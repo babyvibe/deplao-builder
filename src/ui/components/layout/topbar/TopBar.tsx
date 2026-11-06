@@ -18,6 +18,8 @@ import { useErpReminderAttention } from '@/store/erp/erpReminderAttentionStore';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpContext';
 import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
+import { useQuickErpAccess } from '@/hooks/erp/useQuickErpAccess';
+import { useUpcomingEvents } from '@/hooks/erp/useUpcomingEvents';
 import NotificationCenter from '@/components/erp/notifications/NotificationCenter';
 import { Spinner } from '@/components/common/PageLoading';
 import { AlertIcon, BellOffIcon, KeyIcon, MonitorIcon, PluginIcon, RefreshIcon, StarIcon } from '@/components/common/icons';
@@ -363,6 +365,10 @@ export default function TopBar() {
   }, [upcomingReminders.length]);
   const nextReminder = upcomingReminders.find(item => item.startAt > reminderClock) ?? null;
   const reminderLead = nextReminder ? erpReminderLeadText(nextReminder.startAt - reminderClock) : '';
+  // Lịch sắp tới của mình (tab "Lịch sắp tới" trong chuông; nhắc vẫn theo mốc của từng lịch)
+  const { calendar: canSeeCalendar } = useQuickErpAccess();
+  const reminderMyId = useEmployeeStore(s => (s.mode === 'employee' ? String(s.currentEmployee?.employee_id || '') : 'boss'));
+  useUpcomingEvents(canSeeCalendar, reminderMyId);
 
   useEffect(() => {
     if (!erpPerms.can('erp.access')) return;
@@ -894,7 +900,7 @@ export default function TopBar() {
           </button>
           {bellOpen && (
             <div className="absolute right-0 top-full mt-1 z-[9999]">
-              <NotificationCenter onClose={() => setBellOpen(false)} />
+              <NotificationCenter onClose={() => setBellOpen(false)} initialTab={nextReminder ? 'upcoming' : 'inbox'} />
             </div>
           )}
         </div>

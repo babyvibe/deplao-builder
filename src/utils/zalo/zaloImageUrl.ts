@@ -23,6 +23,19 @@ const JXL_STATUS_PARAM = 'jxlstatus';
 const CONTENT_URL_KEYS = ['href', 'thumb', 'hd', 'hdUrl', 'normalUrl', 'oriUrl', 'thumbUrl', 'raw', 'rawUrl'];
 const PARAMS_URL_KEYS = ['hd', 'rawUrl', 'href', 'thumb'];
 
+/** Host media của Zalo (CDN ảnh / file, chat.zalo.me): chỉ những host này mới được nhận cookie phiên tài khoản. */
+const ZALO_MEDIA_HOST_RE = /(^|\.)(zdn\.vn|zadn\.vn|zalo\.me|zaloapp\.com)$/i;
+
+/** Link http(s) thuộc host media của Zalo. */
+export function isZaloMediaUrl(url: unknown): url is string {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return false;
+    try {
+        return ZALO_MEDIA_HOST_RE.test(new URL(url).hostname);
+    } catch {
+        return false;
+    }
+}
+
 export function isZaloJxlUrl(url: unknown): url is string {
     return typeof url === 'string' && JXL_URL_RE.test(url);
 }

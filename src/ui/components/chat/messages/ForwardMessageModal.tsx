@@ -5,7 +5,8 @@ import { useAccountStore } from '@/store/accounts/accountStore';
 import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
 import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import { Button } from '@/components/ui';
-import { RefreshIcon } from '@/components/common/icons';
+import { CloudIcon, RefreshIcon } from '@/components/common/icons';
+import { MY_DOCUMENTS_NAME, isMyDocumentsContact, isSavedMessagesAccount } from '@/lib/chat/zalo/myDocuments';
 import GroupAvatar from '../../common/avatars/GroupAvatar';
 import ChannelBadge from '../../common/avatars/ChannelBadge';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
@@ -46,10 +47,14 @@ interface ContactItem {
   _accountId?: string;
 }
 
-export default function ForwardMessageModal({ messages, onClose, onForward }: {
+export default function ForwardMessageModal({ messages, onClose, onForward, mode = 'forward', initialText = '' }: {
   messages: any[];
   onClose: () => void;
   onForward: (messages: any[], targets: Array<{ threadId: string; threadType: number; accountId: string }>, composeText: string) => void;
+  /** share: link chia sẻ Telegram (lib/chat/links/chatLinks): chọn hội thoại, chữ được điền sẵn vào ô soạn tin, chưa gửi. */
+  mode?: 'forward' | 'share';
+  /** Chữ có sẵn ở ô nội dung (chia sẻ: URL + lời nhắn). */
+  initialText?: string;
 }) {
   // Selector: modal không render lại với mọi thay đổi khác của store (tin nhắn, thông báo…)
   const { labels: allLabels, groupInfoCache } = useAppStore(useShallow(s => ({
@@ -69,7 +74,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward }: {
   const [tab, setTab] = useState<TabKey>('recent');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [composeText, setComposeText] = useState('');
+  const [composeText, setComposeText] = useState(initialText);
 
   // ── Pagination state ──
   const [contacts, setContacts] = useState<ContactItem[]>([]);
@@ -355,8 +360,12 @@ export default function ForwardMessageModal({ messages, onClose, onForward }: {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
-            <h2 className="text-foreground font-semibold text-base">Chuyển tiếp {msgCount > 1 ? `${msgCount} tin nhắn` : 'tin nhắn'}</h2>
-            <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[350px]">{previewText}</p>
+            <h2 className="text-foreground font-semibold text-base">
+              {mode === 'share' ? 'Chia sẻ tới' : `Chuyển tiếp ${msgCount > 1 ? `${msgCount} tin nhắn` : 'tin nhắn'}`}
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[350px]">
+              {mode === 'share' ? 'Điền sẵn vào ô soạn tin, chưa gửi' : previewText}
+            </p>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -526,6 +535,9 @@ export default function ForwardMessageModal({ messages, onClose, onForward }: {
           )}
           {filtered.map(c => {
             const isSelected = selected.has(c.contact_id);
+            // Telegram: hội thoại với chính mình (Tin nhắn đã lưu) = My Documents; dòng mang tên + ảnh của mình
+            const rowAccount = accounts.find(a => a.zalo_id === c._accountId);
+            const savedMessages = isSavedMessagesAccount(rowAccount) && isMyDocumentsContact(c, rowAccount);
             return (
               <button key={c.contact_id}
                 onClick={() => toggleSelect(c.contact_id)}
@@ -533,7 +545,11 @@ export default function ForwardMessageModal({ messages, onClose, onForward }: {
                 <div className={`w-5 h-5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-border-strong'}`}>
                   {isSelected && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
                 </div>
-                {c.contact_type === 'group' ? (
+                {savedMessages ? (
+                  <div className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-gradient-to-br from-sky-400 to-blue-600" style={{ color: '#fff' }}>
+                    <CloudIcon className="w-5 h-5" />
+                  </div>
+                ) : c.contact_type === 'group' ? (
                   <GroupAvatar avatarUrl={c.avatar_url} groupInfo={grpCache[c.contact_id]} name={c.display_name || c.contact_id} id={c.contact_id} size="md" />
                 ) : c.avatar_url ? (
                   <img src={toLocalMediaUrl(c.avatar_url, c._accountId)} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0"
@@ -549,7 +565,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward }: {
                   <PeerInitials id={c.contact_id} name={c.display_name} fallback="U" className="w-10 h-10 text-sm" />
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-foreground truncate">{c.alias || c.display_name || c.contact_id}</p>
+                  <p className="text-sm text-foreground truncate">{savedMessages ? MY_DOCUMENTS_NAME : (c.alias || c.display_name || c.contact_id)}</p>
                   {c.contact_type === 'group'
                     ? <p className="text-xs text-muted-foreground">Nhóm</p>
                     : c.last_message_time
@@ -585,7 +601,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward }: {
             </button>
             <button onClick={handleForward}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">
-              Chuyển tiếp ({selected.size})
+              {mode === 'share' ? 'Chia sẻ' : 'Chuyển tiếp'} ({selected.size})
             </button>
           </div>
         )}

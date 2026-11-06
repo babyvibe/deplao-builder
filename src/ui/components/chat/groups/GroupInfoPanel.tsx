@@ -24,6 +24,7 @@ import { getAdapter } from '@/lib/channels/adapters/registry';
 import TelegramChatSettings from '../telegram/quick/TelegramChatSettings';
 import ZaloAutoDeleteSection from '../zalo/ZaloAutoDeleteSection';
 import { useGroupMemberSync } from '@/hooks/chat/useGroupMemberSync';
+import { useHiddenScanConsent } from '@/lib/crm/hiddenScanConsent';
 import { ArrowDownIcon, ArrowUpIcon, BellIcon, BellOffIcon, CloseIcon, MapPinIcon, PinIcon, SettingsIcon, TrashIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import {
@@ -1106,8 +1107,8 @@ function GrpActionBtn({ icon, label, onClick, active }: { icon: React.ReactNode;
   return (
     <button onClick={onClick}
       className={`flex flex-col items-center gap-1 py-2 px-1 rounded-xl hover:bg-muted transition-colors text-center`}>
-      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-blue-500' : 'bg-accent'}`}>{icon}</div>
-      <span className={`text-[9px] leading-tight ${active ? 'text-blue-500' : 'text-subtle-foreground'}`}>{label}</span>
+      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-primary text-primary-foreground' : 'bg-accent'}`}>{icon}</div>
+      <span className={`text-[9px] leading-tight ${active ? 'text-primary' : 'text-subtle-foreground'}`}>{label}</span>
     </button>
   );
 }
@@ -1137,11 +1138,15 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, onApiSync, myAcco
   const channel = channelCap?.id || CHANNEL.ZALO;
   const reloadRef = useRef<() => Promise<void>>(async () => {});
   // ── Hidden-member scan is a Zalo-only capability ──────────────────────
+  // Quét qua máy chủ Deplao gửi cookie Zalo lên deplaoapp.com: chỉ khi người dùng đã đồng ý (mặc định tắt). Nút tải lại
+  // chỉ quét khi đã đồng ý; chưa đồng ý thì hiện dòng "Quét đủ thành viên" (bấm → hộp thoại hỏi đồng ý trước khi gửi).
   const { syncMembers } = useGroupMemberSync({
     accountId: myAccountId,
     groupId,
     onMembersSynced: () => { void reloadRef.current(); },
   });
+  const hiddenScanConsent = useHiddenScanConsent();
+  const [hiddenScanning, setHiddenScanning] = useState(false);
   const { getActiveAccount } = useAccountStore(useShallow(s => ({
     getActiveAccount: s.getActiveAccount, accounts: s.accounts, activeAccountId: s.activeAccountId,
   })));
@@ -1273,7 +1278,8 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, onApiSync, myAcco
     if (reloading) return;
     setReloading(true);
     try {
-      if (isZaloCh(channel)) await syncMembers();
+      // Chưa đồng ý quét qua máy chủ → bỏ qua im lặng (không hỏi mỗi lần tải lại), chỉ làm mới bằng API Zalo trên máy
+      if (isZaloCh(channel)) await syncMembers({ askConsent: false });
       await onRefresh();
       await reloadList();
     } finally {
@@ -1465,6 +1471,23 @@ function MembersPanel({ groupInfo, groupId, onBack, onRefresh, onApiSync, myAcco
       </div>
       {apiSyncing && (
         <p className="px-4 pb-1 text-[11px] text-subtle-foreground">Đang đồng bộ thành viên lần đầu…</p>
+      )}
+      {/* Nhóm ẩn danh sách thành viên (Zalo chỉ trả một phần) và chưa đồng ý quét qua máy chủ: mời quét, hỏi trước khi gửi */}
+      {isZaloCh(channel) && !hiddenScanConsent.granted && !query && total !== null && officialCount > shownTotal && (
+        <div className="mx-3 mb-1 flex items-center gap-2 rounded-lg bg-muted px-2.5 py-1.5 text-[11px] text-muted-foreground">
+          <span className="min-w-0 flex-1">Thiếu {officialCount - shownTotal} thành viên (nhóm ẩn danh sách)?</span>
+          <button
+            type="button"
+            disabled={hiddenScanning}
+            onClick={async () => {
+              setHiddenScanning(true);
+              try { await syncMembers({ askConsent: true }); } finally { setHiddenScanning(false); }
+            }}
+            className="shrink-0 font-medium text-primary underline-offset-2 hover:underline disabled:opacity-50"
+          >
+            {hiddenScanning ? 'Đang quét…' : 'Quét đủ'}
+          </button>
+        </div>
       )}
       {listError && (
         <div className="mx-3 mb-1 flex items-center gap-2 rounded-lg bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">

@@ -64,14 +64,14 @@ function toBossMediaUrl(localPath: string, bossUrl: string, zaloId?: string): st
     // Patterns: /media/zaloId/... or D:\media\zaloId\...
     const mediaMatch = normalized.match(/(?:^|\/)(media|_uploads|avatar)\/(.+)/);
     if (mediaMatch) {
-      return `${bossUrl}/api/${mediaMatch[1]}/${mediaMatch[2]}`;
+      return `${bossUrl}/api/${mediaMatch[1]}/${encodeUrlPath(mediaMatch[2])}`;
     }
 
     // Fallback: use as-is with media prefix
     // Extract filename from path
     const filename = normalized.split('/').pop() || 'file';
     if (zaloId) {
-      return `${bossUrl}/api/media/${zaloId}/misc/${filename}`;
+      return `${bossUrl}/api/media/${encodeURIComponent(zaloId)}/misc/${encodeURIComponent(filename)}`;
     }
 
     // Last resort: construct from the full path (may not work on boss)
@@ -79,6 +79,15 @@ function toBossMediaUrl(localPath: string, bossUrl: string, zaloId?: string): st
   } catch {
     return localPath;
   }
+}
+
+/**
+ * Mã hoá từng đoạn đường dẫn file của Boss (đường dẫn trên đĩa, chưa mã hoá) cho URL: tên file khách gửi có "#", "%",
+ * "&"… ("Báo giá #3.xlsx", "Giảm 10%.xls") — để nguyên thì "#…" thành phần đuôi URL, Boss nhận sai tên → không tải /
+ * mở được file đó. Boss giải mã đúng một lần (bossFileAccess.parseMediaRelPath).
+ */
+export function encodeUrlPath(relPath: string): string {
+  return relPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
 }
 
 function getMode(): string {

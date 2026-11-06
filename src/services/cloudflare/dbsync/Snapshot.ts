@@ -62,9 +62,12 @@ export function prepareSnapshotCopy(copy: SqlConn, opts: { scope?: Partial<Cloud
     };
 }
 
-/** Nén gzip theo luồng. onProgress(byte đã đọc, tổng byte) gọi tối đa 2 lần/giây + một lần khi xong. */
+/**
+ * Nén gzip theo luồng. onProgress(byte đã đọc, tổng byte) gọi tối đa 2 lần/giây + một lần khi xong. shouldStop() true
+ * (máy sắp ngủ / vừa ngủ dậy giữa lúc chụp gốc) → dừng ngay ở khối kế, ném lỗi.
+ */
 export async function gzipFile(
-    src: string, dst: string, level = 6, onProgress?: (done: number, total: number) => void,
+    src: string, dst: string, level = 6, onProgress?: (done: number, total: number) => void, shouldStop?: () => boolean,
 ): Promise<number> {
     const total = onProgress ? (await fs.promises.stat(src)).size : 0;
     let done = 0;
@@ -78,6 +81,10 @@ export async function gzipFile(
     };
     const counter = new Transform({
         transform(chunk: Buffer, _enc, cb) {
+            if (shouldStop?.()) {
+                cb(new Error('Đã dừng nén'));
+                return;
+            }
             done += chunk.length;
             report(false);
             cb(null, chunk);

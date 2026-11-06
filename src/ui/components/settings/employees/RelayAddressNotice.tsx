@@ -44,13 +44,13 @@ export function copyWithToast(text: string, okMessage = 'Đã sao chép'): void 
   const notify = useAppStore.getState().showNotification;
   navigator.clipboard.writeText(text)
     .then(() => notify(okMessage, 'success'))
-    .catch(() => notify('Không sao chép được — hãy chọn và sao chép thủ công', 'error'));
+    .catch(() => notify('Không sao chép được, hãy chọn và sao chép thủ công', 'error'));
 }
 
 interface RelayAddressNoticeProps {
   status: RelayTunnelStatus | null | undefined;
   /**
-   * Bấm "Thiết lập địa chỉ cố định" (chỉ hiện khi đang dùng địa chỉ tạm). Mặc định mở Cài đặt → Internet & Đám mây →
+   * Bấm "Thiết lập địa chỉ cố định" (chỉ hiện khi đang dùng địa chỉ tạm). Mặc định mở Cài đặt → Internet & Cloud →
    * Địa chỉ Internet (nơi duy nhất cấu hình địa chỉ); máy nhân viên / bản app không có module Cloudflare thì ẩn nút.
    */
   onSetupFixed?: () => void;

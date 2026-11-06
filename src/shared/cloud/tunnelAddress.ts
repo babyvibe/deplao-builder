@@ -1,7 +1,7 @@
 /**
  * Địa chỉ công khai (WAN) của Boss — phần thuần (không phụ thuộc Electron / React / DOM), dùng chung cho
  * main (TunnelService, HttpRelayService, BossAddressProbe, BossUrlAnnouncement) và renderer
- * (RelayStatusPanel, ApiOverviewPanel, InboundWebhooksPanel, TopBar). Test: src/__tests__/cloudflare/tunnelAddress.test.ts.
+ * (Cài đặt → Nhân viên → Kết nối, ApiOverviewPanel, InboundWebhooksPanel, TopBar). Test: src/__tests__/cloudflare/tunnelAddress.test.ts.
  *
  * Không dùng dịch vụ trung gian nào: địa chỉ mới chỉ đi từ Boss tới nhân viên qua kênh realtime đã xác thực
  * (Socket.IO của relay); nhân viên mất liên lạc thì tự nhập địa chỉ mới.

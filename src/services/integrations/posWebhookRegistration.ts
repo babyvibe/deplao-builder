@@ -97,7 +97,7 @@ export function isBase64Secret(value: string): boolean {
   return value.length >= 12 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 }
 
-const NO_ADDRESS = 'Chưa bật địa chỉ nhận webhook — bật "Thanh toán, tích hợp" ở Cài đặt → Internet & Đám mây → Địa chỉ Internet rồi thử lại';
+const NO_ADDRESS = 'Chưa bật địa chỉ nhận webhook — bật "Thanh toán, tích hợp" ở Cài đặt → Internet & Cloud → Địa chỉ Internet rồi thử lại';
 
 function listed(ctx: RegistrationContext, webhooks: RemoteWebhook[]): ListedWebhook[] {
   return webhooks.map(w => ({ ...w, ownership: classifyWebhook(ctx.type, w, ctx.integrationId, ctx.address.url) }));

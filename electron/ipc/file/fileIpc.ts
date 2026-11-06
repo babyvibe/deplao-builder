@@ -4,9 +4,12 @@ import DatabaseService from '../../../src/services/database/DatabaseService';
 import EventBroadcaster from '../../../src/services/event/EventBroadcaster';
 import MediaCacheService from '../../../src/services/cache/MediaCacheService';
 import { bossAuthHeaders } from '../../../src/services/http/bossSessionAuth';
+import { decodeUrlPath } from '../../../src/services/http/bossFileAccess';
 import { classifyMediaError, probeMediaUrl } from '../../../src/services/file/MediaExpiryService';
-import { toZaloJpgUrl } from '../../../src/utils/zalo/zaloImageUrl';
-import { repairMessageImage } from '../../../src/services/file/imageRepair';
+import { isZaloMediaUrl, toZaloJpgUrl } from '../../../src/utils/zalo/zaloImageUrl';
+import {
+    ensureMessageImage, repairMessageImage, type ImageEnsureDeps, type ImageEnsureResult, type ImageRepairDeps,
+} from '../../../src/services/file/imageRepair';
 import Logger from '../../../src/utils/Logger';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -29,6 +32,152 @@ function getFfmpegBin(): string {
         }
     } catch { /* not installed */ }
     return 'ffmpeg'; // fallback PATH
+}
+
+/** URL file của Boss ứng với đường dẫn file Boss lưu trong tin (giống toLocalMediaUrl ở giao diện). */
+function bossFileUrl(bossUrl: string, localPath: string, fallbackName: string): string {
+    const base = bossUrl.replace(/\/+$/, '');
+    const normalized = localPath.replace(/\\/g, '/');
+    const mediaMatch = normalized.match(/(?:^|\/)(media|_uploads|avatar)\/(.+)/);
+    // Mã hoá từng đoạn: tên file có "#", "%"… (Boss giải mã một lần)
+    if (mediaMatch) return `${base}/api/${mediaMatch[1]}/${mediaMatch[2].split('/').map(encodeURIComponent).join('/')}`;
+    return `${base}/api/media/external/${encodeURIComponent(normalized || fallbackName)}`;
+}
+
+/**
+ * Máy nhân viên: file của tin nằm trên máy Boss (local_paths là đường dẫn của Boss) → lưu bản Boss đã lưu: bản đã tải về
+ * máy này trước đó (mở file / xem ảnh), không có thì tải từ Boss bằng token phiên nhân viên.
+ * 'unavailable' = không phải workspace nhân viên.
+ */
+async function saveFromBoss(localPath: string, destPath: string, fallbackName: string): Promise<'saved' | 'failed' | 'unavailable'> {
+    const { default: WorkspaceManager } = require('../../../src/utils/app/WorkspaceManager');
+    const ws = WorkspaceManager.getInstance().getActiveWorkspace();
+    if (ws?.type !== 'remote' || !ws.bossUrl || !ws.token) return 'unavailable';
+    const url = bossFileUrl(ws.bossUrl, localPath, fallbackName);
+    try {
+        const cached = MediaCacheService.getInstance().getLocalCopyPath(url);
+        if (cached) {
+            fs.copyFileSync(cached, destPath);
+            return 'saved';
+        }
+    } catch { /* tải lại từ Boss */ }
+    try {
+        const response = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${ws.token}` },
+            signal: AbortSignal.timeout(120000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        fs.writeFileSync(destPath, Buffer.from(await response.arrayBuffer()));
+        return 'saved';
+    } catch (e: any) {
+        Logger.warn(`[fileIpc] saveAs from Boss failed: ${e.message}`);
+        return 'failed';
+    }
+}
+
+/**
+ * Tải thẳng link gốc của file (CDN Zalo / Facebook / URL Boss) về chỗ người dùng chọn. Trước đây phải có zaloId (không
+ * nơi gọi nào truyền) → mọi file chưa có trên máy báo "zaloId required for remote download".
+ */
+async function downloadUrlTo(url: string, destPath: string, opts: { image: boolean; cookiesJson?: string; userAgent?: string }): Promise<void> {
+    const source = opts.image ? toZaloJpgUrl(url) : url;
+    const headers: Record<string, string> = {
+        'User-Agent': opts.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Referer': 'https://chat.zalo.me/',
+        ...bossAuthHeaders(source),
+    };
+    if (opts.cookiesJson) {
+        const cookieHeader = FileStorageService.buildCookieHeader(opts.cookiesJson);
+        if (cookieHeader) headers['Cookie'] = cookieHeader;
+    }
+    const response = await net.fetch(source, { headers });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length) throw new Error('File rỗng');
+    fs.writeFileSync(destPath, buffer);
+}
+
+/** Phụ thuộc thật (DB, ổ đĩa, CDN) của imageRepair cho file:repairImage / file:ensureMessageImage. */
+function imageRepairDeps(threadIdHint: string | undefined, emitLocalPath: ImageRepairDeps['emitLocalPath']): ImageEnsureDeps {
+    const db = DatabaseService.getInstance();
+    return {
+        isMediaExpired: (zaloId, msgId) => db.isMediaExpired(zaloId, msgId),
+        setMediaExpired: (zaloId, msgId, expired) => db.setMediaExpired(zaloId, msgId, expired),
+        messageInfo: (zaloId, msgId) => {
+            const info = { localPath: '', threadId: '', imageUrl: '', msgType: '', channel: '' };
+            try {
+                const row: any = db.getMessageById(zaloId, msgId, threadIdHint || undefined);
+                if (!row) return info;
+                info.threadId = String(row.thread_id || '');
+                info.msgType = String(row.msg_type || '');
+                info.channel = String(row.channel || '');
+                try {
+                    const lp = typeof row.local_paths === 'string' ? JSON.parse(row.local_paths || '{}') : (row.local_paths || {});
+                    info.localPath = String(lp?.main || lp?.hd || '');
+                } catch { /* local_paths hỏng */ }
+                try {
+                    const contentRaw = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
+                    info.imageUrl = DatabaseService.extractImageUrlFromContent(contentRaw) || '';
+                } catch { /* content không phải JSON */ }
+            } catch (e: any) {
+                Logger.warn(`[fileIpc] repairImage: DB lookup failed: ${e.message}`);
+            }
+            return info;
+        },
+        account: (zaloId) => db.getAccounts().find(item => item.zalo_id === zaloId),
+        download: (zaloId, url, cookies, userAgent) => FileStorageService.downloadImage(zaloId, url, undefined, cookies, userAgent),
+        toJpgUrl: toZaloJpgUrl,
+        resolveAbsolutePath: (relOrAbs) => FileStorageService.resolveAbsolutePath(relOrAbs),
+        validateImage: (absPath) => FileStorageService.validateImageFile(absPath),
+        mediaBaseDir: () => FileStorageService.getBaseDir(),
+        saveLocalPath: (zaloId, msgId, relPath) => db.updateLocalPaths(zaloId, msgId, { main: relPath }),
+        emitLocalPath,
+        classifyError: classifyMediaError,
+        probe: probeMediaUrl,
+        exists: (absPath) => fs.existsSync(absPath),
+        unlink: (absPath) => fs.unlinkSync(absPath),
+        log: (message) => Logger.log(message),
+        warn: (message) => Logger.warn(message),
+        isZaloMediaUrl,
+        // File đã dọn lên Cloudflare R2 (lưu media lên cloud) → lấy lại về chỗ cũ; R2 tắt / chưa nạp → false
+        restoreFromCloud: async (absPath) => {
+            try {
+                return !!(await require('../../../src/services/cloudflare/media').cloudMedia.resolveMissingMediaFile(absPath));
+            } catch {
+                return false;
+            }
+        },
+    };
+}
+
+/** Giao diện đang mở workspace nhân viên (remote) và lệnh không phải Boss chạy hộ nhân viên (`_fromRelay`). */
+function imageRunsOnBoss(params: any): boolean {
+    if (params?._fromRelay) return false;
+    try {
+        const { default: WorkspaceManager } = require('../../../src/utils/app/WorkspaceManager');
+        return WorkspaceManager.getInstance().getActiveWorkspace()?.type === 'remote';
+    } catch {
+        return false;
+    }
+}
+
+/** Chỉ id tin: Boss tự lấy link ảnh + đường dẫn trong DB của nó (không nhận link / đường dẫn từ máy nhân viên). */
+function ensureImageParams(params: any): { zaloId: string; msgId: string; threadId?: string; force: boolean } {
+    return {
+        zaloId: String(params?.zaloId || ''),
+        msgId: String(params?.msgId || ''),
+        threadId: params?.threadId ? String(params.threadId) : undefined,
+        force: !!params?.force,
+    };
+}
+
+/** Tải ảnh có thể mất tới 30 s (CDN) + lấy lại từ R2 */
+const ENSURE_IMAGE_TIMEOUT_MS = 90_000;
+
+/** Máy nhân viên: nhờ Boss có ảnh của tin (tải bằng phiên tài khoản trên Boss); kết quả là đường dẫn trên máy Boss. */
+async function ensureImageOnBoss(params: any): Promise<ImageEnsureResult> {
+    const { proxyToBossWithResult } = require('../network/proxyHelper');
+    return proxyToBossWithResult('file:ensureMessageImage', ensureImageParams(params), { timeoutMs: ENSURE_IMAGE_TIMEOUT_MS });
 }
 
 export function registerFileIpc() {
@@ -70,7 +219,10 @@ export function registerFileIpc() {
         try {
             // Resolve relative paths (stored in DB as folder-agnostic relative paths)
             const resolved = FileStorageService.resolveAbsolutePath(filePath);
-            await shell.openPath(resolved);
+            if (!resolved || !fs.existsSync(resolved)) return { success: false, error: 'Không tìm thấy file trên máy', notFound: true };
+            // shell.openPath không ném lỗi: trả chuỗi lỗi (không có app mở được…) — trước đây bỏ qua, giao diện tưởng đã mở
+            const openError = await shell.openPath(resolved);
+            if (openError) return { success: false, error: openError };
             return { success: true };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -147,52 +299,25 @@ export function registerFileIpc() {
 
             if (localValid && resolvedLocalPath) {
                 fs.copyFileSync(resolvedLocalPath, destPath);
-            } else if (params.remoteUrl) {
-                if (!params.zaloId) return { success: false, error: 'zaloId required for remote download' };
-                const tmpRelPath = await FileStorageService.downloadImage(
-                    params.zaloId, params.remoteUrl, params.defaultName,
-                    params.cookiesJson, params.userAgent,
-                );
-                const tmpPath = tmpRelPath ? FileStorageService.resolveAbsolutePath(tmpRelPath) : '';
-                if (tmpPath && fs.existsSync(tmpPath)) {
-                    fs.copyFileSync(tmpPath, destPath);
-                } else {
-                    return { success: false, error: 'Không thể tải file từ server' };
-                }
-            } else if (params.localPath) {
-                // Employee mode fallback: local path không tồn tại (path từ Boss)
-                // → chuyển thành Boss REST URL và download qua HttpClientService
-                try {
-                    const { default: WorkspaceManager } = require('../../../src/utils/app/WorkspaceManager');
-                    const ws = WorkspaceManager.getInstance().getActiveWorkspace();
-                    if (ws?.type === 'remote' && ws.bossUrl && ws.token) {
-                        // Build boss REST URL từ local path (giống toLocalMediaUrl)
-                        const normalized = params.localPath.replace(/\\/g, '/');
-                        const mediaMatch = normalized.match(/(?:^|\/)(media|_uploads|avatar)\/(.+)/);
-                        let bossUrl = '';
-                        if (mediaMatch) {
-                            bossUrl = `${ws.bossUrl.replace(/\/+$/, '')}/api/${mediaMatch[1]}/${mediaMatch[2]}`;
-                        } else {
-                            const filename = normalized.split('/').pop() || params.defaultName;
-                            bossUrl = `${ws.bossUrl.replace(/\/+$/, '')}/api/media/external/${encodeURIComponent(normalized)}`;
+            } else {
+                // Máy nhân viên: lấy bản Boss đã lưu trước (đúng file của tin), không được thì link gốc
+                const fromBoss = params.localPath ? await saveFromBoss(params.localPath, destPath, params.defaultName) : 'unavailable';
+                if (fromBoss !== 'saved') {
+                    if (params.remoteUrl) {
+                        try {
+                            await downloadUrlTo(params.remoteUrl, destPath, {
+                                image: isImageExt, cookiesJson: params.cookiesJson, userAgent: params.userAgent,
+                            });
+                        } catch (e: any) {
+                            Logger.error(`[fileIpc] saveAs download error: ${e.message}`);
+                            return { success: false, error: `Không tải được file (${e.message}). Link gốc có thể đã hết hạn.` };
                         }
-                        // Download từ Boss
-                        const response = await fetch(bossUrl, {
-                            headers: { 'Authorization': `Bearer ${ws.token}` },
-                            signal: AbortSignal.timeout(120000),
-                        });
-                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                        const buffer = Buffer.from(await response.arrayBuffer());
-                        fs.writeFileSync(destPath, buffer);
+                    } else if (fromBoss === 'failed') {
+                        return { success: false, error: 'Không tải được file từ máy Boss. Kiểm tra kết nối tới Boss rồi thử lại.' };
                     } else {
                         return { success: false, error: 'Không có nguồn file để lưu' };
                     }
-                } catch (e: any) {
-                    Logger.error(`[fileIpc] saveAs employee fallback error: ${e.message}`);
-                    return { success: false, error: 'Không thể tải file từ Boss: ' + e.message };
                 }
-            } else {
-                return { success: false, error: 'Không có nguồn file để lưu' };
             }
 
             return { success: true, savedPath: destPath };
@@ -346,6 +471,9 @@ export function registerFileIpc() {
     /**
      * Sửa ảnh lỗi: tải lại từ CDN (phiên của tài khoản), file đọc được thì cập nhật DB + báo giao diện rồi mới bỏ file cũ.
      * Renderer gọi khi img onError (MediaBubble / MediaViewer) và khi quét ảnh hỏng lúc mở hội thoại.
+     * Máy nhân viên: ảnh của tin nằm trên máy Boss (local_paths là đường dẫn của Boss) → Boss kiểm tra bản của nó, thiếu /
+     * hỏng thì Boss tải lại (file:ensureMessageImage); kết quả là đường dẫn trên máy Boss. Trước đây tải về máy nhân viên
+     * rồi ghi đường dẫn đó vào tin: Boss không có file đó → ảnh lỗi → lại tải → ảnh nháy liên tục.
      */
     ipcMain.handle('file:repairImage', async (_event, params: {
         zaloId: string;
@@ -355,48 +483,31 @@ export function registerFileIpc() {
         remoteUrl?: string;
         /** true = bỏ qua cờ "đã hết hạn" (người dùng bấm Thử tải lại) */
         force?: boolean;
+        _fromRelay?: boolean;
     }) => {
+        if (imageRunsOnBoss(params)) return ensureImageOnBoss(params);
         // Một lượt cho mỗi tin, tải xong mới bỏ file cũ, chỉ xoá file trong thư mục media — imageRepair.ts
-        const db = DatabaseService.getInstance();
-        return repairMessageImage(params, {
-            isMediaExpired: (zaloId, msgId) => db.isMediaExpired(zaloId, msgId),
-            setMediaExpired: (zaloId, msgId, expired) => db.setMediaExpired(zaloId, msgId, expired),
-            messageInfo: (zaloId, msgId) => {
-                const info = { localPath: '', threadId: '', imageUrl: '' };
-                try {
-                    const row: any = db.getMessageById(zaloId, msgId, params.threadId || undefined);
-                    if (!row) return info;
-                    info.threadId = String(row.thread_id || '');
-                    try {
-                        const lp = typeof row.local_paths === 'string' ? JSON.parse(row.local_paths || '{}') : (row.local_paths || {});
-                        info.localPath = String(lp?.main || lp?.hd || '');
-                    } catch { /* local_paths hỏng */ }
-                    try {
-                        const contentRaw = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
-                        info.imageUrl = DatabaseService.extractImageUrlFromContent(contentRaw) || '';
-                    } catch { /* content không phải JSON */ }
-                } catch (e: any) {
-                    Logger.warn(`[fileIpc] repairImage: DB lookup failed: ${e.message}`);
-                }
-                return info;
-            },
-            account: (zaloId) => db.getAccounts().find(item => item.zalo_id === zaloId),
-            download: (zaloId, url, cookies, userAgent) => FileStorageService.downloadImage(zaloId, url, undefined, cookies, userAgent),
-            toJpgUrl: toZaloJpgUrl,
-            resolveAbsolutePath: (relOrAbs) => FileStorageService.resolveAbsolutePath(relOrAbs),
-            validateImage: (absPath) => FileStorageService.validateImageFile(absPath),
-            mediaBaseDir: () => FileStorageService.getBaseDir(),
-            saveLocalPath: (zaloId, msgId, relPath) => db.updateLocalPaths(zaloId, msgId, { main: relPath }),
-            emitLocalPath: (zaloId, msgId, threadId, relPath) => EventBroadcaster.sendDirect('event:localPath', {
-                zaloId, msgId, threadId, localPaths: { main: relPath },
-            }),
-            classifyError: classifyMediaError,
-            probe: probeMediaUrl,
-            exists: (absPath) => fs.existsSync(absPath),
-            unlink: (absPath) => fs.unlinkSync(absPath),
-            log: (message) => Logger.log(message),
-            warn: (message) => Logger.warn(message),
-        });
+        return repairMessageImage(params, imageRepairDeps(params?.threadId, (zaloId, msgId, threadId, relPath) =>
+            EventBroadcaster.sendDirect('event:localPath', { zaloId, msgId, threadId, localPaths: { main: relPath } })));
+    });
+
+    /**
+     * Ảnh của tin Zalo phải có trên máy Boss: đã có → trả đường dẫn; chưa có (tin đồng bộ lịch sử, Boss tắt máy lúc nhận,
+     * tải lỗi) → tải bằng phiên tài khoản (imageRepair.ensureMessageImage). Giao diện gọi khi ảnh chỉ có link Zalo hiện ra
+     * (lib/media/ensureMessageImage). Máy nhân viên chuyển lên Boss (proxy: quyền chat + tài khoản được giao); Boss báo
+     * event:localPath cho giao diện Boss và nhân viên được giao tài khoản.
+     */
+    ipcMain.handle('file:ensureMessageImage', async (_event, params: {
+        zaloId: string;
+        msgId: string;
+        threadId?: string;
+        force?: boolean;
+        _fromRelay?: boolean;
+    }) => {
+        if (imageRunsOnBoss(params)) return ensureImageOnBoss(params);
+        const clean = ensureImageParams(params);
+        return ensureMessageImage(clean, imageRepairDeps(clean.threadId, (zaloId, msgId, threadId, relPath) =>
+            EventBroadcaster.emit('event:localPath', { zaloId, msgId, threadId, localPaths: { main: relPath } })));
     });
 
     /**
@@ -647,7 +758,7 @@ export function registerFileIpc() {
             //    Boss URL pattern: /api/media/{path} → map về workspace media/
             try {
                 const mediaPath = bossUrl.includes('/api/media/')
-                    ? 'media/' + bossUrl.split('/api/media/')[1].split('?')[0]
+                    ? 'media/' + decodeUrlPath(bossUrl.split('/api/media/')[1].split(/[?#]/)[0])
                     : '';
                 if (mediaPath) {
                     const absPath = FileStorageService.resolveAbsolutePath(mediaPath);
@@ -677,7 +788,7 @@ export function registerFileIpc() {
             if (cache.hasCache(bossUrl)) return { success: true, cached: true };
             // Check workspace media directory
             const mediaPath = bossUrl.includes('/api/media/')
-                ? 'media/' + bossUrl.split('/api/media/')[1].split('?')[0]
+                ? 'media/' + decodeUrlPath(bossUrl.split('/api/media/')[1].split(/[?#]/)[0])
                 : '';
             if (mediaPath) {
                 const absPath = FileStorageService.resolveAbsolutePath(mediaPath);
@@ -726,7 +837,7 @@ export function registerFileIpc() {
             }
             // Ưu tiên bản sao đúng tên + đuôi trong thư mục media: file cache hash không có đuôi → openPath không chọn
             // được app. (File Boss giờ cần token nên không mở URL Boss bằng trình duyệt ngoài được nữa.)
-            const namedCopy = cache.getLocalCopyPath(bossUrl);
+            const namedCopy = cache.getLocalCopyPath(bossUrl) || cache.ensureLocalCopy(bossUrl, localPath);
             if (namedCopy) localPath = namedCopy;
 
             return {

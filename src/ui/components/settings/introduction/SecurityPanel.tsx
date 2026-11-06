@@ -28,7 +28,8 @@ export function SecurityPanel() {
         <BulletList items={[
           '<strong class="text-foreground">Lưu trên máy:</strong> tin nhắn, danh bạ, CRM, cài đặt và ảnh / video / file đều nằm trong thư mục dữ liệu trên máy (xem đường dẫn ở Cài đặt → Lưu trữ).',
           '<strong class="text-foreground">Không qua máy chủ của Deplao:</strong> app kết nối thẳng từ máy bạn tới Zalo, Facebook, Telegram (qua proxy nếu bạn gán); nội dung tin nhắn, danh bạ không được gửi về máy chủ của Deplao.',
-          '<strong class="text-foreground">Không lưu mật khẩu tài khoản:</strong> Zalo đăng nhập bằng QR / cookie; mật khẩu Facebook, Telegram chỉ dùng lúc đăng nhập. App chỉ giữ phiên đăng nhập (cookie, token) trên máy này, mã hoá bằng cơ chế bảo mật của hệ điều hành (phiên Zalo, Telegram, token bot, cookie Facebook) — chép thư mục dữ liệu sang máy hoặc tài khoản Windows khác thì phải đăng nhập lại.',
+          '<strong class="text-foreground">Không lưu mật khẩu tài khoản:</strong> Zalo đăng nhập bằng QR / cookie; mật khẩu Facebook, Telegram chỉ dùng lúc đăng nhập. App chỉ giữ phiên đăng nhập (cookie, token) trên máy này, mã hoá bằng cơ chế bảo mật của hệ điều hành (phiên Zalo, Telegram, token bot, cookie Facebook); chép thư mục dữ liệu sang máy hoặc tài khoản Windows khác thì phải đăng nhập lại.',
+          '<strong class="text-foreground">Ngoại lệ duy nhất, cần bạn đồng ý:</strong> Quét thành viên nhóm ẩn (Zalo) chạy trên máy chủ Deplao nên phải gửi phiên đăng nhập Zalo (cookie + IMEI) lên deplaoapp.com. Mặc định tắt; app hỏi trước khi gửi, bật / tắt ở CRM → Nhóm → Quét thành viên. Máy chủ không lưu cookie.',
           '<strong class="text-foreground">Máy nhân viên không giữ dữ liệu gốc:</strong> dữ liệu được lấy từ máy Boss qua kết nối; máy nhân viên chỉ có bộ nhớ đệm ảnh / video / file (tự xoá file cũ nhất khi vượt 2 GB).',
         ]} />
       </Card>
@@ -63,7 +64,7 @@ export function SecurityPanel() {
       <Card>
         <SectionTitle><CloudIcon className="w-4 h-4 inline" /> Đám mây là tuỳ chọn</SectionTitle>
         <Paragraph>
-          Mặc định mọi dữ liệu nằm trên máy. <strong className="text-foreground">Cài đặt → Internet &amp; Đám mây</strong> (chỉ có trên máy chủ, không có ở máy nhân viên)
+          Mặc định mọi dữ liệu nằm trên máy. <strong className="text-foreground">Cài đặt → Internet &amp; Cloud</strong> (chỉ có trên máy chủ, không có ở máy nhân viên)
           chỉ hoạt động khi bạn tự kết nối.
         </Paragraph>
         <BulletList items={[

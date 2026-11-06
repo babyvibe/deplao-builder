@@ -1,5 +1,5 @@
 /**
- * Mảnh dùng lại của Cài đặt → Internet & Đám mây → Đồng bộ dữ liệu (chuyển từ phần "Đồng bộ DB" cũ):
+ * Mảnh dùng lại của Cài đặt → Internet & Cloud → Đồng bộ dữ liệu (chuyển từ phần "Đồng bộ DB" cũ):
  *  - SnapshotProgress: tiến độ chụp bản gốc (bước x/5, %, dung lượng, tốc độ, thời gian còn lại, đang gửi lại phần nào).
  *  - SyncLogTable: nhật ký đồng bộ.
  *  - PassphraseDialog: đặt / đổi mật khẩu sao lưu (bật đồng bộ lần đầu bắt buộc có).

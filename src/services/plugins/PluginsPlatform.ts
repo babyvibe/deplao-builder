@@ -169,10 +169,18 @@ class PluginsPlatform {
         this.uiSubs.clear();
     }
 
-    /** Đổi workspace: dừng plugin của workspace cũ, khởi động plugin của workspace mới. */
+    /** Workspace local chạy nền đổi: dừng plugin của workspace cũ, khởi động plugin của workspace mới. */
     async onWorkspaceChanged(): Promise<void> {
         await this.stop();
         await this.start();
+        this.notify?.('plugins:changed', { at: Date.now() });
+    }
+
+    /**
+     * Giao diện đổi sang / rời workspace nhân viên: plugin của workspace local vẫn chạy, chỉ báo giao diện nạp lại danh
+     * sách trang / node (giao diện nhân viên không hiện plugin).
+     */
+    notifyUiChanged(): void {
         this.notify?.('plugins:changed', { at: Date.now() });
     }
 

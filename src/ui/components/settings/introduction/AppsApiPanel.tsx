@@ -150,7 +150,7 @@ export function AppsApiPanel() {
         <BulletList items={[
           `${bold('Trên máy này:')} ${mono('http://127.0.0.1:9900/api/v1')}`,
           `${bold('Trong mạng LAN:')} ${mono('http://&lt;IP máy chủ&gt;:9900/api/v1')} — tab Tổng quan hiện sẵn địa chỉ để sao chép.`,
-          `${bold('Từ Internet')} (server, n8n, Make… ở ngoài): bật dịch vụ ${bold('Nhân viên và API')} ở ${bold('Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet')}, rồi gọi ${mono('&lt;địa chỉ&gt;/api/v1')}. Mục "Truy cập từ xa" ở tab Tổng quan chỉ hiện địa chỉ này để sao chép; đây cũng là địa chỉ nhân viên làm việc từ xa dùng.`,
+          `${bold('Từ Internet')} (server, n8n, Make… ở ngoài): bật dịch vụ ${bold('Nhân viên và API')} ở ${bold('Cài đặt → Internet &amp; Cloud → Địa chỉ Internet')}, rồi gọi ${mono('&lt;địa chỉ&gt;/api/v1')}. Mục "Truy cập từ xa" ở tab Tổng quan chỉ hiện địa chỉ này để sao chép; đây cũng là địa chỉ nhân viên làm việc từ xa dùng.`,
           'Địa chỉ tạm đổi mỗi lần khởi động lại; hệ thống chạy lâu dài nên dùng địa chỉ cố định (Cloudflare tự động).',
         ]} />
         <Callout>
@@ -176,7 +176,7 @@ export function AppsApiPanel() {
           <InfoTile
             title="Nhận dữ liệu vào"
             meta="Hệ thống khác → Deplao"
-            desc={`Casso, SePay gửi giao dịch chuyển khoản, KiotViet / Haravan / Sapo / Nhanh.vn / Pancake POS gửi đơn hàng (xác thực bằng khoá webhook đặt ở trang tích hợp) vào ${mono('&lt;địa chỉ&gt;/webhook/&lt;loại&gt;')}; website, Zapier, Make… kích hoạt workflow có trigger "Webhook bên ngoài" qua ${mono('&lt;địa chỉ&gt;/api/workflow/webhook/&lt;token&gt;')}. Cần bật địa chỉ "Thanh toán, tích hợp" / "Webhook workflow" ở Cài đặt → Internet &amp; Đám mây; chỉ dùng trong LAN thì không cần.`}
+            desc={`Casso, SePay gửi giao dịch chuyển khoản, KiotViet / Haravan / Sapo / Nhanh.vn / Pancake POS gửi đơn hàng (xác thực bằng khoá webhook đặt ở trang tích hợp) vào ${mono('&lt;địa chỉ&gt;/webhook/&lt;loại&gt;')}; website, Zapier, Make… kích hoạt workflow có trigger "Webhook bên ngoài" qua ${mono('&lt;địa chỉ&gt;/api/workflow/webhook/&lt;token&gt;')}. Cần bật địa chỉ "Thanh toán, tích hợp" / "Webhook workflow" ở Cài đặt → Internet &amp; Cloud; chỉ dùng trong LAN thì không cần.`}
           />
           <InfoTile
             title="Gửi sự kiện ra ngoài"

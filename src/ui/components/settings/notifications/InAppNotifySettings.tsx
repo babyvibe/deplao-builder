@@ -6,8 +6,7 @@
 import React from 'react';
 import { Switch } from '@/components/ui';
 import { BellIcon } from '@/components/common/icons';
-import { ChannelBadgeOverlay } from '@/components/common/avatars/ChannelBadge';
-import { toLocalMediaUrl } from '@/lib/media/localMedia';
+import { AccountAvatar as MiniAccountAvatar } from '@/components/common/accounts/AccountAvatar';
 import { useAccountStore, type AccountInfo } from '@/store/accounts/accountStore';
 import { useInAppNotifyStore } from '@/store/chat/inAppNotifyStore';
 import {
@@ -24,24 +23,8 @@ export function inAppNotifySummaryText(prefs: InAppNotifyPrefs, accountIds: read
   return `Đang bật ${summary.enabled}/${summary.total} tài khoản · tài khoản thêm sau: ${later}`;
 }
 
-/** Ảnh đại diện nhỏ của tài khoản + huy hiệu kênh (dùng cả ở Cài đặt → Tài khoản). */
-export function MiniAccountAvatar({ account, size = 32 }: { account: AccountInfo; size?: 32 | 40 }) {
-  const [failed, setFailed] = React.useState(false);
-  const name = account.full_name || account.zalo_id;
-  const box = size === 40 ? 'h-10 w-10' : 'h-8 w-8';
-  return (
-    <span className={`relative ${box} flex-shrink-0`}>
-      {account.avatar_url && !failed ? (
-        <img src={toLocalMediaUrl(account.avatar_url)} alt="" className={`${box} rounded-full object-cover`} onError={() => setFailed(true)} />
-      ) : (
-        <span className={`flex ${box} items-center justify-center rounded-full bg-muted text-xs font-semibold text-foreground`}>
-          {(name.trim()[0] || '?').toUpperCase()}
-        </span>
-      )}
-      <ChannelBadgeOverlay channel={resolveAccountChannel(account)} size="xs" />
-    </span>
-  );
-}
+/** Ảnh tài khoản + huy hiệu kênh: dùng chung ở common/accounts/AccountAvatar (giữ tên cũ cho các nơi đang import). */
+export { MiniAccountAvatar };
 
 export default function InAppNotifySettings({ showHint = true }: { showHint?: boolean }) {
   const accounts = useAccountStore((s) => s.accounts);

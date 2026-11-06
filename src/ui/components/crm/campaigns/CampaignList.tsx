@@ -8,9 +8,13 @@ import { CampaignIcon, CopyIcon, PauseIcon, PlayIcon, PlusIcon, SearchIcon, Tras
 import {
   CAMPAIGN_STATUS_META,
   CAMPAIGN_TYPE_LABEL,
+  campaignScheduledResumeAt,
+  campaignStatusMeta,
   campaignStatusOf,
   campaignTypeOf,
+  isCampaignAutoStopped,
   formatDay,
+  formatSentAt,
   type CampaignStatus,
 } from '@/lib/crm/campaignView';
 import { CampaignProgressBar, CampaignTypeTile, STATUS_TEXT } from './CampaignParts';
@@ -125,6 +129,8 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
           const status = campaignStatusOf(c.status);
           const type = campaignTypeOf(c.campaign_type);
           const active = activeId === c.id;
+          const autoStopped = isCampaignAutoStopped(c);
+          const resumeAt = campaignScheduledResumeAt(c);
           return (
             <div key={c.id} role="button" tabIndex={0} aria-current={active ? 'true' : undefined}
               onClick={() => onSelect(c.id)}
@@ -169,9 +175,10 @@ export default function CampaignList({ campaigns, loading, activeId, onSelect, o
                   </div>
                 </div>
                 <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className={cn('inline-flex shrink-0 items-center gap-1 font-medium', STATUS_TEXT[status])}>
+                  <span className={cn('inline-flex shrink-0 items-center gap-1 font-medium', autoStopped ? 'text-destructive' : STATUS_TEXT[status])}
+                    title={autoStopped ? `Tự dừng: ${c.auto_stop_reason}${resumeAt ? `. Gửi tiếp lúc ${formatSentAt(resumeAt)}` : ''}` : undefined}>
                     <span className={cn('h-1.5 w-1.5 rounded-full bg-current', status === 'active' && 'animate-pulse')} />
-                    {CAMPAIGN_STATUS_META[status].label}
+                    {campaignStatusMeta(c).label}
                   </span>
                   <span aria-hidden="true">·</span>
                   <span className="truncate">{CAMPAIGN_TYPE_LABEL[type]}</span>

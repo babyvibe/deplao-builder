@@ -12,14 +12,12 @@ export function useChatWindowDialogs(telegramReactions: { load: () => void }) {
   const [contextMenu, setContextMenu] = useState<MessageContextMenuState | null>(null);
   const [forwardMsgs, setForwardMsgs] = useState<any[] | null>(null);
   // Quản lý công việc: "Thêm vào lịch" / "Lưu vào ghi chú" từ tin (chuột phải một tin, hoặc chọn nhiều tin)
-  const [erpDraft, setErpDraft] = useState<{ kind: 'event' | 'note'; msgs: any[] } | null>(null);
+  const [erpDraft, setErpDraft] = useState<{ kind: 'event' | 'note' | 'task'; msgs: any[] } | null>(null);
   const [reactionPopup, setReactionPopup] = useState<{ msg: any; activeEmoji: string } | null>(null);
   const [reactionContextMenu, setReactionContextMenu] = useState<{ x: number; y: number; msg: any; myEmoji: string | null } | null>(null);
   const [userProfilePopup, setUserProfilePopup] = useState<{ userId: string; x: number; y: number } | null>(null);
   const [manageGroupOpen, setManageGroupOpen] = useState(false);
   const [noteModal, setNoteModal] = useState<{ topicId?: string; title?: string; creatorName?: string; createTime?: number } | null>(null);
-  // Telegram WebView modal
-  const [webviewModal, setWebviewModal] = useState<{ botId: string; url: string; title?: string } | null>(null);
   // Menu chuột phải của tin Telegram → tải danh sách reaction của hội thoại (1 lần / 10 phút)
   useEffect(() => {
     if (contextMenu?.msg?.channel === 'telegram_user') telegramReactions.load();
@@ -45,7 +43,7 @@ export function useChatWindowDialogs(telegramReactions: { load: () => void }) {
     contextMenu, setContextMenu, forwardMsgs, setForwardMsgs, erpDraft, setErpDraft,
     reactionPopup, setReactionPopup, reactionContextMenu, setReactionContextMenu,
     userProfilePopup, setUserProfilePopup, manageGroupOpen, setManageGroupOpen,
-    noteModal, setNoteModal, webviewModal, setWebviewModal,
+    noteModal, setNoteModal,
   };
 }
 

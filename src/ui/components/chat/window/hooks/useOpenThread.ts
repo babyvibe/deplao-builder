@@ -8,11 +8,12 @@ import { useShallow } from 'zustand/react/shallow';
 import { getMessageCacheKey, useChatStore, type ContactItem, type MessageItem } from '@/store/chat/chatStore';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
-import { getCapability, type Channel } from '@/../configs/channels/channelConfig';
-import { CHANNEL, isTelegramUser } from '@/lib/channels/channelHelper';
+import { getCapability } from '@/../configs/channels/channelConfig';
+import { isNonZalo, isTelegramUser, resolveChannel } from '@/lib/channels/channelHelper';
 import { inferredPeerReadTs, mergePeerReceipts } from '@/lib/chat/messages/messageStatus';
 import { useTelegramGroupAdmins } from '@/lib/chat/telegram/telegramGroupAdmins';
 import { useTelegramPostStats } from '@/hooks/chat/useTelegramPostStats';
+import { useTelegramPollResults } from '@/hooks/chat/useTelegramPollResults';
 
 /** Giá trị rỗng ổn định cho selector (không tạo mảng mới mỗi lần render → memo phía sau không chạy lại) */
 const EMPTY_MESSAGES: MessageItem[] = [];
@@ -33,10 +34,10 @@ export function useOpenThread() {
     activeAccountId: s.activeAccountId, getActiveAccount: s.getActiveAccount, accounts: s.accounts,
   })));
   const {
-    activeThreadId, prependMessages, setMessages, setReplyTo, editingMsg, setEditingMsg, removeMessage, updateContact,
+    activeThreadId, activeThreadType, prependMessages, setMessages, setReplyTo, editingMsg, setEditingMsg, removeMessage, updateContact,
     messagesLoading, activeTopicId, activeForumTopicId, activeTopicTitle,
   } = useChatStore(useShallow(s => ({
-    activeThreadId: s.activeThreadId, prependMessages: s.prependMessages, setMessages: s.setMessages,
+    activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType, prependMessages: s.prependMessages, setMessages: s.setMessages,
     setReplyTo: s.setReplyTo, editingMsg: s.editingMsg, setEditingMsg: s.setEditingMsg, removeMessage: s.removeMessage,
     updateContact: s.updateContact, messagesLoading: s.messagesLoading, activeTopicId: s.activeTopicId,
     activeForumTopicId: s.activeForumTopicId, activeTopicTitle: s.activeTopicTitle,
@@ -56,13 +57,23 @@ export function useOpenThread() {
     activeAccountId && activeThreadId ? s.groupInfoCache?.[activeAccountId]?.[activeThreadId] : undefined
   ));
 
-  const activeContact = React.useMemo(() => {
+  const accountChannel = allAccounts.find(a => a.zalo_id === activeAccountId)?.channel;
+  const activeContact = React.useMemo((): ContactItem | undefined => {
     if (!activeAccountId || !activeThreadId) return undefined;
-    return contactList.find(c => c.contact_id === activeThreadId);
-  }, [activeAccountId, activeThreadId, contactList]);
+    const found = contactList.find(c => c.contact_id === activeThreadId);
+    if (found) return found;
+    // Hội thoại chưa có trong các trang đã tải (hội thoại ghim / My Documents tải bù theo id): tài khoản Telegram / Facebook
+    // vẫn biết kênh, không để khung chat coi là Zalo (đồng bộ, nút Telegram, gửi tin)
+    if (!isNonZalo(accountChannel)) return undefined;
+    return {
+      owner_zalo_id: activeAccountId, contact_id: activeThreadId, display_name: '', avatar_url: '', is_friend: 0,
+      contact_type: activeThreadType === 1 ? 'group' : 'user', unread_count: 0, last_message: '', last_message_time: 0,
+      channel: resolveChannel(null, { channel: accountChannel }),
+    } as ContactItem;
+  }, [activeAccountId, activeThreadId, activeThreadType, contactList, accountChannel]);
   const channelCap = React.useMemo(() =>
-    getCapability((activeContact?.channel || CHANNEL.ZALO) as Channel),
-  [activeContact]);
+    getCapability(resolveChannel(activeContact, { channel: accountChannel })),
+  [activeContact, accountChannel]);
   // Mốc người kia đã nhận / đã xem tin mình gửi (cột của hội thoại + event:receipt realtime) → dấu ✓ / ✓✓ cạnh giờ
   const liveReceipt = useChatStore(s => (activeAccountId && activeThreadId ? s.peerReceipts[`${activeAccountId}_${activeThreadId}`] : undefined));
   // Người kia nhắn sau tin mình gửi ⇒ đã xem các tin trước đó (Zalo / Facebook không phải lúc nào cũng báo "đã xem")
@@ -80,6 +91,8 @@ export function useOpenThread() {
   // Kênh Telegram: lượt xem / số bình luận của bài làm mới khi mở kênh + mỗi 60 s (như Telegram); hồ sơ người bình luận
   // gần đây cho thanh bình luận
   const postReplierPeers = useTelegramPostStats(activeAccountId, activeThreadId, activeContact?.channel, msgs);
+  // Bình chọn Telegram: kết quả làm mới khi mở hội thoại + mỗi 30 s (như Telegram)
+  useTelegramPollResults(activeAccountId, activeThreadId, activeContact?.channel, msgs);
 
   return {
     activeAccountId, getActiveAccount, allAccounts,

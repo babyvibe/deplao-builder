@@ -148,15 +148,17 @@ export function registerCRMIpc(): void {
         } catch (e: any) { return { success: false, error: e.message }; }
     });
 
-    ipcMain.handle('crm:cloneCampaign', async (_e, { zaloId, campaignId, includeContacts, newName }: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string }) => {
+    // contactIds: chỉ chép những liên hệ này (vd lọc "Đã xem, chưa phản hồi" để gửi tiếp)
+    ipcMain.handle('crm:cloneCampaign', async (_e, { zaloId, campaignId, includeContacts, newName, contactIds }: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string; contactIds?: string[] }) => {
         try {
-            if (isEmployeeMode()) return await proxyToBossWithResult('crm:cloneCampaign', { zaloId, campaignId, includeContacts, newName });
+            if (isEmployeeMode()) return await proxyToBossWithResult('crm:cloneCampaign', { zaloId, campaignId, includeContacts, newName, contactIds });
             const db = DatabaseService.getInstance();
             const source = db.getCRMCampaign(campaignId);
             if (!source || source.owner_zalo_id !== zaloId) return { success: false, error: 'Không tìm thấy chiến dịch' };
             const capability = validateCampaignForChannel(zaloId, source);
             if (!capability.allowed) return { success: false, error: capability.reason };
-            const newId = db.cloneCRMCampaign(campaignId, zaloId, includeContacts, newName);
+            const subset = Array.isArray(contactIds) ? contactIds.map(String).filter(Boolean) : undefined;
+            const newId = db.cloneCRMCampaign(campaignId, zaloId, includeContacts, newName, subset);
             if (!newId) return { success: false, error: 'Không thể nhân bản chiến dịch' };
             db.save();
             EventBroadcaster.emit('crm:campaignChanged', { action: 'clone', ownerZaloId: zaloId, campaignId: newId });
@@ -201,6 +203,16 @@ export function registerCRMIpc(): void {
 
     ipcMain.handle('crm:getCampaignContacts', async (_e, { campaignId }: { campaignId: number }) => {
         try { return { success: true, contacts: DatabaseService.getInstance().getCampaignContacts(campaignId) }; }
+        catch (e: any) { return { success: false, error: e.message }; }
+    });
+
+    // Hiệu quả chiến dịch: liên hệ đã gửi → đã nhận / đã xem / đã phản hồi (shared/analytics/messageEngagement)
+    ipcMain.handle('crm:getCampaignEngagement', async (_e, { campaignId }: { campaignId: number }) => {
+        try {
+            const report = DatabaseService.getInstance().getCampaignEngagement(Number(campaignId));
+            if (!report) return { success: false, error: 'Không tìm thấy chiến dịch' };
+            return { success: true, ...report };
+        }
         catch (e: any) { return { success: false, error: e.message }; }
     });
 
@@ -282,6 +294,12 @@ export function registerCRMIpc(): void {
 
     ipcMain.handle('analytics:campaignComparison', async (_e, { zaloId }: { zaloId: string }) => {
         try { return { success: true, data: DatabaseService.getInstance().getCampaignComparison(zaloId) }; }
+        catch (e: any) { return { success: false, error: e.message }; }
+    });
+
+    // Tin gửi đi: người nhận 1:1 trong khoảng → đã nhận / đã xem / đã phản hồi
+    ipcMain.handle('analytics:outreach', async (_e, { zaloId, sinceTs, untilTs, granularity }: { zaloId: string; sinceTs: number; untilTs: number; granularity?: 'hour' | 'day' }) => {
+        try { return { success: true, ...DatabaseService.getInstance().getOutreachStats(zaloId, sinceTs, untilTs, granularity === 'hour' ? 'hour' : 'day') }; }
         catch (e: any) { return { success: false, error: e.message }; }
     });
 

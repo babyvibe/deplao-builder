@@ -50,7 +50,7 @@ export type MessageRowContext =
   // Chọn nhiều tin (useMessageSelection)
   & Pick<MessageSelection, 'isSelecting' | 'selectedMsgIds' | 'setSelectedMsgIds' | 'dragSelectRef' | 'clickSuppressUntilRef'>
   // Menu / popup (useChatWindowDialogs)
-  & Pick<ChatWindowDialogs, 'setContextMenu' | 'setErpDraft' | 'setManageGroupOpen' | 'setReactionPopup' | 'setUserProfilePopup' | 'setWebviewModal'>
+  & Pick<ChatWindowDialogs, 'setContextMenu' | 'setErpDraft' | 'setManageGroupOpen' | 'setReactionPopup' | 'setUserProfilePopup'>
   // Xem ảnh / video (useMediaViewers)
   & Pick<MediaViewers, 'openViewer' | 'openImageList' | 'openVideoPlayer'>
   // Thao tác trên tin (useMessageActions / useJumpToMessage)

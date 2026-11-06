@@ -1,6 +1,6 @@
 /**
  * CloudMediaSummary — một dòng "Media trên đám mây" ở Cài đặt → Lưu trữ (máy chủ): đã lên kho (R2 / Google Drive) bao
- * nhiêu, đã giải phóng bao nhiêu file trên máy, link sang Internet & Đám mây → Đồng bộ dữ liệu. Chưa bật thì gợi ý thiết lập.
+ * nhiêu, đã giải phóng bao nhiêu file trên máy, link sang Internet & Cloud → Đồng bộ dữ liệu. Chưa bật thì gợi ý thiết lập.
  * Đọc media.status() + storage.status() khi mở + khi main báo đổi (không chu kỳ). Bản app cũ không có module → không
  * hiện gì; chưa có chọn kho → coi là R2 như trước.
  */

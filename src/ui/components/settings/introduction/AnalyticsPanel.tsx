@@ -147,10 +147,10 @@ export function AnalyticsPanel() {
       <Card>
         <SectionTitle><CampaignIcon className="w-4 h-4 inline" /> Tab Chiến dịch</SectionTitle>
         <BulletList items={[
-          '<strong class="text-foreground">KPI:</strong> Tổng chiến dịch · Đã gửi · Lỗi · Trả lời · Gửi thành công % (kèm Phản hồi %)',
-          '<strong class="text-foreground">Trả lời</strong> = người nhận nhắn lại sau khi nhận tin chiến dịch. Gửi thành công % = đã gửi ÷ tổng liên hệ; Phản hồi % = trả lời ÷ đã gửi (cộng trên mọi chiến dịch)',
-          '<strong class="text-foreground">Top chiến dịch (theo số gửi):</strong> so sánh Đã gửi · Trả lời · Lỗi của 10 chiến dịch gửi nhiều nhất',
-          '<strong class="text-foreground">Chi tiết chiến dịch:</strong> trạng thái, Tổng, Đã gửi, Lỗi, Trả lời, Gửi thành công %, Phản hồi lại %; thêm cột Tài khoản khi chọn nhiều tài khoản',
+          '<strong class="text-foreground">KPI:</strong> Tổng chiến dịch · Đã gửi (kèm Gửi thành công %) · Đã nhận % · Đã xem % · Phản hồi % · Lỗi',
+          '<strong class="text-foreground">Đã nhận</strong>: Zalo, Facebook báo đã nhận (Telegram không có). <strong class="text-foreground">Đã xem</strong>: có báo đã xem hoặc khách đã trả lời. <strong class="text-foreground">Phản hồi</strong>: khách nhắn lại sau tin chiến dịch (bỏ tin hệ thống). Tỷ lệ trên số đã gửi, cộng trên mọi chiến dịch',
+          '<strong class="text-foreground">Top chiến dịch (theo số gửi):</strong> so sánh Đã gửi · Đã xem · Phản hồi · Lỗi của 10 chiến dịch gửi nhiều nhất',
+          '<strong class="text-foreground">Chi tiết chiến dịch:</strong> trạng thái, Tổng, Đã gửi, Đã nhận, Đã xem, Phản hồi, Lỗi; thêm cột Tài khoản khi chọn nhiều tài khoản',
           'Tab này tính trên mọi chiến dịch của tài khoản, không phụ thuộc khoảng thời gian',
         ]} />
       </Card>

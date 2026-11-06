@@ -9,6 +9,11 @@
  *  3. Quét nhẹ định kỳ (10 phút): chỉ đọc lại thư mục có mtime đổi (bắt file do đường ghi không gọi hook — Telegram,
  *     thư viện, avatar, file nhân viên tải lên…).
  *
+ * Quét toàn bộ ĐỊNH KỲ (đã có lượt xong trước đó) chỉ chạy khi máy rảnh (utils/startup/systemIdle.ts): không ngay sau
+ * khi máy thức dậy / mở khoá / mở app, người dùng không chạm máy ≥ 10 phút, đang cắm sạc; người dùng quay lại giữa
+ * chừng thì dừng ở thư mục kế (lần sau đi tiếp từ con trỏ); quá 72 giờ thì vẫn chạy. Lượt quét đầu tiên / sau khi đổi
+ * phạm vi chạy ngay. Quét nhẹ chờ 5 phút sau khi mở app / máy thức dậy.
+ *
  * Bỏ qua file tạm / đang ghi dở, file rỗng, cache sticker, thư mục ẩn, symlink/junction (không thoát khỏi thư mục media).
  *
  * Phạm vi lưu (tài khoản / từ ngày / file dùng chung — MediaSyncOptions.scope + includeShared): mọi đường đưa file vào
@@ -24,6 +29,7 @@ import {
     MediaScopeFilter, preOrderCompare, relInScope, relPathInRoot, resolveStoredLocalPath, scopeSignature,
 } from './keys';
 import type { ContextSource, MediaContext } from './MediaContext';
+import { IDLE_WAIT_LABEL, IdleWaitReason, SystemIdleInfo, idleWaitReason } from '../../../utils/startup/systemIdle';
 import { DAY, errorText, HOUR, LogFn, MINUTE, noLog, SECOND, unrefTimer, Waiter, yieldToLoop } from './util';
 
 export interface ScanCursor {
@@ -58,11 +64,17 @@ export interface ScannerDeps {
     fs?: ScannerFs;
     now?(): number;
     log?: LogFn;
+    /** Mốc mở app / máy thức dậy + trạng thái máy (utils/startup/systemIdle.ts). Thiếu (test) = không chờ máy rảnh. */
+    idle?(): { wakeAt: number; info: SystemIdleInfo | null };
 }
 
 export const RECENT_SCAN_INTERVAL_MS = 10 * MINUTE;
 export const RECENT_WINDOW_MS = 3 * DAY;
 export const FULL_RESCAN_AFTER_MS = 7 * DAY;
+/** Quét toàn bộ định kỳ mà máy không rảnh: chờ tối đa 72 giờ sau khi đến hạn. */
+export const FULL_RESCAN_MAX_WAIT_MS = 72 * HOUR;
+/** Quét nhẹ chờ từng này sau khi mở app / máy thức dậy / mở khoá. */
+export const RECENT_SCAN_WAKE_QUIET_MS = 5 * MINUTE;
 export const NOTE_FLUSH_DELAY_MS = 3 * SECOND;
 const NOTE_BUFFER_MAX = 20_000;
 const CURSOR_SAVE_EVERY_MS = 30 * SECOND;
@@ -83,6 +95,8 @@ export class MediaScanner {
     private lastRecentAt = 0;
     /** Tăng mỗi lần người dùng đổi phạm vi: lượt quét đang chạy dừng lại, vòng lặp áp phạm vi mới rồi quét lại từ đầu. */
     private scopeGen = 0;
+    /** Lý do quét toàn bộ định kỳ đang chờ máy rảnh đã ghi nhật ký (không ghi lặp). */
+    private fullWaitLogged: IdleWaitReason | null = null;
 
     constructor(private readonly deps: ScannerDeps) {
         this.fs = deps.fs || (fs.promises as unknown as ScannerFs);
@@ -258,13 +272,18 @@ export class MediaScanner {
                 }
                 const cursor = this.readCursor(ctx);
                 const needFull = cursor.phase !== 'done' || !cursor.doneAt || this.now() - cursor.doneAt >= FULL_RESCAN_AFTER_MS;
-                if (needFull && !(await this.fullScan(ctx, cursor, current))) {
+                const fullWait = needFull ? this.fullScanWait(cursor) : null;
+                if (needFull && !fullWait && !(await this.fullScan(ctx, cursor, current))) {
                     if (this.scopeGen === gen) await this.deps.waiter.wait(5 * SECOND);
                     continue;
                 }
-                if (this.now() - this.lastRecentAt >= RECENT_SCAN_INTERVAL_MS) await this.recentScan(ctx, current);
+                const recentQuietUntil = this.recentScanQuietUntil();
+                if (this.now() - this.lastRecentAt >= RECENT_SCAN_INTERVAL_MS && this.now() >= recentQuietUntil) {
+                    await this.recentScan(ctx, current);
+                }
                 if (this.scopeGen !== gen) continue;
-                await this.deps.waiter.wait(Math.max(5 * SECOND, RECENT_SCAN_INTERVAL_MS - (this.now() - this.lastRecentAt)));
+                const nextRecentAt = Math.max(this.lastRecentAt + RECENT_SCAN_INTERVAL_MS, recentQuietUntil);
+                await this.deps.waiter.wait(Math.max(5 * SECOND, nextRecentAt - this.now()));
             } catch (err) {
                 this.log('warn', `[CloudMedia] Quét media lỗi: ${errorText(err)}`);
                 this.deps.ctx.invalidate();
@@ -275,6 +294,41 @@ export class MediaScanner {
 
     private alive(ctx: MediaContext, isCurrent: () => boolean): boolean {
         return isCurrent() && this.deps.ctx.isValid(ctx);
+    }
+
+    /**
+     * Quét toàn bộ định kỳ (con trỏ có doneAt = đã có lượt xong) phải chờ máy rảnh không; lượt đầu tiên / sau khi đổi
+     * phạm vi (không có doneAt) chạy ngay. Ghi nhật ký một dòng mỗi lần đổi lý do.
+     */
+    private fullScanWait(cursor: ScanCursor): IdleWaitReason | null {
+        if (!this.deps.idle || !cursor.doneAt) return null;
+        let wait: IdleWaitReason | null = null;
+        try {
+            const state = this.deps.idle();
+            wait = idleWaitReason({
+                now: this.now(),
+                wakeAt: state.wakeAt,
+                dueSince: cursor.doneAt + FULL_RESCAN_AFTER_MS,
+                maxWaitMs: FULL_RESCAN_MAX_WAIT_MS,
+                info: state.info,
+            });
+        } catch {
+            wait = null;
+        }
+        if (wait && wait !== this.fullWaitLogged) this.log('log', `[CloudMedia] Quét toàn bộ định kỳ chờ máy rảnh (${IDLE_WAIT_LABEL[wait]})`);
+        this.fullWaitLogged = wait;
+        return wait;
+    }
+
+    /** Quét nhẹ chưa chạy trước mốc này (mở app / máy thức dậy + RECENT_SCAN_WAKE_QUIET_MS); 0 = không chờ. */
+    private recentScanQuietUntil(): number {
+        if (!this.deps.idle) return 0;
+        try {
+            const state = this.deps.idle();
+            return state.info ? state.wakeAt + RECENT_SCAN_WAKE_QUIET_MS : 0;
+        } catch {
+            return 0;
+        }
     }
 
     readCursor(ctx: MediaContext): ScanCursor {
@@ -359,7 +413,7 @@ export class MediaScanner {
             lastSave = this.now();
         };
         while (stack.length) {
-            if (!this.alive(ctx, isCurrent) || this.deps.isPaused()) { save(); return false; }
+            if (!this.alive(ctx, isCurrent) || this.deps.isPaused() || this.fullScanWait(cursor)) { save(); return false; }
             if (this.now() - this.lastRecentAt >= RECENT_SCAN_INTERVAL_MS) {
                 await this.recentScan(ctx, isCurrent);
                 if (!this.alive(ctx, isCurrent)) { save(); return false; }

@@ -2,12 +2,23 @@ import { create } from 'zustand';
 import { clearReplyDrafts } from '@/lib/chat/composer/replyDrafts';
 import ipc from "@/lib/ipc";
 import type { Channel } from '@/../configs/channels/channelConfig';
-import { CHANNEL } from '@/lib/channels/channelHelper';
+import { CHANNEL, isZalo } from '@/lib/channels/channelHelper';
+import { useAccountStore } from '@/store/accounts/accountStore';
 import { mergePeerReceipts, type PeerReceipt } from '@/lib/chat/messages/messageStatus';
 import { replyStateFromMessages } from '../../../shared/chat/replyState';
 import { FB_TEMPLATE_MSG_TYPE, fbTemplateFromAttachments, shouldUpgradeFbTemplate } from '../../../shared/facebook/facebookTemplate';
 
 const MESSAGE_TOPIC_KEY_SEPARATOR = '__tg_topic__';
+
+/**
+ * Hội thoại của tài khoản Telegram / Facebook luôn mang kênh của tài khoản (resolveChannel): cột contacts.channel mặc
+ * định 'zalo' từng ghi nhầm (DB tự sửa 1 lần khi mở app) làm khung chat coi là Zalo (nhãn Zalo, không có nút Telegram,
+ * gửi qua Zalo). Tài khoản Zalo / chưa biết → null (giữ nguyên).
+ */
+function ownerChannelFix(zaloId: string): Channel | null {
+  const channel = useAccountStore.getState().accounts.find((account) => account.zalo_id === zaloId)?.channel;
+  return channel && channel !== CHANNEL.ZALO ? channel : null;
+}
 const FORUM_TOPICS_STORAGE_PREFIX = 'deplao_forum_topics_';
 
 /** Restore persisted forum topics from localStorage (survives app restart). */
@@ -372,21 +383,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   setContacts: (zaloId, contacts) =>
-    set((state) => ({
-      contacts: {
-        ...state.contacts,
-        [zaloId]: contacts.map(c => {
-          // Normalize legacy avatar URL format: media://local/ → local-media://
-          if (c.avatar_url && c.avatar_url.startsWith('media://local/')) {
-            const rawPath = c.avatar_url.replace('media://local/', '');
-            const normalized = rawPath.replace(/\\/g, '/');
-            const withSlash = normalized.startsWith('/') ? normalized : '/' + normalized;
-            return { ...c, avatar_url: 'local-media://' + withSlash };
-          }
-          return c;
-        }),
-      },
-    })),
+    set((state) => {
+      const fixChannel = ownerChannelFix(zaloId);
+      return {
+        contacts: {
+          ...state.contacts,
+          [zaloId]: contacts.map(c => {
+            let contact = c;
+            // Normalize legacy avatar URL format: media://local/ → local-media://
+            if (contact.avatar_url && contact.avatar_url.startsWith('media://local/')) {
+              const rawPath = contact.avatar_url.replace('media://local/', '');
+              const normalized = rawPath.replace(/\\/g, '/');
+              const withSlash = normalized.startsWith('/') ? normalized : '/' + normalized;
+              contact = { ...contact, avatar_url: 'local-media://' + withSlash };
+            }
+            return fixChannel && isZalo(contact.channel) ? { ...contact, channel: fixChannel } : contact;
+          }),
+        },
+      };
+    }),
 
   setMessages: (zaloId, threadId, messages, topicRootMessageId) => {
     const key = getMessageCacheKey(zaloId, threadId, topicRootMessageId);
@@ -580,11 +595,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((state) => {
       const list = state.contacts[zaloId] || [];
       const exists = list.some((c) => c.contact_id === contact.contact_id);
+      const fixChannel = ownerChannelFix(zaloId);
+      const withChannel = (c: ContactItem): ContactItem => (fixChannel && isZalo(c.channel) ? { ...c, channel: fixChannel } : c);
       const updated = exists
-        ? list.map((c) => (c.contact_id === contact.contact_id ? { ...c, ...contact } : c))
+        ? list.map((c) => (c.contact_id === contact.contact_id ? withChannel({ ...c, ...contact }) : c))
         : [
             ...list,
-            {
+            withChannel({
               // Safe defaults so display_name is never undefined
               owner_zalo_id: zaloId,
               display_name: contact.contact_id || '',
@@ -595,7 +612,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               last_message: '',
               last_message_time: 0,
               ...contact,
-            } as ContactItem,
+            } as ContactItem),
           ];
       // Sort by last_message_time desc
       updated.sort((a, b) => (b.last_message_time || 0) - (a.last_message_time || 0));

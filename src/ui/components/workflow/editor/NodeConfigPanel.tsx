@@ -10,7 +10,7 @@ import PublicAddressCard from '@/components/common/cloud/PublicAddressCard';
 
 // ─── Webhook URL field component ─────────────────────────────────────
 // Địa chỉ webhook chỉ để xem (mọi cách tạo địa chỉ, PublicAddressCard): bật / tắt / đổi địa chỉ ở
-// Cài đặt → Internet & Đám mây → Địa chỉ Internet. Ở đây chỉ còn token + tạo token mới.
+// Cài đặt → Internet & Cloud → Địa chỉ Internet. Ở đây chỉ còn token + tạo token mới.
 function WebhookUrlField({ field, config, workflowId, update }: {
   field: any; config: any; workflowId?: string; update: (key: string, val: any) => void;
 }) {

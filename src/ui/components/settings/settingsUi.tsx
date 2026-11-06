@@ -4,11 +4,13 @@
  *   hoặc `full`; `fill` cho trang tự chia vùng cuộn (Hội thoại, Nhật ký…).
  * - SettingsSection: một khối có tiêu đề nhỏ phía trên, nội dung trong thẻ; các dòng bên trong có vạch ngăn.
  * - SettingsRow: tên + mô tả ngắn bên trái, điều khiển bên phải; `children` = phần mở rộng ngay dưới dòng.
- * - Notice: dải thông báo (dùng chung với Internet & Đám mây).
+ * - SettingLine: dòng cài đặt dưới một mục (tài khoản, nhân viên…) kèm trạng thái hiện tại, bấm mở phần chỉnh tại chỗ.
+ * - Notice: dải thông báo (dùng chung với Internet & Cloud).
  * Chỉ dùng token màu (bg-card, text-foreground, primary…) nên đúng cả giao diện sáng và tối.
  */
 import React from 'react';
 import { cn } from '@/lib/cn';
+import { ChevronDownIcon } from '@/components/common/icons';
 
 export { Notice, type NoticeTone } from './cloud/cloudUi';
 
@@ -46,7 +48,7 @@ export function SettingsPage({ title, description, actions, width = 'form', fill
   );
 }
 
-export function SettingsSection({ title, description, action, footer, flush, className, bodyClassName, children }: {
+export function SettingsSection({ title, description, action, footer, flush, plain, className, bodyClassName, children }: {
   title?: React.ReactNode;
   description?: React.ReactNode;
   action?: React.ReactNode;
@@ -54,6 +56,8 @@ export function SettingsSection({ title, description, action, footer, flush, cla
   footer?: React.ReactNode;
   /** Không tự chia dòng / không lề trong: nội dung tự trình bày (danh sách, bảng…). */
   flush?: boolean;
+  /** Không bọc thẻ: nội dung tự là các thẻ xếp dọc (vd danh sách nhân viên). */
+  plain?: boolean;
   className?: string;
   bodyClassName?: string;
   children: React.ReactNode;
@@ -71,8 +75,8 @@ export function SettingsSection({ title, description, action, footer, flush, cla
       )}
       <div
         className={cn(
-          'rounded-xl border border-border/60 bg-card',
-          !flush && 'divide-y divide-border/60 px-4',
+          plain ? 'space-y-2' : 'rounded-xl border border-border/60 bg-card',
+          !plain && !flush && 'divide-y divide-border/60 px-4',
           bodyClassName,
         )}
       >
@@ -101,6 +105,36 @@ export function SettingsRow({ title, description, control, className, children }
         {control != null && <div className="flex flex-shrink-0 items-center gap-2">{control}</div>}
       </div>
       {children != null && <div className="mt-3">{children}</div>}
+    </div>
+  );
+}
+
+/**
+ * Một dòng cài đặt dưới một mục (tài khoản, nhân viên…): tên + trạng thái hiện tại; bấm để mở / đóng phần chỉnh ngay
+ * bên dưới (không giấu sau bánh răng → hộp thoại). `summaryTone="warning"` khi trạng thái cần người dùng để ý.
+ */
+export function SettingLine({ panelId, icon, title, summary, summaryTone, open, onToggle, children }: {
+  panelId: string;
+  icon: React.ReactNode;
+  title: string;
+  summary: React.ReactNode;
+  summaryTone?: 'warning';
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={open ? panelId : undefined}
+        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted">
+        <span className="flex-shrink-0 text-muted-foreground">{icon}</span>
+        <span className="flex-shrink-0 text-[13px] text-foreground">{title}</span>
+        <span className={cn('ml-auto min-w-0 truncate text-right text-xs', summaryTone === 'warning' ? 'text-warning' : 'text-muted-foreground')}>
+          {summary}
+        </span>
+        <ChevronDownIcon className={cn('h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && <div id={panelId} className="max-w-lg px-2 pb-3 pt-1.5">{children}</div>}
     </div>
   );
 }

@@ -37,11 +37,20 @@ function guardMachine(): void {
 
 const senderHooked = new WeakSet<Electron.WebContents>();
 
+/**
+ * Giao diện đang mở workspace nhân viên: ứng dụng của workspace local vẫn chạy nền (dbScope) nhưng trang / nút / node
+ * của chúng không hiện trong giao diện nhân viên.
+ */
+const EMPTY_CONTRIBUTIONS = { pages: [], chatPanels: [], composerButtons: [] };
+function uiContributions(): any {
+    return isEmployeeMachine() ? EMPTY_CONTRIBUTIONS : platform().contributions();
+}
+
 export function registerPluginIpc(): void {
     ipcMain.handle('plugins:list', async () => {
         try {
             const p = platform();
-            return { success: true, plugins: p.manager.list(), contributions: p.contributions() };
+            return { success: true, plugins: p.manager.list(), contributions: uiContributions() };
         } catch (err) {
             return fail(err);
         }
@@ -49,7 +58,7 @@ export function registerPluginIpc(): void {
 
     ipcMain.handle('plugins:contributions', async () => {
         try {
-            return { success: true, contributions: platform().contributions() };
+            return { success: true, contributions: uiContributions() };
         } catch (err) {
             return fail(err);
         }
@@ -188,7 +197,7 @@ export function registerPluginIpc(): void {
 
     ipcMain.handle('plugins:nodeTypes', async () => {
         try {
-            return { success: true, nodes: PluginNodeRegistry.getInstance().list() };
+            return { success: true, nodes: isEmployeeMachine() ? [] : PluginNodeRegistry.getInstance().list() };
         } catch (err) {
             return fail(err);
         }

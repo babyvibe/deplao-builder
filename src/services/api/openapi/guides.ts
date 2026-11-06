@@ -17,7 +17,7 @@ export const OVERVIEW_MARKDOWN = [
     'Mọi thao tác đi qua **cùng logic với giao diện app** (cùng handler IPC), nên kết quả gửi tin, gán nhãn, chạy workflow giống hệt khi bấm trên app.',
     '',
     '- Base URL trên máy: `http://127.0.0.1:9900/api/v1`',
-    '- Từ xa: `https://<địa-chỉ-của-bạn>/api/v1` (cấu hình ở Cài đặt → Internet & Đám mây, dịch vụ "Nhân viên và API")',
+    '- Từ xa: `https://<địa-chỉ-của-bạn>/api/v1` (cấu hình ở Cài đặt → Internet & Cloud, dịch vụ "Nhân viên và API")',
     '- Xác thực: `Authorization: Bearer dpk_...` hoặc `X-Api-Key: dpk_...`',
     '- Tài liệu máy đọc được: `/api/v1/openapi.json` (import vào Postman, Insomnia, sinh SDK)',
 ].join('\n');
@@ -208,7 +208,7 @@ Kết quả có \`upload_id\` (hết hạn sau 24 giờ, chỉ key đã upload d
 const REMOTE = `
 ## Truy cập từ xa & bảo mật
 
-API chạy trên cổng relay (mặc định 9900). Để server/worker bên ngoài gọi được, cấu hình địa chỉ Internet ở **Cài đặt → Internet & Đám mây** (dịch vụ "Nhân viên và API"), chọn một cách tạo địa chỉ:
+API chạy trên cổng relay (mặc định 9900). Để server/worker bên ngoài gọi được, cấu hình địa chỉ Internet ở **Cài đặt → Internet & Cloud** (dịch vụ "Nhân viên và API"), chọn một cách tạo địa chỉ:
 
 1. **Cloudflare tự động (khuyên dùng)**: kết nối tài khoản Cloudflare của bạn ở đầu trang → chọn tên miền + "Tên máy" → Áp dụng. Deplao tự tạo tunnel và địa chỉ cố định trên tên miền của bạn; địa chỉ hiện ở bảng dịch vụ, gọi API tại \`https://<địa-chỉ>/api/v1\`.
 2. **ngrok**: dashboard.ngrok.com → Your Authtoken → dán vào ô Authtoken; mục Domains → lấy domain tĩnh miễn phí → dán vào ô Domain tĩnh; bật "Nhân viên và API". URL cố định: \`https://<domain>/api/v1\`.

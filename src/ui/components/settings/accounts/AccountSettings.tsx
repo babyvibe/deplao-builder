@@ -4,25 +4,30 @@
  * "Thông báo trong app" là công tắc ngay trên dòng (InAppNotifySettings).
  * "Tự động xoá media" có ở mọi kênh và đọc cấu hình khi mở trang (chỉ đọc app_settings trên máy); Zalo thêm
  * "Quyền riêng tư Zalo" và "Hội thoại ẩn" — hai mục này gọi Zalo nên chỉ tải khi mở ra.
+ * "Proxy" (Zalo, Facebook, máy chủ): thêm / đổi / bỏ proxy, tài khoản tự kết nối lại (AccountProxyLine).
  */
-import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
 import { useAccountStore, type AccountInfo } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { showConfirm } from '../../common/ConfirmDialog';
 import { extractApiError } from '@/lib/app/apiError';
-import { ChevronDownIcon, EyeOffIcon, FolderIcon, ShieldIcon, TrashIcon } from '@/components/common/icons';
-import { Button, Switch } from '@/components/ui';
+import { EyeOffIcon, FolderIcon, SearchIcon, ShieldIcon, TrashIcon } from '@/components/common/icons';
+import { Button, Input, Switch } from '@/components/ui';
+import { matchAccountSearch } from '@/lib/accounts/accountSearch';
 import { getChannelLabel, resolveAccountChannel } from '../../../../configs/channels/channelConfig';
 import { isZalo } from '@/lib/channels/channelHelper';
 import ZaloPrivacySettings from './ZaloPrivacySettings';
 import ZaloHiddenPinSection from './ZaloHiddenPinSection';
+import AccountProxyLine, { type ProxyOption } from './AccountProxyLine';
+import { supportsAccountProxy } from '../../../../shared/accounts/accountProxy';
 import { InAppNotifyAccountLine, MiniAccountAvatar } from '../notifications/InAppNotifySettings';
-import { SettingsPage } from '../settingsUi';
+import { SettingLine, SettingsPage } from '../settingsUi';
 
 type MediaConfig = { enabled: boolean; days: number };
 type MediaDraft = { enabled: boolean; days: string };
-type SettingId = 'media' | 'privacy' | 'hidden';
+type SettingId = 'proxy' | 'media' | 'privacy' | 'hidden';
 
 const DEFAULT_MEDIA: MediaConfig = { enabled: false, days: 30 };
 const toDraft = (config: MediaConfig): MediaDraft => ({ enabled: config.enabled, days: String(config.days) });
@@ -32,31 +37,12 @@ const clampDays = (text: string, fallback: number) => {
   return Number.isFinite(n) ? Math.min(365, Math.max(1, n)) : fallback;
 };
 
-/** Một dòng cài đặt dưới tài khoản: tên + trạng thái hiện tại; bấm để mở / đóng phần chỉnh ngay bên dưới. */
-function SettingLine({ panelId, icon, title, summary, open, onToggle, children }: {
-  panelId: string;
-  icon: React.ReactNode;
-  title: string;
-  summary: React.ReactNode;
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
+function AccountCard({ acc, proxies, onDelete }: {
+  acc: AccountInfo;
+  /** Danh sách proxy (null = đang tải, undefined = không hiện dòng Proxy) */
+  proxies?: ProxyOption[] | null;
+  onDelete: () => void;
 }) {
-  return (
-    <div>
-      <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={open ? panelId : undefined}
-        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted">
-        <span className="flex-shrink-0 text-muted-foreground">{icon}</span>
-        <span className="flex-shrink-0 text-[13px] text-foreground">{title}</span>
-        <span className="ml-auto min-w-0 truncate text-right text-xs text-muted-foreground">{summary}</span>
-        <ChevronDownIcon className={`h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && <div id={panelId} className="max-w-lg px-2 pb-3 pt-1.5">{children}</div>}
-    </div>
-  );
-}
-
-function AccountCard({ acc, onDelete }: { acc: AccountInfo; onDelete: () => void }) {
   const showNotification = useAppStore((s) => s.showNotification);
   const baseId = useId();
   const zalo = isZalo(acc.channel);
@@ -147,7 +133,10 @@ function AccountCard({ acc, onDelete }: { acc: AccountInfo; onDelete: () => void
               {getChannelLabel(resolveAccountChannel(acc))}
             </span>
           </div>
-          <p className="truncate text-xs text-muted-foreground">{acc.zalo_id}</p>
+          <p className="truncate text-xs text-muted-foreground" title={acc.phone ? `UID ${acc.zalo_id} · SĐT ${acc.phone}` : `UID ${acc.zalo_id}`}>
+            {acc.zalo_id}
+            {acc.phone && <> · SĐT {acc.phone}</>}
+          </p>
         </div>
         <span className={`flex flex-shrink-0 items-center gap-1.5 text-xs ${acc.isOnline ? 'text-success' : 'text-muted-foreground'}`}>
           <span className={`h-1.5 w-1.5 rounded-full ${acc.isOnline ? 'bg-success' : 'bg-border-strong'}`} />
@@ -162,6 +151,10 @@ function AccountCard({ acc, onDelete }: { acc: AccountInfo; onDelete: () => void
       {/* Cài đặt riêng của tài khoản */}
       <div className="border-t border-border/60 px-1.5 py-1">
         <InAppNotifyAccountLine accountId={acc.zalo_id} />
+        {proxies !== undefined && supportsAccountProxy(acc.channel) && (
+          <AccountProxyLine account={acc} proxies={proxies} panelId={`${baseId}-proxy`}
+            open={open.has('proxy')} onToggle={() => toggle('proxy')} />
+        )}
         <SettingLine panelId={`${baseId}-media`} icon={<FolderIcon className="h-4 w-4" />} title="Tự động xoá media"
           summary={mediaSummary} open={open.has('media')} onToggle={() => toggle('media')}>
           {saved ? (
@@ -230,6 +223,20 @@ export default function AccountSettings() {
   const accounts = useAccountStore((s) => s.accounts);
   const removeAccount = useAccountStore((s) => s.removeAccount);
   const showNotification = useAppStore((s) => s.showNotification);
+  // Proxy do máy chủ quản lý: máy nhân viên không có dòng Proxy
+  const isEmployeeMachine = useEmployeeStore((s) => s.mode) === 'employee';
+  // Tìm nhanh theo tên, UID, SĐT
+  const [query, setQuery] = useState('');
+  const visible = useMemo(() => accounts.filter((acc) => matchAccountSearch(acc, query)), [accounts, query]);
+  const [proxies, setProxies] = useState<ProxyOption[] | null>(null);
+  useEffect(() => {
+    if (isEmployeeMachine) return;
+    let alive = true;
+    ipc.proxy?.list()
+      .then((res) => { if (alive) setProxies(res?.success && Array.isArray(res.proxies) ? res.proxies : []); })
+      .catch(() => { if (alive) setProxies([]); });
+    return () => { alive = false; };
+  }, [isEmployeeMachine]);
 
   // Hộp xoá tài khoản: mặc định "Chỉ xoá tài khoản" (giữ dữ liệu), xoá hết dữ liệu phải chọn rõ
   const [deleteModalAcc, setDeleteModalAcc] = useState<string | null>(null);
@@ -284,13 +291,30 @@ export default function AccountSettings() {
   };
 
   return (
-    <SettingsPage title="Tài khoản" description="Bấm một dòng dưới tài khoản để chỉnh ngay tại chỗ.">
+    <SettingsPage
+      title="Tài khoản"
+      description="Bấm một dòng dưới tài khoản để chỉnh ngay tại chỗ."
+      actions={accounts.length > 0 ? (
+        <div className="relative w-56">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm tên, UID, SĐT" aria-label="Tìm tài khoản"
+            className="h-8 pl-8" />
+        </div>
+      ) : undefined}
+    >
       <div className="space-y-3">
-        {accounts.map((acc) => (
-          <AccountCard key={acc.zalo_id} acc={acc} onDelete={() => openDelete(acc.zalo_id)} />
+        {visible.map((acc) => (
+          <AccountCard key={acc.zalo_id} acc={acc} proxies={isEmployeeMachine ? undefined : proxies}
+            onDelete={() => openDelete(acc.zalo_id)} />
         ))}
         {accounts.length === 0 && (
           <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">Chưa có tài khoản nào</p>
+        )}
+        {accounts.length > 0 && visible.length === 0 && (
+          <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+            Không thấy tài khoản khớp &quot;{query.trim()}&quot;.{' '}
+            <button type="button" onClick={() => setQuery('')} className="font-medium text-primary hover:underline">Xoá tìm kiếm</button>
+          </div>
         )}
       </div>
 

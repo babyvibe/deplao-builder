@@ -1,5 +1,5 @@
 /**
- * cloudUi.tsx — phần dùng chung của tab Cài đặt → Internet & Đám mây (Cloudflare: địa chỉ cố định, lưu media R2,
+ * cloudUi.tsx — phần dùng chung của tab Cài đặt → Internet & Cloud (Cloudflare: địa chỉ cố định, lưu media R2,
  * đồng bộ DB) và của PublicAddressCard. Chỉ dùng token màu của hệ thống giao diện (bg-card, text-foreground,
  * primary / success / warning / destructive / info…).
  *

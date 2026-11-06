@@ -8,22 +8,18 @@
 import * as dns from 'dns';
 import axios from 'axios';
 import FileStorageService from './FileStorageService';
+import { isZaloMediaUrl } from '../../utils/zalo/zaloImageUrl';
 
 export type MediaAvailability = 'ok' | 'expired' | 'unknown';
 
-const ZALO_MEDIA_HOST_RE = /(^|\.)(zdn\.vn|zadn\.vn|zalo\.me|zaloapp\.com)$/i;
 const EXPIRED_STATUS = new Set([404, 410]);
 const DNS_HEALTH_TTL_MS = 30 * 1000;
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 let dnsHealth: { at: number; ok: boolean } | null = null;
 
-function hostOf(url: string): string {
-    try { return new URL(url).hostname; } catch { return ''; }
-}
-
 export function isZaloMediaHost(url: string): boolean {
-    return ZALO_MEDIA_HOST_RE.test(hostOf(url));
+    return isZaloMediaUrl(url);
 }
 
 async function zaloDnsHealthy(): Promise<boolean> {

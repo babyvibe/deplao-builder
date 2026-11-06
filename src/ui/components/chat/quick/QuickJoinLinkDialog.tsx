@@ -1,6 +1,7 @@
 /**
  * Tham gia nhóm bằng link (Zalo zalo.me/g/…, Telegram t.me/… / @tên). Dán link → tự nhận kênh,
- * tự chọn tài khoản cùng kênh, xem trước nhóm rồi mới tham gia.
+ * tự chọn tài khoản cùng kênh, xem trước nhóm rồi mới tham gia. Bấm link nhóm trong tin (lib/chat/links/chatLinks,
+ * ChatLinkHost) cũng mở hộp này với link có sẵn.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '@/store/accounts/accountStore';
@@ -89,14 +90,16 @@ async function joinLink(account: AccountInfo, target: GroupLinkTarget, link: str
   return { status: 'error', message: 'Facebook chưa hỗ trợ tham gia nhóm bằng link' };
 }
 
-export default function QuickJoinLinkDialog({ entries, initialAccountId, disabledReason, onClose, onOpenConversation }: {
+export default function QuickJoinLinkDialog({ entries, initialAccountId, initialLink, disabledReason, onClose, onOpenConversation }: {
   entries: QuickAccountEntry<AccountInfo>[];
   initialAccountId: string | null;
+  /** Link nhóm bấm trong tin: điền sẵn, tự xem trước. */
+  initialLink?: string;
   disabledReason: (account: AccountInfo) => string | null;
   onClose: () => void;
   onOpenConversation: OpenQuickConversation;
 }) {
-  const [link, setLink] = useState('');
+  const [link, setLink] = useState(initialLink || '');
   const [accountId, setAccountId] = useState<string | null>(initialAccountId);
   const [preview, setPreview] = useState<LinkPreview | null>(null);
   const [previewError, setPreviewError] = useState('');

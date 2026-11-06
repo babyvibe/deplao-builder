@@ -9,7 +9,7 @@ CRM · Marketing · ERP · POS · Workflow · AI Assistant — all in one unifie
 
 [🌐 Website](https://deplaoapp.com/) · [🇻🇳 Tiếng Việt](./README.md)
 
-![Version](https://img.shields.io/badge/version-26.10.4-22c55e)
+![Version](https://img.shields.io/badge/version-26.11.0-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Ubuntu-3b82f6)
 ![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
@@ -42,41 +42,41 @@ CRM · Marketing · ERP · POS · Workflow · AI Assistant — all in one unifie
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.10.4.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.10.4-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.11.0.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.11.0-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.10.4.exe</strong></big>
+<big><strong>Deplao-Setup-26.11.0.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.10.4-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.0-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.11.0-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.10.4-arm64.dmg</strong></big>
+<big><strong>Deplao-26.11.0-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.10.4-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.0.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.11.0-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.10.4.AppImage</strong></big><br>
+<big><strong>Deplao-26.11.0.AppImage</strong></big><br>
 <big>works on any distro - <code>chmod +x</code> & run</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.10.4-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.0.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.11.0-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.10.4.dmg</strong></big>
+<big><strong>Deplao-26.11.0.dmg</strong></big>
 
 </td>
 </tr>
@@ -401,7 +401,7 @@ curl -H "Authorization: Bearer dpk_xxx" http://127.0.0.1:9900/api/v1/accounts
 - Full docs (guides, endpoint list, "Try it" button, curl commands): `http://127.0.0.1:9900/docs`
 - OpenAPI for Postman / Insomnia / SDK generation: `http://127.0.0.1:9900/api/v1/openapi.json`
 - Realtime events (Socket.IO, SSE, polling) and **outgoing webhooks** with HMAC signatures and retries
-- Remote access (employees, incoming webhooks, payments): use the Internet address from **Settings → Internet & Đám mây**
+- Remote access (employees, incoming webhooks, payments): use the Internet address from **Settings → Internet & Cloud**
 
 ### Build your own apps
 
@@ -438,7 +438,7 @@ At a glance, Deplao is:
 - 🗂️ **Internal ERP** - tasks, calendars, notes and team coordination within the same system
 - 🧑‍💼 **Boss ↔ Employee workspaces** - connect via **LAN or the Internet**, automatic reconnects, two-way realtime sync, fine-grained permissions and per-employee performance tracking
 - 🎨 **Light / Dark UI** - one color system and component set, a compact navigation bar with a "Tools" group
-- 🔒 **Per-account proxy** - assign a dedicated proxy to each account before login
+- 🔒 **Per-account proxy** - assign a dedicated proxy to each account, add / change / remove it anytime without logging in again
 - 🔐 **Local-first data** - prioritizes data ownership and security on the user's machine
 
 

@@ -11,7 +11,7 @@ gốc một tính năng trong `components/` giữ trang / thành phần chính c
 | gốc `src/ui/` | Điểm vào: `App.tsx`, `main.tsx`, `index.css` |
 | `components/` | Giao diện React theo tính năng (bảng dưới) |
 | `store/` | Store Zustand theo miền: `app/` (trạng thái chung, cập nhật app, tính năng hiện, workspace), `accounts/`, `chat/` (hội thoại, tin đánh dấu, tự đọc, thông báo trong app), `crm/`, `employee/` (chế độ nhân viên), `erp/`, `plugins/`, `zalo/` (trạng thái truy cập) |
-| `hooks/` | Hook theo miền: `chat/`, `accounts/`, `channels/`, `zalo/`, `erp/`, `layout/` |
+| `hooks/` | Hook theo miền: `chat/`, `accounts/`, `channels/`, `zalo/`, `erp/`, `crm/`, `layout/` |
 | `lib/` | Logic không phải React (bảng dưới). Gốc chỉ có `ipc.ts` (cầu IPC tới main) và `cn.ts` (gộp class Tailwind) |
 
 ## components/

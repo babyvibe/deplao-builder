@@ -812,6 +812,19 @@ export const handlers = {
     return success({ items: contacts });
   },
 
+  /** Hiệu quả chiến dịch (đã nhận / đã xem / đã phản hồi): như danh sách liên hệ, chiến dịch phải thuộc tài khoản được giao. */
+  getCampaignEngagementHandler(employee: RegisteredEmployee, params: any): JsonResponse {
+    const id = parseInt(params.campaignId) || 0;
+    if (!id) return error('Missing campaignId');
+    const campaign = db().getCRMCampaign(id);
+    if (!campaign || !assignedIds(employee).includes(String(campaign.owner_zalo_id))) {
+      return error('Không tìm thấy chiến dịch');
+    }
+    const report = db().getCampaignEngagement(id);
+    if (!report) return error('Không tìm thấy chiến dịch');
+    return success(report);
+  },
+
   getSendLogHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId) return error('Missing zaloId');
@@ -948,6 +961,17 @@ export const handlers = {
     if (!zaloId) return error('Missing zaloId');
 
     const data = db().getCampaignComparison(zaloId);
+    return success(data);
+  },
+
+  getOutreachStats(employee: RegisteredEmployee, params: any): JsonResponse {
+    const zaloId = params.zaloId || employee.assigned_accounts[0];
+    if (!zaloId) return error('Missing zaloId');
+
+    const data = db().getOutreachStats(
+      zaloId, parseInt(params.sinceTs) || 0, parseInt(params.untilTs) || Date.now(),
+      params.granularity === 'hour' ? 'hour' : 'day',
+    );
     return success(data);
   },
 

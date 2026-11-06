@@ -21,6 +21,9 @@ export function useThreadMediaMaintenance(deps: {
   const scannedThreadsRef = useRef(new Set<string>());
   useEffect(() => {
     if (!threadReady || !activeAccountId || !activeThreadId || !msgs.length) return;
+    // Máy nhân viên: local_paths là đường dẫn trên máy Boss — kiểm tra theo thư mục của máy này thì ảnh nào cũng "hỏng",
+    // tải lại về máy nhân viên rồi đổi đường dẫn làm ảnh lỗi / nháy. Boss tự giữ ảnh của mình.
+    if (useEmployeeStore.getState().mode === 'employee') return;
     const scanKey = `${activeAccountId}_${activeThreadId}`;
     if (scannedThreadsRef.current.has(scanKey)) return;
     scannedThreadsRef.current.add(scanKey);

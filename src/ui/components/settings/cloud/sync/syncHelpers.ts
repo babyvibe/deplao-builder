@@ -1,5 +1,5 @@
 /**
- * syncHelpers — phần thuần (không React) của Cài đặt → Internet & Đám mây → Đồng bộ dữ liệu: nhãn chế độ, giá trị mặc
+ * syncHelpers — phần thuần (không React) của Cài đặt → Internet & Cloud → Đồng bộ dữ liệu: nhãn chế độ, giá trị mặc
  * định khi main chưa trả trạng thái, so sánh nháp với thiết lập đã lưu, câu tóm tắt
  * "2 tài khoản (A, B) · từ 01/01/2026 · Theo giờ · kèm ảnh" và nhãn của thẻ phần ("Theo giờ · 13:03", "ảnh 614/24.625").
  * Câu có nhắc tới kho nhận thêm `label` (tên kho: "R2" mặc định, "Google Drive" — storageLabel()).

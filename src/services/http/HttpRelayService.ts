@@ -30,6 +30,7 @@ import {
 } from './handlers/ErpRestRoutes';
 import FileStorageService from '../file/FileStorageService';
 import { toSafeFileName } from '../file/safeFileName';
+import { runInRuntimeScope } from '../database/dbScope';
 import {
     COALESCED_POLL_CHANNELS, SPECIAL_PROXY_CHANNELS, checkProxyChannel, checkProxyFilePaths, employeeSendInfo,
     proxyChannelModules, resolveAccountChannelProxy, resolveProxyAccount, shouldSkipCoalescedPoll,
@@ -374,7 +375,9 @@ class HttpRelayService {
         this.pinnedDbPath = DatabaseService.getInstance().getDbPath();
 
         try {
-            this.httpServer = http.createServer((req, res) => this.handleHttpRequest(req, res));
+            // Mọi yêu cầu của nhân viên phục vụ workspace local đang chạy (CSDL Boss), kể cả khi relay được bật từ một lệnh
+            // giao diện lúc màn hình đang mở workspace nhân viên (phạm vi 'ui' của dbScope lan theo luồng async).
+            this.httpServer = http.createServer((req, res) => runInRuntimeScope(() => this.handleHttpRequest(req, res)));
 
             // Attach Socket.IO vào cùng HTTP server (path /socket.io)
             // Employee dùng WebSocket thay SSE cho real-time event. Realtime + catch-up lọc theo cùng
@@ -1821,6 +1824,9 @@ class HttpRelayService {
             if (method === 'GET' && pathname === '/api/query/analytics/campaign-comparison') {
                 return this.json(res, 200, restHandlers.getCampaignComparison(employee, params));
             }
+            if (method === 'GET' && pathname === '/api/query/analytics/outreach') {
+                return this.json(res, 200, restHandlers.getOutreachStats(employee, params));
+            }
             if (method === 'GET' && pathname === '/api/query/analytics/friend-requests') {
                 return this.json(res, 200, restHandlers.getFriendRequestAnalytics(employee, params));
             }
@@ -1954,6 +1960,9 @@ class HttpRelayService {
             if (method === 'GET' && pathname === '/api/query/crm/campaigns/contacts') {
                 return this.json(res, 200, restHandlers.getCampaignContactsHandler(employee, params));
             }
+            if (method === 'GET' && pathname === '/api/query/crm/campaigns/engagement') {
+                return this.json(res, 200, restHandlers.getCampaignEngagementHandler(employee, params));
+            }
             if (method === 'GET' && pathname === '/api/query/crm/campaigns/send-log') {
                 return this.json(res, 200, restHandlers.getSendLogHandler(employee, params));
             }
@@ -2069,7 +2078,8 @@ class HttpRelayService {
                         const AIAssistantService = require('../ai/AIAssistantService').default;
                         const suggestions = await AIAssistantService.getInstance().getSuggestions(
                             parsed.assistantId || parsed.params?.assistantId,
-                            parsed.chatHistory || parsed.params?.chatHistory || []
+                            parsed.chatHistory || parsed.params?.chatHistory || [],
+                            parsed.count ?? parsed.params?.count,
                         );
                         return this.json(res, 200, { success: true, suggestions });
                     } catch (err: any) {
@@ -2518,6 +2528,7 @@ class HttpRelayService {
             if (owned.error) return owned.error;
             return this.invokeBossIpc('crm:cloneCampaign', {
                 zaloId: owned.owner, campaignId, includeContacts: !!params.includeContacts, newName: params.newName,
+                contactIds: Array.isArray(params.contactIds) ? params.contactIds.map(String) : undefined,
             });
         }
         if (pathname === '/api/command/crm/campaigns/status') {

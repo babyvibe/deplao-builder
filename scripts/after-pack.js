@@ -42,7 +42,9 @@ module.exports = async function afterPack(context) {
       icon: iconPath,
       'version-string': {
         ProductName:      pkg.build.productName || pkg.name,
-        FileDescription:  pkg.description || pkg.name,
+        // Tên hiện ở Task Manager, Ứng dụng khởi động, Trình trộn âm lượng, hộp thoại tường lửa: giữ ngắn "Deplao"
+        // (trước đây là cả câu mô tả trong package.json). Dev: scripts/patch-electron-icon.js cũng dùng productName.
+        FileDescription:  pkg.build.productName || pkg.name,
         CompanyName:      'Deplao',
         LegalCopyright:   `Copyright © ${new Date().getFullYear()} Deplao`,
         OriginalFilename: `${productName}.exe`,

@@ -7,15 +7,18 @@ import React, {useState,} from 'react';
 import {useChatStore} from '@/store/chat/chatStore';
 import {useAccountStore} from '@/store/accounts/accountStore';
 import {useAppStore} from '@/store/app/appStore';
+import {useEmployeeStore} from '@/store/employee/employeeStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { getFileMetadata, getLocalMediaPath, getStatusDisplay, extractAttachments, getTelegramStickerMedia, getTelegramPostMeta } from '@/lib/media/mediaResolver';
 import { isFacebook, isTelegram, isTelegramUser, isNonZalo, isZalo } from '@/lib/channels/channelHelper';
 import DataAccessor from '@/lib/data/DataAccessor';
 import {appendUrlParam, toLocalMediaUrl, withCloudWaitHint} from '@/lib/media/localMedia';
+import {fileOnThisMachine} from '@/lib/media/employeeMediaSync';
 import {formatPhone} from '@/lib/contacts/phoneUtils';
 import PhoneDisplay from '../../common/inputs/PhoneDisplay';
 import {convertZaloEmojis} from '@/lib/chat/messages/emojiUtils';
 import {findLinkRanges, findUrlRanges, getMentionRanges, linkifyText, type MentionRange} from '@/lib/chat/messages/messageParser';
+import { openChatLink } from '@/lib/chat/links/chatLinks';
 import {isMediaType, isOaListType} from '@/lib/chat/messages/messageTypeUtils';
 import {TgsBubble} from './MessageBubbles';
 import OaListBubble from '../zalo/messages/OaListBubble';
@@ -30,7 +33,11 @@ import {TelegramPostLayoutContext, telegramPostMediaAspect} from '../telegram/po
 import {DownloadProgressRing, VideoDownloadOverlay} from '../media/MediaDownloadProgress';
 import {isTransferring, useMessageMediaProgress} from '@/lib/media/mediaProgress';
 import {MAX_ZALO_AUTO_REPAIR, resetZaloRepairAttempts, takeZaloRepairAttempt, zaloRepairAttemptsUsed} from '@/lib/media/zaloImageRepairBudget';
+import {ensureMessageImage, useEnsureMessageImage} from '@/lib/media/ensureMessageImage';
+import {attachVideoSource} from '@/lib/media/videoSource';
 import {getGroupLayoutId} from '@/lib/chat/messages/messageGrouping';
+import {useInView} from '@/lib/media/inView';
+import Logger from '../../../../utils/Logger';
 
 type TelegramMediaRepairResult = {
     success: boolean;
@@ -238,6 +245,8 @@ export function EmployeeAvatar({name, avatarUrl}: { name: string; avatarUrl?: st
 /** FileBubble - hiển thị tin nhắn file đính kèm (share.file) */
 export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     const surface = useBubbleSurface(isSent);
+    // Máy nhân viên: local_paths là đường dẫn trên máy Boss (không phải "đã có trên máy này")
+    const employeeView = useEmployeeStore(s => s.mode === 'employee');
     const [opening, setOpening] = React.useState(false);
     const [previewFailed, setPreviewFailed] = React.useState(false);
     const repairAttemptedRef = React.useRef(false);
@@ -324,8 +333,15 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
         if (opening) return;
         setOpening(true);
         try {
-            if (localFilePath) await ipc.file?.openPath(localFilePath);
-            else if (fileHref) ipc.shell?.openExternal(fileHref);
+            // Máy nhân viên: tải bản Boss đã lưu về máy rồi mở (trước đây mở đường dẫn của Boss trên máy nhân viên → không
+            // có gì xảy ra). Không mở được file trên máy → mở link gốc (trình duyệt tải về), không có link thì báo lỗi.
+            const onThisMachine = await fileOnThisMachine(localFilePath, 'file');
+            const opened = onThisMachine ? await ipc.file?.openPath(onThisMachine) : null;
+            if (opened?.success) return;
+            if (fileHref) ipc.shell?.openExternal(fileHref);
+            else if (localFilePath) {
+                useAppStore.getState().showNotification(`Không mở được file${opened?.error ? `: ${opened.error}` : ''}`, 'error');
+            }
         } catch {
         } finally {
             setOpening(false);
@@ -381,8 +397,8 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     };
 
     const sizeText = formatFileSize(fileSize);
-    const hasLocal = !!localFilePath;
-    const canOpen = hasLocal || !!fileHref;
+    const hasLocal = !!localFilePath && !employeeView;
+    const canOpen = !!localFilePath || !!fileHref;
     const {icon, bg, text} = getFileIconAndColor(fileExt);
     // Telegram cho phép gửi ảnh dưới dạng document. Đây vẫn là file (có tên,
     // dung lượng và nút mở file), nhưng client Telegram hiển thị thumbnail và
@@ -448,7 +464,7 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                                         <polyline points="20 6 9 17 4 12"/>
                                     </svg>
                                     <span>Đã có trên máy</span></>
-                                : fileHref ? <span>Nhấn để tải</span>
+                                : (fileHref || localFilePath) ? <span>Nhấn để tải</span>
                                     : (isFacebook(msg.channel) && isSent) ? <span>{getStatusDisplay(msg, true).text}</span>
                                         : <span>Đang tải về...</span>}
                     </p>
@@ -665,6 +681,9 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
             clearRepairTimers();
             setLoadFailed(false);
         }
+        // Máy nhân viên: main chuyển lên Boss (file:repairImage → file:ensureMessageImage) — Boss kiểm tra bản của nó, thiếu /
+        // hỏng thì tải lại bằng phiên tài khoản; kết quả là đường dẫn trên máy Boss (hiện qua /api/media), không tải về máy
+        // nhân viên (đường dẫn máy nhân viên Boss không có → ảnh lỗi → lại tải → ảnh nháy liên tục).
         if (zaloRepairingRef.current) return;
         // Hết lượt của chu kỳ này (zaloImageRepairBudget) → dừng; chỉ báo lỗi khi ảnh đang vẽ đã lỗi
         if (takeZaloRepairAttempt(repairKey) === null) {
@@ -696,6 +715,12 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                 force,
             });
             if (result?.success) {
+                // Boss vẫn còn nguyên đúng file đang hiện lỗi (máy nhân viên): lỗi không do file → không vẽ lại cùng file
+                // (lỗi → sửa → vẽ lại → lỗi…). Bấm "Thử tải lại" thì vẽ lại.
+                if (result.cached && result.newLocalPath === localFilePath && !force) {
+                    failIfShownImageBroken();
+                    return;
+                }
                 // Đường dẫn mới vào store ngay (event:localPath có thể tới sau) — không vẽ lại file cũ vừa được thay
                 if (result.newLocalPath && msg.thread_id) {
                     useChatStore.getState().updateMessageLocalPath(
@@ -725,6 +750,10 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     // Lượt thử lại hẹn giờ dùng hàm mới nhất (đường dẫn / link hiện tại), không phải bản lúc hẹn
     const requestZaloRepairRef = React.useRef(requestZaloRepair);
     requestZaloRepairRef.current = requestZaloRepair;
+
+    // Ảnh chỉ có link Zalo (máy Boss chưa lưu: tin đồng bộ lịch sử, Boss tắt máy lúc nhận, tải lỗi…) → nhờ máy Boss tải về
+    // rồi đổi sang bản đã lưu (máy nhân viên: qua Boss), để link hết hạn vẫn còn ảnh — lib/media/ensureMessageImage
+    useEnsureMessageImage(msg, isZalo(msg?.channel) && !localFilePath && !!remoteUrl && !mediaExpired);
 
     // "Không tải được ảnh" (Zalo, chưa hết hạn): tự thử lại khi có mạng lại, và 1 lần sau ZALO_FAILED_REARM_MS
     const rearmedRef = React.useRef(false);
@@ -1275,14 +1304,13 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
         ? (remoteThumb || localThumbUrl)
         : (localThumbUrl || remoteThumb);
 
+    const employeeView = useEmployeeStore(s => s.mode === 'employee');
     const handlePlay = async (e: React.MouseEvent) => {
         e.stopPropagation();
-        // Mở video local trước, nếu không có thì mở remote
-        if (videoLocalPath) {
-            await ipc.file?.openPath(videoLocalPath);
-        } else if (remoteVideo) {
-            ipc.shell?.openExternal(remoteVideo);
-        }
+        // Mở video trên máy trước (máy nhân viên: tải bản của Boss về), không được thì mở link gốc
+        const onThisMachine = await fileOnThisMachine(videoLocalPath, 'video');
+        const opened = onThisMachine ? await ipc.file?.openPath(onThisMachine) : null;
+        if (!opened?.success && remoteVideo) ipc.shell?.openExternal(remoteVideo);
     };
 
     const handleOpenFolder = async (e: React.MouseEvent) => {
@@ -1383,7 +1411,7 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
             {/* Action buttons - top right, on hover */}
             <div
                 className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/video:opacity-100 transition-opacity">
-                {videoLocalPath && (
+                {videoLocalPath && !employeeView && (
                     <button onClick={handleOpenFolder} title="Mở thư mục"
                             className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1563,6 +1591,25 @@ export function VoiceBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     );
 }
 
+/**
+ * Phiên Zalo để hỏi chi tiết sticker: tài khoản nhận tin trước. Máy nhân viên không có phiên Zalo — lệnh zalo:* được
+ * chuyển cho Boss, Boss chọn phiên theo accountId (tài khoản Boss giao, có trong danh sách tài khoản của giao diện);
+ * trước đây máy nhân viên lấy tài khoản từ DB của máy (rỗng) nên sticker chỉ hiện "[Sticker]".
+ */
+async function stickerDetailAuth(ownerId?: string): Promise<ReturnType<typeof buildZaloAuth> | null> {
+    const known = useAccountStore.getState().accounts;
+    const owner = ownerId ? known.find(a => a.zalo_id === String(ownerId) && isZalo(a.channel)) : undefined;
+    if (owner) return buildZaloAuth(owner);
+    if (useEmployeeStore.getState().mode === 'employee') {
+        const assigned = known.find(a => isZalo(a.channel));
+        return assigned ? buildZaloAuth(assigned) : null;
+    }
+    const accountsRes = await ipc.login?.getAccounts();
+    const accounts: any[] = accountsRes?.accounts || [];
+    const active = accounts.find((a: any) => a.is_active && isZalo(a.channel)) || accounts.find((a: any) => isZalo(a.channel));
+    return active ? buildZaloAuth(active) : null;
+}
+
 /** Preview sticker nhỏ dùng trong khung trích dẫn (quote) - tải URL từ DB cache hoặc API */
 export function QuotedStickerPreview({content}: { content: string }) {
     const [stickerUrl, setStickerUrl] = React.useState<string | null>(null);
@@ -1603,11 +1650,8 @@ export function QuotedStickerPreview({content}: { content: string }) {
 
             // Fallback: fetch from API
             try {
-                const accountsRes = await ipc.login?.getAccounts();
-                const accounts: any[] = accountsRes?.accounts || [];
-                const active = accounts.find((a: any) => a.is_active) || accounts[0];
-                if (!active) return;
-                const auth = buildZaloAuth(active);
+                const auth = await stickerDetailAuth();
+                if (!auth) return;
                 const detailRes = await ipc.zalo?.getStickersDetail({auth, stickerIds: [stickerId]});
                 const stickers: any[] = detailRes?.response || [];
                 if (stickers.length && stickers[0]?.stickerUrl) {
@@ -1838,13 +1882,22 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
     const viewUrl = mediaExpired ? displayUrl : (remoteUrl || displayUrl);
 
     const telegramRepair = useTelegramMediaRepair(msg, !displayUrl);
+    // Ảnh chỉ có link Zalo → nhờ máy Boss lưu (như MediaBubble)
+    useEnsureMessageImage(msg, isZalo(msg?.channel) && !isVideoTile && !localFilePath && !!remoteUrl && !mediaExpired);
     const handleImgError = () => {
         if (useLocal && remoteUrl && !mediaExpired) {
             setUseLocal(false); // local lỗi → fallback CDN ngay
         } else {
             setLoadFailed(true);
-            // Zalo: CDN lỗi → kiểm tra media đã hết hạn chưa (hết hạn → ô hiện "Ảnh/Video đã hết hạn")
-            if (isZalo(msg.channel) && !mediaExpired && remoteUrl) void checkZaloMediaExpired(msg, [remoteUrl]);
+            if (isZalo(msg.channel) && !mediaExpired && remoteUrl) {
+                // Ảnh: nhờ máy Boss tải lại (có bản mới → đường dẫn mới vào store, ô tự vẽ lại). Không được → kiểm tra media
+                // đã hết hạn chưa (hết hạn → ô hiện "Ảnh/Video đã hết hạn")
+                const ensured = isVideoTile ? Promise.resolve(null) : ensureMessageImage(msg);
+                void ensured.then((res) => {
+                    if (res?.expired) setMediaExpiredInStore(msg, true);
+                    else if (!res?.success || res.newLocalPath === localFilePath) void checkZaloMediaExpired(msg, [remoteUrl]);
+                });
+            }
             void telegramRepair.requestRepair('image_load_error');
         }
     };
@@ -2053,6 +2106,61 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
  * StickerBubble - hiển thị sticker với lazy load từ DB cache hoặc API. `onOpenSet` (Telegram cá nhân): bấm sticker mở
  * popup bộ sticker (xem / thêm bộ / gửi lại) như Telegram.
  */
+/**
+ * File sticker Telegram trên máy. Lượt tải vừa xong (event:localPath / tải lại) đứng trước đường dẫn đang lưu trong tin
+ * (có thể là file hỏng vừa được thay); không có thì attachment / local_paths của tin.
+ */
+export function telegramStickerFile(msg: any, realtime: Record<string, string> | null): string {
+    const fromRealtime = realtime?.sticker || realtime?.file || realtime?.main || realtime?.video || '';
+    if (fromRealtime) return fromRealtime;
+    const media = getTelegramStickerMedia(msg);
+    if (media?.localPath) return media.localPath;
+    try {
+        const paths = typeof msg?.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg?.local_paths || {});
+        return paths?.sticker || paths?.file || paths?.main || paths?.video || '';
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * Sticker động dạng video (webm / mp4) của Telegram. Mỗi <video> giữ một trình phát của Chromium, mỗi trang có giới hạn
+ * (cỡ 75): nhóm nhiều sticker động / GIF, cuộn thêm vài trang là sticker mới không phát được (lỗi → "[Sticker]"). Chỉ dựng
+ * <video> khi sticker ở gần vùng đang xem; ra xa thì gỡ hẳn trình phát.
+ */
+function TelegramVideoSticker({src, onError}: { src: string; onError: (event: React.SyntheticEvent<HTMLVideoElement>) => void }) {
+    const boxRef = React.useRef<HTMLDivElement>(null);
+    const visible = useInView(boxRef, {rootMargin: '300px'});
+    return (
+        <div ref={boxRef} className="w-28 h-28">
+            {visible && <ReleasingVideoSticker src={src} onError={onError}/>}
+        </div>
+    );
+}
+
+function ReleasingVideoSticker({src, onError}: { src: string; onError: (event: React.SyntheticEvent<HTMLVideoElement>) => void }) {
+    const ref = React.useRef<HTMLVideoElement>(null);
+    // Gỡ khỏi DOM chưa trả trình phát ngay (chờ dọn rác) → bỏ nguồn để trả chỗ cho sticker / video khác. Nguồn gắn trong
+    // effect (lib/media/videoSource), không qua prop: StrictMode (bản dev) dọn rồi dựng lại effect trên CÙNG thẻ, lượt dọn
+    // gỡ src mà React không gắn lại → sticker động trống, chỉ còn giờ.
+    React.useEffect(() => {
+        const video = ref.current;
+        return video ? attachVideoSource(video, src) : undefined;
+    }, [src]);
+    return (
+        <video
+            ref={ref}
+            autoPlay
+            loop
+            muted
+            playsInline
+            aria-label="Telegram animated sticker"
+            className="w-28 h-28 object-contain rounded-xl"
+            onError={onError}
+        />
+    );
+}
+
 export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => void }) {
     const [stickerUrl, setStickerUrl] = React.useState<string | null>(null);
     const [failed, setFailed] = React.useState(false);
@@ -2061,6 +2169,76 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
     // normally updated by useZaloEvents, but a newly mounted topic bubble must
     // not lose a fast download that races with that cache update.
     const [realtimeLocalPaths, setRealtimeLocalPaths] = React.useState<Record<string, string> | null>(null);
+
+    // ── Telegram: tải sticker chưa có trên máy, thử lại khi không phát được ─────
+    // Lịch sử chỉ tự tải media của tin < 24 giờ, bình luận kênh không tự tải → sticker cũ chờ mãi (ô 🎭 nhấp nháy). Xin tải
+    // như ảnh / video (repairMessageMedia, cùng hàng tải). Không phát được (file hỏng, trình phát hết chỗ) → thử lại.
+    const telegramRepair = useTelegramMediaRepair(msg, false);
+    const telegramFile = isTelegram(msg.channel) ? telegramStickerFile(msg, realtimeLocalPaths) : '';
+    const needsTelegramFile = isTelegramUser(msg.channel) && !telegramFile;
+    const autoRepairKeyRef = React.useRef('');
+    React.useEffect(() => {
+        if (!needsTelegramFile) return undefined;
+        const key = `${msg.owner_zalo_id}:${msg.thread_id}:${msg.msg_id}`;
+        if (autoRepairKeyRef.current === key) return undefined;
+        autoRepairKeyRef.current = key;
+        let alive = true;
+        void telegramRepair.requestRepair('missing_source').then((paths) => {
+            if (!alive) return;
+            if (paths) setRealtimeLocalPaths(paths);
+            else setFailed(true);
+        });
+        return () => { alive = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [needsTelegramFile, msg.owner_zalo_id, msg.thread_id, msg.msg_id]);
+
+    const [retryKey, setRetryKey] = React.useState(0);
+    const mediaErrorsRef = React.useRef(0);
+    const retryTimerRef = React.useRef<number | null>(null);
+    React.useEffect(() => () => {
+        if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+    }, []);
+    const handleStickerError = (event?: React.SyntheticEvent<HTMLVideoElement | HTMLImageElement>) => {
+        if (!isTelegramUser(msg.channel)) {
+            setFailed(true);
+            return;
+        }
+        const errors = ++mediaErrorsRef.current;
+        // Lý do (mã MediaError của trình phát) vào Nhật ký: lần sau khách báo "[Sticker]" thì biết do file hay do trình phát
+        const mediaError = (event?.currentTarget as HTMLVideoElement | undefined)?.error;
+        Logger.warn(`[Sticker] Telegram msg=${msg.msg_id} thread=${msg.thread_id} lỗi lần ${errors}`
+            + (mediaError ? ` code=${mediaError.code} ${mediaError.message || ''}` : '') + ` file=${telegramFile ? 'có' : 'không'}`);
+        if (errors === 1) {
+            // Trình phát chưa có chỗ / file vừa ghi xong: dựng lại một lần
+            retryTimerRef.current = window.setTimeout(() => setRetryKey((k) => k + 1), 1500);
+            return;
+        }
+        if (errors === 2) {
+            // Vẫn lỗi → file trên máy có thể hỏng: tải lại từ Telegram
+            void telegramRepair.requestRepair('image_load_error', true).then((paths) => {
+                if (!paths) {
+                    setFailed(true);
+                    return;
+                }
+                setRealtimeLocalPaths(paths);
+                setRetryKey((k) => k + 1);
+            });
+            return;
+        }
+        setFailed(true);
+    };
+    const retrySticker = () => {
+        mediaErrorsRef.current = 0;
+        setFailed(false);
+        if (!telegramFile) {
+            void telegramRepair.requestRepair('manual_retry', true).then((paths) => {
+                if (paths) setRealtimeLocalPaths(paths);
+                else setFailed(true);
+            });
+            return;
+        }
+        setRetryKey((k) => k + 1);
+    };
 
     // Listen for event:localPath to re-render when sticker is downloaded
     React.useEffect(() => {
@@ -2088,7 +2266,8 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
         if (isTelegram(msg.channel)) {
             const media = getTelegramStickerMedia(msg);
             const realtimeLocalPath = realtimeLocalPaths?.sticker || realtimeLocalPaths?.file || realtimeLocalPaths?.main || realtimeLocalPaths?.video || '';
-            const localPath = media?.localPath || realtimeLocalPath;
+            // Bản vừa tải (event:localPath / tải lại) mới hơn đường dẫn đang lưu trong tin (có thể là file hỏng)
+            const localPath = realtimeLocalPath || media?.localPath || '';
             const format = media?.format || (localPath.toLowerCase().endsWith('.tgs') ? 'tgs' : 'webp');
             if (localPath) {
                 if (format === 'tgs') {
@@ -2122,8 +2301,8 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
                 }
             } catch {}
 
-            // A recognized sticker may still be waiting for event:localPath.
-            if (!media && !cancelled) setFailed(true);
+            // A recognized sticker may still be waiting for event:localPath. Telegram cá nhân: đang xin tải (ở trên).
+            if (!media && !isTelegramUser(msg.channel) && !cancelled) setFailed(true);
             return;
         }
 
@@ -2188,18 +2367,21 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
             } catch {
             }
 
-            // 2. Fetch from API using the active account session
+            // 2. Fetch from API using the account that received the sticker
+            const employee = useEmployeeStore.getState().mode === 'employee';
             try {
-                const accountsRes = await ipc.login?.getAccounts();
-                const accounts: any[] = accountsRes?.accounts || [];
-                const active = accounts.find((a: any) => a.is_active) || accounts[0];
-                if (!active) {
+                const auth = await stickerDetailAuth(msg.owner_zalo_id);
+                if (!auth) {
                     if (!cancelled) setFailed(true);
                     return;
                 }
-                const auth = buildZaloAuth(active);
                 const detailRes = await ipc.zalo?.getStickersDetail({auth, stickerIds: [stickerId]});
                 if (!detailRes?.success) {
+                    // Máy nhân viên: lỗi do Boss / mạng (lệnh chuyển cho Boss), không phải sticker không hỗ trợ
+                    if (employee) {
+                        if (!cancelled) setFailed(true);
+                        return;
+                    }
                     ipc.db?.markStickerUnsupported({stickerId}).catch(() => {
                     });
                     if (!cancelled) setUnsupported(true);
@@ -2216,6 +2398,10 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
                     if (!cancelled) setUnsupported(true);
                 }
             } catch {
+                if (employee) {
+                    if (!cancelled) setFailed(true);
+                    return;
+                }
                 ipc.db?.markStickerUnsupported({stickerId: stickerId!}).catch(() => {
                 });
                 if (!cancelled) setUnsupported(true);
@@ -2253,6 +2439,19 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
     }
 
     if (failed) {
+        if (isTelegramUser(msg.channel)) {
+            const emoji = getTelegramStickerMedia(msg) && extractAttachments(msg).find((item: any) => item?.is_sticker || item?.type === 'sticker')?.emoji;
+            return (
+                <div className="relative w-fit">
+                    <button type="button" onClick={retrySticker} title="Bấm để tải lại sticker" aria-label="Tải lại sticker"
+                            className="w-28 h-28 rounded-xl bg-muted/30 border border-input/30 flex flex-col items-center justify-center gap-1 hover:bg-muted/50 transition-colors">
+                        <span className="text-4xl leading-none">{emoji || '🎭'}</span>
+                        <span className="text-[10px] text-muted-foreground">Bấm để tải lại</span>
+                    </button>
+                    <MediaTimeBadge timestamp={stickerTime}/>
+                </div>
+            );
+        }
         return (
             <div className="w-fit">
                 <span className="text-xs text-muted-foreground px-2 py-1">[Sticker]</span>
@@ -2273,28 +2472,24 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
         return withTime(<TgsBubble filePath={stickerUrl.slice(4)}/>);
     }
 
+    // Tải lại xong ghi đè file cùng đường dẫn → thêm tham số để trình duyệt đọc lại (local-media bỏ qua query)
+    const stickerSrc = telegramRepair.repairedAt && stickerUrl.startsWith('local-media://')
+        ? appendUrlParam(stickerUrl, 'r', String(telegramRepair.repairedAt))
+        : stickerUrl;
     const telegramSticker = getTelegramStickerMedia(msg);
-    if (isTelegram(msg.channel) && (telegramSticker?.format === 'mp4' || telegramSticker?.format === 'webm')) {
-        return withTime(
-            <video
-                src={stickerUrl}
-                autoPlay
-                loop
-                muted
-                playsInline
-                aria-label="Telegram animated sticker"
-                className="w-28 h-28 object-contain rounded-xl"
-                onError={() => setFailed(true)}
-            />
-        );
+    const videoSticker = isTelegram(msg.channel)
+        && (telegramSticker?.format === 'mp4' || telegramSticker?.format === 'webm' || /\.(webm|mp4)(\?|$)/i.test(telegramFile));
+    if (videoSticker) {
+        return withTime(<TelegramVideoSticker key={retryKey} src={stickerSrc} onError={handleStickerError}/>);
     }
 
     return withTime(
         <img
-            src={stickerUrl}
+            key={retryKey}
+            src={stickerSrc}
             alt="sticker"
             className="w-28 h-28 object-contain rounded-xl"
-            onError={() => setFailed(true)}
+            onError={handleStickerError}
         />
     );
 }
@@ -2622,7 +2817,7 @@ export function LinkBubble({
 
             {/* Preview section - CHỈ bấm vào đây mới mở link (ô bên trong bong bóng: bg-foreground/5 hợp cả nền trắng lẫn xanh) */}
             <button
-                onClick={() => href && ipc.shell?.openExternal(href)}
+                onClick={() => href && openChatLink(href)}
                 className="mx-2 mb-2 border border-foreground/10 rounded-xl overflow-hidden bg-foreground/5 text-left cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all"
                 title={href}
             >
@@ -3149,7 +3344,13 @@ export function TextWithMentions({
                         try {
                             const accountId = useAccountStore.getState().activeAccountId || '';
                             const resolved = await ipc.telegramUser?.resolveUsername?.({ accountId, username });
-                            if (resolved?.success && resolved.peer?.peerId) onMentionClick(String(resolved.peer.peerId), e);
+                            if (!resolved?.success || !resolved.peer?.peerId) return;
+                            // @kênh / @nhóm: mở như link t.me (đã tham gia thì vào thẳng, chưa thì xem trước + Tham gia)
+                            if (resolved.peer.peerType && resolved.peer.peerType !== 'user') {
+                                openChatLink(`https://t.me/${username}`, { accountId });
+                                return;
+                            }
+                            onMentionClick(String(resolved.peer.peerId), e);
                         } catch {
                             // A username may be private or no longer available.
                         }

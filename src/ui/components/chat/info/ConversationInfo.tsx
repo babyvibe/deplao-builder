@@ -18,13 +18,13 @@ import { Spinner } from '@/components/common/PageLoading';
 import GroupAvatar from '../../common/avatars/GroupAvatar';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { getCapability, channelSupports, type Channel } from '../../../../configs/channels/channelConfig';
-import { CHANNEL, isZalo as isZaloCh, isNonZalo, isFacebook, isTelegram as isTelegramCh } from '@/lib/channels/channelHelper';
+import { CHANNEL, isZalo as isZaloCh, isNonZalo, isFacebook, isTelegram as isTelegramCh, resolveChannel } from '@/lib/channels/channelHelper';
 import { fetchContactInfo } from '@/hooks/chat/useZaloEvents';
-import { BellIcon, BellOffIcon, GiftIcon, MapPinIcon, PhoneIcon, PinIcon, UserIcon, UsersIcon } from '@/components/common/icons';
+import { BellIcon, BellOffIcon, CloudIcon, GiftIcon, MapPinIcon, PhoneIcon, PinIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
 import ZaloPresenceLine from '../zalo/presence/ZaloPresenceLine';
 import ZaloAutoDeleteSection from '../zalo/ZaloAutoDeleteSection';
-import { isMyDocumentsThread } from '@/lib/chat/zalo/myDocuments';
+import { MY_DOCUMENTS_NAME, isMyDocumentsThread, isSavedMessagesAccount } from '@/lib/chat/zalo/myDocuments';
 
 function muteUntilToDuration(until: number): number | string {
   if (until === 0) return -1;
@@ -96,18 +96,22 @@ function UserConversationInfo() {
 
   const contactList = activeAccountId ? (contacts[activeAccountId] || []) : [];
   const contact = contactList.find((c) => c.contact_id === activeThreadId);
-  const channelCap = getCapability((contact?.channel || CHANNEL.ZALO) as Channel);
-  // Kiểm tra thêm account channel để fallback đúng cho FB khi contact thiếu channel field
+  // Kênh thật của hội thoại (resolveChannel): tài khoản Telegram / Facebook → kênh của tài khoản, kể cả khi dòng cũ ghi
+  // 'zalo' hay hội thoại ghim chưa có trong store
   const activeAccount = getActiveAccount();
-  const effectiveChannel = (contact?.channel || activeAccount?.channel || CHANNEL.ZALO) as Channel;
-  const effectiveChannelCap = getCapability(effectiveChannel);
+  const effectiveChannel = resolveChannel(contact, activeAccount);
+  const channelCap = getCapability(effectiveChannel);
+  const effectiveChannelCap = channelCap;
   // Hội thoại Zalo 1:1 thật (không phải nhóm / chính mình / My Documents): trạng thái truy cập (ZL-01), tự xoá tin (ZL-05)
   const zaloDirect = isZaloCh(effectiveChannel) && !!activeAccountId && !!activeThreadId
     && contact?.contact_type !== 'group' && activeThreadId !== activeAccountId
     && !isMyDocumentsThread((activeAccount || {}) as any, activeThreadId);
+  // Telegram: Tin nhắn đã lưu (hội thoại với chính mình) mang tên + ảnh của mình → My Documents + đám mây như Zalo
+  const savedMessages = isSavedMessagesAccount(activeAccount as any) && isMyDocumentsThread(activeAccount as any, activeThreadId);
+  const canEditAlias = channelCap.supportsAlias && !savedMessages;
   // Hiển thị: ưu tiên alias → display_name
-  const displayName = contact?.alias || contact?.display_name || activeThreadId || '';
-  const avatarUrl = contact?.avatar_url || '';
+  const displayName = savedMessages ? MY_DOCUMENTS_NAME : (contact?.alias || contact?.display_name || activeThreadId || '');
+  const avatarUrl = savedMessages ? '' : (contact?.avatar_url || '');
 
   // Check friends table mỗi khi thread thay đổi
   useEffect(() => {
@@ -655,7 +659,11 @@ function UserConversationInfo() {
       <>
       {/* Avatar + name */}
       <div className="flex flex-col items-center py-6 px-4 border-b border-border">
-        {avatarUrl ? (
+        {savedMessages ? (
+          <div className="w-16 h-16 rounded-full flex items-center justify-center bg-gradient-to-br from-sky-400 to-blue-600 mb-3" style={{ color: '#fff' }}>
+            <CloudIcon className="w-8 h-8" />
+          </div>
+        ) : avatarUrl ? (
           <img src={toLocalMediaUrl(avatarUrl)} alt={displayName} className="w-16 h-16 rounded-full object-cover mb-3" />
         ) : (
           <PeerInitials id={activeThreadId} name={displayName} fallback="U" className="w-16 h-16 text-xl mb-3" />
@@ -670,9 +678,9 @@ function UserConversationInfo() {
             <button onClick={() => setEditingAlias(false)} className="px-2 py-1 bg-muted rounded-lg text-xs text-foreground/80 hover:bg-accent flex-shrink-0">✕</button>
           </div>
         ) : (
-          <div className={`group flex items-center gap-1.5 mt-1 ${channelCap.supportsAlias ? 'cursor-pointer' : ''}`}
-            onMouseEnter={() => channelCap.supportsAlias && setHovering(true)} onMouseLeave={() => setHovering(false)}
-            onClick={() => { if (!channelCap.supportsAlias) return; setAliasValue(contact?.alias || ''); setEditingAlias(true); }}>
+          <div className={`group flex items-center gap-1.5 mt-1 ${canEditAlias ? 'cursor-pointer' : ''}`}
+            onMouseEnter={() => canEditAlias && setHovering(true)} onMouseLeave={() => setHovering(false)}
+            onClick={() => { if (!canEditAlias) return; setAliasValue(contact?.alias || ''); setEditingAlias(true); }}>
             <p className="text-foreground font-semibold text-base text-center">{displayName}</p>
             {channelCap.supportsAlias && isZaloCh(effectiveChannel) && (
               <button
@@ -688,7 +696,7 @@ function UserConversationInfo() {
                 </svg>
               </button>
             )}
-            {channelCap.supportsAlias && (
+            {canEditAlias && (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
               className={`text-foreground/80 transition-opacity flex-shrink-0 ${hovering ? 'opacity-100' : 'opacity-0'}`}>
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -850,8 +858,8 @@ function UserActionBtn({ icon, label, onClick, active }: { icon: React.ReactNode
       className="flex flex-col items-center gap-1 py-2 px-1 rounded-xl hover:bg-muted transition-colors text-center"
       title={label}
     >
-      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-blue-600' : 'bg-muted'}`}>{icon}</div>
-      <span className={`text-[9px] leading-tight ${active ? 'text-blue-400' : 'text-muted-foreground'}`}>{label}</span>
+      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-lg ${active ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>{icon}</div>
+      <span className={`text-[9px] leading-tight ${active ? 'text-primary' : 'text-muted-foreground'}`}>{label}</span>
     </button>
   );
 }

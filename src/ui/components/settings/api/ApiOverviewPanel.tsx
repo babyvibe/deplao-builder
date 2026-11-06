@@ -1,6 +1,6 @@
 /**
  * Tổng quan: server, công tắc API, địa chỉ gọi, truy cập từ xa (địa chỉ Internet dùng chung với nhân viên ở xa — chỉ xem,
- * bật / tắt / đổi ở Cài đặt → Internet & Đám mây → Địa chỉ Internet), giám sát, nút khẩn cấp.
+ * bật / tắt / đổi ở Cài đặt → Internet & Cloud → Địa chỉ Internet), giám sát, nút khẩn cấp.
  */
 import React, { useEffect, useState } from 'react';
 import ipc, { ApiStatusResult } from '@/lib/ipc';
@@ -46,7 +46,7 @@ export default function ApiOverviewPanel({ status, onRefresh }: Props) {
     if (status.employeeMachine) return;
     return ipc.on?.('relay:tunnelStatusUpdate', data => setRelayTunnel({ ...STOPPED_RELAY_TUNNEL, ...(data || {}) }));
   }, [status.employeeMachine]);
-  // Địa chỉ Internet của relay (mọi cách tạo địa chỉ) — cấu hình ở Cài đặt → Internet & Đám mây → Địa chỉ Internet.
+  // Địa chỉ Internet của relay (mọi cách tạo địa chỉ) — cấu hình ở Cài đặt → Internet & Cloud → Địa chỉ Internet.
   const publicAddresses = usePublicAddresses();
   const relayAddr = publicAddresses.get('relay');
   // Bản app không có module Cloudflare: theo tunnel server báo về

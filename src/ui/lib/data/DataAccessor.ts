@@ -11,6 +11,7 @@
 import { useEmployeeStore } from '../../store/employee/employeeStore';
 import RestQueryService from '../../../services/http/RestQueryService';
 import type { ErpZaloNotifySettings, ErpZaloNotifyStatus } from '../../../shared/erp/erpZaloNotify';
+import type { CampaignEngagementResponse } from '../../../shared/analytics/messageEngagement';
 
 // ── Helper ──────────────────────────────────────────────────────────
 
@@ -965,6 +966,14 @@ export class DataAccessor {
     return window.electronAPI.analytics.contactSegmentation({ zaloId });
   }
 
+  /** Tin gửi đi 1:1 trong khoảng: người nhận → đã nhận / đã xem / đã phản hồi (shared/analytics/messageEngagement). */
+  static async getOutreachStats(params: { zaloId: string; sinceTs: number; untilTs: number; granularity?: 'hour' | 'day' }) {
+    if (isEmployee()) {
+      return restReport(await rest().get('/api/query/analytics/outreach', params));
+    }
+    return window.electronAPI.analytics.outreach(params);
+  }
+
   static async getCampaignComparison(zaloId: string) {
     if (isEmployee()) {
       return restReport(await rest().get('/api/query/analytics/campaign-comparison', { zaloId }));
@@ -1259,7 +1268,7 @@ export class DataAccessor {
     return window.electronAPI.crm.getContactStats(params);
   }
 
-  static async cloneCampaign(params: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string }) {
+  static async cloneCampaign(params: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string; contactIds?: string[] }) {
     if (isEmployee()) {
       return restWriteResult(await rest().post('/api/command/crm/campaigns/clone', params));
     }
@@ -1288,6 +1297,16 @@ export class DataAccessor {
       return { success: true, contacts: restItems(res) };
     }
     return window.electronAPI.crm.getCampaignContacts(params);
+  }
+
+  /** Hiệu quả chiến dịch: liên hệ đã gửi → đã nhận / đã xem / đã phản hồi. Cùng hình dạng IPC `{ success, ...báo cáo }`. */
+  static async getCampaignEngagement(params: { campaignId: number }): Promise<CampaignEngagementResponse> {
+    if (isEmployee()) {
+      const res = await rest().get('/api/query/crm/campaigns/engagement', params);
+      if (!res.success || !res.data) return restFail(res);
+      return { success: true, ...res.data };
+    }
+    return window.electronAPI.crm.getCampaignEngagement(params);
   }
 
   static async deleteCampaignContacts(params: { campaignId: number; contactIds: string[] }) {

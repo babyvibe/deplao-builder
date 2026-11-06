@@ -1,5 +1,5 @@
 /**
- * Giới thiệu & Hướng dẫn → "Internet & Đám mây": hướng dẫn trang Cài đặt → Internet & Đám mây (kết nối Cloudflare,
+ * Giới thiệu & Hướng dẫn → "Internet & Cloud": hướng dẫn trang Cài đặt → Internet & Cloud (kết nối Cloudflare,
  * Địa chỉ Internet, Kho lưu R2 / Google Drive, Đồng bộ dữ liệu, khôi phục + máy dự phòng, Mức sử dụng & chi phí).
  * Câu chữ bám giao diện ở src/ui/components/settings/cloud/**; giá, hạn mức và cổng lấy thẳng từ R2_PRICING,
  * GDRIVE_LIMITS, SINGLE_HOST_PATH_RULES (src/shared/cloud/cloudContracts.ts) để không lệch khi các số này đổi.
@@ -193,17 +193,17 @@ export function CloudPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle><CloudIcon className="w-4 h-4 inline" /> Internet &amp; Đám mây</SectionTitle>
+        <SectionTitle><CloudIcon className="w-4 h-4 inline" /> Internet &amp; Cloud</SectionTitle>
         <Paragraph>
-          Một trang cho mọi thứ cần Internet và đám mây của chính bạn: địa chỉ để nhân viên ở xa, API, cổng thanh toán và
+          Một trang cho mọi thứ cần Internet và Cloud của chính bạn: địa chỉ để nhân viên ở xa, API, cổng thanh toán và
           webhook gọi vào máy; lưu ảnh, file và sao lưu dữ liệu (mã hoá trên máy) lên Cloudflare R2 hoặc Google Drive;
           khôi phục sang máy mới khi cần.
         </Paragraph>
         <BulletList items={[
-          `${bold('Ở đâu:')} Cài đặt → Internet &amp; Đám mây. Chỉ có trên máy chủ; máy nhân viên không thấy mục này.`,
+          `${bold('Ở đâu:')} Cài đặt → Internet &amp; Cloud. Chỉ có trên máy chủ; máy nhân viên không thấy mục này.`,
           `${bold('Hai phần:')} ${bold('Địa chỉ Internet')} (nhân viên ở xa, API, thanh toán, webhook) và ${bold('Đồng bộ dữ liệu')} (sao lưu tin nhắn, danh bạ, ảnh, file; khôi phục khi đổi máy).`,
           `${bold('Tuỳ chọn, mặc định tắt:')} không bật thì app chạy như cũ, dữ liệu chỉ nằm trên máy. Mọi thứ dùng tài khoản Cloudflare / Google của chính bạn.`,
-          `${bold('Chấm đỏ')} cạnh mục Internet &amp; Đám mây = có việc cần xem: token lỗi hoặc thiếu quyền, địa chỉ lỗi, đồng bộ lỗi, hoặc vừa khôi phục và tự động hoá đang tạm dừng.`,
+          `${bold('Chấm đỏ')} cạnh mục Internet &amp; Cloud = có việc cần xem: token lỗi hoặc thiếu quyền, địa chỉ lỗi, đồng bộ lỗi, hoặc vừa khôi phục và tự động hoá đang tạm dừng.`,
         ]} />
       </Card>
 
@@ -320,7 +320,7 @@ export function CloudPanel() {
           },
           {
             title: 'Bấm Bật đồng bộ',
-            desc: `Lần đầu Deplao hỏi ${bold('mật khẩu sao lưu')} (ít nhất 8 ký tự, nhập hai lần, tick ô xác nhận) rồi chụp bản gốc ngay: sao chép DB → lọc theo phạm vi → nén → mã hoá → tải lên. Sau đó chỉ đẩy phần thay đổi.`,
+            desc: `Lần đầu Deplao hỏi ${bold('mật khẩu sao lưu')} (ít nhất 8 ký tự, nhập hai lần, tick ô xác nhận) rồi chụp bản gốc ngay: sao chép DB → lọc theo phạm vi → nén → mã hoá → tải lên. Sau đó chỉ đẩy phần thay đổi. Bản gốc mới (khoảng mỗi ngày) chỉ tự chụp khi máy rảnh, đang cắm sạc và không ngay lúc máy vừa thức dậy; bấm ${bold('Đồng bộ ngay')} để chụp luôn.`,
           },
         ]} />
         <Callout tone="destructive">
@@ -402,7 +402,7 @@ export function CloudPanel() {
           `Máy chủ hỏng: trên máy dự phòng bấm ${bold('Chuyển sang máy này')} → đăng nhập lại kênh → bật lại tự động hoá. Chỉ làm khi máy chủ cũ đã hỏng hoặc đã tắt, tránh hai máy cùng gửi tin.`,
         ]} />
         <Callout tone="warning">
-          Dữ liệu khôi phục không tự kết nối kênh chat. Dải &quot;Đã khôi phục dữ liệu…&quot; ở đầu trang Internet &amp; Đám mây
+          Dữ liệu khôi phục không tự kết nối kênh chat. Dải &quot;Đã khôi phục dữ liệu…&quot; ở đầu trang Internet &amp; Cloud
           nhắc tự động hoá đang tạm dừng cho tới khi bạn bật lại.
         </Callout>
       </Card>

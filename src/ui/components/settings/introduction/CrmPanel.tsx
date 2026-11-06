@@ -168,11 +168,12 @@ export function CrmPanel() {
         <StepList steps={[
           { title: 'Dán link nhóm', desc: 'CRM → Nhóm → <strong class="text-foreground">Quét thành viên</strong>, dán link nhóm Zalo (dạng https://zalo.me/g/…) hoặc Group ID dạng số.' },
           { title: 'Tham gia nếu chưa là thành viên', desc: 'Bấm <strong class="text-foreground">Tham gia</strong>; kết quả hiện ngay bên dưới: Đã tham gia, Đã là thành viên, Đang chờ duyệt hoặc Nhóm đã đủ thành viên. Nhóm bật duyệt thành viên sẽ nhận yêu cầu chờ duyệt - đang chờ duyệt là quét được, không cần đợi admin.' },
-          { title: 'Quét', desc: 'Bấm <strong class="text-foreground">Quét</strong>. Xong sẽ báo số thành viên và lưu vào tab Thành viên nhóm (nút Xem trong tab Thành viên).' },
+          { title: 'Quét', desc: 'Bấm <strong class="text-foreground">Quét</strong>. Lần đầu app hỏi bạn có đồng ý gửi phiên đăng nhập Zalo lên máy chủ Deplao không (xem lưu ý). Xong sẽ báo số thành viên và lưu vào tab Thành viên nhóm (nút Xem trong tab Thành viên).' },
           { title: 'Dùng kết quả', desc: 'Chọn thành viên → <strong class="text-foreground">Thêm vào chiến dịch</strong> (kết bạn, nhắn tin, mời vào nhóm) hoặc <strong class="text-foreground">Thêm vào liên hệ</strong>.' },
         ]} />
         <Note tone="warning" title={<><AlertIcon className="w-3.5 h-3.5" /> Lưu ý</>}>
           <BulletList items={[
+            '<strong class="text-foreground">Quét qua máy chủ Deplao, cần bạn đồng ý:</strong> để giữ kín cách quét, việc quét chạy trên deplaoapp.com nên app gửi phiên đăng nhập Zalo (cookie + IMEI) của tài khoản lên đó. Mặc định tắt; app hỏi trước khi gửi, không đồng ý thì không gửi gì. Bật / tắt bằng công tắc <strong class="text-foreground">Quét qua máy chủ Deplao</strong> ở đầu tab Quét thành viên. Máy chủ không lưu cookie, chỉ ghi ID tài khoản, ID nhóm, IP, thời gian. Áp dụng cả cho nút Tải thông tin thành viên và nút Quét đủ trong panel thành viên của hội thoại nhóm',
             'Với nhóm chưa tham gia, cần ít nhất ở trạng thái chờ duyệt; nhóm tắt chế độ chờ duyệt thì không quét được',
             'UID thành viên không dùng chung được giữa các tài khoản (chính sách của Zalo) - hãy quét bằng chính tài khoản sẽ gửi chiến dịch',
             'Nút Chia sẻ gửi nhóm lên kho Nhóm chung của cộng đồng (chờ admin duyệt); Khám phá kho nhóm chung để tìm nhóm có sẵn theo danh mục',
@@ -221,7 +222,7 @@ export function CrmPanel() {
         <StepList steps={[
           { title: 'Tạo chiến dịch', desc: 'Chiến dịch → <strong class="text-foreground">Tạo mới</strong>: đặt Tên, chọn Loại (Hỗn hợp: tick các Hành động).' },
           { title: 'Soạn nội dung', desc: 'Nội dung 1, 2… (nút +) là các biến thể: <strong class="text-foreground">Random</strong> = mỗi người nhận ngẫu nhiên 1 biến thể, <strong class="text-foreground">Tất cả</strong> = nhận lần lượt mọi nội dung. Chèn biến {name} (tên người nhận), {userId}; Zalo có thanh định dạng (đậm, nghiêng, gạch chân, gạch ngang, 4 màu, cỡ chữ) và tuỳ chọn Tag toàn nhóm khi gửi vào nhóm; đính kèm ảnh tuỳ chọn.' },
-          { title: 'Giãn cách & lịch chạy', desc: 'Delay giữa các liên hệ (2-3m, 3-5m, 5-10m, 10-15m hoặc Tùy chỉnh khoảng - tối thiểu 30 giây), Delay giữa các tin nhắn (khi 1 người nhận nhiều tin), Giới hạn/ngày và Giờ bắt đầu chạy (mặc định 08:00).' },
+          { title: 'Giãn cách & lịch chạy', desc: 'Delay giữa các liên hệ (2-3m, 3-5m, 5-10m, 10-15m hoặc Tùy chỉnh khoảng - tối thiểu 30 giây), Delay giữa các tin nhắn (khi 1 người nhận nhiều tin), Giới hạn/ngày, Giờ bắt đầu chạy (mặc định 08:00) và Tự dừng khi lỗi (mặc định Tắt).' },
           { title: 'Thêm liên hệ', desc: 'Bước Thêm liên hệ: Thủ công · Theo nhãn · Theo SĐT (chỉ Zalo - tra số ra tài khoản lúc gửi) · Theo UID · Bạn bè · Nhóm · Theo thành viên nhóm. Có thể thêm sau bằng nút Thêm liên hệ, hoặc từ tab Liên hệ / Nhóm qua nút Thêm vào chiến dịch.' },
           { title: 'Chạy', desc: 'Mở chiến dịch → <strong class="text-foreground">Bắt đầu</strong>. Tạm dừng / Tiếp tục bất cứ lúc nào; nút Sửa và Thêm liên hệ trong màn chi tiết chỉ hiện khi chiến dịch đang Nháp hoặc Tạm dừng.' },
         ]} />
@@ -245,9 +246,10 @@ export function CrmPanel() {
           '<strong class="text-foreground">Menu ⋯</strong> trên thẻ: Bắt đầu / Tạm dừng / Tiếp tục, Nhân bản (Chỉ clone template hoặc Clone giống hệt kèm danh sách khách), Xóa chiến dịch',
           '<strong class="text-foreground">Màn chi tiết:</strong> giãn cách, giờ chạy mỗi ngày, giới hạn/ngày; 4 ô Tổng liên hệ · Đã gửi · Đang chờ · Lỗi và thanh Đã xử lý x/y (kèm Hôm nay a/b khi có giới hạn) cập nhật ngay khi gửi',
           '<strong class="text-foreground">Danh sách liên hệ</strong> của chiến dịch: tìm tên / UID / SĐT, lọc Tất cả · Chờ gửi · Đã gửi · Lỗi, xem lỗi và giờ gửi từng người, xuất CSV',
+          '<strong class="text-foreground">Hiệu quả tin đã gửi:</strong> Đã nhận · Đã xem · Đã phản hồi (kèm %), nút Cập nhật; mỗi người nhận hiện mức cao nhất đã đạt. Lọc <strong class="text-foreground">Đã phản hồi · Đã xem, chưa phản hồi · Chưa xem · Chưa nhận</strong>, rồi bấm <strong class="text-foreground">Tạo chiến dịch từ N liên hệ</strong> để gửi tiếp đúng nhóm khách (chiến dịch nháp, chép nội dung để bạn sửa). Đã xem tính cả khách đã trả lời; Zalo chỉ báo đã xem khi người nhận bật trạng thái Đã xem, Telegram không báo đã nhận, Deplao cần đang mở để nhận các báo này',
           '<strong class="text-foreground">Hỗn hợp:</strong> người nhận có hành động lỗi (vd đã nhắn tin nhưng kết bạn lỗi) hiện <strong class="text-foreground">Gửi một phần</strong> kèm hành động lỗi và có bộ lọc Lỗi một phần; mọi hành động đều lỗi thì hiện Lỗi',
           '<strong class="text-foreground">Tab Lịch sử:</strong> nhật ký gửi của mọi chiến dịch, lọc theo chiến dịch, khoảng ngày, trạng thái, loại gửi (Tin nhắn / Kết bạn / Mời nhóm); bấm một dòng để xem chi tiết; Xuất CSV',
-          'Gửi hết danh sách thì chiến dịch tự chuyển Hoàn thành; tỷ lệ gửi thành công và phản hồi xem ở Báo cáo → Chiến dịch',
+          'Gửi hết danh sách thì chiến dịch tự chuyển Hoàn thành; so sánh các chiến dịch (đã nhận, đã xem, phản hồi) ở Báo cáo → Chiến dịch',
         ]} />
       </Card>
 
@@ -260,6 +262,8 @@ export function CrmPanel() {
         <BulletList items={[
           'Giữa hai liên hệ, app chờ một khoảng ngẫu nhiên trong Delay đã chọn, tối thiểu 30 giây; một người nhận nhiều tin thì các tin cách nhau theo Delay giữa các tin nhắn (mặc định gửi liên tiếp khoảng 1 giây)',
           '<strong class="text-foreground">Giới hạn/ngày:</strong> đủ số liên hệ trong ngày thì tạm dừng và chạy tiếp từ Giờ bắt đầu chạy hôm sau; nếu giờ bắt đầu đã qua trong ngày, chiến dịch chạy ngay',
+          '<strong class="text-foreground">Tự dừng khi lỗi</strong> (Tắt · 3 · 5 · 10 · 20, mặc định Tắt): đủ số liên hệ lỗi liên tiếp (tài khoản bị chặn, bị giới hạn, mất phiên…) thì chiến dịch chuyển <strong class="text-foreground">Tự dừng</strong>, màn chi tiết ghi lý do và lỗi cuối, app báo cho bạn. Kiểm tra tài khoản rồi bấm Tiếp tục (đếm lại từ 0). Gửi được một liên hệ là đếm lại; đủ giới hạn/ngày không tính là lỗi. Gửi cho người lạ (vd thành viên nhóm quét được) hay gặp người chặn tin người lạ, nên chọn 10 hoặc 20',
+          'Tuỳ chọn của Tự dừng khi lỗi: <strong class="text-foreground">Chỉ tính người lạ</strong> (Zalo) - bạn bè và nhóm gửi được hay lỗi đều không tính, vì Zalo chặn spam theo tin nhắn cho người lạ; <strong class="text-foreground">Mai gửi tiếp</strong> - dừng tới Giờ bắt đầu chạy hôm sau rồi tự gửi tiếp (bị chặn spam thường mở lại sau một ngày), bấm Tiếp tục để gửi ngay',
           'Các chiến dịch đang chạy của cùng một tài khoản dùng chung một hàng đợi. Thanh trạng thái cuối trang CRM hiện Queue đang chạy, Hạn mức (60 lượt/giờ mỗi tài khoản, hồi dần 1 lượt mỗi phút) và lần gửi cuối',
           'Chiến dịch Zalo chỉ gửi khi tài khoản đang kết nối; chiến dịch đang chạy tự chạy tiếp khi mở lại app',
           'Mời vào nhóm chỉ mời được người đã là bạn bè; mục Mã lỗi thường gặp trong form giúp tra nguyên nhân khi mời nhóm thất bại',

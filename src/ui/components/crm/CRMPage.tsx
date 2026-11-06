@@ -469,6 +469,21 @@ export default function CRMPage() {
     }
   };
 
+  // Màn chiến dịch → lọc theo hiệu quả (vd "Đã xem, chưa phản hồi") → chiến dịch nháp mới chỉ gồm các liên hệ đó
+  const handleCreateCampaignFromContacts = async (sourceCampaignId: number, contactIds: string[], newName: string) => {
+    if (!activeAccountId || contactIds.length === 0) return;
+    const res: { success: boolean; id?: number; error?: string } | undefined = await (DataAccessor.cloneCampaign({
+      zaloId: activeAccountId, campaignId: sourceCampaignId, includeContacts: true, newName, contactIds,
+    }) as any);
+    if (res?.success) {
+      await loadCampaigns();
+      if (res.id) store.setActiveCampaign(res.id);
+      showNotification(`Đã tạo chiến dịch nháp với ${contactIds.length.toLocaleString('vi-VN')} liên hệ`, 'success');
+    } else {
+      showNotification('Không tạo được chiến dịch: ' + (res?.error || 'Không rõ'), 'error');
+    }
+  };
+
   const handleAddContactsToCampaign = async (campaignId: number, contacts: any[]): Promise<boolean> => {
     if (!activeAccountId) return false;
     let res: any;
@@ -855,6 +870,7 @@ export default function CRMPage() {
                     onStatusChange={handleUpdateCampaignStatus}
                     onAddContacts={async (campaignId, contacts) => { await handleAddContactsToCampaign(campaignId, contacts); }}
                     onUpdate={handleUpdateCampaign}
+                    onCreateFromContacts={handleCreateCampaignFromContacts}
                   />
                 ) : (
                   <EmptyState

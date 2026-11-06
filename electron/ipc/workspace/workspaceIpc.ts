@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, safeStorage } from 'electron';
 import * as http from 'http';
 import * as https from 'https';
+import * as path from 'path';
 import WorkspaceManager, { Workspace } from '../../../src/utils/app/WorkspaceManager';
 import AppModeManager from '../../../src/utils/app/AppModeManager';
 import DatabaseService from '../../../src/services/database/DatabaseService';
@@ -11,6 +12,7 @@ import ConnectionManager from '../../../src/utils/connection/ConnectionManager';
 import EventBroadcaster from '../../../src/services/event/EventBroadcaster';
 import Logger from '../../../src/utils/Logger';
 import { credentialsChanged, isWrongPasswordLogin, normalizeBossUrl } from '../../../src/shared/employee/employeeConnection';
+import { runInRuntimeScope } from '../../../src/services/database/dbScope';
 
 /**
  * Tạm dừng đồng bộ DB lên Cloudflare quanh thao tác đổi / xoá file DB của workspace (dbsync nhả file trước, kiểm tra
@@ -141,6 +143,42 @@ function normalizeUsername(value: unknown): string {
     return String(value ?? '').toLowerCase().trim();
 }
 
+function sameDbFile(a: string, b: string): boolean {
+    const ra = path.resolve(a);
+    const rb = path.resolve(b);
+    return process.platform === 'win32' ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
+}
+
+/**
+ * Đưa main process theo trạng thái workspace (dbScope.ts): CSDL chính + media = workspace local chạy nền
+ * (getRuntimeWorkspace); giao diện mở workspace remote (nhân viên) → mở CSDL đệm của nó cho lệnh từ giao diện.
+ * Đổi sang / rời workspace remote KHÔNG đổi CSDL chính: Zalo, Telegram, Facebook, workflow, API… của workspace local
+ * chạy tiếp và ghi đúng chỗ. Trả về true khi workspace local chạy nền đổi (đổi giữa hai workspace local).
+ */
+async function syncWorkspaceDatabases(): Promise<boolean> {
+    const wsm = WorkspaceManager.getInstance();
+    const db = DatabaseService.getInstance();
+    const runtimeWs = wsm.getRuntimeWorkspace();
+    const uiWs = wsm.getUiActiveWorkspace();
+    if (uiWs?.type !== 'remote') db.closeUiWorkspaceDb();
+
+    const runtimeDbPath = wsm.resolveDbPath(runtimeWs?.dbPath || 'deplao-tool.db');
+    const runtimeChanged = !sameDbFile(runInRuntimeScope(() => db.getDbPath()), runtimeDbPath);
+    if (runtimeChanged) {
+        await db.switchToWorkspaceDb(runtimeDbPath);
+        // Media theo workspace local mới
+        FileStorageService.resetBaseDir();
+    }
+    if (uiWs?.type === 'remote') {
+        db.openUiWorkspaceDb({
+            workspaceId: uiWs.id,
+            dbPath: wsm.resolveDbPath(uiWs.dbPath || `workspace-${uiWs.id}/deplao-tool.db`),
+            mediaDir: wsm.resolveMediaPath(uiWs),
+        });
+    }
+    return runtimeChanged;
+}
+
 /**
  * registerWorkspaceIpc - IPC handlers for Workspace CRUD + switching.
  * 8 channels total.
@@ -164,7 +202,8 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
 
     ipcMain.handle('workspace:getActive', async () => {
         try {
-            const workspace = wm().getActiveWorkspace();
+            // Workspace đang mở trên giao diện (không phải workspace local chạy nền)
+            const workspace = wm().getUiActiveWorkspace();
             return { success: true, workspace };
         } catch (err: any) {
             return { success: false, error: err.message };
@@ -219,28 +258,47 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
 
     // ─── Delete ──────────────────────────────────────────────────────
 
-    ipcMain.handle('workspace:delete', async (_e, { id }: { id: string }) => withCloudDbPaused('workspace-delete', async () => {
+    ipcMain.handle('workspace:delete', async (_e, { id }: { id: string }) => runInRuntimeScope(() => withCloudDbPaused('workspace-delete', async () => {
         try {
             // Record whether this is the currently active workspace BEFORE deleting
             const wasActive = wm().getActiveWorkspaceId() === id;
             const wasRemote = wm().getWorkspaceById(id)?.type === 'remote';
+            // Workspace local đang chạy nền (CSDL chính): chuyển CSDL chính sang workspace local còn lại trước khi xoá thư mục
+            // (Windows khoá file CSDL đang mở)
+            const wasRuntime = !wasRemote && wm().getRuntimeWorkspace()?.id === id;
+            const db = DatabaseService.getInstance();
+            if (wasActive && wasRemote) db.closeUiWorkspaceDb();
+            if (wasRuntime) {
+                const fallback = wm().listWorkspaces().find(w => w.type !== 'remote' && w.id !== id);
+                if (fallback) {
+                    await db.switchToWorkspaceDb(wm().resolveDbPath(fallback.dbPath || 'deplao-tool.db'));
+                    FileStorageService.resetBaseDir();
+                }
+            }
 
             const result = wm().deleteWorkspace(id);
+            // Không xoá được (vd workspace mặc định): mở lại CSDL theo trạng thái cũ
+            if (!result.success && (wasRuntime || (wasActive && wasRemote))) await syncWorkspaceDatabases();
 
             // Xoá remote workspace = ngắt hẳn kết nối tới Boss (heartbeat + Socket.IO + lịch thử lại)
             if (result.success && wasRemote) {
                 try { HttpConnectionManager.getInstance().disconnect(id); } catch { /* ignore */ }
             }
 
-            if (result.success && wasActive) {
+            if (result.success && (wasActive || wasRuntime)) {
                 // WorkspaceManager already updated activeWorkspaceId to the first remaining.
                 // Now we need to: switch DB + notify renderer (same as workspace:switch).
-                const newActiveWs = wm().getActiveWorkspace();
+                const runtimeChanged = await syncWorkspaceDatabases();
+                if (runtimeChanged || wasRuntime) {
+                    try { require('../../../src/services/workflow/WorkflowEngineService').default.getInstance().reloadAll(); } catch { /* ignore */ }
+                    try { void require('../../../src/services/plugins/PluginsPlatform').default.getInstance().onWorkspaceChanged(); } catch { /* ignore */ }
+                }
+            }
+
+            if (result.success && wasActive) {
+                const newActiveWs = wm().getUiActiveWorkspace();
                 if (newActiveWs) {
                     AppModeManager.getInstance().clearOverride();
-                    const newDbPath = wm().resolveDbPath(newActiveWs.dbPath || 'deplao-tool.db');
-                    await DatabaseService.getInstance().switchToWorkspaceDb(newDbPath);
-                    FileStorageService.resetBaseDir();
 
                     if (mainWindow && !mainWindow.isDestroyed()) {
                         mainWindow.webContents.send('workspace:switched', {
@@ -256,11 +314,13 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
             Logger.error(`[workspaceIpc] delete error: ${err.message}`);
             return { success: false, error: err.message };
         }
-    }));
+    })));
 
     // ─── Switch ──────────────────────────────────────────────────────
 
-    ipcMain.handle('workspace:switch', async (_e, { id }: { id: string }) => withCloudDbPaused('workspace-switch', async () => {
+    // Chạy ngoài phạm vi giao diện (runInRuntimeScope): lệnh này đổi chính phạm vi đó, phần còn lại (hook, plugin, đồng bộ
+    // cookie) thuộc workspace local chạy nền.
+    ipcMain.handle('workspace:switch', async (_e, { id }: { id: string }) => runInRuntimeScope(() => withCloudDbPaused('workspace-switch', async () => {
         const prevWorkspaceId = wm().getActiveWorkspaceId();
         try {
             const result = wm().switchWorkspace(id);
@@ -274,12 +334,10 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                 // Clear event hooks to prevent accumulation across switches
                 EventBroadcaster.clearBeforeSendHooks();
 
-                // Switch DatabaseService to the new workspace's DB
-                const newDbPath = wm().resolveDbPath(result.workspace.dbPath || 'deplao-tool.db');
-                await DatabaseService.getInstance().switchToWorkspaceDb(newDbPath);
-
-                // Reset FileStorageService cache so media resolves to the new workspace's folder
-                FileStorageService.resetBaseDir();
+                // CSDL / media: workspace local chạy nền giữ nguyên khi đổi sang / rời workspace nhân viên (remote);
+                // đổi giữa hai workspace local thì CSDL chính + media đổi theo
+                const prevMainDbPath = runInRuntimeScope(() => DatabaseService.getInstance().getDbPath());
+                const runtimeChanged = await syncWorkspaceDatabases();
 
                 // Re-hook HttpRelayService into EventBroadcaster (clearBeforeSendHooks removed them)
                 try {
@@ -297,33 +355,40 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                 // Workflow: đăng ký lại hook trigger (tin nhắn, thanh toán…) — thiếu bước này workflow ngừng chạy tới khi mở lại app
                 try {
                     require('../../../src/services/workflow/WorkflowEngineService').default.getInstance().rehookEvents();
+                    // Workspace local chạy nền đổi → workflow + lịch của workspace mới
+                    if (runtimeChanged) require('../../../src/services/workflow/WorkflowEngineService').default.getInstance().reloadAll();
                 } catch (err: any) {
                     Logger.error(`[workspaceIpc] Workflow rehookEvents failed: ${err?.message || err}`);
                 }
 
-                // Plugin: dừng plugin của workspace cũ, chạy plugin đã bật của workspace mới (nền).
+                // Plugin: workspace local chạy nền đổi → dừng plugin của workspace cũ, chạy plugin đã bật của workspace mới
+                // (nền). Đổi sang / rời workspace nhân viên: plugin vẫn chạy, chỉ báo giao diện nạp lại.
                 try {
-                    void require('../../../src/services/plugins/PluginsPlatform').default.getInstance().onWorkspaceChanged();
+                    const plugins = require('../../../src/services/plugins/PluginsPlatform').default.getInstance();
+                    if (runtimeChanged) void plugins.onWorkspaceChanged();
+                    else plugins.notifyUiChanged();
                 } catch {}
 
                 // Sync latest cookies from active ConnectionManager connections into the newly loaded DB
                 // (Zalo may have refreshed cookies while boss was on a different workspace)
-                try {
-                    const db = DatabaseService.getInstance();
-                    for (const [zaloId, conn] of ConnectionManager.getAllConnections()) {
-                        if (conn.auth) {
-                            const authObj = typeof conn.auth === 'string' ? JSON.parse(conn.auth) : conn.auth;
-                            if (authObj?.cookies) {
-                                // Mã hoá như saveAccount (trước đây ghi cookie thô)
-                                db.updateAccountAuth(zaloId, authObj.cookies, authObj.imei || '', authObj.userAgent || '');
+                if (runtimeChanged) {
+                    try {
+                        const db = DatabaseService.getInstance();
+                        for (const [zaloId, conn] of ConnectionManager.getAllConnections()) {
+                            if (conn.auth) {
+                                const authObj = typeof conn.auth === 'string' ? JSON.parse(conn.auth) : conn.auth;
+                                if (authObj?.cookies) {
+                                    // Mã hoá như saveAccount (trước đây ghi cookie thô)
+                                    db.updateAccountAuth(zaloId, authObj.cookies, authObj.imei || '', authObj.userAgent || '');
+                                }
                             }
                         }
+                    } catch (err: any) {
+                        Logger.warn(`[workspaceIpc] Cookie sync from ConnectionManager failed: ${err.message}`);
                     }
-                } catch (err: any) {
-                    Logger.warn(`[workspaceIpc] Cookie sync from ConnectionManager failed: ${err.message}`);
                 }
 
-                Logger.log(`[workspaceIpc] switch → workspace=${result.workspace.id} name="${result.workspace.name}" type=${result.workspace.type} dbPath=${newDbPath} cachedAssigned=${result.workspace.cachedAssignedAccounts?.length || 0} cachedAccountsData=${result.workspace.cachedAccountsData?.length || 0} cachedPermissions=${result.workspace.cachedPermissions?.length || 0}`);
+                Logger.log(`[workspaceIpc] switch → workspace=${result.workspace.id} name="${result.workspace.name}" type=${result.workspace.type} mainDb=${runInRuntimeScope(() => DatabaseService.getInstance().getDbPath())} (before ${prevMainDbPath}) runtimeChanged=${runtimeChanged} cachedAssigned=${result.workspace.cachedAssignedAccounts?.length || 0} cachedAccountsData=${result.workspace.cachedAccountsData?.length || 0} cachedPermissions=${result.workspace.cachedPermissions?.length || 0}`);
 
                 // Bản sao để gửi renderer: KHÔNG gắn _connected/_snapshot vào object cấu hình
                 // (object đó được saveConfig() ghi xuống workspaces.json).
@@ -367,13 +432,14 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                 const currentActiveId = wm().getActiveWorkspaceId();
                 if (currentActiveId === id && prevWorkspaceId && prevWorkspaceId !== id) {
                     wm().restoreActiveWorkspace(prevWorkspaceId);
+                    await syncWorkspaceDatabases();
                 }
             } catch { /* ignore rollback helper failure */ }
             const msg = err?.message || String(err) || 'Unknown switch error';
             Logger.error(`[workspaceIpc] switch error: ${msg}`, err);
             return { success: false, error: msg };
         }
-    }));
+    })));
 
     // ─── Is Multi-Workspace ──────────────────────────────────────────
 

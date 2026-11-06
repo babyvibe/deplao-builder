@@ -1,6 +1,45 @@
 import React from 'react';
 import { MessageBubble } from './MessageBubbles';
 
+type InlineButton = { text: string; type: 'url' | 'url_auth' | 'webview' | 'callback'; url?: string; buttonId?: number };
+
+/** Nút inline dưới tin bot (Telegram); nút đang chờ bot trả lời (callback) hiện vòng chờ, không bấm lại được. */
+function InlineButtonRows({ rows, onClick }: {
+  rows: InlineButton[][];
+  onClick?: (button: InlineButton, row: number, col: number) => void | Promise<unknown>;
+}) {
+  const [pending, setPending] = React.useState<string | null>(null);
+  return (
+    <div className="mt-1 flex flex-col gap-1">
+      {rows.map((row, rowIdx) => (
+        <div key={rowIdx} className="flex flex-wrap gap-1">
+          {row.map((btn, btnIdx) => {
+            const key = `${rowIdx}:${btnIdx}`;
+            const busy = pending === key;
+            return (
+              <button
+                key={btnIdx}
+                disabled={busy}
+                onClick={() => {
+                  const result = onClick?.(btn, rowIdx, btnIdx);
+                  if (result && typeof (result as Promise<unknown>).finally === 'function') {
+                    setPending(key);
+                    void (result as Promise<unknown>).finally(() => setPending((current) => (current === key ? null : current)));
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-blue-500/50 text-blue-400 hover:bg-blue-500/10 transition-colors disabled:opacity-70"
+              >
+                {busy && <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />}
+                {btn.text}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface SharedMessageContentProps {
   msg: any;
   isSelf: boolean;
@@ -38,8 +77,9 @@ interface SharedMessageContentProps {
   renderRtf?: () => React.ReactNode;
   renderBankCard?: () => React.ReactNode;
   renderText?: () => React.ReactNode;
-  inlineButtons?: Array<Array<{ text: string; type: 'url' | 'webview' | 'callback'; url?: string }>>;
-  onInlineButtonClick?: (button: { text: string; type: string; url?: string }) => void;
+  inlineButtons?: Array<Array<InlineButton>>;
+  /** Bấm nút inline (hàng / cột của nút). Trả Promise khi phải chờ Telegram: nút hiện vòng chờ tới khi xong. */
+  onInlineButtonClick?: (button: InlineButton, row: number, col: number) => void | Promise<unknown>;
 }
 
 /**
@@ -127,21 +167,7 @@ export default function SharedMessageContent({
   return (
     <div className="flex flex-col">
       {mainContent}
-      <div className="mt-1 flex flex-col gap-1">
-        {inlineButtons.map((row, rowIdx) => (
-          <div key={rowIdx} className="flex flex-wrap gap-1">
-            {row.map((btn, btnIdx) => (
-              <button
-                key={btnIdx}
-                onClick={() => onInlineButtonClick?.(btn)}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-blue-500/50 text-blue-400 hover:bg-blue-500/10 transition-colors"
-              >
-                {btn.text}
-              </button>
-            ))}
-          </div>
-        ))}
-      </div>
+      <InlineButtonRows rows={inlineButtons} onClick={onInlineButtonClick} />
     </div>
   );
 }

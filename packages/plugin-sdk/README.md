@@ -30,7 +30,7 @@ module.exports = {
 
 ## Triển khai lên Cloudflare (`deplao.cloudflare`)
 
-Ứng dụng có quyền `cloudflare:workers` (runtime `local`) tạo được Worker và cơ sở dữ liệu D1 trên tài khoản Cloudflare mà người dùng đã kết nối trong Deplao (Cài đặt → Internet & Đám mây). Token Cloudflare không bao giờ đưa cho ứng dụng: Deplao kiểm quyền và gọi Cloudflare thay.
+Ứng dụng có quyền `cloudflare:workers` (runtime `local`) tạo được Worker và cơ sở dữ liệu D1 trên tài khoản Cloudflare mà người dùng đã kết nối trong Deplao (Cài đặt → Internet & Cloud). Token Cloudflare không bao giờ đưa cho ứng dụng: Deplao kiểm quyền và gọi Cloudflare thay.
 
 - Tên Worker / D1 phải **đúng bằng tiền tố** của ứng dụng (phần cuối id: `io.github.acme.fintrack` → `fintrack`) hoặc **bắt đầu bằng `<tiền tố>-`** (`fintrack-dev`); tên khác → lỗi `CF_NAME_FORBIDDEN`.
 - `bundleDir` / thư mục migration là đường dẫn tương đối trong thư mục ứng dụng đã cài; gói theo dạng `bundle.json` + `worker/` + `assets/` (tuỳ chọn). Tổng ≤ 50 MB, ≤ 5000 file asset, mỗi file ≤ 25 MiB.

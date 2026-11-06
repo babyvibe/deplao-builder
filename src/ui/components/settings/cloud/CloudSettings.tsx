@@ -1,5 +1,5 @@
 /**
- * Cài đặt → Internet & Đám mây (chỉ máy chủ): mọi cấu hình Cloudflare ở một chỗ.
+ * Cài đặt → Internet & Cloud (chỉ máy chủ): mọi cấu hình Cloudflare ở một chỗ.
  *  - Dải tài khoản Cloudflare ở đầu (đã kết nối: quyền từng tính năng + Quản lý; chưa kết nối: thẻ Kết nối 3 bước).
  *  - Hai thẻ lớn chọn phần (cùng kiểu trang Ứng dụng, API & Webhook): Địa chỉ Internet · Đồng bộ dữ liệu (dữ liệu +
  *    ảnh/file chung một thiết lập — SyncSection, đọc bằng sync.get()).
@@ -268,7 +268,7 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
 
   if (!api) {
     return (
-      <SettingsPage title="Internet & Đám mây" description={pageDescription} width="wide">
+      <SettingsPage title="Internet & Cloud" description={pageDescription} width="wide">
       <div className="space-y-5">
         <Notice tone="warning" title="Bản app này chưa có tính năng Cloudflare">
           <p>Cập nhật Deplao lên bản mới nhất để dùng địa chỉ cố định, lưu media và sao lưu lên Cloudflare.</p>
@@ -348,7 +348,7 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
   }
 
   const page = (
-    <SettingsPage title="Internet & Đám mây" description={pageDescription} width="wide">
+    <SettingsPage title="Internet & Cloud" description={pageDescription} width="wide">
     <div className="space-y-5">
       <RestoreStateBanner onOpenAccounts={() => setView('dashboard')} />
       {strip}

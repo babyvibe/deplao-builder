@@ -18,8 +18,12 @@ import Logger from '../../utils/Logger';
 import DatabaseService from '../database/DatabaseService';
 import { TELEGRAM_TOP_MESSAGE_ID_SQL, telegramTopMessageIdParams } from '../database/telegramTopMessage';
 import { createCatchUpPacer, focusFirst } from './messages/telegramCatchUpPacer';
+import { createResumeTurns } from './messages/telegramResumeTurns';
+import { mergeTelegramPollUpdate, telegramPollAttachment } from './messages/telegramPolls';
+import { onSystemPower } from '../../utils/startup/systemIdle';
 import EventBroadcaster from '../event/EventBroadcaster';
 import FileStorageService from '../file/FileStorageService';
+import { writeMediaFile } from '../file/writeMediaFile';
 import { shouldFetchAvatar, markAvatarFetched, markAvatarSuccess, resetAvatarCache } from '../../utils/telegram/avatarFetchCache';
 import type { TelegramPeerType } from '../../models/telegram/telegram';
 import { getTelegramMessagePreview } from './messages/TelegramMessagePreview';
@@ -44,6 +48,7 @@ import {
 import { richMediaRefs, richMessageToBlocks, richMessageToText, todoListToText } from './messages/telegramRichMessage';
 import {
   chatInviteJoinOutcome, inlineButtonInfo, stripUnsupportedTelegramPeers, TELEGRAM_BOT_VERIFICATION_ERROR,
+  type InlineButtonInfo,
 } from './api/telegramLayerCompat';
 import { GRAMJS_BUNDLED_LAYER, telegramApiLayerState } from './api/telegramApiLayer';
 import {
@@ -51,6 +56,9 @@ import {
   type DiscussionAnchor,
 } from './channels/telegramChannelPosts';
 import { isTelegramMetaAttachment } from '../../shared/telegram/telegramAttachmentTypes';
+import {
+  MINI_APP_METHOD_RE, MINI_APP_PLATFORM, miniAppParamsJson, sanitizeMiniAppTheme, urlAuthInfo, type UrlAuthInfo,
+} from '../../shared/telegram/telegramMiniApp';
 import { isUndecryptedCredential } from '../../shared/accounts/storedCredential';
 import { normalizeTelegramReaction, orderTelegramReactions, type TelegramChatReactions, type TelegramReactionCatalog } from '../../shared/telegram/telegramReactions';
 import {
@@ -182,6 +190,67 @@ const telegramDownloads = createTelegramDownloadQueue({
 });
 /** Bù tin nền (difference, lịch sử TooLong, đồng bộ lại, dialog watch) nhường luồng chính theo nhịp (telegramCatchUpPacer.ts). */
 const paceCatchUp = createCatchUpPacer();
+/** Sau khi máy thức dậy / mở khoá: bù tin từng tài khoản lần lượt, tài khoản đang mở hội thoại trước (telegramResumeTurns.ts). */
+const resumeTurns = createResumeTurns({ focusedAccount: () => telegramDownloads.getFocus()?.accountId || null });
+onSystemPower(ev => {
+  if (ev !== 'suspend') resumeTurns.noteWake();
+});
+/**
+ * Bình chọn đã hỏi kết quả gần đây theo poll id (UpdateMessagePoll của layer cũ chỉ mang poll id, không mang tin):
+ * `${accountId}:${pollId}` → hội thoại + tin. Giới hạn số mục, bỏ mục cũ nhất.
+ */
+const telegramPollMessages = new Map<string, { chatId: string; msgId: string }>();
+const TELEGRAM_POLL_MEMORY = 2000;
+
+function rememberTelegramPoll(accountId: string, pollId: string, chatId: string, msgId: string): void {
+  if (!pollId || pollId === '0') return;
+  const key = `${accountId}:${pollId}`;
+  telegramPollMessages.delete(key);
+  telegramPollMessages.set(key, { chatId, msgId });
+  if (telegramPollMessages.size > TELEGRAM_POLL_MEMORY) {
+    const oldest = telegramPollMessages.keys().next().value;
+    if (oldest) telegramPollMessages.delete(oldest);
+  }
+}
+
+/**
+ * Áp kết quả bình chọn mới lên tin đã lưu (messages/telegramPolls.ts) + vá giao diện (event:messagesRepaired, nhân
+ * viên cũng nhận). Trả attachments mới, null = không có tin / không đổi.
+ */
+function applyTelegramPollUpdate(accountId: string, chatId: string, msgId: string, update: { poll?: any; results?: any }): string | null {
+  const db = DatabaseService.getInstance();
+  if (!db || !chatId || !msgId) return null;
+  const row = db.queryOne<any>(
+    `SELECT attachments FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND CAST(thread_id AS TEXT) = ? AND channel = 'telegram_user'`,
+    [accountId, msgId, chatId],
+  );
+  if (!row) return null;
+  const merged = mergeTelegramPollUpdate(row.attachments, update);
+  if (!merged) return null;
+  db.run(
+    `UPDATE messages SET attachments = ? WHERE owner_zalo_id = ? AND msg_id = ? AND CAST(thread_id AS TEXT) = ? AND channel = 'telegram_user'`,
+    [merged, accountId, msgId, chatId],
+  );
+  EventBroadcaster.emit('event:messagesRepaired', { zaloId: accountId, threadId: chatId, items: [{ msgId, attachments: JSON.parse(merged) }] });
+  return merged;
+}
+
+/** UpdateMessagePoll: layer mới mang hội thoại + tin; layer cũ chỉ poll id (bình chọn đã hỏi kết quả gần đây). */
+function handleTelegramPollUpdate(accountId: string, update: any): void {
+  const pollId = update?.pollId != null ? String(update.pollId) : '';
+  let chatId = update?.peer ? getCanonicalChatId(update.peer) : '';
+  let msgId = update?.msgId != null ? String(update.msgId) : '';
+  if (!chatId || !msgId) {
+    const known = telegramPollMessages.get(`${accountId}:${pollId}`);
+    if (!known) return;
+    chatId = known.chatId;
+    msgId = known.msgId;
+  } else {
+    rememberTelegramPoll(accountId, pollId, chatId, msgId);
+  }
+  applyTelegramPollUpdate(accountId, chatId, msgId, { poll: update?.poll, results: update?.results });
+}
+
 /** Hội thoại Telegram đang mở của tài khoản (renderer báo qua setTelegramDownloadFocus): bù tin của nó trước. */
 function focusedTelegramChat(accountId: string): string | null {
   const focus = telegramDownloads.getFocus();
@@ -979,6 +1048,10 @@ function applyTelegramMessageEdit(accountId: string, client: any, msg: any): voi
   if (!chatId || !db) return;
 
   applyTelegramMessageReactions(accountId, client, chatId, msgId, msg.reactions, getForumTopicId(msg) || undefined);
+  // Bình chọn bị sửa (đóng, thêm lựa chọn…): chữ không đổi nên phần dưới bỏ qua → cập nhật bình chọn ở đây
+  if (msg.media?.className === 'MessageMediaPoll') {
+    applyTelegramPollUpdate(accountId, chatId, msgId, { poll: msg.media.poll, results: msg.media.results });
+  }
 
   const existingMsg = db.queryOne<any>(
     `SELECT content, edit_history, is_edited FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
@@ -1468,29 +1541,11 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
       live: mediaClass === 'MessageMediaGeoLive', period: Number(media?.period || 0),
     });
   } else if (mediaClass === 'MessageMediaPoll') {
-    const poll = media?.poll || {};
-    const question = String(poll?.question?.text || poll?.question || 'Bình chọn');
+    // Kết quả lúc tin về; về sau cập nhật qua UpdateMessagePoll / refreshPollResults (messages/telegramPolls.ts)
+    const pollAttachment = telegramPollAttachment(media?.poll || {}, media?.results);
     msgType = 'telegram.poll';
-    content ||= question;
-    const resultByOption = new Map<string, any>();
-    for (const result of media?.results?.results || []) {
-      const key = Buffer.from(result?.option || []).toString('base64');
-      resultByOption.set(key, result);
-    }
-    attachments.push({
-      type: 'poll', id: String(poll?.id || ''), question,
-      closed: !!poll?.closed, multiple_choice: !!poll?.multipleChoice, quiz: !!poll?.quiz,
-      open_answers: !!poll?.openAnswers,
-      total_voters: Number(media?.results?.totalVoters || 0),
-      answers: (poll?.answers || []).map((answer: any) => {
-        const option = Buffer.from(answer?.option || []).toString('base64');
-        const result = resultByOption.get(option);
-        return {
-          text: String(answer?.text?.text || answer?.text || ''), option,
-          voters: Number(result?.voters || 0), chosen: !!result?.chosen, correct: !!result?.correct,
-        };
-      }),
-    });
+    content ||= pollAttachment.question;
+    attachments.push(pollAttachment);
   } else if (mediaClass === 'MessageMediaDice') {
     msgType = 'telegram.dice';
     content ||= `${media?.emoticon || '🎲'} ${Number(media?.value || 0)}`;
@@ -1552,7 +1607,7 @@ function normalizeTelegramMessageMedia(message: any, peerType?: TelegramPeerType
 }
 
 /** Parse ReplyInlineMarkup from message into structured button rows */
-function parseInlineButtons(message: any): Array<Array<{ text: string; type: 'url' | 'webview' | 'callback'; url?: string }>> | null {
+function parseInlineButtons(message: any): InlineButtonInfo[][] | null {
   const replyMarkup = (message as any)?.replyMarkup;
   if (!replyMarkup || replyMarkup.className !== 'ReplyInlineMarkup') return null;
 
@@ -2384,7 +2439,10 @@ function scheduleReconnectCatchUp(listener: ActiveListener, client: TelegramClie
     return;
   }
   let retryNeeded = false;
+  let releaseTurn: () => void = () => undefined;
   const promise: Promise<void> = (async () => {
+    // Vừa thức dậy: các tài khoản bù tin lần lượt thay vì cùng lúc (telegramResumeTurns.ts); ngoài lúc đó chạy ngay
+    releaseTurn = await resumeTurns.turn(accountId);
     const idle = await waitForTelegramAccountSync(accountId, 30_000);
     if (!idle) {
       retryNeeded = true;
@@ -2424,6 +2482,7 @@ function scheduleReconnectCatchUp(listener: ActiveListener, client: TelegramClie
     retryNeeded = isCurrentTelegramClient(accountId, client);
     Logger.warn(`[TelegramUserListener] Reconnect catch-up failed for ${accountId}: ${err.message}`);
   }).finally(() => {
+    releaseTurn();
     // A newer client's catch-up owns the account now; leave its state alone.
     if (reconnectCatchUps.get(accountId)?.promise !== promise) return;
     reconnectCatchUps.delete(accountId);
@@ -4215,6 +4274,12 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
           return;
         }
 
+        // Kết quả bình chọn đổi (Telegram đẩy cho bình chọn vừa xem / vừa hỏi kết quả)
+        if ((update as any)?.className === 'UpdateMessagePoll') {
+          handleTelegramPollUpdate(account.accountId, update);
+          return;
+        }
+
         // Handle deleted messages (thu hồi)
         if (update instanceof Api.UpdateDeleteMessages || update instanceof Api.UpdateDeleteChannelMessages) {
           const ids = update.messages || [];
@@ -4373,6 +4438,7 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
         Api.UpdateChatDefaultBannedRights,
         // Channel reactions - handled via className/CONSTRUCTOR_ID check in handler
         (Api as any).UpdateChannelMessageReactions,
+        (Api as any).UpdateMessagePoll,
       ].filter(Boolean),
     }));
 
@@ -4714,6 +4780,15 @@ async function handleServiceMessage(
 /** Main message ingress — handles normal messages from all sources (socket,
  *  difference, history). Uses peerId-first identity (P1.1) and idempotent
  *  persistence (P1.5). Only emits UI events on actual insert. */
+/**
+ * Tin của mình: tin gửi đi, và mọi tin trong Tin nhắn đã lưu (chat với chính mình). Tin chuyển tiếp vào đó Telegram để
+ * out=false (app Telegram hiện như tin đến) → coi là tin đến thì thành chưa đọc, "Chưa trả lời", kích hoạt workflow trả lời
+ * tự động ngay trong chat với chính mình.
+ */
+function isOwnTelegramMessage(message: any, accountId: string, chatId: string): boolean {
+  return !!message?.out || (!!chatId && chatId === accountId);
+}
+
 async function handleNewMessage(accountId: string, event: NewMessageEvent, client?: TelegramClient, source: TelegramIngressSource = 'socket'): Promise<ProcessResult> {
   const message = event.message;
   if (!message) return { status: 'ignored' };
@@ -4856,7 +4931,7 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
   }
 
   const senderId = String(message.senderId?.valueOf() || '');
-  const isSelf = message.out || false;
+  const isSelf = isOwnTelegramMessage(message, accountId, chatId);
   const timestamp = (message.date || Math.floor(Date.now() / 1000)) * 1000;
 
   // Get sender name — best-effort, not blocking identity
@@ -4998,6 +5073,9 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
 
     // Detect if peer is a bot (for DM conversations with bots)
     const peerIsBot = chat?.className === 'User' && chat?.bot ? 1 : null;
+    // Tin nhắn đã lưu (chat với chính mình): không tính chưa đọc, không thông báo (như Telegram); tin trong đó là tin của
+    // mình (isOwnTelegramMessage)
+    const savedMessages = !isGroup && chatId === accountId;
 
     // Bình luận trong nhóm thảo luận chưa tham gia (vd sticker vừa gửi): không tạo hội thoại cho nhóm
     const commentOnly = isGroup && skipCommentOnlyConversation(db, accountId, chatId);
@@ -5014,9 +5092,9 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     `, [
       accountId, chatId, chatTitle,
       isGroup ? 'group' : 'user',
-      isSelf ? 0 : 1, lastMessagePreview, timestamp,
+      isSelf || savedMessages ? 0 : 1, lastMessagePreview, timestamp,
       shouldBeInOthers ? 1 : 0, peerIsBot,
-      isSelf ? 0 : 1,
+      isSelf || savedMessages ? 0 : 1,
     ]);
 
     // If this is a new group/channel with no real name (just ID), resolve info async
@@ -5025,7 +5103,7 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
     }
 
     // Fetch avatar cho contact mới (background, non-blocking)
-    if (client && !isSelf && chat && !commentOnly) {
+    if (client && !isSelf && !savedMessages && chat && !commentOnly) {
       fetchNewContactAvatar(accountId, client, chatId, chat).catch(() => {});
     }
 
@@ -5051,7 +5129,7 @@ async function handleNewMessage(accountId: string, event: NewMessageEvent, clien
         type: threadType,
         threadId: chatId,
         isSelf,
-        _silentNotification: suppressNotification,
+        _silentNotification: suppressNotification || savedMessages,
         // Giao diện: hiện trong phần bình luận nhưng không tạo hội thoại / không tính chưa đọc
         ...(commentOnly ? { _commentOnly: true } : {}),
         data: {
@@ -5487,12 +5565,11 @@ async function saveMediaToDisk(buffer: Buffer, filename: string, msgType: string
     const accountId = parts[0] || 'unknown';
 
     const mediaDir = path.join(baseDir, accountId, subfolder);
-    if (!fs.existsSync(mediaDir)) {
-      fs.mkdirSync(mediaDir, { recursive: true });
-    }
+    await fs.promises.mkdir(mediaDir, { recursive: true });
 
+    // Bất đồng bộ: video vài chục MB ghi đồng bộ chặn main cả giây khi ổ đĩa bận
     const filePath = path.join(mediaDir, filename);
-    fs.writeFileSync(filePath, buffer);
+    await writeMediaFile(filePath, buffer);
 
     // Auto-fix non-faststart MP4 files (moov atom at end → move to front)
     // Without faststart, <video> element can't read metadata and fails to play
@@ -5935,6 +6012,9 @@ async function synchronizeTelegramAccount(
       includeRecentDialogs: !!options.includeHistory || !!options.recoverRecentChannels,
     });
 
+    // Tin nhắn đã lưu không nằm trong lượt quét chat (chỉ 200-300 chat gần nhất): hỏi riêng, 1-2 lệnh
+    await syncSavedMessages(accountId, client);
+
     // A complete global difference plus per-channel recovery is authoritative.
     // Running a broad GetHistory pass anyway races channel difference (history
     // can insert first, causing the realtime path to dedup without a UI event)
@@ -6326,7 +6406,7 @@ async function persistTelegramHistoryMessages(
 
     // Phase B: Use persistTelegramMessage for idempotency
     const senderId = String(msg.senderId?.valueOf() || '');
-    const isSelf = msg.out || false;
+    const isSelf = isOwnTelegramMessage(msg, accountId, chatId);
     const isGroup = dialog.isChannel || dialog.isGroup;
     const threadType = isGroup ? 1 : 0;
 
@@ -6389,6 +6469,132 @@ async function persistTelegramHistoryMessages(
     }
   }
   return inserted;
+}
+
+/** Lần tải lịch sử đầu tiên của Tin nhắn đã lưu: tối đa bấy nhiêu tin (cũ hơn nữa tải khi cuộn lên). */
+const SAVED_MESSAGES_HISTORY_MAX = 5000;
+/** Cờ (app_settings, theo tài khoản): Tin nhắn đã lưu đã được tải lịch sử lần đầu. */
+const savedMessagesHistoryKey = (accountId: string) => `tg_saved_messages_history_v1:${accountId}`;
+const savedMessagesHistoryJobs = new Set<string>();
+
+/**
+ * Tải lịch sử Tin nhắn đã lưu lần đầu, chạy nền (không giữ lượt đồng bộ). Chat này chưa từng được tải lịch sử: trong máy
+ * chỉ có vài tin nhận realtime rời rạc (DB thật: 4 tin 09/2024-03/2025, tin mới nhất trên Telegram cũng là tin cuối
+ * đó nên lượt "tin sau mốc" không tải gì, các tin ở giữa và trước đó thiếu hết; cuộn lên chỉ tải tin cũ hơn tin cũ
+ * nhất). Tải từ tin mới nhất xuống tới tin cũ nhất đang có (không còn khe hở), trang 100 tin cách nhau ~1 s, tối đa
+ * SAVED_MESSAGES_HISTORY_MAX. Lỗi giữa chừng → không đặt cờ, lần đồng bộ sau tải lại (tin đã có bỏ qua).
+ */
+async function backfillSavedMessagesHistory(accountId: string, client: TelegramClient, me: any, oldestLocalId: number): Promise<number> {
+  const db = DatabaseService.getInstance();
+  if (!db || savedMessagesHistoryJobs.has(accountId)) return 0;
+  savedMessagesHistoryJobs.add(accountId);
+  try {
+    const { Api } = require('telegram');
+    const messages: any[] = [];
+    for await (const message of client.iterMessages(new Api.InputPeerSelf(), { limit: SAVED_MESSAGES_HISTORY_MAX, waitTime: 1000 })) {
+      if (retiredClients.has(client)) return 0;
+      messages.push(message);
+      if (oldestLocalId > 0 && Number(message.id) <= oldestLocalId) break;
+    }
+    const title = [me?.firstName, me?.lastName].filter(Boolean).join(' ') || me?.username || accountId;
+    const inserted = await persistTelegramHistoryMessages(accountId, client, accountId, { isChannel: false, isGroup: false, entity: me, title }, messages);
+    db.setSetting(savedMessagesHistoryKey(accountId), '1');
+    Logger.log(`[TelegramUserListener] Saved Messages history for ${accountId}: fetched=${messages.length} inserted=${inserted} oldestLocalId=${oldestLocalId}`);
+    return inserted;
+  } catch (err: any) {
+    Logger.warn(`[TelegramUserListener] Saved Messages history failed for ${accountId}: ${err?.message || err}`);
+    return 0;
+  } finally {
+    savedMessagesHistoryJobs.delete(accountId);
+  }
+}
+
+/**
+ * Tin nhắn đã lưu (Saved Messages = chat với chính mình, Deplao hiện là My Documents). Hội thoại riêng chỉ được tạo từ
+ * lượt quét danh sách chat (fetchMissedMessages: 200-300 chat gần nhất, bỏ qua khi đồng bộ tăng dần đủ), nên chat ít
+ * dùng này không bao giờ có. Mỗi lần đồng bộ hỏi riêng nó (messages.getPeerDialogs, 1 lệnh) → lưu hội thoại (kênh
+ * telegram_user); Telegram có tin mới hơn mốc trong máy thì tải bù như fetchMissedMessages: chưa có tin nào → 100 tin
+ * mới nhất, có rồi → mọi tin sau mốc từ cũ tới mới (tối đa RECOVERY_MESSAGES_PER_DIALOG, lượt sau tải tiếp, không hở).
+ * Lần đầu có tin rời rạc trong máy → tải lịch sử nền (backfillSavedMessagesHistory).
+ */
+async function syncSavedMessages(accountId: string, client: TelegramClient): Promise<number> {
+  const db = DatabaseService.getInstance();
+  if (!db) return 0;
+  try {
+    const { Api } = require('telegram');
+    const result: any = await client.invoke(new Api.messages.GetPeerDialogs({
+      peers: [new Api.InputDialogPeer({ peer: new Api.InputPeerSelf() })],
+    }));
+    const dialog = result?.dialogs?.[0];
+    const me: any = (result?.users || []).find((user: any) => user?.self) || await client.getMe();
+    if (!dialog || !me) return 0;
+    persistTelegramDialogState(accountId, accountId, dialog, me);
+    // Tin lưu trước khi mọi tin ở đây là tin của mình (isOwnTelegramMessage): tin chuyển tiếp từng lưu là tin đến
+    db.run(
+      `UPDATE messages SET is_sent = 1, status = 'sent'
+       WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user' AND is_sent = 0`,
+      [accountId, accountId],
+    );
+    const topMessage = Number(dialog.topMessage || 0);
+    const checkpoint = getTelegramHistoryCheckpoint(db, accountId, accountId);
+    let inserted = 0;
+    let backfilling = false;
+    if (topMessage > 0 && db.getSetting(savedMessagesHistoryKey(accountId)) !== '1') {
+      const oldestLocalId = Number(db.queryOne<{ id: number | null }>(
+        `SELECT MIN(CAST(msg_id AS INTEGER)) AS id FROM messages
+         WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+        [accountId, accountId],
+      )?.id || 0);
+      if (oldestLocalId > 0) {
+        // Tải nền từ tin mới nhất xuống: gồm cả các tin sau mốc nên không tải bù riêng bên dưới
+        void backfillSavedMessagesHistory(accountId, client, me, oldestLocalId);
+        backfilling = true;
+      } else {
+        // Chưa có tin nào trong máy: 100 tin mới nhất bên dưới là đủ (không có khe hở), chỉ đặt cờ
+        db.setSetting(savedMessagesHistoryKey(accountId), '1');
+      }
+    }
+    if (!backfilling && topMessage > checkpoint) {
+      const messages: any[] = [];
+      if (!checkpoint) {
+        messages.push(...await client.getMessages(new Api.InputPeerSelf(), { limit: INITIAL_MESSAGES_PER_DIALOG }));
+      } else {
+        for await (const message of client.iterMessages(new Api.InputPeerSelf(), {
+          minId: checkpoint,
+          limit: RECOVERY_MESSAGES_PER_DIALOG,
+          reverse: true,
+        })) {
+          messages.push(message);
+        }
+      }
+      const title = [me.firstName, me.lastName].filter(Boolean).join(' ') || me.username || accountId;
+      inserted = await persistTelegramHistoryMessages(accountId, client, accountId, { isChannel: false, isGroup: false, entity: me, title }, messages);
+    }
+    // Hội thoại có tin nhưng chưa có dòng tin cuối (dòng cũ không do đồng bộ tạo) → lấy từ tin mới nhất trong máy
+    const contact = db.queryOne<{ last_message_time: number | null }>(
+      `SELECT last_message_time FROM contacts WHERE owner_zalo_id = ? AND contact_id = ?`,
+      [accountId, accountId],
+    );
+    if (contact && !Number(contact.last_message_time)) {
+      const newest = db.queryOne<{ content: string; msg_type: string; timestamp: number }>(
+        `SELECT content, msg_type, timestamp FROM messages
+         WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user' AND msg_type != 'recalled'
+         ORDER BY timestamp DESC LIMIT 1`,
+        [accountId, accountId],
+      );
+      if (newest) {
+        db.run(
+          `UPDATE contacts SET last_message = ?, last_message_time = ? WHERE owner_zalo_id = ? AND contact_id = ?`,
+          [getTelegramMessagePreview(newest.msg_type, newest.content), newest.timestamp, accountId, accountId],
+        );
+        noteTelegramHistoryInsert(accountId, accountId);
+      }
+    }
+    return inserted;
+  } catch (err: any) {
+    Logger.warn(`[TelegramUserListener] Saved Messages sync failed for ${accountId}: ${err?.message || err}`);
+    return 0;
+  }
 }
 
 async function fetchMissedMessages(accountId: string, client: TelegramClient): Promise<TelegramHistorySyncResult> {
@@ -6599,12 +6805,10 @@ async function saveAvatarToDisk(buffer: Buffer, filename: string): Promise<strin
     const baseDir = FileStorageService.getBaseDir();
 
     const avatarsDir = path.join(baseDir, '_avatars', 'telegram');
-    if (!fs.existsSync(avatarsDir)) {
-      fs.mkdirSync(avatarsDir, { recursive: true });
-    }
+    await fs.promises.mkdir(avatarsDir, { recursive: true });
 
     const filePath = path.join(avatarsDir, filename);
-    fs.writeFileSync(filePath, buffer);
+    await writeMediaFile(filePath, buffer);
     return filePath;
   } catch {
     return null;
@@ -6686,33 +6890,62 @@ export async function getBotCommands(accountId: string, botId: string): Promise<
 }
 
 // ─── Telegram WebView (Mini App) ─────────────────────────────────────────────
+// Mini App của bot chạy trong app (renderer TelegramMiniApp, như client Telegram): main lấy link có initData của người
+// dùng và làm các việc Mini App xin qua sự kiện (CloudStorage, quyền nhắn tin, chia sẻ số điện thoại).
+// Tài liệu: https://core.telegram.org/api/bots/webapps, https://core.telegram.org/api/web-events
+
+export interface MiniAppRequestOptions {
+  /** Hội thoại mở Mini App (nút trong tin của bot ở nhóm → nhóm); không có = chat riêng với bot. */
+  peerId?: string;
+  /** Màu giao diện (tgWebAppThemeParams) theo theme của Deplao; main lọc lại (sanitizeMiniAppTheme). */
+  themeParams?: unknown;
+}
+
+async function resolveBotInputUser(accountId: string, client: TelegramClient, botId: string): Promise<any> {
+  const entity = await resolvePeerEntity(accountId, client, botId);
+  if (!entity) throw new Error('Bot not found');
+  if (!entity.accessHash) throw new Error('Cannot get bot access hash');
+  const { Api } = require('telegram');
+  return new Api.InputUser({ userId: BigInt(String(botId)), accessHash: BigInt(String(entity.accessHash)) });
+}
+
+/** Peer của Mini App: hội thoại nơi bấm nút (tin kết quả gửi vào đó), mặc định chat với bot. */
+function resolveMiniAppPeer(accountId: string, client: TelegramClient, botId: string, peerId?: string): Promise<any> {
+  return resolveInputPeer(accountId, client, peerId && /^-?\d+$/.test(peerId) ? peerId : botId);
+}
+
+function miniAppThemeOption(themeParams: unknown): Record<string, unknown> {
+  const theme = sanitizeMiniAppTheme(themeParams);
+  if (!theme) return {};
+  const { Api } = require('telegram');
+  return { themeParams: new Api.DataJSON({ data: JSON.stringify(theme) }) };
+}
+
+function miniAppRandomId(): bigint {
+  return require('crypto').randomBytes(8).readBigInt64LE();
+}
 
 /**
  * Open a Mini App via messages.requestWebView.
  * Used for: inline keyboard WebView buttons, custom bot menu buttons.
  */
 export async function requestWebView(
-  accountId: string, botId: string, url: string, fromBotMenu = false
+  accountId: string, botId: string, url: string, fromBotMenu = false, opts: MiniAppRequestOptions = {},
 ): Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }> {
   const conn = ensureConnected(accountId);
   if ('error' in conn) return { success: false, error: conn.error };
 
   try {
     const { Api } = require('telegram');
-    const entity = await resolvePeerEntity(accountId, conn.client, botId);
-    if (!entity) return { success: false, error: 'Bot not found' };
-
-    const accessHash = entity.accessHash;
-    if (!accessHash) return { success: false, error: 'Cannot get bot access hash' };
-
-    const peer = await resolveInputPeer(accountId, conn.client, botId);
-    const bot = new Api.InputUser({ userId: BigInt(String(botId)), accessHash: BigInt(String(accessHash)) });
+    const bot = await resolveBotInputUser(accountId, conn.client, botId);
+    const peer = await resolveMiniAppPeer(accountId, conn.client, botId, opts.peerId);
 
     const result = await conn.client.invoke(new Api.messages.RequestWebView({
       peer,
       bot,
       url: url || undefined,
-      platform: 'desktop',
+      platform: MINI_APP_PLATFORM,
+      ...miniAppThemeOption(opts.themeParams),
       ...(fromBotMenu ? { fromBotMenu: true } : {}),
     })) as any;
 
@@ -6728,29 +6961,24 @@ export async function requestWebView(
 
 /**
  * Open a bot's Main Mini App via messages.requestMainWebView.
- * Used for: "Open" button in conversation list for bots with Main Mini App.
+ * Used for: "Open" button in conversation list / bot menu for bots with Main Mini App.
  */
 export async function requestMainWebView(
-  accountId: string, botId: string, startParam?: string
+  accountId: string, botId: string, startParam?: string, opts: MiniAppRequestOptions = {},
 ): Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }> {
   const conn = ensureConnected(accountId);
   if ('error' in conn) return { success: false, error: conn.error };
 
   try {
     const { Api } = require('telegram');
-    const entity = await resolvePeerEntity(accountId, conn.client, botId);
-    if (!entity) return { success: false, error: 'Bot not found' };
-
-    const accessHash = entity.accessHash;
-    if (!accessHash) return { success: false, error: 'Cannot get bot access hash' };
-
-    const peer = await resolveInputPeer(accountId, conn.client, botId);
-    const bot = new Api.InputUser({ userId: BigInt(String(botId)), accessHash: BigInt(String(accessHash)) });
+    const bot = await resolveBotInputUser(accountId, conn.client, botId);
+    const peer = await resolveMiniAppPeer(accountId, conn.client, botId, opts.peerId);
 
     const result = await conn.client.invoke(new Api.messages.RequestMainWebView({
       peer,
       bot,
-      platform: 'desktop',
+      platform: MINI_APP_PLATFORM,
+      ...miniAppThemeOption(opts.themeParams),
       ...(startParam ? { startParam } : {}),
     })) as any;
 
@@ -6765,24 +6993,168 @@ export async function requestMainWebView(
 }
 
 /**
- * Keep WebView alive. Must be called every ~60s while WebView is open.
+ * Mini App theo tên (t.me/<bot>/<app>): messages.getBotApp. `inactive` / `requestWriteAccess` → hỏi người dùng trước khi
+ * mở (https://core.telegram.org/api/bots/webapps#direct-link-mini-apps).
  */
-export async function prolongWebView(
-  accountId: string, botId: string, queryId: string
-): Promise<{ success: boolean; error?: string }> {
+export async function getBotApp(
+  accountId: string, botId: string, shortName: string,
+): Promise<{ success: boolean; app?: { id: string; accessHash: string; title: string; description: string; inactive: boolean; requestWriteAccess: boolean }; error?: string }> {
+  if (!/^[A-Za-z0-9_]{3,64}$/.test(String(shortName || ''))) return { success: false, error: 'Tên Mini App không hợp lệ' };
   const conn = ensureConnected(accountId);
   if ('error' in conn) return { success: false, error: conn.error };
 
   try {
     const { Api } = require('telegram');
-    const entity = await resolvePeerEntity(accountId, conn.client, botId);
-    if (!entity) return { success: false, error: 'Bot not found' };
+    const bot = await resolveBotInputUser(accountId, conn.client, botId);
+    const res = await conn.client.invoke(new Api.messages.GetBotApp({
+      app: new Api.InputBotAppShortName({ botId: bot, shortName }),
+      hash: BigInt(0),
+    })) as any;
+    const app = res?.app;
+    if (!app?.id || app.accessHash == null) return { success: false, error: 'Bot không có Mini App này' };
+    return {
+      success: true,
+      app: {
+        id: String(app.id), accessHash: String(app.accessHash), title: String(app.title || shortName),
+        description: String(app.description || ''), inactive: !!res.inactive, requestWriteAccess: !!res.requestWriteAccess,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
 
-    const accessHash = entity.accessHash;
-    if (!accessHash) return { success: false, error: 'Cannot get bot access hash' };
+/** Mở Mini App theo tên (sau getBotApp): messages.requestAppWebView. */
+export async function requestAppWebView(
+  accountId: string, botId: string, app: { id: string; accessHash: string },
+  opts: MiniAppRequestOptions & { startParam?: string; writeAllowed?: boolean } = {},
+): Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }> {
+  if (!/^-?\d+$/.test(String(app?.id || '')) || !/^-?\d+$/.test(String(app?.accessHash || ''))) {
+    return { success: false, error: 'Mini App không hợp lệ' };
+  }
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
 
+  try {
+    const { Api } = require('telegram');
+    const peer = await resolveMiniAppPeer(accountId, conn.client, botId, opts.peerId);
+    const result = await conn.client.invoke(new Api.messages.RequestAppWebView({
+      peer,
+      app: new Api.InputBotAppID({ id: BigInt(app.id), accessHash: BigInt(app.accessHash) }),
+      platform: MINI_APP_PLATFORM,
+      ...miniAppThemeOption(opts.themeParams),
+      ...(opts.startParam ? { startParam: opts.startParam } : {}),
+      ...(opts.writeAllowed ? { writeAllowed: true } : {}),
+    })) as any;
+    return { success: true, webViewUrl: result?.url || '', queryId: String(result?.queryId || '') };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/** Link bot có ?start=<tham số>: người dùng bấm "Bắt đầu" → messages.startBot (https://core.telegram.org/api/links#bot-links). */
+export async function startBot(accountId: string, botId: string, startParam: string): Promise<{ success: boolean; error?: string }> {
+  if (!/^[A-Za-z0-9_-]{0,64}$/.test(String(startParam ?? ''))) return { success: false, error: 'Tham số không hợp lệ' };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const bot = await resolveBotInputUser(accountId, conn.client, botId);
     const peer = await resolveInputPeer(accountId, conn.client, botId);
-    const bot = new Api.InputUser({ userId: BigInt(String(botId)), accessHash: BigInt(String(accessHash)) });
+    await conn.client.invoke(new Api.messages.StartBot({ bot, peer, randomId: miniAppRandomId(), startParam: String(startParam ?? '') }));
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+export type InlineButtonPress =
+  | { kind: 'answer'; message: string; alert: boolean; url: string }
+  | { kind: 'copy'; text: string }
+  | { kind: 'profile'; userId: string }
+  | { kind: 'unsupported'; reason: string };
+
+/**
+ * Nút inline không phải link của tin bot (callback, trò chơi, sao chép, mở hồ sơ…): đọc lại nút ở [hàng][cột] từ tin trên
+ * Telegram (dữ liệu callback không lưu trong DB, tin cũ vẫn bấm được) rồi làm như client Telegram
+ * (https://core.telegram.org/api/bots/buttons): callback / trò chơi → messages.getBotCallbackAnswer.
+ */
+export async function pressInlineButton(
+  accountId: string, chatId: string, messageId: number, row: number, col: number,
+): Promise<{ success: boolean; action?: InlineButtonPress; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const peer = await resolveInputPeer(accountId, conn.client, chatId);
+    const fetched: any[] = (await conn.client.getMessages(peer, { ids: [messageId] })) as any;
+    const message: any = (fetched || []).find((item: any) => Number(item?.id) === messageId);
+    const markup = message?.replyMarkup;
+    const button = markup?.className === 'ReplyInlineMarkup' ? markup.rows?.[row]?.buttons?.[col] : null;
+    if (!button) return { success: false, error: 'Nút này không còn trên tin (bot đã đổi tin)' };
+    // Layer 198: KeyboardButtonCallback… · layer 23x: KeyboardInlineButton { type: InlineButtonTypeCallback… }
+    const kind = String(button.className || '');
+    const type = button.type && typeof button.type === 'object' ? button.type : null;
+    const typeKind = String(type?.className || '');
+    const pick = (name: string) => button[name] ?? type?.[name];
+    const isKind = (legacy: string, current: string) => kind === legacy || typeKind === current;
+
+    if (isKind('KeyboardButtonCallback', 'InlineButtonTypeCallback') || isKind('KeyboardButtonGame', 'InlineButtonTypeGame')) {
+      const game = isKind('KeyboardButtonGame', 'InlineButtonTypeGame');
+      if (!game && pick('requiresPassword')) {
+        return { success: true, action: { kind: 'unsupported', reason: 'Nút này cần mật khẩu 2 lớp của Telegram, hãy bấm trên app Telegram' } };
+      }
+      try {
+        const answer: any = await conn.client.invoke(new Api.messages.GetBotCallbackAnswer({
+          peer, msgId: messageId, ...(game ? { game: true } : { data: pick('data') }),
+        }));
+        return {
+          success: true,
+          action: { kind: 'answer', message: String(answer?.message || ''), alert: !!answer?.alert, url: String(answer?.url || '') },
+        };
+      } catch (err: any) {
+        const reason = String(err?.errorMessage || err?.message || err);
+        // Bot không trả lời kịp: Telegram cũng im lặng (bot thường sửa tin ngay sau đó)
+        if (/BOT_RESPONSE_TIMEOUT/.test(reason)) return { success: true, action: { kind: 'answer', message: '', alert: false, url: '' } };
+        if (/DATA_INVALID|MESSAGE_ID_INVALID/.test(reason)) return { success: false, error: 'Nút đã hết hạn' };
+        throw err;
+      }
+    }
+    if (isKind('KeyboardButtonCopy', 'InlineButtonTypeCopy')) {
+      return { success: true, action: { kind: 'copy', text: String(pick('copyText') || '') } };
+    }
+    if (isKind('KeyboardButtonUserProfile', 'InlineButtonTypeUserProfile')) {
+      return { success: true, action: { kind: 'profile', userId: String(pick('userId') ?? '') } };
+    }
+    if (isKind('KeyboardButtonBuy', 'InlineButtonTypeBuy')) {
+      return { success: true, action: { kind: 'unsupported', reason: 'Thanh toán của bot chưa hỗ trợ trong Deplao' } };
+    }
+    if (isKind('KeyboardButtonSwitchInline', 'InlineButtonTypeSwitchInline')) {
+      return { success: true, action: { kind: 'unsupported', reason: 'Chế độ inline của bot chưa hỗ trợ trong Deplao' } };
+    }
+    return { success: true, action: { kind: 'unsupported', reason: 'Loại nút này chưa hỗ trợ trong Deplao' } };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Keep WebView alive. Must be called every ~60s while WebView is open (same peer as requestWebView).
+ * QUERY_ID_INVALID → `expired`: Mini App phải đóng.
+ */
+export async function prolongWebView(
+  accountId: string, botId: string, queryId: string, peerId?: string,
+): Promise<{ success: boolean; expired?: boolean; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+  if (!/^-?\d+$/.test(String(queryId || ''))) return { success: false, error: 'queryId không hợp lệ' };
+
+  try {
+    const { Api } = require('telegram');
+    const bot = await resolveBotInputUser(accountId, conn.client, botId);
+    const peer = await resolveMiniAppPeer(accountId, conn.client, botId, peerId);
 
     await conn.client.invoke(new Api.messages.ProlongWebView({
       peer,
@@ -6791,6 +7163,128 @@ export async function prolongWebView(
     }));
 
     return { success: true };
+  } catch (err: any) {
+    const message = String(err?.message || err);
+    return { success: false, error: message, ...(/QUERY_ID_INVALID/.test(message) ? { expired: true } : {}) };
+  }
+}
+
+/** web_app_invoke_custom_method (CloudStorage của Mini App…): bots.invokeWebViewCustomMethod. */
+export async function invokeMiniAppCustomMethod(
+  accountId: string, botId: string, method: string, params: unknown,
+): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  if (!MINI_APP_METHOD_RE.test(String(method || ''))) return { success: false, error: 'METHOD_INVALID' };
+  const json = miniAppParamsJson(params);
+  if (json === null) return { success: false, error: 'PARAMS_INVALID' };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const bot = await resolveBotInputUser(accountId, conn.client, botId);
+    const res = await conn.client.invoke(new Api.bots.InvokeWebViewCustomMethod({
+      bot,
+      customMethod: method,
+      params: new Api.DataJSON({ data: json }),
+    })) as any;
+    let result: unknown = null;
+    try { result = JSON.parse(String(res?.data ?? 'null')); } catch { result = null; }
+    return { success: true, result };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/** web_app_request_write_access: bot đã được nhắn cho người dùng chưa (check) / cho phép (allow). */
+export async function miniAppWriteAccess(
+  accountId: string, botId: string, action: 'check' | 'allow',
+): Promise<{ success: boolean; allowed?: boolean; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const bot = await resolveBotInputUser(accountId, conn.client, botId);
+    if (action === 'check') {
+      const allowed = await conn.client.invoke(new Api.bots.CanSendMessage({ bot }));
+      return { success: true, allowed: allowed === true };
+    }
+    await conn.client.invoke(new Api.bots.AllowSendMessage({ bot }));
+    return { success: true, allowed: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/** web_app_request_phone (người dùng đã đồng ý): gửi danh thiếp số điện thoại của tài khoản cho bot, bỏ chặn bot nếu cần. */
+export async function shareMiniAppPhone(accountId: string, botId: string): Promise<{ success: boolean; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const me: any = await conn.client.getMe();
+    const phone = String(me?.phone || '');
+    if (!phone) return { success: false, error: 'Tài khoản Telegram chưa có số điện thoại' };
+    const peer = await resolveInputPeer(accountId, conn.client, botId);
+    const send = () => conn.client.invoke(new Api.messages.SendMedia({
+      peer,
+      media: new Api.InputMediaContact({
+        phoneNumber: phone, firstName: String(me.firstName || ''), lastName: String(me.lastName || ''), vcard: '',
+      }),
+      message: '',
+      randomId: miniAppRandomId(),
+    }));
+    try {
+      await send();
+    } catch (err: any) {
+      if (!/YOU_BLOCKED_USER/.test(String(err?.message))) throw err;
+      await conn.client.invoke(new Api.contacts.Unblock({ id: peer }));
+      await send();
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/** Nút đăng nhập của bot (keyboardButtonUrlAuth): hỏi Telegram trang cần đăng nhập (https://core.telegram.org/api/url-authorization). */
+export async function requestUrlAuth(
+  accountId: string, peerId: string, msgId: number, buttonId: number,
+): Promise<{ success: boolean; info?: UrlAuthInfo; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const peer = await resolveInputPeer(accountId, conn.client, peerId);
+    const res = await conn.client.invoke(new Api.messages.RequestUrlAuth({ peer, msgId, buttonId }));
+    return { success: true, info: urlAuthInfo(res) };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/** Người dùng đồng ý đăng nhập: link Telegram trả về đã kèm chữ ký đăng nhập (null = mở link gốc của nút). */
+export async function acceptUrlAuth(
+  accountId: string, peerId: string, msgId: number, buttonId: number,
+  opts: { writeAllowed?: boolean; sharePhone?: boolean } = {},
+): Promise<{ success: boolean; url?: string | null; error?: string }> {
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const peer = await resolveInputPeer(accountId, conn.client, peerId);
+    const res = await conn.client.invoke(new Api.messages.AcceptUrlAuth({
+      peer,
+      msgId,
+      buttonId,
+      ...(opts.writeAllowed ? { writeAllowed: true } : {}),
+      ...(opts.sharePhone ? { sharePhoneNumber: true } : {}),
+    }));
+    const info = urlAuthInfo(res);
+    return { success: true, url: info.kind === 'accepted' ? info.url : null };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -7150,7 +7644,8 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
         VALUES (?, ?, '', '', 0, ?, 0, ?, ?, 'telegram_user', 0)
         ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
           last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END,
-          last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END
+          last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END,
+          channel = 'telegram_user'
       `, [accountId, chatId, threadType === 1 ? 'group' : 'user', text, now]);
     }
 
@@ -7510,7 +8005,7 @@ export async function getMessages(
       if (!msg) continue;
       const msgId = String(msg.id);
       const senderId = String(msg.senderId?.valueOf() || '');
-      const isSelf = msg.out || false;
+      const isSelf = isOwnTelegramMessage(msg, accountId, chatId);
       const timestamp = ((msg as any).date || Math.floor(Date.now() / 1000)) * 1000;
 
       const cachedPeerType = db?.getTelegramPeer(accountId, chatId)?.peer_type as TelegramPeerType | undefined;
@@ -8426,7 +8921,8 @@ export async function sendFile(accountId: string, chatId: string, filePath: stri
         VALUES (?, ?, '', '', 0, ?, 0, ?, ?, 'telegram_user', 0)
         ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
           last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END,
-          last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END
+          last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END,
+          channel = 'telegram_user'
       `, [accountId, chatId, threadType === 1 ? 'group' : 'user', mediaPreview, now]);
       Logger.log(`[TG:sendFile] STEP5 DB saved msgId=${msgId} msgType=${msgType} attachments=${attachments.length}`);
     }
@@ -8877,7 +9373,7 @@ export async function sendTopicFile(accountId: string, chatId: string, topicRoot
       db.run(`INSERT OR IGNORE INTO messages (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, status, channel, reply_to_id, topic_id, quote_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'sent', 'telegram_user', ?, ?, ?)`,
         [msgId, accountId, chatId, threadType, accountId, caption || '', msgType, now, JSON.stringify(attachments), replyToId, topicRootMessageId, quoteData]);
       // Nhóm thảo luận chưa tham gia: không tạo hội thoại (như Telegram)
-      if (!commentOnly) db.run(`INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel, is_in_others) VALUES (?, ?, '', '', 0, ?, 0, ?, ?, 'telegram_user', 0) ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END, last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END`,
+      if (!commentOnly) db.run(`INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel, is_in_others) VALUES (?, ?, '', '', 0, ?, 0, ?, ?, 'telegram_user', 0) ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END, last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END, channel = 'telegram_user'`,
         [accountId, chatId, threadType === 1 ? 'group' : 'user', mediaPreview, now]);
     }
 
@@ -11177,6 +11673,37 @@ export async function getUserProfile(accountId: string, userId: string, chatId?:
  * Resolve a @username to a Telegram peer.
  * Caches the result in the peer registry.
  */
+/** Kết quả contacts.resolveUsername / resolvePhone → peer chính (đã lưu mọi peer trả về để có access hash). */
+function resolvedPeerInfo(accountId: string, result: any): any | null {
+  const users = result?.users || [];
+  const chats = result?.chats || [];
+  for (const user of users) {
+    if (user?.id) cacheTelegramPeer(accountId, String(user.id), user);
+  }
+  for (const chat of chats) {
+    if (chat?.id) cacheTelegramPeer(accountId, getCanonicalChatId(chat), chat);
+  }
+  const primary = users[0] || chats[0];
+  if (!primary) return null;
+  const isUser = primary.className === 'User';
+  return {
+    peerId: isUser ? String(primary.id) : getCanonicalChatId(primary),
+    peerType: getTelegramPeerType(primary),
+    displayName: primary.firstName
+      ? [primary.firstName, primary.lastName].filter(Boolean).join(' ')
+      : primary.title || primary.username || '',
+    username: primary.username || '',
+    phone: primary.phone || '',
+    // Mở link trong app (lib/chat/links/chatLinks): bot / app chính / đã tham gia nhóm, kênh chưa
+    isBot: isUser && !!primary.bot,
+    hasMainApp: isUser && !!primary.botHasMainApp,
+    ...(isUser ? {} : {
+      isMember: !primary.left && primary.className !== 'ChatForbidden' && primary.className !== 'ChannelForbidden',
+      isChannel: !!primary.broadcast,
+    }),
+  };
+}
+
 export async function resolveUsername(accountId: string, username: string): Promise<{ success: boolean; peer?: any; error?: string }> {
   const conn = ensureConnected(accountId);
   if ('error' in conn) return { success: false, error: conn.error };
@@ -11187,39 +11714,31 @@ export async function resolveUsername(accountId: string, username: string): Prom
     if (!cleanUsername) return { success: false, error: 'Username không hợp lệ' };
 
     const result = await conn.client.invoke(new Api.contacts.ResolveUsername({ username: cleanUsername }));
-    const users = (result as any).users || [];
-    const chats = (result as any).chats || [];
-
-    // Cache all resolved entities
-    for (const user of users) {
-      if (user?.id) cacheTelegramPeer(accountId, String(user.id), user);
-    }
-    for (const chat of chats) {
-      if (chat?.id) {
-        const chatId = getCanonicalChatId(chat);
-        cacheTelegramPeer(accountId, chatId, chat);
-      }
-    }
-
-    // Return the primary resolved peer
-    const primary = users[0] || chats[0];
-    if (!primary) return { success: false, error: `Không tìm thấy @${cleanUsername}` };
-
-    const peerId = primary.className === 'User' ? String(primary.id) : getCanonicalChatId(primary);
-    return {
-      success: true,
-      peer: {
-        peerId,
-        peerType: getTelegramPeerType(primary),
-        displayName: primary.firstName
-          ? [primary.firstName, primary.lastName].filter(Boolean).join(' ')
-          : primary.title || primary.username || '',
-        username: primary.username || '',
-        phone: primary.phone || '',
-      },
-    };
+    const peer = resolvedPeerInfo(accountId, result);
+    if (!peer) return { success: false, error: `Không tìm thấy @${cleanUsername}` };
+    return { success: true, peer };
   } catch (err: any) {
     return { success: false, error: err.message };
+  }
+}
+
+/** Link số điện thoại (t.me/+84…): contacts.resolvePhone, cùng dạng kết quả với resolveUsername. */
+export async function resolvePhone(accountId: string, phone: string): Promise<{ success: boolean; peer?: any; error?: string }> {
+  const clean = String(phone || '').replace(/[^\d]/g, '');
+  if (!/^\d{5,15}$/.test(clean)) return { success: false, error: 'Số điện thoại không hợp lệ' };
+  const conn = ensureConnected(accountId);
+  if ('error' in conn) return { success: false, error: conn.error };
+
+  try {
+    const { Api } = require('telegram');
+    const result = await conn.client.invoke(new Api.contacts.ResolvePhone({ phone: clean }));
+    const peer = resolvedPeerInfo(accountId, result);
+    if (!peer) return { success: false, error: `Không tìm thấy +${clean} trên Telegram` };
+    return { success: true, peer };
+  } catch (err: any) {
+    const message = String(err?.errorMessage || err?.message || err);
+    if (/PHONE_NOT_OCCUPIED/.test(message)) return { success: false, error: `+${clean} chưa dùng Telegram` };
+    return { success: false, error: message };
   }
 }
 
@@ -12173,7 +12692,8 @@ export async function sendTopicMessage(accountId: string, chatId: string, rootMe
         VALUES (?, ?, '', '', 0, 'group', 0, ?, ?, 'telegram_user', 0)
         ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
           last_message = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message ELSE contacts.last_message END,
-          last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END
+          last_message_time = CASE WHEN excluded.last_message_time >= COALESCE(contacts.last_message_time, 0) THEN excluded.last_message_time ELSE contacts.last_message_time END,
+          channel = 'telegram_user'
       `, [accountId, chatId, text, now]);
     }
 
@@ -12815,6 +13335,46 @@ export async function readPostDiscussion(
 }
 
 /**
+ * Kết quả bình chọn như app Telegram: các bình chọn đang hiện trong hội thoại hỏi lại messages.getPollResults (khi mở và
+ * mỗi 30 s, renderer: useTelegramPollResults). Telegram không đẩy kết quả cho mọi người xem nên trước đây số liệu chỉ
+ * chụp lúc tin về ("0 lượt bình chọn" mãi). Sau lần hỏi, UpdateMessagePoll Telegram đẩy về cũng áp được (nhớ poll id).
+ */
+export async function refreshPollResults(
+  accountId: string,
+  chatId: string,
+  messageIds: string[],
+): Promise<{ success: boolean; error?: string; updates?: Array<{ msgId: string; attachments: string }> }> {
+  const listener = activeListeners.get(accountId);
+  if (!listener?.client || !listener.connected) return { success: false, error: 'Telegram listener is not connected' };
+  const ids = Array.from(new Set((messageIds || []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0))).slice(0, 20);
+  if (!ids.length) return { success: true, updates: [] };
+  try {
+    const { Api } = require('telegram');
+    const peer = await resolveInputPeer(accountId, listener.client, chatId);
+    const updates: Array<{ msgId: string; attachments: string }> = [];
+    for (const id of ids) {
+      let result: any;
+      try {
+        result = await listener.client.invoke(new Api.messages.GetPollResults({ peer, msgId: id, pollHash: BigInt(0) }));
+      } catch (err: any) {
+        // Bị giới hạn tần suất: dừng lượt này; tin đã xoá / không còn bình chọn: bỏ qua tin đó
+        if (/FLOOD/i.test(String(err?.errorMessage || err?.message || ''))) break;
+        continue;
+      }
+      for (const update of result?.updates || []) {
+        if (update?.className !== 'UpdateMessagePoll') continue;
+        rememberTelegramPoll(accountId, update.pollId != null ? String(update.pollId) : '', chatId, String(id));
+        const merged = applyTelegramPollUpdate(accountId, chatId, String(id), { poll: update.poll, results: update.results });
+        if (merged) updates.push({ msgId: String(id), attachments: merged });
+      }
+    }
+    return { success: true, updates };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
  * Số liệu bài đăng kênh như Telegram (lượt xem, chia sẻ, bình luận, người bình luận gần đây): messages.getMessagesViews
  * cho các bài đang hiện. Trước đây chỉ lấy lúc bài về → lệch xa Telegram. `increment` = tính một lượt xem (như app
  * Telegram khi bài hiện trên màn hình).
@@ -13101,10 +13661,15 @@ export const __test = {
   applyTelegramMessageReactions,
   applyTelegramReactionResult,
   applyTelegramMessageEdit,
+  // Bình chọn: kết quả Telegram đẩy về (UpdateMessagePoll)
+  handleTelegramPollUpdate,
   readTelegramUnreadThings,
   drainChannelDifference,
   drainChannelDifferenceNow,
   synchronizeTelegramAccount,
+  syncSavedMessages,
+  backfillSavedMessagesHistory,
+  savedMessagesHistoryJobs,
   fetchMissedMessages,
   recoverChannelUpdates,
   reconcileTelegramDialogMembership,

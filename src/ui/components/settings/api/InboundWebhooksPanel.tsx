@@ -2,7 +2,7 @@
  * Webhook → Nhận dữ liệu vào (trước là Cài đặt → Webhooks): ngân hàng (Casso, SePay) gửi giao dịch, phần mềm bán hàng gửi
  * đơn hàng / khách hàng, website / hệ thống khác kích hoạt workflow qua địa chỉ Internet của máy chủ.
  * Địa chỉ ở đây CHỈ ĐỂ XEM (PublicAddressCard, mọi cách tạo địa chỉ); bật / tắt / đổi địa chỉ ở
- * Cài đặt → Internet & Đám mây → Địa chỉ Internet. Đổi cổng nhận vẫn ở đây: workflow:getPortConfig / setPortConfig
+ * Cài đặt → Internet & Cloud → Địa chỉ Internet. Đổi cổng nhận vẫn ở đây: workflow:getPortConfig / setPortConfig
  * (Thanh toán & tích hợp 9888, Webhook workflow 9889).
  */
 import React, { useEffect, useState } from 'react';
@@ -18,7 +18,7 @@ type ServiceKey = keyof typeof PORT_KEYS;
 
 interface InboundService {
   key: ServiceKey;
-  /** Dịch vụ tương ứng ở Cài đặt → Internet & Đám mây → Địa chỉ Internet. */
+  /** Dịch vụ tương ứng ở Cài đặt → Internet & Cloud → Địa chỉ Internet. */
   service: TunnelServiceId;
   /** Đuôi đường dẫn hiện sau địa chỉ gốc ('<…>' → nút sao chép lấy địa chỉ gốc). */
   suffix: string;
@@ -45,7 +45,7 @@ const SERVICES: InboundService[] = [
       'Website, hệ thống khác muốn đẩy dữ liệu vào: dùng "Kích hoạt workflow" bên dưới (trigger "Webhook bên ngoài")',
     ],
     steps: [
-      'Bật địa chỉ "Thanh toán, tích hợp" ở Cài đặt → Internet & Đám mây → Địa chỉ Internet',
+      'Bật địa chỉ "Thanh toán, tích hợp" ở Cài đặt → Internet & Cloud → Địa chỉ Internet',
       'Vào Công cụ → Tích hợp, thêm kết nối Casso / SePay hoặc phần mềm bán hàng (đặt khoá xác thực webhook)',
       'Sao chép địa chỉ nhận trong trang tích hợp đó, dán vào phần webhook của Casso / SePay / phần mềm bán hàng',
       'Có giao dịch / đơn hàng → Deplao kiểm tra chữ ký → workflow "Khi nhận thanh toán" / "Khi phần mềm bán hàng gửi webhook" chạy',
@@ -64,7 +64,7 @@ const SERVICES: InboundService[] = [
       'Nhận callback từ dịch vụ bên ngoài, hệ thống bất kỳ hỗ trợ webhook',
     ],
     steps: [
-      'Bật địa chỉ "Webhook workflow" ở Cài đặt → Internet & Đám mây → Địa chỉ Internet',
+      'Bật địa chỉ "Webhook workflow" ở Cài đặt → Internet & Cloud → Địa chỉ Internet',
       'Vào Công cụ → Workflow, tạo kịch bản với trigger "Webhook bên ngoài" rồi lưu',
       'Đường dẫn riêng của kịch bản hiện trong cấu hình trigger — gửi cho đối tác / hệ thống bên ngoài',
       'Họ gửi (POST) dữ liệu tới đường dẫn đó → workflow chạy; dùng {{ $trigger.body }}, {{ $trigger.headers }}',
@@ -84,7 +84,7 @@ const SERVICES: InboundService[] = [
 export default function InboundWebhooksPanel() {
   const [ports, setPorts] = useState<Record<ServiceKey, number>>({ integration: 9888, workflow: 9889 });
   const [savingPort, setSavingPort] = useState<ServiceKey | null>(null);
-  // Địa chỉ Internet chỉ để xem — bật / tắt / đổi ở Cài đặt → Internet & Đám mây → Địa chỉ Internet.
+  // Địa chỉ Internet chỉ để xem — bật / tắt / đổi ở Cài đặt → Internet & Cloud → Địa chỉ Internet.
   const publicAddresses = usePublicAddresses();
 
   useEffect(() => {
@@ -107,7 +107,7 @@ export default function InboundWebhooksPanel() {
             Hệ thống khác gửi dữ liệu vào Deplao qua <strong>địa chỉ Internet</strong> của máy chủ.{' '}
             {publicAddresses.serverManaged
               ? 'Địa chỉ do máy chủ quản lý.'
-              : 'Bật, tắt hoặc đổi địa chỉ ở Cài đặt → Internet & Đám mây → Địa chỉ Internet.'}
+              : 'Bật, tắt hoặc đổi địa chỉ ở Cài đặt → Internet & Cloud → Địa chỉ Internet.'}
           </p>
           <p className="text-muted-foreground">Chỉ dùng trong cùng mạng LAN thì không cần bật. Địa chỉ chỉ chạy khi Deplao đang mở.</p>
         </div>
@@ -170,7 +170,7 @@ export default function InboundWebhooksPanel() {
                 />
                 <Button size="sm" variant="outline" disabled={portLocked || savingPort === svc.key} loading={savingPort === svc.key} onClick={() => savePort(svc.key)}>Lưu cổng</Button>
                 <span className="text-[11px] text-subtle-foreground">
-                  {portLocked ? 'Tắt địa chỉ này ở Cài đặt → Internet & Đám mây trước khi đổi cổng.' : 'Chỉ đổi khi cổng mặc định bị phần mềm khác dùng.'}
+                  {portLocked ? 'Tắt địa chỉ này ở Cài đặt → Internet & Cloud trước khi đổi cổng.' : 'Chỉ đổi khi cổng mặc định bị phần mềm khác dùng.'}
                 </span>
               </div>
             </details>

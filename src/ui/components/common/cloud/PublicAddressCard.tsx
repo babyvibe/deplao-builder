@@ -3,7 +3,7 @@
  * API → Truy cập từ xa, Webhook → Nhận dữ liệu vào, Tích hợp Casso/SePay, node Webhook workflow), đọc cùng một
  * trạng thái (cloudflare.tunnel.addresses()) nên chữ và trạng thái luôn khớp nhau.
  *
- * Thẻ CHỈ ĐỂ XEM: bật / tắt / đổi địa chỉ nằm ở một chỗ — Cài đặt → Internet & Đám mây → Địa chỉ Internet
+ * Thẻ CHỈ ĐỂ XEM: bật / tắt / đổi địa chỉ nằm ở một chỗ — Cài đặt → Internet & Cloud → Địa chỉ Internet
  * (link "Cấu hình địa chỉ →"; chưa bật hoặc chưa có địa chỉ → "Chưa bật" + "Bật ở Cài đặt →").
  *  - Máy nhân viên / workspace từ xa: "Địa chỉ Internet do máy chủ quản lý", không có link.
  *  - Bản app không có module Cloudflare, chưa đọc xong hoặc đọc lỗi: không hiện gì (không link sang trang Cloudflare).
@@ -154,7 +154,7 @@ export interface PublicAddressesState {
   loaded: boolean;
   /** Máy nhân viên / workspace từ xa: địa chỉ Internet do máy chủ quản lý, không cấu hình ở máy này. */
   serverManaged: boolean;
-  /** Được mở Cài đặt → Internet & Đám mây (máy chủ, có module Cloudflare, lần đọc gần nhất không lỗi). */
+  /** Được mở Cài đặt → Internet & Cloud (máy chủ, có module Cloudflare, lần đọc gần nhất không lỗi). */
   canConfigure: boolean;
   /** Cách tạo địa chỉ đang dùng (theo địa chỉ của dịch vụ relay). */
   mode: TunnelMode | null;
@@ -198,7 +198,7 @@ export interface PublicAddressCardProps {
   title: string;
   /** Đuôi đường dẫn nối sau địa chỉ gốc, vd '/api/v1', '/webhook/casso'. Có '…' hoặc '<' thì chỉ sao chép phần gốc. */
   pathSuffix?: string;
-  /** @deprecated Bỏ qua — thẻ chỉ để xem; bật / tắt ở Cài đặt → Internet & Đám mây → Địa chỉ Internet. */
+  /** @deprecated Bỏ qua — thẻ chỉ để xem; bật / tắt ở Cài đặt → Internet & Cloud → Địa chỉ Internet. */
   showSwitch?: boolean;
   /** Gọn: ít khoảng trắng, trạng thái và link cùng một dòng. */
   compact?: boolean;

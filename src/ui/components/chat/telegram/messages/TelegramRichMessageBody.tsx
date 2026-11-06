@@ -8,6 +8,7 @@
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
+import { openChatLink } from '@/lib/chat/links/chatLinks';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import type { MediaViewerImage } from '../../media/MediaViewer';
 import { TextWithMentions } from '../../messages/ChatWindowBubbles';
@@ -315,7 +316,7 @@ export default function TelegramRichMessageBody({ msg, onOpenImages, highlight, 
         return (
           <div className="rounded-md border border-foreground/10 px-2 py-1.5 text-xs">
             {block.url ? (
-              <button type="button" className="break-all text-left text-primary hover:underline" onClick={() => window.open(block.url, '_blank')}>
+              <button type="button" className="break-all text-left text-primary hover:underline" onClick={() => openChatLink(block.url)}>
                 {block.url}
               </button>
             ) : <span className="text-muted-foreground">Nội dung nhúng</span>}

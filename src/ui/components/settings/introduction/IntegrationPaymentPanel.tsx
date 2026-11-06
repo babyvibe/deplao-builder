@@ -37,7 +37,7 @@ export function IntegrationPaymentPanel() {
         </Paragraph>
         <Tip>
           Casso / SePay gửi thông báo qua Internet về máy bạn, nên cần bật địa chỉ{' '}
-          <strong className="text-foreground">Thanh toán, tích hợp</strong> ở Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet.
+          <strong className="text-foreground">Thanh toán, tích hợp</strong> ở Cài đặt → Internet &amp; Cloud → Địa chỉ Internet.
         </Tip>
       </Card>
 
@@ -64,7 +64,7 @@ export function IntegrationPaymentPanel() {
         <SectionTitle><GlobeIcon className="w-4 h-4 inline" /> Địa chỉ Internet để nhận thông báo</SectionTitle>
         <Paragraph>
           Deplao chạy trên máy bạn, còn Casso / SePay ở trên Internet nên cần một địa chỉ Internet trỏ về máy. Mọi cấu hình
-          địa chỉ nằm ở một chỗ: <strong className="text-foreground">Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet</strong>,
+          địa chỉ nằm ở một chỗ: <strong className="text-foreground">Cài đặt → Internet &amp; Cloud → Địa chỉ Internet</strong>,
           mục <strong className="text-foreground">Cách tạo địa chỉ</strong>:
         </Paragraph>
         <BulletList items={[

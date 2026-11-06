@@ -257,7 +257,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
 
   const localWebhookUrl  = `http://127.0.0.1:${webhookPort}/webhook/${saved_id || catalogItem.type}`;
 
-  // Địa chỉ nhận webhook chỉ để xem (mọi cách tạo địa chỉ) — bật / đổi ở Cài đặt → Internet & Đám mây → Địa chỉ Internet.
+  // Địa chỉ nhận webhook chỉ để xem (mọi cách tạo địa chỉ) — bật / đổi ở Cài đặt → Internet & Cloud → Địa chỉ Internet.
   const serverManaged = usePublicAddresses().serverManaged;
 
   return (
@@ -370,7 +370,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
           </div>
         )}
 
-        {/* Địa chỉ nhận webhook — thanh toán, phần mềm bán hàng. Chỉ xem: bật / đổi ở Cài đặt → Internet & Đám mây → Địa chỉ Internet */}
+        {/* Địa chỉ nhận webhook — thanh toán, phần mềm bán hàng. Chỉ xem: bật / đổi ở Cài đặt → Internet & Cloud → Địa chỉ Internet */}
         {receivesWebhook && (
           <div>
             <h2 className="text-sm font-semibold text-foreground/80 mb-3"><GlobeIcon className="w-4 h-4 inline" /> Địa chỉ nhận webhook</h2>
@@ -385,7 +385,7 @@ export default function IntegrationDetailPage({ catalogItem, saved, webhookPort,
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
                   {catalogItem.name} gửi webhook ({isPayment ? 'thông báo giao dịch' : 'thông báo đơn hàng, khách hàng…'}) từ Internet, còn Deplao chạy trên máy của bạn nên cần một
                   <strong className="text-foreground"> địa chỉ Internet</strong> trỏ về máy.{' '}
-                  {serverManaged ? 'Địa chỉ này do máy chủ quản lý.' : 'Bật ở Cài đặt → Internet & Đám mây → Địa chỉ Internet.'}
+                  {serverManaged ? 'Địa chỉ này do máy chủ quản lý.' : 'Bật ở Cài đặt → Internet & Cloud → Địa chỉ Internet.'}
                 </p>
               </div>
 

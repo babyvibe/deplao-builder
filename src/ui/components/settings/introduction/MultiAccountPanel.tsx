@@ -37,7 +37,7 @@ export function MultiAccountPanel() {
         <StepList steps={[
           { title: 'Mở hộp "Thêm tài khoản"', desc: 'Bấm <strong class="text-foreground">Thêm tài khoản</strong> trên Dashboard, hoặc nút <strong class="text-foreground">+</strong> (viền nét đứt) dưới danh sách avatar ở thanh bên trái.' },
           { title: 'Chọn kênh', desc: '<strong class="text-foreground">Zalo cá nhân</strong> (QR Code hoặc Cookie) · <strong class="text-foreground">Facebook cá nhân</strong> (tài khoản hoặc Cookie) · <strong class="text-foreground">Telegram</strong> (số điện thoại) · <strong class="text-foreground">Telegram Bot</strong> (Bot Token).' },
-          { title: 'Chọn proxy (Zalo, Facebook)', desc: 'Ở bước <em>Chọn Proxy (tuỳ chọn)</em>: chọn proxy đã lưu rồi bấm <em>Test ngay</em>, hoặc chọn <em>Không dùng proxy</em> để kết nối trực tiếp. Telegram không có bước này.' },
+          { title: 'Chọn proxy (Zalo, Facebook)', desc: 'Ở bước <em>Chọn Proxy (tuỳ chọn)</em>: chọn proxy đã lưu rồi bấm <em>Test ngay</em>, hoặc chọn <em>Không dùng proxy</em> để kết nối trực tiếp. Bỏ qua cũng được: thêm hoặc đổi proxy sau ở Cài đặt → Tài khoản. Telegram không có bước này.' },
           { title: 'Đăng nhập', desc: 'Làm theo hướng dẫn từng kênh ở mục bên dưới. Xong, tài khoản hiện trên Dashboard và thanh bên trái, tin nhắn mới bắt đầu về.' },
           { title: 'Dùng tiếp những lần sau', desc: 'Phiên đăng nhập được lưu trên máy: mở app là tự kết nối lại, không phải đăng nhập lại (trừ khi phiên hết hạn). Khi mất mạng, app tự thử kết nối lại.' },
           { title: 'Chuyển tài khoản', desc: 'Bấm avatar ở thanh bên trái, hoặc giữ <strong class="text-foreground">Ctrl</strong> và nhấn <strong class="text-foreground">Tab</strong> để chọn rồi thả Ctrl (Shift+Tab: đi ngược, Esc: huỷ). Ở màn Chat, nút ☰ trên cùng thanh bên mở danh sách tài khoản đầy đủ kèm ô tìm kiếm.' },
@@ -78,10 +78,10 @@ export function MultiAccountPanel() {
           Dùng khi cần tách IP cho từng tài khoản, dùng proxy của công ty, hoặc đăng nhập tài khoản từ vùng địa lý khác.
         </Paragraph>
         <BulletList items={[
-          '<strong class="text-foreground">Tạo proxy:</strong> Cài đặt → Proxy → <em>Thêm proxy</em> → nhập Tên proxy, Giao thức (HTTP · HTTPS · SOCKS4 · SOCKS5), Host / IP, Port, Username / Password nếu có → <em>Lưu proxy</em>. Bấm <em>Test kết nối</em> để kiểm tra.',
+          '<strong class="text-foreground">Tạo proxy:</strong> Cài đặt → Proxy → <em>Thêm proxy</em> → nhập Tên proxy, Giao thức (HTTP · HTTPS · SOCKS4 · SOCKS5), Host / IP, Port, Username / Password nếu có → <em>Lưu proxy</em>. Bấm <em>Thử kết nối</em> để kiểm tra.',
           '<strong class="text-foreground">Gán khi đăng nhập:</strong> ở bước <em>Chọn Proxy (tuỳ chọn)</em>, chọn proxy → <em>Test ngay</em> → <em>Tiếp tục với proxy</em>. Proxy lỗi thì đăng nhập sẽ thất bại - sửa proxy hoặc tiếp tục không dùng proxy.',
-          '<strong class="text-foreground">Đổi proxy:</strong> đăng nhập lại tài khoản đó và chọn proxy khác ở bước Chọn Proxy.',
-          '<strong class="text-foreground">Theo dõi:</strong> Cài đặt → Proxy hiện số tài khoản đang dùng mỗi proxy và mục <em>Tài khoản đang dùng proxy</em>. Xoá một proxy sẽ gỡ proxy đó khỏi mọi tài khoản đang dùng.',
+          '<strong class="text-foreground">Thêm, đổi, bỏ proxy về sau:</strong> Cài đặt → Tài khoản → dòng <em>Proxy</em> dưới tài khoản → chọn proxy (hoặc <em>Không dùng proxy</em>) → <em>Áp dụng</em>. Hoặc Cài đặt → Proxy → dòng <em>Tài khoản</em> dưới mỗi proxy → tick tài khoản. Deplao thử proxy trước, rồi tài khoản tự kết nối lại qua proxy mới, không cần đăng nhập lại. Proxy không phản hồi thì giữ nguyên như cũ.',
+          '<strong class="text-foreground">Theo dõi:</strong> Cài đặt → Proxy ghi tài khoản đang dùng dưới mỗi proxy. Sửa thông tin proxy thì các tài khoản đó kết nối lại ngay với thông tin mới; xoá proxy thì các tài khoản đó kết nối lại không qua proxy.',
           'Telegram hiện chưa có bước chọn proxy.',
         ]} />
       </Card>
@@ -119,7 +119,7 @@ export function MultiAccountPanel() {
           'Gửi hàng loạt (chiến dịch, workflow) càng nhiều thao tác, nội dung càng dài và delay càng ngắn thì càng dễ bị đánh dấu spam - hãy giãn cách và tuân thủ quy định của từng nền tảng.',
           'Facebook: đồng bộ lịch sử tin nhắn và quét dữ liệu gửi nhiều yêu cầu, vẫn có rủi ro bị checkpoint (Facebook yêu cầu xác minh hoặc tạm khoá) - chỉ tải khoảng thời gian cần thiết, nên dùng tài khoản phụ để quét dữ liệu.',
           'Gộp tài khoản: tài khoản chưa kết nối vẫn nằm trong danh sách gộp (avatar xám) nhưng không nhận tin mới cho tới khi kết nối lại.',
-          'Chuyển sang máy mới: nếu máy cũ đã bật Đồng bộ dữ liệu (Cài đặt → Internet &amp; Đám mây), ở máy mới bấm <em>Khôi phục dữ liệu từ Cloudflare</em> trong hộp Thêm tài khoản để lấy lại dữ liệu từ bản sao trên Cloudflare R2 hoặc Google Drive, rồi đăng nhập lại các kênh được yêu cầu.',
+          'Chuyển sang máy mới: nếu máy cũ đã bật Đồng bộ dữ liệu (Cài đặt → Internet &amp; Cloud), ở máy mới bấm <em>Khôi phục dữ liệu từ Cloudflare</em> trong hộp Thêm tài khoản để lấy lại dữ liệu từ bản sao trên Cloudflare R2 hoặc Google Drive, rồi đăng nhập lại các kênh được yêu cầu.',
         ]} />
       </Card>
     </div>

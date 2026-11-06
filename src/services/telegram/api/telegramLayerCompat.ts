@@ -32,8 +32,10 @@ export function stripUnsupportedTelegramPeers<T>(result: T): T {
 
 export interface InlineButtonInfo {
   text: string;
-  type: 'url' | 'webview' | 'callback';
+  /** url_auth = nút "đăng nhập bằng Telegram" (keyboardButtonUrlAuth): messages.requestUrlAuth cần buttonId. */
+  type: 'url' | 'url_auth' | 'webview' | 'callback';
   url?: string;
+  buttonId?: number;
 }
 
 /**
@@ -45,7 +47,12 @@ export function inlineButtonInfo(button: any): InlineButtonInfo {
   const kind = String(button?.className || '');
   const type = button?.type && typeof button.type === 'object' ? button.type : null;
   const typeKind = String(type?.className || '');
-  if (kind === 'KeyboardButtonUrl' || kind === 'KeyboardButtonUrlAuth' || typeKind === 'InlineButtonTypeUrl' || typeKind === 'InlineButtonTypeUrlAuth') {
+  if (kind === 'KeyboardButtonUrlAuth' || typeKind === 'InlineButtonTypeUrlAuth') {
+    const url = String(button?.url || type?.url || '');
+    const buttonId = Number(button?.buttonId ?? type?.buttonId);
+    return Number.isInteger(buttonId) ? { text, type: 'url_auth', url, buttonId } : { text, type: 'url', url };
+  }
+  if (kind === 'KeyboardButtonUrl' || typeKind === 'InlineButtonTypeUrl') {
     return { text, type: 'url', url: String(button?.url || type?.url || '') };
   }
   if (kind === 'KeyboardButtonWebView' || kind === 'KeyboardButtonSimpleWebView' || typeKind === 'InlineButtonTypeWebView') {

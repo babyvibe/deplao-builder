@@ -7,12 +7,16 @@ import { sendCampaignBlock } from './campaignBlockSender';
 import { DEFAULT_CAMPAIGN_SEND_OPTIONS, readCampaignSendOptions, type CampaignSendOptions } from '../../shared/crm/campaignSendPlan';
 import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../shared/crm/campaignDelay';
 import { summarizeMixedOutcome, type MixedActionOutcome } from '../../shared/crm/campaignOutcome';
+import { campaignAutoResumeAt, campaignAutoStopReason, campaignFlag, shouldAutoStopCampaign } from '../../shared/crm/campaignAutoStop';
+import type { CRMCampaign } from '../../models';
 import { automationsPausedAfterRestore } from '../cloudflare/restoreGate';
 
 /**
  * CRMQueueService - chạy trong main process
  * Token bucket per account: max 60 tin/giờ, refill 1 token mỗi 60s
  * Dispatcher loop: kiểm tra mỗi 5s, nếu đủ delay → gửi 1 tin rồi đợi
+ * Tự dừng khi N liên hệ lỗi liên tiếp (cài ở từng chiến dịch, mặc định không dừng): trackFailureStreak; "Mai gửi tiếp":
+ * scheduleAutoResume
  */
 class CRMQueueService {
     private static instance: CRMQueueService;
@@ -24,11 +28,14 @@ class CRMQueueService {
     private lastRefillAt: Map<string, number> = new Map();
     // Daily limit tracking: campaignId → paused due to daily limit
     private dailyPausedCampaigns: Map<number, boolean> = new Map();
+    // Tự dừng "Mai gửi tiếp": một hẹn giờ cho chiến dịch cần chạy lại sớm nhất (mọi tài khoản)
+    private autoResumeTimer: ReturnType<typeof setTimeout> | null = null;
 
     public readonly MAX_TOKENS = 60;
     private readonly REFILL_INTERVAL_MS = 60 * 1000;  // 1 phút / token → 60/giờ
     private readonly CHECK_INTERVAL_MS = 5000;          // kiểm tra mỗi 5s
     private readonly PHONE_RESOLVE_TIMEOUT_MS = 15_000; // timeout resolve phone → tránh treo vô hạn
+    private readonly AUTO_RESUME_RECHECK_MS = 60 * 60 * 1000; // máy ngủ / đổi giờ: hẹn giờ chạy lại xét lại ít nhất mỗi giờ
 
     public static getInstance(): CRMQueueService {
         if (!CRMQueueService.instance) CRMQueueService.instance = new CRMQueueService();
@@ -96,6 +103,8 @@ class CRMQueueService {
             return;
         }
         try {
+            // "Mai gửi tiếp": chiến dịch tự dừng đã tới giờ chạy lại trong lúc app tắt → chạy luôn; còn lại hẹn giờ
+            this.resumeDueCampaigns();
             const owners = DatabaseService.getInstance().getActiveCampaignOwners();
             for (const zaloId of owners) {
                 Logger.log(`[CRMQueue] Resuming queue for ${zaloId}`);
@@ -104,6 +113,37 @@ class CRMQueueService {
         } catch (err: any) {
             Logger.warn(`[CRMQueue] resumeActiveCampaigns: ${err.message}`);
         }
+    }
+
+    /** Hẹn giờ chạy lại chiến dịch tự dừng "Mai gửi tiếp" sớm nhất (gọi sau khi tự dừng + lúc mở app). */
+    private scheduleAutoResume(): void {
+        if (this.autoResumeTimer) { clearTimeout(this.autoResumeTimer); this.autoResumeTimer = null; }
+        let next = 0;
+        try { next = DatabaseService.getInstance().nextCampaignAutoResumeAt(); } catch { return; }
+        if (!next) return;
+        const wait = Math.min(Math.max(next - Date.now(), 1000), this.AUTO_RESUME_RECHECK_MS);
+        this.autoResumeTimer = setTimeout(() => { this.autoResumeTimer = null; this.resumeDueCampaigns(); }, wait);
+        // Không giữ app sống lúc thoát (như các hẹn giờ hàng đợi được dọn khi tắt app)
+        (this.autoResumeTimer as any)?.unref?.();
+    }
+
+    /** Chạy lại chiến dịch tự dừng "Mai gửi tiếp" đã tới giờ, rồi hẹn lần sau. */
+    private resumeDueCampaigns(): void {
+        // Vừa khôi phục DB: chờ người dùng xác nhận (resumeAutomationsAfterRestore gọi lại resumeActiveCampaigns)
+        if (automationsPausedAfterRestore()) return;
+        try {
+            const db = DatabaseService.getInstance();
+            for (const campaign of db.getDueAutoResumeCampaigns(Date.now())) {
+                if (!db.resumeAutoStoppedCampaign(campaign.id)) continue;
+                db.save();
+                Logger.log(`[CRMQueue] ▶ Campaign ${campaign.id} resumed the day after its auto-stop`);
+                EventBroadcaster.emit('crm:campaignChanged', { action: 'status', ownerZaloId: campaign.owner_zalo_id, campaignId: campaign.id, status: 'active' });
+                this.startForAccount(campaign.owner_zalo_id);
+            }
+        } catch (err: any) {
+            Logger.warn(`[CRMQueue] resumeDueCampaigns: ${err.message}`);
+        }
+        this.scheduleAutoResume();
     }
 
     private refillTokens(zaloId: string): void {
@@ -190,6 +230,14 @@ class CRMQueueService {
             return;
         }
 
+        // Tự dừng khi lỗi, "Chỉ tính người lạ" (Zalo): Zalo chặn spam theo tin cho người lạ, nhắn bạn bè / nhóm vẫn được
+        // → bạn bè và nhóm không đổi chuỗi lỗi liên tiếp. Kênh khác không có danh sách bạn bè → tính mọi liên hệ.
+        const strangersOnly = channel === 'zalo' && campaignFlag(campaignData?.stop_strangers_only) === 1;
+        let strangerTarget = (item as any).contact_type !== 'group' && Number((item as any).is_friend) !== 1;
+        const outcome = (failed: boolean, error?: string): StreakOutcome => ({
+            failed, error, strangersOnly, counted: !strangersOnly || strangerTarget,
+        });
+
         // ── Bắt đầu processing ──────────────────────────────────────────────
         // Đặt isProcessing bên ngoài try, nhưng sẽ reset trong finally
         this.isProcessing.set(zaloId, true);
@@ -238,12 +286,14 @@ class CRMQueueService {
                     db.updateCampaignContactStatus(item.id!, 'failed', 'Không tìm thấy SĐT trên Zalo');
                     db.save();
                     this.broadcastProgress(zaloId, item.campaign_id, item.contact_id, 'failed', 'Không tìm thấy SĐT trên Zalo');
-                    this.checkCampaignCompletion(item.campaign_id, zaloId);
+                    // Tài khoản bị giới hạn tra SĐT cũng trả "không tìm thấy" → tính vào chuỗi lỗi liên tiếp (SĐT lạ = người lạ)
+                    this.finishContact(zaloId, item.campaign_id, campaignData, outcome(true, 'Không tìm thấy SĐT trên Zalo'));
                     this.isProcessing.set(zaloId, false);
                     return;
                 }
                 effectiveContactId = resolved.uid;
                 effectiveDisplayName = resolved.name;
+                try { strangerTarget = !db.checkIsFriend(zaloId, resolved.uid); } catch { /* giữ: SĐT lạ = người lạ */ }
                 try { db.updateCampaignContactId(item.id!, resolved.uid, resolved.name); } catch { /* non-critical */ }
                 Logger.log(`[CRMQueue] Phone ${phone} → UID ${resolved.uid} (${resolved.name})`);
             }
@@ -520,7 +570,8 @@ class CRMQueueService {
 
             Logger.log(`[CRMQueue] ${outcomeStatus === 'failed' ? '❌ Failed' : outcomeError ? '⚠️ Partly sent' : '✅ Sent'} to ${effectiveContactId} (campaign ${item.campaign_id})`);
             this.broadcastProgress(zaloId, item.campaign_id, effectiveContactId, outcomeStatus, outcomeError);
-            this.checkCampaignCompletion(item.campaign_id, zaloId);
+            // Lỗi một phần (hỗn hợp: một hành động được) = tài khoản vẫn gửi được → không tính lỗi liên tiếp
+            this.finishContact(zaloId, item.campaign_id, campaignData, outcome(outcomeStatus === 'failed', outcomeError));
 
         } catch (err: any) {
             const errMsg = err?.message || String(err);
@@ -547,14 +598,19 @@ class CRMQueueService {
             } catch (logErr: any) {
                 Logger.error(`[CRMQueue] ❌ Failed to save error log: ${logErr.message}`);
             }
+            // Lượt lỗi (kết bạn / mời nhóm bị từ chối…) vẫn tính giãn cách + hạn mức 60/giờ như lượt gửi được: trước đây
+            // liên hệ kế tiếp chạy ngay sau 5 giây → tài khoản đang bị giới hạn bị gọi API dồn dập tới hết danh sách
+            this.tokens.set(zaloId, Math.max(0, (this.tokens.get(zaloId) ?? 1) - 1));
+            this.lastSentAt.set(zaloId, Date.now());
             this.broadcastProgress(zaloId, item.campaign_id, effectiveContactId, 'failed', errMsg);
-            this.checkCampaignCompletion(item.campaign_id, zaloId);
+            this.finishContact(zaloId, item.campaign_id, campaignData, outcome(true, errMsg));
         } finally {
             this.isProcessing.set(zaloId, false);
         }
     }
 
-    private checkCampaignCompletion(campaignId: number, zaloId: string): void {
+    /** true = chiến dịch vừa xong (không còn liên hệ chờ gửi). */
+    private checkCampaignCompletion(campaignId: number, zaloId: string): boolean {
         try {
             const db = DatabaseService.getInstance();
             const contacts = db.getCampaignContacts(campaignId);
@@ -565,9 +621,49 @@ class CRMQueueService {
                 Logger.log(`[CRMQueue] Campaign ${campaignId} completed`);
                 EventBroadcaster.emit('crm:campaignDone', { zaloId, campaignId });
                 this.checkAndStopIfIdle(zaloId);
+                return true;
             }
         } catch (err: any) {
             Logger.warn(`[CRMQueue] checkCampaignCompletion: ${err.message}`);
+        }
+        return false;
+    }
+
+    /**
+     * Sau mỗi liên hệ đã gửi / tra SĐT: hết người nhận → Hoàn thành (không tự dừng chiến dịch đã xong); còn → ghi chuỗi
+     * lỗi liên tiếp, đủ ngưỡng thì tự dừng.
+     */
+    private finishContact(zaloId: string, campaignId: number, campaign: CRMCampaign | null, outcome: StreakOutcome): void {
+        if (this.checkCampaignCompletion(campaignId, zaloId)) return;
+        this.trackFailureStreak(zaloId, campaignId, campaign, outcome);
+    }
+
+    /**
+     * Chuỗi liên hệ gửi lỗi liên tiếp (shared/crm/campaignAutoStop): lỗi +1, gửi được về 0. Đủ ngưỡng cài ở chiến dịch
+     * (tài khoản bị chặn / giới hạn / mất phiên thì liên hệ nào cũng lỗi) → Tạm dừng chiến dịch, ghi lý do + lỗi cuối,
+     * báo mọi màn (crm:campaignAutoStopped). Giới hạn ngày không phải lỗi: chiến dịch chờ sang hôm sau như cũ.
+     * "Mai gửi tiếp" → hẹn chạy lại lúc Giờ bắt đầu chạy hôm sau (scheduleAutoResume).
+     */
+    private trackFailureStreak(zaloId: string, campaignId: number, campaign: CRMCampaign | null, outcome: StreakOutcome): void {
+        if (!outcome.counted) return; // "Chỉ tính người lạ": bạn bè / nhóm không đổi chuỗi
+        try {
+            const db = DatabaseService.getInstance();
+            const failures = db.recordCampaignOutcome(campaignId, outcome.failed);
+            if (!outcome.failed || !shouldAutoStopCampaign(failures, campaign?.stop_after_failures)) return;
+            const reason = campaignAutoStopReason(failures, outcome.error, { strangersOnly: outcome.strangersOnly });
+            const resumeAt = campaignFlag(campaign?.stop_resume_next_day) ? campaignAutoResumeAt(Date.now(), campaign?.daily_start_time) : 0;
+            // Chỉ dừng chiến dịch còn đang chạy (vừa bị tạm dừng tay / xoá trong lúc gửi → giữ nguyên)
+            if (!db.autoStopCRMCampaign(campaignId, reason, resumeAt)) return;
+            db.save();
+            Logger.warn(`[CRMQueue] ⏸ Campaign ${campaignId} auto-stopped: ${reason}${resumeAt ? ` (resumes ${new Date(resumeAt).toISOString()})` : ''}`);
+            EventBroadcaster.emit('crm:campaignChanged', { action: 'status', ownerZaloId: zaloId, campaignId, status: 'paused' });
+            EventBroadcaster.emit('crm:campaignAutoStopped', {
+                zaloId, campaignId, name: campaign?.name || '', failures, reason, strangersOnly: outcome.strangersOnly, resumeAt,
+            });
+            this.checkAndStopIfIdle(zaloId);
+            if (resumeAt) this.scheduleAutoResume();
+        } catch (err: any) {
+            Logger.warn(`[CRMQueue] trackFailureStreak: ${err.message}`);
         }
     }
 
@@ -625,6 +721,9 @@ class CRMQueueService {
         }
     }
 }
+
+/** Kết quả một liên hệ cho chuỗi lỗi liên tiếp. `counted` = false: không đổi chuỗi ("Chỉ tính người lạ" mà đây là bạn bè / nhóm). */
+type StreakOutcome = { failed: boolean; error?: string; counted: boolean; strangersOnly: boolean };
 
 export default CRMQueueService;
 

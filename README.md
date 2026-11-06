@@ -9,7 +9,7 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 
 [🌐 Website](https://deplaoapp.com/) · [🇬🇧 English](./README.en.md)
 
-![Version](https://img.shields.io/badge/version-26.10.4-22c55e)
+![Version](https://img.shields.io/badge/version-26.11.0-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Ubuntu-3b82f6)
 ![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
@@ -42,41 +42,41 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.10.4.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.10.4-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.11.0.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.11.0-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.10.4.exe</strong></big>
+<big><strong>Deplao-Setup-26.11.0.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.10.4-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.0-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.11.0-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.10.4-arm64.dmg</strong></big>
+<big><strong>Deplao-26.11.0-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.10.4-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.0.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.11.0-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.10.4.AppImage</strong></big><br>
+<big><strong>Deplao-26.11.0.AppImage</strong></big><br>
 <big>chạy mọi distro - <code>chmod +x</code> là dùng được</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.10.4.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.10.4-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.0.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.11.0-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.10.4.dmg</strong></big>
+<big><strong>Deplao-26.11.0.dmg</strong></big>
 
 </td>
 </tr>
@@ -402,7 +402,7 @@ curl -H "Authorization: Bearer dpk_xxx" http://127.0.0.1:9900/api/v1/accounts
 - Tài liệu đầy đủ (hướng dẫn, danh sách endpoint, nút "Thử gọi", lệnh curl): `http://127.0.0.1:9900/docs`
 - OpenAPI cho Postman / Insomnia / sinh SDK: `http://127.0.0.1:9900/api/v1/openapi.json`
 - Sự kiện realtime (Socket.IO, SSE, polling) và **webhook gửi ra** có chữ ký HMAC, tự thử lại
-- Gọi từ xa (nhân viên, webhook nhận vào, thanh toán): dùng địa chỉ Internet ở **Cài đặt → Internet & Đám mây**
+- Gọi từ xa (nhân viên, webhook nhận vào, thanh toán): dùng địa chỉ Internet ở **Cài đặt → Internet & Cloud**
 
 ### Ứng dụng tự phát triển
 
@@ -434,12 +434,12 @@ Nếu nhìn nhanh, có thể hiểu Deplao là:
 - 🤖 **AI Assistant** - hỗ trợ gợi ý câu trả lời, chat trực tiếp trong hội thoại. Còn giúp phân loại tin nhắn, trả lời khách hàng 24/7.
 - 🔗 **Tích hợp ngoài** - POS, vận chuyển, thanh toán, Google Sheets, Telegram, Email, HTTP Request... Kết hợp sử dụng khi chat hoặc workflow
 - 🧩 **Ứng dụng & Public API** - gần 300 API, webhook, sự kiện realtime và ứng dụng tự phát triển chạy ngay trong Deplao
-- ☁️ **Internet & Đám mây** - địa chỉ Internet cố định qua Cloudflare của bạn; lưu media, sao lưu + đồng bộ DB đã mã hoá lên Cloudflare R2 hoặc Google Drive (Google One), xem mức dùng và phí ước tính; khôi phục sang máy mới
+- ☁️ **Internet & Cloud** - địa chỉ Internet cố định qua Cloudflare của bạn; lưu media, sao lưu + đồng bộ DB đã mã hoá lên Cloudflare R2 hoặc Google Drive (Google One), xem mức dùng và phí ước tính; khôi phục sang máy mới
 - 📈 **Báo cáo & phân tích** - theo dõi tin nhắn, liên hệ, nhãn, nhân viên, chiến dịch, workflow, AI.
 - 🗂️ **ERP nội bộ** - task, lịch làm việc, notes và phối hợp vận hành nội bộ ngay trong cùng hệ thống
 - 🧑‍💼 **Workspace boss ↔ nhân viên** - kết nối qua **LAN hoặc Internet**, tự kết nối lại, đồng bộ realtime hai chiều, phân quyền chi tiết và theo dõi hiệu suất từng nhân viên
 - 🎨 **Giao diện Sáng / Tối** - bảng màu và bộ thành phần thống nhất, thanh điều hướng gọn với nhóm "Công cụ"
-- 🔒 **Proxy per-account** - gán Proxy riêng cho từng tài khoản trước khi đăng nhập
+- 🔒 **Proxy per-account** - gán Proxy riêng cho từng tài khoản, thêm / đổi / bỏ lúc nào cũng được, không cần đăng nhập lại
 - 🔐 **Dữ liệu lưu cục bộ** - ưu tiên quyền kiểm soát dữ liệu và bảo mật trên máy người dùng
 
 
@@ -518,9 +518,9 @@ Các màn hình dưới đây được sắp theo luồng sử dụng thực t�
   </tr>
   <tr>
     <td>
-      <img src="./assets/cloud.png" alt="Internet và Đám mây với Cloudflare, Google Drive trong Deplao" width="360" />
+      <img src="./assets/cloud.png" alt="Internet & Cloud với Cloudflare, Google Drive trong Deplao" width="360" />
       <br />
-      <sub><strong>Internet & Đám mây (Cloudflare · Google Drive)</strong></sub>
+      <sub><strong>Internet & Cloud (Cloudflare · Google Drive)</strong></sub>
     </td>
     <td>
       <img src="./assets/mobile-sync.png" alt="Đồng bộ tin nhắn cũ Zalo từ điện thoại trong Deplao" width="360" />
@@ -608,7 +608,7 @@ Deplao phù hợp cho:
 - Sự kiện realtime và webhook gửi ra có chữ ký, trang tài liệu + OpenAPI
 - Cài và tự viết ứng dụng chạy ngay trong Deplao, có SDK và CLI (xem mục [Public API](#public-api))
 
-### 9) ☁️ Internet & Đám mây (Cloudflare · Google Drive)
+### 9) ☁️ Internet & Cloud (Cloudflare · Google Drive)
 - Một chỗ cấu hình địa chỉ Internet (địa chỉ tạm, Cloudflare tự động, ngrok, Cloudflare thủ công) cho nhân viên ở xa, webhook và thanh toán
 - Chọn kho lưu: Cloudflare R2 hoặc Google Drive (Google One) — đăng nhập Google trên trình duyệt, Deplao chỉ thấy file do chính nó tạo
 - Lưu media lên kho đã chọn, tự lấy lại khi file trên máy thiếu, tuỳ chọn giải phóng ổ đĩa

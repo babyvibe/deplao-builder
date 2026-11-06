@@ -64,7 +64,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
           && a.isOnline === b?.isOnline
           && a.isConnected === b?.isConnected
           && a.listenerActive === b?.listenerActive
-          && a.channel === b?.channel;
+          && a.channel === b?.channel
+          // proxy đổi / bị xoá ở Cài đặt → nạp lại danh sách phải thấy proxy mới
+          && (a.proxy_id ?? null) === (b?.proxy_id ?? null);
       })
     ) {
       // Danh sách không đổi, nhưng vẫn đảm bảo có active account nếu đang thiếu.

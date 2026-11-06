@@ -1,5 +1,5 @@
 /**
- * cloudContracts — hợp đồng chung cho tính năng "Internet & Đám mây" (Cloudflare: tunnel cố định, R2 media,
+ * cloudContracts — hợp đồng chung cho tính năng "Internet & Cloud" (Cloudflare: tunnel cố định, R2 media,
  * đồng bộ DB). Dùng cho cả main (src/services/cloudflare/**, electron/ipc/cloud/cloudflareIpc.ts) và renderer
  * (src/ui/components/settings/cloud/**). Thiết kế: Claude Doc "Deplao × Cloudflare" (tab chính + tab Giao diện).
  *
@@ -258,6 +258,8 @@ export interface DbSyncWorkspaceStatus {
     scope?: CloudScope;
     /** Tiến độ lần chụp bản gốc đang chạy (null / thiếu = không chạy). */
     progress?: DbSyncProgress | null;
+    /** Bản gốc mới đang chờ máy rảnh mới chụp: vừa thức dậy / đang chạy pin / đang có người dùng (null = không chờ). */
+    baseWaiting?: 'wake' | 'battery' | 'active' | null;
     /** Mã bản sao trên R2 của workspace này (cùng dạng RemoteDbCopy.workspaceId); null = chưa có. */
     copyId?: string | null;
 }

@@ -16,7 +16,7 @@ Mỗi thư mục là một vùng / tính năng của màn chat. Phần riêng m�
 | `polls/` | Bình chọn (tạo, bong bóng, xem kết quả) |
 | `reminders/` | Nhắc hẹn (tạo, popup khi đến giờ) |
 | `quick/` | Thao tác nhanh (nút "+", nhắn tin nhanh, kết bạn, tạo nhóm, tham gia bằng link, lịch hẹn / ghi chú nhanh) |
-| `telegram/` | Riêng Telegram: `forum/` chủ đề, `posts/` bài kênh + bình luận, `messages/` phần tin, `stickers/` sticker / GIF, `quick/` nhóm / kênh mới, danh bạ, cuộc gọi; WebView bot |
+| `telegram/` | Riêng Telegram: `forum/` chủ đề, `posts/` bài kênh + bình luận, `messages/` phần tin, `stickers/` sticker / GIF, `quick/` nhóm / kênh mới, danh bạ, cuộc gọi; `miniapp/` Mini App của bot (chạy trong app) + nút đăng nhập bằng Telegram |
 | `zalo/` | Riêng Zalo: `catalog/` danh mục sản phẩm, `presence/` trạng thái truy cập, `hidden/` hội thoại ẩn, `messages/` thẻ OA / media hết hạn; tự xoá tin |
 | `facebook/` | Riêng Facebook: thẻ tin mẫu của Page |
 

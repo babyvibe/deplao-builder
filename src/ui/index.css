@@ -305,11 +305,11 @@ html[data-theme="light"] {
     background: rgb(var(--subtle-foreground));
   }
 
-  /* AI suggestion bar: purple accent stays, every neutral reads the theme tokens.
-     Purple text is mixed with --foreground so it is light on dark and deep on light. */
+  /* AI suggestion bar: chỉ token của theme (nền thẻ, chip trung tính như ô nhập, điểm nhấn = màu chính) để hợp cả giao
+     diện sáng lẫn tối; không gradient / viền / bóng tím riêng. */
   .ai-suggestion-bar {
     @apply flex items-center gap-2 px-3 py-2;
-    background: linear-gradient(90deg, rgba(88, 28, 135, 0.22) 0%, rgb(var(--card) / 0.96) 28%, rgb(var(--card)) 100%);
+    background: rgb(var(--card));
     scrollbar-width: thin;
     scrollbar-color: transparent transparent;
   }
@@ -332,32 +332,23 @@ html[data-theme="light"] {
 
   .ai-suggestion-badge {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[0.625rem] font-semibold tracking-wide flex-shrink-0;
-    color: color-mix(in srgb, #a855f7 55%, rgb(var(--foreground)));
-    background: rgba(168, 85, 247, 0.16);
-    border: 1px solid rgba(168, 85, 247, 0.28);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+    color: rgb(var(--primary));
+    background: rgb(var(--primary) / 0.1);
   }
 
-  .ai-suggestion-loading {
-    @apply inline-flex items-center rounded-full px-3 py-1.5 text-[0.6875rem] flex-shrink-0;
-    color: rgb(var(--muted-foreground));
-    background: rgb(var(--card) / 0.9);
-    border: 1px solid rgb(var(--border));
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
-  }
-
+  /* Các gợi ý chia đều bề ngang thanh (rộng / hẹp theo khung chat, không cố định → không thừa trống / không tràn; hẹp
+     quá 8rem thì cuộn ngang). Cao bằng nhau (2 dòng chữ, chữ ngắn canh giữa): gợi ý mới dài / ngắn khác không làm thanh
+     cao thấp → khung chat không nhảy. Mờ đi (opacity) khi đang gọi lại vì có tin mới. */
   .ai-suggestion-chip {
-    @apply flex-shrink-0 max-w-[15rem] rounded-2xl px-3 py-2 text-left text-xs transition-all;
+    @apply flex min-w-[8rem] flex-1 basis-0 items-center rounded-xl px-3 py-2 text-left text-xs transition;
+    min-height: calc(3rem + 2px);
     color: rgb(var(--foreground));
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.14) 0%, rgb(var(--card) / 0.94) 40%, rgb(var(--card)) 100%);
-    border: 1px solid rgba(168, 85, 247, 0.24);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+    background: rgb(var(--muted));
+    border: 1px solid rgb(var(--border));
   }
   .ai-suggestion-chip:hover {
-    transform: translateY(-0.125rem);
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.18) 0%, rgb(var(--muted) / 0.98) 100%);
-    border-color: rgba(168, 85, 247, 0.4);
-    box-shadow: 0 10px 18px rgba(0, 0, 0, 0.22);
+    background: rgb(var(--primary) / 0.08);
+    border-color: rgb(var(--primary) / 0.45);
   }
 
   .ai-suggestion-chip-text {
@@ -369,15 +360,17 @@ html[data-theme="light"] {
   }
 
   .ai-suggestion-close {
-    @apply ml-auto flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full transition-all;
+    @apply ml-auto flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full transition-colors;
     color: rgb(var(--muted-foreground));
-    background: rgb(var(--card) / 0.9);
-    border: 1px solid rgb(var(--border));
   }
   .ai-suggestion-close:hover {
-    color: color-mix(in srgb, #a855f7 55%, rgb(var(--foreground)));
-    background: rgba(168, 85, 247, 0.12);
-    border-color: rgba(168, 85, 247, 0.28);
+    color: rgb(var(--foreground));
+    background: rgb(var(--muted));
+  }
+
+  /* Nút Gợi ý AI trên thanh công cụ (nền xanh khi bật): lần gọi AI gần nhất lỗi → ngôi sao đỏ, hai giao diện như nhau */
+  .ai-tool-sparkle-error {
+    color: #f87171;
   }
 }
 
@@ -458,11 +451,18 @@ html[data-theme="light"] input[type="datetime-local"] {
 html:not([data-theme="light"]) .chat-link { color: #9ecbff; text-decoration-line: none; }
 html:not([data-theme="light"]) .chat-link:hover { color: #c6e2ff; text-decoration-line: underline; }
 
-/* "Chuyển tiếp từ …" (TelegramForwardHeader) và @nhắc tên trong tin (TextWithMentions): xanh như cũ; riêng tin mình gửi
-   ở giao diện tối (hàng [data-out] của ChatWindow, bong bóng xanh đậm: xanh cũ chìm) dùng xanh sáng như link */
-.chat-forward { color: rgb(var(--primary)); }
+/* "Chuyển tiếp từ …" (TelegramForwardHeader) như Telegram: chữ "Chuyển tiếp từ" màu chữ phụ, tên nguồn đậm theo màu của
+   nguồn (chat-peer-N, như tên người gửi / trích dẫn). Trước đây cả dòng màu nhấn xanh, chữ mờ 80%: 3.4 (chữ ~2.8) trên
+   bong bóng tối, khó đọc. Giao diện sáng: tên đậm thêm (xanh lá / cam / ngọc chỉ ~3 trên nền trắng, chữ nhỏ khó đọc);
+   bong bóng gửi giao diện tối (xanh đậm): tên sáng thêm. */
+.chat-forward-label { color: rgb(var(--muted-foreground)); }
+.chat-forward-name { color: rgb(var(--chat-peer)); }
+html[data-theme="light"] .chat-forward-name { color: color-mix(in srgb, rgb(var(--chat-peer)) 72%, rgb(var(--foreground))); }
+html:not([data-theme="light"]) [data-out] .chat-forward-name { color: color-mix(in srgb, rgb(var(--chat-peer)) 75%, #fff); }
+
+/* @nhắc tên trong tin (TextWithMentions): xanh như cũ; tin mình gửi ở giao diện tối (hàng [data-out] của ChatWindow,
+   bong bóng xanh đậm: xanh cũ chìm) dùng xanh sáng như link */
 .chat-mention { color: #5398f3; }
-html:not([data-theme="light"]) [data-out] .chat-forward,
 html:not([data-theme="light"]) [data-out] .chat-mention { color: #9ecbff; }
 
 /* Dấu ✓✓ "đã xem" cạnh giờ tin gửi (MessageTime StatusTicks); ✓ / ✓✓ khác giữ màu chữ của giờ */

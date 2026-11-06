@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { writeMediaFile } from '../../file/writeMediaFile';
 import type {
   TelegramCoveredStickerSet,
   TelegramStickerFileKind,
@@ -492,9 +493,9 @@ export function getStickerFile(accountId: string, docId: string, variant: 'thumb
     if (!data || (typeof data !== 'string' && data.length === 0)) return { success: false, error: 'Không tải được sticker' };
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const ext = detectFileExt(buffer, thumb ? '.webp' : FULL_EXT[stickerFormatOf(entry.doc)]);
-    fs.mkdirSync(dir, { recursive: true });
+    await fs.promises.mkdir(dir, { recursive: true });
     const localPath = path.join(dir, baseName + ext);
-    fs.writeFileSync(localPath, buffer);
+    await writeMediaFile(localPath, buffer);
     return { success: true, localPath, kind: fileKindOfExt(ext) };
   })().catch((err: any) => ({ success: false as const, error: err?.message || String(err) }))
     .finally(() => { fileInflight.delete(key); });

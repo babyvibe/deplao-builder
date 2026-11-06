@@ -2,7 +2,7 @@
  * Dải cảnh báo sau khi khôi phục dữ liệu từ Cloudflare: chiến dịch, workflow và lịch của ứng dụng đang tạm dừng
  * (tránh gửi trùng với máy cũ) cho tới khi người dùng xác nhận máy cũ đã tắt → db.resumeAutomations().
  * Đọc db.restoreState() khi mở và khi main báo phần 'db' đổi. Bản app cũ không có các hàm này → không hiện gì.
- * Dùng ở Cài đặt → Internet & Đám mây; có thể gắn thêm ở Dashboard.
+ * Dùng ở Cài đặt → Internet & Cloud; có thể gắn thêm ở Dashboard.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { showConfirm } from '@/components/common/ConfirmDialog';

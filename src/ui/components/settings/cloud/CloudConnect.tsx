@@ -1,6 +1,6 @@
 /**
  * Kết nối Cloudflare — 3 bước: tạo token qua link Cloudflare điền sẵn quyền → dán token và Account ID → Kết nối.
- * Dùng ở Cài đặt → Internet & Đám mây (chưa kết nối / đổi token) và bước 1 của trình khôi phục.
+ * Dùng ở Cài đặt → Internet & Cloud (chưa kết nối / đổi token) và bước 1 của trình khôi phục.
  * Token chỉ đi một chiều renderer → main (main lưu bằng safeStorage); renderer không bao giờ đọc lại.
  */
 import React, { useId, useState } from 'react';
@@ -192,7 +192,7 @@ export interface ConnectCardProps extends ConnectFormProps {
   className?: string;
 }
 
-/** Thẻ "Kết nối Cloudflare" ở đầu trang Internet & Đám mây khi chưa kết nối (hoặc khi đổi token). */
+/** Thẻ "Kết nối Cloudflare" ở đầu trang Internet & Cloud khi chưa kết nối (hoặc khi đổi token). */
 export function ConnectCard({ title = 'Kết nối Cloudflare', className, ...form }: ConnectCardProps) {
   return (
     <Card className={cn('space-y-4 p-4', className)}>

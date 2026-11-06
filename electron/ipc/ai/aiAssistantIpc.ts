@@ -174,7 +174,8 @@ export function registerAIAssistantIpc(): void {
   });
 
   // ─── Get suggestions (for chat input) ─────────────────────────────────────
-  ipcMain.handle('ai:suggest', async (_e, { assistantId, chatHistory }: { assistantId: string; chatHistory: any[] }) => {
+  // count: số câu (1..5) — ô soạn tin theo cài đặt "Số câu gợi ý"; thiếu = 5 (API, nhân viên bản cũ)
+  ipcMain.handle('ai:suggest', async (_e, { assistantId, chatHistory, count }: { assistantId: string; chatHistory: any[]; count?: number }) => {
     try {
       // Employee mode: proxy qua Boss REST API để Boss gọi AI
       if (isEmployeeMode()) {
@@ -186,7 +187,7 @@ export function registerAIAssistantIpc(): void {
             const res = await fetch(`${baseUrl}/api/command/ai/suggest`, {
               method: 'POST',
               headers: { 'Authorization': `Bearer ${ws.token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ assistantId, chatHistory }),
+              body: JSON.stringify({ assistantId, chatHistory, count }),
               signal: AbortSignal.timeout(60000),
             });
             const json: any = await res.json();
@@ -197,7 +198,7 @@ export function registerAIAssistantIpc(): void {
         return { success: false, error: 'Không kết nối tới Boss', suggestions: [] };
       }
 
-      const suggestions = await AIAssistantService.getInstance().getSuggestions(assistantId, chatHistory);
+      const suggestions = await AIAssistantService.getInstance().getSuggestions(assistantId, chatHistory, count);
       return { success: true, suggestions };
     } catch (e: any) {
       const status = e.response?.status;

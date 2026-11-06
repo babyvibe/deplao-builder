@@ -7,17 +7,28 @@ import { useCurrentEmployeeId, useErpPermissions } from '@/hooks/erp/useErpConte
 import { useUpdateStore } from '@/store/app/updateStore';
 import { ArrowLeftIcon, DownloadIcon, MonitorIcon, RefreshIcon, SettingsIcon, SparklesIcon } from '@/components/common/icons';
 import InAppNotifySettings from '@/components/settings/notifications/InAppNotifySettings';
+import { SegmentedControl } from '@/components/settings/settingsUi';
+import { useQuickErpAccess } from '@/hooks/erp/useQuickErpAccess';
+import UpcomingEventsTab, { useUpcomingTodayCount } from './UpcomingEventsTab';
 
+type NotificationTab = 'inbox' | 'upcoming';
 
-interface Props { onClose?: () => void; }
+interface Props {
+  onClose?: () => void;
+  /** Tab mở sẵn: chuông đang báo lịch sắp tới → "Lịch sắp tới". */
+  initialTab?: NotificationTab;
+}
 
 /**
  * Chuông thông báo trên thanh tiêu đề: bản cập nhật, thông báo ERP (khi có quyền) và ⚙ Cài đặt thông báo tin nhắn trong
  * app (bật / tắt từng tài khoản hoặc tất cả). Nhắc lịch sắp tới ("15 phút nữa tới lịch hẹn"): bấm = đã đọc + mở hội thoại
- * gắn với lịch (không có thì mở Lịch), chuông trên thanh tiêu đề thôi báo.
+ * gắn với lịch (không có thì mở Lịch), chuông trên thanh tiêu đề thôi báo. Được xem lịch → thêm tab "Lịch sắp tới"
+ * (UpcomingEventsTab: danh sách lịch 7 ngày tới + mốc báo trước).
  */
-export default function NotificationCenter({ onClose }: Props) {
+export default function NotificationCenter({ onClose, initialTab = 'inbox' }: Props) {
   const [view, setView] = useState<'list' | 'settings'>('list');
+  const { calendar: canSeeCalendar } = useQuickErpAccess();
+  const [tab, setTab] = useState<NotificationTab>(initialTab);
   if (view === 'settings') {
     return (
       <div className="w-80 max-h-[520px] bg-card border border-input rounded-xl shadow-2xl overflow-hidden flex flex-col">
@@ -36,7 +47,14 @@ export default function NotificationCenter({ onClose }: Props) {
       </div>
     );
   }
-  return <NotificationList onClose={onClose} onOpenSettings={() => setView('settings')} />;
+  return (
+    <NotificationList
+      onClose={onClose}
+      onOpenSettings={() => setView('settings')}
+      tab={canSeeCalendar ? tab : 'inbox'}
+      onTabChange={canSeeCalendar ? setTab : undefined}
+    />
+  );
 }
 
 /** payload lưu JSON (IPC / REST trả chuỗi hoặc object). */
@@ -50,7 +68,12 @@ function reminderEventIds(items: ErpNotification[]): string[] {
   return items.filter(n => n.type === 'event_reminder').map(n => String(payloadOf(n).eventId || '')).filter(Boolean);
 }
 
-function NotificationList({ onClose, onOpenSettings }: Props & { onOpenSettings: () => void }) {
+function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Props, 'onClose'> & {
+  onOpenSettings: () => void;
+  tab: NotificationTab;
+  /** Có tab "Lịch sắp tới" (được xem lịch) */
+  onTabChange?: (tab: NotificationTab) => void;
+}) {
   const eid = useCurrentEmployeeId();
   const erpPerms = useErpPermissions();
   const inbox = useErpNotificationStore(s => s.inbox);
@@ -90,6 +113,22 @@ function NotificationList({ onClose, onOpenSettings }: Props & { onOpenSettings:
   const groups = groupByDay(inbox);
   const hasErpNotifs = erpPerms.can('erp.access') && inbox.length > 0;
   const isEmpty = !hasUpdate && !hasErpNotifs;
+  const unreadCount = inbox.filter(n => !n.read).length;
+  const upcomingToday = useUpcomingTodayCount();
+  const inboxActions = hasErpNotifs && (
+    <>
+      <button
+        onClick={() => { useErpReminderAttention.getState().dismiss(); void markAllRead(eid); }}
+        className="text-[11px] text-muted-foreground hover:text-foreground"
+        title="Đánh dấu tất cả đã đọc"
+      >Đọc hết</button>
+      <button
+        onClick={() => { useErpReminderAttention.getState().dismiss(); void deleteAllNotifications(eid); }}
+        className="text-[11px] text-muted-foreground hover:text-red-400"
+        title="Xoá tất cả thông báo"
+      >Xoá hết</button>
+    </>
+  );
 
   const updateStatusLabel = () => {
     switch (status) {
@@ -106,24 +145,23 @@ function NotificationList({ onClose, onOpenSettings }: Props & { onOpenSettings:
 
   return (
     <div className="w-80 max-h-[520px] bg-card border border-input rounded-xl shadow-2xl overflow-hidden flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <span className="text-sm font-semibold text-foreground">Thông báo</span>
+      {/* Header: tab Thông báo / Lịch sắp tới (khi được xem lịch), ⚙, đóng */}
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border">
+        {onTabChange ? (
+          <SegmentedControl
+            label="Thông báo"
+            value={tab}
+            onChange={onTabChange}
+            options={[
+              { value: 'inbox', label: 'Thông báo', count: unreadCount },
+              { value: 'upcoming', label: 'Lịch sắp tới', count: upcomingToday },
+            ]}
+          />
+        ) : (
+          <span className="text-sm font-semibold text-foreground">Thông báo</span>
+        )}
         <div className="flex items-center gap-2">
-          {hasErpNotifs && (
-            <>
-              <button
-                onClick={() => { useErpReminderAttention.getState().dismiss(); void markAllRead(eid); }}
-                className="text-[11px] text-muted-foreground hover:text-foreground"
-                title="Đánh dấu tất cả đã đọc"
-              >Đọc hết</button>
-              <button
-                onClick={() => { useErpReminderAttention.getState().dismiss(); void deleteAllNotifications(eid); }}
-                className="text-[11px] text-muted-foreground hover:text-red-400"
-                title="Xoá tất cả thông báo"
-              >Xoá hết</button>
-            </>
-          )}
+          {!onTabChange && inboxActions}
           <button
             onClick={onOpenSettings}
             className="text-muted-foreground hover:text-foreground"
@@ -138,6 +176,11 @@ function NotificationList({ onClose, onOpenSettings }: Props & { onOpenSettings:
         </div>
       </div>
 
+      {onTabChange && tab === 'inbox' && hasErpNotifs && (
+        <div className="flex items-center justify-end gap-3 px-3 py-1 border-b border-border/60">{inboxActions}</div>
+      )}
+
+      {tab === 'upcoming' ? <UpcomingEventsTab onClose={onClose} /> : (
       <div className="flex-1 overflow-y-auto">
         {/* ── App update item ── */}
         {hasUpdate && updateInfo && (
@@ -226,6 +269,7 @@ function NotificationList({ onClose, onOpenSettings }: Props & { onOpenSettings:
           <div className="p-6 text-center text-muted-foreground text-xs">Chưa có thông báo</div>
         )}
       </div>
+      )}
     </div>
   );
 }

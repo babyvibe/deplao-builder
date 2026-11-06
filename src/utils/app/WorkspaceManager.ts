@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
 import Logger from '../Logger';
+import { inUiRemoteScope } from '../../services/database/dbScope';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -68,6 +69,11 @@ export interface SavedRemotePassword {
 
 interface WorkspaceConfig {
     activeWorkspaceId: string;
+    /**
+     * Workspace local mở gần nhất = workspace mà main process chạy nền (CSDL chính, tài khoản, workflow…) khi giao diện
+     * đang mở workspace remote — kể cả khi mở app lúc đang ở workspace remote.
+     */
+    lastLocalWorkspaceId?: string;
     workspaces: Workspace[];
     /** workspaceId → mật khẩu đã lưu (mã hoá). */
     savedPasswords?: Record<string, SavedRemotePassword>;
@@ -122,6 +128,10 @@ class WorkspaceManager {
         if (!activeWs && this.config.workspaces.length > 0) {
             this.config.activeWorkspaceId = this.config.workspaces[0].id;
             this.saveConfig();
+        }
+        // Bản cũ chưa ghi workspace local chạy nền: workspace đang mở nếu là local (ghi ở lần lưu sau)
+        if (activeWs && activeWs.type !== 'remote' && !this.config.lastLocalWorkspaceId) {
+            this.config.lastLocalWorkspaceId = activeWs.id;
         }
 
         this.initialized = true;
@@ -302,6 +312,7 @@ class WorkspaceManager {
         if (this.config.activeWorkspaceId === id) {
             this.config.activeWorkspaceId = this.config.workspaces[0].id;
         }
+        if (this.config.lastLocalWorkspaceId === id) delete this.config.lastLocalWorkspaceId;
 
         this.saveConfig();
 
@@ -359,13 +370,37 @@ class WorkspaceManager {
 
     // ─── Active workspace ────────────────────────────────────────────
 
+    /**
+     * Workspace của đoạn code đang chạy: lệnh từ giao diện đang mở workspace remote → workspace remote đó; còn lại (việc
+     * chạy nền, API, plugin, relay…) → workspace local đang chạy (getRuntimeWorkspace). Giao diện mở workspace local thì
+     * hai cái là một. Xem dbScope.ts.
+     */
     public getActiveWorkspace(): Workspace {
+        return inUiRemoteScope() ? this.getUiActiveWorkspace() : this.getRuntimeWorkspace();
+    }
+
+    /** Workspace đang mở trên giao diện (activeWorkspaceId), bất kể đoạn code đang chạy là gì. */
+    public getUiActiveWorkspace(): Workspace {
         const ws = this.config.workspaces.find(w => w.id === this.config.activeWorkspaceId);
         if (!ws) {
             // Fallback: return first workspace
             return this.config.workspaces[0];
         }
         return ws;
+    }
+
+    /**
+     * Workspace local mà main process chạy nền (CSDL chính, media, tài khoản, workflow, API…): workspace đang mở nếu là
+     * local; giao diện đang mở workspace remote → workspace local mở gần nhất, không có thì workspace mặc định.
+     */
+    public getRuntimeWorkspace(): Workspace {
+        const ui = this.getUiActiveWorkspace();
+        if (!ui || ui.type !== 'remote') return ui;
+        const locals = this.config.workspaces.filter(w => w.type !== 'remote');
+        return locals.find(w => w.id === this.config.lastLocalWorkspaceId)
+            || locals.find(w => w.id === DEFAULT_WORKSPACE_ID)
+            || locals[0]
+            || ui;
     }
 
     public getActiveWorkspaceId(): string {
@@ -381,6 +416,10 @@ class WorkspaceManager {
         }
 
         const prevId = this.config.activeWorkspaceId;
+        // Workspace local đang chạy nền: workspace local vừa rời (sang remote) hoặc vừa mở
+        const prevWs = this.config.workspaces.find(w => w.id === prevId);
+        if (prevWs && prevWs.type !== 'remote') this.config.lastLocalWorkspaceId = prevWs.id;
+        if (ws.type !== 'remote') this.config.lastLocalWorkspaceId = id;
         this.config.activeWorkspaceId = id;
         this.saveConfig();
 
@@ -401,6 +440,7 @@ class WorkspaceManager {
         if (!ws) return { success: false, error: 'Workspace không tồn tại' };
 
         this.config.activeWorkspaceId = id;
+        if (ws.type !== 'remote') this.config.lastLocalWorkspaceId = id;
         this.saveConfig();
         Logger.warn(`[WorkspaceManager] Restored active workspace to: ${id} ("${ws.name}")`);
         return { success: true, workspace: ws };

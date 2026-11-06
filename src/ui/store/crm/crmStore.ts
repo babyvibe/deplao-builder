@@ -35,6 +35,16 @@ export interface CRMCampaign {
   per_contact_delay_max_seconds: number;
   daily_send_limit: number;    // 0 = không giới hạn
   daily_start_time: string;    // "HH:MM" format
+  /** Tự dừng khi N liên hệ lỗi liên tiếp; 0 / thiếu (Boss bản cũ) = không dừng */
+  stop_after_failures?: number;
+  consecutive_failures?: number;
+  /** Lý do chiến dịch tự dừng ('' = không); còn tới khi bấm Tiếp tục */
+  auto_stop_reason?: string;
+  auto_stopped_at?: number;
+  /** Tự dừng: chỉ tính người lạ / mai gửi tiếp (0 / 1); lúc tự chạy lại (0 = không hẹn) */
+  stop_strangers_only?: number;
+  stop_resume_next_day?: number;
+  auto_resume_at?: number;
   created_at: number;
   updated_at: number;
   total_contacts: number;

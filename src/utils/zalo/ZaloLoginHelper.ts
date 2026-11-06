@@ -15,6 +15,7 @@ import { whenStartupSettled } from "../startup/startupSettle";
 import { refreshZaloAutoDelete } from "../../services/zalo/zaloAutoDeleteSync";
 import { refreshZaloHidden, zaloHiddenApiOf } from "../../services/zalo/zaloHiddenConversations";
 import { describeZaloSocketRetry, installZaloListenerRetryGuard } from "./zaloListenerRetry";
+import { isQrLoginCancelled, qrLoginErrorText } from "../../shared/zalo/zaloQrLogin";
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_BASE_MS = 5000; // 5s base, exponential backoff
@@ -91,13 +92,14 @@ class ZaloLoginHelper {
         const zalo = new Zalo(this.createZaloConfig({ selfListen: true }, proxyAgent));
         let account = { avatar: '', displayName: '' };
         let abortFn: (() => unknown) | null = null;
+        /** zca-js hết hạn mã (100 s) / người dùng bấm Từ chối trên điện thoại: lượt QR kết thúc, không phải lỗi */
+        let expired = false;
+        let declined = false;
 
         // Lưu abort function để có thể cancel từ bên ngoài
         ZaloLoginHelper.activeQRAbortFns.set(tempId, () => { abortFn?.(); });
 
-        const api = await zalo.loginQR({
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
-        }, (res) => {
+        const onQrEvent = (res: any) => {
             console.log(`[ZaloLoginHelper] loginQR event type: ${res.type}`, JSON.stringify((res as any).data || {}).substring(0, 100));
 
             if (res.type === LoginQRCallbackEventType.QRCodeGenerated) {
@@ -115,13 +117,17 @@ class ZaloLoginHelper {
             }
 
             if (res.type === LoginQRCallbackEventType.QRCodeExpired) {
+                expired = true;
                 console.log(`[ZaloLoginHelper] QR expired for tempId: ${tempId}`);
                 EventBroadcaster.broadcastQRUpdate(tempId, '', 'expired');
             }
 
             if (res.type === LoginQRCallbackEventType.QRCodeDeclined) {
+                declined = true;
                 console.log(`[ZaloLoginHelper] QR declined for tempId: ${tempId}`);
                 EventBroadcaster.broadcastQRUpdate(tempId, '', 'declined');
+                // zca-js có callback thì sau khi báo Từ chối KHÔNG kết thúc lượt (promise treo tới khi bị huỷ) → kết thúc luôn
+                (res as any).actions?.abort?.();
             }
 
             if (res.type === LoginQRCallbackEventType.QRCodeScanned) {
@@ -130,7 +136,25 @@ class ZaloLoginHelper {
                 console.log(`[ZaloLoginHelper] QR scanned: ${account.displayName}`);
                 EventBroadcaster.broadcastQRUpdate(tempId, '', 'scanned');
             }
-        });
+        };
+
+        let api: API;
+        try {
+            api = await zalo.loginQR({
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+            }, onQrEvent);
+        } catch (err: any) {
+            ZaloLoginHelper.activeQRAbortFns.delete(tempId);
+            // "Operation aborted" = app tự huỷ lượt QR (đóng cửa sổ / Làm mới / Từ chối); hết hạn → zca-js tự huỷ lượt chờ
+            // ("Cannot get scan/confirm result"). Không phải lỗi: chỉ ghi Nhật ký mức thường.
+            if (isQrLoginCancelled(err) || expired || declined) {
+                Logger.log(`[ZaloLoginHelper] QR ${tempId} ${declined ? 'declined' : expired ? 'expired' : 'cancelled'} (${err?.message || err})`);
+                return;
+            }
+            // Lỗi thật (sau khi quét / xác nhận): báo giao diện, trước đây cửa sổ đứng mãi ở "Đang xác nhận trên điện thoại..."
+            EventBroadcaster.broadcastQRUpdate(tempId, '', 'error', qrLoginErrorText(err));
+            throw err;
+        }
 
         // Cleanup
         ZaloLoginHelper.activeQRAbortFns.delete(tempId);

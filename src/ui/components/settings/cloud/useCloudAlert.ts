@@ -1,5 +1,5 @@
 /**
- * useCloudAlert — chấm đỏ "Internet & Đám mây" ở thanh trái Cài đặt khi phần Cloudflare cần người dùng xem:
+ * useCloudAlert — chấm đỏ "Internet & Cloud" ở thanh trái Cài đặt khi phần Cloudflare cần người dùng xem:
  * token lỗi / thiếu quyền, địa chỉ cố định lỗi, đồng bộ ảnh / dữ liệu lỗi, hoặc vừa khôi phục và tự động hoá
  * đang tạm dừng.
  *

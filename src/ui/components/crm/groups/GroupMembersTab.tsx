@@ -14,6 +14,7 @@ import LoadFailedNotice from '@/components/crm/LoadFailedNotice';
 import ShareGroupModal from '@/components/crm/groups/ShareGroupModal';
 import SharedGroupsCategoryPopup from '@/components/crm/groups/SharedGroupsCategoryPopup';
 import BulkImportGroupsModal from '@/components/crm/groups/BulkImportGroupsModal';
+import { ensureHiddenScanConsent, HiddenScanConsentSwitch } from '@/components/crm/groups/HiddenScanConsentDialog';
 import { syncZaloGroups, MemberPlaceholder, SyncGroupsProgress } from '@/lib/zalo/zaloGroupUtils';
 import { classifyZaloJoinResult } from '@/lib/zalo/zaloJoinGroupResult';
 import { AlertIcon, CheckIcon, SearchIcon } from '@/components/common/icons';
@@ -372,6 +373,7 @@ function ZaloGroupMembersTab() {
   }, [activeAccountId, loadGroupsFromDB, groupsLoadFailed]);
 
   // ── Fetch members from the shared scan API ─────────────────────────────
+  // Quét qua máy chủ Deplao = gửi cookie Zalo → chưa đồng ý thì hỏi trước (useGroupMemberSync, askConsent)
   const fetchMembersFromAPI = useCallback(async () => {
     if (!activeAccountId || !selectedGroupId) return;
     // Chưa đọc được thành viên hiện có (vai trò trưởng / phó nhóm) → chưa quét: lưu lúc này dựa trên dữ liệu thiếu
@@ -380,7 +382,7 @@ function ZaloGroupMembersTab() {
 
     setMembersLoading(true);
     try {
-      await syncMembers();
+      await syncMembers({ askConsent: true });
     } finally {
       setMembersLoading(false);
     }
@@ -595,11 +597,13 @@ function ZaloGroupMembersTab() {
   }, [activeAccountId, loadGroupsFromDB]);
 
   // ── Scan from "Quét thành viên" tab (gọi backend API) ──────────────
+  // Gửi cookie + IMEI Zalo lên deplaoapp.com → hỏi đồng ý TRƯỚC mọi việc khác; không đồng ý thì dừng, không gửi gì.
   const handleScanTab = useCallback(async () => {
     if (!activeAccountId || !scanLinkInput.trim()) return;
 
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) { setScanTabError('Không tìm thấy tài khoản'); return; }
+    if (!(await ensureHiddenScanConsent({ accountName: acc.full_name || acc.zalo_id }))) return;
     const auth = buildZaloAuth(acc, activeAccountId);
 
     setScanTabLoading(true);
@@ -943,6 +947,9 @@ function ZaloGroupMembersTab() {
               <h2 className="text-lg font-bold text-foreground">Quét thành viên nhóm ẩn</h2>
               <p className="text-sm text-muted-foreground mt-1">Tiếp cận hàng nghìn khách hàng tiềm năng từ các nhóm Zalo chất lượng</p>
             </div>
+
+            {/* Gửi cookie Zalo lên máy chủ Deplao chỉ khi bật (mặc định tắt, bật phải qua hộp thoại đồng ý) */}
+            <HiddenScanConsentSwitch />
 
             {/* Feature cards */}
             <div className="grid grid-cols-2 gap-3">

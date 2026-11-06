@@ -37,12 +37,12 @@ const HIGHLIGHTS: InfoItem[] = [
   { icon: <BotIcon className="w-4 h-4" />, title: 'Trợ lý AI', desc: 'Gợi ý trả lời, hỏi đáp trong khung chat, trả lời khách 24/7' },
   { icon: <StoreIcon className="w-4 h-4" />, title: 'Tích hợp bán hàng', desc: 'POS, vận chuyển, thanh toán, Google Sheets, Email, HTTP…' },
   { icon: <PluginIcon className="w-4 h-4" />, title: 'Ứng dụng & Public API', desc: 'Gần 300 API, webhook, ứng dụng tự phát triển' },
-  { icon: <CloudIcon className="w-4 h-4" />, title: 'Internet & Đám mây', desc: 'Địa chỉ cố định qua Cloudflare, sao lưu lên R2 / Google Drive' },
+  { icon: <CloudIcon className="w-4 h-4" />, title: 'Internet & Cloud', desc: 'Địa chỉ cố định qua Cloudflare, sao lưu lên R2 / Google Drive' },
   { icon: <ChartIcon className="w-4 h-4" />, title: 'Báo cáo & phân tích', desc: 'Tin nhắn, liên hệ, nhãn, nhân viên, chiến dịch, workflow, AI' },
   { icon: <ClipboardListIcon className="w-4 h-4" />, title: 'Quản lý công việc (ERP)', desc: 'Công việc, lịch làm việc, ghi chú nội bộ' },
   { icon: <BriefcaseIcon className="w-4 h-4" />, title: 'Workspace Boss ↔ nhân viên', desc: 'Kết nối LAN / Internet, phân quyền, theo dõi hiệu suất' },
   { icon: <PaletteIcon className="w-4 h-4" />, title: 'Giao diện Sáng / Tối', desc: 'Đổi trên thanh trên cùng hoặc Cài đặt → Giao diện' },
-  { icon: <GlobeIcon className="w-4 h-4" />, title: 'Proxy riêng từng tài khoản', desc: 'Chọn proxy ngay trước khi đăng nhập' },
+  { icon: <GlobeIcon className="w-4 h-4" />, title: 'Proxy riêng từng tài khoản', desc: 'Chọn khi đăng nhập, đổi lúc nào cũng được' },
   { icon: <LockIcon className="w-4 h-4" />, title: 'Dữ liệu lưu trên máy bạn', desc: 'Tin nhắn, danh bạ, CRM, ảnh / video nằm trên máy' },
 ];
 
@@ -109,7 +109,7 @@ export function OverviewPanel() {
           '<strong class="text-foreground">Thanh bên trái:</strong> avatar các tài khoản (bấm để chuyển tài khoản, nút <strong class="text-foreground">+</strong> để thêm) và các mục Dashboard · Chat · CRM · Báo cáo · Công cụ · Cài đặt.',
           '<strong class="text-foreground">Công cụ:</strong> Workflow, Tích hợp, Quản lý công việc (ERP) và Ứng dụng, API &amp; Webhook.',
           '<strong class="text-foreground">Thanh trên cùng:</strong> nút <em>Tất cả tính năng</em> để tìm và mở nhanh mọi trang (có thể ẩn / hiện từng mục trên thanh bên), đồng bộ tin nhắn cũ Zalo / Facebook, đổi giao diện Sáng / Tối.',
-          '<strong class="text-foreground">Cài đặt:</strong> Hội thoại, Giao diện, Thông báo, Tài khoản, Proxy, Bảo mật, Nhân viên, Workspace, Lưu trữ, Internet &amp; Đám mây, Giới thiệu, Log phiên bản, Nhật ký.',
+          '<strong class="text-foreground">Cài đặt:</strong> Hội thoại, Giao diện, Thông báo, Tài khoản, Proxy, Bảo mật, Nhân viên, Workspace, Lưu trữ, Internet &amp; Cloud, Giới thiệu, Log phiên bản, Nhật ký.',
         ]} />
       </Card>
 

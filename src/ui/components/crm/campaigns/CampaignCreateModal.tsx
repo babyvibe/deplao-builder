@@ -3,11 +3,12 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
-import { AlertIcon, ChartIcon, ChatIcon, ClipboardListIcon, EditIcon, RocketIcon, SendIcon, ShuffleIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
+import { AlertIcon, ChartIcon, ChatIcon, ClipboardListIcon, EditIcon, PauseIcon, RocketIcon, SendIcon, ShuffleIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 import { parseMarkup } from '../../../../services/crm/message-markup';
 import { type Channel } from '../../../../configs/channels/channelConfig';
 import { COMBINE_FALLBACK_LABEL, planBlockSend, type CampaignSendOptions } from '../../../../shared/crm/campaignSendPlan';
 import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../../../shared/crm/campaignDelay';
+import { CAMPAIGN_STOP_AFTER_FAILURES_CHOICES, campaignFlag, normalizeStopAfterFailures } from '../../../../shared/crm/campaignAutoStop';
 import { CampaignSendOptionsControl } from './CampaignParts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -34,6 +35,11 @@ interface CampaignFormData {
   per_contact_delay_max_seconds?: number;
   daily_send_limit: number;
   daily_start_time: string;
+  /** Tự dừng khi N liên hệ lỗi liên tiếp; 0 = không dừng */
+  stop_after_failures?: number;
+  /** Tự dừng: chỉ tính người lạ (Zalo) / mai gửi tiếp — 0 / 1 */
+  stop_strangers_only?: number;
+  stop_resume_next_day?: number;
 }
 
 interface CampaignCreateModalProps {
@@ -562,6 +568,17 @@ export default function CampaignCreateModal({
   const [activeBlock,   setActiveBlock]  = useState(0);
   const [dailyLimit,    setDailyLimit]   = useState(initialData?.daily_send_limit ?? 0);
   const [dailyStartTime, setDailyStartTime] = useState(initialData?.daily_start_time ?? '08:00');
+  // Mặc định không tự dừng; giá trị ngoài các mốc (lưu qua API) vẫn hiện để không mất khi lưu lại
+  const [stopAfterFailures, setStopAfterFailures] = useState(() => normalizeStopAfterFailures(initialData?.stop_after_failures));
+  const stopChoices = CAMPAIGN_STOP_AFTER_FAILURES_CHOICES.includes(stopAfterFailures)
+    ? CAMPAIGN_STOP_AFTER_FAILURES_CHOICES
+    : [...CAMPAIGN_STOP_AFTER_FAILURES_CHOICES, stopAfterFailures].sort((a, b) => a - b);
+  // Zalo chặn spam theo tin cho người lạ (nhắn bạn bè / nhóm vẫn được) và thường mở lại hôm sau. Kênh khác không có
+  // danh sách bạn bè → không có "Chỉ tính người lạ".
+  const strangersOption = channel === 'zalo';
+  const [stopStrangersOnly, setStopStrangersOnly] = useState(() => campaignFlag(initialData?.stop_strangers_only) === 1);
+  const [stopResumeNextDay, setStopResumeNextDay] = useState(() => campaignFlag(initialData?.stop_resume_next_day) === 1);
+  const countStrangersOnly = strangersOption && stopStrangersOnly;
 
   // ── Delay range (min/max thay thế fixed + jitter) ────────────────────────
   const getInitMinMax = (): [number, number] => {
@@ -682,6 +699,9 @@ export default function CampaignCreateModal({
       per_contact_delay_max_seconds: pcDelayMax,
       daily_send_limit: dailyLimit,
       daily_start_time: dailyStartTime,
+      stop_after_failures: stopAfterFailures,
+      stop_strangers_only: countStrangersOnly ? 1 : 0,
+      stop_resume_next_day: stopResumeNextDay ? 1 : 0,
     });
     setSaving(false);
     onClose();
@@ -920,6 +940,46 @@ export default function CampaignCreateModal({
                 {dailyLimit > 0
                   ? `Gửi tối đa ${dailyLimit}/ngày từ ${dailyStartTime}`
                   : `Không giới hạn/ngày · chạy từ ${dailyStartTime}, hạn mức 60 lượt/giờ mỗi tài khoản`}
+              </p>
+            </div>
+
+            {/* Tự dừng khi lỗi liên tiếp: tài khoản bị chặn / giới hạn thì không gửi mãi (shared/crm/campaignAutoStop) */}
+            <div>
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5"><PauseIcon className="w-4 h-4 inline" /> Tự dừng khi lỗi</label>
+              <div className="grid grid-cols-5 gap-1">
+                {stopChoices.map(n => (
+                  <button key={n} type="button" onClick={() => setStopAfterFailures(n)}
+                    title={n > 0 ? `Dừng khi ${n} liên hệ lỗi liên tiếp` : 'Không tự dừng'}
+                    className={`py-1.5 rounded-lg border text-[11px] font-medium tabular-nums transition-colors ${
+                      stopAfterFailures === n ? 'border-blue-500 bg-blue-500/15 text-blue-300'
+                        : 'border-input text-muted-foreground hover:border-border-strong hover:text-foreground/80'
+                    }`}>
+                    {n > 0 ? n : 'Tắt'}
+                  </button>
+                ))}
+              </div>
+              {stopAfterFailures > 0 && (
+                <div className="mt-1.5 space-y-1">
+                  {strangersOption && (
+                    <label className="flex items-center gap-2 cursor-pointer text-[11px] text-muted-foreground select-none"
+                      title="Zalo chặn spam theo tin nhắn cho người lạ: bạn bè, nhóm gửi được hay lỗi đều không tính">
+                      <input type="checkbox" checked={stopStrangersOnly} onChange={e => setStopStrangersOnly(e.target.checked)}
+                        className="accent-blue-500 w-3.5 h-3.5" />
+                      Chỉ tính người lạ
+                    </label>
+                  )}
+                  <label className="flex items-center gap-2 cursor-pointer text-[11px] text-muted-foreground select-none"
+                    title={`Dừng tới ${dailyStartTime} hôm sau rồi tự gửi tiếp (bị chặn spam thường mở lại sau một ngày)`}>
+                    <input type="checkbox" checked={stopResumeNextDay} onChange={e => setStopResumeNextDay(e.target.checked)}
+                      className="accent-blue-500 w-3.5 h-3.5" />
+                    Mai gửi tiếp
+                  </label>
+                </div>
+              )}
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {stopAfterFailures > 0
+                  ? `Dừng khi ${stopAfterFailures} ${countStrangersOnly ? 'người lạ' : 'liên hệ'} lỗi liên tiếp${stopResumeNextDay ? `, ${dailyStartTime} hôm sau gửi tiếp` : ''}`
+                  : 'Gửi hết danh sách dù lỗi'}
               </p>
             </div>
 

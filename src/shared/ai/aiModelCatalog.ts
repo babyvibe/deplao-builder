@@ -98,6 +98,14 @@ const LEGACY_MODEL_ALIASES: Record<string, string> = {
   'mistral-small-3-latest': 'mistral-large-latest', 'codestral-2-latest': 'mistral-large-latest',
 };
 
+/** Tên dễ đọc của model theo danh mục (vd "Claude Haiku 4.5"); model tự nhập (OpenRouter / 9router) giữ nguyên id. */
+export function aiModelLabel(platform: string | null | undefined, model: string | null | undefined): string {
+  const id = String(model || '').trim();
+  if (!id) return '';
+  const options = AI_MODEL_OPTIONS[String(platform || '').toLowerCase() as AIModelPlatform] || [];
+  return options.find(option => option.value === id)?.label || id;
+}
+
 export function normalizeAIModel(platform: string, requestedModel?: string | null): string {
   const normalizedPlatform = platform.toLowerCase() as AIModelPlatform;
   const requested = String(requestedModel || '').trim();

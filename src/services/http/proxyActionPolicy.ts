@@ -53,6 +53,8 @@ export const EMPLOYEE_PROXY_IPC_CHANNELS: ReadonlySet<string> = new Set([
   'integration:listWebhooks', 'integration:registerWebhooks', 'integration:removeWebhook',
   // Workflow (module workflow; Boss kiểm tra mọi trang của workflow thuộc tài khoản được giao)
   'workflow:save', 'workflow:delete', 'workflow:toggle', 'workflow:clone', 'workflow:cloneAll',
+  // Ảnh tin Zalo Boss chưa lưu → Boss tải bằng phiên tài khoản (module chat; chỉ id tin, link lấy trong DB Boss)
+  'file:ensureMessageImage',
 ]);
 
 /** Kênh xử lý riêng trong executeProxyAction (Boss tự lấy auth của tài khoản được giao). */
@@ -108,6 +110,7 @@ export function proxyChannelModules(channel: string): string[] {
   if (spec?.modules?.length) return [...spec.modules];
   if (ACCOUNT_SETTINGS_PROXY_CHANNELS.has(name)) return ['settings_accounts'];
   if (CATALOG_WRITE_PROXY_CHANNELS.has(name)) return ['crm'];
+  if (name === 'file:ensureMessageImage') return ['chat'];
   if (FRIEND_PROXY_CHANNELS.has(name)) return ['friends', 'chat'];
   if (name.startsWith('zalo:') || name.startsWith('fb:') || name.startsWith('telegramUser:')) return ['chat'];
   if (name.startsWith('crm:')) return ['crm'];
@@ -398,7 +401,7 @@ export function checkProxyFilePaths(params: any, ctx: ProxyPathContext): ProxyPa
 // ─── Gộp lệnh poll reaction Telegram ────────────────────────────────────────
 
 /** Kênh poll định kỳ: nhiều nhân viên mở cùng nhóm → Boss chỉ hỏi Telegram một lần trong cửa sổ này. */
-export const COALESCED_POLL_CHANNELS: ReadonlySet<string> = new Set(['telegramUser:refreshReactions']);
+export const COALESCED_POLL_CHANNELS: ReadonlySet<string> = new Set(['telegramUser:refreshReactions', 'telegramUser:refreshPollResults']);
 export const POLL_COALESCE_WINDOW_MS = 15_000;
 
 export interface RecentPoll { at: number; ids: ReadonlySet<string> }

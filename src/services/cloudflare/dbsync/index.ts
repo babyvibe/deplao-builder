@@ -25,6 +25,7 @@ import { invalidateRestoreGate } from '../restoreGate';
 import DatabaseService from '../../database/DatabaseService';
 import WorkspaceManager, { Workspace } from '../../../utils/app/WorkspaceManager';
 import Logger from '../../../utils/Logger';
+import { lastSystemWakeAt, onSystemPower, systemIdleInfo } from '../../../utils/startup/systemIdle';
 import { DbOps, createWorkerOps } from './DbOpsClient';
 import type { DbOpsEvent } from './ops';
 import { Follower, newFollowState } from './Follow';
@@ -326,6 +327,14 @@ function onBaseDone(_engine: SyncEngine, m: DbManifest, bucket: string): void {
 /** Lúc tiến trình app khởi động — chu kỳ đồng bộ tự động chờ STARTUP_QUIET_MS sau mốc này (SyncEngine.scheduleAt). */
 const APP_STARTED_AT = Date.now() - Math.round(process.uptime() * 1000);
 
+// Máy sắp ngủ / vừa thức dậy / vừa mở khoá (powerMonitor ở main.ts): chu kỳ tự động chờ như sau khi mở app, bản gốc chờ
+// máy rảnh (baseWindow.ts); máy ngủ giữa lúc tự chụp gốc → dừng lần chụp đó.
+onSystemPower((ev, at) => {
+    for (const e of engines.values()) {
+        try { e.onPowerEvent(ev, at); } catch { /* bỏ qua */ }
+    }
+});
+
 const engineCtx: EngineContext = {
     core: cloudflare,
     get ops() { return ops(); },
@@ -339,6 +348,8 @@ const engineCtx: EngineContext = {
     baseLock,
     now: () => Date.now(),
     appStartedAt: () => APP_STARTED_AT,
+    lastWakeAt: lastSystemWakeAt,
+    baseWindow: systemIdleInfo,
     claimUid,
     onBaseDone,
 } as EngineContext;

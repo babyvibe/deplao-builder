@@ -7,6 +7,9 @@ import {
   NOTIF_OVERRIDES_STORAGE_KEY, effectiveNotifSettings, normalizeNotifOverrides, withAccountNotifSettings,
   type NotifSettingsOverride,
 } from '@/lib/notifications/notifSettingsOverrides';
+import {
+  normalizeAiSuggestKinds, normalizeComposerSuggestionCount, type AiSuggestKind, type AiSuggestKinds,
+} from '@/lib/chat/composer/aiReplySuggestions';
 
 type AppView = 'chat' | 'friends' | 'settings' | 'dashboard' | 'crm' | 'workflow' | 'integration' | 'analytics' | 'erp' | 'plugin';
 export type AppTheme = 'dark' | 'light';
@@ -105,8 +108,10 @@ interface AppStore {
   searchOpen: boolean;
   // AI Suggestions
   aiSuggestionsEnabled: boolean;
-  aiSuggestions: string[];
-  aiSuggestionsLoading: boolean;
+  /** Loại hội thoại được gợi ý (cá nhân / nhóm / chủ đề / kênh / bot) — menu Gợi ý AI, mọi tài khoản trên máy này */
+  aiSuggestKinds: AiSuggestKinds;
+  /** Số câu gợi ý (1..5, mặc định 3) */
+  aiSuggestCount: number;
   aiAutoInjectZaloContext: boolean;
   aiQuickPanelContextCountOverride: number | null;
   /** Cache: threadKey → last used assistantId for AI Quick Panel */
@@ -169,8 +174,8 @@ interface AppStore {
   toggleIntegrationQuickPanel: () => void;
   toggleAIQuickPanel: () => void;
   setAiSuggestionsEnabled: (enabled: boolean) => void;
-  setAiSuggestions: (suggestions: string[]) => void;
-  setAiSuggestionsLoading: (loading: boolean) => void;
+  setAiSuggestKind: (kind: AiSuggestKind, enabled: boolean) => void;
+  setAiSuggestCount: (count: number) => void;
   setAiAutoInjectZaloContext: (enabled: boolean) => void;
   setAiQuickPanelContextCountOverride: (count: number | null) => void;
   setAiThreadAssistant: (threadKey: string, assistantId: string) => void;
@@ -380,6 +385,14 @@ function loadAiSuggestionsEnabled(): boolean {
   try { return localStorage.getItem('ai_suggestions_enabled') === 'true'; } catch {}
   return false;
 }
+function loadAiSuggestKinds(): AiSuggestKinds {
+  try { const s = localStorage.getItem('ai_suggest_kinds'); if (s) return normalizeAiSuggestKinds(JSON.parse(s)); } catch {}
+  return normalizeAiSuggestKinds(null);
+}
+function loadAiSuggestCount(): number {
+  try { return normalizeComposerSuggestionCount(localStorage.getItem('ai_suggest_count')); } catch {}
+  return normalizeComposerSuggestionCount(null);
+}
 function loadAiAutoInjectZaloContext(): boolean {
   try {
     const stored = localStorage.getItem('ai_auto_inject_zalo_context');
@@ -452,8 +465,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   searchOpen: false,
   searchHighlightQuery: '',
   aiSuggestionsEnabled: loadAiSuggestionsEnabled(),
-  aiSuggestions: [],
-  aiSuggestionsLoading: false,
+  aiSuggestKinds: loadAiSuggestKinds(),
+  aiSuggestCount: loadAiSuggestCount(),
   aiAutoInjectZaloContext: loadAiAutoInjectZaloContext(),
   aiQuickPanelContextCountOverride: loadAiQuickPanelContextCountOverride(),
   aiThreadAssistantMap: loadAiThreadAssistantMap(),
@@ -546,10 +559,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
   })),
   setAiSuggestionsEnabled: (enabled) => {
     try { localStorage.setItem('ai_suggestions_enabled', String(enabled)); } catch {}
-    set({ aiSuggestionsEnabled: enabled, aiSuggestions: [] });
+    // Gợi ý đang hiện của ô soạn tin: hooks/chat/useAiReplySuggestions tự bỏ khi tắt
+    set({ aiSuggestionsEnabled: enabled });
   },
-  setAiSuggestions: (suggestions) => set({ aiSuggestions: suggestions }),
-  setAiSuggestionsLoading: (loading) => set({ aiSuggestionsLoading: loading }),
+  setAiSuggestKind: (kind, enabled) => set((s) => {
+    const next = { ...s.aiSuggestKinds, [kind]: enabled };
+    try { localStorage.setItem('ai_suggest_kinds', JSON.stringify(next)); } catch {}
+    return { aiSuggestKinds: next };
+  }),
+  setAiSuggestCount: (count) => {
+    const next = normalizeComposerSuggestionCount(count);
+    try { localStorage.setItem('ai_suggest_count', String(next)); } catch {}
+    set({ aiSuggestCount: next });
+  },
   setAiAutoInjectZaloContext: (enabled) => {
     try { localStorage.setItem('ai_auto_inject_zalo_context', String(enabled)); } catch {}
     set({ aiAutoInjectZaloContext: enabled });

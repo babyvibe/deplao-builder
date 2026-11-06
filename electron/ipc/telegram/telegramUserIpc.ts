@@ -26,6 +26,21 @@ import { employeeRoutedIpcMain } from '../network/proxyHelper';
  */
 const ipcMain = employeeRoutedIpcMain(electronIpcMain);
 
+/** Id Telegram dạng số (người, nhóm `-…`, kênh `-100…`); khác thì bỏ. */
+function optionalId(value: unknown): string | undefined {
+  const id = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  return /^-?\d{1,20}$/.test(id) ? id : undefined;
+}
+
+/** Nút đăng nhập: hội thoại + id tin + button_id (số nguyên dương 32 bit). */
+function urlAuthIds(params: { peerId?: unknown; msgId?: unknown; buttonId?: unknown }): { peerId: string; msgId: number; buttonId: number } | null {
+  const peerId = optionalId(params?.peerId);
+  const msgId = Number(params?.msgId);
+  const buttonId = Number(params?.buttonId);
+  const int32 = (n: number) => Number.isInteger(n) && n >= 0 && n <= 0x7fffffff;
+  return peerId && int32(msgId) && msgId > 0 && int32(buttonId) ? { peerId, msgId, buttonId } : null;
+}
+
 type LegacyTelegramForumTopicContext = TelegramChatContext & {
   /** Backward-compatible alias; callers must migrate to topicRootMessageId. */
   topicId?: string;
@@ -182,17 +197,90 @@ export function registerTelegramUserIpc(): void {
     }
   });
 
-  // ── Telegram WebView (Mini App) ────────────────────────────────────────
-  ipcMain.handle('telegramUser:requestWebView', async (_event, params: { accountId: string; botId: string; url: string; fromBotMenu?: boolean }) => {
-    try { return await TelegramUser.requestWebView(params.accountId, params.botId, params.url, params.fromBotMenu); }
+  // ── Telegram WebView (Mini App) + nút đăng nhập của bot ─────────────────
+  // peerId = hội thoại nơi bấm nút (tin của bot trong nhóm → nhóm); themeParams = màu theo theme Deplao (main lọc lại).
+  ipcMain.handle('telegramUser:requestWebView', async (_event, params: { accountId: string; botId: string; url: string; fromBotMenu?: boolean; peerId?: string; themeParams?: unknown }) => {
+    try {
+      return await TelegramUser.requestWebView(params.accountId, params.botId, params.url, params.fromBotMenu,
+        { peerId: optionalId(params.peerId), themeParams: params.themeParams });
+    }
     catch (err: any) { return { success: false, error: err.message }; }
   });
-  ipcMain.handle('telegramUser:requestMainWebView', async (_event, params: { accountId: string; botId: string; startParam?: string }) => {
-    try { return await TelegramUser.requestMainWebView(params.accountId, params.botId, params.startParam); }
+  ipcMain.handle('telegramUser:requestMainWebView', async (_event, params: { accountId: string; botId: string; startParam?: string; peerId?: string; themeParams?: unknown }) => {
+    try {
+      return await TelegramUser.requestMainWebView(params.accountId, params.botId, params.startParam,
+        { peerId: optionalId(params.peerId), themeParams: params.themeParams });
+    }
     catch (err: any) { return { success: false, error: err.message }; }
   });
-  ipcMain.handle('telegramUser:prolongWebView', async (_event, params: { accountId: string; botId: string; queryId: string }) => {
-    try { return await TelegramUser.prolongWebView(params.accountId, params.botId, params.queryId); }
+  ipcMain.handle('telegramUser:prolongWebView', async (_event, params: { accountId: string; botId: string; queryId: string; peerId?: string }) => {
+    try { return await TelegramUser.prolongWebView(params.accountId, params.botId, params.queryId, optionalId(params.peerId)); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:miniAppCustomMethod', async (_event, params: { accountId: string; botId: string; method: string; params?: unknown }) => {
+    try { return await TelegramUser.invokeMiniAppCustomMethod(params.accountId, params.botId, String(params.method || ''), params.params); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:miniAppWriteAccess', async (_event, params: { accountId: string; botId: string; action: 'check' | 'allow' }) => {
+    try { return await TelegramUser.miniAppWriteAccess(params.accountId, params.botId, params.action === 'allow' ? 'allow' : 'check'); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:miniAppSharePhone', async (_event, params: { accountId: string; botId: string }) => {
+    try { return await TelegramUser.shareMiniAppPhone(params.accountId, params.botId); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:requestUrlAuth', async (_event, params: { accountId: string; peerId: string; msgId: number; buttonId: number }) => {
+    const ids = urlAuthIds(params);
+    if (!ids) return { success: false, error: 'Thiếu thông tin nút đăng nhập' };
+    try { return await TelegramUser.requestUrlAuth(params.accountId, ids.peerId, ids.msgId, ids.buttonId); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:acceptUrlAuth', async (_event, params: { accountId: string; peerId: string; msgId: number; buttonId: number; writeAllowed?: boolean; sharePhone?: boolean }) => {
+    const ids = urlAuthIds(params);
+    if (!ids) return { success: false, error: 'Thiếu thông tin nút đăng nhập' };
+    try {
+      return await TelegramUser.acceptUrlAuth(params.accountId, ids.peerId, ids.msgId, ids.buttonId,
+        { writeAllowed: params.writeAllowed === true, sharePhone: params.sharePhone === true });
+    }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  // ── Link Telegram mở trong app (lib/chat/links/chatLinks): số điện thoại, Mini App theo tên, link bot ?start ──
+  ipcMain.handle('telegramUser:resolvePhone', async (_event, params: { accountId: string; phone: string }) => {
+    try { return await TelegramUser.resolvePhone(params.accountId, String(params.phone || '')); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:getBotApp', async (_event, params: { accountId: string; botId: string; shortName: string }) => {
+    try { return await TelegramUser.getBotApp(params.accountId, params.botId, String(params.shortName || '')); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:requestAppWebView', async (_event, params: {
+    accountId: string; botId: string; appId: string; accessHash: string; startParam?: string; writeAllowed?: boolean;
+    peerId?: string; themeParams?: unknown;
+  }) => {
+    const startParam = typeof params.startParam === 'string' && /^[A-Za-z0-9_-]{1,512}$/.test(params.startParam) ? params.startParam : undefined;
+    try {
+      return await TelegramUser.requestAppWebView(params.accountId, params.botId,
+        { id: String(params.appId || ''), accessHash: String(params.accessHash || '') },
+        { startParam, writeAllowed: params.writeAllowed === true, peerId: optionalId(params.peerId), themeParams: params.themeParams });
+    }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:pressInlineButton', async (_event, params: { accountId: string; chatId: string; msgId: number; row: number; col: number }) => {
+    const chatId = optionalId(params.chatId);
+    const msgId = Number(params.msgId);
+    const row = Number(params.row);
+    const col = Number(params.col);
+    const index = (n: number) => Number.isInteger(n) && n >= 0 && n < 100;
+    if (!chatId || !Number.isInteger(msgId) || msgId <= 0 || msgId > 0x7fffffff || !index(row) || !index(col)) {
+      return { success: false, error: 'Thiếu thông tin nút' };
+    }
+    try { return await TelegramUser.pressInlineButton(params.accountId, chatId, msgId, row, col); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('telegramUser:startBot', async (_event, params: { accountId: string; botId: string; startParam: string }) => {
+    const botId = optionalId(params.botId);
+    if (!botId) return { success: false, error: 'Thiếu bot' };
+    try { return await TelegramUser.startBot(params.accountId, botId, String(params.startParam ?? '')); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
@@ -509,6 +597,12 @@ export function registerTelegramUserIpc(): void {
   // Đã đọc bình luận tới readMaxId (messages.readDiscussion) — lần mở sau bắt đầu ở bình luận chưa đọc kế tiếp
   ipcMain.handle('telegramUser:readPostDiscussion', async (_event, params: { accountId: string; chatId: string; rootId: string; readMaxId: number; channelId?: string; postId?: string }) => {
     try { return await TelegramUser.readPostDiscussion(params.accountId, params.chatId, params.rootId, params.readMaxId, { channelId: params.channelId, postId: params.postId }); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+
+  // Kết quả các bình chọn đang hiện (messages.getPollResults)
+  ipcMain.handle('telegramUser:refreshPollResults', async (_event, params: { accountId: string; chatId: string; messageIds: string[] }) => {
+    try { return await TelegramUser.refreshPollResults(params.accountId, params.chatId, params.messageIds); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 

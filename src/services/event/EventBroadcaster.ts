@@ -1663,10 +1663,10 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast QR code update
+     * Broadcast QR code update (`message`: câu báo cho người dùng khi status = 'error')
      */
-    public static broadcastQRUpdate(tempId: string, qrDataUrl: string, status: string): void {
-        this.send('qr:update', { tempId, qrDataUrl, status });
+    public static broadcastQRUpdate(tempId: string, qrDataUrl: string, status: string, message?: string): void {
+        this.send('qr:update', { tempId, qrDataUrl, status, ...(message ? { message } : {}) });
     }
 
     /**

@@ -22,9 +22,9 @@ import { fetchAllAliases } from '@/lib/zalo/zaloAliasUtils';
 import { Spinner } from '@/components/common/PageLoading';
 import { BotIcon, ClockIcon, CloudIcon, RefreshIcon } from '@/components/common/icons';
 import { zaloAutoDeleteLabel } from '../../../../shared/zalo/zaloAutoDelete';
-import { MY_DOCUMENTS_NAME, isMyDocumentsThread } from '@/lib/chat/zalo/myDocuments';
+import { isMyDocumentsThread, isSavedMessagesAccount, myDocumentsTitle, showsMyDocumentsIcon } from '@/lib/chat/zalo/myDocuments';
 import { PluginPanelToggle } from '@/components/plugins/contributions/PluginChatPanel';
-import { CHANNEL, isZalo, isFacebook, isTelegram, isTelegramUser } from '@/lib/channels/channelHelper';
+import { CHANNEL, isZalo, isFacebook, isTelegram, isTelegramUser, resolveChannel } from '@/lib/channels/channelHelper';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
 import { ZaloHeaderPresence } from '../zalo/presence/ZaloOnlinePresence';
 
@@ -657,15 +657,18 @@ export default function ChatHeader() {
   const contactList = contacts[activeAccountId] || [];
   const contact = contactList.find((c) => c.contact_id === activeThreadId);
   const activeAccount = getActiveAccount();
-  // Zalo "My Documents": hội thoại có sẵn của Zalo (ID = send2me_id của phiên, không phải UID của mình)
+  // Zalo "My Documents": hội thoại có sẵn của Zalo (ID = send2me_id của phiên, không phải UID của mình); Telegram: Tin nhắn
+  // đã lưu (hội thoại với chính mình) cũng hiện là My Documents
   const isMyDocs = isMyDocumentsThread(activeAccount, activeThreadId, contact?.avatar_url);
   // Ưu tiên alias → display_name
-  const displayName = contact?.alias || contact?.display_name || (isMyDocs ? MY_DOCUMENTS_NAME : activeThreadId);
+  const displayName = isMyDocs ? myDocumentsTitle(contact, activeAccount) : (contact?.alias || contact?.display_name || activeThreadId);
   const avatarUrl = toLocalMediaUrl(contact?.avatar_url || '');
   const isGroup = activeThreadType === 1 || contact?.contact_type === 'group';
+  // Kênh thật của hội thoại (resolveChannel): dòng cũ mang 'zalo' / hội thoại ghim chưa có trong store không thành Zalo
+  const threadChannel = resolveChannel(contact, activeAccount);
   const isFacebookDM = !isGroup && isFacebook(activeAccount?.channel);
   const groupInfo = isGroup ? (groupInfoCache[activeAccountId] || {})[activeThreadId] : undefined;
-  const isTelegramGroup = isGroup && isTelegram(contact?.channel || activeAccount?.channel);
+  const isTelegramGroup = isGroup && isTelegram(threadChannel);
   const telegramMemberCount = Number(groupInfo?.memberCount || contact?.telegram_members_count || 0);
   const telegramOnlineCount = Number(groupInfo?.onlineCount || contact?.telegram_online_count || 0);
   const telegramAudienceLabel = (groupInfo?.peerType || contact?.telegram_peer_type) === 'channel'
@@ -681,8 +684,8 @@ export default function ChatHeader() {
 
   // Render avatar: group composite or user avatar
   const renderAvatar = () => {
-    // My Documents: ảnh thư mục của Zalo; chỉ dùng biểu tượng đám mây khi thiếu / lỗi ảnh
-    if (isMyDocs && (!avatarUrl || avatarFailed)) {
+    // My Documents: ảnh thư mục của Zalo; biểu tượng đám mây khi thiếu / lỗi ảnh và với Telegram (dòng mang ảnh của mình)
+    if (isMyDocs && showsMyDocumentsIcon(activeAccount, avatarUrl, avatarFailed)) {
       return (
         <div className="w-9 h-9 rounded-full flex items-center justify-center bg-gradient-to-br from-sky-400 to-blue-600" style={{ color: '#fff' }}>
           <CloudIcon className="w-5 h-5" />
@@ -696,7 +699,7 @@ export default function ChatHeader() {
           // Retry avatar cho cả Zalo + Facebook
           if (activeAccountId && activeThreadId) {
             import('@/lib/contacts/avatarRetry').then(({ handleAvatarError }) =>
-              handleAvatarError({ ownerId: activeAccountId, contactId: activeThreadId, channel: contact?.channel || CHANNEL.ZALO })
+              handleAvatarError({ ownerId: activeAccountId, contactId: activeThreadId, channel: threadChannel })
             ).then(newUrl => {
               if (newUrl) {
                 updateContact(activeAccountId!, { contact_id: activeThreadId, avatar_url: newUrl });
@@ -860,8 +863,8 @@ export default function ChatHeader() {
                   </svg>
                 </button>
             )}
-            {/* Edit alias button - sửa tên gợi nhớ (mọi kênh) */}
-            {!isGroup && channelCap.supportsAlias && (
+            {/* Edit alias button - sửa tên gợi nhớ (mọi kênh; My Documents của Telegram giữ tên cố định) */}
+            {!isGroup && channelCap.supportsAlias && !(isMyDocs && isSavedMessagesAccount(activeAccount)) && (
               <button
                 title={isZalo(activeAccount?.channel) ? 'Sửa tên gợi nhớ (đồng bộ Zalo)' : 'Sửa tên gợi nhớ (lưu local trên app)'}
                 onClick={handleOpenAliasEdit}
@@ -874,6 +877,10 @@ export default function ChatHeader() {
               </button>
             )}
           </div>
+          {/* Hộp thư gộp: My Documents của tài khoản nào */}
+          {isMyDocs && mergedInboxMode && (
+            <p className="mt-0.5 text-[11px] text-muted-foreground truncate">{activeAccount?.full_name || activeAccountId}</p>
+          )}
           {/* Zalo 1:1: "Trực tuyến" / "Truy cập 14:05" từ dữ liệu đã có — không hỏi Zalo thêm (ZL-01 giai đoạn 2) */}
           {!isGroup && !isMyDocs && isZalo(activeAccount?.channel) && (
             <ZaloHeaderPresence accountId={activeAccountId} userId={activeThreadId} />
@@ -959,7 +966,7 @@ export default function ChatHeader() {
             </svg>
           </button>
           {/* Tải tin nhắn từ Telegram API */}
-          {isTelegramUser(contact?.channel) && (
+          {isTelegramUser(threadChannel) && (
             <div className="relative group">
               <button
                 title="Tải tin nhắn từ Telegram"

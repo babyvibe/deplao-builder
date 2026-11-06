@@ -23,6 +23,7 @@ import ConversationSettings from './conversation/ConversationSettings';
 import EmployeeSettings from './employees/EmployeeSettings';
 import WorkspaceSettings from './workspace/WorkspaceSettings';
 import ProxySettings from './proxy/ProxySettings';
+import AccountSelect from '../common/accounts/AccountSelect';
 import LockScreenSettings from './security/LockScreenSettings';
 import AccountSettings from './accounts/AccountSettings';
 import InAppNotifySettings from './notifications/InAppNotifySettings';
@@ -33,9 +34,8 @@ import CloudMediaSummary from './cloud/CloudMediaSummary';
 import { toCloudSection } from './cloud/cloudUi';
 import { useCloudAlert } from './cloud/useCloudAlert';
 import { loadSeenTabs, markTabSeen, SETTINGS_WATCHLIST, hasUnseenChangelog, markChangelogSeen } from '@/lib/app/settingsSeenTabs';
-import { Button, Select, Switch } from '@/components/ui';
+import { Button, Switch } from '@/components/ui';
 import { DesignSystemPage } from '@/components/ui/DesignSystemPage';
-import { isZalo, isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { Notice, PathText, SettingsPage, SettingsRow, SettingsSection } from './settingsUi';
 
 type SettingsTab = 'notifications' | 'accounts' | 'storage' | 'cloud' | 'conversation' | 'employees' | 'workspace' | 'introduction' | 'changelog' | 'appearance' | 'proxy' | 'security' | 'logs';
@@ -64,7 +64,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: 'Dữ liệu & mạng',
     items: [
       { id: 'storage', icon: <HardDriveIcon className="w-4 h-4" />, label: 'Lưu trữ' },
-      { id: 'cloud',   icon: <CloudIcon className="w-4 h-4" />, label: 'Internet & Đám mây' },
+      { id: 'cloud',   icon: <CloudIcon className="w-4 h-4" />, label: 'Internet & Cloud' },
       { id: 'proxy',   icon: <GlobeIcon className="w-4 h-4" />, label: 'Proxy' },
     ],
   },
@@ -81,7 +81,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('conversation');
   const [introSubtab, setIntroSubtab] = useState<string | null>(null);
-  // Internet & Đám mây: phần mở sẵn theo nav:settings { tab: 'cloud', subtab: 'address' | 'sync' } ('media' / 'db' cũ → 'sync')
+  // Internet & Cloud: phần mở sẵn theo nav:settings { tab: 'cloud', subtab: 'address' | 'sync' } ('media' / 'db' cũ → 'sync')
   const [cloudSubtab, setCloudSubtab] = useState<CloudSection | null>(null);
   const [seenTabs, setSeenTabs] = useState<Set<string>>(() => loadSeenTabs());
   const [unreadChangelog, setUnreadChangelog] = useState(() => hasUnseenChangelog());
@@ -229,7 +229,7 @@ export default function Settings() {
     if (!perm) return true; // no permission required
     return useEmployeeStore.getState().hasPermission(perm);
   };
-  // Internet & Đám mây (Cloudflare) chỉ dành cho máy chủ — máy nhân viên không thấy.
+  // Internet & Cloud (Cloudflare) chỉ dành cho máy chủ — máy nhân viên không thấy.
   const hideCloud = isEmployee || empMode === 'employee';
   const isVisible = (item: NavItem) => hasSettingsPerm(item.requiredPerm) && (item.id !== 'cloud' || !hideCloud);
   const visibleGroups = NAV_GROUPS
@@ -280,7 +280,7 @@ export default function Settings() {
                   {active && <span aria-hidden="true" className="absolute inset-y-1 left-0 w-[3px] rounded-r-full bg-primary" />}
                   <span className="flex-shrink-0">{item.icon}</span>
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  {/* Chấm đỏ: tab mới chưa xem / log phiên bản chưa đọc / Internet & Đám mây cần xem */}
+                  {/* Chấm đỏ: tab mới chưa xem / log phiên bản chưa đọc / Internet & Cloud cần xem */}
                   {dot && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-destructive" title={dot} aria-label={dot} />}
                 </button>
               );
@@ -315,7 +315,7 @@ export default function Settings() {
         {activeTab === 'proxy' && <ProxySettings />}
         {activeTab === 'employees' && <EmployeeSettings />}
         {activeTab === 'workspace' && <WorkspaceSettings />}
-        {/* Internet & Đám mây (Cloudflare, chỉ máy chủ) */}
+        {/* Internet & Cloud (Cloudflare, chỉ máy chủ) */}
         {activeTab === 'cloud' && !hideCloud && <CloudSettings initialSubtab={cloudSubtab} />}
         {activeTab === 'introduction' && <IntroductionSettings initialSubtab={introSubtab as any} />}
         {activeTab === 'changelog' && <ChangelogSettings />}
@@ -552,14 +552,6 @@ function NotificationsPage() {
     : (partial: any) => setNotifSettingsForAccount(selectedNotifAccount, partial);
   const hasOverride = !isGlobal && !!notifSettingsOverrides[selectedNotifAccount];
 
-  const accountOption = (acc: (typeof accounts)[number]) => (
-    <option key={acc.zalo_id} value={acc.zalo_id}>
-      {acc.full_name || acc.zalo_id}{notifSettingsOverrides[acc.zalo_id] ? ' · riêng' : ''}
-    </option>
-  );
-  const zaloAccounts = accounts.filter(a => isZalo(a.channel));
-  const facebookAccounts = accounts.filter(a => isFacebook(a.channel));
-  const telegramAccounts = accounts.filter(a => isTelegram(a.channel));
 
   return (
     <SettingsPage title="Thông báo" description="Cách Deplao báo tin nhắn mới. Lưu riêng trên máy này.">
@@ -567,18 +559,18 @@ function NotificationsPage() {
         title="Popup và âm thanh"
         footer="Hội thoại đã tắt thông báo sẽ không báo. Không thấy popup? Bật thông báo cho Deplao trong cài đặt Windows / macOS."
         action={(
-          <Select
+          <AccountSelect
             aria-label="Áp dụng cho tài khoản"
-            value={selectedNotifAccount}
-            onChange={e => setSelectedNotifAccount(e.target.value)}
-            wrapperClassName="w-60"
-            className="h-8 text-xs"
-          >
-            <option value="__global__">Tất cả tài khoản (mặc định)</option>
-            {zaloAccounts.length > 0 && <optgroup label="Zalo">{zaloAccounts.map(accountOption)}</optgroup>}
-            {facebookAccounts.length > 0 && <optgroup label="Facebook">{facebookAccounts.map(accountOption)}</optgroup>}
-            {telegramAccounts.length > 0 && <optgroup label="Telegram">{telegramAccounts.map(accountOption)}</optgroup>}
-          </Select>
+            accounts={accounts}
+            value={isGlobal ? null : selectedNotifAccount}
+            onChange={id => setSelectedNotifAccount(id ?? '__global__')}
+            allLabel="Tất cả tài khoản (mặc định)"
+            allDetail="Cài đặt chung cho mọi tài khoản"
+            note={acc => (notifSettingsOverrides[acc.zalo_id] ? 'riêng' : null)}
+            size="sm"
+            align="end"
+            triggerClassName="w-64"
+          />
         )}
       >
         {!isGlobal && (
@@ -655,9 +647,7 @@ function NotificationsPage() {
       </SettingsSection>
 
       {/* Tự mở cùng máy: khởi động lại máy xong không phải nhớ mở Deplao (lưu theo máy) */}
-      <SettingsSection title="Khởi động cùng máy" flush bodyClassName="p-4">
-        <AutoLaunchSettings />
-      </SettingsSection>
+      <AutoLaunchSettings />
     </SettingsPage>
   );
 }

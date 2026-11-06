@@ -7,6 +7,8 @@ import ChatHeader from './components/chat/header/ChatHeader';
 import ChatWindow from './components/chat/window/ChatWindow';
 import MessageInput from './components/chat/composer/MessageInput';
 import { TelegramPostDiscussionHost } from './components/chat/telegram/posts/TelegramPostDiscussion';
+import { TelegramMiniAppHost } from './components/chat/telegram/miniapp/TelegramMiniApp';
+import { ChatLinkHost } from './components/chat/links/ChatLinkHost';
 import ConversationInfo from './components/chat/info/ConversationInfo';
 import GroupBoardPanel from './components/chat/groups/GroupBoardPanel';
 import IntegrationQuickPanel from './components/integration/IntegrationQuickPanel';
@@ -38,6 +40,7 @@ import { useCRMStore } from './store/crm/crmStore';
 import { useZaloEvents } from './hooks/chat/useZaloEvents';
 import { useChatEvents } from './hooks/chat/useChatEvents';
 import useIsMobile from './hooks/layout/useIsMobile';
+import { useCampaignAutoStopNotice } from './hooks/crm/useCampaignAutoStopNotice';
 import ipc, { buildZaloAuth } from './lib/ipc';
 import { reportUiSettledWhenReady } from '@/lib/app/startupSettled';
 import { liveReadSync } from './lib/chat/read/liveReadSync';
@@ -1294,11 +1297,15 @@ export default function App() {
     return () => window.removeEventListener('zalo:reminder', handleReminderEvent);
   }, []);
 
+  // ─── Chiến dịch CRM tự dừng vì lỗi liên tiếp: báo ở mọi màn (chiến dịch chạy nền) ─────────
+  useCampaignAutoStopNotice(isWindowFocusedRef);
+
   // ─── Nhắc lịch Quản lý công việc (ERP): popup như nhắc hẹn Zalo ──────────────
   // Main (ErpCalendarService) phát 'erp:event:reminder' tới giờ nhắc; trước đây chỉ trang ERP nghe và không hiện gì.
-  // Đúng giờ → popup; nhắc trước → thông báo thường trong chuông (main tạo) + chuông rung "15 phút nữa tới lịch hẹn".
+  // Đúng giờ → popup; nhắc trước (mốc "Nhắc trước" của từng lịch) → thông báo thường trong chuông (main tạo) + chuông rung
+  // "15 phút nữa tới lịch hẹn" + thông báo nổi khi đang dùng app.
   useEffect(() => {
-    const unsub = window.electronAPI?.on('erp:event:reminder', (payload: any) => {
+    const handleErpReminder = (payload: any) => {
       const event = payload?.event;
       if (!event?.id) return;
       const employee = useEmployeeStore.getState();
@@ -1322,6 +1329,9 @@ export default function App() {
             );
           }
           window.electronAPI?.app?.flashFrame?.(true);
+        } else {
+          // Đang dùng app: thông báo nổi để không lỡ (chuông trên thanh tiêu đề rung + đếm ngược tới giờ hẹn)
+          useAppStore.getState().showNotification(`⏰ ${erpReminderLeadText(startAt - now)}: ${event.title}`, 'info');
         }
         return;
       }
@@ -1378,7 +1388,8 @@ export default function App() {
         }
         window.electronAPI?.app?.flashFrame?.(true);
       }
-    });
+    };
+    const unsub = window.electronAPI?.on('erp:event:reminder', handleErpReminder);
     return () => unsub?.();
   }, []);
 
@@ -1454,7 +1465,7 @@ export default function App() {
                     }
                   } else if (ch === 'telegram_bot') {
                     const health = await (ipc as any).telegram?.getActiveBots?.();
-                    const isActive = health?.bots?.some((b: any) => b.accountId === tgAcc.zalo_id) ?? false;
+                    const isActive = health?.bots?.some((b: any) => b.accountId === tgAcc.zalo_id && b.polling) ?? false;
                     if (isActive) {
                       useAccountStore.getState().updateAccountStatus(tgAcc.zalo_id, true, true);
                       useAccountStore.getState().updateListenerActive(tgAcc.zalo_id, true);
@@ -1586,12 +1597,17 @@ export default function App() {
       if (botAccounts.length) {
         try {
           const activeBots = await (ipc as any).telegram?.getActiveBots?.();
-          const activeBotIds = new Set<string>(
-            (activeBots?.bots || []).map((b: any) => String(b.accountId))
+          const botStates = new Map<string, { polling?: boolean }>(
+            (activeBots?.bots || []).map((b: any) => [String(b.accountId), b])
           );
           for (const acc of botAccounts) {
-            const isActive = activeBotIds.has(acc.zalo_id);
-            if (!isActive && acc.isConnected) {
+            const bot = botStates.get(acc.zalo_id);
+            const isActive = !!bot;
+            if (bot && !bot.polling) {
+              // Đã đăng ký nhưng tạm dừng (nơi khác nhận tin của bot / token lỗi): hiện đúng là chưa kết nối, không tự
+              // kết nối lại (giành tin với nơi kia) — người dùng bấm Kết nối lại, token lỗi thì main tự thử mỗi phút
+              if (acc.isConnected) useAccountStore.getState().updateAccountStatus(acc.zalo_id, false, false);
+            } else if (!isActive && acc.isConnected) {
               console.warn(`[HealthCheck] Telegram Bot ${acc.zalo_id} disconnected, reconnecting...`);
               useAccountStore.getState().updateAccountStatus(acc.zalo_id, false, false);
               // Reconnect: start bot again
@@ -1993,6 +2009,11 @@ export default function App() {
 
       {/* Thông báo tin nhắn mới trong app (góc trên bên phải, dưới thanh tiêu đề) */}
       <InAppMessageToasts belowFriendRequest={friendRequestQueue.length > 0} />
+
+      {/* Mini App của bot Telegram (chạy trong app) + hộp đăng nhập bằng Telegram của nút bot */}
+      <TelegramMiniAppHost />
+      {/* Link nhóm Zalo / Telegram, link bot ?start bấm trong tin: hộp Tham gia / Bắt đầu (lib/chat/links/chatLinks) */}
+      <ChatLinkHost />
 
       {/* Friend Request In-App Notification - show one at a time from queue */}
       {friendRequestQueue.length > 0 && (

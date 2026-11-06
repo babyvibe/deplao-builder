@@ -2,7 +2,7 @@
  * Trợ lý AI và báo cáo.
  * Kênh IPC: ai:listAssistants, ai:getAssistant, ai:getDefault, ai:saveAssistant, ai:deleteAssistant,
  * ai:chat, ai:suggest, ai:getAccountAssistant, ai:setAccountAssistant, ai:getUsageLogs, ai:getUsageStats,
- * analytics:* (11 báo cáo).
+ * analytics:* (12 báo cáo).
  */
 import { s } from '../schema';
 import { ApiError, route, RouteDef } from '../types';
@@ -33,6 +33,7 @@ const REPORTS: Record<string, { channel: string; perAccount: boolean; needsRange
     'contact-growth': { channel: 'analytics:contactGrowth', perAccount: true, needsRange: true, label: 'Tăng trưởng liên hệ' },
     'segmentation': { channel: 'analytics:contactSegmentation', perAccount: true, needsRange: false, label: 'Phân khúc liên hệ' },
     'campaign-comparison': { channel: 'analytics:campaignComparison', perAccount: true, needsRange: false, label: 'So sánh chiến dịch' },
+    'outreach': { channel: 'analytics:outreach', perAccount: true, needsRange: true, label: 'Tin gửi đi: đã nhận, đã xem, phản hồi' },
     'friend-requests': { channel: 'analytics:friendRequests', perAccount: true, needsRange: true, label: 'Lời mời kết bạn' },
     'workflows': { channel: 'analytics:workflowAnalytics', perAccount: true, needsRange: true, label: 'Workflow' },
     'ai': { channel: 'analytics:aiAnalytics', perAccount: false, needsRange: true, label: 'AI' },
@@ -157,7 +158,7 @@ export function aiRoutes(): RouteDef[] {
         // ── Báo cáo ────────────────────────────────────────────────────────
         route({
             method: 'GET', path: '/analytics/:report', scope: 'analytics:read', tags: ['Báo cáo'], operationId: 'getAnalyticsReport',
-            summary: 'Báo cáo (dashboard, message-volume, peak-hours, contact-growth, segmentation, campaign-comparison, friend-requests, workflows, ai, response-time, label-usage)',
+            summary: 'Báo cáo (dashboard, message-volume, peak-hours, contact-growth, segmentation, campaign-comparison, outreach, friend-requests, workflows, ai, response-time, label-usage)',
             params: s.object({ report: s.enum(Object.keys(REPORTS) as any) }),
             query: s.object({
                 account_id: s.id().optional().describe('Bắt buộc với báo cáo theo tài khoản'),

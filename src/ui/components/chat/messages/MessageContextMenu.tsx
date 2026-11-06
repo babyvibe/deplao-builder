@@ -1,9 +1,12 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
 import type { ChannelCapability } from '@/../configs/channels/channelConfig';
-import { CalendarIcon, ClipboardListIcon, CloudIcon, FileTextIcon, ReplyIcon, StarIcon } from '@/components/common/icons';
+import { CalendarIcon, CheckSquareIcon, ClipboardListIcon, CloudIcon, FileTextIcon, ReplyIcon, StarIcon } from '@/components/common/icons';
 import { getForwardBlockReason } from '@/lib/chat/forward/forwardSupport';
 import { copyImageToClipboard } from '@/lib/chat/media/copyImage';
+import { fileOnThisMachine } from '@/lib/media/employeeMediaSync';
+import { ensureMessageImage } from '@/lib/media/ensureMessageImage';
+import { isZalo } from '@/lib/channels/channelHelper';
 import TelegramReadReceipts, { type ReadReceiptPerson } from '../telegram/messages/TelegramReadReceipts';
 import { ReactionGrid } from './reactions/ReactionPicker';
 import { displayReactionEmoji } from './reactions/ReactionComponents';
@@ -37,12 +40,14 @@ interface MessageContextMenuProps {
   /** "Tin đánh dấu": current state of the targeted message + toggle. */
   isStarred?: boolean;
   onToggleStar?: (msg: any) => void;
-  /** Zalo only: send a copy of the message to My Documents (Cloud của tôi). */
+  /** Send a copy of the message to My Documents (Zalo Cloud của tôi; Telegram Saved Messages). */
   onSaveToMyDocuments?: (msg: any) => void;
   /** Quản lý công việc: tạo lịch hẹn từ tin (ngày giờ đọc trong tin, tới giờ có nhắc) — chỉ truyền khi được tạo lịch. */
   onAddToCalendar?: (msg: any) => void;
   /** Quản lý công việc: lưu tin vào Ghi chú — chỉ truyền khi được tạo ghi chú. */
   onSaveToNote?: (msg: any) => void;
+  /** Quản lý công việc: tạo task từ tin (chữ + ảnh của tin thành nội dung task) — chỉ truyền khi được tạo task. */
+  onCreateTask?: (msg: any) => void;
   showNotification?: (msg: string, type: 'success' | 'error' | 'info') => void;
   /** Tin đã thu hồi: chỉ còn thao tác cục bộ (sao chép, lưu ảnh/file, đánh dấu, xoá khỏi app) — ẩn mọi thao tác đồng bộ lên nền tảng. */
   recalled?: boolean;
@@ -120,7 +125,7 @@ function getDefaultFilename(msg: any): string {
 
 export default function MessageContextMenu({
   x, y, msg, mediaMsg, isSent, isGroupAdmin, channelCap, onClose, onReply, onForward, onSelectMessages, onUndo, onDelete, onDeleteFromDb, onReact, onPin, onEdit,
-  isStarred, onToggleStar, onSaveToMyDocuments, onAddToCalendar, onSaveToNote, showNotification, recalled = false, readReceipts,
+  isStarred, onToggleStar, onSaveToMyDocuments, onAddToCalendar, onSaveToNote, onCreateTask, showNotification, recalled = false, readReceipts,
   onCancelReact, reactionChoices, myReaction = null,
 }: MessageContextMenuProps) {
   const quickReactions = reactionChoices?.quick ?? QUICK_REACTIONS;
@@ -240,12 +245,19 @@ export default function MessageContextMenu({
     }
   };
 
-  // Mở thư mục chứa file/ảnh
+  // Mở thư mục chứa file/ảnh (máy nhân viên: tải bản của Boss về máy trước). Ảnh Zalo máy Boss chưa lưu (chỉ có link) →
+  // nhờ Boss lưu trước — trước đây báo "File chưa được tải về máy".
   const handleShowInFolder = async () => {
     onClose();
-    if (localPath) {
-      await ipc.file?.showItemInFolder(localPath);
-    } else if (remoteUrl) {
+    let path = localPath;
+    if (!path && isMedia && isZalo(target?.channel)) {
+      const saved = await ensureMessageImage(target);
+      if (saved.success && saved.newLocalPath) path = saved.newLocalPath;
+    }
+    const onThisMachine = await fileOnThisMachine(path, isVideo ? 'video' : isFile ? 'file' : 'image');
+    if (onThisMachine) {
+      await ipc.file?.showItemInFolder(onThisMachine);
+    } else if (localPath || remoteUrl) {
       showNotification?.('File chưa được tải về máy', 'info');
     }
   };
@@ -314,7 +326,7 @@ export default function MessageContextMenu({
       {platform && (channelCap?.supportsForward ?? true) && !getForwardBlockReason(msg) && (
         <MenuItem icon="↪" label="Chuyển tiếp" onClick={() => { onForward(msg); onClose(); }} />
       )}
-      {/* Zalo: gửi bản sao tin vào My Documents (Cloud của tôi) - như "Tuỳ chọn khác › Lưu vào My Documents" của Zalo */}
+      {/* Gửi bản sao tin vào My Documents - như "Tuỳ chọn khác › Lưu vào My Documents" của Zalo (Telegram: Tin nhắn đã lưu) */}
       {platform && onSaveToMyDocuments && !getForwardBlockReason(target) && (
         <MenuItem icon={<CloudIcon className="w-4 h-4" />} label="Lưu vào My Documents" onClick={() => { onSaveToMyDocuments(target); onClose(); }} />
       )}
@@ -410,7 +422,11 @@ export default function MessageContextMenu({
         />
       )}
 
-      {/* Quản lý công việc: lịch hẹn (đọc ngày giờ trong tin, tới giờ có nhắc) / ghi chú từ tin */}
+      {/* Quản lý công việc: task (chữ + ảnh của tin thành nội dung) / lịch hẹn (đọc ngày giờ trong tin, tới giờ có nhắc) /
+          ghi chú từ tin */}
+      {onCreateTask && (
+        <MenuItem icon={<CheckSquareIcon className="w-4 h-4" />} label="Tạo task" onClick={() => { onCreateTask(msg); onClose(); }} />
+      )}
       {onAddToCalendar && (
         <MenuItem icon={<CalendarIcon className="w-4 h-4" />} label="Thêm vào lịch" onClick={() => { onAddToCalendar(msg); onClose(); }} />
       )}

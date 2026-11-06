@@ -120,8 +120,8 @@ export const MIGRATIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS d1_migrations(
     applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );`;
 
-const NOT_CONNECTED_MESSAGE = 'Chưa kết nối Cloudflare — kết nối ở Cài đặt → Internet & Đám mây trên máy chủ';
-const TOKEN_INVALID_MESSAGE = 'Token Cloudflare không còn hợp lệ — kết nối lại ở Cài đặt → Internet & Đám mây';
+const NOT_CONNECTED_MESSAGE = 'Chưa kết nối Cloudflare — kết nối ở Cài đặt → Internet & Cloud trên máy chủ';
+const TOKEN_INVALID_MESSAGE = 'Token Cloudflare không còn hợp lệ — kết nối lại ở Cài đặt → Internet & Cloud';
 const OWN_CODES = new Set(['CF_NOT_CONNECTED', 'CF_PERMISSION', 'CF_NAME_FORBIDDEN', 'CF_BUNDLE_INVALID', 'CF_API', 'CF_DECLINED', 'VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT']);
 
 /** Quyền token cần cho một nhóm thao tác (Worker, D1, liệt kê tên miền, đọc DNS). */
@@ -132,7 +132,7 @@ export function permissionError(need: WorkersNeed, status?: number): CloudError 
     const label = NEED_LABELS[need];
     return new CloudError(
         'CF_PERMISSION',
-        `Token Cloudflare thiếu quyền "${label}" — thêm quyền này cho token (hoặc tạo token mới bằng link mẫu ở Cài đặt → Internet & Đám mây) rồi bấm Kiểm tra lại token`,
+        `Token Cloudflare thiếu quyền "${label}" — thêm quyền này cho token (hoặc tạo token mới bằng link mẫu ở Cài đặt → Internet & Cloud) rồi bấm Kiểm tra lại token`,
         status,
     );
 }

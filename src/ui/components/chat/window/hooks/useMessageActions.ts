@@ -224,12 +224,12 @@ export function useMessageActions(deps: {
   }, labels);
 
   // Zalo: "Lưu vào My Documents" = gửi bản sao tin vào hội thoại My Documents CÓ SẴN của Zalo (ID = send2me_id của
-  // phiên đăng nhập — không phải hội thoại với UID của chính mình)
+  // phiên đăng nhập — không phải hội thoại với UID của chính mình). Telegram: vào Tin nhắn đã lưu (hội thoại với chính mình)
   const handleSaveToMyDocuments = async (target: any) => {
     if (!activeAccountId || !target) return;
     const myDocsId = myDocumentsThreadId(allAccounts.find(a => a.zalo_id === activeAccountId));
     if (!myDocsId) {
-      showNotification('Chưa xác định được hội thoại My Documents của tài khoản này — hãy kết nối lại tài khoản Zalo rồi thử lại', 'error');
+      showNotification('Chưa xác định được hội thoại My Documents của tài khoản này, hãy kết nối lại tài khoản rồi thử lại', 'error');
       return;
     }
     // Ảnh trong album được bấm chuột phải → chỉ ảnh đó; còn lại cả album / tin

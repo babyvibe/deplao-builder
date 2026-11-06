@@ -11,6 +11,8 @@ import type {
   TelegramCallHistoryItem, TelegramChatSettings, TelegramContactItem, TelegramCreateChannelResult, TelegramMissingInvitee,
 } from '../../shared/telegram/telegramQuickModel';
 import type { TelegramCoveredStickerSet, TelegramStickerFileKind, TelegramStickerItem, TelegramStickerSetInfo } from '../../shared/telegram/telegramStickers';
+import type { UrlAuthInfo } from '../../shared/telegram/telegramMiniApp';
+import type { CampaignEngagementResponse, OutreachStats } from '../../shared/analytics/messageEngagement';
 import type {
   EmployeeCredentialsEvent,
   EmployeeResyncEvent,
@@ -353,7 +355,7 @@ declare global {
     electronAPI: {
       api: ApiIpc;
       plugins: PluginsIpc;
-      /** Internet & Đám mây (Cloudflare) — chỉ máy chủ; token / mật khẩu sao lưu không bao giờ quay về renderer. */
+      /** Internet & Cloud (Cloudflare) — chỉ máy chủ; token / mật khẩu sao lưu không bao giờ quay về renderer. */
       cloudflare?: CloudflareIpc;
       window: {
         minimize: () => void;
@@ -664,10 +666,13 @@ declare global {
         getCampaigns: (params: { zaloId: string }) => Promise<{ success: boolean; campaigns: any[] }>;
         saveCampaign: (params: { zaloId: string; campaign: any }) => Promise<{ success: boolean; id: number; error?: string }>;
         deleteCampaign: (params: { zaloId: string; campaignId: number }) => Promise<{ success: boolean }>;
-        cloneCampaign: (params: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string }) => Promise<{ success: boolean; id: number; error?: string }>;
+        /** contactIds: chỉ chép những liên hệ này (bỏ trống = tất cả khi includeContacts). */
+        cloneCampaign: (params: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string; contactIds?: string[] }) => Promise<{ success: boolean; id: number; error?: string }>;
         updateCampaignStatus: (params: { campaignId: number; status: string }) => Promise<{ success: boolean }>;
         addCampaignContacts: (params: { zaloId: string; campaignId: number; contacts: any[] }) => Promise<{ success: boolean; error?: string }>;
         getCampaignContacts: (params: { campaignId: number }) => Promise<{ success: boolean; contacts: any[] }>;
+        /** Liên hệ đã gửi → đã nhận / đã xem / đã phản hồi (shared/analytics/messageEngagement). */
+        getCampaignEngagement: (params: { campaignId: number }) => Promise<CampaignEngagementResponse>;
         deleteCampaignContacts: (params: { campaignId: number; contactIds: string[] }) => Promise<{ success: boolean }>;
         deleteAllCampaignContacts: (params: { campaignId: number }) => Promise<{ success: boolean }>;
         getSendLog: (params: { zaloId: string; opts?: any }) => Promise<{ success: boolean; logs: any[] }>;
@@ -700,8 +705,12 @@ declare global {
             id: number; name: string; type: string; status: string; created_at: number;
             total: number; sent: number; failed: number; pending: number; replied: number;
             deliveryRate: number; replyRate: number;
+            delivered: number; deliveredBase: number; seen: number;
+            receivedRate: number | null; seenRate: number; sendsMessage: boolean; channel: string;
           }>;
         }>;
+        /** Tin gửi đi 1:1 trong khoảng: người nhận → đã nhận / đã xem / đã phản hồi. */
+        outreach: (params: { zaloId: string; sinceTs: number; untilTs: number; granularity?: 'hour' | 'day' }) => Promise<{ success: boolean; error?: string } & Partial<OutreachStats>>;
         friendRequests: (params: { zaloId: string; sinceTs: number; untilTs: number }) => Promise<{
           success: boolean; totalSent: number; totalReceived: number;
           timeline: Array<{ bucket: string; sent: number; received: number }>;
@@ -743,7 +752,9 @@ declare global {
         saveTempBlob: (params: { base64: string; ext: string; filename?: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>;
         getVideoMeta: (params: { filePath: string }) => Promise<{ success: boolean; thumbPath: string; duration: number; width: number; height: number; error?: string }>;
         readImageAsBase64: (params: { localPath?: string; remoteUrl?: string }) => Promise<{ success: boolean; base64?: string; mimeType?: string; error?: string }>;
-        repairImage: (params: { zaloId: string; msgId: string; threadId?: string; localPath?: string; remoteUrl?: string; force?: boolean }) => Promise<{ success: boolean; newLocalPath?: string; expired?: boolean; error?: string }>;
+        repairImage: (params: { zaloId: string; msgId: string; threadId?: string; localPath?: string; remoteUrl?: string; force?: boolean }) => Promise<{ success: boolean; newLocalPath?: string; expired?: boolean; cached?: boolean; error?: string }>;
+        /** Ảnh tin Zalo phải có trên máy Boss (máy nhân viên: Boss tải); cached = đã có sẵn */
+        ensureMessageImage: (params: { zaloId: string; msgId: string; threadId?: string; force?: boolean }) => Promise<{ success: boolean; newLocalPath?: string; expired?: boolean; cached?: boolean; error?: string; code?: string }>;
         /** Kiểm tra media Zalo còn trên CDN không (video / ảnh trong album). expired=true → đã lưu cờ media_expired. */
         checkMediaExpired: (params: { zaloId: string; msgId: string; urls: string[]; force?: boolean }) => Promise<{ success: boolean; expired: boolean; unknown?: boolean; error?: string }>;
         /** Tải media của 1 tin Zalo về máy (chuyển tiếp tin chưa tải), cập nhật local_paths */
@@ -870,7 +881,7 @@ declare global {
         getFiles:        (assistantId: string) => Promise<{ success: boolean; files: any[]; error?: string }>;
         uploadFile:      (assistantId: string, filePath: string) => Promise<{ success: boolean; id?: number; fileName?: string; error?: string }>;
         removeFile:      (fileId: number) => Promise<{ success: boolean; error?: string }>;
-        suggest:         (assistantId: string, chatHistory: any[]) => Promise<{ success: boolean; suggestions: string[]; error?: string }>;
+        suggest:         (assistantId: string, chatHistory: any[], count?: number) => Promise<{ success: boolean; suggestions: string[]; error?: string }>;
         chat:            (assistantId: string, messages: any[], structured?: boolean, maxTokens?: number) => Promise<{ success: boolean; result?: string; totalTokens?: number; promptTokens?: number; completionTokens?: number; error?: string }>;
         /** Chỉ dùng messages của caller (không chèn persona / kiến thức của trợ lý) - AI Workflow Builder */
         chatRaw?:        (params: { assistantId: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>; maxTokens?: number; temperature?: number }) => Promise<{ success: boolean; result?: string; totalTokens?: number; promptTokens?: number; completionTokens?: number; error?: string }>;
@@ -1196,6 +1207,10 @@ declare global {
         refreshPostStats?: (params: { accountId: string; chatId: string; messageIds: string[]; increment?: boolean }) => Promise<{
           success: boolean; error?: string; updates?: Array<{ msgId: string; attachments: string }>; peers?: Record<string, { name: string; avatar: string }>;
         }>;
+        /** Kết quả các bình chọn đang hiện (messages.getPollResults); updates = attachments mới của tin đã đổi */
+        refreshPollResults?: (params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{
+          success: boolean; error?: string; updates?: Array<{ msgId: string; attachments: string }>;
+        }>;
         downloadRichMedia?: (params: { accountId: string; chatId: string; messageId: string; mediaId?: string }) => Promise<{ success: boolean; localPaths?: Record<string, string>; error?: string }>;
         /** Thẻ link của bản ghi cũ: lấy lại attachments theo lô (≤ 100 tin / hội thoại), không tải media */
         refreshMessageAttachments?: (params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{
@@ -1206,6 +1221,30 @@ declare global {
         getFullChat:       (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; info?: any; error?: string }>;
         getUserProfile:    (params: { accountId: string; userId: string; chatId?: string }) => Promise<{ success: boolean; profile?: any; error?: string }>;
         resolveUsername:   (params: { accountId: string; username: string }) => Promise<{ success: boolean; peer?: any; error?: string }>;
+        // Mini App của bot (lib/chat/telegram/telegramMiniApp) + nút đăng nhập (keyboardButtonUrlAuth)
+        requestWebView?:   (params: { accountId: string; botId: string; url: string; fromBotMenu?: boolean; peerId?: string; themeParams?: Record<string, string> }) => Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }>;
+        requestMainWebView?: (params: { accountId: string; botId: string; startParam?: string; peerId?: string; themeParams?: Record<string, string> }) => Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }>;
+        prolongWebView?:   (params: { accountId: string; botId: string; queryId: string; peerId?: string }) => Promise<{ success: boolean; expired?: boolean; error?: string }>;
+        miniAppCustomMethod?: (params: { accountId: string; botId: string; method: string; params?: unknown }) => Promise<{ success: boolean; result?: unknown; error?: string }>;
+        miniAppWriteAccess?: (params: { accountId: string; botId: string; action: 'check' | 'allow' }) => Promise<{ success: boolean; allowed?: boolean; error?: string }>;
+        miniAppSharePhone?: (params: { accountId: string; botId: string }) => Promise<{ success: boolean; error?: string }>;
+        requestUrlAuth?:   (params: { accountId: string; peerId: string; msgId: number; buttonId: number }) => Promise<{ success: boolean; info?: UrlAuthInfo; error?: string }>;
+        acceptUrlAuth?:    (params: { accountId: string; peerId: string; msgId: number; buttonId: number; writeAllowed?: boolean; sharePhone?: boolean }) => Promise<{ success: boolean; url?: string | null; error?: string }>;
+        // Link Telegram mở trong app (lib/chat/links/chatLinks)
+        resolvePhone?:     (params: { accountId: string; phone: string }) => Promise<{ success: boolean; peer?: any; error?: string }>;
+        getBotApp?:        (params: { accountId: string; botId: string; shortName: string }) => Promise<{ success: boolean; app?: { id: string; accessHash: string; title: string; description: string; inactive: boolean; requestWriteAccess: boolean }; error?: string }>;
+        requestAppWebView?: (params: { accountId: string; botId: string; appId: string; accessHash: string; startParam?: string; writeAllowed?: boolean; peerId?: string; themeParams?: Record<string, string> }) => Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }>;
+        startBot?:         (params: { accountId: string; botId: string; startParam: string }) => Promise<{ success: boolean; error?: string }>;
+        /** Nút callback / trò chơi / sao chép / hồ sơ của tin bot: main đọc lại nút [hàng][cột] từ tin rồi trả việc cần làm */
+        pressInlineButton?: (params: { accountId: string; chatId: string; msgId: number; row: number; col: number }) => Promise<{
+          success: boolean;
+          action?:
+            | { kind: 'answer'; message: string; alert: boolean; url: string }
+            | { kind: 'copy'; text: string }
+            | { kind: 'profile'; userId: string }
+            | { kind: 'unsupported'; reason: string };
+          error?: string;
+        }>;
         searchContacts:    (params: { accountId: string; query: string }) => Promise<{ success: boolean; peers?: any[]; error?: string }>;
         getPeers:          (params: { accountId: string; peerType?: string }) => Promise<{ success: boolean; peers?: any[]; error?: string }>;
         // Forum / Topics
@@ -1244,6 +1283,8 @@ declare global {
         update:        (id: number, proxy: any) => Promise<{ success: boolean; proxy?: any; error?: string }>;
         delete:        (id: number) => Promise<{ success: boolean; error?: string }>;
         setAccount:    (zaloId: string, proxyId: number | null) => Promise<{ success: boolean; error?: string }>;
+        /** Thêm / đổi / bỏ proxy của tài khoản Zalo, Facebook rồi kết nối lại ngay; connected=false: đã lưu nhưng chưa kết nối lại được */
+        applyToAccount: (accountId: string, proxyId: number | null, opts?: { force?: boolean }) => Promise<{ success: boolean; proxyId?: number | null; changed?: boolean; connected?: boolean; reconnectError?: string; error?: string }>;
         getForAccount: (zaloId: string) => Promise<{ success: boolean; proxy?: any; error?: string }>;
         test:          (proxy: any) => Promise<{ success: boolean; ms?: number; status?: number; error?: string }>;
       };

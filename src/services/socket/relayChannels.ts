@@ -76,6 +76,7 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'crm:noteChanged',
   'crm:campaignChanged',
   'crm:campaignDone',
+  'crm:campaignAutoStopped', // tự dừng vì lỗi liên tiếp → thông báo (dữ liệu chiến dịch đổi qua crm:campaignChanged)
   'crm:queueUpdate',
   'crm:queueStatus',
   // ─── Thư viện media ──────────────────────────────────────────────────────

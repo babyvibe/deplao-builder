@@ -49,8 +49,13 @@ import { SHOW_DEV_TOOLS, IS_DEV_BUILD } from '../src/configs/app/BuildConfig';
 import Logger from '../src/utils/Logger';
 import { armStartupSettleFallback, settleWhenMainIdle } from '../src/utils/startup/startupSettle';
 import { startMainThreadWatchdog } from '../src/utils/startup/mainThreadWatchdog';
+import { noteSystemPower, startWakeWatch } from '../src/utils/startup/systemIdle';
+import { noteWindowHidden, noteWindowShown, startMemoryMonitor } from '../src/utils/startup/memoryMonitor';
+import { dbReads } from '../src/services/database/read/DbReadClient';
 import { startRendererStartupProfile } from '../src/utils/startup/startupProfiler';
 import { newerInstallToRelaunch, type LaunchInfo } from './app/singleInstanceRelaunch';
+import { rendererCspHeaders } from './app/rendererCsp';
+import { isExternalUrl, isInAppChatLink, mainFrameNavigation } from './app/mainWindowLinks';
 import { createAutoLaunch, type AutoLaunch } from '../src/utils/startup/autoLaunch';
 
 // CHANNEL constant — same as src/ui/lib/channels/channelHelper.ts (electron build excludes src/ui/)
@@ -372,8 +377,27 @@ function createWindow() {
     }
   }, 8_000).unref();
 
-  // A successful full page load means Vite is reachable again. Reset the
-  // bounded retry budget so a later laptop suspend can recover independently.
+  // Link / điều hướng (app/mainWindowLinks): preload gắn electronAPI cho mọi trang của cửa sổ này → khung chính chỉ ở
+  // giao diện Deplao. Link web (link không bắt click, window.open, target="_blank", chuột giữa, mini app Telegram) mở
+  // bằng trình duyệt của máy để giữ phiên đăng nhập; không mở cửa sổ Electron.
+  const linkOptions = { isDev, devOrigin: 'http://localhost:27799', entryFile: path.join(__dirname, '../../dist/index.html') };
+  // Link Telegram / nhóm Zalo: giao diện mở hội thoại / Mini App trong app (app:openChatLink), không ra trình duyệt
+  const openLinkOutside = (url: string) => {
+    if (isInAppChatLink(url) && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:openChatLink', url);
+    else if (isExternalUrl(url)) shell.openExternal(url).catch(() => {});
+  };
+  mainWindow.webContents.on('will-navigate', (details: any) => {
+    const url = String(details?.url || '');
+    const decision = mainFrameNavigation(url, linkOptions);
+    if (decision.allow) return;
+    details.preventDefault();
+    if (decision.openExternal || isInAppChatLink(url)) openLinkOutside(url);
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openLinkOutside(url);
+    return { action: 'deny' };
+  });
+
   mainWindow.webContents.on('will-frame-navigate', (details: any) => {
     try {
       if (details.isMainFrame) return;
@@ -384,6 +408,8 @@ function createWindow() {
     } catch {}
   });
 
+  // A successful full page load means Vite is reachable again. Reset the
+  // bounded retry budget so a later laptop suspend can recover independently.
   mainWindow.webContents.on('did-finish-load', () => {
     if (!isDev) return;
     devRendererReloadAttempts = 0;
@@ -465,18 +491,17 @@ function createWindow() {
     });
   }
 
-  // CSP: chặn inline scripts bên ngoài trong production
+  const mainContentsId = (): number | null => {
+    try { return mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null; } catch { return null; }
+  };
+
+  // CSP: chặn inline scripts bên ngoài trong production, chỉ cho nội dung của Deplao (app/rendererCsp). Trình duyệt nội
+  // bộ, mini app Telegram dùng chung session giữ nguyên như bản dev; trang ứng dụng deplao-plugin:// giữ CSP riêng.
+  // ⚠️ Cũng chỉ MỘT listener onHeadersReceived cho session này (xem ghi chú bên dưới).
   if (!isDev) {
     mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
-      callback({
-        responseHeaders: {
-          ...details.responseHeaders,
-          'Content-Security-Policy': [
-            // img-src và media-src phải có https: để load ảnh/video từ CDN Zalo
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: local-media: blob: https: http:; media-src 'self' local-media: blob: https: http:; connect-src 'self' https: http: wss:; font-src 'self' data: https:; frame-src 'self' https:;",
-          ],
-        },
-      });
+      const responseHeaders = rendererCspHeaders(details, mainContentsId());
+      callback(responseHeaders ? { responseHeaders } : {});
     });
   }
 
@@ -484,9 +509,7 @@ function createWindow() {
   // thẻ không gửi được → gắn token phiên nhân viên ở đây — chỉ cho Boss đã đăng ký, chỉ khung chính cửa sổ này.
   // ⚠️ Electron chỉ giữ MỘT listener mỗi sự kiện webRequest của một session: đây là onBeforeSendHeaders DUY NHẤT của
   // session cửa sổ chính (trình duyệt nội bộ dùng chung session, bị loại theo webContentsId) — cần thêm thì gộp vào hook.
-  installBossFileAuthHook(mainWindow.webContents.session, () => {
-    try { return mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null; } catch { return null; }
-  });
+  installBossFileAuthHook(mainWindow.webContents.session, mainContentsId);
   setPreferredBossWorkspace(() => {
     try { return WorkspaceManager.getInstance().getActiveWorkspaceId(); } catch { return undefined; }
   });
@@ -510,15 +533,24 @@ function createWindow() {
     mainWindow?.webContents.send('app:windowFocus', true);
   });
   mainWindow.on('blur', () => mainWindow?.webContents.send('app:windowFocus', false));
-  mainWindow.on('minimize', () => mainWindow?.webContents.send('app:windowFocus', false));
+  // Ẩn / thu nhỏ lâu: nhả bộ đệm ảnh của cửa sổ + ghi RAM vào Nhật ký (utils/startup/memoryMonitor.ts)
+  mainWindow.on('minimize', () => {
+    mainWindow?.webContents.send('app:windowFocus', false);
+    if (mainWindow) noteWindowHidden(mainWindow);
+  });
   mainWindow.on('restore', () => {
     cancelDockBounce();
     mainWindow?.webContents.send('app:windowFocus', true);
+    noteWindowShown();
   });
-  mainWindow.on('hide', () => mainWindow?.webContents.send('app:windowFocus', false));
+  mainWindow.on('hide', () => {
+    mainWindow?.webContents.send('app:windowFocus', false);
+    if (mainWindow) noteWindowHidden(mainWindow);
+  });
   mainWindow.on('show', () => {
     cancelDockBounce();
     mainWindow?.webContents.send('app:windowFocus', true);
+    noteWindowShown();
     // Re-apply overlay sau khi show lại
     if (process.platform === 'win32' && currentIconIsDot && cachedOverlayDot && !cachedOverlayDot.isEmpty()) {
       mainWindow?.setOverlayIcon(cachedOverlayDot, 'Tin chưa đọc');
@@ -679,8 +711,9 @@ function registerWindowControls() {
   });
 
   // Open external link in browser
+  // Chỉ http, https, mailto (app/mainWindowLinks): link lấy từ tin nhắn, link lạ (file:, ms-msdt:…) chạy được chương trình.
   ipcMain.on('shell:openExternal', (_event, url: string) => {
-    shell.openExternal(url);
+    if (isExternalUrl(url)) shell.openExternal(url).catch(() => {});
   });
 
   ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
@@ -1126,10 +1159,48 @@ async function resolveMissingMediaFromCloud(absPath: string, waitMs: number): Pr
   try {
     const { cloudMedia } = require('../src/services/cloudflare/media') as typeof import('../src/services/cloudflare/media');
     const resolved = await cloudMedia.resolveMissingMediaFile(absPath, { waitMs });
-    return resolved && fs.existsSync(resolved) ? resolved : null;
+    if (!resolved) return null;
+    return (await fs.promises.stat(resolved).then(() => true, () => false)) ? resolved : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Chẩn đoán video phục vụ qua local-media: HEVC (Chromium không phát được), moov không nằm trong 64 KB đầu (chưa
+ * faststart, <video> không đọc được thông tin). Mỗi file một lần mỗi phiên, đọc bất đồng bộ ở nền. Trước đây mở và đọc
+ * 64 KB đồng bộ trên main cho MỖI request Range của trình phát video.
+ */
+const checkedVideoContainers = new Set<string>();
+function checkVideoContainerOnce(absPath: string, fileSize: number): void {
+  if (checkedVideoContainers.has(absPath)) return;
+  if (checkedVideoContainers.size >= 2000) checkedVideoContainers.clear();
+  checkedVideoContainers.add(absPath);
+  void (async () => {
+    const handle = await fs.promises.open(absPath, 'r');
+    try {
+      const scanBuf = Buffer.alloc(Math.min(fileSize, 64 * 1024));
+      const { bytesRead } = await handle.read(scanBuf, 0, scanBuf.length, 0);
+      if (bytesRead < 12) return;
+      const brand = scanBuf.toString('ascii', 8, 12);
+      if (brand.includes('hvc1') || brand.includes('hev1')) {
+        console.warn(`[local-media] WARNING: HEVC/H.265 codec detected (brand=${brand}) - may not play in Chromium!`);
+      }
+      let offset = 0;
+      let moovFound = false;
+      while (offset < bytesRead - 8) {
+        const boxSize = scanBuf.readUInt32BE(offset);
+        if (scanBuf.toString('ascii', offset + 4, offset + 8) === 'moov') { moovFound = true; break; }
+        if (boxSize < 8) break; // invalid box
+        offset += boxSize;
+      }
+      if (!moovFound) {
+        console.warn(`[local-media] WARNING: moov atom NOT found in first 64KB of ${path.basename(absPath)} - file is NOT faststart.`);
+      }
+    } finally {
+      await handle.close().catch(() => {});
+    }
+  })().catch((err: any) => console.warn(`[local-media] Could not read video header: ${err?.message || err}`));
 }
 
 /**
@@ -1151,10 +1222,19 @@ function deferQuitForCloudShutdown(event: { preventDefault(): void }): boolean {
 app.whenReady().then(async () => {
   // Luồng chính bị chặn ≥ 1 s (SQLite đồng bộ, vòng lặp dài…) → Nhật ký "[Hiệu năng] …" — tìm nguyên nhân "Not Responding".
   startMainThreadWatchdog();
+  // RAM theo từng tiến trình (main, cửa sổ, GPU…) → Nhật ký "[Hiệu năng] RAM Deplao …" mỗi 30 phút
+  startMemoryMonitor(() => app.getAppMetrics());
+  // Đọc DB nặng (mở hội thoại, tìm tin, danh sách ảnh / file / hội thoại) chạy trong worker đọc, không chặn luồng chính
+  dbReads.enable({ log: (msg) => Logger.warn(msg) });
   // A resume wakes the Electron main process and background sync services, but
   // Chromium's requests to Vite can remain suspended. The blank screen in dev
   // is therefore a renderer recovery problem, not a stopped message listener.
+  // Việc nặng chạy nền (chụp bản gốc DB, quét media, bù tin Telegram) chờ sau khi máy thức dậy / mở khoá và dừng khi máy
+  // ngủ giữa chừng: chạy đúng lúc mở máy làm ổ đĩa 100 %, app đơ (utils/startup/systemIdle.ts).
+  // powerMonitor không báo (Modern Standby trên vài máy): nhịp 30 giây tự nhận ra máy vừa ngủ dậy
+  startWakeWatch();
   powerMonitor.on('suspend', () => {
+    noteSystemPower('suspend');
     if (isDev) {
       devRendererSystemSuspended = true;
       console.log('[main] System suspend detected; monitoring Vite renderer on resume');
@@ -1171,8 +1251,12 @@ app.whenReady().then(async () => {
       console.warn(`[main] Telegram resume handling failed: ${err?.message || err}`);
     }
   };
-  powerMonitor.on('unlock-screen', () => notifyTelegramUserResume('unlock-screen'));
+  powerMonitor.on('unlock-screen', () => {
+    noteSystemPower('unlock');
+    notifyTelegramUserResume('unlock-screen');
+  });
   powerMonitor.on('resume', () => {
+    noteSystemPower('resume');
     notifyTelegramUserResume('resume');
     if (!isDev) return;
     devRendererSystemSuspended = false;
@@ -1207,117 +1291,65 @@ app.whenReady().then(async () => {
       const configFolder = path.dirname(FileStorageService.getBaseDir());
       // console.log(`[local-media] Request: url=${request.url} → filePath=${filePath} configFolder=${configFolder}`);
 
+      // Kiểm tra file bất đồng bộ: existsSync / statSync / đọc đầu video trên main process cho mỗi ảnh và mỗi request
+      // Range của video làm cả app khựng khi ổ đĩa bận (máy thiếu RAM ghi pagefile, app khác đọc ghi nhiều).
+      const statFile = (p: string) => fs.promises.stat(p).then((s) => (s.isFile() ? s : null), () => null);
+      let stat: fs.Stats | null;
       if (!path.isAbsolute(filePath)) {
         // Relative path: "media/zaloId/date/img.jpg" → configFolder/media/zaloId/...
         filePath = path.join(configFolder, filePath);
-        // console.log(`[local-media] Resolved relative → ${filePath}`);
-      } else if (!fs.existsSync(filePath)) {
-        // Absolute path but file not found (old drive/folder after move).
-        const normalized = filePath.replace(/\\/g, '/');
-        const mediaIdx = normalized.lastIndexOf('/media/');
-        if (mediaIdx >= 0) {
-          const relativePart = normalized.slice(mediaIdx + 1); // "media/zaloId/..."
-          filePath = path.join(configFolder, relativePart);
-        }
-      }
-
-      if (!fs.existsSync(filePath)) {
-        // Fallback: file might be missing extension (DB migration bug)
-        // Try common extensions: .jpg, .png, .webp, .mp4, .ogg, .mp3
-        const exts = ['.jpg', '.png', '.webp', '.mp4', '.ogg', '.mp3'];
-        const dir = path.dirname(filePath);
-        const base = path.basename(filePath);
-        for (const ext of exts) {
-          const candidate = path.join(dir, base + ext);
-          if (fs.existsSync(candidate)) {
-            // console.log(`[local-media] Found with extension: ${candidate}`);
-            filePath = candidate;
-            break;
+        stat = await statFile(filePath);
+      } else {
+        stat = await statFile(filePath);
+        if (!stat) {
+          // Absolute path but file not found (old drive/folder after move).
+          const normalized = filePath.replace(/\\/g, '/');
+          const mediaIdx = normalized.lastIndexOf('/media/');
+          if (mediaIdx >= 0) {
+            const relativePart = normalized.slice(mediaIdx + 1); // "media/zaloId/..."
+            filePath = path.join(configFolder, relativePart);
+            stat = await statFile(filePath);
           }
         }
       }
 
-      if (!fs.existsSync(filePath)) {
-        // Fallback: check old Telegram media location (userData/telegram_media/)
-        const basename = path.basename(filePath);
-        const oldTelegramPath = path.join(app.getPath('userData'), 'telegram_media', basename);
-        if (fs.existsSync(oldTelegramPath)) {
-          filePath = oldTelegramPath;
+      if (!stat) {
+        // Fallback: file might be missing extension (DB migration bug)
+        const dir = path.dirname(filePath);
+        const base = path.basename(filePath);
+        for (const candidateExt of ['.jpg', '.png', '.webp', '.mp4', '.ogg', '.mp3']) {
+          const candidate = path.join(dir, base + candidateExt);
+          const found = await statFile(candidate);
+          if (found) { filePath = candidate; stat = found; break; }
         }
       }
 
-      if (!fs.existsSync(filePath)) {
-        // R2 media (tuỳ chọn, mặc định tắt): file đã được dọn khỏi máy / máy mới khôi phục → tải lại từ R2.
-        const fromCloud = await resolveMissingMediaFromCloud(path.resolve(filePath), cloudWaitMs);
-        if (fromCloud) filePath = fromCloud;
+      if (!stat) {
+        // Fallback: check old Telegram media location (userData/telegram_media/)
+        const oldTelegramPath = path.join(app.getPath('userData'), 'telegram_media', path.basename(filePath));
+        const found = await statFile(oldTelegramPath);
+        if (found) { filePath = oldTelegramPath; stat = found; }
       }
 
-      if (!fs.existsSync(filePath)) {
+      if (!stat) {
+        // R2 media (tuỳ chọn, mặc định tắt): file đã được dọn khỏi máy / máy mới khôi phục → tải lại từ R2.
+        const fromCloud = await resolveMissingMediaFromCloud(path.resolve(filePath), cloudWaitMs);
+        if (fromCloud) { filePath = fromCloud; stat = await statFile(filePath); }
+      }
+
+      if (!stat) {
         // A stale DB reference is expected after media cleanup or moving the
         // storage folder. Return 404 for the renderer fallback without flooding
         // the Electron log once per visible avatar/message.
-        // console.warn(`[local-media] NOT FOUND: ${filePath} (original request: ${request.url})`);
         return new Response('Not Found', { status: 404 });
       }
 
-      // console.log(`[local-media] Serving: ${filePath}`);
-
       const absPath = path.resolve(filePath);
-      const stat = fs.statSync(absPath);
       const fileSize = stat.size;
       const ext = path.extname(absPath).toLowerCase();
 
-      // ── Debug: check file header for MP4 validity ──
-      if (ext === '.mp4' || ext === '.webm' || ext === '.mov') {
-        try {
-          const headerBuf = Buffer.alloc(32);
-          const fd = fs.openSync(absPath, 'r');
-          fs.readSync(fd, headerBuf, 0, 32, 0);
-          fs.closeSync(fd);
-          // Check MP4 ftyp box: bytes 4-7 should be 'ftyp'
-          const boxSize = headerBuf.readUInt32BE(0);
-          const boxType = headerBuf.toString('ascii', 4, 8);
-          const brand = headerBuf.toString('ascii', 8, 12);
-          // console.log(`[local-media] File header: size=${fileSize} bytes, box=${boxType}, brand=${brand}, boxSize=${boxSize}`);
-          // Check for HEVC brand
-          if (brand.includes('hvc1') || brand.includes('hev1')) {
-            console.warn(`[local-media] WARNING: HEVC/H.265 codec detected (brand=${brand}) - may not play in Chromium!`);
-          }
-
-          // Scan for moov atom position (critical for <video> playback)
-          // moov should be before mdat for faststart, otherwise <video> can't read metadata
-          try {
-            const scanBuf = Buffer.alloc(Math.min(fileSize, 64 * 1024)); // scan first 64KB
-            const fdScan = fs.openSync(absPath, 'r');
-            fs.readSync(fdScan, scanBuf, 0, scanBuf.length, 0);
-            fs.closeSync(fdScan);
-            let moovOffset = -1;
-            let mdatOffset = -1;
-            let offset = 0;
-            while (offset < scanBuf.length - 8) {
-              const boxSize = scanBuf.readUInt32BE(offset);
-              const boxType = scanBuf.toString('ascii', offset + 4, offset + 8);
-              if (boxType === 'moov') { moovOffset = offset; break; }
-              if (boxType === 'mdat') { mdatOffset = offset; }
-              if (boxSize < 8) break; // invalid box
-              offset += boxSize;
-            }
-            if (moovOffset >= 0) {
-              // console.log(`[local-media] moov atom found at offset ${moovOffset} (faststart OK)`);
-            } else {
-              console.warn(`[local-media] WARNING: moov atom NOT found in first 64KB! File is NOT faststart.`);
-              console.warn(`[local-media] <video> will fail to read metadata. Need to transcode with: ffmpeg -i input.mp4 -c copy -movflags +faststart output.mp4`);
-            }
-            if (mdatOffset >= 0) {
-              // console.log(`[local-media] mdat atom found at offset ${mdatOffset}`);
-            }
-          } catch (e2: any) {
-            console.warn(`[local-media] Could not scan for moov: ${e2.message}`);
-          }
-        } catch (e: any) {
-          console.warn(`[local-media] Could not read header: ${e.message}`);
-        }
-      }
+      // Chẩn đoán video (HEVC, chưa faststart): một lần mỗi file, đọc ở nền, không giữ response
+      if (ext === '.mp4' || ext === '.mov') checkVideoContainerOnce(absPath, fileSize);
       const mimeTypes: Record<string, string> = {
         '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
         '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo',

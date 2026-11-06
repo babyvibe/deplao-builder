@@ -24,10 +24,21 @@ import TaskMultiSelect from './TaskMultiSelect';
 import { PaperclipIcon } from '@/components/common/icons';
 
 
+/** Điền sẵn khi tạo task mới (vd "Tạo task" từ tin nhắn: lib/chat/erp/messageToErp.taskDraftFromMessages). */
+export interface TaskEditorInitial {
+  title?: string;
+  /** Nội dung (HTML, có thể kèm ảnh data URL). */
+  description?: string;
+  /** Hạn hoàn thành (ms). */
+  dueAt?: number | null;
+}
+
 interface Props {
   taskId?: string | null;
   defaultStatus?: ErpTaskStatus;
   projectId?: string;
+  /** Chỉ dùng khi tạo mới, đọc một lần lúc mở. */
+  initial?: TaskEditorInitial;
   onClose: () => void;
   onSaved?: (task: ErpTask) => void;
 }
@@ -81,14 +92,14 @@ const QUILL_FORMATS = [
   'background',
 ] as const;
 
-function emptyForm(defaultStatus: ErpTaskStatus, projectId?: string): TaskFormState {
+function emptyForm(defaultStatus: ErpTaskStatus, projectId?: string, initial?: TaskEditorInitial): TaskFormState {
   return {
-    title: '',
-    description: '',
+    title: initial?.title ?? '',
+    description: initial?.description ?? '',
     project_id: projectId ?? '',
     status: defaultStatus,
     priority: 'normal',
-    due_date: '',
+    due_date: toDateTimeInputValue(initial?.dueAt),
     assignees: [],
     watchers: [],
   };
@@ -120,8 +131,10 @@ function isImageAttachment(attachment: TaskAttachmentInput) {
   return attachment.mime_type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(attachment.file_name);
 }
 
-export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', projectId, onClose, onSaved }: Props) {
+export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', projectId, initial, onClose, onSaved }: Props) {
   const quillRef = useRef<ReactQuill | null>(null);
+  // Giá trị điền sẵn lúc mở (nơi gọi có thể tạo object mới mỗi lần render — không được làm mất chữ đang gõ)
+  const initialRef = useRef(initial);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const editorImageInputRef = useRef<HTMLInputElement>(null);
   const { showNotification } = useAppStore();
@@ -129,7 +142,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
   const { profiles, loadProfiles } = useErpEmployeeStore();
   const { projects, loadProjects, createTask, updateTask } = useErpTaskStore();
   const [task, setTask] = useState<ErpTaskDetail | null>(null);
-  const [form, setForm] = useState<TaskFormState>(() => emptyForm(defaultStatus, projectId));
+  const [form, setForm] = useState<TaskFormState>(() => emptyForm(defaultStatus, projectId, taskId ? undefined : initialRef.current));
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [loading, setLoading] = useState(!!taskId);
   const [saving, setSaving] = useState(false);
@@ -171,7 +184,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
 
   const syncFormFromTask = useCallback((nextTask: ErpTaskDetail | null) => {
     if (!nextTask) {
-      setForm(emptyForm(defaultStatus, projectId));
+      setForm(emptyForm(defaultStatus, projectId, initialRef.current));
       setAttachments([]);
       return;
     }

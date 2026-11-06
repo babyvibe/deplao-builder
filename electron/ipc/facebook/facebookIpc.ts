@@ -318,6 +318,17 @@ export async function signOutFacebookAccount(internalId: string): Promise<void> 
   DatabaseService.getInstance().clearFBAccountSession(internalId);
 }
 
+/**
+ * Kết nối lại tài khoản Facebook bằng phiên đang lưu, tạo lại phiên + MQTT + E2EE với proxy đang lưu trong
+ * accounts.proxy_id (vừa đổi proxy ở Cài đặt, network/proxyIpc). Ném lỗi khi không kết nối được.
+ */
+export async function reconnectFacebookAccount(accountId: string): Promise<void> {
+  const internalId = resolveInternalId(accountId);
+  clearFacebookStartupRetry(internalId);
+  await FacebookConnectionManager.disconnect(internalId);
+  await connectFacebookAccount(internalId, 'dashboard');
+}
+
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 export function registerFacebookIpc(): void {
@@ -1101,7 +1112,8 @@ export function registerFacebookIpc(): void {
   }) => {
     try {
       const internalId = resolveInternalId(params.accountId);
-      const messages = DatabaseService.getInstance().getFBMessages(
+      // Đọc trong worker (DatabaseService.getFBMessagesAsync): ổ đĩa chậm không làm cả app đứng
+      const messages = await DatabaseService.getInstance().getFBMessagesAsync(
         internalId, params.threadId, params.limit || 50, params.offset || 0
       );
       return { success: true, messages };

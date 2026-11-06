@@ -18,6 +18,7 @@ import {
   mergeFriendRequests,
   mergeHeatmaps,
   mergeLabelUsages,
+  mergeOutreach,
   mergeOverviews,
   mergeSegmentations,
   mergeVolumes,
@@ -30,22 +31,24 @@ import {
   type FriendRequestStats,
   type HeatmapPoint,
   type LabelUsage,
+  type OutreachReport,
   type ResponseTimeStats,
   type VolumePoint,
   type WorkflowAnalytics,
 } from './mergeAnalytics';
+import type { OutreachStats } from '../../../shared/analytics/messageEngagement';
 
 export type AnalyticsTabId = 'overview' | 'messages' | 'contacts' | 'labels' | 'campaigns' | 'workflow' | 'ai' | 'employees';
 
 /** Max analytics calls in flight (IPC / REST to the Boss); the DB answers them one by one anyway. */
 export const ANALYTICS_CONCURRENCY = 4;
 
-type AccountMetric = 'overview' | 'volume' | 'heatmap' | 'friendRequests' | 'contactGrowth' | 'segmentation' | 'campaigns' | 'labelUsage';
+type AccountMetric = 'overview' | 'volume' | 'heatmap' | 'friendRequests' | 'contactGrowth' | 'segmentation' | 'campaigns' | 'labelUsage' | 'outreach';
 export type SharedMetric = 'workflow' | 'responseTime' | 'ai';
 
 const TAB_PLANS: Record<AnalyticsTabId, { perAccount: AccountMetric[]; shared: SharedMetric[] }> = {
   overview: { perAccount: ['overview', 'volume', 'friendRequests', 'contactGrowth', 'labelUsage'], shared: ['workflow', 'ai'] },
-  messages: { perAccount: ['overview', 'volume', 'heatmap'], shared: ['responseTime'] },
+  messages: { perAccount: ['overview', 'volume', 'heatmap', 'outreach'], shared: ['responseTime'] },
   contacts: { perAccount: ['overview', 'segmentation', 'friendRequests', 'contactGrowth'], shared: [] },
   labels: { perAccount: ['labelUsage'], shared: [] },
   campaigns: { perAccount: ['overview', 'campaigns'], shared: [] },
@@ -77,6 +80,9 @@ export interface AnalyticsReport {
   contactGrowth?: ContactGrowthPoint[];
   segmentation?: ContactSegmentation | null;
   campaigns?: CampaignRow[];
+  /** Tin gửi đi 1:1: đã nhận / đã xem / đã phản hồi (null: không tài khoản nào trả được). */
+  outreach?: OutreachReport | null;
+  outreachByAccount?: Array<AccountResult<OutreachStats>>;
   labelUsage?: LabelUsage | null;
   workflow?: WorkflowAnalytics | null;
   responseTime?: ResponseTimeStats | null;
@@ -139,6 +145,13 @@ async function fetchAccountMetric(metric: AccountMetric, zaloId: string, q: Anal
       return unwrapArray<CampaignRow>(await DataAccessor.getCampaignComparison(zaloId));
     case 'labelUsage':
       return unwrapObject<LabelUsage>(await DataAccessor.getLabelUsage(range));
+    case 'outreach':
+      // Không bắt buộc: máy chủ (Boss) bản cũ chưa có báo cáo này → bỏ khối, không loại cả tài khoản khỏi tab
+      try {
+        return unwrapObject<OutreachStats>(await DataAccessor.getOutreachStats({ ...range, granularity: q.granularity }));
+      } catch {
+        return null;
+      }
     default:
       throw new Error(`Unknown metric ${metric as string}`);
   }
@@ -168,7 +181,11 @@ export async function loadAnalyticsReport(
   query: AnalyticsQuery,
   concurrency: number = ANALYTICS_CONCURRENCY,
 ): Promise<AnalyticsReport> {
-  const plan = TAB_PLANS[tab] || TAB_PLANS.overview;
+  const basePlan = TAB_PLANS[tab] || TAB_PLANS.overview;
+  // Tin gửi đi chỉ tính hội thoại 1:1: bộ lọc "Nhóm" thì không đọc
+  const plan = query.threadType === 1
+    ? { ...basePlan, perAccount: basePlan.perAccount.filter(metric => metric !== 'outreach') }
+    : basePlan;
   const zaloIds = Array.from(new Set(query.zaloIds.filter(Boolean)));
   // The Messages tab hides response time for groups: do not run its (expensive) query then.
   const shared = plan.shared.filter(metric => !(metric === 'responseTime' && query.threadType === 1));
@@ -239,6 +256,11 @@ export async function loadAnalyticsReport(
   if (loads('contactGrowth')) report.contactGrowth = mergeContactGrowth(pick<ContactGrowthPoint[]>('contactGrowth').map(entry => entry.data));
   if (loads('segmentation')) report.segmentation = mergeSegmentations(pick<ContactSegmentation>('segmentation').map(entry => entry.data));
   if (loads('campaigns')) report.campaigns = mergeCampaignLists(pick<CampaignRow[]>('campaigns'));
+  if (loads('outreach')) {
+    const list = pick<OutreachStats | null>('outreach').filter((entry): entry is AccountResult<OutreachStats> => !!entry.data);
+    report.outreach = mergeOutreach(list.map(entry => entry.data));
+    report.outreachByAccount = list;
+  }
   if (loads('labelUsage')) report.labelUsage = mergeLabelUsages(pick<LabelUsage>('labelUsage').map(entry => entry.data));
 
   if (shared.includes('workflow')) report.workflow = (sharedValues.get('workflow') as WorkflowAnalytics | undefined) ?? null;

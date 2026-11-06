@@ -5,6 +5,9 @@
 import React from 'react';
 import { convertZaloEmojis } from './emojiUtils';
 import { zinstantPreviewText } from '../../../../shared/zalo/zaloZinstant';
+import { isLinkableUrl, trimUrlEnd } from '../../../../shared/chat/urlText';
+
+export { trimUrlEnd };
 
 /**
  * Parse msg.content thành text thuần để hiển thị preview.
@@ -71,8 +74,13 @@ export function getTelegramMentionRanges(attachments: unknown): TelegramMentionR
   return getMentionRanges(attachments);
 }
 
-/** URL nhận diện trong tin nhắn — dùng chung cho linkifyText và findUrlRanges. */
-const LINK_URL_REGEX = /(https?:\/\/[^\s<>"')\]]+|www\.[^\s<>"')\]]+|[a-zA-Z0-9._-]+\.(com|vn|net|org|io|dev|app|me|co|xyz|info|tv|gg|link|page|site|online|tech|store|fun|icu|top|cc|pw|tk|ml|ga|cf|gq)(?:\/[^\s<>"')\]]*)?)/g;
+/**
+ * URL nhận diện trong tin nhắn — dùng chung cho linkifyText và findUrlRanges. Ngoặc, nháy đơn nằm TRONG link vẫn thuộc
+ * link (Shopee: "…-Samsung-Galaxy-A56-5G-(8GB-128GB)-Hàng-Chính-Hãng…", Wikipedia "…_(định_hướng)"); dấu câu / ngoặc đóng
+ * thừa ở cuối do trimUrlEnd (shared/chat/urlText) bỏ. Trước đây link dừng ở ")" đầu tiên: nửa sau của link Shopee thành
+ * chữ thường.
+ */
+const LINK_URL_REGEX = /(https?:\/\/[^\s<>"]+|www\.[^\s<>"]+|[a-zA-Z0-9._-]+\.(com|vn|net|org|io|dev|app|me|co|xyz|info|tv|gg|link|page|site|online|tech|store|fun|icu|top|cc|pw|tk|ml|ga|cf|gq)(?:\/[^\s<>"]*)?)/g;
 
 /**
  * Địa chỉ email (vd ten.khach@gmail.com) — nhận NGUYÊN địa chỉ trước khi xét URL / mention. Trước đây "@" của
@@ -100,19 +108,42 @@ export function findEmailRanges(text: string): Array<[number, number]> {
 }
 
 /**
- * Vị trí [start, end) các URL trong text (cùng regex với linkifyText). Dùng để không coi "@" nằm trong
+ * Vị trí [start, end) các URL trong text (cùng regex + cắt đuôi như linkifyText). Dùng để không coi "@" nằm trong
  * URL (vd threads.com/@user/post/…) là mention. Tên miền nằm trong email (gmail.com của a@gmail.com) không phải URL.
  */
 export function findUrlRanges(text: string): Array<[number, number]> {
   if (!text) return [];
   const emails = findEmailRanges(text);
-  return collectRanges(text, LINK_URL_REGEX.source)
-    .filter(([start, end]) => !emails.some(([emailStart, emailEnd]) => start >= emailStart && end <= emailEnd));
+  const ranges: Array<[number, number]> = [];
+  const re = new RegExp(LINK_URL_REGEX.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (!m[0]) { re.lastIndex++; continue; }
+    const url = trimUrlEnd(m[0]);
+    if (!isLinkableUrl(url)) continue;
+    ranges.push([m.index, m.index + url.length]);
+    // Phần vừa cắt (dấu câu, ngoặc đóng) quét lại như chữ thường
+    re.lastIndex = m.index + url.length;
+  }
+  return ranges.filter(([start, end]) => !emails.some(([emailStart, emailEnd]) => start >= emailStart && end <= emailEnd));
 }
 
 /** URL + email: "@" nằm trong các đoạn này thuộc về link / địa chỉ email, không phải mention. */
 export function findLinkRanges(text: string): Array<[number, number]> {
   return [...findUrlRanges(text), ...findEmailRanges(text)].sort((a, b) => a[0] - b[0]);
+}
+
+/**
+ * Bấm link trong tin: bộ mở link trong app (lib/chat/links/chatLinks tự đăng ký khi nạp: link nhóm Zalo / Telegram mở
+ * hội thoại trong app). Chưa đăng ký (test, màn chưa nạp) thì mở bằng trình duyệt của máy như trước.
+ */
+let chatLinkOpener: ((url: string) => void) | null = null;
+export function setChatLinkOpener(opener: ((url: string) => void) | null): void {
+  chatLinkOpener = opener;
+}
+function openMessageLink(url: string): void {
+  if (chatLinkOpener) chatLinkOpener(url);
+  else { try { window.electronAPI?.shell?.openExternal?.(url); } catch {} }
 }
 
 /** Link trong tin (URL, email). chat-link: giao diện tối xanh da trời nhạt, không gạch chân (index.css); sáng giữ nguyên. */
@@ -164,7 +195,7 @@ export function linkifyText(text: string, options: { detectMentions?: boolean } 
           onClick: (e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
-            try { window.electronAPI?.shell?.openExternal?.(mailto); } catch {}
+            openMessageLink(mailto);
           },
           title: raw,
         }, raw)
@@ -194,8 +225,14 @@ export function linkifyText(text: string, options: { detectMentions?: boolean } 
       // This was a regex hit inside @@name / a word. Keep it as plain text.
       parts.push(raw);
     } else {
-      // URL link
-      const href = raw.startsWith('http') ? raw : `https://${raw}`;
+      // URL link — bỏ dấu câu / ngoặc đóng thừa ở cuối (trimUrlEnd); phần bỏ ra quét lại như chữ thường
+      const url = trimUrlEnd(raw);
+      if (!isLinkableUrl(url)) {
+        parts.push(raw);
+        lastIndex = match.index + raw.length;
+        continue;
+      }
+      const href = url.startsWith('http') ? url : `https://${url}`;
       parts.push(
         React.createElement('a', {
           key: `link-${match.index}`,
@@ -206,11 +243,14 @@ export function linkifyText(text: string, options: { detectMentions?: boolean } 
           onClick: (e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
-            try { window.electronAPI?.shell?.openExternal?.(href); } catch {}
+            openMessageLink(href);
           },
           title: href,
-        }, raw)
+        }, url)
       );
+      lastIndex = match.index + url.length;
+      combinedRegex.lastIndex = lastIndex;
+      continue;
     }
     lastIndex = match.index + raw.length;
   }
@@ -310,6 +350,60 @@ export function getQuotedMediaCaption(
 ): string {
   if (!quote) return captionFromQuotePart(originalContent);
   return captionFromQuotePart(quote.attach) || captionFromQuotePart(quote.msg) || captionFromQuotePart(originalContent);
+}
+
+/** Attachment Telegram chỉ là thông tin kèm (album, bài kênh, nhắc tên…), không phải nội dung của tin. */
+const TELEGRAM_META_ATTACHMENTS = new Set(['telegram_grouped_media', 'telegram_post', 'telegram_mention', 'telegram_forward']);
+/** Chữ app tự đặt khi tin Telegram không có chú thích (listener / gửi file) — trích dẫn hiện nhãn đúng loại thay vì chữ này. */
+const TELEGRAM_QUOTE_PLACEHOLDERS = new Set(['🎵 Audio', '📎 Tệp đính kèm', '📎 File', '🎬 Video', '🖼️ Hình ảnh', '🎤 Tin nhắn thoại']);
+
+export interface TelegramQuoteMedia {
+  /** Nhãn khi tin không có chú thích: "Video", "😌 Sticker", "🎤 Tin nhắn thoại", "📎 bao-gia.pdf"… */
+  label: string;
+  /** Ảnh thu nhỏ có sẵn trong tin (ảnh bìa mờ của video / GIF / video tròn, data URL). */
+  thumb: string;
+  /** Tiền tố đặt trước chữ của tin (bình chọn: câu hỏi; liên hệ: tên). */
+  prefix?: string;
+  sticker?: boolean;
+}
+
+/**
+ * Tin Telegram được trích dẫn theo loại (như Telegram): video / GIF / video tròn có ảnh bìa, sticker có emoji, thoại,
+ * nhạc, file có tên… Trước đây chỉ có nhãn của Zalo (chat.video.msg, chat.sticker…) → trả lời một video / sticker
+ * Telegram hiện "[Tin nhắn]". `attach` = attachments của tin gốc (chuỗi JSON hoặc mảng) trong quote_data.
+ */
+export function telegramQuoteMedia(msgType: string | undefined, attach: unknown): TelegramQuoteMedia | null {
+  let list: any[] = [];
+  try {
+    const parsed = typeof attach === 'string' ? JSON.parse(attach || '[]') : attach;
+    list = Array.isArray(parsed) ? parsed : (parsed && typeof parsed === 'object' ? [parsed] : []);
+  } catch { list = []; }
+  const media = list.find((item: any) => item && typeof item === 'object' && !TELEGRAM_META_ATTACHMENTS.has(String(item.type || ''))) || {};
+  const kind = String(media.type || '');
+  const type = String(msgType || '');
+  const thumb = typeof media.stripped_thumb === 'string' && media.stripped_thumb.startsWith('data:image/') ? media.stripped_thumb : '';
+  const fileName = String(media.title || media.file_name || media.name || '').trim();
+  if (type === 'video_note' || kind === 'video_note') return { label: 'Tin nhắn video', thumb };
+  if (kind === 'gif' || kind === 'animation') return { label: 'GIF', thumb };
+  if (type === 'video' || kind === 'video') return { label: 'Video', thumb };
+  if (type === 'sticker' || kind === 'sticker') {
+    return { label: media.emoji ? `${media.emoji} Sticker` : 'Sticker', thumb: '', sticker: true };
+  }
+  if (kind === 'voice') return { label: '🎤 Tin nhắn thoại', thumb: '' };
+  if (type === 'audio' || kind === 'audio') return { label: `🎵 ${fileName || 'Âm thanh'}`, thumb: '' };
+  if (type === 'file' || kind === 'file' || kind === 'document') return { label: `📎 ${fileName || 'File'}`, thumb: '' };
+  if (type === 'telegram.poll' || kind === 'poll') {
+    return { label: `📊 ${String(media.question || '').trim() || 'Bình chọn'}`, thumb: '', prefix: '📊 ' };
+  }
+  if (type === 'telegram.location' || kind === 'location') return { label: '📍 Vị trí', thumb: '', prefix: '📍 ' };
+  if (type === 'telegram.contact' || kind === 'contact') return { label: `👤 ${String(media.name || '').trim() || 'Liên hệ'}`, thumb: '', prefix: '👤 ' };
+  if (type === 'deleted') return { label: 'Tin đã xoá', thumb: '' };
+  return null;
+}
+
+/** Chữ của tin Telegram được trích dẫn là chữ app tự đặt (không phải chú thích người gửi gõ). */
+export function isTelegramQuotePlaceholder(text: string): boolean {
+  return TELEGRAM_QUOTE_PLACEHOLDERS.has(String(text || '').trim());
 }
 
 /**

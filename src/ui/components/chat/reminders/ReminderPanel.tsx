@@ -463,7 +463,7 @@ export default function ReminderPanel({ threadId, threadType, onClose, anchorRef
             <div className="flex gap-1 flex-wrap">
               {EMOJI_OPTIONS.map(opt => (
                 <button key={opt.icon} onClick={() => setForm(f => ({ ...f, emoji: opt.icon }))}
-                  className={`w-8 h-8 rounded-lg text-base flex items-center justify-center transition-colors ${form.emoji === opt.icon ? 'bg-blue-600' : 'hover:bg-accent'}`}>
+                  className={`w-8 h-8 rounded-lg text-base flex items-center justify-center transition-colors ${form.emoji === opt.icon ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}>
                   {opt.component}
                 </button>
               ))}

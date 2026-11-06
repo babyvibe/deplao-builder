@@ -9,6 +9,7 @@
 
 import ipc from '../ipc';
 import { toLocalMediaUrl } from './localMedia';
+import { useEmployeeStore } from '../../store/employee/employeeStore';
 
 export interface EmployeeMediaResult {
   localPath: string;
@@ -71,6 +72,25 @@ export async function ensureMediaLocal(
   }
 
   return { localPath: '', displayUrl: resolvedUrl, fromCache: false };
+}
+
+/**
+ * Đường dẫn file trên MÁY NÀY để mở / hiện trong thư mục. Máy nhân viên: local_paths là đường dẫn trên máy Boss → tải
+ * bản của Boss về máy (MediaCacheService gắn token phiên nhân viên) rồi trả đường dẫn bản tải ('' = không tải được).
+ * Chủ / standalone: trả nguyên đường dẫn.
+ */
+export async function fileOnThisMachine(
+  localPath: string,
+  mediaType: 'image' | 'video' | 'file' = 'file',
+): Promise<string> {
+  if (!localPath) return '';
+  let employee = false;
+  try {
+    employee = useEmployeeStore.getState().mode === 'employee';
+  } catch { /* store chưa sẵn sàng */ }
+  if (!employee) return localPath;
+  const { localPath: downloaded } = await ensureMediaLocal(localPath, mediaType);
+  return downloaded;
 }
 
 /**

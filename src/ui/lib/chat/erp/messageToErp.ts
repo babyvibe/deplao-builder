@@ -95,3 +95,63 @@ export function noteDraftFromMessages(messages: readonly ErpSourceMessage[], ctx
     : `Ghi chú từ ${ctx.conversation}`;
   return { title, content: messagesAsNote(messages, ctx) };
 }
+
+// ─── Task ───────────────────────────────────────────────────────────────────
+
+export interface ErpTaskSourceMessage extends ErpSourceMessage {
+  /** Ảnh của tin (data URL / link) chèn vào nội dung task. */
+  images?: string[];
+}
+
+export interface ErpTaskDraft {
+  title: string;
+  /** Nội dung task (HTML cho trình soạn của task). */
+  description: string;
+  /** Hạn hoàn thành đọc trong tin ("mai 9h gửi báo giá"); null = không có. */
+  dueAt: number | null;
+}
+
+const escapeHtml = (text: string) => text
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+const textParagraph = (text: string) => `<p>${text.split(/\r?\n/).map(escapeHtml).join('<br>')}</p>`;
+
+/**
+ * "Tạo task" từ tin nhắn: tiêu đề = dòng chữ đầu (bỏ phần ngày giờ), hạn = ngày giờ đọc trong tin (tin chọn sau cùng có
+ * ngày giờ, như lịch hẹn; chỉ có ngày → 17:00 ngày đó), nội dung = mỗi tin một khối "Hà · 10:24 26/10" + chữ + ảnh của
+ * tin, cuối là hội thoại · kênh · tài khoản. Tin chỉ có ảnh vẫn được lấy.
+ */
+export function taskDraftFromMessages(messages: readonly ErpTaskSourceMessage[], ctx: ErpSourceContext): ErpTaskDraft {
+  const now = ctx.now ?? new Date();
+  const list = messages.filter(m => (m.text && m.text.trim() && m.text !== '[Tin nhắn]') || m.images?.length);
+  const withText = list.filter(m => m.text && m.text.trim() && m.text !== '[Tin nhắn]');
+  let parsed: ReturnType<typeof parseViDateTime> = null;
+  let source = withText[0];
+  for (const message of withText) {
+    const found = parseViDateTime(message.text, message.timestamp ? new Date(message.timestamp) : now);
+    if (found) { parsed = found; source = message; }
+  }
+  const firstLine = (source?.text || '').split(/\r?\n/).map(line => line.trim()).find(Boolean) || '';
+  const cleaned = firstLine
+    ? titleWithoutDateTime(firstLine, parsed ? parsed.spans.filter(([start]) => start < firstLine.length) : [])
+    : '';
+  const title = cleaned
+    ? (cleaned.length > 80 ? `${cleaned.slice(0, 77)}…` : cleaned)
+    : `Task từ ${ctx.conversation}`;
+
+  let dueAt: number | null = null;
+  if (parsed) {
+    const at = new Date(parsed.at);
+    if (!parsed.hasTime) at.setHours(17, 0, 0, 0);
+    dueAt = at.getTime();
+  }
+
+  const blocks = list.map((m) => {
+    const parts = [`<p><strong>${escapeHtml(m.sender)}</strong> · ${escapeHtml(stamp(m.timestamp))}</p>`];
+    if (m.text && m.text.trim() && m.text !== '[Tin nhắn]') parts.push(textParagraph(m.text.trim()));
+    for (const src of m.images || []) parts.push(`<p><img src="${escapeHtml(src)}"></p>`);
+    return parts.join('');
+  });
+  const from = [`Hội thoại: ${ctx.conversation}`, ctx.channelLabel, ctx.accountName].filter(Boolean).join(' · ');
+  return { title, description: [...blocks, `<p><em>${escapeHtml(from)}</em></p>`].join(''), dueAt };
+}

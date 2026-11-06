@@ -3,7 +3,7 @@
  * Casso, SePay, phần mềm bán hàng…). Một luồng logic cho:
  *   - ipcMain 'tunnel:start' / 'tunnel:stop' / 'tunnel:status' (electron/ipc/integrations/integrationIpc.ts — chỉ gọi vào đây);
  *   - module tunnel (src/services/cloudflare/tunnel) khi bật / tắt dịch vụ 'payments' ở
- *     Cài đặt → Internet & Đám mây → Địa chỉ Internet (chế độ Địa chỉ tạm / ngrok / Cloudflare thủ công).
+ *     Cài đặt → Internet & Cloud → Địa chỉ Internet (chế độ Địa chỉ tạm / ngrok / Cloudflare thủ công).
  *
  * Chế độ 'cloudflare_auto': địa chỉ là dịch vụ 'payments' của tunnel cố định dùng chung (src/services/cloudflare/tunnel,
  * nạp lười — lỗi nạp → null = chạy như cũ). Chế độ khác: Cloudflare Quick Tunnel riêng cho cổng (TunnelService, địa chỉ
@@ -41,7 +41,7 @@ function sendTunnelChanged(port: number, url: string | null): void {
 let cloudPaymentsWatchOff: (() => void) | null = null;
 let lastCloudPaymentsUrl: string | null = null;
 
-/** Địa chỉ thanh toán đổi (tiến trình lên/xuống, bật/tắt ở màn Internet & Đám mây) → 'tunnel:changed' như tunnel cũ. */
+/** Địa chỉ thanh toán đổi (tiến trình lên/xuống, bật/tắt ở màn Internet & Cloud) → 'tunnel:changed' như tunnel cũ. */
 function watchCloudPayments(cloud: CloudTunnelApi): void {
     if (cloudPaymentsWatchOff) return;
     lastCloudPaymentsUrl = cloudPaymentsUrl(cloud);

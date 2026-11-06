@@ -792,7 +792,7 @@ const TOOLS_GUIDE = [
           'Loại chiến dịch: Tin nhắn, Kết bạn, Mời nhóm, Hỗn hợp (Telegram: chỉ Tin nhắn)',
           'Chọn người nhận: thủ công, theo nhãn, SĐT, UID, bạn bè, nhóm, thành viên nhóm',
           'Chèn tên người nhận bằng {name}; xem trước nội dung như khung chat; chọn chữ trước / ảnh trước hoặc gộp ảnh + chữ thành 1 tin',
-          'Tự giãn cách ngẫu nhiên giữa các liên hệ (tối thiểu 30 giây), tối đa 60 tin/giờ mỗi tài khoản để tránh bị coi là spam',
+          'Tự giãn cách ngẫu nhiên giữa các liên hệ (tối thiểu 30 giây), tối đa 60 tin/giờ mỗi tài khoản để tránh bị coi là spam; bật Tự dừng khi lỗi để chiến dịch tự tạm dừng khi tài khoản bị chặn, bị giới hạn',
           'Theo dõi realtime: đã gửi / đang chờ / lỗi - tạm dừng, tiếp tục bất cứ lúc nào; tab Lịch sử xem từng tin đã gửi',
           'Tab Nhóm → Quét thành viên: lấy thành viên nhóm Zalo (cả nhóm ẩn danh sách, nhóm đang chờ duyệt) vào CRM',
         ],
@@ -911,7 +911,7 @@ const TOOLS_GUIDE = [
         icon: <GlobeIcon className="w-4 h-4 inline" />,
         title: 'Địa chỉ Internet - nhận thông báo từ bên ngoài',
         items: [
-          'Casso / SePay gửi thông báo qua Internet: bật dòng "Thanh toán, tích hợp" ở Cài đặt → Internet & Đám mây → Địa chỉ Internet',
+          'Casso / SePay gửi thông báo qua Internet: bật dòng "Thanh toán, tích hợp" ở Cài đặt → Internet & Cloud → Địa chỉ Internet',
           'Cloudflare tự động: địa chỉ cố định; Địa chỉ tạm đổi mỗi lần khởi động lại - phải dán lại vào Casso / SePay',
           'Địa chỉ nhận của từng kết nối nằm ngay trong trang Casso / SePay (nút sao chép)',
           'Website / dịch vụ ngoài kích hoạt Workflow qua dòng "Webhook workflow" ở cùng trang',

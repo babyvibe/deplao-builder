@@ -1,5 +1,5 @@
 /**
- * Cài đặt → Internet & Đám mây → Địa chỉ Internet — nơi DUY NHẤT cấu hình và bật / tắt địa chỉ Internet (các màn khác chỉ
+ * Cài đặt → Internet & Cloud → Địa chỉ Internet — nơi DUY NHẤT cấu hình và bật / tắt địa chỉ Internet (các màn khác chỉ
  * hiện địa chỉ và dẫn về đây).
  *  - "Cách tạo địa chỉ": Địa chỉ tạm · Cloudflare tự động · ngrok · Cloudflare thủ công (tunnel.setMode — chế độ khác
  *    Cloudflare tự động ghi luôn nhà cung cấp tunnel của relay).
@@ -81,8 +81,8 @@ const MODE_ORDER: TunnelMode[] = ['quick', 'cloudflare_auto', 'ngrok', 'cloudfla
 
 /** "Tự bật khi mở app" ở chế độ khác Cloudflare tự động = relay_tunnel_autostart của relay (như trước). */
 const LEGACY_AUTOSTART_HINT =
-  'Chỉ áp dụng cho Nhân viên và API: tunnel bật lại khi máy chủ nhân viên (LAN) tự chạy lúc mở app (bật "Tự động bật khi mở app" '
-  + 'của LAN ở Cài đặt → Nhân viên → Kết nối). Thanh toán, tích hợp và Webhook workflow không tự bật, bật lại ở bảng trên khi cần.';
+  'Chỉ áp dụng cho Nhân viên và API: tunnel bật lại khi máy chủ nhân viên (LAN) tự chạy lúc mở app (bật "Tự bật khi mở app" '
+  + 'ở Cài đặt → Nhân viên → Kết nối). Thanh toán, tích hợp và Webhook workflow không tự bật, bật lại ở bảng trên khi cần.';
 
 const CF_STATUS: Record<string, { label: string; dot: string }> = {
   healthy: { label: 'Healthy', dot: 'bg-success' },

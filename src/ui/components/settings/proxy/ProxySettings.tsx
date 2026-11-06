@@ -1,21 +1,26 @@
 /**
- * Cài đặt → Proxy: danh sách proxy (HTTP, HTTPS, SOCKS4, SOCKS5) để gán cho tài khoản khi đăng nhập. Mỗi dòng có thử kết
- * nối, sửa, xoá và tên các tài khoản đang dùng proxy đó.
+ * Cài đặt → Proxy: danh sách proxy (HTTP, HTTPS, SOCKS4, SOCKS5) cho tài khoản Zalo, Facebook. Mỗi proxy có thử kết nối,
+ * sửa, xoá và dòng "Tài khoản" để gán / gỡ tài khoản ngay tại chỗ: tài khoản tự kết nối lại qua proxy mới, không cần đăng
+ * nhập lại (issue #73). Sửa thông tin hoặc xoá proxy đang dùng thì các tài khoản đó cũng kết nối lại ngay.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useId } from 'react';
 import ipc from '@/lib/ipc';
 import { cn } from '@/lib/cn';
 import { useAppStore } from '@/store/app/appStore';
-import { useAccountStore } from '@/store/accounts/accountStore';
+import { useAccountStore, type AccountInfo } from '@/store/accounts/accountStore';
+import { useApplyAccountProxy } from '@/hooks/accounts/useAccountProxy';
 import { showConfirm } from '../../common/ConfirmDialog';
 import { Spinner } from '@/components/common/PageLoading';
-import { CheckIcon, CloseIcon, EditIcon, GlobeIcon, PlusIcon, TrashIcon } from '@/components/common/icons';
+import { CheckIcon, CloseIcon, EditIcon, GlobeIcon, PlusIcon, TrashIcon, UsersIcon } from '@/components/common/icons';
 import { Button, Input, Label } from '@/components/ui';
-import { SettingsPage, SettingsSection } from '../settingsUi';
+import { getChannelLabel, resolveAccountChannel } from '../../../../configs/channels/channelConfig';
+import { supportsAccountProxy } from '../../../../shared/accounts/accountProxy';
+import { MiniAccountAvatar } from '../notifications/InAppNotifySettings';
+import { SettingLine, SettingsPage, SettingsSection } from '../settingsUi';
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-interface ProxyItem {
+export interface ProxyItem {
   id: number;
   name: string;
   type: 'http' | 'https' | 'socks4' | 'socks5';
@@ -178,6 +183,72 @@ function ProxyForm({
   );
 }
 
+// ─── Tài khoản dùng proxy ─────────────────────────────────────────────────────
+const accountName = (acc: AccountInfo) => acc.full_name || acc.zalo_id;
+
+export function ProxyAccountsLine({ proxy, proxies, accounts }: {
+  proxy: ProxyItem;
+  proxies: ProxyItem[];
+  /** Tài khoản Zalo, Facebook (kênh dùng được proxy) */
+  accounts: AccountInfo[];
+}) {
+  const panelId = useId();
+  const applyProxy = useApplyAccountProxy();
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState<Record<string, boolean>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const using = accounts.filter((acc) => acc.proxy_id === proxy.id);
+  const summary = using.length > 0 ? `Dùng cho: ${using.map(accountName).join(', ')}` : 'Chưa gán tài khoản nào';
+
+  const toggleAccount = async (acc: AccountInfo, on: boolean) => {
+    const id = acc.zalo_id;
+    setPending((p) => ({ ...p, [id]: true }));
+    setErrors((e) => ({ ...e, [id]: '' }));
+    const outcome = await applyProxy(id, on ? proxy.id : null);
+    setPending((p) => ({ ...p, [id]: false }));
+    if (!outcome.ok) setErrors((e) => ({ ...e, [id]: outcome.error || 'Không đổi được proxy' }));
+    else if (outcome.connected === false) setErrors((e) => ({ ...e, [id]: `Đã lưu nhưng chưa kết nối lại được: ${outcome.error}` }));
+  };
+
+  return (
+    <div className="-mx-2 mt-1.5">
+      <SettingLine panelId={panelId} icon={<UsersIcon className="h-4 w-4" />} title="Tài khoản" summary={summary}
+        open={open} onToggle={() => setOpen((v) => !v)}>
+        {accounts.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Chưa có tài khoản Zalo, Facebook nào.</p>
+        ) : (
+          <div className="space-y-0.5">
+            {accounts.map((acc) => {
+              const id = acc.zalo_id;
+              const busy = !!pending[id];
+              const other = acc.proxy_id != null && acc.proxy_id !== proxy.id ? proxies.find((p) => p.id === acc.proxy_id) : undefined;
+              return (
+                <div key={id}>
+                  <label className={cn('flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-muted', busy && 'cursor-wait')}>
+                    <input type="checkbox" checked={acc.proxy_id === proxy.id} disabled={busy}
+                      onChange={(e) => void toggleAccount(acc, e.target.checked)} className="accent-primary" />
+                    <MiniAccountAvatar account={acc} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] text-foreground">{accountName(acc)}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {getChannelLabel(resolveAccountChannel(acc))}{other ? ` · đang dùng ${other.name}` : ''}
+                      </span>
+                    </span>
+                    {busy && <span className="flex flex-shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground"><Spinner size={3} /> Đang kết nối lại...</span>}
+                  </label>
+                  {errors[id] && <p role="alert" className="pb-1 pl-9 text-[11px] text-destructive">{errors[id]}</p>}
+                </div>
+              );
+            })}
+            <p className="px-2 pt-1 text-[11px] text-muted-foreground">Tick là tài khoản tự kết nối lại qua proxy này, không cần đăng nhập lại.</p>
+          </div>
+        )}
+      </SettingLine>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ProxySettings() {
   const [proxies, setProxies] = useState<ProxyItem[]>([]);
@@ -186,6 +257,9 @@ export default function ProxySettings() {
   const [editTarget, setEditTarget] = useState<ProxyItem | null>(null);
   const showNotification = useAppStore(s => s.showNotification);
   const accounts = useAccountStore(s => s.accounts);
+  const applyProxy = useApplyAccountProxy();
+  // Kênh dùng được proxy riêng (Telegram chưa hỗ trợ)
+  const proxyAccounts = React.useMemo(() => accounts.filter((acc) => supportsAccountProxy(acc.channel)), [accounts]);
 
   // Accounts indexed by proxy_id
   const accountsByProxy = React.useMemo(() => {
@@ -198,6 +272,19 @@ export default function ProxySettings() {
     }
     return map;
   }, [accounts]);
+
+  /** Kết nối lại lần lượt các tài khoản (proxy vừa sửa / xoá) rồi báo một lần. proxyId null = kết nối thẳng. */
+  const reconnectAccounts = async (list: AccountInfo[], proxyId: number | null) => {
+    if (list.length === 0) return;
+    showNotification(`Đang kết nối lại ${list.length} tài khoản...`, 'info');
+    const failed: string[] = [];
+    for (const acc of list) {
+      const outcome = await applyProxy(acc.zalo_id, proxyId, { force: true, quiet: true });
+      if (!outcome.ok || outcome.connected === false) failed.push(accountName(acc));
+    }
+    if (failed.length === 0) showNotification(`Đã kết nối lại ${list.length} tài khoản`, 'success');
+    else showNotification(`Chưa kết nối lại được: ${failed.join(', ')}`, 'warning');
+  };
 
   const loadProxies = useCallback(async () => {
     const res = await ipc.proxy?.list();
@@ -219,10 +306,15 @@ export default function ProxySettings() {
           password: form.password,
         });
         if (res?.success) {
+          const target = editTarget;
+          const connectionChanged = form.type !== target.type || form.host.trim() !== target.host || Number(form.port) !== Number(target.port)
+            || (form.username || '') !== (target.username || '') || (form.password || '') !== (target.password || '');
           showNotification('Đã cập nhật proxy', 'success');
           setFormMode('none');
           setEditTarget(null);
           loadProxies();
+          // Tài khoản đang dùng proxy này dùng ngay thông tin mới
+          if (connectionChanged) void reconnectAccounts(accountsByProxy[target.id] || [], target.id);
         } else {
           showNotification(res?.error || 'Cập nhật thất bại', 'error');
         }
@@ -249,11 +341,11 @@ export default function ProxySettings() {
   };
 
   const handleDelete = async (proxy: ProxyItem) => {
-    const usedCount = accountsByProxy[proxy.id]?.length || 0;
+    const used = accountsByProxy[proxy.id] || [];
     const confirmed = await showConfirm({
       title: `Xóa proxy "${proxy.name}"?`,
-      message: usedCount > 0
-        ? `Proxy đang được dùng bởi ${usedCount} tài khoản. Xóa sẽ gỡ proxy khỏi tất cả tài khoản đó.`
+      message: used.length > 0
+        ? `Proxy đang được dùng bởi ${used.length} tài khoản (${used.map(accountName).join(', ')}). Xoá xong các tài khoản này kết nối lại không qua proxy. Muốn giữ proxy thì gán proxy khác cho chúng trước.`
         : 'Proxy sẽ bị xóa vĩnh viễn.',
       confirmText: 'Xóa',
       variant: 'danger',
@@ -263,6 +355,7 @@ export default function ProxySettings() {
     if (res?.success) {
       showNotification('Đã xóa proxy', 'success');
       loadProxies();
+      void reconnectAccounts(used, null);
     } else {
       showNotification(res?.error || 'Xóa proxy thất bại', 'error');
     }
@@ -276,7 +369,7 @@ export default function ProxySettings() {
   return (
     <SettingsPage
       title="Proxy"
-      description="Gán proxy riêng cho từng tài khoản khi đăng nhập. Hỗ trợ HTTP, HTTPS, SOCKS4, SOCKS5."
+      description="Proxy riêng cho tài khoản Zalo, Facebook. Đổi lúc nào cũng được."
       actions={formMode === 'none' && (
         <Button size="sm" onClick={() => setFormMode('add')} leftIcon={<PlusIcon className="h-4 w-4" />}>Thêm proxy</Button>
       )}
@@ -306,15 +399,15 @@ export default function ProxySettings() {
           <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center">
             <GlobeIcon className="mx-auto h-6 w-6 text-muted-foreground" />
             <p className="mt-2 text-sm font-medium text-foreground">Chưa có proxy nào</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">Thêm proxy rồi chọn khi đăng nhập tài khoản.</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Thêm proxy rồi gán cho tài khoản ngay tại đây.</p>
           </div>
         )
       ) : (
         <SettingsSection title={`Danh sách (${proxies.length})`}>
           {proxies.map((proxy) => {
-            const usedAccounts = accountsByProxy[proxy.id] || [];
             return (
-              <div key={proxy.id} className="flex items-center gap-3 py-3">
+              <div key={proxy.id} className="py-3">
+              <div className="flex items-center gap-3">
                 <span className="w-16 flex-shrink-0 rounded-md bg-muted px-2 py-0.5 text-center text-[11px] font-semibold text-muted-foreground">
                   {proxy.type.toUpperCase()}
                 </span>
@@ -322,11 +415,6 @@ export default function ProxySettings() {
                   <p className="truncate text-sm font-medium text-foreground">{proxy.name}</p>
                   <p className="truncate font-mono text-xs text-muted-foreground">
                     {proxy.username ? `${proxy.username}@` : ''}{proxy.host}:{proxy.port}
-                  </p>
-                  <p className="truncate text-xs text-subtle-foreground" title={usedAccounts.map(a => a.full_name || a.zalo_id).join(', ')}>
-                    {usedAccounts.length > 0
-                      ? `Dùng cho: ${usedAccounts.map(a => a.full_name || a.zalo_id).join(', ')}`
-                      : 'Chưa gán tài khoản nào'}
                   </p>
                 </div>
                 <div className="flex flex-shrink-0 items-center gap-1">
@@ -339,6 +427,8 @@ export default function ProxySettings() {
                     <TrashIcon className="h-4 w-4" />
                   </Button>
                 </div>
+              </div>
+              <ProxyAccountsLine proxy={proxy} proxies={proxies} accounts={proxyAccounts} />
               </div>
             );
           })}

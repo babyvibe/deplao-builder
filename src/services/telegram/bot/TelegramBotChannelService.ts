@@ -16,6 +16,7 @@ import Logger from '../../../utils/Logger';
 import DatabaseService from '../../database/DatabaseService';
 import EventBroadcaster from '../../event/EventBroadcaster';
 import FileStorageService from '../../file/FileStorageService';
+import { writeMediaFile } from '../../file/writeMediaFile';
 import { shouldFetchAvatar, markAvatarFetched, markAvatarSuccess, resetAvatarCache } from '../../../utils/telegram/avatarFetchCache';
 import * as BotIngress from './TelegramBotIngressService';
 import type { BotAccount, NormalizedUpdate, BotUpdateConsumer } from './TelegramBotIngressService';
@@ -747,11 +748,9 @@ async function saveAvatarToDisk(buffer: Buffer, filename: string): Promise<strin
   try {
     const baseDir = FileStorageService.getBaseDir();
     const avatarsDir = path.join(baseDir, '_avatars', 'telegram');
-    if (!fs.existsSync(avatarsDir)) {
-      fs.mkdirSync(avatarsDir, { recursive: true });
-    }
+    await fs.promises.mkdir(avatarsDir, { recursive: true });
     const filePath = path.join(avatarsDir, filename);
-    fs.writeFileSync(filePath, buffer);
+    await writeMediaFile(filePath, buffer);
     return filePath;
   } catch {
     return null;
@@ -773,12 +772,10 @@ async function saveMediaToDisk(buffer: Buffer, filename: string, msgType: string
     const accountId = parts[0] || 'unknown';
 
     const mediaDir = path.join(baseDir, accountId, subfolder);
-    if (!fs.existsSync(mediaDir)) {
-      fs.mkdirSync(mediaDir, { recursive: true });
-    }
+    await fs.promises.mkdir(mediaDir, { recursive: true });
 
     const filePath = path.join(mediaDir, filename);
-    fs.writeFileSync(filePath, buffer);
+    await writeMediaFile(filePath, buffer);
     return filePath;
   } catch {
     return null;
@@ -1653,18 +1650,9 @@ type ActionResult = { success: boolean; messageId?: string; error?: string };
 /**
  * Start bot: registers inbox consumer with ingress and starts polling.
  */
-export function startBot(account: TelegramBotAccount): void {
-  if (registeredAccounts.has(account.accountId)) return;
-  // Token không đúng dạng — thường là bản mã hoá không giải mã được trên máy này: đừng đăng ký, health check sẽ thử
-  // kết nối lại mỗi phút mãi mãi
-  if (!isTelegramBotToken(account.botToken)) {
-    throw new Error('Token bot không hợp lệ hoặc không giải mã được trên máy này. Vui lòng kết nối lại bot bằng token.');
-  }
-  registeredAccounts.set(account.accountId, account);
-  DatabaseService.getInstance()?.repairTelegramLastMessagePreviews(account.accountId, 'telegram_bot');
-
-  // Create the inbox consumer for this account
-  const consumer: BotUpdateConsumer = async (acc, update) => {
+/** Consumer hộp thư của bot: lưu tin, tải media, phát sự kiện cho giao diện / workflow. */
+function createInboxConsumer(): BotUpdateConsumer {
+  return async (acc, update) => {
     Logger.log(`[TelegramBot] Received update: kind=${update.kind} accountId=${acc.accountId}`);
     // Handle both regular messages and channel posts
     if ((update.kind === 'message' || update.kind === 'channel_post') && update.message) {
@@ -1784,18 +1772,20 @@ export function startBot(account: TelegramBotAccount): void {
       });
     }
   };
+}
 
-  const pollingStarted = BotIngress.startBot(account);
-  if (!pollingStarted) {
-    Logger.warn(`[TelegramBotChannel] Bot ${account.accountId} is configured but polling is paused because this token is in use elsewhere.`);
-    return;
-  }
-  BotIngress.registerConsumer(account.accountId, consumer);
+/**
+ * Gắn bot vào ingress (một vòng getUpdates cho mỗi token) và đăng ký consumer hộp thư — cả khi poller của token đang
+ * tạm dừng, để lúc nhận tin lại không mất hộp thư. false = token đang bị nơi khác nhận tin (409).
+ */
+function attachIngress(account: BotAccount): boolean {
+  const polling = BotIngress.startBot(account);
+  const consumer = (account as any)._inboxConsumer as BotUpdateConsumer | undefined;
+  if (consumer) BotIngress.registerConsumer(account.accountId, consumer);
+  return polling;
+}
 
-  // Store consumer reference for cleanup
-  (account as any)._inboxConsumer = consumer;
-
-  // Emit connected event so UI knows bot is online
+function emitBotConnected(account: BotAccount): void {
   try {
     const { EventBroadcaster } = require('../../event/EventBroadcaster');
     EventBroadcaster.emit('event:connected', {
@@ -1806,6 +1796,52 @@ export function startBot(account: TelegramBotAccount): void {
       },
     });
   } catch {}
+}
+
+/** Gỡ bot khỏi ingress + danh sách đăng ký (không báo giao diện). */
+function detachBot(accountId: string): void {
+  const account = registeredAccounts.get(accountId);
+  if (account) {
+    const consumer = (account as any)._inboxConsumer;
+    if (consumer) BotIngress.unregisterConsumer(accountId, consumer);
+  }
+  registeredAccounts.delete(accountId);
+  BotIngress.stopBot(accountId);
+}
+
+export function startBot(account: TelegramBotAccount): void {
+  const registered = registeredAccounts.get(account.accountId);
+  if (registered && registered.botToken === account.botToken) {
+    // Đã đăng ký, cùng token = người dùng bấm kết nối lại. Bot đang tạm dừng (nơi khác nhận tin của bot, token lỗi) →
+    // nhận tin lại ngay, giữ consumer. Trước đây hàm trả về luôn: giao diện báo đã kết nối nhưng bot không nhận tin
+    // tới khi mở lại app.
+    if (BotIngress.isPollerRunning(account.accountId)) return;
+    const resumed = BotIngress.resumeBot(account.accountId) || attachIngress(registered);
+    if (resumed) {
+      emitBotConnected(registered);
+      Logger.log(`[TelegramBotChannel] Resumed polling for ${account.accountId} (@${registered.botUsername})`);
+    }
+    return;
+  }
+  // Token không đúng dạng — thường là bản mã hoá không giải mã được trên máy này: đừng đăng ký, health check sẽ thử
+  // kết nối lại mỗi phút mãi mãi
+  if (!isTelegramBotToken(account.botToken)) {
+    throw new Error('Token bot không hợp lệ hoặc không giải mã được trên máy này. Vui lòng kết nối lại bot bằng token.');
+  }
+  // Kết nối lại bằng token mới: gỡ đăng ký của token cũ
+  if (registered) detachBot(account.accountId);
+  registeredAccounts.set(account.accountId, account);
+  DatabaseService.getInstance()?.repairTelegramLastMessagePreviews(account.accountId, 'telegram_bot');
+
+  // Store consumer reference for cleanup
+  (account as any)._inboxConsumer = createInboxConsumer();
+  if (!attachIngress(account)) {
+    Logger.warn(`[TelegramBotChannel] Bot ${account.accountId} is configured but polling is paused because this token is in use elsewhere.`);
+    return;
+  }
+
+  // Emit connected event so UI knows bot is online
+  emitBotConnected(account);
 
   Logger.log(`[TelegramBotChannel] Registered inbox consumer for ${account.accountId} (@${account.botUsername})`);
 }
@@ -1814,13 +1850,7 @@ export function startBot(account: TelegramBotAccount): void {
  * Stop bot: unregisters consumer and stops ingress.
  */
 export function stopBot(accountId: string): void {
-  const account = registeredAccounts.get(accountId);
-  if (account) {
-    const consumer = (account as any)._inboxConsumer;
-    if (consumer) BotIngress.unregisterConsumer(accountId, consumer);
-  }
-  registeredAccounts.delete(accountId);
-  BotIngress.stopBot(accountId);
+  detachBot(accountId);
 
   // Emit disconnected event so UI knows bot is offline
   try {
@@ -1863,6 +1893,11 @@ export function isBotPollingConflict(accountId: string): boolean {
   return registeredAccounts.has(accountId) && BotIngress.hasPollingConflict(accountId);
 }
 
+/** Trạng thái nhận tin của bot cho giao diện: polling / conflict (nơi khác nhận tin) / unauthorized / not_found / stopped. */
+export function getBotPollState(accountId: string): BotIngress.BotPollState {
+  return registeredAccounts.has(accountId) ? BotIngress.getPollState(accountId) : 'stopped';
+}
+
 /**
  * Attempt to reconnect a bot if it's registered but not polling.
  * Returns true if reconnection was attempted.
@@ -1875,9 +1910,9 @@ export function tryReconnectBot(accountId: string): boolean {
   if (BotIngress.isPollerRunning(accountId)) return false;
   if (BotIngress.hasPollingConflict(accountId)) return false;
 
-  // Re-register with ingress
+  // Re-register with ingress (kèm consumer hộp thư — trước đây poller mới không có consumer nên tin bị bỏ qua)
   try {
-    if (!BotIngress.startBot(account)) return false;
+    if (!attachIngress(account)) return false;
     Logger.log(`[TelegramBotChannel] Reconnected bot ${accountId}`);
     return true;
   } catch (err: any) {

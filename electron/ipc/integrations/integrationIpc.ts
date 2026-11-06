@@ -192,7 +192,7 @@ export function registerIntegrationIpc(): void {
     });
 
     // ─── Tunnel (cổng nhận webhook thanh toán) ────────────────────────────────
-    // Logic ở src/services/integrations/PaymentsTunnel.ts (dùng chung với Cài đặt → Internet & Đám mây → Địa chỉ Internet):
+    // Logic ở src/services/integrations/PaymentsTunnel.ts (dùng chung với Cài đặt → Internet & Cloud → Địa chỉ Internet):
     // Cloudflare tự động → dịch vụ 'payments' của tunnel dùng chung; chế độ khác → Quick Tunnel riêng của cổng.
     ipcMain.handle('tunnel:start', () => startPaymentsTunnel());
 

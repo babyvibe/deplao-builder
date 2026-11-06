@@ -1,5 +1,5 @@
 import React from 'react';
-import ipc from '@/lib/ipc';
+import { openChatLink } from '@/lib/chat/links/chatLinks';
 import { requestTelegramPreviewRefresh } from '@/lib/chat/telegram/telegramPreviewRefresh';
 
 /**
@@ -57,7 +57,7 @@ export function TelegramLinkPreviewCard({ meta, hideTitle = false, children, cla
   const open = (event: React.MouseEvent | React.KeyboardEvent) => {
     if (!meta.url) return;
     event.stopPropagation();
-    ipc.shell?.openExternal(meta.url);
+    openChatLink(meta.url);
   };
   const showTitle = !!meta.title && !hideTitle;
   return (

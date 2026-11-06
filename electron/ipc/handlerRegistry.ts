@@ -9,9 +9,15 @@
  * Lưu ý bảo mật: registry này KHÔNG dùng cho /api/proxy/action của nhân viên —
  * proxy cũ vẫn dùng registry riêng trong zaloIpc.ts (chỉ kênh zalo:*), để không mở
  * rộng bề mặt mà nhân viên gọi được.
+ *
+ * Lệnh từ giao diện chạy trong phạm vi workspace đang mở (dbScope.runInUiScope): giao diện đang mở workspace nhân viên
+ * (remote) → CSDL / media / chế độ của workspace đó. Public API / plugin gọi thẳng handler trong Map (không qua đây)
+ * nên luôn phục vụ workspace local đang chạy. Boss gọi handler hộ nhân viên (HttpRelayService: proxy / lệnh REST, qua
+ * ipcMain._invokeHandlers với event = null) cũng vậy: không phải lệnh của giao diện.
  */
 import { ipcMain } from 'electron';
 import { timeIpc } from '../../src/utils/startup/mainThreadWatchdog';
+import { runInUiScope } from '../../src/services/database/dbScope';
 
 export type RegisteredIpcHandler = (event: any, ...args: any[]) => any;
 
@@ -29,7 +35,13 @@ export function installIpcHandlerRegistry(): void {
 
     main.handle = (channel: string, listener: RegisteredIpcHandler) => {
         // Đo phần chạy đồng bộ của handler (≥ 1 s → Nhật ký "[Hiệu năng] IPC …") — tìm thủ phạm khi app "Not Responding".
-        const result = originalHandle(channel, (event: any, ...args: any[]) => timeIpc(channel, () => listener(event, ...args)));
+        // Phạm vi workspace đang mở chỉ cho lệnh có event của Electron (từ giao diện). event = null: Boss chạy hộ nhân viên →
+        // workspace local đang chạy. Trước đây máy vừa là Boss vừa mở workspace nhân viên thì lệnh của nhân viên (lưu nhãn,
+        // ghi chú, tải ảnh…) đọc / ghi CSDL đệm của workspace nhân viên thay vì CSDL của Boss.
+        const result = originalHandle(channel, (event: any, ...args: any[]) => {
+            const run = () => timeIpc(channel, () => listener(event, ...args));
+            return event ? runInUiScope(run) : run();
+        });
         ipcHandlerRegistry.set(channel, listener);
         return result;
     };

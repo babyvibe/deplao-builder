@@ -9,9 +9,12 @@ import {useAccountStore} from '@/store/accounts/accountStore';
 import {useAppStore} from '@/store/app/appStore';
 import {useEmployeeStore} from '@/store/employee/employeeStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc'
+import { openTelegramMiniApp } from '@/lib/chat/telegram/telegramMiniApp';
 import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
 import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import { useMentionMembers } from '@/hooks/chat/useMentionMembers';
+import { useAiReplySuggestions } from '@/hooks/chat/useAiReplySuggestions';
+import { aiSuggestKindOf } from '@/lib/chat/composer/aiReplySuggestions';
 import {
   EMPTY_THREAD_LOCAL_LABELS, nextThreadLocalLabels, sortActiveLocalLabels, threadLabelsKey, toLabelIdSet,
   type ThreadLocalLabelsState,
@@ -20,6 +23,7 @@ import { relayEventAccount, THREAD_LABELS_CHANGED_EVENT, threadLabelsEventTouche
 import { messageQueue, generateTempId, extractMsgIdFromResponse } from '@/lib/chat/send/MessageQueue';
 import { Spinner } from '@/components/common/PageLoading';
 import AccountAssignmentPopup from './AccountAssignmentPopup';
+import AiSuggestionMenu from './AiSuggestionMenu';
 import {SendCardModal} from '../groups/GroupModals';
 import {CreatePollDialog} from '../polls/CreatePollDialog';
 import {NoteViewModal} from '../groups/NoteViewModal';
@@ -36,7 +40,8 @@ import {
 import ReminderPanel from '../reminders/ReminderPanel';
 import { matchesShortcut } from '../../common/inputs/LabelEmojiPicker';
 import { getCapability } from '../../../../configs/channels/channelConfig';
-import { isNonZalo, isTelegramBot, isTelegramUser, isTelegram, isFacebook, isZalo, CHANNEL, isTelegramForumGeneral } from '@/lib/channels/channelHelper';
+import { isNonZalo, isTelegramBot, isTelegramUser, isTelegram, isFacebook, isZalo, CHANNEL, isTelegramForumGeneral, resolveChannel } from '@/lib/channels/channelHelper';
+import { isTelegramQuotePlaceholder, telegramQuoteMedia } from '@/lib/chat/messages/messageParser';
 import { getTelegramMembershipNotice } from '@/lib/telegram/telegramMembership';
 import * as channelIpc from '../../../lib/channels/channelIpc';
 import { getAdapter } from '@/lib/channels/adapters/registry';
@@ -199,15 +204,14 @@ export default function MessageInput() {
   const activeThreadId = composerTarget ? composerTarget.threadId : storeThreadId;
   const activeThreadType = composerTarget ? composerTarget.threadType : storeThreadType;
   const activeTopicId = composerTarget ? composerTarget.topicId : storeTopicId;
-  const { showNotification, setGroupInfo, mergedInboxMode, toggleIntegrationQuickPanel, pinnedIntegrationShortcuts, unpinIntegrationShortcut, editPinnedShortcutIcon, openIntegrationPanelTo, aiSuggestionsEnabled, aiSuggestions, aiSuggestionsLoading, setAiSuggestionsEnabled, setAiSuggestions, setAiSuggestionsLoading, isAiSuggestDisabled, toggleAiDisableForThread, toggleAiDisableForAccount, aiSuggestDisabledThreads, aiSuggestDisabledAccounts } = useAppStore(useShallow(s => ({
+  const { showNotification, setGroupInfo, mergedInboxMode, toggleIntegrationQuickPanel, pinnedIntegrationShortcuts, unpinIntegrationShortcut, editPinnedShortcutIcon, openIntegrationPanelTo, isAiSuggestDisabled, aiSuggestKinds, aiSuggestCount } = useAppStore(useShallow(s => ({
     showNotification: s.showNotification, setGroupInfo: s.setGroupInfo, mergedInboxMode: s.mergedInboxMode,
     toggleIntegrationQuickPanel: s.toggleIntegrationQuickPanel, pinnedIntegrationShortcuts: s.pinnedIntegrationShortcuts,
     unpinIntegrationShortcut: s.unpinIntegrationShortcut, editPinnedShortcutIcon: s.editPinnedShortcutIcon,
-    openIntegrationPanelTo: s.openIntegrationPanelTo, aiSuggestionsEnabled: s.aiSuggestionsEnabled, aiSuggestions: s.aiSuggestions,
-    aiSuggestionsLoading: s.aiSuggestionsLoading, setAiSuggestionsEnabled: s.setAiSuggestionsEnabled,
-    setAiSuggestions: s.setAiSuggestions, setAiSuggestionsLoading: s.setAiSuggestionsLoading,
-    isAiSuggestDisabled: s.isAiSuggestDisabled, toggleAiDisableForThread: s.toggleAiDisableForThread,
-    toggleAiDisableForAccount: s.toggleAiDisableForAccount, aiSuggestDisabledThreads: s.aiSuggestDisabledThreads,
+    openIntegrationPanelTo: s.openIntegrationPanelTo,
+    isAiSuggestDisabled: s.isAiSuggestDisabled, aiSuggestKinds: s.aiSuggestKinds, aiSuggestCount: s.aiSuggestCount,
+    // Không dùng trực tiếp: bật / tắt gợi ý (toàn bộ, theo hội thoại / tài khoản) → render lại để isAiSuggestDisabled tính lại
+    aiSuggestionsEnabled: s.aiSuggestionsEnabled, aiSuggestDisabledThreads: s.aiSuggestDisabledThreads,
     aiSuggestDisabledAccounts: s.aiSuggestDisabledAccounts,
   })));
   // Thông tin nhóm đang mở (thành viên để @mention): không render lại khi nhóm khác cập nhật
@@ -218,7 +222,16 @@ export default function MessageInput() {
   // Channel capability for active thread
   const storeContact = useChatStore(s => (s.contacts[activeAccountId || ''] || []).find(c => c.contact_id === activeThreadId));
   // Phần bình luận: nhóm thảo luận chưa tham gia không có trong danh sách hội thoại → liên hệ do phần bình luận cho
-  const activeContact = storeContact ?? (composerTarget?.contact as unknown as typeof storeContact);
+  const targetContact = storeContact ?? (composerTarget?.contact as unknown as typeof storeContact);
+  // Kênh thật (resolveChannel): tài khoản Telegram / Facebook gửi theo kênh của tài khoản, kể cả dòng cũ ghi 'zalo' hay hội
+  // thoại chưa có trong store (hội thoại ghim / My Documents tải bù theo id): không bao giờ gửi qua Zalo
+  const accountChannel = allAccounts.find((a) => a.zalo_id === activeAccountId)?.channel;
+  const activeContact = React.useMemo(() => {
+    if (!isNonZalo(accountChannel)) return targetContact;
+    const channel = resolveChannel(targetContact, { channel: accountChannel });
+    if (targetContact) return targetContact.channel === channel ? targetContact : { ...targetContact, channel };
+    return activeThreadId ? ({ contact_id: activeThreadId, channel } as NonNullable<typeof storeContact>) : undefined;
+  }, [targetContact, accountChannel, activeThreadId]);
   // Tin nháp: phần bình luận lưu riêng (không lẫn với tin nháp của chính nhóm thảo luận)
   const draftThreadId = commentMode && activeThreadId ? `${activeThreadId}#comments:${activeTopicId}` : activeThreadId;
   const draftTargetRef = useRef({ accountId: activeAccountId, threadId: draftThreadId });
@@ -330,113 +343,16 @@ export default function MessageInput() {
     return () => window.removeEventListener('ai:insertToChat', handler);
   }, []);
 
-  // ─── AI: fetch suggestions when new message arrives in active thread ──────
-  const aiSuggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const aiSuggestCacheRef = useRef<{ hash: string; suggestions: string[] }>({ hash: '', suggestions: [] });
-
-  // Shared function to fetch AI suggestions for the current thread
-  const fetchAiSuggestions = useCallback(async () => {
-    if (!activeAccountId || !activeThreadId) return;
-    if (useAppStore.getState().isAiSuggestDisabled(activeAccountId, activeThreadId)) return;
-    try {
-      setAiSuggestionsLoading(true);
-      // Get per-account suggestion assistant
-      const accRes = await DataAccessor.getAccountAssistant(activeAccountId || '', 'suggestion');
-      const assistantId = accRes?.assistant?.id;
-      if (!assistantId) { setAiSuggestionsLoading(false); return; }
-      // Get context message count from assistant
-      const contextCount = accRes?.assistant?.contextMessageCount || 30;
-      // Get recent messages - include image context
-      const key = `${activeAccountId}_${activeThreadId}`;
-      const msgs = useChatStore.getState().messages[key] || [];
-      const recent = msgs.slice(-contextCount).map((m: any) => {
-        const role = m.is_sent ? 'assistant' : 'user';
-        // Detect image messages and describe them in context
-        const msgType = m.msg_type || '';
-        const isImage = msgType === 'chat.photo' || msgType === 'photo' || msgType === 'image';
-        if (isImage) {
-          return { role, content: '[Hình ảnh được gửi]' };
-        }
-        // Try to detect image from content structure
-        if (typeof m.content === 'object' && m.content !== null) {
-          let params: any = m.content?.params;
-          if (typeof params === 'string') { try { params = JSON.parse(params); } catch { params = null; } }
-          if (params?.hd || params?.rawUrl || m.content?.thumb) {
-            const textPart = m.content?.msg || m.content?.title || '';
-            return { role, content: textPart ? `[Hình ảnh kèm text: ${textPart}]` : '[Hình ảnh được gửi]' };
-          }
-          return { role, content: m.content?.msg || m.content?.title || '' };
-        }
-        return { role, content: typeof m.content === 'string' ? m.content : '' };
-      }).filter((m: any) => m.content.trim());
-      if (recent.length === 0) { setAiSuggestionsLoading(false); return; }
-      // Cache: skip API call if context hasn't changed
-      const contextHash = recent.map((m: any) => `${m.role}:${m.content}`).join('|');
-      if (contextHash === aiSuggestCacheRef.current.hash && aiSuggestCacheRef.current.suggestions.length > 0) {
-        setAiSuggestions(aiSuggestCacheRef.current.suggestions);
-        setAiSuggestionsLoading(false);
-        return;
-      }
-      const res = await ipc.ai?.suggest(assistantId, recent);
-      if (res?.success && res.suggestions?.length) {
-        setAiSuggestions(res.suggestions);
-        aiSuggestCacheRef.current = { hash: contextHash, suggestions: res.suggestions };
-      } else {
-      }
-    } catch {}
-    setAiSuggestionsLoading(false);
-  }, [activeAccountId, activeThreadId]);
-
-  useEffect(() => {
-    if (!activeAccountId || !activeThreadId || commentMode) return;
-    // Check granular disable
-    if (isAiSuggestDisabled(activeAccountId, activeThreadId)) return;
-
-    // Trigger initial fetch when effect runs (feature enabled, thread switch, etc.)
-    if (aiSuggestTimerRef.current) clearTimeout(aiSuggestTimerRef.current);
-    aiSuggestTimerRef.current = setTimeout(() => {
-      fetchAiSuggestions();
-    }, 1500);
-
-    // Listen for new messages via custom event from useZaloEvents
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.zaloId !== activeAccountId || detail?.threadId !== activeThreadId) return;
-      // Re-check disable in case it changed
-      if (useAppStore.getState().isAiSuggestDisabled(activeAccountId, activeThreadId)) return;
-      // Debounce 1.5s
-      if (aiSuggestTimerRef.current) clearTimeout(aiSuggestTimerRef.current);
-      aiSuggestTimerRef.current = setTimeout(() => {
-        fetchAiSuggestions();
-      }, 1500);
-    };
-    window.addEventListener('ai:newMessage', handler);
-    return () => {
-      window.removeEventListener('ai:newMessage', handler);
-      if (aiSuggestTimerRef.current) clearTimeout(aiSuggestTimerRef.current);
-    };
-  }, [activeAccountId, activeThreadId, commentMode, aiSuggestDisabledThreads, aiSuggestDisabledAccounts, aiSuggestionsEnabled, fetchAiSuggestions]);
-
-  // Clear suggestions & cache when thread changes
-  useEffect(() => {
-    setAiSuggestions([]);
-    aiSuggestCacheRef.current = { hash: '', suggestions: [] };
-  }, [activeThreadId]);
-
-  // ─── Notify ChatWindow when AI suggestions bar height changes ─────────────
-  // Khi thanh gợi ý AI xuất hiện/biến mất, input area thay đổi chiều cao
-  // → cần scroll chat xuống dưới nếu user đang ở cuối trang
-  const prevSuggestionsVisibleRef = useRef(false);
-  useEffect(() => {
-    const isVisible = !!(aiSuggestions.length > 0 || aiSuggestionsLoading);
-    if (isVisible !== prevSuggestionsVisibleRef.current) {
-      prevSuggestionsVisibleRef.current = isVisible;
-      // Dispatch sau 1 frame để DOM đã cập nhật chiều cao
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent('ai:suggestionsBarChanged', { detail: { visible: isVisible } }));
-      });
-    }
-  }, [aiSuggestions, aiSuggestionsLoading]);
+  // ─── Gợi ý trả lời AI (hooks/chat/useAiReplySuggestions) ─────────────────
+  // Thanh chỉ hiện khi đã có gợi ý từ trợ lý "Gợi ý" của tài khoản; đang gọi AI → xoay nhỏ ở nút AI trên thanh công cụ
+  // (trước đây thanh "Đang gợi ý…" hiện rồi mất / đổi chiều cao mỗi tin mới → khung chat nhảy).
+  // Cài ở menu nút AI: loại hội thoại được gợi ý (cá nhân / nhóm; Telegram thêm chủ đề / kênh / bot), số câu, trợ lý.
+  const aiSuggestKind = aiSuggestKindOf(activeContact, activeThreadType, activeTopicId);
+  const aiSuggestOn = !commentMode && !!activeAccountId && !!activeThreadId
+    && !isAiSuggestDisabled(activeAccountId, activeThreadId) && aiSuggestKinds[aiSuggestKind];
+  const aiSuggest = useAiReplySuggestions({
+    accountId: activeAccountId, threadId: activeThreadId, topicId: activeTopicId, enabled: aiSuggestOn, count: aiSuggestCount,
+  });
 
   // ─── Outgoing typing event (debounced) ────────────────────────────────────
   // Theo chuẩn các nền tảng lớn (WhatsApp/Telegram):
@@ -3162,31 +3078,25 @@ export default function MessageInput() {
         </div>
       )}
 
-      {/* AI Suggestions bar */}
-      {!commentMode && activeAccountId && activeThreadId && !isAiSuggestDisabled(activeAccountId, activeThreadId) && (aiSuggestions.length > 0 || aiSuggestionsLoading) && (
+      {/* Gợi ý AI: chỉ khi đã có gợi ý (đang gọi AI → xoay ở nút AI); gọi lại khi có tin mới thì giữ gợi ý cũ, mờ đi */}
+      {aiSuggest.suggestions.length > 0 && (
         <div className="ai-suggestion-bar border-b overflow-x-auto">
           <span className="ai-suggestion-badge">
             <SparklesIcon className="w-3 h-3" />
             <span>Gợi ý AI</span>
           </span>
-          {aiSuggestionsLoading ? (
-            <span className="ai-suggestion-loading animate-pulse">
-              Đang gợi ý câu trả lời...
-            </span>
-          ) : (
-            aiSuggestions.map((s, i) => (
-              <button
-                key={i}
-                onClick={() => { setText(s); if (textareaRef.current) textareaRef.current.innerText = s; setAiSuggestions([]); }}
-                className="ai-suggestion-chip group"
-                title={s}
-              >
-                <span className="ai-suggestion-chip-text line-clamp-2 break-words">{s}</span>
-              </button>
-            ))
-          )}
+          {aiSuggest.suggestions.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => { setText(s); if (textareaRef.current) textareaRef.current.innerText = s; aiSuggest.dismiss(); }}
+              className={`ai-suggestion-chip group${aiSuggest.refreshing ? ' opacity-60' : ''}`}
+              title={s}
+            >
+              <span className="ai-suggestion-chip-text line-clamp-2 break-words">{s}</span>
+            </button>
+          ))}
           <button
-            onClick={() => setAiSuggestions([])}
+            onClick={aiSuggest.dismiss}
             className="ai-suggestion-close"
             title="Ẩn gợi ý"
           >
@@ -3201,7 +3111,7 @@ export default function MessageInput() {
           <div className="flex-1 border-l-2 border-blue-500 pl-2 min-w-0 flex items-center gap-2">
             <div className="flex-1 min-w-0">
               <p className="text-xs text-blue-400 font-medium">Trả lời</p>
-              <p className="text-xs text-muted-foreground truncate">{parseReplyContent(replyTo.content, replyTo.msg_type)}</p>
+              <p className="text-xs text-muted-foreground truncate">{parseReplyContent(replyTo.content, replyTo.msg_type, replyTo.channel, replyTo.attachments)}</p>
             </div>
             {isImageMsg(replyTo.msg_type, replyTo.content) && (() => {
               const imgs = extractReplyImages(replyTo.content, replyTo.attachments);
@@ -3700,55 +3610,23 @@ export default function MessageInput() {
               setShowStickerPicker(false);
               setShowAiMenu(v => !v);
             }}
-            title="Gợi ý AI"
-            active={aiSuggestionsEnabled && !(activeAccountId && activeThreadId && isAiSuggestDisabled(activeAccountId, activeThreadId))}
+            title={aiSuggest.loading ? 'Gợi ý AI: đang gợi ý câu trả lời…'
+              : aiSuggest.error ? `Gợi ý AI: không gọi được AI (${aiSuggest.error})` : 'Gợi ý AI'}
+            active={aiSuggestOn}
           >
             <span className="leading-none relative">
-                <BotIcon className="w-5 h-5" />
-              <SparklesIcon className="absolute bottom-4 left-2 w-3 h-3" />
+              <BotIcon className="w-5 h-5" />
+              {/* Đang gọi AI: ngôi sao thành vòng xoay nhỏ ở góc nút; lần gọi gần nhất lỗi: ngôi sao đỏ */}
+              {aiSuggest.loading ? (
+                <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" aria-hidden="true" />
+              ) : (
+                <SparklesIcon className={`absolute bottom-4 left-2 w-3 h-3${aiSuggest.error ? ' ai-tool-sparkle-error' : ''}`} />
+              )}
             </span>
           </ToolbarBtn>
           {showAiMenu && (
-            <div className="absolute bottom-full left-0 mb-2 w-64 overflow-hidden rounded-2xl border border-purple-500/20 bg-card shadow-2xl shadow-black/40 backdrop-blur z-50">
-              <div className="border-b border-purple-500/10 bg-gradient-to-r from-purple-500/10 via-transparent to-transparent px-3 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-purple-500">Gợi ý AI</p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">Tuỳ chỉnh nhanh cho hội thoại hiện tại</p>
-              </div>
-              <button
-                onClick={() => { setAiSuggestionsEnabled(!aiSuggestionsEnabled); setShowAiMenu(false); }}
-                className="w-full text-left px-3 py-2.5 hover:bg-purple-500/10 flex items-center gap-2.5 transition-colors"
-              >
-                <span className={`w-4 h-4 rounded-md border ${aiSuggestionsEnabled ? 'bg-blue-500 border-blue-500 shadow-sm shadow-blue-900/40' : 'border-border-strong bg-card'} flex items-center justify-center flex-shrink-0`}>
-                  {aiSuggestionsEnabled && <span className="text-white-important text-[8px]">✓</span>}
-                </span>
-                <span className="text-foreground leading-5">Bật gợi ý AI (toàn bộ)</span>
-              </button>
-              {activeAccountId && activeThreadId && (
-                <>
-                  <div className="mx-3 border-t border-border/80" />
-                  <button
-                    onClick={() => { toggleAiDisableForThread(activeAccountId, activeThreadId); setShowAiMenu(false); }}
-                    className="w-full text-left px-3 py-2.5 hover:bg-purple-500/10 flex items-center gap-2.5 transition-colors"
-                  >
-                    <span className={`w-4 h-4 rounded-md border ${isAiSuggestDisabled(activeAccountId, activeThreadId) && !useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] ? 'bg-red-500 border-red-500 shadow-sm shadow-red-900/40' : 'border-border-strong bg-card'} flex items-center justify-center flex-shrink-0`}>
-                      {isAiSuggestDisabled(activeAccountId, activeThreadId) && !useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] && <span className="text-white-important text-[8px]">✓</span>}
-                    </span>
-                    <span className="text-foreground leading-5">Tắt ở hội thoại này</span>
-                  </button>
-                </>
-              )}
-              {activeAccountId && (
-                <button
-                  onClick={() => { toggleAiDisableForAccount(activeAccountId); setShowAiMenu(false); }}
-                  className="w-full text-left px-3 py-2.5 hover:bg-purple-500/10 flex items-center gap-2.5 transition-colors"
-                >
-                  <span className={`w-4 h-4 rounded-md border ${useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] ? 'bg-red-500 border-red-500 shadow-sm shadow-red-900/40' : 'border-border-strong bg-card'} flex items-center justify-center flex-shrink-0`}>
-                    {useAppStore.getState().aiSuggestDisabledAccounts[activeAccountId] && <span className="text-white-important text-[8px]">✓</span>}
-                  </span>
-                  <span className="text-foreground leading-5">Tắt toàn bộ tài khoản này</span>
-                </button>
-              )}
-            </div>
+            <AiSuggestionMenu accountId={activeAccountId} threadId={activeThreadId} channel={activeContact?.channel}
+              kind={aiSuggestKind} onAssistantChanged={aiSuggest.refresh} />
           )}
         </div>}
 
@@ -3970,31 +3848,14 @@ export default function MessageInput() {
           <div className="relative flex-shrink-0 mb-0.5">
             <button
               onClick={() => {
-                if (menuBtnType === 'main_app') {
-                  // Open Main Mini App via requestMainWebView
-                  (async () => {
-                    try {
-                      const res = await (ipc as any).telegramUser?.requestMainWebView({
-                        accountId: activeAccountId || '', botId: activeThreadId || '',
-                      });
-                      if (res?.success && res.webViewUrl) {
-                        window.open(res.webViewUrl, '_blank');
-                      }
-                    } catch {}
-                  })();
-                } else if (menuBtnType === 'custom' && menuBtnUrl) {
-                  // Open Mini App via requestWebView
-                  (async () => {
-                    try {
-                      const res = await (ipc as any).telegramUser?.requestWebView({
-                        accountId: activeAccountId || '', botId: activeThreadId || '',
-                        url: menuBtnUrl, fromBotMenu: true,
-                      });
-                      if (res?.success && res.webViewUrl) {
-                        window.open(res.webViewUrl, '_blank');
-                      }
-                    } catch {}
-                  })();
+                // Mini App mở trong app như Telegram (lib/chat/telegram/telegramMiniApp): app chính / nút menu của bot
+                const botName = activeContact?.alias || activeContact?.display_name || undefined;
+                if (menuBtnType === 'main_app' && activeAccountId && activeThreadId) {
+                  openTelegramMiniApp({ accountId: activeAccountId, botId: activeThreadId, peerId: activeThreadId, kind: 'main', botName });
+                } else if (menuBtnType === 'custom' && menuBtnUrl && activeAccountId && activeThreadId) {
+                  openTelegramMiniApp({
+                    accountId: activeAccountId, botId: activeThreadId, peerId: activeThreadId, kind: 'menu', url: menuBtnUrl, botName,
+                  });
                 } else {
                   handleToggleBotMenu();
                 }
@@ -4135,7 +3996,7 @@ export default function MessageInput() {
           <button
             onMouseDown={(e) => { e.preventDefault(); setShowEmojiPicker(v => !v); setShowStickerPicker(false); }}
             title="Biểu cảm"
-            className={`w-9 h-9 rounded-lg flex items-center justify-center text-xl transition-colors ${showEmojiPicker ? 'bg-blue-600' : 'hover:bg-muted'}`}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center text-xl transition-colors ${showEmojiPicker ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
           >
             <SmileIcon className="w-5 h-5" />
           </button>
@@ -4413,7 +4274,13 @@ function extractReplyImages(content: string, attachments?: string): string[] {
   return urls;
 }
 
-function parseReplyContent(content: string, msgType?: string): string {
+function parseReplyContent(content: string, msgType?: string, channel?: string, attachments?: unknown): string {
+  // Telegram: video / sticker / thoại / file… không có chữ (hoặc chỉ có chữ app tự đặt) → nhãn đúng loại, như khung trích
+  // dẫn trong bong bóng (telegramQuoteMedia); trước đây hiện "[Tin nhắn]"
+  if (isTelegram(channel)) {
+    const media = telegramQuoteMedia(msgType, attachments);
+    if (media && (!content || content === 'null' || isTelegramQuotePlaceholder(content))) return media.label;
+  }
   if (!content || content === 'null') return '[Tin nhắn]';
 
   // Ưu tiên sử dụng msgType nếu có

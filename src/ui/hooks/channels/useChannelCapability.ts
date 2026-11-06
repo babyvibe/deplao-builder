@@ -6,12 +6,12 @@
 
 import { useChatStore } from '@/store/chat/chatStore';
 import { useAccountStore } from '@/store/accounts/accountStore';
-import { getCapability, type ChannelCapability, type Channel } from '@/../configs/channels/channelConfig';
-import { CHANNEL } from '@/lib/channels/channelHelper';
+import { getCapability, type ChannelCapability } from '@/../configs/channels/channelConfig';
+import { resolveChannel } from '@/lib/channels/channelHelper';
 
 /**
  * Lấy ChannelCapability cho thread đang active.
- * Derive channel từ: active contact → active account → fallback 'zalo'
+ * Kênh theo resolveChannel: tài khoản Telegram / Facebook → kênh của tài khoản; Zalo → kênh của hội thoại.
  */
 export function useChannelCapability(): ChannelCapability {
   const activeThreadId = useChatStore(s => s.activeThreadId);
@@ -23,9 +23,7 @@ export function useChannelCapability(): ChannelCapability {
     ? (contacts[activeAccountId] || []).find(c => c.contact_id === activeThreadId)
     : undefined;
   const account = accounts.find(a => a.zalo_id === activeAccountId);
-  const channel = (contact?.channel || account?.channel || CHANNEL.ZALO) as Channel;
-
-  return getCapability(channel);
+  return getCapability(resolveChannel(contact, account));
 }
 
 /**
@@ -36,6 +34,5 @@ export function getChannelCapabilityForContact(
   contact?: { channel?: string },
   account?: { channel?: string },
 ): ChannelCapability {
-  const channel = (contact?.channel || account?.channel || CHANNEL.ZALO) as Channel;
-  return getCapability(channel);
+  return getCapability(resolveChannel(contact, account));
 }

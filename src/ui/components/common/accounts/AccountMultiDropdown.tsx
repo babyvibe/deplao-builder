@@ -4,6 +4,7 @@
  */
 import React, { useState, useEffect, useRef } from 'react';
 import { AccountInfo } from '@/store/accounts/accountStore';
+import { AccountAvatar } from './AccountAvatar';
 
 interface Props {
   accounts: AccountInfo[];
@@ -23,16 +24,9 @@ interface Props {
   showOnlyAction?: boolean;
 }
 
+/** Ảnh tài khoản dùng chung (AccountAvatar): sm = 20px xếp chồng trên nút, md = 32px kèm huy hiệu kênh trong danh sách. */
 function AvatarThumb({ acc, size = 'sm' }: { acc: AccountInfo; size?: 'sm' | 'md' }) {
-  const dim = size === 'sm' ? 'w-5 h-5 text-[7px]' : 'w-7 h-7 text-xs';
-  const initial = (acc.full_name || acc.zalo_id || '?').charAt(0).toUpperCase();
-  return acc.avatar_url ? (
-    <img src={acc.avatar_url} alt="" className={`${dim} rounded-full object-cover border border-input shrink-0`} />
-  ) : (
-    <div className={`${dim} rounded-full bg-gradient-to-br from-blue-500 to-purple-600 border border-border flex items-center justify-center text-white font-bold shrink-0`}>
-      {initial}
-    </div>
-  );
+  return <AccountAvatar account={acc} size={size === 'sm' ? 20 : 32} className={size === 'sm' ? 'ring-2 ring-card' : undefined} />;
 }
 
 export default function AccountMultiDropdown({

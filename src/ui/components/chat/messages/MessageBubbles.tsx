@@ -11,6 +11,8 @@ import { useAccountStore } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { getCachedBankCard } from '@/lib/chat/zalo/bankCardCache';
+import { bankCardTemplateUrl, loadBankCardTemplate, peekBankCardTemplate } from '@/lib/chat/zalo/bankCardTemplate';
+import { openChatLink } from '@/lib/chat/links/chatLinks';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
@@ -1306,7 +1308,7 @@ function LinkBubble({ parsed, isSelf }: { parsed: any; isSelf: boolean }) {
       {/* Bottom area: clickable link */}
       {href && (
         <button
-          onClick={() => ipc.shell?.openExternal(href)}
+          onClick={() => openChatLink(href)}
           className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs truncate border-t transition-colors ${
             'border-foreground/10 text-primary hover:bg-foreground/5'
           }`}
@@ -1708,61 +1710,9 @@ function parseBankCardFromContent(content: string): { binBank: number; numAccBan
   } catch { return null; }
 }
 
-/**
- * Trích xuất pcItem.data_url (HTML) từ content ZInstant template.
- */
-function extractBankCardHtmlUrl(content: string): string | null {
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed?.action !== 'zinstant.bankcard') return null;
-    let params: any = parsed.params;
-    if (typeof params === 'string') {
-      try { params = JSON.parse(params); } catch { return null; }
-    }
-    if (!params || typeof params !== 'object') return null;
-    return params.pcItem?.data_url || params.item?.data_url || null;
-  } catch { return null; }
-}
-
-/**
- * Fetch HTML bank card từ Zalo CDN, inject CSS custom, tạo blob URL an toàn.
- * Tham khảo: load HTML → ẩn .mobile_element, fix chiều cao .card_wrapper → blob → iframe.
- */
-async function loadBankCardHtmlBlob(url: string): Promise<string | null> {
-  try {
-    const urlWithTs = url.includes('?') ? `${url}&_t=${Date.now()}` : `${url}?_t=${Date.now()}`;
-    const res = await fetch(urlWithTs, {
-      headers: { 'Accept': 'text/html,application/xhtml+xml,application/xml' },
-    });
-    if (!res.ok) return null;
-    let html = await res.text();
-    if (!html || html.length < 50) return null;
-
-    // Inject CSS: ẩn mobile_element + fix card_wrapper height
-    const customCSS = `<style>
-      .mobile_element { display: none !important; }
-      .card_wrapper { height: 230px !important; min-height: 200px !important; }
-      body { margin: 0; padding: 0; overflow: hidden; background: transparent; }
-    </style>`;
-
-    if (html.includes('</head>')) {
-      html = html.replace('</head>', `${customCSS}</head>`);
-    } else if (html.includes('<body')) {
-      html = html.replace('<body', `${customCSS}<body`);
-    } else {
-      html = customCSS + html;
-    }
-
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    return URL.createObjectURL(blob);
-  } catch { return null; }
-}
-
 export function BankCardBubble({ msg }: { msg: any }) {
   const [copied, setCopied] = React.useState(false);
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
-  const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
-  const [templateLoading, setTemplateLoading] = React.useState(false);
 
   // ── Parse structured data (binBank + numAccBank) trực tiếp từ content ──
   const data = React.useMemo(() => {
@@ -1776,31 +1726,26 @@ export function BankCardBubble({ msg }: { msg: any }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [msg.content, msg.thread_id, msg.timestamp, activeAccountId]);
 
-  // ── Trích xuất HTML URL từ ZInstant template ──
+  // ── Thẻ nhận về: template HTML trên CDN Zalo (lib/chat/zalo/bankCardTemplate: chỉ CDN zinstant, bỏ script) ──
   const htmlUrl = React.useMemo(
-    () => !data ? extractBankCardHtmlUrl(msg.content || '{}') : null,
+    () => !data ? bankCardTemplateUrl(msg.content || '{}') : null,
     [data, msg.content],
   );
+  // Template đã tải (cuộn qua lại không tải lại, không nháy khung "Đang tải").
+  const [template, setTemplate] = React.useState<{ url: string; html: string | null } | null>(() => {
+    const html = htmlUrl ? peekBankCardTemplate(htmlUrl) : undefined;
+    return htmlUrl && html ? { url: htmlUrl, html } : null;
+  });
 
-  // ── Fetch HTML → inject CSS → blob URL ──
   React.useEffect(() => {
-    if (data || !htmlUrl) return;
+    if (!htmlUrl || template?.url === htmlUrl) return;
     let cancelled = false;
-    setTemplateLoading(true);
-
-    loadBankCardHtmlBlob(htmlUrl).then(url => {
-      if (cancelled) { if (url) URL.revokeObjectURL(url); return; }
-      if (url) setBlobUrl(url);
-      setTemplateLoading(false);
-    });
-
+    loadBankCardTemplate(htmlUrl).then((html) => { if (!cancelled) setTemplate({ url: htmlUrl, html }); });
     return () => { cancelled = true; };
-  }, [data, htmlUrl]);
+  }, [htmlUrl, template?.url]);
 
-  // Cleanup blob URL on unmount
-  React.useEffect(() => {
-    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
-  }, [blobUrl]);
+  const templateLoading = !!htmlUrl && template?.url !== htmlUrl;
+  const templateHtml = htmlUrl && template?.url === htmlUrl ? template.html : null;
 
   const handleCopy = (text: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -1838,7 +1783,7 @@ export function BankCardBubble({ msg }: { msg: any }) {
     );
   }
 
-  // ── Case 2: Đang tải HTML blob ──
+  // ── Case 2: Đang tải template ──
   if (templateLoading) {
     return (
       <div className="rounded-2xl overflow-hidden shadow-lg max-w-[300px] bg-card animate-pulse">
@@ -1851,16 +1796,16 @@ export function BankCardBubble({ msg }: { msg: any }) {
     );
   }
 
-  // ── Case 3: Có blob URL → render iframe ──
-  if (blobUrl) {
+  // ── Case 3: Template của Zalo → iframe srcdoc, sandbox="" (không script, origin riêng: không chạm được app) ──
+  if (templateHtml) {
     return (
       <div className="relative rounded-2xl overflow-hidden shadow-lg max-w-[300px]">
         <MediaTimeBadge timestamp={msg.timestamp} />
         <iframe
-          src={blobUrl}
+          srcDoc={templateHtml}
           title="Tài khoản ngân hàng"
           className="w-[300px] h-[230px] block border-0 rounded-2xl"
-          sandbox="allow-same-origin allow-scripts"
+          sandbox=""
           style={{ pointerEvents: 'none', background: 'transparent' }}
         />
       </div>
@@ -2085,8 +2030,9 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
       }
     } catch {}
   }
+  // Cột dọc: nội dung cũ nằm DƯỚI bong bóng (xếp ngang thì nó thành cột hẹp bên cạnh và kéo bong bóng cao theo)
   return (
-    <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-0.5`}>
+    <div className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} mb-0.5`}>
       <div className={`px-3 py-2 rounded-lg text-sm max-w-[280px] break-words whitespace-pre-wrap ${cls}`} style={{ overflowWrap: 'break-word', wordBreak: 'normal' }}>
         {text ? linkifyText(text) : '(Không có nội dung)'}
         {isEdited && editHistoryEntries.length > 0 && (
@@ -2104,7 +2050,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
         )}
       </div>
       {showEditHistory && editHistoryEntries.length > 0 && (
-        <div className="w-full mt-1 space-y-1">
+        <div className="w-full max-w-[280px] mt-1 space-y-1">
           {editHistoryEntries.map((entry, i) => (
             <div
               key={i}

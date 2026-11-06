@@ -13,6 +13,7 @@
 import { ipcMain } from 'electron';
 import * as TelegramBotChannel from '../../../src/services/telegram/bot/TelegramBotChannelService';
 import Logger from '../../../src/utils/Logger';
+import { BOT_DISCONNECT_REASON, botDisconnectMessage } from '../../../src/shared/telegram/telegramBotStatus';
 
 export function registerTelegramIpc(): void {
   // ── Validate bot token ──────────────────────────────────────────────────
@@ -29,7 +30,16 @@ export function registerTelegramIpc(): void {
   ipcMain.handle('telegram:startBot', async (_event, account: TelegramBotChannel.TelegramBotAccount) => {
     try {
       TelegramBotChannel.startBot(account);
-      return { success: true };
+      // Token đang bị nơi khác nhận tin (poller của token tạm dừng vì 409): báo thật, không báo "đã kết nối"
+      const state = TelegramBotChannel.getBotPollState(account.accountId);
+      if (state === 'conflict') {
+        return {
+          success: false,
+          state,
+          error: botDisconnectMessage(BOT_DISCONNECT_REASON.conflict, account.botFirstName || account.botUsername || ''),
+        };
+      }
+      return { success: true, state };
     } catch (err: any) {
       Logger.error(`[telegram:startBot] ${err.message}`);
       return { success: false, error: err.message };
@@ -93,11 +103,17 @@ export function registerTelegramIpc(): void {
   ipcMain.handle('telegram:getActiveBots', async () => {
     try {
       // Strip non-serializable properties (functions, circular refs) for IPC
-      const bots = TelegramBotChannel.getActiveBots().map(b => ({
-        accountId: b.accountId,
-        botUsername: b.botUsername,
-        botFirstName: b.botFirstName,
-      }));
+      const bots = TelegramBotChannel.getActiveBots().map(b => {
+        const state = TelegramBotChannel.getBotPollState(b.accountId);
+        return {
+          accountId: b.accountId,
+          botUsername: b.botUsername,
+          botFirstName: b.botFirstName,
+          // Đã đăng ký nhưng có thể đang tạm dừng (nơi khác nhận tin / token lỗi): giao diện dựa vào đây, không dựa vào việc có trong danh sách
+          polling: state === 'polling',
+          state,
+        };
+      });
       return { success: true, bots };
     } catch (err: any) {
       return { success: false, error: err.message };

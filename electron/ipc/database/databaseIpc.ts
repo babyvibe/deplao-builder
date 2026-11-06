@@ -95,7 +95,8 @@ export function registerDatabaseIpc() {
             const safeLimit = Math.min(Math.max(Math.floor(Number(limit) || 50), 1), 200);
             const safeOffset = Math.max(Math.floor(Number(offset) || 0), 0);
             const safeBefore = Math.max(Math.floor(Number(before) || 0), 0);
-            const messages = DatabaseService.getInstance().getMessages(zaloId, threadId, safeLimit, safeOffset, safeBefore || undefined, topicId);
+            // Đọc trong worker (DatabaseService.getMessagesAsync): ổ đĩa chậm không làm cả app đứng
+            const messages = await DatabaseService.getInstance().getMessagesAsync(zaloId, threadId, safeLimit, safeOffset, safeBefore || undefined, topicId);
             Logger.log(`[databaseIpc] db:getMessages → ${messages.length} msgs (limit=${safeLimit}, cursor=${safeBefore || '-'}, offset=${safeOffset})`);
             return { success: true, messages };
         } catch (error: any) {
@@ -106,7 +107,7 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:getMessagesAround', async (_event, { zaloId, threadId, timestamp, limit = 50 }) => {
         try {
             if (isEmployeeMode()) return { success: true };
-            const messages = DatabaseService.getInstance().getMessagesAround(zaloId, threadId, timestamp, limit);
+            const messages = await DatabaseService.getInstance().getMessagesAroundAsync(zaloId, threadId, timestamp, limit);
             return { success: true, messages };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -146,7 +147,7 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:getContactsFiltered', async (_event, params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; unrepliedOnly?: boolean; fromTs?: number; toTs?: number; contactIds?: string[]; limit?: number; offset?: number }) => {
         try {
             if (isEmployeeMode()) return { success: true, contacts: [] };
-            const contacts = DatabaseService.getInstance().getContactsFiltered(params.zaloId, params);
+            const contacts = await DatabaseService.getInstance().getContactsFilteredAsync(params.zaloId, params);
             return { success: true, contacts };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -176,7 +177,7 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:searchMessages', async (_event, { zaloId, query }) => {
         try {
             if (isEmployeeMode()) return { success: true };
-            const results = DatabaseService.getInstance().searchMessages(zaloId, query);
+            const results = await DatabaseService.getInstance().searchMessagesAsync(zaloId, query);
             return { success: true, results };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -186,13 +187,13 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:getMediaMessages', async (_event, { zaloId, threadId, limit, offset, beforeTs, beforeMsgId, afterTs, afterMsgId }) => {
         try {
             if (isEmployeeMode()) return { success: true };
-            if (!threadId) return { success: true, messages: DatabaseService.getInstance().getAllLocalMediaMessages(zaloId) };
+            if (!threadId) return { success: true, messages: await DatabaseService.getInstance().getAllLocalMediaMessagesAsync(zaloId) };
             // beforeTs/afterTs (+ msgId): keyset page on (timestamp, msg_id) for the image viewer gallery, newest-first.
             // No cursor → the old offset paging (panel Ảnh/Video, Public API), unchanged.
             const cursor = normalizeMediaCursor({ beforeTs, beforeMsgId, afterTs, afterMsgId });
             const messages = cursor
-                ? DatabaseService.getInstance().getMediaMessages(zaloId, threadId, clampMediaPageLimit(limit), 0, cursor)
-                : DatabaseService.getInstance().getMediaMessages(zaloId, threadId, limit ?? 50, offset ?? 0);
+                ? await DatabaseService.getInstance().getMediaMessagesAsync(zaloId, threadId, clampMediaPageLimit(limit), 0, cursor)
+                : await DatabaseService.getInstance().getMediaMessagesAsync(zaloId, threadId, limit ?? 50, offset ?? 0);
             return { success: true, messages };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -202,7 +203,7 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:getFileMessages', async (_event, { zaloId, threadId, limit, offset }) => {
         try {
             if (isEmployeeMode()) return { success: true };
-            const messages = DatabaseService.getInstance().getFileMessages(zaloId, threadId, limit ?? 50, offset ?? 0);
+            const messages = await DatabaseService.getInstance().getFileMessagesAsync(zaloId, threadId, limit ?? 50, offset ?? 0);
             return { success: true, messages };
         } catch (error: any) {
             return { success: false, error: error.message };

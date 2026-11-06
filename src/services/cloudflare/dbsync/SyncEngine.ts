@@ -26,6 +26,10 @@ import {
     parseManifest, rebaseReason, segmentKey, totalSegments,
 } from './Manifest';
 import { SEGMENT_MAX_BYTES, SEGMENT_ROW_LIMIT } from './Segment';
+import {
+    BASE_WAIT_LABEL, BASE_WAIT_RECHECK_MS, BaseWaitReason, BaseWindowInfo, baseWaitReason, isDeferrableRebase, isOptionalRebase,
+} from './baseWindow';
+import { TIME_JUMP_MS } from '../../../utils/startup/systemIdle';
 import type { StateStore, WorkspaceSyncState } from './state';
 import type { LogInput } from './syncLog';
 
@@ -36,6 +40,8 @@ export const START_DELAY_MS = 20_000;
  * "Đồng bộ ngay" và yêu cầu chụp gốc của người dùng (requestBase) không phải chờ.
  */
 export const STARTUP_QUIET_MS = 5 * 60_000;
+/** Nhịp kiểm tra máy có ngủ giữa lúc chụp bản gốc không. */
+const BASE_HEARTBEAT_MS = 10_000;
 export const RECHECK_DELAY_MS = 3_000;
 export const REALTIME_DELAY_MS = 5_000;
 export const HOUR_MS = 3_600_000;
@@ -98,6 +104,10 @@ export interface EngineContext {
     now(): number;
     /** Lúc tiến trình app khởi động (ms). Có → chu kỳ tự động không chạy trước mốc này + STARTUP_QUIET_MS. */
     appStartedAt?(): number;
+    /** Lúc máy thức dậy / mở khoá gần nhất (powerMonitor; 0 = chưa). Chu kỳ tự động chờ như sau khi mở app. */
+    lastWakeAt?(): number;
+    /** Máy có rảnh để tự chụp bản gốc không (baseWindow.ts). Thiếu / null = không biết → chụp ngay như trước. */
+    baseWindow?(): BaseWindowInfo | null;
     /** Một workspaceUid chỉ được một engine dùng (DB sao chép giữa hai workspace → không ghi đè bản sao của nhau). */
     claimUid(uid: string, engineId: string): string | null;
     onBaseDone(engine: SyncEngine, manifest: DbManifest, bucket: string): void;
@@ -236,6 +246,14 @@ export class SyncEngine {
     private progress: DbSyncProgress | null = null;
     private uploadSample: { at: number; sent: number } | null = null;
     private uploadLoggedQuarter = 0;
+    /** Engine tự thấy tiến trình vừa bị đóng băng (hẹn giờ chạy trễ) → coi như máy vừa thức dậy lúc này. */
+    private detectedWakeAt = 0;
+    private maintLastAt = 0;
+    /** Chụp gốc tự phát đang chờ máy rảnh vì lý do gì (baseWindow.ts; null = không chờ) + lý do đã ghi nhật ký. */
+    private baseWaiting: BaseWaitReason | null = null;
+    private baseWaitLogged: string | null = null;
+    /** Lần chụp gốc đang chạy: tự phát thì dừng được khi máy ngủ; stamp = tên file tạm (báo worker dừng). */
+    private baseRun: { automatic: boolean; stamp: number; slept: boolean } | null = null;
 
     constructor(ws: EngineWorkspace, private readonly ctx: EngineContext) {
         this.id = ws.id;
@@ -274,7 +292,8 @@ export class SyncEngine {
         const now = this.ctx.now();
         if (mode === 'realtime') {
             void this.watch();
-            this.maintTimer = setInterval(() => { void this.enqueue('maintenance'); }, MAINTENANCE_MS);
+            this.maintLastAt = now;
+            this.maintTimer = setInterval(() => this.onMaintenanceTick(), MAINTENANCE_MS);
             (this.maintTimer as any)?.unref?.();
             this.scheduleAt(now + firstDelayMs);
         } else {
@@ -369,6 +388,21 @@ export class SyncEngine {
         this.scheduleAt(this.ctx.now() + REALTIME_DELAY_MS);
     }
 
+    /**
+     * Máy sắp ngủ / vừa thức dậy / vừa mở khoá (powerMonitor qua index.ts, hoặc engine tự thấy hẹn giờ chạy trễ).
+     * Chụp gốc tự phát đang chạy mà máy ngủ → dừng ở bước kế (worker dừng nén), không chạy nốt đúng lúc người dùng quay
+     * lại; chụp lại khi máy rảnh. Mở khoá thì không dừng (máy vẫn thức), chỉ dời lần chụp sau.
+     */
+    onPowerEvent(ev: 'suspend' | 'resume' | 'unlock', at = this.ctx.now()): void {
+        if (ev !== 'suspend') this.detectedWakeAt = Math.max(this.detectedWakeAt, at);
+        const run = this.baseRun;
+        if (ev === 'unlock' || !run || !run.automatic || run.slept) return;
+        run.slept = true;
+        this.baseWaiting = 'wake';
+        this.ctx.log('log', `[CloudDb] ${this.id}: máy ${ev === 'suspend' ? 'sắp ngủ' : 'vừa ngủ dậy'} giữa lúc chụp bản gốc → dừng, chụp lại khi máy rảnh`);
+        void this.ctx.ops.call('cancelSnapshot', { dbPath: this.dbPath, stamp: run.stamp }).catch(() => undefined);
+    }
+
     // ─── Trạng thái / nhật ký ─────────────────────────────────────────────────
 
     view(): DbSyncWorkspaceStatus {
@@ -389,6 +423,7 @@ export class SyncEngine {
             lastError: this.st.lastError,
             scope: this.currentScope(),
             progress: this.progress ? { ...this.progress, retry: this.progress.retry ? { ...this.progress.retry } : null } : null,
+            baseWaiting: this.baseWaiting,
         };
     }
 
@@ -555,20 +590,50 @@ export class SyncEngine {
         }
     }
 
+    /** Mốc mở app / máy thức dậy / mở khoá gần nhất (0 = không biết). */
+    private wakeAt(): number {
+        return Math.max(this.ctx.appStartedAt?.() || 0, this.ctx.lastWakeAt?.() || 0, this.detectedWakeAt);
+    }
+
     private scheduleAt(ts: number): void {
         if (this.stopped || this.paused || this.ctx.mode() === 'off') return;
-        // Chu kỳ tự động (hẹn giờ, Realtime) chờ hết STARTUP_QUIET_MS sau khi mở app; chụp gốc do người dùng yêu cầu thì không.
-        const quietUntil = !this.forceBaseReason && this.ctx.appStartedAt ? this.ctx.appStartedAt() + STARTUP_QUIET_MS : 0;
+        // Chu kỳ tự động (hẹn giờ, Realtime) chờ hết STARTUP_QUIET_MS sau khi mở app / máy thức dậy / mở khoá; chụp gốc do
+        // người dùng yêu cầu thì không.
+        const wake = this.forceBaseReason ? 0 : this.wakeAt();
+        const quietUntil = wake ? wake + STARTUP_QUIET_MS : 0;
         const at = Math.max(ts, this.backoffUntil, quietUntil);
         if (this.timer && this.timerAt <= at) return; // đã có lịch sớm hơn
         if (this.timer) clearTimeout(this.timer);
         this.timerAt = at;
         this.timer = setTimeout(() => {
+            const now = this.ctx.now();
+            const late = now - this.timerAt;
             this.timer = null;
             this.timerAt = 0;
+            // Đến hạn trong lúc máy ngủ → chạy ngay khi máy vừa thức: coi như máy vừa thức dậy lúc này.
+            if (late > TIME_JUMP_MS && !this.forceBaseReason) this.onPowerEvent('resume', now);
+            // Hẹn từ trước khi máy thức dậy / mở khoá: chưa chạy, dời tới hết khoảng yên lặng.
+            const wake = this.forceBaseReason ? 0 : this.wakeAt();
+            if (wake && now < wake + STARTUP_QUIET_MS) {
+                this.scheduleAt(now);
+                return;
+            }
             void this.enqueue('timer');
         }, Math.max(0, at - this.ctx.now()));
         (this.timer as any)?.unref?.();
+    }
+
+    /** Realtime: chu kỳ bảo trì 15 phút (bắt thay đổi sót, chụp gốc định kỳ); vừa thức dậy thì chờ như hẹn giờ. */
+    private onMaintenanceTick(): void {
+        const now = this.ctx.now();
+        if (this.maintLastAt && now - this.maintLastAt > MAINTENANCE_MS + TIME_JUMP_MS) this.onPowerEvent('resume', now);
+        this.maintLastAt = now;
+        const wake = this.wakeAt();
+        if (wake && now < wake + STARTUP_QUIET_MS) {
+            this.scheduleAt(now); // dời tới hết khoảng yên lặng
+            return;
+        }
+        void this.enqueue('maintenance');
     }
 
     private async watch(): Promise<void> {
@@ -713,6 +778,8 @@ export class SyncEngine {
             }
             const lastPushedId = Math.max(this.st.lastAckedId || 0, manifest?.segments.length ? manifest.segments[manifest.segments.length - 1].toId : 0, manifest?.base?.highWater || 0);
             let rebase: string | null = this.forceBaseReason
+                // Gốc bắt buộc đã hoãn chờ máy rảnh: dấu hiệu như trigger vừa cài lại chỉ có ở chu kỳ phát hiện → nhớ trong state
+                || this.st.pendingBase
                 || (t.reinstalled ? 'tracking' : null)
                 || (this.st.dbPath && !samePath(this.st.dbPath, this.dbPath) ? 'db-path' : null)
                 || (t.dirtySeq < lastPushedId ? 'older-db' : null)
@@ -720,9 +787,16 @@ export class SyncEngine {
                 || rebaseReason(manifest, { now: this.ctx.now(), fingerprint: t.fingerprint, dbUid: t.dbUid, scope });
             if (!rebase && manifest && !(await this.chainPassOk(manifest, passphrase))) rebase = 'passphrase';
 
+            // Chụp gốc tự phát (tuổi, đoạn lớn, đổi schema…) chờ máy rảnh (baseWindow.ts); gốc định kỳ thì lúc chờ vẫn đẩy
+            // đoạn thay đổi lên gốc cũ. Người dùng yêu cầu ("Đồng bộ ngay", đổi phạm vi / kho / mật khẩu) thì không chờ.
+            // t.created: vừa bật đồng bộ trên DB này → bản gốc đầu tiên chạy luôn.
+            const automatic = reason !== 'manual' && !this.forceBaseReason && !t.created;
+            this.baseWaiting = null;
+            const waitBase = (why: string) => automatic && this.mustWaitForBase(why);
+            if (rebase && isOptionalRebase(rebase) && waitBase(rebase)) rebase = null;
             if (!rebase) {
                 const stats = await this.ctx.ops.call<DirtyStats>('dirtyStats', { dbPath: this.dbPath });
-                if (stats.count > REBASE_DIRTY_ROWS) {
+                if (stats.count > REBASE_DIRTY_ROWS && !waitBase('bulk')) {
                     rebase = 'bulk';
                 } else if (stats.count > 0) {
                     const res = await this.pushSegments(r2, manifest as DbManifest, passphrase, stats.count, scope);
@@ -732,15 +806,25 @@ export class SyncEngine {
                     rebase = res.rebase;
                 }
             }
+            // Gốc bắt buộc tự phát (đổi schema…) cũng chờ, tối đa 6 giờ: lúc chờ thay đổi nằm trong DB, chưa đẩy được.
+            if (rebase && !isOptionalRebase(rebase) && waitBase(rebase)) {
+                if (this.st.pendingBase !== rebase) {
+                    this.st.pendingBase = rebase;
+                    this.ctx.state.save();
+                }
+                rebase = null;
+            }
+            if (!rebase && !this.baseWaiting) this.clearBaseWait();
             if (rebase) {
                 this.checkRunnable();
                 kind = 'base';
                 this.ctx.log('log', `[CloudDb] ${this.id}: chụp bản gốc mới (${rebase}, phạm vi: ${describeScope(scope)})`);
-                const b = await this.makeBase(r2, bucket, passphrase, t, rebase, scope);
+                const b = await this.makeBase(r2, bucket, passphrase, t, rebase, scope, automatic);
                 pushes += 1;
                 rows += b.rows;
                 bytes += b.bytes;
                 baseDone = true;
+                this.clearBaseWait();
             }
 
             // Thành công
@@ -796,6 +880,40 @@ export class SyncEngine {
         else this.ctx.notify();
     }
 
+    /**
+     * Chụp gốc tự phát có phải chờ máy rảnh không (baseWindow.ts). Ghi lúc bắt đầu cần chụp (vào state: mức chờ tối đa
+     * tính qua các lần mở app) + nhật ký một dòng mỗi lần đổi lý do. true = chưa chụp lần này.
+     */
+    private mustWaitForBase(rebase: string): boolean {
+        if (!isDeferrableRebase(rebase)) return false;
+        const now = this.ctx.now();
+        if (!this.st.baseDueSince) {
+            this.st.baseDueSince = now;
+            this.ctx.state.save();
+        }
+        let window: BaseWindowInfo | null = null;
+        try { window = this.ctx.baseWindow?.() ?? null; } catch { window = null; }
+        const wait = baseWaitReason({ reason: rebase, dueSince: this.st.baseDueSince, now, lastWakeAt: this.wakeAt(), window });
+        if (!wait) return false;
+        const key = `${rebase}:${wait}`;
+        if (key !== this.baseWaitLogged) {
+            this.baseWaitLogged = key;
+            this.ctx.log('log', `[CloudDb] ${this.id}: chờ máy rảnh mới chụp bản gốc (${rebase}; ${BASE_WAIT_LABEL[wait]})`);
+        }
+        this.baseWaiting = wait;
+        return true;
+    }
+
+    private clearBaseWait(): void {
+        this.baseWaiting = null;
+        this.baseWaitLogged = null;
+        if (this.st.baseDueSince || this.st.pendingBase) {
+            this.st.baseDueSince = 0;
+            this.st.pendingBase = null;
+            this.ctx.state.save();
+        }
+    }
+
     private reschedule(): void {
         if (this.stopped || this.paused) return;
         const mode = this.ctx.mode();
@@ -805,8 +923,10 @@ export class SyncEngine {
             this.scheduleAt(this.backoffUntil);
             return;
         }
-        if (mode === 'hourly') this.scheduleAt(now + HOUR_MS);
-        else void this.rearm();
+        // Đang chờ máy rảnh để chụp gốc: kiểm lại sớm (khoảng rảnh của người dùng có thể ngắn)
+        if (this.baseWaiting) this.scheduleAt(now + BASE_WAIT_RECHECK_MS);
+        else if (mode === 'hourly') this.scheduleAt(now + HOUR_MS);
+        if (mode !== 'hourly') void this.rearm();
     }
 
     // ─── Đoạn thay đổi ────────────────────────────────────────────────────────
@@ -878,8 +998,28 @@ export class SyncEngine {
         try { await fs.promises.rm(this.tmpDir(), { recursive: true, force: true }); } catch { /* bỏ qua */ }
     }
 
+    /**
+     * Đánh dấu lần chụp gốc đang chạy + nhịp kiểm tra máy ngủ (khoảng giữa hai nhịp > TIME_JUMP_MS = tiến trình bị đóng
+     * băng → onPowerEvent dừng lần chụp tự phát). Trả hàm kết thúc.
+     */
+    private beginBaseRun(run: { automatic: boolean; stamp: number; slept: boolean }): () => void {
+        this.baseRun = run;
+        let beat = this.ctx.now();
+        const heartbeat = setInterval(() => {
+            const now = this.ctx.now();
+            if (now - beat > TIME_JUMP_MS) this.onPowerEvent('resume', now);
+            beat = now;
+        }, BASE_HEARTBEAT_MS);
+        (heartbeat as any)?.unref?.();
+        return () => {
+            clearInterval(heartbeat);
+            if (this.baseRun === run) this.baseRun = null;
+        };
+    }
+
     private async makeBase(
         r2: R2Client, bucket: string, passphrase: string, t: TrackingInfo, reason: string, scope: CloudScope = ALL_SCOPE,
+        automatic = false,
     ): Promise<{ rows: number; bytes: number }> {
         return this.ctx.baseLock.run(async () => {
             this.checkRunnable();
@@ -899,6 +1039,14 @@ export class SyncEngine {
                 });
             }, 1000);
             (copyPoll as any)?.unref?.();
+            // Chụp tự phát mà máy ngủ giữa chừng (Modern Standby đánh thức vài giây ban đêm, máy tự ngủ khi rảnh): dừng ở
+            // bước kế thay vì chạy nốt đúng lúc người dùng quay lại.
+            const run = { automatic, stamp: at, slept: false };
+            const endRun = this.beginBaseRun(run);
+            const checkAwake = () => {
+                this.checkRunnable();
+                if (run.slept) throw new AbortJob('Máy ngủ giữa lúc chụp bản gốc');
+            };
             let snap: any;
             try {
                 // Lọc theo phạm vi làm trong worker, trên bản sao vừa backup (không đụng DB sống).
@@ -906,13 +1054,15 @@ export class SyncEngine {
             } catch (err) {
                 this.progress = null;
                 this.ctx.notify();
+                endRun();
+                if (run.slept) throw new AbortJob('Máy ngủ giữa lúc chụp bản gốc');
                 throw err;
             } finally {
                 clearInterval(copyPoll);
             }
             const encPath = `${snap.gzPath}.dplc`;
             try {
-                this.checkRunnable();
+                checkAwake();
                 const gzBytes = Number(snap.gzBytes) || (await fileSize(snap.gzPath));
                 this.setProgress('encrypt', 0, gzBytes);
                 const encPoll = setInterval(() => {
@@ -928,6 +1078,7 @@ export class SyncEngine {
                     clearInterval(encPoll);
                 }
                 await removeQuietly(snap.gzPath);
+                checkAwake();
                 const passCheck = (await readHead(encPath, 64)).toString('base64');
                 const uid = t.workspaceUid as string;
                 const key = baseKey(uid, at);
@@ -979,6 +1130,7 @@ export class SyncEngine {
                 const rows = Object.values<number>(snap.rowCounts || {}).reduce((s2, n) => s2 + (Number(n) || 0), 0);
                 return { rows, bytes: enc.bytes };
             } finally {
+                endRun();
                 this.progress = null;
                 this.uploadSample = null;
                 this.ctx.notify();

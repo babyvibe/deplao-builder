@@ -13,6 +13,7 @@ import IntegrationRegistry from '../integrations/IntegrationRegistry';
 import Logger from '../../utils/Logger';
 import { requestAICompletion } from './AIProviderAdapter';
 import { normalizeAIModel } from '../../shared/ai/aiModelCatalog';
+import { normalizeSuggestionCount, parseSuggestionResult, suggestionSystemPrompt } from '../../shared/ai/replySuggestions';
 import type { AIAssistant, AIAssistantFile, ChatMessage, AIPlatform } from '../../models';
 
 // ─── Encryption helpers ───────────────────────────────────────────────────────
@@ -380,31 +381,19 @@ VÍ DỤ ĐẦU RA ĐÚNG:
   // ─── Public AI methods ──────────────────────────────────────────────────
 
   /**
-   * Generate chat suggestions based on recent chat history
+   * Gợi ý câu trả lời từ lịch sử hội thoại. `count` = số câu (1..5; ô soạn tin mặc định 3 — cài ở menu Gợi ý AI);
+   * không truyền (API, nhân viên bản cũ) = 5 như trước.
    */
-  public async getSuggestions(assistantId: string, chatHistory: Array<{ role: string; content: string }>): Promise<string[]> {
+  public async getSuggestions(assistantId: string, chatHistory: Array<{ role: string; content: string }>, count?: number): Promise<string[]> {
     const assistant = this.getAssistant(assistantId);
     if (!assistant || !assistant.enabled) return [];
 
+    const wanted = normalizeSuggestionCount(count);
     const contextCount = assistant.contextMessageCount || 30;
     // KHÔNG dùng buildSystemPrompt() ở đây vì assistant system prompt có thể lấn át
     // instruction suggest (đặc biệt với model FREE). Chỉ dùng instruction thuần.
     const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: `Bạn là trợ lý gợi ý tin nhắn cho người bán hàng / chăm sóc khách hàng.
-
-NHIỆM VỤ: Dựa vào lịch sử hội thoại bên dưới, hãy gợi ý ĐÚNG 5 câu trả lời ngắn gọn, tự nhiên, phù hợp nhất.
-
-YÊU CẦU BẮT BUỘC:
-- Trả về JSON array gồm ĐÚNG 5 string, KHÔNG thêm text nào khác
-- Mỗi câu phải ngắn gọn (dưới 100 ký tự), tự nhiên như chat thật
-- Câu gợi ý phải khớp ngữ cảnh cuộc hội thoại
-- KHÔNG giải thích, KHÔNG thêm markdown, KHÔNG thêm lời chào dư thừa
-
-ĐỊNH DẠNG CHUẨN (chỉ trả về đúng format này, không thêm gì khác):
-["Câu gợi ý 1","Câu gợi ý 2","Câu gợi ý 3","Câu gợi ý 4","Câu gợi ý 5"]`
-      },
+      { role: 'system', content: suggestionSystemPrompt(wanted) },
       ...chatHistory.slice(-contextCount).map(m => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
@@ -414,42 +403,9 @@ YÊU CẦU BẮT BUỘC:
     try {
       const { result } = await this.callLLM(assistant, messages, 1000);
       Logger.info(`[AIAssistant] getSuggestions raw result: ${result}`);
-
-      // Try parsing as JSON array first (preferred format)
-      let suggestions: string[] = [];
-      try {
-        // Extract JSON array from response (may have surrounding text)
-        const jsonMatch = result.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (Array.isArray(parsed)) {
-            suggestions = parsed.map((s: any) => String(s).trim()).filter(s => s.length > 0);
-          }
-        }
-      } catch {
-        // Fallback: split by newlines and clean up numbering/bullets
-        Logger.info(`[AIAssistant] getSuggestions JSON parse failed, falling back to line split`);
-        suggestions = result
-          .split('\n')
-          .map(s => s.trim())
-          .map(s => s.replace(/^[\d]+[.):\-]\s*/, ''))  // remove numbering like "1. ", "1) ", "1- "
-          .map(s => s.replace(/^[-•*]\s*/, ''))          // remove bullets like "- ", "• ", "* "
-          .map(s => s.replace(/^["']|["']$/g, ''))       // remove surrounding quotes
-          .map(s => s.trim())
-          .filter(s => s.length > 0);
-
-        // Fallback #2: nếu line-split không ra (vd text 1 đoạn), thử split theo câu
-        if (suggestions.length === 0 && result.length > 20) {
-          suggestions = result
-            .split(/[.!?]\s*/)
-            .map(s => s.trim())
-            .filter(s => s.length > 20)
-            .slice(0, 5);
-        }
-      }
-
-      Logger.info(`[AIAssistant] getSuggestions parsed ${suggestions.length} suggestions: ${JSON.stringify(suggestions)}`);
-      return suggestions.slice(0, 5);
+      const suggestions = parseSuggestionResult(result, wanted);
+      Logger.info(`[AIAssistant] getSuggestions parsed ${suggestions.length}/${wanted} suggestions: ${JSON.stringify(suggestions)}`);
+      return suggestions;
     } catch (e: any) {
       Logger.error(`[AIAssistant] getSuggestions error: ${e.message}`);
       return [];

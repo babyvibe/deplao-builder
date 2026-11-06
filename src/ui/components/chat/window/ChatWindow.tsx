@@ -79,7 +79,7 @@ export default function ChatWindow() {
     contextMenu, setContextMenu, forwardMsgs, setForwardMsgs, erpDraft, setErpDraft,
     reactionPopup, setReactionPopup, reactionContextMenu, setReactionContextMenu,
     userProfilePopup, setUserProfilePopup, manageGroupOpen, setManageGroupOpen,
-    noteModal, setNoteModal, webviewModal, setWebviewModal,
+    noteModal, setNoteModal,
   } = dialogs;
   const {
     failedMsgAvatars, setFailedMsgAvatars, avatarRefreshAttempted,
@@ -159,7 +159,7 @@ export default function ChatWindow() {
     failedMsgAvatars, setFailedMsgAvatars, avatarRefreshAttempted,
     revealedRecallIds, setRevealedRecallIds, revealedEditIds, setRevealedEditIds,
     isSelecting, selectedMsgIds, setSelectedMsgIds, dragSelectRef, clickSuppressUntilRef,
-    setContextMenu, setErpDraft, setManageGroupOpen, setReactionPopup, setUserProfilePopup, setWebviewModal,
+    setContextMenu, setErpDraft, setManageGroupOpen, setReactionPopup, setUserProfilePopup,
     openViewer, openImageList, openVideoPlayer,
     handleReact, handleCancelReaction, handleScrollToMsg,
     telegramReactions, reactionPickerMsgId, openReactionPicker, armReactionPicker,

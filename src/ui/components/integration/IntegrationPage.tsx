@@ -360,7 +360,7 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
 
 /**
  * Địa chỉ nhận webhook thanh toán / tích hợp (cổng 9888) — CHỈ XEM. Bật / tắt / đổi địa chỉ ở
- * Cài đặt → Internet & Đám mây → Địa chỉ Internet.
+ * Cài đặt → Internet & Cloud → Địa chỉ Internet.
  */
 function WebhookAddressCard({ webhookPort, tunnelUrl, savedList }: {
   webhookPort: number;
@@ -398,7 +398,7 @@ function WebhookAddressCard({ webhookPort, tunnelUrl, savedList }: {
           “Khi phần mềm bán hàng gửi webhook” (cần đặt khoá xác thực webhook trong trang tích hợp). Đơn vị vận chuyển không gửi
           dữ liệu vào đây — Deplao tự hỏi khi bạn tra cứu. Chỉ chạy khi Deplao đang mở.
           {!pub.serverManaged && (
-            <> Bật, tắt hoặc đổi địa chỉ ở <strong className="text-foreground">Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet</strong>.</>
+            <> Bật, tắt hoặc đổi địa chỉ ở <strong className="text-foreground">Cài đặt → Internet &amp; Cloud → Địa chỉ Internet</strong>.</>
           )}
         </p>
       </div>
@@ -416,7 +416,7 @@ function WebhookAddressCard({ webhookPort, tunnelUrl, savedList }: {
             <AlertIcon className="inline h-4 w-4 text-warning" /> Đã kết nối {receivers.join(', ')} nhưng chưa bật địa chỉ nhận
           </p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Webhook chưa vào được Deplao (thanh toán tự động, workflow theo webhook chưa chạy). Bật ở Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet.
+            Webhook chưa vào được Deplao (thanh toán tự động, workflow theo webhook chưa chạy). Bật ở Cài đặt → Internet &amp; Cloud → Địa chỉ Internet.
           </p>
         </div>
       )}
@@ -520,7 +520,7 @@ export default function IntegrationPage() {
   const [selectedDetail, setSelectedDetail] = useState<{ catalogItem: CatalogItem; saved?: SavedIntegration } | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('all');
   const [webhookPort, setWebhookPort] = useState<number>(9888);
-  // Địa chỉ nhận webhook đang chạy (chỉ đọc) — bật / tắt ở Cài đặt → Internet & Đám mây → Địa chỉ Internet
+  // Địa chỉ nhận webhook đang chạy (chỉ đọc) — bật / tắt ở Cài đặt → Internet & Cloud → Địa chỉ Internet
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -669,7 +669,7 @@ export default function IntegrationPage() {
 // ─── Top Navigation Bar ───────────────────────────────────────────────────────
 
 /**
- * Trạng thái địa chỉ nhận webhook (một dòng, chỉ xem). Bấm → Cài đặt → Internet & Đám mây → Địa chỉ Internet;
+ * Trạng thái địa chỉ nhận webhook (một dòng, chỉ xem). Bấm → Cài đặt → Internet & Cloud → Địa chỉ Internet;
  * máy nhân viên không hiện, bản app không có module Cloudflare thì chỉ hiện chữ.
  */
 function WebhookStatusPill({ tunnelUrl }: { tunnelUrl: string | null }) {
@@ -692,7 +692,7 @@ function WebhookStatusPill({ tunnelUrl }: { tunnelUrl: string | null }) {
       type="button"
       onClick={() => navigateSettings('cloud', 'address')}
       className={cn(className, 'transition-colors hover:bg-muted hover:text-foreground')}
-      title={url ? `${url} — đổi ở Cài đặt → Internet & Đám mây` : 'Bật ở Cài đặt → Internet & Đám mây → Địa chỉ Internet'}
+      title={url ? `${url} — đổi ở Cài đặt → Internet & Cloud` : 'Bật ở Cài đặt → Internet & Cloud → Địa chỉ Internet'}
     >
       {content}
     </button>
@@ -713,7 +713,7 @@ function TopBar({ activeTab, onTabChange, tunnelUrl }: {
             <h1 className="text-base font-semibold text-foreground"><PluginIcon className="w-4 h-4 inline" /> Tích hợp</h1>
             <p className="text-[11px] text-muted-foreground">Kết nối nền tảng bên ngoài</p>
           </div>
-          {/* Địa chỉ nhận webhook — chỉ xem, bật / tắt ở Cài đặt → Internet & Đám mây */}
+          {/* Địa chỉ nhận webhook — chỉ xem, bật / tắt ở Cài đặt → Internet & Cloud */}
           <WebhookStatusPill tunnelUrl={tunnelUrl} />
         </div>
 

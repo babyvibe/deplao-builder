@@ -21,6 +21,7 @@ import DataAccessor, {
 } from '@/lib/data/DataAccessor';
 import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import ipc from '@/lib/ipc';
+import { openChatLink } from '@/lib/chat/links/chatLinks';
 import { Spinner } from '@/components/common/PageLoading';
 import { Button } from '@/components/ui';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
@@ -925,7 +926,7 @@ function LinkRow({ link }: { link: any }) {
   const dateStr = new Date(link.timestamp).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' });
   return (
     <div className="flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors group/link cursor-pointer"
-      onClick={() => link.url && ipc.shell?.openExternal(link.url)}
+      onClick={() => link.url && openChatLink(link.url)}
       title={link.url}
     >
       {/* Thumbnail */}

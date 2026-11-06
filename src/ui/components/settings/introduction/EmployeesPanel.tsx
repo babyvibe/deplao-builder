@@ -2,16 +2,16 @@ import React from 'react';
 import { BotIcon, ChartIcon, ChatIcon, ClipboardListIcon, CrownIcon, FolderIcon, GlobeIcon, HomeIcon, LightningIcon, LinkIcon, LockIcon, RefreshIcon, SettingsIcon, SmartphoneIcon, TrendingUpIcon, UsersIcon } from '@/components/common/icons';
 import { Badge, BulletList, Card, Paragraph, SectionTitle, StepList } from './introUi';
 
-/** Các module trong "Quyền truy cập module" (Cài đặt → Nhân viên → Thêm / Sửa nhân viên). */
+/** Các mục ở dòng "Quyền dùng" (Cài đặt → Nhân viên, dưới tên mỗi nhân viên; cùng tên với EMPLOYEE_MODULES). */
 const MODULES = [
-  { icon: <ChatIcon className="w-4 h-4" />, mod: 'Chat', desc: 'Gửi / nhận tin nhắn' },
-  { icon: <UsersIcon className="w-4 h-4" />, mod: 'Bạn bè', desc: 'Danh sách bạn bè, liên hệ' },
-  { icon: <ChartIcon className="w-4 h-4" />, mod: 'CRM', desc: 'Khách hàng, nhãn, chiến dịch' },
-  { icon: <ClipboardListIcon className="w-4 h-4" />, mod: 'ERP', desc: 'Quản lý công việc' },
-  { icon: <LightningIcon className="w-4 h-4" />, mod: 'Workflow', desc: 'Tự động hoá' },
+  { icon: <ChatIcon className="w-4 h-4" />, mod: 'Tin nhắn', desc: 'Đọc, trả lời tin' },
+  { icon: <UsersIcon className="w-4 h-4" />, mod: 'Bạn bè', desc: 'Danh bạ, lời mời kết bạn' },
+  { icon: <ChartIcon className="w-4 h-4" />, mod: 'Khách hàng', desc: 'CRM, nhãn, chiến dịch' },
+  { icon: <ClipboardListIcon className="w-4 h-4" />, mod: 'Công việc', desc: 'Việc, lịch, ghi chú' },
+  { icon: <LightningIcon className="w-4 h-4" />, mod: 'Tự động hoá', desc: 'Workflow' },
   { icon: <LinkIcon className="w-4 h-4" />, mod: 'Tích hợp', desc: 'POS, vận chuyển, thanh toán' },
-  { icon: <TrendingUpIcon className="w-4 h-4" />, mod: 'Thống kê', desc: 'Trang Báo cáo' },
-  { icon: <BotIcon className="w-4 h-4" />, mod: 'AI', desc: 'Trợ lý AI' },
+  { icon: <TrendingUpIcon className="w-4 h-4" />, mod: 'Báo cáo', desc: 'Thống kê' },
+  { icon: <BotIcon className="w-4 h-4" />, mod: 'Trợ lý AI', desc: 'Gợi ý, trả lời tự động' },
 ];
 
 export function EmployeesPanel() {
@@ -55,6 +55,7 @@ export function EmployeesPanel() {
         <BulletList items={[
           '<strong class="text-foreground">Không sao chép cả dữ liệu:</strong> máy nhân viên đọc hội thoại, tin nhắn, khách hàng trực tiếp từ máy Boss khi cần; chỉ giữ bộ nhớ đệm ảnh / file (tự dọn khi quá 2 GB, xem ở Cài đặt → Lưu trữ).',
           '<strong class="text-foreground">Realtime hai chiều:</strong> tin mới, tin sửa, thu hồi / xoá và cảm xúc hiện ngay trên cả máy Boss lẫn máy nhân viên.',
+          '<strong class="text-foreground">Ảnh lấy từ máy Boss:</strong> ảnh Zalo máy Boss chưa lưu (tin đồng bộ lịch sử, Boss tắt máy lúc nhận) thì Boss tự tải về khi nhân viên mở xem, link Zalo hết hạn vẫn còn ảnh.',
           '<strong class="text-foreground">Zalo, Facebook, Telegram đều chạy qua máy Boss:</strong> nhân viên gửi tin, thả cảm xúc, thao tác nhóm… như bình thường; thêm, đăng nhập lại hay xoá tài khoản chỉ làm trên máy Boss.',
           '<strong class="text-foreground">Biết ai đã trả lời:</strong> tin do nhân viên gửi có ảnh đại diện nhỏ của nhân viên bên cạnh (rê chuột để xem "Gửi bởi: …").',
         ]} />
@@ -65,15 +66,15 @@ export function EmployeesPanel() {
         <StepList steps={[
           {
             title: 'Boss tạo tài khoản nhân viên',
-            desc: 'Vào <strong class="text-foreground">Cài đặt → Nhân viên → Thêm nhân viên</strong>: nhập tên đăng nhập, mật khẩu, tên hiển thị (ảnh đại diện, nhóm là tuỳ chọn), tick các module được dùng và các tài khoản nhân viên phụ trách → <strong class="text-foreground">Tạo nhân viên</strong>.',
+            desc: 'Vào <strong class="text-foreground">Cài đặt → Nhân viên → Thêm nhân viên</strong>: nhập tên hiển thị (tên đăng nhập tự gợi ý, mật khẩu tạo sẵn), chọn tài khoản chat và mục được dùng → <strong class="text-foreground">Tạo nhân viên</strong>. Bấm <strong class="text-foreground">Sao chép</strong> để gửi thông tin đăng nhập cho nhân viên.',
           },
           {
-            title: 'Boss bật kết nối LAN',
-            desc: 'Cùng trang, tab <strong class="text-foreground">Kết nối</strong> → ô "Kết nối LAN": giữ cổng mặc định 9900 → <strong class="text-foreground">Bật</strong>, bật thêm "Tự động bật khi mở app". Mục "Địa chỉ kết nối" hiện địa chỉ dạng 192.168.1.10:9900 để gửi cho nhân viên cùng mạng.',
+            title: 'Boss bật kết nối',
+            desc: 'Cùng trang, mục <strong class="text-foreground">Kết nối</strong>: bật <strong class="text-foreground">Cho nhân viên kết nối</strong> và "Tự bật khi mở app". Dòng "Cùng mạng (LAN)" hiện địa chỉ dạng 192.168.1.10:9900, bấm vào để sao chép gửi nhân viên cùng mạng.',
           },
           {
             title: '(Tuỳ chọn) Mở cho nhân viên ở xa',
-            desc: 'Vào <strong class="text-foreground">Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet</strong>, chọn cách tạo địa chỉ, bật dòng <strong class="text-foreground">Nhân viên và API</strong> rồi sao chép địa chỉ (https://…) gửi cho nhân viên. Kết nối LAN ở bước 2 vẫn phải bật.',
+            desc: 'Vào <strong class="text-foreground">Cài đặt → Internet &amp; Cloud → Địa chỉ Internet</strong>, chọn cách tạo địa chỉ, bật dòng <strong class="text-foreground">Nhân viên và API</strong>. Địa chỉ (https://…) hiện ở dòng "Qua Internet" của mục Kết nối. Công tắc ở bước 2 vẫn phải bật.',
           },
           {
             title: 'Nhân viên đăng nhập',
@@ -85,8 +86,8 @@ export function EmployeesPanel() {
           },
         ]} />
         <Paragraph>
-          Mẹo: đầu trang Cài đặt → Nhân viên có công tắc <strong className="text-foreground">LAN</strong> bật / tắt nhanh, trạng thái WAN và số nhân viên đang online.
-          Nút <strong className="text-foreground">Nhóm</strong> giúp chia nhân viên theo nhóm (VD: CSKH, Kho).
+          Mẹo: mỗi nhân viên là một thẻ; bấm dòng <strong className="text-foreground">Tài khoản chat</strong>, <strong className="text-foreground">Quyền dùng</strong>, <strong className="text-foreground">Nhóm</strong> hay <strong className="text-foreground">Hồ sơ &amp; mật khẩu</strong> ngay dưới tên để sửa tại chỗ.
+          Giả lập, đăng xuất, khoá, xoá nằm ở nút <strong className="text-foreground">⋯</strong>. Nhóm (VD: CSKH, Kho) chọn hoặc tạo nhanh ngay lúc thêm nhân viên, hoặc ở dòng <strong className="text-foreground">Nhóm</strong> của từng người (đổi tên, xoá nhóm cũng ở đó).
         </Paragraph>
       </Card>
 
@@ -102,7 +103,7 @@ export function EmployeesPanel() {
             {
               icon: <GlobeIcon className="w-4 h-4" />,
               mode: 'Internet — làm việc từ xa',
-              desc: 'Không cần mở cổng router, IP tĩnh hay VPS. Địa chỉ chỉ được tạo và bật / tắt ở Cài đặt → Internet & Đám mây → Địa chỉ Internet; tab Kết nối chỉ hiển thị lại.',
+              desc: 'Không cần mở cổng router, IP tĩnh hay VPS. Địa chỉ chỉ được tạo và bật / tắt ở Cài đặt → Internet & Cloud → Địa chỉ Internet; trang Nhân viên chỉ hiển thị lại.',
             },
           ].map((m, i) => (
             <div key={i} className="bg-muted rounded-lg p-3 space-y-1">
@@ -115,7 +116,7 @@ export function EmployeesPanel() {
           '<strong class="text-foreground">Địa chỉ tạm:</strong> không cần tài khoản nhưng đổi mỗi lần khởi động lại — phải gửi lại cho nhân viên. Chỉ nên dùng thử.',
           '<strong class="text-foreground">Cloudflare tự động (khuyên dùng):</strong> kết nối tài khoản Cloudflare có tên miền (gói Free là đủ) để có địa chỉ cố định; nhân viên chỉ cần nhập một lần.',
           '<strong class="text-foreground">ngrok / Cloudflare thủ công:</strong> dùng tài khoản ngrok hoặc tunnel Cloudflare do bạn tự quản lý.',
-          'Khi địa chỉ đổi, tab Kết nối hiện thông báo <strong class="text-foreground">"Địa chỉ cho nhân viên đã đổi"</strong> kèm nút Sao chép. Nhân viên đang nối qua LAN được báo và tự chuyển; nhân viên ở xa dán địa chỉ mới vào ô <strong class="text-foreground">Kết nối lại</strong> trên thanh tiêu đề.',
+          'Khi địa chỉ đổi, trang Nhân viên hiện thông báo <strong class="text-foreground">"Địa chỉ cho nhân viên đã đổi"</strong> kèm nút Sao chép. Nhân viên đang nối qua LAN được báo và tự chuyển; nhân viên ở xa dán địa chỉ mới vào ô <strong class="text-foreground">Kết nối lại</strong> trên thanh tiêu đề.',
         ]} />
       </Card>
 
@@ -125,14 +126,14 @@ export function EmployeesPanel() {
           'Mất mạng hoặc máy Boss khởi động lại: máy nhân viên tự kết nối lại và <strong class="text-foreground">nhận bù các sự kiện bị lỡ</strong>; trong lúc chờ vẫn giữ dữ liệu đang xem (thanh tiêu đề báo "Đang khôi phục…" hoặc "Offline").',
           'Địa chỉ tạm của Boss đã đổi: bấm <strong class="text-foreground">Kết nối lại</strong> → dán địa chỉ mới → "Kết nối địa chỉ mới", không cần nhập lại mật khẩu. Nếu Boss vừa báo địa chỉ mới, chỉ cần bấm <strong class="text-foreground">Dùng</strong>.',
           'Phiên đăng nhập của nhân viên có hạn 7 ngày; hết hạn hoặc bị thu hồi thì bấm Kết nối lại và nhập mật khẩu.',
-          'Máy Boss phải mở Deplao và có Internet. Bật "Tự động bật khi mở app" (tab Kết nối) để nhân viên tự nối lại ngay khi Boss mở app.',
+          'Máy Boss phải mở Deplao và có Internet. Bật "Tự bật khi mở app" (mục Kết nối) để nhân viên tự nối lại ngay khi Boss mở app.',
         ]} />
       </Card>
 
       <Card>
         <SectionTitle><LockIcon className="w-4 h-4 inline" /> Phân quyền &amp; bảo mật</SectionTitle>
         <Paragraph>
-          Khi tạo / sửa nhân viên, Boss tick từng module trong <strong className="text-foreground">Quyền truy cập module</strong> và chọn đúng các tài khoản được giao.
+          Khi tạo nhân viên, hoặc ở dòng <strong className="text-foreground">Quyền dùng</strong> / <strong className="text-foreground">Tài khoản chat</strong> dưới tên, Boss tick từng mục được dùng và chọn đúng các tài khoản được giao.
           Máy Boss kiểm tra quyền ở mọi thao tác (đọc, gửi tin, tải file), kể cả khi nhân viên làm việc từ xa.
         </Paragraph>
         <div className="grid grid-cols-2 gap-1.5">
@@ -147,11 +148,11 @@ export function EmployeesPanel() {
           ))}
         </div>
         <BulletList items={[
-          '<strong class="text-foreground">Quyền trong Cài đặt:</strong> "Quản lý TK Zalo" (xem / xoá tài khoản) và "Quản lý nhân viên" chỉ nên cấp cho người tin cậy. Giao diện, Thông báo, Lưu trữ, Giới thiệu, Log phiên bản luôn mở; trang Internet &amp; Đám mây chỉ có trên máy Boss.',
+          '<strong class="text-foreground">Quyền trong Cài đặt:</strong> "Quản lý tài khoản" (xem / xoá tài khoản) và "Quản lý nhân viên" chỉ nên cấp cho người tin cậy. Giao diện, Thông báo, Lưu trữ, Giới thiệu, Log phiên bản luôn mở; trang Internet &amp; Cloud chỉ có trên máy Boss.',
           '<strong class="text-foreground">Đổi quyền hoặc tài khoản được giao:</strong> áp dụng ngay trên máy nhân viên đang online; trang không còn quyền sẽ tự chuyển về Dashboard.',
-          '<strong class="text-foreground">Vô hiệu hoá, xoá hoặc đổi mật khẩu</strong> nhân viên → phiên đăng nhập bị thu hồi ngay, nhân viên đang online bị ngắt kèm lý do.',
-          '<strong class="text-foreground">Đăng xuất tất cả nhân viên</strong> (tab Kết nối): dùng khi nghi lộ tài khoản — mọi máy nhân viên, kể cả đang offline, phải đăng nhập lại.',
-          '<strong class="text-foreground">Xem thử như nhân viên:</strong> nút "Đăng nhập với tư cách nhân viên này" cạnh mỗi nhân viên cho Boss thấy đúng giao diện của người đó (thanh tiêu đề hiện "Đang xem: …"); bấm Thoát để quay lại.',
+          '<strong class="text-foreground">Khoá, xoá, đổi mật khẩu hoặc "Đăng xuất khỏi máy nhân viên"</strong> (nút ⋯) → phiên đăng nhập bị thu hồi ngay, nhân viên đang online bị ngắt kèm lý do.',
+          '<strong class="text-foreground">Đăng xuất tất cả nhân viên</strong> (mục Bảo mật cuối trang): dùng khi nghi lộ tài khoản, mọi máy nhân viên kể cả đang offline phải đăng nhập lại.',
+          '<strong class="text-foreground">Giả lập nhân viên:</strong> nút ⋯ → "Giả lập nhân viên này" cho Boss thấy đúng giao diện của người đó (thanh tiêu đề hiện "Đang giả lập: …"); bấm Thoát giả lập để quay lại.',
         ]} />
       </Card>
 
@@ -164,7 +165,7 @@ export function EmployeesPanel() {
           '<strong class="text-foreground">Chỉ số tổng:</strong> số nhân viên, tổng tin gửi, hội thoại xử lý, thời gian phản hồi trung bình, tổng giờ online.',
           '<strong class="text-foreground">So sánh:</strong> tin nhắn &amp; hội thoại từng người, tin nhắn và giờ online theo ngày, xếp hạng tốc độ phản hồi, biểu đồ radar, hoạt động theo giờ trong ngày.',
           '<strong class="text-foreground">Lọc nhân viên:</strong> chọn một vài người hoặc "Tất cả"; bảng chi tiết có nút <strong class="text-foreground">Xuất CSV</strong>.',
-          'Trang Cài đặt → Nhân viên có số liệu nhanh: tổng nhân viên, đang hoạt động, đang online, số nhóm; tab Kết nối liệt kê ai đang online, từ IP nào, đã nối bao lâu.',
+          'Trang Cài đặt → Nhân viên ghi ngay dưới tên ai đang online, từ IP nào, đã nối bao lâu (hoặc lần vào cuối).',
         ]} />
       </Card>
 

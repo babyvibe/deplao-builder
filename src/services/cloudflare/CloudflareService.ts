@@ -1,5 +1,5 @@
 /**
- * CloudflareService — lõi dùng chung của tính năng "Internet & Đám mây" (singleton `cloudflare`).
+ * CloudflareService — lõi dùng chung của tính năng "Internet & Cloud" (singleton `cloudflare`).
  *
  *  - connect: kiểm token (tokens/verify; token 'cfat_' là token của tài khoản) → liệt kê tên miền → thử quyền
  *    từng tính năng (tunnel, R2, Worker + D1 cho ứng dụng — không bắt buộc) bằng các GET rẻ → lưu token (safeStorage)

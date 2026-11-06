@@ -44,6 +44,7 @@ import {
     cloneMediaOptions, DEFAULT_MEDIA_OPTIONS, errorText, GIB, LogFn, MINUTE, msUntilLocalTime, noLog, normalizeMediaOptions,
     sameMediaScope, SECOND, unrefTimer, Waker,
 } from './util';
+import { lastWakeOrStartAt, systemIdleInfo } from '../../../utils/startup/systemIdle';
 
 export interface CloudMediaServiceDeps {
     core(): CloudflareCore;
@@ -157,6 +158,8 @@ export class CloudMediaService implements CloudMediaModule {
             scope,
             now,
             log: this.log,
+            // Quét toàn bộ định kỳ chỉ khi máy rảnh, quét nhẹ chờ sau khi máy thức dậy (MediaScanner.fullScanWait)
+            idle: () => ({ wakeAt: lastWakeOrStartAt(), info: systemIdleInfo() }),
         });
         this.rehydrator = new MediaRehydrate({
             ctx: this.ctxMgr,

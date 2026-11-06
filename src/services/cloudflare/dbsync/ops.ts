@@ -39,6 +39,9 @@ function toBuffer(v: unknown): Buffer {
 
 export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) => void): OpsHandler {
     const conns = new Map<string, SqlConn>();
+    /** Lần chụp gốc đang chạy / đã được main báo dừng (máy ngủ giữa chừng), theo đường dẫn DB + mốc file tạm. */
+    const snapshotsRunning = new Set<string>();
+    const snapshotsCancelled = new Set<string>();
     const watches = new Map<string, { timer: ReturnType<typeof setInterval>; armed: boolean }>();
 
     const keyOf = (p: string) => path.resolve(String(p || ''));
@@ -109,13 +112,21 @@ export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) =
             case 'snapshot': {
                 const live = conn(a.dbPath);
                 const tmpDir = String(a.tmpDir);
-                await fs.promises.mkdir(tmpDir, { recursive: true });
-                const raw = path.join(tmpDir, `base-${String(a.stamp || Date.now())}.db`);
+                const stamp = String(a.stamp || Date.now());
+                const runKey = `${keyOf(a.dbPath)}|${stamp}`;
+                // Main báo dừng (cancelSnapshot): bước sao chép một mạch không ngắt được, các bước sau dừng ngay.
+                const stopped = () => snapshotsCancelled.has(runKey);
+                const cancelled = () => Object.assign(new Error('Đã dừng chụp bản gốc'), { code: 'DBSYNC_SNAPSHOT_CANCELLED' });
+                snapshotsRunning.add(runKey);
+                const raw = path.join(tmpDir, `base-${stamp}.db`);
                 const gzPath = `${raw}.gz`;
                 const sidecars = [`${raw}-journal`, `${raw}-wal`, `${raw}-shm`];
-                await removeQuietly(raw, gzPath, ...sidecars);
                 try {
+                    await fs.promises.mkdir(tmpDir, { recursive: true });
+                    await removeQuietly(raw, gzPath, ...sidecars);
+                    if (stopped()) throw cancelled();
                     await live.backupTo(raw);
+                    if (stopped()) throw cancelled();
                     emit({ type: 'progress', dbPath: String(a.dbPath), phase: 'filter', done: 0, total: 0 });
                     // scratch: file tạm của riêng worker — cho phép journal_mode = OFF khi lọc theo phạm vi.
                     const copy = openConn(raw, { mustExist: true, scratch: true });
@@ -125,16 +136,27 @@ export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) =
                     } finally {
                         copy.close();
                     }
+                    if (stopped()) throw cancelled();
                     const rawBytes = (await fs.promises.stat(raw)).size;
                     const gzBytes = await gzipFile(raw, gzPath, 6, (done, total) => {
                         emit({ type: 'progress', dbPath: String(a.dbPath), phase: 'compress', done, total });
-                    });
+                    }, stopped);
                     await removeQuietly(raw, ...sidecars);
                     return { gzPath, rawBytes, gzBytes, ...info };
                 } catch (err) {
                     await removeQuietly(raw, gzPath, ...sidecars);
-                    throw err;
+                    throw stopped() ? cancelled() : err;
+                } finally {
+                    snapshotsRunning.delete(runKey);
+                    snapshotsCancelled.delete(runKey);
                 }
+            }
+            case 'cancelSnapshot': {
+                // Chỉ ghi nhận khi lần chụp đó còn chạy (báo trễ sau khi xong thì bỏ qua, không đọng lại).
+                const runKey = `${keyOf(a.dbPath)}|${String(a.stamp)}`;
+                if (!snapshotsRunning.has(runKey)) return false;
+                snapshotsCancelled.add(runKey);
+                return true;
             }
             case 'appendLog':
                 return appendLog(conn(a.dbPath), a.entry);

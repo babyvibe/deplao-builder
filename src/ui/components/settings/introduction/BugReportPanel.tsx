@@ -92,7 +92,7 @@ export function BugReportPanel() {
             </ol>
           </div>
           <p className="text-muted-foreground leading-relaxed">
-            <strong className="text-foreground">Môi trường:</strong> Deplao v26.10.4, Windows 11, Zalo cá nhân, dùng một mình (không có nhân viên).
+            <strong className="text-foreground">Môi trường:</strong> Deplao v26.11.0, Windows 11, Zalo cá nhân, dùng một mình (không có nhân viên).
             Đã thử 50 người (bình thường), 100 người (bình thường), 150 người (lỗi). Đính kèm: ảnh chụp + file nhật ký.
           </p>
           <div className="bg-success/10 border border-success/30 rounded-lg p-2 mt-2">
@@ -110,7 +110,7 @@ export function BugReportPanel() {
             { icon: <CloseIcon className="w-4 h-4" />, type: 'Lỗi crash / treo app', tips: 'Ghi thao tác cuối trước khi lỗi, chụp màn hình. Nếu app còn mở được: Cài đặt → Nhật ký → Xuất file.' },
             { icon: <StarIcon className="w-4 h-4" />, type: 'Lỗi giao diện / hiển thị', tips: 'Ảnh chụp hiện tại và mong đợi. Ghi giao diện Sáng / Tối, hệ điều hành, độ phân giải, cỡ chữ (nút ⋯ → Cỡ chữ).' },
             { icon: <WifiIcon className="w-4 h-4" />, type: 'Lỗi kết nối / đồng bộ tài khoản', tips: 'Ghi kênh (Zalo, Facebook, Telegram) và tài khoản bị lỗi, thời điểm, trạng thái trên Dashboard. Thử kết nối / đăng nhập lại, kiểm tra Proxy nếu có gắn.' },
-            { icon: <UsersIcon className="w-4 h-4" />, type: 'Lỗi kết nối nhân viên', tips: 'Ghi LAN hay Internet, loại địa chỉ (tạm / cố định), trạng thái trên thanh tiêu đề máy nhân viên và tab Cài đặt → Nhân viên → Kết nối của máy Boss.' },
+            { icon: <UsersIcon className="w-4 h-4" />, type: 'Lỗi kết nối nhân viên', tips: 'Ghi LAN hay Internet, loại địa chỉ (tạm / cố định), trạng thái trên thanh tiêu đề máy nhân viên và mục Cài đặt → Nhân viên → Kết nối của máy Boss.' },
             { icon: <LinkIcon className="w-4 h-4" />, type: 'Lỗi tích hợp bên thứ 3', tips: 'Ghi rõ tích hợp nào (POS, vận chuyển, thanh toán…), thao tác, kết quả mong đợi và thực tế. Không dán API key vào issue.' },
             { icon: <LightningIcon className="w-4 h-4" />, type: 'Lỗi Workflow không chạy', tips: 'Chụp sơ đồ workflow, ghi trigger + action; mở "Lịch sử chạy" trong trình sửa workflow để xem bước bị lỗi.' },
             { icon: <ActivityIcon className="w-4 h-4" />, type: 'Hiệu năng chậm / lag', tips: 'Ghi quy mô dữ liệu (số tài khoản, hội thoại, nhóm), thao tác bị chậm, so sánh với phiên bản trước.' },

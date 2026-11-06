@@ -11,19 +11,43 @@ import { getTelegramMessagePreview } from '../telegram/messages/TelegramMessageP
 import { normalizeZaloPhotoContent, toZaloJpgUrl } from '../../utils/zalo/zaloImageUrl';
 import FileStorageService from '../file/FileStorageService';
 import { searchPickerContacts, PickerContactRow, PickerSearchOptions, PickerSearchResult } from '../../shared/workflow/contactPickerSearch';
-import { addLocalDays, localDayBuckets, localDayDiff, localDayKey, localHourBuckets, sqlLocalDay, sqlLocalHour } from '../../shared/analytics/localTimeBuckets';
+import { addLocalDays, localDayBuckets, localDayDiff, localDayKey, localHourBuckets, localHourKey, sqlLocalDay, sqlLocalHour } from '../../shared/analytics/localTimeBuckets';
+import {
+    addEngagement, campaignSendsMessage, emptyEngagement, engagementRates, engagementState, engagementSupport,
+    type CampaignEngagementReport, type EngagementCounts, type EngagementSupport, type OutreachStats,
+} from '../../shared/analytics/messageEngagement';
+import { campaignEngagementRows, outreachRows } from './engagementQueries';
 import { MEDIA_MESSAGE_COLUMNS, MEDIA_MESSAGE_FILTER, buildMediaCursorQuery, type MediaCursor } from './mediaMessagesQuery';
 import { escapeLikePattern, foldSearchText } from '../../shared/chat/searchFold';
 import { buildMessageFtsQuery, MESSAGE_SEARCH_FTS_CANDIDATES, MESSAGE_SEARCH_LIMIT, MESSAGE_SEARCH_RECENT_SCAN } from '../../shared/chat/messageSearch';
 import { createCRMContactFilter, hasCRMContactFilters, type CRMContactFilters } from '../../shared/crm/crmContactFilters';
+import { campaignFlag, normalizeStopAfterFailures } from '../../shared/crm/campaignAutoStop';
 import { mergeZaloReactionAliases, normalizeZaloReactionEmoji } from '../../shared/zalo/zaloReactions';
 import { zinstantPreviewText } from '../../shared/zalo/zaloZinstant';
 import { contactReplyStateSql } from '../../shared/chat/replyState';
+import { isLinkableUrl, trimUrlEnd } from '../../shared/chat/urlText';
 import { ZALO_TTL_EXPIRY_GRACE_MS, isZaloTtlExpired } from '../../shared/zalo/zaloAutoDelete';
 import { TELEGRAM_TOP_MESSAGE_ID_SQL, telegramTopMessageIdParams } from './telegramTopMessage';
+import { currentDbScope, getUiRemoteWorkspace, runWithDbPath, setUiRemoteWorkspace, type UiRemoteWorkspace } from './dbScope';
+import { dbReads } from './read/DbReadClient';
+
+/** Một câu SELECT của kế hoạch đọc: 'all' = query(), 'get' = queryOne(). */
+type ReadStep = { op: 'all' | 'get'; sql: string; params: any[] };
+/**
+ * Kế hoạch đọc: các câu SELECT (yield) xen phần JS như cũ. runReadPlan chạy từng câu ngay trên luồng chính (như trước);
+ * runReadPlanAsync chạy chúng trong worker đọc (read/DbReadClient.ts). Một bản logic cho cả hai → cùng kết quả.
+ */
+type ReadPlan<T> = Generator<ReadStep, T, any>;
+const readAll = (sql: string, params: any[] = []): ReadStep => ({ op: 'all', sql, params });
 
 // better-sqlite3: native SQLite - no WASM heap, memory-mapped I/O
+/** Kết nối CSDL chính = workspace local đang chạy (không bao giờ là workspace remote). */
 let db: BetterSqlite3.Database | null = null;
+/** Đường dẫn CSDL chính (DatabaseService.dbPath). */
+let mainDbPath = '';
+/** CSDL đệm của workspace remote đang mở trên giao diện — chỉ lệnh từ giao diện (phạm vi 'ui' của dbScope) dùng. */
+let uiDb: BetterSqlite3.Database | null = null;
+let uiDbPath = '';
 /** Câu lệnh tra tin Zalo theo cliMsgId (findZaloRowByCli) — mỗi kết nối DB một bản. */
 const zaloCliLookupStatements = new WeakMap<BetterSqlite3.Database, BetterSqlite3.Statement>();
 
@@ -79,6 +103,32 @@ function getCachedSecondaryDb(targetDbPath: string): BetterSqlite3.Database {
     return _cachedSecondaryDb;
 }
 
+/** Cùng một file CSDL (Windows không phân biệt hoa thường). */
+function samePath(a: string, b: string): boolean {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    const ra = path.resolve(a);
+    const rb = path.resolve(b);
+    return process.platform === 'win32' ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
+}
+
+/**
+ * Kết nối CSDL của đoạn code đang chạy (dbScope.ts): không phạm vi → CSDL chính (workspace local đang chạy); phạm vi
+ * 'ui' (lệnh từ giao diện workspace remote) → CSDL đệm của workspace đó; phạm vi 'path' (withDbPath) → CSDL đó.
+ */
+function currentDb(): BetterSqlite3.Database | null {
+    const scope = currentDbScope();
+    if (!scope) return db;
+    if (scope.kind === 'ui') return uiDb && getUiRemoteWorkspace() ? uiDb : db;
+    if (samePath(scope.dbPath, mainDbPath)) return db;
+    if (uiDb && samePath(scope.dbPath, uiDbPath)) return uiDb;
+    return getCachedSecondaryDb(scope.dbPath);
+}
+
+function conn(): BetterSqlite3.Database {
+    return currentDb()!;
+}
+
 function closeCachedSecondaryDb(): void {
     if (_cachedSecondaryTimer) { clearTimeout(_cachedSecondaryTimer); _cachedSecondaryTimer = null; }
     if (_cachedSecondaryDb) {
@@ -122,8 +172,16 @@ export type FbSaveOutcome = 'new' | 'repaired' | 'duplicate';
 
 class DatabaseService {
     private static instance: DatabaseService;
-    private dbPath: string = '';
     private initialized = false;
+
+    /** Đường dẫn CSDL chính (lưu ở mainDbPath để currentDb() so sánh). */
+    private get dbPath(): string {
+        return mainDbPath;
+    }
+
+    private set dbPath(value: string) {
+        mainDbPath = value;
+    }
 
     /** Open a better-sqlite3 database at the given path with WAL mode */
     private openDb(dbPath: string): BetterSqlite3.Database {
@@ -146,15 +204,27 @@ class DatabaseService {
             Logger.log(`[DatabaseService] userData path: ${userDataPath}`);
 
             // ─── Workspace-aware DB path resolution ─────────────────────
+            // CSDL chính = workspace local đang chạy, kể cả khi mở app lúc giao diện đang ở workspace nhân viên (remote):
+            // Telegram / Facebook / workflow… của workspace local vẫn chạy. CSDL đệm của workspace remote mở riêng (cuối hàm).
             let resolvedViaWorkspace = false;
+            let uiRemote: { workspaceId: string; dbPath: string; mediaDir: string } | null = null;
             try {
                 const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
                 const wm = WorkspaceManager.getInstance();
-                const activeDbPath = wm.getActiveDbPath();
-                if (activeDbPath) {
-                    this.dbPath = activeDbPath;
+                const runtimeWs = wm.getRuntimeWorkspace();
+                const runtimeDbPath = runtimeWs ? wm.resolveDbPath(runtimeWs.dbPath || 'deplao-tool.db') : '';
+                if (runtimeDbPath) {
+                    this.dbPath = runtimeDbPath;
                     resolvedViaWorkspace = true;
                     Logger.log(`[DatabaseService] DB path from WorkspaceManager: ${this.dbPath}`);
+                }
+                const uiWs = wm.getUiActiveWorkspace();
+                if (uiWs?.type === 'remote') {
+                    uiRemote = {
+                        workspaceId: uiWs.id,
+                        dbPath: wm.resolveDbPath(uiWs.dbPath || `workspace-${uiWs.id}/deplao-tool.db`),
+                        mediaDir: wm.resolveMediaPath(uiWs),
+                    };
                 }
             } catch { /* WorkspaceManager not yet initialized - fall back to legacy */ }
 
@@ -212,8 +282,16 @@ class DatabaseService {
             this.initialized = true;
             this.encryptStoredCredentials();
             this.repairZaloZinstantPreviewsOnce();
+            this.repairNonZaloContactChannelsOnce();
             this.scheduleJxlImageRepair();
             Logger.log(`[DatabaseService] Initialized at ${this.dbPath} (better-sqlite3, WAL mode)`);
+            if (uiRemote) {
+                try {
+                    this.openUiWorkspaceDb(uiRemote);
+                } catch (uiErr: any) {
+                    Logger.error(`[DatabaseService] Remote workspace DB open failed: ${uiErr?.message || uiErr}`);
+                }
+            }
         } catch (error: any) {
             Logger.error(`[DatabaseService] Failed to initialize: ${error.message}`);
             // ⚠️ DO NOT silently fall back to in-memory DB - this causes "lost data" after updates.
@@ -294,9 +372,61 @@ class DatabaseService {
                 db.pragma('wal_checkpoint(TRUNCATE)');
                 Logger.log(`[DatabaseService] WAL checkpoint completed for ${this.dbPath}`);
             }
+            if (uiDb) uiDb.pragma('wal_checkpoint(TRUNCATE)');
         } catch (err: any) {
             Logger.warn(`[DatabaseService] WAL checkpoint error: ${err.message}`);
         }
+    }
+
+    /**
+     * Giao diện mở workspace remote (nhân viên): mở CSDL đệm của nó cho lệnh từ giao diện (phạm vi 'ui' của dbScope).
+     * CSDL chính (workspace local) giữ nguyên để mọi thứ chạy nền của workspace local không ghi nhầm sang đây.
+     */
+    public openUiWorkspaceDb(ws: UiRemoteWorkspace): void {
+        const target = path.resolve(ws.dbPath);
+        if (samePath(target, this.dbPath)) throw new Error(`Remote workspace DB trùng CSDL chính: ${target}`);
+        if (!(uiDb && samePath(uiDbPath, target))) {
+            this.closeUiWorkspaceDb();
+            const dir = path.dirname(target);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            // Kết nối phụ (withDbPath) cùng file → đóng, dùng một kết nối
+            if (_cachedSecondaryPath && samePath(_cachedSecondaryPath, target)) closeCachedSecondaryDb();
+            let opened: BetterSqlite3.Database;
+            try {
+                opened = this.openDb(target);
+            } catch (loadErr: any) {
+                Logger.warn(`[DatabaseService] Failed to open remote workspace DB (corrupt?): ${loadErr?.message || loadErr}. Backing up and creating fresh DB.`);
+                try { fs.copyFileSync(target, `${target}.corrupt-${Date.now()}.bak`); } catch { /* không có file */ }
+                try { fs.unlinkSync(target); } catch { /* không có file */ }
+                opened = this.openDb(target);
+            }
+            uiDb = opened;
+            uiDbPath = target;
+            runWithDbPath(target, () => {
+                this.createTables();
+                this.migrate();
+                this.migrateFTS5();
+                this.migrateMediaLibrary();
+                this.initErpSchema();
+                this.encryptStoredCredentials();
+                this.repairZaloZinstantPreviewsOnce();
+                this.repairNonZaloContactChannelsOnce();
+            });
+        }
+        setUiRemoteWorkspace({ workspaceId: ws.workspaceId, dbPath: target, mediaDir: ws.mediaDir });
+        Logger.log(`[DatabaseService] Remote workspace DB ready at ${target} (main DB stays ${this.dbPath})`);
+    }
+
+    /** Giao diện rời workspace remote: đóng CSDL đệm của nó. */
+    public closeUiWorkspaceDb(): void {
+        setUiRemoteWorkspace(null);
+        if (!uiDb) return;
+        dbReads.closeAllSync();
+        try { uiDb.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* bỏ qua */ }
+        try { uiDb.close(); } catch { /* bỏ qua */ }
+        Logger.log(`[DatabaseService] Remote workspace DB closed: ${uiDbPath}`);
+        uiDb = null;
+        uiDbPath = '';
     }
 
     /**
@@ -305,6 +435,9 @@ class DatabaseService {
      * before the NSIS installer runs (prevents DB corruption during updates).
      */
     public close(): void {
+        this.closeUiWorkspaceDb();
+        // Worker đọc nhả file trước (Windows không cho thay / xoá file đang mở — vd khôi phục ngay sau close())
+        dbReads.closeAllSync();
         try {
             if (db) {
                 // Flush WAL first
@@ -325,6 +458,8 @@ class DatabaseService {
      */
     public async reinitialize(): Promise<void> {
         Logger.log('[DatabaseService] Reinitializing from new config...');
+        this.closeUiWorkspaceDb();
+        dbReads.closeAllSync();
         try { db?.close(); } catch {}
         db = null;
         this.initialized = false;
@@ -367,6 +502,8 @@ class DatabaseService {
 
             // Close cached secondary DB (if any) before switching
             closeCachedSecondaryDb();
+            // Worker đọc nhả file DB cũ
+            dbReads.closeAllSync();
 
             // Close old DB
             try {
@@ -405,6 +542,7 @@ class DatabaseService {
             this.initialized = true;
             this.encryptStoredCredentials();
             this.repairZaloZinstantPreviewsOnce();
+            this.repairNonZaloContactChannelsOnce();
             this.scheduleJxlImageRepair();
 
             Logger.log(`[DatabaseService] Workspace DB ready at ${this.dbPath}`);
@@ -434,48 +572,19 @@ class DatabaseService {
     }
 
     /**
-     * Temporarily switch to a different DB file, run a synchronous callback,
-     * then switch back. Used by EmployeeService to access the relay workspace DB.
-     * @deprecated Use queryOtherDb() instead - withDbPath swaps the global db and is unsafe with concurrent IPC.
+     * Chạy `fn` trên CSDL `targetDbPath` (vd DB của Boss / của workspace nhân viên). Phạm vi theo luồng chạy (dbScope):
+     * không đổi CSDL của code khác đang chạy song song, phần async trong `fn` vẫn ở đúng CSDL. Trước đây hàm đổi biến
+     * `db` dùng chung rồi trả lại, nên IPC chạy xen giữa ghi nhầm DB.
      */
     public withDbPath<T>(targetDbPath: string, fn: () => T): T {
-        const currentPath = this.dbPath;
-        const currentDb = db;
-        if (currentPath === targetDbPath) {
-            return fn();
-        }
-        try {
-            db = getCachedSecondaryDb(targetDbPath);
-            this.dbPath = targetDbPath;
-            const result = fn();
-            return result;
-        } finally {
-            db = currentDb;
-            this.dbPath = currentPath;
-        }
+        if (samePath(this.getDbPath(), targetDbPath)) return fn();
+        return runWithDbPath(targetDbPath, fn);
     }
 
-    /**
-     * Async variant of withDbPath — awaits the callback before restoring the DB.
-     * Use this when fn() is async (contains await), otherwise withDbPath restores
-     * the DB before the async operations complete, causing writes to go to the
-     * wrong database.
-     */
+    /** Như withDbPath (giữ cho nơi gọi cũ truyền hàm async). */
     public async withDbPathAsync<T>(targetDbPath: string, fn: () => Promise<T>): Promise<T> {
-        const currentPath = this.dbPath;
-        const currentDb = db;
-        if (currentPath === targetDbPath) {
-            return fn();
-        }
-        try {
-            db = getCachedSecondaryDb(targetDbPath);
-            this.dbPath = targetDbPath;
-            const result = await fn();
-            return result;
-        } finally {
-            db = currentDb;
-            this.dbPath = currentPath;
-        }
+        if (samePath(this.getDbPath(), targetDbPath)) return fn();
+        return runWithDbPath(targetDbPath, fn);
     }
 
     /**
@@ -497,12 +606,12 @@ class DatabaseService {
     }
 
     public exec(sql: string): void {
-        db!.exec(sql);
+        conn().exec(sql);
     }
 
     public run(sql: string, params: any[] = []): void {
         try {
-            db!.prepare(sql).run(...params);
+            conn().prepare(sql).run(...params);
         } catch (err: any) {
             // Do not log parameter values: they can contain message text,
             // tokens, or contact data. Counts still identify missing binds.
@@ -517,18 +626,18 @@ class DatabaseService {
 
     /** Execute SQL without flushing to disk - same as run() now (WAL auto-writes) */
     private runNoSave(sql: string, params: any[] = []): void {
-        db!.prepare(sql).run(...params);
+        conn().prepare(sql).run(...params);
     }
 
     /** Run an INSERT and return the new rowid. */
     public runInsert(sql: string, params: any[] = []): number {
-        const result = db!.prepare(sql).run(...params);
+        const result = conn().prepare(sql).run(...params);
         return Number(result.lastInsertRowid) || 0;
     }
 
     /** Run a statement and return how many rows it changed. */
     public runChanges(sql: string, params: any[] = []): number {
-        return Number(db!.prepare(sql).run(...params).changes) || 0;
+        return Number(conn().prepare(sql).run(...params).changes) || 0;
     }
 
     /**
@@ -536,21 +645,78 @@ class DatabaseService {
      * Uses better-sqlite3 native transaction → automatic ROLLBACK on throw.
      */
     public transaction<T>(fn: () => T): T {
-        return db!.transaction(fn)();
+        return conn().transaction(fn)();
     }
 
     public query<T>(sql: string, params: any[] = []): T[] {
         try {
-            return db!.prepare(sql).all(...params) as T[];
+            return conn().prepare(sql).all(...params) as T[];
         } catch (err: any) {
             Logger.error(`[DatabaseService] Query error: ${err.message} | SQL: ${sql}`);
             return [];
         }
     }
 
+    /**
+     * CSDL mà conn() đang trỏ tới, để worker đọc mở đúng file đó (chỉ đọc). null = CSDL phụ của withDbPath / đang đổi
+     * workspace → đọc như cũ trên luồng chính.
+     */
+    private readDbPath(): string | null {
+        if (!db || this.switching) return null;
+        const scope = currentDbScope();
+        if (!scope) return mainDbPath;
+        if (scope.kind === 'ui') return uiDb && getUiRemoteWorkspace() ? uiDbPath : mainDbPath;
+        if (samePath(scope.dbPath, mainDbPath)) return mainDbPath;
+        if (uiDb && samePath(scope.dbPath, uiDbPath)) return uiDbPath;
+        return null;
+    }
+
+    /**
+     * Như query() nhưng câu SELECT chạy trong worker đọc (read/DbReadClient.ts): luồng chính không đứng khi ổ đĩa chậm.
+     * Không chạy được ở worker (chưa bật, CSDL phụ, worker lỗi, câu lệnh lỗi trong worker) → query() như cũ.
+     */
+    public async queryAsync<T>(sql: string, params: any[] = []): Promise<T[]> {
+        const dbPath = this.readDbPath();
+        if (dbPath) {
+            const res = await dbReads.run({ op: 'all', dbPath, sql, params });
+            if (res) return res.value as T[];
+        }
+        return this.query<T>(sql, params);
+    }
+
+    /** Như queryOne() trong worker đọc (xem queryAsync). */
+    public async queryOneAsync<T>(sql: string, params: any[] = []): Promise<T | undefined> {
+        const dbPath = this.readDbPath();
+        if (dbPath) {
+            const res = await dbReads.run({ op: 'get', dbPath, sql, params });
+            if (res) return res.value as T | undefined;
+        }
+        return this.queryOne<T>(sql, params);
+    }
+
+    /** Chạy kế hoạch đọc trên luồng chính (đúng như trước). */
+    private runReadPlan<T>(plan: ReadPlan<T>): T {
+        let step = plan.next();
+        while (!step.done) {
+            const s = step.value as ReadStep;
+            step = plan.next(s.op === 'get' ? this.queryOne(s.sql, s.params) : this.query(s.sql, s.params));
+        }
+        return step.value as T;
+    }
+
+    /** Chạy kế hoạch đọc, các câu SELECT trong worker đọc (queryAsync / queryOneAsync). */
+    private async runReadPlanAsync<T>(plan: ReadPlan<T>): Promise<T> {
+        let step = plan.next();
+        while (!step.done) {
+            const s = step.value as ReadStep;
+            step = plan.next(s.op === 'get' ? await this.queryOneAsync(s.sql, s.params) : await this.queryAsync(s.sql, s.params));
+        }
+        return step.value as T;
+    }
+
     queryOne<T>(sql: string, params: any[] = []): T | undefined {
         try {
-            return db!.prepare(sql).get(...params) as T | undefined;
+            return conn().prepare(sql).get(...params) as T | undefined;
         } catch (err: any) {
             Logger.error(`[DatabaseService] QueryOne error: ${err.message} | SQL: ${sql}`);
             return undefined;
@@ -977,6 +1143,16 @@ class DatabaseService {
         try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN campaign_type TEXT NOT NULL DEFAULT 'message'`); } catch {}
         try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN mixed_config TEXT NOT NULL DEFAULT '{}'`); } catch {}
         try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN channel TEXT NOT NULL DEFAULT 'zalo'`); } catch {}
+        // Tự dừng khi lỗi liên tiếp (shared/crm/campaignAutoStop): ngưỡng cài ở chiến dịch (0 = không dừng), chuỗi lỗi
+        // hiện tại, lý do + lúc tự dừng (hiện ở màn chiến dịch tới khi bấm Tiếp tục)
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN stop_after_failures INTEGER NOT NULL DEFAULT 0`); } catch {}
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`); } catch {}
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN auto_stop_reason TEXT NOT NULL DEFAULT ''`); } catch {}
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN auto_stopped_at INTEGER NOT NULL DEFAULT 0`); } catch {}
+        // Tuỳ chọn của tự dừng: chỉ tính người lạ (Zalo) / mai gửi tiếp (auto_resume_at = lúc tự chạy lại, 0 = không hẹn)
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN stop_strangers_only INTEGER NOT NULL DEFAULT 0`); } catch {}
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN stop_resume_next_day INTEGER NOT NULL DEFAULT 0`); } catch {}
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN auto_resume_at INTEGER NOT NULL DEFAULT 0`); } catch {}
 
         this.exec(`
             CREATE TABLE IF NOT EXISTS crm_campaign_contacts (
@@ -1088,9 +1264,9 @@ class DatabaseService {
         try {
             const wfCols = this.query<any>(`PRAGMA table_info(workflows)`);
             if (!wfCols.some((c: any) => c.name === 'page_ids')) {
-                db!.exec(`ALTER TABLE workflows ADD COLUMN page_ids TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE workflows ADD COLUMN page_ids TEXT DEFAULT ''`);
                 // Backfill: migrate existing page_id → page_ids
-                db!.exec(`UPDATE workflows SET page_ids = page_id WHERE page_id != '' AND (page_ids IS NULL OR page_ids = '')`);
+                conn().exec(`UPDATE workflows SET page_ids = page_id WHERE page_id != '' AND (page_ids IS NULL OR page_ids = '')`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added page_ids column to workflows');
             }
@@ -1635,63 +1811,63 @@ class DatabaseService {
             const cols = this.query<any>(`PRAGMA table_info(messages)`);
             const hasQuoteData = cols.some((c) => c.name === 'quote_data');
             if (!hasQuoteData) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN quote_data TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN quote_data TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added quote_data column');
             }
 
             const hasReactions = cols.some((c) => c.name === 'reactions');
             if (!hasReactions) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN reactions TEXT DEFAULT '{}'`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN reactions TEXT DEFAULT '{}'`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added reactions column');
             }
 
             const hasIsRecalled = cols.some((c: any) => c.name === 'is_recalled');
             if (!hasIsRecalled) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN is_recalled INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN is_recalled INTEGER DEFAULT 0`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added is_recalled column');
             }
 
             const hasRecalledContent = cols.some((c: any) => c.name === 'recalled_content');
             if (!hasRecalledContent) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN recalled_content TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN recalled_content TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added recalled_content column');
             }
 
             const hasRecalledMsgType = cols.some((c: any) => c.name === 'recalled_msg_type');
             if (!hasRecalledMsgType) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN recalled_msg_type TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN recalled_msg_type TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added recalled_msg_type column');
             }
 
             const hasDeletedBy = cols.some((c: any) => c.name === 'deleted_by');
             if (!hasDeletedBy) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN deleted_by TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN deleted_by TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added deleted_by column');
             }
 
             const hasReplyToId = cols.some((c: any) => c.name === 'reply_to_id');
             if (!hasReplyToId) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN reply_to_id TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN reply_to_id TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added reply_to_id column');
             }
 
             const hasEditHistory = cols.some((c: any) => c.name === 'edit_history');
             if (!hasEditHistory) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN edit_history TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN edit_history TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added edit_history column');
             }
 
             const hasIsEdited = cols.some((c: any) => c.name === 'is_edited');
             if (!hasIsEdited) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN is_edited INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN is_edited INTEGER DEFAULT 0`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added is_edited column');
             }
@@ -1699,7 +1875,7 @@ class DatabaseService {
             // Zalo gắn thời gian tự xoá cho tin (ms, ZL-05): chỉ để hiện đồng hồ — Deplao không xoá tin theo TTL
             const hasTtl = cols.some((c: any) => c.name === 'ttl');
             if (!hasTtl) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN ttl INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN ttl INTEGER DEFAULT 0`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added ttl column');
             }
@@ -1708,7 +1884,7 @@ class DatabaseService {
             const accCols = this.query<any>(`PRAGMA table_info(accounts)`);
             const hasListenerActive = accCols.some((c: any) => c.name === 'listener_active');
             if (!hasListenerActive) {
-                db!.exec(`ALTER TABLE accounts ADD COLUMN listener_active INTEGER DEFAULT 1`);
+                conn().exec(`ALTER TABLE accounts ADD COLUMN listener_active INTEGER DEFAULT 1`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added listener_active column');
             }
@@ -1743,9 +1919,9 @@ class DatabaseService {
             const contactCols = this.query<any>(`PRAGMA table_info(contacts)`);
             const hasChannel = contactCols.some((c: any) => c.name === 'channel');
             if (!hasChannel) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN channel TEXT DEFAULT 'zalo'`);
-                db!.exec(`ALTER TABLE messages ADD COLUMN channel TEXT DEFAULT 'zalo'`);
-                db!.exec(`ALTER TABLE accounts ADD COLUMN channel TEXT DEFAULT 'zalo'`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN channel TEXT DEFAULT 'zalo'`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN channel TEXT DEFAULT 'zalo'`);
+                conn().exec(`ALTER TABLE accounts ADD COLUMN channel TEXT DEFAULT 'zalo'`);
                 this.save();
                 Logger.log('[DatabaseService] ✅ Migration: added channel column to contacts, messages, accounts');
             }
@@ -1789,12 +1965,12 @@ class DatabaseService {
                     const fbAccCount = this.query<any>(`SELECT COUNT(*) as n FROM fb_accounts`);
                     if ((fbAccCount[0]?.n || 0) > 0) {
                         Logger.log('[DatabaseService] 🔄 Migration B3: copying fb_* data → unified tables...');
-                        db!.exec(`
+                        conn().exec(`
                             INSERT OR IGNORE INTO accounts (zalo_id, full_name, avatar_url, imei, user_agent, cookies, is_active, created_at, channel)
                             SELECT COALESCE(facebook_id, id), COALESCE(name, ''), COALESCE(avatar_url, ''), '', '', COALESCE(cookie_encrypted, ''), 1, datetime(created_at/1000, 'unixepoch'), 'facebook'
                             FROM fb_accounts
                         `);
-                        db!.exec(`
+                        conn().exec(`
                             INSERT OR IGNORE INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel)
                             SELECT COALESCE(f.facebook_id, ft.account_id), ft.id, COALESCE(ft.name, ''), '', 0,
                                    CASE WHEN ft.type = 'user' THEN 'user' ELSE 'group' END,
@@ -1802,7 +1978,7 @@ class DatabaseService {
                             FROM fb_threads ft
                             LEFT JOIN fb_accounts f ON f.id = ft.account_id
                         `);
-                        db!.exec(`
+                        conn().exec(`
                             INSERT OR IGNORE INTO messages (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, status, channel)
                             SELECT fm.id, COALESCE(f.facebook_id, fm.account_id), fm.thread_id, 0, COALESCE(fm.sender_id, ''),
                                    COALESCE(fm.body, ''), COALESCE(fm.type, 'text'), fm.timestamp, COALESCE(fm.is_self, 0),
@@ -1821,15 +1997,15 @@ class DatabaseService {
 
         // ─── Migration: channel indexes ────────────────────────────────────────
         try {
-            db!.exec(`CREATE INDEX IF NOT EXISTS idx_contacts_channel ON contacts(channel, owner_zalo_id)`);
-            db!.exec(`CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel, owner_zalo_id, thread_id)`);
+            conn().exec(`CREATE INDEX IF NOT EXISTS idx_contacts_channel ON contacts(channel, owner_zalo_id)`);
+            conn().exec(`CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel, owner_zalo_id, thread_id)`);
             // These indexes serve the two high-volume paths: cursor based chat
             // pagination and reports scoped to an account/date range.  Without
             // them SQLite scans/sorts a growing share of the whole messages table.
-            db!.exec(`CREATE INDEX IF NOT EXISTS idx_messages_owner_timestamp ON messages(owner_zalo_id, timestamp)`);
-            db!.exec(`CREATE INDEX IF NOT EXISTS idx_messages_owner_type_timestamp ON messages(owner_zalo_id, thread_type, timestamp)`);
-            db!.exec(`CREATE INDEX IF NOT EXISTS idx_messages_thread_cursor ON messages(owner_zalo_id, thread_id, timestamp DESC, msg_id DESC)`);
-            db!.exec(`CREATE INDEX IF NOT EXISTS idx_contacts_others ON contacts(owner_zalo_id, is_in_others)`);
+            conn().exec(`CREATE INDEX IF NOT EXISTS idx_messages_owner_timestamp ON messages(owner_zalo_id, timestamp)`);
+            conn().exec(`CREATE INDEX IF NOT EXISTS idx_messages_owner_type_timestamp ON messages(owner_zalo_id, thread_type, timestamp)`);
+            conn().exec(`CREATE INDEX IF NOT EXISTS idx_messages_thread_cursor ON messages(owner_zalo_id, thread_id, timestamp DESC, msg_id DESC)`);
+            conn().exec(`CREATE INDEX IF NOT EXISTS idx_contacts_others ON contacts(owner_zalo_id, is_in_others)`);
         } catch (err: any) {
             Logger.warn(`[DatabaseService] Migration channel indexes: ${err.message}`);
         }
@@ -1838,10 +2014,10 @@ class DatabaseService {
         try {
             const workflowCols = this.query<any>(`PRAGMA table_info(workflows)`);
             if (workflowCols.length > 0 && !workflowCols.some((c: any) => c.name === 'channel')) {
-                db!.exec(`ALTER TABLE workflows ADD COLUMN channel TEXT NOT NULL DEFAULT 'zalo'`);
+                conn().exec(`ALTER TABLE workflows ADD COLUMN channel TEXT NOT NULL DEFAULT 'zalo'`);
                 Logger.log('[DatabaseService] Migration: added channel column to workflows');
             }
-            db!.exec(`UPDATE workflows SET channel = 'zalo' WHERE channel IS NULL OR TRIM(channel) = ''`);
+            conn().exec(`UPDATE workflows SET channel = 'zalo' WHERE channel IS NULL OR TRIM(channel) = ''`);
             this.save();
         } catch (err: any) {
             Logger.warn(`[DatabaseService] workflow channel migration warning: ${err.message}`);
@@ -1860,11 +2036,11 @@ class DatabaseService {
                     // Check if facebook_id already exists in accounts to avoid unique constraint violation
                     const existing = this.queryOne<any>(`SELECT 1 FROM accounts WHERE zalo_id = ?`, [row.facebook_id]);
                     if (!existing) {
-                        db!.exec(`UPDATE accounts SET zalo_id = '${row.facebook_id}' WHERE zalo_id = '${row.zalo_id}' AND channel = 'facebook'`);
+                        conn().exec(`UPDATE accounts SET zalo_id = '${row.facebook_id}' WHERE zalo_id = '${row.zalo_id}' AND channel = 'facebook'`);
                         Logger.log(`[DatabaseService] ✅ Migration B4: FB account ${row.zalo_id} → ${row.facebook_id}`);
                     } else {
                         // Already migrated or duplicate - remove the old UUID row
-                        db!.exec(`DELETE FROM accounts WHERE zalo_id = '${row.zalo_id}' AND channel = 'facebook'`);
+                        conn().exec(`DELETE FROM accounts WHERE zalo_id = '${row.zalo_id}' AND channel = 'facebook'`);
                         Logger.log(`[DatabaseService] ✅ Migration B4: Removed duplicate FB account row ${row.zalo_id}`);
                     }
                 }
@@ -1882,12 +2058,12 @@ class DatabaseService {
                 // A target owner can already contain the same contact/message.
                 // Preserve both rows when that happens: the target is already
                 // usable and automatic deduplication could discard user data.
-                const contactsFixed = db!.prepare(
+                const contactsFixed = conn().prepare(
                     `UPDATE OR IGNORE contacts
                      SET owner_zalo_id = ?
                      WHERE owner_zalo_id = ? AND channel = 'facebook'`,
                 ).run(toOwnerId, fromOwnerId);
-                const messagesFixed = db!.prepare(
+                const messagesFixed = conn().prepare(
                     `UPDATE OR IGNORE messages
                      SET owner_zalo_id = ?
                      WHERE owner_zalo_id = ? AND channel = 'facebook'`,
@@ -1938,9 +2114,9 @@ class DatabaseService {
         try {
             const crmTagCols = this.query<any>(`PRAGMA table_info(crm_tags)`);
             if (crmTagCols.length > 0 && !crmTagCols.some((c: any) => c.name === 'channel')) {
-                db!.exec(`ALTER TABLE crm_tags ADD COLUMN channel TEXT DEFAULT 'zalo'`);
-                db!.exec(`ALTER TABLE crm_contact_tags ADD COLUMN channel TEXT DEFAULT 'zalo'`);
-                db!.exec(`ALTER TABLE crm_notes ADD COLUMN channel TEXT DEFAULT 'zalo'`);
+                conn().exec(`ALTER TABLE crm_tags ADD COLUMN channel TEXT DEFAULT 'zalo'`);
+                conn().exec(`ALTER TABLE crm_contact_tags ADD COLUMN channel TEXT DEFAULT 'zalo'`);
+                conn().exec(`ALTER TABLE crm_notes ADD COLUMN channel TEXT DEFAULT 'zalo'`);
                 this.save();
                 Logger.log('[DatabaseService] ��� Migration: added channel to CRM tables');
             }
@@ -1952,7 +2128,7 @@ class DatabaseService {
         try {
             const accCols2 = this.query<any>(`PRAGMA table_info(accounts)`);
             if (!accCols2.some((c: any) => c.name === 'proxy_id')) {
-                db!.exec(`ALTER TABLE accounts ADD COLUMN proxy_id INTEGER DEFAULT NULL`);
+                conn().exec(`ALTER TABLE accounts ADD COLUMN proxy_id INTEGER DEFAULT NULL`);
                 Logger.log('[DatabaseService] ✅ Migration: added proxy_id column to accounts');
             }
         } catch (err: any) {
@@ -1963,7 +2139,7 @@ class DatabaseService {
         try {
             const tables = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='friends'`);
             if (tables.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS friends (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         owner_zalo_id TEXT NOT NULL,
@@ -1975,7 +2151,7 @@ class DatabaseService {
                         UNIQUE(owner_zalo_id, user_id)
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_friends_owner ON friends(owner_zalo_id)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_friends_owner ON friends(owner_zalo_id)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created friends table');
             }
@@ -1987,7 +2163,7 @@ class DatabaseService {
         try {
             const gmt = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='page_group_member'`);
             if (gmt.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS page_group_member (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         owner_zalo_id TEXT NOT NULL,
@@ -2000,7 +2176,7 @@ class DatabaseService {
                         UNIQUE(owner_zalo_id, group_id, member_id)
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_group_member ON page_group_member(owner_zalo_id, group_id)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_group_member ON page_group_member(owner_zalo_id, group_id)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created page_group_member table');
             }
@@ -2012,7 +2188,7 @@ class DatabaseService {
         try {
             const cols = this.query<any>(`PRAGMA table_info(page_group_member)`);
             if (cols.length > 0 && !cols.some((c: any) => c.name === 'username')) {
-                db!.exec(`ALTER TABLE page_group_member ADD COLUMN username TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE page_group_member ADD COLUMN username TEXT DEFAULT ''`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added username column to page_group_member');
             }
@@ -2024,7 +2200,7 @@ class DatabaseService {
         try {
             const frt = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='friend_requests'`);
             if (frt.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS friend_requests (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         owner_zalo_id TEXT NOT NULL,
@@ -2039,7 +2215,7 @@ class DatabaseService {
                         UNIQUE(owner_zalo_id, user_id, direction)
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_friend_requests_owner ON friend_requests(owner_zalo_id, direction)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_friend_requests_owner ON friend_requests(owner_zalo_id, direction)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created friend_requests table');
             }
@@ -2049,7 +2225,7 @@ class DatabaseService {
         try {
             const st = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='stickers'`);
             if (st.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS stickers (
                         sticker_id INTEGER PRIMARY KEY,
                         cat_id INTEGER DEFAULT 0,
@@ -2062,7 +2238,7 @@ class DatabaseService {
                         updated_at INTEGER DEFAULT 0
                     )
                 `);
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS recent_stickers (
                         sticker_id INTEGER PRIMARY KEY,
                         used_at INTEGER NOT NULL
@@ -2079,13 +2255,13 @@ class DatabaseService {
         try {
             const cols = this.query<any>(`PRAGMA table_info(stickers)`);
             if (cols.length > 0 && !cols.find((c: any) => c.name === 'unsupported')) {
-                db!.exec(`ALTER TABLE stickers ADD COLUMN unsupported INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE stickers ADD COLUMN unsupported INTEGER DEFAULT 0`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added unsupported column to stickers');
             }
             const sp = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='sticker_packs'`);
             if (sp.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS sticker_packs (
                         cat_id INTEGER PRIMARY KEY,
                         name TEXT DEFAULT '',
@@ -2106,7 +2282,7 @@ class DatabaseService {
         try {
             const ks = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='keyword_stickers'`);
             if (ks.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS keyword_stickers (
                         keyword TEXT PRIMARY KEY,
                         sticker_ids TEXT DEFAULT '[]',
@@ -2124,7 +2300,7 @@ class DatabaseService {
         try {
             const pm = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='pinned_messages'`);
             if (pm.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS pinned_messages (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         owner_zalo_id TEXT NOT NULL,
@@ -2141,7 +2317,7 @@ class DatabaseService {
                         UNIQUE(owner_zalo_id, thread_id, msg_id)
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_pinned ON pinned_messages(owner_zalo_id, thread_id, pinned_at)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_pinned ON pinned_messages(owner_zalo_id, thread_id, pinned_at)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created pinned_messages table');
             }
@@ -2153,7 +2329,7 @@ class DatabaseService {
         try {
             const lqm = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='local_quick_messages'`);
             if (lqm.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS local_quick_messages (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         owner_zalo_id TEXT NOT NULL,
@@ -2165,7 +2341,7 @@ class DatabaseService {
                         UNIQUE(owner_zalo_id, keyword)
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_lqm_owner ON local_quick_messages(owner_zalo_id)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_lqm_owner ON local_quick_messages(owner_zalo_id)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created local_quick_messages table');
             }
@@ -2176,23 +2352,23 @@ class DatabaseService {
         try {
             const cols = this.query<any>(`PRAGMA table_info(accounts)`);
             if (!cols.some((c: any) => c.name === 'phone')) {
-                db!.exec(`ALTER TABLE accounts ADD COLUMN phone TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE accounts ADD COLUMN phone TEXT DEFAULT ''`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added phone column to accounts');
             }
             if (!cols.some((c: any) => c.name === 'is_business')) {
-                db!.exec(`ALTER TABLE accounts ADD COLUMN is_business INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE accounts ADD COLUMN is_business INTEGER DEFAULT 0`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added is_business column to accounts');
             }
             if (!cols.some((c: any) => c.name === 'username')) {
-                db!.exec(`ALTER TABLE accounts ADD COLUMN username TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE accounts ADD COLUMN username TEXT DEFAULT ''`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added username column to accounts');
             }
             // Zalo "My Documents": hội thoại riêng có sẵn của Zalo (loginInfo.send2me_id), KHÔNG phải hội thoại với chính mình
             if (!cols.some((c: any) => c.name === 'send2me_id')) {
-                db!.exec(`ALTER TABLE accounts ADD COLUMN send2me_id TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE accounts ADD COLUMN send2me_id TEXT DEFAULT ''`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added send2me_id column to accounts');
             }
@@ -2206,33 +2382,33 @@ class DatabaseService {
             const names = contactCols.map((c: any) => c.name);
             let needSave = false;
             if (!names.includes('is_muted')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN is_muted INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN is_muted INTEGER DEFAULT 0`);
                 Logger.log('[DatabaseService] Migration: added is_muted to contacts');
                 needSave = true;
             }
             if (!names.includes('mute_until')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN mute_until INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN mute_until INTEGER DEFAULT 0`);
                 Logger.log('[DatabaseService] Migration: added mute_until to contacts');
                 needSave = true;
             }
             if (!names.includes('is_in_others')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN is_in_others INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN is_in_others INTEGER DEFAULT 0`);
                 Logger.log('[DatabaseService] Migration: added is_in_others to contacts');
                 needSave = true;
             }
             // Zalo: tự xoá tin nhắn (ms, ZL-05 — Deplao chỉ hiển thị, không xoá tin) và hội thoại ẩn bằng PIN (ZL-03)
             if (!names.includes('zalo_auto_delete_ttl')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN zalo_auto_delete_ttl INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN zalo_auto_delete_ttl INTEGER DEFAULT 0`);
                 Logger.log('[DatabaseService] Migration: added zalo_auto_delete_ttl to contacts');
                 needSave = true;
             }
             if (!names.includes('zalo_hidden')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN zalo_hidden INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN zalo_hidden INTEGER DEFAULT 0`);
                 Logger.log('[DatabaseService] Migration: added zalo_hidden to contacts');
                 needSave = true;
             }
             if (!names.includes('has_mention')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN has_mention INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN has_mention INTEGER DEFAULT 0`);
                 Logger.log('[DatabaseService] Migration: added has_mention to contacts');
                 needSave = true;
             }
@@ -2240,29 +2416,29 @@ class DatabaseService {
             // reply_marked_at: đánh dấu đã trả lời tay / hàng loạt (shared/chat/replyState) — mốc tin mới nhất lúc đánh dấu, ms
             for (const column of ['peer_delivered_ts', 'peer_read_ts', 'peer_read_max_id', 'reply_marked_at']) {
                 if (!names.includes(column)) {
-                    db!.exec(`ALTER TABLE contacts ADD COLUMN ${column} INTEGER DEFAULT 0`);
+                    conn().exec(`ALTER TABLE contacts ADD COLUMN ${column} INTEGER DEFAULT 0`);
                     Logger.log(`[DatabaseService] Migration: added ${column} to contacts`);
                     needSave = true;
                 }
             }
             if (!names.includes('alias')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN alias TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN alias TEXT DEFAULT ''`);
                 Logger.log('[DatabaseService] Migration: added alias to contacts');
                 needSave = true;
             }
             if (!names.includes('gender')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN gender INTEGER DEFAULT NULL`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN gender INTEGER DEFAULT NULL`);
                 Logger.log('[DatabaseService] Migration: added gender to contacts');
                 needSave = true;
             }
             if (!names.includes('birthday')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN birthday TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN birthday TEXT DEFAULT NULL`);
                 Logger.log('[DatabaseService] Migration: added birthday to contacts');
                 needSave = true;
             }
             // Lần cuối tên/avatar được làm mới hàng loạt từ API (unix ms). 0/NULL = chưa bao giờ.
             if (!names.includes('info_refreshed_at')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN info_refreshed_at INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN info_refreshed_at INTEGER DEFAULT 0`);
                 Logger.log('[DatabaseService] Migration: added info_refreshed_at to contacts');
                 needSave = true;
             }
@@ -2283,15 +2459,15 @@ class DatabaseService {
             ];
             for (const [column, definition] of telegramColumns) {
                 if (!names.includes(column)) {
-                    db!.exec(`ALTER TABLE contacts ADD COLUMN ${column} ${definition}`);
+                    conn().exec(`ALTER TABLE contacts ADD COLUMN ${column} ${definition}`);
                     Logger.log(`[DatabaseService] Migration: added ${column} to contacts`);
                     needSave = true;
                 }
             }
             if (needSave) this.save();
             // Reset is_cov_bot=0 and has_main_app=0 to NULL so existing contacts get re-checked
-            try { db!.exec(`UPDATE contacts SET is_cov_bot = NULL WHERE is_cov_bot = 0 AND channel = 'telegram_user'`); } catch {}
-            try { db!.exec(`UPDATE contacts SET has_main_app = NULL WHERE has_main_app = 0 AND channel = 'telegram_user'`); } catch {}
+            try { conn().exec(`UPDATE contacts SET is_cov_bot = NULL WHERE is_cov_bot = 0 AND channel = 'telegram_user'`); } catch {}
+            try { conn().exec(`UPDATE contacts SET has_main_app = NULL WHERE has_main_app = 0 AND channel = 'telegram_user'`); } catch {}
         } catch (err: any) {
             Logger.warn(`[DatabaseService] contacts flags migration warning: ${err.message}`);
         }
@@ -2302,32 +2478,32 @@ class DatabaseService {
             const logColNames = logCols.map((c: any) => c.name);
             let needSave = false;
             if (!logColNames.includes('display_name')) {
-                db!.exec(`ALTER TABLE crm_send_log ADD COLUMN display_name TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE crm_send_log ADD COLUMN display_name TEXT DEFAULT ''`);
                 Logger.log('[DatabaseService] Migration: added display_name to crm_send_log');
                 needSave = true;
             }
             if (!logColNames.includes('phone')) {
-                db!.exec(`ALTER TABLE crm_send_log ADD COLUMN phone TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE crm_send_log ADD COLUMN phone TEXT DEFAULT ''`);
                 Logger.log('[DatabaseService] Migration: added phone to crm_send_log');
                 needSave = true;
             }
             if (!logColNames.includes('contact_type')) {
-                db!.exec(`ALTER TABLE crm_send_log ADD COLUMN contact_type TEXT DEFAULT 'user'`);
+                conn().exec(`ALTER TABLE crm_send_log ADD COLUMN contact_type TEXT DEFAULT 'user'`);
                 Logger.log('[DatabaseService] Migration: added contact_type to crm_send_log');
                 needSave = true;
             }
             if (!logColNames.includes('data_request')) {
-                db!.exec(`ALTER TABLE crm_send_log ADD COLUMN data_request TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE crm_send_log ADD COLUMN data_request TEXT DEFAULT ''`);
                 Logger.log('[DatabaseService] Migration: added data_request to crm_send_log');
                 needSave = true;
             }
             if (!logColNames.includes('data_response')) {
-                db!.exec(`ALTER TABLE crm_send_log ADD COLUMN data_response TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE crm_send_log ADD COLUMN data_response TEXT DEFAULT ''`);
                 Logger.log('[DatabaseService] Migration: added data_response to crm_send_log');
                 needSave = true;
             }
             if (!logColNames.includes('send_type')) {
-                db!.exec(`ALTER TABLE crm_send_log ADD COLUMN send_type TEXT DEFAULT ''`);
+                conn().exec(`ALTER TABLE crm_send_log ADD COLUMN send_type TEXT DEFAULT ''`);
                 Logger.log('[DatabaseService] Migration: added send_type to crm_send_log');
                 needSave = true;
             }
@@ -2340,7 +2516,7 @@ class DatabaseService {
         try {
             const llCols = this.query<any>(`PRAGMA table_info(local_labels)`);
             if (llCols.length > 0 && !llCols.some((c: any) => c.name === 'text_color')) {
-                db!.exec(`ALTER TABLE local_labels ADD COLUMN text_color TEXT NOT NULL DEFAULT '#FFFFFF'`);
+                conn().exec(`ALTER TABLE local_labels ADD COLUMN text_color TEXT NOT NULL DEFAULT '#FFFFFF'`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added text_color to local_labels');
             }
@@ -2354,11 +2530,11 @@ class DatabaseService {
             if (lqmCols.length > 0) {
                 const lqmNames = lqmCols.map((c: any) => c.name);
                 if (!lqmNames.includes('is_active')) {
-                    db!.exec(`ALTER TABLE local_quick_messages ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`);
+                    conn().exec(`ALTER TABLE local_quick_messages ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`);
                     Logger.log('[DatabaseService] Migration: added is_active to local_quick_messages');
                 }
                 if (!lqmNames.includes('sort_order')) {
-                    db!.exec(`ALTER TABLE local_quick_messages ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+                    conn().exec(`ALTER TABLE local_quick_messages ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
                     Logger.log('[DatabaseService] Migration: added sort_order to local_quick_messages');
                 }
             }
@@ -2372,15 +2548,15 @@ class DatabaseService {
             if (llCols2.length > 0) {
                 const llNames2 = llCols2.map((c: any) => c.name);
                 if (!llNames2.includes('is_active')) {
-                    db!.exec(`ALTER TABLE local_labels ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`);
+                    conn().exec(`ALTER TABLE local_labels ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`);
                     Logger.log('[DatabaseService] Migration: added is_active to local_labels');
                 }
                 if (!llNames2.includes('sort_order')) {
-                    db!.exec(`ALTER TABLE local_labels ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
+                    conn().exec(`ALTER TABLE local_labels ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
                     Logger.log('[DatabaseService] Migration: added sort_order to local_labels');
                 }
                 if (!llNames2.includes('shortcut')) {
-                    db!.exec(`ALTER TABLE local_labels ADD COLUMN shortcut TEXT NOT NULL DEFAULT ''`);
+                    conn().exec(`ALTER TABLE local_labels ADD COLUMN shortcut TEXT NOT NULL DEFAULT ''`);
                     Logger.log('[DatabaseService] Migration: added shortcut to local_labels');
                 }
             }
@@ -2392,7 +2568,7 @@ class DatabaseService {
         try {
             const aiCols = this.query<any>(`PRAGMA table_info(ai_assistants)`);
             if (aiCols.length > 0 && !aiCols.some((c: any) => c.name === 'context_message_count')) {
-                db!.exec(`ALTER TABLE ai_assistants ADD COLUMN context_message_count INTEGER NOT NULL DEFAULT 30`);
+                conn().exec(`ALTER TABLE ai_assistants ADD COLUMN context_message_count INTEGER NOT NULL DEFAULT 30`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added context_message_count to ai_assistants');
             }
@@ -2404,7 +2580,7 @@ class DatabaseService {
         try {
             const aiCols2 = this.query<any>(`PRAGMA table_info(ai_assistants)`);
             if (aiCols2.length > 0 && !aiCols2.some((c: any) => c.name === 'pinned_products_json')) {
-                db!.exec(`ALTER TABLE ai_assistants ADD COLUMN pinned_products_json TEXT NOT NULL DEFAULT '[]'`);
+                conn().exec(`ALTER TABLE ai_assistants ADD COLUMN pinned_products_json TEXT NOT NULL DEFAULT '[]'`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added pinned_products_json to ai_assistants');
             }
@@ -2416,7 +2592,7 @@ class DatabaseService {
         try {
             const aat = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='ai_account_assistants'`);
             if (aat.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS ai_account_assistants (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         zalo_id TEXT NOT NULL,
@@ -2426,7 +2602,7 @@ class DatabaseService {
                         FOREIGN KEY(assistant_id) REFERENCES ai_assistants(id) ON DELETE CASCADE
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_ai_account_role ON ai_account_assistants(zalo_id, role)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_ai_account_role ON ai_account_assistants(zalo_id, role)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created ai_account_assistants table');
             }
@@ -2438,7 +2614,7 @@ class DatabaseService {
         try {
             const aul = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='ai_usage_logs'`);
             if (aul.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS ai_usage_logs (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         assistant_id TEXT NOT NULL,
@@ -2453,8 +2629,8 @@ class DatabaseService {
                         created_at INTEGER NOT NULL DEFAULT 0
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_ai_usage_date ON ai_usage_logs(created_at)`);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_ai_usage_assistant ON ai_usage_logs(assistant_id, created_at)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_ai_usage_date ON ai_usage_logs(created_at)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_ai_usage_assistant ON ai_usage_logs(assistant_id, created_at)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created ai_usage_logs table');
             }
@@ -2466,7 +2642,7 @@ class DatabaseService {
         try {
             const md = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='message_drafts'`);
             if (md.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS message_drafts (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         owner_zalo_id TEXT NOT NULL,
@@ -2476,7 +2652,7 @@ class DatabaseService {
                         UNIQUE(owner_zalo_id, thread_id)
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_drafts_owner ON message_drafts(owner_zalo_id)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_drafts_owner ON message_drafts(owner_zalo_id)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created message_drafts table');
             }
@@ -2488,7 +2664,7 @@ class DatabaseService {
         try {
             const bc = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='bank_cards'`);
             if (bc.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS bank_cards (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         owner_zalo_id TEXT NOT NULL,
@@ -2501,7 +2677,7 @@ class DatabaseService {
                         updated_at INTEGER NOT NULL DEFAULT 0
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_bank_cards_owner ON bank_cards(owner_zalo_id)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_bank_cards_owner ON bank_cards(owner_zalo_id)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created bank_cards table');
             }
@@ -2513,7 +2689,7 @@ class DatabaseService {
         try {
             const lpc = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='local_pinned_conversations'`);
             if (lpc.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS local_pinned_conversations (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         owner_zalo_id TEXT NOT NULL,
@@ -2522,7 +2698,7 @@ class DatabaseService {
                         UNIQUE(owner_zalo_id, thread_id)
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_lpc_owner ON local_pinned_conversations(owner_zalo_id, pinned_at DESC)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_lpc_owner ON local_pinned_conversations(owner_zalo_id, pinned_at DESC)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: created local_pinned_conversations table');
             }
@@ -2534,7 +2710,7 @@ class DatabaseService {
         try {
             const starred = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='starred_messages'`);
             if (starred.length === 0) {
-                db!.exec(`
+                conn().exec(`
             CREATE TABLE IF NOT EXISTS starred_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 owner_zalo_id TEXT NOT NULL,
@@ -2560,12 +2736,12 @@ class DatabaseService {
                 const noteColNames = noteCols.map((c: any) => c.name);
                 let needSave = false;
                 if (!noteColNames.includes('topic_id')) {
-                    db!.exec(`ALTER TABLE crm_notes ADD COLUMN topic_id TEXT DEFAULT NULL`);
+                    conn().exec(`ALTER TABLE crm_notes ADD COLUMN topic_id TEXT DEFAULT NULL`);
                     Logger.log('[DatabaseService] Migration: added topic_id to crm_notes');
                     needSave = true;
                 }
                 if (!noteColNames.includes('contact_type')) {
-                    db!.exec(`ALTER TABLE crm_notes ADD COLUMN contact_type TEXT NOT NULL DEFAULT 'user'`);
+                    conn().exec(`ALTER TABLE crm_notes ADD COLUMN contact_type TEXT NOT NULL DEFAULT 'user'`);
                     Logger.log('[DatabaseService] Migration: added contact_type to crm_notes');
                     needSave = true;
                 }
@@ -2579,7 +2755,7 @@ class DatabaseService {
         try {
             const empT = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='employees'`);
             if (empT.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS employees (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         employee_id TEXT NOT NULL UNIQUE,
@@ -2594,7 +2770,7 @@ class DatabaseService {
                         last_login INTEGER DEFAULT NULL
                     )
                 `);
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS employee_permissions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         employee_id TEXT NOT NULL,
@@ -2604,7 +2780,7 @@ class DatabaseService {
                         FOREIGN KEY (employee_id) REFERENCES employees(employee_id) ON DELETE CASCADE
                     )
                 `);
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS employee_account_access (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         employee_id TEXT NOT NULL,
@@ -2613,7 +2789,7 @@ class DatabaseService {
                         FOREIGN KEY (employee_id) REFERENCES employees(employee_id) ON DELETE CASCADE
                     )
                 `);
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS employee_message_log (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         employee_id TEXT NOT NULL,
@@ -2626,10 +2802,10 @@ class DatabaseService {
                         timestamp INTEGER NOT NULL
                     )
                 `);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_emp_msg_log_employee ON employee_message_log(employee_id)`);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_emp_msg_log_zalo ON employee_message_log(zalo_id)`);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_emp_msg_log_ts ON employee_message_log(timestamp)`);
-                db!.exec(`
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_emp_msg_log_employee ON employee_message_log(employee_id)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_emp_msg_log_zalo ON employee_message_log(zalo_id)`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_emp_msg_log_ts ON employee_message_log(timestamp)`);
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS employee_sessions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         employee_id TEXT NOT NULL,
@@ -2651,7 +2827,7 @@ class DatabaseService {
         try {
             const grpT = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='employee_groups'`);
             if (grpT.length === 0) {
-                db!.exec(`
+                conn().exec(`
                     CREATE TABLE IF NOT EXISTS employee_groups (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         group_id TEXT NOT NULL UNIQUE,
@@ -2667,7 +2843,7 @@ class DatabaseService {
             // Add group_id column to employees if missing
             const empCols = this.query<any>(`PRAGMA table_info(employees)`);
             if (empCols.length > 0 && !empCols.some((c: any) => c.name === 'group_id')) {
-                db!.exec(`ALTER TABLE employees ADD COLUMN group_id TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE employees ADD COLUMN group_id TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added group_id to employees');
             }
@@ -2679,7 +2855,7 @@ class DatabaseService {
         try {
             const msgCols = this.query<any>(`PRAGMA table_info(messages)`);
             if (msgCols.length > 0 && !msgCols.some((c: any) => c.name === 'handled_by_employee')) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN handled_by_employee TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN handled_by_employee TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added handled_by_employee to messages');
             }
@@ -2691,8 +2867,8 @@ class DatabaseService {
         try {
             const campCols = this.query<any>(`PRAGMA table_info(crm_campaigns)`);
             if (campCols.length > 0 && !campCols.some((c: any) => c.name === 'daily_send_limit')) {
-                db!.exec(`ALTER TABLE crm_campaigns ADD COLUMN daily_send_limit INTEGER NOT NULL DEFAULT 0`);
-                db!.exec(`ALTER TABLE crm_campaigns ADD COLUMN daily_start_time TEXT NOT NULL DEFAULT '08:00'`);
+                conn().exec(`ALTER TABLE crm_campaigns ADD COLUMN daily_send_limit INTEGER NOT NULL DEFAULT 0`);
+                conn().exec(`ALTER TABLE crm_campaigns ADD COLUMN daily_start_time TEXT NOT NULL DEFAULT '08:00'`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added daily_send_limit + daily_start_time to crm_campaigns');
             }
@@ -2704,12 +2880,12 @@ class DatabaseService {
         try {
             const campCols2 = this.query<any>(`PRAGMA table_info(crm_campaigns)`);
             if (campCols2.length > 0 && !campCols2.some((c: any) => c.name === 'delay_min_seconds')) {
-                db!.exec(`ALTER TABLE crm_campaigns ADD COLUMN delay_min_seconds INTEGER NOT NULL DEFAULT 60`);
-                db!.exec(`ALTER TABLE crm_campaigns ADD COLUMN delay_max_seconds INTEGER NOT NULL DEFAULT 60`);
-                db!.exec(`ALTER TABLE crm_campaigns ADD COLUMN per_contact_delay_min_seconds INTEGER NOT NULL DEFAULT 0`);
-                db!.exec(`ALTER TABLE crm_campaigns ADD COLUMN per_contact_delay_max_seconds INTEGER NOT NULL DEFAULT 0`);
+                conn().exec(`ALTER TABLE crm_campaigns ADD COLUMN delay_min_seconds INTEGER NOT NULL DEFAULT 60`);
+                conn().exec(`ALTER TABLE crm_campaigns ADD COLUMN delay_max_seconds INTEGER NOT NULL DEFAULT 60`);
+                conn().exec(`ALTER TABLE crm_campaigns ADD COLUMN per_contact_delay_min_seconds INTEGER NOT NULL DEFAULT 0`);
+                conn().exec(`ALTER TABLE crm_campaigns ADD COLUMN per_contact_delay_max_seconds INTEGER NOT NULL DEFAULT 0`);
                 // Backfill existing campaigns: derive range from delay_seconds (±10s, min 30s)
-                db!.exec(`UPDATE crm_campaigns SET delay_min_seconds = MAX(30, delay_seconds - 10), delay_max_seconds = delay_seconds + 10 WHERE delay_min_seconds = 60 AND delay_max_seconds = 60`);
+                conn().exec(`UPDATE crm_campaigns SET delay_min_seconds = MAX(30, delay_seconds - 10), delay_max_seconds = delay_seconds + 10 WHERE delay_min_seconds = 60 AND delay_max_seconds = 60`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added delay_min/max + per_contact_delay to crm_campaigns');
             }
@@ -2721,7 +2897,7 @@ class DatabaseService {
         try {
             const threadCols = this.query<any>(`PRAGMA table_info(fb_threads)`);
             if (!threadCols.some((c: any) => c.name === 'is_e2ee')) {
-                db!.exec(`ALTER TABLE fb_threads ADD COLUMN is_e2ee INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE fb_threads ADD COLUMN is_e2ee INTEGER DEFAULT 0`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added is_e2ee to fb_threads');
             }
@@ -2733,7 +2909,7 @@ class DatabaseService {
         try {
             const fbMsgCols = this.query<any>(`PRAGMA table_info(fb_messages)`);
             if (!fbMsgCols.some((c: any) => c.name === 'edit_history')) {
-                db!.exec(`ALTER TABLE fb_messages ADD COLUMN edit_history TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE fb_messages ADD COLUMN edit_history TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added edit_history to fb_messages');
             }
@@ -2745,7 +2921,7 @@ class DatabaseService {
         try {
             const aiCols = this.query<any>(`PRAGMA table_info(ai_assistants)`);
             if (aiCols.length > 0 && !aiCols.some((c: any) => c.name === 'base_url')) {
-                db!.exec(`ALTER TABLE ai_assistants ADD COLUMN base_url TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE ai_assistants ADD COLUMN base_url TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added base_url to ai_assistants');
             }
@@ -2757,7 +2933,7 @@ class DatabaseService {
         try {
             const contactCols = this.query<any>(`PRAGMA table_info(contacts)`);
             if (!contactCols.some((c: any) => c.name === 'is_forum')) {
-                db!.exec(`ALTER TABLE contacts ADD COLUMN is_forum INTEGER DEFAULT NULL`);
+                conn().exec(`ALTER TABLE contacts ADD COLUMN is_forum INTEGER DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added is_forum column to contacts');
             }
@@ -2769,7 +2945,7 @@ class DatabaseService {
         try {
             const msgCols = this.query<any>(`PRAGMA table_info(messages)`);
             if (!msgCols.some((c: any) => c.name === 'inline_buttons')) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN inline_buttons TEXT DEFAULT NULL`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN inline_buttons TEXT DEFAULT NULL`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added inline_buttons column to messages');
             }
@@ -2793,7 +2969,7 @@ class DatabaseService {
             });
 
             if (!hasScopedMessageKey) {
-                db!.exec(`
+                conn().exec(`
                     BEGIN TRANSACTION;
                     ALTER TABLE messages RENAME TO messages_legacy_unique;
                     CREATE TABLE messages (
@@ -2842,13 +3018,19 @@ class DatabaseService {
                     DROP TABLE messages_legacy_unique;
                     CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(owner_zalo_id, thread_id, timestamp);
                     CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel, owner_zalo_id, thread_id);
+                    -- Bảng cũ bị xoá kéo theo mọi chỉ mục của nó: tạo lại ngay (trước đây chỉ có 2 cái trên, phần còn lại đợi
+                    -- lần mở app sau → phiên đầu của DB mới: báo cáo / phân trang chat quét cả bảng tin)
+                    CREATE INDEX IF NOT EXISTS idx_messages_owner_timestamp ON messages(owner_zalo_id, timestamp);
+                    CREATE INDEX IF NOT EXISTS idx_messages_owner_type_timestamp ON messages(owner_zalo_id, thread_type, timestamp);
+                    CREATE INDEX IF NOT EXISTS idx_messages_thread_cursor ON messages(owner_zalo_id, thread_id, timestamp DESC, msg_id DESC);
+                    CREATE INDEX IF NOT EXISTS idx_messages_cli ON messages(owner_zalo_id, cli_msg_id) WHERE cli_msg_id IS NOT NULL;
                     COMMIT;
                 `);
                 this.save();
                 Logger.log('[DatabaseService] Migration: scoped message uniqueness by channel and thread');
             }
         } catch (err: any) {
-            try { db!.exec('ROLLBACK'); } catch {}
+            try { conn().exec('ROLLBACK'); } catch {}
             Logger.warn(`[DatabaseService] scoped message uniqueness migration: ${err.message}`);
         }
 
@@ -2858,8 +3040,8 @@ class DatabaseService {
         try {
             const messageCols = this.query<any>(`PRAGMA table_info(messages)`);
             if (messageCols.length > 0 && !messageCols.some((column: any) => column.name === 'topic_id')) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN topic_id TEXT DEFAULT NULL`);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_messages_topic ON messages(owner_zalo_id, thread_id, topic_id, timestamp)`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN topic_id TEXT DEFAULT NULL`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_messages_topic ON messages(owner_zalo_id, thread_id, topic_id, timestamp)`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added messages.topic_id for Telegram forum history');
             }
@@ -2870,7 +3052,7 @@ class DatabaseService {
         // (mở một topic forum quét cả lịch sử nhóm). Bản một phần: chỉ tin có topic, xây nhanh, tin thường không tốn ghi
         // thêm. DB cũ đã có bản đầy đủ cùng tên thì giữ nguyên — getMessages theo topic dùng được cả hai.
         try {
-            db!.exec(`CREATE INDEX IF NOT EXISTS idx_messages_topic ON messages(owner_zalo_id, thread_id, topic_id, timestamp) WHERE topic_id IS NOT NULL`);
+            conn().exec(`CREATE INDEX IF NOT EXISTS idx_messages_topic ON messages(owner_zalo_id, thread_id, topic_id, timestamp) WHERE topic_id IS NOT NULL`);
         } catch (err: any) {
             Logger.warn(`[DatabaseService] idx_messages_topic: ${err.message}`);
         }
@@ -2885,7 +3067,7 @@ class DatabaseService {
         try {
             const messageCols = this.query<any>(`PRAGMA table_info(messages)`);
             if (messageCols.length > 0 && !messageCols.some((column: any) => column.name === 'media_expired')) {
-                db!.exec(`ALTER TABLE messages ADD COLUMN media_expired INTEGER DEFAULT 0`);
+                conn().exec(`ALTER TABLE messages ADD COLUMN media_expired INTEGER DEFAULT 0`);
                 Logger.log('[DatabaseService] Migration: added messages.media_expired');
             }
         } catch (err: any) {
@@ -2899,7 +3081,7 @@ class DatabaseService {
      * Gọi lại ở accessor vì DB phụ (runOnBossDb/withDbPath) không chạy migrate().
      */
     private ensurePlainIdMapTable(): void {
-        db!.exec(`
+        conn().exec(`
             CREATE TABLE IF NOT EXISTS zalo_plain_id_map (
                 owner_zalo_id TEXT NOT NULL,
                 kind TEXT NOT NULL,
@@ -2984,9 +3166,9 @@ class DatabaseService {
     public replaceTelegramGroupAdmins(ownerZaloId: string, groupId: string, admins: Array<{ memberId: string; role: number; rank: string }>): void {
         if (!this.initialized || !groupId) return;
         const now = Date.now();
-        db!.transaction(() => {
-            db!.prepare(`DELETE FROM telegram_group_admins WHERE owner_zalo_id = ? AND group_id = ?`).run(ownerZaloId, groupId);
-            const insert = db!.prepare(
+        conn().transaction(() => {
+            conn().prepare(`DELETE FROM telegram_group_admins WHERE owner_zalo_id = ? AND group_id = ?`).run(ownerZaloId, groupId);
+            const insert = conn().prepare(
                 `INSERT OR REPLACE INTO telegram_group_admins (owner_zalo_id, group_id, member_id, role, rank, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?)`
             );
@@ -3825,7 +4007,7 @@ class DatabaseService {
     /** Lưu proxy mới, trả về id */
     public saveProxy(proxy: { name: string; type: string; host: string; port: number; username?: string; password?: string }): number {
         const now = Date.now();
-        const result = db!.prepare(
+        const result = conn().prepare(
             `INSERT INTO proxies (name, type, host, port, username, password, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(proxy.name, proxy.type, proxy.host, proxy.port, proxy.username || '', proxy.password || '', now, now);
@@ -3846,13 +4028,13 @@ class DatabaseService {
         if (sets.length === 0) return;
         sets.push('updated_at = ?'); vals.push(now);
         vals.push(id);
-        db!.prepare(`UPDATE proxies SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+        conn().prepare(`UPDATE proxies SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
     }
 
     /** Xóa proxy và gỡ khỏi mọi tài khoản đang dùng */
     public deleteProxy(id: number): void {
-        db!.prepare(`UPDATE accounts SET proxy_id = NULL WHERE proxy_id = ?`).run(id);
-        db!.prepare(`DELETE FROM proxies WHERE id = ?`).run(id);
+        conn().prepare(`UPDATE accounts SET proxy_id = NULL WHERE proxy_id = ?`).run(id);
+        conn().prepare(`DELETE FROM proxies WHERE id = ?`).run(id);
     }
 
     /** Lấy danh sách proxies kèm số tài khoản đang dùng */
@@ -4089,13 +4271,13 @@ class DatabaseService {
         // Gọi cho mọi tin Zalo đến → câu lệnh chuẩn bị một lần cho mỗi kết nối DB (db đổi khi xem DB của Boss / workspace).
         // Chỉ lọc (owner, cli_msg_id) để SQLite luôn dùng idx_messages_cli (vài dòng); thêm thread_id vào WHERE thì có lúc
         // nó chọn idx_messages_thread_cursor và quét cả lịch sử hội thoại (đo trên DB thật: hàng chục giây / truy vấn)
-        let stmt = zaloCliLookupStatements.get(db!);
+        let stmt = zaloCliLookupStatements.get(conn());
         if (!stmt) {
-            stmt = db!.prepare(
+            stmt = conn().prepare(
                 `SELECT id, msg_id, thread_id, sender_id, content, COALESCE(channel, 'zalo') AS channel FROM messages
                   WHERE owner_zalo_id = ? AND cli_msg_id = ?`
             );
-            zaloCliLookupStatements.set(db!, stmt);
+            zaloCliLookupStatements.set(conn(), stmt);
         }
         const rows = stmt.all(ownerZaloId, cli) as Array<{ id: number; msg_id: string; thread_id: string; sender_id: string; content: string; channel: string }>;
         const hit = rows.find(r => r.thread_id === threadId && String(r.sender_id) === senderId && r.channel === 'zalo');
@@ -4132,7 +4314,7 @@ class DatabaseService {
         const existing = this.findZaloRowByCli(ownerZaloId, row.threadId, String(row.params[5] || ''), row.params[1]);
         if (!existing || existing.msg_id === msgId || !DatabaseService.isSyntheticZaloMsgId(existing.msg_id)) return false;
         try {
-            db!.prepare('UPDATE messages SET msg_id = ?, timestamp = ? WHERE id = ?').run(msgId, row.timestamp, existing.id);
+            conn().prepare('UPDATE messages SET msg_id = ?, timestamp = ? WHERE id = ?').run(msgId, row.timestamp, existing.id);
         } catch (err: any) {
             // Dòng id thật đã có (UNIQUE) → để INSERT OR IGNORE bỏ qua như cũ
             Logger.warn(`[DatabaseService] Đổi id tạm ${existing.msg_id} → ${msgId} lỗi: ${err?.message}`);
@@ -4149,7 +4331,7 @@ class DatabaseService {
      */
     public saveHistoryMessagesBulk(ownerZaloId: string, messages: any[]): { inserted: number; ignored: number; threads: string[] } {
         if (!this.initialized || messages.length === 0) return { inserted: 0, ignored: 0, threads: [] };
-        const insert = db!.prepare(
+        const insert = conn().prepare(
             `INSERT OR IGNORE INTO messages
              (msg_id, cli_msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, local_paths, status, quote_data, is_recalled)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
@@ -4159,7 +4341,7 @@ class DatabaseService {
         const touched = new Set<string>();
         const latest = new Map<string, NonNullable<ReturnType<DatabaseService['buildZaloMessageRow']>>>();
 
-        db!.transaction(() => {
+        conn().transaction(() => {
             for (const message of messages) {
                 let row: ReturnType<DatabaseService['buildZaloMessageRow']> = null;
                 try {
@@ -4216,13 +4398,13 @@ class DatabaseService {
     public savePlainIdMappings(ownerZaloId: string, kind: 'user' | 'group', pairs: Array<[string, string]>): void {
         if (!this.initialized || pairs.length === 0) return;
         this.ensurePlainIdMapTable();
-        const stmt = db!.prepare(
+        const stmt = conn().prepare(
             `INSERT INTO zalo_plain_id_map (owner_zalo_id, kind, plain_id, noise_id, updated_at)
              VALUES (?,?,?,?,?)
              ON CONFLICT(owner_zalo_id, kind, plain_id) DO UPDATE SET noise_id = excluded.noise_id, updated_at = excluded.updated_at`
         );
         const now = Date.now();
-        db!.transaction(() => {
+        conn().transaction(() => {
             for (const [plainId, noiseId] of pairs) stmt.run(ownerZaloId, kind, plainId, noiseId, now);
         })();
     }
@@ -4296,6 +4478,15 @@ class DatabaseService {
     }
 
     public getMessages(ownerZaloId: string, threadId: string, limit = 50, offset = 0, before?: number, topicId?: string): Message[] {
+        return this.runReadPlan(this.getMessagesPlan(ownerZaloId, threadId, limit, offset, before, topicId));
+    }
+
+    /** getMessages với câu SELECT chạy trong worker đọc: mở / cuộn hội thoại không chặn luồng chính (cùng kết quả). */
+    public getMessagesAsync(ownerZaloId: string, threadId: string, limit = 50, offset = 0, before?: number, topicId?: string): Promise<Message[]> {
+        return this.runReadPlanAsync(this.getMessagesPlan(ownerZaloId, threadId, limit, offset, before, topicId));
+    }
+
+    private *getMessagesPlan(ownerZaloId: string, threadId: string, limit: number, offset: number, before?: number, topicId?: string): ReadPlan<Message[]> {
         if (!this.initialized) return [];
         // Telegram General has UI topic ID "1", but its messages do not carry
         // a forum top_msg_id. Persist them as NULL and expose them through the
@@ -4312,13 +4503,13 @@ class DatabaseService {
         if (before && before > 0) {
             // Use <= instead of < to handle messages with same timestamp.
             // prependMessages() deduplicates by msg_id, so duplicates are safe.
-            const msgs = this.query<Message>(
+            const msgs: Message[] = yield readAll(
                 `SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ?${topicFilter} AND timestamp <= ? ORDER BY ${orderBy} LIMIT ?`,
                 [ownerZaloId, threadId, ...topicParams, before, limit]
             );
             return msgs;
         }
-        const msgs = this.query<Message>(
+        const msgs: Message[] = yield readAll(
             // Cùng mốc (Telegram chỉ có giây) → id sau = tin sau, như truy vấn theo con trỏ ở trên (cùng chỉ mục)
             `SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ?${topicFilter} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
             [ownerZaloId, threadId, ...topicParams, limit, offset]
@@ -4331,14 +4522,23 @@ class DatabaseService {
 
     /** Lấy tin nhắn xung quanh 1 timestamp - dùng khi cần scroll đến tin nhắn cũ ngoài trang hiện tại */
     public getMessagesAround(ownerZaloId: string, threadId: string, timestamp: number, limit = 50): Message[] {
+        return this.runReadPlan(this.getMessagesAroundPlan(ownerZaloId, threadId, timestamp, limit));
+    }
+
+    /** getMessagesAround trong worker đọc (nhảy tới tin cũ). */
+    public getMessagesAroundAsync(ownerZaloId: string, threadId: string, timestamp: number, limit = 50): Promise<Message[]> {
+        return this.runReadPlanAsync(this.getMessagesAroundPlan(ownerZaloId, threadId, timestamp, limit));
+    }
+
+    private *getMessagesAroundPlan(ownerZaloId: string, threadId: string, timestamp: number, limit: number): ReadPlan<Message[]> {
         if (!this.initialized) return [];
         const half = Math.floor(limit / 2);
         // Lấy half tin nhắn CŨ hơn hoặc bằng timestamp + half tin nhắn MỚI hơn timestamp
-        const older = this.query<Message>(
+        const older: Message[] = yield readAll(
             'SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND timestamp <= ? ORDER BY timestamp DESC LIMIT ?',
             [ownerZaloId, threadId, timestamp, half]
         );
-        const newer = this.query<Message>(
+        const newer: Message[] = yield readAll(
             'SELECT * FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND timestamp > ? ORDER BY timestamp ASC LIMIT ?',
             [ownerZaloId, threadId, timestamp, half]
         );
@@ -4357,8 +4557,17 @@ class DatabaseService {
 
     /** Lấy tất cả file đính kèm trong một thread - dùng cho tab File */
     public getFileMessages(ownerZaloId: string, threadId: string, limit = 50, offset = 0): Message[] {
+        return this.runReadPlan(this.getFileMessagesPlan(ownerZaloId, threadId, limit, offset));
+    }
+
+    /** getFileMessages trong worker đọc (tab File). */
+    public getFileMessagesAsync(ownerZaloId: string, threadId: string, limit = 50, offset = 0): Promise<Message[]> {
+        return this.runReadPlanAsync(this.getFileMessagesPlan(ownerZaloId, threadId, limit, offset));
+    }
+
+    private *getFileMessagesPlan(ownerZaloId: string, threadId: string, limit: number, offset: number): ReadPlan<Message[]> {
         if (!this.initialized) return [];
-        return this.query<Message>(
+        return yield readAll(
             `SELECT msg_id, owner_zalo_id, thread_id, sender_id, content, msg_type, timestamp, local_paths, attachments, channel
              FROM messages
              WHERE owner_zalo_id = ? AND thread_id = ?
@@ -4380,13 +4589,22 @@ class DatabaseService {
      *   Xem mediaMessagesQuery.ts.
      */
     public getMediaMessages(ownerZaloId: string, threadId: string, limit = 50, offset = 0, cursor?: MediaCursor | null): Message[] {
+        return this.runReadPlan(this.getMediaMessagesPlan(ownerZaloId, threadId, limit, offset, cursor));
+    }
+
+    /** getMediaMessages trong worker đọc (panel Ảnh/Video, bộ sưu tập của trình xem ảnh). */
+    public getMediaMessagesAsync(ownerZaloId: string, threadId: string, limit = 50, offset = 0, cursor?: MediaCursor | null): Promise<Message[]> {
+        return this.runReadPlanAsync(this.getMediaMessagesPlan(ownerZaloId, threadId, limit, offset, cursor));
+    }
+
+    private *getMediaMessagesPlan(ownerZaloId: string, threadId: string, limit: number, offset: number, cursor?: MediaCursor | null): ReadPlan<Message[]> {
         if (!this.initialized) return [];
         if (cursor && (cursor.beforeTs !== undefined || cursor.afterTs !== undefined)) {
             const page = buildMediaCursorQuery(ownerZaloId, threadId, cursor, limit);
-            const rows = this.query<Message>(page.sql, page.params);
+            const rows: Message[] = yield readAll(page.sql, page.params);
             return page.ascending ? rows.reverse() : rows;
         }
-        return this.query<Message>(
+        return yield readAll(
             `SELECT ${MEDIA_MESSAGE_COLUMNS}
              FROM messages
              WHERE owner_zalo_id = ? AND thread_id = ?
@@ -4399,8 +4617,17 @@ class DatabaseService {
 
     /** Lấy tất cả ảnh đã lưu trong folder media cho một tài khoản (tất cả threads) */
     public getAllLocalMediaMessages(ownerZaloId: string): Message[] {
+        return this.runReadPlan(this.getAllLocalMediaMessagesPlan(ownerZaloId));
+    }
+
+    /** getAllLocalMediaMessages trong worker đọc. */
+    public getAllLocalMediaMessagesAsync(ownerZaloId: string): Promise<Message[]> {
+        return this.runReadPlanAsync(this.getAllLocalMediaMessagesPlan(ownerZaloId));
+    }
+
+    private *getAllLocalMediaMessagesPlan(ownerZaloId: string): ReadPlan<Message[]> {
         if (!this.initialized) return [];
-        return this.query<Message>(
+        return yield readAll(
             `SELECT msg_id, owner_zalo_id, thread_id, sender_id, content, msg_type, timestamp, local_paths
              FROM messages
              WHERE owner_zalo_id = ?
@@ -4412,6 +4639,15 @@ class DatabaseService {
     }
 
     public searchMessages(ownerZaloId: string, query: string): Message[] {
+        return this.runReadPlan(this.searchMessagesPlan(ownerZaloId, query));
+    }
+
+    /** searchMessages trong worker đọc (ô tìm kiếm danh sách hội thoại). */
+    public searchMessagesAsync(ownerZaloId: string, query: string): Promise<Message[]> {
+        return this.runReadPlanAsync(this.searchMessagesPlan(ownerZaloId, query));
+    }
+
+    private *searchMessagesPlan(ownerZaloId: string, query: string): ReadPlan<Message[]> {
         if (!this.initialized) return [];
         const text = String(query ?? '').trim();
         if (!text) return [];
@@ -4420,9 +4656,9 @@ class DatabaseService {
         // MESSAGE_SEARCH_FTS_CANDIDATES dòng khớp mới nhất theo rowid rồi mới xếp theo thời gian: xếp MỌI dòng khớp
         // của từ phổ biến ("anh") mất ~0,6 s, chặn tiến trình chính.
         const ftsQuery = buildMessageFtsQuery(text);
-        if (ftsQuery && this.hasMessagesFts()) {
+        if (ftsQuery && (yield* this.hasMessagesFtsPlan())) {
             try {
-                const rows = this.query<Message>(
+                const rows: Message[] = yield readAll(
                     `SELECT m.* FROM messages m
                      WHERE m.rowid IN (
                          SELECT rowid FROM messages_fts
@@ -4440,7 +4676,7 @@ class DatabaseService {
 
         // Không có FTS / FTS không khớp (khớp giữa từ như "freeship", emoji…): LIKE chỉ trên các tin gần nhất của
         // tài khoản. Trước đây LIKE '%…%' quét cả bảng — 1,3 triệu tin ≈ 30 s đứng cả app mỗi lần gõ sai / từ hiếm.
-        return this.query<Message>(
+        return yield readAll(
             `SELECT * FROM (
                  SELECT * FROM messages WHERE owner_zalo_id = ?
                  ORDER BY timestamp DESC LIMIT ${MESSAGE_SEARCH_RECENT_SCAN}
@@ -4452,9 +4688,10 @@ class DatabaseService {
 
     /** Bảng messages_fts đã có (migrateFTS5 lúc mở DB). Chỉ nhớ khi đã thấy — chưa có thì lần sau kiểm lại. */
     private messagesFtsReady = false;
-    private hasMessagesFts(): boolean {
+    private *hasMessagesFtsPlan(): ReadPlan<boolean> {
         if (this.messagesFtsReady) return true;
-        this.messagesFtsReady = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'`).length > 0;
+        const tables: any[] = yield readAll(`SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'`);
+        this.messagesFtsReady = tables.length > 0;
         return this.messagesFtsReady;
     }
 
@@ -4497,11 +4734,11 @@ class DatabaseService {
     private static readonly knownColumns = new WeakMap<object, Map<string, boolean>>();
 
     private hasColumn(table: string, column: string): boolean {
-        if (!db) return false;
-        let columns = DatabaseService.knownColumns.get(db);
+        if (!currentDb()) return false;
+        let columns = DatabaseService.knownColumns.get(conn());
         if (!columns) {
             columns = new Map();
-            DatabaseService.knownColumns.set(db, columns);
+            DatabaseService.knownColumns.set(conn(), columns);
         }
         const key = `${table}.${column}`;
         let exists = columns.get(key);
@@ -4529,7 +4766,7 @@ class DatabaseService {
         for (let i = 0; i < ids.length; i += 400) {
             const chunk = ids.slice(i, i + 400);
             const marks = chunk.map(() => '?').join(', ');
-            db!.transaction(() => {
+            conn().transaction(() => {
                 if (replied) {
                     this.run(
                         `UPDATE contacts SET reply_marked_at = MAX(COALESCE(reply_marked_at, 0), COALESCE(
@@ -4585,6 +4822,15 @@ class DatabaseService {
         limit?: number;
         offset?: number;
     }): Contact[] {
+        return this.runReadPlan(this.getContactsFilteredPlan(ownerZaloId, opts));
+    }
+
+    /** getContactsFiltered trong worker đọc (danh sách hội thoại, bộ lọc, tìm hội thoại). */
+    public getContactsFilteredAsync(ownerZaloId: string, opts?: Parameters<DatabaseService['getContactsFiltered']>[1]): Promise<Contact[]> {
+        return this.runReadPlanAsync(this.getContactsFilteredPlan(ownerZaloId, opts));
+    }
+
+    private *getContactsFilteredPlan(ownerZaloId: string, opts?: Parameters<DatabaseService['getContactsFiltered']>[1]): ReadPlan<Contact[]> {
         if (!this.initialized) return [];
         const conditions: string[] = ['owner_zalo_id = ?'];
         const params: any[] = [ownerZaloId];
@@ -4646,7 +4892,7 @@ class DatabaseService {
         // is_replied: đã trả lời / chưa trả lời theo tin thật mới nhất (shared/chat/replyState) — tính ở đây để danh sách đúng
         // ngay khi mở app (trước đây chỉ có trong bộ nhớ, mất sau khi khởi động lại)
         const select = `SELECT contacts.*, ${this.replyStateColumnSql()} AS is_replied FROM contacts WHERE ${where}`;
-        return this.query<Contact>(
+        return yield readAll(
             opts?.unrepliedOnly
                 ? `SELECT * FROM (${select}) WHERE is_replied = 0 ORDER BY last_message_time DESC${pagination}`
                 : `${select} ORDER BY last_message_time DESC${pagination}`,
@@ -4708,7 +4954,7 @@ class DatabaseService {
         const enabled = this.query<{ contact_id: string }>(
             'SELECT contact_id FROM contacts WHERE owner_zalo_id = ? AND zalo_auto_delete_ttl > 0', [ownerZaloId],
         );
-        db!.transaction(() => {
+        conn().transaction(() => {
             for (const row of enabled) {
                 if (ttls.has(row.contact_id)) continue;
                 this.run('UPDATE contacts SET zalo_auto_delete_ttl = 0 WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, row.contact_id]);
@@ -4781,7 +5027,7 @@ class DatabaseService {
         const current = this.query<{ contact_id: string }>(
             'SELECT contact_id FROM contacts WHERE owner_zalo_id = ? AND zalo_hidden = 1', [ownerZaloId],
         );
-        db!.transaction(() => {
+        conn().transaction(() => {
             for (const row of current) {
                 if (hiddenIds.has(row.contact_id)) continue;
                 this.run('UPDATE contacts SET zalo_hidden = 0 WHERE owner_zalo_id = ? AND contact_id = ?', [ownerZaloId, row.contact_id]);
@@ -4843,7 +5089,9 @@ class DatabaseService {
                    display_name=CASE WHEN ?!='' THEN ? ELSE contacts.display_name END,
                    avatar_url=CASE WHEN ?!='' THEN ? ELSE contacts.avatar_url END,
                    phone=CASE WHEN ?!='' THEN ? ELSE contacts.phone END,
-                   contact_type=CASE WHEN ?!='' THEN ? ELSE contacts.contact_type END`,
+                   contact_type=CASE WHEN ?!='' THEN ? ELSE contacts.contact_type END,
+                   -- Dòng cũ mang kênh mặc định 'zalo' của tài khoản Telegram / Facebook: sửa theo kênh của tài khoản
+                   channel=CASE WHEN COALESCE(contacts.channel, 'zalo') = 'zalo' THEN excluded.channel ELSE contacts.channel END`,
                 [
                     ownerZaloId, contactId,
                     displayName || contactId, avatarUrl || '', normalizedPhone,
@@ -4910,20 +5158,20 @@ class DatabaseService {
         let updated = 0;
         try {
             this.transaction(() => {
-                const updateContact = db!.prepare(
+                const updateContact = conn().prepare(
                     `UPDATE contacts SET
                         display_name = CASE WHEN ? != '' THEN ? ELSE display_name END,
                         avatar_url = CASE WHEN ? != '' THEN ? ELSE avatar_url END,
                         info_refreshed_at = ?
                      WHERE owner_zalo_id = ? AND contact_id = ?`
                 );
-                const updateFriend = db!.prepare(
+                const updateFriend = conn().prepare(
                     `UPDATE friends SET
                         display_name = CASE WHEN ? != '' THEN ? ELSE display_name END,
                         avatar = CASE WHEN ? != '' THEN ? ELSE avatar END
                      WHERE owner_zalo_id = ? AND user_id = ?`
                 );
-                const stamp = db!.prepare(
+                const stamp = conn().prepare(
                     `UPDATE contacts SET info_refreshed_at = ?
                      WHERE owner_zalo_id = ? AND contact_id = ? AND COALESCE(info_refreshed_at, 0) < ?`
                 );
@@ -5423,6 +5671,28 @@ class DatabaseService {
         }
     }
 
+    /**
+     * Liên hệ của tài khoản Telegram / Facebook mang kênh 'zalo' (mặc định của cột; trước 26.10.3 đường lưu hồ sơ không
+     * ghi kênh): lọc theo kênh không thấy (vd "Tin nhắn đã lưu" của Telegram), mở ra thì ô soạn tin gửi theo kênh Zalo.
+     * Sửa một lần theo kênh của tài khoản sở hữu (tài khoản Telegram / Facebook không có liên hệ Zalo).
+     */
+    private repairNonZaloContactChannelsOnce(): void {
+        const key = 'repair_contact_channel_v1';
+        try {
+            if (this.getSetting(key) === '1') return;
+            const where = `COALESCE(channel, 'zalo') = 'zalo'
+                  AND owner_zalo_id IN (SELECT zalo_id FROM accounts WHERE COALESCE(channel, 'zalo') <> 'zalo')`;
+            const count = this.queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM contacts WHERE ${where}`)?.n || 0;
+            if (count > 0) {
+                this.run(`UPDATE contacts SET channel = (SELECT a.channel FROM accounts a WHERE a.zalo_id = contacts.owner_zalo_id) WHERE ${where}`);
+                Logger.log(`[DatabaseService] Contact channels repaired: ${count}`);
+            }
+            this.setSetting(key, '1');
+        } catch (err: any) {
+            Logger.warn(`[DatabaseService] repairNonZaloContactChannelsOnce: ${err?.message}`);
+        }
+    }
+
     private scheduleJxlImageRepair(): void {
         if (this.jxlRepairTimer) clearTimeout(this.jxlRepairTimer);
         this.jxlRepairTimer = setTimeout(() => {
@@ -5433,7 +5703,7 @@ class DatabaseService {
     }
 
     private async repairStoredJxlImages(): Promise<void> {
-        const target = db;
+        const target = currentDb();
         if (!target || !this.initialized) return;
         if (this.getSetting(DatabaseService.JXL_REPAIR_SETTING) === '1') return;
         const maxRow = target.prepare('SELECT MAX(id) AS maxId FROM messages').get() as { maxId: number | null } | undefined;
@@ -5451,7 +5721,7 @@ class DatabaseService {
         const staleFiles: string[] = [];
         let fixed = 0;
         for (let from = 0; from < maxId; from += CHUNK) {
-            if (db !== target) return; // đổi workspace giữa chừng → lần mở DB sau chạy lại
+            if (currentDb() !== target) return; // đổi workspace giữa chừng → lần mở DB sau chạy lại
             const rows = select.all(from, from + CHUNK) as Array<{
                 id: number; content: string; local_paths: string | null; quote_data: string | null; attachments: string | null;
             }>;
@@ -5471,7 +5741,7 @@ class DatabaseService {
             }
             await new Promise(resolve => setImmediate(resolve));
         }
-        if (db !== target) return;
+        if (currentDb() !== target) return;
         this.setSetting(DatabaseService.JXL_REPAIR_SETTING, '1');
         for (const file of staleFiles) {
             try { fs.unlinkSync(FileStorageService.resolveAbsolutePath(file)); } catch { /* đã xoá */ }
@@ -5546,7 +5816,7 @@ class DatabaseService {
             ];
             let updated = 0;
             // UDF: no parameter binding - all logic runs in pure JS callback
-            db!.function('_rewrite_local_path', (jsonStr: string): string => {
+            conn().function('_rewrite_local_path', (jsonStr: string): string => {
                 if (!jsonStr) return jsonStr;
                 let text = jsonStr;
                 let changed = false;
@@ -5556,7 +5826,7 @@ class DatabaseService {
                 if (changed) updated++;
                 return text;
             });
-            db!.exec(
+            conn().exec(
                 `UPDATE messages SET local_paths = _rewrite_local_path(local_paths)
                  WHERE local_paths IS NOT NULL AND local_paths != '' AND local_paths != '{}' AND local_paths != 'null'`
             );
@@ -5589,7 +5859,7 @@ class DatabaseService {
         try {
             // JS UDF: receives local_paths JSON string, returns transformed string.
             // No Wasm param binding - all transformation runs in JavaScript.
-            db!.function('_migrate_local_path', (jsonStr: string): string => {
+            conn().function('_migrate_local_path', (jsonStr: string): string => {
                 if (!jsonStr) return jsonStr;
                 try {
                     const lp: Record<string, string> = JSON.parse(jsonStr);
@@ -5615,7 +5885,7 @@ class DatabaseService {
             // JSON stores Windows separators escaped as `\\`, while an absolute
             // Unix path includes `/media/`. Already-relative `media/...` values
             // match neither condition.
-            db!.exec(
+            conn().exec(
                 `UPDATE messages SET local_paths = _migrate_local_path(local_paths)
                  WHERE local_paths IS NOT NULL
                    AND local_paths != ''
@@ -5700,8 +5970,8 @@ class DatabaseService {
         if (!this.initialized || !msgIds.length) return;
         try {
             // Telegram: msg_id chỉ duy nhất trong 1 hội thoại → xoá đúng hội thoại, không bao giờ xoá theo msg_id trần
-            const scoped = db!.prepare(`DELETE FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND ${SAME_THREAD_SQL}`);
-            const unscoped = db!.prepare(
+            const scoped = conn().prepare(`DELETE FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND ${SAME_THREAD_SQL}`);
+            const unscoped = conn().prepare(
                 `DELETE FROM messages WHERE owner_zalo_id = ? AND msg_id = ? AND COALESCE(channel, 'zalo') NOT IN ('telegram_user', 'telegram_bot')`,
             );
             for (const msgId of msgIds) {
@@ -5722,7 +5992,7 @@ class DatabaseService {
     public markMessageDeletedByAdmin(ownerZaloId: string, msgIds: string[], deletedByUid: string): void {
         if (!this.initialized || !msgIds.length) return;
         try {
-            const stmt = db!.prepare(
+            const stmt = conn().prepare(
                 `UPDATE messages SET deleted_by = ? WHERE owner_zalo_id = ? AND msg_id = ?`
             );
             for (const msgId of msgIds) {
@@ -5768,7 +6038,7 @@ class DatabaseService {
         if (!this.initialized) return;
         const now = Date.now();
         try {
-            const stmt = db!.prepare(
+            const stmt = conn().prepare(
                 `INSERT INTO friends (owner_zalo_id, user_id, display_name, avatar, phone, updated_at)
                  VALUES (?,?,?,?,?,?)
                  ON CONFLICT(owner_zalo_id, user_id) DO UPDATE SET
@@ -5795,7 +6065,7 @@ class DatabaseService {
     public saveContactsBatch(contacts: Array<Omit<Contact, 'id'>>): void {
         if (!this.initialized || contacts.length === 0) return;
         try {
-            const stmt = db!.prepare(
+            const stmt = conn().prepare(
                 `INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, phone, is_friend, contact_type, unread_count, last_message, last_message_time)
                  VALUES (?,?,?,?,?,?,?,?,?,?)
                  ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
@@ -5920,7 +6190,7 @@ class DatabaseService {
                 [ownerZaloId, direction]
             );
             const now = Date.now();
-            const stmt = db!.prepare(
+            const stmt = conn().prepare(
                 `INSERT OR IGNORE INTO friend_requests (owner_zalo_id, user_id, display_name, avatar, phone, direction, msg, created_at, updated_at)
                  VALUES (?,?,?,?,?,?,?,?,?)`
             );
@@ -6278,7 +6548,11 @@ class DatabaseService {
         return '';
     }
 
+    /** Đường dẫn CSDL của đoạn code đang chạy (xem currentDb). */
     public getDbPath(): string {
+        const scope = currentDbScope();
+        if (scope?.kind === 'path') return scope.dbPath;
+        if (scope?.kind === 'ui' && uiDb && getUiRemoteWorkspace()) return uiDbPath;
         return this.dbPath;
     }
 
@@ -6302,8 +6576,8 @@ class DatabaseService {
         try {
             const tables = this.query<any>(`SELECT name FROM sqlite_master WHERE type='table' AND name='links'`);
             if (tables.length === 0) {
-                db!.exec(`CREATE TABLE IF NOT EXISTS links (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_zalo_id TEXT NOT NULL, thread_id TEXT NOT NULL, msg_id TEXT NOT NULL, url TEXT NOT NULL, title TEXT DEFAULT '', domain TEXT DEFAULT '', thumb_url TEXT DEFAULT '', timestamp INTEGER NOT NULL, UNIQUE(owner_zalo_id, msg_id))`);
-                db!.exec(`CREATE INDEX IF NOT EXISTS idx_links_thread ON links(owner_zalo_id, thread_id, timestamp)`);
+                conn().exec(`CREATE TABLE IF NOT EXISTS links (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_zalo_id TEXT NOT NULL, thread_id TEXT NOT NULL, msg_id TEXT NOT NULL, url TEXT NOT NULL, title TEXT DEFAULT '', domain TEXT DEFAULT '', thumb_url TEXT DEFAULT '', timestamp INTEGER NOT NULL, UNIQUE(owner_zalo_id, msg_id))`);
+                conn().exec(`CREATE INDEX IF NOT EXISTS idx_links_thread ON links(owner_zalo_id, thread_id, timestamp)`);
                 this.save();
             }
         } catch {}
@@ -6311,7 +6585,7 @@ class DatabaseService {
         // Bù link từ tin cũ (dữ liệu có trước bảng links): 1 lần / hội thoại / phiên — tin mới lưu link ngay lúc nhận
         // (saveLink, saveFBMessage). Trước đây chạy mỗi lần mở tab Link: hội thoại chưa có link quét lại cả hội thoại, và
         // truy vấn tin Facebook quét hết tin của hội thoại Zalo / Telegram (không bao giờ khớp) — 113k tin ≈ 0,7 s.
-        const backfillKey = `${this.dbPath}|${ownerZaloId}|${threadId}`;
+        const backfillKey = `${this.getDbPath()}|${ownerZaloId}|${threadId}`;
         if (!linksBackfilledThreads.has(backfillKey)) {
             linksBackfilledThreads.add(backfillKey);
             this.backfillThreadLinks(ownerZaloId, threadId);
@@ -6337,7 +6611,7 @@ class DatabaseService {
                     [ownerZaloId, threadId]
                 );
                 if (msgs.length > 0) {
-                    const stmt = db!.prepare(
+                    const stmt = conn().prepare(
                         'INSERT OR IGNORE INTO links (owner_zalo_id, thread_id, msg_id, url, title, domain, thumb_url, timestamp) VALUES (?,?,?,?,?,?,?,?)'
                     );
                     let backfilled = 0;
@@ -6377,7 +6651,7 @@ class DatabaseService {
             );
             if (fbMsgs.length > 0) {
                 const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
-                const stmt = db!.prepare(
+                const stmt = conn().prepare(
                     'INSERT OR IGNORE INTO links (owner_zalo_id, thread_id, msg_id, url, title, domain, thumb_url, timestamp) VALUES (?,?,?,?,?,?,?,?)'
                 );
                 let backfilled = 0;
@@ -6385,7 +6659,8 @@ class DatabaseService {
                     const text = m.content || '';
                     const matches = text.match(urlRegex);
                     if (!matches) continue;
-                    for (const url of matches) {
+                    // Dấu câu / ngoặc đóng thừa cuối link không thuộc link (như khung chat — shared/chat/urlText)
+                    for (const url of matches.map(trimUrlEnd).filter(isLinkableUrl)) {
                         try {
                             const domain = new URL(url).hostname;
                             stmt.run(ownerZaloId, threadId, m.msg_id + '_' + url.slice(0, 20), url, url, domain, '', m.timestamp);
@@ -6407,9 +6682,9 @@ class DatabaseService {
     ): void {
         if (!this.initialized) return;
         const now = Date.now();
-        const stmt = db!.prepare(GROUP_MEMBER_UPSERT_SQL);
+        const stmt = conn().prepare(GROUP_MEMBER_UPSERT_SQL);
         // 1 transaction cho cả danh sách (nhóm vài nghìn thành viên: mỗi lệnh tự commit chặn main lâu hơn nhiều lần)
-        db!.transaction(() => {
+        conn().transaction(() => {
             for (const m of members) {
                 stmt.run(ownerZaloId, groupId, m.memberId, m.displayName || '', m.avatar || '', m.role || 0, m.username || '', now);
             }
@@ -6425,7 +6700,7 @@ class DatabaseService {
         member: { memberId: string; displayName: string; avatar: string; role: number; username?: string }
     ): void {
         if (!this.initialized) return;
-        db!.prepare(GROUP_MEMBER_UPSERT_SQL)
+        conn().prepare(GROUP_MEMBER_UPSERT_SQL)
             .run(ownerZaloId, groupId, member.memberId, member.displayName || '', member.avatar || '', member.role || 0, member.username || '', Date.now());
         this.save();
         // Individual member hydration is expected during Telegram catch-up;
@@ -6436,7 +6711,7 @@ class DatabaseService {
     /** Remove a SINGLE group member from DB */
     public removeGroupMember(ownerZaloId: string, groupId: string, memberId: string): void {
         if (!this.initialized) return;
-        db!.prepare(
+        conn().prepare(
             `DELETE FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND member_id = ?`
         ).run(ownerZaloId, groupId, memberId);
         this.save();
@@ -6466,9 +6741,9 @@ class DatabaseService {
 
     /** Hàm SQL `deplao_fold(text)`: bỏ dấu tiếng Việt + chữ thường (foldSearchText) — tìm / sắp xếp tên thành viên. */
     private ensureFoldFunction(): void {
-        if (!db || DatabaseService.foldFunctionDbs.has(db)) return;
-        db.function('deplao_fold', { deterministic: true }, (value: unknown) => foldSearchText(value));
-        DatabaseService.foldFunctionDbs.add(db);
+        if (!currentDb() || DatabaseService.foldFunctionDbs.has(conn())) return;
+        conn().function('deplao_fold', { deterministic: true }, (value: unknown) => foldSearchText(value));
+        DatabaseService.foldFunctionDbs.add(conn());
     }
 
     /**
@@ -6546,11 +6821,11 @@ class DatabaseService {
     private static readonly knownTables = new WeakMap<object, Map<string, boolean>>();
 
     private hasTable(name: string): boolean {
-        if (!db) return false;
-        let tables = DatabaseService.knownTables.get(db);
+        if (!currentDb()) return false;
+        let tables = DatabaseService.knownTables.get(conn());
         if (!tables) {
             tables = new Map();
-            DatabaseService.knownTables.set(db, tables);
+            DatabaseService.knownTables.set(conn(), tables);
         }
         let exists = tables.get(name);
         if (exists === undefined) {
@@ -6585,7 +6860,7 @@ class DatabaseService {
     public saveStickers(stickers: any[]): void {
         if (!this.initialized || !stickers?.length) return;
         try {
-            const stmt = db!.prepare(
+            const stmt = conn().prepare(
                 `INSERT OR REPLACE INTO stickers
                  (sticker_id, cat_id, type, text, sticker_url, sticker_sprite_url, checksum, data_json, unsupported, updated_at)
                  VALUES (?,?,?,?,?,?,?,?,?,?)`
@@ -6654,7 +6929,7 @@ class DatabaseService {
     public saveStickerPacks(packs: any[]): void {
         if (!this.initialized || !packs?.length) return;
         try {
-            const stmt = db!.prepare(
+            const stmt = conn().prepare(
                 `INSERT OR REPLACE INTO sticker_packs
                  (cat_id, name, thumb_url, sticker_count, data_json, updated_at)
                  VALUES (?,?,?,?,?,?)`
@@ -6931,7 +7206,7 @@ class DatabaseService {
         if (!this.initialized) return;
         this.runNoSave(`DELETE FROM local_quick_messages WHERE owner_zalo_id=?`, [ownerZaloId]);
         const now = Date.now();
-        const stmt = db!.prepare(
+        const stmt = conn().prepare(
             `INSERT OR REPLACE INTO local_quick_messages (owner_zalo_id, keyword, title, media_json, created_at, updated_at) VALUES (?,?,?,?,?,?)`
         );
         for (const item of items) {
@@ -6950,7 +7225,7 @@ class DatabaseService {
             );
             if (rows.length === 0) return 0;
             const now = Date.now();
-            const stmt = db!.prepare(
+            const stmt = conn().prepare(
                 `INSERT OR REPLACE INTO local_quick_messages (owner_zalo_id, keyword, title, media_json, created_at, updated_at)
                  VALUES (?,?,?,?,?,?)`
             );
@@ -7223,12 +7498,12 @@ class DatabaseService {
 
     /** Gán nhiều label cho nhiều thread trong 1 transaction — tối ưu cho bulk */
     public bulkAssignLocalLabelToThread(ownerZaloId: string, labelIds: number[], threadIds: string[]): number {
-        if (!this.initialized || !db || labelIds.length === 0 || threadIds.length === 0) return 0;
+        if (!this.initialized || !currentDb() || labelIds.length === 0 || threadIds.length === 0) return 0;
         let count = 0;
         const now = Date.now();
         try {
-            db.exec('BEGIN');
-            const stmt = db.prepare(
+            conn().exec('BEGIN');
+            const stmt = conn().prepare(
                 `INSERT OR IGNORE INTO local_label_threads (owner_zalo_id, label_id, thread_id, created_at) VALUES (?,?,?,?)`
             );
             for (const labelId of labelIds) {
@@ -7237,9 +7512,9 @@ class DatabaseService {
                     count++;
                 }
             }
-            db.exec('COMMIT');
+            conn().exec('COMMIT');
         } catch (err: any) {
-            try { db!.exec('ROLLBACK'); } catch {}
+            try { conn().exec('ROLLBACK'); } catch {}
             Logger.error(`[DB] bulkAssignLocalLabelToThread: ${err.message}`);
         }
         return count;
@@ -7367,25 +7642,109 @@ class DatabaseService {
             const perContactMax = campaign.per_contact_delay_max_seconds ?? perContactMin;
             // Still write delay_seconds as the midpoint for backward compat
             const compatDelaySeconds = campaign.delay_seconds || Math.round((delayMin + delayMax) / 2);
+            // Tự dừng khi lỗi liên tiếp: bản lưu không gửi trường này (nhân viên / API bản cũ, đổi tuỳ chọn gửi) → giữ nguyên
+            const stopAfterFailures = campaign.stop_after_failures == null ? null : normalizeStopAfterFailures(campaign.stop_after_failures);
+            const strangersOnly = campaign.stop_strangers_only == null ? null : campaignFlag(campaign.stop_strangers_only);
+            const resumeNextDay = campaign.stop_resume_next_day == null ? null : campaignFlag(campaign.stop_resume_next_day);
             if (campaign.id) {
                 this.run(
-                    `UPDATE crm_campaigns SET channel=?, name=?, template_message=?, friend_request_message=?, campaign_type=?, mixed_config=?, status=?, delay_seconds=?, delay_min_seconds=?, delay_max_seconds=?, per_contact_delay_min_seconds=?, per_contact_delay_max_seconds=?, daily_send_limit=?, daily_start_time=?, updated_at=? WHERE id=? AND owner_zalo_id=?`,
-                    [channel, campaign.name, campaign.template_message || '', frMsg, type, mixedCfg, status, compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, now, campaign.id, campaign.owner_zalo_id]
+                    `UPDATE crm_campaigns SET channel=?, name=?, template_message=?, friend_request_message=?, campaign_type=?, mixed_config=?, status=?, delay_seconds=?, delay_min_seconds=?, delay_max_seconds=?, per_contact_delay_min_seconds=?, per_contact_delay_max_seconds=?, daily_send_limit=?, daily_start_time=?, stop_after_failures=COALESCE(?, stop_after_failures), stop_strangers_only=COALESCE(?, stop_strangers_only), stop_resume_next_day=COALESCE(?, stop_resume_next_day), updated_at=? WHERE id=? AND owner_zalo_id=?`,
+                    [channel, campaign.name, campaign.template_message || '', frMsg, type, mixedCfg, status, compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, stopAfterFailures, strangersOnly, resumeNextDay, now, campaign.id, campaign.owner_zalo_id]
                 );
                 return campaign.id;
             } else {
                 return this.runInsert(
-                    `INSERT INTO crm_campaigns (owner_zalo_id, channel, name, template_message, friend_request_message, campaign_type, mixed_config, status, delay_seconds, delay_min_seconds, delay_max_seconds, per_contact_delay_min_seconds, per_contact_delay_max_seconds, daily_send_limit, daily_start_time, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-                    [campaign.owner_zalo_id, channel, campaign.name, campaign.template_message, frMsg, type, mixedCfg, campaign.status || 'draft', compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, now, now]
+                    `INSERT INTO crm_campaigns (owner_zalo_id, channel, name, template_message, friend_request_message, campaign_type, mixed_config, status, delay_seconds, delay_min_seconds, delay_max_seconds, per_contact_delay_min_seconds, per_contact_delay_max_seconds, daily_send_limit, daily_start_time, stop_after_failures, stop_strangers_only, stop_resume_next_day, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                    [campaign.owner_zalo_id, channel, campaign.name, campaign.template_message, frMsg, type, mixedCfg, campaign.status || 'draft', compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, stopAfterFailures ?? 0, strangersOnly ?? 0, resumeNextDay ?? 0, now, now]
                 );
             }
         } catch (err: any) { Logger.error(`[DB] saveCRMCampaign: ${err.message}`); return 0; }
     }
 
+    /** Bắt đầu / Tạm dừng / Tiếp tục / Hoàn thành: bỏ trạng thái tự dừng (cả hẹn mai gửi tiếp), đếm lỗi liên tiếp lại từ 0. */
     public updateCRMCampaignStatus(campaignId: number, status: CRMCampaignStatus): void {
         if (!this.initialized) return;
-        try { this.run(`UPDATE crm_campaigns SET status=?, updated_at=? WHERE id=?`, [status, Date.now(), campaignId]); }
+        try {
+            this.run(
+                `UPDATE crm_campaigns SET status=?, consecutive_failures=0, auto_stop_reason='', auto_stopped_at=0, auto_resume_at=0, updated_at=? WHERE id=?`,
+                [status, Date.now(), campaignId],
+            );
+        }
         catch (err: any) { Logger.error(`[DB] updateCRMCampaignStatus: ${err.message}`); }
+    }
+
+    /**
+     * Chuỗi liên hệ gửi lỗi liên tiếp của chiến dịch (shared/crm/campaignAutoStop): lỗi +1, gửi được về 0. Trả số lỗi
+     * liên tiếp sau lượt này.
+     */
+    public recordCampaignOutcome(campaignId: number, failed: boolean): number {
+        if (!this.initialized) return 0;
+        try {
+            if (!failed) {
+                this.run(`UPDATE crm_campaigns SET consecutive_failures=0 WHERE id=? AND consecutive_failures<>0`, [campaignId]);
+                return 0;
+            }
+            const rows = this.query<{ consecutive_failures: number }>(
+                `UPDATE crm_campaigns SET consecutive_failures=consecutive_failures+1 WHERE id=? RETURNING consecutive_failures`,
+                [campaignId],
+            );
+            return Number(rows[0]?.consecutive_failures) || 0;
+        } catch (err: any) { Logger.error(`[DB] recordCampaignOutcome: ${err.message}`); return 0; }
+    }
+
+    /**
+     * Tự dừng chiến dịch đang chạy (đủ lỗi liên tiếp): Tạm dừng + lý do + lúc dừng, hiện ở màn chiến dịch tới khi bấm
+     * Tiếp tục. `resumeAt` > 0 = "Mai gửi tiếp" (hàng đợi tự chạy lại lúc đó). false = chiến dịch không còn chạy (vừa
+     * bị tạm dừng tay / xoá) → không đổi gì.
+     */
+    public autoStopCRMCampaign(campaignId: number, reason: string, resumeAt = 0): boolean {
+        if (!this.initialized) return false;
+        try {
+            const now = Date.now();
+            return this.runChanges(
+                `UPDATE crm_campaigns SET status='paused', auto_stop_reason=?, auto_stopped_at=?, auto_resume_at=?, updated_at=? WHERE id=? AND status='active'`,
+                [reason, now, Math.max(0, Math.round(resumeAt) || 0), now, campaignId],
+            ) > 0;
+        } catch (err: any) { Logger.error(`[DB] autoStopCRMCampaign: ${err.message}`); return false; }
+    }
+
+    /** Lúc sớm nhất có chiến dịch tự dừng "Mai gửi tiếp" cần chạy lại (0 = không có). */
+    public nextCampaignAutoResumeAt(): number {
+        if (!this.initialized) return 0;
+        try {
+            const row = this.queryOne<{ at: number | null }>(
+                `SELECT MIN(auto_resume_at) AS at FROM crm_campaigns WHERE status='paused' AND auto_resume_at>0 AND stop_resume_next_day=1`,
+            );
+            return Number(row?.at) || 0;
+        } catch (err: any) { Logger.error(`[DB] nextCampaignAutoResumeAt: ${err.message}`); return 0; }
+    }
+
+    /** Chiến dịch tự dừng "Mai gửi tiếp" đã tới giờ chạy lại (bỏ tick Mai gửi tiếp lúc đang dừng → không chạy lại). */
+    public getDueAutoResumeCampaigns(now: number): Array<{ id: number; owner_zalo_id: string; name: string }> {
+        if (!this.initialized) return [];
+        try {
+            return this.query<{ id: number; owner_zalo_id: string; name: string }>(
+                `SELECT id, owner_zalo_id, name FROM crm_campaigns
+                 WHERE status='paused' AND auto_resume_at>0 AND auto_resume_at<=? AND stop_resume_next_day=1
+                 ORDER BY auto_resume_at, id`,
+                [now],
+            );
+        } catch (err: any) { Logger.error(`[DB] getDueAutoResumeCampaigns: ${err.message}`); return []; }
+    }
+
+    /**
+     * Chạy lại chiến dịch tự dừng "Mai gửi tiếp": Đang chạy, bỏ lý do + hẹn giờ, đếm lỗi lại từ 0. false = người dùng
+     * vừa đổi trạng thái (đã Tiếp tục / xoá) → không đổi gì.
+     */
+    public resumeAutoStoppedCampaign(campaignId: number): boolean {
+        if (!this.initialized) return false;
+        try {
+            return this.runChanges(
+                `UPDATE crm_campaigns SET status='active', consecutive_failures=0, auto_stop_reason='', auto_stopped_at=0, auto_resume_at=0, updated_at=?
+                 WHERE id=? AND status='paused' AND auto_resume_at>0`,
+                [Date.now(), campaignId],
+            ) > 0;
+        } catch (err: any) { Logger.error(`[DB] resumeAutoStoppedCampaign: ${err.message}`); return false; }
     }
 
     public deleteCRMCampaign(campaignId: number, ownerZaloId: string): void {
@@ -7397,7 +7756,8 @@ class DatabaseService {
         } catch (err: any) { Logger.error(`[DB] deleteCRMCampaign: ${err.message}`); }
     }
 
-    public cloneCRMCampaign(campaignId: number, ownerZaloId: string, includeContacts: boolean, newName?: string): number {
+    /** `contactIds`: chỉ chép những liên hệ này (lọc theo hiệu quả để gửi tiếp); bỏ trống = tất cả. */
+    public cloneCRMCampaign(campaignId: number, ownerZaloId: string, includeContacts: boolean, newName?: string, contactIds?: readonly string[]): number {
         if (!this.initialized) return 0;
         try {
             const orig = this.getCRMCampaign(campaignId);
@@ -7413,10 +7773,11 @@ class DatabaseService {
             if (!newId) { Logger.warn(`[DB] cloneCRMCampaign: saveCRMCampaign returned 0`); return 0; }
 
             if (includeContacts) {
-                const contacts = this.getCampaignContacts(campaignId);
+                const wanted = contactIds && contactIds.length > 0 ? new Set(contactIds.map(String)) : null;
+                const contacts = this.getCampaignContacts(campaignId).filter((c) => !wanted || wanted.has(String(c.contact_id)));
                 if (contacts.length > 0) {
                     // Batch insert via a prepared statement to avoid per-row save() calls
-                    const stmt = db!.prepare(
+                    const stmt = conn().prepare(
                         `INSERT OR IGNORE INTO crm_campaign_contacts
                          (campaign_id, owner_zalo_id, contact_id, display_name, avatar, status, sent_at, retry_count, error)
                          VALUES (?,?,?,?,?,?,?,?,?)`
@@ -7445,7 +7806,7 @@ class DatabaseService {
     public addCampaignContacts(campaignId: number, ownerZaloId: string, contacts: Array<{ contactId: string; displayName?: string; avatar?: string; phone?: string }>): void {
         if (!this.initialized || !contacts.length) return;
         try {
-            const stmt = db!.prepare(
+            const stmt = conn().prepare(
                 `INSERT OR IGNORE INTO crm_campaign_contacts (campaign_id, owner_zalo_id, contact_id, display_name, avatar, phone, status, sent_at, retry_count, error) VALUES (?,?,?,?,?,?,'pending',0,0,'')`
             );
             for (const c of contacts) {
@@ -7511,7 +7872,8 @@ class DatabaseService {
                     c.per_contact_delay_min_seconds, c.per_contact_delay_max_seconds,
                     c.campaign_type, c.friend_request_message, c.mixed_config,
                     COALESCE(cont.phone, fr.phone, '') as phone,
-                    COALESCE(cont.contact_type, 'user') as contact_type
+                    COALESCE(cont.contact_type, 'user') as contact_type,
+                    CASE WHEN fr.user_id IS NOT NULL OR COALESCE(cont.is_friend, 0) = 1 THEN 1 ELSE 0 END as is_friend
                  FROM crm_campaign_contacts cc
                  JOIN crm_campaigns c ON c.id=cc.campaign_id
                  LEFT JOIN contacts cont ON cont.owner_zalo_id=cc.owner_zalo_id AND cont.contact_id=cc.contact_id
@@ -7587,28 +7949,20 @@ class DatabaseService {
         } catch (err: any) { Logger.error(`[DB] getSendLog: ${err.message}`); return []; }
     }
 
-    /** Top N campaigns with detailed stats including replied count */
+    /**
+     * Top N campaigns (CRM → Tổng quan) + hiệu quả: đã nhận / đã xem / đã phản hồi theo quy tắc chung
+     * (shared/analytics/messageEngagement; replied_count trước đây đếm mọi tin đến sau sent_at, kể cả tin hệ thống).
+     */
     public getTopCampaignStats(ownerZaloId: string, limit = 10): any[] {
         if (!this.initialized) return [];
         try {
-            return this.query<any>(`
+            const rows = this.query<any>(`
                 SELECT
-                    c.id, c.name, c.campaign_type, c.created_at, c.status,
+                    c.id, c.name, c.campaign_type, c.created_at, c.status, c.channel, c.mixed_config, c.owner_zalo_id,
                     COUNT(DISTINCT cc.id) as total_contacts,
                     COALESCE(SUM(CASE WHEN cc.status='sent' THEN 1 ELSE 0 END), 0) as sent_count,
                     COALESCE(SUM(CASE WHEN cc.status='failed' THEN 1 ELSE 0 END), 0) as failed_count,
-                    COALESCE(SUM(CASE WHEN cc.status='pending' THEN 1 ELSE 0 END), 0) as pending_count,
-                    COUNT(DISTINCT CASE
-                        WHEN EXISTS(
-                            SELECT 1 FROM messages m
-                            WHERE m.owner_zalo_id = cc.owner_zalo_id
-                              AND m.thread_id = cc.contact_id
-                              AND m.is_sent = 0
-                              AND m.timestamp > cc.sent_at
-                              AND cc.status = 'sent'
-                              AND cc.sent_at > 0
-                        ) THEN cc.contact_id END
-                    ) as replied_count
+                    COALESCE(SUM(CASE WHEN cc.status='pending' THEN 1 ELSE 0 END), 0) as pending_count
                 FROM crm_campaigns c
                 LEFT JOIN crm_campaign_contacts cc ON cc.campaign_id = c.id
                 WHERE c.owner_zalo_id = ?
@@ -7616,7 +7970,79 @@ class DatabaseService {
                 ORDER BY c.created_at DESC
                 LIMIT ?
             `, [ownerZaloId, limit]);
+            const engagement = this.campaignEngagementCounts(rows);
+            return rows.map(({ mixed_config: _mixed, owner_zalo_id: _owner, ...row }: any) => {
+                const counts = engagement.get(Number(row.id)) || emptyEngagement();
+                return {
+                    ...row,
+                    replied_count: counts.replied,
+                    seen_count: counts.seen,
+                    delivered_count: counts.delivered,
+                    delivered_base: counts.deliveredBase,
+                    sends_message: campaignSendsMessage(row.campaign_type, _mixed),
+                };
+            });
         } catch (err: any) { Logger.error(`[DB] getTopCampaignStats: ${err.message}`); return []; }
+    }
+
+    /** Kênh báo được gì cho một chiến dịch: chỉ kết bạn / mời vào nhóm thì không có tin để nhận / xem. */
+    private campaignEngagementSupport(campaign: { owner_zalo_id?: string; channel?: string | null; campaign_type?: string | null; mixed_config?: string | null }): EngagementSupport {
+        if (!campaignSendsMessage(campaign.campaign_type, campaign.mixed_config)) return { delivered: false, seen: false };
+        const channel = campaign.channel
+            || this.queryOne<{ channel?: string }>('SELECT channel FROM accounts WHERE zalo_id = ?', [campaign.owner_zalo_id || ''])?.channel
+            || 'zalo';
+        return engagementSupport(channel);
+    }
+
+    /** Bộ đếm hiệu quả của nhiều chiến dịch, một câu SQL (campaignEngagementRows) cho tất cả. */
+    private campaignEngagementCounts(campaigns: ReadonlyArray<{ id: number; owner_zalo_id?: string; channel?: string | null; campaign_type?: string | null; mixed_config?: string | null }>): Map<number, EngagementCounts> {
+        const result = new Map<number, EngagementCounts>();
+        if (campaigns.length === 0) return result;
+        const supportById = new Map<number, EngagementSupport>();
+        for (const campaign of campaigns) {
+            supportById.set(Number(campaign.id), this.campaignEngagementSupport(campaign));
+            result.set(Number(campaign.id), emptyEngagement());
+        }
+        for (const row of campaignEngagementRows(this, [...supportById.keys()])) {
+            const id = Number(row.campaign_id);
+            const support = supportById.get(id);
+            const counts = result.get(id);
+            if (!support || !counts) continue;
+            addEngagement(counts, engagementState({
+                anchorTs: Number(row.anchor_ts), deliveredTs: Number(row.delivered_ts),
+                readTs: Number(row.read_ts), replyTs: Number(row.reply_ts),
+            }, support), support);
+        }
+        return result;
+    }
+
+    /**
+     * Hiệu quả của một chiến dịch: mỗi liên hệ ĐÃ GỬI → đã nhận / đã xem / đã phản hồi (lọc danh sách, ô số liệu của màn
+     * chiến dịch). Liên hệ chưa gửi / lỗi không có trong `items`.
+     */
+    public getCampaignEngagement(campaignId: number): CampaignEngagementReport | null {
+        if (!this.initialized) return null;
+        try {
+            const campaign = this.getCRMCampaign(campaignId);
+            if (!campaign) return null;
+            const channel = campaign.channel
+                || this.queryOne<{ channel?: string }>('SELECT channel FROM accounts WHERE zalo_id = ?', [campaign.owner_zalo_id])?.channel
+                || 'zalo';
+            const support = this.campaignEngagementSupport({ ...campaign, channel });
+            const counts = emptyEngagement();
+            const items = campaignEngagementRows(this, [campaignId]).map((row) => {
+                const state = engagementState({
+                    anchorTs: Number(row.anchor_ts), deliveredTs: Number(row.delivered_ts),
+                    readTs: Number(row.read_ts), replyTs: Number(row.reply_ts),
+                }, support);
+                addEngagement(counts, state, support);
+                return { contactId: String(row.contact_id), ...state, replyTs: Number(row.reply_ts) || 0 };
+            });
+            return {
+                campaignId, channel, sendsMessage: campaignSendsMessage(campaign.campaign_type, campaign.mixed_config),
+                support, counts, items,
+            };
+        } catch (err: any) { Logger.error(`[DB] getCampaignEngagement: ${err.message}`); return null; }
     }
 
     /** CRM Contacts - aggregate friends + contacts, dedup */
@@ -8307,39 +8733,36 @@ class DatabaseService {
     public getCampaignComparison(zaloId: string): Array<{
         id: number; name: string; type: string; status: string; created_at: number;
         total: number; sent: number; failed: number; pending: number; replied: number;
+        /** Gửi thành công: sent / total, % */
         deliveryRate: number; replyRate: number;
+        /** Hiệu quả tin (shared/analytics/messageEngagement): đã nhận / đã xem; deliveredBase = mẫu số đã nhận */
+        delivered: number; deliveredBase: number; seen: number;
+        /** đã nhận / deliveredBase, % — null: kênh không báo đã nhận (Telegram) / chiến dịch không gửi tin */
+        receivedRate: number | null; seenRate: number;
+        sendsMessage: boolean; channel: string;
     }> {
         if (!this.initialized || !zaloId) return [];
         try {
             const rows = this.query<any>(`
                 SELECT
-                    c.id, c.name, c.campaign_type, c.status, c.created_at,
+                    c.id, c.name, c.campaign_type, c.status, c.created_at, c.channel, c.mixed_config, c.owner_zalo_id,
                     COUNT(DISTINCT cc.id) as total_contacts,
                     COALESCE(SUM(CASE WHEN cc.status='sent' THEN 1 ELSE 0 END), 0) as sent_count,
                     COALESCE(SUM(CASE WHEN cc.status='failed' THEN 1 ELSE 0 END), 0) as failed_count,
-                    COALESCE(SUM(CASE WHEN cc.status='pending' THEN 1 ELSE 0 END), 0) as pending_count,
-                    COUNT(DISTINCT CASE
-                        WHEN EXISTS(
-                            SELECT 1 FROM messages m
-                            WHERE m.owner_zalo_id = cc.owner_zalo_id
-                              AND m.thread_id = cc.contact_id
-                              AND m.is_sent = 0
-                              AND m.timestamp > cc.sent_at
-                              AND cc.status = 'sent'
-                              AND cc.sent_at > 0
-                        ) THEN cc.contact_id END
-                    ) as replied_count
+                    COALESCE(SUM(CASE WHEN cc.status='pending' THEN 1 ELSE 0 END), 0) as pending_count
                 FROM crm_campaigns c
                 LEFT JOIN crm_campaign_contacts cc ON cc.campaign_id = c.id
                 WHERE c.owner_zalo_id = ?
                 GROUP BY c.id
                 ORDER BY c.created_at DESC
             `, [zaloId]);
+            const engagement = this.campaignEngagementCounts(rows);
 
             return rows.map((r: any) => {
                 const total = r.total_contacts || 0;
                 const sent = r.sent_count || 0;
-                const replied = r.replied_count || 0;
+                const counts = engagement.get(Number(r.id)) || emptyEngagement();
+                const rates = engagementRates(counts);
                 return {
                     id: r.id,
                     name: r.name,
@@ -8350,14 +8773,59 @@ class DatabaseService {
                     sent,
                     failed: r.failed_count || 0,
                     pending: r.pending_count || 0,
-                    replied,
+                    replied: counts.replied,
                     deliveryRate: total > 0 ? Math.round(sent / total * 100) : 0,
-                    replyRate: sent > 0 ? Math.round(replied / sent * 100) : 0,
+                    replyRate: sent > 0 ? Math.round(counts.replied / sent * 100) : 0,
+                    delivered: counts.delivered,
+                    deliveredBase: counts.deliveredBase,
+                    seen: counts.seen,
+                    receivedRate: rates.deliveredRate,
+                    seenRate: sent > 0 ? Math.round(counts.seen / sent * 100) : 0,
+                    sendsMessage: campaignSendsMessage(r.campaign_type, r.mixed_config),
+                    channel: String(r.channel || 'zalo'),
                 };
             });
         } catch (err: any) {
             Logger.error(`[DB] getCampaignComparison: ${err.message}`);
             return [];
+        }
+    }
+
+    /**
+     * Tin gửi đi (Báo cáo → Tin nhắn): người nhận 1:1 có tin mình gửi trong khoảng → đã nhận / đã xem / đã phản hồi
+     * (shared/analytics/messageEngagement). Mỗi người tính một lần, theo tin đầu tiên mình gửi trong khoảng; timeline theo
+     * ngày (giờ khi granularity = 'hour') của tin đó.
+     */
+    public getOutreachStats(zaloId: string, sinceTs: number, untilTs: number, granularity: 'hour' | 'day' = 'day'): OutreachStats {
+        const account = zaloId
+            ? this.queryOne<{ channel?: string; send2me_id?: string }>('SELECT channel, send2me_id FROM accounts WHERE zalo_id = ?', [zaloId])
+            : undefined;
+        const channel = account?.channel || 'zalo';
+        const support = engagementSupport(channel);
+        const empty = { ...emptyEngagement(), channel, support, timeline: [] as Array<EngagementCounts & { bucket: string }> };
+        if (!this.initialized || !zaloId) return empty;
+        try {
+            const hourly = granularity === 'hour';
+            const buckets = hourly ? localHourBuckets(sinceTs, untilTs) : localDayBuckets(sinceTs, untilTs);
+            const counts = emptyEngagement();
+            const byBucket = new Map<string, EngagementCounts>();
+            // Hội thoại với chính mình: Telegram Saved Messages (= id tài khoản), Zalo My Documents (send2me_id)
+            for (const row of outreachRows(this, zaloId, sinceTs, untilTs, [zaloId, account?.send2me_id || ''])) {
+                const state = engagementState({
+                    anchorTs: Number(row.anchor_ts), deliveredTs: Number(row.delivered_ts),
+                    readTs: Number(row.read_ts), replyTs: Number(row.reply_ts),
+                }, support);
+                addEngagement(counts, state, support);
+                const key = hourly ? localHourKey(Number(row.anchor_ts)) : localDayKey(Number(row.anchor_ts));
+                let bucket = byBucket.get(key);
+                if (!bucket) { bucket = emptyEngagement(); byBucket.set(key, bucket); }
+                addEngagement(bucket, state, support);
+            }
+            const timeline = buckets.map((b) => ({ bucket: b.label, ...(byBucket.get(b.key) || emptyEngagement()) }));
+            return { ...counts, channel, support, timeline };
+        } catch (err: any) {
+            Logger.error(`[DB] getOutreachStats: ${err.message}`);
+            return empty;
         }
     }
 
@@ -10057,7 +10525,7 @@ class DatabaseService {
                 const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
                 const matches = msg.body.match(urlRegex);
                 if (matches) {
-                    for (const url of matches) {
+                    for (const url of matches.map(trimUrlEnd).filter(isLinkableUrl)) {
                         try {
                             const domain = new URL(url).hostname;
                             this.saveLink(ownerZaloId, msg.thread_id, msg.id + '_' + url.slice(0, 20), url, url, domain, '', msg.timestamp);
@@ -10070,14 +10538,18 @@ class DatabaseService {
     }
 
     public getFBMessages(accountId: string, threadId: string, limit: number = 50, offset: number = 0): any[] {
-        return this.query<any>(
-            `SELECT * FROM fb_messages
+        return this.query<any>(DatabaseService.FB_MESSAGES_SQL, [accountId, threadId, limit, offset]);
+    }
+
+    /** getFBMessages trong worker đọc (mở hội thoại Facebook). */
+    public getFBMessagesAsync(accountId: string, threadId: string, limit: number = 50, offset: number = 0): Promise<any[]> {
+        return this.queryAsync<any>(DatabaseService.FB_MESSAGES_SQL, [accountId, threadId, limit, offset]);
+    }
+
+    private static readonly FB_MESSAGES_SQL = `SELECT * FROM fb_messages
              WHERE account_id = ? AND thread_id = ?
              ORDER BY timestamp DESC
-             LIMIT ? OFFSET ?`,
-            [accountId, threadId, limit, offset]
-        );
-    }
+             LIMIT ? OFFSET ?`;
 
     public updateFBMessageUnsent(id: string): void {
         // Read current body from fb_messages to preserve as recalled_content

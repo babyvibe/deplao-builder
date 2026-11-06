@@ -235,6 +235,7 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:getPostDiscussion': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:readPostDiscussion': proxy(),
   'telegramUser:refreshPostStats': proxy(),
+  'telegramUser:refreshPollResults': proxy(),
   'telegramUser:repairEmptyMessages': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:refreshMessageAttachments': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:repairMessageQuotes': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
@@ -248,6 +249,19 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:requestWebView': proxy(),
   'telegramUser:requestMainWebView': proxy(),
   'telegramUser:prolongWebView': proxy(),
+  'telegramUser:miniAppCustomMethod': proxy(),
+  'telegramUser:miniAppWriteAccess': proxy(),
+  'telegramUser:miniAppSharePhone': proxy(),
+  // Nút đăng nhập của bot (keyboardButtonUrlAuth)
+  'telegramUser:requestUrlAuth': proxy(),
+  'telegramUser:acceptUrlAuth': proxy(),
+  // Link Telegram mở trong app: số điện thoại, Mini App theo tên, link bot ?start
+  'telegramUser:resolvePhone': proxy(),
+  'telegramUser:getBotApp': proxy(),
+  'telegramUser:requestAppWebView': proxy(),
+  'telegramUser:startBot': proxy(),
+  // Nút callback / sao chép / hồ sơ của tin bot
+  'telegramUser:pressInlineButton': proxy(),
   // ── Sticker / GIF ───────────────────────────────────────────────────────
   'telegramUser:getStickerSets': proxy(),
   'telegramUser:getStickerSetStickers': proxy(),

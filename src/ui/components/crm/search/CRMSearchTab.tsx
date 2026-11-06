@@ -178,7 +178,7 @@ export default function CRMSearchTab() {
           placeholder="Nhập số điện thoại..."
           autoFocus
           className="input-field text-sm flex-1" />
-        <button onClick={handleSearch} disabled={searching} className="btn-primary text-foreground px-3 py-2 text-sm">
+        <button onClick={handleSearch} disabled={searching} className="btn-primary px-3 py-2 text-sm">
           {searching ? '...' : 'Tìm'}
         </button>
       </div>
@@ -218,9 +218,9 @@ export default function CRMSearchTab() {
               ? <span className="flex-1 text-center text-sm text-red-400 py-2 border border-red-700 rounded-lg"><CloseIcon className="w-4 h-4 inline" /> Đã chặn</span>
               : isAlreadyFriend
                 ? <span className="flex-1 text-center text-sm text-green-400 py-2 border border-green-700 rounded-lg">✓ Đã là bạn bè</span>
-                : <button onClick={() => openAddFriendModal(searchResult.uid, searchResult.display_name || searchResult.zalo_name, searchResult.avatar)} className="btn-primary text-foreground flex-1 text-sm">Kết bạn</button>}
+                : <button onClick={() => openAddFriendModal(searchResult.uid, searchResult.display_name || searchResult.zalo_name, searchResult.avatar)} className="btn-primary flex-1 text-sm">Kết bạn</button>}
             <button onClick={() => handleMessage(searchResult.uid, { displayName: searchResult.display_name || searchResult.zalo_name, avatar: searchResult.avatar })}
-              className="btn-primary text-foreground flex-1 text-sm flex items-center justify-center gap-1">
+              className="btn-primary flex-1 text-sm flex items-center justify-center gap-1">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               </svg>

@@ -52,11 +52,17 @@ export function isNonZalo(ch?: string): boolean {
 // ─── Resolve channel ─────────────────────────────────────────────────────────
 
 /**
- * Resolve channel từ contact + account, ưu tiên contact.channel.
- * Dùng trong component khi cần channel mà không muốn lặp logic.
+ * Kênh của hội thoại. Tài khoản Telegram / Facebook chỉ có hội thoại cùng kênh nên kênh của TÀI KHOẢN thắng: cột
+ * contacts.channel mặc định 'zalo' từng ghi nhầm (vd My Documents của Telegram), và hội thoại ghim tải bù theo id không
+ * có trong store (không có contact). Tài khoản Zalo hoặc chưa biết tài khoản: kênh của hội thoại, mặc định Zalo.
  */
-export function resolveChannel(contact?: { channel?: string }, account?: { channel?: string }): Channel {
-  return ((contact?.channel || account?.channel || CHANNEL.ZALO) as Channel);
+export function resolveChannel(
+  contact?: { channel?: string | null } | null,
+  account?: { channel?: string | null } | null,
+): Channel {
+  const accountChannel = account?.channel;
+  if (accountChannel && accountChannel !== CHANNEL.ZALO) return accountChannel as Channel;
+  return (contact?.channel || accountChannel || CHANNEL.ZALO) as Channel;
 }
 
 // ─── Capability-based helpers ────────────────────────────────────────────────

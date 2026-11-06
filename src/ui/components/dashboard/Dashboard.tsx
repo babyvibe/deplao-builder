@@ -8,6 +8,7 @@ import AccountCard from './AccountCard';
 import MergedInboxModal from './MergedInboxModal';
 import EmployeeLoginModal from './EmployeeLoginModal';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
+import { matchAccountSearch } from '@/lib/accounts/accountSearch';
 import PageLoading from '@/components/common/PageLoading';
 import { RestoreStateBanner } from '../settings/cloud/restore/RestoreStateBanner';
 import { BugIcon, HomeIcon, RefreshIcon, SunIcon, TargetIcon, UserIcon, UsersIcon } from '@/components/common/icons';
@@ -89,15 +90,9 @@ export default function Dashboard() {
     setDragOverIndex(null);
   };
 
-  const q = search.trim().toLowerCase();
-  const filtered = q
-    ? accounts.filter((a) =>
-        (a.full_name || '').toLowerCase().includes(q) ||
-        a.zalo_id.includes(q) ||
-        (a.phone || '').replace(/\D/g, '').includes(q.replace(/\D/g, '')) ||
-        (a.phone || '').includes(q)
-      )
-    : accounts;
+  // Tên (không dấu), UID, SĐT. Trước đây ô tìm có chữ không lọc được: so số điện thoại với chuỗi rỗng luôn khớp.
+  const q = search.trim();
+  const filtered = q ? accounts.filter((a) => matchAccountSearch(a, q)) : accounts;
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">

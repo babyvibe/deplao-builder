@@ -1,5 +1,5 @@
 /**
- * Cài đặt → Internet & Đám mây → Địa chỉ Internet: cấu hình nhà cung cấp tunnel của "Nhân viên và API" (relay, cổng 9900)
+ * Cài đặt → Internet & Cloud → Địa chỉ Internet: cấu hình nhà cung cấp tunnel của "Nhân viên và API" (relay, cổng 9900)
  * cho hai cách tạo địa chỉ ngrok và Cloudflare thủ công (trước nằm ở Cài đặt → Nhân viên → Kết nối).
  *  - Đọc / lưu qua IPC có sẵn relay:getTunnelConfig / relay:setTunnelConfig: token lưu mã hoá ở main, renderer chỉ biết
  *    "đã lưu" (ô nhập hiện "Đã lưu … (dán để thay)", không bao giờ hiện token).

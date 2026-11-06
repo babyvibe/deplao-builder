@@ -130,7 +130,7 @@ export default function WebhookRegistrationCard({ type, name, integrationId, onC
             {state && !address && (
               <div role="alert" className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-2.5 text-[11px] text-foreground">
                 <AlertIcon className="w-4 h-4 inline text-warning" /> Chưa bật địa chỉ nhận webhook — bật <strong>Thanh toán, tích hợp</strong> ở
-                Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet rồi bấm Làm mới.
+                Cài đặt → Internet &amp; Cloud → Địa chỉ Internet rồi bấm Làm mới.
               </div>
             )}
             {address && state?.temporary && (

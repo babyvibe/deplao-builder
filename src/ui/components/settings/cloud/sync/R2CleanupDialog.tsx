@@ -1,5 +1,5 @@
 /**
- * Dọn file trên R2 (Cài đặt → Internet & Đám mây → Đồng bộ dữ liệu → Nâng cao). Xoá tin trong app KHÔNG tự xoá trên
+ * Dọn file trên R2 (Cài đặt → Internet & Cloud → Đồng bộ dữ liệu → Nâng cao). Xoá tin trong app KHÔNG tự xoá trên
  * R2; hộp này là cách để bớt dung lượng R2, luôn quét trước rồi mới xoá:
  *  1 Chọn file cần dọn: tin đã xoá · của tài khoản · cũ hơn ngày · ngoài phạm vi lưu (OR), kèm tuỳ chọn an toàn
  *    (mặc định giữ file chỉ còn trên R2, không xoá bản trên máy) → Quét = media.cleanupPreview (không xoá gì).

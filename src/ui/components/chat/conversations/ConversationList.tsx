@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
+import { openTelegramMiniApp } from '@/lib/chat/telegram/telegramMiniApp';
 import { MESSAGE_LOAD_LIMIT, MESSAGE_RESTORE_LIMIT, MESSAGE_SEARCH_LIMIT, PAGE_SIZE, CONVERSATION_DISPLAY_STEP, INITIAL_LOADING_TIMEOUT_MS, LABELS_DEBOUNCE_MS } from '@/lib/chat/constants';
 import DataAccessor, {
   isReadFailure, mergeAccountOnSuccess, nextConversationPaging, readFailureMessage, retryDelayMs,
@@ -38,7 +39,8 @@ import { useAutoReadStore } from '@/store/chat/autoReadStore';
 import { markConversationRead } from '@/lib/chat/read/markConversationRead';
 import { useStarredStore } from '@/store/chat/starredStore';
 import type { StarredItem } from '@/lib/chat/messages/starredMessages';
-import { MY_DOCUMENTS_NAME, isMyDocumentsContact, isPinnedMyDocuments, myDocumentsThreadId } from '@/lib/chat/zalo/myDocuments';
+import { MY_DOCUMENTS_NAME, isMyDocumentsContact, isMyDocumentsThread, myDocumentsGroupSummary, myDocumentsThreadId, myDocumentsTitle, showsMyDocumentsIcon } from '@/lib/chat/zalo/myDocuments';
+import MyDocumentsPanel, { type MyDocumentsPanelEntry } from './MyDocumentsPanel';
 import { isSameMessagePage, newestMessages } from '@/lib/chat/messages/messagePage';
 import { hiddenViewRows } from '@/lib/chat/zalo/hiddenView';
 import { registerConversationOpener } from '@/lib/chat/conversations/openConversation';
@@ -277,6 +279,8 @@ export default function ConversationList() {
   const [forumChatId, setForumChatId] = useState<string | null>(null);
   const [forumChatName, setForumChatName] = useState('');
   const [forumAccountId, setForumAccountId] = useState<string | null>(null);
+  // Gộp trang (không lọc tài khoản): danh sách My Documents của các tài khoản, mở từ dòng "My Documents" chung
+  const [myDocsPanelOpen, setMyDocsPanelOpen] = useState(false);
   const ctxRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -985,8 +989,10 @@ export default function ConversationList() {
   ), [mergedInboxMode, mergedInboxFilterAccount, mergedInboxAccounts, activeAccountId, allOthers, hiddenLocked]);
 
   // Zalo "My Documents": hội thoại CÓ SẴN của Zalo, đồng bộ với Zalo (ID = loginInfo.send2me_id, KHÔNG phải UID của
-  // mình). Như Zalo: luôn ở đầu danh sách của tài khoản, không bỏ ghim được; hộp thư gộp chỉ ghim khi đã có tin.
+  // mình). Như Zalo: luôn ở đầu danh sách của tài khoản, không bỏ ghim được.
   // Ít khi có tin mới nên thường nằm ở trang sau → tải bù theo id như hội thoại ghim (không tự dựng hội thoại nào).
+  // Telegram: Tin nhắn đã lưu (hội thoại với chính mình) cũng là My Documents. Hộp thư gộp không lọc tài khoản: 1 dòng
+  // "My Documents" chung ở đầu, bấm vào chọn tài khoản như chủ đề của nhóm forum (MyDocumentsPanel).
   const accountOf = useCallback(
     (accountId?: string | null) => allAccountsList.find(a => a.zalo_id === accountId),
     [allAccountsList],
@@ -1031,7 +1037,7 @@ export default function ConversationList() {
     if (!activeAccountId || !pinnedIdsKey) return;
     requestPinnedExtras(activeAccountId, pinnedIdsKey.split(','));
   }, [activeAccountId, pinnedIdsKey, loadedContactCount, requestPinnedExtras]);
-  // Hộp thư gộp: My Documents của từng tài khoản Zalo đang gộp
+  // Hộp thư gộp: My Documents / Tin nhắn đã lưu của từng tài khoản đang gộp
   const mergedMyDocsKey = useMemo(() => {
     if (!mergedInboxMode) return '';
     return mergedInboxAccounts
@@ -1217,7 +1223,7 @@ export default function ConversationList() {
     for (const c of result) {
       const draftKey = `${c.owner_zalo_id}_${c.contact_id}`;
       sortKeys.set(c, {
-        md: isPinnedMyDocuments(c, accountOf(c.owner_zalo_id)) ? 1 : 0,
+        md: isMyDocumentsContact(c, accountOf(c.owner_zalo_id)) ? 1 : 0,
         hasDraft: c.contact_id !== activeThreadId && !!drafts[draftKey],
         draftTs: draftTimestamps[draftKey] || 0,
         time: c.last_message_time || 0,
@@ -1255,10 +1261,10 @@ export default function ConversationList() {
       || filter === 'unreplied' || !!dateRange;
     const rawSource = (hasFilter && dbFilteredContactsWithLiveState) ? dbFilteredContactsWithLiveState : mergedContacts;
 
-    // Account filter (from sidebar)
+    // Account filter (from sidebar). Không lọc: My Documents của từng tài khoản gom vào 1 dòng chung ở đầu danh sách
     const accountFiltered = mergedInboxFilterAccount
       ? rawSource.filter(c => c.owner_zalo_id === mergedInboxFilterAccount)
-      : rawSource;
+      : rawSource.filter(c => !isMyDocumentsContact(c, accountOf(c.owner_zalo_id)));
 
     // Others safety filter
     const source = filter === 'others'
@@ -1314,7 +1320,7 @@ export default function ConversationList() {
     }
 
     return unreadFiltered;
-  }, [mergedContacts, dbFilteredContactsWithLiveState, mergedInboxFilterAccount, channelFilter, search, filter, filterLabelIds, allOthers, hiddenLocked, allLabels, mergedLabels, effectiveFilterLabelSource, filterLabelMode, localLabelThreadMapByAccount, dateRange]);
+  }, [mergedContacts, dbFilteredContactsWithLiveState, mergedInboxFilterAccount, channelFilter, search, filter, filterLabelIds, allOthers, hiddenLocked, allLabels, mergedLabels, effectiveFilterLabelSource, filterLabelMode, localLabelThreadMapByAccount, dateRange, accountOf]);
 
   const mergedUnreadCount = mergedContacts
     ? mergedContacts.reduce((s, c) => {
@@ -1332,6 +1338,34 @@ export default function ConversationList() {
 
   // Danh sách đang vẽ: đang xem hội thoại ẩn (đã gõ đúng PIN) → chỉ hội thoại ẩn; ngược lại danh sách thường
   const listItems = hiddenViewContacts ?? (mergedInboxMode ? (filteredMerged ?? []) : filtered);
+
+  // ── Hộp thư gộp không lọc tài khoản: My Documents của các tài khoản (theo bộ lọc kênh) gom vào 1 dòng chung ──
+  const myDocsGrouped = mergedInboxMode && !mergedInboxFilterAccount;
+  const myDocsEntries = useMemo(() => {
+    const entries: Array<{ account: any; threadId: string; contact: import('@/store/chat/chatStore').ContactItem | null }> = [];
+    if (!myDocsGrouped) return entries;
+    for (const accountId of mergedInboxAccounts) {
+      const account = accountOf(accountId);
+      if (!account || (channelFilter !== 'all' && (account.channel || CHANNEL.ZALO) !== channelFilter)) continue;
+      const knownId = myDocumentsThreadId(account);
+      const loaded = contacts[accountId] || [];
+      // Ngoài các trang đã tải thì lấy bản tải bù theo id (mergedMyDocsKey); Zalo chưa biết send2me_id → nhận theo ảnh
+      const contact = (knownId
+        ? loaded.find(c => c.contact_id === knownId) || (pinnedExtrasByAccount[accountId] || []).find((c: any) => c.contact_id === knownId)
+        : loaded.find(c => isMyDocumentsContact(c, account))) || null;
+      const threadId = knownId || contact?.contact_id || '';
+      if (threadId) entries.push({ account, threadId, contact });
+    }
+    return entries;
+  }, [myDocsGrouped, mergedInboxAccounts, accountOf, channelFilter, contacts, pinnedExtrasByAccount]);
+  const myDocsSummary = useMemo(() => myDocumentsGroupSummary(myDocsEntries.map(entry => entry.contact)), [myDocsEntries]);
+  // Dòng chung chỉ ở danh sách "Tất cả" (không tìm / lọc ngày / xem hội thoại ẩn), như My Documents của tài khoản
+  const showMyDocsRow = myDocsGrouped && myDocsEntries.length > 0 && !hiddenViewContacts
+    && filter === 'all' && !search.trim() && !dateRange;
+  const myDocsActiveEntry = myDocsEntries.find(entry => entry.account.zalo_id === activeAccountId && entry.threadId === activeThreadId);
+  useEffect(() => {
+    if (!myDocsGrouped) setMyDocsPanelOpen(false);
+  }, [myDocsGrouped]);
 
   // Sentinel cuộn vô hạn có đang hiển thị: observer phải gắn lại khi sentinel xuất hiện SAU lần render đầu
   // (danh sách tải xong / trang lỗi được thử lại) — trước đây chỉ gắn khi đổi panel, bộ lọc hoặc tài khoản.
@@ -1516,6 +1550,8 @@ export default function ConversationList() {
     // Telegram Forum: NON-BLOCKING check — open chat first, check forum in background
     const accChannel = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId)?.channel || CHANNEL.ZALO;
     const selectedContact = (contacts[zaloId] || []).find(c => c.contact_id === contactId);
+    // Mở hội thoại khác (không phải My Documents) → đóng danh sách My Documents của hộp thư gộp
+    if (!isMyDocumentsThread(accountOf(zaloId), contactId, selectedContact?.avatar_url)) setMyDocsPanelOpen(false);
     const isTgGroup = threadType === 1 && isTelegramUser(selectedContact?.channel || accChannel);
 
     // Tin trong máy được hỏi TRƯỚC mọi lệnh khác: main xử lý IPC lần lượt (SQLite đồng bộ) nên các lệnh ghi bên dưới (đã
@@ -2409,6 +2445,31 @@ export default function ConversationList() {
     );
   }
 
+  // Hộp thư gộp: My Documents của từng tài khoản như danh sách chủ đề forum, chọn tài khoản → mở My Documents của nó
+  if (myDocsPanelOpen && myDocsGrouped) {
+    return (
+      <div className="w-full border-r border-border flex-shrink-0">
+        <MyDocumentsPanel
+          entries={myDocsEntries.map(({ account, threadId, contact }): MyDocumentsPanelEntry => ({
+            accountId: account.zalo_id,
+            accountName: account.full_name || account.zalo_id,
+            accountAvatar: account.avatar_url || '',
+            channel: (account.channel || CHANNEL.ZALO) as Channel,
+            threadId,
+            preview: formatLastMessage(contact?.last_message),
+            timeLabel: contact?.last_message_time ? formatTime(contact.last_message_time) : '',
+            unread: Number(contact?.unread_count) || 0,
+          }))}
+          activeKey={myDocsActiveEntry ? `${myDocsActiveEntry.account.zalo_id}:${myDocsActiveEntry.threadId}` : null}
+          onSelect={(entry) => {
+            void handleMergedClick({ owner_zalo_id: entry.accountId, contact_id: entry.threadId, contact_type: 'user' } as import('@/store/chat/chatStore').ContactItem);
+          }}
+          onBack={() => setMyDocsPanelOpen(false)}
+        />
+      </div>
+    );
+  }
+
   // Nút X ẩn kết quả tìm SĐT Zalo (đang tìm / không thấy / người dùng tìm được / chọn tài khoản để tìm)
   const phoneSearchDismiss = (
     <button
@@ -3052,9 +3113,42 @@ export default function ConversationList() {
 
       {/* Contact list */}
       <div className="flex-1 overflow-y-auto relative" ref={setListContainer} onScroll={handleListScroll}>
+        {/* Hộp thư gộp: 1 dòng My Documents chung, bấm vào chọn tài khoản (MyDocumentsPanel) */}
+        {showMyDocsRow && (() => {
+          const latestEntry = myDocsSummary.latest ? myDocsEntries.find(entry => entry.contact === myDocsSummary.latest) : undefined;
+          const latestTime = Number(myDocsSummary.latest?.last_message_time) || 0;
+          return (
+            <div
+              className={`group/conv relative w-full flex items-center gap-3 px-3 py-2.5 hover:bg-muted transition-colors cursor-pointer max-h-[80px] min-h-[80px] ${myDocsActiveEntry ? 'bg-selected hover:bg-selected' : ''}`}
+              onClick={() => { setMyDocsPanelOpen(true); setFilterDropdownOpen(false); }}>
+              <div className="relative flex-shrink-0"><MyDocumentsIcon /></div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-1">
+                  <span className={`text-sm text-foreground truncate flex items-center gap-1 ${myDocsSummary.unread > 0 ? 'font-semibold' : 'font-medium'}`}>
+                    <span title="My Documents luôn ở đầu (như Zalo)"><PinIcon className="w-4 h-4" /></span>
+                    <span className="truncate">{MY_DOCUMENTS_NAME}</span>
+                  </span>
+                  {latestTime > 0 && <span className="flex-shrink-0 text-xs text-muted-foreground whitespace-nowrap">{formatTime(latestTime)}</span>}
+                </div>
+                <div className="flex items-center justify-between gap-1 mt-1">
+                  <span className="text-sm text-muted-foreground truncate">
+                    {latestEntry
+                      ? <><span className="text-foreground/80">{latestEntry.account.full_name || latestEntry.account.zalo_id}: </span>{formatLastMessage(myDocsSummary.latest?.last_message)}</>
+                      : `${myDocsEntries.length} tài khoản`}
+                  </span>
+                  {myDocsSummary.unread > 0 && (
+                    <span className="flex-shrink-0 bg-primary text-primary-foreground text-[10px] font-medium leading-none tabular-nums rounded-full h-[18px] min-w-[18px] px-1.5 inline-flex items-center justify-center">
+                      {myDocsSummary.unread > 99 ? '99+' : myDocsSummary.unread}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {initialLoading && activeAccountId && accountContacts.length === 0 ? (
           <PageLoading variant="skeleton" skeletonVariant="table" />
-        ) : listItems.length === 0 ? (
+        ) : listItems.length === 0 && showMyDocsRow ? null : listItems.length === 0 ? (
           useChatStore.getState().conversationsLoading[activeAccountId || ''] ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm gap-2">
               <span className="w-5 h-5 border-2 border-border-strong border-t-transparent rounded-full animate-spin" />
@@ -3098,9 +3192,8 @@ export default function ConversationList() {
           // Badge tài khoản sở hữu (chỉ trong chế độ Gộp trang)
           const ownerAcc = mergedInboxMode ? allAccountsList.find(a => a.zalo_id === contact.owner_zalo_id) : null;
           const contactAccount = accountOf(contactZaloId);
+          // My Documents luôn ghim ở đầu như Zalo (hộp thư gộp không lọc tài khoản: dòng chung, không vẽ ở đây)
           const isMyDocs = isMyDocumentsContact(contact, contactAccount);
-          // Danh sách của tài khoản: luôn ghim như Zalo; hộp thư gộp: khi đã có tin (như thứ tự sắp xếp)
-          const myDocsPinned = isMyDocs && (!mergedInboxMode || isPinnedMyDocuments(contact, contactAccount));
           return (
             <React.Fragment key={`${contact.owner_zalo_id}_${contact.contact_id}`}>
             {startsNonMemberSection && (
@@ -3115,10 +3208,8 @@ export default function ConversationList() {
               className={`group/conv relative w-full flex items-center gap-3 px-3 py-2.5 hover:bg-muted transition-colors cursor-pointer ${threadLocalLabelsArr.length > 0 ? 'min-h-[72px]' : 'max-h-[80px] min-h-[80px]'} ${activeThreadId === contact.contact_id && activeAccountId === contact.owner_zalo_id ? 'bg-selected hover:bg-selected' : ''}`}
               onClick={() => { if (mergedInboxMode) { handleMergedClick(contact); } else { handleSelect(contact.contact_id, threadType, contact.owner_zalo_id || activeAccountId); setFilterDropdownOpen(false); } }}>
               <div className="relative flex-shrink-0">
-                {isMyDocs && (!contact.avatar_url || failedAvatars.has(contact.contact_id)) ? (
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-sky-400 to-blue-600" style={{ color: '#fff' }} title={MY_DOCUMENTS_NAME}>
-                    <CloudIcon className="w-5 h-5" />
-                  </div>
+                {isMyDocs && showsMyDocumentsIcon(contactAccount, contact.avatar_url, failedAvatars.has(contact.contact_id)) ? (
+                  <MyDocumentsIcon />
                 ) : threadType === 1 ? (
                   <ConversationGroupAvatar
                     accountId={contactZaloId}
@@ -3171,10 +3262,10 @@ export default function ConversationList() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-sm font-medium text-foreground truncate flex items-center gap-1">
-                    {myDocsPinned && <span title="My Documents luôn ở đầu (như Zalo)"><PinIcon className="w-4 h-4" /></span>}
+                    {isMyDocs && <span title="My Documents luôn ở đầu (như Zalo)"><PinIcon className="w-4 h-4" /></span>}
                     {!isMyDocs && isLocalPinned && <span title="Ghim trong app">📍</span>}
                     {!isMyDocs && isPinned && <span title="Ghim Zalo"><PinIcon className="w-4 h-4" /></span>}
-                    <span className="truncate">{contact.alias || contact.display_name || (isMyDocs ? MY_DOCUMENTS_NAME : contact.contact_id)}</span>
+                    <span className="truncate">{isMyDocs ? myDocumentsTitle(contact, contactAccount) : (contact.alias || contact.display_name || contact.contact_id)}</span>
                     {membershipNotice && (
                       <span
                         className="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium leading-none bg-amber-500/15 text-amber-400"
@@ -3231,14 +3322,11 @@ export default function ConversationList() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          (async () => {
-                            try {
-                              const res = await (ipc as any).telegramUser?.requestMainWebView({
-                                accountId: contact.owner_zalo_id, botId: contact.contact_id,
-                              });
-                              if (res?.success && res.webViewUrl) window.open(res.webViewUrl, '_blank');
-                            } catch {}
-                          })();
+                          // App chính của bot, mở trong app như Telegram (lib/chat/telegram/telegramMiniApp)
+                          openTelegramMiniApp({
+                            accountId: contact.owner_zalo_id, botId: contact.contact_id, peerId: contact.contact_id, kind: 'main',
+                            botName: contact.alias || contact.display_name || undefined,
+                          });
                         }}
                         className="text-[10px] text-blue-400 hover:text-blue-300 font-medium px-1.5 py-0.5 rounded hover:bg-blue-500/10 transition-colors"
                       >
@@ -3465,6 +3553,15 @@ function CtxItem({ icon, label, onClick, hasArrow, danger }: { icon: React.React
       <span className="flex-1">{label}</span>
       {hasArrow && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>}
     </button>
+  );
+}
+
+/** Ảnh của My Documents khi không có ảnh thư mục của Zalo (Telegram luôn dùng): đám mây trên nền xanh. */
+function MyDocumentsIcon() {
+  return (
+    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-sky-400 to-blue-600" style={{ color: '#fff' }} title={MY_DOCUMENTS_NAME}>
+      <CloudIcon className="w-5 h-5" />
+    </div>
   );
 }
 

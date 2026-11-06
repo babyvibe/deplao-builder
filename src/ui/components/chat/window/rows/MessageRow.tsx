@@ -40,6 +40,7 @@ import { SendStatusIndicator } from './SendStatusIndicator';
 import { MessageHoverActions } from './MessageHoverActions';
 import { resolveTelegramForward } from '../channels/telegram/forwardSource';
 import { TelegramPostRowFooter } from '../channels/telegram/TelegramPostRowFooter';
+import { handleTelegramInlineButton } from '@/lib/chat/links/chatLinks';
 import type { MessageRowContext } from './rowContext';
 
 /** Mốc ngày (tin hiển thị đầu tiên của mỗi ngày lịch) */
@@ -59,7 +60,7 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
     groupedFirstMsgs, groupedSkipIds, pollSkipIds, groupedStickerFirstMsgs, groupedStickerSkipIds, dayStartIds,
     msgIndexById, msgTypeCache, getRowMsgIds, getContact, getGroupMember, groupMembers, isGroupAdmin, revealedEditIds,
     isSelecting, selectedMsgIds, setSelectedMsgIds, dragSelectRef, clickSuppressUntilRef, setContextMenu,
-    setManageGroupOpen, setUserProfilePopup, setWebviewModal, openViewer, openVideoPlayer,
+    setManageGroupOpen, setUserProfilePopup, openViewer, openVideoPlayer,
   } = ctx;
 
   // Skip non-first images in a group layout batch
@@ -354,13 +355,7 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
               inlineButtons={(() => {
                 try { return msg.inline_buttons ? JSON.parse(msg.inline_buttons) : undefined; } catch { return undefined; }
               })()}
-              onInlineButtonClick={(btn) => {
-                if (btn.type === 'url' && btn.url) {
-                  window.open(btn.url, '_blank');
-                } else if (btn.type === 'webview' && btn.url) {
-                  setWebviewModal({ botId: msg.sender_id, url: btn.url, title: btn.text });
-                }
-              }}
+              onInlineButtonClick={(btn, row, col) => handleTelegramInlineButton(msg, btn, activeAccountId || '', displayName, { row, col })}
               isGroupMedia={isGroupMedia}
               isPoll={isPollMsg}
               isVideo={isVideoMsg}

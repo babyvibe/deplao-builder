@@ -13,11 +13,20 @@
  *    (averages weighted by their sample count), never averaged across accounts;
  *  - "today vs yesterday" sums both sides over the same accounts before comparing.
  *
+ * Tin gửi đi (đã nhận / đã xem / đã phản hồi, shared/analytics/messageEngagement): bộ đếm cộng theo tài khoản (mỗi
+ * tài khoản tự có người nhận), tỷ lệ tính lại từ tổng; "đã nhận" chỉ trên mẫu số của kênh có báo (deliveredBase).
+ *
  * Metrics that cannot be merged here are computed by the multi-account data-layer variants
  * (DataAccessor.getWorkflowAnalyticsForAccounts / getResponseTimeForAccounts): the response-time
  * median, and workflows, whose runs are not attributed to an account (a workflow attached to two
  * selected accounts would be counted twice).
  */
+
+import {
+  mergeEngagementCounts,
+  type EngagementCounts,
+  type OutreachStats,
+} from '../../../shared/analytics/messageEngagement';
 
 // ── Report shapes (as returned by DatabaseService analytics methods) ──────────────────────────
 
@@ -53,7 +62,14 @@ export interface ContactSegmentation {
 export interface CampaignRow {
   id: number; name: string; type: string; status: string; created_at: number;
   total: number; sent: number; failed: number; pending: number; replied: number;
+  /** Gửi thành công: sent / total, % */
   deliveryRate: number; replyRate: number;
+  /** Hiệu quả tin (máy chủ cũ không trả → undefined): đã nhận / mẫu số đã nhận / đã xem */
+  delivered?: number; deliveredBase?: number; seen?: number;
+  /** delivered / deliveredBase, % — null: kênh không báo đã nhận */
+  receivedRate?: number | null; seenRate?: number;
+  sendsMessage?: boolean;
+  channel?: string;
   /** Owning account — set when lists of several accounts are merged. */
   zaloId?: string;
 }
@@ -259,6 +275,11 @@ export interface CampaignTotals {
   deliveryRate: number;
   /** replied / sent of all campaigns, % */
   replyRate: number;
+  delivered: number; deliveredBase: number; seen: number;
+  /** delivered / deliveredBase, % — null when no campaign is on a channel that reports delivery */
+  receivedRate: number | null;
+  /** seen / sent, % */
+  seenRate: number;
 }
 
 /** Totals of a campaign list; rates from the summed counts (not the mean of per-campaign rates). */
@@ -266,6 +287,9 @@ export function campaignTotals(rows: ReadonlyArray<CampaignRow>): CampaignTotals
   const total = sumOf(rows, row => row.total);
   const sent = sumOf(rows, row => row.sent);
   const replied = sumOf(rows, row => row.replied);
+  const delivered = sumOf(rows, row => row.delivered);
+  const deliveredBase = sumOf(rows, row => row.deliveredBase);
+  const seen = sumOf(rows, row => row.seen);
   return {
     campaigns: rows.length,
     total,
@@ -275,6 +299,34 @@ export function campaignTotals(rows: ReadonlyArray<CampaignRow>): CampaignTotals
     replied,
     deliveryRate: percent(sent, total),
     replyRate: percent(replied, sent),
+    delivered,
+    deliveredBase,
+    seen,
+    receivedRate: deliveredBase > 0 ? percent(delivered, deliveredBase) : null,
+    seenRate: percent(seen, sent),
+  };
+}
+
+// ── Tin gửi đi ─────────────────────────────────────────────────────────────────
+
+export type OutreachPoint = EngagementCounts & { bucket: string };
+
+export interface OutreachReport extends EngagementCounts {
+  timeline: OutreachPoint[];
+  /** Kênh của các tài khoản có trong số liệu (ghi chú theo kênh). */
+  channels: string[];
+}
+
+const OUTREACH_FIELDS: ReadonlyArray<keyof OutreachPoint> = ['sent', 'delivered', 'deliveredBase', 'seen', 'replied'];
+
+/** Tin gửi đi của nhiều tài khoản: cộng bộ đếm và từng điểm thời gian; null khi không tài khoản nào có số liệu. */
+export function mergeOutreach(list: ReadonlyArray<Maybe<Partial<OutreachStats>>>): OutreachReport | null {
+  const items = present(list);
+  if (items.length === 0) return null;
+  return {
+    ...mergeEngagementCounts(items),
+    timeline: mergeBucketSeries(items.map(item => item.timeline as OutreachPoint[] | undefined), OUTREACH_FIELDS),
+    channels: Array.from(new Set(items.map(item => String(item.channel || 'zalo')))),
   };
 }
 

@@ -12,11 +12,12 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { writeMediaFile } from '../file/writeMediaFile';
 import * as crypto from 'crypto';
 import Logger from '../../utils/Logger';
 import FileStorageService from '../file/FileStorageService';
 import { bossAuthHeaders } from '../http/bossSessionAuth';
-import { isPathInside } from '../http/bossFileAccess';
+import { decodeUrlPath, isPathInside } from '../http/bossFileAccess';
 
 interface CacheEntry {
   key: string;
@@ -208,10 +209,8 @@ class MediaCacheService {
 
       // Lưu cache hash-based
       const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      fs.writeFileSync(filePath, buffer);
+      await fs.promises.mkdir(dir, { recursive: true });
+      await writeMediaFile(filePath, buffer);
 
       // Ghi index
       this.index.set(cacheKey, {
@@ -231,8 +230,9 @@ class MediaCacheService {
         const structuredPath = this.structuredPathFor(bossUrl);
         if (structuredPath) {
           const structuredDir = path.dirname(structuredPath);
-          if (!fs.existsSync(structuredDir)) fs.mkdirSync(structuredDir, { recursive: true });
-          if (!fs.existsSync(structuredPath)) fs.writeFileSync(structuredPath, buffer);
+          await fs.promises.mkdir(structuredDir, { recursive: true });
+          const already = await fs.promises.stat(structuredPath).then(() => true, () => false);
+          if (!already) await writeMediaFile(structuredPath, buffer);
           Logger.log(`[MediaCacheService] Also saved to: ${structuredPath}`);
         }
       } catch {}
@@ -360,6 +360,24 @@ class MediaCacheService {
     }
   }
 
+  /**
+   * Bản sao đúng tên + đuôi trong thư mục media từ file cache (cache đặt tên theo hash, không đuôi → mở bằng app mặc định
+   * không được). Dùng khi cache có sẵn nhưng bản sao chưa có (tải trước khi có bản sao, thư mục media bị dọn…).
+   */
+  public ensureLocalCopy(bossUrl: string, sourcePath: string): string {
+    try {
+      const structuredPath = this.structuredPathFor(bossUrl);
+      if (!structuredPath || !sourcePath || !fs.existsSync(sourcePath)) return '';
+      if (!fs.existsSync(structuredPath)) {
+        fs.mkdirSync(path.dirname(structuredPath), { recursive: true });
+        fs.copyFileSync(sourcePath, structuredPath);
+      }
+      return structuredPath;
+    } catch {
+      return '';
+    }
+  }
+
   /** Đường dẫn trong thư mục media của workspace ứng với boss URL ('' nếu không suy ra được / thoát khỏi thư mục media). */
   private structuredPathFor(bossUrl: string): string {
     const mediaRelPath = this.extractMediaRelPath(bossUrl);
@@ -384,9 +402,9 @@ class MediaCacheService {
    */
   private extractMediaRelPath(bossUrl: string): string {
     try {
-      // Match /api/media/ hoặc /api/avatar/...
-      const match = bossUrl.match(/\/api\/(?:media|avatar|_uploads)\/(.+)/);
-      if (match) return match[1];
+      // Match /api/media/ hoặc /api/avatar/... — bỏ ?query/#hash, giải mã tên file (URL mã hoá từng đoạn: "#", "%"…)
+      const match = bossUrl.split(/[?#]/)[0].match(/\/api\/(?:media|avatar|_uploads)\/(.+)/);
+      if (match) return decodeUrlPath(match[1]);
       // Fallback: lấy pathname từ URL
       const urlObj = new URL(bossUrl);
       const pathname = urlObj.pathname.replace(/^\/api\//, '');

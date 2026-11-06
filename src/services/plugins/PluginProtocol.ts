@@ -67,7 +67,7 @@ export function resolvePluginFile(root: string, relPath: string): string | null 
     }
 }
 
-export function buildCsp(rec: PluginRecord): string {
+export function buildCsp(rec: PluginRecord, devOrigin = DEV_RENDERER_ORIGIN): string {
     const connect = ["'self'"];
     const img = ["'self'", 'data:', 'blob:'];
     if (rec.granted_permissions.includes('network')) {
@@ -90,7 +90,10 @@ export function buildCsp(rec: PluginRecord): string {
         "object-src 'none'",
         "base-uri 'self'",
         "form-action 'self'",
-        'frame-ancestors *',
+        // Ai được nhúng trang ứng dụng: chính ứng dụng, giao diện Deplao bản cài (file://) và bản dev (Vite). Không dùng
+        // '*': theo CSP, '*' chỉ khớp http/https/ws/wss nên chặn giao diện file:// của bản cài (trang trắng), lại cho
+        // mọi trang web ngoài nhúng.
+        `frame-ancestors 'self' file: ${devOrigin}`,
     ].join('; ');
 }
 
@@ -128,7 +131,7 @@ export async function handlePluginRequest(request: { url: string; method?: strin
 
     const headers: Record<string, string> = { ...baseHeaders, 'Content-Type': mimeFor(file) };
     if (rec.source_type === 'dev') headers['Cache-Control'] = 'no-store';
-    if (/\.html?$/i.test(file)) headers['Content-Security-Policy'] = buildCsp(rec);
+    if (/\.html?$/i.test(file)) headers['Content-Security-Policy'] = buildCsp(rec, deps.devOrigin);
     if (method === 'HEAD') return new Response(null, { status: 200, headers });
     const data = await fs.promises.readFile(file);
     return new Response(data, { status: 200, headers });

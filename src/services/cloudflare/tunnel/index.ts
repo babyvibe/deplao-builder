@@ -12,7 +12,7 @@
  *   - HttpRelayService                   startTunnel/stopTunnel/status → dịch vụ 'relay'
  * Các nơi đó nạp module này LƯỜI (require trong hàm, lỗi → null) và gọi isCloudTunnelAuto() trước.
  *
- * Chế độ khác (Địa chỉ tạm / ngrok / Cloudflare thủ công): Cài đặt → Internet & Đám mây → Địa chỉ Internet là nơi DUY
+ * Chế độ khác (Địa chỉ tạm / ngrok / Cloudflare thủ công): Cài đặt → Internet & Cloud → Địa chỉ Internet là nơi DUY
  * NHẤT bật / tắt địa chỉ. setServiceEnabled đi qua cầu legacyBridge bên dưới vào đúng các hàm cũ ở trên (nạp lười), nên
  * hành vi từng cổng giữ nguyên: relay dùng nhà cung cấp đã chọn, thanh toán / workflow dùng Quick Tunnel riêng.
  */

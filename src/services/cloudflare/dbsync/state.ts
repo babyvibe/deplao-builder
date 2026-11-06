@@ -22,6 +22,10 @@ export interface WorkspaceSyncState {
     trackingInstalled: boolean;
     /** Kho chứa manifest / bản gốc đang nhớ (thiếu = 'r2' — bản cũ chỉ có R2). Đổi kho → chụp gốc mới trên kho mới. */
     provider?: CloudStorageProvider;
+    /** Lúc bắt đầu cần tự chụp gốc mà còn chờ máy rảnh (0 / thiếu = không chờ) — mức chờ tối đa tính qua các lần mở app. */
+    baseDueSince?: number;
+    /** Gốc bắt buộc đang hoãn chờ máy rảnh (vd 'tracking': chu kỳ sau không còn dấu hiệu nên phải nhớ). */
+    pendingBase?: string | null;
 }
 
 export interface FollowState {

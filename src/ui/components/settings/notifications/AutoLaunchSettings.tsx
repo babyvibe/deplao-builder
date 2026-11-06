@@ -6,6 +6,7 @@ import React from 'react';
 import { Switch } from '@/components/ui';
 import ipc, { type AutoLaunchStatus } from '@/lib/ipc';
 import { useAppStore } from '@/store/app/appStore';
+import { SettingsRow, SettingsSection } from '../settingsUi';
 
 /** Hệ điều hành đang chặn mục tự mở: chỉ chỗ bật lại. */
 export function autoLaunchBlockedHint(platform: string): string {
@@ -41,34 +42,45 @@ export default function AutoLaunchSettings() {
     }
   };
 
+  // Chưa đọc được trạng thái: chưa hiện cả mục (không có thẻ trống)
   if (!status) return null;
   const locked = !status.supported || saving;
+  const hint = !status.supported
+    ? <p className="text-xs text-muted-foreground">Chỉ có ở bản cài đặt, bản đang chạy là bản dev.</p>
+    : status.enabled && status.blocked
+      ? <p className="text-xs text-warning">{autoLaunchBlockedHint(status.platform)}</p>
+      : undefined;
+  // Cùng kiểu dòng với các mục khác của trang Thông báo: tên + mô tả bên trái, công tắc bên phải, có vạch ngăn
   return (
-    <div className="space-y-3">
-      <Switch
-        className="flex-row-reverse justify-between"
-        checked={status.enabled}
-        disabled={locked}
-        onCheckedChange={(on) => void update({ enabled: on })}
-        label="Tự mở Deplao khi bật máy"
+    <SettingsSection title="Khởi động cùng máy">
+      <SettingsRow
+        title="Tự mở Deplao khi bật máy"
         description="Không lỡ tin nhắn sau khi khởi động lại máy."
-      />
+        control={(
+          <Switch
+            aria-label="Tự mở Deplao khi bật máy"
+            checked={status.enabled}
+            disabled={locked}
+            onCheckedChange={(on) => void update({ enabled: on })}
+          />
+        )}
+      >
+        {hint}
+      </SettingsRow>
       {status.enabled && (
-        <Switch
-          className="flex-row-reverse justify-between"
-          checked={status.hidden}
-          disabled={locked}
-          onCheckedChange={(on) => void update({ hidden: on })}
-          label="Chạy ngầm ở khay"
+        <SettingsRow
+          title="Chạy ngầm ở khay"
           description="Tự mở thì không bật cửa sổ, vẫn nhận tin và thông báo."
+          control={(
+            <Switch
+              aria-label="Chạy ngầm ở khay"
+              checked={status.hidden}
+              disabled={locked}
+              onCheckedChange={(on) => void update({ hidden: on })}
+            />
+          )}
         />
       )}
-      {!status.supported && (
-        <p className="text-xs text-muted-foreground">Chỉ có ở bản cài đặt, bản đang chạy là bản dev.</p>
-      )}
-      {status.supported && status.enabled && status.blocked && (
-        <p className="text-xs text-warning">{autoLaunchBlockedHint(status.platform)}</p>
-      )}
-    </div>
+    </SettingsSection>
   );
 }

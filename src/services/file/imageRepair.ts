@@ -31,8 +31,8 @@ export interface ImageRepairResult {
 export interface ImageRepairDeps {
   isMediaExpired(zaloId: string, msgId: string): boolean;
   setMediaExpired(zaloId: string, msgId: string, expired: boolean): void;
-  /** local_paths hiện tại của tin (main / hd) và thread của tin */
-  messageInfo(zaloId: string, msgId: string): { localPath: string; threadId: string; imageUrl: string };
+  /** local_paths hiện tại của tin (main / hd), thread, link ảnh trong content; loại tin + kênh (ensureMessageImage) */
+  messageInfo(zaloId: string, msgId: string): { localPath: string; threadId: string; imageUrl: string; msgType?: string; channel?: string };
   account(zaloId: string): { cookies?: string; user_agent?: string } | undefined;
   /** FileStorageService.downloadImage: đường dẫn tương đối, '' khi CDN trả 401/403/409/410; ném khi lỗi khác */
   download(zaloId: string, url: string, cookies?: string, userAgent?: string): Promise<string>;
@@ -49,6 +49,31 @@ export interface ImageRepairDeps {
   log(message: string): void;
   warn(message: string): void;
 }
+
+export interface ImageEnsureParams {
+  zaloId: string;
+  msgId: string;
+  threadId?: string;
+  /** true = bỏ qua cờ "đã hết hạn" (người dùng bấm Thử tải lại) */
+  force?: boolean;
+}
+
+export interface ImageEnsureResult extends ImageRepairResult {
+  /** File đã có sẵn trên máy, không tải lại */
+  cached?: boolean;
+  /** Lỗi không đổi khi hỏi lại: không thấy tin / không phải ảnh Zalo / không có link ảnh Zalo */
+  code?: 'NOT_FOUND' | 'NOT_ZALO_IMAGE' | 'NO_IMAGE_URL';
+}
+
+export interface ImageEnsureDeps extends ImageRepairDeps {
+  /** Link thuộc CDN Zalo — chỉ tải (kèm cookie phiên tài khoản) từ những link này */
+  isZaloMediaUrl(url: string): boolean;
+  /** File không còn trên máy (đã dọn lên Cloudflare R2) → lấy lại về đúng chỗ cũ; true = đã có lại */
+  restoreFromCloud?(absPath: string): Promise<boolean>;
+}
+
+/** Loại tin ảnh Zalo (cột msg_type) — ensureMessageImage chỉ tải ảnh của các tin này. */
+export const ZALO_PHOTO_MSG_TYPES: ReadonlySet<string> = new Set(['chat.photo', 'photo', 'image']);
 
 const pendingRepairs = new Map<string, Promise<ImageRepairResult>>();
 
@@ -140,4 +165,45 @@ async function runRepair(params: ImageRepairParams, deps: ImageRepairDeps): Prom
 
   deps.log(`[imageRepair] success: ${msgId} → ${newLocalPath}`);
   return { success: true, newLocalPath };
+}
+
+/**
+ * Ảnh của một tin Zalo phải có trên máy này (máy Boss) — file:ensureMessageImage.
+ *
+ * Boss chỉ tự tải ảnh lúc NHẬN tin. Tin vào lúc Boss tắt máy (đồng bộ lịch sử sau đó), tin đồng bộ từ điện thoại, lần tải
+ * lỗi… không có bản trên máy: giao diện hiện thẳng link Zalo, link hết hạn là mất ảnh. Máy nhân viên còn không có cookie
+ * Zalo, chỉ đọc được ảnh từ máy Boss (/api/media). Nên khi ảnh như vậy hiện ra (trên máy Boss, hoặc máy nhân viên nhờ qua
+ * proxy), Boss tải về bằng phiên của tài khoản và lưu local_paths; giao diện đổi sang bản đã lưu.
+ *
+ * - Đã có file đọc được → trả luôn (`cached`), không gọi mạng; file đã dọn lên R2 → lấy lại từ R2 trước.
+ * - Chỉ tin ảnh Zalo, chỉ link trong DB của chính tin đó và chỉ host CDN Zalo: nhân viên gọi qua proxy nên KHÔNG nhận
+ *   link / đường dẫn từ nơi gọi (tải link tuỳ ý kèm cookie tài khoản = lộ cookie; đường dẫn tuỳ ý = xoá nhầm file).
+ * - Chưa có / file hỏng → repairMessageImage (một lượt mỗi tin, tải xong mới bỏ file cũ, CDN báo hết hạn → media_expired).
+ */
+export async function ensureMessageImage(params: ImageEnsureParams, deps: ImageEnsureDeps): Promise<ImageEnsureResult> {
+  const zaloId = String(params?.zaloId || '');
+  const msgId = String(params?.msgId || '');
+  if (!zaloId || !msgId) return { success: false, error: 'Missing zaloId or msgId' };
+  const info = deps.messageInfo(zaloId, msgId);
+  if (!info.threadId) return { success: false, error: 'Không tìm thấy tin nhắn', code: 'NOT_FOUND' };
+  if ((info.channel && info.channel !== 'zalo') || !ZALO_PHOTO_MSG_TYPES.has(String(info.msgType || ''))) {
+    return { success: false, error: 'Không phải tin ảnh Zalo', code: 'NOT_ZALO_IMAGE' };
+  }
+
+  if (info.localPath) {
+    const absPath = deps.resolveAbsolutePath(info.localPath);
+    let check = deps.validateImage(absPath);
+    if (check.reason === 'not_found' && deps.restoreFromCloud) {
+      try {
+        if (await deps.restoreFromCloud(absPath)) check = deps.validateImage(absPath);
+      } catch { /* R2 tắt / lỗi → tải lại từ Zalo */ }
+    }
+    // 'truncated': Chromium vẫn hiện được JPEG thiếu marker kết thúc (repair cũng cho qua)
+    if (check.valid || check.reason === 'truncated') return { success: true, newLocalPath: info.localPath, cached: true };
+  }
+
+  if (!deps.isZaloMediaUrl(deps.toJpgUrl(info.imageUrl || ''))) {
+    return { success: false, error: 'Tin không có link ảnh Zalo', code: 'NO_IMAGE_URL' };
+  }
+  return repairMessageImage({ zaloId, msgId, threadId: params.threadId || info.threadId, force: !!params.force }, deps);
 }

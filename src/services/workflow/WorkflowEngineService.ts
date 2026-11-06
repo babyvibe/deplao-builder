@@ -378,6 +378,26 @@ class WorkflowEngineService {
     }
   }
 
+  /**
+   * Workspace local chạy nền đổi sang workspace local khác: nạp lại toàn bộ workflow + lịch chạy của workspace đó (trước
+   * đây workflow chỉ nạp lúc mở app → sau khi đổi, workflow của workspace cũ chạy trên CSDL của workspace mới).
+   * Đổi sang / rời workspace nhân viên (remote) không gọi: workflow của workspace local vẫn chạy.
+   */
+  public reloadAll(): void {
+    for (const workflowId of Array.from(this.cronJobs.keys())) this.unregisterCron(workflowId);
+    for (const timer of this.debounceTimers.values()) clearTimeout(timer);
+    this.debounceTimers.clear();
+    this.debounceBuffers.clear();
+    this.cooldownUntil.clear();
+    this.loadWorkflows();
+    this.registerCronJobs();
+    try {
+      const { syncPollers } = require('./TelegramBotPollingService');
+      syncPollers();
+    } catch { /* ignore */ }
+    Logger.log(`[WorkflowEngine] Reloaded - ${this.workflows.size} workflows loaded`);
+  }
+
   public reloadWorkflow(workflowId: string): void {
     const row = DatabaseService.getInstance().getWorkflowById(workflowId);
     if (!row) { this.workflows.delete(workflowId); this.unregisterCron(workflowId); return; }

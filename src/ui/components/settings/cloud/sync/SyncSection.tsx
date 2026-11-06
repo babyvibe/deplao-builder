@@ -1,5 +1,5 @@
 /**
- * Cài đặt → Internet & Đám mây → Đồng bộ dữ liệu: MỘT thiết lập cho dữ liệu (DB) và ảnh/file (media) của workspace đang
+ * Cài đặt → Internet & Cloud → Đồng bộ dữ liệu: MỘT thiết lập cho dữ liệu (DB) và ảnh/file (media) của workspace đang
  * mở (sync.get / sync.apply — src/shared/cloud/cloudContracts.ts):
  *  1. Thiết lập đồng bộ — form nháp, lưu bằng MỘT nút ("Lưu thiết lập", "Bật đồng bộ" khi đang tắt): tài khoản, thời
  *     gian, chế độ (Tắt · Theo giờ · Realtime), kèm ảnh/video/file (mặc định bật) + file chung, mật khẩu sao lưu.
@@ -636,6 +636,11 @@ function WorkspaceStatus({ ws, showName, scopeText }: { ws: DbSyncWorkspaceStatu
       : ws.state === 'paused' ? 'Đang tạm dừng'
         : ws.state === 'error' ? (ws.lastError || 'Đồng bộ bị lỗi, sẽ thử lại.')
           : null;
+  // Bản gốc mới (chép + nén cả DB, nặng ổ đĩa) chờ lúc máy rảnh
+  const waitText = ws.baseWaiting === 'battery' ? 'Chụp bản gốc mới khi cắm sạc'
+    : ws.baseWaiting === 'active' ? 'Chụp bản gốc mới khi máy rảnh'
+      : ws.baseWaiting === 'wake' ? 'Chụp bản gốc mới sau ít phút'
+        : null;
   return (
     <div className="flex items-start gap-2.5">
       <span className={cn('mt-1.5 h-2 w-2 flex-shrink-0 rounded-full', dot)} aria-hidden="true" />
@@ -655,6 +660,9 @@ function WorkspaceStatus({ ws, showName, scopeText }: { ws: DbSyncWorkspaceStatu
           <p className={cn('flex items-center gap-1.5 text-xs', ws.state === 'error' ? 'text-destructive' : ws.state === 'paused' ? 'text-warning' : 'text-muted-foreground')}>
             {working && <CloudSpinner className="h-3.5 w-3.5" />}{stateText}
           </p>
+        )}
+        {!stateText && !ws.progress && waitText && (
+          <p className="text-xs text-muted-foreground" title="Bản gốc chép và nén cả dữ liệu nên chờ lúc máy rảnh.">{waitText}</p>
         )}
       </div>
     </div>

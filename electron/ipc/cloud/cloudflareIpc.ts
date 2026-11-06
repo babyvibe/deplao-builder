@@ -1,5 +1,5 @@
 /**
- * cloudflareIpc — IPC cho phần "Internet & Đám mây" (Cloudflare: kết nối, địa chỉ cố định, R2 media, đồng bộ DB).
+ * cloudflareIpc — IPC cho phần "Internet & Cloud" (Cloudflare: kết nối, địa chỉ cố định, R2 media, đồng bộ DB).
  *
  * Kênh 'cloudflare:*' (khớp CloudflareIpc trong src/shared/cloud/cloudContracts.ts, preload expose window.electronAPI.cloudflare).
  * Gồm cả kho lưu (R2 / Google Drive: storage:*, google:*) và mức sử dụng & chi phí (usage:get).

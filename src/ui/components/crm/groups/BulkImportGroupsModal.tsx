@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { submitSharedGroup, scanGroupViaBackend, DEFAULT_CATEGORIES, type SharedGroupCategory } from '@/lib/crm/backendService';
+import { ensureHiddenScanConsent } from './HiddenScanConsentDialog';
 
 // ─── Icons ──────────────────────────────────────────────────────────────────
 
@@ -198,6 +199,8 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
       alert('Không tìm thấy tài khoản Zalo đang đăng nhập');
       return;
     }
+    // Đếm thành viên từng nhóm = quét qua máy chủ Deplao (gửi cookie Zalo) → hỏi đồng ý một lần cho cả lượt nhập
+    if (!(await ensureHiddenScanConsent({ accountName: acc.full_name || acc.zalo_id }))) return;
 
     setStep('importing');
     setImporting(true);

@@ -30,6 +30,7 @@ import { groupAdminRole, groupOwnerRole } from '../../../shared/chat/groupMember
 import { zaloReactionIconToEmoji } from '../../../shared/zalo/zaloReactions';
 import { replyStateForIncoming } from '../../../shared/chat/replyState';
 import { zinstantPreviewText } from '../../../shared/zalo/zaloZinstant';
+import { botDisconnectMessage } from '../../../shared/telegram/telegramBotStatus';
 
 // ─── Contact fetch cache (7 ngày) ────────────────────────────────────────────
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -793,6 +794,22 @@ export function useZaloEvents() {
 
   // Request OS notification permission on mount
   useEffect(() => { requestNotificationPermission(); }, []);
+
+  // ── Đăng nhập QR xong khi cửa sổ Thêm tài khoản đã đóng ─────────
+  // Người dùng hay đóng cửa sổ khi điện thoại đã báo thành công mà Deplao còn đang lấy phiên: main vẫn lưu + kết nối
+  // tài khoản nhưng danh sách chỉ được nạp trong cửa sổ đó → tài khoản chỉ hiện sau khi mở lại app. Luôn nạp lại ở đây.
+  useEffect(() => {
+    const unsub = ipc.on('qr:update', (data: any) => {
+      if (data?.status !== 'success') return;
+      const modalOpen = useAppStore.getState().addAccountModalOpen;
+      ipc.login?.getAccounts().then((res: any) => {
+        if (!Array.isArray(res?.accounts)) return;
+        useAccountStore.getState().setAccounts(res.accounts);
+        if (!modalOpen) showNotification('Đã thêm tài khoản Zalo vào Deplao', 'success');
+      }).catch(() => {});
+    });
+    return unsub;
+  }, [showNotification]);
 
   // ── Handle notification click → mở đúng hội thoại ──────────────
   useEffect(() => {
@@ -2015,6 +2032,13 @@ export function useZaloEvents() {
       // Zalo tự nối lại trong vài giây như Zalo Web (Zalo PC đăng nhập / đăng xuất): chỉ đổi trạng thái, không báo. Không
       // nối lại được thì main báo lần nữa (closed / hết thời gian chờ) và lúc đó mới hiện thông báo
       if (String(data?.reason || '').startsWith('reconnecting')) return;
+      // Bot Telegram dừng nhận tin (nơi khác đang nhận tin của bot, token lỗi): nói rõ lý do + cách sửa
+      const account = useAccountStore.getState().accounts.find(a => a.zalo_id === data.zaloId);
+      const botMessage = botDisconnectMessage(data?.reason, account?.full_name || '');
+      if (botMessage) {
+        showNotification(botMessage, 'warning');
+        return;
+      }
       showNotification(`Tài khoản ${data.zaloId} bị ngắt kết nối`, 'warning');
     });
 

@@ -1,16 +1,18 @@
 /**
  * Popup / hộp thoại của khung chat: trình xem ảnh + video, menu chuột phải của tin, chuyển tiếp, lịch hẹn / ghi chú từ
- * tin, menu + danh sách cảm xúc, hồ sơ người gửi, quản lý nhóm, ghi chú nhóm, WebView bot Telegram, bộ sticker Telegram.
+ * tin, menu + danh sách cảm xúc, hồ sơ người gửi, quản lý nhóm, ghi chú nhóm, bộ sticker Telegram (Mini App của bot:
+ * TelegramMiniAppHost ở App).
  * Trạng thái mở / đóng ở useChatWindowDialogs (+ useMediaViewers); thao tác ở useMessageActions.
  */
 import MediaGalleryViewer from '../../media/MediaGalleryViewer';
 import MessageContextMenu from '../../messages/MessageContextMenu';
-import TelegramWebViewModal from '../../telegram/TelegramWebViewModal';
 import VideoPlayer from '../../media/VideoPlayer';
 import { type Channel, getChannelLabel } from '@/../configs/channels/channelConfig';
 import { QuickEventDialog, QuickNoteDialog } from '../../quick/QuickErpDialogs';
+import { QuickTaskFromMessages } from '../../quick/QuickTaskFromMessages';
 import { eventDraftFromMessages, noteDraftFromMessages } from '@/lib/chat/erp/messageToErp';
 import { CHANNEL } from '@/lib/channels/channelHelper';
+import { myDocumentsThreadId } from '@/lib/chat/zalo/myDocuments';
 import { ManagePanel } from '../../groups/GroupInfoPanel';
 import { UserProfilePopup } from '../../../common/profile/UserProfilePopup';
 import { getTelegramPostMeta } from '@/lib/media/mediaResolver';
@@ -48,7 +50,7 @@ export type ChatWindowModalsProps =
   // Người gửi
   & Pick<SenderDirectory, 'contactMap' | 'getContact' | 'getGroupMember' | 'groupMembers' | 'erpSourceOf'>
   // Menu / popup đang mở
-  & Pick<ChatWindowDialogs, 'contextMenu' | 'setContextMenu' | 'forwardMsgs' | 'setForwardMsgs' | 'erpDraft' | 'setErpDraft' | 'reactionPopup' | 'setReactionPopup' | 'reactionContextMenu' | 'setReactionContextMenu' | 'userProfilePopup' | 'setUserProfilePopup' | 'manageGroupOpen' | 'setManageGroupOpen' | 'noteModal' | 'setNoteModal' | 'webviewModal' | 'setWebviewModal'>
+  & Pick<ChatWindowDialogs, 'contextMenu' | 'setContextMenu' | 'forwardMsgs' | 'setForwardMsgs' | 'erpDraft' | 'setErpDraft' | 'reactionPopup' | 'setReactionPopup' | 'reactionContextMenu' | 'setReactionContextMenu' | 'userProfilePopup' | 'setUserProfilePopup' | 'manageGroupOpen' | 'setManageGroupOpen' | 'noteModal' | 'setNoteModal'>
   // Chọn nhiều tin
   & Pick<MessageSelection, 'setIsSelecting' | 'setSelectedMsgIds'>
   // Xem ảnh / video
@@ -60,12 +62,15 @@ export type ChatWindowModalsProps =
   // Reaction dùng được của hội thoại Telegram + quyền Quản lý công việc
   & Pick<ModalExtras, 'telegramReactions' | 'erpAccess'>;
 
+/** "Lưu vào My Documents": Zalo và Telegram (Tin nhắn đã lưu); ẩn khi đang ở chính hội thoại đó. */
+const SAVE_TO_MY_DOCUMENTS_CHANNELS = new Set<string>([CHANNEL.ZALO, CHANNEL.TELEGRAM_USER]);
+
 export function ChatWindowModals(props: ChatWindowModalsProps) {
   const {
     activeAccountId, activeThreadId, activeContact, allAccounts, channelCap, contactList, threadGroupInfo, setReplyTo, setEditingMsg, showNotification,
     groupedFirstMsgs,
     contactMap, getContact, getGroupMember, groupMembers, erpSourceOf,
-    contextMenu, setContextMenu, forwardMsgs, setForwardMsgs, erpDraft, setErpDraft, reactionPopup, setReactionPopup, reactionContextMenu, setReactionContextMenu, userProfilePopup, setUserProfilePopup, manageGroupOpen, setManageGroupOpen, noteModal, setNoteModal, webviewModal, setWebviewModal,
+    contextMenu, setContextMenu, forwardMsgs, setForwardMsgs, erpDraft, setErpDraft, reactionPopup, setReactionPopup, reactionContextMenu, setReactionContextMenu, userProfilePopup, setUserProfilePopup, manageGroupOpen, setManageGroupOpen, noteModal, setNoteModal,
     setIsSelecting, setSelectedMsgIds,
     mediaGalleryRef, buildImageEntry, videoPlayerState, setVideoPlayerState,
     handleUndo, handleDelete, handleDeleteFromDb, handleReact, handleCancelReaction, handleForward, runForward, handleSaveToMyDocuments, contextTargetStarred, handleToggleStar, handlePin,
@@ -128,9 +133,11 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
           }}
           isStarred={contextTargetStarred}
           onToggleStar={handleToggleStar}
-          onSaveToMyDocuments={(activeContact?.channel || CHANNEL.ZALO) === CHANNEL.ZALO && channelCap.supportsForward ? handleSaveToMyDocuments : undefined}
+          onSaveToMyDocuments={channelCap.supportsForward && SAVE_TO_MY_DOCUMENTS_CHANNELS.has(activeContact?.channel || CHANNEL.ZALO)
+            && activeThreadId !== myDocumentsThreadId(allAccounts.find((a) => a.zalo_id === activeAccountId)) ? handleSaveToMyDocuments : undefined}
           onAddToCalendar={erpAccess.event ? (m) => setErpDraft({ kind: 'event', msgs: groupedFirstMsgs[m.msg_id] || [m] }) : undefined}
           onSaveToNote={erpAccess.note ? (m) => setErpDraft({ kind: 'note', msgs: groupedFirstMsgs[m.msg_id] || [m] }) : undefined}
+          onCreateTask={erpAccess.task ? (m) => setErpDraft({ kind: 'task', msgs: groupedFirstMsgs[m.msg_id] || [m] }) : undefined}
           showNotification={showNotification}
           readReceipts={activeAccountId && canQueryTelegramReadReceipts(contextMenu.msg, {
             isSent: contextMenu.isSent,
@@ -162,7 +169,8 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
         />
       )}
 
-      {/* Quản lý công việc: lịch hẹn / ghi chú từ tin (điền sẵn tiêu đề, ngày giờ đọc trong tin, nội dung tin) */}
+      {/* Quản lý công việc: lịch hẹn / ghi chú / task từ tin (điền sẵn tiêu đề, ngày giờ đọc trong tin, nội dung tin; task
+          kèm ảnh của tin) */}
       {erpDraft && activeAccountId && activeThreadId && (() => {
         const conversation = activeContact?.alias || activeContact?.display_name || activeThreadId;
         const account = allAccounts.find(a => a.zalo_id === activeAccountId);
@@ -174,6 +182,9 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
         const sources = erpDraft.msgs.map(erpSourceOf);
         if (erpDraft.kind === 'note') {
           return <QuickNoteDialog initial={noteDraftFromMessages(sources, ctx)} onClose={() => setErpDraft(null)} />;
+        }
+        if (erpDraft.kind === 'task') {
+          return <QuickTaskFromMessages msgs={erpDraft.msgs} sources={sources} ctx={ctx} onClose={() => setErpDraft(null)} />;
         }
         const draft = eventDraftFromMessages(sources, ctx);
         const linkedMsg = erpDraft.msgs[draft.sourceIndex];
@@ -277,17 +288,6 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
               return [note, ...filtered];
             });
           }}
-        />
-      )}
-
-      {/* Telegram WebView Modal */}
-      {webviewModal && activeAccountId && (
-        <TelegramWebViewModal
-          accountId={activeAccountId}
-          botId={webviewModal.botId}
-          url={webviewModal.url}
-          title={webviewModal.title}
-          onClose={() => setWebviewModal(null)}
         />
       )}
 

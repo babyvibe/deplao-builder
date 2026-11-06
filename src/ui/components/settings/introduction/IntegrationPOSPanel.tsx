@@ -114,7 +114,7 @@ export function IntegrationPOSPanel() {
           được theo phần mềm, loại dữ liệu, tên sự kiện và trạng thái. Deplao chỉ nhận webhook xác thực đúng khoá.
         </Paragraph>
         <StepList steps={[
-          { title: 'Bật địa chỉ nhận', desc: 'Cài đặt → Internet &amp; Đám mây → Địa chỉ Internet → bật <strong class="text-foreground">Thanh toán, tích hợp</strong> (chỉ chạy khi Deplao đang mở trên máy Boss).' },
+          { title: 'Bật địa chỉ nhận', desc: 'Cài đặt → Internet &amp; Cloud → Địa chỉ Internet → bật <strong class="text-foreground">Thanh toán, tích hợp</strong> (chỉ chạy khi Deplao đang mở trên máy Boss).' },
           { title: 'KiotViet / Sapo: Đăng ký webhook tự động', desc: 'Trang nền tảng → mục <strong class="text-foreground">Đăng ký webhook tự động</strong> → chọn sự kiện → <strong class="text-foreground">Đăng ký webhook</strong>. Deplao tạo webhook trỏ về địa chỉ nhận (KiotViet: tự tạo và lưu Secret) — không cần bước 3, 4.' },
           { title: 'Nền tảng khác: đặt khoá xác thực webhook', desc: 'Haravan / Nhanh.vn / Pancake: trang nền tảng → ô khoá webhook (bảng dưới) → <strong class="text-foreground">Cập nhật</strong>. Làm bước này TRƯỚC khi bật webhook bên phần mềm bán hàng.' },
           { title: 'Dán địa chỉ vào phần mềm bán hàng', desc: 'Sao chép <strong class="text-foreground">Địa chỉ nhận webhook</strong> trong trang nền tảng, dán vào phần cấu hình webhook của phần mềm bán hàng, dùng cùng khoá.' },

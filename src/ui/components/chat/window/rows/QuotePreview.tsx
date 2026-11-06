@@ -1,10 +1,15 @@
 /**
  * Trích dẫn trong bong bóng (bấm → nhảy tới tin gốc): tên người được trích theo màu, ảnh thu nhỏ + chú thích với
  * tin ảnh / sticker, không thì 2 dòng chữ. quote_data lưu sẵn, hoặc tra tin gốc theo reply_to_id.
+ * Telegram: nhãn + ảnh bìa theo loại tin được trích (video, GIF, video tròn, sticker, thoại, file… — telegramQuoteMedia).
  */
 import { peerColorIndex } from '@/lib/chat/messages/peerStyle';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
-import { extractMediaUrl, extractQuoteImage, getQuotedMediaCaption, parseQuoteMsg } from '@/lib/chat/messages/messageParser';
+import { getTelegramStickerMedia } from '@/lib/media/mediaResolver';
+import { isTelegram } from '@/lib/channels/channelHelper';
+import {
+  extractMediaUrl, extractQuoteImage, getQuotedMediaCaption, isTelegramQuotePlaceholder, parseQuoteMsg, telegramQuoteMedia,
+} from '@/lib/chat/messages/messageParser';
 import { isMediaType } from '@/lib/chat/messages/messageTypeUtils';
 import { QuotedStickerPreview } from '../../messages/ChatWindowBubbles';
 import type { MessageRowContext, RowLocals } from './rowContext';
@@ -43,10 +48,19 @@ export function QuotePreview({ ctx, msg, isSent, quoteShell, isNoBubbleMsg, post
     // Nội dung tin gốc (lấy chú thích của ảnh / video được trích dẫn)
     let origContent = '';
     const isQuotedSticker = q.msgType === 'chat.sticker';
+    // Telegram: attachments + ảnh sticker của tin gốc (quote_data cũ có thể thiếu attach)
+    let origAttachments: unknown = null;
+    let telegramStickerImg = '';
 
     if (q.msgId) {
       const origMsg = findMsgById(String(q.msgId));
       if (origMsg) {
+        origAttachments = origMsg.attachments;
+        if (isTelegram(msg.channel)) {
+          const sticker = getTelegramStickerMedia(origMsg);
+          // Sticker tĩnh đã có file (webp / png); sticker động (tgs / webm) chỉ hiện emoji + "Sticker"
+          if (sticker?.localPath && /\.(webp|png)$/i.test(sticker.localPath)) telegramStickerImg = toLocalMediaUrl(sticker.localPath);
+        }
         origContent = String(origMsg.content || '');
         // Dùng msg_type thật từ tin nhắn gốc nếu quote_data đang fallback sai
         if (origMsg.msg_type && origMsg.msg_type !== 'text') {
@@ -71,7 +85,11 @@ export function QuotePreview({ ctx, msg, isSent, quoteShell, isNoBubbleMsg, post
         ? q.attach
         : (q.attach ? JSON.stringify(q.attach) : (q.msg || ''));
     }
-    const finalImgUrl = quotedImgUrl || lookupImgUrl;
+    const tgQuote = isTelegram(msg.channel)
+      ? telegramQuoteMedia(q.msgType, q.attach && q.attach !== '[]' ? q.attach : origAttachments)
+      : null;
+    const tgSticker = !!tgQuote?.sticker && !!telegramStickerImg;
+    const finalImgUrl = quotedImgUrl || lookupImgUrl || tgQuote?.thumb || (tgSticker ? telegramStickerImg : '');
     const quoteAuthor = resolveQuoteAuthor(q);
     // Telegram: khung trích dẫn theo màu người được trích (vạch trái + nền nhạt + tên cùng màu); chữ trích dẫn
     // dài không kéo rộng bong bóng (w-0 min-w-full, chỉ tên người được trích tính) — tối thiểu 13rem, như Telegram
@@ -84,8 +102,17 @@ export function QuotePreview({ ctx, msg, isSent, quoteShell, isNoBubbleMsg, post
     // Luôn tính quoteDisplayText (dùng làm fallback khi ảnh không tải được)
     let quoteDisplayText = '';
     {
-      const parsedText = parseQuoteMsg(effectiveMsgForQuote, q.msgType);
-      if (parsedText) {
+      // Telegram: chữ của tin là chữ thường (chú thích / câu hỏi bình chọn…), không phải JSON kiểu Zalo — parseQuoteMsg
+      // đọc theo kiểu Zalo thì tin file mất cả chú thích lẫn tên file ("[File]")
+      const telegramCaption = tgQuote ? String(effectiveMsgForQuote || '').trim() : '';
+      const parsedText = tgQuote ? '' : parseQuoteMsg(effectiveMsgForQuote, q.msgType);
+      if (tgQuote) {
+        const caption = telegramCaption && telegramCaption !== 'null' && !isTelegramQuotePlaceholder(telegramCaption) ? telegramCaption : '';
+        // Bình chọn / liên hệ / vị trí: chữ của tin kèm biểu tượng loại tin (như Telegram); không có chữ → nhãn theo loại
+        quoteDisplayText = caption
+          ? (tgQuote.prefix && !caption.startsWith(tgQuote.prefix.trim()) ? `${tgQuote.prefix}${caption}` : caption)
+          : tgQuote.label;
+      } else if (parsedText) {
         quoteDisplayText = parsedText;
       } else {
         // Fallback dựa trên msgType nếu có
@@ -122,14 +149,14 @@ export function QuotePreview({ ctx, msg, isSent, quoteShell, isNoBubbleMsg, post
           const quoteLabel = quoteCaption || quoteDisplayText.replace(/^\[(.*)\]$/, '$1');
           return (
             <div className="flex items-center gap-2 min-w-0">
-              <div className="w-10 h-10 flex-shrink-0 overflow-hidden rounded bg-foreground/5 [&_img]:w-full [&_img]:h-full [&_img]:object-cover">
+              <div className={`w-10 h-10 flex-shrink-0 overflow-hidden rounded bg-foreground/5 [&_img]:w-full [&_img]:h-full ${tgSticker ? '[&_img]:object-contain' : '[&_img]:object-cover'}`}>
                 {isQuotedSticker ? (
                   <QuotedStickerPreview content={quotedStickerContent} />
                 ) : (
                   <img
                     src={finalImgUrl}
                     alt="ảnh trích dẫn"
-                    className="w-full h-full object-cover"
+                    className={`w-full h-full ${tgSticker ? 'object-contain' : 'object-cover'}`}
                     onError={(e) => { const box = e.currentTarget.parentElement; if (box) box.style.display = 'none'; }}
                   />
                 )}

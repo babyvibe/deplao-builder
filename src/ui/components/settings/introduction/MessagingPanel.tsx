@@ -67,7 +67,7 @@ export function MessagingPanel() {
           `${b('Tự động đánh dấu đã đọc')} (menu ⋮ → Tự động): đánh dấu đã đọc hàng loạt các hội thoại chưa đọc theo thời gian tin nhắn cuối (Tất cả · Hôm nay · 7 ngày qua · 30 ngày qua · Cũ hơn 7 ngày · Tuỳ chọn), có thể gồm cả Khác (lưu trữ) và đồng bộ "đã đọc" lên Zalo, Facebook, Telegram. Xem trước số hội thoại rồi bấm Bắt đầu; đóng popup vẫn chạy nền.`,
           `${b('Chuột phải vào hội thoại:')} Đánh dấu đã đọc / chưa đọc · Đánh dấu đã trả lời / chưa trả lời (hội thoại 1:1) · Tắt thông báo (Trong 1 giờ · Trong 4 giờ · Cho đến 8:00 AM · Cho đến khi được mở lại) · Ghim (đồng bộ Zalo / Telegram) hoặc Ghim trong app · Ẩn hội thoại bằng mã PIN (Zalo) · Chuyển vào Khác (lưu trữ) / Đưa về danh sách chính · Mời vào nhóm · Xóa hội thoại (chỉ xoá trên app này).`,
           `${b('Nút "+" (Thao tác nhanh)')} cạnh ô tìm kiếm: chọn tài khoản rồi tạo nhóm Zalo / Telegram / Messenger, tham gia nhóm bằng link (xem trước nhóm trước khi vào), thêm bạn Zalo theo số điện thoại hoặc thêm liên hệ Telegram. Mục "Công việc của tôi" có Thêm lịch hẹn và Ghi chú nhanh (khi được dùng Quản lý công việc).`,
-          'Hội thoại ghim luôn nằm đầu danh sách; My Documents của Zalo luôn ở trên cùng như trên Zalo.',
+          'Hội thoại ghim luôn nằm đầu danh sách; My Documents (Zalo, Telegram) luôn ở trên cùng. Gộp trang: My Documents mọi tài khoản là 1 dòng, bấm vào rồi chọn tài khoản.',
         ]} />
       </Card>
 
@@ -123,7 +123,7 @@ export function MessagingPanel() {
           `${b('Thả cảm xúc:')} bấm hoặc giữ chuột trên nút 👍 dưới tin nhắn để mở thanh cảm xúc dạng dọc (tự mở lên / xuống theo chỗ trống); bấm lại cảm xúc của mình để gỡ. Zalo, Facebook có 6 cảm xúc quen thuộc; Telegram có đủ bộ cảm xúc của hội thoại (cuộn trong thanh, hoặc menu chuột phải → nút mở rộng).`,
           `${b('Trả lời · Chuyển tiếp · Sao chép')}, Sao chép link, Copy hình ảnh, Mở trong thư mục, Lưu về máy.`,
           `${b('Chọn tin nhắn:')} chọn nhiều tin (hoặc giữ chuột kéo qua nhiều tin) để Sao chép hoặc Chuyển tiếp một lần.`,
-          `${b('Thêm vào lịch · Lưu vào ghi chú')} (khi được dùng Quản lý công việc): tạo lịch hẹn từ tin, ngày giờ tự đọc trong tin ("Mai 9h" thành 9:00 ngày mai), ghi chú là nội dung tin kèm người gửi; nhắc trước thì chuông trên thanh tiêu đề báo "15 phút nữa tới lịch hẹn", tới giờ hiện popup nhắc như nhắc hẹn Zalo, bấm Mở hội thoại để về đúng tin. Chọn nhiều tin thì thanh dưới cũng có hai nút này.`,
+          `${b('Tạo task · Thêm vào lịch · Lưu vào ghi chú')} (khi được dùng Quản lý công việc): tạo task từ tin (chữ và ảnh của tin thành nội dung task, ngày giờ trong tin thành hạn), tạo lịch hẹn từ tin, ngày giờ tự đọc trong tin ("Mai 9h" thành 9:00 ngày mai), ghi chú là nội dung tin kèm người gửi; nhắc trước thì chuông trên thanh tiêu đề báo "15 phút nữa tới lịch hẹn", tới giờ hiện popup nhắc như nhắc hẹn Zalo, bấm Mở hội thoại để về đúng tin. Chọn nhiều tin thì thanh dưới cũng có các nút này.`,
           `${b('Tạo lịch hẹn')} ngay dưới tin có ngày giờ sắp tới ("mai 9h", "20 phút nữa", "thứ 6", "20/11"), như Zalo: bấm là điền sẵn ngày giờ theo tin; tin chỉ có ngày thì bạn chọn giờ. Nút tự ẩn khi đã qua giờ hẹn.`,
           `${b('Thu hồi tin nhắn')} của bạn; trưởng / phó nhóm có thêm Xoá tin nhắn của thành viên. Ngoài ra có Xóa (chỉ mình tôi) và Xóa vĩnh viễn khỏi app.`,
           `${b('Sửa tin nhắn')} đã gửi: có ở Telegram. Tin Telegram bạn gửi có thêm dòng "Đã xem" cho biết ai đã xem (trong nhóm) hoặc xem lúc nào (chat riêng).`,
@@ -160,7 +160,7 @@ export function MessagingPanel() {
           `${b('Ghim tin nhắn:')} chuột phải vào tin → Ghim tin nhắn. Thanh ghim nằm đầu khung chat: bấm để nhảy tới tin gốc, bấm +n để xem tất cả.`,
           `${b('Bảng tin nhóm')} (nhóm Zalo): nút ở đầu khung chat hoặc trong thông tin nhóm, gom Tin ghim · Ghi chú · Bình chọn của nhóm.`,
           `${b('Tin đánh dấu:')} chuột phải vào tin → Đánh dấu tin nhắn; xem lại ở menu ⋮ → Tin đánh dấu (xếp theo ngày, bấm để mở đúng tin). Dùng cho mọi kênh; khi Gộp trang hiện tin đánh dấu của các tài khoản đang gộp.`,
-          `${b('My Documents')} (Zalo, "Cloud của tôi"): hội thoại lưu trữ riêng của tài khoản, luôn ở đầu danh sách. Chuột phải vào tin → Lưu vào My Documents để lưu bản sao — xem được cả trên Zalo điện thoại và máy tính.`,
+          `${b('My Documents')} (Zalo "Cloud của tôi", Telegram "Tin nhắn đã lưu"): hội thoại lưu trữ riêng của tài khoản, luôn ở đầu danh sách. Chuột phải vào tin → Lưu vào My Documents để lưu bản sao, xem được cả trên điện thoại và máy tính. Gộp trang: 1 dòng My Documents chung, bấm vào rồi chọn tài khoản (như chủ đề nhóm); lọc theo tài khoản thì hiện My Documents của tài khoản đó.`,
         ]} />
       </Card>
 

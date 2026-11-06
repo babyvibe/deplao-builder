@@ -6,23 +6,40 @@ import Logger from '../../utils/Logger';
 import { toZaloJpgUrl } from '../../utils/zalo/zaloImageUrl';
 import { bossAuthHeaders } from '../http/bossSessionAuth';
 import { toSafeFileName } from './safeFileName';
+import { writeMediaFile } from './writeMediaFile';
+import { getUiRemoteWorkspace, inUiRemoteScope } from '../database/dbScope';
 
 class FileStorageService {
     private static baseDir: string = '';
+    /** Thư mục media của workspace remote đã tạo (không kiểm tra lại mỗi lần gọi). */
+    private static ensuredRemoteDirs = new Set<string>();
 
     /**
      * Resolve thư mục media gốc dựa theo workspace hiện tại.
      * - Default workspace: dbFolder/media/
      * - Additional workspaces: dbFolder/workspace-{id}/media/
      * Gọi lần đầu sẽ đọc config, sau đó cache vào static field.
+     *
+     * Theo luồng chạy (dbScope): lệnh từ giao diện đang mở workspace remote → media của workspace đó; còn lại (Zalo,
+     * Telegram, Facebook… chạy nền) → media của workspace local đang chạy, dù giao diện đang mở workspace nào.
      */
     public static getBaseDir(): string {
+        if (inUiRemoteScope()) {
+            const remoteDir = getUiRemoteWorkspace()?.mediaDir;
+            if (remoteDir) {
+                if (!this.ensuredRemoteDirs.has(remoteDir)) {
+                    if (!fs.existsSync(remoteDir)) fs.mkdirSync(remoteDir, { recursive: true });
+                    this.ensuredRemoteDirs.add(remoteDir);
+                }
+                return remoteDir;
+            }
+        }
         if (!this.baseDir) {
             // Try workspace-aware resolution first
             try {
                 const WorkspaceManager = require('../../utils/app/WorkspaceManager').default;
                 const wm = WorkspaceManager.getInstance();
-                this.baseDir = wm.getActiveMediaPath();
+                this.baseDir = wm.resolveMediaPath(wm.getRuntimeWorkspace());
             } catch {
                 // Fallback: legacy resolution
                 const userDataPath = app.getPath('userData');
@@ -329,17 +346,17 @@ class FileStorageService {
         try {
             const accountDir = this.getAccountDir(zaloId);
             const dir = subDir ? path.join(accountDir, subDir.replace(/[^\w.-]/g, '_')) : accountDir;
-            if (subDir && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            if (subDir) await fs.promises.mkdir(dir, { recursive: true });
             // Sanitize filename: remove illegal chars, trailing dots/spaces (Windows rejects "file.")
             const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_').replace(/[. ]+$/, '').trim() || `file_${Date.now()}`;
             const localPath = path.join(dir, safeFilename);
 
-            if (fs.existsSync(localPath)) {
-                try {
-                    if (fs.statSync(localPath).size > 0) return this.toRelativePath(localPath);
-                } catch {}
+            // I/O bất đồng bộ (ổ đĩa bận thì không chặn main) — xem writeMediaFile
+            const existing = await fs.promises.stat(localPath).catch(() => null);
+            if (existing) {
+                if (existing.size > 0) return this.toRelativePath(localPath);
                 Logger.warn(`[FileStorageService] Corrupted file (empty): ${safeFilename}, will re-download`);
-                try { fs.unlinkSync(localPath); } catch {}
+                await fs.promises.unlink(localPath).catch(() => {});
                 // Fall through to download
             }
 
@@ -360,7 +377,7 @@ class FileStorageService {
                 timeout: 60000,
                 headers,
             });
-            fs.writeFileSync(localPath, Buffer.from(response.data));
+            await writeMediaFile(localPath, Buffer.from(response.data));
             this.noteCloudMediaWrite(localPath);
             Logger.log(`[FileStorageService] Saved file: ${safeFilename}`);
             return this.toRelativePath(localPath);
@@ -416,11 +433,11 @@ class FileStorageService {
             const fname = filename ? toSafeFileName(filename, `img_${Date.now()}${ext}`, { decodeUri: false }) : `img_${Date.now()}${ext}`;
             const localPath = path.join(dir, fname);
 
-            if (fs.existsSync(localPath)) {
-                const v = this.validateImageFile(localPath);
-                if (v.valid) return this.toRelativePath(localPath);
-                Logger.warn(`[FileStorageService] Corrupted image (${v.reason}): ${fname}, will re-download`);
-                try { fs.unlinkSync(localPath); } catch {}
+            const existing = await this.validateImageFileAsync(localPath);
+            if (existing.valid) return this.toRelativePath(localPath);
+            if (existing.reason !== 'not_found') {
+                Logger.warn(`[FileStorageService] Corrupted image (${existing.reason}): ${fname}, will re-download`);
+                await fs.promises.unlink(localPath).catch(() => {});
                 // Fall through to download
             }
 
@@ -441,7 +458,7 @@ class FileStorageService {
                 headers,
             });
 
-            fs.writeFileSync(localPath, Buffer.from(response.data));
+            await writeMediaFile(localPath, Buffer.from(response.data));
             this.noteCloudMediaWrite(localPath);
             Logger.log(`[FileStorageService] Saved image: ${fname}`);
             // Store as relative path (folder-agnostic - resolves via local-media:// handler)
@@ -484,7 +501,7 @@ class FileStorageService {
     public static async saveBuffer(zaloId: string, buffer: Buffer, filename: string): Promise<string> {
         const dir = this.getAccountDir(zaloId);
         const localPath = path.join(dir, toSafeFileName(filename, `file_${Date.now()}`, { decodeUri: false }));
-        fs.writeFileSync(localPath, buffer);
+        await writeMediaFile(localPath, buffer);
         this.noteCloudMediaWrite(localPath);
         return localPath;
     }
@@ -544,13 +561,11 @@ class FileStorageService {
             const fname = filename ? toSafeFileName(filename, `vid_${Date.now()}${ext}`, { decodeUri: false }) : `vid_${Date.now()}${ext}`;
             const localPath = path.join(dir, fname);
 
-            if (fs.existsSync(localPath)) {
-                try {
-                    const stat = fs.statSync(localPath);
-                    if (stat.size > 0) return this.toRelativePath(localPath);
-                } catch {}
+            const existing = await fs.promises.stat(localPath).catch(() => null);
+            if (existing) {
+                if (existing.size > 0) return this.toRelativePath(localPath);
                 Logger.warn(`[FileStorageService] Corrupted video (empty): ${fname}, will re-download`);
-                try { fs.unlinkSync(localPath); } catch {}
+                await fs.promises.unlink(localPath).catch(() => {});
                 // Fall through to download
             }
 
@@ -576,7 +591,7 @@ class FileStorageService {
                     },
                 } : {}),
             });
-            fs.writeFileSync(localPath, Buffer.from(response.data));
+            await writeMediaFile(localPath, Buffer.from(response.data));
             this.noteCloudMediaWrite(localPath);
             Logger.log(`[FileStorageService] Saved video: ${fname}`);
             // Store as relative path (folder-agnostic)

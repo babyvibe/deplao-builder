@@ -13,13 +13,19 @@ import {
   RefreshIcon, SearchIcon, TrashIcon, UsersIcon,
 } from '@/components/common/icons';
 import {
-  CAMPAIGN_STATUS_META,
   CAMPAIGN_TYPE_LABEL,
   CONTACT_PARTIAL_META,
   CONTACT_STATUS_META,
+  ENGAGEMENT_FILTER_LABEL,
+  ENGAGEMENT_LEVEL_META,
   buildCampaignContactsCsv,
+  engagementFilterCounts,
+  engagementLevelOf,
+  isEngagementFilter,
   campaignContactStats,
+  campaignScheduledResumeAt,
   campaignDelayRange,
+  campaignStatusMeta,
   campaignStatusOf,
   campaignSteps,
   campaignTypeOf,
@@ -29,13 +35,18 @@ import {
   formatDelayRange,
   formatSentAt,
   hasTextWithImages,
+  isCampaignAutoStopped,
   partialFailureOf,
   readContentConfig,
   readMixedConfig,
   withSendOptions,
   type CampaignContactStats,
+  type CampaignEngagementView,
   type ContactFilter,
+  type EngagementLevel,
 } from '@/lib/crm/campaignView';
+import { engagementNotes, engagementPercents, formatRate } from '@/lib/analytics/engagementView';
+import type { CampaignEngagementReport, EngagementFilter } from '../../../../shared/analytics/messageEngagement';
 import TargetSelector from './TargetSelector';
 import CampaignCreateModal from './CampaignCreateModal';
 import {
@@ -43,6 +54,7 @@ import {
   type CampaignGroupRef,
 } from './CampaignParts';
 import type { CampaignSendOptions } from '../../../../shared/crm/campaignSendPlan';
+import { stopAfterFailuresLabel } from '../../../../shared/crm/campaignAutoStop';
 import type { Channel } from '../../../../configs/channels/channelConfig';
 
 interface LocalLabelItem {
@@ -63,6 +75,8 @@ interface CampaignDetailProps {
   onStatusChange: (id: number, status: string) => void;
   onAddContacts: (campaignId: number, contacts: any[]) => Promise<void>;
   onUpdate?: (data: CampaignUpdateData) => Promise<void>;
+  /** Tạo chiến dịch nháp (chép nội dung chiến dịch này) chỉ gồm các liên hệ đang lọc — gửi tiếp cho người đã xem… */
+  onCreateFromContacts?: (sourceCampaignId: number, contactIds: string[], newName: string) => Promise<void>;
 }
 
 /** Everything saveCRMCampaign rewrites — a partial update would reset the missing fields. */
@@ -79,6 +93,9 @@ export interface CampaignUpdateData {
   per_contact_delay_max_seconds?: number;
   daily_send_limit?: number;
   daily_start_time?: string;
+  stop_after_failures?: number;
+  stop_strangers_only?: number;
+  stop_resume_next_day?: number;
 }
 
 /** Rows rendered per "Xem thêm" step — campaigns can hold thousands of contacts. */
@@ -117,15 +134,39 @@ function StatTile({ label, value, tone, note }: { label: string; value: number; 
   );
 }
 
-const ContactRow = React.memo(function ContactRow({ contact, removable, disabled, onRemove }: {
+/** Một chỉ số hiệu quả: tỷ lệ lớn, số người / mẫu số, thanh. */
+function EngagementTile({ label, percent, count, base, barClass }: {
+  label: string; percent: number | null; count: number; base: number; barClass: string;
+}) {
+  return (
+    <div className="rounded-lg bg-muted/60 px-3 py-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground">{label}</p>
+        <p className="text-[11px] tabular-nums text-subtle-foreground">
+          {count.toLocaleString('vi-VN')}/{base.toLocaleString('vi-VN')}
+        </p>
+      </div>
+      <p className="mt-0.5 text-lg font-semibold leading-6 tabular-nums text-foreground">{formatRate(percent)}</p>
+      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-border/60">
+        <div className={cn('h-full rounded-full transition-all', barClass)} style={{ width: `${Math.max(0, Math.min(100, percent ?? 0))}%` }} />
+      </div>
+    </div>
+  );
+}
+
+const ContactRow = React.memo(function ContactRow({ contact, engagementLevel, removable, disabled, onRemove }: {
   contact: any;
+  /** Liên hệ đã gửi: mức hiệu quả cao nhất (đã phản hồi / đã xem / đã nhận) thay cho nhãn "Đã gửi". */
+  engagementLevel?: EngagementLevel | null;
   removable: boolean;
   disabled: boolean;
   onRemove: (contactId: string) => void;
 }) {
   const status = contactStatusOf(contact.status);
   const partialError = partialFailureOf(contact);
-  const meta = partialError ? CONTACT_PARTIAL_META : CONTACT_STATUS_META[status];
+  const meta = status === 'sent' && engagementLevel
+    ? ENGAGEMENT_LEVEL_META[engagementLevel]
+    : partialError ? CONTACT_PARTIAL_META : CONTACT_STATUS_META[status];
   const name = contact.display_name || contact.contact_id || '?';
   const secondary = contact.phone || (contact.contact_id && contact.contact_id !== contact.display_name ? contact.contact_id : '');
   return (
@@ -156,7 +197,7 @@ const ContactRow = React.memo(function ContactRow({ contact, removable, disabled
   );
 });
 
-export default function CampaignDetail({ campaign, zaloId, channel, allLabels, localLabels, localLabelThreadMap, onStatusChange, onAddContacts, onUpdate }: CampaignDetailProps) {
+export default function CampaignDetail({ campaign, zaloId, channel, allLabels, localLabels, localLabelThreadMap, onStatusChange, onAddContacts, onUpdate, onCreateFromContacts }: CampaignDetailProps) {
   const [contacts, setContacts] = useState<any[]>([]);
   /** Campaign the `contacts` array belongs to (avoids showing the previous campaign's rows while switching). */
   const [contactsFor, setContactsFor] = useState<number | null>(null);
@@ -169,7 +210,13 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
   const [filter, setFilter] = useState<ContactFilter>('all');
   const [visibleCount, setVisibleCount] = useState(CONTACT_PAGE);
   const [savingSendOptions, setSavingSendOptions] = useState(false);
+  const [creatingFromFilter, setCreatingFromFilter] = useState(false);
   const requestSeq = useRef(0);
+  // Hiệu quả (đã nhận / đã xem / đã phản hồi) của liên hệ đã gửi — đọc riêng, nhẹ, làm mới bằng nút "Cập nhật"
+  const [engagement, setEngagement] = useState<CampaignEngagementReport | null>(null);
+  const [engagementFor, setEngagementFor] = useState<number | null>(null);
+  const [engagementLoading, setEngagementLoading] = useState(false);
+  const engagementSeq = useRef(0);
 
   const loadContacts = useCallback(async () => {
     const seq = ++requestSeq.current;
@@ -191,8 +238,27 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
     }
   }, [campaign.id]);
 
+  const loadEngagement = useCallback(async () => {
+    const seq = ++engagementSeq.current;
+    setEngagementLoading(true);
+    try {
+      const res = await DataAccessor.getCampaignEngagement({ campaignId: campaign.id });
+      if (seq !== engagementSeq.current) return;
+      if (res?.success) {
+        const { success: _ok, ...report } = res;
+        setEngagement(report);
+        setEngagementFor(campaign.id);
+      }
+    } catch { /* giữ số liệu cũ, thử lại bằng nút Cập nhật */ } finally {
+      if (seq === engagementSeq.current) setEngagementLoading(false);
+    }
+  }, [campaign.id]);
+
   // Re-load contacts when campaign object changes (e.g. after adding contacts from parent)
   useEffect(() => { loadContacts(); }, [loadContacts, campaign]);
+  // Có liên hệ đã gửi mới có hiệu quả để đọc
+  const hasSent = (campaign.sent_count || 0) > 0;
+  useEffect(() => { if (hasSent) void loadEngagement(); }, [loadEngagement, hasSent, campaign]);
 
   useEffect(() => { setQuery(''); setFilter('all'); }, [campaign.id]);
   useEffect(() => { setVisibleCount(CONTACT_PAGE); }, [campaign.id, query, filter]);
@@ -208,16 +274,19 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
       ));
     });
     const unsubDone = ipc.on?.('crm:campaignDone', (data: any) => {
-      if (data.campaignId === campaign.id) loadContacts();
+      if (data.campaignId === campaign.id) { loadContacts(); void loadEngagement(); }
     });
     return () => { unsubUpdate?.(); unsubDone?.(); };
-  }, [campaign.id, loadContacts]);
+  }, [campaign.id, loadContacts, loadEngagement]);
 
   const contactsReady = contactsFor === campaign.id;
   const status = campaignStatusOf(campaign.status);
   const type = campaignTypeOf(campaign.campaign_type);
   const editable = status === 'draft' || status === 'paused';
-  const statusMeta = CAMPAIGN_STATUS_META[status];
+  // Tự dừng vì lỗi liên tiếp: nhãn "Tự dừng" + lý do dưới tiêu đề tới khi bấm Tiếp tục
+  const autoStopped = isCampaignAutoStopped(campaign);
+  const autoResumeAt = campaignScheduledResumeAt(campaign);
+  const statusMeta = campaignStatusMeta(campaign);
 
   // Live counts from the rows (queue events update them); campaign counters until the rows arrive.
   const stats = useMemo<CampaignContactStats>(() => {
@@ -235,9 +304,28 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
     };
   }, [contactsReady, contacts, campaign.total_contacts, campaign.sent_count, campaign.failed_count, campaign.sent_today_count]);
 
+  const engagementReady = engagementFor === campaign.id && !!engagement;
+  const engagementView = useMemo<CampaignEngagementView | null>(() => {
+    if (!engagementReady || !engagement) return null;
+    return { byContact: new Map(engagement.items.map(item => [item.contactId, item])), support: engagement.support };
+  }, [engagementReady, engagement]);
+  const engagementCounts = useMemo(() => engagementFilterCounts(contacts, engagementView), [contacts, engagementView]);
+  // Bộ lọc hiệu quả có nghĩa với chiến dịch: chỉ kết bạn / mời nhóm → chỉ "Đã phản hồi"
+  const engagementFilters = useMemo<EngagementFilter[]>(() => {
+    if (!engagementView || stats.sent === 0) return [];
+    if (!engagement?.sendsMessage) return ['replied'];
+    const list: EngagementFilter[] = ['replied', 'seen_no_reply', 'not_seen'];
+    if (engagementView.support.delivered) list.push('not_delivered');
+    return list;
+  }, [engagementView, engagement?.sendsMessage, stats.sent]);
+  // Bộ lọc hiệu quả đang chọn nhưng không còn dùng được (đổi chiến dịch / chưa tải) → về "Tất cả"
+  useEffect(() => {
+    if (isEngagementFilter(filter) && engagementReady && !engagementFilters.includes(filter)) setFilter('all');
+  }, [filter, engagementReady, engagementFilters]);
+
   const filtered = useMemo(
-    () => (contactsReady ? filterCampaignContacts(contacts, filter, query) : []),
-    [contactsReady, contacts, filter, query],
+    () => (contactsReady ? filterCampaignContacts(contacts, filter, query, engagementView) : []),
+    [contactsReady, contacts, filter, query, engagementView],
   );
   const visible = filtered.length > visibleCount ? filtered.slice(0, visibleCount) : filtered;
 
@@ -316,7 +404,7 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
 
   const handleExport = useCallback(() => {
     if (contacts.length === 0) return;
-    const blob = new Blob(['﻿' + buildCampaignContactsCsv(contacts)], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['﻿' + buildCampaignContactsCsv(contacts, engagementView)], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -324,7 +412,26 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     useAppStore.getState().showNotification(`Đã xuất ${contacts.length} liên hệ ra file CSV`, 'success');
-  }, [contacts, campaign.name]);
+  }, [contacts, campaign.name, engagementView]);
+
+  // Gửi tiếp cho đúng nhóm khách (vd đã xem nhưng chưa phản hồi): chiến dịch nháp mới, chép nội dung, chỉ các liên hệ đang lọc
+  const handleCreateFromFilter = useCallback(async () => {
+    if (!onCreateFromContacts || !isEngagementFilter(filter) || filtered.length === 0 || creatingFromFilter) return;
+    const label = ENGAGEMENT_FILTER_LABEL[filter];
+    const ok = await showConfirm({
+      title: `Tạo chiến dịch cho ${filtered.length.toLocaleString('vi-VN')} liên hệ?`,
+      message: `Chiến dịch nháp mới chép nội dung chiến dịch này, chỉ gồm các liên hệ "${label}". Sửa nội dung rồi bấm Bắt đầu.`,
+      confirmText: 'Tạo chiến dịch',
+      variant: 'info',
+    });
+    if (!ok) return;
+    setCreatingFromFilter(true);
+    try {
+      await onCreateFromContacts(campaign.id, filtered.map(c => String(c.contact_id)), `${campaign.name} · ${label}`);
+    } finally {
+      setCreatingFromFilter(false);
+    }
+  }, [onCreateFromContacts, filter, filtered, creatingFromFilter, campaign.id, campaign.name]);
 
   const handleSendOptionsChange = async (patch: Partial<CampaignSendOptions>) => {
     if (!onUpdate || !editable || savingSendOptions) return;
@@ -343,6 +450,9 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
         per_contact_delay_max_seconds: campaign.per_contact_delay_max_seconds,
         daily_send_limit: campaign.daily_send_limit,
         daily_start_time: campaign.daily_start_time,
+        stop_after_failures: campaign.stop_after_failures,
+        stop_strangers_only: campaign.stop_strangers_only,
+        stop_resume_next_day: campaign.stop_resume_next_day,
       });
     } finally {
       setSavingSendOptions(false);
@@ -393,7 +503,8 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
       <>
         <ul className="divide-y divide-border/60">
           {visible.map(c => (
-            <ContactRow key={c.id ?? c.contact_id} contact={c} removable={editable} disabled={deleting} onRemove={handleDeleteContact} />
+            <ContactRow key={c.id ?? c.contact_id} contact={c} removable={editable} disabled={deleting} onRemove={handleDeleteContact}
+              engagementLevel={engagementView ? engagementLevelOf(engagementView.byContact.get(String(c.contact_id))) : null} />
           ))}
         </ul>
         {filtered.length > visible.length && (
@@ -428,6 +539,11 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
               <MetaItem icon={<ChartIcon className="h-3.5 w-3.5" />}>
                 {dailyLimit > 0 ? `Tối đa ${dailyLimit.toLocaleString('vi-VN')} liên hệ/ngày` : 'Không giới hạn/ngày'}
               </MetaItem>
+              <MetaItem icon={<PauseIcon className="h-3.5 w-3.5" />} title="Tạm dừng chiến dịch khi nhiều liên hệ lỗi liên tiếp (tài khoản bị chặn, giới hạn…)">
+                {stopAfterFailuresLabel(campaign.stop_after_failures, {
+                  strangersOnly: formatting && campaign.stop_strangers_only, resumeNextDay: campaign.stop_resume_next_day,
+                })}
+              </MetaItem>
               {campaign.created_at > 0 && <span className="text-subtle-foreground">Tạo {formatDay(campaign.created_at)}</span>}
             </div>
           </div>
@@ -446,6 +562,19 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
             )}
           </div>
         </div>
+
+        {autoStopped && (
+          <div role="status" className="mt-3 flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <AlertIcon className="mt-px h-4 w-4 shrink-0" />
+            <p className="min-w-0 leading-relaxed">
+              <span className="font-semibold">Đã tự dừng{campaign.auto_stopped_at ? ` lúc ${formatSentAt(campaign.auto_stopped_at)}` : ''}:</span>{' '}
+              {campaign.auto_stop_reason}.{' '}
+              {autoResumeAt > 0
+                ? `Tự gửi tiếp lúc ${formatSentAt(autoResumeAt)}, hoặc bấm Tiếp tục để gửi ngay.`
+                : 'Kiểm tra tài khoản rồi bấm Tiếp tục.'}
+            </p>
+          </div>
+        )}
 
         <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
           <StatTile label="Tổng liên hệ" value={stats.total} />
@@ -468,6 +597,35 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
             <CampaignProgressBar total={stats.total} sent={stats.sent} failed={stats.failed} className="h-2" />
           </div>
         )}
+
+        {engagementReady && engagement && engagement.counts.sent > 0 && (() => {
+          const counts = engagement.counts;
+          const percents = engagementPercents(counts);
+          return (
+            <div className="mt-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-subtle-foreground">Hiệu quả tin đã gửi</p>
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={engagementLoading}
+                  leftIcon={<RefreshIcon className={cn('h-3.5 w-3.5', engagementLoading && 'animate-spin')} />}
+                  onClick={() => { void loadEngagement(); }}>
+                  Cập nhật
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {engagement.sendsMessage && engagement.support.delivered && (
+                  <EngagementTile label="Đã nhận" percent={percents.delivered} count={counts.delivered} base={counts.deliveredBase} barClass="bg-primary" />
+                )}
+                {engagement.sendsMessage && (
+                  <EngagementTile label="Đã xem" percent={percents.seen} count={counts.seen} base={counts.sent} barClass="bg-info" />
+                )}
+                <EngagementTile label="Đã phản hồi" percent={percents.replied} count={counts.replied} base={counts.sent} barClass="bg-success" />
+              </div>
+              <p className="text-[11px] leading-relaxed text-subtle-foreground">
+                {engagementNotes([engagement.channel], { sendsMessage: engagement.sendsMessage }).join(' ')}
+              </p>
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Body: content preview + contacts (side by side from xl, stacked + scrollable below) ── */}
@@ -558,7 +716,29 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
                     </button>
                   );
                 })}
+                {engagementFilters.length > 0 && <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />}
+                {engagementFilters.map(value => {
+                  const active = filter === value;
+                  return (
+                    <button key={value} type="button" onClick={() => setFilter(value)} aria-pressed={active}
+                      className={cn(
+                        'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
+                        active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                      )}>
+                      {ENGAGEMENT_FILTER_LABEL[value]}
+                      <span className={cn('tabular-nums', active ? 'text-primary/80' : 'text-subtle-foreground')}>
+                        {engagementCounts[value].toLocaleString('vi-VN')}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
+              {onCreateFromContacts && isEngagementFilter(filter) && filtered.length > 0 && (
+                <Button variant="outline" size="sm" className="ml-auto h-7 text-xs" loading={creatingFromFilter}
+                  leftIcon={<PlusIcon className="h-3.5 w-3.5" />} onClick={() => { void handleCreateFromFilter(); }}>
+                  Tạo chiến dịch từ {filtered.length.toLocaleString('vi-VN')} liên hệ
+                </Button>
+              )}
             </div>
           )}
 
@@ -599,6 +779,9 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
             per_contact_delay_max_seconds: campaign.per_contact_delay_max_seconds,
             daily_send_limit: campaign.daily_send_limit,
             daily_start_time: campaign.daily_start_time,
+            stop_after_failures: campaign.stop_after_failures,
+            stop_strangers_only: campaign.stop_strangers_only,
+            stop_resume_next_day: campaign.stop_resume_next_day,
           }}
           onClose={() => setShowEdit(false)}
           onSave={async (data) => {

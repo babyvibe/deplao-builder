@@ -483,7 +483,7 @@ function ProxySelectStep({
 
       <button
         onClick={onContinue}
-        className="btn-primary text-foreground w-full"
+        className="btn-primary w-full"
       >
         {selectedProxyId ? <><CheckIcon className="w-4 h-4 inline" /> Tiếp tục với proxy</> : 'Tiếp tục không cần proxy →'}
       </button>
@@ -493,11 +493,24 @@ function ProxySelectStep({
 
 // ─── QR Login Tab ─────────────────────────────────────────────────────────────
 
-const QR_TIMEOUT_SECONDS = 60;
+/**
+ * zca-js huỷ mã QR sau 100 s (kể từ lúc tạo mã). Trước đây đếm 60 s: mã còn dùng được đã bị ẩn và báo hết hạn, người
+ * dùng bấm Làm mới huỷ đúng lượt vừa quét → điện thoại báo đăng nhập thành công mà Deplao không có tài khoản.
+ */
+const QR_TIMEOUT_SECONDS = 100;
+
+type QRStatus = 'idle' | 'loading' | 'waiting' | 'scanned' | 'success' | 'expired' | 'declined' | 'error';
 
 function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: number | null }) {
   const [qrData, setQrData] = useState<string>('');
-  const [status, setStatus] = useState<'idle' | 'loading' | 'waiting' | 'scanned' | 'success' | 'expired' | 'error'>('idle');
+  const [status, setStatusState] = useState<QRStatus>('idle');
+  // Trạng thái hiện tại cho lúc đóng cửa sổ (cleanup của effect chỉ thấy giá trị lúc mount)
+  const statusRef = useRef<QRStatus>('idle');
+  const setStatus = (next: QRStatus) => {
+    statusRef.current = next;
+    setStatusState(next);
+  };
+  const [errorText, setErrorText] = useState('');
   const [timeLeft, setTimeLeft] = useState(QR_TIMEOUT_SECONDS);
   const tempId = useRef(`qr_${Date.now()}`);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -528,6 +541,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
     // Tạo tempId mới mỗi lần refresh
     tempId.current = `qr_${Date.now()}`;
     setQrData('');
+    setErrorText('');
     setStatus('loading');
     clearTimer();
 
@@ -598,11 +612,12 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
 
       if (data.status === 'expired' || data.status === 'declined') {
         clearTimer();
-        setStatus('expired');
+        setStatus(data.status);
       }
 
       if (data.status === 'error') {
         clearTimer();
+        setErrorText(typeof data.message === 'string' ? data.message : '');
         setStatus('error');
       }
     });
@@ -613,7 +628,10 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
     return () => {
       clearTimer();
       unsub();
-      // Huỷ QR đang chờ để tránh orphaned background process
+      // Huỷ QR đang chờ để tránh orphaned background process. Đã quét, đang xác nhận trên điện thoại → để lượt đăng nhập
+      // chạy tiếp: đóng cửa sổ lúc này từng huỷ đúng lượt điện thoại vừa xác nhận ("Operation aborted"); xong thì
+      // useZaloEvents nạp lại danh sách tài khoản.
+      if (statusRef.current === 'scanned') return;
       ipc.login?.loginQRAbort?.(tempId.current).catch(() => {});
     };
   }, []);
@@ -660,16 +678,18 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
         </div>
       )}
 
-      {/* Expired / Error → hiện nút Làm mới */}
-      {(status === 'expired' || status === 'error') && (
+      {/* Expired / Declined / Error → hiện nút Làm mới */}
+      {(status === 'expired' || status === 'declined' || status === 'error') && (
         <div className="py-6 flex flex-col items-center gap-4">
           <div className="text-5xl">{status === 'expired' ? <ClockIcon className="w-5 h-5" /> : <CloseIcon className="w-5 h-5" />}</div>
           <p className="text-foreground/80 text-sm">
-            {status === 'expired' ? 'Mã QR đã hết hạn (1 phút)' : 'Có lỗi xảy ra'}
+            {status === 'expired' ? 'Mã QR đã hết hạn'
+              : status === 'declined' ? 'Đã từ chối đăng nhập trên điện thoại'
+              : (errorText || 'Có lỗi xảy ra')}
           </p>
           <button
             onClick={handleRefresh}
-            className="btn-primary text-foreground flex items-center gap-2"
+            className="btn-primary flex items-center gap-2"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="23 4 23 10 17 10" />
@@ -826,7 +846,7 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
       <button
         onClick={handleLogin}
         disabled={loading || !username.trim() || !password || (need2FA && !twoFASecret.trim())}
-        className="btn-primary text-foreground w-full"
+        className="btn-primary w-full"
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
@@ -1035,7 +1055,7 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
       </div>
 
       {!started && !error && <div className="flex justify-center gap-2 py-5 text-sm text-muted-foreground"><Spinner size={4} /> Đang mở biểu mẫu đăng nhập...</div>}
-      {!started && error && <button onClick={start} disabled={loading} className="btn-primary text-foreground w-full">Thử lại</button>}
+      {!started && error && <button onClick={start} disabled={loading} className="btn-primary w-full">Thử lại</button>}
 
       {started && step && (
         <>
@@ -1072,15 +1092,15 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
             <div className="flex gap-2">
               <button type="button" onClick={cancel} disabled={loading} className="btn-secondary flex-1">Huỷ</button>
               {isInputStep && (
-                <button type="submit" disabled={loading} className="btn-primary text-foreground flex-[2]">
+                <button type="submit" disabled={loading} className="btn-primary flex-[2]">
                   {loading ? <span className="flex items-center justify-center gap-2"><Spinner size={4} /> Đang xác thực...</span> : 'Tiếp tục'}
                 </button>
               )}
               {isWaitStep && !waiting && (
-                <button type="button" onClick={() => void waitForApproval(sessionId)} disabled={loading} className="btn-primary text-foreground flex-[2]">Kiểm tra lại</button>
+                <button type="button" onClick={() => void waitForApproval(sessionId)} disabled={loading} className="btn-primary flex-[2]">Kiểm tra lại</button>
               )}
               {isWebStep && !isGoogleStep && (
-                <button type="button" onClick={openVerification} disabled={loading} className="btn-primary text-foreground flex-[2]">
+                <button type="button" onClick={openVerification} disabled={loading} className="btn-primary flex-[2]">
                   {loading ? <span className="flex items-center justify-center gap-2"><Spinner size={4} /> Đang xác minh...</span> : 'Mở cửa sổ xác minh'}
                 </button>
               )}
@@ -1279,7 +1299,7 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
       <button
         onClick={handleLogin}
         disabled={loading || !cookie.trim()}
-        className="btn-primary text-foreground w-full"
+        className="btn-primary w-full"
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
@@ -1450,7 +1470,7 @@ function CookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId
       <button
         onClick={handleLogin}
         disabled={loading || !authJson.trim() || !!jsonError}
-        className="btn-primary text-foreground w-full"
+        className="btn-primary w-full"
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
