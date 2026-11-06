@@ -127,7 +127,10 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════
   build-mac-arm64:
     needs: resolve-tag
-    runs-on: macos-14
+    # GitHub gỡ image macOS 14 ngày 02/11/2026 (job lỗi ngay: "The configuration 'macos-14-arm64-us-default' is not
+    # supported"). macos-15 cũng là Apple Silicon. Ghim số, không dùng macos-latest (đã là macOS 26) để bản build
+    # không tự đổi môi trường.
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
@@ -200,7 +203,9 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════
   build-ubuntu:
     needs: resolve-tag
-    runs-on: ubuntu-latest
+    # ubuntu-latest chuyển dần sang Ubuntu 26 từ 19/10/2026: module native (better-sqlite3) build trên glibc mới có thể
+    # không chạy được trên Ubuntu / Debian cũ hơn. Ghim 24.04 như các bản trước (26.10.4 build trên 24.04).
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
