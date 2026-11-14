@@ -1,14 +1,14 @@
 /**
- * Trạng thái dùng chung của danh sách tin: khung cuộn + ref đo cuộn, cờ sẵn sàng của hội thoại, phân trang tin cũ,
- * "đang xem tin cũ". Các hook hành vi (useThreadLifecycle / useScrollFollow / useOlderMessages / useJumpToMessage)
- * cùng đọc / ghi bộ này; tách khai báo ra để mỗi hook chỉ giữ phần việc của nó.
+ * Shared state of the message list: the scroll container + the scroll-measuring ref, the conversation's ready flag, paging of older messages,
+ * "đang xem tin cũ" (viewing old messages). The behavior hooks (useThreadLifecycle / useScrollFollow / useOlderMessages / useJumpToMessage)
+ * read / write this same state; the declarations are kept separate so each hook only holds its own part.
  */
 import { useCallback, useRef, useState } from 'react';
 
 export function useMessageListState() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  // Phần nội dung bên trong khung cuộn: ResizeObserver theo dõi phần này để bám đáy khi ảnh/video tải xong
+  // The content inside the scroll container: a ResizeObserver watches this part to stick to the bottom when photos / videos finish loading
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const pinnedBarWrapperRef = useRef<HTMLDivElement>(null);
   const prevPinnedBarHeightRef = useRef(0);
@@ -19,10 +19,10 @@ export function useMessageListState() {
   const isInitialThreadLoadRef = useRef(true);
   const initialScrollDoneRef = useRef(false);
   const [initialScrollDone, setInitialScrollDone] = useState(false);
-  // nearBottomRef: cập nhật realtime từ scroll event (không gây re-render)
-  // dùng cho ResizeObserver + realtime scroll — tránh stale closure
+  // nearBottomRef: updated in real time from the scroll event (does not cause a re-render)
+  // used by ResizeObserver + realtime scroll, avoids a stale closure
   const nearBottomRef = useRef(true);
-  // Debounced scroll-to-bottom: gom nhiều request thành 1 lần scroll
+  // Debounced scroll-to-bottom: batches many requests into one scroll
   const scrollRafRef = useRef(0);
   const scrollToBottom = useCallback((reason?: string) => {
     if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
@@ -34,34 +34,34 @@ export function useMessageListState() {
     });
   }, []);
 
-  // Chỉ để hiện spinner (bật trễ khi trang tải lâu); chặn tải trùng dùng loadingMoreRef
+  // Only to show the spinner (turned on late when the page loads slowly); blocks duplicate loads using loadingMoreRef
   const [loadingMore, setLoadingMore] = useState(false);
-  // "Có thể còn tin cũ hơn" — false khi lần tải đã chắc chắn hết
+  // "Có thể còn tin cũ hơn" (May have older messages): false once a load has confirmed there are none left
   const [hasMore, setHasMore] = useState(true);
-  // Đã biết CHẮC còn tin cũ hơn (trang vừa tải trả dư 1 dòng) → mới hiện nút "Tải tin nhắn cũ hơn"
+  // Known for SURE that older messages remain (the page just loaded returned 1 extra row) → only then show the "Tải tin nhắn cũ hơn" (Load older messages) button
   const [olderKnown, setOlderKnown] = useState(false);
   const [loadError, setLoadError] = useState(false);
-  // Mỗi lần tải tin cũ / đổi hội thoại tăng 1 — kết quả về muộn của lần tải cũ bị bỏ qua
+  // Incremented on each older-message load / conversation switch: a late result from an old load is ignored
   const loadSeqRef = useRef(0);
-  // Đang cuộn mượt tới một tin (ghim / trích dẫn / tìm kiếm): chèn trang cũ lên trên lúc này làm lệch đích
+  // Smoothly scrolling to a message (pinned / quote / search): inserting an older page above now would throw off the target
   const suppressLoadOlderUntilRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
 
-  // Track khi đang xem tin nhắn cũ (do click vào ghim / quote / search) - cần nút "Về tin mới nhất"
+  // Track when viewing old messages (after clicking a pin / quote / search): needs the "Về tin mới nhất" (Back to latest) button
   const [isViewingHistory, setIsViewingHistory] = useState(false);
   const [loadingLatest, setLoadingLatest] = useState(false);
 
-  // ─── Thread ready gate: chỉ hiển thị UI khi messages + pins đều đã load ──
+  // ─── Thread ready gate: only show the UI when both messages + pins have loaded ──
   const [threadReady, setThreadReady] = useState(false);
   const [messagesReady, setMessagesReady] = useState(false);
   // Track initial loading for PageLoading display
   const [initialLoading, setInitialLoading] = useState(true);
-  // loadingSpinner: spinner trung tâm khi chuyển thread, chỉ done sau khi scroll hoàn tất
+  // loadingSpinner: the center spinner when switching threads, only done after the scroll finishes
   const [loadingSpinner, setLoadingSpinner] = useState(false);
-  // Track threadId đã scroll - tránh race condition giữa useLayoutEffect vs useEffect
+  // Track the threadId already scrolled to: avoids a race condition between useLayoutEffect and useEffect
   const lastScrolledThreadRef = useRef<string | null>(null);
 
-  // Tải tin cũ khi cuộn gần đỉnh (useOlderMessages): hàm mới nhất + cờ chặn tải trùng
+  // Load older messages when scrolled near the top (useOlderMessages): latest function + a flag that blocks duplicate loads
   const loadMoreFnRef = useRef<() => void>(() => {});
   const hasMoreRef = useRef(true);
   const loadingMoreRef = useRef(false);

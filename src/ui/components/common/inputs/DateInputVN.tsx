@@ -2,9 +2,9 @@ import React from 'react';
 import { useAppStore } from '@/store/app/appStore';
 
 /**
- * DateInputVN - wrapper cho input[type="date"] và input[type="datetime-local"].
- * - Thêm lang="vi-VN" để Chromium hiển thị đúng dd/mm/yyyy
- * - Tự chọn color-scheme theo theme (light/dark)
+ * DateInputVN - wrapper for input[type="date"] and input[type="datetime-local"].
+ * - Adds lang="vi-VN" so Chromium shows dd/mm/yyyy correctly
+ * - Picks color-scheme from the theme automatically (light/dark)
  */
 interface DateInputVNProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> {
   type?: 'date' | 'datetime-local';

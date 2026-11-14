@@ -12,12 +12,13 @@ import {
     socketResyncNeeded,
     type EmployeeResyncReason,
 } from '../../shared/employee/employeeConnection';
+import { tr } from '../../shared/i18n';
 
-/** Thông tin kèm theo khi trạng thái kết nối đổi (main → HttpConnectionManager → renderer). */
+/** Extra info sent along when the connection status changes (main → HttpConnectionManager → renderer). */
 export interface ServiceStatusInfo {
-    /** Boss từ chối token (heartbeat 401 / Socket.IO auth) → đã dừng heartbeat + socket, cần đăng nhập lại. */
+    /** The Boss rejected the token (heartbeat 401 / Socket.IO auth) → heartbeat and socket stopped; login is needed again. */
     authExpired?: boolean;
-    /** Bị Boss ngắt (relay:kicked) → đã disconnect, không tự kết nối lại. */
+    /** Kicked by Boss (relay:kicked) → disconnected, will not reconnect automatically. */
     kicked?: boolean;
     reason?: string;
 }
@@ -25,14 +26,14 @@ export interface ServiceStatusInfo {
 export interface ConnectResult {
     success: boolean;
     error?: string;
-    /** Boss trả 401 lúc đăng ký → token hết hạn / sai, thử lại vô ích. */
+    /** Boss returned 401 during registration → the token expired / is invalid; retrying is pointless. */
     authExpired?: boolean;
-    /** disconnect() được gọi trong lúc đang kết nối. */
+    /** disconnect() was called while connecting. */
     cancelled?: boolean;
 }
 
 export interface SnapshotMeta {
-    /** Renderer phải áp dụng ngay (bỏ qua throttle 60 s của workspace:initialState). */
+    /** The renderer must apply this immediately (skip the 60 s throttle of workspace:initialState). */
     forced?: boolean;
     reason?: string;
 }
@@ -43,12 +44,12 @@ export type WakeKind = 'resume' | 'unlock-screen' | 'network-online';
  * HttpClientService - Employee side only.
  * Replaces SocketClientService.
  *
- * - Runs a lightweight HTTP server to receive pushed events from Boss
+ * - Runs a lightweight HTTP server to receive events pushed from Boss
  * - Sends proxy actions to Boss via HTTP POST
- * - Heartbeat every 15s to keep registration alive (tự hồi phục: vẫn chạy khi đang mất kết nối)
- * - Phát hiện token hết hạn (heartbeat 401 x2 / Socket.IO auth) → dừng, báo authExpired
- * - Báo onResync khi Socket.IO / heartbeat hồi phục sau khoảng mất > 10 s, sau khi máy ngủ dậy, hoặc khi catch-up
- *   Socket.IO không phát lại được phần đã lỡ (Boss khởi động lại / buffer không đủ / Boss bản cũ)
+ * - Heartbeat every 15s to keep the registration alive (self-recovering: keeps running while the connection is lost)
+ * - Detects an expired token (heartbeat 401 x2 / Socket.IO auth) → stops, reports authExpired
+ * - Reports onResync when Socket.IO / heartbeat recovers after a gap of more than 10 s, after the machine wakes from sleep, or when the Socket.IO catch-up
+ *   cannot replay what was missed (Boss restarted / buffer too small / old Boss version)
  */
 class HttpClientService {
     private static instance: HttpClientService;
@@ -64,18 +65,18 @@ class HttpClientService {
     private consecutiveHeartbeatFailures = 0;
     private static MAX_HEARTBEAT_FAILURES = 5;
     private static HEARTBEAT_INTERVAL_MS = 15_000;
-    /** 401 liên tiếp trước khi kết luận token hết hạn (1 lần lẻ có thể do Boss đang khởi động lại). */
+    /** 401 in a row before concluding the token has expired (a single one may come from Boss restarting). */
     private static AUTH_FAILURES_BEFORE_EXPIRED = 2;
     private callbackUrl = '';
 
-    /** Tăng mỗi lần connect()/disconnect() → bỏ qua kết quả của lần kết nối / heartbeat cũ. */
+    /** Incremented on every connect()/disconnect() → discards the results of older connect / heartbeat attempts. */
     private generation = 0;
     private heartbeatInFlight = false;
     private consecutiveAuthFailures = 0;
     private authExpired = false;
-    /** Thời điểm bắt đầu chuỗi heartbeat lỗi hiện tại (0 = đang khoẻ). */
+    /** When the current heartbeat-failure streak started (0 = healthy). */
     private firstHeartbeatFailureAt = 0;
-    /** Máy vừa ngủ dậy → resync ngay khi heartbeat kế tiếp thành công. */
+    /** The machine just woke from sleep → resync as soon as the next heartbeat succeeds. */
     private pendingWakeResync = false;
     private lastSocketConnected: boolean | null = null;
 
@@ -85,13 +86,13 @@ class HttpClientService {
     private onPermissionUpdate: ((data: any) => void) | null = null;
     private onResync: ((reason: EmployeeResyncReason, gapMs: number) => void) | null = null;
 
-    /** Socket.IO client - transport duy nhất cho real-time event */
+    /** Socket.IO client: the only transport for real-time events */
     private socketIOClient = new SocketIOClient();
 
     /**
-     * Channels to forward to local EventBroadcaster — CÙNG danh sách Boss relay (relayChannels.ts). Trước đây là danh
-     * sách riêng: Boss relay db:unreadChanged, db:conversationDeleted, db:contactProfileUpdated, library:*,
-     * erp:event:employeeProfileDeleted… nhưng nhân viên bỏ qua → không bao giờ tới renderer.
+     * Channels to forward to the local EventBroadcaster: the SAME list that Boss relays (relayChannels.ts). Previously this was a separate list:
+     * Boss relayed db:unreadChanged, db:conversationDeleted, db:contactProfileUpdated, library:*,
+     * erp:event:employeeProfileDeleted… but the employee dropped them, so they never reached the renderer.
      */
     private static FORWARD_CHANNELS: ReadonlySet<string> = EMPLOYEE_FORWARD_CHANNELS;
 
@@ -110,7 +111,7 @@ class HttpClientService {
         }
 
         const gen = ++this.generation;
-        const cancelled: ConnectResult = { success: false, error: 'Đã huỷ kết nối', cancelled: true };
+        const cancelled: ConnectResult = { success: false, error: tr('Đã huỷ kết nối'), cancelled: true };
         this.token = token;
         this.authExpired = false;
         this.consecutiveAuthFailures = 0;
@@ -134,7 +135,7 @@ class HttpClientService {
             const health = await this.httpGet(`${this.bossUrl}/api/health`, {}, 8000).catch(() => null);
             if (gen !== this.generation) return cancelled;
             if (!health?.status) {
-                return { success: false, error: 'Không thể kết nối tới Boss. Kiểm tra địa chỉ và relay server đã bật chưa.' };
+                return { success: false, error: tr('Không thể kết nối tới Boss. Kiểm tra địa chỉ và relay server đã bật chưa.') };
             }
 
             // 2. Start local HTTP server for LAN callback fallback (non-fatal if fails)
@@ -165,7 +166,7 @@ class HttpClientService {
                     Logger.warn('[HttpClientService] Boss từ chối token (HTTP 401) — phiên đăng nhập hết hạn');
                     return { success: false, error: AUTH_EXPIRED_MESSAGE, authExpired: true };
                 }
-                return { success: false, error: hbResult.error || 'Không thể kết nối tới Boss' };
+                return { success: false, error: hbResult.error || tr('Không thể kết nối tới Boss') };
             }
 
             this.connected = true;
@@ -182,11 +183,11 @@ class HttpClientService {
             this.socketIOClient.setOnAuthRejected((message) => {
                 if (gen === this.generation) this.handleAuthExpired('Socket.IO', message);
             });
-            // Catch-up không phát lại được phần đã lỡ (Boss khởi động lại / buffer không đủ / Boss cũ) → employee:resync
+            // Catch-up could not replay what was missed (Boss restarted / buffer too small / old Boss) → employee:resync
             this.socketIOClient.setOnResync((reason, gapMs) => {
                 if (gen === this.generation) this.onResync?.(reason, gapMs);
             });
-            // ts (giờ Boss) của heartbeat đăng ký: lần nối đầu chỉ xin phát lại event từ thời điểm này
+            // ts (Boss time) of the registration heartbeat: the first connection only asks to replay events from this time onward
             this.socketIOClient.connect(this.bossUrl, this.token, {
                 sinceTs: typeof hbResult?.ts === 'number' ? hbResult.ts : undefined,
             });
@@ -239,14 +240,14 @@ class HttpClientService {
         return { connected: this.connected, bossUrl: this.bossUrl, latency: this.latencyMs, authExpired: this.authExpired };
     }
 
-    // ─── Wake / health (gọi từ HttpConnectionManager) ─────────────────
+    // ─── Wake / health (called from HttpConnectionManager) ─────────────────
 
     /**
-     * Máy ngủ dậy / mở khoá / mạng có lại: heartbeat ngay thay vì chờ chu kỳ 15 s.
-     * resume: luôn mở lại Socket.IO (socket cũ có thể đã chết mà chưa biết) và resync khi heartbeat OK.
+     * The machine woke from sleep / was unlocked / the network came back: heartbeat right away instead of waiting for the 15 s cycle.
+     * resume: always reopen Socket.IO (the old socket may already be dead without knowing it) and resync when the heartbeat succeeds.
      */
     public handleWake(kind: WakeKind): void {
-        if (!this.heartbeatTimer || this.authExpired) return; // chưa chạy / đã dừng
+        if (!this.heartbeatTimer || this.authExpired) return; // not running / already stopped
         if (kind === 'resume') {
             this.pendingWakeResync = true;
             this.socketIOClient.reconnectNow('máy vừa ngủ dậy');
@@ -256,7 +257,7 @@ class HttpClientService {
         void this.runHeartbeat();
     }
 
-    /** Lưới an toàn (health check 60 s): heartbeat OK mà Socket.IO đã bỏ cuộc → mở lại. */
+    /** Safety net (health check every 60 s): heartbeat OK but Socket.IO has given up → reopen it. */
     public ensureRealtime(): void {
         if (!this.connected || this.authExpired || !this.heartbeatTimer) return;
         if (this.socketIOClient.isConnected() || this.socketIOClient.isRecovering()) return;
@@ -275,7 +276,7 @@ class HttpClientService {
         }
     }
 
-    /** Token bị Boss từ chối → dừng heartbeat + socket (thử lại vô ích), báo authExpired. */
+    /** Token rejected by Boss → stop heartbeat + socket (retrying is pointless), report authExpired. */
     private handleAuthExpired(source: string, message: string): void {
         if (this.authExpired) return;
         this.authExpired = true;
@@ -288,7 +289,7 @@ class HttpClientService {
         this.onStatusChange?.(false, 0, { authExpired: true, reason: message });
     }
 
-    /** Heartbeat / đăng ký trả 401 (Boss: authenticateRequest() = null). */
+    /** Heartbeat / registration returns 401 (Boss: authenticateRequest() = null). */
     private isAuthFailure(result: any): boolean {
         if (!result || result.success) return false;
         if (result.__httpStatus === 401) return true;
@@ -299,7 +300,7 @@ class HttpClientService {
 
     public async proxyAction(channel: string, params: any, timeoutMs = 30000): Promise<any> {
         if (!this.connected) {
-            throw new Error('Chưa kết nối tới BOSS');
+            throw new Error(tr('Chưa kết nối tới BOSS'));
         }
 
         return this.httpPost(
@@ -351,7 +352,7 @@ class HttpClientService {
     public setOnPermissionUpdate(cb: (data: any) => void): void {
         this.onPermissionUpdate = cb;
     }
-    /** Kết nối vừa hồi phục sau khoảng mất > RESYNC_GAP_MS, máy ngủ dậy, hoặc catch-up không đủ → renderer tải lại dữ liệu. */
+    /** Connection recovered after a gap longer than RESYNC_GAP_MS, the machine woke from sleep, or the catch-up was insufficient → the renderer reloads its data. */
     public setOnResync(cb: (reason: EmployeeResyncReason, gapMs: number) => void): void {
         this.onResync = cb;
     }
@@ -364,7 +365,7 @@ class HttpClientService {
     /** Request fresh account/employee snapshot from Boss (reconnect recovery / 403 ACCOUNT_FORBIDDEN) */
     public async requestSnapshot(meta?: SnapshotMeta): Promise<{ success: boolean; snapshot?: any; error?: string }> {
         if (!this.connected) {
-            return { success: false, error: 'Chưa kết nối tới BOSS' };
+            return { success: false, error: tr('Chưa kết nối tới BOSS') };
         }
         const gen = this.generation;
         try {
@@ -374,7 +375,7 @@ class HttpClientService {
                 15000
             );
             if (gen !== this.generation) {
-                return { success: false, error: 'Đã huỷ kết nối' };
+                return { success: false, error: tr('Đã huỷ kết nối') };
             }
             if (!result?.success || !result?.snapshot) {
                 return { success: false, error: result?.error || 'Snapshot failed' };
@@ -474,14 +475,14 @@ class HttpClientService {
         }
         if (channel === 'relay:kicked') {
             Logger.log(`[HttpClientService] Kicked by boss: ${data?.reason}`);
-            // disconnect() xoá callback → giữ lại trước để còn báo được cho manager/renderer
+            // disconnect() clears the callbacks, so keep them first to still be able to notify the manager/renderer
             const notify = this.onStatusChange;
             this.disconnect();
-            notify?.(false, 0, { kicked: true, reason: data?.reason || 'Bị ngắt kết nối bởi quản lý' });
+            notify?.(false, 0, { kicked: true, reason: data?.reason || tr('Bị ngắt kết nối bởi quản lý') });
             return;
         }
 
-        // Boss báo địa chỉ (tunnel) đổi: tự chuyển nếu địa chỉ đang lưu đúng là địa chỉ cũ, luôn báo renderer
+        // Boss reports that the address (tunnel) changed: switch automatically if the saved address is exactly the old one; always notify the renderer
         if (channel === BOSS_URL_CHANGED_EVENT) {
             applyBossUrlAnnouncement(this.workspaceId, data);
             return;
@@ -509,8 +510,8 @@ class HttpClientService {
             return;
         }
 
-        // "Xoá khỏi app" ở Boss / nhân viên khác (scope 'app'): xoá hẳn khỏi DB nhân viên, chuyển nguyên event cho renderer
-        // (nhánh dưới đổi 1 tin thành event:undo → hiện "đã thu hồi", sai với xoá khỏi app).
+        // "Xoá khỏi app" (remove from app) from Boss / another employee (scope 'app'): delete it fully from the employee DB, pass the event unchanged to the renderer
+        // (the branch below turns a message into event:undo → shows "đã thu hồi" (unsent), which is wrong for remove-from-app)
         if (channel === 'event:delete' && data?.scope === 'app' && data?.zaloId && Array.isArray(data?.msgIds) && data.msgIds.length) {
             this.saveRelayAppDeleteToWorkspaceDb(String(data.zaloId), data.msgIds.map(String), data);
             return;
@@ -616,9 +617,9 @@ class HttpClientService {
 
         // Persist conversation-level events from Boss to employee's local DB
         // (labels, pins, quick messages, CRM, pinned conversations, contact settings).
-        // UI nhân viên đọc dữ liệu qua REST (DataAccessor) — DB cục bộ chỉ là bản đệm; kênh mới (Telegram sửa / xoá
-        // tin, Facebook, thư viện, đánh dấu…) chỉ cần chuyển tiếp, renderer cập nhật store từ payload.
-        // Gửi renderer kể cả khi workspace này đang chạy nền (store theo zaloId, không lẫn tài khoản).
+        // The employee UI reads data via REST (DataAccessor): the local DB is only a cache. New channels (Telegram edit / delete
+        // messages, Facebook, library, mark-as-read…) only need to be forwarded; the renderer updates the store from the payload.
+        // Still send to the renderer even when this workspace is running in the background (the store is keyed by zaloId, so accounts do not mix).
         if (HttpClientService.FORWARD_CHANNELS.has(channel)) {
             this.persistRelayConversationEvent(channel, data);
             // Forward to renderer always. Data was persisted to correct DB via withDbPath above.
@@ -746,7 +747,7 @@ class HttpClientService {
 
             // ── Contact flags ──
             if (channel === 'db:contactFlagsChanged' && data) {
-                // Lệnh REST của nhân viên phát { zaloId, … }, IPC của Boss phát { ownerZaloId, … }
+                // Employee REST commands emit { zaloId, … }; Boss IPC emits { ownerZaloId, … }
                 const ownerZaloId = data.ownerZaloId || data.zaloId;
                 runOnWsDb(() => {
                     if (ownerZaloId && data.contactId && data.flags) {
@@ -776,9 +777,9 @@ class HttpClientService {
         }
     }
 
-    // ─── Socket.IO client — thay thế toàn bộ SSE ────────────────
-    // HttpClientService dùng SocketIOClient cho real-time event.
-    // SSE đã được xoá. Xem src/services/socket/SocketIOClient.ts
+    // ─── Socket.IO client: replaces all of SSE ────────────────
+    // HttpClientService uses SocketIOClient for real-time events.
+    // SSE has been removed. See src/services/socket/SocketIOClient.ts
 
 
     // ─── Heartbeat ────────────────────────────────────────────────────
@@ -846,7 +847,7 @@ class HttpClientService {
      * Called for event:undo and event:delete - both just mark messages as recalled.
      * Uses withDbPath to target the correct DB when another workspace is active.
      */
-    /** "Xoá khỏi app" từ Boss: xoá tin khỏi DB của workspace nhân viên (đúng DB kể cả khi workspace khác đang mở) rồi báo renderer. */
+    /** "Xoá khỏi app" (remove from app) from Boss: delete the message from the employee workspace DB (the right DB even when another workspace is open), then notify the renderer. */
     private saveRelayAppDeleteToWorkspaceDb(zaloId: string, msgIds: string[], data: any): void {
         try {
             const DatabaseService = require('../database/DatabaseService').default;
@@ -978,11 +979,11 @@ class HttpClientService {
         this.stopHeartbeat();
         this.consecutiveHeartbeatFailures = 0;
         this.firstHeartbeatFailureAt = 0;
-        // Kể cả khi đã disconnected → vẫn thử heartbeat để tự reconnect
+        // Even when already disconnected → still try the heartbeat to reconnect automatically
         this.heartbeatTimer = setInterval(() => { void this.runHeartbeat(); }, HttpClientService.HEARTBEAT_INTERVAL_MS);
     }
 
-    /** Một nhịp heartbeat (chu kỳ 15 s hoặc gọi ngay khi máy ngủ dậy) — không chạy chồng. */
+    /** One heartbeat tick (every 15 s, or called right away when the machine wakes from sleep); never runs overlapping. */
     private async runHeartbeat(): Promise<void> {
         if (this.heartbeatInFlight || this.authExpired || !this.bossUrl) return;
         const gen = this.generation;
@@ -1021,14 +1022,14 @@ class HttpClientService {
         this.consecutiveAuthFailures = 0;
         this.firstHeartbeatFailureAt = 0;
         this.pendingWakeResync = false;
-        // Nếu trước đó đang disconnected mà heartbeat thành công → reconnect!
+        // If it was disconnected before and the heartbeat now succeeds → reconnect!
         if (!this.connected) {
             this.connected = true;
             Logger.log(`[HttpClientService] ✅ Reconnected via heartbeat (sau ${failuresBefore} lần lỗi, ${Math.round(gapMs / 1000)}s)`);
         }
         this.onStatusChange?.(true, latency);
 
-        // Boss vừa không tới được: Socket.IO có thể đang chờ backoff dài → mở lại ngay
+        // Boss was unreachable just now: Socket.IO may be waiting in a long backoff → reopen it right away
         if (failuresBefore > 0 && !this.socketIOClient.isConnected()) {
             this.socketIOClient.reconnectNow('heartbeat hồi phục');
         }
@@ -1073,8 +1074,8 @@ class HttpClientService {
             if (hostname.endsWith('.loca.lt') || hostname.endsWith('.localtunnel.me')) {
                 return { 'bypass-tunnel-reminder': 'true' };
             }
-            // ngrok free domains chèn trang cảnh báo trình duyệt → header này bỏ qua,
-            // trả JSON trực tiếp thay vì HTML interstitial.
+            // ngrok free domains insert a browser warning page → this header skips it,
+            // and returns JSON directly instead of the HTML interstitial.
             if (hostname.endsWith('.ngrok-free.dev') || hostname.endsWith('.ngrok-free.app') || hostname.endsWith('.ngrok.app') || hostname.endsWith('.ngrok.io')) {
                 return { 'ngrok-skip-browser-warning': 'true' };
             }
@@ -1093,7 +1094,7 @@ class HttpClientService {
             Logger.warn('[HttpClientService] Received HTML response instead of JSON (tunnel interstitial?)');
             return {
                 success: false,
-                error: 'URL tunnel cần xác nhận trình duyệt. Vui lòng mở địa chỉ Boss trong trình duyệt một lần để kích hoạt, sau đó thử lại.',
+                error: tr('URL tunnel cần xác nhận trình duyệt. Vui lòng mở địa chỉ Boss trong trình duyệt một lần để kích hoạt, sau đó thử lại.'),
             };
         }
         try {
@@ -1104,8 +1105,8 @@ class HttpClientService {
     }
 
     /**
-     * Gắn HTTP status vào kết quả đã parse dưới dạng thuộc tính KHÔNG enumerable (`__httpStatus`)
-     * → nhận ra 401 mà không lọt ra IPC / JSON (structured clone bỏ qua thuộc tính không enumerable).
+     * Attach the HTTP status to the parsed result as a NON-enumerable property (`__httpStatus`)
+     * → detects a 401 without it leaking into IPC / JSON (structured clone skips non-enumerable properties).
      */
     private withHttpStatus(parsed: any, statusCode?: number): any {
         if (parsed && typeof parsed === 'object' && statusCode) {

@@ -1,7 +1,7 @@
 /**
- * autoReadStore - "Tự động đánh dấu đã đọc" job (menu ⋮ → Tự động).
+ * autoReadStore - "Tự động đánh dấu đã đọc" (Auto mark as read) job (⋮ menu → Auto).
  *
- * `find` lists the unread conversations of the chosen accounts from the DB (Boss REST in employee
+ * `find` lists the unread conversations of the chosen accounts from the DB (owner's machine REST in employee
  * mode); `start` processes them one by one (markConversationRead: app first, then the platform
  * when it has an API, paced per platform). The job keeps running when the popup is closed; the
  * menu and the popup read its progress from here.
@@ -12,6 +12,7 @@ import { markConversationRead } from '@/lib/chat/read/markConversationRead';
 import { AutoReadRange, autoReadPlatformDelay } from '@/lib/chat/read/autoMarkRead';
 import { isTelegramNonMember } from '@/lib/telegram/telegramMembership';
 import { useAccountStore } from '@/store/accounts/accountStore';
+import { tr } from '../../../shared/i18n';
 
 export interface AutoReadConversation {
   accountId: string;
@@ -101,7 +102,7 @@ export const useAutoReadStore = create<AutoReadState>((set, get) => ({
           if (result.sync === 'synced') job.synced += 1;
           else if (result.sync === 'failed') {
             job.failed += 1;
-            if (job.errors.length < 20) job.errors = [...job.errors, { name: conversation.name, error: result.error || 'Lỗi không xác định' }];
+            if (job.errors.length < 20) job.errors = [...job.errors, { name: conversation.name, error: result.error || tr('Lỗi không xác định') }];
           } else job.appOnly += 1;
           return { job };
         });

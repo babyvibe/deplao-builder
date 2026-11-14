@@ -18,6 +18,8 @@ import {
   buildSearchIndex, contactSearchFields, filterSearchIndex, foldForSearch, friendSearchFields, matchesSearch,
   MESSAGE_SEARCH_DEBOUNCE_MS, MESSAGE_SEARCH_MIN_LENGTH,
 } from '@/lib/chat/conversations/conversationSearch';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── Vietnamese-aware normalization for fuzzy matching ────────────────────────
 function normalizeStr(s: string): string {
@@ -29,7 +31,7 @@ function normalizeStr(s: string): string {
     .trim();
 }
 
-// So khớp liên hệ / bạn bè (bỏ dấu, cả đ → d, khoá tính sẵn): lib/chat/conversations/conversationSearch.
+// Contact / friend matching (accent-insensitive, d-stroke counts as d, key precomputed): lib/chat/conversations/conversationSearch.
 
 function isPhoneNumber(s: string): boolean {
   return /^(\+84|0)\d{8,10}$/.test(s.trim().replace(/\s/g, ''));
@@ -67,7 +69,7 @@ export function highlightText(text: string, query: string): React.ReactNode {
 
 // ─── Parse message preview ────────────────────────────────────────────────────
 function parsePreview(content: string): string {
-  if (!content) return '[Tin nhắn]';
+  if (!content) return tr('[Tin nhắn]');
 
   try {
     const p = JSON.parse(content);
@@ -106,11 +108,11 @@ function parsePreview(content: string): string {
 
     const par = (() => { try { return typeof p?.params === 'string' ? JSON.parse(p.params) : (p?.params || {}); } catch { return {}; } })();
     if (p?.title && (par?.fileSize || par?.fileExt || par?.fileUrl || p?.normalUrl)) return `File: ${p.title}`;
-    if (p?.href || p?.thumb || par?.rawUrl || par?.hd) return '[Hình ảnh]';
+    if (p?.href || p?.thumb || par?.rawUrl || par?.hd) return tr('[Hình ảnh]');
     // Location check: has latitude/longitude in params
-    if (par?.latitude || par?.longitude) return p?.description ? `📍 ${p.description}` : '📍 [Vị trí]';
+    if (par?.latitude || par?.longitude) return p?.description ? `📍 ${p.description}` : tr('📍 [Vị trí]');
     if (p?.title) return p.title;
-    return '[Đính kèm]';
+    return tr('[Đính kèm]');
   } catch {
     return content;
   }
@@ -156,9 +158,9 @@ function formatTime(ts: number): string {
   if (!ts) return '';
   const d = new Date(ts);
   const now = new Date();
-  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-  if (d.getFullYear() === now.getFullYear()) return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit' });
-  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' });
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleString(appLocale(), { day: '2-digit', month: '2-digit' });
+  return d.toLocaleString(appLocale(), { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
 // ─── ContactResultItem ────────────────────────────────────────────────────────
@@ -207,8 +209,8 @@ function ContactResultItem({ contact, query, onClick, groupInfoCache }: {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm text-foreground truncate">{highlightText(name, query)}</p>
-        {isGroup && <p className="text-xs text-muted-foreground mt-0.5">Nhóm</p>}
-        {contact._isFriendOnly && <p className="text-xs text-green-500 mt-0.5">Bạn bè</p>}
+        {isGroup && <p className="text-xs text-muted-foreground mt-0.5">{tr('Nhóm')}</p>}
+        {contact._isFriendOnly && <p className="text-xs text-green-500 mt-0.5">{tr('Bạn bè')}</p>}
       </div>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity"><polyline points="9 18 15 12 9 6"/></svg>
     </button>
@@ -225,7 +227,7 @@ function MessageResultItem({ msg, query, contacts, onClick, groupInfoCache }: {
 }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const contact = contacts.find(c => c.contact_id === msg.thread_id);
-  const convName = contact?.alias || contact?.display_name || msg.thread_id || 'Hội thoại';
+  const convName = contact?.alias || contact?.display_name || msg.thread_id || tr('Hội thoại');
   const preview = parsePreview(msg.content);
   const isGroup = contact?.contact_type === 'group';
   const zaloId = msg.owner_zalo_id;
@@ -260,7 +262,7 @@ function MessageResultItem({ msg, query, contacts, onClick, groupInfoCache }: {
           <span className="text-xs text-muted-foreground flex-shrink-0">{formatTime(msg.timestamp)}</span>
         </div>
         <p className="text-xs text-muted-foreground truncate mt-0.5">
-          {!!msg.is_sent && <span className="text-muted-foreground">Bạn: </span>}
+          {!!msg.is_sent && <span className="text-muted-foreground">{tr('Bạn:')} </span>}
           {highlightText(preview, query)}
         </p>
       </div>
@@ -275,14 +277,13 @@ function PhoneResultCard({ result, searching, onOpen, onAddFriend }: {
 }) {
   if (searching) return (
     <div className="mx-3 my-2 p-3 bg-card rounded-xl border border-border text-xs text-muted-foreground flex items-center gap-2">
-      <Spinner size={4} />
-      Đang tìm kiếm SĐT...
+      {trx('<0/>Đang tìm kiếm SĐT...', { 0: <Spinner size={4} /> })}
     </div>
   );
   if (!result) return null;
   if (result._notFound) return (
     <div className="mx-3 my-2 p-3 bg-card rounded-xl border border-border text-xs text-muted-foreground">
-      Không tìm thấy người dùng hoặc người dùng đã chặn tìm kiếm với người lạ
+      {tr('Không tìm thấy người dùng hoặc người dùng đã chặn tìm kiếm với người lạ')}
     </div>
   );
   const name = result.display_name || result.zalo_name || result.uid;
@@ -293,14 +294,14 @@ function PhoneResultCard({ result, searching, onOpen, onAddFriend }: {
         : <PeerInitials id={result.uid} name={name} fallback="U" className="w-10 h-10 text-sm" />}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-foreground truncate font-medium">{name}</p>
-        {result.isBlocked === 1 ? <p className="text-xs text-red-400"><CloseIcon className="w-4 h-4 inline" /> Đã chặn</p>
-          : result.isFr === 1 ? <p className="text-xs text-green-400">✓ Bạn bè</p>
-          : result._sentRequest ? <p className="text-xs text-yellow-400">✓ Đã gửi lời mời</p>
-          : <p className="text-xs text-muted-foreground">Chưa kết bạn</p>}
+        {result.isBlocked === 1 ? <p className="text-xs text-red-400">{trx('<0/> Đã chặn', { 0: <CloseIcon className="w-4 h-4 inline" /> })}</p>
+          : result.isFr === 1 ? <p className="text-xs text-green-400">{tr('✓ Bạn bè')}</p>
+          : result._sentRequest ? <p className="text-xs text-yellow-400">{tr('✓ Đã gửi lời mời')}</p>
+          : <p className="text-xs text-muted-foreground">{tr('Chưa kết bạn')}</p>}
       </div>
       <div className="flex gap-1.5 flex-shrink-0">
         {result.isBlocked !== 1 && result.isFr !== 1 && !result._sentRequest && (
-          <button onClick={onAddFriend} className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2.5 py-1 rounded-lg transition-colors">+ Kết bạn</button>
+          <button onClick={onAddFriend} className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2.5 py-1 rounded-lg transition-colors">{tr('+ Kết bạn')}</button>
         )}
         <button onClick={onOpen} className="bg-muted hover:bg-accent text-foreground text-xs px-2.5 py-1 rounded-lg transition-colors"><ChatIcon className="w-4 h-4" /></button>
       </div>
@@ -315,14 +316,13 @@ function UsernameResultCard({ result, searching, onOpen }: {
 }) {
   if (searching) return (
     <div className="mx-3 my-2 p-3 bg-card rounded-xl border border-border text-xs text-muted-foreground flex items-center gap-2">
-      <Spinner size={4} />
-      Đang tìm @{typeof result === 'string' ? result : '...'}...
+      {trx('<0/>Đang tìm @{{v1}}...', { 0: <Spinner size={4} />, v1: typeof result === 'string' ? result : '...' })}
     </div>
   );
   if (!result) return null;
   if (result._notFound) return (
     <div className="mx-3 my-2 p-3 bg-card rounded-xl border border-border text-xs text-muted-foreground">
-      Không tìm thấy người dùng @{result._query || '...'}
+      {trx('Không tìm thấy người dùng @{{v1}}', { v1: result._query || '...' })}
     </div>
   );
   const name = result.displayName || result.username || result.id;
@@ -334,11 +334,11 @@ function UsernameResultCard({ result, searching, onOpen }: {
       <div className="flex-1 min-w-0">
         <p className="text-sm text-foreground truncate font-medium">{name}</p>
         {result.username && <p className="text-xs text-cyan-400">@{result.username}</p>}
-        {result.id && <p className="text-[11px] text-subtle-foreground">ID: {result.id}</p>}
+        {result.id && <p className="text-[11px] text-subtle-foreground">{trx('ID: {{id}}', { id: result.id })}</p>}
       </div>
       <div className="flex gap-1.5 flex-shrink-0">
         <button onClick={onOpen} className="bg-cyan-600 hover:bg-cyan-700 text-white-important text-xs px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1">
-          <ChatIcon className="w-3.5 h-3.5" /> Nhắn tin
+          {trx('<0/> Nhắn tin', { 0: <ChatIcon className="w-3.5 h-3.5" /> })}
         </button>
       </div>
     </div>
@@ -347,28 +347,28 @@ function UsernameResultCard({ result, searching, onOpen }: {
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 type SearchTab = 'all' | 'contacts' | 'messages';
-/** Gõ @username: chờ ngừng gõ chừng này rồi mới hỏi Telegram (resolveUsername bị giới hạn chặt). */
+/** Typing @username: wait this long after the last keystroke before asking Telegram (resolveUsername is rate-limited). */
 const TELEGRAM_USERNAME_DEBOUNCE_MS = 600;
 const ALL_CONTACT_LIMIT = 10;
 const ALL_MESSAGE_LIMIT = 20;
 const PAGE_SIZE = 20;
 
-/** Kết quả tìm liên hệ phía BOSS (chế độ nhân viên) + tài khoản / từ khoá của nó. */
+/** Contact search results from the Boss side (employee mode) + that account's keywords. */
 interface ServerContactResults { accountId: string; query: string; items: any[] }
 const NO_SERVER_CONTACTS: ServerContactResults = { accountId: '', query: '', items: [] };
 
-/** Liên hệ khớp từ khoá (bí danh, tên, SĐT, ID) — cùng điều kiện lọc danh sách hội thoại trong bộ nhớ. */
-/** Liên hệ có khớp từ khoá đã bỏ dấu (foldForSearch) không — cùng quy tắc với danh sách đã tính sẵn khoá. */
+/** Contacts matching the keyword (alias, name, phone, ID), using the same filter as the in-memory conversation list. */
+/** Whether the contact matches the accent-folded keyword (foldForSearch), using the same rule as the precomputed keys. */
 function contactMatchesQuery(c: any, needle: string): boolean {
   return matchesSearch(contactSearchFields(c), needle);
 }
 
-/** Báo lỗi tải gọn ngay trong kết quả (chế độ nhân viên: mất kết nối BOSS) — không trông như "Không tìm thấy". */
+/** Show a compact load error inside the results (employee mode: Boss connection lost), not "Không tìm thấy" (Not found). */
 function LoadFailedRow({ text, onRetry }: { text: string; onRetry: () => void }) {
   return (
     <div role="status" className="flex items-center justify-center gap-2 px-3 py-2 text-xs text-muted-foreground">
       <span>{text}</span>
-      <Button variant="link" size="sm" className="text-xs" onClick={() => onRetry()}>Thử lại</Button>
+      <Button variant="link" size="sm" className="text-xs" onClick={() => onRetry()}>{tr('Thử lại')}</Button>
     </div>
   );
 }
@@ -390,12 +390,12 @@ export default function GlobalSearchPanel({
   query, activeAccountId, contacts, allAccounts, mergedInboxMode, mergedInboxAccounts,
   groupInfoCache: groupInfoCacheProp, onSelectConversation, onSelectMessage,
 }: GlobalSearchPanelProps) {
-  // Danh sách hội thoại không còn theo dõi cả cache ảnh nhóm → bảng tìm kiếm (chỉ khi đang mở) tự đọc
+  // The conversation list no longer tracks the group avatar cache → the search panel (only while open) reads it itself
   const storeGroupInfoCache = useAppStore(s => s.groupInfoCache);
   const groupInfoCache = groupInfoCacheProp ?? storeGroupInfoCache;
   const [tab, setTab] = useState<SearchTab>('all');
   const [rawMsgResults, setMsgResults] = useState<any[]>([]);
-  // Hội thoại ẩn bằng PIN của Zalo (ZL-03) khi tài khoản đang khoá: không lộ trong kết quả tìm
+  // Conversations hidden behind a Zalo PIN (ZL-03) while the account is locked: do not show them in search results
   const isHiddenLocked = useHiddenLockedPredicate();
   const msgResults = useMemo(
     () => rawMsgResults.filter((m: any) => !isHiddenLocked(String(m.owner_zalo_id || activeAccountId || ''), String(m.thread_id || ''))),
@@ -415,8 +415,8 @@ export default function GlobalSearchPanel({
   const [usernameSearching, setUsernameSearching] = useState(false);
   const [usernamePendingAccounts, setUsernamePendingAccounts] = useState(false);
 
-  // Server-side contact search for employee mode (boss API has full DB). Lỗi → giữ kết quả cũ (lọc theo từ khoá
-  // hiện tại), đánh dấu lỗi để hiện "Thử lại".
+  // Server-side contact search for employee mode (Boss API has the full DB). On error → keep the previous results (filtered by
+  // the current keyword), mark the error so "Thử lại" (Retry) is shown.
   const isEmployeeMode = useEmployeeStore(s => s.mode === 'employee');
   const [serverContacts, setServerContacts] = useState<ServerContactResults>(NO_SERVER_CONTACTS);
   const [serverSearchFailed, setServerSearchFailed] = useState(false);
@@ -427,8 +427,8 @@ export default function GlobalSearchPanel({
   const [addFriendModal, setAddFriendModal] = useState<{ userId: string; displayName: string; avatar: string } | null>(null);
   const [sendingFriendReq, setSendingFriendReq] = useState(false);
 
-  // Friends list from DB (includes friends without conversations) — theo tài khoản: lần đọc lỗi (chế độ nhân viên)
-  // giữ danh sách cũ của đúng tài khoản đó thay vì thành rỗng
+  // Friends list from DB (includes friends without conversations), per account: on a read error (employee mode)
+  // keep that account's previous list instead of emptying it
   const [friendsByAccount, setFriendsByAccount] = useState<Record<string, any[]>>({});
   const [friendsFailed, setFriendsFailed] = useState<Record<string, boolean>>({});
   const friendAccountIds = useMemo(
@@ -441,10 +441,10 @@ export default function GlobalSearchPanel({
   );
   const friendsLoadFailed = friendAccountIds.some(id => friendsFailed[id]);
 
-  // Tin nhắn: lỗi tìm ≠ "không có tin nào" (giữ kết quả cũ của cùng từ khoá, hiện "Thử lại")
+  // Messages: a search error ≠ "no messages" (keep the previous results for the same keyword, show "Thử lại")
   const [msgSearchFailed, setMsgSearchFailed] = useState(false);
   const msgSearchSeqRef = useRef(0);
-  const msgResultsKeyRef = useRef(''); // tài khoản + từ khoá của msgResults đang hiện
+  const msgResultsKeyRef = useRef(''); // the account + keyword of the msgResults currently shown
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -462,7 +462,7 @@ export default function GlobalSearchPanel({
     setFriendsByAccount(prev => {
       let next = prev;
       for (const { zaloId, res, failed } of results) {
-        if (failed || !Array.isArray(res?.friends)) continue; // lỗi → giữ danh sách cũ của tài khoản này
+        if (failed || !Array.isArray(res?.friends)) continue; // on error → keep this account's previous list
         if (next === prev) next = { ...prev };
         next[zaloId] = res.friends.map((f: any) => ({ ...f, _ownerZaloId: zaloId }));
       }
@@ -502,10 +502,10 @@ export default function GlobalSearchPanel({
   const runServerContactSearch = useCallback(async (accountId: string, q: string) => {
     const seq = ++serverSearchSeqRef.current;
     const res: any = await DataAccessor.searchConversations(accountId, q).catch(() => null);
-    if (seq !== serverSearchSeqRef.current) return; // từ khoá / tài khoản đã đổi trong lúc chờ
+    if (seq !== serverSearchSeqRef.current) return; // keyword / account changed while waiting
     if (!res || isReadFailure(res)) {
       if (res) console.warn('[GlobalSearchPanel] Không tìm được liên hệ phía BOSS:', readFailureMessage(res));
-      setServerSearchFailed(true); // giữ kết quả cũ (contactResults lọc lại theo từ khoá hiện tại)
+      setServerSearchFailed(true); // keep the old results (contactResults re-filtered by the current keyword)
       return;
     }
     setServerContacts({ accountId, query: q, items: Array.isArray(res.items) ? res.items : [] });
@@ -515,7 +515,7 @@ export default function GlobalSearchPanel({
   useEffect(() => {
     if (contactSearchTimerRef.current) clearTimeout(contactSearchTimerRef.current);
     if (!isEmployeeMode || !query.trim() || !activeAccountId) {
-      serverSearchSeqRef.current += 1; // bỏ lần tìm đang chạy
+      serverSearchSeqRef.current += 1; // drop the running search
       setServerContacts(NO_SERVER_CONTACTS);
       setServerSearchFailed(false);
       return;
@@ -527,9 +527,9 @@ export default function GlobalSearchPanel({
   }, [query, activeAccountId, isEmployeeMode, runServerContactSearch]);
 
   // ── Contact filtering with Vietnamese normalization ──────────────────────────
-  // Khoá tìm kiếm (đã bỏ dấu, cả đ → d) của từng hội thoại / bạn bè tính MỘT lần khi danh sách đổi; mỗi lần gõ chỉ
-  // còn includes trên khoá (trước: chuẩn hoá Unicode lại tên + từ khoá cho từng trường của từng liên hệ, mỗi phím).
-  // Lọc theo từ khoá "hoãn" (useDeferredValue): ô nhập luôn mượt, danh sách lớn (gộp trang) lọc lại khi rảnh.
+  // Search key (accent-folded, d-stroke counts as d) of each conversation / friend, computed ONCE when the list changes; each keystroke
+  // only runs includes on the key (before: Unicode-normalize the name + keyword for every field of every contact, on every key press).
+  // Keyword filter is deferred (useDeferredValue): the input stays smooth, and the large merged inbox filters when idle.
   const deferredQuery = useDeferredValue(query);
 
   // Build a set of contact IDs already in conversations for quick lookup
@@ -541,9 +541,9 @@ export default function GlobalSearchPanel({
     return set;
   }, [contacts]);
 
-  // Tên gợi nhớ và tên đầy đủ là hai trường riêng: "Em yêu" vẫn khớp khi tên gợi nhớ chỉ là "Em"
+  // Alias and full name are separate fields: "Em yêu" still matches when the alias is only "Em"
   const contactIndex = useMemo(() => buildSearchIndex(contacts, contactSearchFields), [contacts]);
-  // Bạn bè chưa có hội thoại (đã có thì nằm trong contactIndex)
+  // Friends with no conversation yet (those with one are already in contactIndex)
   const friendIndex = useMemo(
     () => buildSearchIndex(friendsList.filter(f => !contactIdSet.has(f.userId)), friendSearchFields),
     [friendsList, contactIdSet],
@@ -571,7 +571,7 @@ export default function GlobalSearchPanel({
       }));
 
     // 3. Merge server-side results (employee mode) — dedupe by contact_id.
-    // Kết quả của từ khoá trước (lần tìm mới đang chờ / vừa lỗi) chỉ giữ những liên hệ vẫn khớp từ khoá hiện tại.
+    // Results of the previous keyword (a new search is pending / just failed) keep only the contacts that still match the current keyword.
     const seenIds = new Set([...fromContacts.map(c => c.contact_id), ...fromFriends.map(c => c.contact_id)]);
     const serverItems = serverContacts.accountId !== (activeAccountId || '')
       ? []
@@ -597,10 +597,10 @@ export default function GlobalSearchPanel({
     } catch (err) {
       console.warn('[GlobalSearchPanel] message search failed:', err);
     }
-    if (seq !== msgSearchSeqRef.current) return; // từ khoá đã đổi: lần tìm mới lo cờ searching
+    if (seq !== msgSearchSeqRef.current) return; // keyword changed: the new search sets the searching flag
     if (!res || isReadFailure(res)) {
       if (res) console.warn('[GlobalSearchPanel] Không tìm được tin nhắn:', readFailureMessage(res));
-      // Lỗi ≠ "không có tin nào": giữ kết quả cũ của cùng từ khoá (thử lại / kết nối lại), khác từ khoá → trống
+      // Error ≠ "no messages": keep the results of the same keyword (retry / reconnect), a different keyword → empty
       if (msgResultsKeyRef.current !== key) {
         msgResultsKeyRef.current = '';
         setMsgResults([]);
@@ -616,7 +616,7 @@ export default function GlobalSearchPanel({
     setSearching(false);
   }, []);
 
-  // Từ khoá quá ngắn (1 chữ cái): chỉ lọc danh bạ, không tìm tin nhắn (khớp gần như mọi tin, chỉ tốn DB)
+  // One-letter keyword: only filter contacts, do not search messages (matches almost every message, just costs DB time)
   const msgQueryTooShort = query.trim().length > 0 && query.trim().length < MESSAGE_SEARCH_MIN_LENGTH;
 
   useEffect(() => {
@@ -624,7 +624,7 @@ export default function GlobalSearchPanel({
     const isPhone = isPhoneNumber(query);
     const q = query.trim();
     if (!q || !activeAccountId || isPhone || q.length < MESSAGE_SEARCH_MIN_LENGTH) {
-      msgSearchSeqRef.current += 1; // bỏ lần tìm đang chạy
+      msgSearchSeqRef.current += 1; // drop the running search
       msgResultsKeyRef.current = '';
       setMsgResults([]); setSearching(false); setMsgSearchFailed(false); return;
     }
@@ -634,7 +634,7 @@ export default function GlobalSearchPanel({
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [query, activeAccountId, runMessageSearch]);
 
-  /** Thử lại những nguồn vừa lỗi (bạn bè, tìm liên hệ phía BOSS, tìm tin nhắn) — nút "Thử lại", kết nối lại. */
+  /** Retry the sources that failed (friends, Boss-side contact search, message search): the "Thử lại" (Retry) button, reconnect. */
   const retryFailedSources = (opts: { allFriends?: boolean } = {}) => {
     const tasks: Promise<unknown>[] = [];
     const friendIds = opts.allFriends ? friendAccountIds : friendAccountIds.filter(id => friendsFailed[id]);
@@ -647,7 +647,7 @@ export default function GlobalSearchPanel({
     return Promise.allSettled(tasks);
   };
 
-  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại bạn bè của các tài khoản đang tìm, chạy lại phần tìm vừa lỗi
+  // Employee mode: Boss connection restored → reload friends for the accounts being searched, re-run the failed search
   useEmployeeResync(() => retryFailedSources({ allFriends: true }));
 
   // ── Phone number search ──────────────────────────────────────────────────────
@@ -657,7 +657,7 @@ export default function GlobalSearchPanel({
     }
     setPhoneSearching(true); setPhoneResult(null); setPhonePendingAccounts(false);
     try {
-      // Dùng chung lần tìm với ô tìm kiếm của danh sách hội thoại (cùng số) — không gọi findUser của Zalo 2 lần
+      // Shares the search with the conversation list search box (same number): does not call Zalo findUser twice
       setPhoneResult(await lookupZaloUserByPhone(acc, phone));
     } catch {} finally { setPhoneSearching(false); }
   };
@@ -674,7 +674,7 @@ export default function GlobalSearchPanel({
   }, [query, activeAccountId]);
 
   // ── Telegram username search ─────────────────────────────────────────────────
-  // Mỗi lần tìm mang số thứ tự: kết quả của từ khoá cũ về muộn không ghi đè kết quả mới (trước đây hiện nhầm người).
+  // Each search carries a sequence number: results of an older keyword arriving late do not overwrite the new ones (this used to show the wrong person).
   const usernameSeqRef = useRef(0);
   const doUsernameSearch = async (acc: any, rawQuery: string) => {
     const username = rawQuery.trim().replace(/^@/, '');
@@ -718,7 +718,7 @@ export default function GlobalSearchPanel({
 
   useEffect(() => {
     if (!isTelegramUsername(query) || !query.trim()) {
-      usernameSeqRef.current += 1; // bỏ lần tìm đang chạy
+      usernameSeqRef.current += 1; // drop the running search
       setUsernameResult(null);
       setUsernameSearching(false);
       setUsernamePendingAccounts(false);
@@ -737,8 +737,8 @@ export default function GlobalSearchPanel({
       setUsernameResult(null);
       return;
     }
-    // Chờ ngừng gõ: trước đây mỗi phím sau "@abcde" là một lần resolveUsername + getUserProfile lên Telegram
-    // (Telegram giới hạn resolveUsername rất chặt → dễ FLOOD_WAIT).
+    // Debounce typing: before, every key after "@abcde" triggered another resolveUsername + getUserProfile call to Telegram
+    // (Telegram rate-limits resolveUsername very strictly, so FLOOD_WAIT is easy to hit).
     usernameSeqRef.current += 1;
     setUsernameSearching(true);
     setUsernameResult(null);
@@ -753,12 +753,12 @@ export default function GlobalSearchPanel({
   const isUsername = isTelegramUsername(query);
   const showContactsSection = (tab === 'all' || tab === 'contacts') && contactResults.length > 0 && !isPhone && !isUsername;
   const showMessagesSection = (tab === 'all' || tab === 'messages') && msgResults.length > 0 && !isPhone && !isUsername;
-  // Nguồn tìm vừa đọc lỗi (chế độ nhân viên: mất kết nối BOSS) → "Không tải được — Thử lại" thay vì "Không tìm thấy"
+  // A search source that just failed to read (employee mode: Boss connection lost) → "Không tải được - Thử lại" (Failed to load, retry) instead of "Không tìm thấy"
   const contactSourcesFailed = friendsLoadFailed || serverSearchFailed;
   const anySearchFailed = contactSourcesFailed || msgSearchFailed;
   const failedSearchText = msgSearchFailed && contactSourcesFailed
-    ? 'Không tải được kết quả tìm kiếm'
-    : msgSearchFailed ? 'Không tải được kết quả tin nhắn' : 'Không tải được đầy đủ danh bạ';
+    ? tr('Không tải được kết quả tìm kiếm')
+    : msgSearchFailed ? tr('Không tải được kết quả tin nhắn') : tr('Không tải được đầy đủ danh bạ');
   const retrySearch = () => { void retryFailedSources(); };
   const isEmpty = !searching && !isPhone && !isUsername && !phoneSearching && !usernameSearching && query.trim()
     && contactResults.length === 0 && msgResults.length === 0 && !anySearchFailed;
@@ -770,9 +770,9 @@ export default function GlobalSearchPanel({
   const msgsForTab = msgResults.slice(0, messagesPage * PAGE_SIZE);
 
   const TABS: { key: SearchTab; label: string }[] = [
-    { key: 'all', label: 'Tất cả' },
-    { key: 'contacts', label: 'Liên hệ' },
-    { key: 'messages', label: 'Tin nhắn' },
+    { key: 'all', label: tr('Tất cả') },
+    { key: 'contacts', label: tr('Liên hệ') },
+    { key: 'messages', label: tr('Tin nhắn') },
   ];
 
   const handleOpenPhone = (result: any) => {
@@ -794,7 +794,7 @@ export default function GlobalSearchPanel({
     onSelectConversation(String(result.id), 0, overrideZaloId, userInfo);
   };
 
-  /** Mở hội thoại từ kết quả tìm kiếm liên hệ (bao gồm bạn bè chưa có hội thoại) */
+  /** Open the conversation from a contact search result (including friends with no conversation yet). */
   const handleOpenContact = (c: any) => {
     const threadType = c.contact_type === 'group' ? 1 : 0;
     if (c._isFriendOnly) {
@@ -835,7 +835,7 @@ export default function GlobalSearchPanel({
         {(searching || phoneSearching) && (
           <div className="flex justify-center items-center py-8 text-muted-foreground">
             <Spinner size={5} className="mr-2" />
-            <span className="text-sm">Đang tìm kiếm...</span>
+            <span className="text-sm">{tr('Đang tìm kiếm...')}</span>
           </div>
         )}
 
@@ -844,7 +844,7 @@ export default function GlobalSearchPanel({
           <div className="px-3 py-3">
             <p className="text-xs text-yellow-400 mb-2 flex items-center gap-1">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              Chọn trang để tìm <span className="text-foreground font-medium">{query}</span>:
+              {trx('Chọn trang để tìm <0>{{query}}</0>:', { 0: <span className="text-foreground font-medium" />, query })}
             </p>
             <div className="flex flex-wrap gap-1.5">
               {mergedInboxAccounts.map(zaloId => {
@@ -888,7 +888,7 @@ export default function GlobalSearchPanel({
           <div className="px-3 py-3">
             <p className="text-xs text-yellow-400 mb-2 flex items-center gap-1">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              Chọn tài khoản Telegram để tìm <span className="text-foreground font-medium">{query}</span>:
+              {trx('Chọn tài khoản Telegram để tìm <0>{{query}}</0>:', { 0: <span className="text-foreground font-medium" />, query })}
             </p>
             <div className="flex flex-wrap gap-1.5">
               {mergedInboxAccounts
@@ -918,7 +918,7 @@ export default function GlobalSearchPanel({
           />
         )}
 
-        {/* ── TAB: Tất cả ── */}
+        {/* ── TAB: All ── */}
         {tab === 'all' && !searching && !isPhone && !isUsername && (
           <>
             {query.trim() && anySearchFailed && <LoadFailedRow text={failedSearchText} onRetry={retrySearch} />}
@@ -926,7 +926,7 @@ export default function GlobalSearchPanel({
             {showContactsSection && (
               <>
                 <div className="px-3 pt-3 pb-1.5 flex items-center justify-between">
-                  <span className="text-xs text-foreground/80 font-semibold">Liên hệ ({contactResults.length})</span>
+                  <span className="text-xs text-foreground/80 font-semibold">{trx('Liên hệ ({{count}})', { count: contactResults.length })}</span>
                 </div>
                 {contactsForAll.map(c => (
                   <ContactResultItem key={c.contact_id + (c.owner_zalo_id || '')} contact={c} query={query} groupInfoCache={groupInfoCache}
@@ -936,7 +936,7 @@ export default function GlobalSearchPanel({
                   <button
                     onClick={() => setTab('contacts')}
                     className="w-full py-2.5 text-sm text-foreground/80 bg-muted/30 hover:bg-muted/60 transition-colors text-center border-t border-border/40">
-                    Xem tất cả {contactResults.length} liên hệ
+                    {trx('Xem tất cả {{count}} liên hệ', { count: contactResults.length })}
                   </button>
                 )}
                 {showMessagesSection && <div className="border-t border-border/50 mt-1" />}
@@ -948,7 +948,7 @@ export default function GlobalSearchPanel({
               <>
                 <div className="px-3 pt-3 pb-1.5 flex items-center justify-between">
                   <span className="text-xs text-foreground/80 font-semibold">
-                    Tin nhắn ({msgResults.length >= 50 ? '50+' : msgResults.length})
+                    {trx('Tin nhắn ({{v1}})', { v1: msgResults.length >= 50 ? '50+' : msgResults.length })}
                   </span>
                 </div>
                 {msgsForAll.map((msg, i) => (
@@ -959,7 +959,7 @@ export default function GlobalSearchPanel({
                   <button
                     onClick={() => setTab('messages')}
                     className="w-full py-2.5 text-sm text-foreground/80 bg-muted/30 hover:bg-muted/60 transition-colors text-center border-t border-border/40">
-                    Xem tất cả tin nhắn
+                    {tr('Xem tất cả tin nhắn')}
                   </button>
                 )}
               </>
@@ -967,15 +967,15 @@ export default function GlobalSearchPanel({
           </>
         )}
 
-        {/* ── TAB: Liên hệ (paginated) ── */}
+        {/* ── TAB: Contacts (paginated) ── */}
         {tab === 'contacts' && !isPhone && (
           <>
             {query.trim() && contactSourcesFailed && (
-              <LoadFailedRow text="Không tải được đầy đủ danh bạ" onRetry={retrySearch} />
+              <LoadFailedRow text={tr('Không tải được đầy đủ danh bạ')} onRetry={retrySearch} />
             )}
             {contactResults.length === 0 && !searching && query.trim() && !contactSourcesFailed && (
               <div className="flex flex-col items-center py-16 text-muted-foreground">
-                <p className="text-sm">Không tìm thấy liên hệ nào</p>
+                <p className="text-sm">{tr('Không tìm thấy liên hệ nào')}</p>
               </div>
             )}
             {contactsForTab.map(c => (
@@ -985,13 +985,13 @@ export default function GlobalSearchPanel({
             {contactResults.length > contactsPage * PAGE_SIZE && (
               <button onClick={() => setContactsPage(p => p + 1)}
                 className="w-full py-3 text-sm text-blue-400 hover:text-blue-300 bg-muted/20 hover:bg-muted/40 transition-colors text-center border-t border-border/40">
-                Tải thêm ({contactResults.length - contactsPage * PAGE_SIZE} còn lại)
+                {trx('Tải thêm ({{v1}} còn lại)', { v1: contactResults.length - contactsPage * PAGE_SIZE })}
               </button>
             )}
           </>
         )}
 
-        {/* ── TAB: Tin nhắn (paginated) ── */}
+        {/* ── TAB: Messages (paginated) ── */}
         {tab === 'messages' && !isPhone && (
           <>
             {searching && (
@@ -1000,11 +1000,11 @@ export default function GlobalSearchPanel({
               </div>
             )}
             {!searching && query.trim() && msgSearchFailed && (
-              <LoadFailedRow text="Không tải được kết quả tin nhắn" onRetry={retrySearch} />
+              <LoadFailedRow text={tr('Không tải được kết quả tin nhắn')} onRetry={retrySearch} />
             )}
             {!searching && msgResults.length === 0 && query.trim() && !msgSearchFailed && (
               <div className="flex flex-col items-center py-16 text-muted-foreground">
-                <p className="text-sm">{msgQueryTooShort ? 'Gõ thêm để tìm trong tin nhắn' : 'Không tìm thấy tin nhắn nào'}</p>
+                <p className="text-sm">{msgQueryTooShort ? tr('Gõ thêm để tìm trong tin nhắn') : tr('Không tìm thấy tin nhắn nào')}</p>
               </div>
             )}
             {msgsForTab.map((msg, i) => (
@@ -1014,7 +1014,7 @@ export default function GlobalSearchPanel({
             {msgResults.length > messagesPage * PAGE_SIZE && (
               <button onClick={() => setMessagesPage(p => p + 1)}
                 className="w-full py-3 text-sm text-blue-400 hover:text-blue-300 bg-muted/20 hover:bg-muted/40 transition-colors text-center border-t border-border/40">
-                Tải thêm ({msgResults.length - messagesPage * PAGE_SIZE} còn lại)
+                {trx('Tải thêm ({{v1}} còn lại)', { v1: msgResults.length - messagesPage * PAGE_SIZE })}
               </button>
             )}
           </>
@@ -1026,7 +1026,7 @@ export default function GlobalSearchPanel({
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-30">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
-            <p className="text-sm">Không tìm thấy kết quả</p>
+            <p className="text-sm">{tr('Không tìm thấy kết quả')}</p>
             <p className="text-xs mt-1 opacity-60">"{query}"</p>
           </div>
         )}
@@ -1037,7 +1037,7 @@ export default function GlobalSearchPanel({
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
-            <p className="text-sm">Nhập từ khoá để tìm kiếm</p>
+            <p className="text-sm">{tr('Nhập từ khoá để tìm kiếm')}</p>
           </div>
         )}
       </div>
@@ -1062,7 +1062,7 @@ export default function GlobalSearchPanel({
               setPhoneResult((p: any) => p?.uid === addFriendModal.userId ? { ...p, _sentRequest: true } : p);
               setAddFriendModal(null);
             } catch (err: any) {
-              alert('Gửi lời mời thất bại: ' + (err?.message || err));
+              alert(tr('Gửi lời mời thất bại: {{v1}}', { v1: (err?.message || err) }));
             } finally {
               setSendingFriendReq(false);
             }

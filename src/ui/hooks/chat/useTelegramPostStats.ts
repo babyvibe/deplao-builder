@@ -1,8 +1,8 @@
 /**
- * Số liệu bài đăng kênh Telegram như app Telegram: khi mở kênh và mỗi 60 s, hỏi lại lượt xem / số bình luận / người bình
- * luận gần đây của các bài mới nhất đang tải (messages.getMessagesViews, main: telegramUser:refreshPostStats) rồi vá
- * attachments trong store. Trước đây số liệu chỉ chụp lúc bài về → lệch xa Telegram (lượt xem, bình luận).
- * Lần hỏi đầu tiên mỗi lần mở kênh tính một lượt xem (increment), như Telegram khi bài hiện ra.
+ * Telegram channel post stats like the Telegram app: when a channel is opened and every 60 s, asks again for the views / comment count / recent commenters of the
+ * latest posts being loaded (messages.getMessagesViews, main: telegramUser:refreshPostStats) and patches the
+ * attachments in the store. Before, the stats were only captured when the post arrived → far off from Telegram (views, comments).
+ * The first ask each time a channel is opened counts one view (increment), like Telegram does when a post appears.
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
@@ -10,7 +10,7 @@ import { getTelegramPostMeta } from '@/lib/media/mediaResolver';
 import { useChatStore } from '@/store/chat/chatStore';
 
 const REFRESH_INTERVAL_MS = 60_000;
-/** Số bài mới nhất hỏi mỗi lần (Telegram giới hạn 100 id / lần gọi). */
+/** Number of the latest posts asked each time (Telegram limits 100 ids per call). */
 const MAX_POSTS = 60;
 
 export type TelegramPostPeers = Record<string, { name: string; avatar: string }>;
@@ -24,7 +24,7 @@ export function useTelegramPostStats(
   const [peers, setPeers] = React.useState<TelegramPostPeers>({});
   const enabled = channel === 'telegram_user' && !!accountId && !!threadId;
 
-  // id các bài đang tải (mới nhất trước) — ref để interval luôn đọc danh sách mới mà không tạo lại timer
+  // ids of the posts being loaded (latest first): ref so the interval always reads the new list without recreating the timer
   const postIdsRef = React.useRef<string[]>([]);
   postIdsRef.current = React.useMemo(() => {
     if (!enabled) return [];
@@ -66,7 +66,7 @@ export function useTelegramPostStats(
           setPeers((previous) => ({ ...previous, ...result.peers }));
         }
       } catch {
-        // Mất kết nối / lỗi tạm: lần sau thử lại
+        // Connection lost / temporary error: try again next time
       } finally {
         running = false;
       }

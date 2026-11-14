@@ -1,8 +1,8 @@
 /**
  * SecureSettingsService.ts
- * Wrapper quanh electron.safeStorage để mã hóa data nhạy cảm trong SQLite.
- * Data được mã hóa bởi OS (Windows Credential Manager / macOS Keychain).
- * Chỉ app này trên đúng máy này mới giải mã được.
+ * Wrapper around electron.safeStorage to encrypt sensitive data stored in SQLite.
+ * The data is encrypted by the OS (Windows Credential Manager / macOS Keychain).
+ * Only this app, on this same machine, can decrypt it.
  */
 import { safeStorage } from 'electron';
 import DatabaseService from '../database/DatabaseService';
@@ -11,7 +11,7 @@ import Logger from '../../utils/Logger';
 const ENC_PREFIX = 'enc:';
 
 /**
- * Lưu value được mã hóa bởi safeStorage vào SQLite settings.
+ * Saves a value encrypted by safeStorage into the SQLite settings.
  */
 export function secureSet(key: string, value: string): void {
     if (!value && value !== '') {
@@ -19,7 +19,7 @@ export function secureSet(key: string, value: string): void {
         return;
     }
     if (!safeStorage.isEncryptionAvailable()) {
-        // Fallback: lưu plaintext với warning (hiếm gặp - OS không hỗ trợ keychain)
+        // Fallback: store plaintext with a warning (rare: the OS does not support a keychain)
         Logger.warn(`[SecureSettings] safeStorage unavailable - storing "${key}" as plaintext`);
         DatabaseService.getInstance().setSetting(key, value);
         return;
@@ -35,8 +35,8 @@ export function secureSet(key: string, value: string): void {
 }
 
 /**
- * Đọc và giải mã value từ SQLite settings.
- * Trả về null nếu không tồn tại hoặc không giải mã được.
+ * Reads and decrypts a value from the SQLite settings.
+ * Returns null if it does not exist or cannot be decrypted.
  */
 export function secureGet(key: string): string | null {
     const raw = DatabaseService.getInstance().getSetting(key);
@@ -52,21 +52,21 @@ export function secureGet(key: string): string | null {
         }
     }
 
-    // Plaintext cũ (chưa migrate) - trả về nguyên
+    // Old plaintext (not migrated yet): returned as is
     return raw;
 }
 
 /**
- * Xóa secure setting.
+ * Deletes a secure setting.
  */
 export function secureDelete(key: string): void {
     DatabaseService.getInstance().setSetting(key, '');
 }
 
 /**
- * Lưu value với encryption bắt buộc. KHÔNG fallback plaintext.
- * Dùng cho E2EE device state — nếu safeStorage unavailable → throw error.
- * Caller phải xử lý và degrade service (không lưu state).
+ * Saves a value with mandatory encryption. NO plaintext fallback.
+ * Used for E2EE device state: if safeStorage is unavailable → throws an error.
+ * The caller must handle it and degrade the service (without saving state).
  */
 export function secureSetRequired(key: string, value: string): void {
     if (!value && value !== '') {

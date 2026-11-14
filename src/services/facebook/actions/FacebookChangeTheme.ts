@@ -1,7 +1,7 @@
 /**
  * FacebookChangeTheme.ts
- * Port từ Python _messaging/_changeTheme.py
- * Đổi theme (màu/gradient) cho hội thoại Facebook Messenger
+ * Ported from Python _messaging/_changeTheme.py
+ * Change the theme (color/gradient) of a Facebook Messenger conversation
  */
 
 import axios from 'axios';
@@ -18,11 +18,11 @@ const THEME_DARK = 'dark';
 export { THEME_LIGHT, THEME_DARK };
 
 /**
- * Đổi theme cho hội thoại Facebook Messenger (N1)
+ * Change the theme of a Facebook Messenger conversation (N1)
  *
- * @param theme - Gradient color ID hoặc 'light'/'dark'. Ví dụ:
- *   '1408628207129185' = gradient xanh dương
- *   'light' = theme mặc định
+ * @param theme - Gradient color ID or 'light'/'dark'. For example:
+ *   '1408628207129185' = blue gradient
+ *   'light' = default theme
  *   'dark' = dark mode
  */
 export async function changeThreadTheme(

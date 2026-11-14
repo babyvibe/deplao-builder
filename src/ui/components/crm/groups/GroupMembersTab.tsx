@@ -21,6 +21,8 @@ import { AlertIcon, CheckIcon, SearchIcon } from '@/components/common/icons';
 import { useGroupMemberSync } from '@/hooks/chat/useGroupMemberSync';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { groupRoleKind } from '../../../../shared/chat/groupMemberRoles';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface ZaloGroup {
   contact_id: string;
@@ -39,12 +41,12 @@ interface GroupMember {
   phone?: string;
 }
 
-/** Nhãn vai trò theo quy ước của kênh (Zalo 2 = trưởng / 1 = phó, Telegram 1 = người tạo / 2 = quản trị). */
+/** Role label under the channel's convention (Zalo 2 = owner / 1 = deputy, Telegram 1 = creator / 2 = admin). */
 function roleLabel(role: number, channel?: string) {
   const kind = groupRoleKind(role, channel);
-  if (kind === 'owner') return { text: 'Trưởng nhóm', cls: 'text-yellow-400', kind };
-  if (kind === 'admin') return { text: 'Phó nhóm', cls: 'text-blue-400', kind };
-  return { text: 'Thành viên', cls: 'text-muted-foreground', kind };
+  if (kind === 'owner') return { text: tr('Trưởng nhóm'), cls: 'text-yellow-400', kind };
+  if (kind === 'admin') return { text: tr('Phó nhóm'), cls: 'text-blue-400', kind };
+  return { text: tr('Thành viên'), cls: 'text-muted-foreground', kind };
 }
 
 function Avatar({ src, name, size = 36 }: { src?: string; name: string; size?: number }) {
@@ -116,26 +118,26 @@ function ZaloGroupMembersTab() {
   const [searchGroup, setSearchGroup] = useState('');
   const [searchMember, setSearchMember] = useState('');
 
-  // ── Lần đọc lỗi (employee: mất kết nối BOSS) ──────────────────────────────
-  // Lỗi → giữ nhóm / thành viên / chiến dịch đang có của ĐÚNG tài khoản (nhóm), báo "Không tải được — Thử lại", và
-  // khoá thao tác ghi dựa trên dữ liệu đọc thiếu (đồng bộ nhóm, quét thành viên) cho tới khi đọc lại được.
+  // ── Failed read (employee: lost connection to BOSS) ──────────────────────────────
+  // Error → keep the groups / members / campaigns of the EXACT account (groups), show "Không tải được - Thử lại" (Failed to load - Retry), and
+  // lock write actions based on incomplete data (group sync, member scan) until a read works again.
   const [groupsLoadFailed, setGroupsLoadFailed] = useState(false);
-  /** 'members' = không đọc được danh sách thành viên (khoá quét); 'phones' = chỉ không đọc được SĐT từ danh bạ. */
+  /** 'members' = the member list could not be read (scan locked); 'phones' = only the phone numbers from the contacts could not be read. */
   const [membersFailure, setMembersFailure] = useState<null | 'members' | 'phones'>(null);
   const membersLoadFailed = membersFailure !== null;
   const [campaignsLoadFailed, setCampaignsLoadFailed] = useState(false);
   const [groupsReading, setGroupsReading] = useState(false);
   const [membersReading, setMembersReading] = useState(false);
   const [campaignsLoading, setCampaignsLoading] = useState(false);
-  /** Chủ của dữ liệu đang hiện: nhóm & chiến dịch = tài khoản, thành viên = `tàiKhoản:nhóm`. */
+  /** Owner of the data on screen: groups & campaigns = the account, members = `account:group`. */
   const groupsOwnerRef = useRef<string | null>(null);
   const membersOwnerRef = useRef<string | null>(null);
   const campaignsOwnerRef = useRef<string | null>(null);
-  // Chỉ lần đọc mới nhất được ghi state (đổi tài khoản / nhóm trong lúc chờ)
+  // Only the latest read is written to state (account / group changed while waiting)
   const groupsSeqRef = useRef(0);
   const membersSeqRef = useRef(0);
   const campaignsSeqRef = useRef(0);
-  // Bản mới nhất cho callback async (giữ số thành viên / SĐT đã biết khi lần đọc phụ lỗi)
+  // Latest value for async callbacks (keeps the known member count / phone numbers when a secondary read fails)
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
   const membersRef = useRef(members);
@@ -190,12 +192,12 @@ function ZaloGroupMembersTab() {
   // ── Export notification state ──────────────────────────────────────────
   const [exportNotif, setExportNotif] = useState<{ message: string; folderPath?: string } | null>(null);
 
-  // ── Red dot: "mới" badge cho tab Quét thành viên ─────────────────────
+  // ── Red dot: "mới" (new) badge for the Member scan tab ─────────────────────
   const [scanTabSeen, setScanTabSeen] = useState(() => {
     try { return localStorage.getItem('scanTabSeen') === 'true'; } catch { return false; }
   });
 
-  // ── Resolved group info (hiện ảnh + tên nhóm khi tham gia / quét) ─────
+  // ── Resolved group info (shows the group photo + name when joining / scanning) ─────
   const [resolvedGroupInfo, setResolvedGroupInfo] = useState<{ groupId: string; name: string; avatar: string; creatorId?: string; adminIds?: string[] } | null>(null);
 
   // ── Groups 3-dot menu ─────────────────────────────────────────────────────
@@ -237,8 +239,8 @@ function ZaloGroupMembersTab() {
   });
 
   // ── Load groups from contacts (contact_type='group') ──────────────────────
-  // Trả `false` khi đọc lỗi: danh sách lỗi → giữ danh sách đang có của tài khoản; chỉ đếm thành viên lỗi → danh sách
-  // mới nhưng giữ số thành viên đã biết (không về "Chưa có thành viên"). Cả hai bật `groupsLoadFailed`.
+  // Returns `false` on read error: list error → keep the account's current list; only the member count failed → the list
+  // is new but keeps the known member count (not back to "Chưa có thành viên" (No members yet)). Both set `groupsLoadFailed`.
   const loadGroupsFromDB = useCallback(async (): Promise<boolean> => {
     if (!activeAccountId) return false;
     const accountId = activeAccountId;
@@ -247,10 +249,10 @@ function ZaloGroupMembersTab() {
     try {
       const convRes = await DataAccessor.getConversations(accountId, 999, 0);
       const convFailed = isReadFailure(convRes);
-      // Danh sách lỗi → khỏi đếm thành viên
+      // List error → skip counting members
       const allMembersRes = convFailed ? null : await DataAccessor.getAllGroupMembers(accountId);
       const countsFailed = isReadFailure(allMembersRes);
-      if (seq !== groupsSeqRef.current) return !convFailed && !countsFailed; // đã đổi tài khoản / có lần đọc mới hơn
+      if (seq !== groupsSeqRef.current) return !convFailed && !countsFailed; // account changed / a newer read exists
       if (convFailed) {
         if (readOutcome(true, groupsOwnerRef.current, accountId) === 'clear') {
           groupsOwnerRef.current = accountId;
@@ -277,10 +279,10 @@ function ZaloGroupMembersTab() {
   }, [activeAccountId, setGroupCount]);
 
   // ── Load members from page_group_member ───────────────────────────────────
-  // Chỉ ghi khi `groupId` vẫn là nhóm đang chọn. Đọc thành viên lỗi → giữ danh sách đang hiện của đúng nhóm, không
-  // đóng dấu thời gian (`membersFailure` = 'members'); đọc danh bạ lỗi → danh sách mới nhưng giữ SĐT đang hiện ('phones').
+  // Only write when `groupId` is still the selected group. If reading the members failed, keep the list on screen for the right group, without
+  // stamping the time (`membersFailure` = 'members'); if reading the contacts failed → a new list but keep the phone numbers on screen ('phones').
   const loadMembersFromDB = useCallback(async (groupId: string): Promise<boolean> => {
-    // Nhóm không đang xem (vd quét ở tab "Quét thành viên"): không đọc — chọn nhóm đó sẽ tự tải (effect bên dưới)
+    // Group not being viewed (e.g. scanning in the "Quét thành viên" (Member scan) tab): do not read; selecting that group will load it (effect below)
     if (!activeAccountId || selectedGroupIdRef.current !== groupId) return false;
     const accountId = activeAccountId;
     const owner = `${accountId}:${groupId}`;
@@ -289,9 +291,9 @@ function ZaloGroupMembersTab() {
     try {
       const res = await DataAccessor.getGroupMembers({ zaloId: accountId, groupId });
       const membersFailed = isReadFailure(res);
-      // Merge phone numbers from contacts table (danh sách thành viên đã lỗi thì khỏi đọc)
+      // Merge phone numbers from the contacts table (skip if the member list failed)
       const convRes = membersFailed ? null : await DataAccessor.getConversations(accountId, 999, 0);
-      // Đổi nhóm / tài khoản trong lúc chờ, hoặc nhóm này không phải nhóm đang xem → không ghi
+      // Group / account changed while waiting, or this group is not the one being viewed → do not write
       if (seq !== membersSeqRef.current || selectedGroupIdRef.current !== groupId) return !membersFailed;
       if (membersFailed) {
         if (readOutcome(true, membersOwnerRef.current, owner) === 'clear') {
@@ -330,8 +332,8 @@ function ZaloGroupMembersTab() {
   // ── Fetch groups from API - delegates to syncZaloGroups (full-sync mode) ──
   const fetchGroupsFromAPI = useCallback(async () => {
     if (!activeAccountId) return;
-    // Lần đọc nhóm / số thành viên gần nhất lỗi: đồng bộ toàn bộ dựa vào bảng thành viên hiện có — đọc lỗi sẽ ghi đè
-    // thành viên mọi nhóm bằng bản rỗng tên và tải lại từ đầu. Chờ "Thử lại" đọc được đã.
+    // The last group / member count read failed: the full sync relies on the existing member table, and a failed read would overwrite
+    // the members of every group with empty names and reload from scratch. Wait until a "Thử lại" (Retry) read works.
     if (groupsLoadFailed) return;
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) return;
@@ -363,8 +365,8 @@ function ZaloGroupMembersTab() {
       });
       await loadGroupsFromDB();
     } catch (err: any) {
-      // syncZaloGroups dừng có chủ đích khi không đọc được dữ liệu hiện có (tránh ghi đè) → báo cho người dùng
-      useAppStore.getState().showNotification(err?.message || 'Đồng bộ nhóm thất bại', 'error');
+      // syncZaloGroups stops on purpose when the existing data cannot be read (to avoid overwriting) → tell the user
+      useAppStore.getState().showNotification(err?.message || tr('Đồng bộ nhóm thất bại'), 'error');
     } finally {
       setGroupsLoading(false);
       setGroupFetchProgress(null);
@@ -373,11 +375,11 @@ function ZaloGroupMembersTab() {
   }, [activeAccountId, loadGroupsFromDB, groupsLoadFailed]);
 
   // ── Fetch members from the shared scan API ─────────────────────────────
-  // Quét qua máy chủ Deplao = gửi cookie Zalo → chưa đồng ý thì hỏi trước (useGroupMemberSync, askConsent)
+  // Scanning through the Deplao server = sends the Zalo cookie → ask for consent first if not given yet (useGroupMemberSync, askConsent)
   const fetchMembersFromAPI = useCallback(async () => {
     if (!activeAccountId || !selectedGroupId) return;
-    // Chưa đọc được thành viên hiện có (vai trò trưởng / phó nhóm) → chưa quét: lưu lúc này dựa trên dữ liệu thiếu
-    // (useGroupMemberSync cũng tự bỏ lưu khi lần đọc vai trò của nó lỗi)
+    // Existing members (owner / deputy roles) could not be read → no scan yet: saving now would be based on incomplete data
+    // (useGroupMemberSync also skips saving when its role read failed)
     if (membersFailure === 'members') return;
 
     setMembersLoading(true);
@@ -402,7 +404,7 @@ function ZaloGroupMembersTab() {
     linkScanStopRef.current = false;
 
     try {
-      // ── Step 1: getGroupLinkInfo - phân trang đến khi hết (hasMoreMember = 0) ──
+      // ── Step 1: getGroupLinkInfo, paging until done (hasMoreMember = 0) ──
       let groupId = '';
       let name = '';
       let avatar = '';
@@ -415,7 +417,7 @@ function ZaloGroupMembersTab() {
         if (linkScanStopRef.current) break;
         const res = await ipc.zalo?.getGroupLinkInfo({ auth, link: linkScanInput.trim(), memberPage: page });
         if (!res?.success) {
-          setLinkScanError(res?.error || 'Không thể lấy thông tin nhóm. Kiểm tra lại đường dẫn.');
+          setLinkScanError(res?.error || tr('Không thể lấy thông tin nhóm. Kiểm tra lại đường dẫn.'));
           return;
         }
         const data = res.response;
@@ -436,7 +438,7 @@ function ZaloGroupMembersTab() {
       }
 
       if (!groupId) {
-        setLinkScanError('Không tìm thấy thông tin nhóm từ link này.');
+        setLinkScanError(tr('Không tìm thấy thông tin nhóm từ link này.'));
         return;
       }
 
@@ -520,7 +522,7 @@ function ZaloGroupMembersTab() {
       setSelectedGroupId(groupId);
       await loadMembersFromDB(groupId);
     } catch (err: any) {
-      setLinkScanError(err.message || 'Đã xảy ra lỗi không xác định');
+      setLinkScanError(err.message || tr('Đã xảy ra lỗi không xác định'));
     } finally {
       setLinkScanLoading(false);
       setLinkScanProgress(null);
@@ -540,29 +542,29 @@ function ZaloGroupMembersTab() {
     setLinkJoinMsg('');
     try {
       const res = await ipc.zalo?.joinGroupLink({ auth, link: linkScanInput.trim() });
-      // 178 = đã là thành viên, 172 = nhóm đầy, 240 = chờ duyệt (lib/zalo/zaloJoinGroupResult)
+      // 178 = already a member, 172 = group full, 240 = waiting for approval (lib/zalo/zaloJoinGroupResult)
       const join = classifyZaloJoinResult(res);
       if (join.outcome === 'already') {
         setLinkJoinStatus('already');
-        setLinkJoinMsg('Bạn đã là thành viên của nhóm này.');
+        setLinkJoinMsg(tr('Bạn đã là thành viên của nhóm này.'));
       } else if (join.outcome === 'full') {
         setLinkJoinStatus('error');
-        setLinkJoinMsg('Group đã vượt quá số thành viên cho phép. Bạn không thể tham gia nhóm này.');
+        setLinkJoinMsg(tr('Group đã vượt quá số thành viên cho phép. Bạn không thể tham gia nhóm này.'));
       } else if (join.outcome === 'pending') {
         setLinkJoinStatus('pending');
-        setLinkJoinMsg('Nhóm bật chế độ duyệt thành viên. Yêu cầu của bạn đã được gửi, chờ admin duyệt.');
+        setLinkJoinMsg(tr('Nhóm bật chế độ duyệt thành viên. Yêu cầu của bạn đã được gửi, chờ admin duyệt.'));
       } else if (join.outcome === 'error') {
         setLinkJoinStatus('error');
-        setLinkJoinMsg(join.error || `Lỗi${join.code ? ` (${join.code})` : ''}: Không thể tham gia nhóm.`);
+        setLinkJoinMsg(join.error || tr('Lỗi{{v1}}: Không thể tham gia nhóm.', { v1: join.code ? ` (${join.code})` : '' }));
       } else {
         setLinkJoinStatus('success');
-        setLinkJoinMsg('Đã tham gia nhóm thành công!');
+        setLinkJoinMsg(tr('Đã tham gia nhóm thành công!'));
         // Refresh group list to show new group
         await loadGroupsFromDB();
       }
     } catch (err: any) {
       setLinkJoinStatus('error');
-      setLinkJoinMsg(err?.message || 'Lỗi không xác định khi tham gia nhóm.');
+      setLinkJoinMsg(err?.message || tr('Lỗi không xác định khi tham gia nhóm.'));
     } finally {
       setLinkJoinLoading(false);
     }
@@ -596,13 +598,13 @@ function ZaloGroupMembersTab() {
     }
   }, [activeAccountId, loadGroupsFromDB]);
 
-  // ── Scan from "Quét thành viên" tab (gọi backend API) ──────────────
-  // Gửi cookie + IMEI Zalo lên deplaoapp.com → hỏi đồng ý TRƯỚC mọi việc khác; không đồng ý thì dừng, không gửi gì.
+  // ── Scan from the "Quét thành viên" (Member scan) tab (calls the backend API) ──────────────
+  // Sends the cookie + Zalo IMEI to deplaoapp.com → asks for consent BEFORE anything else; without consent it stops and sends nothing.
   const handleScanTab = useCallback(async () => {
     if (!activeAccountId || !scanLinkInput.trim()) return;
 
     const acc = useAccountStore.getState().getActiveAccount();
-    if (!acc) { setScanTabError('Không tìm thấy tài khoản'); return; }
+    if (!acc) { setScanTabError(tr('Không tìm thấy tài khoản')); return; }
     if (!(await ensureHiddenScanConsent({ accountName: acc.full_name || acc.zalo_id }))) return;
     const auth = buildZaloAuth(acc, activeAccountId);
 
@@ -614,18 +616,18 @@ function ZaloGroupMembersTab() {
       let groupId = scanLinkInput.trim();
       let groupInfoFromLink: { groupId: string; name: string; avatar: string; creatorId?: string; adminIds?: string[] } | null = null;
 
-      // Nếu là link zalo.me → gọi getGroupLinkInfo để lấy groupId + save group info
+      // If it is a zalo.me link → call getGroupLinkInfo to get the groupId + save the group info
       if (groupId.includes('zalo.me') || groupId.includes('chat.zalo.me')) {
         const info = await resolveAndSaveGroupInfo(auth, groupId);
         if (!info) {
-          setScanTabError('Không lấy được thông tin nhóm từ link. Kiểm tra lại đường dẫn.');
+          setScanTabError(tr('Không lấy được thông tin nhóm từ link. Kiểm tra lại đường dẫn.'));
           return;
         }
         groupId = info.groupId;
         groupInfoFromLink = info;
         setResolvedGroupInfo(info);
       } else if (/^\d+$/.test(groupId)) {
-        // Nhập groupId dạng số → thử resolve info để hiện tên + ảnh + lấy creator/admin
+        // Numeric groupId entered → try to resolve the info to show the name + photo and get the creator / admin
         const info = await resolveAndSaveGroupInfo(auth, groupId);
         if (info) {
           groupInfoFromLink = info;
@@ -635,11 +637,11 @@ function ZaloGroupMembersTab() {
 
       // Validate groupId
       if (!/^\d+$/.test(groupId)) {
-        setScanTabError('Group ID không hợp lệ. Nhập link nhóm hoặc Group ID dạng số.');
+        setScanTabError(tr('Group ID không hợp lệ. Nhập link nhóm hoặc Group ID dạng số.'));
         return;
       }
 
-      // Gọi backend API quét thành viên
+      // Call the backend API to scan the members
       const { scanGroupViaBackend } = await import('@/lib/crm/backendService');
       const result = await scanGroupViaBackend({
         pageId: activeAccountId,
@@ -649,38 +651,38 @@ function ZaloGroupMembersTab() {
       });
 
       if (!result?.success) {
-        setScanTabError(result?.error || 'Quét thất bại');
+        setScanTabError(result?.error || tr('Quét thất bại'));
         return;
       }
 
       const members = result.members || [];
       if (members.length === 0) {
-        setScanTabError('Không tìm thấy thành viên nào trong nhóm.');
+        setScanTabError(tr('Không tìm thấy thành viên nào trong nhóm.'));
         return;
       }
 
       setScanTabResults(members);
       setScanTabGroupId(groupId);
 
-      // Update resolvedGroupInfo nếu chưa có (trường hợp nhập groupId số)
+      // Update resolvedGroupInfo if it is not set yet (numeric groupId entered)
       if (!resolvedGroupInfo && !groupInfoFromLink) {
         setResolvedGroupInfo({ groupId, name: groupId, avatar: '', creatorId: '', adminIds: [] });
       }
 
-      // Xác định role từ creatorId/adminIds (lấy từ getGroupLinkInfo)
+      // Work out the role from creatorId / adminIds (taken from getGroupLinkInfo)
       const creatorId = groupInfoFromLink?.creatorId || '';
       const adminIdList = groupInfoFromLink?.adminIds || [];
       const adminSet = new Set([creatorId, ...adminIdList].filter(Boolean));
 
-      // Lưu vào DB
+      // Save to DB
       await DataAccessor.saveGroupMembers({
         zaloId: activeAccountId,
         groupId,
         members: members.map((m: any) => {
           const mid = m.userId || m.id;
           let role = 0;
-          if (mid === creatorId) role = 2;       // Trưởng nhóm
-          else if (adminSet.has(mid)) role = 1;  // Phó nhóm
+          if (mid === creatorId) role = 2;       // Owner
+          else if (adminSet.has(mid)) role = 1;  // Deputy
           return {
             memberId: mid,
             displayName: m.displayName || m.zaloName || m.userId || m.id,
@@ -693,7 +695,7 @@ function ZaloGroupMembersTab() {
       // Reload members tab
       await loadMembersFromDB(groupId);
     } catch (err: any) {
-      setScanTabError(err?.message || 'Lỗi không xác định');
+      setScanTabError(err?.message || tr('Lỗi không xác định'));
     } finally {
       setScanTabLoading(false);
     }
@@ -715,28 +717,28 @@ function ZaloGroupMembersTab() {
       if (info) setResolvedGroupInfo(info);
 
       const res = await ipc.zalo?.joinGroupLink({ auth, link: scanLinkInput.trim() });
-      // Mỗi kết quả ghi vào state của CHÍNH tab Quét (nhánh nhóm đầy từng ghi vào modal Join theo link → tab không hiện gì)
+      // Each result is written to the state of the Scan tab ITSELF (the full-group branch used to write into the join-by-link modal → the tab showed nothing)
       const join = classifyZaloJoinResult(res);
       if (join.outcome === 'already') {
         setScanJoinType('already');
-        setScanJoinMsg('Bạn đã là thành viên của nhóm này.');
+        setScanJoinMsg(tr('Bạn đã là thành viên của nhóm này.'));
       } else if (join.outcome === 'full') {
         setScanJoinType('error');
-        setScanJoinMsg('Group đã vượt quá số thành viên cho phép. Bạn không thể tham gia nhóm này.');
+        setScanJoinMsg(tr('Group đã vượt quá số thành viên cho phép. Bạn không thể tham gia nhóm này.'));
       } else if (join.outcome === 'pending') {
         setScanJoinType('pending');
-        setScanJoinMsg('Nhóm bật chế độ duyệt thành viên. Yêu cầu đã được gửi, chờ admin duyệt. Bạn có thể quét thành viên nhóm được rồi!');
+        setScanJoinMsg(tr('Nhóm bật chế độ duyệt thành viên. Yêu cầu đã được gửi, chờ admin duyệt. Bạn có thể quét thành viên nhóm được rồi!'));
       } else if (join.outcome === 'error') {
         setScanJoinType('error');
-        setScanJoinMsg(join.error || `Lỗi${join.code ? ` (${join.code})` : ''}: Không thể tham gia nhóm.`);
+        setScanJoinMsg(join.error || tr('Lỗi{{v1}}: Không thể tham gia nhóm.', { v1: join.code ? ` (${join.code})` : '' }));
       } else {
         setScanJoinType('success');
-        setScanJoinMsg('Đã tham gia nhóm thành công!');
+        setScanJoinMsg(tr('Đã tham gia nhóm thành công!'));
         await loadGroupsFromDB();
       }
     } catch (err: any) {
       setScanJoinType('error');
-      setScanJoinMsg(err?.message || 'Lỗi không xác định');
+      setScanJoinMsg(err?.message || tr('Lỗi không xác định'));
     } finally {
       setScanJoinLoading(false);
     }
@@ -753,8 +755,8 @@ function ZaloGroupMembersTab() {
   const clearSelection = () => setSelectedMemberIds(new Set());
 
   // ── Campaigns for the picker ──────────────────────────────────────────────
-  // Lỗi → giữ danh sách của đúng tài khoản + báo lỗi; danh sách của tài khoản khác thì bỏ (không thêm thành viên vào
-  // chiến dịch của tài khoản khác, không hiện "Chưa có chiến dịch nào" giả).
+  // Error → keep the list of the exact account + show the error; the list of another account is dropped (so no members are added to
+  // another account's campaign, and no fake "Chưa có chiến dịch nào" (No campaigns yet) is shown).
   const loadPickerCampaigns = useCallback(async (): Promise<boolean> => {
     if (!activeAccountId) return false;
     const accountId = activeAccountId;
@@ -816,8 +818,8 @@ function ZaloGroupMembersTab() {
         }));
       const res: any = await DataAccessor.addCampaignContacts({ zaloId: activeAccountId, campaignId: pickedCampaignId, contacts });
       if (res?.success === false) {
-        // Ghi lỗi (employee: mất kết nối BOSS) → báo + giữ cửa sổ / lựa chọn để thử lại (trước đây đóng như đã thêm)
-        useAppStore.getState().showNotification('Không thêm được vào chiến dịch: ' + (res.error || 'Không rõ'), 'error');
+        // Write error (employee: lost connection to BOSS) → show the error + keep the window / selection so the user can retry (before, it closed as if it had been added)
+        useAppStore.getState().showNotification(tr('Không thêm được vào chiến dịch: {{v1}}', { v1: (res.error || tr('Không rõ')) }), 'error');
         return;
       }
       setShowCampaignPicker(false);
@@ -830,7 +832,7 @@ function ZaloGroupMembersTab() {
 
   // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    // Đổi tài khoản: bỏ ngay dữ liệu của tài khoản trước và mọi lần đọc đang chờ của nó
+    // Account changed: drop the previous account's data and any pending reads of it at once
     groupsSeqRef.current++; membersSeqRef.current++;
     groupsOwnerRef.current = null; membersOwnerRef.current = null;
     setGroupsLoadFailed(false); setMembersFailure(null);
@@ -841,7 +843,7 @@ function ZaloGroupMembersTab() {
   }, [activeAccountId]);
 
   useEffect(() => {
-    membersSeqRef.current++; // bỏ kết quả đang chờ của nhóm trước
+    membersSeqRef.current++; // drop the earlier pending result for the group first
     membersOwnerRef.current = null;
     setMembersFailure(null); setMembersReading(false);
     setMembers([]); setMembersLastFetched(0); setSelectedMemberIds(new Set());
@@ -850,15 +852,15 @@ function ZaloGroupMembersTab() {
 
   const retryMembers = () => { if (selectedGroupId) loadMembersFromDB(selectedGroupId); };
 
-  // ── Chế độ nhân viên: kết nối BOSS phục hồi → tải lại nhóm + thành viên nhóm đang xem (+ chiến dịch nếu đang chọn
-  // mà lần trước lỗi). Lần đọc lỗi lúc mất kết nối đã giữ dữ liệu cũ, giờ làm mới.
+  // ── Employee mode: BOSS connection restored → reload the group + members being viewed (+ the campaign if one was selected
+  // that failed last time). The failed read during the connection loss kept the old data, now refresh it.
   useEmployeeResync(() => Promise.allSettled([
     loadGroupsFromDB(),
     selectedGroupId ? loadMembersFromDB(selectedGroupId) : Promise.resolve(false),
     showCampaignPicker && campaignsLoadFailed ? loadPickerCampaigns() : Promise.resolve(false),
   ]));
 
-  // ── Listen for external navigation to scan tab (from TopBar "Kiếm tiền") ──
+  // ── Listen for external navigation to the scan tab (from the TopBar "Kiếm tiền" (Earn money)) ──
   useEffect(() => {
     const handler = () => {
       setActiveTab('scan');
@@ -891,12 +893,12 @@ function ZaloGroupMembersTab() {
     filteredMembers.every(m => selectedMemberIds.has(m.member_id));
 
   const formatTime = (ts: number) =>
-    ts ? new Date(ts).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    ts ? new Date(ts).toLocaleString(appLocale(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
 
   if (!activeAccountId) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <EmptyState icon={GroupIcon} title="Chưa chọn tài khoản" desc="Chọn tài khoản Zalo để xem thành viên nhóm" />
+        <EmptyState icon={GroupIcon} title={tr('Chưa chọn tài khoản')} desc={tr('Chọn tài khoản Zalo để xem thành viên nhóm')} />
       </div>
     );
   }
@@ -912,7 +914,7 @@ function ZaloGroupMembersTab() {
             ${activeTab === 'members'
               ? 'text-blue-400 border-b-2 border-blue-400'
               : 'text-muted-foreground hover:text-foreground'}`}>
-          Thành viên nhóm
+          {tr('Thành viên nhóm')}
         </button>
         <button
           onClick={() => {
@@ -929,7 +931,7 @@ function ZaloGroupMembersTab() {
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
-          Quét thành viên
+          {tr('Quét thành viên')}
           {!scanTabSeen && (
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
           )}
@@ -938,26 +940,26 @@ function ZaloGroupMembersTab() {
 
       {/* ── Tab content ──────────────────────────────────────────────────── */}
       {activeTab === 'scan' ? (
-        /* ── Tab: Quét thành viên (Miễn phí) ──────────────────────────────── */
+        /* ── Tab: Member scan (Free) ──────────────────────────────── */
         <div className="flex-1 overflow-y-auto bg-card">
           <div className="mx-auto px-6 py-6 space-y-5 relative">
 
             {/* Header */}
             <div className="text-center pb-2 relative">
-              <h2 className="text-lg font-bold text-foreground">Quét thành viên nhóm ẩn</h2>
-              <p className="text-sm text-muted-foreground mt-1">Tiếp cận hàng nghìn khách hàng tiềm năng từ các nhóm Zalo chất lượng</p>
+              <h2 className="text-lg font-bold text-foreground">{tr('Quét thành viên nhóm ẩn')}</h2>
+              <p className="text-sm text-muted-foreground mt-1">{tr('Tiếp cận hàng nghìn khách hàng tiềm năng từ các nhóm Zalo chất lượng')}</p>
             </div>
 
-            {/* Gửi cookie Zalo lên máy chủ Deplao chỉ khi bật (mặc định tắt, bật phải qua hộp thoại đồng ý) */}
+            {/* Send the Zalo cookie to the Deplao server only when turned on (off by default; turning it on must go through the consent dialog) */}
             <HiddenScanConsentSwitch />
 
             {/* Feature cards */}
             <div className="grid grid-cols-2 gap-3">
               {[
-                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-purple-400"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>, title: 'Nhóm ẩn thành viên', desc: 'Bạn đã tham gia nhưng admin ẩn danh sách - quét vẫn lấy được hết' },
-                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>, title: 'Nhóm chờ duyệt', desc: 'Chưa được duyệt vào nhóm vẫn quét được thành viên - không cần chờ admin phê duyệt' },
-                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>, title: 'Nhanh chóng', desc: '1000+ thành viên chỉ trong vài giây' },
-                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-400"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>, title: 'Kết quả chi tiết', desc: 'Tên, ảnh đại diện, UID - thêm vào chiến dịch kết bạn, nhắn tin, mời vào nhóm ngay' },
+                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-purple-400"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>, title: tr('Nhóm ẩn thành viên'), desc: tr('Bạn đã tham gia nhưng admin ẩn danh sách - quét vẫn lấy được hết') },
+                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>, title: tr('Nhóm chờ duyệt'), desc: tr('Chưa được duyệt vào nhóm vẫn quét được thành viên - không cần chờ admin phê duyệt') },
+                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-green-400"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>, title: tr('Nhanh chóng'), desc: tr('1000+ thành viên chỉ trong vài giây') },
+                { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-400"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>, title: tr('Kết quả chi tiết'), desc: tr('Tên, ảnh đại diện, UID - thêm vào chiến dịch kết bạn, nhắn tin, mời vào nhóm ngay') },
               ].map((f, i) => (
                 <div key={i} className="bg-card border border-border rounded-xl p-3.5 flex gap-3">
                   <div className="w-9 h-9 rounded-lg bg-muted/50 flex items-center justify-center flex-shrink-0">{f.icon}</div>
@@ -977,7 +979,7 @@ function ZaloGroupMembersTab() {
                   value={scanLinkInput}
                   onChange={e => { setScanLinkInput(e.target.value); setScanTabError(''); setResolvedGroupInfo(null); }}
                   onKeyDown={e => { if (e.key === 'Enter' && !scanTabLoading) handleScanTab(); }}
-                  placeholder="Dán link nhóm Zalo (vd: https://zalo.me/g/xxxxxx)"
+                  placeholder={tr('Dán link nhóm Zalo (vd: https://zalo.me/g/xxxxxx)')}
                   disabled={scanTabLoading}
                   className="flex-1 bg-card border border-input rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 disabled:opacity-50"
                 />
@@ -985,20 +987,20 @@ function ZaloGroupMembersTab() {
                   onClick={handleJoinFromScanTab}
                   disabled={scanJoinLoading || !scanLinkInput.trim()}
                   className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0">
-                  {scanJoinLoading ? <>{SpinIcon} Đang join...</> : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg> Tham gia</>}
+                  {scanJoinLoading ? <>{trx('{{SpinIcon}} Đang join...', { SpinIcon })}</> : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg> {tr('Tham gia')}</>}
                 </button>
                 <button
                   onClick={handleScanTab}
                   disabled={scanTabLoading || !scanLinkInput.trim()}
                   className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 flex-shrink-0">
                   {scanTabLoading ? (
-                    <>{SpinIcon} Đang quét...</>
+                    <>{trx('{{SpinIcon}} Đang quét...', { SpinIcon })}</>
                   ) : (
                     <>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                       </svg>
-                      Quét
+                      {tr('Quét')}
                     </>
                   )}
                 </button>
@@ -1026,13 +1028,13 @@ function ZaloGroupMembersTab() {
                     <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
                     <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
                   </svg>
-                  Chia sẻ
+                  {tr('Chia sẻ')}
                 </button>
               </div>
-              <p className="text-[12px] text-muted-foreground">Kết quả khi quét xong sẽ lưu vào tab `Thành viên nhóm` để bạn sử dụng thêm vào chiến dịch.</p>
-              <p className="text-[12px] text-muted-foreground">UID thành viên nhóm không thể chia sẻ giữa các tài khoản với nhau do chính sách từ Zalo.</p>
-              <p className="text-[12px] text-muted-foreground">Nếu bạn quét nhóm chưa join cần ít nhất ở chế độ chờ duyệt, với trường hợp nhóm tắt chờ duyệt thì bạn không thể quét được nhóm này.</p>
-              <p className="text-[12px] text-muted-foreground">Bạn có thể chia sẻ group cho cộng đồng để xây dựng kho nhóm dùng chung toàn bộ app.</p>
+              <p className="text-[12px] text-muted-foreground">{tr('Kết quả khi quét xong sẽ lưu vào tab `Thành viên nhóm` để bạn sử dụng thêm vào chiến dịch.')}</p>
+              <p className="text-[12px] text-muted-foreground">{tr('UID thành viên nhóm không thể chia sẻ giữa các tài khoản với nhau do chính sách từ Zalo.')}</p>
+              <p className="text-[12px] text-muted-foreground">{tr('Nếu bạn quét nhóm chưa join cần ít nhất ở chế độ chờ duyệt, với trường hợp nhóm tắt chờ duyệt thì bạn không thể quét được nhóm này.')}</p>
+              <p className="text-[12px] text-muted-foreground">{tr('Bạn có thể chia sẻ group cho cộng đồng để xây dựng kho nhóm dùng chung toàn bộ app.')}</p>
             </div>
 
             {/* Resolved group info card */}
@@ -1049,7 +1051,7 @@ function ZaloGroupMembersTab() {
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-foreground truncate">{resolvedGroupInfo.name}</p>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">ID: {resolvedGroupInfo.groupId}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{trx('ID: {{groupId}}', { groupId: resolvedGroupInfo.groupId })}</p>
                 </div>
                 <button onClick={() => setResolvedGroupInfo(null)}
                   className="text-subtle-foreground hover:text-foreground/80 transition-colors p-1">
@@ -1084,9 +1086,9 @@ function ZaloGroupMembersTab() {
               <div className="bg-card border border-border rounded-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-foreground">Đã quét xong</p>
+                    <p className="text-sm font-medium text-foreground">{tr('Đã quét xong')}</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      <span className="text-green-400 font-medium">{scanTabResults.length}</span> thành viên · Đã lưu vào tab Thành viên nhóm
+                      {trx('<0>{{count}}</0> thành viên · Đã lưu vào tab Thành viên nhóm', { 0: <span className="text-green-400 font-medium" />, count: scanTabResults.length })}
                     </p>
                   </div>
                   <button
@@ -1095,7 +1097,7 @@ function ZaloGroupMembersTab() {
                       setSelectedGroupId(scanTabGroupId);
                     }}
                     className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors">
-                    Xem trong tab Thành viên →
+                    {tr('Xem trong tab Thành viên →')}
                   </button>
                   <button
                     onClick={() => {
@@ -1112,7 +1114,7 @@ function ZaloGroupMembersTab() {
                       <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
                       <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
                     </svg>
-                    Chia sẻ nhóm này
+                    {tr('Chia sẻ nhóm này')}
                   </button>
                 </div>
                 <div className="max-h-80 overflow-y-auto divide-y divide-border/50">
@@ -1127,7 +1129,7 @@ function ZaloGroupMembersTab() {
                   ))}
                   {scanTabResults.length > 50 && (
                     <div className="px-4 py-2 text-xs text-subtle-foreground text-center">
-                      ... và {scanTabResults.length - 50} thành viên khác. Xem đầy đủ ở tab Thành viên nhóm.
+                      {trx('... và {{v1}} thành viên khác. Xem đầy đủ ở tab Thành viên nhóm.', { v1: scanTabResults.length - 50 })}
                     </div>
                   )}
                 </div>
@@ -1145,8 +1147,8 @@ function ZaloGroupMembersTab() {
                     </svg>
                   </div>
                   <div>
-                    <p className="text-md font-semibold text-foreground">Nhóm chung từ cộng đồng</p>
-                    <p className="text-[10px] text-foreground/80">Cùng nhau phát triển, chia sẻ giá trị</p>
+                    <p className="text-md font-semibold text-foreground">{tr('Nhóm chung từ cộng đồng')}</p>
+                    <p className="text-[10px] text-foreground/80">{tr('Cùng nhau phát triển, chia sẻ giá trị')}</p>
                   </div>
                 </div>
               </div>
@@ -1154,9 +1156,9 @@ function ZaloGroupMembersTab() {
               {/* Benefits grid */}
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { icon: '🎯', title: 'Tiết kiệm thời gian', desc: 'Không cần tự tìm nhóm, đã có danh sách nhóm chất lượng' },
-                  { icon: '🤝', title: 'Cùng nhau phát triển', desc: 'Chia sẻ nhóm tốt giúp cộng đồng cùng tiếp cận khách hàng' },
-                  { icon: '✅', title: 'Đảm bảo chất lượng', desc: 'Mọi nhóm đều qua kiểm duyệt, không spam không ảo hoặc nhóm ít thành viên' },
+                  { icon: '🎯', title: tr('Tiết kiệm thời gian'), desc: tr('Không cần tự tìm nhóm, đã có danh sách nhóm chất lượng') },
+                  { icon: '🤝', title: tr('Cùng nhau phát triển'), desc: tr('Chia sẻ nhóm tốt giúp cộng đồng cùng tiếp cận khách hàng') },
+                  { icon: '✅', title: tr('Đảm bảo chất lượng'), desc: tr('Mọi nhóm đều qua kiểm duyệt, không spam không ảo hoặc nhóm ít thành viên') },
                 ].map((b, i) => (
                     <div key={i} className="bg-muted/30 rounded-lg p-2 text-center">
                       <span className="text-base">{b.icon}</span>
@@ -1174,19 +1176,19 @@ function ZaloGroupMembersTab() {
                   <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
                   <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
                 </svg>
-                Khám phá kho nhóm chung
+                {tr('Khám phá kho nhóm chung')}
               </button>
             </div>
 
             {/* How it works */}
             <div className="bg-card border border-border rounded-xl p-4">
-              <p className="text-xs font-medium text-foreground/80 mb-3">Cách sử dụng</p>
+              <p className="text-xs font-medium text-foreground/80 mb-3">{tr('Cách sử dụng')}</p>
               <div className="space-y-2.5">
                 {[
-                  { step: '1', text: 'Dán link nhóm Zalo vào ô bên trên' },
-                  { step: '2', text: 'Nhấn Tham gia nếu chưa là thành viên' },
-                  { step: '3', text: 'Nhấn Quét → kết quả hiện ở tab Thành viên nhóm' },
-                  { step: '4', text: 'Chọn thành viên → thêm vào chiến dịch, gửi tin, kết bạn...' },
+                  { step: '1', text: tr('Dán link nhóm Zalo vào ô bên trên') },
+                  { step: '2', text: tr('Nhấn Tham gia nếu chưa là thành viên') },
+                  { step: '3', text: tr('Nhấn Quét → kết quả hiện ở tab Thành viên nhóm') },
+                  { step: '4', text: tr('Chọn thành viên → thêm vào chiến dịch, gửi tin, kết bạn...') },
                 ].map(s => (
                   <div key={s.step} className="flex items-start gap-2.5">
                     <span className="w-5 h-5 rounded-full bg-muted text-[11px] font-bold text-foreground/80 flex items-center justify-center flex-shrink-0 mt-0.5">{s.step}</span>
@@ -1199,7 +1201,7 @@ function ZaloGroupMembersTab() {
           </div>
         </div>
       ) : (
-      /* ── Tab: Thành viên nhóm (hiện tại) ──────────────────────────────── */
+      /* ── Tab: Group members (current) ──────────────────────────────── */
       <div className="flex flex-1 overflow-hidden relative">
 
       {/* ── Left: Groups ──────────────────────────────────────────────────── */}
@@ -1207,17 +1209,17 @@ function ZaloGroupMembersTab() {
         <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-shrink-0">
           <div className="flex-1 min-w-0">
             <h3 className="text-sm font-semibold text-foreground">
-              Danh sách nhóm
+              {tr('Danh sách nhóm')}
               {groups.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({groups.length})</span>}
             </h3>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Từ danh sách hội thoại</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">{tr('Từ danh sách hội thoại')}</p>
           </div>
           {/* 3-dot menu */}
           <div ref={groupMenuRef} className="relative flex-shrink-0">
             <button
               onClick={() => setShowGroupMenu(v => !v)}
               disabled={groupsLoading}
-              title="Tùy chọn đồng bộ nhóm"
+              title={tr('Tùy chọn đồng bộ nhóm')}
               className="flex items-center justify-center w-8 h-8 rounded-lg bg-muted hover:bg-accent disabled:opacity-50 text-foreground/80 text-lg font-bold transition-colors leading-none">
               ⋮
             </button>
@@ -1226,10 +1228,10 @@ function ZaloGroupMembersTab() {
                 <button
                   onClick={() => { fetchGroupsFromAPI(); setShowGroupMenu(false); }}
                   disabled={groupsLoadFailed}
-                  title={groupsLoadFailed ? 'Chưa đọc được dữ liệu nhóm hiện có — bấm "Thử lại" ở danh sách nhóm trước' : undefined}
+                  title={groupsLoadFailed ? tr('Chưa đọc được dữ liệu nhóm hiện có — bấm "Thử lại" ở danh sách nhóm trước') : undefined}
                   className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent">
                   {groupsLoading ? SpinIcon : RefreshIcon}
-                  <span>Tải toàn bộ nhóm từ Zalo</span>
+                  <span>{tr('Tải toàn bộ nhóm từ Zalo')}</span>
                 </button>
                 <button
                   onClick={() => { setShowLinkScanModal(true); setLinkScanInput(''); setLinkScanError(''); setLinkScanResult(null); setLinkJoinStatus('idle'); setLinkJoinMsg(''); setShowGroupMenu(false); }}
@@ -1238,7 +1240,7 @@ function ZaloGroupMembersTab() {
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
                   </svg>
-                  <span>Join nhóm theo link</span>
+                  <span>{tr('Join nhóm theo link')}</span>
                 </button>
               </div>
             )}
@@ -1248,24 +1250,24 @@ function ZaloGroupMembersTab() {
         {groups.length > 0 && (
           <div className="px-3 py-2 border-b border-border/50 flex-shrink-0">
             <input type="text" value={searchGroup} onChange={e => setSearchGroup(e.target.value)}
-              placeholder="Tìm nhóm..."
+              placeholder={tr('Tìm nhóm...')}
               className="w-full bg-card border border-input rounded-lg px-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
           </div>
         )}
 
         <div className="flex-1 overflow-y-auto bg-card">
           {groups.length > 0 && groupsLoadFailed && (
-            <LoadFailedNotice className="justify-start px-3" text="Không tải được dữ liệu nhóm mới nhất"
+            <LoadFailedNotice className="justify-start px-3" text={tr('Không tải được dữ liệu nhóm mới nhất')}
               onRetry={loadGroupsFromDB} busy={groupsReading} />
           )}
           {groups.length === 0 && groupsLoadFailed ? (
-            // Lỗi ≠ "chưa có nhóm": không gợi ý "Tải từ API" (đồng bộ dựa trên dữ liệu đọc thiếu)
-            <LoadFailedNotice className="h-full" text="Không tải được danh sách nhóm" onRetry={loadGroupsFromDB} busy={groupsReading} />
+            // An error ≠ "no groups yet": do not suggest "Tải từ API" (Load from API) (the sync would rely on incomplete data)
+            <LoadFailedNotice className="h-full" text={tr('Không tải được danh sách nhóm')} onRetry={loadGroupsFromDB} busy={groupsReading} />
           ) : groups.length === 0 ? (
-            <EmptyState icon={GroupIcon} title="Chưa có dữ liệu nhóm"
-              desc={<>Nhấn <span className="text-blue-400 font-medium">Tải từ API</span> để đồng bộ nhóm từ Zalo.</>} />
+            <EmptyState icon={GroupIcon} title={tr('Chưa có dữ liệu nhóm')}
+              desc={<>{trx('Nhấn <0>Tải từ API</0> để đồng bộ nhóm từ Zalo.', { 0: <span className="text-blue-400 font-medium" /> })}</>} />
           ) : filteredGroups.length === 0 ? (
-            <div className="flex items-center justify-center h-16 text-xs text-muted-foreground">Không tìm thấy nhóm</div>
+            <div className="flex items-center justify-center h-16 text-xs text-muted-foreground">{tr('Không tìm thấy nhóm')}</div>
           ) : (
             <div className="py-1">
               {filteredGroups.map(group => (
@@ -1282,7 +1284,7 @@ function ZaloGroupMembersTab() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-foreground truncate font-medium">{group.display_name}</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {group.memberCount > 0 ? `${group.memberCount} thành viên` : 'Chưa có thành viên'}
+                      {group.memberCount > 0 ? tr('{{memberCount}} thành viên', { memberCount: group.memberCount }) : tr('Chưa có thành viên')}
                     </p>
                   </div>
                 </button>
@@ -1295,12 +1297,12 @@ function ZaloGroupMembersTab() {
       {/* ── Right: Members ────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {!selectedGroup ? (
-          <EmptyState icon={GroupIcon} title="Chọn một nhóm để xem thành viên"
+          <EmptyState icon={GroupIcon} title={tr('Chọn một nhóm để xem thành viên')}
             desc={groups.length === 0 && groupsLoadFailed
-              ? 'Chưa tải được danh sách nhóm — bấm "Thử lại" ở cột bên trái.'
+              ? tr('Chưa tải được danh sách nhóm — bấm "Thử lại" ở cột bên trái.')
               : groups.length === 0
-              ? 'Hãy tải danh sách nhóm từ API trước.'
-              : 'Chọn một nhóm bên trái để xem danh sách thành viên.'} />
+              ? tr('Hãy tải danh sách nhóm từ API trước.')
+              : tr('Chọn một nhóm bên trái để xem danh sách thành viên.')} />
         ) : (
           <>
             {/* Members header */}
@@ -1316,29 +1318,29 @@ function ZaloGroupMembersTab() {
                 <h3 className="text-sm font-semibold text-foreground truncate">{selectedGroup.display_name}</h3>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
                   {members.length > 0
-                    ? <>{members.length} thành viên{membersLastFetched > 0 && <span className="ml-2 text-muted-foreground">· {formatTime(membersLastFetched)}</span>}</>
-                    : membersFailure === 'members' ? 'Không tải được dữ liệu thành viên' : 'Chưa có dữ liệu thành viên'}
+                    ? <>{trx('{{count}} thành viên', { count: members.length })}{membersLastFetched > 0 && <span className="ml-2 text-muted-foreground">· {formatTime(membersLastFetched)}</span>}</>
+                    : membersFailure === 'members' ? tr('Không tải được dữ liệu thành viên') : tr('Chưa có dữ liệu thành viên')}
                 </p>
               </div>
-              {/* Tải thành viên từ API quét nhóm dùng chung — khoá khi chưa đọc được thành viên hiện có */}
+              {/* Load members from the shared group scan API: locked until the existing members can be read */}
               <button onClick={fetchMembersFromAPI} disabled={membersLoading || membersFailure === 'members'}
-                title={membersFailure === 'members' ? 'Chưa đọc được dữ liệu thành viên hiện có — bấm "Thử lại" trước' : undefined}
+                title={membersFailure === 'members' ? tr('Chưa đọc được dữ liệu thành viên hiện có — bấm "Thử lại" trước') : undefined}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium transition-colors flex-shrink-0">
                 {membersLoading ? SpinIcon : RefreshIcon}
-                {membersLoading ? 'Đang tải...' : 'Tải thông tin thành viên'}
+                {membersLoading ? tr('Đang tải...') : tr('Tải thông tin thành viên')}
               </button>
-              {/* Xuất danh sách thành viên */}
+              {/* Export member list */}
               {filteredMembers.length > 0 && (
                 <button onClick={() => {
                   const escapeCSV = (v: any): string => {
                     const s = String(v ?? '');
-                    // Excel tự chuyển số dài (SĐT, UID) thành scientific notation → ép giữ dạng text
+                    // Excel turns long numbers (phone numbers, UIDs) into scientific notation → force them to stay as text
                     if (/^\d+$/.test(s) && s.length >= 5) return '="' + s + '"';
                     if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r'))
                       return '"' + s.replace(/"/g, '""') + '"';
                     return s;
                   };
-                  const headers = ['STT', 'Tên', 'UID', 'Số điện thoại', 'Vai trò'];
+                  const headers = ['STT', tr('Tên'), 'UID', tr('Số điện thoại'), tr('Vai trò')];
                   const rows = filteredMembers.map((m, i) => [
                     i + 1,
                     escapeCSV(m.display_name || ''),
@@ -1354,14 +1356,14 @@ function ZaloGroupMembersTab() {
                   a.download = `thanh_vien_${selectedGroup?.display_name || selectedGroupId}_${new Date().toISOString().split('T')[0]}.csv`;
                   document.body.appendChild(a); a.click(); document.body.removeChild(a);
                   URL.revokeObjectURL(url);
-                  setExportNotif({ message: `Đã xuất ${filteredMembers.length} thành viên` });
+                  setExportNotif({ message: tr('Đã xuất {{count}} thành viên', { count: filteredMembers.length }) });
                   setTimeout(() => setExportNotif(null), 4000);
                 }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium transition-colors flex-shrink-0">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                   </svg>
-                  Xuất danh sách
+                  {tr('Xuất danh sách')}
                 </button>
               )}
             </div>
@@ -1377,18 +1379,18 @@ function ZaloGroupMembersTab() {
                   {allFilteredSelected ? (
                     <>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                      Bỏ chọn tất cả
+                      {tr('Bỏ chọn tất cả')}
                     </>
                   ) : (
                     <>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="9 11 12 14 22 4"/></svg>
-                      Chọn tất cả ({filteredMembers.length})
+                      {trx('Chọn tất cả ({{count}})', { count: filteredMembers.length })}
                     </>
                   )}
                 </button>
               )}
               <input type="text" value={searchMember} onChange={e => setSearchMember(e.target.value)}
-                     placeholder="Tìm thành viên..."
+                     placeholder={tr('Tìm thành viên...')}
                      className="flex-1 bg-card border border-input rounded-lg px-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
             </div>
 
@@ -1396,20 +1398,20 @@ function ZaloGroupMembersTab() {
             <div className="flex-1 overflow-y-auto pb-16">
               {members.length > 0 && membersLoadFailed && (
                 <LoadFailedNotice className="justify-start px-4"
-                  text={membersFailure === 'phones' ? 'Không tải được số điện thoại mới nhất' : 'Không tải được dữ liệu thành viên mới nhất'}
+                  text={membersFailure === 'phones' ? tr('Không tải được số điện thoại mới nhất') : tr('Không tải được dữ liệu thành viên mới nhất')}
                   onRetry={retryMembers} busy={membersReading} />
               )}
               {members.length === 0 && membersFailure === 'members' ? (
-                // Lỗi ≠ "chưa có thành viên": không gợi ý "Tải thành viên" (lưu dựa trên dữ liệu đọc thiếu)
-                <LoadFailedNotice className="h-full" text="Không tải được danh sách thành viên" onRetry={retryMembers} busy={membersReading} />
+                // An error ≠ "no members yet": do not suggest "Tải thành viên" (Load members) (saving would rely on incomplete data)
+                <LoadFailedNotice className="h-full" text={tr('Không tải được danh sách thành viên')} onRetry={retryMembers} busy={membersReading} />
               ) : members.length === 0 ? (
                 <EmptyState
                   icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}
-                  title="Chưa có dữ liệu thành viên"
-                  desc={<>Nhấn <span className="text-blue-400 font-medium">Tải thành viên</span> để đồng bộ từ Zalo về DB.<br/><span className="text-muted-foreground text-[11px]">Lưu ý: cần tải nhóm từ API trước để có danh sách UID.</span></>}
+                  title={tr('Chưa có dữ liệu thành viên')}
+                  desc={<>{trx('Nhấn <0>Tải thành viên</0> để đồng bộ từ Zalo về DB.<1/><2>Lưu ý: cần tải nhóm từ API trước để có danh sách UID.</2>', { 0: <span className="text-blue-400 font-medium" />, 1: <br/>, 2: <span className="text-muted-foreground text-[11px]" /> })}</>}
                 />
               ) : filteredMembers.length === 0 ? (
-                <div className="flex items-center justify-center h-16 text-xs text-muted-foreground">Không tìm thấy thành viên</div>
+                <div className="flex items-center justify-center h-16 text-xs text-muted-foreground">{tr('Không tìm thấy thành viên')}</div>
               ) : (
                 <div className="p-2 space-y-0.5">
                   {filteredMembers.map(member => {
@@ -1433,7 +1435,7 @@ function ZaloGroupMembersTab() {
                           {member.display_name
                             ? <p className="text-sm text-foreground truncate font-medium">{member.display_name}</p>
                             : <p className="text-sm text-muted-foreground truncate italic">
-                                Chưa có tên -{' '}
+                                {tr('Chưa có tên - ')}
                                 {member.phone
                                   ? <PhoneDisplay phone={member.phone} className="text-muted-foreground" />
                                   : member.member_id}
@@ -1457,16 +1459,16 @@ function ZaloGroupMembersTab() {
 
             {/* ── Bottom action bar ─────────────────── */}
             <div className="absolute bottom-0 left-72 right-0 bg-card/95 backdrop-blur border-t border-input px-5 py-3 z-10">
-              {/* Row 1: Selection info + Bỏ chọn */}
+              {/* Row 1: selection info + Deselect */}
               {selectedMemberIds.size > 0 && (
                 <div className="flex items-center gap-3 mb-2">
                   <span className="text-sm text-foreground font-medium">
-                    Đã chọn <span className="text-blue-400">{selectedMemberIds.size}</span> thành viên
+                    {trx('Đã chọn <0>{{count}}</0> thành viên', { 0: <span className="text-blue-400" />, count: selectedMemberIds.size })}
                   </span>
                   <div className="flex-1"/>
                   <button onClick={clearSelection}
                     className="px-3 py-1.5 rounded-lg bg-muted hover:bg-accent text-foreground/80 text-xs transition-colors">
-                    Bỏ chọn
+                    {tr('Bỏ chọn')}
                   </button>
                 </div>
               )}
@@ -1481,7 +1483,7 @@ function ZaloGroupMembersTab() {
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
                   </svg>
-                  Thêm vào chiến dịch
+                  {tr('Thêm vào chiến dịch')}
                 </button>
                 <button onClick={() => setShowAddToContacts(true)} disabled={selectedMemberIds.size === 0}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -1493,7 +1495,7 @@ function ZaloGroupMembersTab() {
                     <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/>
                     <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
                   </svg>
-                  Thêm vào liên hệ
+                  {tr('Thêm vào liên hệ')}
                 </button>
               </div>
             </div>
@@ -1508,27 +1510,27 @@ function ZaloGroupMembersTab() {
           <div className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-1">
-              <h3 className="font-semibold text-foreground">Thêm vào chiến dịch</h3>
+              <h3 className="font-semibold text-foreground">{tr('Thêm vào chiến dịch')}</h3>
               <button
                 onClick={() => setShowCreateCampaign(true)}
                 className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors px-2 py-1 rounded-lg hover:bg-blue-500/10">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
-                Tạo mới
+                {tr('Tạo mới')}
               </button>
             </div>
             <p className="text-xs text-muted-foreground mb-3">
-              Áp dụng cho <span className="text-blue-400 font-medium">{selectedMemberIds.size}</span> thành viên đã chọn
+              {trx('Áp dụng cho <0>{{count}}</0> thành viên đã chọn', { 0: <span className="text-blue-400 font-medium" />, count: selectedMemberIds.size })}
             </p>
 
             {localCampaigns.length > 0 && campaignsLoadFailed && (
-              <LoadFailedNotice className="justify-start px-0 pt-0" text="Không tải được danh sách chiến dịch mới nhất"
+              <LoadFailedNotice className="justify-start px-0 pt-0" text={tr('Không tải được danh sách chiến dịch mới nhất')}
                 onRetry={loadPickerCampaigns} busy={campaignsLoading} />
             )}
             {localCampaigns.length === 0 && campaignsLoadFailed ? (
-              // Lỗi ≠ "chưa có chiến dịch": không gợi ý tạo chiến dịch mới (dễ tạo trùng)
-              <LoadFailedNotice className="py-6" text="Không tải được danh sách chiến dịch" onRetry={loadPickerCampaigns} busy={campaignsLoading} />
+              // An error ≠ "no campaigns yet": do not suggest creating a new campaign (easy to create duplicates)
+              <LoadFailedNotice className="py-6" text={tr('Không tải được danh sách chiến dịch')} onRetry={loadPickerCampaigns} busy={campaignsLoading} />
             ) : localCampaigns.length === 0 ? (
               <div className="py-6 flex flex-col items-center gap-3">
                 <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
@@ -1537,8 +1539,8 @@ function ZaloGroupMembersTab() {
                   </svg>
                 </div>
                 <div className="text-center">
-                  <p className="text-sm text-foreground/80 font-medium">Chưa có chiến dịch nào</p>
-                  <p className="text-xs text-muted-foreground mt-1">Tạo chiến dịch mới để bắt đầu gửi tin</p>
+                  <p className="text-sm text-foreground/80 font-medium">{tr('Chưa có chiến dịch nào')}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{tr('Tạo chiến dịch mới để bắt đầu gửi tin')}</p>
                 </div>
                 <button
                   onClick={() => setShowCreateCampaign(true)}
@@ -1546,7 +1548,7 @@ function ZaloGroupMembersTab() {
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                   </svg>
-                  Tạo chiến dịch mới
+                  {tr('Tạo chiến dịch mới')}
                 </button>
               </div>
             ) : (
@@ -1559,7 +1561,7 @@ function ZaloGroupMembersTab() {
                       <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.status === 'active' ? 'bg-green-400' : c.status === 'paused' ? 'bg-yellow-400' : 'bg-accent'}`} />
                       {c.name}
                     </span>
-                    <span className="block text-xs text-muted-foreground mt-0.5 pl-3">{c.total_contacts ?? 0} liên hệ</span>
+                    <span className="block text-xs text-muted-foreground mt-0.5 pl-3">{trx('{{v1}} liên hệ', { v1: c.total_contacts ?? 0 })}</span>
                   </button>
                 ))}
               </div>
@@ -1569,19 +1571,19 @@ function ZaloGroupMembersTab() {
               <div className="flex gap-2">
                 <button onClick={() => setShowCampaignPicker(false)}
                   className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
-                  Hủy
+                  {tr('Hủy')}
                 </button>
                 <button onClick={handleAddToCampaign}
                   disabled={!pickedCampaignId || addingToCampaign}
                   className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40 transition-colors">
-                  {addingToCampaign ? 'Đang thêm...' : `Thêm ${selectedMemberIds.size} thành viên`}
+                  {addingToCampaign ? tr('Đang thêm...') : tr('Thêm {{count}} thành viên', { count: selectedMemberIds.size })}
                 </button>
               </div>
             )}
             {localCampaigns.length === 0 && (
               <button onClick={() => setShowCampaignPicker(false)}
                 className="w-full mt-2 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
-                Hủy
+                {tr('Hủy')}
               </button>
             )}
           </div>
@@ -1633,15 +1635,15 @@ function ZaloGroupMembersTab() {
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-foreground text-sm">Join nhóm theo link</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Nhập link mời nhóm Zalo để tham gia nhóm</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Các nhóm công khai thành viên mới quét được thành viên</p>
+                <h3 className="font-semibold text-foreground text-sm">{tr('Join nhóm theo link')}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{tr('Nhập link mời nhóm Zalo để tham gia nhóm')}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{tr('Các nhóm công khai thành viên mới quét được thành viên')}</p>
               </div>
             </div>
 
             {/* Input */}
             <div className="mb-4">
-              <label className="text-xs text-muted-foreground mb-1.5 block">Đường dẫn nhóm</label>
+              <label className="text-xs text-muted-foreground mb-1.5 block">{tr('Đường dẫn nhóm')}</label>
               <input
                 value={linkScanInput}
                 onChange={e => { setLinkScanInput(e.target.value); setLinkJoinStatus('idle'); setLinkJoinMsg(''); }}
@@ -1658,7 +1660,7 @@ function ZaloGroupMembersTab() {
                 <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
                   <span className="flex items-center gap-1.5">
                     {SpinIcon}
-                    <span>Đang tải thông tin thành viên: <span className="text-foreground font-medium">{linkScanProgress.current}</span>/{linkScanProgress.total}</span>
+                    <span>{trx('Đang tải thông tin thành viên: <0>{{current}}</0>/{{total}}', { 0: <span className="text-foreground font-medium" />, current: linkScanProgress.current, total: linkScanProgress.total })}</span>
                   </span>
                   <span className="text-purple-400 font-medium">{Math.round((linkScanProgress.current / linkScanProgress.total) * 100)}%</span>
                 </div>
@@ -1668,7 +1670,7 @@ function ZaloGroupMembersTab() {
                 </div>
                 <button onClick={() => { linkScanStopRef.current = true; }}
                   className="mt-2 text-xs text-red-400 hover:text-red-300 transition-colors">
-                  Dừng tải thông tin
+                  {tr('Dừng tải thông tin')}
                 </button>
               </div>
             )}
@@ -1677,7 +1679,7 @@ function ZaloGroupMembersTab() {
             {linkScanLoading && linkScanProgress === null && (
               <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground">
                 {SpinIcon}
-                <span>Đang lấy thông tin nhóm từ Zalo...</span>
+                <span>{tr('Đang lấy thông tin nhóm từ Zalo...')}</span>
               </div>
             )}
 
@@ -1691,8 +1693,7 @@ function ZaloGroupMembersTab() {
             {/* Success result */}
             {linkScanResult && !linkScanLoading && (
               <div className="mb-4 px-3 py-2 bg-green-500/10 border border-green-500/30 rounded-xl text-xs text-green-400">
-                <CheckIcon className="w-4 h-4 inline" /> Đã quét xong nhóm <span className="font-semibold text-green-300">"{linkScanResult.name}"</span>
-                <span className="text-muted-foreground ml-1">({linkScanResult.groupId})</span>
+                {trx('<0/> Đã quét xong nhóm <1>"{{name}}"</1><2>({{groupId}})</2>', { 0: <CheckIcon className="w-4 h-4 inline" />, 1: <span className="font-semibold text-green-300" />, name: linkScanResult.name, 2: <span className="text-muted-foreground ml-1" />, groupId: linkScanResult.groupId })}
               </div>
             )}
 
@@ -1718,29 +1719,29 @@ function ZaloGroupMembersTab() {
                 onClick={() => setShowLinkScanModal(false)}
                 disabled={linkScanLoading && linkScanProgress !== null}
                 className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent disabled:opacity-40 transition-colors">
-                {linkScanResult && !linkScanLoading ? 'Đóng' : 'Hủy'}
+                {linkScanResult && !linkScanLoading ? tr('Đóng') : tr('Hủy')}
               </button>
               {!linkScanResult && (
                 <button
                   onClick={scanGroupByLink}
                   disabled={linkScanLoading || !linkScanInput.trim()}
                   className="flex-1 py-2 rounded-xl bg-purple-600 text-white text-sm hover:bg-purple-700 disabled:opacity-40 transition-colors flex items-center justify-center gap-1.5">
-                  {linkScanLoading ? <>{SpinIcon} Đang quét...</> : <><SearchIcon className="w-4 h-4 inline" /> Quét nhóm</>}
+                  {linkScanLoading ? <>{trx('{{SpinIcon}} Đang quét...', { SpinIcon })}</> : <>{trx('<0/> Quét nhóm', { 0: <SearchIcon className="w-4 h-4 inline" /> })}</>}
                 </button>
               )}
               {/* Join button - shown after scan success or standalone */}
               <button
                 onClick={joinGroupByLink}
                 disabled={linkJoinLoading || !linkScanInput.trim()}
-                title="Yêu cầu tài khoản đang hoạt động tham gia nhóm này"
+                title={tr('Yêu cầu tài khoản đang hoạt động tham gia nhóm này')}
                 className="flex-1 py-2 rounded-xl bg-teal-600 text-white text-sm hover:bg-teal-700 disabled:opacity-40 transition-colors flex items-center justify-center gap-1.5">
-                {linkJoinLoading ? <>{SpinIcon} Đang join...</> : '🚪 Join nhóm'}
+                {linkJoinLoading ? <>{trx('{{SpinIcon}} Đang join...', { SpinIcon })}</> : tr('🚪 Join nhóm')}
               </button>
               {linkScanResult && !linkScanLoading && (
                 <button
                   onClick={() => { setLinkScanInput(''); setLinkScanResult(null); setLinkScanError(''); setLinkJoinStatus('idle'); setLinkJoinMsg(''); }}
                   className="flex-1 py-2 rounded-xl bg-purple-600 text-white text-sm hover:bg-purple-700 transition-colors">
-                  Quét link khác
+                  {tr('Quét link khác')}
                 </button>
               )}
             </div>
@@ -1761,14 +1762,13 @@ function ZaloGroupMembersTab() {
                     {SpinIcon}
                   </div>
                   <div>
-                    <h3 className="font-semibold text-foreground text-sm">Đang đồng bộ nhóm Zalo</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">Tổng cộng <span className="text-foreground font-medium">{groupFetchProgress.total}</span> nhóm · Bước 1/2</p>
+                    <h3 className="font-semibold text-foreground text-sm">{tr('Đang đồng bộ nhóm Zalo')}</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">{trx('Tổng cộng <0>{{total}}</0> nhóm · Bước 1/2', { 0: <span className="text-foreground font-medium" />, total: groupFetchProgress.total })}</p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between text-xs mb-2">
                   <span className="text-muted-foreground">
-                    Đã xử lý: <span className="text-foreground font-semibold">{groupFetchProgress.current}</span>
-                    <span className="text-muted-foreground"> / {groupFetchProgress.total}</span>
+                    {trx('Đã xử lý: <0>{{current}}</0><1> / {{total}}</1>', { 0: <span className="text-foreground font-semibold" />, current: groupFetchProgress.current, 1: <span className="text-muted-foreground" />, total: groupFetchProgress.total })}
                   </span>
                   <span className="text-blue-400 font-semibold text-sm">
                     {Math.round((groupFetchProgress.current / groupFetchProgress.total) * 100)}%
@@ -1779,7 +1779,7 @@ function ZaloGroupMembersTab() {
                     style={{ width: `${(groupFetchProgress.current / groupFetchProgress.total) * 100}%` }} />
                 </div>
                 <p className="text-[11px] text-muted-foreground mt-3 text-center">
-                  Vui lòng không đóng cửa sổ trong khi đồng bộ...
+                  {tr('Vui lòng không đóng cửa sổ trong khi đồng bộ...')}
                 </p>
               </>
             ) : (
@@ -1790,9 +1790,9 @@ function ZaloGroupMembersTab() {
                     {SpinIcon}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-foreground text-sm">Đang tải chi tiết thành viên · Bước 2/2</h3>
+                    <h3 className="font-semibold text-foreground text-sm">{tr('Đang tải chi tiết thành viên · Bước 2/2')}</h3>
                     <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                      Nhóm <span className="text-foreground font-medium">{groupFetchProgress.groupCurrent}/{groupFetchProgress.groupTotal}</span>
+                      {trx('Nhóm <0>{{groupCurrent}}/{{groupTotal}}</0>', { 0: <span className="text-foreground font-medium" />, groupCurrent: groupFetchProgress.groupCurrent, groupTotal: groupFetchProgress.groupTotal })}
                       {groupFetchProgress.currentGroupName && (
                         <span className="ml-1 text-muted-foreground truncate">· {groupFetchProgress.currentGroupName}</span>
                       )}
@@ -1803,7 +1803,7 @@ function ZaloGroupMembersTab() {
                 {/* Group progress */}
                 <div className="mb-3">
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-muted-foreground">Tiến độ nhóm</span>
+                    <span className="text-muted-foreground">{tr('Tiến độ nhóm')}</span>
                     <span className="text-green-400 font-semibold">
                       {Math.round((groupFetchProgress.groupCurrent / groupFetchProgress.groupTotal) * 100)}%
                     </span>
@@ -1819,7 +1819,7 @@ function ZaloGroupMembersTab() {
                   <div className="mb-3">
                     <div className="flex items-center justify-between text-xs mb-1">
                       <span className="text-muted-foreground">
-                        Thành viên: <span className="text-foreground">{groupFetchProgress.memberCurrent}</span>/{groupFetchProgress.memberTotal}
+                        {trx('Thành viên: <0>{{memberCurrent}}</0>/{{memberTotal}}', { 0: <span className="text-foreground" />, memberCurrent: groupFetchProgress.memberCurrent, memberTotal: groupFetchProgress.memberTotal })}
                       </span>
                       <span className="text-blue-400 font-semibold">
                         {Math.round((groupFetchProgress.memberCurrent / groupFetchProgress.memberTotal) * 100)}%
@@ -1833,11 +1833,11 @@ function ZaloGroupMembersTab() {
                 )}
 
                 <div className="flex items-center justify-between mt-3">
-                  <p className="text-[11px] text-muted-foreground">Đang tải SĐT + thông tin thành viên từ Zalo...</p>
+                  <p className="text-[11px] text-muted-foreground">{tr('Đang tải SĐT + thông tin thành viên từ Zalo...')}</p>
                   <button
                     onClick={() => { bulkEnrichStopRef.current = true; }}
                     className="flex-shrink-0 ml-3 px-3 py-1 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg transition-colors">
-                    Bỏ qua
+                    {tr('Bỏ qua')}
                   </button>
                 </div>
               </>
@@ -1912,7 +1912,7 @@ function ZaloGroupMembersTab() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm text-foreground font-medium">{exportNotif.message}</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">File đã được tải xuống</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">{tr('File đã được tải xuống')}</p>
           </div>
           <button onClick={() => setExportNotif(null)}
             className="text-subtle-foreground hover:text-foreground/80 transition-colors p-1 flex-shrink-0">
@@ -1955,16 +1955,16 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
   const [addingToCampaign, setAddingToCampaign] = useState(false);
   const [showAddToContacts, setShowAddToContacts] = useState(false);
 
-  // ── Lần đọc từ BOSS lỗi (employee: mất kết nối) — giữ dữ liệu đang có của đúng tài khoản / nhóm, báo "Thử lại" ──
+  // ── A read from BOSS failed (employee: lost connection): keep the current data of the exact account / group, show "Thử lại" (Retry) ──
   const [groupsLoadFailed, setGroupsLoadFailed] = useState(false);
   const [membersLoadFailed, setMembersLoadFailed] = useState(false);
   const [campaignsLoadFailed, setCampaignsLoadFailed] = useState(false);
   const [campaignsLoading, setCampaignsLoading] = useState(false);
-  /** Chủ của dữ liệu đang hiện: nhóm = `tàiKhoản:kênh`, thành viên = `tàiKhoản:nhóm`, chiến dịch = tài khoản. */
+  /** Owner of the data on screen: group = `account:channel`, member = `account:group`, campaign = the account. */
   const groupsOwnerRef = useRef<string | null>(null);
   const membersOwnerRef = useRef<string | null>(null);
   const campaignsOwnerRef = useRef<string | null>(null);
-  // Chỉ lần đọc mới nhất được ghi state (chọn nhóm khác / đổi tài khoản trong lúc chờ)
+  // Only the latest read is written to state (another group selected / account changed while waiting)
   const groupsSeqRef = useRef(0);
   const membersSeqRef = useRef(0);
   const campaignsSeqRef = useRef(0);
@@ -1991,9 +1991,9 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
     setLoading(true);
     try {
       const res = await DataAccessor.getConversations(activeAccountId, 999, 0);
-      if (seq !== groupsSeqRef.current) return; // có lần đọc mới hơn
+      if (seq !== groupsSeqRef.current) return; // a newer read exists
       if (isReadFailure(res)) {
-        // Lỗi → giữ danh sách (và nhóm đang chọn) của đúng tài khoản; của tài khoản khác thì bỏ
+        // Error → keep the list (and the selected group) of the exact account; drop it for another account
         if (readOutcome(true, groupsOwnerRef.current, owner) === 'clear') {
           groupsOwnerRef.current = owner;
           setGroups([]);
@@ -2019,7 +2019,7 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
     }
   }, [activeAccountId, channel, selectedId, setGroupCount]);
 
-  // Đổi tài khoản / kênh: bỏ ngay nhóm + thành viên của tài khoản trước (không chọn / thao tác nhầm trong lúc tải)
+  // Account / channel changed: drop the previous account's group + members at once (so nothing is selected / acted on by mistake while loading)
   const viewOwner = `${activeAccountId || ''}:${channel}`;
   const viewOwnerRef = useRef(viewOwner);
   useEffect(() => {
@@ -2048,7 +2048,7 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
     try {
       const res = await DataAccessor.getConversations(activeAccountId, 999, 0);
       if (isReadFailure(res)) {
-        // Lỗi → giữ danh sách đang có (trước đây bị thay bằng rỗng), không quét avatar dựa trên danh sách rỗng
+        // Error → keep the list on screen (before, it was replaced with empty), do not scan avatars based on an empty list
         setGroupsLoadFailed(true);
         return;
       }
@@ -2084,10 +2084,10 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
         setSelectedMemberIds(new Set());
       }
       const message = [
-        avatarByGroupId.size ? `đã cập nhật ${avatarByGroupId.size} avatar` : '',
-        excludedChannelIds.size ? `đã loại ${excludedChannelIds.size} kênh tin tức` : '',
+        avatarByGroupId.size ? tr('đã cập nhật {{count}} avatar', { count: avatarByGroupId.size }) : '',
+        excludedChannelIds.size ? tr('đã loại {{count}} kênh tin tức', { count: excludedChannelIds.size }) : '',
       ].filter(Boolean).join(', ');
-      if (message) showNotification(`Telegram Nhóm: ${message}`, 'success');
+      if (message) showNotification(tr('Telegram Nhóm: {{message}}', { message }), 'success');
     } finally { setRefreshingGroups(false); }
   }, [activeAccountId, channel, refreshingGroups, selectedId, setGroupCount, showNotification, loadGroups]);
 
@@ -2100,9 +2100,9 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
       // Show the persistent cache first. Avatar hydration is intentionally
       // backgrounded by the Telegram service to keep its MTProto connection stable.
       const cachedRes = await DataAccessor.getGroupMembers({ zaloId: activeAccountId, groupId });
-      if (seq !== membersSeqRef.current) return; // đã chọn nhóm khác / có lần tải mới hơn
-      // Đọc cache lỗi (employee: mất kết nối BOSS) → coi danh sách đang hiện của ĐÚNG nhóm này là cache: không làm
-      // mất thành viên đã thu thập từ lịch sử tin nhắn khi gộp với danh sách Telegram bên dưới
+      if (seq !== membersSeqRef.current) return; // another group was selected / a newer load exists
+      // Reading the cache failed (employee: lost connection to BOSS) → treat the list on screen for THIS group as the cache: do not lose
+      // the members collected from the message history when merging with the Telegram list below
       const cachedFailed = isReadFailure(cachedRes);
       const cached = cachedFailed
         ? (membersOwnerRef.current === owner ? membersRef.current : [])
@@ -2135,7 +2135,7 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
         setMembers([]);
         membersOwnerRef.current = null;
         setMembersLoadFailed(false);
-        showNotification('Đây là kênh tin tức Telegram, không có danh sách thành viên để quản lý.', 'info');
+        showNotification(tr('Đây là kênh tin tức Telegram, không có danh sách thành viên để quản lý.'), 'info');
         return;
       }
       if (memberRes?.success) {
@@ -2144,14 +2144,14 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
           .map(normaliseMember)
           .filter(member => member.id)
           .map(member => ({ ...cachedById.get(member.id), ...member, avatar: member.avatar || cachedById.get(member.id)?.avatar || '' }));
-        // Telegram chỉ trả về một phần participant list, trong khi những người
-        // từng nhắn tin đã được lưu theo group_id ở DB. Giữ cả hai nguồn để
-        // CRM không làm mất các thành viên đã thu thập từ lịch sử tin nhắn.
+        // Telegram only returns part of the participant list, while the people
+        // who have messaged are stored by group_id in the DB. Keep both sources so
+        // the CRM does not lose the members collected from the message history.
         const freshIds = new Set(fresh.map((member: any) => member.id));
         membersOwnerRef.current = owner;
         setMembers([...fresh, ...cached.filter((member: any) => !freshIds.has(member.id))]);
       } else if (!cached.length) {
-        showNotification(memberRes?.error || 'Không thể tải thành viên nhóm', 'error');
+        showNotification(memberRes?.error || tr('Không thể tải thành viên nhóm'), 'error');
       }
     } finally {
       if (seq === membersSeqRef.current) setMemberLoading(false);
@@ -2185,7 +2185,7 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
     return next;
   });
 
-  // Chiến dịch cho cửa sổ chọn: lỗi → giữ danh sách của đúng tài khoản + báo lỗi; của tài khoản khác thì bỏ
+  // Campaigns for the picker window: error → keep the list of the exact account + show the error; another account's list is dropped
   const loadPickerCampaigns = useCallback(async (): Promise<boolean> => {
     if (!activeAccountId) return false;
     const accountId = activeAccountId;
@@ -2232,24 +2232,24 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
         avatar: member.avatar || '',
       }));
       const res = await DataAccessor.addCampaignContacts({ zaloId: activeAccountId, campaignId: pickedCampaignId, contacts });
-      if (res?.success === false) throw new Error(res.error || 'Không thể thêm vào chiến dịch');
-      showNotification(`Đã thêm ${contacts.length} thành viên vào chiến dịch`, 'success');
+      if (res?.success === false) throw new Error(res.error || tr('Không thể thêm vào chiến dịch'));
+      showNotification(tr('Đã thêm {{count}} thành viên vào chiến dịch', { count: contacts.length }), 'success');
       setShowCampaignPicker(false);
       setSelectedMemberIds(new Set());
     } catch (err: any) {
-      showNotification(err?.message || 'Không thể thêm vào chiến dịch', 'error');
+      showNotification(err?.message || tr('Không thể thêm vào chiến dịch'), 'error');
     } finally { setAddingToCampaign(false); }
   }, [activeAccountId, pickedCampaignId, selectedMemberIds, members, showNotification]);
 
   const handleCreateCampaign = useCallback(async (data: any) => {
     if (!activeAccountId) return;
     const res = await DataAccessor.saveCRMCampaign({ zaloId: activeAccountId, campaign: { ...data, channel } });
-    if (res?.success === false) throw new Error(res.error || 'Không thể tạo chiến dịch');
+    if (res?.success === false) throw new Error(res.error || tr('Không thể tạo chiến dịch'));
     if (await loadPickerCampaigns() && res?.id) setPickedCampaignId(res.id);
   }, [activeAccountId, channel, loadPickerCampaigns]);
 
-  // ── Chế độ nhân viên: kết nối BOSS phục hồi → tải lại danh sách nhóm; thành viên / chiến dịch chỉ khi lần trước lỗi
-  // (tải thành viên còn gọi Telegram — không chạy lại mỗi lần kết nối hồi phục).
+  // ── Employee mode: BOSS connection restored → reload the group list; members / campaigns only if they failed last time
+  // (loading members still calls Telegram: do not run it again on every reconnect).
   useEmployeeResync(() => Promise.allSettled([
     loadGroups(),
     selectedId && membersLoadFailed ? loadGroupMembers(selectedId) : Promise.resolve(),
@@ -2269,13 +2269,13 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
       <aside className="w-80 flex-shrink-0 border-r border-border flex flex-col bg-card">
         <div className="px-4 pt-4 pb-3 border-b border-border flex items-start gap-2 flex-shrink-0">
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold text-foreground">Danh sách nhóm</h3>
+            <h3 className="text-sm font-semibold text-foreground">{tr('Danh sách nhóm')}</h3>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              {groups.length > 0 ? `${groups.length} nhóm Telegram đã đồng bộ` : 'Nhóm Telegram đã đồng bộ'}
+              {groups.length > 0 ? tr('{{count}} nhóm Telegram đã đồng bộ', { count: groups.length }) : tr('Nhóm Telegram đã đồng bộ')}
             </p>
           </div>
           <button onClick={refreshGroupsAndMissingAvatars} disabled={loading || refreshingGroups}
-            title="Tải lại nhóm và avatar còn thiếu"
+            title={tr('Tải lại nhóm và avatar còn thiếu')}
             className="flex items-center justify-center w-8 h-8 rounded-lg border border-input text-foreground/80 hover:text-foreground hover:border-border-strong hover:bg-card disabled:opacity-50 transition-colors flex-shrink-0">
             {loading || refreshingGroups ? SpinIcon : RefreshIcon}
           </button>
@@ -2286,14 +2286,14 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>
             </svg>
-            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Tìm nhóm Telegram..."
+            <input value={query} onChange={e => setQuery(e.target.value)} placeholder={tr('Tìm nhóm Telegram...')}
               className="w-full bg-card border border-input rounded-lg pl-8 pr-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors" />
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
           {groupsLoadFailed && groups.length > 0 && (
-            <LoadFailedNotice className="justify-start px-1" text="Không tải được danh sách nhóm mới nhất"
+            <LoadFailedNotice className="justify-start px-1" text={tr('Không tải được danh sách nhóm mới nhất')}
               onRetry={loadGroups} busy={loading || refreshingGroups} />
           )}
           {visibleGroups.map(g => {
@@ -2308,20 +2308,20 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
                     {g.display_name || g.contact_id}
                   </span>
                   <span className="block text-[10px] text-muted-foreground mt-0.5 truncate">
-                    {g.telegram_peer_type === 'forum' ? 'Diễn đàn'
-                      : g.telegram_peer_type === 'supergroup' ? 'Siêu nhóm'
-                      : g.telegram_peer_type === 'basic_group' ? 'Nhóm'
-                      : 'Nhóm Telegram'}
+                    {g.telegram_peer_type === 'forum' ? tr('Diễn đàn')
+                      : g.telegram_peer_type === 'supergroup' ? tr('Siêu nhóm')
+                      : g.telegram_peer_type === 'basic_group' ? tr('Nhóm')
+                      : tr('Nhóm Telegram')}
                   </span>
                 </span>
               </button>
             );
           })}
           {!loading && visibleGroups.length === 0 && (groupsLoadFailed && groups.length === 0 ? (
-            <LoadFailedNotice className="p-5" text="Không tải được danh sách nhóm" onRetry={loadGroups} busy={refreshingGroups} />
+            <LoadFailedNotice className="p-5" text={tr('Không tải được danh sách nhóm')} onRetry={loadGroups} busy={refreshingGroups} />
           ) : (
             <p className="p-5 text-center text-xs text-muted-foreground leading-relaxed">
-              Chưa có nhóm Telegram đã đồng bộ.
+              {tr('Chưa có nhóm Telegram đã đồng bộ.')}
             </p>
           ))}
         </div>
@@ -2331,13 +2331,13 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
       <section className="flex-1 min-w-0 flex flex-col">
         {!selectedId ? (
           <div className="m-auto text-center text-muted-foreground">
-            <p className="text-sm">Chọn một nhóm để xem CRM nhóm</p>
-            <p className="text-xs mt-1">Chỉ hiển thị nhóm đã có trong dữ liệu Telegram.</p>
+            <p className="text-sm">{tr('Chọn một nhóm để xem CRM nhóm')}</p>
+            <p className="text-xs mt-1">{tr('Chỉ hiển thị nhóm đã có trong dữ liệu Telegram.')}</p>
           </div>
         ) : channel === 'telegram_bot' ? (
           <div className="m-auto text-center text-muted-foreground max-w-sm">
-            <p className="text-sm">Telegram Bot không có danh sách thành viên đầy đủ.</p>
-            <p className="text-xs mt-1">Bot API chỉ cho phép campaign tới chat mà bot đã nhận được hoặc nhóm bot đang tham gia.</p>
+            <p className="text-sm">{tr('Telegram Bot không có danh sách thành viên đầy đủ.')}</p>
+            <p className="text-xs mt-1">{tr('Bot API chỉ cho phép campaign tới chat mà bot đã nhận được hoặc nhóm bot đang tham gia.')}</p>
           </div>
         ) : (
           <>
@@ -2353,13 +2353,13 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
                   {selectedGroup?.display_name || selectedId}
                 </h3>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {members.length > 0 ? `${members.length} thành viên` : 'Chưa có dữ liệu thành viên'}
+                  {members.length > 0 ? tr('{{count}} thành viên', { count: members.length }) : tr('Chưa có dữ liệu thành viên')}
                 </p>
               </div>
-              <button onClick={() => loadGroupMembers(selectedId)} disabled={memberLoading} title="Tải lại thành viên"
+              <button onClick={() => loadGroupMembers(selectedId)} disabled={memberLoading} title={tr('Tải lại thành viên')}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium transition-colors flex-shrink-0">
                 {memberLoading ? SpinIcon : RefreshIcon}
-                {memberLoading ? 'Đang tải...' : 'Tải lại'}
+                {memberLoading ? tr('Đang tải...') : tr('Tải lại')}
               </button>
             </div>
 
@@ -2369,7 +2369,7 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
                 <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>
                 </svg>
-                <input value={memberQuery} onChange={event => setMemberQuery(event.target.value)} placeholder="Tìm thành viên..."
+                <input value={memberQuery} onChange={event => setMemberQuery(event.target.value)} placeholder={tr('Tìm thành viên...')}
                   className="w-full bg-card border border-input rounded-lg pl-8 pr-3 py-2 text-xs text-foreground placeholder-subtle-foreground outline-none focus:border-blue-500 transition-colors" />
               </div>
               {visibleMembers.length > 0 && (
@@ -2381,12 +2381,12 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
                   {allVisibleSelected ? (
                     <>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                      Bỏ chọn
+                      {tr('Bỏ chọn')}
                     </>
                   ) : (
                     <>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="9 11 12 14 22 4"/></svg>
-                      Tất cả ({visibleMembers.length})
+                      {trx('Tất cả ({{count}})', { count: visibleMembers.length })}
                     </>
                   )}
                 </button>
@@ -2396,15 +2396,15 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
             {/* Members list */}
             <div className="flex-1 overflow-y-auto px-3 py-2">
               {membersLoadFailed && members.length > 0 && !memberLoading && (
-                <LoadFailedNotice className="justify-start px-2" text="Không tải được thành viên đã lưu — danh sách có thể thiếu"
+                <LoadFailedNotice className="justify-start px-2" text={tr('Không tải được thành viên đã lưu — danh sách có thể thiếu')}
                   onRetry={() => loadGroupMembers(selectedId)} />
               )}
               {memberLoading && members.length === 0 ? (
-                <p className="p-5 text-xs text-muted-foreground">Đang tải thành viên…</p>
+                <p className="p-5 text-xs text-muted-foreground">{tr('Đang tải thành viên…')}</p>
               ) : members.length === 0 && membersLoadFailed ? (
-                <LoadFailedNotice className="p-5" text="Không tải được danh sách thành viên" onRetry={() => loadGroupMembers(selectedId)} />
+                <LoadFailedNotice className="p-5" text={tr('Không tải được danh sách thành viên')} onRetry={() => loadGroupMembers(selectedId)} />
               ) : visibleMembers.length === 0 ? (
-                <p className="p-5 text-center text-xs text-muted-foreground">Không tìm thấy thành viên.</p>
+                <p className="p-5 text-center text-xs text-muted-foreground">{tr('Không tìm thấy thành viên.')}</p>
               ) : (
                 <div className="space-y-1">
                   {visibleMembers.map(member => {
@@ -2443,8 +2443,8 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
             <div className="border-t border-input px-5 py-3 flex items-center gap-3 bg-card/95 backdrop-blur flex-shrink-0">
               <span className="text-xs text-muted-foreground flex-1">
                 {selectedMemberIds.size ? (
-                  <>Đã chọn <span className="text-blue-400 font-medium">{selectedMemberIds.size}</span> thành viên</>
-                ) : 'Chọn thành viên để thao tác'}
+                  <>{trx('Đã chọn <0>{{count}}</0> thành viên', { 0: <span className="text-blue-400 font-medium" />, count: selectedMemberIds.size })}</>
+                ) : tr('Chọn thành viên để thao tác')}
               </span>
               <button onClick={openCampaignPicker} disabled={!selectedMemberIds.size}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium transition-colors ${
@@ -2453,7 +2453,7 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
                     : 'bg-muted text-subtle-foreground cursor-not-allowed'
                 }`}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                Thêm vào chiến dịch
+                {tr('Thêm vào chiến dịch')}
               </button>
               <button onClick={() => setShowAddToContacts(true)} disabled={!selectedMemberIds.size}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium transition-colors ${
@@ -2462,7 +2462,7 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
                     : 'bg-muted text-subtle-foreground cursor-not-allowed'
                 }`}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
-                Thêm vào liên hệ
+                {tr('Thêm vào liên hệ')}
               </button>
             </div>
           </>
@@ -2471,14 +2471,14 @@ function TelegramGroupMembersTab({ channel }: { channel: 'telegram_user' | 'tele
       {showCampaignPicker && !showCreateCampaign && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowCampaignPicker(false)}>
           <div className="w-80 rounded-2xl border border-input bg-card p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold text-foreground">Thêm vào chiến dịch</h3><button onClick={() => setShowCreateCampaign(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Tạo mới</button></div>
-            <p className="mb-3 text-xs text-muted-foreground">Chỉ hiển thị chiến dịch Telegram của tài khoản này.</p>
+            <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold text-foreground">{tr('Thêm vào chiến dịch')}</h3><button onClick={() => setShowCreateCampaign(true)} className="text-xs text-blue-400 hover:text-blue-300">{tr('+ Tạo mới')}</button></div>
+            <p className="mb-3 text-xs text-muted-foreground">{tr('Chỉ hiển thị chiến dịch Telegram của tài khoản này.')}</p>
             {campaignsLoadFailed && campaigns.length > 0 && (
-              <LoadFailedNotice className="justify-start px-0 pt-0" text="Không tải được danh sách chiến dịch mới nhất"
+              <LoadFailedNotice className="justify-start px-0 pt-0" text={tr('Không tải được danh sách chiến dịch mới nhất')}
                 onRetry={loadPickerCampaigns} busy={campaignsLoading} />
             )}
-            <div className="mb-4 max-h-52 space-y-1 overflow-y-auto">{campaigns.length ? campaigns.map(campaign => <button key={campaign.id} onClick={() => setPickedCampaignId(campaign.id)} className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${pickedCampaignId === campaign.id ? 'border-blue-500 bg-blue-500/15 text-foreground' : 'border-input text-foreground/80 hover:border-border-strong'}`}>{campaign.name}</button>) : campaignsLoadFailed ? <LoadFailedNotice className="py-4" text="Không tải được danh sách chiến dịch" onRetry={loadPickerCampaigns} busy={campaignsLoading} /> : <p className="py-4 text-center text-xs text-muted-foreground">Chưa có chiến dịch Telegram.</p>}</div>
-            <div className="flex gap-2"><button onClick={() => setShowCampaignPicker(false)} className="flex-1 rounded-lg bg-muted py-2 text-xs text-foreground">Huỷ</button><button onClick={handleAddToCampaign} disabled={!pickedCampaignId || addingToCampaign} className="flex-1 rounded-lg bg-blue-600 py-2 text-xs text-white disabled:opacity-40">{addingToCampaign ? 'Đang thêm…' : 'Thêm'}</button></div>
+            <div className="mb-4 max-h-52 space-y-1 overflow-y-auto">{campaigns.length ? campaigns.map(campaign => <button key={campaign.id} onClick={() => setPickedCampaignId(campaign.id)} className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${pickedCampaignId === campaign.id ? 'border-blue-500 bg-blue-500/15 text-foreground' : 'border-input text-foreground/80 hover:border-border-strong'}`}>{campaign.name}</button>) : campaignsLoadFailed ? <LoadFailedNotice className="py-4" text={tr('Không tải được danh sách chiến dịch')} onRetry={loadPickerCampaigns} busy={campaignsLoading} /> : <p className="py-4 text-center text-xs text-muted-foreground">{tr('Chưa có chiến dịch Telegram.')}</p>}</div>
+            <div className="flex gap-2"><button onClick={() => setShowCampaignPicker(false)} className="flex-1 rounded-lg bg-muted py-2 text-xs text-foreground">{tr('Huỷ')}</button><button onClick={handleAddToCampaign} disabled={!pickedCampaignId || addingToCampaign} className="flex-1 rounded-lg bg-blue-600 py-2 text-xs text-white disabled:opacity-40">{addingToCampaign ? tr('Đang thêm…') : tr('Thêm')}</button></div>
           </div>
         </div>
       )}

@@ -10,6 +10,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { tr } from '../../../shared/i18n';
 
 export type ConfirmVariant = 'danger' | 'warning' | 'info';
 
@@ -26,8 +27,8 @@ export function ConfirmDialog({
   open,
   title,
   message,
-  confirmText = 'Xác nhận',
-  cancelText = 'Hủy',
+  confirmText = tr('Xác nhận'),
+  cancelText = tr('Hủy'),
   variant = 'danger',
   onConfirm,
   onCancel,

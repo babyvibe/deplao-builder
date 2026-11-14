@@ -1,13 +1,13 @@
 /**
- * telegramIpc.ts - IPC handlers cho Telegram Bot channel
+ * telegramIpc.ts - IPC handlers for the Telegram Bot channel
  *
  * Channels:
- * - telegram:validateBot    — Validate bot token qua getMe
- * - telegram:startBot       — Start polling cho bot account
- * - telegram:stopBot        — Stop polling
- * - telegram:sendMessage    — Gửi tin nhắn
- * - telegram:sendPhoto      — Gửi ảnh
- * - telegram:getActiveBots  — Get danh sách bot đang active
+ * - telegram:validateBot    - Validate the bot token via getMe
+ * - telegram:startBot       - Start polling for the bot account
+ * - telegram:stopBot        - Stop polling
+ * - telegram:sendMessage    - Send a message
+ * - telegram:sendPhoto      - Send a photo
+ * - telegram:getActiveBots  - Get the list of active bots
  */
 
 import { ipcMain } from 'electron';
@@ -30,7 +30,7 @@ export function registerTelegramIpc(): void {
   ipcMain.handle('telegram:startBot', async (_event, account: TelegramBotChannel.TelegramBotAccount) => {
     try {
       TelegramBotChannel.startBot(account);
-      // Token đang bị nơi khác nhận tin (poller của token tạm dừng vì 409): báo thật, không báo "đã kết nối"
+      // This token is receiving messages somewhere else (its poller is paused because of a 409): report it truthfully, do not report "đã kết nối" (connected)
       const state = TelegramBotChannel.getBotPollState(account.accountId);
       if (state === 'conflict') {
         return {
@@ -109,7 +109,7 @@ export function registerTelegramIpc(): void {
           accountId: b.accountId,
           botUsername: b.botUsername,
           botFirstName: b.botFirstName,
-          // Đã đăng ký nhưng có thể đang tạm dừng (nơi khác nhận tin / token lỗi): giao diện dựa vào đây, không dựa vào việc có trong danh sách
+          // Registered but possibly paused (receiving elsewhere / token error): the UI relies on this, not on whether it is in the list
           polling: state === 'polling',
           state,
         };

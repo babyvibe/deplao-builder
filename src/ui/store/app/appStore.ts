@@ -10,6 +10,7 @@ import {
 import {
   normalizeAiSuggestKinds, normalizeComposerSuggestionCount, type AiSuggestKind, type AiSuggestKinds,
 } from '@/lib/chat/composer/aiReplySuggestions';
+import { tr } from '../../../shared/i18n';
 
 type AppView = 'chat' | 'friends' | 'settings' | 'dashboard' | 'crm' | 'workflow' | 'integration' | 'analytics' | 'erp' | 'plugin';
 export type AppTheme = 'dark' | 'light';
@@ -18,7 +19,7 @@ export interface GroupMember {
   userId: string;
   displayName: string;
   avatar: string;
-  role: number; // 0 = thành viên; chủ / phó nhóm tuỳ kênh (Zalo 2 / 1, Telegram 1 / 2) — đọc qua shared/chat/groupMemberRoles
+  role: number; // 0 = member; owner / deputy depends on the channel (Zalo 2 / 1, Telegram 1 / 2), read via shared/chat/groupMemberRoles
   username?: string; // Telegram @username
   status?: string;
   statusText?: string;
@@ -80,18 +81,18 @@ export interface PinnedIntegrationShortcut {
 
 interface AppStore {
   view: AppView;
-  /** Trang plugin đang mở khi view === 'plugin'. */
+  /** Plugin page that is open when view === 'plugin'. */
   activePluginPage: { pluginId: string; pageId: string } | null;
   openPluginPage: (pluginId: string, pageId: string) => void;
-  /** Trang "Ứng dụng": lưới các ứng dụng (plugin) đã cài. */
+  /** The "Ứng dụng" (Apps) page: grid of installed apps (plugins). */
   openPluginHub: () => void;
-  /** Ngăn đang mở ở trang Ứng dụng (installed | dev = Phát triển ứng dụng). */
+  /** Tab open on the Apps page (installed | dev = App development). */
   pluginHubTab: 'installed' | 'dev';
   setPluginHubTab: (tab: 'installed' | 'dev') => void;
-  /** Phần đang mở ở trang Ứng dụng, API & Webhook (Công cụ → Ứng dụng, API & Webhook). */
+  /** Section open on the Apps page, API & Webhook (Tools → Apps, API & Webhook). */
   pluginHubSection: 'plugins' | 'api' | 'webhooks';
   setPluginHubSection: (section: 'plugins' | 'api' | 'webhooks') => void;
-  /** Panel plugin bên phải màn chat (đóng các panel phải khác khi mở). */
+  /** Plugin panel on the right of the chat screen (closes the other right-side panels when opened). */
   activePluginPanel: { pluginId: string; panelId: string } | null;
   setActivePluginPanel: (panel: { pluginId: string; panelId: string } | null) => void;
   isLoading: boolean;
@@ -108,9 +109,9 @@ interface AppStore {
   searchOpen: boolean;
   // AI Suggestions
   aiSuggestionsEnabled: boolean;
-  /** Loại hội thoại được gợi ý (cá nhân / nhóm / chủ đề / kênh / bot) — menu Gợi ý AI, mọi tài khoản trên máy này */
+  /** Conversation types to suggest (personal / group / topic / channel / bot): AI suggestions menu, for all accounts on this machine */
   aiSuggestKinds: AiSuggestKinds;
-  /** Số câu gợi ý (1..5, mặc định 3) */
+  /** Number of suggestions (1..5, default 3) */
   aiSuggestCount: number;
   aiAutoInjectZaloContext: boolean;
   aiQuickPanelContextCountOverride: number | null;
@@ -126,7 +127,7 @@ interface AppStore {
   quickChatOpen: boolean;
   quickChatTarget: QuickChatTarget | null;
   quickChatZaloId: string | null;
-  /** Hội thoại đang hiện trong popup Nhắn tin nhanh: tin mới của nó coi như đang xem (không chuông / thẻ, đã đọc) */
+  /** Conversation shown in the quick-message popup: its new messages count as viewed (no bell / card, marked as read) */
   quickChatThread: { zaloId: string; threadId: string; threadType: number } | null;
   setQuickChatThread: (thread: { zaloId: string; threadId: string; threadType: number } | null) => void;
   openQuickChat: (opts?: { target?: QuickChatTarget; zaloId?: string }) => void;
@@ -148,13 +149,13 @@ interface AppStore {
    */
   mutedThreads: Record<string, Record<string, number>>;
   notifSettings: NotifSettings;
-  /** Cài đặt riêng của từng tài khoản: zaloId → các mục KHÁC mặc định (lib/notifications/notifSettingsOverrides, lưu trên máy này) */
+  /** Per-account settings: zaloId → the items that DIFFER from the default (lib/notifications/notifSettingsOverrides, saved on this machine) */
   notifSettingsOverrides: Record<string, NotifSettingsOverride>;
   /** In-memory others cache: zaloId -> Set<contactId> */
   othersConversations: Record<string, Set<string>>;
-  /** Hội thoại Zalo đang ẩn bằng PIN (ZL-03): zaloId → contact_id (contacts.zalo_hidden) */
+  /** Zalo conversations hidden with a PIN (ZL-03): zaloId → contact_id (contacts.zalo_hidden) */
   hiddenConversations: Record<string, Set<string>>;
-  /** Tài khoản đang mở khoá hội thoại ẩn (đã gõ đúng PIN): zaloId → thời điểm mở (ms) — chỉ máy này */
+  /** Accounts that have unlocked hidden conversations (correct PIN entered): zaloId → unlock time (ms), this machine only */
   hiddenUnlocked: Record<string, number>;
 
   theme: AppTheme;
@@ -196,9 +197,9 @@ interface AppStore {
   loadFlags: (zaloId: string) => Promise<void>;
 
   /**
-   * Employee mode: tải lại cờ (tắt tiếng / "Khác") + nhãn của các tài khoản đang xem sau khi kết nối BOSS
-   * phục hồi (useEmployeeResync). Không có `zaloIds` → tài khoản đang mở / các tài khoản gộp trang.
-   * Chế độ chủ/standalone: không làm gì.
+   * Employee mode: reload the flags (muted / "Khác") + labels of the viewed accounts after the connection to the owner's machine
+   * is restored (useEmployeeResync). Without `zaloIds` → the open account / the accounts in the merged inbox.
+   * Owner / standalone mode: does nothing.
    */
   reloadEmployeeData: (zaloIds?: string[]) => Promise<void>;
 
@@ -214,9 +215,9 @@ interface AppStore {
 
   /** Get notification settings for a specific account (override + fallback to global) */
   getNotifSettingsForAccount: (zaloId: string) => NotifSettings;
-  /** Chỉnh cài đặt riêng của một tài khoản (chỉ lưu phần khác mặc định, localStorage của máy này) */
+  /** Change the settings of one account (saves only the parts that differ from the default, in this machine's localStorage) */
   setNotifSettingsForAccount: (zaloId: string, settings: Partial<NotifSettings>) => Promise<void>;
-  /** Bỏ cài đặt riêng: tài khoản theo lại cài đặt mặc định */
+  /** Remove the account's own settings: the account goes back to the default settings */
   resetNotifSettingsForAccount: (zaloId: string) => void;
 
   /** Move a contact to Others folder. Persists to DB + updates in-memory cache. */
@@ -225,18 +226,18 @@ interface AppStore {
   removeFromOthers: (zaloId: string, contactId: string) => void;
   /** Fast in-memory check. */
   isInOthers: (zaloId: string, contactId: string) => boolean;
-  /** Hội thoại đang ẩn trên Zalo (bất kể đã mở khoá): không âm thanh / thông báo / số chưa đọc (quyết định Q3). */
+  /** Hidden conversations on Zalo (even if unlocked): no sound / notifications / unread count (decision Q3). */
   isZaloHidden: (zaloId: string, contactId: string) => boolean;
-  /** Ẩn và tài khoản đang khoá → không hiện ở danh sách / tìm kiếm. */
+  /** Hidden and the account is locked → not shown in the list / search. */
   isHiddenLocked: (zaloId: string, contactId: string) => boolean;
   setHiddenUnlocked: (zaloId: string, unlocked: boolean) => void;
-  /** Ẩn lại mọi tài khoản đang mở (khoá app, đổi tài khoản, 5 phút không thao tác). */
+  /** Hide again all unlocked accounts (app locked, account switched, 5 minutes of inactivity). */
   lockAllHidden: () => void;
-  /** Thay danh sách hội thoại ẩn của một tài khoản (sau khi mở khoá / ẩn / bỏ ẩn). */
+  /** Replace the hidden conversation list of one account (after unlocking / hiding / unhiding). */
   setHiddenThreads: (zaloId: string, contactIds: string[]) => void;
   /**
-   * Áp dụng cờ tắt tiếng / "Khác" vừa đổi ở nơi khác (db:contactFlagsChanged — Boss hoặc nhân viên khác, hoặc tiếng
-   * vọng thay đổi của chính mình) vào bộ nhớ đệm. KHÔNG ghi DB. Giá trị như đang có → không đổi state (không render lại).
+   * Apply the muted / "Khác" flags changed somewhere else (db:contactFlagsChanged, from the owner's machine or another employee, or the echo of one's own change)
+   * to the cache. Does NOT write to the DB. A value that is already the same → state unchanged (no re-render).
    */
   applyContactFlags: (zaloId: string, contactId: string, flags: { is_muted?: number; mute_until?: number; is_in_others?: number; zalo_hidden?: number }) => void;
 
@@ -246,9 +247,9 @@ interface AppStore {
   getGroupInfo: (zaloId: string, groupId: string) => CachedGroupInfo | undefined;
   clearGroupInfo: (zaloId: string, groupId: string) => void;
 
-  // ── Merged inbox (Gộp tài khoản) ─────────────────────────────────────────────
+  // ── Merged inbox (merge accounts) ─────────────────────────────────────────────
   mergedInboxMode: boolean;
-  /** Danh sách zaloId được gộp vào inbox chung */
+  /** zaloIds merged into the shared inbox */
   mergedInboxAccounts: string[];
   /** null = show all; zaloId = filter by this account */
   mergedInboxFilterAccount: string | null;
@@ -333,7 +334,7 @@ const loadNotifSettings = (): NotifSettings => {
   }
 };
 
-// ─── Cài đặt thông báo riêng của từng tài khoản: localStorage của máy này (như notifSettings) ──────────────
+// ─── Per-account notification settings: this machine's localStorage (like notifSettings) ──────────────
 const loadNotifOverrides = (): Record<string, NotifSettingsOverride> => {
   try {
     return normalizeNotifOverrides(JSON.parse(localStorage.getItem(NOTIF_OVERRIDES_STORAGE_KEY) || '{}'));
@@ -420,8 +421,8 @@ function loadAiThreadAssistantMap(): Record<string, string> {
 
 // ─── Helper: write flag to DB via IPC (fire-and-forget) ─────────────────────
 /**
- * Lưu cờ tắt thông báo / "Khác". UI đã đổi trước (optimistic); ghi lỗi (nhân viên mất kết nối Boss, không có quyền…)
- * → `revert()` trả lại trạng thái cũ + báo lỗi. Trước đây lỗi bị bỏ qua: UI báo đã tắt thông báo nhưng Boss không lưu.
+ * Save the mute / "Khác" flags. The UI changes first (optimistic); if the write fails (employee lost connection to the owner's machine, no permission…)
+ * → `revert()` restores the old state + shows an error. Previously the error was ignored: the UI showed notifications as muted but the owner's machine did not save it.
  */
 function persistFlag(
   zaloId: string,
@@ -431,7 +432,7 @@ function persistFlag(
 ) {
   const fail = (error?: string) => {
     revert();
-    useAppStore.getState().showNotification(`Không lưu được thay đổi${error ? `: ${error}` : ''}`, 'error');
+    useAppStore.getState().showNotification(tr('Không lưu được thay đổi{{v1}}', { v1: error ? `: ${error}` : '' }), 'error');
   };
   DataAccessor.setContactFlags({ zaloId, contactId, flags })
     .then((res: any) => { if (res && res.success === false) fail(res.error); })
@@ -522,8 +523,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   hideNotification: () => set({ notification: null }),
   showErpPermissionDialog: (payload) => set({
     erpPermissionDialog: {
-      title: payload?.title || 'Không có quyền thực hiện',
-      message: payload?.message || 'Tài khoản hiện tại không có quyền thực hiện thao tác ERP này. Vui lòng liên hệ quản trị viên để được cấp quyền phù hợp.',
+      title: payload?.title || tr('Không có quyền thực hiện'),
+      message: payload?.message || tr('Tài khoản hiện tại không có quyền thực hiện thao tác ERP này. Vui lòng liên hệ quản trị viên để được cấp quyền phù hợp.'),
       details: payload?.details,
     },
   }),
@@ -559,7 +560,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   })),
   setAiSuggestionsEnabled: (enabled) => {
     try { localStorage.setItem('ai_suggestions_enabled', String(enabled)); } catch {}
-    // Gợi ý đang hiện của ô soạn tin: hooks/chat/useAiReplySuggestions tự bỏ khi tắt
+    // Suggestions currently shown in the composer: hooks/chat/useAiReplySuggestions drops them itself when turned off
     set({ aiSuggestionsEnabled: enabled });
   },
   setAiSuggestKind: (kind, enabled) => set((s) => {
@@ -644,8 +645,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (useEmployeeStore.getState().mode === 'employee') {
       try {
         const res = await DataAccessor.getLocalLabels({ zaloId });
-        // Lỗi: KHÔNG cache (trước đây lỗi = nhãn rỗng suốt 12 h) và giữ nhãn đang có. Không đóng dấu
-        // labelsFetchedAt → lần đổi tài khoản / kết nối lại sau hỏi lại BOSS.
+        // Error: do NOT cache (previously an error meant empty labels for 12 h) and keep the current labels. Do not stamp
+        // labelsFetchedAt → the next account switch / reconnect asks the owner's machine again.
         if (isReadFailure(res)) return { labels: cached || [], version: cachedVersion };
         const labels = (res?.labels || []).map((l: any) => ({
           id: l.id,
@@ -664,7 +665,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }));
         return { labels, version: 0 };
       } catch {
-        // Máy nhân viên không có phiên Zalo: không rơi xuống gọi Zalo API (lỗi đó lại bị cache 5 phút)
+        // Employee machines have no Zalo session: do not fall through to calling the Zalo API (that error would then be cached for 5 minutes)
         return { labels: cached || [], version: cachedVersion };
       }
     }
@@ -715,8 +716,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   loadFlags: async (zaloId) => {
     try {
       const res = await DataAccessor.getContactsWithFlags(zaloId);
-      // Lỗi (employee: mất kết nối BOSS) → giữ cờ đang có: thay bằng rỗng làm "Khác" trống và hội thoại
-      // đang tắt tiếng kêu lại. reloadEmployeeData tải lại khi kết nối phục hồi.
+      // Error (employee: lost connection to the owner's machine) → keep the current flags: replacing them with empty would leave "Khác" empty and make a
+      // muted conversation ring again. reloadEmployeeData reloads when the connection is restored.
       if (!res?.success) return;
 
       const newMuted: Record<string, number> = {};
@@ -730,11 +731,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         } else if (row.mute_until > 0 && row.mute_until > Date.now()) {
           newMuted[row.contact_id] = row.mute_until;
         }
-        // "Khác" folder: is_in_others=1 hoặc telegram_archived=1
+        // "Khác" folder: is_in_others=1 or telegram_archived=1
         if (row.is_in_others === 1 || row.telegram_archived === 1) {
           othersSet.add(row.contact_id);
         }
-        // Hội thoại ẩn bằng PIN của Zalo (ZL-03)
+        // Zalo conversations hidden with a PIN (ZL-03)
         if (Number(row.zalo_hidden) === 1) hiddenSet.add(row.contact_id);
       }
 
@@ -758,8 +759,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const accounts = useAccountStore.getState().accounts;
     await Promise.allSettled(unique.flatMap((zaloId) => {
       const tasks: Promise<unknown>[] = [get().loadFlags(zaloId)];
-      // Nhãn chỉ nạp cho tài khoản Zalo (như ConversationList). `force`: nhãn đã cache trước lúc mất kết nối có
-      // thể đã đổi trên BOSS; nhánh nhân viên không dùng auth.
+      // Labels are only loaded for Zalo accounts (like ConversationList). `force`: labels cached before the connection was lost may
+      // have changed on the owner's machine; the employee branch does not use auth.
       if (isZalo(accounts.find((a) => a.zalo_id === zaloId)?.channel)) {
         tasks.push(get().fetchLabelsWithCache(zaloId, null, true));
       }
@@ -774,7 +775,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((s) => ({
       mutedThreads: { ...s.mutedThreads, [zaloId]: { ...(s.mutedThreads[zaloId] || {}), [contactId]: until } },
     }));
-    // Lỗi lưu → trả về giá trị trước (nếu chưa ai đổi tiếp)
+    // Save error → return the previous value (if nobody has changed it since)
     const revert = () => set((s) => {
       if (s.mutedThreads[zaloId]?.[contactId] !== until) return {};
       const next = { ...(s.mutedThreads[zaloId] || {}) };
@@ -911,8 +912,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!zaloId || !contactId || !flags) return;
     set((s) => {
       const patch: Partial<AppStore> = {};
-      // Tắt tiếng: is_muted=1 → vô thời hạn (0); mute_until > now → có hạn; còn lại → bỏ tắt tiếng.
-      // Thiếu một nửa (chỉ is_muted / chỉ mute_until) → nửa còn lại lấy theo giá trị đang có.
+      // Mute: is_muted=1 → forever (0); mute_until > now → until that time; otherwise → unmute.
+      // Half missing (only is_muted / only mute_until) → the other half uses the current value.
       if (flags.is_muted !== undefined || flags.mute_until !== undefined) {
         const accountMuted = s.mutedThreads[zaloId] || {};
         const current = accountMuted[contactId];
@@ -1037,7 +1038,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   hasAnyCRMRequestUnseen: () => Object.values(get().crmRequestUnseenByAccount).some(Boolean),
 
   // ── Account switcher (Ctrl+Tab) ──────────────────────────────────────────
-  /** Số items: merged mode → "Tất cả" (index 0) + accounts; normal → chỉ accounts */
+  /** Number of items: merged mode → "Tất cả" (All) (index 0) + accounts; normal → accounts only */
   openAccountSwitcher: () => set((s) => {
     const accs = useAccountStore.getState().accounts;
     const total = s.mergedInboxMode ? accs.length + 1 : accs.length;
@@ -1049,7 +1050,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const activeId = useAccountStore.getState().activeAccountId;
     let startIdx = accs.findIndex(a => a.zalo_id === activeId);
     if (startIdx < 0) startIdx = 0;
-    if (s.mergedInboxMode) startIdx += 1; // "Tất cả" ở index 0
+    if (s.mergedInboxMode) startIdx += 1; // "Tất cả" (All) at index 0
     return { accountSwitcherOpen: true, accountSwitcherIndex: startIdx };
   }),
   closeAccountSwitcher: (select) => set((s) => {
@@ -1057,7 +1058,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (select) {
       const accs = useAccountStore.getState().accounts;
       const idx = s.accountSwitcherIndex;
-      // Merged mode: index 0 = "Tất cả", 1..N = accounts[0..N-1]
+      // Merged mode: index 0 = "Tất cả" (All), 1..N = accounts[0..N-1]
       // Normal mode: 0..N-1 = accounts[0..N-1] directly
       if (s.mergedInboxMode) {
         if (idx === 0) {

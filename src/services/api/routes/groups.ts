@@ -1,6 +1,6 @@
 /**
- * Nhóm chat, bạn bè, tra cứu người dùng.
- * Kênh IPC: db:getContactsFiltered (contactType group), zalo:getGroupInfo, db:getGroupMembers,
+ * Group chats, friends, user lookup.
+ * IPC channels: db:getContactsFiltered (contactType group), zalo:getGroupInfo, db:getGroupMembers,
  * zalo:addUserToGroup, zalo:removeUserFromGroup, zalo:changeGroupName, zalo:getGroupLinkDetail,
  * zalo:enableGroupLink, zalo:disableGroupLink, zalo:createGroup, zalo:leaveGroup,
  * telegramUser:getFullChat/getGroupMembers/addChatUser/deleteChatUser/editChatTitle/exportChatInvite/leaveChat,
@@ -13,9 +13,10 @@ import { AccountInfo, ApiContext, route, RouteDef } from '../types';
 import { CHANNELS, requireOnline, unsupported } from '../channels/ChannelActions';
 import { accountParams, mapConversation, offsetPage, pageShape, scrub } from './common';
 import { foldSearchText } from '../../../shared/chat/searchFold';
+import { tr } from '../../../shared/i18n';
 
-const groupParams = s.object({ accountId: s.id(), groupId: s.id().describe('ID nhóm (thread_id)') });
-const userParams = s.object({ accountId: s.id(), userId: s.id().describe('ID người dùng trên kênh') });
+const groupParams = s.object({ accountId: s.id(), groupId: s.id().describe(tr('ID nhóm (thread_id)')) });
+const userParams = s.object({ accountId: s.id(), userId: s.id().describe(tr('ID người dùng trên kênh')) });
 
 async function zaloCall(ctx: ApiContext, acc: AccountInfo, channel: string, payload: Record<string, any>, timeoutMs?: number) {
     requireOnline(acc);
@@ -29,7 +30,7 @@ export function groupRoutes(): RouteDef[] {
     return [
         route({
             method: 'GET', path: '/accounts/:accountId/groups', scope: 'chat:read', tags, operationId: 'listGroups',
-            summary: 'Nhóm của tài khoản (từ DB, mới hoạt động trước)',
+            summary: tr('Nhóm của tài khoản (từ DB, mới hoạt động trước)'),
             params: accountParams,
             query: s.object({ ...pageShape, search: s.string().max(200).optional() }),
             handler: async ctx => {
@@ -41,7 +42,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/groups/:groupId', scope: 'chat:read', tags, operationId: 'getGroup',
-            summary: 'Thông tin nhóm từ kênh (thành viên, admin, cài đặt)',
+            summary: tr('Thông tin nhóm từ kênh (thành viên, admin, cài đặt)'),
             params: groupParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -60,7 +61,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/groups/:groupId/members', scope: 'chat:read', tags, operationId: 'listGroupMembers',
-            summary: 'Thành viên nhóm (Zalo: danh sách đã lưu; Telegram: lấy từ kênh)',
+            summary: tr('Thành viên nhóm (Zalo: danh sách đã lưu; Telegram: lấy từ kênh)'),
             params: groupParams,
             query: s.object({ limit: s.int().min(1).max(1000).default(200) }),
             handler: async ctx => {
@@ -76,7 +77,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/members', scope: 'chat:manage', tags, operationId: 'addGroupMembers',
-            summary: 'Thêm thành viên vào nhóm',
+            summary: tr('Thêm thành viên vào nhóm'),
             params: groupParams,
             body: s.object({ user_ids: s.array(s.id()).min(1).max(50) }),
             handler: async ctx => {
@@ -97,7 +98,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/groups/:groupId/members/:userId', scope: 'chat:manage', tags, operationId: 'removeGroupMember',
-            summary: 'Mời một thành viên ra khỏi nhóm',
+            summary: tr('Mời một thành viên ra khỏi nhóm'),
             params: s.object({ accountId: s.id(), groupId: s.id(), userId: s.id() }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -115,7 +116,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/groups/:groupId', scope: 'chat:manage', tags, operationId: 'renameGroup',
-            summary: 'Đổi tên nhóm',
+            summary: tr('Đổi tên nhóm'),
             params: groupParams,
             body: s.object({ name: s.string().min(1).max(200) }),
             handler: async ctx => {
@@ -130,7 +131,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/groups/:groupId/invite-link', scope: 'chat:manage', tags, operationId: 'getGroupInviteLink',
-            summary: 'Link mời vào nhóm',
+            summary: tr('Link mời vào nhóm'),
             params: groupParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -145,7 +146,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/invite-link', scope: 'chat:manage', tags, operationId: 'enableGroupInviteLink',
-            summary: 'Bật link mời (Zalo)',
+            summary: tr('Bật link mời (Zalo)'),
             params: groupParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -155,7 +156,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/groups/:groupId/invite-link', scope: 'chat:manage', tags, operationId: 'disableGroupInviteLink',
-            summary: 'Tắt link mời (Zalo)',
+            summary: tr('Tắt link mời (Zalo)'),
             params: groupParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -166,7 +167,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/groups', scope: 'chat:manage', tags, operationId: 'createGroup',
-            summary: 'Tạo nhóm Zalo',
+            summary: tr('Tạo nhóm Zalo'),
             params: accountParams,
             body: s.object({ name: s.string().min(1).max(200), member_ids: s.array(s.id()).min(1).max(100) }),
             handler: async ctx => {
@@ -177,7 +178,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/leave', scope: 'chat:manage', tags, operationId: 'leaveGroup',
-            summary: 'Rời nhóm',
+            summary: tr('Rời nhóm'),
             params: groupParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -188,10 +189,10 @@ export function groupRoutes(): RouteDef[] {
             },
         }),
 
-        // ── Bạn bè & người dùng ───────────────────────────────────────────
+        // ── Friends & users ───────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/friends', scope: 'contacts:read', tags: ctags, operationId: 'listFriends',
-            summary: 'Danh sách bạn bè (Zalo). refresh=true tải lại từ Zalo',
+            summary: tr('Danh sách bạn bè (Zalo). refresh=true tải lại từ Zalo'),
             params: accountParams,
             query: s.object({ ...pageShape, search: s.string().max(200).optional(), refresh: s.boolean().default(false) }),
             handler: async ctx => {
@@ -206,7 +207,7 @@ export function groupRoutes(): RouteDef[] {
                 const r = await ctx.call('db:getFriends', { zaloId: acc.id });
                 let rows: any[] = r?.friends || [];
                 if (search) {
-                    // db:getFriends trả displayName / phoneNumber; tìm không phân biệt hoa thường và dấu ("dao" khớp "Đào").
+                    // db:getFriends returns displayName / phoneNumber; search ignores case and diacritics ("dao" matches "Đào").
                     const q = foldSearchText(search);
                     rows = rows.filter(f => foldSearchText(f.displayName ?? f.display_name).includes(q) || String(f.phoneNumber ?? f.phone ?? '').includes(q));
                 }
@@ -215,7 +216,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/friend-requests', scope: 'contacts:read', tags: ctags, operationId: 'listFriendRequests',
-            summary: 'Lời mời kết bạn đã nhận / đã gửi',
+            summary: tr('Lời mời kết bạn đã nhận / đã gửi'),
             params: accountParams,
             query: s.object({ direction: s.enum(['received', 'sent'] as const).default('received') }),
             handler: async ctx => {
@@ -226,7 +227,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/friend-requests', scope: 'contacts:write', tags: ctags, operationId: 'sendFriendRequest',
-            summary: 'Gửi lời mời kết bạn (Zalo)',
+            summary: tr('Gửi lời mời kết bạn (Zalo)'),
             params: accountParams,
             body: s.object({ user_id: s.id(), message: s.string().max(150).default('') }),
             handler: async ctx => {
@@ -238,7 +239,7 @@ export function groupRoutes(): RouteDef[] {
         ...(['accept', 'reject', 'cancel'] as const).map(action => route({
             method: 'POST', path: `/accounts/:accountId/friend-requests/:userId/${action}`, scope: 'contacts:write', tags: ctags,
             operationId: `${action}FriendRequest`,
-            summary: action === 'accept' ? 'Chấp nhận lời mời kết bạn' : action === 'reject' ? 'Từ chối lời mời kết bạn' : 'Huỷ lời mời đã gửi',
+            summary: action === 'accept' ? tr('Chấp nhận lời mời kết bạn') : action === 'reject' ? tr('Từ chối lời mời kết bạn') : tr('Huỷ lời mời đã gửi'),
             params: userParams,
             handler: async (ctx: ApiContext) => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -253,7 +254,7 @@ export function groupRoutes(): RouteDef[] {
         })),
         route({
             method: 'DELETE', path: '/accounts/:accountId/friends/:userId', scope: 'contacts:write', tags: ctags, operationId: 'removeFriend',
-            summary: 'Huỷ kết bạn (Zalo)',
+            summary: tr('Huỷ kết bạn (Zalo)'),
             params: userParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -265,7 +266,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/users/lookup', scope: 'contacts:read', tags: ctags, operationId: 'lookupUserByPhone',
-            summary: 'Tìm người dùng theo số điện thoại (DB trước, rồi Zalo)',
+            summary: tr('Tìm người dùng theo số điện thoại (DB trước, rồi Zalo)'),
             params: accountParams,
             query: s.object({ phone: s.string().min(6).max(20) }),
             handler: async ctx => {
@@ -279,7 +280,7 @@ export function groupRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/users/:userId', scope: 'contacts:read', tags: ctags, operationId: 'getUserProfile',
-            summary: 'Hồ sơ người dùng từ Zalo',
+            summary: tr('Hồ sơ người dùng từ Zalo'),
             params: userParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);

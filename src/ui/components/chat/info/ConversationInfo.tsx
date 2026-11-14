@@ -25,6 +25,8 @@ import PeerInitials from '@/components/common/avatars/PeerInitials';
 import ZaloPresenceLine from '../zalo/presence/ZaloPresenceLine';
 import ZaloAutoDeleteSection from '../zalo/ZaloAutoDeleteSection';
 import { MY_DOCUMENTS_NAME, isMyDocumentsThread, isSavedMessagesAccount } from '@/lib/chat/zalo/myDocuments';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 function muteUntilToDuration(until: number): number | string {
   if (until === 0) return -1;
@@ -82,7 +84,7 @@ function UserConversationInfo() {
   const [showMutualGroups, setShowMutualGroups] = useState(false);
   const [mutualGroups, setMutualGroups] = useState<{ groupId: string; name: string; avatar: string }[]>([]);
   const [mutualGroupsLoading, setMutualGroupsLoading] = useState(false);
-  // isFriendDB: check thực từ bảng friends trong DB (đáng tin hơn contact.is_friend)
+  // isFriendDB: checked directly from the friends table in the DB (more reliable than contact.is_friend)
   const [isFriendDB, setIsFriendDB] = useState<boolean | null>(null);
   const [aliasRefreshing, setAliasRefreshing] = useState(false);
   // Editable contact info states
@@ -96,33 +98,33 @@ function UserConversationInfo() {
 
   const contactList = activeAccountId ? (contacts[activeAccountId] || []) : [];
   const contact = contactList.find((c) => c.contact_id === activeThreadId);
-  // Kênh thật của hội thoại (resolveChannel): tài khoản Telegram / Facebook → kênh của tài khoản, kể cả khi dòng cũ ghi
-  // 'zalo' hay hội thoại ghim chưa có trong store
+  // The real channel of the conversation (resolveChannel): a Telegram / Facebook account → that account's channel, even when the old row says
+  // 'zalo', or the pinned conversation is not yet in the store
   const activeAccount = getActiveAccount();
   const effectiveChannel = resolveChannel(contact, activeAccount);
   const channelCap = getCapability(effectiveChannel);
   const effectiveChannelCap = channelCap;
-  // Hội thoại Zalo 1:1 thật (không phải nhóm / chính mình / My Documents): trạng thái truy cập (ZL-01), tự xoá tin (ZL-05)
+  // Real Zalo 1:1 conversation (not a group / yourself / My Documents): access status (ZL-01), auto-delete messages (ZL-05)
   const zaloDirect = isZaloCh(effectiveChannel) && !!activeAccountId && !!activeThreadId
     && contact?.contact_type !== 'group' && activeThreadId !== activeAccountId
     && !isMyDocumentsThread((activeAccount || {}) as any, activeThreadId);
-  // Telegram: Tin nhắn đã lưu (hội thoại với chính mình) mang tên + ảnh của mình → My Documents + đám mây như Zalo
+  // Telegram: Saved Messages (the conversation with yourself) carries your own name + image → My Documents + cloud, as in Zalo
   const savedMessages = isSavedMessagesAccount(activeAccount as any) && isMyDocumentsThread(activeAccount as any, activeThreadId);
   const canEditAlias = channelCap.supportsAlias && !savedMessages;
-  // Hiển thị: ưu tiên alias → display_name
+  // Display: prefer alias → display_name
   const displayName = savedMessages ? MY_DOCUMENTS_NAME : (contact?.alias || contact?.display_name || activeThreadId || '');
   const avatarUrl = savedMessages ? '' : (contact?.avatar_url || '');
 
-  // Check friends table mỗi khi thread thay đổi
+  // Check the friends table every time the thread changes
   useEffect(() => {
     setIsFriendDB(null);
     if (!activeAccountId || !activeThreadId) return;
     DataAccessor.isFriend({ zaloId: activeAccountId, userId: activeThreadId })
-      // Lỗi đọc (employee: mất kết nối BOSS) ≠ "không phải bạn bè": dùng cờ trên hội thoại như khi lỗi IPC
+      // A read error (employee: Boss connection lost) ≠ "not a friend": use the flag on the conversation, as on an IPC error
       .then((res: any) => setIsFriendDB(isReadFailure(res) ? !!(contact?.is_friend) : !!res?.isFriend))
       .catch(() => setIsFriendDB(!!(contact?.is_friend)));
   }, [activeAccountId, activeThreadId]);
-  // Init aliasValue từ alias (không phải display_name) khi thread thay đổi
+  // Initialize aliasValue from the alias (not display_name) when the thread changes
   useEffect(() => {
     setAliasValue(contact?.alias || '');
   }, [activeThreadId, contact?.alias]);
@@ -143,8 +145,8 @@ function UserConversationInfo() {
       .catch(() => {});
   }, [activeAccountId, activeThreadId]);
 
-  // Ghim trong app của hội thoại đang mở đổi ở nơi khác (Boss / nhân viên khác / ConversationList — relay
-  // db:pinnedConversationChanged → 'local-pin-changed' có threadId + isPinned)
+  // The in-app pin of the open conversation changed elsewhere (Boss / another employee / ConversationList: relay
+  // db:pinnedConversationChanged → 'local-pin-changed' with threadId + isPinned)
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -156,8 +158,8 @@ function UserConversationInfo() {
     return () => window.removeEventListener(LOCAL_PIN_CHANGED_EVENT, handler);
   }, [activeAccountId, activeThreadId]);
 
-  // Chế độ nhân viên: kết nối BOSS phục hồi → đọc lại cờ ghim trong app (đổi trong lúc mất kết nối không có event).
-  // Lỗi đọc / đã đổi hội thoại → giữ cờ đang hiện.
+  // Employee mode: Boss connection restored → re-read the in-app pin flag (a change made while the connection was lost has no event).
+  // A read error or the conversation changed → keep the flag currently shown.
   useEmployeeResync(() => {
     const accountId = useAccountStore.getState().activeAccountId;
     const threadId = useChatStore.getState().activeThreadId;
@@ -179,10 +181,10 @@ function UserConversationInfo() {
     return () => document.removeEventListener('mousedown', handler);
   }, [muteDropdownOpen]);
 
-  // ── Auto-fetch user info khi vào hội thoại chưa có thông tin ──────────
+  // ── Auto-fetch user info when opening a conversation that has no info yet ──────────
   useEffect(() => {
     if (!activeAccountId || !activeThreadId) return;
-    if (activeThreadType === 1) return; // Group - không áp dụng
+    if (activeThreadType === 1) return; // Group - not applicable
 
     const ctList = useChatStore.getState().contacts[activeAccountId] || [];
     const ct = ctList.find((c) => c.contact_id === activeThreadId);
@@ -191,11 +193,11 @@ function UserConversationInfo() {
     const channel = ct.channel || CHANNEL.ZALO;
     const hasRealName = !!(ct.display_name && ct.display_name !== activeThreadId && !/^\d+$/.test(ct.display_name));
     const hasAvatar = !!ct.avatar_url;
-    if (hasRealName && hasAvatar) return; // Đã có đủ thông tin
+    if (hasRealName && hasAvatar) return; // Already has enough info
 
     setLoading(true);
     if (isZaloCh(channel)) {
-      // Dùng fetchContactInfo có cache 7 ngày + xử lý alias
+      // Use fetchContactInfo, which has a 7-day cache and alias handling
       fetchContactInfo(activeAccountId, activeThreadId)
         .finally(() => setLoading(false))
         .catch(() => {});
@@ -275,7 +277,7 @@ function UserConversationInfo() {
                   displayName: newName, avatarUrl: newAvatar, phone: newPhone,
                   gender, birthday,
                 });
-                // Lưu alias vào DB (field riêng, không overwrite display_name)
+                // Save the alias to the DB (its own field, does not overwrite display_name)
                 if (newAlias) {
                   DataAccessor.setContactAlias({
                     zaloId: activeAccountId,
@@ -296,9 +298,9 @@ function UserConversationInfo() {
   const handleMuteWithTime = (until: number) => {
     if (!activeAccountId || !activeThreadId) return;
     setMuted(activeAccountId, activeThreadId, until);
-    showNotification('Đã tắt thông báo', 'success');
+    showNotification(tr('Đã tắt thông báo'), 'success');
     setMuteDropdownOpen(false);
-    // Gọi API đồng bộ lên server (fire-and-forget) - chỉ Zalo
+    // Call the sync API on the server (fire-and-forget): Zalo only
     if (channelCap.supportsMuteSync && isZaloCh(effectiveChannel)) {
       const auth = getAuth();
       if (auth) {
@@ -311,8 +313,8 @@ function UserConversationInfo() {
   const handleUnmute = () => {
     if (!activeAccountId || !activeThreadId) return;
     clearMuted(activeAccountId, activeThreadId);
-    showNotification('Đã bật thông báo', 'success');
-    // Gọi API đồng bộ lên server (fire-and-forget) - chỉ Zalo
+    showNotification(tr('Đã bật thông báo'), 'success');
+    // Call the sync API on the server (fire-and-forget): Zalo only
     if (channelCap.supportsMuteSync && isZaloCh(effectiveChannel)) {
       const auth = getAuth();
       if (auth) {
@@ -329,13 +331,13 @@ function UserConversationInfo() {
       if (!activeAccountId) return;
       const newVal = !isLocalPinned;
       const pinRes: any = await DataAccessor.setLocalPinnedConversation({ zaloId: activeAccountId, threadId: activeThreadId, isPinned: newVal });
-      // Nhân viên: Boss từ chối / mất kết nối → báo lỗi, giữ trạng thái cũ
+      // Employee: Boss refuses or connection lost → show the error, keep the old state
       if (pinRes?.success === false) {
-        showNotification(`Không ${newVal ? 'ghim' : 'bỏ ghim'} được: ${pinRes.error || 'lỗi không xác định'}`, 'error');
+        showNotification(tr('Không {{v1}} được: {{v2}}', { v1: newVal ? 'ghim' : tr('bỏ ghim'), v2: pinRes.error || tr('lỗi không xác định') }), 'error');
         return;
       }
       setIsLocalPinned(newVal);
-      showNotification(newVal ? 'Đã ghim trong app' : 'Đã bỏ ghim khỏi app', 'success');
+      showNotification(newVal ? tr('Đã ghim trong app') : tr('Đã bỏ ghim khỏi app'), 'success');
       return;
     }
     const auth = getAuth();
@@ -347,9 +349,9 @@ function UserConversationInfo() {
         isPin: !isPinned,
       });
       setIsPinned(!isPinned);
-      showNotification(isPinned ? 'Đã bỏ ghim hội thoại' : 'Đã ghim hội thoại', 'success');
+      showNotification(isPinned ? tr('Đã bỏ ghim hội thoại') : tr('Đã ghim hội thoại'), 'success');
     } catch (e: any) {
-      showNotification('Lỗi: ' + e.message, 'error');
+      showNotification(tr('Lỗi: {{message}}', { message: e.message }), 'error');
     }
   };
 
@@ -363,7 +365,7 @@ function UserConversationInfo() {
         if (auth) {
           const res = await ipc.zalo?.changeFriendAlias({ auth, alias: trimmed, friendId: activeThreadId });
           if (res && !res.success && res.error) {
-            showNotification('Lỗi cập nhật biệt danh: ' + res.error, 'error');
+            showNotification(tr('Lỗi cập nhật biệt danh: {{error}}', { error: res.error }), 'error');
             return;
           }
         }
@@ -384,14 +386,14 @@ function UserConversationInfo() {
           alias: trimmed,
         }).catch(() => {});
       }
-      showNotification('Đã cập nhật biệt danh', 'success');
+      showNotification(tr('Đã cập nhật biệt danh'), 'success');
       setEditingAlias(false);
     } catch (e: any) {
-      showNotification('Lỗi: ' + e.message, 'error');
+      showNotification(tr('Lỗi: {{message}}', { message: e.message }), 'error');
     }
   };
 
-  /** Reload alias + user info từ API - lưu toàn bộ alias + cập nhật thông tin hội thoại hiện tại */
+  /** Reload the alias + user info from the API: save all aliases + update the current conversation's info. */
   const handleRefreshAlias = async () => {
     if (!activeThreadId || !activeAccountId) return;
     setAliasRefreshing(true);
@@ -399,7 +401,7 @@ function UserConversationInfo() {
       if (isZaloCh(effectiveChannel) && channelSupports(effectiveChannel, 'supportsAlias')) {
         const auth = getAuth();
         if (!auth) return;
-        // 1. Update toàn bộ alias từ fetchAllAliases (pagination, count=200)
+        // 1. Update all aliases from fetchAllAliases (paginated, count=200)
         const aliasItems = await fetchAllAliases(auth);
         for (const item of aliasItems) {
           if (item.alias && item.userId) {
@@ -407,7 +409,7 @@ function UserConversationInfo() {
             DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
           }
         }
-        // 2. Fetch full profile (tên, avatar, SĐT) cho hội thoại hiện tại
+        // 2. Fetch the full profile (name, avatar, phone) for the current conversation
         const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: activeThreadId });
         const rawProfile = infoRes?.response?.changed_profiles?.[activeThreadId]
           || infoRes?.response?.data?.[activeThreadId];
@@ -433,8 +435,8 @@ function UserConversationInfo() {
           }
         }
       } else {
-        // Facebook / other: refresh thông tin user từ profile HTML + reload alias từ DB
-        // FB: refresh tên + avatar từ profile HTML
+        // Facebook / other: refresh the user info from the profile HTML + reload the alias from DB
+        // FB: refresh the name + avatar from the profile HTML
         const fbRes = await ipc.fb?.getUserInfoFacebook({ accountId: activeAccountId, userId: activeThreadId });
         if (fbRes?.success && (fbRes.name || fbRes.avatarUrl)) {
           const patch: any = { contact_id: activeThreadId };
@@ -462,7 +464,7 @@ function UserConversationInfo() {
       avatarUrl: contact?.avatar_url || '',
     }).catch(() => {});
     setEditingPhone(false);
-    showNotification('Đã cập nhật số điện thoại', 'success');
+    showNotification(tr('Đã cập nhật số điện thoại'), 'success');
   };
 
   const handleSaveBirthday = async () => {
@@ -470,7 +472,7 @@ function UserConversationInfo() {
     const val = birthdayInput.trim();
     // Basic validation: DD/MM/YYYY or empty
     if (val && !/^\d{2}\/\d{2}\/\d{4}$/.test(val)) {
-      showNotification('Ngày sinh không đúng định dạng DD/MM/YYYY', 'error');
+      showNotification(tr('Ngày sinh không đúng định dạng DD/MM/YYYY'), 'error');
       return;
     }
     updateContact(activeAccountId, { contact_id: activeThreadId, birthday: val || null });
@@ -483,7 +485,7 @@ function UserConversationInfo() {
       avatarUrl: contact?.avatar_url || '',
     }).catch(() => {});
     setEditingBirthday(false);
-    showNotification('Đã cập nhật ngày sinh', 'success');
+    showNotification(tr('Đã cập nhật ngày sinh'), 'success');
   };
 
   const handleSetGender = async (gender: number | null) => {
@@ -497,8 +499,8 @@ function UserConversationInfo() {
       displayName: contact?.display_name || '',
       avatarUrl: contact?.avatar_url || '',
     }).catch(() => {});
-    const label = gender === 0 ? 'Nam' : gender === 1 ? 'Nữ' : 'chưa xác định';
-    showNotification(`Đã đặt giới tính: ${label}`, 'success');
+    const label = gender === 0 ? 'Nam' : gender === 1 ? tr('Nữ') : tr('chưa xác định');
+    showNotification(tr('Đã đặt giới tính: {{label}}', { label }), 'success');
   };
 
   // Close gender picker on outside click
@@ -518,7 +520,7 @@ function UserConversationInfo() {
     };
   }, [showGenderPicker]);
 
-  // Load mutual groups khi mở sub-panel
+  // Load mutual groups when the sub-panel opens
   const handleOpenMutualGroups = () => {
     if (!channelCap.supportsMutualGroups) return;
     setShowMutualGroups(true);
@@ -575,7 +577,7 @@ function UserConversationInfo() {
             </svg>
           </button>
           <span className="text-sm font-semibold text-foreground flex-1 text-center pr-6">
-            Nhóm chung ({mutualGroups.length})
+            {trx('Nhóm chung ({{count}})', { count: mutualGroups.length })}
           </span>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -602,14 +604,14 @@ function UserConversationInfo() {
             </button>
           ))}
           {!mutualGroupsLoading && mutualGroups.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-8">Không có nhóm chung</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Không có nhóm chung')}</p>
           )}
         </div>
       </div>
     );
   }
 
-  // Media detail - thay thế toàn bộ panel
+  // Media detail: replaces the whole panel
   if (mediaDetailTab !== null && activeThreadId) {
     return (
       <MediaDetailPanel
@@ -632,9 +634,9 @@ function UserConversationInfo() {
     <div className="w-72 h-full flex-shrink-0 bg-card border-l border-border flex flex-col overflow-y-auto">
       {/* Header */}
       <div className="flex items-center px-4 py-3 border-b border-border">
-        <span className="flex-1 text-sm font-semibold text-foreground text-center">Thông tin liên hệ</span>
+        <span className="flex-1 text-sm font-semibold text-foreground text-center">{tr('Thông tin liên hệ')}</span>
         {(channelCap.supportsAlias || channelCap.supportsPinConversation) && (
-        <button title="Cập nhật thông tin" onClick={handleRefresh} disabled={loading}
+        <button title={tr('Cập nhật thông tin')} onClick={handleRefresh} disabled={loading}
           className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 flex-shrink-0">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
             className={loading ? 'animate-spin' : ''}>
@@ -650,7 +652,7 @@ function UserConversationInfo() {
         <div className="flex-1 flex items-center justify-center py-20">
           <div className="flex flex-col items-center gap-3">
             <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs text-muted-foreground">Đang tải thông tin...</span>
+            <span className="text-xs text-muted-foreground">{tr('Đang tải thông tin...')}</span>
           </div>
         </div>
       )}
@@ -672,9 +674,9 @@ function UserConversationInfo() {
           <div className="flex items-center gap-2 mt-2 w-full px-2">
             <input value={aliasValue} onChange={e => setAliasValue(e.target.value)}
               className="flex-1 bg-muted border border-input rounded-lg px-2 py-1 text-sm text-foreground focus:outline-none focus:border-blue-500 text-center"
-              placeholder="Nhập biệt danh..." autoFocus
+              placeholder={tr('Nhập biệt danh...')} autoFocus
               onKeyDown={e => { if (e.key === 'Enter') handleSaveAlias(); if (e.key === 'Escape') setEditingAlias(false); }} />
-            <button onClick={handleSaveAlias} className="px-2 py-1 bg-blue-600 rounded-lg text-xs text-white hover:bg-blue-700 flex-shrink-0">Lưu</button>
+            <button onClick={handleSaveAlias} className="px-2 py-1 bg-blue-600 rounded-lg text-xs text-white hover:bg-blue-700 flex-shrink-0">{tr('Lưu')}</button>
             <button onClick={() => setEditingAlias(false)} className="px-2 py-1 bg-muted rounded-lg text-xs text-foreground/80 hover:bg-accent flex-shrink-0">✕</button>
           </div>
         ) : (
@@ -684,7 +686,7 @@ function UserConversationInfo() {
             <p className="text-foreground font-semibold text-base text-center">{displayName}</p>
             {channelCap.supportsAlias && isZaloCh(effectiveChannel) && (
               <button
-                title="Cập nhật thông tin + tên gợi nhớ"
+                title={tr('Cập nhật thông tin + tên gợi nhớ')}
                 onClick={(e) => { e.stopPropagation(); handleRefreshAlias(); }}
                 className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
                 disabled={aliasRefreshing}
@@ -720,9 +722,9 @@ function UserConversationInfo() {
       <div className="border-b border-border divide-y divide-border/50">
         <ContactInfoRow
           icon={<PhoneIcon className="w-4 h-4" />}
-          label="Số điện thoại"
+          label={tr('Số điện thoại')}
           value={contact?.phone || ''}
-          placeholder="Thêm số điện thoại"
+          placeholder={tr('Thêm số điện thoại')}
           editing={editingPhone}
           editValue={phoneInput}
           onStartEdit={() => { setPhoneInput(contact?.phone || ''); setEditingPhone(true); }}
@@ -732,9 +734,9 @@ function UserConversationInfo() {
         />
         <ContactInfoRow
           icon={<GiftIcon className="w-4 h-4" />}
-          label="Sinh nhật"
+          label={tr('Sinh nhật')}
           value={contact?.birthday || ''}
-          placeholder="Chọn ngày"
+          placeholder={tr('Chọn ngày')}
           editing={editingBirthday}
           editValue={birthdayInput}
           onStartEdit={() => { setBirthdayInput(contact?.birthday || ''); setEditingBirthday(true); }}
@@ -746,9 +748,9 @@ function UserConversationInfo() {
         <div ref={genderBtnRef} className="relative">
           <ContactInfoRow
             icon={<UserIcon className="w-4 h-4" />}
-            label="Giới tính"
+            label={tr('Giới tính')}
             value={contact?.gender === 0 ? 'Nam' : contact?.gender === 1 ? 'Nữ' : ''}
-            placeholder="Chọn giới tính"
+            placeholder={tr('Chọn giới tính')}
             editing={false}
             onStartEdit={() => setShowGenderPicker(true)}
             isClickable
@@ -769,7 +771,7 @@ function UserConversationInfo() {
         <div className="relative" ref={muteRef}>
           <UserActionBtn
             icon={isMuted ? <BellIcon className="w-4 h-4" /> : <BellOffIcon className="w-4 h-4" />}
-            label={isMuted ? 'Bật thông báo' : 'Tắt thông báo'}
+            label={isMuted ? tr('Bật thông báo') : tr('Tắt thông báo')}
             onClick={isMuted ? handleUnmute : () => {
               if (muteRef.current) {
                 const rect = muteRef.current.getBoundingClientRect();
@@ -783,10 +785,10 @@ function UserConversationInfo() {
             <div className="fixed z-50 bg-card border border-border rounded-xl shadow-2xl min-w-[210px] py-1"
               style={{ top: muteDropdownPos.top, left: muteDropdownPos.left }}>
               {[
-                { label: 'Trong 1 giờ',             until: () => Date.now() + 60 * 60 * 1000 },
-                { label: 'Trong 4 giờ',             until: () => Date.now() + 4 * 60 * 60 * 1000 },
-                { label: 'Cho đến 8:00 AM',         until: () => { const d = new Date(); d.setDate(d.getDate() + (d.getHours() >= 8 ? 1 : 0)); d.setHours(8,0,0,0); return d.getTime(); } },
-                { label: 'Cho đến khi được mở lại', until: () => 0 },
+                { label: tr('Trong 1 giờ'),             until: () => Date.now() + 60 * 60 * 1000 },
+                { label: tr('Trong 4 giờ'),             until: () => Date.now() + 4 * 60 * 60 * 1000 },
+                { label: tr('Cho đến 8:00 AM'),         until: () => { const d = new Date(); d.setDate(d.getDate() + (d.getHours() >= 8 ? 1 : 0)); d.setHours(8,0,0,0); return d.getTime(); } },
+                { label: tr('Cho đến khi được mở lại'), until: () => 0 },
               ].map(opt => (
                 <button key={opt.label} onClick={() => handleMuteWithTime(opt.until())}
                   className="w-full flex items-center px-4 py-2.5 text-sm text-foreground/80 hover:bg-muted hover:text-foreground text-left transition-colors">
@@ -797,18 +799,18 @@ function UserConversationInfo() {
           )}
         </div>
         {effectiveChannelCap.supportsPinConversation && isZaloCh(effectiveChannel) && (
-          <UserActionBtn icon={<PinIcon className="w-4 h-4" />} label={isPinned ? 'Bỏ ghim' : 'Ghim hội thoại'} onClick={handleTogglePin} active={isPinned} />
+          <UserActionBtn icon={<PinIcon className="w-4 h-4" />} label={isPinned ? tr('Bỏ ghim') : tr('Ghim hội thoại')} onClick={handleTogglePin} active={isPinned} />
         )}
         {(!effectiveChannelCap.supportsPinConversation || isNonZalo(effectiveChannel)) && (
-          <UserActionBtn icon={<MapPinIcon className="w-4 h-4" />} label={isLocalPinned ? 'Bỏ ghim app' : 'Ghim trong app'} onClick={handleTogglePin} active={isLocalPinned} />
+          <UserActionBtn icon={<MapPinIcon className="w-4 h-4" />} label={isLocalPinned ? tr('Bỏ ghim app') : tr('Ghim trong app')} onClick={handleTogglePin} active={isLocalPinned} />
         )}
         {channelCap.supportsCreateGroup && (
-          <UserActionBtn icon={<UsersIcon className="w-4 h-4" />} label="Tạo nhóm" onClick={() => setCreateGroupOpen(true)} />
+          <UserActionBtn icon={<UsersIcon className="w-4 h-4" />} label={tr('Tạo nhóm')} onClick={() => setCreateGroupOpen(true)} />
         )}
       </div>
 
 
-      {/* Tự xoá tin nhắn trên Zalo (ZL-05) — Deplao vẫn giữ tin */}
+      {/* Auto-delete messages on Zalo (ZL-05): Deplao still keeps the messages */}
       {zaloDirect && activeAccountId && activeThreadId && (
         <div className="border-b border-border">
           <ZaloAutoDeleteSection accountId={activeAccountId} threadId={activeThreadId} isGroup={false} bordered={false} />
@@ -823,7 +825,7 @@ function UserConversationInfo() {
         />
       )}
 
-      {/* User actions: nhóm chung, chặn, báo xấu, xoá bạn, xoá lịch sử */}
+      {/* User actions: mutual groups, block, report, remove friend, delete history */}
       {activeThreadId && (
         <UserActionSection
           userId={activeThreadId}
@@ -919,7 +921,7 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
               )}
               <button onClick={onSave}
                 className="px-2 py-1 text-xs font-medium text-green-400 hover:text-green-300 bg-muted/50 hover:bg-muted rounded-lg transition-colors flex-shrink-0">
-                Lưu
+                {tr('Lưu')}
               </button>
               <button onClick={onCancelEdit}
                 className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground bg-muted/50 hover:bg-muted rounded-lg transition-colors flex-shrink-0">
@@ -930,7 +932,7 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
             <button
               onClick={onClick || onStartEdit}
               className="text-left mt-0.5 block w-full"
-              title={isClickable ? 'Nhấn để chọn' : 'Nhấn để sửa'}
+              title={isClickable ? tr('Nhấn để chọn') : tr('Nhấn để sửa')}
             >
               {value ? (
                 <span className={`text-sm ${isClickable ? 'text-blue-400 hover:text-blue-300 cursor-pointer' : 'text-foreground'}`}>
@@ -939,7 +941,7 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
                   {value}
                 </span>
               ) : (
-                <span className="text-sm text-muted-foreground italic">{placeholder || 'Chưa cập nhật'}</span>
+                <span className="text-sm text-muted-foreground italic">{placeholder || tr('Chưa cập nhật')}</span>
               )}
             </button>
           )}
@@ -948,7 +950,7 @@ function ContactInfoRow({ icon, label, value, placeholder, editing, editValue, o
       {!editing && !isClickable && (
         <button onClick={onStartEdit}
           className="text-muted-foreground hover:text-foreground/80 transition-colors flex-shrink-0 ml-2"
-          title="Sửa">
+          title={tr('Sửa')}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -983,9 +985,9 @@ function GenderPickerPopup({ current, onSelect, onClose }: {
   }, [onClose]);
 
   const OPTIONS = [
-    { value: null, label: 'Không xác định' },
-    { value: 0, label: '♂ Nam' },
-    { value: 1, label: '♀ Nữ' },
+    { value: null, label: tr('Không xác định') },
+    { value: 0, label: tr('♂ Nam') },
+    { value: 1, label: tr('♀ Nữ') },
   ];
 
   return (

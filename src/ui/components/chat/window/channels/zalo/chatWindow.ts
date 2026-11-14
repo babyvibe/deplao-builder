@@ -1,6 +1,6 @@
 /**
- * Zalo trong khung chat: thành viên nhóm từ getGroupInfo (DB chưa có), tên + ảnh người gửi chưa biết (getUserInfo từng
- * người). Tin cũ hơn: chỉ DB (lịch sử Zalo tải ở nơi khác: đồng bộ từ điện thoại, getGroupChatHistory).
+ * Zalo in the chat window: group members from getGroupInfo (when the DB has none), names + photos of unknown senders (getUserInfo, one person at a time).
+ * Older messages: DB only (Zalo history is loaded elsewhere: syncing from the phone, getGroupChatHistory).
  */
 import { useChatStore } from '@/store/chat/chatStore';
 import { useAccountStore } from '@/store/accounts/accountStore';
@@ -21,8 +21,8 @@ async function fetchGroupMembers({ account, accountId, groupId }: FetchGroupMemb
   const creatorId: string = String(info.creatorId || info.creator || '');
   const adminList: string[] = (info.adminIds || info.admins || []).map(String);
 
-  // Build members list từ memVerList hoặc memIdList
-  // memVerList có thể là array of strings "uid_version" hoặc array of objects {id, ...}
+  // Build the members list from memVerList or memIdList
+  // memVerList can be an array of strings "uid_version" or an array of objects {id, ...}
   const parseMemVerList = (list: any[]): string[] => {
     if (!list || !Array.isArray(list)) return [];
     return list.map((entry: any) => {
@@ -41,7 +41,7 @@ async function fetchGroupMembers({ account, accountId, groupId }: FetchGroupMemb
     memberId: uid,
     displayName: '',
     avatar: '',
-    // Quy ước Zalo trong DB: 2 = trưởng nhóm, 1 = phó nhóm (shared/chat/groupMemberRoles) — trước đây lưu ngược
+    // Zalo convention in the DB: 2 = group owner, 1 = deputy (shared/chat/groupMemberRoles). It used to be saved the other way round
     role: uid === creatorId ? 2 : adminList.includes(uid) ? 1 : 0,
   }));
 
@@ -56,7 +56,7 @@ function resolveUnknownSenders(
     const senderKey = `${activeAccountId}__${senderId}__${activeThreadId}`;
     requestedMemberInfoRef.current.add(senderKey);
 
-    // Fetch member info via IPC - tương tự fetchGroupMemberInfo trong useZaloEvents
+    // Fetch member info via IPC, similar to fetchGroupMemberInfo in useZaloEvents
     const load = async () => {
       try {
         const acc = useAccountStore.getState().accounts.find(a => a.zalo_id === activeAccountId);

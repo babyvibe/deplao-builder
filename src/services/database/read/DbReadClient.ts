@@ -1,11 +1,11 @@
 /**
- * DbReadClient — main gửi câu SELECT nặng của DatabaseService (mở hội thoại, tìm tin, danh sách ảnh / file, danh sách
- * hội thoại) sang luồng đọc (dbReadWorker.ts) thay vì chạy better-sqlite3 đồng bộ trên luồng chính. Ổ đĩa chậm (máy vừa
- * thức dậy, RAM đầy) thì mỗi lần đọc có thể mất vài giây: trước đây là vài giây cả app đứng, nay chỉ lệnh đó chờ.
+ * DbReadClient: main sends the heavy SELECT statements of DatabaseService (opening a conversation, searching messages, photo / file lists, conversation
+ * lists) to the read thread (dbReadWorker.ts) instead of running better-sqlite3 synchronously on the main thread. On a slow disk (the machine just
+ * woke up, RAM full) each read can take several seconds: before, the whole app froze for those seconds; now only that command waits.
  *
- * Kết quả không bao giờ khác đường cũ: chưa bật (test), không tạo được worker, worker lỗi / chết / quá hạn, câu lệnh lỗi
- * trong worker (vd hàm SQL chỉ đăng ký trên kết nối chính) → run() trả null và DatabaseService chạy câu đó trên luồng
- * chính như trước. Worker không dùng từ IDLE_TERMINATE_MS thì dừng (đỡ RAM), lần đọc sau tạo lại.
+ * The result is never different from the old path: not enabled (tests), the worker could not be created, the worker errored / died / timed out, a statement failed
+ * in the worker (e.g. a SQL function that is only registered on the main connection) → run() returns null and DatabaseService runs that statement on the main
+ * thread as before. A worker that is not used for IDLE_TERMINATE_MS is stopped (saves RAM); the next read creates it again.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -13,7 +13,7 @@ import type { ReadRequest } from './readOps';
 
 export const READ_TIMEOUT_MS = 30_000;
 export const IDLE_TERMINATE_MS = 10 * 60_000;
-/** Worker chết ngoài ý muốn từng này lần thì thôi (đọc trên luồng chính tới khi mở lại app). */
+/** If the worker dies unexpectedly this many times, stop (reads run on the main thread until the app is reopened). */
 const MAX_CRASHES = 3;
 
 export type ReadExecutor = (req: ReadRequest) => unknown | Promise<unknown>;
@@ -25,17 +25,17 @@ interface Pending {
     timer: ReturnType<typeof setTimeout>;
 }
 
-/** Đường dẫn dbReadWorker.js cạnh file này (ưu tiên bản unpack khỏi app.asar — worker_threads không đọc được asar). */
+/** Path of dbReadWorker.js next to this file (prefers the copy unpacked from app.asar: worker_threads cannot read asar). */
 function resolveWorkerPath(dir: string = __dirname): string | null {
     const p = path.join(dir, 'dbReadWorker.js');
     const candidates = p.includes('app.asar') && !p.includes('app.asar.unpacked') ? [p.replace('app.asar', 'app.asar.unpacked'), p] : [p];
     for (const c of candidates) {
-        try { if (fs.existsSync(c)) return c; } catch { /* bỏ qua */ }
+        try { if (fs.existsSync(c)) return c; } catch { /* ignore */ }
     }
     return null;
 }
 
-/** better_sqlite3.node thật trên đĩa (worker không cần gói 'bindings' nằm trong app.asar) — như dbsync/DbOpsClient. */
+/** The real better_sqlite3.node on disk (the worker does not need the 'bindings' package inside app.asar), as in dbsync/DbOpsClient. */
 function resolveNativeBinding(): string | null {
     try {
         const pkg = require.resolve('better-sqlite3/package.json');
@@ -47,7 +47,7 @@ function resolveNativeBinding(): string | null {
     }
 }
 
-/** Structured clone biến Buffer thành Uint8Array: trả lại Buffer như better-sqlite3 trên luồng chính. */
+/** Structured clone turns a Buffer into a Uint8Array: returns the Buffer as better-sqlite3 does on the main thread. */
 function withBuffers(value: unknown): unknown {
     const fix = (row: unknown) => {
         if (!row || typeof row !== 'object') return;
@@ -75,21 +75,21 @@ export class DbReadClient {
     private idleTimer: ReturnType<typeof setTimeout> | null = null;
     private log: (msg: string) => void = () => undefined;
 
-    /** main.ts (sau app ready): đọc nặng chạy qua worker. */
+    /** main.ts (after app ready): heavy reads go through the worker. */
     enable(opts: { log?: (msg: string) => void } = {}): void {
         this.enabled = true;
         if (opts.log) this.log = opts.log;
     }
 
-    /** Test: chạy câu đọc trong tiến trình (vd readOps + node:sqlite); null = về mặc định. */
+    /** Test: run the read statement in-process (e.g. readOps + node:sqlite); null = use the default. */
     setExecutor(fn: ReadExecutor | null, closeAll?: () => void): void {
         this.executor = fn;
         this.executorCloseAll = fn ? closeAll || null : null;
     }
 
-    /** null = không chạy được ngoài luồng chính (nơi gọi đọc như cũ). */
+    /** null = cannot run off the main thread (the caller reads as before). */
     async run(req: ReadRequest): Promise<{ value: unknown } | null> {
-        // Tham số nhị phân: để luồng chính lo (structured clone đổi kiểu Buffer)
+        // Binary parameters: the main thread handles them (structured clone changes the Buffer type)
         if (req.params.some(p => p instanceof Uint8Array)) return null;
         if (this.executor) {
             try {
@@ -120,12 +120,12 @@ export class DbReadClient {
     }
 
     /**
-     * Đóng mọi kết nối của worker và CHỜ xong (tối đa timeoutMs) — DatabaseService gọi ngay trước khi đóng / thay / chuyển
-     * file DB (Windows không cho thay file đang mở). Lệnh đọc gửi trước đó chạy xong trước.
+     * Closes every connection of the worker and WAITS for it (at most timeoutMs), DatabaseService calls this right before closing / replacing / moving
+     * the DB file (Windows does not allow replacing an open file). Read commands sent before it finish first.
      */
     closeAllSync(timeoutMs = 2000): void {
         if (this.executor) {
-            try { this.executorCloseAll?.(); } catch { /* bỏ qua */ }
+            try { this.executorCloseAll?.(); } catch { /* ignore */ }
             return;
         }
         const w = this.worker;
@@ -141,8 +141,8 @@ export class DbReadClient {
         try {
             Atomics.wait(flag, 0, 0, timeoutMs);
         } catch {
-            // Luồng này không được Atomics.wait: chờ bận, tối đa timeoutMs
-            while (Atomics.load(flag, 0) === 0 && Date.now() < deadline) { /* chờ */ }
+            // This thread must not use Atomics.wait: wait while busy, at most timeoutMs
+            while (Atomics.load(flag, 0) === 0 && Date.now() < deadline) { /* wait */ }
         }
     }
 
@@ -173,7 +173,7 @@ export class DbReadClient {
                     this.log(`[DbRead] Worker dừng ${this.crashes} lần (mã ${code}): đọc trên luồng chính như cũ`);
                 }
             });
-            // Không giữ tiến trình sống chỉ vì worker (thoát app không phải chờ)
+            // Do not keep the process alive just for the worker (exiting the app does not have to wait)
             w.unref();
             this.worker = w;
             return w;
@@ -202,7 +202,7 @@ export class DbReadClient {
         }
     }
 
-    /** Không dùng IDLE_TERMINATE_MS → dừng worker (đỡ RAM); lần đọc sau tạo lại. */
+    /** Without IDLE_TERMINATE_MS → stop the worker (saves RAM); the next read creates it again. */
     private touch(): void {
         if (this.idleTimer) clearTimeout(this.idleTimer);
         this.idleTimer = setTimeout(() => {

@@ -9,6 +9,8 @@ import {
   type BossUrlChangeReason,
   type RelayTunnelStatus,
 } from '../../../../shared/cloud/tunnelAddress';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const ACK_STORAGE_KEY = 'deplao_relay_url_ack';
 const ACK_EVENT = 'relay:urlNoticeAck';
@@ -17,7 +19,7 @@ function readAck(): string | null {
   try { return localStorage.getItem(ACK_STORAGE_KEY); } catch { return null; }
 }
 
-/** Địa chỉ BOSS đã bấm "Đã gửi cho nhân viên" (đồng bộ giữa các màn đang mở). */
+/** The owner's address after clicking "Đã gửi cho nhân viên" (Sent to employees) (synced across the open screens). */
 export function useRelayUrlAck(): [string | null, (url: string) => void] {
   const [ack, setAck] = useState<string | null>(readAck);
   useEffect(() => {
@@ -34,32 +36,32 @@ export function useRelayUrlAck(): [string | null, (url: string) => void] {
 }
 
 const REASON_TEXT: Record<BossUrlChangeReason, string> = {
-  restart: 'Tunnel bị ngắt và đã tự chạy lại với địa chỉ mới.',
-  start: 'Tunnel vừa bật với địa chỉ khác lần trước (địa chỉ tạm đổi mỗi lần khởi động lại).',
-  switch: 'Bạn vừa đổi cấu hình tunnel.',
+  restart: tr('Tunnel bị ngắt và đã tự chạy lại với địa chỉ mới.'),
+  start: tr('Tunnel vừa bật với địa chỉ khác lần trước (địa chỉ tạm đổi mỗi lần khởi động lại).'),
+  switch: tr('Bạn vừa đổi cấu hình tunnel.'),
 };
 
-/** Sao chép vào clipboard + báo kết quả. */
-export function copyWithToast(text: string, okMessage = 'Đã sao chép'): void {
+/** Copy to the clipboard + report the result. */
+export function copyWithToast(text: string, okMessage = tr('Đã sao chép')): void {
   const notify = useAppStore.getState().showNotification;
   navigator.clipboard.writeText(text)
     .then(() => notify(okMessage, 'success'))
-    .catch(() => notify('Không sao chép được, hãy chọn và sao chép thủ công', 'error'));
+    .catch(() => notify(tr('Không sao chép được, hãy chọn và sao chép thủ công'), 'error'));
 }
 
 interface RelayAddressNoticeProps {
   status: RelayTunnelStatus | null | undefined;
   /**
-   * Bấm "Thiết lập địa chỉ cố định" (chỉ hiện khi đang dùng địa chỉ tạm). Mặc định mở Cài đặt → Internet & Cloud →
-   * Địa chỉ Internet (nơi duy nhất cấu hình địa chỉ); máy nhân viên / bản app không có module Cloudflare thì ẩn nút.
+   * Clicking "Thiết lập địa chỉ cố định" (Set up a fixed address) (shown only while using a temporary address). Opens Settings → Internet & Cloud →
+   * Internet address by default (the only place to configure the address); employee machines / app builds without the Cloudflare module hide the button.
    */
   onSetupFixed?: () => void;
   className?: string;
 }
 
 /**
- * "Địa chỉ cho nhân viên đã đổi" — hiện tới khi BOSS bấm "Đã gửi cho nhân viên". Nhân viên còn nối được (LAN,
- * hoặc qua tunnel cũ khi đổi cấu hình) đã được báo tự động; nhân viên ở xa cần BOSS gửi địa chỉ mới.
+ * "Địa chỉ cho nhân viên đã đổi" (The address for employees has changed) - shown until the owner clicks "Đã gửi cho nhân viên" (Sent to employees). Employees still connected (LAN,
+ * or through the old tunnel when the config changes) were told automatically; remote employees need the owner to send the new address.
  */
 export default function RelayAddressNotice({ status, onSetupFixed, className }: RelayAddressNoticeProps) {
   const [ack, acknowledge] = useRelayUrlAck();
@@ -69,7 +71,7 @@ export default function RelayAddressNotice({ status, onSetupFixed, className }: 
   if (!status || !shouldShowUrlChangedNotice(status, ack) || !status.tunnelUrl) return null;
   const url = status.tunnelUrl;
   const changedAt = status.urlChangedAt
-    ? new Date(status.urlChangedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+    ? new Date(status.urlChangedAt).toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' })
     : '';
   const reasonText = status.changeReason ? REASON_TEXT[status.changeReason] : '';
 
@@ -79,7 +81,7 @@ export default function RelayAddressNotice({ status, onSetupFixed, className }: 
         <AlertIcon className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-foreground">
-            Địa chỉ cho nhân viên đã đổi{changedAt ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">lúc {changedAt}</span> : null}
+            {tr('Địa chỉ cho nhân viên đã đổi')}{changedAt ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">{trx('lúc {{changedAt}}', { changedAt })}</span> : null}
           </p>
           {reasonText && <p className="text-xs text-muted-foreground mt-0.5">{reasonText}</p>}
         </div>
@@ -87,34 +89,33 @@ export default function RelayAddressNotice({ status, onSetupFixed, className }: 
 
       <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5">
         <code className="flex-1 min-w-0 truncate font-mono text-xs text-foreground select-all" title={url}>{url}</code>
-        <Button size="sm" leftIcon={<CopyIcon className="w-4 h-4" />} onClick={() => copyWithToast(url, 'Đã sao chép địa chỉ mới')}>
-          Sao chép
+        <Button size="sm" leftIcon={<CopyIcon className="w-4 h-4" />} onClick={() => copyWithToast(url, tr('Đã sao chép địa chỉ mới'))}>
+          {tr('Sao chép')}
         </Button>
       </div>
 
       {status.previousUrl && (
         <p className="text-[11px] text-subtle-foreground truncate" title={status.previousUrl}>
-          Địa chỉ cũ (không dùng được nữa): <span className="font-mono line-through">{status.previousUrl}</span>
+          {trx('Địa chỉ cũ (không dùng được nữa): <0>{{previousUrl}}</0>', { 0: <span className="font-mono line-through" />, previousUrl: status.previousUrl })}
         </p>
       )}
 
       <p className="text-xs text-muted-foreground leading-relaxed">
-        Nhân viên còn kết nối được (qua mạng LAN) đã được báo và tự chuyển. Nhân viên làm việc từ xa: gửi họ địa chỉ mới
-        để dán vào ô <strong className="text-foreground">"Kết nối lại"</strong> trên thanh tiêu đề.
+        {trx('Nhân viên còn kết nối được (qua mạng LAN) đã được báo và tự chuyển. Nhân viên làm việc từ xa: gửi họ địa chỉ mới để dán vào ô <0>"Kết nối lại"</0> trên thanh tiêu đề.', { 0: <strong className="text-foreground" /> })}
       </p>
 
       {status.kind === 'temporary' && (
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Dùng <strong className="text-foreground">Địa chỉ cố định</strong> để không phải gửi lại sau mỗi lần khởi động lại.
+          {trx('Dùng <0>Địa chỉ cố định</0> để không phải gửi lại sau mỗi lần khởi động lại.', { 0: <strong className="text-foreground" /> })}
           {setupFixed && (
-            <Button variant="link" size="sm" className="ml-1 text-xs" onClick={setupFixed}>Thiết lập địa chỉ cố định</Button>
+            <Button variant="link" size="sm" className="ml-1 text-xs" onClick={setupFixed}>{tr('Thiết lập địa chỉ cố định')}</Button>
           )}
         </p>
       )}
 
       <div className="flex justify-end">
         <Button variant="ghost" size="sm" leftIcon={<CheckIcon className="w-4 h-4" />} onClick={() => acknowledge(url)}>
-          Đã gửi cho nhân viên
+          {tr('Đã gửi cho nhân viên')}
         </Button>
       </div>
     </div>

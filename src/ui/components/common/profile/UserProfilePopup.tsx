@@ -1,6 +1,6 @@
 /**
- * UserProfilePopup - Popup thông tin người dùng
- * Reusable: dùng được trong ChatWindow, FriendList, Dashboard, ...
+ * UserProfilePopup - user info popup
+ * Reusable: can be used in ChatWindow, FriendList, Dashboard, ...
  */
 import React from 'react';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -19,6 +19,8 @@ import PeerInitials from '../avatars/PeerInitials';
 import ZaloPresenceLine from '../../chat/zalo/presence/ZaloPresenceLine';
 import { isMyDocumentsThread } from '@/lib/chat/zalo/myDocuments';
 import { openConversation } from '@/lib/chat/conversations/openConversation';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── ActionRow ────────────────────────────────────────────────────────────────
 export function ActionRow({ icon, label, onClick, textColor = 'text-foreground/80' }: {
@@ -323,7 +325,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
   const bio = userInfo?.bio || '';
   const isFriend = !!(userInfo?.isFr === 1 || userInfo?.isFriend || userInfo?.is_friend);
   const isMe = userId === activeAccountId;
-  // Trạng thái truy cập Zalo (ZL-01): chỉ người dùng Zalo 1:1, không phải chính mình / My Documents
+  // Zalo access status (ZL-01): only for 1:1 Zalo users, not yourself / My Documents
   const presenceAccount = useAccountStore.getState().accounts.find((a) => a.zalo_id === activeAccountId);
   const presenceContact = contacts.find((c) => c.contact_id === userId);
   const presenceEnabled = !isMe && !!presenceAccount && isZalo(presenceAccount.channel) && isZalo(presenceContact?.channel)
@@ -331,7 +333,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
 
   const formatGender = (g: number | undefined) => {
     if (g === undefined || g === null) return null;
-    return g === 1 ? 'Nữ' : g === 0 ? 'Nam' : null;
+    return g === 1 ? tr('Nữ') : g === 0 ? 'Nam' : null;
   };
 
   const formatDob = () => {
@@ -343,7 +345,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
     return '**/**/****';
   };
 
-  // Nhắn ngay trong popup Nhắn tin nhanh (không rời màn hình đang xem); trong popup có nút mở hội thoại đầy đủ
+  // Message right away in the quick message popup (without leaving the current screen); the popup has a button to open the full conversation
   const handleOpenChat = () => {
     useAppStore.getState().openQuickChat({
       zaloId: activeAccountId,
@@ -357,7 +359,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
 
   // ── Add-friend inline compose ──────────────────────────────────────────
   const [friendCompose, setFriendCompose] = React.useState(false);
-  const [friendMsg, setFriendMsg] = React.useState('Xin chào! Mình muốn kết bạn với bạn.');
+  const [friendMsg, setFriendMsg] = React.useState(tr('Xin chào! Mình muốn kết bạn với bạn.'));
   const [sendingFriendReq, setSendingFriendReq] = React.useState(false);
 
   const handleAddFriend = () => setFriendCompose(true);
@@ -366,12 +368,12 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
     try {
       setSendingFriendReq(true);
       const auth = await getAuth();
-      await ipc.zalo?.sendFriendRequest({ auth, userId, msg: friendMsg.trim() || 'Xin chào!' });
+      await ipc.zalo?.sendFriendRequest({ auth, userId, msg: friendMsg.trim() || tr('Xin chào!') });
       setUserInfo((p: any) => ({ ...p, isFr: 1 }));
       setFriendCompose(false);
-      showNotification('Đã gửi lời mời kết bạn!', 'success');
+      showNotification(tr('Đã gửi lời mời kết bạn!'), 'success');
     } catch (e: any) {
-      showNotification('Gửi lời mời thất bại: ' + (e?.message || e), 'error');
+      showNotification(tr('Gửi lời mời thất bại: {{v1}}', { v1: (e?.message || e) }), 'error');
     } finally {
       setSendingFriendReq(false);
     }
@@ -382,9 +384,9 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
     try {
       const auth = await getAuth();
       await ipc.zalo?.sendCard({ auth, threadId: activeThreadId, type: isInGroup ? 1 : 0, options: { userId } });
-      showNotification('Đã chia sẻ danh thiếp', 'success');
+      showNotification(tr('Đã chia sẻ danh thiếp'), 'success');
       onClose();
-    } catch (e: any) { showNotification('Thất bại: ' + e.message, 'error'); }
+    } catch (e: any) { showNotification(tr('Thất bại: {{message}}', { message: e.message }), 'error'); }
   };
 
   const handleToggleBlock = async () => {
@@ -393,22 +395,22 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
       if (isBlocked) {
         await ipc.zalo?.unblockUser({ auth, userId });
         setIsBlocked(false);
-        showNotification(`Đã bỏ chặn ${name}`, 'success');
+        showNotification(tr('Đã bỏ chặn {{name}}', { name }), 'success');
       } else {
         await ipc.zalo?.blockUser({ auth, userId });
         setIsBlocked(true);
-        showNotification(`Đã chặn ${name}`, 'success');
+        showNotification(tr('Đã chặn {{name}}', { name }), 'success');
       }
-    } catch (e: any) { showNotification('Thất bại: ' + e.message, 'error'); }
+    } catch (e: any) { showNotification(tr('Thất bại: {{message}}', { message: e.message }), 'error'); }
   };
 
   const handleReport = async () => {
     try {
       const auth = await getAuth();
       await (ipc.zalo as any)?.reportUser?.({ auth, userId, reason: 0 });
-      showNotification(`Đã báo cáo ${name}`, 'success');
+      showNotification(tr('Đã báo cáo {{name}}', { name }), 'success');
       onClose();
-    } catch (e: any) { showNotification('Thất bại: ' + e.message, 'error'); }
+    } catch (e: any) { showNotification(tr('Thất bại: {{message}}', { message: e.message }), 'error'); }
   };
 
   const handleUnfriend = async () => {
@@ -417,9 +419,9 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
       await (ipc.zalo as any)?.deleteFriend?.({ auth, userId })
         ?? await (ipc.zalo as any)?.unfriend?.({ auth, userId });
       setUserInfo((p: any) => ({ ...p, isFr: 0 }));
-      showNotification(`Đã xoá bạn bè ${name}`, 'success');
+      showNotification(tr('Đã xoá bạn bè {{name}}', { name }), 'success');
       setConfirmAction(null);
-    } catch (e: any) { showNotification('Thất bại: ' + e.message, 'error'); }
+    } catch (e: any) { showNotification(tr('Thất bại: {{message}}', { message: e.message }), 'error'); }
   };
 
   const handleSaveAlias = async () => {
@@ -436,8 +438,8 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
         useChatStore.getState().updateContact(activeAccountId, { contact_id: userId, alias: trimmed });
         DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: userId, alias: trimmed }).catch(() => {});
       }
-      showNotification('Đã cập nhật tên gợi nhớ', 'success');
-    } catch (e: any) { showNotification('Thất bại: ' + e.message, 'error'); }
+      showNotification(tr('Đã cập nhật tên gợi nhớ'), 'success');
+    } catch (e: any) { showNotification(tr('Thất bại: {{message}}', { message: e.message }), 'error'); }
     setEditingAlias(false);
   };
 
@@ -457,7 +459,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
             <button onClick={() => setShowGroups(false)} className="text-muted-foreground hover:text-foreground transition-colors">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
-            <h3 className="text-foreground font-semibold text-sm">Nhóm chung ({mutualGroups.length})</h3>
+            <h3 className="text-foreground font-semibold text-sm">{trx('Nhóm chung ({{count}})', { count: mutualGroups.length })}</h3>
           </div>
           <div className="flex-1 overflow-y-auto">
             {mutualGroupsLoading && mutualGroups.length === 0 && (
@@ -479,7 +481,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
               </button>
             ))}
             {!mutualGroupsLoading && mutualGroups.length === 0 && (
-              <p className="text-xs text-muted-foreground text-center py-8">Không có nhóm chung</p>
+              <p className="text-xs text-muted-foreground text-center py-8">{tr('Không có nhóm chung')}</p>
             )}
           </div>
         </div>
@@ -499,8 +501,8 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           {cover && (
             <button
               className="absolute inset-0 w-full h-full focus:outline-none group"
-              onClick={() => setImageViewer({ url: cover, label: 'Ảnh bìa' })}
-              title="Xem ảnh bìa"
+              onClick={() => setImageViewer({ url: cover, label: tr('Ảnh bìa') })}
+              title={tr('Xem ảnh bìa')}
             >
               <img src={cover} alt="" className="w-full h-full object-cover group-hover:brightness-90 transition-all"
                 onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -529,8 +531,8 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
             {avatar ? (
               <button
                 className="relative focus:outline-none group"
-                onClick={() => setImageViewer({ url: avatar, label: 'Ảnh đại diện' })}
-                title="Xem ảnh đại diện"
+                onClick={() => setImageViewer({ url: avatar, label: tr('Ảnh đại diện') })}
+                title={tr('Xem ảnh đại diện')}
               >
                 <img src={avatar} alt={name} className="w-20 h-20 rounded-full object-cover border-4 border-border group-hover:brightness-90 transition-all" />
                 <span className="absolute inset-0 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -571,7 +573,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                 <p className="text-foreground font-bold text-base leading-tight truncate">{name}</p>
                 {!isMe && (
                   <button onClick={() => { setEditingAlias(true); setTimeout(() => aliasInputRef.current?.select(), 50); }}
-                    title="Đặt tên gợi nhớ"
+                    title={tr('Đặt tên gợi nhớ')}
                     className="text-muted-foreground hover:text-blue-400 transition-colors flex-shrink-0">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
@@ -596,7 +598,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           <div className="px-4 pb-3">
             {friendCompose ? (
               <div className="bg-muted/60 border border-input rounded-xl p-3">
-                <p className="text-xs text-muted-foreground mb-2">Soạn lời mời kết bạn gửi đến <span className="text-foreground font-medium">{name}</span></p>
+                <p className="text-xs text-muted-foreground mb-2">{trx('Soạn lời mời kết bạn gửi đến <0>{{name}}</0>', { 0: <span className="text-foreground font-medium" />, name })}</p>
                 <textarea
                   value={friendMsg}
                   onChange={e => setFriendMsg(e.target.value)}
@@ -605,18 +607,18 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                   maxLength={200}
                   autoFocus
                   className="w-full bg-card border border-input rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-none mb-2"
-                  placeholder="Lời nhắn kết bạn..."
+                  placeholder={tr('Lời nhắn kết bạn...')}
                 />
                 <div className="flex gap-2">
                   <button onClick={() => setFriendCompose(false)} disabled={sendingFriendReq}
                     className="flex-1 py-1.5 rounded-lg bg-accent text-foreground/80 text-xs hover:bg-accent transition-colors disabled:opacity-50">
-                    Hủy
+                    {tr('Hủy')}
                   </button>
                   <button onClick={doSendFriendRequest} disabled={sendingFriendReq}
                     className="flex-1 py-1.5 rounded-lg bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium flex items-center justify-center gap-1">
                     {sendingFriendReq
-                      ? <><svg className="animate-spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Đang gửi...</>
-                      : <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Gửi lời mời</>}
+                      ? <><svg className="animate-spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> {tr('Đang gửi...')}</>
+                      : <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> {tr('Gửi lời mời')}</>}
                   </button>
                 </div>
               </div>
@@ -629,7 +631,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                       <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/>
                       <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
                     </svg>
-                    Kết bạn
+                    {tr('Kết bạn')}
                   </button>
                 )}
                 <button onClick={handleOpenChat}
@@ -637,7 +639,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
                   </svg>
-                  Nhắn tin
+                  {tr('Nhắn tin')}
                 </button>
               </div>
             )}
@@ -648,24 +650,24 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
 
         {/* Personal info */}
         <div className="px-4 py-3">
-          <p className="text-xs font-semibold text-foreground/80 mb-2">Thông tin cá nhân</p>
+          <p className="text-xs font-semibold text-foreground/80 mb-2">{tr('Thông tin cá nhân')}</p>
           <div className="space-y-2">
             {bio && (
               <div className="flex gap-3 text-xs">
-                <span className="text-muted-foreground w-20 flex-shrink-0">Bio</span>
+                <span className="text-muted-foreground w-20 flex-shrink-0">{tr('Bio')}</span>
                 <span className="text-foreground/80 break-words flex-1">{bio}</span>
               </div>
             )}
             <div className="flex gap-3 text-xs">
-              <span className="text-muted-foreground w-20 flex-shrink-0">Giới tính</span>
+              <span className="text-muted-foreground w-20 flex-shrink-0">{tr('Giới tính')}</span>
               <span className="text-foreground/80">{formatGender(userInfo?.gender) ?? '**'}</span>
             </div>
             <div className="flex gap-3 text-xs">
-              <span className="text-muted-foreground w-20 flex-shrink-0">Ngày sinh</span>
+              <span className="text-muted-foreground w-20 flex-shrink-0">{tr('Ngày sinh')}</span>
               <span className="text-foreground/80">{formatDob()}</span>
             </div>
             <div className="flex gap-3 text-xs">
-              <span className="text-muted-foreground w-20 flex-shrink-0">Điện thoại</span>
+              <span className="text-muted-foreground w-20 flex-shrink-0">{tr('Điện thoại')}</span>
               <span className={userInfo?.phone ? 'text-blue-400' : 'text-muted-foreground'}>
                 {userInfo?.phone
                   ? <PhoneDisplay phone={userInfo.phone} className="text-xs text-blue-400" />
@@ -682,7 +684,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           {channelCap.supportsMutualGroups && (
             <ActionRow
               icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>}
-              label={mutualGroupsLoading ? 'Nhóm chung (đang tải...)' : `Nhóm chung${mutualGroups.length > 0 ? ` (${mutualGroups.length})` : ' (0)'}`}
+              label={mutualGroupsLoading ? tr('Nhóm chung (đang tải...)') : tr('Nhóm chung{{v1}}', { v1: mutualGroups.length > 0 ? ` (${mutualGroups.length})` : ' (0)' })}
               onClick={() => !mutualGroupsLoading && setShowGroups(true)}
               textColor={mutualGroupsLoading ? 'text-muted-foreground' : 'text-foreground/80'}
             />
@@ -690,14 +692,14 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           {!isInGroup && activeThreadId && !isMe && channelCap.supportsBusinessCard && (
             <ActionRow
               icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="9" cy="12" r="2"/><path d="M13 12h4M13 16h4"/></svg>}
-              label="Chia sẻ danh thiếp"
+              label={tr('Chia sẻ danh thiếp')}
               onClick={handleShareCard}
             />
           )}
           {!isMe && channelCap.supportsBlock && (
             <ActionRow
               icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>}
-              label={isBlocked ? 'Bỏ chặn tin nhắn và cuộc gọi' : 'Chặn tin nhắn và cuộc gọi'}
+              label={isBlocked ? tr('Bỏ chặn tin nhắn và cuộc gọi') : tr('Chặn tin nhắn và cuộc gọi')}
               onClick={handleToggleBlock}
               textColor={isBlocked ? 'text-orange-400' : 'text-foreground/80'}
             />
@@ -705,14 +707,14 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           {!isMe && channelCap.supportsReport && (
             <ActionRow
               icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}
-              label="Báo xấu"
+              label={tr('Báo xấu')}
               onClick={handleReport}
             />
           )}
           {isFriend && !isMe && channelCap.supportsRemoveFriend && (
             <ActionRow
               icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="23" y1="11" x2="17" y2="11"/></svg>}
-              label="Xoá khỏi danh sách bạn bè"
+              label={tr('Xoá khỏi danh sách bạn bè')}
               onClick={() => setConfirmAction('unfriend')}
               textColor="text-red-400"
             />
@@ -726,13 +728,13 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
           onClick={() => setConfirmAction(null)}>
           <div className="bg-card rounded-2xl p-5 w-72 border border-border shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="text-foreground font-semibold text-base mb-2">Xoá bạn bè?</h3>
-            <p className="text-muted-foreground text-sm mb-4">Bạn có chắc muốn xoá <span className="text-foreground font-medium">{name}</span> khỏi danh sách bạn bè?</p>
+            <h3 className="text-foreground font-semibold text-base mb-2">{tr('Xoá bạn bè?')}</h3>
+            <p className="text-muted-foreground text-sm mb-4">{trx('Bạn có chắc muốn xoá <0>{{name}}</0> khỏi danh sách bạn bè?', { 0: <span className="text-foreground font-medium" />, name })}</p>
             <div className="flex gap-2">
               <button onClick={() => setConfirmAction(null)}
-                className="flex-1 bg-muted hover:bg-accent text-foreground text-sm py-2 rounded-xl font-medium transition-colors">Huỷ</button>
+                className="flex-1 bg-muted hover:bg-accent text-foreground text-sm py-2 rounded-xl font-medium transition-colors">{tr('Huỷ')}</button>
               <button onClick={handleUnfriend}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 rounded-xl font-medium transition-colors">Xoá</button>
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 rounded-xl font-medium transition-colors">{tr('Xoá')}</button>
             </div>
           </div>
         </div>
@@ -763,7 +765,7 @@ export function UserProfilePopup({ userId, anchorX, anchorY, contacts, activeAcc
             onClick={e => e.stopPropagation()}
           />
           {/* Hint */}
-          <p className="absolute bottom-4 text-foreground/40 text-xs">Nhấn bên ngoài hoặc Esc để đóng</p>
+          <p className="absolute bottom-4 text-foreground/40 text-xs">{tr('Nhấn bên ngoài hoặc Esc để đóng')}</p>
         </div>
       )}
     </div>

@@ -1,25 +1,25 @@
 /**
- * Kéo-thả file / ảnh vào khung chat (vùng tin nhắn + ô soạn tin dùng chung).
+ * Drag and drop of files / images into the chat (the message area + the shared composer).
  *
- * Trước đây chỉ đọc `dataTransfer.files`: kéo ảnh từ trang web / app chỉ đưa link (không kèm dữ liệu file) thì im lặng
- * không có gì xảy ra. Nay đọc thêm link ảnh — `<img src>` trong text/html, text/uri-list, text/plain — rồi tải ảnh qua main
- * (file:readImageAsBase64, không vướng CORS; kiểm tra đúng là ảnh theo vài byte đầu) thành File để đi đúng đường gửi ảnh.
- * Dữ liệu kéo PHẢI đọc ngay trong sự kiện drop (sau đó trình duyệt khoá lại) — readDropPayload làm việc đó.
+ * It used to read only `dataTransfer.files`: dragging an image from a web page / app that only gives a link (no file data) did nothing silently.
+ * Now it also reads the image link (`<img src>` in text/html, text/uri-list, text/plain), then downloads the image through main
+ * (file:readImageAsBase64, no CORS problem; checks it really is an image from the first few bytes) into a File so it takes the normal image send path.
+ * The drag data MUST be read right inside the drop event (the browser locks it afterwards): readDropPayload does that.
  */
 import ipc from '@/lib/ipc';
 
 export interface DropPayload {
   files: File[];
-  /** Link ảnh (http(s) / data:image) khi lần kéo không kèm file */
+  /** Image link (http(s) / data:image) when the drag has no file attached */
   imageUrls: string[];
-  /** Các kiểu dữ liệu của lần kéo — ghi Nhật ký để chẩn đoán */
+  /** The data types of the drag, written to the log for diagnosis */
   types: string[];
 }
 
 const MAX_DROPPED_URLS = 10;
 const IMAGE_EXT = /\.(jpe?g|jfif|png|gif|webp|bmp)$/i;
 
-/** Ảnh: theo MIME; Windows đôi khi để trống MIME (.jfif, .webp…) → theo đuôi file. */
+/** Images: by MIME type; Windows sometimes leaves the MIME type empty (.jfif, .webp...) → by file extension. */
 export function isImageFile(file: { type?: string; name?: string }): boolean {
   return (file.type || '').startsWith('image/') || (!file.type && IMAGE_EXT.test(file.name || ''));
 }
@@ -30,8 +30,8 @@ const decodeHtmlEntities = (value: string) => value
 const isUsableImageUrl = (url: string) => /^https?:\/\//i.test(url) || /^data:image\//i.test(url);
 
 /**
- * Link ảnh từ dữ liệu kéo: ưu tiên `<img src>` trong HTML (ảnh thật, kể cả khi ảnh nằm trong một link tới trang khác),
- * rồi text/uri-list (bỏ dòng chú thích #), rồi text/plain nếu chỉ là một link. Chỉ giữ http(s) / data:image, bỏ trùng.
+ * Image links from the drag data: prefer `<img src>` in the HTML (the real image, even when it sits inside a link to another page),
+ * then text/uri-list (skipping # comment lines), then text/plain if it is just one link. Keeps only http(s) / data:image, removes duplicates.
  */
 export function extractImageUrls(source: { html?: string; uriList?: string; text?: string }): string[] {
   const urls: string[] = [];
@@ -54,7 +54,7 @@ export function extractImageUrls(source: { html?: string; uriList?: string; text
   return urls.slice(0, MAX_DROPPED_URLS);
 }
 
-/** MIME ảnh theo vài byte đầu (JPEG, PNG, GIF, WEBP, BMP); không phải ảnh → null. */
+/** Image MIME type from the first few bytes (JPEG, PNG, GIF, WEBP, BMP); not an image → null. */
 export function sniffImageMime(bytes: Uint8Array): string | null {
   const at = (i: number) => bytes[i];
   if (bytes.length >= 3 && at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return 'image/jpeg';
@@ -75,7 +75,7 @@ function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
-/** Tên file từ link (phần cuối đường dẫn) — không có thì "anh-keo-tha-N". */
+/** File name from the link (the last part of the path); if none, "anh-keo-tha-N". */
 function fileNameFor(url: string, index: number, mime: string): string {
   const ext = EXT_OF[mime] || 'jpg';
   if (!/^https?:/i.test(url)) return `anh-keo-tha-${index + 1}.${ext}`;
@@ -88,7 +88,7 @@ function fileNameFor(url: string, index: number, mime: string): string {
   }
 }
 
-/** Đọc dữ liệu một lần thả — gọi ngay trong onDrop (dữ liệu kéo bị khoá sau sự kiện). */
+/** Reads the data of one drop: call it right inside onDrop (the drag data is locked after the event). */
 export function readDropPayload(dataTransfer: DataTransfer | null | undefined): DropPayload {
   if (!dataTransfer) return { files: [], imageUrls: [], types: [] };
   const types = Array.from(dataTransfer.types || []);
@@ -106,7 +106,7 @@ export function readDropPayload(dataTransfer: DataTransfer | null | undefined): 
   return { files, imageUrls, types };
 }
 
-/** Tải các link ảnh thả vào thành File (bỏ link không tải được / không phải ảnh). */
+/** Downloads the dropped image links into Files (skips links that fail to download / are not images). */
 export async function fetchDroppedImages(urls: string[]): Promise<File[]> {
   const files: File[] = [];
   for (const [index, url] of urls.slice(0, MAX_DROPPED_URLS).entries()) {
@@ -124,7 +124,7 @@ export async function fetchDroppedImages(urls: string[]): Promise<File[]> {
       if (!mime) continue;
       files.push(new File([bytes], fileNameFor(url, index, mime), { type: mime }));
     } catch {
-      // link hỏng / mạng lỗi → bỏ qua link đó
+      // broken link / network error → skip that link
     }
   }
   return files;

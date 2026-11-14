@@ -1,33 +1,33 @@
 /**
- * useEmployeeResync — chế độ nhân viên: tải lại dữ liệu khi kết nối tới BOSS phục hồi.
+ * useEmployeeResync: in employee mode, reload data when the connection to the BOSS is restored.
  *
- * Lỗi REST tạm thời không còn bị biến thành "không có dữ liệu" (DataAccessor trả `success: false`, người gọi giữ
- * dữ liệu cũ) — nhưng dữ liệu cũ đó cần được làm mới khi mạng quay lại. Hook này gọi `callback` khi:
- *  - `RestQueryService.onRecovered` — REST client chuyển từ bị chặn / mất kết nối về kết nối được;
- *  - window event `employee:resync` — main process kết nối lại BOSS / máy thức dậy sau khi ngủ.
+ * Temporary REST errors no longer turn into "không có dữ liệu" (no data) (DataAccessor returns `success: false`, and the caller keeps
+ * the old data), but that old data must be refreshed when the network comes back. This hook calls `callback` when:
+ *  - `RestQueryService.onRecovered`: the REST client goes from blocked / lost connection back to reachable;
+ *  - window event `employee:resync`: the main process reconnects to the BOSS / the machine wakes from sleep.
  *
- * Hai nguồn thường bắn sát nhau → gộp (debounce ~500 ms) thành MỘT lần gọi. Kích hoạt trong lúc lần trước còn
- * chạy (callback trả Promise) → chạy thêm đúng một lần sau khi xong, không chạy chồng.
- * Chế độ chủ / standalone: không đăng ký gì, không bao giờ gọi `callback`.
+ * The two sources often fire close together → merged (debounce ~500 ms) into ONE call. Triggered while the previous run is still
+ * running (the callback returns a Promise) → runs exactly one more time after it finishes, never overlapping.
+ * BOSS / standalone mode: registers nothing, never calls `callback`.
  */
 import { useEffect, useRef } from 'react';
 import RestQueryService from '../../../services/http/RestQueryService';
 import { useEmployeeStore } from '../../store/employee/employeeStore';
 
-/** Window event do App bắn sau khi main process kết nối lại BOSS / hệ thống thức dậy. */
+/** Window event fired by the App after the main process reconnects to the BOSS / the system wakes up. */
 export const EMPLOYEE_RESYNC_EVENT = 'employee:resync';
 export const EMPLOYEE_RESYNC_DEBOUNCE_MS = 500;
 
 export interface ResyncScheduler {
-  /** Yêu cầu tải lại — các yêu cầu trong cửa sổ debounce gộp thành một lần chạy. */
+  /** Reload request; requests inside the debounce window merge into one run. */
   request(): void;
-  /** Huỷ lịch đang chờ và mọi lần chạy bổ sung (lần đang chạy dở vẫn chạy nốt). */
+  /** Cancel the pending schedule and any extra runs (a run already in progress still finishes). */
   cancel(): void;
 }
 
 /**
- * Lịch tải lại thuần (không React): debounce đuôi `debounceMs`, không chạy chồng — yêu cầu tới khi `run` đang chạy
- * được dồn thành một lần chạy nữa sau khi xong.
+ * Plain reload scheduler (no React): trailing debounce of `debounceMs`, never overlapping. Requests that arrive while `run` is
+ * busy are merged into one more run after it finishes.
  */
 export function createResyncScheduler(
   run: () => void | Promise<unknown>,
@@ -81,8 +81,8 @@ export function createResyncScheduler(
 }
 
 /**
- * Đăng ký `RestQueryService.onRecovered` (API mới) một cách phòng thủ: bản chưa có API thì chỉ còn nguồn
- * window event. Trả hàm huỷ đăng ký.
+ * Registers `RestQueryService.onRecovered` (new API) defensively: builds without the API keep only the
+ * window event source. Returns the unsubscribe function.
  */
 export function subscribeRestRecovered(cb: () => void): () => void {
   try {
@@ -98,14 +98,14 @@ export function subscribeRestRecovered(cb: () => void): () => void {
 }
 
 /**
- * Gọi `callback` (bản mới nhất của lần render gần nhất) mỗi khi kết nối BOSS phục hồi — chỉ ở chế độ nhân viên.
- * Callback nên tự đọc state mới nhất (store.getState()) và chỉ tải lại phần đang hiển thị.
+ * Calls `callback` (the latest version from the most recent render) each time the BOSS connection is restored, in employee mode only.
+ * The callback should read the latest state itself (store.getState()) and only reload the part that is shown.
  */
 export function useEmployeeResync(
   callback: () => void | Promise<unknown>,
   debounceMs: number = EMPLOYEE_RESYNC_DEBOUNCE_MS,
 ): void {
-  // Selector boolean: chỉ render lại khi đổi chế độ (không subscribe cả employeeStore)
+  // Boolean selector: re-renders only when the mode changes (does not subscribe to the whole employeeStore)
   const isEmployee = useEmployeeStore((s) => s.mode === 'employee');
   const callbackRef = useRef(callback);
   callbackRef.current = callback;

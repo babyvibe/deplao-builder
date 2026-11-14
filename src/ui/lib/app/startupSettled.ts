@@ -1,7 +1,7 @@
 /**
- * Báo main (app:uiSettled) khi giao diện đã tải xong lúc mở app: danh sách hội thoại của tài khoản đang mở đã có (hoặc
- * không có tài khoản nào được chọn), rồi chờ trình duyệt rảnh. Main chỉ bắt đầu việc nền nặng (đồng bộ bù / tải lại tin
- * cũ Telegram…) sau mốc này — xem src/utils/startup/startupSettle.ts. Tối đa 20 s (vd mở app ở trang khác, không có danh sách).
+ * Tells main (app:uiSettled) when the UI has finished loading at app start: the conversation list of the open account is ready (or
+ * no account is selected), then waits for the browser to be idle. Main only starts heavy background work (catch-up sync / reloading old
+ * Telegram messages…) after this point: see src/utils/startup/startupSettle.ts. Max 20 s (e.g. the app opened on another page, with no list).
  */
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accounts/accountStore';
@@ -25,7 +25,7 @@ export function reportUiSettledWhenReady(): void {
     for (const unsubscribe of unsubscribes) unsubscribe();
     if (maxTimer) clearTimeout(maxTimer);
     const send = () => {
-      try { ipc.app?.uiSettled?.(); } catch { /* preload cũ chưa có kênh này */ }
+      try { ipc.app?.uiSettled?.(); } catch { /* old preload does not have this channel yet */ }
     };
     const requestIdle = (window as unknown as { requestIdleCallback?: IdleCallback }).requestIdleCallback;
     if (requestIdle) requestIdle(send, { timeout: 3_000 });
@@ -35,7 +35,7 @@ export function reportUiSettledWhenReady(): void {
   const check = () => {
     if (done) return;
     const { accounts, activeAccountId } = useAccountStore.getState();
-    if (!accounts.length) return; // danh sách tài khoản chưa tải xong
+    if (!accounts.length) return; // account list not loaded yet
     if (!activeAccountId) {
       finish();
       return;

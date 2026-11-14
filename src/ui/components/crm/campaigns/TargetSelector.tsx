@@ -12,6 +12,8 @@ import { formatPhone } from '@/lib/contacts/phoneUtils';
 import { CloudIcon, HardDriveIcon, LinkIcon, TagIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channels/channelHelper';
 import { getCapability, type Channel } from '../../../../configs/channels/channelConfig';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export interface LocalLabelItem {
   id: number;
@@ -24,9 +26,9 @@ export interface LocalLabelItem {
 interface TargetSelectorProps {
   zaloId: string;
   /**
-   * Kênh của tài khoản (mặc định Zalo). "Theo SĐT" chỉ có khi kênh tra được SĐT → tài khoản lúc gửi (Zalo); tab Nhãn
-   * Zalo chỉ khi kênh có nhãn Zalo. Telegram trước đây vẫn thấy cả hai: SĐT chưa có trong danh bạ thành người nhận
-   * "phone:…" mà queue không gửi được.
+   * The account's channel (default Zalo). "Theo SĐT" (By phone number) only appears when the channel can look up the phone number → the account at send time (Zalo); the Zalo label
+   * tab only when the channel has Zalo labels. Telegram used to show both: a phone number not yet in the contacts became the recipient
+   * "phone:…" which the queue could not send.
    */
   channel?: Channel;
   allLabels: LabelData[];
@@ -40,7 +42,7 @@ interface TargetSelectorProps {
 
 type SelectMode = 'manual' | 'by_label' | 'friends_only' | 'groups_only' | 'by_phone' | 'by_uid' | 'by_group';
 
-/** Nhãn Zalo lưu ID nhóm với tiền tố "g" (vd "g4579..."); contact_id trong CRM thì không. Bỏ tiền tố để so khớp. */
+/** Zalo labels store group IDs with a "g" prefix (e.g. "g4579..."); contact_id in the CRM does not. Strip the prefix to match. */
 function stripGroupPrefix(id: string): string {
   return id.startsWith('g') ? id.slice(1) : id;
 }
@@ -61,13 +63,13 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
   const [mode, setMode] = useState<SelectMode>('manual');
   const [selectedZaloLabelIds, setSelectedZaloLabelIds] = useState<number[]>([]);
   const [selectedLocalLabelIds, setSelectedLocalLabelIds] = useState<number[]>([]);
-  const [manualSelected, setManualSelected] = useState<Set<string>>(new Set());  // Với mode lọc (nhóm/bạn bè/nhãn) mọi item được chọn sẵn; user có thể bỏ chọn từng cái → lưu ở đây.
+  const [manualSelected, setManualSelected] = useState<Set<string>>(new Set());  // In filter modes (groups / friends / labels) every item is selected by default; the user can unselect each one → stored here.
   const [search, setSearch] = useState('');
   const [allContacts, setAllContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  // Lần tải danh sách liên hệ gần nhất lỗi (employee: mất kết nối BOSS) → danh sách trống / cũ, khoá nút "Thêm"
+  // The last contact list load failed (employee: lost connection to BOSS) → list is empty / old, the "Thêm" (Add) button is locked
   const [contactsFailed, setContactsFailed] = useState(false);
-  /** Tài khoản của `allContacts` đang hiện: lỗi chỉ giữ danh sách cũ khi nó thuộc đúng tài khoản này. */
+  /** Account of the `allContacts` on screen: an error only keeps the old list when it belongs to this account. */
   const contactsOwnerRef = useRef<string | null>(null);
   const contactsSeqRef = useRef(0);
 
@@ -85,7 +87,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
   const [groupMemberCounts, setGroupMemberCounts] = useState<Record<string, number>>({});
   const [groupConfirmLoading, setGroupConfirmLoading] = useState(false);
-  /** Lần "Thêm thành viên" vừa rồi không đọc được thành viên của một nhóm → chưa thêm ai. */
+  /** The last "Thêm thành viên" (Add members) could not read the members of a group → nobody was added yet. */
   const [groupConfirmError, setGroupConfirmError] = useState<string | null>(null);
   const [groupCountsFailed, setGroupCountsFailed] = useState(false);
   const countsOwnerRef = useRef<string | null>(null);
@@ -98,7 +100,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
   // ── Load local labels directly (self-sufficient, not relying on parent props) ──
   const [fetchedLocalLabels, setFetchedLocalLabels] = useState<LocalLabelItem[]>([]);
   const [fetchedThreadMap, setFetchedThreadMap] = useState<Record<string, number[]>>({});
-  // Lỗi (nhãn hoặc bảng gán nhãn) → giữ bản đang có, hiện "Không tải được — Thử lại" chỗ danh sách lẽ ra trống
+  // Error (labels or the label-assignment table) → keep what is there, show "Không tải được - Thử lại" (Failed to load - Retry) where the list would otherwise be empty
   const [localLabelsFailed, setLocalLabelsFailed] = useState(false);
   const [localLabelsLoading, setLocalLabelsLoading] = useState(false);
   const labelsOwnerRef = useRef<string | null>(null);
@@ -119,13 +121,13 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
     } catch (err: any) {
       labelsRes = threadsRes = { success: false, error: err?.message };
     }
-    if (seq !== labelsSeqRef.current) return; // đã có lần tải mới hơn
+    if (seq !== labelsSeqRef.current) return; // a newer load has already finished
     setLocalLabelsLoading(false);
     const labelsFailed = isReadFailure(labelsRes);
     const threadsFailed = isReadFailure(threadsRes);
     const failed = labelsFailed || threadsFailed;
     if (readOutcome(failed, labelsOwnerRef.current, owner) === 'clear') {
-      // Lỗi ngay khi đổi tài khoản: không lọc / hiện nhãn của tài khoản trước
+      // Error right after switching the account: do not filter / show the previous account's labels
       setFetchedLocalLabels([]);
       setFetchedThreadMap({});
     }
@@ -172,14 +174,14 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
     } catch (err: any) {
       res = { success: false, error: err?.message };
     }
-    if (seq !== contactsSeqRef.current) return; // đã có lần tải mới hơn
+    if (seq !== contactsSeqRef.current) return; // a newer load has already finished
     setLoading(false);
     if (res?.success) {
       contactsOwnerRef.current = owner;
       setAllContacts(res.contacts || []);
       setContactsFailed(false);
     } else if (isReadFailure(res)) {
-      // Lỗi → giữ danh sách đang có của đúng tài khoản (nút "Thêm" bị khoá tới khi tải lại được); của tài khoản khác thì bỏ
+      // Error → keep the current list for that exact account (the "Thêm" (Add) button is locked until a reload works); drop it if it belongs to another account
       if (readOutcome(true, contactsOwnerRef.current, owner) === 'clear') {
         contactsOwnerRef.current = owner;
         setAllContacts([]);
@@ -190,20 +192,20 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
 
-  // Đổi mode/nhãn (hoặc tài khoản) → reset danh sách đã chọn để không giữ nhầm sang tập khác.
+  // Changing mode / label (or the account) → reset the selected list so the selection is not carried over to another set.
   useEffect(() => {
     setManualSelected(new Set());
     setSelectedGroupIds(new Set());
     setGroupConfirmError(null);
   }, [mode, selectedZaloLabelIds, selectedLocalLabelIds, zaloId]);
 
-  // Đổi sang kênh không có "Theo SĐT" / Nhãn Zalo khi đang mở → về chế độ có sẵn
+  // Switching to a channel without "Theo SĐT" / Zalo label while it is open → back to a mode that is available
   useEffect(() => {
     if (!supportsPhoneTargets && mode === 'by_phone') setMode('manual');
     if (!supportsZaloLabels && labelTab === 'zalo') setLabelTab('local');
   }, [supportsPhoneTargets, supportsZaloLabels, mode, labelTab]);
 
-  // Đổi tài khoản khi đang mở (hiếm): SĐT/UID đã khớp theo danh bạ tài khoản trước không dùng cho tài khoản này
+  // Switching account while open (rare): the phone / UID matched from the previous account's contacts is not used for this account
   const resolvedForRef = useRef(zaloId);
   useEffect(() => {
     if (resolvedForRef.current === zaloId) return;
@@ -225,8 +227,8 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
     if (mode === 'groups_only') list = list.filter(c => c.contact_type === 'group');
     if (mode === 'by_label') {
       // Filter by selected Zalo labels.
-      // Nhãn Zalo lưu ID nhóm có tiền tố "g" (vd "g4579..."), còn contact_id trong CRM
-      // không có tiền tố → chuẩn hóa cả hai đầu trước khi so khớp.
+      // Zalo labels store group IDs with a "g" prefix (e.g. "g4579..."), while contact_id in the CRM does not
+      // without the prefix → normalize both sides before matching.
       if (supportsZaloLabels && selectedZaloLabelIds.length > 0) {
         list = list.filter(c => {
           const cid = stripGroupPrefix(c.contact_id);
@@ -347,7 +349,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
     }
     if (seq !== countsSeqRef.current) return;
     if (isReadFailure(res)) {
-      // Lỗi → giữ số đã biết (cùng tài khoản) thay vì "Chưa có thông tin" cho mọi nhóm; số của tài khoản khác thì bỏ
+      // Error → keep the known numbers (same account) instead of "Chưa có thông tin" (No info yet) for every group; numbers of another account are dropped
       if (readOutcome(true, countsOwnerRef.current, owner) === 'clear') {
         countsOwnerRef.current = owner;
         setGroupMemberCounts({});
@@ -365,7 +367,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
     loadGroupCounts();
   }, [zaloId, groups.length]);
 
-  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại danh sách liên hệ, Nhãn Local, số thành viên nhóm
+  // Employee mode: BOSS connection restored → reload the contact list, Local labels, group member counts
   useEmployeeResync(() => Promise.allSettled([
     loadContacts(),
     loadLocalLabels(),
@@ -430,7 +432,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
           return true;
         });
     }
-    // Mode manual & mode lọc theo nhãn: mặc định không tích, user tự chọn từng liên hệ.
+    // Manual mode & label-filter mode: nothing is ticked by default, the user picks each contact
     return filtered.filter(c => manualSelected.has(c.contact_id));
   }, [mode, available, manualSelected, filtered, phoneList, phoneResolved, uidList, uidResolved, existingContactIds]);
 
@@ -524,15 +526,15 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
         }
         const failed = isReadFailure(dbRes);
         reads.push({ groupId, failed, members: dbRes?.members });
-        // Một nhóm lỗi là đủ để không thêm gì — khỏi chờ lỗi / timeout lần lượt từng nhóm khi mất kết nối
+        // One failed group is enough to add nothing: no need to wait for the errors / timeouts one group after another when the connection drops
         if (failed) break;
       }
       const { members: allMembers, failedGroupIds } = collectGroupTargets(reads, existingContactIds);
       if (failedGroupIds.length > 0) {
-        // Trước đây nhóm lỗi bị bỏ qua lặng lẽ → chiến dịch nhận tập người nhận thiếu / rỗng. Giờ: không thêm, báo rõ.
+        // Before, a failed group was silently skipped → the campaign got an incomplete / empty recipient set. Now: nothing is added, and the reason is shown clearly.
         const failedId = failedGroupIds[0];
         const name = groups.find(g => g.contact_id === failedId)?.display_name || failedId;
-        setGroupConfirmError(`Không tải được thành viên nhóm "${name}" — chưa thêm ai. Bấm "Thêm thành viên" để thử lại.`);
+        setGroupConfirmError(tr('Không tải được thành viên nhóm "{{name}}" — chưa thêm ai. Bấm "Thêm thành viên" để thử lại.', { name }));
         return;
       }
       if (allMembers.length > 0) {
@@ -546,9 +548,9 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
 
   const totalLabelFilters = (supportsZaloLabels ? selectedZaloLabelIds.length : 0) + selectedLocalLabelIds.length;
 
-  // ── Lần tải lỗi → khoá nút "Thêm …" và nói rõ lý do ────────────────────────
-  // Danh sách liên hệ / bảng gán Nhãn Local lỗi có thể cho ra tập người nhận rỗng hoặc thiếu mà người dùng không
-  // nhận ra (rồi chạy chiến dịch với tập đó). Bảng gán nhãn chỉ tính khi đang dùng bản tự tải (props rỗng).
+  // ── Failed load → lock the "Thêm …" (Add …) button and state the reason ────────────────────────
+  // A failed contact list / Local label assignment table can give an empty or incomplete recipient set that the user does not
+  // recognize (and then run the campaign with that set). The label assignment table only counts when using the self-loaded copy (empty props).
   const localLabelMapFailed = localLabelsFailed && effectiveThreadMap === fetchedThreadMap;
   const blockReason = targetConfirmBlockReason(mode, {
     contactsFailed,
@@ -560,7 +562,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
     if (localLabelsFailed) loadLocalLabels();
   };
   const blockedHint = blockReason ? (
-    <LoadFailedNotice className="justify-start px-0 py-0 text-warning" text={`${blockReason} — chưa thể thêm người nhận`}
+    <LoadFailedNotice className="justify-start px-0 py-0 text-warning" text={tr('{{blockReason}} — chưa thể thêm người nhận', { blockReason })}
       onRetry={retryFailedLoads} busy={loading || localLabelsLoading} />
   ) : null;
 
@@ -572,11 +574,11 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
           <div>
-            <h3 className="font-semibold text-foreground">Chọn liên hệ</h3>
+            <h3 className="font-semibold text-foreground">{tr('Chọn liên hệ')}</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {loading ? 'Đang tải...'
-                : contactsFailed && allContacts.length === 0 ? 'Không tải được danh sách liên hệ'
-                : `${finalSelected.length} đã chọn · ${available.length} khả dụng`}
+              {loading ? tr('Đang tải...')
+                : contactsFailed && allContacts.length === 0 ? tr('Không tải được danh sách liên hệ')
+                : tr('{{count}} đã chọn · {{count1}} khả dụng', { count: finalSelected.length, count1: available.length })}
             </p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
@@ -592,13 +594,13 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
         {/* Mode selector */}
         <div className="flex gap-1 px-4 py-2.5 border-b border-border flex-shrink-0 overflow-x-auto">
           {([
-            { key: 'manual' as const, label: 'Thủ công' },
-            { key: 'by_label' as const, label: 'Theo nhãn' },
-            { key: 'by_phone' as const, label: 'Theo SĐT' },
-            { key: 'by_uid' as const, label: 'Theo UID' },
-            { key: 'friends_only' as const, label: 'Bạn bè' },
-            { key: 'groups_only' as const, label: 'Nhóm' },
-            { key: 'by_group' as const, label: 'Theo thành viên nhóm' },
+            { key: 'manual' as const, label: tr('Thủ công') },
+            { key: 'by_label' as const, label: tr('Theo nhãn') },
+            { key: 'by_phone' as const, label: tr('Theo SĐT') },
+            { key: 'by_uid' as const, label: tr('Theo UID') },
+            { key: 'friends_only' as const, label: tr('Bạn bè') },
+            { key: 'groups_only' as const, label: tr('Nhóm') },
+            { key: 'by_group' as const, label: tr('Theo thành viên nhóm') },
           ]).filter(({ key }) => key !== 'by_phone' || supportsPhoneTargets).map(({ key, label }) => (
             <button key={key} onClick={() => setMode(key)}
               className={`text-xs px-3 py-1.5 rounded-lg border transition-colors whitespace-nowrap flex-shrink-0 ${
@@ -617,7 +619,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                   labelTab === 'local'
                     ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
                     : 'text-muted-foreground hover:text-foreground/80 border border-transparent'
-                }`}><HardDriveIcon className="w-4 h-4 inline" /> Nhãn Local{effectiveLocalLabels.length > 0 ? ` (${effectiveLocalLabels.length})` : ''}
+                }`}>{trx('<0/> Nhãn Local{{v1}}', { 0: <HardDriveIcon className="w-4 h-4 inline" />, v1: effectiveLocalLabels.length > 0 ? ` (${effectiveLocalLabels.length})` : '' })}
               </button>
               {supportsZaloLabels && (
                 <button onClick={() => setLabelTab('zalo')}
@@ -626,7 +628,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                       ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
                       : 'text-muted-foreground hover:text-foreground/80 border border-transparent'
                   }`}>
-                  <CloudIcon className="w-4 h-4 inline" /> Nhãn Zalo{allLabels.length > 0 ? ` (${allLabels.length})` : ''}
+                  {trx('<0/> Nhãn Zalo{{v1}}', { 0: <CloudIcon className="w-4 h-4 inline" />, v1: allLabels.length > 0 ? ` (${allLabels.length})` : '' })}
                 </button>
               )}
             </div>
@@ -651,10 +653,10 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                   })}
                 </div>
               ) : localLabelsFailed ? (
-                <LoadFailedNotice className="justify-start px-0" text="Không tải được Nhãn Local"
+                <LoadFailedNotice className="justify-start px-0" text={tr('Không tải được Nhãn Local')}
                   onRetry={loadLocalLabels} busy={localLabelsLoading} />
               ) : (
-                <p className="text-xs text-muted-foreground py-2">Chưa có Nhãn Local nào. Tạo nhãn từ trang Liên hệ.</p>
+                <p className="text-xs text-muted-foreground py-2">{tr('Chưa có Nhãn Local nào. Tạo nhãn từ trang Liên hệ.')}</p>
               )
             )}
 
@@ -678,12 +680,12 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                   })}
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground py-2">Chưa có nhãn Zalo nào. Đồng bộ nhãn từ header trước.</p>
+                <p className="text-xs text-muted-foreground py-2">{tr('Chưa có nhãn Zalo nào. Đồng bộ nhãn từ header trước.')}</p>
               )
             )}
 
             {totalLabelFilters > 0 && (
-              <p className="text-[11px] text-blue-400">{filtered.length} liên hệ phù hợp với {totalLabelFilters} nhãn đã chọn</p>
+              <p className="text-[11px] text-blue-400">{trx('{{count}} liên hệ phù hợp với {{totalLabelFilters}} nhãn đã chọn', { count: filtered.length, totalLabelFilters })}</p>
             )}
           </div>
         )}
@@ -695,7 +697,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
               {/* Left: textarea */}
               <div className="w-1/2 flex flex-col border-r border-border">
                 <div className="px-3 py-2 border-b border-border/50 flex-shrink-0">
-                  <p className="text-[11px] text-muted-foreground font-medium">Nhập hoặc dán SĐT (mỗi số 1 dòng)</p>
+                  <p className="text-[11px] text-muted-foreground font-medium">{tr('Nhập hoặc dán SĐT (mỗi số 1 dòng)')}</p>
                 </div>
                 <textarea
                   value={phoneInput}
@@ -709,20 +711,20 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
               <div className="w-1/2 flex flex-col">
                 <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 flex items-center justify-between">
                   <p className="text-[11px] text-muted-foreground font-medium">
-                    {phoneList.length} số hợp lệ
+                    {trx('{{count}} số hợp lệ', { count: phoneList.length })}
                     {phoneList.length > 0 && (() => {
                       const resolved = phoneList.filter(p => phoneResolved.get(p) != null).length;
-                      return resolved > 0 ? <span className="text-green-400 ml-1">· {resolved} có tên</span> : null;
+                      return resolved > 0 ? <span className="text-green-400 ml-1">{trx('· {{resolved}} có tên', { resolved })}</span> : null;
                     })()}
                   </p>
                   {phoneList.length > 0 && (
                     <button onClick={() => { setPhoneInput(''); setPhoneList([]); setPhoneResolved(new Map()); }}
-                      className="text-[11px] text-red-400 hover:text-red-300">Xóa tất cả</button>
+                      className="text-[11px] text-red-400 hover:text-red-300">{tr('Xóa tất cả')}</button>
                   )}
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   {phoneList.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center py-8">Nhập SĐT bên trái →</p>
+                    <p className="text-xs text-muted-foreground text-center py-8">{tr('Nhập SĐT bên trái →')}</p>
                   ) : (
                     phoneList.map((phone, i) => {
                       const resolved = phoneResolved.get(phone);
@@ -751,7 +753,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                               : <p className="text-xs text-muted-foreground font-mono">{phone}</p>
                             }
                           </div>
-                          {existing && <span className="text-[10px] text-yellow-500 flex-shrink-0">đã có</span>}
+                          {existing && <span className="text-[10px] text-yellow-500 flex-shrink-0">{tr('đã có')}</span>}
                           <button onClick={() => removePhone(phone)} className="text-muted-foreground hover:text-red-400 text-xs flex-shrink-0 ml-1">✕</button>
                         </div>
                       );
@@ -764,24 +766,24 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
             {/* Phone footer */}
             <div className="flex items-center gap-2 px-4 py-3 border-t border-border flex-shrink-0">
               {blockedHint ? (
-                // Khớp SĐT ↔ UID + chống trùng dựa vào danh sách liên hệ → chưa cho thêm khi danh sách lỗi
+                // Matching phone ↔ UID and de-duplication rely on the contact list → adding is not allowed while the list has failed
                 <div className="flex-1 min-w-0 text-xs">{blockedHint}</div>
               ) : (
               <span className="text-xs text-muted-foreground flex-1">
-                {phoneList.length} SĐT
+                {trx('{{count}} SĐT', { count: phoneList.length })}
                 {phoneList.length > 0 && (() => {
                   const resolvedCount = phoneList.filter(p => phoneResolved.get(p) != null).length;
-                  return resolvedCount > 0 ? <span className="text-green-400"> · {resolvedCount} có tên</span> : null;
+                  return resolvedCount > 0 ? <span className="text-green-400"> {trx('· {{resolvedCount}} có tên', { resolvedCount })}</span> : null;
                 })()}
               </span>
               )}
-              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">{tr('Hủy')}</button>
               <button
                 disabled={phoneList.length === 0 || !!blockReason}
                 title={blockReason || undefined}
                 onClick={handleConfirmPhones}
                 className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
-                Thêm {phoneList.length} SĐT
+                {trx('Thêm {{count}} SĐT', { count: phoneList.length })}
               </button>
             </div>
           </>
@@ -791,7 +793,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
               {/* Left: textarea */}
               <div className="w-1/2 flex flex-col border-r border-border">
                 <div className="px-3 py-2 border-b border-border/50 flex-shrink-0">
-                  <p className="text-[11px] text-muted-foreground font-medium">Nhập hoặc dán UID (mỗi UID 1 dòng)</p>
+                  <p className="text-[11px] text-muted-foreground font-medium">{tr('Nhập hoặc dán UID (mỗi UID 1 dòng)')}</p>
                 </div>
                 <textarea
                   value={uidInput}
@@ -805,20 +807,20 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
               <div className="w-1/2 flex flex-col">
                 <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 flex items-center justify-between">
                   <p className="text-[11px] text-muted-foreground font-medium">
-                    {uidList.length} UID hợp lệ
+                    {trx('{{count}} UID hợp lệ', { count: uidList.length })}
                     {uidList.length > 0 && (() => {
                       const resolved = uidList.filter(u => uidResolved.get(u) != null).length;
-                      return resolved > 0 ? <span className="text-green-400 ml-1">· {resolved} có tên</span> : null;
+                      return resolved > 0 ? <span className="text-green-400 ml-1">{trx('· {{resolved}} có tên', { resolved })}</span> : null;
                     })()}
                   </p>
                   {uidList.length > 0 && (
                     <button onClick={() => { setUidInput(''); setUidList([]); setUidResolved(new Map()); }}
-                      className="text-[11px] text-red-400 hover:text-red-300">Xóa tất cả</button>
+                      className="text-[11px] text-red-400 hover:text-red-300">{tr('Xóa tất cả')}</button>
                   )}
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   {uidList.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center py-8">Nhập UID bên trái →</p>
+                    <p className="text-xs text-muted-foreground text-center py-8">{tr('Nhập UID bên trái →')}</p>
                   ) : (
                     uidList.map((uid, i) => {
                       const resolved = uidResolved.get(uid);
@@ -845,7 +847,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                               : <p className="text-xs text-muted-foreground font-mono">{uid}</p>
                             }
                           </div>
-                          {existing && <span className="text-[10px] text-yellow-500 flex-shrink-0">đã có</span>}
+                          {existing && <span className="text-[10px] text-yellow-500 flex-shrink-0">{tr('đã có')}</span>}
                           <button onClick={() => removeUid(uid)} className="text-muted-foreground hover:text-red-400 text-xs flex-shrink-0 ml-1">✕</button>
                         </div>
                       );
@@ -861,16 +863,16 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                 {uidList.length} UID
                 {uidList.length > 0 && (() => {
                   const resolvedCount = uidList.filter(u => uidResolved.get(u) != null).length;
-                  return resolvedCount > 0 ? <span className="text-green-400"> · {resolvedCount} có tên</span> : null;
+                  return resolvedCount > 0 ? <span className="text-green-400"> {trx('· {{resolvedCount}} có tên', { resolvedCount })}</span> : null;
                 })()}
-                {uidList.length > 0 && <span className="text-muted-foreground"> · Còn lại sẽ lấy tên khi gửi</span>}
+                {uidList.length > 0 && <span className="text-muted-foreground"> {tr('· Còn lại sẽ lấy tên khi gửi')}</span>}
               </span>
-              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">{tr('Hủy')}</button>
               <button
                 disabled={uidList.length === 0}
                 onClick={handleConfirmUids}
                 className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
-                Thêm {uidList.length} UID
+                {trx('Thêm {{count}} UID', { count: uidList.length })}
               </button>
             </div>
           </>
@@ -879,15 +881,15 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
             {/* Group list */}
             <div className="flex-1 overflow-y-auto">
               {groups.length > 0 && groupCountsFailed && (
-                <LoadFailedNotice className="justify-start px-4" text="Không tải được số thành viên nhóm"
+                <LoadFailedNotice className="justify-start px-4" text={tr('Không tải được số thành viên nhóm')}
                   onRetry={loadGroupCounts} />
               )}
               {groups.length === 0 && loading ? (
-                <p className="text-xs text-muted-foreground text-center py-8">Đang tải...</p>
+                <p className="text-xs text-muted-foreground text-center py-8">{tr('Đang tải...')}</p>
               ) : groups.length === 0 && contactsFailed ? (
-                <LoadFailedNotice className="py-8" text="Không tải được danh sách nhóm" onRetry={loadContacts} busy={loading} />
+                <LoadFailedNotice className="py-8" text={tr('Không tải được danh sách nhóm')} onRetry={loadContacts} busy={loading} />
               ) : groups.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-8">Không có nhóm nào</p>
+                <p className="text-xs text-muted-foreground text-center py-8">{tr('Không có nhóm nào')}</p>
               ) : (
                 groups.map(g => {
                   const isSelected = selectedGroupIds.has(g.contact_id);
@@ -916,7 +918,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                       <div className="flex-1 min-w-0">
                         <p className="text-xs text-foreground truncate font-medium">{g.display_name || g.contact_id}</p>
                         <p className="text-[10px] text-muted-foreground">
-                          {memberCount > 0 ? `${memberCount} thành viên` : 'Chưa có thông tin'}
+                          {memberCount > 0 ? tr('{{memberCount}} thành viên', { memberCount }) : tr('Chưa có thông tin')}
                         </p>
                       </div>
                     </label>
@@ -933,16 +935,16 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                 <div className="flex-1 min-w-0 text-xs">{blockedHint}</div>
               ) : (
               <span className="text-xs text-muted-foreground flex-1">
-                {selectedGroupIds.size} nhóm · ~{totalEstimatedMembers} thành viên
+                {trx('{{count}} nhóm · ~{{totalEstimatedMembers}} thành viên', { count: selectedGroupIds.size, totalEstimatedMembers })}
               </span>
               )}
-              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">{tr('Hủy')}</button>
               <button
                 disabled={selectedGroupIds.size === 0 || groupConfirmLoading || !!blockReason}
                 title={blockReason || undefined}
                 onClick={handleConfirmGroups}
                 className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
-                {groupConfirmLoading ? 'Đang tải...' : `Thêm thành viên`}
+                {groupConfirmLoading ? tr('Đang tải...') : tr('Thêm thành viên')}
               </button>
             </div>
           </>
@@ -956,11 +958,11 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                   <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                 </svg>
                 <input value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Tìm tên, SĐT, UID..."
+                  placeholder={tr('Tìm tên, SĐT, UID...')}
                   className="w-full bg-muted border border-input rounded-full pl-7 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
               </div>
               <button onClick={selectAllFiltered} className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0">
-                Chọn tất cả ({filtered.length})
+                {trx('Chọn tất cả ({{count}})', { count: filtered.length })}
               </button>
             </div>
 
@@ -969,14 +971,14 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
               {loading && (allContacts.length === 0 || contactsOwnerRef.current !== zaloId) ? (
                 <div className="p-4 space-y-2">{[...Array(6)].map((_, i) => <div key={i} className="h-10 bg-muted/50 rounded-lg animate-pulse" />)}</div>
               ) : filtered.length === 0 && contactsFailed && allContacts.length === 0 ? (
-                <LoadFailedNotice className="py-8" text="Không tải được danh sách liên hệ" onRetry={loadContacts} busy={loading} />
+                <LoadFailedNotice className="py-8" text={tr('Không tải được danh sách liên hệ')} onRetry={loadContacts} busy={loading} />
               ) : filtered.length === 0 && mode === 'by_label' && selectedLocalLabelIds.length > 0 && localLabelMapFailed ? (
-                <LoadFailedNotice className="py-8" text="Không tải được Nhãn Local" onRetry={loadLocalLabels} busy={localLabelsLoading} />
+                <LoadFailedNotice className="py-8" text={tr('Không tải được Nhãn Local')} onRetry={loadLocalLabels} busy={localLabelsLoading} />
               ) : filtered.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center py-8">
                   {mode === 'by_label' && totalLabelFilters === 0
-                    ? 'Chọn ít nhất 1 nhãn để lọc liên hệ'
-                    : 'Không tìm thấy liên hệ phù hợp'}
+                    ? tr('Chọn ít nhất 1 nhãn để lọc liên hệ')
+                    : tr('Không tìm thấy liên hệ phù hợp')}
                 </p>
               ) : (
                 filtered.map(c => {
@@ -1005,7 +1007,7 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs text-foreground truncate font-medium">{name}</span>
                           {c.contact_type === 'group'
-                            ? <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">nhóm</span>
+                            ? <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">{tr('nhóm')}</span>
                             : c.is_friend === 1 && <span className="text-[9px] text-green-500 flex-shrink-0">●</span>}
                         </div>
                         {(contactLabels.length > 0 || contactLocalLabels.length > 0) && (
@@ -1031,14 +1033,14 @@ export default function TargetSelector({ zaloId, channel = CHANNEL.ZALO, allLabe
               {blockedHint ? (
                 <div className="flex-1 min-w-0 text-xs">{blockedHint}</div>
               ) : (
-                <span className="text-xs text-muted-foreground flex-1">{finalSelected.length} liên hệ được chọn</span>
+                <span className="text-xs text-muted-foreground flex-1">{trx('{{count}} liên hệ được chọn', { count: finalSelected.length })}</span>
               )}
-              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">{tr('Hủy')}</button>
               <button disabled={finalSelected.length === 0 || !!blockReason}
                 title={blockReason || undefined}
                 onClick={() => { onConfirm(finalSelected); onClose(); }}
                 className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
-                Thêm {finalSelected.length} liên hệ
+                {trx('Thêm {{count}} liên hệ', { count: finalSelected.length })}
               </button>
             </div>
           </>

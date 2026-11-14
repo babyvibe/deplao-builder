@@ -1,7 +1,7 @@
 /**
- * Tab "GIF" của bảng biểu cảm Telegram: GIF đã lưu của tài khoản (đồng bộ app Telegram) + GIF thịnh hành, ô tìm GIF qua
- * bot @gif như Telegram, cuộn xuống để tải thêm. Bấm GIF = gửi (Telegram tự thêm vào "GIF đã lưu"); rê chuột để xem
- * chuyển động; "✕" trên GIF đã lưu = bỏ khỏi danh sách.
+ * "GIF" tab of the Telegram emoji panel: the account's saved GIFs (synced from the Telegram app) + trending GIFs, a GIF search through the
+ * @gif bot like Telegram, scroll down to load more. Click a GIF = send it (Telegram adds it to "GIF đã lưu" (Saved GIFs) automatically); hover to preview
+ * the motion; "✕" on a saved GIF = remove it from the list.
  */
 import React from 'react';
 import { cn } from '@/lib/cn';
@@ -17,6 +17,7 @@ import {
 } from '@/lib/chat/telegram/telegramStickerStore';
 import { TelegramStickerTile } from './TelegramStickerTile';
 import { PanelMessage, SearchField } from './TelegramStickerPanel';
+import { tr } from '../../../../../shared/i18n';
 
 const GIF_HEIGHT = 84;
 const LOAD_MORE_DISTANCE = 240;
@@ -83,7 +84,7 @@ export const TelegramGifPanel = React.memo(function TelegramGifPanel({ accountId
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 px-2 pb-1 pt-2">
-        <SearchField value={query} onChange={setQuery} placeholder="Tìm GIF" />
+        <SearchField value={query} onChange={setQuery} placeholder={tr('Tìm GIF')} />
       </div>
       <InViewRootContext.Provider value={scrollEl}>
         <div ref={setScrollEl} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-2">
@@ -91,17 +92,17 @@ export const TelegramGifPanel = React.memo(function TelegramGifPanel({ accountId
             <>
               {showSaved && (
                 <>
-                  <SectionTitle>GIF đã lưu</SectionTitle>
+                  <SectionTitle>{tr('GIF đã lưu')}</SectionTitle>
                   <GifGrid accountId={accountId} gifs={saved!} onPick={onPick} onRemove={(gif) => void removeSavedGif(accountId, gif.id)} />
                 </>
               )}
-              <SectionTitle>{q ? 'Kết quả' : 'Thịnh hành'}</SectionTitle>
+              <SectionTitle>{q ? tr('Kết quả') : tr('Thịnh hành')}</SectionTitle>
               {results.gifs.length > 0 && !stale ? (
                 <GifGrid accountId={accountId} gifs={results.gifs} onPick={onPick} />
               ) : results.loading || stale ? (
-                <PanelMessage loading>Đang tải GIF…</PanelMessage>
+                <PanelMessage loading>{tr('Đang tải GIF…')}</PanelMessage>
               ) : (
-                <PanelMessage>{results.error || (q ? 'Không tìm thấy GIF' : 'Chưa có GIF')}</PanelMessage>
+                <PanelMessage>{results.error || (q ? tr('Không tìm thấy GIF') : tr('Chưa có GIF'))}</PanelMessage>
               )}
               {results.loading && !stale && results.gifs.length > 0 && (
                 <div className="flex justify-center py-2" aria-hidden>
@@ -129,13 +130,13 @@ function GifGrid({ accountId, gifs, onPick, onRemove }: {
   return (
     <div className="grid grid-cols-3 gap-1 pb-1.5">
       {gifs.map((gif) => (
-        <TelegramStickerTile key={gif.id} accountId={accountId} item={gif} size={GIF_HEIGHT} cover onClick={onPick} title="Gửi GIF">
+        <TelegramStickerTile key={gif.id} accountId={accountId} item={gif} size={GIF_HEIGHT} cover onClick={onPick} title={tr('Gửi GIF')}>
           {onRemove && (
             <span
               role="button"
               tabIndex={-1}
-              title="Bỏ khỏi GIF đã lưu"
-              aria-label="Bỏ khỏi GIF đã lưu"
+              title={tr('Bỏ khỏi GIF đã lưu')}
+              aria-label={tr('Bỏ khỏi GIF đã lưu')}
               onClick={(event) => { event.stopPropagation(); onRemove(gif); }}
               className={cn(
                 'absolute right-1 top-1 hidden h-5 w-5 items-center justify-center rounded-full bg-black/55 group-hover:flex',

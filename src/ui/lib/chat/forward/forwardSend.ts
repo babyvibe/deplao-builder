@@ -1,7 +1,7 @@
 /**
- * Chuyển tiếp tin (khung chat, "Lưu vào My Documents"): gửi lại từng tin nguồn sang hội thoại đích theo đúng loại:
- * album ảnh Zalo gộp 1 lần, video / tin thoại / danh thiếp / link / sticker Zalo gửi lại đúng loại, media khác gửi từ file
- * trên máy (tải về nếu chưa có), Telegram / Facebook còn chuyển tiếp gốc. Tách từ ChatWindow (không đổi hành vi).
+ * Forwards messages (chat window, "Lưu vào My Documents"): re-sends each source message to the target conversation by type:
+ * a Zalo photo album is sent in one batch, Zalo videos / voice messages / contact cards / links / stickers are re-sent as the same type, other media is sent from the local file
+ * on the machine (downloaded first if missing), Telegram / Facebook still use native forwarding. Split out of ChatWindow (behaviour unchanged).
  */
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -13,12 +13,13 @@ import {
   getForwardCaption, getForwardPlan, getZaloCardInfo, getZaloLinkInfo, getZaloRichText,
   getZaloStickerId, getZaloVideoInfo, getZaloVoiceUrl, type ForwardKind,
 } from '@/lib/chat/forward/forwardSupport';
+import { tr } from '../../../../shared/i18n';
 
 type ForwardTarget = { threadId: string; threadType: number };
 
 /**
- * File local đã tải của tin, đúng key theo loại (video có cả `thumb` — không được lấy nhầm ảnh bìa làm video).
- * Bỏ qua file `.jxl` cũ (Chromium / Zalo không dùng được).
+ * The message's downloaded local file, using the key for its type (a video also has `thumb`; never take the cover image as the video).
+ * Skips old `.jxl` files (Chromium / Zalo cannot use them).
  */
 function getForwardLocalPath(msg: any, kind?: ForwardKind): string {
   const resolved = getLocalMediaPath(msg);
@@ -52,14 +53,14 @@ async function sendForwardText(
   if (!text) return;
 
   if (isFacebook(channel) || isTelegramCh(channel)) {
-    if (!accountId) throw new Error('Không tìm thấy tài khoản gửi');
+    if (!accountId) throw new Error(tr('Không tìm thấy tài khoản gửi'));
     const result = await getAdapter(channel as Channel).sendMessage({
       accountId,
       threadId: target.threadId,
       body: text,
       threadType: target.threadType,
     });
-    ensureForwardSuccess(result, 'Không gửi được tin nhắn');
+    ensureForwardSuccess(result, tr('Không gửi được tin nhắn'));
     return;
   }
 
@@ -69,10 +70,10 @@ async function sendForwardText(
     threadId: target.threadId,
     type: target.threadType,
   });
-  ensureForwardSuccess(result, 'Không gửi được tin nhắn Zalo');
+  ensureForwardSuccess(result, tr('Không gửi được tin nhắn Zalo'));
 }
 
-/** Đích Zalo (mặc định khi không rõ kênh) */
+/** Zalo target (default when the channel is unknown) */
 const isZaloForwardTarget = (channel?: string) => !isFacebook(channel) && !isTelegramCh(channel);
 
 const FORWARD_DOWNLOAD_KINDS: Partial<Record<ForwardKind, 'image' | 'gif' | 'file' | 'voice' | 'video'>> = {
@@ -80,8 +81,8 @@ const FORWARD_DOWNLOAD_KINDS: Partial<Record<ForwardKind, 'image' | 'gif' | 'fil
 };
 
 /**
- * File local để gửi lại media. Chưa tải (tin đồng bộ từ điện thoại, tin cũ…) → main process tải về theo link CDN
- * trong content (chỉ tin Zalo), cập nhật local_paths để bubble hiện "đã có trên máy".
+ * Local file used to re-send media. Not downloaded yet (message synced from the phone, old message...) → the main process downloads it from the CDN link
+ * in content (Zalo messages only), then updates local_paths so the bubble shows "đã có trên máy" (already on this machine).
  */
 async function ensureForwardLocalPath(msg: any, kind: ForwardKind): Promise<string> {
   const existing = getForwardLocalPath(msg, kind);
@@ -105,8 +106,8 @@ async function ensureForwardLocalPath(msg: any, kind: ForwardKind): Promise<stri
 }
 
 /**
- * Gom các tin cùng album (liền nhau trong danh sách chuyển tiếp) thành 1 nhóm, theo thứ tự ảnh trong album.
- * `albums`: msg_id ảnh đầu → toàn bộ tin của album (groupedFirstMsgs).
+ * Groups the messages of the same album (adjacent in the forward list) into one group, in the photo order of the album.
+ * `albums`: msg_id of the first photo → all messages of the album (groupedFirstMsgs).
  */
 export function groupForwardAlbums(messages: any[], albums: Record<string, any[]>): any[][] {
   const albumOf = new Map<string, any[]>();
@@ -129,12 +130,12 @@ export function groupForwardAlbums(messages: any[], albums: Record<string, any[]
 }
 
 const FORWARD_ALBUM_FILE_RE = /\.(jpe?g|png|webp)$/i;
-/** Lỗi ZaloService.sendImages khi kiểm tra file, trước khi upload (giữ khớp câu chữ bên đó). */
+/** ZaloService.sendImages error when checking the file before upload (kept in line with the wording over there). */
 const FORWARD_ALBUM_PRECHECK_ERROR_RE = /Không tìm thấy một trong các tệp ảnh|không phải ảnh JPG, PNG hoặc WebP|Không đọc được kích thước ảnh/;
 
 /**
- * File local của album nếu gửi gộp được: đích là Zalo, mọi tin là ảnh và có (hoặc tải về được) file JPG/PNG/WebP
- * (định dạng sendImages chấp nhận). Ngược lại null → gửi từng tin.
+ * Local files of the album when it can be sent as one batch: the target is Zalo, every message is a photo, and each has (or can download) a JPG/PNG/WebP file
+ * (formats sendImages accepts). Otherwise null → send each message separately.
  */
 async function prepareForwardAlbum(unit: any[], channel?: string): Promise<string[] | null> {
   if (unit.length < 2 || !isZaloForwardTarget(channel)) return null;
@@ -148,13 +149,13 @@ async function prepareForwardAlbum(unit: any[], channel?: string): Promise<strin
   return paths;
 }
 
-/** Gửi album bằng 1 lần sendImages (zca-js gán groupLayoutId → người nhận thấy album), caption gửi sau như sendOneForward. */
+/** Sends the album in one sendImages call (zca-js assigns a groupLayoutId → the recipient sees an album), the caption is sent afterwards as in sendOneForward. */
 async function sendForwardAlbum(
   auth: any, unit: any[], filePaths: string[], target: ForwardTarget,
   channel?: string, accountId?: string,
 ): Promise<void> {
   const result = await ipc.zalo?.sendImages({ auth, filePaths, threadId: target.threadId, type: target.threadType });
-  ensureForwardSuccess(result, 'Không gửi được album ảnh Zalo');
+  ensureForwardSuccess(result, tr('Không gửi được album ảnh Zalo'));
   for (const msg of unit) {
     const caption = getForwardCaption(msg, 'image');
     if (caption) await sendForwardText(auth, channel, accountId, target, caption);
@@ -171,10 +172,10 @@ function getForwardVideoThumbPath(msg: any): string {
 }
 
 /**
- * Video sang Zalo phải gửi bằng sendVideo — sendFile ra tin file .mp4, không xem được ngay.
- * Video Zalo còn link CDN → dùng lại link + ảnh bìa gốc, không upload lại (sendVideo của zca-js chính là API
- * "forward" msgType 5, cách Zalo chuyển tiếp video). Link hết hạn / gửi lỗi / video kênh khác → upload file đã tải về.
- * Trả false nếu không có link lẫn file (để thử native forward).
+ * A video going to Zalo must be sent with sendVideo: sendFile produces a .mp4 file message that cannot be played right away.
+ * A Zalo video that still has its CDN link → reuse the link + the original cover image, no re-upload (zca-js sendVideo is the same API as
+ * the "forward" msgType 5, the way Zalo forwards videos). Expired link / send error / video from another channel → upload the downloaded file.
+ * Returns false if there is neither a link nor a file (so native forward is tried).
  */
 async function sendZaloVideoForward(auth: any, msg: any, localPath: string, target: ForwardTarget): Promise<boolean> {
   const info = getZaloVideoInfo(msg);
@@ -194,12 +195,12 @@ async function sendZaloVideoForward(auth: any, msg: any, localPath: string, targ
         type: target.threadType,
       });
       if (result?.success) return true;
-      // sendVideo lỗi = chưa gửi gì (lỗi ở bước HEAD link hoặc ở request forward duy nhất) → upload file nếu có
-      if (!localPath) ensureForwardSuccess(result, 'Không gửi được video Zalo');
+      // sendVideo failed = nothing was sent yet (error at the HEAD link step or at the single forward request) → upload the file if there is one
+      if (!localPath) ensureForwardSuccess(result, tr('Không gửi được video Zalo'));
       console.warn('[Forward] Gửi video bằng link CDN lỗi → upload file đã tải về:', result?.error);
     } else if (!localPath) {
-      // Native forward lúc này chỉ ra video không phát được ở người nhận
-      throw new Error('Video đã hết hạn trên Zalo và chưa tải về máy');
+      // Native forward at this point only produces a video the recipient cannot play
+      throw new Error(tr('Video đã hết hạn trên Zalo và chưa tải về máy'));
     }
   }
   if (!localPath) return false;
@@ -214,7 +215,7 @@ async function sendZaloVideoForward(auth: any, msg: any, localPath: string, targ
   }
   const uploadVideoRes = await ipc.zalo?.uploadVideoFile?.({ auth, videoPath: localPath, threadId: target.threadId, type: target.threadType });
   const videoUrl: string = uploadVideoRes?.response?.fileUrl || '';
-  if (!videoUrl) throw new Error(uploadVideoRes?.error || 'Tải video lên Zalo thất bại');
+  if (!videoUrl) throw new Error(uploadVideoRes?.error || tr('Tải video lên Zalo thất bại'));
   const result = await ipc.zalo?.sendVideo({
     auth,
     options: {
@@ -227,13 +228,13 @@ async function sendZaloVideoForward(auth: any, msg: any, localPath: string, targ
     threadId: target.threadId,
     type: target.threadType,
   });
-  ensureForwardSuccess(result, 'Không gửi được video Zalo');
+  ensureForwardSuccess(result, tr('Không gửi được video Zalo'));
   return true;
 }
 
 /**
- * Tin thoại sang Zalo: sendVoice (sendFile ra tin file .m4a). Dùng lại link m4a gốc như video (sendVoice của zca-js
- * là API "forward" msgType 3); link hết hạn / gửi lỗi → tải file lên lại. Trả false nếu không có link lẫn file.
+ * Voice message to Zalo: sendVoice (sendFile produces a .m4a file message). Reuses the original m4a link like a video (zca-js sendVoice
+ * is the "forward" msgType 3 API); expired link / send error → upload the file again. Returns false if there is neither a link nor a file.
  */
 async function sendZaloVoiceForward(auth: any, msg: any, target: ForwardTarget): Promise<boolean> {
   const voiceUrl = isZalo(msg.channel) ? getZaloVoiceUrl(msg) : '';
@@ -244,7 +245,7 @@ async function sendZaloVoiceForward(auth: any, msg: any, target: ForwardTarget):
     if (!check?.expired) {
       const result = await ipc.zalo?.sendVoice({ auth, options: { voiceUrl }, threadId: target.threadId, type: target.threadType });
       if (result?.success) return true;
-      // sendVoice lỗi = chưa gửi gì (lỗi ở bước HEAD link hoặc request forward duy nhất) → tải file lên lại
+      // sendVoice failed = nothing was sent yet (error at the HEAD link step or the single forward request) → upload the file again
       console.warn('[Forward] Gửi tin thoại bằng link gốc lỗi → tải file lên lại:', result?.error);
     }
   }
@@ -253,15 +254,15 @@ async function sendZaloVoiceForward(auth: any, msg: any, target: ForwardTarget):
   const uploadRes = await ipc.zalo?.uploadVoiceFile?.({ auth, voicePath: localPath, threadId: target.threadId, type: target.threadType });
   const resp = uploadRes?.response;
   const uploadedUrl: string = resp?.fileUrl || resp?.normalUrl || resp?.hdUrl || resp?.url || resp?.href || '';
-  if (!uploadedUrl) throw new Error(uploadRes?.error || 'Tải tin thoại lên Zalo thất bại');
+  if (!uploadedUrl) throw new Error(uploadRes?.error || tr('Tải tin thoại lên Zalo thất bại'));
   const result = await ipc.zalo?.sendVoice({ auth, options: { voiceUrl: uploadedUrl }, threadId: target.threadId, type: target.threadType });
-  ensureForwardSuccess(result, 'Không gửi được tin thoại Zalo');
+  ensureForwardSuccess(result, tr('Không gửi được tin thoại Zalo'));
   return true;
 }
 
 /**
- * Gửi lại tin dạng chữ / thẻ của Zalo theo đúng loại (xem forwardSupport.ts). Trả false nếu loại tin cần gửi
- * dạng media (xử lý ở sendOneForward).
+ * Re-sends a Zalo text / card message as its own type (see forwardSupport.ts). Returns false if the message type must be sent
+ * as media (handled in sendOneForward).
  */
 async function sendZaloStructuredForward(
   auth: any, msg: any, kind: ForwardKind, target: ForwardTarget,
@@ -270,12 +271,12 @@ async function sendZaloStructuredForward(
   const toZalo = isZaloForwardTarget(channel);
   switch (kind) {
     case 'rtf': {
-      // Chữ định dạng: giữ in đậm / nghiêng / màu / cỡ chữ / danh sách
+      // Formatted text: keep bold / italic / color / font size / lists
       const { text, styles } = getZaloRichText(msg);
-      if (!text) throw new Error('Tin nhắn không có nội dung để chuyển tiếp');
+      if (!text) throw new Error(tr('Tin nhắn không có nội dung để chuyển tiếp'));
       if (toZalo && styles.length > 0) {
         const result = await ipc.zalo?.sendMessage({ auth, message: text, styles, threadId: target.threadId, type: target.threadType });
-        ensureForwardSuccess(result, 'Không gửi được tin nhắn Zalo');
+        ensureForwardSuccess(result, tr('Không gửi được tin nhắn Zalo'));
       } else {
         await sendForwardText(auth, channel, accountId, target, text);
       }
@@ -284,12 +285,12 @@ async function sendZaloStructuredForward(
     case 'link': {
       const { url, text } = getZaloLinkInfo(msg);
       const fullText = !text ? url : (url && !text.includes(url) ? `${text}\n${url}` : text);
-      if (!fullText) throw new Error('Tin nhắn link không có nội dung');
+      if (!fullText) throw new Error(tr('Tin nhắn link không có nội dung'));
       if (toZalo && url) {
-        // sendLink: 1 tin gồm chữ (chứa link) + khung xem trước, giống tin gốc
+        // sendLink: one message with the text (containing the link) + the preview box, same as the original
         const result = await ipc.zalo?.sendLink({ auth, url, message: text || undefined, threadId: target.threadId, type: target.threadType });
         if (result?.success) return true;
-        // Không đọc được xem trước của link (parseLink lỗi, chưa gửi gì) → gửi dạng chữ, link vẫn bấm được
+        // Link preview cannot be read (parseLink failed, nothing sent yet) → send as text, the link is still clickable
         console.warn('[Forward] sendLink lỗi → gửi dạng chữ:', result?.error);
       }
       await sendForwardText(auth, channel, accountId, target, fullText);
@@ -301,21 +302,21 @@ async function sendZaloStructuredForward(
         const result = await ipc.zalo?.sendCard({
           auth, options: { userId, ...(phone ? { phoneNumber: phone } : {}) }, threadId: target.threadId, type: target.threadType,
         });
-        ensureForwardSuccess(result, 'Không gửi được danh thiếp Zalo');
+        ensureForwardSuccess(result, tr('Không gửi được danh thiếp Zalo'));
         return true;
       }
-      // Kênh khác không có danh thiếp Zalo → gửi tên + số điện thoại
+      // Other channels have no Zalo contact card → send the name + phone number
       const cardText = [name && `👤 ${name}`, phone].filter(Boolean).join('\n');
-      if (!cardText) throw new Error('Không đọc được danh thiếp');
+      if (!cardText) throw new Error(tr('Không đọc được danh thiếp'));
       await sendForwardText(auth, channel, accountId, target, cardText);
       return true;
     }
     case 'sticker': {
-      if (!toZalo) throw new Error('Sticker Zalo chỉ chuyển tiếp được sang Zalo');
+      if (!toZalo) throw new Error(tr('Sticker Zalo chỉ chuyển tiếp được sang Zalo'));
       const stickerId = getZaloStickerId(msg);
-      if (!stickerId) throw new Error('Không đọc được sticker');
+      if (!stickerId) throw new Error(tr('Không đọc được sticker'));
       const result = await ipc.zalo?.sendSticker({ auth, stickerId, threadId: target.threadId, type: target.threadType });
-      ensureForwardSuccess(result, 'Không gửi được sticker Zalo');
+      ensureForwardSuccess(result, tr('Không gửi được sticker Zalo'));
       return true;
     }
     default:
@@ -324,8 +325,8 @@ async function sendZaloStructuredForward(
 }
 
 /**
- * Gửi một tin nguồn theo đúng loại. Caption nguồn được gửi thành một tin độc lập khi phải resend media.
- * Không dùng `forwardMessage` của zca-js cho media: API đó chỉ chuyển tiếp văn bản (message rỗng → lỗi).
+ * Sends one source message as its own type. The source caption is sent as a separate message when the media has to be resent.
+ * Does not use zca-js `forwardMessage` for media: that API only forwards text (empty message → error).
  */
 export async function sendOneForward(
   auth: any, msg: any, target: ForwardTarget,
@@ -333,30 +334,30 @@ export async function sendOneForward(
 ): Promise<void> {
   const plan = getForwardPlan(msg);
   const { kind } = plan;
-  if (kind === 'unsupported') throw new Error(`${plan.reason || 'Loại tin nhắn này'} không chuyển tiếp được`);
+  if (kind === 'unsupported') throw new Error(tr('{{v1}} không chuyển tiếp được', { v1: plan.reason || tr('Loại tin nhắn này') }));
   const caption = getForwardCaption(msg, kind);
   const toZalo = isZaloForwardTarget(channel);
 
   if (kind === 'text' || kind === 'location') {
-    if (!caption) throw new Error('Loại tin nhắn này chưa có nội dung để chuyển tiếp');
+    if (!caption) throw new Error(tr('Loại tin nhắn này chưa có nội dung để chuyển tiếp'));
     await sendForwardText(auth, channel, accountId, target, caption);
     return;
   }
 
   if (isZalo(msg.channel) && await sendZaloStructuredForward(auth, msg, kind, target, channel, accountId)) return;
 
-  // Video / tin thoại sang Zalo: tin xem / nghe được ngay, không phải tin file
+  // Video / voice message to Zalo: a message that plays right away, not a file message
   if (kind === 'video' && toZalo && await sendZaloVideoForward(auth, msg, getForwardLocalPath(msg, 'video'), target)) {
     if (caption) await sendForwardText(auth, channel, accountId, target, caption);
     return;
   }
   if (kind === 'voice' && toZalo && await sendZaloVoiceForward(auth, msg, target)) return;
 
-  // Media còn lại: gửi lại từ file local (tải về nếu chưa có) để chuyển được giữa các tài khoản / kênh.
+  // Other media: re-sent from the local file (downloaded first if missing) so it can move between accounts / channels.
   const localPath = await ensureForwardLocalPath(msg, kind);
   if (localPath) {
     if (!toZalo) {
-      if (!accountId) throw new Error('Không tìm thấy tài khoản gửi');
+      if (!accountId) throw new Error(tr('Không tìm thấy tài khoản gửi'));
       const fileType = kind === 'image' ? 'image'
         : kind === 'video' ? (msg.msg_type === 'video_note' ? 'video_note' : 'video')
           : kind === 'voice' ? 'voice'
@@ -366,53 +367,53 @@ export async function sendOneForward(
       const result = await getAdapter(channel as Channel).sendAttachment({
         accountId, threadId: target.threadId, filePath: localPath, threadType: target.threadType, fileType,
       });
-      ensureForwardSuccess(result, 'Không gửi được tệp đính kèm');
+      ensureForwardSuccess(result, tr('Không gửi được tệp đính kèm'));
     } else {
-      // Ảnh / GIF (zca-js gửi .gif thành tin GIF) / sticker kênh khác dạng ảnh → sendImage; còn lại → file
+      // Photo / GIF (zca-js sends .gif as a GIF message) / other-channel sticker as an image → sendImage; the rest → file
       const asImage = (kind === 'image' || kind === 'gif' || kind === 'animation' || kind === 'sticker')
         && /\.(jpe?g|png|webp|gif)$/i.test(localPath);
       const result = asImage
         ? await ipc.zalo?.sendImage({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType, message: '' })
         : await ipc.zalo?.sendFile({ auth, filePath: localPath, threadId: target.threadId, type: target.threadType });
-      ensureForwardSuccess(result, 'Không gửi được tệp đính kèm Zalo');
+      ensureForwardSuccess(result, tr('Không gửi được tệp đính kèm Zalo'));
     }
 
-    // Không nhét caption vào attachment: gửi riêng để giữ đúng thứ tự/behaviour
-    // chung giữa các kênh, và không làm mất text khi chuyển nhiều message.
+    // Do not put the caption into the attachment: send it separately to keep the right order/behaviour
+    // shared across channels, and does not drop the text when forwarding several messages.
     if (caption) await sendForwardText(auth, channel, accountId, target, caption);
     return;
   }
 
-  // Không có file local: Facebook / Telegram còn native forward trên đúng tài khoản nguồn.
+  // No local file: Facebook / Telegram still use native forward on the source account itself.
   const canUseNativeForward = !sourceAccountId || sourceAccountId === accountId;
   if (!toZalo && canUseNativeForward && msg.msg_id && accountId) {
     if (isFacebook(channel)) {
       const result = await getAdapter(channel as Channel).forwardMessage({
         accountId, messageId: String(msg.msg_id), targetThreadId: target.threadId, threadType: target.threadType,
       });
-      ensureForwardSuccess(result, 'Không chuyển tiếp được tin nhắn Facebook');
+      ensureForwardSuccess(result, tr('Không chuyển tiếp được tin nhắn Facebook'));
       return;
     }
     const sourceThreadId = msg.thread_id || msg.chat_id;
-    if (!sourceThreadId) throw new Error('Tin nhắn Telegram không có hội thoại nguồn');
+    if (!sourceThreadId) throw new Error(tr('Tin nhắn Telegram không có hội thoại nguồn'));
     const result = await getAdapter(channel as Channel).forwardMessage({
       accountId, messageId: String(msg.msg_id), targetThreadId: target.threadId, sourceThreadId: String(sourceThreadId), threadType: target.threadType,
     });
-    ensureForwardSuccess(result, 'Không chuyển tiếp được tin nhắn Telegram');
+    ensureForwardSuccess(result, tr('Không chuyển tiếp được tin nhắn Telegram'));
     return;
   }
   throw new Error(isZalo(msg.channel)
-    ? 'Không tải được tệp từ Zalo (link đã hết hạn?) nên không chuyển tiếp được'
-    : 'Tệp chưa được tải về; không thể chuyển tiếp sang tài khoản khác');
+    ? tr('Không tải được tệp từ Zalo (link đã hết hạn?) nên không chuyển tiếp được')
+    : tr('Tệp chưa được tải về; không thể chuyển tiếp sang tài khoản khác'));
 }
 
 export interface ForwardJobTarget { threadId: string; threadType: number; accountId: string }
 
 export interface ForwardJobContext {
-  /** msg_id ảnh đầu → mọi tin của album (gửi gộp album) */
+  /** msg_id of the first photo → every message of the album (album batch send) */
   albums: Record<string, any[]>;
   accounts: Array<{ zalo_id: string; channel?: string } & Record<string, any>>;
-  /** Tài khoản đang mở (chuyển tiếp gốc Telegram / Facebook chỉ dùng được trên chính tài khoản nguồn) */
+  /** The account currently open (native Telegram / Facebook forwarding only works on the source account itself) */
   sourceAccountId?: string | null;
   notify: (message: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
@@ -423,13 +424,13 @@ export interface ForwardJobLabels {
 }
 
 export const DEFAULT_FORWARD_LABELS: ForwardJobLabels = {
-  progress: (done, total) => `Đang chuyển tiếp ${done}/${total}...`,
-  done: 'Đã chuyển tiếp xong',
+  progress: (done, total) => tr('Đang chuyển tiếp {{done}}/{{total}}...', { done, total }),
+  done: tr('Đã chuyển tiếp xong'),
 };
 
 /**
- * Gửi các tin tới từng người nhận (chuyển tiếp / Lưu vào My Documents): album gộp 1 lần, còn lại từng tin;
- * nội dung soạn kèm (nếu có) là 1 tin mới sau cùng. Chạy nền, không block UI.
+ * Sends the messages to each recipient (forward / Save to My Documents): an album in one batch, everything else one message at a time;
+ * the text composed with them (if any) is one new message at the end. Runs in the background, does not block the UI.
  */
 export function runForwardJob(
   messages: any[],
@@ -439,7 +440,7 @@ export function runForwardJob(
   labels: ForwardJobLabels = DEFAULT_FORWARD_LABELS,
 ): void {
   const units = groupForwardAlbums(messages, ctx.albums);
-  // Chạy lần lượt ở background, không block UI
+  // Runs one after another in the background, does not block the UI
   (async () => {
     const total = messages.length * targets.length;
     let counter = 0;
@@ -452,7 +453,7 @@ export function runForwardJob(
       const targetAccount = ctx.accounts.find(a => a.zalo_id === target.accountId);
       if (!targetAccount) {
         failCount += messages.length;
-        firstFailure ||= 'Không tìm thấy tài khoản gửi';
+        firstFailure ||= tr('Không tìm thấy tài khoản gửi');
         continue;
       }
       const targetChannel = targetAccount.channel || CHANNEL.ZALO;
@@ -461,7 +462,7 @@ export function runForwardJob(
         : buildZaloAuth(targetAccount);
 
       for (const unit of units) {
-        // Album toàn ảnh (tải về nếu chưa có) → gửi gộp 1 lần để người nhận cũng thấy album.
+        // All-photo album (downloaded first if missing) → sent in one batch so the recipient also sees an album.
         const albumPaths = await prepareForwardAlbum(unit, targetChannel);
         if (albumPaths) {
           let albumDone = true;
@@ -477,13 +478,13 @@ export function runForwardJob(
             forwardedAny = true;
           } catch (e: any) {
             if (FORWARD_ALBUM_PRECHECK_ERROR_RE.test(e?.message || '')) {
-              // Lỗi kiểm tra file trước khi upload → chưa gửi gì → gửi từng ảnh bên dưới
+              // File check failed before upload → nothing sent yet → send each photo below
               albumDone = false;
               console.warn(`[Forward] Album first=${unit[0].msg_id} → gửi từng ảnh:`, e.message);
             } else {
-              // Lỗi lúc gửi: không gửi lại từng ảnh (có thể đã gửi một phần → trùng)
+              // Error while sending: do not resend each photo (part may already have been sent → duplicates)
               failCount += unit.length;
-              firstFailure ||= e?.message || 'Không rõ lỗi';
+              firstFailure ||= e?.message || tr('Không rõ lỗi');
               console.warn(`[Forward] Failed album first=${unit[0].msg_id} (${unit.length} ảnh) target=${target.threadId}:`, e.message);
             }
           }
@@ -510,7 +511,7 @@ export function runForwardJob(
             forwardedAny = true;
           } catch (e: any) {
             failCount++;
-            firstFailure ||= e?.message || 'Không rõ lỗi';
+            firstFailure ||= e?.message || tr('Không rõ lỗi');
             console.warn(`[Forward] Failed msg=${msg.msg_id} target=${target.threadId}:`, e.message);
           }
           if (total > 1) {
@@ -519,9 +520,9 @@ export function runForwardJob(
         }
       }
 
-      // Nội dung người dùng soạn trong popup luôn là một tin mới, sau
-      // toàn bộ các tin được forward tới người nhận này. Nó không được
-      // phép thay thế text/caption của tin nguồn.
+      // Text the user writes in the popup is always a new message, sent after
+      // all the messages forwarded to this recipient. It must not replace
+      // the text/caption of the source message.
       if (forwardedAny && companionText) {
         try {
           await sendForwardText(targetAuth, targetChannel, target.accountId, {
@@ -530,7 +531,7 @@ export function runForwardJob(
           }, companionText);
         } catch (e: any) {
           failCount++;
-          firstFailure ||= e?.message || 'Không rõ lỗi';
+          firstFailure ||= e?.message || tr('Không rõ lỗi');
           console.warn(`[Forward] Failed companion target=${target.threadId}:`, e.message);
         }
       }
@@ -538,7 +539,7 @@ export function runForwardJob(
     if (failCount === 0) {
       ctx.notify(labels.done, 'success');
     } else {
-      ctx.notify(`${labels.done} (${failCount} lỗi): ${firstFailure}`, 'error');
+      ctx.notify(tr('{{done}} ({{failCount}} lỗi): {{firstFailure}}', { done: labels.done, failCount, firstFailure }), 'error');
     }
   })();
 }

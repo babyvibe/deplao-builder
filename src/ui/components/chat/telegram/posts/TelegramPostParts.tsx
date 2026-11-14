@@ -1,6 +1,6 @@
 /**
- * Các phần của bài đăng kênh Telegram vẽ như Telegram: cảm xúc nằm TRONG khung bài, chân bài (người đăng · 👁 lượt xem ·
- * đã sửa · giờ), thanh bình luận (ảnh người bình luận gần đây + "N bình luận" / "Để lại bình luận" + ›).
+ * Parts of a Telegram channel post, drawn like Telegram: reactions INSIDE the post frame, the post footer (author · 👁 views ·
+ * edited · time), the comment bar (avatars of recent commenters, then "N bình luận" (N comments) or "Để lại bình luận" (Leave a comment), and ›).
  */
 import React from 'react';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
@@ -8,8 +8,9 @@ import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { displayReactionEmoji } from '../../messages/reactions/ReactionComponents';
 import { formatBubbleTime, formatFullDateTime } from '../../messages/MessageTime';
 import { formatTelegramPostCount } from './telegramPostLayout';
+import { tr, appLocale } from '../../../../../shared/i18n';
 
-/** Cảm xúc của bài: bấm = thả / gỡ cảm xúc đó (kênh không cho xem ai thả, như Telegram). */
+/** Post reactions: click = add / remove that reaction (the channel does not show who reacted, same as Telegram). */
 export function TelegramPostReactions({ counts, myEmoji, onToggle }: {
   counts: Record<string, number>;
   myEmoji: string | null;
@@ -29,7 +30,7 @@ export function TelegramPostReactions({ counts, myEmoji, onToggle }: {
               event.stopPropagation();
               onToggle(emoji, mine);
             }}
-            title={mine ? 'Bỏ cảm xúc' : 'Thả cảm xúc này'}
+            title={mine ? tr('Bỏ cảm xúc') : tr('Thả cảm xúc này')}
             className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors select-none ${
               mine ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-foreground hover:bg-primary/20'
             }`}
@@ -43,7 +44,7 @@ export function TelegramPostReactions({ counts, myEmoji, onToggle }: {
   );
 }
 
-/** Chân bài như Telegram: người đăng, 👁 lượt xem, "đã sửa", giờ — dồn phải. */
+/** Post footer like Telegram: author, 👁 views, "đã sửa" (edited), time, aligned right. */
 export function TelegramPostFooter({ postAuthor, views, edited, timestamp }: {
   postAuthor?: string;
   views: number;
@@ -54,7 +55,7 @@ export function TelegramPostFooter({ postAuthor, views, edited, timestamp }: {
     <div className="flex items-center justify-end gap-1.5 px-3 pb-1.5 pt-1 text-[11px] leading-4 text-subtle-foreground select-none">
       {postAuthor && <span className="min-w-0 truncate">{postAuthor}</span>}
       {views > 0 && (
-        <span className="inline-flex shrink-0 items-center gap-0.5" title={`${views.toLocaleString('vi-VN')} lượt xem`}>
+        <span className="inline-flex shrink-0 items-center gap-0.5" title={tr('{{v1}} lượt xem', { v1: views.toLocaleString(appLocale()) })}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
             <circle cx="12" cy="12" r="3" />
@@ -62,19 +63,19 @@ export function TelegramPostFooter({ postAuthor, views, edited, timestamp }: {
           {formatTelegramPostCount(views)}
         </span>
       )}
-      {edited && <span className="shrink-0">đã sửa</span>}
+      {edited && <span className="shrink-0">{tr('đã sửa')}</span>}
       <span className="shrink-0 cursor-default" title={formatFullDateTime(timestamp)}>{formatBubbleTime(timestamp)}</span>
     </div>
   );
 }
 
-/** Thanh bình luận cuối bài: bấm mở phần bình luận (nhóm thảo luận) ngay trong khung chat. */
+/** Comment bar at the end of the post: click to open the comments (discussion group) right in the chat window. */
 export function TelegramPostCommentsBar({ count, repliers, peers, isSent, unread, onOpen }: {
   count: number;
   repliers: string[];
   peers: Record<string, { name: string; avatar: string }>;
   isSent?: boolean;
-  /** Có bình luận mới từ lần đọc trước → chấm xanh (như Telegram) */
+  /** New comments since the last read → green dot (like Telegram) */
   unread?: boolean;
   onOpen: () => void;
 }) {
@@ -106,9 +107,9 @@ export function TelegramPostCommentsBar({ count, repliers, peers, isSent, unread
         </svg>
       )}
       <span className="min-w-0 flex-1 truncate">
-        {count > 0 ? `${formatTelegramPostCount(count)} bình luận` : 'Để lại bình luận'}
+        {count > 0 ? tr('{{v1}} bình luận', { v1: formatTelegramPostCount(count) }) : tr('Để lại bình luận')}
       </span>
-      {unread && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" title="Có bình luận mới" aria-label="Có bình luận mới" />}
+      {unread && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" title={tr('Có bình luận mới')} aria-label={tr('Có bình luận mới')} />}
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 opacity-70" aria-hidden>
         <polyline points="9 6 15 12 9 18" />
       </svg>

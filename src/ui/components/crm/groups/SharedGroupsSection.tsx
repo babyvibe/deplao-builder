@@ -5,6 +5,8 @@ import {
   type SharedGroupItem,
   type SharedGroupCategory,
 } from '@/lib/crm/backendService';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── Icons ──────────────────────────────────────────────────────────────────
 
@@ -80,10 +82,10 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
       {/* Header */}
       <div className="px-5 py-3 border-b border-border flex-shrink-0">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-foreground">Nhóm chung</h3>
+          <h3 className="text-sm font-semibold text-foreground">{tr('Nhóm chung')}</h3>
           {loading && SpinIcon}
         </div>
-        <p className="text-[11px] text-muted-foreground">Danh sách nhóm đã được chia sẻ và duyệt bởi admin</p>
+        <p className="text-[11px] text-muted-foreground">{tr('Danh sách nhóm đã được chia sẻ và duyệt bởi admin')}</p>
       </div>
 
       {/* Category filter tabs */}
@@ -94,7 +96,7 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
               ${selectedCategoryId === null
                 ? 'bg-blue-600 text-white'
                 : 'bg-muted text-muted-foreground hover:bg-accent'}`}>
-            Tất cả
+            {tr('Tất cả')}
           </button>
           {categories.filter(c => (c.count ?? 0) > 0).map(cat => (
             <button key={cat.id} onClick={() => setSelectedCategoryId(cat.id)}
@@ -115,7 +117,7 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
         <div className="relative">
           <div className="absolute left-3 top-1/2 -translate-y-1/2 text-subtle-foreground">{SearchIcon}</div>
           <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)}
-            placeholder="Tìm nhóm theo tên hoặc ID..."
+            placeholder={tr('Tìm nhóm theo tên hoặc ID...')}
             className="w-full bg-card border border-input rounded-lg pl-9 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
         </div>
       </div>
@@ -131,12 +133,12 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
               </svg>
             </div>
-            <p className="text-sm text-foreground/80 font-medium mb-1">Chưa có nhóm nào</p>
-            <p className="text-xs text-muted-foreground">Các nhóm được chia sẻ sẽ hiển thị ở đây</p>
+            <p className="text-sm text-foreground/80 font-medium mb-1">{tr('Chưa có nhóm nào')}</p>
+            <p className="text-xs text-muted-foreground">{tr('Các nhóm được chia sẻ sẽ hiển thị ở đây')}</p>
           </div>
         ) : filteredGroups.length === 0 ? (
           <div className="flex items-center justify-center h-16 text-xs text-muted-foreground">
-            Không tìm thấy nhóm
+            {tr('Không tìm thấy nhóm')}
           </div>
         ) : (
           <div className="p-2 space-y-1">
@@ -161,9 +163,7 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
                     <span className="text-xs">{group.category.icon}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground mt-0.5">
-                    {group.memberCount.toLocaleString('vi-VN')} thành viên
-                    <span className="mx-1.5">·</span>
-                    <span className="text-subtle-foreground">Chia sẻ bởi {group.submittedBy}</span>
+                    {trx('{{v1}} thành viên<0>·</0><1>Chia sẻ bởi {{submittedBy}}</1>', { v1: group.memberCount.toLocaleString(appLocale()), 0: <span className="mx-1.5" />, 1: <span className="text-subtle-foreground" />, submittedBy: group.submittedBy })}
                   </p>
                 </div>
 
@@ -171,14 +171,14 @@ export default function SharedGroupsSection({ activeAccountId, onJoinGroup }: Sh
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   <button onClick={() => onJoinGroup(group.groupId)}
                     className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1">
-                    Tham gia
+                    {tr('Tham gia')}
                   </button>
                   <button onClick={() => {
                     const url = `https://zalo.me/g/${group.groupId}`;
                     window.open(url, '_blank');
                   }}
                     className="w-8 h-8 rounded-lg bg-muted hover:bg-accent flex items-center justify-center text-muted-foreground transition-colors"
-                    title="Mở link nhóm">
+                    title={tr('Mở link nhóm')}>
                     {ExternalLinkIcon}
                   </button>
                 </div>

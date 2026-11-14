@@ -1,10 +1,10 @@
 /**
- * ApiPlatform — điểm nối Public API v1 vào app.
+ * ApiPlatform: the connection point between the Public API v1 and the app.
  *
- *  - Router khởi tạo LAZY ở request /api/v1 đầu tiên (người không dùng API không tốn gì).
- *  - HttpRelayService gọi `handles(url)` / `handle(req, res)` cho /api/v1 và /docs, và
- *    `attachSocket(io)` khi server chạy (namespace Socket.IO /v1).
- *  - main.ts gọi `configure({ handlers })` với registry IPC chung và `startEvents()`.
+ *  - The router is created LAZILY on the first /api/v1 request (people who do not use the API pay nothing).
+ *  - HttpRelayService calls `handles(url)` / `handle(req, res)` for /api/v1 and /docs, and
+ *    `attachSocket(io)` when the server runs (Socket.IO namespace /v1).
+ *  - main.ts calls `configure({ handlers })` with the shared IPC registry and `startEvents()`.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { ApiRouter, systemPrincipal } from './ApiRouter';
@@ -60,7 +60,7 @@ class ApiPlatform {
         return ApiPlatform.instance;
     }
 
-    /** Test: tạo instance mới. */
+    /** Test: create a new instance. */
     static resetForTests(): void {
         ApiPlatform.instance?.webhooks?.stop();
         ApiPlatform.instance = null;
@@ -75,7 +75,7 @@ class ApiPlatform {
         if (opts.onBeforeSend) this.onBeforeSend = opts.onBeforeSend;
     }
 
-    /** Route bổ sung (plugin) — đăng ký trước khi router khởi tạo hoặc nạp nóng. */
+    /** Extra routes (plugins): register before the router is created or hot-loaded. */
     addRouteProvider(provider: ExtraProvider): void {
         this.extraProviders.push(provider);
         if (this.router) {
@@ -84,7 +84,7 @@ class ApiPlatform {
         }
     }
 
-    /** Owner "plugin:<id>" / "employee:<id>" → principal (cho webhook của plugin/nhân viên). */
+    /** Owner "plugin:<id>" / "employee:<id>" → principal (for the webhooks of plugins / employees). */
     addPrincipalResolver(resolver: PrincipalResolver): void {
         this.principalResolvers.push(resolver);
     }
@@ -113,7 +113,7 @@ class ApiPlatform {
         return this.accounts;
     }
 
-    // ─── Sự kiện ─────────────────────────────────────────────────────────
+    // ─── Events ─────────────────────────────────────────────────────────
 
     private systemCall(channel: string, payload: any): Promise<any> {
         return this.getInvoker()
@@ -154,7 +154,7 @@ class ApiPlatform {
                     const EventBroadcaster = require('../event/EventBroadcaster').default;
                     return EventBroadcaster.onBeforeSend(channel, cb);
                 } catch {
-                    return () => { /* không có EventBroadcaster (test) */ };
+                    return () => { /* no EventBroadcaster (test) */ };
                 }
             },
             logError: msg => logger().warn?.(msg),
@@ -172,7 +172,7 @@ class ApiPlatform {
         return this.webhooks;
     }
 
-    /** Gọi một lần lúc khởi động (sau khi đăng ký IPC). Rẻ: chỉ đăng ký hook + timer nhẹ. */
+    /** Called once at startup (after the IPC registration). Cheap: only registers hooks + light timers. */
     startEvents(): void {
         try {
             this.getHub().hook();
@@ -182,7 +182,7 @@ class ApiPlatform {
         }
     }
 
-    /** Sau khi đổi workspace: EventBroadcaster.clearBeforeSendHooks() đã xoá hook → đăng ký lại. */
+    /** After a workspace change: EventBroadcaster.clearBeforeSendHooks() removed the hooks → register them again. */
     rehookEvents(): void {
         try {
             this.hub?.hook();
@@ -255,7 +255,7 @@ class ApiPlatform {
         this.openApiCache = null;
     }
 
-    /** Kiểm tra rẻ (không khởi tạo router). */
+    /** Cheap check (does not create the router). */
     handles(url: string): boolean {
         const pathname = String(url || '').split('?')[0];
         return pathname === '/api/v1' || pathname.startsWith('/api/v1/') || pathname === '/docs' || pathname.startsWith('/docs/');
@@ -265,7 +265,7 @@ class ApiPlatform {
         await this.getRouter().handle(req, res);
     }
 
-    /** Gọi một thao tác API trong process (plugin, test). */
+    /** Run one API operation inside the process (plugins, tests). */
     invoke(target: string, input: Parameters<ApiRouter['invoke']>[1]) {
         return this.getRouter().invoke(target, input);
     }
@@ -287,7 +287,7 @@ class ApiPlatform {
         };
     }
 
-    /** Khi tài khoản đổi (thêm/xoá/kết nối) → làm mới danh bạ ngay. */
+    /** When an account changes (added / removed / connected) → refresh the directory right away. */
     invalidateAccounts(): void {
         this.accounts?.invalidate();
     }

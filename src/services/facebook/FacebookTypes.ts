@@ -1,6 +1,6 @@
 /**
  * FacebookTypes.ts
- * Tất cả TypeScript interfaces và types cho Facebook integration
+ * All TypeScript interfaces and types for the Facebook integration
  */
 
 import type { FbTemplate } from '../../shared/facebook/facebookTemplate';
@@ -46,8 +46,8 @@ export interface FBLoginResult {
 export type FBAccountStatus = 'connected' | 'disconnected' | 'connecting' | 'error' | 'cookie_expired' | 'max_retries';
 
 export interface FBAccountRecord {
-  id: string;             // UUID nội bộ
-  facebook_id: string;    // ID số của Facebook user
+  id: string;             // Internal UUID
+  facebook_id: string;    // Numeric ID of the Facebook user
   name: string;
   avatar_url: string;
   cookie_encrypted: string;
@@ -63,7 +63,7 @@ export interface FBAccountRecord {
 export type FBThreadType = 'group' | 'user';
 
 export interface FBThread {
-  id: string;               // thread_fbid từ Facebook
+  id: string;               // thread_fbid from Facebook
   account_id: string;
   name: string;
   type: FBThreadType;
@@ -103,7 +103,7 @@ export interface FBAttachment {
 }
 
 export interface FBMessage {
-  id: string;               // messageID từ Facebook (mid.xxx)
+  id: string;               // messageID from Facebook (mid.xxx)
   account_id: string;
   thread_id: string;
   sender_id: string;
@@ -213,7 +213,7 @@ export interface FBMQTTAttachment {
   mediaSha256?: string;
   /** Encrypted media SHA256 hash (base64) for E2EE decryption */
   mediaEncSha256?: string;
-  /** Tin mẫu của Page (attachmentType 'template'): chữ, ảnh, nút, carousel — xem shared/facebook/facebookTemplate.ts */
+  /** Page template message (attachmentType 'template'): text, images, buttons, carousel: see shared/facebook/facebookTemplate.ts */
   template?: FbTemplate;
 }
 
@@ -241,7 +241,7 @@ export interface FBMQTTMessage {
   senderJid?: string;
   /** Whether this message was decrypted by the E2EE bridge */
   isE2EE?: boolean;
-  /** Bridge không hiển thị được nội dung (xem một lần, thanh toán…) → chữ thay thế, không lưu bong bóng rỗng */
+  /** Content the bridge cannot display (view once, payment…) → replacement text, no empty bubble is saved */
   unsupported?: string;
 }
 
@@ -313,7 +313,7 @@ export interface FBE2EEMessageRaw {
   mentions?: any[];
   attachments?: any[];
   type: 'e2ee';
-  /** Loại nội dung bridge chưa hiển thị được (view_once, payment, contact…) */
+  /** Content type the bridge cannot display yet (view_once, payment, contact…) */
   unsupported?: string;
   /** Original message being replied to (if this message is a reply) */
   replyTo?: {

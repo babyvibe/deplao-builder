@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '@/store/app/appStore';
 import { CheckIcon, CloseIcon, UserCheckIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 export interface FriendRequestNotifData {
@@ -85,14 +87,14 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
           <div className="flex items-center gap-2">
             <span className="text-lg"><UserCheckIcon className="w-4 h-4" /></span>
             <p className={`font-bold text-sm ${isLight ? 'text-gray-800' : 'text-foreground'}`}>
-              Lời mời kết bạn
+              {tr('Lời mời kết bạn')}
             </p>
           </div>
           <button
             onClick={handleDismiss}
             className={`text-lg leading-none p-0.5 rounded-full transition-colors
               ${isLight ? 'text-muted-foreground hover:text-muted-foreground hover:bg-gray-100' : 'text-muted-foreground hover:text-foreground/80 hover:bg-muted'}`}
-            title="Đóng"
+            title={tr('Đóng')}
           >
             ×
           </button>
@@ -124,7 +126,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
             )}
             {!data.msg && (
               <p className={`text-xs mt-0.5 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-                muốn kết bạn với bạn
+                {tr('muốn kết bạn với bạn')}
               </p>
             )}
           </div>
@@ -137,7 +139,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
               ? (isLight ? 'bg-green-50 text-green-600' : 'bg-green-900/30 text-green-400')
               : (isLight ? 'bg-gray-50 text-muted-foreground' : 'bg-card/50 text-muted-foreground')
             }`}>
-            {result === 'accepted' ? <><CheckIcon className="w-4 h-4 inline" /> Đã chấp nhận kết bạn</> : <><CloseIcon className="w-4 h-4 inline" /> Đã từ chối lời mời</>}
+            {result === 'accepted' ? <>{trx('<0/> Đã chấp nhận kết bạn', { 0: <CheckIcon className="w-4 h-4 inline" /> })}</> : <>{trx('<0/> Đã từ chối lời mời', { 0: <CloseIcon className="w-4 h-4 inline" /> })}</>}
           </div>
         )}
 
@@ -157,7 +159,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
               {acting === 'accept' ? (
                 <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <><CheckIcon className="w-4 h-4 inline" /> Chấp nhận</>
+                <>{trx('<0/> Chấp nhận', { 0: <CheckIcon className="w-4 h-4 inline" /> })}</>
               )}
             </button>
             <button
@@ -173,7 +175,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
               {acting === 'reject' ? (
                 <span className="inline-block w-4 h-4 border-2 border-border-strong/30 border-t-gray-400 rounded-full animate-spin" />
               ) : (
-                <><CloseIcon className="w-4 h-4 inline" /> Từ chối</>
+                <>{trx('<0/> Từ chối', { 0: <CloseIcon className="w-4 h-4 inline" /> })}</>
               )}
             </button>
           </div>
@@ -186,7 +188,7 @@ export default function FriendRequestNotification({ data, onAccept, onReject, on
             className={`w-full mt-2 text-xs text-center py-1 rounded-lg transition-colors
               ${isLight ? 'text-blue-500 hover:bg-blue-50' : 'text-blue-400 hover:bg-blue-900/20'}`}
           >
-            Xem tất cả lời mời →
+            {tr('Xem tất cả lời mời →')}
           </button>
         )}
       </div>

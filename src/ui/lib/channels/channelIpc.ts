@@ -3,8 +3,8 @@
  * Delegates to ChannelAdapter instances via getAdapter(channel).
  * UI components call this instead of ipc.zalo / ipc.fb directly.
  *
- * Giai đoạn 1 refactor: bọc adapter, giữ nguyên tên hàm + chữ ký export.
- * Giai đoạn 2: UI migrate dần sang gọi getAdapter(channel) trực tiếp.
+ * Refactor phase 1: wraps the adapters, keeps the function names + exported signatures.
+ * Phase 2: the UI gradually moves to calling getAdapter(channel) directly.
  */
 
 import { Channel } from '../../../configs/channels/channelConfig';
@@ -35,7 +35,7 @@ export type {
   PollParams,
 } from './adapters/ChannelAdapter';
 
-// ─── Facade functions — giữ nguyên chữ ký, delegate to adapter ───────────────
+// ─── Facade functions: keep the signatures, delegate to the adapter ───────────────
 
 export async function sendMessage(channel: Channel, params: {
   accountId: string;
@@ -57,10 +57,10 @@ export async function sendAttachment(channel: Channel, params: {
   filePath: string;
   threadType?: number;
   body?: string;
-  /** voice = ghi âm trong app (Telegram: tin thoại thật) */
+  /** voice = recorded in the app (Telegram: real voice messages) */
   fileType?: 'image' | 'video' | 'audio' | 'voice' | 'file';
   quote?: string | null;
-  /** Telegram: trả lời tin này (cả trong chủ đề forum / chuỗi bình luận) */
+  /** Telegram: reply to this message (also inside a forum topic / channel post comment thread) */
   replyToMsgId?: string;
   libraryUuid?: string;
 }) {
@@ -79,7 +79,7 @@ export async function sendVideo(channel: Channel, params: {
   height?: number;
   body?: string;
   quote?: any;
-  /** Telegram: trả lời tin này (cả trong chủ đề forum / chuỗi bình luận) */
+  /** Telegram: reply to this message (also inside a forum topic / channel post comment thread) */
   replyToMsgId?: string;
   auth?: any;
   libraryUuid?: string;

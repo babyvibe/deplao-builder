@@ -1,11 +1,12 @@
 /**
- * PluginStorage — KV riêng của từng plugin (bảng plugin_storage), thư mục dữ liệu riêng,
- * và nhật ký plugin (bảng plugin_logs, ghi theo lô, giữ 5.000 dòng mỗi plugin).
+ * PluginStorage: a private KV store for each plugin (plugin_storage table), its own data folder,
+ * and the plugin log (plugin_logs table, written in batches, keeps 5,000 lines per plugin).
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { apiDb, apiTablesExist } from '../api/dbSchema';
 import { ApiError } from '../api/types';
+import { tr } from '../../shared/i18n';
 
 export const STORAGE_LIMITS = {
     keyMax: 200,
@@ -19,7 +20,7 @@ export class PluginStorage {
 
     private checkKey(key: string): string {
         const k = String(key ?? '');
-        if (!k || k.length > STORAGE_LIMITS.keyMax) throw new ApiError(400, 'VALIDATION_ERROR', `key phải có 1–${STORAGE_LIMITS.keyMax} ký tự`);
+        if (!k || k.length > STORAGE_LIMITS.keyMax) throw new ApiError(400, 'VALIDATION_ERROR', tr('key phải có 1–{{keyMax}} ký tự', { keyMax: STORAGE_LIMITS.keyMax }));
         return k;
     }
 
@@ -31,14 +32,14 @@ export class PluginStorage {
 
     set(pluginId: string, key: string, value: any): void {
         const k = this.checkKey(key);
-        if (value === undefined) throw new ApiError(400, 'VALIDATION_ERROR', 'value không được undefined (dùng delete)');
+        if (value === undefined) throw new ApiError(400, 'VALIDATION_ERROR', tr('value không được undefined (dùng delete)'));
         let json: string;
-        try { json = JSON.stringify(value); } catch { throw new ApiError(400, 'VALIDATION_ERROR', 'value phải chuyển được sang JSON'); }
+        try { json = JSON.stringify(value); } catch { throw new ApiError(400, 'VALIDATION_ERROR', tr('value phải chuyển được sang JSON')); }
         const bytes = Buffer.byteLength(json);
-        if (bytes > STORAGE_LIMITS.valueMaxBytes) throw new ApiError(413, 'PAYLOAD_TOO_LARGE', 'Mỗi giá trị tối đa 1 MB');
+        if (bytes > STORAGE_LIMITS.valueMaxBytes) throw new ApiError(413, 'PAYLOAD_TOO_LARGE', tr('Mỗi giá trị tối đa 1 MB'));
         const db = apiDb();
         const used = db.queryOne<{ n: number }>('SELECT COALESCE(SUM(LENGTH(value_json)), 0) AS n FROM plugin_storage WHERE plugin_id = ? AND key != ?', [pluginId, k]);
-        if (Number(used?.n || 0) + bytes > STORAGE_LIMITS.totalMaxBytes) throw new ApiError(413, 'PAYLOAD_TOO_LARGE', 'Plugin đã dùng hết 20 MB lưu trữ');
+        if (Number(used?.n || 0) + bytes > STORAGE_LIMITS.totalMaxBytes) throw new ApiError(413, 'PAYLOAD_TOO_LARGE', tr('Plugin đã dùng hết 20 MB lưu trữ'));
         db.run(
             `INSERT INTO plugin_storage (plugin_id, key, value_json, updated_at) VALUES (?,?,?,?)
              ON CONFLICT(plugin_id, key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
@@ -60,7 +61,7 @@ export class PluginStorage {
         );
         return rows.map(r => {
             let value: any = null;
-            try { value = JSON.parse(r.value_json); } catch { /* giữ null */ }
+            try { value = JSON.parse(r.value_json); } catch { /* keep null */ }
             return { key: r.key, value, updated_at: r.updated_at };
         });
     }
@@ -70,7 +71,7 @@ export class PluginStorage {
         return apiDb().runChanges('DELETE FROM plugin_storage WHERE plugin_id = ?', [pluginId]);
     }
 
-    /** Thư mục file riêng của plugin (tạo nếu chưa có). */
+    /** The plugin's own file folder (created if it does not exist yet). */
     dataDir(pluginId: string): string {
         const dir = path.join(this.dataRoot(), pluginId);
         fs.mkdirSync(dir, { recursive: true });
@@ -120,7 +121,7 @@ export class PluginLogStore {
                 this.sinceprune = 0;
                 this.prune();
             }
-        } catch { /* nhật ký không được làm hỏng plugin */ }
+        } catch { /* a log write must never break the plugin */ }
     }
 
     prune(): void {

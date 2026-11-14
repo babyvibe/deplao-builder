@@ -1,12 +1,12 @@
 /**
- * Mảnh dùng lại của Cài đặt → Internet & Cloud → Đồng bộ dữ liệu (chuyển từ phần "Đồng bộ DB" cũ):
- *  - SnapshotProgress: tiến độ chụp bản gốc (bước x/5, %, dung lượng, tốc độ, thời gian còn lại, đang gửi lại phần nào).
- *  - SyncLogTable: nhật ký đồng bộ.
- *  - PassphraseDialog: đặt / đổi mật khẩu sao lưu (bật đồng bộ lần đầu bắt buộc có).
- *  - StandbyCard + FollowDialog: máy dự phòng (máy chủ thấy máy nào đang theo dõi; máy dự phòng thấy
- *    "Đang theo dõi bản của …" + Chuyển sang máy này).
- *  - RemoteCopiesCard: "Bản sao DB trên R2" (đọc khi bấm, xoá hẳn bản của máy cũ — db.deleteRemote).
- * Câu chữ dùng tên kho đang chọn (useStoreLabel: "R2" / "Google Drive").
+ * Reusable pieces of Settings → Internet & Cloud → Data sync (moved from the old "Đồng bộ DB" (DB sync) section):
+ *  - SnapshotProgress: base snapshot progress (step x/5, %, size, speed, time left, which part is being re-sent).
+ *  - SyncLogTable: sync log.
+ *  - PassphraseDialog: set / change the backup password (required the first time sync is turned on).
+ *  - StandbyCard + FollowDialog: standby machine (the server sees which machine is monitoring; a standby machine sees
+ *    "Đang theo dõi bản của …" (Monitoring the copy of …) + Switch to this machine).
+ *  - RemoteCopiesCard: "Bản sao DB trên R2" (DB copies on R2) (read on click, permanently deletes the copy of an old machine - db.deleteRemote).
+ * The wording uses the selected storage name (useStoreLabel: "R2" / "Google Drive").
  */
 import React, { useEffect, useId, useState } from 'react';
 import { showConfirm } from '@/components/common/ConfirmDialog';
@@ -45,76 +45,78 @@ import {
   useStoreLabel,
 } from '../cloudUi';
 import { CopyScopeNotice, RemoteCopyDetails, RemoteCopyList, type RestoreWizardOptions } from '../restore/RestoreWizard';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
-// ─── Tiến độ chụp bản gốc ────────────────────────────────────────────────────────────────
+// ─── Base snapshot progress ────────────────────────────────────────────────────────────────
 
-/** Các bước chụp bản gốc; bước cuối "Tải lên <kho>" ghép tên kho lúc vẽ. */
+/** The base snapshot steps; the last step "Tải lên <kho>" (Upload to <storage>) gets the storage name filled in when drawn. */
 const SNAPSHOT_STEPS: Array<{ phase: DbSyncProgress['phase']; label: string }> = [
-  { phase: 'copy', label: 'Sao chép DB' },
-  { phase: 'filter', label: 'Lọc theo phạm vi' },
-  { phase: 'compress', label: 'Nén' },
-  { phase: 'encrypt', label: 'Mã hoá' },
-  { phase: 'upload', label: 'Tải lên' },
+  { phase: 'copy', label: tr('Sao chép DB') },
+  { phase: 'filter', label: tr('Lọc theo phạm vi') },
+  { phase: 'compress', label: tr('Nén') },
+  { phase: 'encrypt', label: tr('Mã hoá') },
+  { phase: 'upload', label: tr('Tải lên') },
 ];
 
-/** "45 giây", "12 phút", "1 giờ 5 phút". */
+/** "45 giây" (45 seconds), "12 phút" (12 minutes), "1 giờ 5 phút" (1 hour 5 minutes). */
 function fmtDuration(ms: number): string {
   const sec = Math.max(0, Math.round(ms / 1000));
-  if (sec < 60) return `${sec} giây`;
+  if (sec < 60) return tr('{{sec}} giây', { sec });
   const min = Math.round(sec / 60);
-  if (min < 60) return `${min} phút`;
+  if (min < 60) return tr('{{min}} phút', { min });
   const h = Math.floor(min / 60);
   const m = min % 60;
-  return m ? `${h} giờ ${m} phút` : `${h} giờ`;
+  return m ? tr('{{h}} giờ {{m}} phút', { h, m }) : tr('{{h}} giờ', { h });
 }
 
-/** Tiến độ chụp bản gốc: bước hiện tại, %, dung lượng, tốc độ + thời gian còn lại khi tải lên, đang gửi lại phần nào. */
+/** Base snapshot progress: current step, %, size, speed + time left while uploading, which part is being re-sent. */
 export function SnapshotProgress({ progress, now = Date.now() }: { progress: DbSyncProgress; now?: number }) {
   const store = useStoreLabel();
   const idx = Math.max(0, SNAPSHOT_STEPS.findIndex(st => st.phase === progress.phase));
   const step = SNAPSHOT_STEPS[idx] ?? SNAPSHOT_STEPS[0];
   const stepLabel = step.phase === 'upload' ? `${step.label} ${store}` : step.label;
-  const parts: string[] = [`Bước ${idx + 1}/${SNAPSHOT_STEPS.length}: ${stepLabel}`];
+  const parts: string[] = [tr('Bước {{v1}}/{{count}}: {{stepLabel}}', { v1: idx + 1, count: SNAPSHOT_STEPS.length, stepLabel })];
   if (progress.total > 0) parts.push(`${fmtBytes(progress.done)} / ${fmtBytes(progress.total)}`);
   if (progress.phase === 'upload' && progress.rate && progress.rate > 0) {
     parts.push(`${fmtBytes(progress.rate)}/s`);
-    if (progress.total > progress.done) parts.push(`còn khoảng ${fmtDuration(((progress.total - progress.done) / progress.rate) * 1000)}`);
+    if (progress.total > progress.done) parts.push(tr('còn khoảng {{v1}}', { v1: fmtDuration(((progress.total - progress.done) / progress.rate) * 1000) }));
   }
   const retry = progress.retry;
   return (
     <div className="space-y-1.5 pt-1">
-      <ProgressBar value={progress.percent} tone={retry ? 'warning' : 'primary'} label="Tiến độ chụp bản gốc" />
+      <ProgressBar value={progress.percent} tone={retry ? 'warning' : 'primary'} label={tr('Tiến độ chụp bản gốc')} />
       <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
         <CloudSpinner className="h-3.5 w-3.5" />
         <span>{parts.join(' · ')}</span>
         <span className="font-medium text-foreground">{progress.percent}%</span>
       </p>
       <p className="text-[11px] text-subtle-foreground">
-        Bắt đầu {fmtHm(progress.startedAt)} · đã chạy {fmtDuration(now - progress.startedAt)}
+        {trx('Bắt đầu {{v1}} · đã chạy {{v2}}', { v1: fmtHm(progress.startedAt), v2: fmtDuration(now - progress.startedAt) })}
       </p>
       {retry && (
         <p className="text-xs text-warning">
-          Mạng chậm: phần {retry.part ?? '?'} đang gửi lại (lần {retry.attempt}/{retry.maxAttempts}) — vẫn tiếp tục, không cần làm gì.
+          {trx('Mạng chậm: phần {{v1}} đang gửi lại (lần {{attempt}}/{{maxAttempts}}) — vẫn tiếp tục, không cần làm gì.', { v1: retry.part ?? '?', attempt: retry.attempt, maxAttempts: retry.maxAttempts })}
         </p>
       )}
     </div>
   );
 }
 
-// ─── Nhật ký đồng bộ ─────────────────────────────────────────────────────────────────────
+// ─── Sync log ─────────────────────────────────────────────────────────────────────────
 
 const KIND_LABEL: Record<SyncLogEntry['kind'], string> = {
-  base: 'Chụp gốc mới',
-  segment: 'Đoạn thay đổi',
-  'segments-hour': 'Đoạn thay đổi',
-  restore: 'Khôi phục',
-  follow: 'Máy dự phòng tải về',
+  base: tr('Chụp gốc mới'),
+  segment: tr('Đoạn thay đổi'),
+  'segments-hour': tr('Đoạn thay đổi'),
+  restore: tr('Khôi phục'),
+  follow: tr('Máy dự phòng tải về'),
 };
 
 const RESULT: Record<SyncLogEntry['result'], { label: string; variant: 'success' | 'warning' | 'destructive' }> = {
-  ok: { label: 'Thành công', variant: 'success' },
-  retried: { label: 'Thử lại', variant: 'warning' },
-  error: { label: 'Lỗi', variant: 'destructive' },
+  ok: { label: tr('Thành công'), variant: 'success' },
+  retried: { label: tr('Thử lại'), variant: 'warning' },
+  error: { label: tr('Lỗi'), variant: 'destructive' },
 };
 
 export function SyncLogTable({ entries, workspaceNames }: { entries: SyncLogEntry[]; workspaceNames?: Map<string, string> | null }) {
@@ -124,11 +126,11 @@ export function SyncLogTable({ entries, workspaceNames }: { entries: SyncLogEntr
       <table className="w-full text-left text-xs">
         <thead className="bg-muted/50 text-[11px] uppercase tracking-wider text-subtle-foreground">
           <tr>
-            <th className="px-3 py-2 font-medium">Thời điểm</th>
-            <th className="px-3 py-2 font-medium">Loại</th>
-            <th className="px-3 py-2 font-medium">Thay đổi</th>
-            <th className="px-3 py-2 font-medium">Dung lượng</th>
-            <th className="px-3 py-2 font-medium">Kết quả</th>
+            <th className="px-3 py-2 font-medium">{tr('Thời điểm')}</th>
+            <th className="px-3 py-2 font-medium">{tr('Loại')}</th>
+            <th className="px-3 py-2 font-medium">{tr('Thay đổi')}</th>
+            <th className="px-3 py-2 font-medium">{tr('Dung lượng')}</th>
+            <th className="px-3 py-2 font-medium">{tr('Kết quả')}</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -137,13 +139,13 @@ export function SyncLogTable({ entries, workspaceNames }: { entries: SyncLogEntr
             const time = e.endAt && e.kind === 'segments-hour'
               ? `${fmtLogTime(e.at, now)}–${fmtLogTime(e.endAt, now).slice(-5)}`
               : fmtLogTime(e.at, now);
-            const kind = e.kind === 'segments-hour' ? `${KIND_LABEL[e.kind]} · ${fmtNum(e.pushes)} lần đẩy` : (KIND_LABEL[e.kind] ?? e.kind);
+            const kind = e.kind === 'segments-hour' ? tr('{{v1}} · {{v2}} lần đẩy', { v1: KIND_LABEL[e.kind], v2: fmtNum(e.pushes) }) : (KIND_LABEL[e.kind] ?? e.kind);
             const ws = workspaceNames?.get(e.workspaceId);
             return (
               <tr key={e.id} className="text-foreground">
                 <td className="whitespace-nowrap px-3 py-2 tabular-nums">{time}</td>
                 <td className="px-3 py-2">{ws ? <span className="text-muted-foreground">{ws} · </span> : null}{kind}</td>
-                <td className="whitespace-nowrap px-3 py-2 tabular-nums">{e.kind === 'base' ? 'toàn bộ' : `${fmtNum(e.rows)} dòng`}</td>
+                <td className="whitespace-nowrap px-3 py-2 tabular-nums">{e.kind === 'base' ? tr('toàn bộ') : tr('{{v1}} dòng', { v1: fmtNum(e.rows) })}</td>
                 <td className="whitespace-nowrap px-3 py-2 tabular-nums">{fmtBytes(e.bytes)}</td>
                 <td className="px-3 py-2">
                   <Badge size="sm" variant={result.variant} title={e.error || undefined}>{result.label}</Badge>
@@ -157,14 +159,14 @@ export function SyncLogTable({ entries, workspaceNames }: { entries: SyncLogEntr
   );
 }
 
-// ─── Mật khẩu sao lưu ────────────────────────────────────────────────────────────────────
+// ─── Backup password ────────────────────────────────────────────────────────────────────
 
-/** 'enable' = đang bật đồng bộ lần đầu (lưu mật khẩu xong thì lưu luôn thiết lập). */
+/** 'enable' = turning sync on for the first time (after saving the password, the settings are saved too). */
 export type PassphraseDialogKind = 'set' | 'change' | 'enable';
 
 /**
- * Đặt / đổi mật khẩu sao lưu: nhập hai lần + xác nhận đã hiểu quên mật khẩu là mất bản trên R2.
- * Chỉ gắn khi đang mở (đóng là bỏ hết chữ đã gõ).
+ * Set / change the backup password: enter it twice + confirm you understand that forgetting the password means losing the copy on R2.
+ * Only mounted while open (closing discards everything typed).
  */
 export function PassphraseDialog({ kind, busy, onCancel, onSubmit }: {
   kind: PassphraseDialogKind;
@@ -181,9 +183,9 @@ export function PassphraseDialog({ kind, busy, onCancel, onSubmit }: {
   const [error, setError] = useState<string | null>(null);
 
   const submit = () => {
-    if (first.length < 8) { setError('Mật khẩu cần ít nhất 8 ký tự.'); return; }
-    if (first !== second) { setError('Hai lần nhập không khớp.'); return; }
-    if (!ack) { setError('Tick ô xác nhận để tiếp tục.'); return; }
+    if (first.length < 8) { setError(tr('Mật khẩu cần ít nhất 8 ký tự.')); return; }
+    if (first !== second) { setError(tr('Hai lần nhập không khớp.')); return; }
+    if (!ack) { setError(tr('Tick ô xác nhận để tiếp tục.')); return; }
     setError(null);
     onSubmit(first);
   };
@@ -194,54 +196,54 @@ export function PassphraseDialog({ kind, busy, onCancel, onSubmit }: {
       <form className="flex min-h-0 flex-col" onSubmit={e => { e.preventDefault(); submit(); }}>
         <DialogHeader>
           <div className="min-w-0">
-            <DialogTitle>{change ? 'Đổi mật khẩu sao lưu' : 'Đặt mật khẩu sao lưu'}</DialogTitle>
+            <DialogTitle>{change ? tr('Đổi mật khẩu sao lưu') : tr('Đặt mật khẩu sao lưu')}</DialogTitle>
             <DialogDescription>
               {change
-                ? `Bản mới trên ${label} dùng mật khẩu mới. Máy dự phòng phải nhập lại mật khẩu mới.`
-                : `Bản trên ${label} được mã hoá bằng mật khẩu này trước khi tải lên. Máy khác phải nhập mật khẩu khi khôi phục.`}
+                ? tr('Bản mới trên {{label}} dùng mật khẩu mới. Máy dự phòng phải nhập lại mật khẩu mới.', { label })
+                : tr('Bản trên {{label}} được mã hoá bằng mật khẩu này trước khi tải lên. Máy khác phải nhập mật khẩu khi khôi phục.', { label })}
             </DialogDescription>
           </div>
           <DialogClose />
         </DialogHeader>
         <DialogBody className="space-y-3">
-          <FormField label="Mật khẩu" htmlFor={firstId} hint="Ít nhất 8 ký tự. Ghi lại ở nơi an toàn.">
+          <FormField label={tr('Mật khẩu')} htmlFor={firstId} hint={tr('Ít nhất 8 ký tự. Ghi lại ở nơi an toàn.')}>
             <Input id={firstId} type="password" autoComplete="new-password" value={first} onChange={e => { setFirst(e.target.value); setError(null); }} autoFocus />
           </FormField>
-          <FormField label="Nhập lại mật khẩu" htmlFor={secondId}>
+          <FormField label={tr('Nhập lại mật khẩu')} htmlFor={secondId}>
             <Input id={secondId} type="password" autoComplete="new-password" value={second} onChange={e => { setSecond(e.target.value); setError(null); }} />
           </FormField>
-          <Checkbox checked={ack} onCheckedChange={next => { setAck(next); setError(null); }} label={`Tôi hiểu quên mật khẩu là mất bản trên ${label}`} />
+          <Checkbox checked={ack} onCheckedChange={next => { setAck(next); setError(null); }} label={tr('Tôi hiểu quên mật khẩu là mất bản trên {{label}}', { label })} />
           {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         </DialogBody>
         <DialogFooter>
-          <Button variant="ghost" onClick={onCancel} disabled={busy}>Huỷ</Button>
-          <Button type="submit" loading={busy}>{kind === 'enable' ? 'Đặt mật khẩu và bật' : 'Lưu mật khẩu'}</Button>
+          <Button variant="ghost" onClick={onCancel} disabled={busy}>{tr('Huỷ')}</Button>
+          <Button type="submit" loading={busy}>{kind === 'enable' ? tr('Đặt mật khẩu và bật') : tr('Lưu mật khẩu')}</Button>
         </DialogFooter>
       </form>
     </Dialog>
   );
 }
 
-// ─── Bản sao trên R2: được xoá bản nào, nhãn cạnh bản sao ───────────────────────────────
+// ─── Copies on R2: which copies can be deleted, labels next to the copies ───────────────────────────────
 
 type CloudRun = ReturnType<typeof useCloudAction>['run'];
 
 const DELETE_KEY = 'delete:';
 
-/** Bản đang xoá (theo khoá bận của useCloudAction). */
+/** Copy being deleted (by the busy lock of useCloudAction). */
 function deletingIdOf(busy: string | null): string | null {
   return busy?.startsWith(DELETE_KEY) ? busy.slice(DELETE_KEY.length) : null;
 }
 
 /**
- * Hỏi lại rồi xoá hẳn một bản sao DB trên kho (`label` = tên kho). Lỗi của main (vd COPY_IN_USE) hiện nguyên văn.
- * Trả true khi đã xoá.
+ * Asks again, then permanently deletes one DB copy on the storage (`label` = storage name). Errors from main (e.g. COPY_IN_USE) are shown as is.
+ * Returns true when deleted.
  */
 async function deleteRemoteCopy(copy: RemoteDbCopy, run: CloudRun, label = 'R2'): Promise<boolean> {
   const ok = await showConfirm({
-    title: `Xoá hẳn bản sao DB "${copy.name}" trên ${label}?`,
-    message: `Máy ${copy.machine} · đồng bộ ${fmtWhen(copy.lastSyncAt)} · ${fmtBytes(copy.bytes)}. Không khôi phục được nữa.`,
-    confirmText: 'Xoá bản này',
+    title: tr('Xoá hẳn bản sao DB "{{name}}" trên {{label}}?', { name: copy.name, label }),
+    message: tr('Máy {{machine}} · đồng bộ {{v1}} · {{v2}}. Không khôi phục được nữa.', { machine: copy.machine, v1: fmtWhen(copy.lastSyncAt), v2: fmtBytes(copy.bytes) }),
+    confirmText: tr('Xoá bản này'),
     variant: 'danger',
   });
   if (!ok) return false;
@@ -251,14 +253,14 @@ async function deleteRemoteCopy(copy: RemoteDbCopy, run: CloudRun, label = 'R2')
       const db = cloudApi()?.db;
       return typeof db?.deleteRemote === 'function' ? db.deleteRemote(copy.workspaceId) : undefined;
     },
-    `Đã xoá bản sao trên ${label}`,
+    tr('Đã xoá bản sao trên {{label}}', { label }),
   );
   return !!res;
 }
 
 /**
- * Không cho xoá bản máy này đang đồng bộ lên, hay bản máy này đang theo dõi (main cũng chặn); nhãn
- * "Đang đồng bộ từ máy này" / "Của máy này" / "Máy này đang theo dõi".
+ * Blocks deleting the copy this machine is syncing up, or the copy this machine is monitoring (main blocks it too); labels
+ * "Đang đồng bộ từ máy này" (Syncing from this machine) / "Của máy này" (This machine's) / "Máy này đang theo dõi" (This machine is monitoring).
  */
 export function remoteCopyRules(status: DbSyncStatus): {
   canDelete: (copy: RemoteDbCopy) => boolean;
@@ -266,7 +268,7 @@ export function remoteCopyRules(status: DbSyncStatus): {
 } {
   const following = status.following;
   const syncing = status.mode !== 'off';
-  // Bản của máy này: mã bản sao trên R2 (bucket/uid) của từng workspace; id workspace trên máy giữ lại cho bản cũ của main.
+  // This machine's copy: the copy code on R2 (bucket/uid) of each workspace; the workspace id on the machine is kept for main's old copies.
   const ownIds = new Set<string>();
   for (const w of status.workspaces) {
     if (w.copyId) ownIds.add(w.copyId);
@@ -275,25 +277,25 @@ export function remoteCopyRules(status: DbSyncStatus): {
   return {
     canDelete: copy => copy.workspaceId !== following?.workspaceId && !(syncing && ownIds.has(copy.workspaceId)),
     tagOf: copy => {
-      if (copy.workspaceId === following?.workspaceId) return 'Máy này đang theo dõi';
-      if (ownIds.has(copy.workspaceId)) return syncing ? 'Đang đồng bộ từ máy này' : 'Của máy này';
+      if (copy.workspaceId === following?.workspaceId) return tr('Máy này đang theo dõi');
+      if (ownIds.has(copy.workspaceId)) return syncing ? tr('Đang đồng bộ từ máy này') : tr('Của máy này');
       return null;
     },
   };
 }
 
-// ─── Máy dự phòng ────────────────────────────────────────────────────────────────────────
+// ─── Standby machine ────────────────────────────────────────────────────────────────────────
 
 /**
- * Máy dự phòng: máy chủ thấy máy nào đang theo dõi + nút bật theo dõi bản của máy khác; máy dự phòng thấy
- * "Đang theo dõi bản của …" + Chuyển sang máy này (mở trình khôi phục chế độ promote) / Tắt theo dõi.
+ * Standby machine: the server sees which machine is monitoring + a button to start monitoring another machine's copy; a standby machine sees
+ * "Đang theo dõi bản của …" (Monitoring the copy of …) + Switch to this machine (opens the restore wizard in promote mode) / Stop monitoring.
  */
 export function StandbyCard({ status, ready, onWizard, onStatus, onRefresh, className }: {
   status: DbSyncStatus;
   ready: boolean;
-  /** Mở trình khôi phục (Chuyển sang máy này). */
+  /** Open the restore wizard (Switch to this machine). */
   onWizard: (options: RestoreWizardOptions) => void;
-  /** Trạng thái DB mới từ main (follow on/off). */
+  /** New DB status from main (follow on/off). */
   onStatus?: (status: DbSyncStatus) => void;
   onRefresh?: () => void;
   className?: string;
@@ -313,13 +315,13 @@ export function StandbyCard({ status, ready, onWizard, onStatus, onRefresh, clas
   const stopFollow = async () => {
     if (!following) return;
     const ok = await showConfirm({
-      title: 'Tắt theo dõi?',
-      message: `Máy này ngừng tải bản sao của ${following.sourceMachine}. Dữ liệu đã tải về máy vẫn giữ.`,
-      confirmText: 'Tắt theo dõi',
+      title: tr('Tắt theo dõi?'),
+      message: tr('Máy này ngừng tải bản sao của {{sourceMachine}}. Dữ liệu đã tải về máy vẫn giữ.', { sourceMachine: following.sourceMachine }),
+      confirmText: tr('Tắt theo dõi'),
       variant: 'warning',
     });
     if (!ok) return;
-    const res = await run('follow', () => cloudApi()?.db.follow({ workspaceId: following.workspaceId, on: false }), 'Đã tắt theo dõi');
+    const res = await run('follow', () => cloudApi()?.db.follow({ workspaceId: following.workspaceId, on: false }), tr('Đã tắt theo dõi'));
     if (res) applyStatus(res.status);
   };
 
@@ -331,41 +333,40 @@ export function StandbyCard({ status, ready, onWizard, onStatus, onRefresh, clas
   return (
     <Card className={cn('space-y-2 p-4', className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-foreground">Máy dự phòng</p>
+        <p className="text-sm font-semibold text-foreground">{tr('Máy dự phòng')}</p>
         {!following && (
           <span className="text-xs text-muted-foreground">
             {followers.length
-              ? `${followers.length} máy đang theo dõi · ${followers.map(f => `${f.machine} · trễ ${fmtLag(f.lagMs)}`).join(', ')}`
-              : 'Chưa có máy nào theo dõi'}
+              ? tr('{{count}} máy đang theo dõi · {{v1}}', { count: followers.length, v1: followers.map(f => tr('{{machine}} · trễ {{v1}}', { machine: f.machine, v1: fmtLag(f.lagMs) })).join(', ') })
+              : tr('Chưa có máy nào theo dõi')}
           </span>
         )}
       </div>
       {following ? (
         <>
           <p className="text-sm text-foreground">
-            Đang theo dõi bản của <strong>{following.sourceMachine}</strong> · trễ {fmtLag(following.lagMs)}
+            {trx('Đang theo dõi bản của <0>{{sourceMachine}}</0> · trễ {{v1}}', { 0: <strong />, sourceMachine: following.sourceMachine, v1: fmtLag(following.lagMs) })}
           </p>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Máy này tải đoạn mới mỗi phút. Khi máy chủ hỏng, bấm Chuyển sang máy này để dùng dữ liệu ngay; kênh chat
-            đăng nhập lại ở bước sau.
+            {tr('Máy này tải đoạn mới mỗi phút. Khi máy chủ hỏng, bấm Chuyển sang máy này để dùng dữ liệu ngay; kênh chat đăng nhập lại ở bước sau.')}
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={promote}>Chuyển sang máy này</Button>
-            <Button size="sm" variant="outline" loading={busy === 'follow'} onClick={() => void stopFollow()}>Tắt theo dõi</Button>
+            <Button size="sm" onClick={promote}>{tr('Chuyển sang máy này')}</Button>
+            <Button size="sm" variant="outline" loading={busy === 'follow'} onClick={() => void stopFollow()}>{tr('Tắt theo dõi')}</Button>
           </div>
         </>
       ) : (
         <>
           <p className="text-xs text-foreground">
             {provider === 'gdrive'
-              ? 'Máy khác cài Deplao, chọn kho Google Drive và đăng nhập cùng tài khoản Google rồi bật Theo dõi bản sao.'
-              : 'Máy khác cài Deplao, kết nối cùng Cloudflare rồi bật Theo dõi bản sao.'}
+              ? tr('Máy khác cài Deplao, chọn kho Google Drive và đăng nhập cùng tài khoản Google rồi bật Theo dõi bản sao.')
+              : tr('Máy khác cài Deplao, kết nối cùng Cloudflare rồi bật Theo dõi bản sao.')}
           </p>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Máy đó tải đoạn mới mỗi phút; khi cần thì bấm Chuyển sang máy này ngay trên máy đó.
+            {tr('Máy đó tải đoạn mới mỗi phút; khi cần thì bấm Chuyển sang máy này ngay trên máy đó.')}
           </p>
           <Button size="sm" variant="outline" disabled={!ready} onClick={() => setFollowOpen(true)}>
-            Dùng máy này theo dõi bản của máy khác…
+            {tr('Dùng máy này theo dõi bản của máy khác…')}
           </Button>
         </>
       )}
@@ -377,7 +378,7 @@ export function StandbyCard({ status, ready, onWizard, onStatus, onRefresh, clas
           onDone={next => {
             setFollowOpen(false);
             applyStatus(next);
-            notify('Đã bật theo dõi bản sao', 'success');
+            notify(tr('Đã bật theo dõi bản sao'), 'success');
           }}
         />
       )}
@@ -386,8 +387,8 @@ export function StandbyCard({ status, ready, onWizard, onStatus, onRefresh, clas
 }
 
 /**
- * Bật chế độ máy dự phòng: chọn bản sao của máy khác trên kho → nhập mật khẩu sao lưu → db.follow({ on: true }).
- * Bản của máy / workspace không dùng nữa xoá được ngay trong danh sách (nút thùng rác).
+ * Turn on standby mode: pick another machine's copy on the storage → enter the backup password → db.follow({ on: true }).
+ * Copies of machines / workspaces that are no longer used can be deleted right in the list (trash button).
  */
 export function FollowDialog({ passphraseSet, canDelete, onClose, onDone }: {
   passphraseSet: boolean;
@@ -411,7 +412,7 @@ export function FollowDialog({ passphraseSet, canDelete, onClose, onDone }: {
     try {
       const res = await cloudApi()?.db.listRemote();
       if (res?.success) setCopies(res.copies ?? []);
-      else { setCopies([]); setLoadError(res?.error || `Không đọc được danh sách bản sao trên ${label}.`); }
+      else { setCopies([]); setLoadError(res?.error || tr('Không đọc được danh sách bản sao trên {{label}}.', { label })); }
     } catch (err) {
       setCopies([]);
       setLoadError(cleanIpcError(err));
@@ -426,8 +427,8 @@ export function FollowDialog({ passphraseSet, canDelete, onClose, onDone }: {
   };
 
   const submit = async () => {
-    if (!selected) { setError('Chọn bản sao cần theo dõi.'); return; }
-    if (!passphrase && !passphraseSet) { setError('Nhập mật khẩu sao lưu của máy chủ.'); return; }
+    if (!selected) { setError(tr('Chọn bản sao cần theo dõi.')); return; }
+    if (!passphrase && !passphraseSet) { setError(tr('Nhập mật khẩu sao lưu của máy chủ.')); return; }
     setError(null);
     const res = await run('follow', () => cloudApi()?.db.follow({ workspaceId: selected, on: true, passphrase: passphrase || undefined }));
     if (!res) return;
@@ -439,19 +440,19 @@ export function FollowDialog({ passphraseSet, canDelete, onClose, onDone }: {
     <Dialog open onOpenChange={next => { if (!next && busy !== 'follow') onClose(); }} size="md">
       <DialogHeader>
         <div className="min-w-0">
-          <DialogTitle>Theo dõi bản sao của máy khác</DialogTitle>
-          <DialogDescription>Máy này tải đoạn mới mỗi phút; khi máy chủ hỏng thì chuyển sang dùng ngay.</DialogDescription>
+          <DialogTitle>{tr('Theo dõi bản sao của máy khác')}</DialogTitle>
+          <DialogDescription>{tr('Máy này tải đoạn mới mỗi phút; khi máy chủ hỏng thì chuyển sang dùng ngay.')}</DialogDescription>
         </div>
         <DialogClose />
       </DialogHeader>
       <DialogBody className="space-y-4">
         {copies === null ? (
           <p className="flex items-center gap-2 text-xs text-muted-foreground">
-            <CloudSpinner className="h-3.5 w-3.5" /> {`Đang đọc bản sao trên ${label}…`}
+            <CloudSpinner className="h-3.5 w-3.5" /> {tr('Đang đọc bản sao trên {{label}}…', { label })}
           </p>
         ) : copies.length === 0 ? (
-          <Notice tone={loadError ? 'destructive' : 'info'} action={<Button size="sm" variant="ghost" onClick={() => void load()}>Tải lại</Button>}>
-            <p>{loadError || `Chưa có bản sao nào trên ${label} của tài khoản này.`}</p>
+          <Notice tone={loadError ? 'destructive' : 'info'} action={<Button size="sm" variant="ghost" onClick={() => void load()}>{tr('Tải lại')}</Button>}>
+            <p>{loadError || tr('Chưa có bản sao nào trên {{label}} của tài khoản này.', { label })}</p>
           </Notice>
         ) : (
           <RemoteCopyList
@@ -465,34 +466,34 @@ export function FollowDialog({ passphraseSet, canDelete, onClose, onDone }: {
         )}
         {selectedCopy && <CopyScopeNotice copy={selectedCopy} />}
         <FormField
-          label="Mật khẩu sao lưu của máy chủ"
+          label={tr('Mật khẩu sao lưu của máy chủ')}
           htmlFor={passId}
-          hint={passphraseSet ? 'Để trống nếu giống mật khẩu đã lưu trên máy này.' : undefined}
+          hint={passphraseSet ? tr('Để trống nếu giống mật khẩu đã lưu trên máy này.') : undefined}
         >
           <Input id={passId} type="password" autoComplete="off" value={passphrase} onChange={e => { setPassphrase(e.target.value); setError(null); }} />
         </FormField>
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       </DialogBody>
       <DialogFooter>
-        <Button variant="ghost" onClick={onClose} disabled={busy === 'follow'}>Huỷ</Button>
-        <Button loading={busy === 'follow'} disabled={!copies?.length} onClick={() => void submit()}>Bật theo dõi</Button>
+        <Button variant="ghost" onClick={onClose} disabled={busy === 'follow'}>{tr('Huỷ')}</Button>
+        <Button loading={busy === 'follow'} disabled={!copies?.length} onClick={() => void submit()}>{tr('Bật theo dõi')}</Button>
       </DialogFooter>
     </Dialog>
   );
 }
 
-// ─── Bản sao DB trên R2 ──────────────────────────────────────────────────────────────────
+// ─── DB copy on R2 ──────────────────────────────────────────────────────────────────
 
 /**
- * "Bản sao DB trên R2": chỉ đọc danh sách khi bấm "Xem các bản trên R2" (không tự đọc định kỳ); xoá hẳn bản của máy /
- * workspace không dùng nữa. Bản máy này đang đồng bộ lên hoặc đang theo dõi thì không có nút xoá.
+ * "Bản sao DB trên R2" (DB copies on R2): the list is only read when "Xem các bản trên R2" (View copies on R2) is clicked (it does not read on a timer); permanently deletes the copy of a machine /
+ * workspace that is no longer used. A copy this machine is syncing up or monitoring has no delete button.
  */
 export function RemoteCopiesCard({ ready, canDelete, tagOf, initialCopies = null }: {
   ready: boolean;
   canDelete: (copy: RemoteDbCopy) => boolean;
-  /** Nhãn cạnh bản sao ("Đang đồng bộ từ máy này", "Máy này đang theo dõi", "Của máy này"). */
+  /** Label next to a copy ("Đang đồng bộ từ máy này" (Syncing from this machine), "Máy này đang theo dõi" (This machine is monitoring), "Của máy này" (This machine's)). */
   tagOf?: (copy: RemoteDbCopy) => string | null;
-  /** Danh sách đã đọc trước (test). */
+  /** List read earlier (test). */
   initialCopies?: RemoteDbCopy[] | null;
 }) {
   const label = useStoreLabel();
@@ -511,7 +512,7 @@ export function RemoteCopiesCard({ ready, canDelete, tagOf, initialCopies = null
     try {
       const res = await db.listRemote();
       if (res?.success) setCopies(res.copies ?? []);
-      else { setCopies([]); setError(res?.error || `Không đọc được danh sách bản sao trên ${label}.`); }
+      else { setCopies([]); setError(res?.error || tr('Không đọc được danh sách bản sao trên {{label}}.', { label })); }
     } catch (err) {
       setCopies([]);
       setError(cleanIpcError(err));
@@ -528,11 +529,11 @@ export function RemoteCopiesCard({ ready, canDelete, tagOf, initialCopies = null
     <Card className="space-y-3 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-foreground">{`Bản sao DB trên ${label}`}</p>
+          <p className="text-sm font-semibold text-foreground">{tr('Bản sao DB trên {{label}}', { label })}</p>
           <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
             {provider === 'gdrive'
-              ? 'Các bản đang có trên Google Drive (của mọi máy dùng tài khoản Google này). Xoá bản của máy cũ không dùng nữa để bớt dung lượng.'
-              : 'Các bản đang có trong kho R2 (của mọi máy dùng tài khoản Cloudflare này). Xoá bản của máy cũ không dùng nữa để bớt dung lượng.'}
+              ? tr('Các bản đang có trên Google Drive (của mọi máy dùng tài khoản Google này). Xoá bản của máy cũ không dùng nữa để bớt dung lượng.')
+              : tr('Các bản đang có trong kho R2 (của mọi máy dùng tài khoản Cloudflare này). Xoá bản của máy cũ không dùng nữa để bớt dung lượng.')}
           </p>
         </div>
         <Button
@@ -543,11 +544,11 @@ export function RemoteCopiesCard({ ready, canDelete, tagOf, initialCopies = null
           disabled={!ready}
           onClick={() => void load()}
         >
-          {copies ? 'Tải lại' : `Xem các bản trên ${label}`}
+          {copies ? tr('Tải lại') : tr('Xem các bản trên {{label}}', { label })}
         </Button>
       </div>
       {error && <Notice tone="destructive"><p>{error}</p></Notice>}
-      {copies && !error && copies.length === 0 && <p className="text-xs text-muted-foreground">{`Chưa có bản sao nào trên ${label}.`}</p>}
+      {copies && !error && copies.length === 0 && <p className="text-xs text-muted-foreground">{tr('Chưa có bản sao nào trên {{label}}.', { label })}</p>}
       {copies && copies.length > 0 && (
         <ul className="divide-y divide-border rounded-xl border border-border">
           {copies.map(copy => {
@@ -567,7 +568,7 @@ export function RemoteCopiesCard({ ready, canDelete, tagOf, initialCopies = null
                       disabled={!ready || (deleting != null && deleting !== copy.workspaceId)}
                       onClick={() => void remove(copy)}
                     >
-                      {`Xoá bản này trên ${label}`}
+                      {tr('Xoá bản này trên {{label}}', { label })}
                     </Button>
                   )}
                 </div>

@@ -1,7 +1,9 @@
 /**
- * Chưa chọn hội thoại nào.
+ * No conversation selected.
  */
 
+
+import { tr } from '../../../../../shared/i18n';
 
 export function NoThreadSelected() {
   return (
@@ -9,7 +11,7 @@ export function NoThreadSelected() {
       <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="mb-4 opacity-30">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </svg>
-      <p className="text-sm">Chọn một hội thoại để bắt đầu</p>
+      <p className="text-sm">{tr('Chọn một hội thoại để bắt đầu')}</p>
     </div>
   );
 }

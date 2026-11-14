@@ -1,6 +1,6 @@
 /**
- * Tìm nhanh tài khoản chat theo tên (không dấu), @username, UID và số điện thoại (0912…, 84912…, +84 912… coi như một).
- * Dùng ở Cài đặt → Tài khoản và Dashboard.
+ * Quick search of chat accounts by name (accent-insensitive), @username, UID and phone number (0912…, 84912…, +84 912… count as one).
+ * Used in Settings → Accounts and the Dashboard.
  */
 export interface SearchableAccount {
   zalo_id: string;
@@ -13,7 +13,7 @@ export interface SearchableAccount {
 
 const fold = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
 
-/** Các cách viết cùng một số Việt Nam: 0912… ↔ 84912… */
+/** The different ways to write the same Vietnamese number: 0912… ↔ 84912… */
 function phoneVariants(digits: string): string[] {
   const variants = new Set([digits]);
   if (digits.startsWith('84') && digits.length > 2) variants.add(`0${digits.slice(2)}`);
@@ -28,7 +28,7 @@ export function matchAccountSearch(account: SearchableAccount, query: string): b
   const names = [account.full_name, account.display_name, account.username];
   if (folded && names.some((name) => name && fold(name).includes(folded))) return true;
   if (account.zalo_id.includes(q) || (!!account.facebook_id && account.facebook_id.includes(q))) return true;
-  // Số điện thoại: cần ít nhất 3 chữ số để "0" không khớp mọi tài khoản
+  // Phone number: at least 3 digits are needed so that "0" does not match every account
   const queryDigits = q.replace(/\D/g, '');
   const phoneDigits = (account.phone || '').replace(/\D/g, '');
   if (queryDigits.length < 3 || !phoneDigits) return false;

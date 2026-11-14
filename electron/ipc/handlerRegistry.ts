@@ -1,19 +1,19 @@
 /**
- * handlerRegistry — ghi nhận MỌI IPC handler (ipcMain.handle) vào một Map để
- * Public API v1 và plugin gọi đúng handler mà UI đang dùng (một logic duy nhất).
+ * handlerRegistry: records EVERY IPC handler (ipcMain.handle) in one Map so
+ * Public API v1 and plugins call the same handler the UI uses (a single logic).
  *
- * Cài đặt bằng cách import file này TRƯỚC mọi register*Ipc() trong electron/main.ts.
- * Wrapper chỉ thêm `Map.set/delete` và đo phần chạy đồng bộ của handler (timeIpc — chỉ ghi Nhật ký khi ≥ 1 s),
- * không đổi kết quả / lỗi của handler. Map giữ handler gốc (Public API / plugin gọi thẳng).
+ * Installed by importing this file BEFORE any register*Ipc() in electron/main.ts.
+ * The wrapper only adds `Map.set/delete` and measures the synchronous part of a handler (timeIpc: writes to the Log only when ≥ 1 s),
+ * without changing the handler's result / errors. The Map keeps the original handler (Public API / plugins call it directly).
  *
- * Lưu ý bảo mật: registry này KHÔNG dùng cho /api/proxy/action của nhân viên —
- * proxy cũ vẫn dùng registry riêng trong zaloIpc.ts (chỉ kênh zalo:*), để không mở
- * rộng bề mặt mà nhân viên gọi được.
+ * Security note: this registry is NOT used for the employee /api/proxy/action -
+ * the old proxy still uses its own registry in zaloIpc.ts (zalo:* channels only), so it does not
+ * widen the surface employees can call.
  *
- * Lệnh từ giao diện chạy trong phạm vi workspace đang mở (dbScope.runInUiScope): giao diện đang mở workspace nhân viên
- * (remote) → CSDL / media / chế độ của workspace đó. Public API / plugin gọi thẳng handler trong Map (không qua đây)
- * nên luôn phục vụ workspace local đang chạy. Boss gọi handler hộ nhân viên (HttpRelayService: proxy / lệnh REST, qua
- * ipcMain._invokeHandlers với event = null) cũng vậy: không phải lệnh của giao diện.
+ * UI commands run in the scope of the open workspace (dbScope.runInUiScope): when the UI has an employee (remote) workspace open →
+ * that workspace's DB / media / mode. Public API / plugins call handlers in the Map directly (not through here),
+ * so they always serve the running local workspace. Boss calling a handler on behalf of an employee (HttpRelayService: proxy / REST commands, via
+ * ipcMain._invokeHandlers with event = null) is the same: not a UI command.
  */
 import { ipcMain } from 'electron';
 import { timeIpc } from '../../src/utils/startup/mainThreadWatchdog';
@@ -34,10 +34,10 @@ export function installIpcHandlerRegistry(): void {
     const originalRemove = typeof main.removeHandler === 'function' ? main.removeHandler.bind(ipcMain) : null;
 
     main.handle = (channel: string, listener: RegisteredIpcHandler) => {
-        // Đo phần chạy đồng bộ của handler (≥ 1 s → Nhật ký "[Hiệu năng] IPC …") — tìm thủ phạm khi app "Not Responding".
-        // Phạm vi workspace đang mở chỉ cho lệnh có event của Electron (từ giao diện). event = null: Boss chạy hộ nhân viên →
-        // workspace local đang chạy. Trước đây máy vừa là Boss vừa mở workspace nhân viên thì lệnh của nhân viên (lưu nhãn,
-        // ghi chú, tải ảnh…) đọc / ghi CSDL đệm của workspace nhân viên thay vì CSDL của Boss.
+        // Measures the synchronous part of the handler (≥ 1 s → Log "[Hiệu năng] IPC …") - to find the culprit when the app shows "Not Responding".
+        // The open-workspace scope only applies to commands that carry an Electron event (from the UI). event = null: Boss running on behalf of an employee →
+        // the running local workspace. Before, when a machine was both Boss and had an employee workspace open, the employee's commands (save label,
+        // save note, download image…) read / wrote the cached DB of the employee workspace instead of Boss's DB.
         const result = originalHandle(channel, (event: any, ...args: any[]) => {
             const run = () => timeIpc(channel, () => listener(event, ...args));
             return event ? runInUiScope(run) : run();

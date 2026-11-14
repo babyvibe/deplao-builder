@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { app } from 'electron';
 import Logger from '../Logger';
 import { inUiRemoteScope } from '../../services/database/dbScope';
+import { tr } from '../../shared/i18n';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,14 +56,14 @@ export interface Workspace {
 }
 
 /**
- * Mật khẩu nhân viên đã lưu cho một remote workspace ("Kết nối lại" không phải gõ lại). Mã hoá bằng Electron safeStorage
- * (Windows DPAPI) ở workspaceIpc — WorkspaceManager chỉ cất bản mã. Nằm NGOÀI object Workspace nên không bao giờ theo
- * workspace:list / getActive / switched… sang renderer.
+ * Saved employee password for a remote workspace ("Kết nối lại" (Reconnect) does not need it typed again). Encrypted with Electron safeStorage
+ * (Windows DPAPI) in workspaceIpc: WorkspaceManager only keeps the encrypted copy. It sits OUTSIDE the Workspace object, so it never reaches the renderer
+ * through workspace:list / getActive / switched…
  */
 export interface SavedRemotePassword {
-    /** base64 của safeStorage.encryptString(password) */
+    /** base64 of safeStorage.encryptString(password) */
     enc: string;
-    /** Tên đăng nhập (chữ thường) lúc lưu — chỉ dùng lại cho đúng tài khoản này. '' = không rõ. */
+    /** Login name (lowercase) at save time, only reused for this same account. '' = unknown. */
     username: string;
     savedAt: number;
 }
@@ -70,12 +71,12 @@ export interface SavedRemotePassword {
 interface WorkspaceConfig {
     activeWorkspaceId: string;
     /**
-     * Workspace local mở gần nhất = workspace mà main process chạy nền (CSDL chính, tài khoản, workflow…) khi giao diện
-     * đang mở workspace remote — kể cả khi mở app lúc đang ở workspace remote.
+     * The most recently opened local workspace = the workspace the main process runs in the background (main DB, accounts, workflows…) while the UI
+     * is showing a remote workspace, including when the app was opened while on a remote workspace.
      */
     lastLocalWorkspaceId?: string;
     workspaces: Workspace[];
-    /** workspaceId → mật khẩu đã lưu (mã hoá). */
+    /** workspaceId → saved password (encrypted). */
     savedPasswords?: Record<string, SavedRemotePassword>;
 }
 
@@ -129,7 +130,7 @@ class WorkspaceManager {
             this.config.activeWorkspaceId = this.config.workspaces[0].id;
             this.saveConfig();
         }
-        // Bản cũ chưa ghi workspace local chạy nền: workspace đang mở nếu là local (ghi ở lần lưu sau)
+        // Older versions did not record the background local workspace: use the open workspace if it is local (recorded on the next save)
         if (activeWs && activeWs.type !== 'remote' && !this.config.lastLocalWorkspaceId) {
             this.config.lastLocalWorkspaceId = activeWs.id;
         }
@@ -162,7 +163,7 @@ class WorkspaceManager {
 
         const defaultWorkspace: Workspace = {
             id: DEFAULT_WORKSPACE_ID,
-            name: 'Mặc định',
+            name: tr('Mặc định'),
             type: 'local',
             icon: '🏠',
             createdAt: Date.now(),
@@ -229,12 +230,12 @@ class WorkspaceManager {
         relayPort?: number;
     }): { success: boolean; workspace?: Workspace; error?: string } {
         if (this.config.workspaces.length >= MAX_WORKSPACES) {
-            return { success: false, error: `Tối đa ${MAX_WORKSPACES} workspace` };
+            return { success: false, error: tr('Tối đa {{MAX_WORKSPACES}} workspace', { MAX_WORKSPACES }) };
         }
 
         // Check duplicate name
         if (this.config.workspaces.some(w => w.name === params.name)) {
-            return { success: false, error: `Tên "${params.name}" đã tồn tại` };
+            return { success: false, error: tr('Tên "{{name}}" đã tồn tại', { name: params.name }) };
         }
 
         const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -281,11 +282,11 @@ class WorkspaceManager {
 
     public updateWorkspace(id: string, updates: Partial<Omit<Workspace, 'id' | 'createdAt'>>): { success: boolean; error?: string } {
         const idx = this.config.workspaces.findIndex(w => w.id === id);
-        if (idx < 0) return { success: false, error: 'Workspace không tồn tại' };
+        if (idx < 0) return { success: false, error: tr('Workspace không tồn tại') };
 
         // Check duplicate name
         if (updates.name && this.config.workspaces.some(w => w.id !== id && w.name === updates.name)) {
-            return { success: false, error: `Tên "${updates.name}" đã tồn tại` };
+            return { success: false, error: tr('Tên "{{name}}" đã tồn tại', { name: updates.name }) };
         }
 
         Object.assign(this.config.workspaces[idx], updates);
@@ -295,17 +296,17 @@ class WorkspaceManager {
 
     public deleteWorkspace(id: string): { success: boolean; error?: string } {
         if (id === DEFAULT_WORKSPACE_ID) {
-            return { success: false, error: 'Không thể xóa workspace mặc định' };
+            return { success: false, error: tr('Không thể xóa workspace mặc định') };
         }
         if (this.config.workspaces.length <= 1) {
-            return { success: false, error: 'Phải có ít nhất 1 workspace' };
+            return { success: false, error: tr('Phải có ít nhất 1 workspace') };
         }
 
         const ws = this.config.workspaces.find(w => w.id === id);
-        if (!ws) return { success: false, error: 'Workspace không tồn tại' };
+        if (!ws) return { success: false, error: tr('Workspace không tồn tại') };
 
         this.config.workspaces = this.config.workspaces.filter(w => w.id !== id);
-        // Xoá workspace = quên luôn mật khẩu nhân viên đã lưu
+        // Deleting a workspace also forgets its saved employee password
         if (this.config.savedPasswords) delete this.config.savedPasswords[id];
 
         // If deleted was active, switch to first remaining
@@ -347,7 +348,7 @@ class WorkspaceManager {
         return { success: true };
     }
 
-    // ─── Mật khẩu nhân viên đã lưu (bản mã) ──────────────────────────
+    // ─── Saved employee password (encrypted copy) ──────────────────────────
 
     public getSavedPassword(id: string): SavedRemotePassword | null {
         const entry = this.config.savedPasswords?.[id];
@@ -360,7 +361,7 @@ class WorkspaceManager {
         this.saveConfig();
     }
 
-    /** true nếu có mật khẩu để xoá. */
+    /** true if there is a password to delete. */
     public clearSavedPassword(id: string): boolean {
         if (!this.config.savedPasswords?.[id]) return false;
         delete this.config.savedPasswords[id];
@@ -371,15 +372,15 @@ class WorkspaceManager {
     // ─── Active workspace ────────────────────────────────────────────
 
     /**
-     * Workspace của đoạn code đang chạy: lệnh từ giao diện đang mở workspace remote → workspace remote đó; còn lại (việc
-     * chạy nền, API, plugin, relay…) → workspace local đang chạy (getRuntimeWorkspace). Giao diện mở workspace local thì
-     * hai cái là một. Xem dbScope.ts.
+     * The workspace the running code belongs to: a command from a UI that has a remote workspace open → that remote workspace; everything else (background
+     * jobs, API, plugins, relay…) → the local workspace that is running (getRuntimeWorkspace). When the UI has a local workspace open,
+     * the two are the same. See dbScope.ts.
      */
     public getActiveWorkspace(): Workspace {
         return inUiRemoteScope() ? this.getUiActiveWorkspace() : this.getRuntimeWorkspace();
     }
 
-    /** Workspace đang mở trên giao diện (activeWorkspaceId), bất kể đoạn code đang chạy là gì. */
+    /** Workspace open in the UI (activeWorkspaceId), regardless of what code is running. */
     public getUiActiveWorkspace(): Workspace {
         const ws = this.config.workspaces.find(w => w.id === this.config.activeWorkspaceId);
         if (!ws) {
@@ -390,8 +391,8 @@ class WorkspaceManager {
     }
 
     /**
-     * Workspace local mà main process chạy nền (CSDL chính, media, tài khoản, workflow, API…): workspace đang mở nếu là
-     * local; giao diện đang mở workspace remote → workspace local mở gần nhất, không có thì workspace mặc định.
+     * The local workspace the main process runs in the background (main DB, media, accounts, workflows, API…): the open workspace if it is
+     * local; if the UI has a remote workspace open → the most recently opened local workspace, or the default workspace if there is none.
      */
     public getRuntimeWorkspace(): Workspace {
         const ui = this.getUiActiveWorkspace();
@@ -409,14 +410,14 @@ class WorkspaceManager {
 
     public switchWorkspace(id: string): { success: boolean; workspace?: Workspace; error?: string } {
         const ws = this.config.workspaces.find(w => w.id === id);
-        if (!ws) return { success: false, error: 'Workspace không tồn tại' };
+        if (!ws) return { success: false, error: tr('Workspace không tồn tại') };
 
         if (this.config.activeWorkspaceId === id) {
             return { success: true, workspace: ws }; // already active
         }
 
         const prevId = this.config.activeWorkspaceId;
-        // Workspace local đang chạy nền: workspace local vừa rời (sang remote) hoặc vừa mở
+        // Local workspace running in the background: the local workspace just left (for a remote one) or just opened
         const prevWs = this.config.workspaces.find(w => w.id === prevId);
         if (prevWs && prevWs.type !== 'remote') this.config.lastLocalWorkspaceId = prevWs.id;
         if (ws.type !== 'remote') this.config.lastLocalWorkspaceId = id;
@@ -437,7 +438,7 @@ class WorkspaceManager {
 
     public restoreActiveWorkspace(id: string): { success: boolean; workspace?: Workspace; error?: string } {
         const ws = this.config.workspaces.find(w => w.id === id);
-        if (!ws) return { success: false, error: 'Workspace không tồn tại' };
+        if (!ws) return { success: false, error: tr('Workspace không tồn tại') };
 
         this.config.activeWorkspaceId = id;
         if (ws.type !== 'remote') this.config.lastLocalWorkspaceId = id;

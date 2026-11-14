@@ -1,7 +1,7 @@
 /**
- * Phần riêng từng kênh của khung chat. Khung chat (hooks/) chỉ gọi qua chatWindowChannel(channel); kênh không khai
- * báo hàm nào thì khung chat dùng hành vi chung (chỉ đọc DB). Thêm kênh: viết một ChatWindowChannel rồi đăng ký ở
- * channels/index.ts (xem README.md của thư mục window/).
+ * Per-channel parts of the chat window. The chat window (hooks/) only calls them through chatWindowChannel(channel); a channel that declares no
+ * function gets the common behavior from the chat window (DB only). To add a channel: write a ChatWindowChannel, then register it in
+ * channels/index.ts (see README.md in the window/ folder).
  */
 import type React from 'react';
 
@@ -10,18 +10,18 @@ export type Notify = (message: string, type?: 'success' | 'error' | 'info' | 'wa
 export interface OlderFromServerArgs {
   accountId: string;
   threadId: string;
-  /** Topic forum (Telegram) đang mở */
+  /** Open forum topic (Telegram) */
   topicId: string | null;
-  /** Tin cũ nhất đang có (mốc của trang trước) */
+  /** Oldest message currently loaded (the marker for the previous page) */
   oldest: any;
-  /** timestamp của `oldest` */
+  /** timestamp of `oldest` */
   before: number;
 }
 
 export interface OlderFromServerResult {
-  /** Số tin server vừa lưu vào DB (> 0 → khung chat đọc lại trang từ DB) */
+  /** Number of messages the server just saved to the DB (> 0 → the chat window reloads the page from the DB) */
   stored: number;
-  /** Server còn tin cũ hơn nữa */
+  /** The server has even older messages */
   hasMore: boolean;
 }
 
@@ -32,13 +32,13 @@ export interface EnsureMessageArgs {
   notify: Notify;
 }
 
-/** ok = false: đã báo lỗi cho người dùng, dừng nhảy tới tin */
+/** ok = false: the error was already shown to the user, stop jumping to the message */
 export interface EnsureMessageResult {
   ok: boolean;
   message?: any;
 }
 
-/** Một thành viên nhóm theo dạng lưu DB (DataAccessor.saveGroupMembers) */
+/** One group member in the form saved to the DB (DataAccessor.saveGroupMembers) */
 export interface ServerGroupMember {
   memberId: string;
   displayName: string;
@@ -52,7 +52,7 @@ export interface ServerGroupMember {
 
 export interface ServerGroupInfo {
   members: ServerGroupMember[];
-  /** Tên / ảnh nhóm (Zalo getGroupInfo): có thì cập nhật cả liên hệ của nhóm */
+  /** Group name / photo (Zalo getGroupInfo): if present, also update the group's contact */
   name?: string;
   avatar?: string;
   creatorId?: string;
@@ -60,7 +60,7 @@ export interface ServerGroupInfo {
 }
 
 export interface FetchGroupMembersArgs {
-  /** Tài khoản đang mở (accountStore) */
+  /** The open account (accountStore) */
   account: any;
   accountId: string;
   groupId: string;
@@ -71,13 +71,13 @@ export interface ResolveUnknownSendersArgs {
   activeThreadId: string;
   activeContact: any;
   msgs: any[];
-  /** Người gửi trong nhóm chưa có tên + ảnh (đã lọc những người đang chờ) */
+  /** Group senders without a name + photo (people already pending are filtered out) */
   unknownSenders: Set<string>;
-  /** Khoá `${accountId}__${senderId}__${threadId}` đã hỏi: kênh tự đánh dấu / gỡ để không hỏi trùng */
+  /** Key `${accountId}__${senderId}__${threadId}` already asked: the channel marks / unmarks it itself so it does not ask twice */
   requestedMemberInfoRef: React.MutableRefObject<Set<string>>;
 }
 
-/** Hội thoại đang mở, cho hook riêng của kênh khi mở hội thoại (useChannelThreadSync) */
+/** The open conversation, for the channel's own hook when a conversation opens (useChannelThreadSync) */
 export interface ThreadSyncDeps {
   activeAccountId: string | null;
   activeThreadId: string | null;
@@ -91,16 +91,16 @@ export interface ThreadSyncDeps {
 
 export interface ChatWindowChannel {
   /**
-   * DB hết tin cũ hơn → xin server một trang (server lưu DB, khung chat đọc lại DB). Không khai báo: chỉ đọc DB.
-   * Ném lỗi = lỗi tạm thời (mất kết nối, FLOOD_WAIT…): hiện "Lỗi - Thử lại" và vẫn coi là còn tin cũ.
+   * DB has no older messages → ask the server for one page (the server saves it to the DB, the chat window reads the DB again). Not declared: DB only.
+   * Throwing an error = a temporary failure (connection lost, FLOOD_WAIT…): shows "Lỗi - Thử lại" (Error - Retry) and still treats older messages as existing.
    */
   fetchOlderFromServer?: (args: OlderFromServerArgs) => Promise<OlderFromServerResult>;
-  /** Tin không có trong DB (nhảy tới tin ghim / trích dẫn / tìm kiếm) → tải từ server rồi nhảy tới */
+  /** Message not in the DB (jump to a pinned message / quote / search result) → load it from the server, then jump to it */
   ensureMessage?: (args: EnsureMessageArgs) => Promise<EnsureMessageResult>;
-  /** Thành viên nhóm từ server khi DB chưa có (hoặc membersNeedRefresh). null = không lấy được */
+  /** Group members from the server when the DB has none (or membersNeedRefresh). null = could not be fetched */
   fetchGroupMembers?: (args: FetchGroupMembersArgs) => Promise<ServerGroupInfo | null>;
-  /** DB đã có thành viên nhưng thiếu tên / ảnh → lấy lại bằng fetchGroupMembers */
+  /** The DB has members but some lack a name / photo → fetch again with fetchGroupMembers */
   membersNeedRefresh?: (dbMembers: any[]) => boolean;
-  /** Người gửi chưa có tên / ảnh: hỏi server, lưu DB + danh bạ + bộ đệm nhóm (chạy nền) */
+  /** Senders without a name / photo: ask the server, save to the DB + contacts + group cache (runs in the background) */
   resolveUnknownSenders?: (args: ResolveUnknownSendersArgs) => void;
 }

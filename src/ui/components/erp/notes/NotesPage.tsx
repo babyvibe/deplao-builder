@@ -7,6 +7,8 @@ import NoteVersionHistory from './NoteVersionHistory';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { withErpDeniedNotice } from '@/store/erp/erpStoreHelpers';
 import { BookIcon, EditIcon, EyeIcon, FolderIcon, LinkIcon, PinIcon, TrashIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 export default function NotesPage() {
@@ -58,13 +60,13 @@ export default function NotesPage() {
       {/* Folder tree */}
       <div className="w-44 border-r border-border/60 flex flex-col bg-card flex-shrink-0">
         <div className="px-3 py-2 border-b border-border/40">
-          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Thư mục</p>
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{tr('Thư mục')}</p>
         </div>
         <div className="flex-1 overflow-y-auto py-1">
           <button
             onClick={() => setActiveFolderId(undefined)}
             className={`w-full text-left px-3 py-2 text-xs transition-colors ${activeFolderId === undefined ? 'bg-blue-600/20 text-blue-400' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground/80'}`}
-          ><EditIcon className="w-4 h-4 inline" /> Tất cả note
+          >{trx('<0/> Tất cả note', { 0: <EditIcon className="w-4 h-4 inline" /> })}
           </button>
           {folderTree.map(folder => (
             <FolderNode
@@ -80,7 +82,7 @@ export default function NotesPage() {
             onClick={() => { setFolderForm({ name: '', parent_id: activeFolderId ? String(activeFolderId) : '' }); setShowNewFolderPrompt(true); }}
             className="w-full text-left px-3 py-2 text-xs text-muted-foreground hover:text-muted-foreground hover:bg-muted/30"
           >
-            + Thư mục
+            {tr('+ Thư mục')}
           </button>
         </div>
       </div>
@@ -89,19 +91,19 @@ export default function NotesPage() {
       <div className="w-56 border-r border-border/60 flex flex-col bg-card/30 flex-shrink-0">
         <div className="px-3 py-2 border-b border-border/40 space-y-1.5">
           <input
-            placeholder="Tìm note..."
+            placeholder={tr('Tìm note...')}
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="w-full bg-muted/60 border border-input/60 rounded-lg px-2.5 py-1.5 text-xs text-foreground/80 placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
           />
           <button
             onClick={async () => {
-              const note = await createNote({ title: 'Note mới', content: '', folder_id: activeFolderId });
+              const note = await createNote({ title: tr('Note mới'), content: '', folder_id: activeFolderId });
               if (note) setActiveNote(note.id);
             }}
             className="w-full py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg"
           >
-            + Note mới
+            {tr('+ Note mới')}
           </button>
         </div>
         <div className="flex-1 overflow-y-auto py-1">
@@ -116,14 +118,14 @@ export default function NotesPage() {
               <p className="text-xs font-medium text-foreground truncate">{note.pinned ? <><PinIcon className="w-3.5 h-3.5 inline" /> </> : ''}{note.title}</p>
               <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{note.content.slice(0, 50)}</p>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                {new Date(note.updated_at).toLocaleDateString('vi-VN')}
+                {new Date(note.updated_at).toLocaleDateString(appLocale())}
               </p>
             </button>
           ))}
           {notes.length === 0 && (
             <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
               <span className="text-2xl mb-1"><EditIcon className="w-4 h-4" /></span>
-              <p className="text-xs">Chưa có note nào</p>
+              <p className="text-xs">{tr('Chưa có note nào')}</p>
             </div>
           )}
         </div>
@@ -138,34 +140,34 @@ export default function NotesPage() {
                 value={editorTitle}
                 onChange={e => { setEditorTitle(e.target.value); scheduleAutoSave('title', e.target.value); }}
                 className="flex-1 bg-transparent text-lg font-bold text-foreground focus:outline-none placeholder-subtle-foreground"
-                placeholder="Tiêu đề..."
+                placeholder={tr('Tiêu đề...')}
               />
               <button
                 onClick={() => setPreview(p => !p)}
                 className={`text-xs px-2 py-1 rounded ${preview ? 'bg-blue-600/30 text-blue-300' : 'text-muted-foreground hover:text-foreground/80 hover:bg-muted/50'}`}
-                title={preview ? 'Chuyển sang chỉnh sửa' : 'Xem preview markdown'}
+                title={preview ? tr('Chuyển sang chỉnh sửa') : tr('Xem preview markdown')}
               >
-                {preview ? <><EditIcon className="w-4 h-4 inline" /> Sửa</> : <><EyeIcon className="w-4 h-4 inline" /> Preview</>}
+                {preview ? <>{trx('<0/> Sửa', { 0: <EditIcon className="w-4 h-4 inline" /> })}</> : <>{trx('<0/> Preview', { 0: <EyeIcon className="w-4 h-4 inline" /> })}</>}
               </button>
               <button
                 onClick={() => setShowShare(true)}
                 className="text-muted-foreground hover:text-blue-400 text-xs px-2 py-1 rounded hover:bg-muted/50"
-                title="Chia sẻ"
-              ><LinkIcon className="w-4 h-4 inline" /> Chia sẻ
+                title={tr('Chia sẻ')}
+              >{trx('<0/> Chia sẻ', { 0: <LinkIcon className="w-4 h-4 inline" /> })}
               </button>
               <button
                 onClick={() => setShowHistory(true)}
                 className="text-muted-foreground hover:text-purple-400 text-xs px-2 py-1 rounded hover:bg-muted/50"
-                title="Lịch sử phiên bản"
+                title={tr('Lịch sử phiên bản')}
               >
-                🕒 Lịch sử
+                {tr('🕒 Lịch sử')}
               </button>
               <button
                 onClick={() => setDeleteNoteTarget(activeNote.id)}
                 className="text-muted-foreground hover:text-red-400 text-xs p-1 rounded"
-                title="Xoá note"
+                title={tr('Xoá note')}
               >
-                Xóa
+                {tr('Xóa')}
               </button>
             </div>
             {preview ? (
@@ -176,21 +178,21 @@ export default function NotesPage() {
               <textarea
                 value={editorContent}
                 onChange={e => { setEditorContent(e.target.value); scheduleAutoSave('content', e.target.value); }}
-                placeholder="Nhập nội dung note (Markdown)..."
+                placeholder={tr('Nhập nội dung note (Markdown)...')}
                 className="flex-1 resize-none bg-transparent text-sm text-foreground/80 px-6 py-4 focus:outline-none leading-relaxed font-mono placeholder-subtle-foreground"
               />
             )}
             <div className="px-6 py-1.5 border-t border-border/40 flex-shrink-0">
               <p className="text-[10px] text-muted-foreground">
-                {editorContent.length} ký tự · Cập nhật {new Date(activeNote.updated_at).toLocaleString('vi-VN')} · Tự lưu
+                {trx('{{count}} ký tự · Cập nhật {{v1}} · Tự lưu', { count: editorContent.length, v1: new Date(activeNote.updated_at).toLocaleString(appLocale()) })}
               </p>
             </div>
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
             <span className="text-4xl mb-3"><BookIcon className="w-4 h-4" /></span>
-            <p className="text-sm">Chọn một note để xem / chỉnh sửa</p>
-            <p className="text-xs mt-1">hoặc tạo note mới từ danh sách bên trái</p>
+            <p className="text-sm">{tr('Chọn một note để xem / chỉnh sửa')}</p>
+            <p className="text-xs mt-1">{tr('hoặc tạo note mới từ danh sách bên trái')}</p>
           </div>
         )}
       </div>
@@ -198,12 +200,12 @@ export default function NotesPage() {
       {showNewFolderPrompt && (
         <ErpOverlay onClose={() => setShowNewFolderPrompt(false)}>
           <ErpModalCard className="w-80 p-5">
-            <p className="text-sm font-semibold text-foreground mb-3">Tạo thư mục</p>
+            <p className="text-sm font-semibold text-foreground mb-3">{tr('Tạo thư mục')}</p>
             <div className="space-y-3">
               <input
                 value={folderForm.name}
                 onChange={e => setFolderForm(v => ({ ...v, name: e.target.value }))}
-                placeholder="Nhập tên thư mục..."
+                placeholder={tr('Nhập tên thư mục...')}
                 className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
               <select
@@ -211,12 +213,12 @@ export default function NotesPage() {
                 onChange={e => setFolderForm(v => ({ ...v, parent_id: e.target.value }))}
                 className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground"
               >
-                <option value="">Thư mục gốc</option>
+                <option value="">{tr('Thư mục gốc')}</option>
                 {folders.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
               </select>
             </div>
             <div className="flex gap-2 justify-end mt-4">
-              <button onClick={() => setShowNewFolderPrompt(false)} className="px-4 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">Huỷ</button>
+              <button onClick={() => setShowNewFolderPrompt(false)} className="px-4 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">{tr('Huỷ')}</button>
               <button
                 onClick={async () => {
                   withErpDeniedNotice(await DataAccessor.erpCreateNoteFolder({ name: folderForm.name.trim(), parent_id: folderForm.parent_id ? Number(folderForm.parent_id) : undefined }));
@@ -226,7 +228,7 @@ export default function NotesPage() {
                 disabled={!folderForm.name.trim()}
                 className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg transition-colors"
               >
-                Tạo
+                {tr('Tạo')}
               </button>
             </div>
           </ErpModalCard>
@@ -234,9 +236,9 @@ export default function NotesPage() {
       )}
       {renameFolderTarget && (
         <PromptDialog
-          title="Đổi tên thư mục"
+          title={tr('Đổi tên thư mục')}
           defaultValue={renameFolderTarget.name}
-          placeholder="Tên thư mục mới..."
+          placeholder={tr('Tên thư mục mới...')}
           onConfirm={async (name) => {
             withErpDeniedNotice(await DataAccessor.erpRenameNoteFolder(renameFolderTarget.id, name));
             await loadFolders();
@@ -247,7 +249,7 @@ export default function NotesPage() {
       )}
       {folderDeleteTarget !== null && (
         <ConfirmDialog
-          message="Xóa thư mục này? Các note sẽ được chuyển về thư mục gốc."
+          message={tr('Xóa thư mục này? Các note sẽ được chuyển về thư mục gốc.')}
           onConfirm={async () => {
             withErpDeniedNotice(await DataAccessor.erpDeleteNoteFolder(Number(folderDeleteTarget)));
             if (activeFolderId === folderDeleteTarget) setActiveFolderId(undefined);
@@ -260,7 +262,7 @@ export default function NotesPage() {
       )}
       {deleteNoteTarget && (
         <ConfirmDialog
-          message="Xoá note này? Hành động không thể hoàn tác."
+          message={tr('Xoá note này? Hành động không thể hoàn tác.')}
           onConfirm={async () => { await deleteNote(deleteNoteTarget); setDeleteNoteTarget(null); }}
           onCancel={() => setDeleteNoteTarget(null)}
         />
@@ -315,8 +317,8 @@ function FolderNode({ folder, activeFolderId, onSelect, onRename, onDelete, leve
           <button type="button" onClick={(e) => {
             e.stopPropagation();
             onRename(folder.id, folder.name);
-          }} className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-[11px] text-blue-400 hover:text-blue-300 hover:bg-muted/70" title="Đổi tên thư mục"><EditIcon className="w-4 h-4" /></button>
-          <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(folder.id); }} className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-[11px] text-red-400 hover:text-red-300 hover:bg-muted/70" title="Xóa thư mục"><TrashIcon className="w-4 h-4" /></button>
+          }} className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-[11px] text-blue-400 hover:text-blue-300 hover:bg-muted/70" title={tr('Đổi tên thư mục')}><EditIcon className="w-4 h-4" /></button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(folder.id); }} className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-[11px] text-red-400 hover:text-red-300 hover:bg-muted/70" title={tr('Xóa thư mục')}><TrashIcon className="w-4 h-4" /></button>
         </div>
       </div>
       {folder.children?.map((child: any) => (

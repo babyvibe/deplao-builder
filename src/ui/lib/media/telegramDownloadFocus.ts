@@ -1,9 +1,9 @@
 /**
- * Báo main hội thoại Telegram đang mở → hàng tải file của tài khoản đó tải ảnh / video / file của hội thoại này trước
- * (services/telegram/media/telegramDownloadQueue.ts). Trước đây hàng tải chạy theo thứ tự xếp hàng: lúc mở app, phần bắt kịp
- * của mọi hội thoại khác xếp trước nên vào hội thoại không xem được video ngay.
+ * Tell main which Telegram conversation is open → that account's file download queue downloads photos / videos / files of this conversation first
+ * (services/telegram/media/telegramDownloadQueue.ts). Previously the queue ran in arrival order: on app start, the catch-up of
+ * every other conversation came first, so opening a conversation did not show its videos right away.
  *
- * Chỉ báo khi giá trị đổi (đổi hội thoại / tài khoản). Không phải Telegram hoặc chưa mở hội thoại → bỏ ưu tiên.
+ * Only reports when the value changes (switching conversation / account). Not Telegram, or no conversation open → priority is dropped.
  */
 import ipc from '@/lib/ipc';
 import { isTelegramUser } from '@/lib/channels/channelHelper';
@@ -45,7 +45,7 @@ export function installTelegramDownloadFocus(
     try {
       Promise.resolve(send(focus)).catch(() => {});
     } catch {
-      // Chỉ là gợi ý thứ tự tải — không bao giờ làm hỏng việc đổi hội thoại
+      // Only a hint for the download order: it never breaks switching conversations
     }
   };
   const unsubscribeChat = useChatStore.subscribe(update);

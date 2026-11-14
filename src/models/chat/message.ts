@@ -1,4 +1,4 @@
-/** Tin nhắn unified - Zalo + Facebook */
+/** Unified message - Zalo + Facebook */
 export interface Message {
     id?: number;
     msg_id: string;
@@ -28,7 +28,7 @@ export interface Message {
     topic_id?: string | null;
 }
 
-/** Draft tin nhắn đang soạn dở */
+/** Draft message being written */
 export interface MessageDraft {
     id?: number;
     owner_zalo_id: string;

@@ -1,12 +1,12 @@
 /**
- * Tải file sao lưu `.db.crypt` (URL lấy từ sự kiện syncmsg_info).
+ * Download the `.db.crypt` backup file (URL taken from the syncmsg_info event).
  *
- * Bám theo request tải của Zalo PC (`handleCustomHeaders` trong main-dist/main.js, option `cookies: true`):
- * gửi TOÀN BỘ cookie phiên của domain xác thực trong header `cookie`, kèm header chống cache; không có
- * `Origin`/`Referer`. Bộ header bên dưới là bộ PR #269 bắt được từ Zalo (gồm `Sec-Fetch-*` của Electron net).
+ * Follows the download request of Zalo PC (`handleCustomHeaders` in main-dist/main.js, option `cookies: true`):
+ * sends ALL session cookies of the auth domain in the `cookie` header, plus no-cache headers; no
+ * `Origin`/`Referer`. The header set below is the one PR #269 captured from Zalo (including the `Sec-Fetch-*` of Electron net).
  *
- * Không dùng `fetch` (undici) vì nó luôn ghi đè `sec-fetch-mode: cors` và tự thêm header → không tái tạo
- * được request của Zalo. Dùng `https.request` để kiểm soát toàn bộ header, vẫn đi qua proxy của tài khoản.
+ * Does not use `fetch` (undici), because it always overrides `sec-fetch-mode: cors` and adds headers on its own → it cannot reproduce
+ * the Zalo request. Uses `https.request` to control all the headers, and still goes through the account's proxy.
  */
 import * as fs from 'fs';
 import * as http from 'http';
@@ -14,8 +14,9 @@ import * as https from 'https';
 import * as zlib from 'zlib';
 import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
+import { tr } from '../../../shared/i18n';
 
-/** Domain của Zalo — chỉ gửi cookie phiên tới các domain này. */
+/** Zalo domains: session cookies are only sent to these domains. */
 export const ZALO_HOST_RE = /(^|\.)(zalo\.me|zaloapp\.com|zdn\.vn|zadn\.vn)$/i;
 
 const MAX_REDIRECTS = 5;
@@ -31,9 +32,9 @@ export class DownloadAbortedError extends Error {
 export interface BackupDownloadOptions {
     url: string;
     userAgent: string;
-    /** Cookie phiên (chuỗi `a=b; c=d`) — chỉ gửi khi host thuộc Zalo. */
+    /** Session cookie (string `a=b; c=d`), only sent when the host belongs to Zalo. */
     sessionCookie: string;
-    /** Agent proxy của tài khoản (ctx.options.agent của zca-js), nếu có. */
+    /** The account's proxy agent (zca-js ctx.options.agent), if any. */
     agent?: http.Agent;
     destPath: string;
     expectedSize?: number;
@@ -75,7 +76,7 @@ function get(url: URL, headers: Record<string, string>, agent: http.Agent | unde
             }
             resolve(res);
         });
-        req.setTimeout(IDLE_TIMEOUT_MS, () => req.destroy(new Error('Máy chủ Zalo không phản hồi khi tải bản sao lưu')));
+        req.setTimeout(IDLE_TIMEOUT_MS, () => req.destroy(new Error(tr('Máy chủ Zalo không phản hồi khi tải bản sao lưu'))));
         req.on('error', reject);
         req.end();
     });
@@ -95,7 +96,7 @@ function decoderFor(res: http.IncomingMessage): zlib.Gunzip | zlib.Inflate | zli
     }
 }
 
-/** Đọc tối đa `max` byte nội dung lỗi để ghi log/hiển thị. */
+/** Read at most `max` bytes of the error body, for logging / display. */
 async function readSnippet(res: http.IncomingMessage, max = 1024): Promise<string> {
     const decoder = decoderFor(res);
     const body: Readable = decoder ? res.pipe(decoder) : res;
@@ -107,18 +108,18 @@ async function readSnippet(res: http.IncomingMessage, max = 1024): Promise<strin
             size += (chunk as Buffer).length;
             if (size >= max) break;
         }
-    } catch { /* nội dung lỗi không đọc được */ }
+    } catch { /* error body could not be read */ }
     res.destroy();
     return Buffer.concat(chunks).subarray(0, max).toString('utf8').replace(/\s+/g, ' ').trim();
 }
 
-/** Lấy thông báo lỗi của server (JSON error_message nếu có). */
+/** Get the server's error message (JSON error_message if present). */
 function serverMessage(snippet: string): string {
     try {
         const json = JSON.parse(snippet);
         const msg = json?.error_message || json?.message || json?.error;
         if (msg) return `: ${String(msg).slice(0, 120)}`;
-    } catch { /* không phải JSON */ }
+    } catch { /* not JSON */ }
     return '';
 }
 
@@ -127,9 +128,9 @@ export async function downloadBackupFile(opts: BackupDownloadOptions): Promise<{
     try {
         url = new URL(opts.url);
     } catch {
-        throw new Error('Đường dẫn tải bản sao lưu không hợp lệ');
+        throw new Error(tr('Đường dẫn tải bản sao lưu không hợp lệ'));
     }
-    if (url.protocol !== 'https:') throw new Error('Đường dẫn tải bản sao lưu không hợp lệ');
+    if (url.protocol !== 'https:') throw new Error(tr('Đường dẫn tải bản sao lưu không hợp lệ'));
 
     const zaloHost = ZALO_HOST_RE.test(url.hostname);
     const cookies = zaloHost && opts.sessionCookie ? [opts.sessionCookie, ''] : [''];
@@ -148,10 +149,10 @@ export async function downloadBackupFile(opts: BackupDownloadOptions): Promise<{
         lastDetail = await readSnippet(res);
         opts.log?.(`tải ${where} (${cookie ? 'cookie phiên' : 'không cookie'}) → HTTP ${status} `
             + `${res.headers['content-type'] || ''} ${lastDetail.slice(0, 300)}`);
-        // Chỉ thử cách khác với lỗi 4xx (cookie/phiên); 5xx/khác thì dừng luôn.
+        // Only try another way for 4xx errors (cookie/session); for 5xx/others, stop right away.
         if (status < 400 || status >= 500) break;
     }
-    throw new Error(`Tải bản sao lưu thất bại (HTTP ${lastStatus}${serverMessage(lastDetail)})`);
+    throw new Error(tr('Tải bản sao lưu thất bại (HTTP {{lastStatus}}{{v1}})', { lastStatus, v1: serverMessage(lastDetail) }));
 }
 
 async function saveResponse(res: http.IncomingMessage, opts: BackupDownloadOptions): Promise<{ bytes: number }> {

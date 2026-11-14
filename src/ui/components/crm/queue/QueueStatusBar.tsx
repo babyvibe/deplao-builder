@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface QueueStatus {
   running: boolean;
@@ -40,7 +42,7 @@ export default function QueueStatusBar({ status, maxTokens: maxTokensProp = 60 }
     if (s < 60) return `${s}s`;
     const m = Math.floor(s / 60);
     const rem = s % 60;
-    return rem > 0 ? `${m}p${rem}s` : `${m} phút`;
+    return rem > 0 ? `${m}p${rem}s` : tr('{{m}} phút', { m });
   };
 
   return (
@@ -49,39 +51,38 @@ export default function QueueStatusBar({ status, maxTokens: maxTokensProp = 60 }
       {status?.dailyPaused ? (
         <span className="flex items-center gap-1.5 text-yellow-400 flex-shrink-0">
           <span className="w-2 h-2 rounded-full bg-yellow-400" />
-          Tạm dừng (đạt giới hạn/ngày)
+          {tr('Tạm dừng (đạt giới hạn/ngày)')}
         </span>
       ) : (
         <span className="flex items-center gap-1.5 text-green-400 flex-shrink-0">
           <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-          Queue đang chạy
+          {tr('Queue đang chạy')}
         </span>
       )}
 
       {/* Token bar */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <span className="text-muted-foreground">Hạn mức:</span>
+        <span className="text-muted-foreground">{tr('Hạn mức:')}</span>
         <div className="w-24 h-1.5 bg-muted rounded-full overflow-hidden">
           <div className={`h-full rounded-full transition-all duration-500 ${tokenColor}`}
             style={{ width: `${tokenPct}%` }} />
         </div>
         <span className={`font-medium tabular-nums ${tokenTextColor}`}>
-          {status.tokens}/{maxTokens}
-          <span className="text-muted-foreground font-normal"> /giờ</span>
+          {trx('{{tokens}}/{{maxTokens}}<0> /giờ</0>', { tokens: status.tokens, maxTokens, 0: <span className="text-muted-foreground font-normal" /> })}
         </span>
       </div>
 
       {/* Elapsed since last send */}
       {status.lastSentAt > 0 && elapsedSec > 0 && (
         <span className="text-muted-foreground flex-shrink-0">
-          ⏱ Gửi lần cuối: <span className="text-blue-400 font-medium">{fmtElapsed(elapsedSec)}</span> trước
+          {trx('⏱ Gửi lần cuối: <0>{{v1}}</0> trước', { 0: <span className="text-blue-400 font-medium" />, v1: fmtElapsed(elapsedSec) })}
         </span>
       )}
 
       {/* Last sent timestamp */}
       {status.lastSentAt > 0 && (
         <span className="text-muted-foreground ml-auto flex-shrink-0">
-          {new Date(status.lastSentAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          {new Date(status.lastSentAt).toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </span>
       )}
     </div>

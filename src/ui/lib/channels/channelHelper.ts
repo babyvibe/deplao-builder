@@ -1,17 +1,17 @@
 /**
- * channelHelper.ts — Shared channel detection utilities + constants
+ * channelHelper.ts: shared channel detection utilities + constants
  *
- * Thay vì lặp `channel === 'telegram_bot' || channel === 'telegram_user'`
- * ở 20+ file, dùng các helper này.
+ * Instead of repeating `channel === 'telegram_bot' || channel === 'telegram_user'`
+ * in 20+ files, use these helpers.
  *
- * Design principle: UI nên check capability (channelSupports) thay vì check channel name.
- * Nhưng khi cần check channel cụ thể (routing API, chọn adapter), dùng helper ở đây.
+ * Design principle: UI should check capability (channelSupports) instead of the channel name.
+ * But when a specific channel must be checked (API routing, choosing an adapter), use the helpers here.
  */
 
 import { type Channel, channelSupports, getCapability, type ChannelCapability } from '../../../configs/channels/channelConfig';
 
 // ─── Channel constants — single source of truth cho string literals ───────────
-// Dùng CHANNEL.ZALO thay vì 'zalo' để tránh typo và dễ refactor.
+// Use CHANNEL.ZALO instead of 'zalo' to avoid typos and make refactoring easier.
 
 export const CHANNEL = {
   ZALO: 'zalo',
@@ -44,7 +44,7 @@ export function isTelegramUser(ch?: string): boolean {
   return ch === CHANNEL.TELEGRAM_USER;
 }
 
-/** Non-Zalo = cần dùng adapter thay vì ipc.zalo */
+/** Non-Zalo = must use an adapter instead of ipc.zalo */
 export function isNonZalo(ch?: string): boolean {
   return (ch || CHANNEL.ZALO) !== CHANNEL.ZALO;
 }
@@ -52,9 +52,9 @@ export function isNonZalo(ch?: string): boolean {
 // ─── Resolve channel ─────────────────────────────────────────────────────────
 
 /**
- * Kênh của hội thoại. Tài khoản Telegram / Facebook chỉ có hội thoại cùng kênh nên kênh của TÀI KHOẢN thắng: cột
- * contacts.channel mặc định 'zalo' từng ghi nhầm (vd My Documents của Telegram), và hội thoại ghim tải bù theo id không
- * có trong store (không có contact). Tài khoản Zalo hoặc chưa biết tài khoản: kênh của hội thoại, mặc định Zalo.
+ * The channel of the conversation. Telegram / Facebook accounts only have conversations on the same channel, so the ACCOUNT's channel wins: the
+ * contacts.channel column defaulted to 'zalo' and was once written wrongly (e.g. the My Documents of a Telegram account), and a pinned conversation loads late by id when it
+ * is not in the store (no contact). Zalo accounts or unknown accounts: the conversation's channel, defaulting to Zalo.
  */
 export function resolveChannel(
   contact?: { channel?: string | null } | null,
@@ -68,15 +68,15 @@ export function resolveChannel(
 // ─── Capability-based helpers ────────────────────────────────────────────────
 
 /**
- * Kiểm tra feature có được hỗ trợ cho channel không.
- * Wrapper gọn hơn channelSupports().
+ * Checks whether a feature is supported for the channel.
+ * A more compact wrapper of channelSupports().
  */
 export function supports(ch: Channel, feature: keyof ChannelCapability): boolean {
   return channelSupports(ch, feature);
 }
 
 /**
- * Lấy capability object cho channel.
+ * Gets the capability object for the channel.
  */
 export function getCap(ch: Channel): ChannelCapability {
   return getCapability(ch);
@@ -101,8 +101,8 @@ export function isTelegramForumGeneral(topicId?: string | null): boolean {
 // ─── Common pattern helpers ──────────────────────────────────────────────────
 
 /**
- * Helper cho pattern phổ biến: "chỉ gọi Zalo API khi channel là Zalo".
- * Trả về true nếu nên skip (không phải Zalo).
+ * Helper for the common pattern: "only call the Zalo API when the channel is Zalo".
+ * Returns true if it should skip (not Zalo).
  *
  * Usage:
  *   if (shouldSkipZaloApi(ch)) return;
@@ -113,8 +113,8 @@ export function shouldSkipZaloApi(ch?: string): boolean {
 }
 
 /**
- * Helper cho pattern: "dùng adapter cho non-Zalo, ipc.zalo cho Zalo".
- * Trả về true nếu nên dùng adapter.
+ * Helper for the pattern: "use the adapter for non-Zalo, ipc.zalo for Zalo".
+ * Returns true if the adapter should be used.
  */
 export function shouldUseAdapter(ch?: string): boolean {
   return (ch || CHANNEL.ZALO) !== CHANNEL.ZALO;

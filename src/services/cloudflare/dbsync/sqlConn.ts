@@ -1,12 +1,12 @@
 /**
- * sqlConn — lớp mỏng trên SQLite cho module đồng bộ DB.
+ * sqlConn: a thin layer over SQLite for the DB sync module.
  *
- * Logic đồng bộ (trigger, gói đoạn thay đổi, chụp gốc, khôi phục) viết trên interface này để chạy được ở hai nơi:
- *  - worker_threads của app: better-sqlite3 (openBetterSqlite);
- *  - test jest: node:sqlite (better-sqlite3 của dự án build cho Electron nên Node thường không nạp được).
+ * The sync logic (triggers, packing change segments, base snapshots, restore) is written against this interface so it can run in two places:
+ *  - the app's worker_threads: better-sqlite3 (openBetterSqlite);
+ *  - jest tests: node:sqlite (the project's better-sqlite3 is built for Electron, so plain Node cannot load it).
  *
- * File này (và mọi file worker dùng) KHÔNG import electron / Logger / module ngoài thư mục dbsync — worker chạy được
- * cả khi thư mục dbsync được unpack khỏi app.asar.
+ * This file (and every file the worker uses) does NOT import electron / Logger / modules outside the dbsync folder, so the worker can run
+ * even when the dbsync folder is unpacked from app.asar.
  */
 import * as fs from 'fs';
 
@@ -16,9 +16,9 @@ export interface SqlRunResult {
 }
 
 export interface SqlStatement {
-    /** Chỉ dùng cho câu KHÔNG trả dữ liệu (INSERT/UPDATE/DELETE/DDL). */
+    /** Only for statements that return NO data (INSERT/UPDATE/DELETE/DDL). */
     run(...params: unknown[]): SqlRunResult;
-    /** Chỉ dùng cho câu trả dữ liệu (SELECT/PRAGMA đọc). undefined khi không có dòng. */
+    /** Only for statements that return data (SELECT / reading PRAGMA). undefined when there is no row. */
     get(...params: unknown[]): any;
     all(...params: unknown[]): any[];
 }
@@ -27,13 +27,13 @@ export interface SqlConn {
     readonly filePath: string;
     exec(sql: string): void;
     /**
-     * bigInts: mọi số nguyên đọc ra dạng BigInt — giữ đúng giá trị > 2^53 và phân biệt INTEGER (bigint) với REAL
-     * (number). Bắt buộc khi gói dòng vào đoạn thay đổi.
+     * bigInts: every integer is read back as a BigInt → keeps values > 2^53 exact and tells INTEGER (bigint) apart from REAL
+     * (number). Required when packing rows into change segments.
      */
     prepare(sql: string, opts?: { bigInts?: boolean }): SqlStatement;
     /**
-     * Sao chép nguyên trang sang file MỚI (giữ rowid — không dùng VACUUM INTO vì có thể đánh số lại rowid).
-     * Chép trong một bước duy nhất (giữ một giao dịch đọc) nên là ảnh chụp nhất quán dù connection khác đang ghi.
+     * Copies the pages as they are to a NEW file (keeps rowids; does not use VACUUM INTO, which can renumber rowids).
+     * Copies in a single step (one read transaction is held), so it is a consistent snapshot even while another connection is writing.
      */
     backupTo(destPath: string): Promise<void>;
     close(): void;
@@ -41,20 +41,20 @@ export interface SqlConn {
 
 export interface OpenOptions {
     readonly?: boolean;
-    /** Không tạo file khi chưa có (DB sống của workspace). */
+    /** Does not create the file if it does not exist yet (the workspace's live DB). */
     mustExist?: boolean;
-    /** busy_timeout (ms) — worker chờ khoá ghi của app, không chặn main. Mặc định 15 s. */
+    /** busy_timeout (ms): the worker waits for the app's write lock, without blocking main. Default 15 s. */
     busyTimeoutMs?: number;
     /**
-     * File tạm của riêng worker (bản sao chụp gốc): tắt chế độ defensive của better-sqlite3 để PRAGMA journal_mode = OFF
-     * có hiệu lực khi lọc theo phạm vi (không ghi file journal cỡ GB). KHÔNG dùng cho DB sống.
+     * The worker's own temp file (base snapshot copy): turns off better-sqlite3's defensive mode so PRAGMA journal_mode = OFF
+     * takes effect when filtering by scope (no GB-sized journal file is written). NOT for the live DB.
      */
     scratch?: boolean;
 }
 
 export type OpenSqlConn = (filePath: string, opts?: OpenOptions) => SqlConn;
 
-/** Mở bằng better-sqlite3. nativeBinding: đường dẫn better_sqlite3.node (worker không cần gói 'bindings' trong asar). */
+/** Open with better-sqlite3. nativeBinding: the path of better_sqlite3.node (the worker does not need the 'bindings' package inside the asar). */
 export function betterSqliteOpener(nativeBinding?: string | null): OpenSqlConn {
     return (filePath: string, opts: OpenOptions = {}): SqlConn => {
         if (opts.mustExist && !fs.existsSync(filePath)) throw new Error(`Không tìm thấy file DB: ${filePath}`);
@@ -68,7 +68,7 @@ export function betterSqliteOpener(nativeBinding?: string | null): OpenSqlConn {
         if (nativeBinding) options.nativeBinding = nativeBinding;
         const db = new Database(filePath, options);
         if (opts.scratch && typeof db.unsafeMode === 'function') {
-            try { db.unsafeMode(true); } catch { /* giữ defensive — chỉ chậm hơn */ }
+            try { db.unsafeMode(true); } catch { /* keep defensive mode, it is just slower */ }
         }
         return {
             filePath,
@@ -79,13 +79,13 @@ export function betterSqliteOpener(nativeBinding?: string | null): OpenSqlConn {
                 return st as SqlStatement;
             },
             backupTo: async (destPath: string) => {
-                // better-sqlite3: bước đầu chép 0 trang (khởi tạo), sau đó chép số trang mà progress trả về →
-                // trả số lớn nhất để phần còn lại chép trong MỘT bước (một giao dịch đọc → ảnh chụp nhất quán;
-                // WAL không chặn người ghi). Chạy trong worker nên không chặn main.
+                // better-sqlite3: the first step copies 0 pages (initialization), then copies the number of pages that progress returns →
+                // returns the largest number so the rest is copied in ONE step (one read transaction → a consistent snapshot;
+                // WAL does not block writers). It runs in the worker, so it does not block main.
                 await db.backup(destPath, { progress: () => 0x7fffffff });
             },
             close: () => {
-                try { db.close(); } catch { /* đã đóng */ }
+                try { db.close(); } catch { /* already closed */ }
             },
         };
     };
@@ -93,7 +93,7 @@ export function betterSqliteOpener(nativeBinding?: string | null): OpenSqlConn {
 
 export const openBetterSqlite: OpenSqlConn = betterSqliteOpener(null);
 
-// ─── Tiện ích SQL dùng chung ────────────────────────────────────────────────
+// ─── Shared SQL helpers ────────────────────────────────────────────────
 
 export function quoteIdent(name: string): string {
     return `"${String(name).replace(/"/g, '""')}"`;
@@ -108,13 +108,13 @@ export function tableExists(conn: SqlConn, name: string): boolean {
     return !!row;
 }
 
-/** Tên bảng đúng như trong sqlite_master (so khớp không phân biệt hoa thường) hoặc null. */
+/** Table name exactly as in sqlite_master (case-insensitive match) or null. */
 export function canonicalTableName(conn: SqlConn, name: string): string | null {
     const row = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE").get(name);
     return row ? String(row.name) : null;
 }
 
-/** BEGIN IMMEDIATE … COMMIT (ROLLBACK khi lỗi). Lấy khoá ghi ngay từ đầu — busy_timeout lo việc chờ app. */
+/** BEGIN IMMEDIATE … COMMIT (ROLLBACK on error). Takes the write lock right from the start; busy_timeout handles waiting for the app. */
 export function writeTx<T>(conn: SqlConn, fn: () => T): T {
     conn.exec('BEGIN IMMEDIATE');
     try {
@@ -122,12 +122,12 @@ export function writeTx<T>(conn: SqlConn, fn: () => T): T {
         conn.exec('COMMIT');
         return out;
     } catch (err) {
-        try { conn.exec('ROLLBACK'); } catch { /* giao dịch đã huỷ */ }
+        try { conn.exec('ROLLBACK'); } catch { /* transaction cancelled */ }
         throw err;
     }
 }
 
-/** Giao dịch đọc: mọi SELECT trong fn thấy cùng một ảnh chụp. */
+/** Read transaction: every SELECT inside fn sees the same snapshot. */
 export function readTx<T>(conn: SqlConn, fn: () => T): T {
     conn.exec('BEGIN');
     try {
@@ -135,7 +135,7 @@ export function readTx<T>(conn: SqlConn, fn: () => T): T {
         conn.exec('COMMIT');
         return out;
     } catch (err) {
-        try { conn.exec('ROLLBACK'); } catch { /* giao dịch đã huỷ */ }
+        try { conn.exec('ROLLBACK'); } catch { /* transaction cancelled */ }
         throw err;
     }
 }

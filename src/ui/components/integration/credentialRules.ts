@@ -1,16 +1,18 @@
 /**
- * credentialRules.ts — kiểm tra phần "Thông tin xác thực" khi bấm Kết nối một tích hợp mới (IntegrationDetailPage).
+ * credentialRules.ts - checks the "Thông tin xác thực" (Credentials) section when a new integration is connected (IntegrationDetailPage).
  *
- *  - Ô không đánh dấu `optional` là bắt buộc.
- *  - Nền tảng có nhiều cách đăng nhập khai báo `credentialAlternatives` (Haravan: Access Token HOẶC API Key + Password
- *    của ứng dụng riêng): các ô trong đó đánh dấu optional, và phải điền đủ ít nhất một nhóm.
- *  - Cập nhật kết nối đã lưu: ô trống = giữ giá trị cũ → không bắt buộc ô nào.
+ *  - A field not marked `optional` is required.
+ *  - A platform with several login methods declares `credentialAlternatives` (Haravan: Access Token OR API Key + Password
+ *    of a private app): the fields in those are marked optional, and at least one group must be fully filled in.
+ *  - Updating a saved connection: an empty field keeps the old value → no field is required.
  */
+
+import { tr } from '../../../shared/i18n';
 
 export interface CredentialFieldRule { key: string; label: string; optional?: boolean }
 export interface CredentialAlternative { label: string; keys: string[] }
 
-/** Thông báo cho ô còn thiếu, hoặc null khi đủ. */
+/** Message for the missing field, or null when complete. */
 export function missingCredentialMessage(
   fields: readonly CredentialFieldRule[],
   alternatives: readonly CredentialAlternative[] | undefined,
@@ -20,10 +22,10 @@ export function missingCredentialMessage(
   if (isUpdate) return null;
   const filled = (key: string) => !!String(credentials[key] ?? '').trim();
   for (const field of fields) {
-    if (!field.optional && !filled(field.key)) return `Vui lòng nhập ${field.label}`;
+    if (!field.optional && !filled(field.key)) return tr('Vui lòng nhập {{label}}', { label: field.label });
   }
   if (alternatives?.length && !alternatives.some(group => group.keys.every(filled))) {
-    return `Vui lòng nhập ${alternatives.map(group => group.label).join(' hoặc ')}`;
+    return tr('Vui lòng nhập {{v1}}', { v1: alternatives.map(group => group.label).join(tr(' hoặc ')) });
   }
   return null;
 }

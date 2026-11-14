@@ -1,13 +1,14 @@
 /**
- * Cầu sự kiện Mini App Telegram ↔ Deplao (phần thuần). Mini App chạy trong iframe như Telegram Web: SDK chính thức
- * (telegram-web-app.js) thấy mình ở trong iframe thì gửi window.parent.postMessage(JSON.stringify({ eventType, eventData }),
- * '*') và nhận sự kiện của client cũng bằng postMessage cùng dạng.
- * Danh sách sự kiện: https://core.telegram.org/api/web-events (Mini App → client), https://core.telegram.org/api/bots/webapps
+ * Event bridge between Telegram Mini Apps and Deplao (pure part). The Mini App runs in an iframe, as in Telegram Web: the official SDK
+ * (telegram-web-app.js) sees it is inside an iframe, so it sends window.parent.postMessage(JSON.stringify({ eventType, eventData }),
+ * '*') and receives the client's events by postMessage in the same form.
+ * Event list: https://core.telegram.org/api/web-events (Mini App → client), https://core.telegram.org/api/bots/webapps
  * (client → Mini App).
  */
 import {
   MINI_APP_METHOD_RE, isHexColor, miniAppParamsJson, type MiniAppThemeParams,
 } from '../../../../shared/telegram/telegramMiniApp';
+import { tr } from '../../../../shared/i18n';
 
 export interface MiniAppEvent {
   eventType: string;
@@ -17,7 +18,7 @@ export interface MiniAppEvent {
 const MAX_EVENT_CHARS = 256 * 1024;
 const EVENT_TYPE_RE = /^[a-z][a-z0-9_]{0,63}$/;
 
-/** Tin postMessage của Mini App → sự kiện; null nếu không phải dạng của SDK Telegram. */
+/** postMessage from the Mini App → event; null if it is not in the Telegram SDK's format. */
 export function parseMiniAppEvent(data: unknown): MiniAppEvent | null {
   let raw: any = data;
   if (typeof data === 'string') {
@@ -30,7 +31,7 @@ export function parseMiniAppEvent(data: unknown): MiniAppEvent | null {
   return { eventType, eventData: raw.eventData ?? null };
 }
 
-/** Theme của Deplao (biến --dp-* của pluginTheme) → theme_params của Telegram. */
+/** Deplao theme (the --dp-* variables of pluginTheme) → Telegram's theme_params. */
 export function miniAppThemeFromVars(vars: Record<string, string>): MiniAppThemeParams {
   const pick = (name: string): string | undefined => (isHexColor(vars[name]) ? vars[name].toLowerCase() : undefined);
   const theme: MiniAppThemeParams = {
@@ -64,7 +65,7 @@ export interface MiniAppButton {
   textColor?: string;
   progress: boolean;
   shine: boolean;
-  /** Nút phụ: vị trí so với nút chính. */
+  /** Secondary button: position relative to the main button. */
   position: 'left' | 'right' | 'top' | 'bottom';
 }
 
@@ -74,7 +75,7 @@ export const HIDDEN_MINI_APP_BUTTON: MiniAppButton = Object.freeze({
 
 const BUTTON_POSITIONS = ['left', 'right', 'top', 'bottom'] as const;
 
-/** web_app_setup_main_button / web_app_setup_secondary_button → trạng thái nút (chữ rỗng = ẩn). */
+/** web_app_setup_main_button / web_app_setup_secondary_button → button state (empty text = hidden). */
 export function miniAppButton(data: any): MiniAppButton {
   const text = typeof data?.text === 'string' ? data.text.trim().slice(0, 64) : '';
   const position = BUTTON_POSITIONS.includes(data?.position) ? data.position : 'left';
@@ -99,9 +100,9 @@ export interface MiniAppPopup {
 }
 
 const POPUP_BUTTON_TYPES: readonly MiniAppPopupButtonType[] = ['ok', 'close', 'cancel', 'default', 'destructive'];
-const POPUP_DEFAULT_TEXT: Partial<Record<MiniAppPopupButtonType, string>> = { ok: 'OK', close: 'Đóng', cancel: 'Huỷ' };
+const POPUP_DEFAULT_TEXT: Partial<Record<MiniAppPopupButtonType, string>> = { ok: 'OK', close: tr('Đóng'), cancel: tr('Huỷ') };
 
-/** web_app_open_popup → popup hợp lệ (tiêu đề ≤ 64, nội dung 1-256 ký tự, 1-3 nút id khác nhau); null nếu sai. */
+/** web_app_open_popup → a valid popup (title ≤ 64, body 1-256 characters, 1-3 distinct button ids); null if invalid. */
 export function miniAppPopup(data: any): MiniAppPopup | null {
   const message = typeof data?.message === 'string' ? data.message.trim() : '';
   if (!message || message.length > 256) return null;
@@ -124,7 +125,7 @@ export function miniAppPopup(data: any): MiniAppPopup | null {
   return { ...(title ? { title } : {}), message, buttons };
 }
 
-/** web_app_set_header_color: color_key (bg_color / secondary_bg_color của theme) hoặc color #RRGGBB. */
+/** web_app_set_header_color: color_key (bg_color / secondary_bg_color of the theme) or color #RRGGBB. */
 export function miniAppHeaderColor(data: any, theme: MiniAppThemeParams): string | null {
   if (isHexColor(data?.color)) return data.color;
   if (data?.color_key === 'bg_color') return theme.bg_color ?? null;
@@ -137,14 +138,14 @@ export function miniAppColor(data: any): string | null {
   return isHexColor(data?.color) ? data.color : null;
 }
 
-/** Chữ đen / trắng đọc được trên nền #RRGGBB (đầu Mini App đổi màu). */
+/** Black / white text readable on a #RRGGBB background (the Mini App header changes colour). */
 export function textColorOn(hex: string): string {
   const n = parseInt(hex.slice(1), 16);
   const luma = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
   return luma > 150 ? '#000000' : '#ffffff';
 }
 
-/** web_app_open_link: chỉ http / https (mở bằng trình duyệt của máy, Mini App vẫn mở). */
+/** web_app_open_link: only http / https (opened in the machine's browser, the Mini App stays open). */
 export function miniAppLinkUrl(data: any): string | null {
   const raw = typeof data?.url === 'string' ? data.url : '';
   if (!raw || raw.length > 4096) return null;
@@ -156,7 +157,7 @@ export function miniAppLinkUrl(data: any): string | null {
   }
 }
 
-/** web_app_open_tg_link: path_full của link t.me ("/" + đường dẫn + query) → https://t.me…; null nếu sai. */
+/** web_app_open_tg_link: path_full of the t.me link ("/" + path + query) → https://t.me…; null if invalid. */
 export function miniAppTgLink(data: any): string | null {
   const path = typeof data?.path_full === 'string' ? data.path_full : '';
   if (!path.startsWith('/') || path.startsWith('//') || path.length > 2048) return null;
@@ -168,7 +169,7 @@ export function miniAppTgLink(data: any): string | null {
   }
 }
 
-/** Giới hạn số lần trong một khoảng (mở link: 1 lần / 1 s như Telegram; popup: 3 lần / 3 s). */
+/** Rate limit within a window (opening links: 1 time / 1 s as in Telegram; popups: 3 times / 3 s). */
 export function createRateLimiter(limit: number, windowMs: number, now: () => number = Date.now): () => boolean {
   const hits: number[] = [];
   return () => {
@@ -186,7 +187,7 @@ export interface MiniAppCustomCall {
   params: Record<string, unknown>;
 }
 
-/** web_app_invoke_custom_method (CloudStorage…) → lời gọi hợp lệ; null nếu sai. */
+/** web_app_invoke_custom_method (CloudStorage…) → a valid call; null if invalid. */
 export function miniAppCustomCall(data: any): MiniAppCustomCall | null {
   const reqId = typeof data?.req_id === 'string' && data.req_id.length <= 128 ? data.req_id : '';
   const method = typeof data?.method === 'string' ? data.method : '';
@@ -197,8 +198,8 @@ export function miniAppCustomCall(data: any): MiniAppCustomCall | null {
 }
 
 /**
- * Sự kiện Deplao chưa hỗ trợ mà Mini App chờ trả lời: trả "không hỗ trợ" ngay để Mini App không treo (toàn màn hình,
- * sinh trắc, quét QR, thanh toán, vị trí, bộ nhớ trên máy…). Đọc clipboard: Telegram chỉ cho bot ở menu đính kèm.
+ * Deplao events not supported yet that the Mini App waits on: reply "không hỗ trợ" (not supported) at once so the Mini App does not hang (fullscreen,
+ * biometrics, QR scan, payments, location, on-device storage...). Reading the clipboard: Telegram only allows it for bots in the attachment menu.
  */
 export function unsupportedReply(event: MiniAppEvent): MiniAppEvent | null {
   const data = event.eventData && typeof event.eventData === 'object' ? event.eventData : {};
@@ -238,5 +239,5 @@ export function unsupportedReply(event: MiniAppEvent): MiniAppEvent | null {
   }
 }
 
-/** Mép an toàn (safe_area_changed / content_safe_area_changed): khung trong app không bị che. */
+/** Safe-area edges (safe_area_changed / content_safe_area_changed): the frame inside the app is not covered. */
 export const MINI_APP_ZERO_INSETS = Object.freeze({ top: 0, bottom: 0, left: 0, right: 0 });

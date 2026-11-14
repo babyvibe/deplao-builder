@@ -1,10 +1,10 @@
-// Parser markup BBCode-style → định dạng zca-js (styles) cho tin nhắn Zalo.
+// Parser for BBCode-style markup → zca-js formatting (styles) for Zalo messages.
 //
-// Vì {name} được thay lúc gửi (mỗi contact tên dài/ngắn khác nhau), style KHÔNG thể
-// lưu theo offset tuyệt đối. Thay vào đó lưu thẻ inline trong text và parse SAU khi
-// đã substitute → offset luôn khớp với text thật gửi đi.
+// Because {name} is replaced at send time (each contact's name is longer or shorter), styles CANNOT be
+// stored by absolute offset. Instead, the inline tags are kept in the text and parsed AFTER
+// the substitution is done → the offsets always match the real text being sent.
 
-/** Bảng ánh xạ thẻ → mã TextStyle của zca-js (dist/apis/sendMessage: enum TextStyle). */
+/** Map of tags → zca-js TextStyle codes (dist/apis/sendMessage: enum TextStyle). */
 const TAG_TO_STYLE: Record<string, string> = {
     b: 'b',            // Bold
     i: 'i',            // Italic
@@ -32,9 +32,9 @@ export interface ParsedMarkup {
 const TAG_RE = /\[(\/?)([a-z]+)\]/gi;
 
 /**
- * Tách thẻ markup khỏi text và sinh danh sách style theo offset trên text sạch.
- * - Thẻ lồng nhau OK (sinh nhiều style cùng range — zca-js chấp nhận).
- * - Thẻ lạ / không khớp cặp mở-đóng → giữ nguyên như text thường (không crash).
+ * Splits markup tags out of the text and builds the style list by offset on the clean text.
+ * - Nested tags are OK (several styles on the same range; zca-js accepts them).
+ * - Unknown tags / tags without a matching open-close pair → kept as plain text (no crash).
  */
 export function parseMarkup(raw: string): ParsedMarkup {
     if (!raw) return { text: '', styles: [] };
@@ -50,22 +50,22 @@ export function parseMarkup(raw: string): ParsedMarkup {
         const isClose = m[1] === '/';
         const tag = m[2].toLowerCase();
 
-        // Thẻ không nằm trong bảng → coi như text thường, bỏ qua (giữ nguyên literal).
+        // A tag not in the table → treated as plain text and skipped (kept as a literal).
         if (!(tag in TAG_TO_STYLE)) continue;
 
-        // Nối phần text đứng trước thẻ vào output sạch.
+        // Append the text before the tag to the clean output.
         text += raw.slice(lastIndex, m.index);
         lastIndex = TAG_RE.lastIndex;
 
         if (!isClose) {
             openStack.push({ tag, start: text.length });
         } else {
-            // Tìm thẻ mở gần nhất cùng loại (LIFO).
+            // Find the nearest open tag of the same type (LIFO).
             let found = -1;
             for (let i = openStack.length - 1; i >= 0; i--) {
                 if (openStack[i].tag === tag) { found = i; break; }
             }
-            if (found === -1) continue; // đóng không có mở → bỏ qua
+            if (found === -1) continue; // close tag without an open tag → skip
             const open = openStack.splice(found, 1)[0];
             const len = text.length - open.start;
             if (len > 0) styles.push({ start: open.start, len, st: TAG_TO_STYLE[tag] });

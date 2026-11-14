@@ -1,13 +1,13 @@
 /**
- * googleOAuth — đăng nhập Google cho app desktop (OAuth 2.0 "installed app"):
+ * googleOAuth: Google sign-in for the desktop app (OAuth 2.0 "installed app"):
  *
- *  - PKCE S256 (code_verifier 32 byte ngẫu nhiên) + state ngẫu nhiên 32 byte (base64url).
- *  - Nhận mã qua máy chủ HTTP loopback chỉ nghe 127.0.0.1, cổng do hệ điều hành cấp (redirect_uri
- *    http://127.0.0.1:<cổng>). Chỉ nhận GET có state khớp; mọi lối ra (xong / từ chối / quá 5 phút / huỷ) đều đóng server.
- *  - Quyền duy nhất: drive.file (không nhạy cảm — app chỉ thấy file do chính nó tạo). Không xin openid / email: email
- *    lấy từ Drive about.get. access_type=offline + prompt=consent → lần nào Google cũng trả refresh token.
- *  - Đổi mã / làm mới / thu hồi token qua oauth2.googleapis.com (x-www-form-urlencoded).
- *  - Không bao giờ log token, mã đăng nhập, client secret hay URL chứa chúng.
+ *  - PKCE S256 (code_verifier of 32 random bytes) + a random 32-byte state (base64url).
+ *  - The code is received through an HTTP loopback server that only listens on 127.0.0.1, on a port the OS assigns (redirect_uri
+ *    http://127.0.0.1:<port>). Only accepts a GET whose state matches; every exit (done / refused / over 5 minutes / cancelled) closes the server.
+ *  - Only scope: drive.file (not sensitive: the app only sees files it created itself). Does not request openid / email: the email
+ *    comes from Drive about.get. access_type=offline + prompt=consent → Google always returns a refresh token.
+ *  - Exchanging / refreshing / revoking tokens goes through oauth2.googleapis.com (x-www-form-urlencoded).
+ *  - Never logs the token, sign-in code, client secret, or any URL containing them.
  */
 import * as http from 'http';
 import type { AddressInfo } from 'net';
@@ -15,24 +15,25 @@ import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { CloudError } from '../contracts';
 import { MSG_NETWORK, NETWORK_WAIT_MS, parseRetryAfter } from './DriveApi';
 import type { DriveFetch } from './DriveApi';
+import { tr } from '../../../shared/i18n';
 
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 export const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
-/** Chờ người dùng đăng nhập trên trình duyệt tối đa 5 phút. */
+/** Waits up to 5 minutes for the user to sign in in the browser. */
 export const LOGIN_TIMEOUT_MS = 5 * 60_000;
 const TOKEN_TIMEOUT_MS = 30_000;
 const REVOKE_TIMEOUT_MS = 10_000;
 
-export const MSG_DENIED = 'Bạn đã từ chối cho Deplao truy cập Google Drive.';
-export const MSG_SCOPE_DENIED = 'Bạn chưa cho phép Deplao xem, tạo và xoá tệp Google Drive do Deplao tạo — đăng nhập lại và đánh dấu ô quyền Google Drive.';
-export const MSG_TIMEOUT = 'Quá 5 phút chưa đăng nhập xong Google — bấm Đăng nhập để thử lại.';
-export const MSG_CANCELLED = 'Đã huỷ đăng nhập Google';
-export const MSG_SESSION_EXPIRED = 'Phiên Google đã hết hạn hoặc bị thu hồi — đăng nhập lại Google Drive.';
-export const MSG_NO_REFRESH = 'Google không trả về phiên đăng nhập dài hạn — vào myaccount.google.com → Bảo mật → Kết nối với ứng dụng bên thứ ba, gỡ Deplao rồi đăng nhập lại.';
+export const MSG_DENIED = tr('Bạn đã từ chối cho Deplao truy cập Google Drive.');
+export const MSG_SCOPE_DENIED = tr('Bạn chưa cho phép Deplao xem, tạo và xoá tệp Google Drive do Deplao tạo — đăng nhập lại và đánh dấu ô quyền Google Drive.');
+export const MSG_TIMEOUT = tr('Quá 5 phút chưa đăng nhập xong Google — bấm Đăng nhập để thử lại.');
+export const MSG_CANCELLED = tr('Đã huỷ đăng nhập Google');
+export const MSG_SESSION_EXPIRED = tr('Phiên Google đã hết hạn hoặc bị thu hồi — đăng nhập lại Google Drive.');
+export const MSG_NO_REFRESH = tr('Google không trả về phiên đăng nhập dài hạn — vào myaccount.google.com → Bảo mật → Kết nối với ứng dụng bên thứ ba, gỡ Deplao rồi đăng nhập lại.');
 
-/** Client OAuth dùng để đăng nhập / làm mới (secret có thể trống với client Desktop + PKCE). */
+/** OAuth client used to sign in / refresh (the secret may be empty for a Desktop client + PKCE). */
 export interface OAuthClient {
     clientId: string;
     clientSecret?: string | null;
@@ -40,15 +41,15 @@ export interface OAuthClient {
 
 export interface GoogleTokens {
     accessToken: string;
-    /** ms (đồng hồ máy) lúc access token hết hạn. */
+    /** ms (machine clock) when the access token expires. */
     expiresAt: number;
-    /** Có khi đổi mã (bắt buộc) — làm mới thường không trả lại. */
+    /** Present when exchanging the code (required); a refresh usually does not return it. */
     refreshToken: string | null;
-    /** Quyền Google đã cấp (cách nhau bởi dấu cách). */
+    /** Google scopes granted (separated by spaces). */
     scope: string;
 }
 
-// ─── PKCE / state / URL đăng nhập ────────────────────────────────────────────
+// ─── PKCE / state / sign-in URL ────────────────────────────────────────────
 
 export function createPkcePair(): { verifier: string; challenge: string } {
     const verifier = randomBytes(32).toString('base64url');
@@ -79,14 +80,14 @@ export function buildAuthorizeUrl(p: { clientId: string; redirectUri: string; co
     return `${GOOGLE_AUTH_URL}?${q.toString()}`;
 }
 
-// ─── Máy chủ loopback nhận mã ────────────────────────────────────────────────
+// ─── Loopback server that receives the code ────────────────────────────────────────────────
 
 export interface LoopbackLogin {
-    /** http://127.0.0.1:<cổng> — dùng y nguyên cho URL đăng nhập và lúc đổi mã. */
+    /** http://127.0.0.1:<port>: used exactly as is for the sign-in URL and when exchanging the code. */
     readonly redirectUri: string;
-    /** Mã đăng nhập (+ quyền Google báo đã cấp, nếu có trên URL chuyển hướng). Lỗi = CloudError. */
+    /** Sign-in code (+ the scopes Google reports as granted, if present on the redirect URL). Error = CloudError. */
     readonly result: Promise<{ code: string; scope: string | null }>;
-    /** Huỷ chờ → result bị từ chối CloudError('CANCELLED'). Gọi khi đã xong: không làm gì. */
+    /** Cancel the wait → the result is rejected with CloudError('CANCELLED'). Called after it has finished: does nothing. */
     cancel(): void;
 }
 
@@ -105,7 +106,7 @@ function page(title: string, detail: string, ok: boolean): string {
         + `</style></head><body><div class="card"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p></div></body></html>`;
 }
 
-/** So sánh state không lộ thời gian. */
+/** Compares the state without leaking timing. */
 function sameSecret(a: string, b: string): boolean {
     const x = Buffer.from(String(a), 'utf8');
     const y = Buffer.from(String(b), 'utf8');
@@ -113,8 +114,8 @@ function sameSecret(a: string, b: string): boolean {
 }
 
 /**
- * Mở máy chủ loopback 127.0.0.1:<cổng ngẫu nhiên> chờ Google chuyển hướng về với ?code=…&state=…
- * Từ chối (error=access_denied) → CloudError('GOOGLE_DENIED'); quá hạn → 'GOOGLE_TIMEOUT'; huỷ → 'CANCELLED'.
+ * Opens a loopback server on 127.0.0.1:<random port> and waits for Google to redirect back with ?code=…&state=…
+ * Refused (error=access_denied) → CloudError('GOOGLE_DENIED'); expired → 'GOOGLE_TIMEOUT'; cancelled → 'CANCELLED'.
  */
 export function startLoopbackLogin(opts: { state: string; timeoutMs?: number }): Promise<LoopbackLogin> {
     const timeoutMs = Math.max(1, opts.timeoutMs ?? LOGIN_TIMEOUT_MS);
@@ -127,23 +128,23 @@ export function startLoopbackLogin(opts: { state: string; timeoutMs?: number }):
         const result = new Promise<{ code: string; scope: string | null }>((resolve, reject) => {
             settle = (err, value) => (err ? reject(err) : resolve(value as { code: string; scope: string | null }));
         });
-        // Người gọi vẫn nhận lỗi khi await; dòng này chỉ tránh "unhandled rejection" nếu huỷ trước khi có ai await.
+        // The caller still gets the error when it awaits; this line only avoids an "unhandled rejection" if cancelled before anyone awaits.
         result.catch(() => undefined);
 
         const closeServer = (dropAll: boolean) => {
-            try { server.close(); } catch { /* đã đóng */ }
+            try { server.close(); } catch { /* already closed */ }
             const s = server as unknown as { closeAllConnections?: () => void; closeIdleConnections?: () => void };
             try {
                 if (dropAll) s.closeAllConnections?.();
                 else s.closeIdleConnections?.();
-            } catch { /* bỏ qua */ }
+            } catch { /* ignore */ }
         };
         const finish = (err: CloudError | null, value?: { code: string; scope: string | null }, dropAll = false) => {
             if (done) return;
             done = true;
             if (timer) clearTimeout(timer);
             timer = null;
-            // Trang trả về có 'Connection: close' → Node tự đóng kết nối sau khi gửi xong; còn lại thì đóng ngay
+            // The page returns 'Connection: close' → Node closes the connection by itself after sending; otherwise close it right away
             closeServer(dropAll);
             settle(err, value);
         };
@@ -170,13 +171,13 @@ export function startLoopbackLogin(opts: { state: string; timeoutMs?: number }):
                 return;
             }
             const state = url.searchParams.get('state');
-            // favicon / request lạ / state sai (chống CSRF) → bỏ qua, vẫn chờ
+            // favicon / unknown request / wrong state (CSRF protection) → ignore it and keep waiting
             if (!state || !sameSecret(state, opts.state)) {
                 reply(404, '');
                 return;
             }
             if (done) {
-                reply(200, page('Đăng nhập đã kết thúc', 'Quay lại Deplao để xem kết quả.', true));
+                reply(200, page(tr('Đăng nhập đã kết thúc'), tr('Quay lại Deplao để xem kết quả.'), true));
                 return;
             }
             const error = url.searchParams.get('error');
@@ -186,35 +187,35 @@ export function startLoopbackLogin(opts: { state: string; timeoutMs?: number }):
             if (error) {
                 failure = error === 'access_denied'
                     ? new CloudError('GOOGLE_DENIED', MSG_DENIED)
-                    : new CloudError('GOOGLE_AUTH_FAILED', `Google báo lỗi khi đăng nhập (${error.replace(/[^\w.-]/g, '').slice(0, 40)}) — thử lại.`);
+                    : new CloudError('GOOGLE_AUTH_FAILED', tr('Google báo lỗi khi đăng nhập ({{v1}}) — thử lại.', { v1: error.replace(/[^\w.-]/g, '').slice(0, 40) }));
             } else if (!code) {
-                failure = new CloudError('GOOGLE_AUTH_FAILED', 'Google không trả về mã đăng nhập — thử lại.');
+                failure = new CloudError('GOOGLE_AUTH_FAILED', tr('Google không trả về mã đăng nhập — thử lại.'));
             } else if (scope !== null && !hasDriveScope(scope)) {
-                // Màn đồng ý cho bỏ chọn từng quyền: bỏ ô Google Drive = không dùng được
+                // The consent screen lets the user untick each scope: unticking Google Drive = cannot be used
                 failure = new CloudError('GOOGLE_SCOPE_DENIED', MSG_SCOPE_DENIED);
             }
             if (failure) {
-                reply(400, page('Chưa kết nối được Google Drive', failure.message, false));
+                reply(400, page(tr('Chưa kết nối được Google Drive'), failure.message, false));
                 finish(failure);
                 return;
             }
-            reply(200, page('Đã kết nối Google Drive — quay lại Deplao.', 'Có thể đóng thẻ này.', true));
+            reply(200, page(tr('Đã kết nối Google Drive — quay lại Deplao.'), tr('Có thể đóng thẻ này.'), true));
             finish(null, { code: code as string, scope });
         });
 
         server.on('error', (err: any) => {
             if (!listening) {
-                rejectStart(new CloudError('GOOGLE_LOOPBACK', `Không mở được cổng nhận kết quả đăng nhập trên máy (${err?.code || err?.message || err}).`));
+                rejectStart(new CloudError('GOOGLE_LOOPBACK', tr('Không mở được cổng nhận kết quả đăng nhập trên máy ({{v1}}).', { v1: err?.code || err?.message || err })));
                 return;
             }
-            finish(new CloudError('GOOGLE_LOOPBACK', 'Máy chủ nhận kết quả đăng nhập Google bị lỗi — thử lại.'), undefined, true);
+            finish(new CloudError('GOOGLE_LOOPBACK', tr('Máy chủ nhận kết quả đăng nhập Google bị lỗi — thử lại.')), undefined, true);
         });
 
         server.listen(0, '127.0.0.1', () => {
             listening = true;
             const port = (server.address() as AddressInfo).port;
             timer = setTimeout(() => finish(new CloudError('GOOGLE_TIMEOUT', MSG_TIMEOUT), undefined, true), timeoutMs);
-            try { (timer as { unref?: () => void }).unref?.(); } catch { /* bỏ qua */ }
+            try { (timer as { unref?: () => void }).unref?.(); } catch { /* ignore */ }
             resolveStart({
                 redirectUri: `http://127.0.0.1:${port}`,
                 result,
@@ -249,7 +250,7 @@ async function postForm(fetchImpl: DriveFetch, url: string, form: URLSearchParam
             text = await res.text();
         } catch {
             throw timedOut
-                ? new CloudError('R2_TIMEOUT', 'Google phản hồi quá lâu — tự thử lại sau.', undefined, NETWORK_WAIT_MS)
+                ? new CloudError('R2_TIMEOUT', tr('Google phản hồi quá lâu — tự thử lại sau.'), undefined, NETWORK_WAIT_MS)
                 : new CloudError('R2_NETWORK', MSG_NETWORK, undefined, NETWORK_WAIT_MS);
         }
         let data: any = null;
@@ -261,34 +262,33 @@ async function postForm(fetchImpl: DriveFetch, url: string, form: URLSearchParam
 }
 
 /**
- * Lỗi của máy chủ token Google → CloudError. invalid_grant khi làm mới = phiên chết ('GOOGLE_INVALID_GRANT' —
- * GoogleDriveService xoá refresh token rồi báo NOT_CONNECTED); client sai → 'GOOGLE_CLIENT_INVALID' (status 401 để tầng
- * trên dừng như lỗi quyền).
+ * Error from Google's token server → CloudError. invalid_grant when refreshing = the session is dead ('GOOGLE_INVALID_GRANT':
+ * GoogleDriveService deletes the refresh token, then reports NOT_CONNECTED); wrong client → 'GOOGLE_CLIENT_INVALID' (status 401 so the layer above stops, like a permission error).
  */
 function tokenError(status: number, data: any, retryAfter: string | null, phase: 'exchange' | 'refresh'): CloudError {
     const code = typeof data?.error === 'string' ? data.error : '';
     const desc = typeof data?.error_description === 'string' ? data.error_description : '';
     if (status === 429 || status >= 500) {
-        return new CloudError('R2_BUSY', 'Google đang bận — tự thử lại sau.', status, parseRetryAfter(retryAfter, Date.now()) ?? (status === 429 ? 30_000 : 10_000));
+        return new CloudError('R2_BUSY', tr('Google đang bận — tự thử lại sau.'), status, parseRetryAfter(retryAfter, Date.now()) ?? (status === 429 ? 30_000 : 10_000));
     }
     if (code === 'invalid_grant') {
         return phase === 'refresh'
             ? new CloudError('GOOGLE_INVALID_GRANT', MSG_SESSION_EXPIRED, status)
-            : new CloudError('GOOGLE_AUTH_FAILED', 'Mã đăng nhập Google đã hết hạn hoặc đã dùng — đăng nhập lại.', status);
+            : new CloudError('GOOGLE_AUTH_FAILED', tr('Mã đăng nhập Google đã hết hạn hoặc đã dùng — đăng nhập lại.'), status);
     }
     if (/client_secret is missing/i.test(desc)) {
-        return new CloudError('GOOGLE_CLIENT_SECRET_REQUIRED', 'Client OAuth này cần Client secret — nhập Client secret (mục Nâng cao) rồi đăng nhập lại.', 401);
+        return new CloudError('GOOGLE_CLIENT_SECRET_REQUIRED', tr('Client OAuth này cần Client secret — nhập Client secret (mục Nâng cao) rồi đăng nhập lại.'), 401);
     }
     if (code === 'invalid_client' || code === 'unauthorized_client') {
-        return new CloudError('GOOGLE_CLIENT_INVALID', 'Client OAuth Google không hợp lệ (sai Client ID / Client secret hoặc client đã bị xoá) — kiểm tra mục Nâng cao.', 401);
+        return new CloudError('GOOGLE_CLIENT_INVALID', tr('Client OAuth Google không hợp lệ (sai Client ID / Client secret hoặc client đã bị xoá) — kiểm tra mục Nâng cao.'), 401);
     }
     const reason = code.replace(/[^\w.-]/g, '').slice(0, 40);
-    return new CloudError('GOOGLE_AUTH_FAILED', `Google từ chối đăng nhập (${reason || `HTTP ${status}`}).`, status);
+    return new CloudError('GOOGLE_AUTH_FAILED', tr('Google từ chối đăng nhập ({{v1}}).', { v1: reason || `HTTP ${status}` }), status);
 }
 
 function parseTokens(data: any, nowMs: number): GoogleTokens {
     const accessToken = typeof data?.access_token === 'string' ? data.access_token : '';
-    if (!accessToken) throw new CloudError('GOOGLE_AUTH_FAILED', 'Google không trả về token truy cập — thử đăng nhập lại.');
+    if (!accessToken) throw new CloudError('GOOGLE_AUTH_FAILED', tr('Google không trả về token truy cập — thử đăng nhập lại.'));
     const expiresIn = Number(data?.expires_in);
     return {
         accessToken,
@@ -301,12 +301,12 @@ function parseTokens(data: any, nowMs: number): GoogleTokens {
 function clientForm(client: OAuthClient): URLSearchParams {
     const form = new URLSearchParams();
     form.set('client_id', client.clientId);
-    // Client "Desktop app" dùng PKCE có thể không cần secret — chỉ gửi khi có
+    // A "Desktop app" client using PKCE may not need a secret: only send it when there is one
     if (client.clientSecret) form.set('client_secret', client.clientSecret);
     return form;
 }
 
-/** Đổi mã đăng nhập lấy token. Thiếu quyền drive.file → 'GOOGLE_SCOPE_DENIED'; thiếu refresh token → 'GOOGLE_NO_REFRESH'. */
+/** Exchanges the sign-in code for tokens. Missing drive.file scope → 'GOOGLE_SCOPE_DENIED'; missing refresh token → 'GOOGLE_NO_REFRESH'. */
 export async function exchangeAuthCode(
     fetchImpl: DriveFetch,
     client: OAuthClient,
@@ -326,7 +326,7 @@ export async function exchangeAuthCode(
     return tokens as GoogleTokens & { refreshToken: string };
 }
 
-/** Làm mới access token. invalid_grant → CloudError('GOOGLE_INVALID_GRANT'). */
+/** Refreshes the access token. invalid_grant → CloudError('GOOGLE_INVALID_GRANT'). */
 export async function refreshAccessToken(fetchImpl: DriveFetch, client: OAuthClient, refreshToken: string, now: () => number = Date.now): Promise<GoogleTokens> {
     const form = clientForm(client);
     form.set('grant_type', 'refresh_token');
@@ -336,7 +336,7 @@ export async function refreshAccessToken(fetchImpl: DriveFetch, client: OAuthCli
     return parseTokens(r.data, now());
 }
 
-/** Thu hồi token (best effort): true nếu Google xác nhận. Không ném. */
+/** Revokes the token (best effort): true if Google confirms it. Does not throw. */
 export async function revokeToken(fetchImpl: DriveFetch, token: string): Promise<boolean> {
     try {
         const form = new URLSearchParams();

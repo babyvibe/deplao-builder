@@ -1,11 +1,11 @@
 /**
  * useChatEvents.ts
- * Unified event hook - lắng nghe cả Zalo và Facebook events,
- * normalize về cùng chatStore (unified store).
+ * Unified event hook: listens to both Zalo and Facebook events,
+ * normalizes them into the same chatStore (unified store).
  *
- * Phase B4: merge Facebook events vào chatStore.
- * Zalo events vẫn được xử lý bởi useZaloEvents (không thay đổi).
- * Hook này chỉ thêm FB events → chatStore để ConversationList hiển thị FB threads.
+ * Phase B4: merges Facebook events into chatStore.
+ * Zalo events are still handled by useZaloEvents (unchanged).
+ * This hook only adds FB events → chatStore so ConversationList shows FB threads.
  */
 
 import { useEffect } from 'react';
@@ -25,15 +25,16 @@ import { isChatPaneVisible } from '@/lib/chat/read/liveReadSync';
 import { getFilteredUnreadCount } from '@/lib/notifications/badgeUtils';
 import { applyRepeatedFbMessage } from '@/lib/chat/facebook/repeatedFbMessage';
 import { ImageIcon, PaletteIcon, PaperclipIcon } from '@/components/common/icons';
+import { tr } from '../../../shared/i18n';
 
-/** Chế độ nhân viên: event Facebook là bản relay từ Boss (phiên Facebook chỉ chạy trên Boss). */
+/** Employee mode: Facebook events are relays from the Boss (the Facebook session only runs on the Boss). */
 function isEmployeeMode(): boolean {
   return useEmployeeStore.getState().mode === 'employee';
 }
 
 /**
- * Lấy tên hiển thị của account từ accountStore.
- * Dùng trong notification title để biết tin nhắn đến từ account nào.
+ * Gets the display name of the account from accountStore.
+ * Used in the notification title to show which account the message came in on.
  */
 function getAccountDisplayName(zaloId: string): string {
   const accounts = useAccountStore.getState().accounts;
@@ -43,40 +44,40 @@ function getAccountDisplayName(zaloId: string): string {
 
 /**
  * Generate human-readable preview from FB attachment metadata
- * Giữ nguyên type gốc (sticker, image, video...) để MessageBubbles
- * tự quyết định render dựa trên msg_type.
+ * Keeps the original type (sticker, image, video...) so MessageBubbles
+ * decides how to render, based on msg_type.
  */
 function fbAttachmentPreview(attachType: string, attObj: any): string {
   if (attachType === 'system') return ''; // System notifications use body text (admin msg), not a preview
-  if (attachType === 'template' || attachType === FB_TEMPLATE_MSG_TYPE) return fbTemplateText(attObj?.template) || '📎 Tin nhắn mẫu';
-  if (attachType === 'image' || attachType === 'photo') return '🖼️ Hình ảnh';
+  if (attachType === 'template' || attachType === FB_TEMPLATE_MSG_TYPE) return fbTemplateText(attObj?.template) || tr('📎 Tin nhắn mẫu');
+  if (attachType === 'image' || attachType === 'photo') return tr('🖼️ Hình ảnh');
   if (attachType === 'video') return '🎬 Video';
   if (attachType === 'audio') return '🎵 Audio';
   if (attachType === 'sticker') return '🎨 Sticker';
   const name = attObj?.name;
   if (name) return `📎 ${name}`;
-  if (attachType) return '📎 Tệp đính kèm';
+  if (attachType) return tr('📎 Tệp đính kèm');
   return '';
 }
 
 /**
- * Normalize một FB MQTT message → MessageItem format của chatStore
- * Giữ nguyên attachment type gốc - MessageBubbles tự quyết định render.
- * loadMessageFromDB (saveFBMessage) map sticker→image nhưng live event
- * để nguyên type để StickerBubble/MediaBubble xử lý phù hợp.
+ * Normalize one FB MQTT message into the chatStore MessageItem format
+ * Keeps the original attachment type: MessageBubbles decides how to render it.
+ * loadMessageFromDB (saveFBMessage) maps sticker→image, but the live event
+ * keeps the type so StickerBubble/MediaBubble can handle it properly.
  */
 function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
   const threadId = msg.replyToID || msg.threadId || '';
 
-  // hasAttachment: kiểm tra id hợp lệ + có url hoặc attachmentType
+  // hasAttachment: check that the id is valid + has a url or attachmentType
   const hasAttachment = !!(msg.attachments?.id && msg.attachments.id !== 0 &&
     (msg.attachments.url || msg.attachments.attachmentType));
 
-  // rawType: giữ nguyên type gốc từ MQTT (sticker, image, video, file...)
-  // Cho phép backend override msg_type (vd 'system' cho admin notification)
+  // rawType: keeps the original type from MQTT (sticker, image, video, file...)
+  // Let the backend override msg_type (e.g. 'system' for admin notifications)
   const rawType = msg.msg_type || (!hasAttachment ? 'text' : (msg.attachments.attachmentType || 'image'));
-  // KHÔNG map sticker→image ở đây - để MessageBubbles.isStickerType xử lý
-  // Tin mẫu của Page (thẻ + nút) → fb.template, giống hàng main lưu trong DB
+  // Do NOT map sticker→image here: MessageBubbles.isStickerType handles it
+  // Page template messages (card + buttons) → fb.template, same as the rows main saves in the DB
   const msgType = rawType === 'template' ? FB_TEMPLATE_MSG_TYPE : rawType;
 
   if (rawType === 'sticker') {
@@ -97,7 +98,7 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
     ...(a.fileSize != null ? { fileSize: a.fileSize } : {}),
     ...(a.mimeType ? { mimeType: a.mimeType } : {}),
     ...(a.localPath ? { localPath: a.localPath } : {}),
-    // E2EE media download fields - cần preserve để StickerBubble biết sticker có thể download
+    // E2EE media download fields: must be preserved so StickerBubble knows the sticker can be downloaded
     ...(a.directPath ? { directPath: a.directPath } : {}),
     ...(a.mediaKey ? { mediaKey: a.mediaKey } : {}),
     ...(a.mediaSha256 ? { mediaSha256: a.mediaSha256 } : {}),
@@ -138,7 +139,7 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
   };
 }
 
-/** Cửa sổ app có đang được dùng không: main báo qua 'app:windowFocus' (document.hasFocus() không đáng tin trong Electron). */
+/** Whether the app window is in use: main reports it via 'app:windowFocus' (document.hasFocus() is not reliable in Electron). */
 let appWindowFocused = typeof document === 'undefined' || document.hasFocus();
 let appWindowFocusTracked = false;
 function trackAppWindowFocus(): void {
@@ -148,8 +149,8 @@ function trackAppWindowFocus(): void {
 }
 
 /**
- * Hook lắng nghe FB events và cập nhật chatStore thống nhất.
- * Gọi hook này ở App level (cùng chỗ với useZaloEvents).
+ * Hook that listens to FB events and updates the unified chatStore.
+ * Call this hook at App level (same place as useZaloEvents).
  */
 export function useChatEvents(): void {
   const activeThreadId = useChatStore((s) => s.activeThreadId);
@@ -188,9 +189,9 @@ export function useChatEvents(): void {
       }
       const store = useChatStore.getState();
 
-      // Bản thứ 2 của cùng tin (MQTT và bridge cùng nhận) vừa sửa được hàng rỗng / thẻ "File đính kèm không hiển thị"
-      // (main chỉ phát lại khi DB thật sự được sửa, bản trùng y hệt không phát): vá tin + xem trước, không cộng chưa đọc,
-      // không báo lần nữa.
+      // The second copy of the same message (MQTT and the bridge both receive it) just repaired an empty row / a "File đính kèm không hiển thị" (attachment not shown) card
+      // (main only re-emits when the DB is actually edited, an exact duplicate is not emitted): patch the message + preview, do not add to unread,
+      // do not notify again.
       if (message.repeat === true) {
         applyRepeatedFbMessage(fbAccountId, threadId, normalized);
         return;
@@ -199,11 +200,11 @@ export function useChatEvents(): void {
       // If self-echo from MQTT, replace the temp message instead of adding duplicate
       // Build last message preview early (used by both temp-replacement and normal paths)
       const lastMsgPreview = normalized.content?.slice(0, 100)
-        || (normalized.msg_type === 'image' || normalized.msg_type === 'photo' ? '🖼️ Hình ảnh'
+        || (normalized.msg_type === 'image' || normalized.msg_type === 'photo' ? tr('🖼️ Hình ảnh')
           : normalized.msg_type === 'video' ? '🎬 Video'
           : normalized.msg_type === 'audio' ? '🎵 Audio'
-          : normalized.msg_type !== 'text' ? '📎 Tệp đính kèm'
-          : '[Tệp đính kèm]');
+          : normalized.msg_type !== 'text' ? tr('📎 Tệp đính kèm')
+          : tr('[Tệp đính kèm]'));
 
       if (isSelf) {
         const key = `${fbAccountId}_${threadId}`;
@@ -266,7 +267,7 @@ export function useChatEvents(): void {
       // Add message to store first
       store.addMessage(fbAccountId, threadId, normalized);
 
-      // Nếu là self-image → báo cho MessageQueue để đếm batch
+      // If it is a self-image → report to MessageQueue to count the batch
       if (isSelf && (normalized.msg_type === 'image' || normalized.msg_type === 'photo')) {
         messageQueue.onImageMessageReceived(fbAccountId, threadId, String(normalized.msg_id || ''));
       }
@@ -312,8 +313,8 @@ export function useChatEvents(): void {
         }
       }
 
-      // Đã / chưa trả lời theo tin thật mới nhất (shared/chat/replyState): tin mình gửi từ máy khác = đã trả lời, tin của người
-      // kia (kể cả lúc đang mở hội thoại) = chưa trả lời — trước đây chỉ đổi khi cộng chưa đọc
+      // Replied / not replied based on the latest real message (shared/chat/replyState): a message I sent from another machine = replied, a message from the other person
+      // (even while the conversation is open) = not replied. Previously it only changed when the unread count went up
       const fbReplyState = replyStateForIncoming(
         { msgType: normalized.msg_type, timestamp: normalized.timestamp, isSelf },
         (useChatStore.getState().contacts[fbAccountId] || []).find(c => c.contact_id === threadId)?.last_message_time,
@@ -335,7 +336,7 @@ export function useChatEvents(): void {
       // Pages display the same account avatar.
       const threadContact = (useChatStore.getState().contacts[fbAccountId] || [])
         .find(c => c.contact_id === threadId);
-      // Nhân viên: phiên Facebook chỉ có trên máy Boss — Boss tự lấy tên / ảnh rồi phát fb:onContactUpdate (relay)
+      // Employee: the Facebook session only exists on the Boss machine: the Boss fetches the name / avatar itself, then emits fb:onContactUpdate (relay)
       if (!isEmployeeMode() && threadContact?.contact_type !== 'group' && /^\d+$/.test(String(threadId))) {
         const contactsList = useChatStore.getState().contacts[fbAccountId] || [];
         const conversationContact = contactsList.find(c => c.contact_id === threadId);
@@ -362,9 +363,9 @@ export function useChatEvents(): void {
       if (!isSelf) {
         if (currentActive !== threadId) store.incrementUnread(fbAccountId, threadId);
 
-        // ─── Âm thanh + thông báo trong app + popup hệ điều hành cho tin FB (một chỗ duy nhất) ──────────
-        // Hội thoại đang hiện trên màn hình và cửa sổ đang dùng → không báo (đã thấy tin). Cửa sổ ở nền thì vẫn báo cả
-        // khi đó là hội thoại đang mở (trước đây App.tsx báo riêng phần này → mỗi tin FB kêu 2 lần, 2 popup).
+        // ─── Sound + in-app notification + OS popup for FB messages (one single place) ──────────
+        // The conversation shown on screen in the window in use → no notification (already seen). A background window still notifies, even
+        // when it is the open conversation (previously App.tsx notified this part separately → each FB message rang twice, with 2 popups).
         const windowFocused = appWindowFocused;
         const onScreen = currentActive === threadId
           && useAccountStore.getState().activeAccountId === fbAccountId
@@ -397,7 +398,7 @@ export function useChatEvents(): void {
               text: lastMsgPreview,
             });
           }
-          // Đang dùng app và thẻ trong app đã hiện → không bật thêm popup của hệ điều hành cho cùng tin
+          // The app is in use and the in-app tab is already shown → do not turn on another OS popup for the same message
           if (fbNotifSettings.desktopEnabled && notifAllowed && !(showToast && windowFocused)) {
             const contactAvatar = ctact?.avatar_url || undefined;
             const notifTitle = `[${getAccountDisplayName(fbAccountId)}] ${contactName}`;
@@ -414,7 +415,7 @@ export function useChatEvents(): void {
     });
     if (unsubMsg) unsubscribers.push(unsubMsg);
 
-    // ─── fb:onContactUpdate → cập nhật tên/avatar cho 1-1 Facebook ──────────────
+    // ─── fb:onContactUpdate → update name/avatar for 1-1 Facebook ──────────────
     const unsubContact = ipc.on?.('fb:onContactUpdate', (data: {
       fbAccountId: string;
       contactId: string;
@@ -441,27 +442,27 @@ export function useChatEvents(): void {
         case 'connected':
           updateAccountStatus(data.fbAccountId, true, true);
           updateListenerActive(data.fbAccountId, true);
-          // Reload contacts after FB connects — Boss: DB; nhân viên (event relay): BOSS REST (ipc.db.getContacts ở máy
-          // nhân viên chỉ là stub, lỗi đọc giữ danh sách)
+          // Reload contacts after FB connects. Boss: DB; employee (relay event): BOSS REST (ipc.db.getContacts on the employee machine
+          // is only a stub, a read error keeps the list)
           reloadAccountContacts(data.fbAccountId).catch(() => {});
           break;
 
         case 'connecting':
-          // isOnline=false, isConnected=true → badge hiển thị "Đang kết nối"
+          // isOnline=false, isConnected=true → badge shows "Đang kết nối" (Connecting)
           updateAccountStatus(data.fbAccountId, false, true);
           break;
 
         case 'cookie_expired':
-          // MQTT max retries (8 lần) → đánh dấu listener chết
+          // MQTT max retries (8 times) → mark the listener as dead
           updateAccountStatus(data.fbAccountId, false, false);
           updateListenerActive(data.fbAccountId, false);
-          // Thông báo user
+          // User notification
           {
             const accounts = useAccountStore.getState().accounts;
             const acc = accounts.find((a: any) => a.zalo_id === data.fbAccountId || a.facebook_id === data.fbAccountId);
             const name = acc?.full_name || acc?.zalo_id || data.fbAccountId;
             useAppStore.getState().showNotification(
-              `⚠️ Tài khoản Facebook "${name}" đã hết phiên đăng nhập (FB phát hiện bất thường hoặc cookie hết hạn). Vào Dashboard → "Đăng nhập lại" để đăng nhập lại.`,
+              tr('⚠️ Tài khoản Facebook "{{name}}" đã hết phiên đăng nhập (FB phát hiện bất thường hoặc cookie hết hạn). Vào Dashboard → "Đăng nhập lại" để đăng nhập lại.', { name }),
               'error'
             );
           }
@@ -496,8 +497,8 @@ export function useChatEvents(): void {
       if (!data?.fbAccountId || !data?.messageId) return;
       // Need threadId to update reaction - search through cached messages if not provided
       if (data.threadId) {
-        // Messenger: mỗi người một cảm xúc / tin (như DB, persistReactionToDB) → 'set'; cộng dồn làm một lần thả hiện "2"
-        // khi cảm xúc được báo lại
+        // Messenger: each person has one reaction / message (as in DB, persistReactionToDB) → 'set'; accumulating them as one reaction shows "2"
+        // when the reaction is reported again
         useChatStore.getState().updateMessageReaction(
           data.fbAccountId, data.threadId, data.messageId, data.userId, data.emoji, 'set'
         );
@@ -597,7 +598,7 @@ export function useChatEvents(): void {
       actorFbId?: string;
     }) => {
       if (!data?.fbAccountId || !data?.threadId) return;
-      // Nhân viên: không có phiên / DB Facebook cục bộ — getThreads ở máy nhân viên chỉ thử kết nối lại vô ích
+      // Employee: no session / local Facebook DB on the employee machine: getThreads on an employee machine only retries the connection, which is useless
       if (isEmployeeMode()) return;
       // Refresh contacts list so participant count gets synced
       ipc.fb?.getThreads({ accountId: data.fbAccountId, forceRefresh: false })
@@ -605,7 +606,7 @@ export function useChatEvents(): void {
     });
     if (unsubGroupEvent) unsubscribers.push(unsubGroupEvent);
 
-    // ─── event:localPath → cập nhật local_paths cho message sau khi download ──
+    // ─── event:localPath → update local_paths for the message after download ──
     const unsubLocalPath = ipc.on?.('event:localPath', (data: {
       zaloId: string;
       msgId: string;

@@ -1,32 +1,32 @@
 /**
- * Trích dẫn đang dở THEO TỪNG hội thoại (như Telegram): đang trả lời tin ở hội thoại A, sang B thì B không có trích dẫn,
- * quay lại A thì trích dẫn cũ hiện lại. `chatStore.replyTo` vẫn là trích dẫn của hội thoại đang mở; MessageInput cất /
- * lấy lại khi đổi hội thoại (hoặc chủ đề forum). Chỉ nhớ trong phiên làm việc. Thuần — test ở
+ * Reply drafts PER conversation (like Telegram): replying to a message in conversation A, then switching to B shows no reply in B,
+ * and going back to A brings the old reply back. `chatStore.replyTo` is still the reply of the open conversation; MessageInput saves /
+ * restores it when the conversation changes (or the forum topic). Only remembered for the current session. Pure: tested in
  * src/__tests__/chat/composer/replyDrafts.test.ts.
  */
 import type { MessageItem } from '@/store/chat/chatStore';
 
 const drafts = new Map<string, MessageItem>();
 
-/** Khoá: tài khoản + hội thoại (+ chủ đề forum Telegram: mỗi chủ đề một trích dẫn). */
+/** Key: account + conversation (+ Telegram forum topic: one reply per topic). */
 export function replyDraftKey(accountId: string | null | undefined, threadId: string | null | undefined, topicId?: string | number | null): string {
   if (!accountId || !threadId) return '';
   return `${accountId}_${threadId}${topicId != null && topicId !== '' ? `_t${topicId}` : ''}`;
 }
 
-/** Cất trích dẫn của hội thoại vừa rời (null = không còn trích dẫn). */
+/** Save the reply of the conversation just left (null = no reply left). */
 export function saveReplyDraft(key: string, reply: MessageItem | null | undefined): void {
   if (!key) return;
   if (reply) drafts.set(key, reply);
   else drafts.delete(key);
 }
 
-/** Trích dẫn đang dở của hội thoại (null nếu không có). */
+/** The conversation's unfinished reply (null if none). */
 export function getReplyDraft(key: string): MessageItem | null {
   return (key && drafts.get(key)) || null;
 }
 
-/** Tin trả lời đã gửi xong: bỏ trích dẫn đó ở mọi hội thoại đang cất nó. */
+/** A reply message has been sent: drop that reply in every conversation that saved it. */
 export function forgetReplyDraft(reply: MessageItem | null | undefined): void {
   if (!reply) return;
   for (const [key, value] of drafts) {
@@ -36,7 +36,7 @@ export function forgetReplyDraft(reply: MessageItem | null | undefined): void {
   }
 }
 
-/** Đổi workspace: trích dẫn của tài khoản cũ không còn ý nghĩa. */
+/** Workspace change: the old account's replies no longer make sense. */
 export function clearReplyDrafts(): void {
   drafts.clear();
 }

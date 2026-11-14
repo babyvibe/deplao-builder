@@ -1,5 +1,5 @@
 /**
- * TelegramBotChannelService.ts - Kênh chat Telegram Bot
+ * TelegramBotChannelService.ts - Telegram Bot chat channel
  *
  * Handles inbox messages: save to DB, download media, broadcast UI events.
  * Also exposes all Bot API send/action methods.
@@ -23,6 +23,7 @@ import type { BotAccount, NormalizedUpdate, BotUpdateConsumer } from './Telegram
 import { getTelegramMessagePreview } from '../messages/TelegramMessagePreview';
 import { isTelegramBotToken } from '../../../shared/accounts/storedCredential';
 import { telegramSentTimestamp } from '../../../utils/time/serverClock';
+import { tr } from '../../../shared/i18n';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const REQUEST_TIMEOUT = 30000;
@@ -43,7 +44,7 @@ function appendBotUpload(form: any, field: string, filePath: string): void {
   }
   const resolvedPath = resolveBotUploadPath(filePath);
   if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`File không tồn tại: ${path.basename(resolvedPath)}`);
+    throw new Error(tr('File không tồn tại: {{v1}}', { v1: path.basename(resolvedPath) }));
   }
   form.append(field, fs.createReadStream(resolvedPath));
 }
@@ -78,7 +79,7 @@ function normalizeBotPollAttachment(poll: any): any {
     type: 'poll',
     id: String(poll?.id || ''),
     poll_id: String(poll?.id || ''),
-    question: String(poll?.question || 'Bình chọn'),
+    question: String(poll?.question || tr('Bình chọn')),
     closed: !!poll?.is_closed,
     is_closed: !!poll?.is_closed,
     multiple_choice: !!poll?.allows_multiple_answers,
@@ -360,7 +361,7 @@ async function saveMessage(msg: TelegramMessage, botToken?: string): Promise<voi
       return '';
     })();
 
-    // Resolve quote_data nếu có reply
+    // Resolve quote_data if this is a reply
     let quoteData: string | undefined;
     if (msg.replyToMessageId) {
       try {
@@ -420,7 +421,7 @@ async function saveMessage(msg: TelegramMessage, botToken?: string): Promise<voi
       msg.isSelf ? 0 : 1, // for the ON CONFLICT update
     ]);
 
-    // Fetch avatar cho contact mới (background)
+    // Fetch avatar for a new contact (background)
     if (!msg.isSelf) {
       fetchBotContactAvatar(msg.accountId, msg.threadId, msg.senderName, botToken).catch(() => {});
     }
@@ -439,7 +440,7 @@ async function updateBotPollMessage(account: BotAccount, rawMessage: any): Promi
   if (!poll || !chatId || !messageId) return;
 
   const attachments = [normalizeBotPollAttachment(poll)];
-  const content = String(poll.question || 'Bình chọn');
+  const content = String(poll.question || tr('Bình chọn'));
   const timestamp = Number(rawMessage?.edit_date || rawMessage?.date || Math.floor(Date.now() / 1000)) * 1000;
   DatabaseService.getInstance()?.run(
     `UPDATE messages SET content = ?, msg_type = 'telegram.poll', attachments = ?, is_edited = 1
@@ -502,7 +503,7 @@ async function updateBotPollResults(account: BotAccount, poll: any): Promise<voi
         _silentNotification: true,
         data: {
           uidFrom: String(candidate.sender_id || ''), idTo: candidate.thread_id, msgId: candidate.msg_id,
-          content: String(poll.question || 'Bình chọn'), preview: getTelegramMessagePreview('telegram.poll'),
+          content: String(poll.question || tr('Bình chọn')), preview: getTelegramMessagePreview('telegram.poll'),
           msgType: 'telegram.poll', channel: 'telegram_bot', ts: String(Date.now()), attachments,
         },
       },
@@ -519,12 +520,12 @@ async function handleBotPollOptionAdded(account: BotAccount, rawMessage: any): P
   const optionId = String(added?.option_persistent_id || '');
   const option = (pollMessage?.poll?.options || []).find((item: any) => String(item?.persistent_id || '') === optionId);
   const fromName = [rawMessage?.from?.first_name, rawMessage?.from?.last_name].filter(Boolean).join(' ')
-    || String(rawMessage?.from?.username || rawMessage?.from?.id || 'Thành viên');
-  const optionText = String(option?.text || 'một lựa chọn mới');
+    || String(rawMessage?.from?.username || rawMessage?.from?.id || tr('Thành viên'));
+  const optionText = String(option?.text || tr('một lựa chọn mới'));
 
   await handleInboundMessage(account, {
     ...rawMessage,
-    text: `${fromName} đã thêm “${optionText}” vào bình chọn`,
+    text: tr('{{fromName}} đã thêm “{{optionText}}” vào bình chọn', { fromName, optionText }),
     poll_option_added: undefined,
   });
 }
@@ -544,7 +545,7 @@ async function fetchBotContactAvatar(
   if (!db) return;
 
   try {
-    // Kiểm tra đã có avatar chưa
+    // Check whether it already has an avatar
     const existing = db.queryOne<any>(
       `SELECT avatar_url FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'telegram_bot'`,
       [accountId, chatId]
@@ -554,7 +555,7 @@ async function fetchBotContactAvatar(
       return;
     }
 
-    // Kiểm tra cache
+    // Check cache
     if (!shouldFetchAvatar(accountId, chatId)) return;
     markAvatarFetched(accountId, chatId);
 
@@ -567,7 +568,7 @@ async function fetchBotContactAvatar(
 
       if (res.data?.ok && res.data?.result?.photos?.length > 0) {
         const photo = res.data.result.photos[0];
-        const fileId = photo[photo.length - 1]?.file_id; // Lấy size lớn nhất
+        const fileId = photo[photo.length - 1]?.file_id; // Get the largest size
         if (fileId) {
           // Get file path
           const fileRes = await axios.get(`${TELEGRAM_API}/bot${botToken}/getFile`, {
@@ -631,7 +632,7 @@ async function fetchBotContactAvatar(
 // ─── Media Download (Bot API) ────────────────────────────────────────────────
 
 /**
- * Download media từ Telegram Bot API qua getFile.
+ * Download media from the Telegram Bot API via getFile.
  * Bot API: getFile(file_id) → file_path → download URL
  */
 async function downloadBotMedia(
@@ -785,7 +786,7 @@ async function saveMediaToDisk(buffer: Buffer, filename: string, msgType: string
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Gửi tin nhắn qua Telegram Bot
+ * Send a message through the Telegram Bot
  */
 export interface TelegramBotSendMessageParams {
   accountId: string;
@@ -861,7 +862,7 @@ export async function sendMessage(
 
     // Detect threadType: Telegram group/channel IDs are negative
     const threadType = chatId.startsWith('-') ? 1 : 0;
-    // Giờ server của tin (Bot API `date`), không phải giờ máy — máy nhanh vài giây thì khách trả lời ngay bị xếp trước
+    // Server time of the message (Bot API `date`), not the machine's time: a machine running a few seconds fast would let a customer's immediate reply sort before it
     const sentTimestamp = telegramSentTimestamp(result, sentAt);
 
     // Save sent message to DB
@@ -920,7 +921,7 @@ async function saveSentBotMessage(
   content: string,
   msgType: string,
   attachments: any[] = [],
-  /** Kết quả Bot API (`result`) — lấy giờ server `date` làm mốc thời gian của tin */
+  /** Bot API result (`result`): take the server `date` as the message's time */
   sentResult?: unknown,
 ): Promise<void> {
   if (!msgId) return;
@@ -970,8 +971,8 @@ async function saveSentBotMessage(
 }
 
 /**
- * Lưu + phát sự kiện cho một tin ảnh bot vừa gửi (sendPhoto hoặc một phần tử của sendMediaGroup).
- * Trả về message_id ('' khi Telegram không trả id).
+ * Save + emit an event for one photo message the bot just sent (sendPhoto or one item of sendMediaGroup).
+ * Returns the message_id ('' when Telegram returns no id).
  */
 async function recordSentBotPhoto(accountId: string, chatId: string, bot: BotAccount, result: any, caption?: string): Promise<string> {
     // Telegram photo response: result.message_id exists at top level
@@ -983,7 +984,7 @@ async function recordSentBotPhoto(accountId: string, chatId: string, bot: BotAcc
     // Save sent photo to DB and emit event
     if (msgId) {
       const threadType = chatId.startsWith('-') ? 1 : 0;
-      const sentTimestamp = telegramSentTimestamp(result); // giờ server (`date`), không phải giờ máy
+      const sentTimestamp = telegramSentTimestamp(result); // server time (`date`), not the machine's time
       // Extract photo attachments from API response
       const photoAttachments = (result?.photo || []).map((p: any) => ({
         type: 'photo',
@@ -1045,7 +1046,7 @@ async function recordSentBotPhoto(accountId: string, chatId: string, bot: BotAcc
 }
 
 /**
- * Gửi ảnh qua Telegram Bot
+ * Send a photo through the Telegram Bot
  */
 export async function sendPhoto(accountId: string, chatId: string, photoPath: string, caption?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const bot = registeredAccounts.get(accountId);
@@ -1081,8 +1082,8 @@ export async function sendPhoto(accountId: string, chatId: string, photoPath: st
 const BOT_ALBUM_MAX = 10;
 
 /**
- * Gửi nhiều ảnh thành một album (sendMediaGroup), chú thích ở ảnh đầu — Telegram hiện chú thích
- * dưới album. Mỗi ảnh của album là một tin riêng trong DB (như khi nhận album).
+ * Send several photos as one album (sendMediaGroup), the caption on the first photo: Telegram shows the caption
+ * below the album. Each photo in the album is a separate message in the DB (as when an album is received).
  */
 export async function sendPhotoAlbum(
   accountId: string,
@@ -1091,7 +1092,7 @@ export async function sendPhotoAlbum(
   caption?: string,
 ): Promise<{ success: boolean; messageId?: string; messageIds?: string[]; error?: string }> {
   const photos = photoPaths.filter(Boolean);
-  if (photos.length === 0) return { success: false, error: 'Không có ảnh để gửi' };
+  if (photos.length === 0) return { success: false, error: tr('Không có ảnh để gửi') };
   if (photos.length === 1) return sendPhoto(accountId, chatId, photos[0], caption);
   const bot = registeredAccounts.get(accountId);
   if (!bot) return { success: false, error: 'Bot not active' };
@@ -1145,7 +1146,7 @@ export async function sendPhotoAlbum(
 }
 
 /**
- * Gửi video qua Telegram Bot
+ * Send a video through the Telegram Bot
  */
 export async function sendVideo(accountId: string, chatId: string, videoPath: string, caption?: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1180,7 +1181,7 @@ export async function sendVideo(accountId: string, chatId: string, videoPath: st
 }
 
 /**
- * Gửi document/file qua Telegram Bot
+ * Send a document/file through the Telegram Bot
  */
 export async function sendDocument(accountId: string, chatId: string, filePath: string, caption?: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1216,7 +1217,7 @@ export async function sendDocument(accountId: string, chatId: string, filePath: 
 }
 
 /**
- * Gửi audio qua Telegram Bot
+ * Send audio through the Telegram Bot
  */
 export async function sendAudio(accountId: string, chatId: string, audioPath: string, caption?: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1251,7 +1252,7 @@ export async function sendAudio(accountId: string, chatId: string, audioPath: st
 }
 
 /**
- * Chuyển tiếp tin nhắn
+ * Forward a message
  */
 export async function forwardMessage(accountId: string, chatId: string, fromChatId: string, messageId: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1270,7 +1271,7 @@ export async function forwardMessage(accountId: string, chatId: string, fromChat
 }
 
 /**
- * Xóa tin nhắn
+ * Delete a message
  */
 export async function deleteMessage(accountId: string, chatId: string, messageId: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1287,7 +1288,7 @@ export async function deleteMessage(accountId: string, chatId: string, messageId
 }
 
 /**
- * Thêm reaction
+ * Add a reaction
  */
 export async function addReaction(accountId: string, chatId: string, messageId: string, emoji: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1305,7 +1306,7 @@ export async function addReaction(accountId: string, chatId: string, messageId: 
 }
 
 /**
- * Ghim tin nhắn
+ * Pin a message
  */
 export async function pinMessage(accountId: string, chatId: string, messageId: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1322,7 +1323,7 @@ export async function pinMessage(accountId: string, chatId: string, messageId: s
 }
 
 /**
- * Tạo poll
+ * Create a poll
  */
 export async function sendPoll(accountId: string, chatId: string, question: string, options: string[]): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1355,7 +1356,7 @@ export async function sendPoll(accountId: string, chatId: string, question: stri
 }
 
 /**
- * Sửa tin nhắn
+ * Edit a message
  */
 export async function editMessage(accountId: string, chatId: string, messageId: string, text: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1373,7 +1374,7 @@ export async function editMessage(accountId: string, chatId: string, messageId: 
 }
 
 /**
- * Gửi sticker
+ * Send a sticker
  */
 export async function sendSticker(accountId: string, chatId: string, stickerPath: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1407,7 +1408,7 @@ export async function sendSticker(accountId: string, chatId: string, stickerPath
 }
 
 /**
- * Gửi voice message
+ * Send a voice message
  */
 export async function sendVoice(accountId: string, chatId: string, voicePath: string, caption?: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1439,7 +1440,7 @@ export async function sendVoice(accountId: string, chatId: string, voicePath: st
 }
 
 /**
- * Gửi animation/GIF
+ * Send an animation/GIF
  */
 export async function sendAnimation(accountId: string, chatId: string, animPath: string, caption?: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1475,7 +1476,7 @@ export async function sendAnimation(accountId: string, chatId: string, animPath:
 }
 
 /**
- * Gửi video note (round video)
+ * Send a video note (round video)
  */
 export async function sendVideoNote(accountId: string, chatId: string, videoPath: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1509,7 +1510,7 @@ export async function sendVideoNote(accountId: string, chatId: string, videoPath
 }
 
 /**
- * Gửi contact
+ * Send a contact
  */
 export async function sendContact(accountId: string, chatId: string, phone: string, firstName: string, lastName?: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1525,7 +1526,7 @@ export async function sendContact(accountId: string, chatId: string, phone: stri
 }
 
 /**
- * Gửi location
+ * Send a location
  */
 export async function sendLocation(accountId: string, chatId: string, latitude: number, longitude: number): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1541,7 +1542,7 @@ export async function sendLocation(accountId: string, chatId: string, latitude: 
 }
 
 /**
- * Hiển thị typing indicator
+ * Show the typing indicator
  */
 export async function sendChatAction(accountId: string, chatId: string, action: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1572,7 +1573,7 @@ export async function answerCallbackQuery(accountId: string, callbackQueryId: st
 }
 
 /**
- * Bỏ ghim tin nhắn
+ * Unpin a message
  */
 export async function unpinChatMessage(accountId: string, chatId: string, messageId?: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1588,7 +1589,7 @@ export async function unpinChatMessage(accountId: string, chatId: string, messag
 }
 
 /**
- * Lấy số lượng thành viên nhóm
+ * Get the group member count
  */
 export async function getChatMemberCount(accountId: string, chatId: string): Promise<ActionResult & { count?: number }> {
   const bot = registeredAccounts.get(accountId);
@@ -1605,7 +1606,7 @@ export async function getChatMemberCount(accountId: string, chatId: string): Pro
 }
 
 /**
- * Hạn chế thành viên (mute/restrict)
+ * Restrict a member (mute / restrict)
  */
 export async function restrictChatMember(accountId: string, chatId: string, userId: string, permissions: {
   canSendMessages?: boolean; canSendAudios?: boolean; canSendDocuments?: boolean;
@@ -1630,7 +1631,7 @@ export async function restrictChatMember(accountId: string, chatId: string, user
 }
 
 /**
- * Edit caption của media message
+ * Edit the caption of a media message
  */
 export async function editMessageCaption(accountId: string, chatId: string, messageId: string, caption: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1650,7 +1651,7 @@ type ActionResult = { success: boolean; messageId?: string; error?: string };
 /**
  * Start bot: registers inbox consumer with ingress and starts polling.
  */
-/** Consumer hộp thư của bot: lưu tin, tải media, phát sự kiện cho giao diện / workflow. */
+/** Inbox consumer of the bot: saves messages, downloads media, emits events for the UI / workflows. */
 function createInboxConsumer(): BotUpdateConsumer {
   return async (acc, update) => {
     Logger.log(`[TelegramBot] Received update: kind=${update.kind} accountId=${acc.accountId}`);
@@ -1771,12 +1772,46 @@ function createInboxConsumer(): BotUpdateConsumer {
         rawUpdate: update.raw,
       });
     }
+    // Another member joined / left / was removed (chat_member: Telegram sends it only while the bot is an admin of the group)
+    if (update.kind === 'chat_member' && update.chatMember) {
+      const member = update.chatMember;
+      const chat = member.chat || {};
+      const user = member.new_chat_member?.user || member.old_chat_member?.user || {};
+      const previousStatus = String(member.old_chat_member?.status || '');
+      const currentStatus = String(member.new_chat_member?.status || '');
+      const wasInChat = !['left', 'kicked'].includes(previousStatus);
+      const isInChat = !['left', 'kicked'].includes(currentStatus);
+      const eventType = !wasInChat && isInChat ? 'joined'
+        : wasInChat && !isInChat ? (currentStatus === 'kicked' ? 'removed' : 'left')
+        : 'changed';
+      const actor = member.from || {};
+      EventBroadcaster.emit('event:telegramBotMemberUpdate', {
+        zaloId: acc.accountId,
+        accountId: acc.accountId,
+        channel: 'telegram_bot',
+        chatId: String(chat.id || ''),
+        threadId: String(chat.id || ''),
+        chatTitle: chat.title || '',
+        chatType: chat.type || '',
+        eventType,
+        previousStatus,
+        currentStatus,
+        memberId: String(user.id || ''),
+        memberName: [user.first_name, user.last_name].filter(Boolean).join(' ') || String(user.username || user.id || ''),
+        memberUsername: user.username || '',
+        isBot: !!user.is_bot,
+        actorId: String(actor.id || ''),
+        actorName: [actor.first_name, actor.last_name].filter(Boolean).join(' ') || String(actor.username || actor.id || ''),
+        timestamp: Number(member.date || Math.floor(Date.now() / 1000)) * 1000,
+        rawUpdate: update.raw,
+      });
+    }
   };
 }
 
 /**
- * Gắn bot vào ingress (một vòng getUpdates cho mỗi token) và đăng ký consumer hộp thư — cả khi poller của token đang
- * tạm dừng, để lúc nhận tin lại không mất hộp thư. false = token đang bị nơi khác nhận tin (409).
+ * Attach the bot to the ingress (one getUpdates loop per token) and register the inbox consumer, even while the token's poller is
+ * paused, so the inbox is not lost when receiving resumes. false = the token is being received by somewhere else (409).
  */
 function attachIngress(account: BotAccount): boolean {
   const polling = BotIngress.startBot(account);
@@ -1798,7 +1833,7 @@ function emitBotConnected(account: BotAccount): void {
   } catch {}
 }
 
-/** Gỡ bot khỏi ingress + danh sách đăng ký (không báo giao diện). */
+/** Remove the bot from the ingress + the registration list (does not notify the UI). */
 function detachBot(accountId: string): void {
   const account = registeredAccounts.get(accountId);
   if (account) {
@@ -1812,9 +1847,9 @@ function detachBot(accountId: string): void {
 export function startBot(account: TelegramBotAccount): void {
   const registered = registeredAccounts.get(account.accountId);
   if (registered && registered.botToken === account.botToken) {
-    // Đã đăng ký, cùng token = người dùng bấm kết nối lại. Bot đang tạm dừng (nơi khác nhận tin của bot, token lỗi) →
-    // nhận tin lại ngay, giữ consumer. Trước đây hàm trả về luôn: giao diện báo đã kết nối nhưng bot không nhận tin
-    // tới khi mở lại app.
+    // Already registered, same token = the user clicked reconnect. The bot's poller is paused (someone else receives the bot's messages, or the token is wrong) →
+    // run again at once, keeping the consumer. Previously this returned straight away: the UI reported connected but the bot received no messages
+    // until the app is reopened.
     if (BotIngress.isPollerRunning(account.accountId)) return;
     const resumed = BotIngress.resumeBot(account.accountId) || attachIngress(registered);
     if (resumed) {
@@ -1823,12 +1858,12 @@ export function startBot(account: TelegramBotAccount): void {
     }
     return;
   }
-  // Token không đúng dạng — thường là bản mã hoá không giải mã được trên máy này: đừng đăng ký, health check sẽ thử
-  // kết nối lại mỗi phút mãi mãi
+  // Token has the wrong format, usually an encrypted copy that cannot be decrypted on this machine: do not register it; the health check will try
+  // reconnecting every minute forever
   if (!isTelegramBotToken(account.botToken)) {
-    throw new Error('Token bot không hợp lệ hoặc không giải mã được trên máy này. Vui lòng kết nối lại bot bằng token.');
+    throw new Error(tr('Token bot không hợp lệ hoặc không giải mã được trên máy này. Vui lòng kết nối lại bot bằng token.'));
   }
-  // Kết nối lại bằng token mới: gỡ đăng ký của token cũ
+  // Reconnect with a new token: remove the registration of the old token
   if (registered) detachBot(account.accountId);
   registeredAccounts.set(account.accountId, account);
   DatabaseService.getInstance()?.repairTelegramLastMessagePreviews(account.accountId, 'telegram_bot');
@@ -1893,7 +1928,7 @@ export function isBotPollingConflict(accountId: string): boolean {
   return registeredAccounts.has(accountId) && BotIngress.hasPollingConflict(accountId);
 }
 
-/** Trạng thái nhận tin của bot cho giao diện: polling / conflict (nơi khác nhận tin) / unauthorized / not_found / stopped. */
+/** The bot's receiving state for the UI: polling / conflict (received elsewhere) / unauthorized / not_found / stopped. */
 export function getBotPollState(accountId: string): BotIngress.BotPollState {
   return registeredAccounts.has(accountId) ? BotIngress.getPollState(accountId) : 'stopped';
 }
@@ -1910,7 +1945,7 @@ export function tryReconnectBot(accountId: string): boolean {
   if (BotIngress.isPollerRunning(accountId)) return false;
   if (BotIngress.hasPollingConflict(accountId)) return false;
 
-  // Re-register with ingress (kèm consumer hộp thư — trước đây poller mới không có consumer nên tin bị bỏ qua)
+  // Re-register with the ingress (with the inbox consumer; before, a new poller had no consumer, so messages were dropped)
   try {
     if (!attachIngress(account)) return false;
     Logger.log(`[TelegramBotChannel] Reconnected bot ${accountId}`);
@@ -1922,7 +1957,7 @@ export function tryReconnectBot(accountId: string): boolean {
 }
 
 /**
- * Validate bot token bằng getMe
+ * Validate a bot token with getMe
  */
 export async function validateBotToken(botToken: string): Promise<{ success: boolean; bot?: any; error?: string }> {
   return BotIngress.validateBotToken(botToken);
@@ -1931,7 +1966,7 @@ export async function validateBotToken(botToken: string): Promise<{ success: boo
 // ─── Group Management API ────────────────────────────────────────────────────
 
 /**
- * Lấy thông tin nhóm (tên, avatar, mô tả, thành viên)
+ * Get group info (name, avatar, description, members)
  */
 export async function getChat(accountId: string, chatId: string): Promise<ActionResult & { chat?: any }> {
   const bot = registeredAccounts.get(accountId);
@@ -1952,7 +1987,7 @@ export async function getChat(accountId: string, chatId: string): Promise<Action
 }
 
 /**
- * Lấy danh sách admin nhóm
+ * Get the group's admin list
  */
 export async function getChatAdministrators(accountId: string, chatId: string): Promise<ActionResult & { admins?: any[] }> {
   const bot = registeredAccounts.get(accountId);
@@ -1973,7 +2008,7 @@ export async function getChatAdministrators(accountId: string, chatId: string): 
 }
 
 /**
- * Lấy thông tin 1 thành viên trong nhóm
+ * Get info about 1 member of the group
  */
 export async function getChatMember(accountId: string, chatId: string, userId: string): Promise<ActionResult & { member?: any }> {
   const bot = registeredAccounts.get(accountId);
@@ -1994,7 +2029,7 @@ export async function getChatMember(accountId: string, chatId: string, userId: s
 }
 
 /**
- * Kick/ban thành viên khỏi nhóm
+ * Kick / ban a member from the group
  */
 export async function banChatMember(accountId: string, chatId: string, userId: string, untilDate?: number): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -2011,7 +2046,7 @@ export async function banChatMember(accountId: string, chatId: string, userId: s
 }
 
 /**
- * Bỏ ban thành viên
+ * Unban a member
  */
 export async function unbanChatMember(accountId: string, chatId: string, userId: string, onlyIfBanned?: boolean): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -2028,7 +2063,23 @@ export async function unbanChatMember(accountId: string, chatId: string, userId:
 }
 
 /**
- * Promote/demote thành viên (admin, deputy)
+ * Approve or decline a request to join a group (chat_join_request). The bot must be an admin with the "invite users" right.
+ */
+export async function answerChatJoinRequest(accountId: string, chatId: string, userId: string, approve: boolean): Promise<ActionResult> {
+  const bot = registeredAccounts.get(accountId);
+  if (!bot) return { success: false, error: 'Bot not active' };
+
+  try {
+    const method = approve ? 'approveChatJoinRequest' : 'declineChatJoinRequest';
+    const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/${method}`, { chat_id: chatId, user_id: userId }, { timeout: REQUEST_TIMEOUT });
+    return { success: !!res.data?.ok };
+  } catch (err: any) {
+    return { success: false, error: err.response?.data?.description || err.message };
+  }
+}
+
+/**
+ * Promote / demote a member (admin, deputy)
  */
 export async function promoteChatMember(accountId: string, chatId: string, userId: string, perms?: {
   canChangeInfo?: boolean; canDeleteMessages?: boolean; canInviteUsers?: boolean;
@@ -2049,7 +2100,7 @@ export async function promoteChatMember(accountId: string, chatId: string, userI
 }
 
 /**
- * Rời khỏi nhóm
+ * Leave the group
  */
 export async function leaveChat(accountId: string, chatId: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -2064,7 +2115,7 @@ export async function leaveChat(accountId: string, chatId: string): Promise<Acti
 }
 
 /**
- * Đổi avatar nhóm
+ * Change the group's photo
  */
 export async function setChatPhoto(accountId: string, chatId: string, photoPath: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -2088,7 +2139,7 @@ export async function setChatPhoto(accountId: string, chatId: string, photoPath:
 }
 
 /**
- * Tạo link mời nhóm
+ * Create a group invite link
  */
 export async function exportChatInviteLink(accountId: string, chatId: string): Promise<ActionResult & { link?: string }> {
   const bot = registeredAccounts.get(accountId);
@@ -2106,7 +2157,7 @@ export async function exportChatInviteLink(accountId: string, chatId: string): P
 }
 
 /**
- * Xóa avatar nhóm
+ * Remove the group's photo
  */
 export async function deleteChatPhoto(accountId: string, chatId: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -2121,7 +2172,7 @@ export async function deleteChatPhoto(accountId: string, chatId: string): Promis
 }
 
 /**
- * Đặt mô tả nhóm
+ * Set the group description
  */
 export async function setChatDescription(accountId: string, chatId: string, description: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);

@@ -1,6 +1,6 @@
 /**
- * "Cuộc gọi" Telegram: nhật ký cuộc gọi của tài khoản (messages.Search + InputMessagesFilterPhoneCalls), tab Gọi nhỡ,
- * bấm để mở hội thoại. Deplao chưa nghe / gọi được (Telegram không công bố giao thức thoại tgcalls) — ghi rõ ở đầu.
+ * Telegram "Cuộc gọi" (Calls): the account's call log (messages.Search + InputMessagesFilterPhoneCalls), Missed calls tab,
+ * click to open the conversation. Deplao cannot take or place calls yet (Telegram does not publish the tgcalls voice protocol), noted here at the top.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccountInfo } from '@/store/accounts/accountStore';
@@ -15,6 +15,8 @@ import {
 } from '../../../../../shared/telegram/telegramQuickModel';
 import { accountLabel, type OpenQuickConversation } from '../../quick/quickActions';
 import { Notice, TelegramAvatar } from './TelegramUi';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const PAGE = 50;
 const pad2 = (value: number) => String(value).padStart(2, '0');
@@ -25,12 +27,12 @@ export function formatCallTime(ts: number, now: number = Date.now()): string {
   const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   if (ts >= startToday) return time;
-  if (ts >= startToday - 86400000) return `Hôm qua ${time}`;
+  if (ts >= startToday - 86400000) return tr('Hôm qua {{time}}', { time });
   if (d.getFullYear() === today.getFullYear()) return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)} ${time}`;
   return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
 
-/** Mũi tên hướng cuộc gọi: ↗ gọi đi, ↙ gọi đến. */
+/** Call direction arrow: ↗ outgoing call, ↙ incoming call. */
 function DirectionIcon({ out, className }: { out: boolean; className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
@@ -73,7 +75,7 @@ export default function TelegramCallsDialog({ account, onClose, onOpenConversati
       const res = await ipc.telegramUser?.getCallHistory({ accountId, missed: tab === 'missed', offsetId, limit: PAGE });
       if (current !== seq.current) return;
       if (!res?.success) {
-        setError(res?.error || 'Không tải được lịch sử cuộc gọi');
+        setError(res?.error || tr('Không tải được lịch sử cuộc gọi'));
         if (!append) setItems([]);
         return;
       }
@@ -81,7 +83,7 @@ export default function TelegramCallsDialog({ account, onClose, onOpenConversati
       setNextOffset(res.nextOffsetId || 0);
       setHasMore(!!res.hasMore);
     } catch (err: any) {
-      if (current === seq.current) setError(err?.message || 'Không tải được lịch sử cuộc gọi');
+      if (current === seq.current) setError(err?.message || tr('Không tải được lịch sử cuộc gọi'));
     } finally {
       if (current === seq.current) setLoading(false);
     }
@@ -102,33 +104,32 @@ export default function TelegramCallsDialog({ account, onClose, onOpenConversati
     <Dialog open onOpenChange={next => { if (!next) onClose(); }} size="md">
       <DialogHeader>
         <div className="min-w-0">
-          <DialogTitle>Cuộc gọi</DialogTitle>
-          <DialogDescription>Telegram · {accountLabel(account)}</DialogDescription>
+          <DialogTitle>{tr('Cuộc gọi')}</DialogTitle>
+          <DialogDescription>{trx('Telegram · {{v1}}', { v1: accountLabel(account) })}</DialogDescription>
         </div>
         <DialogClose />
       </DialogHeader>
       <DialogBody className="space-y-2.5">
         <Notice>
-          Deplao chưa nghe / gọi được cuộc gọi Telegram — hãy nghe máy trên điện thoại hoặc Telegram Desktop. Khi có cuộc gọi
-          đến, Deplao báo ngay để bạn từ chối hoặc mở hội thoại; cuộc gọi cũng hiện trong khung chat.
+          {tr('Deplao chưa nghe / gọi được cuộc gọi Telegram — hãy nghe máy trên điện thoại hoặc Telegram Desktop. Khi có cuộc gọi đến, Deplao báo ngay để bạn từ chối hoặc mở hội thoại; cuộc gọi cũng hiện trong khung chat.')}
         </Notice>
         <div className="flex items-center justify-between gap-2">
           <Tabs value={tab} onValueChange={value => setTab(value as 'all' | 'missed')} variant="pills">
             <TabsList>
-              <TabsTrigger value="all">Tất cả</TabsTrigger>
-              <TabsTrigger value="missed">Gọi nhỡ</TabsTrigger>
+              <TabsTrigger value="all">{tr('Tất cả')}</TabsTrigger>
+              <TabsTrigger value="missed">{tr('Gọi nhỡ')}</TabsTrigger>
             </TabsList>
           </Tabs>
-          <Button size="icon" variant="ghost" onClick={() => void load(false, 0)} title="Tải lại" aria-label="Tải lại lịch sử cuộc gọi">
+          <Button size="icon" variant="ghost" onClick={() => void load(false, 0)} title={tr('Tải lại')} aria-label={tr('Tải lại lịch sử cuộc gọi')}>
             <RefreshIcon className={cn('h-4 w-4', loading && 'animate-spin')} />
           </Button>
         </div>
         {error && <Notice tone="error">{error}</Notice>}
         <div className="max-h-[22rem] min-h-[12rem] overflow-y-auto rounded-xl border border-border p-1">
           {items === null ? (
-            <p className="px-3 py-10 text-center text-xs text-muted-foreground">Đang tải lịch sử cuộc gọi…</p>
+            <p className="px-3 py-10 text-center text-xs text-muted-foreground">{tr('Đang tải lịch sử cuộc gọi…')}</p>
           ) : items.length === 0 ? (
-            <p className="px-3 py-10 text-center text-xs text-muted-foreground">{tab === 'missed' ? 'Không có cuộc gọi nhỡ' : 'Chưa có cuộc gọi nào'}</p>
+            <p className="px-3 py-10 text-center text-xs text-muted-foreground">{tab === 'missed' ? tr('Không có cuộc gọi nhỡ') : tr('Chưa có cuộc gọi nào')}</p>
           ) : (
             <ul>
               {items.map(item => {
@@ -158,13 +159,13 @@ export default function TelegramCallsDialog({ account, onClose, onOpenConversati
           )}
           {items && items.length > 0 && hasMore && (
             <div className="p-2 text-center">
-              <Button size="sm" variant="ghost" loading={loading} onClick={() => void load(true, nextOffset)}>Xem thêm</Button>
+              <Button size="sm" variant="ghost" loading={loading} onClick={() => void load(true, nextOffset)}>{tr('Xem thêm')}</Button>
             </div>
           )}
         </div>
       </DialogBody>
       <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Đóng</Button>
+        <Button variant="outline" onClick={onClose}>{tr('Đóng')}</Button>
       </DialogFooter>
     </Dialog>
   );

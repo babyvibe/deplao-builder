@@ -22,14 +22,16 @@ import type {
 import { EmployeeAvatar, PriorityBadge, RichContentPreview, StatusBadge } from '../shared/ErpBadges';
 import TaskMultiSelect from './TaskMultiSelect';
 import { PaperclipIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
-/** Điền sẵn khi tạo task mới (vd "Tạo task" từ tin nhắn: lib/chat/erp/messageToErp.taskDraftFromMessages). */
+/** Prefilled when creating a new task (e.g. "Tạo task" (Create task) from a message: lib/chat/erp/messageToErp.taskDraftFromMessages). */
 export interface TaskEditorInitial {
   title?: string;
-  /** Nội dung (HTML, có thể kèm ảnh data URL). */
+  /** Content (HTML, may include images as data URLs). */
   description?: string;
-  /** Hạn hoàn thành (ms). */
+  /** Due date (ms). */
   dueAt?: number | null;
 }
 
@@ -37,7 +39,7 @@ interface Props {
   taskId?: string | null;
   defaultStatus?: ErpTaskStatus;
   projectId?: string;
-  /** Chỉ dùng khi tạo mới, đọc một lần lúc mở. */
+  /** Only used when creating; read once when opened. */
   initial?: TaskEditorInitial;
   onClose: () => void;
   onSaved?: (task: ErpTask) => void;
@@ -60,18 +62,18 @@ interface TaskFormState {
 }
 
 const STATUS_OPTS: Array<{ value: ErpTaskStatus; label: string }> = [
-  { value: 'todo', label: 'Cần làm' },
-  { value: 'doing', label: 'Đang làm' },
-  { value: 'review', label: 'Xem xét' },
-  { value: 'done', label: 'Hoàn thành' },
-  { value: 'cancelled', label: 'Huỷ' },
+  { value: 'todo', label: tr('Cần làm') },
+  { value: 'doing', label: tr('Đang làm') },
+  { value: 'review', label: tr('Xem xét') },
+  { value: 'done', label: tr('Hoàn thành') },
+  { value: 'cancelled', label: tr('Huỷ') },
 ];
 
 const PRIORITY_OPTS: Array<{ value: ErpTaskPriority; label: string }> = [
-  { value: 'low', label: 'Thấp' },
-  { value: 'normal', label: 'Bình thường' },
-  { value: 'high', label: 'Cao' },
-  { value: 'urgent', label: 'Khẩn cấp' },
+  { value: 'low', label: tr('Thấp') },
+  { value: 'normal', label: tr('Bình thường') },
+  { value: 'high', label: tr('Cao') },
+  { value: 'urgent', label: tr('Khẩn cấp') },
 ];
 
 const QUILL_FORMATS = [
@@ -133,7 +135,7 @@ function isImageAttachment(attachment: TaskAttachmentInput) {
 
 export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', projectId, initial, onClose, onSaved }: Props) {
   const quillRef = useRef<ReactQuill | null>(null);
-  // Giá trị điền sẵn lúc mở (nơi gọi có thể tạo object mới mỗi lần render — không được làm mất chữ đang gõ)
+  // Prefill values at open time (the caller may create a new object on every render: must not wipe out the text being typed)
   const initialRef = useRef(initial);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const editorImageInputRef = useRef<HTMLInputElement>(null);
@@ -209,8 +211,8 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
       return;
     }
     setLoading(true);
-    // Nhân viên: chi tiết task trên Boss (REST) — trước đây IPC ở máy nhân viên → DB cục bộ không có task, drawer trống.
-    // Lỗi đọc → giữ dữ liệu đang hiện
+    // Employee: task details come from the owner (REST). Previously the IPC call ran on the employee machine → the local DB had no tasks, so the drawer was empty.
+    // On read error → keep the data currently shown
     const res: any = await DataAccessor.erpTaskDetail(nextTaskId);
     if (res?.success && res.task) {
       setTask(res.task);
@@ -303,7 +305,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
   const openAttachment = async (attachment: AttachmentDraft) => {
     const res = await ipc.shell?.openPath?.(attachment.file_path);
     if (!res?.success) {
-      showNotification(res?.error || 'Không thể mở file đính kèm', 'error');
+      showNotification(res?.error || tr('Không thể mở file đính kèm'), 'error');
     }
   };
 
@@ -332,11 +334,11 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
         };
         const created = await createTask(payload);
         if (created) {
-          showNotification('Đã tạo task thành công', 'success');
+          showNotification(tr('Đã tạo task thành công'), 'success');
           onSaved?.(created);
           onClose();
         } else {
-          showNotification('Không tạo được task', 'error');
+          showNotification(tr('Không tạo được task'), 'error');
         }
         return;
       }
@@ -354,8 +356,8 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
       };
       const saved = await updateTask(taskId, patch);
       if (!saved.success) {
-        // Boss / handler từ chối (quyền ERP, tệp đính kèm không hợp lệ…) — không báo "đã lưu"
-        showNotification(saved.error || 'Không lưu được task', 'error');
+        // Owner / handler rejects (ERP permission, invalid attachment…): do not report "đã lưu" (saved)
+        showNotification(saved.error || tr('Không lưu được task'), 'error');
         return;
       }
       const updated: any = await DataAccessor.erpTaskDetail(taskId);
@@ -364,7 +366,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
         syncFormFromTask(updated.task);
         onSaved?.(updated.task);
       }
-      showNotification('Đã lưu task thành công', 'success');
+      showNotification(tr('Đã lưu task thành công'), 'success');
       onClose();
     } finally {
       setSaving(false);
@@ -375,7 +377,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
     if (!taskId || !comment.trim()) return;
     const res: any = withErpDeniedNotice(await DataAccessor.erpAddComment(taskId, comment));
     if (res && res.success === false) {
-      showNotification(res.error || 'Không gửi được bình luận', 'error');
+      showNotification(res.error || tr('Không gửi được bình luận'), 'error');
       return;
     }
     setComment('');
@@ -385,19 +387,19 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
   const handleChecklistToggle = async (itemId: number, done: boolean) => {
     const res: any = withErpDeniedNotice(await DataAccessor.erpTaskChecklistToggle(itemId, done));
     if (res && res.success === false) {
-      showNotification(res.error || 'Không cập nhật được checklist', 'error');
+      showNotification(res.error || tr('Không cập nhật được checklist'), 'error');
       return;
     }
     await refresh(taskId);
   };
 
   const actionLabel = (action: string) => ({
-    created: 'Tạo task',
-    status_changed: 'Đổi trạng thái',
-    assigned: 'Cập nhật người thực hiện',
-    commented: 'Thêm bình luận',
-    attached: 'Thêm tệp đính kèm',
-    updated: 'Cập nhật nội dung',
+    created: tr('Tạo task'),
+    status_changed: tr('Đổi trạng thái'),
+    assigned: tr('Cập nhật người thực hiện'),
+    commented: tr('Thêm bình luận'),
+    attached: tr('Thêm tệp đính kèm'),
+    updated: tr('Cập nhật nội dung'),
   }[action] || action);
 
   return (
@@ -408,22 +410,22 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-border/60 flex-shrink-0">
           <div className="min-w-0">
-            <h3 className="text-base font-semibold text-foreground truncate">{taskId ? 'Cập nhật task' : 'Tạo task mới'}</h3>
-            <p className="text-[11px] text-muted-foreground mt-1 truncate">{taskId ? `Task ID: ${taskId}` : 'Mọi thay đổi của task sẽ được lưu bằng một nút lưu tổng.'}</p>
+            <h3 className="text-base font-semibold text-foreground truncate">{taskId ? tr('Cập nhật task') : tr('Tạo task mới')}</h3>
+            <p className="text-[11px] text-muted-foreground mt-1 truncate">{taskId ? tr('Task ID: {{taskId}}', { taskId }) : tr('Mọi thay đổi của task sẽ được lưu bằng một nút lưu tổng.')}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
               className="px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
             >
-              Đóng
+              {tr('Đóng')}
             </button>
             <button
               onClick={saveTask}
               disabled={!form.title.trim() || saving || loading}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-medium rounded-xl transition-colors flex items-center gap-2"
             >
-              {saving ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Đang lưu...</> : 'Lưu task'}
+              {saving ? <><span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> {tr('Đang lưu...')}</> : tr('Lưu task')}
             </button>
           </div>
         </div>
@@ -437,28 +439,28 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
             <div className="h-full grid grid-cols-1">
               <div className="overflow-y-auto px-5 py-5 space-y-5 border-r border-border/50">
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Tiêu đề <span className="text-red-400">*</span></label>
+                  <label className="text-xs text-muted-foreground mb-1.5 block font-medium">{trx('Tiêu đề <0>*</0>', { 0: <span className="text-red-400" /> })}</label>
                   <input
                     autoFocus={!taskId}
                     value={form.title}
                     onChange={event => setForm(current => ({ ...current, title: event.target.value }))}
                     className="w-full bg-muted border border-input rounded-xl px-4 py-3 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30"
-                    placeholder="Nhập tiêu đề task..."
+                    placeholder={tr('Nhập tiêu đề task...')}
                   />
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                  <Field label="Dự án">
+                  <Field label={tr('Dự án')}>
                     <select
                       value={form.project_id}
                       onChange={event => setForm(current => ({ ...current, project_id: event.target.value }))}
                       className="task-editor-select"
                     >
-                      <option value="">Không thuộc dự án</option>
+                      <option value="">{tr('Không thuộc dự án')}</option>
                       {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
                     </select>
                   </Field>
-                  <Field label="Trạng thái">
+                  <Field label={tr('Trạng thái')}>
                     <select
                       value={form.status}
                       onChange={event => setForm(current => ({ ...current, status: event.target.value as ErpTaskStatus }))}
@@ -467,7 +469,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                       {STATUS_OPTS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   </Field>
-                  <Field label="Độ ưu tiên">
+                  <Field label={tr('Độ ưu tiên')}>
                     <select
                       value={form.priority}
                       onChange={event => setForm(current => ({ ...current, priority: event.target.value as ErpTaskPriority }))}
@@ -476,7 +478,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                       {PRIORITY_OPTS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   </Field>
-                  <Field label="Hạn hoàn thành">
+                  <Field label={tr('Hạn hoàn thành')}>
                     <input
                       type="datetime-local"
                       value={form.due_date}
@@ -488,20 +490,20 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs text-muted-foreground font-medium block mb-1.5">Người thực hiện</label>
+                    <label className="text-xs text-muted-foreground font-medium block mb-1.5">{tr('Người thực hiện')}</label>
                     <TaskMultiSelect
                       options={assigneeOptions.map((employee: any) => ({ value: employee.employee_id, label: employee.display_name }))}
                       value={form.assignees}
-                      placeholder="Chọn người thực hiện"
+                      placeholder={tr('Chọn người thực hiện')}
                       onChange={next => setForm(current => ({ ...current, assignees: next }))}
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground font-medium block mb-1.5">Người theo dõi</label>
+                    <label className="text-xs text-muted-foreground font-medium block mb-1.5">{tr('Người theo dõi')}</label>
                     <TaskMultiSelect
                       options={assigneeOptions.map((employee: any) => ({ value: employee.employee_id, label: employee.display_name }))}
                       value={form.watchers}
-                      placeholder="Chọn người theo dõi"
+                      placeholder={tr('Chọn người theo dõi')}
                       onChange={next => setForm(current => ({ ...current, watchers: next }))}
                       tone="violet"
                     />
@@ -511,15 +513,15 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div>
-                      <label className="text-xs text-muted-foreground font-medium block">Nội dung task</label>
-                      <p className="text-[11px] text-muted-foreground mt-1">Soạn nội dung với heading, danh sách, màu chữ, code block và chèn ảnh trực tiếp.</p>
+                      <label className="text-xs text-muted-foreground font-medium block">{tr('Nội dung task')}</label>
+                      <p className="text-[11px] text-muted-foreground mt-1">{tr('Soạn nội dung với heading, danh sách, màu chữ, code block và chèn ảnh trực tiếp.')}</p>
                     </div>
                     <button
                       type="button"
                       onClick={handleEditorImagePick}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-500/30 bg-blue-500/10 text-blue-300 hover:border-blue-400/50 hover:bg-blue-500/20"
                     >
-                      + Chèn ảnh vào nội dung
+                      {tr('+ Chèn ảnh vào nội dung')}
                     </button>
                   </div>
                   <div className="task-rich-editor-wrap rounded-xl border border-input overflow-hidden bg-card">
@@ -531,7 +533,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                       modules={quillModules}
                       formats={[...QUILL_FORMATS]}
                       className="task-rich-editor"
-                      placeholder="Mô tả chi tiết công việc, checklist dạng rich text, hướng dẫn, ảnh minh hoạ..."
+                      placeholder={tr('Mô tả chi tiết công việc, checklist dạng rich text, hướng dẫn, ảnh minh hoạ...')}
                     />
                   </div>
                 </div>
@@ -539,15 +541,15 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div>
-                      <label className="text-xs text-muted-foreground font-medium block">Tệp đính kèm</label>
-                      <p className="text-[11px] text-muted-foreground mt-1">Đính kèm file tham chiếu riêng. Ảnh có thể chèn trực tiếp vào nội dung hoặc đính kèm ở đây.</p>
+                      <label className="text-xs text-muted-foreground font-medium block">{tr('Tệp đính kèm')}</label>
+                      <p className="text-[11px] text-muted-foreground mt-1">{tr('Đính kèm file tham chiếu riêng. Ảnh có thể chèn trực tiếp vào nội dung hoặc đính kèm ở đây.')}</p>
                     </div>
                     <button
                       type="button"
                       onClick={() => attachmentInputRef.current?.click()}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium border border-input bg-muted/70 text-foreground hover:border-border-strong hover:bg-muted"
                     >
-                      + Thêm tệp
+                      {tr('+ Thêm tệp')}
                     </button>
                   </div>
                   <input ref={attachmentInputRef} type="file" multiple className="hidden" onChange={handleAttachmentFiles} />
@@ -555,7 +557,7 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
 
                   {attachments.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
-                      Chưa có tệp đính kèm
+                      {tr('Chưa có tệp đính kèm')}
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -569,22 +571,22 @@ export default function TaskEditorDrawer({ taskId, defaultStatus = 'todo', proje
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="text-sm text-foreground font-medium truncate">{attachment.file_name}</div>
-                              <div className="text-[11px] text-muted-foreground mt-1 truncate">{attachment.mime_type || 'Tệp đính kèm'}{attachment.size ? ` · ${(attachment.size / 1024).toFixed(1)} KB` : ''}</div>
+                              <div className="text-[11px] text-muted-foreground mt-1 truncate">{attachment.mime_type || tr('Tệp đính kèm')}{attachment.size ? ` · ${(attachment.size / 1024).toFixed(1)} KB` : ''}</div>
                             </div>
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => openAttachment(attachment)}
                                 className="inline-flex items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-[11px] font-medium text-blue-300 hover:border-blue-400/50 hover:bg-blue-500/20 hover:text-foreground"
-                                title="Mở tệp"
+                                title={tr('Mở tệp')}
                               >
-                                Mở
+                                {tr('Mở')}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => removeAttachment(attachment.id)}
                                 className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:border-red-400/50 hover:bg-red-500/20 hover:text-foreground"
-                                title="Gỡ tệp"
+                                title={tr('Gỡ tệp')}
                               >
                                 ✕
                               </button>

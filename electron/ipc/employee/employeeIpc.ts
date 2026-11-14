@@ -7,6 +7,7 @@ import HttpConnectionManager from '../../../src/services/http/HttpConnectionMana
 import HttpRelayService from '../../../src/services/http/HttpRelayService';
 import WorkspaceManager from '../../../src/utils/app/WorkspaceManager';
 import Logger from '../../../src/utils/Logger';
+import { tr } from '../../../src/shared/i18n';
 
 export function registerEmployeeIpc(): void {
     const svc = () => EmployeeService.getInstance();
@@ -28,7 +29,7 @@ export function registerEmployeeIpc(): void {
     ipcMain.handle('employee:getById', async (_e, { employeeId }: { employeeId: string }) => {
         try {
             const emp = svc().getEmployeeById(employeeId);
-            if (!emp) return { success: false, error: 'Không tìm thấy nhân viên' };
+            if (!emp) return { success: false, error: tr('Không tìm thấy nhân viên') };
             return { success: true, employee: { ...emp, password_hash: undefined } };
         } catch (err: any) {
             return { success: false, error: err.message };
@@ -53,12 +54,12 @@ export function registerEmployeeIpc(): void {
         try {
             const result = svc().updateEmployee(employeeId, updates);
             if (result.success) {
-                // Khoá / đổi mật khẩu: EmployeeService đã thu hồi token — ngắt luôn phiên đang mở (báo lý do cho nhân viên)
+                // Lock / change password: EmployeeService has revoked the token → also cut the session that is open (tell the employee the reason)
                 const disabled = updates?.is_active !== undefined && !Number(updates.is_active);
                 if (disabled) {
-                    HttpRelayService.getInstance().terminateEmployeeSession(employeeId, 'Tài khoản đã bị vô hiệu hóa');
+                    HttpRelayService.getInstance().terminateEmployeeSession(employeeId, tr('Tài khoản đã bị vô hiệu hóa'));
                 } else if (updates?.password) {
-                    HttpRelayService.getInstance().terminateEmployeeSession(employeeId, 'Mật khẩu đã được thay đổi — vui lòng đăng nhập lại');
+                    HttpRelayService.getInstance().terminateEmployeeSession(employeeId, tr('Mật khẩu đã được thay đổi — vui lòng đăng nhập lại'));
                 }
             }
             return result;
@@ -70,22 +71,22 @@ export function registerEmployeeIpc(): void {
     ipcMain.handle('employee:delete', async (_e, { employeeId }: { employeeId: string }) => {
         try {
             const result = svc().deleteEmployee(employeeId);
-            if (result.success) HttpRelayService.getInstance().terminateEmployeeSession(employeeId, 'Tài khoản đã bị xóa');
+            if (result.success) HttpRelayService.getInstance().terminateEmployeeSession(employeeId, tr('Tài khoản đã bị xóa'));
             return result;
         } catch (err: any) {
             return { success: false, error: err.message };
         }
     });
 
-    // ─── Đăng xuất tất cả nhân viên (chỉ máy Boss) ──────────────────────
-    // Đổi khoá ký token → mọi nhân viên (đang nối hay không) phải đăng nhập lại bằng mật khẩu.
+    // ─── Log out all employees (Boss machine only) ──────────────────────
+    // Changing the token signing key → every employee (connected or not) must sign in again with the password.
     ipcMain.handle('employee:logoutAll', async (e) => {
-        // Chỉ renderer của chính máy này — proxy cũ của nhân viên (/api/proxy/action) gọi handler với event = null
-        if (!e?.sender) return { success: false, error: 'Không được phép' };
+        // Only this machine's own renderer: the old employee proxy (/api/proxy/action) calls the handler with event = null
+        if (!e?.sender) return { success: false, error: tr('Không được phép') };
         try {
             const relay = HttpRelayService.getInstance();
             if (WorkspaceManager.getInstance().isActiveRemote() && !relay.isRunning()) {
-                return { success: false, error: 'Chỉ dùng trên máy quản lý (BOSS)' };
+                return { success: false, error: tr('Chỉ dùng trên máy quản lý (BOSS)') };
             }
             return relay.logoutAllEmployees();
         } catch (err: any) {
@@ -225,8 +226,8 @@ export function registerEmployeeIpc(): void {
     });
 
     // ─── HTTP Client (Employee side) ────────────────────────────────
-    // Kết nối / ngắt Boss đi qua remote workspace (workspace:loginRemote → workspace:connectRemote / disconnectRemote).
-    // employee:connectToBoss / disconnectFromBoss (kết nối dưới workspace đang active, không lưu gì) đã bỏ.
+    // Connecting / disconnecting Boss goes through the remote workspace (workspace:loginRemote → workspace:connectRemote / disconnectRemote).
+    // employee:connectToBoss / disconnectFromBoss (connecting under the active workspace, saves nothing) have been removed.
 
     ipcMain.handle('employee:getConnectionStatus', async () => {
         // Return status for the active workspace connection (or legacy singleton)

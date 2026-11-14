@@ -1,8 +1,8 @@
 /**
- * Ô chọn MỘT tài khoản chuẩn của app (thay <select> trần và AccountSelectorDropdown cũ): nút giống ô Select của bộ giao
- * diện, hiện ảnh tài khoản + tên; danh sách chia theo kênh (Zalo, Facebook, Telegram), mỗi dòng ảnh kèm huy hiệu kênh +
- * tên + "Kênh · SĐT / @username", dấu ✓ ở dòng đang chọn. Dòng "tất cả" ở đầu tuỳ chọn (`allLabel`, chọn → null);
- * `note` ghi chú ngắn từng dòng (vd "riêng"). Dựa trên DropdownMenu (portal, tự lật lên khi thiếu chỗ, phím ↑ ↓ Enter Esc).
+ * The standard single-account picker of the app (replaces the bare <select> and the old AccountSelectorDropdown): a button like the Select of the design system,
+ * showing the account picture + name; the list is grouped by channel (Zalo, Facebook, Telegram), each row has the picture with a channel badge +
+ * name + "Kênh · SĐT / @username" (Channel · phone / @username), a ✓ on the selected row. The "tất cả" (all) row at the top of the options (`allLabel`, picking it → null);
+ * `note` is a short note on each row (e.g. "riêng" (private)). Based on DropdownMenu (portal, flips up when there is no room, keys ↑ ↓ Enter Esc).
  */
 import React from 'react';
 import { cn } from '@/lib/cn';
@@ -12,10 +12,11 @@ import { DropdownMenu, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparato
 import { CheckIcon, ChevronDownIcon, UsersIcon } from '@/components/common/icons';
 import { getChannelLabel, resolveAccountChannel } from '../../../../configs/channels/channelConfig';
 import { AccountAvatar } from './AccountAvatar';
+import { tr } from '../../../../shared/i18n';
 
 export type SelectableAccount = Pick<AccountInfo, 'zalo_id' | 'full_name' | 'avatar_url' | 'channel' | 'phone' | 'username'>;
 
-/** Dòng phụ dưới tên: kênh · SĐT (hoặc @username). */
+/** Secondary line under the name: channel · phone (or @username). */
 export function accountSelectDetail(account: SelectableAccount): string {
   const channel = getChannelLabel(resolveAccountChannel(account));
   if (account.phone) return `${channel} · ${account.phone}`;
@@ -23,7 +24,7 @@ export function accountSelectDetail(account: SelectableAccount): string {
   return channel;
 }
 
-/** Nhóm theo kênh, thứ tự Zalo → Facebook → Telegram (cá nhân + bot) → kênh khác; giữ thứ tự tài khoản trong nhóm. */
+/** Grouped by channel, in the order Zalo → Facebook → Telegram (personal + bot) → other channels; keeps the account order within a group. */
 export function groupAccountsByChannel<T extends SelectableAccount>(accounts: readonly T[]): Array<{ label: string; accounts: T[] }> {
   const groups: Array<{ label: string; test: (channel?: string) => boolean; accounts: T[] }> = [
     { label: 'Zalo', test: (channel) => isZalo(channel as any), accounts: [] },
@@ -37,34 +38,34 @@ export function groupAccountsByChannel<T extends SelectableAccount>(accounts: re
     if (group) group.accounts.push(account); else other.push(account);
   }
   const result = groups.filter((group) => group.accounts.length > 0).map(({ label, accounts: list }) => ({ label, accounts: list }));
-  if (other.length) result.push({ label: 'Khác', accounts: other });
+  if (other.length) result.push({ label: tr('Khác'), accounts: other });
   return result;
 }
 
 export interface AccountSelectProps<T extends SelectableAccount = SelectableAccount> {
   accounts: readonly T[];
-  /** zalo_id đang chọn; null = dòng "tất cả" (khi có `allLabel`) hoặc chưa chọn */
+  /** The selected zalo_id; null = the "tất cả" (all) row (when `allLabel` is set) or nothing selected yet */
   value: string | null;
   onChange: (accountId: string | null) => void;
-  /** Dòng đầu "tất cả", vd "Tất cả tài khoản (mặc định)"; chọn → onChange(null) */
+  /** First "all" row, e.g. "Tất cả tài khoản (mặc định)" (All accounts (default)); picking it → onChange(null) */
   allLabel?: string;
-  /** Dòng phụ của dòng "tất cả" */
+  /** Secondary line of the "all" row */
   allDetail?: string;
   placeholder?: string;
-  /** Chữ ghi chú nhỏ sau tên (vd "riêng") */
+  /** Small note text after the name (e.g. "riêng" (private)) */
   note?: (account: T) => string | null | undefined;
-  /** sm: cao 32px chữ nhỏ (thanh công cụ, góc mục); md: như ô nhập */
+  /** sm: 32px tall, small text (toolbar, corner of a section); md: like an input box */
   size?: 'sm' | 'md';
   align?: 'start' | 'end';
   side?: 'bottom' | 'top';
   disabled?: boolean;
-  /** Lớp cho phần bao nút (độ rộng, vd w-64 / w-full) */
+  /** Class for the button wrapper (width, e.g. w-64 / w-full) */
   triggerClassName?: string;
   'aria-label'?: string;
 }
 
 export default function AccountSelect<T extends SelectableAccount>({
-  accounts, value, onChange, allLabel, allDetail, placeholder = 'Chọn tài khoản', note, size = 'md', align = 'start',
+  accounts, value, onChange, allLabel, allDetail, placeholder = tr('Chọn tài khoản'), note, size = 'md', align = 'start',
   side = 'bottom', disabled = false, triggerClassName, 'aria-label': ariaLabel,
 }: AccountSelectProps<T>) {
   const selected = value ? accounts.find((account) => account.zalo_id === value) : undefined;
@@ -160,7 +161,7 @@ export default function AccountSelect<T extends SelectableAccount>({
         </div>
       ))}
       {accounts.length === 0 && !allLabel && (
-        <p className="px-2 py-1.5 text-xs text-muted-foreground">Chưa có tài khoản nào</p>
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">{tr('Chưa có tài khoản nào')}</p>
       )}
     </DropdownMenu>
   );

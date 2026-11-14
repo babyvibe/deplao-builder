@@ -1,7 +1,7 @@
 /**
- * "Phần tử đang hiện trong vùng cuộn?" bằng IntersectionObserver DÙNG CHUNG theo (vùng cuộn, lề) — lưới vài trăm sticker
- * không tạo vài trăm observer. `root` = khung cuộn chứa phần tử (lề `rootMargin` chỉ có tác dụng với root, nên muốn tải
- * trước khi cuộn tới thì truyền khung cuộn). Môi trường không có IntersectionObserver (test) → coi như đang hiện.
+ * "Is the element visible in the scroll area?" using a SHARED IntersectionObserver per (scroll area, margin): a grid of hundreds of stickers
+ * does not create hundreds of observers. `root` = the scroll container holding the element (`rootMargin` only has an effect with a root, so to load
+ * before scrolling to it, pass the scroll container). Environments without IntersectionObserver (tests) → treated as visible.
  */
 import React from 'react';
 
@@ -46,10 +46,10 @@ export function observeInView(element: Element, root: Element | null, rootMargin
   };
 }
 
-/** Khung cuộn của bảng sticker / GIF — ô trong bảng đo "đang hiện" theo khung này. */
+/** Scroll container of the sticker / GIF panel: cells in the panel are measured for "đang hiện" (visible) against this container. */
 export const InViewRootContext = React.createContext<Element | null>(null);
 
-/** `once`: đã hiện 1 lần thì giữ true (mục đã dựng không gỡ khi cuộn qua). */
+/** `once`: once shown, stays true (a built item is not removed when scrolled past). */
 export function useInView(ref: React.RefObject<Element | null>, options: { rootMargin?: string; once?: boolean } = {}): boolean {
   const root = React.useContext(InViewRootContext);
   const { rootMargin = '0px', once = false } = options;

@@ -1,13 +1,14 @@
 /**
- * Tin zinstant của Zalo Official Account (`chat.webcontent` / `chat.webcontent.v2`): bản tin, thông báo, khuyến mãi —
- * thẻ ảnh + tiêu đề + nội dung + nút, dựng từ dữ liệu có trong tin (shared/zalo/zaloZinstant). Bản v2 nén gzip → giải nén
- * một lần / nội dung (cache). Trước đây bản tin hiện "[Đính kèm]", bản v2 hiện nguyên chuỗi JSON.
+ * Zalo Official Account zinstant message (`chat.webcontent` / `chat.webcontent.v2`): news, notifications, promotions:
+ * an image card + title + content + button, built from the data in the message (shared/zalo/zaloZinstant). The v2 version is gzip-compressed, so it is decompressed
+ * once per content (cached). Before, news showed "[Đính kèm]" (Attachment), and v2 showed the whole JSON string.
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import ipc from '@/lib/ipc';
 import { gunzipToText } from '@/lib/media/tgs';
 import { BubbleTime } from '../../messages/MessageTime';
 import { applyZinstantData, parseZinstantCard, type ZinstantButton, type ZinstantCard } from '../../../../../shared/zalo/zaloZinstant';
+import { tr } from '../../../../../shared/i18n';
 
 const MAX_UNPACKED = 200;
 const unpacked = new Map<string, Promise<any | null>>();
@@ -92,7 +93,7 @@ export default function ZaloOaCard({ msg, isSent }: { msg: any; isSent: boolean 
         {card.paragraphs.map((paragraph, index) => (
           <p key={index} className="text-[13px] leading-snug break-words whitespace-pre-line">{paragraph}</p>
         ))}
-        {!hasBody && <p className="text-[13px] leading-snug break-words whitespace-pre-line">{card.text || 'Tin từ Official Account'}</p>}
+        {!hasBody && <p className="text-[13px] leading-snug break-words whitespace-pre-line">{card.text || tr('Tin từ Official Account')}</p>}
       </div>
       {card.buttons.length > 0 && <Buttons buttons={card.buttons} />}
       <BubbleTime timestamp={msg?.timestamp} className="px-3 pb-2" />

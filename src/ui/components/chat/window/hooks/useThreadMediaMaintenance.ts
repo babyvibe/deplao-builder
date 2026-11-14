@@ -1,6 +1,6 @@
 /**
- * Bảo trì media khi mở hội thoại (chạy nền, 1 lần / hội thoại / phiên): kiểm tra ảnh trên máy hỏng → tải lại từ CDN;
- * chế độ nhân viên: nạp sẵn ảnh / video / file từ Boss vào bộ đệm của máy.
+ * Media maintenance when opening a conversation (runs in the background, once per conversation per session): checks the broken images on this machine → downloads them again from the CDN;
+ * employee mode: pre-loads the photos / videos / files from Boss into this machine's cache.
  */
 import { useEffect, useRef } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
@@ -16,13 +16,13 @@ export function useThreadMediaMaintenance(deps: {
   msgs: any[];
 }) {
   const { threadReady, activeAccountId, activeThreadId, msgs } = deps;
-  // ─── Lazy scan: quét ảnh lỗi trong conversation khi mở thread ────────────────
-  // Chạy 1 lần per thread, sau khi threadReady. Background, không block UI.
+  // ─── Lazy scan: scan the conversation for broken images when opening the thread ────────────────
+  // Runs once per thread, after threadReady. In the background, does not block the UI.
   const scannedThreadsRef = useRef(new Set<string>());
   useEffect(() => {
     if (!threadReady || !activeAccountId || !activeThreadId || !msgs.length) return;
-    // Máy nhân viên: local_paths là đường dẫn trên máy Boss — kiểm tra theo thư mục của máy này thì ảnh nào cũng "hỏng",
-    // tải lại về máy nhân viên rồi đổi đường dẫn làm ảnh lỗi / nháy. Boss tự giữ ảnh của mình.
+    // Employee machine: local_paths are paths on Boss's machine. Checking them against this machine's folders makes every image look "broken",
+    // downloads them back to the employee machine, then changes the path, which breaks / flickers the images. Boss keeps its own images.
     if (useEmployeeStore.getState().mode === 'employee') return;
     const scanKey = `${activeAccountId}_${activeThreadId}`;
     if (scannedThreadsRef.current.has(scanKey)) return;
@@ -65,7 +65,7 @@ export function useThreadMediaMaintenance(deps: {
       if (!res?.success || !res.corrupted?.length) return;
       console.log(`[ChatWindow] Found ${res.corrupted.length} corrupted images in thread ${activeThreadId}, repairing...`);
       for (const item of res.corrupted) {
-        // localPath: file hỏng chỉ bị bỏ khi đã tải được bản mới
+        // localPath: a broken file is only dropped once a new copy has been downloaded
         ipc.file?.repairImage({
           zaloId: item.zaloId,
           msgId: item.msgId,

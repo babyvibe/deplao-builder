@@ -1,7 +1,7 @@
 /**
- * Hỏi đồng ý trước khi gửi phiên đăng nhập Zalo (cookie + IMEI) lên máy chủ Deplao để quét thành viên nhóm ẩn, và công
- * tắc bật / tắt ở CRM → Nhóm → Quét thành viên. Hộp thoại nói rõ: gửi gì, vì sao qua máy chủ, máy chủ giữ gì, rủi ro,
- * quyền không đồng ý và chỗ tắt. Quy tắc + chỗ lưu lựa chọn: lib/crm/hiddenScanConsent.ts.
+ * Asks for consent before sending the Zalo login session (cookie + IMEI) to the Deplao server to scan hidden group members, and the
+ * on / off switch in CRM → Groups → Scan members. The dialog states what is sent, why it goes via the server, what the server keeps, the risks,
+ * the right to decline, and where to turn it off. Rules + where the choice is saved: lib/crm/hiddenScanConsent.ts.
  */
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -14,22 +14,23 @@ import { useAppStore } from '@/store/app/appStore';
 import {
   hasHiddenScanConsent, setHiddenScanConsent, useHiddenScanConsent,
 } from '@/lib/crm/hiddenScanConsent';
+import { tr, appLocale } from '../../../../shared/i18n';
 
 type DialogMode = 'ask' | 'info';
 
-export function HiddenScanConsentDialog({ accountName, mode = 'ask', confirmLabel = 'Đồng ý và quét', onAnswer }: {
+export function HiddenScanConsentDialog({ accountName, mode = 'ask', confirmLabel = tr('Đồng ý và quét'), onAnswer }: {
   accountName?: string;
-  /** info = chỉ xem lại (đã bật), một nút Đóng. */
+  /** info = view only (already enabled), with a single Close button. */
   mode?: DialogMode;
   confirmLabel?: string;
   onAnswer: (agreed: boolean) => void;
 }) {
-  const who = accountName ? `tài khoản ${accountName}` : 'tài khoản đang quét';
+  const who = accountName ? tr('tài khoản {{accountName}}', { accountName }) : tr('tài khoản đang quét');
   const points: Array<[string, string]> = [
-    ['Gửi gì', `Phiên đăng nhập Zalo (cookie + IMEI) của ${who} và ID nhóm, gửi lên deplaoapp.com qua HTTPS.`],
-    ['Vì sao', 'Cách quét nhóm ẩn thành viên chạy trên máy chủ để giữ kín, không nằm trong mã nguồn mở của app.'],
-    ['Máy chủ giữ gì', 'Chỉ dùng phiên này gọi Zalo lấy danh sách thành viên rồi trả về máy bạn, không lưu cookie. Nhật ký chỉ có ID tài khoản, ID nhóm, IP, thời gian.'],
-    ['Rủi ro', 'Ai có cookie có thể dùng tài khoản Zalo đó. Chỉ đồng ý nếu bạn tin Deplao.'],
+    [tr('Gửi gì'), tr('Phiên đăng nhập Zalo (cookie + IMEI) của {{who}} và ID nhóm, gửi lên deplaoapp.com qua HTTPS.', { who })],
+    [tr('Vì sao'), tr('Cách quét nhóm ẩn thành viên chạy trên máy chủ để giữ kín, không nằm trong mã nguồn mở của app.')],
+    [tr('Máy chủ giữ gì'), tr('Chỉ dùng phiên này gọi Zalo lấy danh sách thành viên rồi trả về máy bạn, không lưu cookie. Nhật ký chỉ có ID tài khoản, ID nhóm, IP, thời gian.')],
+    [tr('Rủi ro'), tr('Ai có cookie có thể dùng tài khoản Zalo đó. Chỉ đồng ý nếu bạn tin Deplao.')],
   ];
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onAnswer(false); }} size="md">
@@ -37,9 +38,9 @@ export function HiddenScanConsentDialog({ accountName, mode = 'ask', confirmLabe
         <div className="flex min-w-0 items-start gap-2.5">
           <ShieldIcon className="mt-0.5 h-5 w-5 flex-shrink-0 text-warning" />
           <div className="min-w-0">
-            <DialogTitle>{mode === 'info' ? 'Quét qua máy chủ Deplao' : 'Quét thành viên qua máy chủ Deplao?'}</DialogTitle>
+            <DialogTitle>{mode === 'info' ? tr('Quét qua máy chủ Deplao') : tr('Quét thành viên qua máy chủ Deplao?')}</DialogTitle>
             <DialogDescription>
-              {mode === 'info' ? 'Những gì được gửi đi khi bật quét qua máy chủ.' : 'Cần bạn đồng ý trước khi phiên đăng nhập Zalo rời khỏi máy.'}
+              {mode === 'info' ? tr('Những gì được gửi đi khi bật quét qua máy chủ.') : tr('Cần bạn đồng ý trước khi phiên đăng nhập Zalo rời khỏi máy.')}
             </DialogDescription>
           </div>
         </div>
@@ -55,16 +56,15 @@ export function HiddenScanConsentDialog({ accountName, mode = 'ask', confirmLabe
           ))}
         </dl>
         <p className="rounded-lg bg-muted px-3 py-2 text-xs leading-relaxed text-foreground/90">
-          Bạn có quyền không đồng ý: không quét nhóm ẩn, mọi tính năng khác vẫn dùng bình thường. Bật / tắt lúc nào cũng
-          được ở CRM → Nhóm → Quét thành viên.
+          {tr('Bạn có quyền không đồng ý: không quét nhóm ẩn, mọi tính năng khác vẫn dùng bình thường. Bật / tắt lúc nào cũng được ở CRM → Nhóm → Quét thành viên.')}
         </p>
       </DialogBody>
       <DialogFooter>
         {mode === 'info' ? (
-          <Button onClick={() => onAnswer(false)}>Đóng</Button>
+          <Button onClick={() => onAnswer(false)}>{tr('Đóng')}</Button>
         ) : (
           <>
-            <Button variant="outline" onClick={() => onAnswer(false)}>Không đồng ý</Button>
+            <Button variant="outline" onClick={() => onAnswer(false)}>{tr('Không đồng ý')}</Button>
             <Button onClick={() => onAnswer(true)}>{confirmLabel}</Button>
           </>
         )}
@@ -73,7 +73,7 @@ export function HiddenScanConsentDialog({ accountName, mode = 'ask', confirmLabe
   );
 }
 
-/** Mở hộp thoại ngoài cây React hiện tại (như showConfirm); trả lời true = đồng ý. Không tự lưu lựa chọn. */
+/** Opens the dialog outside the current React tree (like showConfirm); answering true = agreed. Does not save the choice by itself. */
 export function askHiddenScanConsent(options: { accountName?: string; mode?: DialogMode; confirmLabel?: string } = {}): Promise<boolean> {
   return new Promise((resolve) => {
     const container = document.createElement('div');
@@ -84,7 +84,7 @@ export function askHiddenScanConsent(options: { accountName?: string; mode?: Dia
       if (answered) return;
       answered = true;
       resolve(agreed);
-      // Gỡ sau lượt sự kiện hiện tại (đang ở trong handler của chính root này)
+      // Unmount after the current event tick (we are inside this root's own handler)
       setTimeout(() => { root.unmount(); container.remove(); }, 0);
     };
     root.render(<HiddenScanConsentDialog {...options} onAnswer={answer} />);
@@ -92,8 +92,8 @@ export function askHiddenScanConsent(options: { accountName?: string; mode?: Dia
 }
 
 /**
- * Gọi NGAY TRƯỚC mỗi lần quét qua máy chủ: đã đồng ý → true; chưa → hỏi, đồng ý thì nhớ (bật công tắc) rồi true;
- * không đồng ý → false (chỗ gọi không được gửi gì).
+ * Call RIGHT BEFORE each scan through the server: already agreed → true; not yet → ask; if agreed, remember it (turn on the switch) and return true;
+ * declined → false (the caller must not send anything).
  */
 export async function ensureHiddenScanConsent(options: { accountName?: string } = {}): Promise<boolean> {
   if (hasHiddenScanConsent()) return true;
@@ -104,10 +104,10 @@ export async function ensureHiddenScanConsent(options: { accountName?: string } 
 
 function formatAt(at: number | null): string {
   if (!at) return '';
-  return new Date(at).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return new Date(at).toLocaleString(appLocale(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-/** Công tắc "Quét qua máy chủ Deplao" (CRM → Nhóm → Quét thành viên). Bật = phải qua hộp thoại đồng ý; tắt = ngay. */
+/** Toggle "Quét qua máy chủ Deplao" (CRM → Groups → Scan members). On = must go through the consent dialog; Off = applies immediately. */
 export function HiddenScanConsentSwitch({ className }: { className?: string }) {
   const consent = useHiddenScanConsent();
   const showNotification = useAppStore((s) => s.showNotification);
@@ -116,12 +116,12 @@ export function HiddenScanConsentSwitch({ className }: { className?: string }) {
   const change = async (on: boolean) => {
     if (!on) {
       setHiddenScanConsent(false);
-      showNotification('Đã tắt quét qua máy chủ. Deplao không gửi cookie Zalo ra khỏi máy nữa.', 'info');
+      showNotification(tr('Đã tắt quét qua máy chủ. Deplao không gửi cookie Zalo ra khỏi máy nữa.'), 'info');
       return;
     }
     setAsking(true);
     try {
-      if (await askHiddenScanConsent({ confirmLabel: 'Đồng ý' })) setHiddenScanConsent(true);
+      if (await askHiddenScanConsent({ confirmLabel: tr('Đồng ý') })) setHiddenScanConsent(true);
     } finally {
       setAsking(false);
     }
@@ -131,19 +131,19 @@ export function HiddenScanConsentSwitch({ className }: { className?: string }) {
     <div className={cn('flex items-start gap-3 rounded-xl border bg-card p-4', consent.granted ? 'border-warning/40' : 'border-border', className)}>
       <ShieldIcon className={cn('mt-0.5 h-5 w-5 flex-shrink-0', consent.granted ? 'text-warning' : 'text-muted-foreground')} />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-foreground">Quét qua máy chủ Deplao</p>
+        <p className="text-sm font-semibold text-foreground">{tr('Quét qua máy chủ Deplao')}</p>
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
           {consent.granted
-            ? `Đang bật${consent.at ? ` (đồng ý lúc ${formatAt(consent.at)})` : ''}: mỗi lần quét, phiên đăng nhập Zalo (cookie) được gửi lên deplaoapp.com.`
-            : 'Đang tắt: Deplao không gửi cookie Zalo ra khỏi máy. Bấm Quét sẽ hỏi bạn trước.'}
+            ? tr('Đang bật{{v1}}: mỗi lần quét, phiên đăng nhập Zalo (cookie) được gửi lên deplaoapp.com.', { v1: consent.at ? tr(' (đồng ý lúc {{v1}})', { v1: formatAt(consent.at) }) : '' })
+            : tr('Đang tắt: Deplao không gửi cookie Zalo ra khỏi máy. Bấm Quét sẽ hỏi bạn trước.')}
         </p>
         <Button variant="link" size="sm" className="mt-1 h-auto p-0 text-xs"
           onClick={() => { void askHiddenScanConsent({ mode: 'info' }); }}>
-          Gửi gì, vì sao?
+          {tr('Gửi gì, vì sao?')}
         </Button>
       </div>
       <Switch checked={consent.granted} disabled={asking} onCheckedChange={(on) => { void change(on); }}
-        aria-label="Quét qua máy chủ Deplao" />
+        aria-label={tr('Quét qua máy chủ Deplao')} />
     </div>
   );
 }

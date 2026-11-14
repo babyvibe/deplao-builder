@@ -1,12 +1,12 @@
 /**
- * employeeRestRead.ts — phần thuần của đường ĐỌC REST nhân viên phía Boss (HttpRelayService.handleRestApi +
- * RestApiHandlers). Không import DB / electron → test được trực tiếp.
+ * employeeRestRead.ts: the pure part of the employee REST READ path on Boss (HttpRelayService.handleRestApi +
+ * RestApiHandlers). No DB / electron imports, so it can be tested directly.
  *
- *  - parseRestQueryParams: query string → params (giá trị JSON `[...]`/`{...}` tự parse, TRỪ ô chữ người dùng gõ)
- *  - RestReadCache: cache đọc ngắn hạn, hết hạn ngay khi DB đổi (mốc thay đổi), chỉ lưu kết quả thành công
- *  - toConversationItem / toMessageItem: dòng DB đầy đủ như nhánh IPC (+ các trường chuẩn hoá cũ cho bản cũ)
- *  - labelsVisibleToAccounts / ownedByAccounts / workflowVisibleToAccounts: chỉ dữ liệu của tài khoản được giao
- *  - workflowRowToDto / maskProxyRow: hình dạng giống IPC, không lộ bí mật
+ *  - parseRestQueryParams: query string → params (JSON values `[...]`/`{...}` are parsed, EXCEPT free text typed by the user)
+ *  - RestReadCache: short-lived read cache, expires as soon as the DB changes (change marker), only successful results are cached
+ *  - toConversationItem / toMessageItem: full DB rows like the IPC path (+ the old normalized fields for old builds)
+ *  - labelsVisibleToAccounts / ownedByAccounts / workflowVisibleToAccounts: only data of the assigned accounts
+ *  - workflowRowToDto / maskProxyRow: same shape as IPC, no secrets exposed
  */
 
 import { normalizeChannel } from '../../configs/channels/channelConfig';
@@ -14,28 +14,28 @@ import { normalizeChannel } from '../../configs/channels/channelConfig';
 // ── Query params ───────────────────────────────────────────────────────────────
 
 /**
- * Tham số là chữ người dùng gõ (tìm kiếm, số điện thoại…): giữ nguyên chuỗi. Trước đây "[1,2]" / "{a}" trong ô tìm
- * bị parse thành mảng / object rồi handler tìm sai.
+ * Parameters that are text typed by the user (search, phone numbers...): keep the string as is. Previously "[1,2]" / "{a}" typed in the search box
+ * were parsed into an array / object, and the handler then searched wrongly.
  */
 export const RAW_TEXT_QUERY_PARAMS: ReadonlySet<string> = new Set(['search', 'q', 'query', 'keyword', 'phone']);
 
-/** `?a=1&ids=["x"]` → `{ a: '1', ids: ['x'] }`. Giá trị trông như JSON object/array được parse (RestQueryService gửi mảng/object dạng JSON). */
+/** `?a=1&ids=["x"]` → `{ a: '1', ids: ['x'] }`. Values that look like a JSON object/array are parsed (RestQueryService sends arrays/objects as JSON). */
 export function parseRestQueryParams(queryString: string): Record<string, any> {
   const params: Record<string, any> = {};
   const search = new URLSearchParams(queryString.startsWith('?') ? queryString.slice(1) : queryString);
   for (const [key, value] of search) {
     if (!RAW_TEXT_QUERY_PARAMS.has(key)
       && ((value.startsWith('{') && value.endsWith('}')) || (value.startsWith('[') && value.endsWith(']')))) {
-      try { params[key] = JSON.parse(value); continue; } catch { /* không phải JSON → giữ chuỗi */ }
+      try { params[key] = JSON.parse(value); continue; } catch { /* not JSON → keep the string */ }
     }
     params[key] = value;
   }
   return params;
 }
 
-// ── Cache đọc (Boss) ───────────────────────────────────────────────────────────
+// ── Read cache (Boss) ───────────────────────────────────────────────────────────
 
-/** Khoá cache: method + đường dẫn + tham số (bỏ khoá nội bộ `_…`, sắp xếp) + nhân viên. */
+/** Cache key: method + path + params (internal `_…` keys removed, sorted) + employee. */
 export function restCacheKey(method: string, pathname: string, employeeId: string, params?: Record<string, any> | null): string {
   const query = params
     ? Object.keys(params).filter(k => !k.startsWith('_')).sort().map(k => `${k}=${JSON.stringify(params[k])}`).join('&')
@@ -46,10 +46,10 @@ export function restCacheKey(method: string, pathname: string, employeeId: strin
 interface RestCacheEntry { data: any; ts: number; token: string }
 
 /**
- * Cache kết quả đọc REST trong vài giây (nhân viên gọi lại nhãn / ghim / cờ sau MỖI tin nhắn — chặn main thread).
- * Một entry chỉ dùng được khi CÙNG mốc thay đổi DB (`token`, xem HttpRelayService.restCacheToken) VÀ còn trong TTL:
- * event realtime luôn phát SAU khi ghi DB, nên lần tải lại ngay sau event không bao giờ nhận giá trị trước thay đổi.
- * Không có mốc (null) → không cache. Chỉ lưu kết quả thành công (`success !== false`).
+ * Caches REST read results for a few seconds (employees re-request labels / pins / flags after EVERY message, which blocks the main thread).
+ * An entry is only used when it has the SAME DB change marker (`token`, see HttpRelayService.restCacheToken) AND is still within the TTL:
+ * realtime events are always sent AFTER the DB write, so a reload right after an event never gets a value from before the change.
+ * No marker (null) → no cache. Only successful results are stored (`success !== false`).
  */
 export class RestReadCache {
   private readonly entries = new Map<string, RestCacheEntry>();
@@ -88,7 +88,7 @@ export class RestReadCache {
     for (const [key, entry] of this.entries) {
       if (now - entry.ts >= this.ttlMs) this.entries.delete(key);
     }
-    // Vẫn quá nhiều (nhiều nhân viên × tham số trong cùng TTL): bỏ entry cũ nhất (Map giữ thứ tự chèn)
+    // Still too many (many employees × params within the same TTL): drop the oldest entry (Map keeps insertion order)
     while (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) break;
@@ -97,12 +97,12 @@ export class RestReadCache {
   }
 }
 
-// ── Hình dạng dòng (giống nhánh IPC) ───────────────────────────────────────────
+// ── Row shape (same as the IPC path) ───────────────────────────────────────────
 
 /**
- * Hội thoại: TOÀN BỘ cột như IPC getContactsFiltered (channel, is_in_others, mute_until, is_forum, telegram_*…) —
- * trước đây chỉ một danh sách cột cố định nên chế độ nhân viên thiếu kênh / chủ đề Telegram / cờ. Các trường chuẩn hoá
- * cũ giữ nguyên giá trị để nhân viên bản cũ đọc như trước.
+ * Conversations: ALL columns like IPC getContactsFiltered (channel, is_in_others, mute_until, is_forum, telegram_*...),
+ * previously only a fixed column list, so employee mode lacked the channel / Telegram topic / flags. The old normalized fields
+ * keep their values so employees on old builds read them as before.
  */
 export function toConversationItem(c: any): any {
   return {
@@ -117,7 +117,7 @@ export function toConversationItem(c: any): any {
     unread_count: c?.unread_count || 0,
     is_group: c?.is_group ? 1 : 0,
     is_muted: c?.is_muted ? 1 : 0,
-    is_pinned: false, // client tự kiểm tra (ghim local)
+    is_pinned: false, // the client checks this itself (local pin)
     is_friend: c?.is_friend ? 1 : 0,
     contact_type: c?.contact_type || 0,
     alias: c?.alias || '',
@@ -128,8 +128,8 @@ export function toConversationItem(c: any): any {
 }
 
 /**
- * Tin nhắn: TOÀN BỘ cột như IPC db:getMessages (thread_type, status, channel, reply_to_id, is_edited, edit_history,
- * inline_buttons, media_expired…) + các trường chuẩn hoá cũ.
+ * Messages: ALL columns like IPC db:getMessages (thread_type, status, channel, reply_to_id, is_edited, edit_history,
+ * inline_buttons, media_expired...) + the old normalized fields.
  */
 export function toMessageItem(m: any): any {
   return {
@@ -155,15 +155,15 @@ export function toMessageItem(m: any): any {
   };
 }
 
-// ── Lọc theo tài khoản được giao ───────────────────────────────────────────────
+// ── Filter by assigned accounts ───────────────────────────────────────────────
 
 function idList(value: unknown): string[] {
   return String(value ?? '').split(',').map(s => s.trim()).filter(Boolean);
 }
 
 /**
- * Nhãn Local khi KHÔNG truyền tài khoản (Cài đặt → Nhãn): nhãn chung (page_ids rỗng) + nhãn gắn với ít nhất một tài
- * khoản được giao. Trước đây Boss trả nhãn của tài khoản được giao ĐẦU TIÊN → nhãn riêng của tài khoản thứ hai biến mất.
+ * Local labels when NO account is passed (Settings → Labels): shared labels (empty page_ids) + labels attached to at least one
+ * assigned account. Previously Boss returned the labels of the FIRST assigned account, so the second account's own labels disappeared.
  */
 export function labelsVisibleToAccounts<T extends { page_ids?: unknown }>(labels: T[], accountIds: readonly string[]): T[] {
   const allowed = new Set(accountIds.map(String));
@@ -173,7 +173,7 @@ export function labelsVisibleToAccounts<T extends { page_ids?: unknown }>(labels
   });
 }
 
-/** Dòng có chủ là tài khoản được giao (dòng không có chủ = dùng chung → giữ). */
+/** Row owned by an assigned account (row with no owner = shared → kept). */
 export function ownedByAccounts<T extends Record<string, any>>(rows: T[], accountIds: readonly string[], key = 'owner_zalo_id'): T[] {
   const allowed = new Set(accountIds.map(String));
   return (rows || []).filter((row) => {
@@ -182,7 +182,7 @@ export function ownedByAccounts<T extends Record<string, any>>(rows: T[], accoun
   });
 }
 
-/** Dòng bảng workflows → hình dạng `Workflow` của IPC workflow:list (pageIds mảng, nodes/edges đã parse, enabled boolean). */
+/** workflows table row → `Workflow` shape of IPC workflow:list (pageIds array, nodes/edges parsed, enabled boolean). */
 export function workflowRowToDto(r: any): any {
   const pageIdsRaw = String(r?.page_ids || r?.page_id || '');
   const pageIds = idList(pageIdsRaw);
@@ -205,7 +205,7 @@ export function workflowRowToDto(r: any): any {
   };
 }
 
-/** Như workflowIpc (nhân viên): workflow chung (không gắn trang) hoặc gắn ít nhất một tài khoản được giao. */
+/** Same as workflowIpc (employee): shared workflows (not attached to a page) or attached to at least one assigned account. */
 export function workflowVisibleToAccounts(wf: { pageIds?: string[] }, accountIds: readonly string[]): boolean {
   const pages = wf?.pageIds || [];
   if (pages.length === 0) return true;
@@ -213,7 +213,7 @@ export function workflowVisibleToAccounts(wf: { pageIds?: string[] }, accountIds
   return pages.some(id => allowed.has(String(id)));
 }
 
-/** Proxy: không bao giờ gửi mật khẩu cho máy nhân viên. */
+/** Proxy: never send the password to an employee machine. */
 export function maskProxyRow<T extends Record<string, any>>(row: T): T {
   if (!row || typeof row !== 'object') return row;
   return { ...row, password: row.password ? '***' : '' };

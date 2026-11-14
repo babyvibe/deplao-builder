@@ -23,14 +23,16 @@ import { Reactions } from 'zca-js';
 import { requestAICompletion } from '../ai/AIProviderAdapter';
 import { automationsPausedAfterRestore } from '../cloudflare/restoreGate';
 import {
-  parseIdList, isExcludedId, isWithinActiveHours, classifyZaloMessageType, normalizeMessageTypes,
+  parseIdList, isExcludedId, isThreadAllowed, isWithinActiveHours, classifyZaloMessageType, normalizeMessageTypes,
   mentionsAccount, hasSenderRoleFilter, normalizeZaloUid, resolveZaloGroupRole, isRoleAllowed,
-  parseCooldownMs,
+  parseCooldownMs, zaloMessageText,
 } from './triggerFilters';
 import { posLookupNode, posLookupQuery, refusedPosLookup, vietnamLocalPhone } from './posLookupGuard';
+import { evaluateCondition, isBotCommandText, looseText, matchCategory, parseBotCommand, workflowLocale } from './workflowText';
 import { MAX_LOOP_ITERATIONS_PER_RUN, forEachBodyNodeIds, forEachItemLimit, forEachVariableName, parseForEachList } from './forEachLoop';
 import { paymentFromEvent } from '../integrations/paymentWebhook';
 import { matchesPosWebhookTrigger } from '../integrations/posWebhook';
+import { tr } from '../../shared/i18n';
 
 // Workflow versions before reaction keys were introduced stored the six picker
 // options as numbers. Keep those workflows executable while sending the icon
@@ -113,7 +115,8 @@ export type NodeType =
   | 'tg.changeGroupName' | 'tg.leaveGroup' | 'tg.exportInviteLink' | 'tg.createForumTopic'
   // Telegram Bot
   | 'tgbot.trigger.message' | 'tgbot.trigger.command' | 'tgbot.trigger.join' | 'tgbot.trigger.callback'
-  | 'tgbot.trigger.editedMessage' | 'tgbot.trigger.joinRequest'
+  | 'tgbot.trigger.editedMessage' | 'tgbot.trigger.joinRequest' | 'tgbot.trigger.memberUpdate'
+  | 'tgbot.action.unbanMember' | 'tgbot.action.approveJoinRequest'
   | 'tgbot.action.sendMessage' | 'tgbot.action.sendPhoto' | 'tgbot.action.sendVideo' | 'tgbot.action.sendFile'
   | 'tgbot.action.sendMenu' | 'tgbot.action.sendForm' | 'tgbot.action.forward'
   | 'tgbot.action.sendSticker' | 'tgbot.action.sendAudio' | 'tgbot.action.sendVoice' | 'tgbot.action.leaveChat'
@@ -149,7 +152,7 @@ export interface Workflow {
   channel: WorkflowChannel;
   /** @deprecated use pageIds */
   pageId?: string;
-  /** Danh sách zalo_id mà workflow này áp dụng. Rỗng = áp dụng cho tất cả pages. */
+  /** zalo_id list this workflow applies to. Empty = applies to all pages. */
   pageIds: string[];
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
@@ -190,7 +193,7 @@ export interface NodeResult {
   output: Record<string, any>;
   durationMs: number;
   error?: string;
-  /** Lượt lặp (từ 1) khi node nằm trong thân "Lặp qua danh sách"; không có = node chạy một lần. */
+  /** Iteration number (from 1) when the node sits inside the body of "Lặp qua danh sách" (loop over list); absent = the node runs once. */
   iteration?: number;
 }
 
@@ -206,14 +209,14 @@ interface ExecutionContext {
   _wfName: string;
 }
 
-/** Trạng thái một lần chạy, dùng chung giữa chuỗi node chính và thân các vòng lặp logic.forEach. */
+/** State of one run, shared between the main node chain and the bodies of the logic.forEach loops. */
 interface WorkflowRunState {
   status: 'success' | 'error' | 'partial';
   errorMessage?: string;
   nodeResults: NodeResult[];
   simulate: boolean;
   simulatedMessages: SimulatedMessage[];
-  /** Tổng số lượt lặp đã chạy (giới hạn MAX_LOOP_ITERATIONS_PER_RUN). */
+  /** Total number of loop iterations run so far (limit MAX_LOOP_ITERATIONS_PER_RUN). */
   loopIterations: number;
 }
 
@@ -256,14 +259,14 @@ function logTelegramChannelTrace(stage: string, trace: ReturnType<typeof getTele
   // Logger.log(`[TG:channel-workflow] ${stage} | ${printable.join(' ')}`);
 }
 
-/** Cooldown (cooldownMinutes): khi map vượt ngưỡng thì dọn các mốc đã hết hạn (tối đa 1 lần / phút) */
+/** Cooldown (cooldownMinutes): when the map exceeds the threshold, expired entries are removed (at most once per minute) */
 const COOLDOWN_PRUNE_THRESHOLD = 2000;
 const COOLDOWN_PRUNE_INTERVAL_MS = 60 * 1000;
-/** Cache vai trò nhóm Zalo cho bộ lọc senderRole (key = zaloId:groupId) */
+/** Cache of Zalo group roles for the senderRole filter (key = zaloId:groupId) */
 const GROUP_ROLE_CACHE_TTL_MS = 10 * 60 * 1000;
-/** Tra cứu lỗi được nhớ ngắn hạn để không gọi getGroupInfo liên tục khi nhóm nhắn dồn dập */
+/** Short-lived memory of lookup errors, so getGroupInfo is not called repeatedly when a group sends many messages quickly */
 const GROUP_ROLE_FAILURE_TTL_MS = 30 * 1000;
-/** zca-js getGroupInfo không có timeout → tự giới hạn, tránh lượt tra cứu treo chặn mãi nhóm đó */
+/** zca-js getGroupInfo has no timeout → limit it ourselves, so a hung lookup does not block that group forever */
 const GROUP_ROLE_LOOKUP_TIMEOUT_MS = 15 * 1000;
 const GROUP_ROLE_CACHE_MAX = 500;
 
@@ -287,6 +290,24 @@ function outboundText(cfg: Record<string, any>): string {
 
 // ─── Service ─────────────────────────────────────────────────────────────────
 
+/** Per-recipient counts of a send node (continueOnError keeps going after a failed recipient). */
+type SendTally = { sent: number; failed: number; lastMsgId: string; lastError: string };
+const newSendTally = (): SendTally => ({ sent: 0, failed: 0, lastMsgId: '', lastError: '' });
+
+/** Zalo message types that carry a downloadable file (forwarding re-sends the local copy). */
+function isZaloMediaType(msgType: string): boolean {
+  return /^(chat\.(photo|video\.msg|video|voice|gif|doodle)|share\.file)$/i.test(String(msgType || '').trim());
+}
+
+/** Readable text of a Zalo link card ({ title, href, … }): its address, so forwarding never sends attachment JSON. */
+function zaloLinkText(raw: unknown): string {
+  let obj: any = raw;
+  if (typeof raw === 'string') {
+    try { obj = JSON.parse(raw); } catch { return ''; }
+  }
+  return obj && typeof obj === 'object' ? String(obj.href || '').trim() : '';
+}
+
 class WorkflowEngineService {
   private static instance: WorkflowEngineService;
   private workflows: Map<string, Workflow> = new Map();
@@ -296,12 +317,12 @@ class WorkflowEngineService {
   private debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   /** Buffered message events for debounce - key = workflowId:threadId */
   private debounceBuffers: Map<string, any[]> = new Map();
-  /** cooldownMinutes - key = workflowId:threadId → thời điểm hết cooldown (chỉ trong RAM) */
+  /** cooldownMinutes - key = workflowId:threadId → time when the cooldown ends (RAM only) */
   private cooldownUntil: Map<string, number> = new Map();
   private cooldownLastPruneAt = 0;
-  /** senderRole - vai trò nhóm Zalo đã tra cứu, key = zaloId:groupId (failed = lỗi, nhớ ngắn hạn) */
+  /** senderRole - looked-up Zalo group role, key = zaloId:groupId (failed = error, short-lived memory) */
   private groupRoleCache: Map<string, ZaloGroupRoles & { at: number; failed?: boolean }> = new Map();
-  /** senderRole - getGroupInfo đang chạy, gộp các lượt tra cứu trùng key */
+  /** senderRole - getGroupInfo in progress, merges lookups with the same key */
   private groupRoleInflight: Map<string, Promise<ZaloGroupRoles | null>> = new Map();
 
   public static getInstance(): WorkflowEngineService {
@@ -334,16 +355,24 @@ class WorkflowEngineService {
     return ch === 'zalo' || ch === 'facebook' || ch === 'telegram_user' || ch === 'telegram_bot';
   }
 
+  /** Channel an event says it comes from ('' = not stated: Zalo events and channel-less triggers). */
+  private eventChannelOf(data: any): WorkflowChannel | '' {
+    const raw = data?.channel || data?.message?.channel || data?.message?.data?.channel || data?.data?.channel || '';
+    if (!raw || typeof raw !== 'string') return '';
+    const ch = this.normalizeWorkflowChannel(raw);
+    return ch === 'zalo' || ch === 'facebook' || ch === 'telegram_user' || ch === 'telegram_bot' ? ch : '';
+  }
+
   /**
-   * Resolve Facebook account ID về internal UUID để tìm đúng instance trong FacebookService.
-   * FacebookService.instances map dùng UUID làm key, nhưng workflow trigger gửi numeric FB UID.
-   * Nếu không resolve, getInstance() sẽ tạo instance mới + connect() mất ~10s không cần thiết.
+   * Resolve a Facebook account ID to its internal UUID so the right instance is found in FacebookService.
+   * FacebookService.instances is keyed by UUID, but the workflow trigger sends the numeric FB UID.
+   * Without resolving, getInstance() creates a new instance and connect() takes ~10s for nothing.
    */
   private resolveFBAccountId(rawId: string): string {
     if (!rawId) return '';
-    // Nếu đã là UUID (có dấu gạch ngang) → trả về nguyên
+    // If it is already a UUID (contains dashes) → return it unchanged
     if (rawId.includes('-')) return rawId;
-    // Nếu là Facebook UID (all digits) → tìm UUID từ DB
+    // If it is a Facebook UID (all digits) → look up the UUID in the DB
     if (/^\d+$/.test(rawId)) {
       try {
         const fbAcc = DatabaseService.getInstance().getFBAccountByFacebookId(rawId);
@@ -379,9 +408,9 @@ class WorkflowEngineService {
   }
 
   /**
-   * Workspace local chạy nền đổi sang workspace local khác: nạp lại toàn bộ workflow + lịch chạy của workspace đó (trước
-   * đây workflow chỉ nạp lúc mở app → sau khi đổi, workflow của workspace cũ chạy trên CSDL của workspace mới).
-   * Đổi sang / rời workspace nhân viên (remote) không gọi: workflow của workspace local vẫn chạy.
+   * When a background local workspace switches to another local workspace: reload all workflows + schedules of that workspace (before
+   * this, workflows were only loaded when the app opened → after a switch, the old workspace's workflows ran on the new workspace's DB).
+   * Not called when switching to / leaving an employee (remote) workspace: the local workspace's workflows keep running.
    */
   public reloadAll(): void {
     for (const workflowId of Array.from(this.cronJobs.keys())) this.unregisterCron(workflowId);
@@ -451,7 +480,7 @@ class WorkflowEngineService {
     }
   }
 
-  /** Xoá các mốc cooldown của workflow (key = workflowId:threadId) */
+  /** Delete the cooldown entries of the workflow (key = workflowId:threadId) */
   private clearCooldownForWorkflow(workflowId: string): void {
     const prefix = workflowId + ':';
     for (const key of this.cooldownUntil.keys()) {
@@ -461,7 +490,7 @@ class WorkflowEngineService {
 
   // ─── Event Listeners ──────────────────────────────────────────────────────
 
-  /** Hook đã đăng ký với EventBroadcaster — gỡ trước khi đăng ký lại để không chạy workflow hai lần. */
+  /** Hook registered with EventBroadcaster: remove it before registering again so the workflow does not run twice. */
   private eventUnsubscribers: Array<() => void> = [];
 
   private onEvent(channel: string, callback: (data: any) => void): void {
@@ -469,12 +498,12 @@ class WorkflowEngineService {
   }
 
   /**
-   * (Đăng ký lại) mọi hook trigger. Gọi lúc khởi động và sau khi đổi workspace — workspace:switch gọi
-   * EventBroadcaster.clearBeforeSendHooks(), trước đây workflow ngừng nhận sự kiện tới khi mở lại app.
+   * (Re-)register all trigger hooks. Called at startup and after a workspace change: workspace:switch calls
+   * EventBroadcaster.clearBeforeSendHooks(), and before this fix the workflows stopped receiving events until the app was reopened.
    */
   public rehookEvents(): void {
     for (const unsubscribe of this.eventUnsubscribers) {
-      try { unsubscribe(); } catch { /* hook đã bị xoá */ }
+      try { unsubscribe(); } catch { /* the hook was removed */ }
     }
     this.eventUnsubscribers = [];
     this.registerZaloEventListeners();
@@ -606,10 +635,13 @@ class WorkflowEngineService {
     this.onEvent('event:telegramBotJoinRequest', (data: any) => {
       this.triggerWorkflows('tgbot.trigger.joinRequest', data);
     });
+    this.onEvent('event:telegramBotMemberUpdate', (data: any) => {
+      this.triggerWorkflows('tgbot.trigger.memberUpdate', data);
+    });
   }
 
   /**
-   * Gọi từ main process khi renderer emit 'workflow:labelEvent'.
+   * Called from the main process when the renderer emits 'workflow:labelEvent'.
    * Bridge: renderer (ChatHeader) → ipcMain → engine.
    */
   public triggerLabelEvent(data: {
@@ -643,7 +675,7 @@ class WorkflowEngineService {
 
     const tz = scheduleNode.config.timezone || 'Asia/Ho_Chi_Minh';
     const task = cron.schedule(expr, () => {
-      // Vừa khôi phục DB từ Cloudflare: chờ người dùng xác nhận máy cũ đã tắt (tránh hai máy cùng chạy lịch).
+      // Just restored the DB from Cloudflare: wait for the user to confirm the old machine is off (avoids two machines running the schedules at once).
       if (automationsPausedAfterRestore()) {
         Logger.warn(`[WorkflowEngine] Cron "${wf.name}" skipped: automations paused after restore`);
         return;
@@ -687,7 +719,15 @@ class WorkflowEngineService {
         logTelegramChannelTrace('WORKFLOW_SKIPPED', telegramChannelTrace, { workflowId: wf.id, reason: 'trigger_not_present' });
         continue;
       }
-      // pageIds: rỗng = áp dụng cho tất cả; có giá trị = chỉ chạy cho page khớp
+      // An event of one channel never starts a workflow of another channel: Zalo and Telegram share event names
+      // (event:message, event:groupEvent), so a Zalo workflow set for "all accounts" used to run on Telegram messages too
+      // and answer through the Zalo API. Events without a channel (schedule, webhook, payment…) are not affected.
+      const eventChannel = this.eventChannelOf(eventData);
+      if (eventChannel && this.normalizeWorkflowChannel(wf.channel) !== eventChannel) {
+        logTelegramChannelTrace('WORKFLOW_SKIPPED', telegramChannelTrace, { workflowId: wf.id, reason: 'other_channel', workflowChannel: wf.channel || '-' });
+        continue;
+      }
+      // pageIds: empty = applies to all; has values = only runs for the matching pages
       if (wf.pageIds.length > 0) {
         const accountId = eventData.zaloId || eventData.fbAccountId || eventData.accountId || '';
         if (accountId && !wf.pageIds.includes(accountId)) {
@@ -706,13 +746,13 @@ class WorkflowEngineService {
         debounceSeconds: Number(triggerNode.config.debounceSeconds || 0),
       });
 
-      // senderRole (trưởng / phó nhóm / thành viên) cần getGroupInfo → kiểm tra bất đồng bộ,
-      // chỉ dispatch khi vai trò người gửi khớp. Tin cá nhân đã bị loại ở matchesTriggerFilter.
+      // senderRole (owner / deputy / member) needs getGroupInfo → checked asynchronously,
+      // only dispatch when the sender's role matches. Personal messages were already excluded in matchesTriggerFilter.
       if (triggerType === 'trigger.message' && hasSenderRoleFilter(triggerNode.config?.senderRole)) {
         this.matchesSenderRole(triggerNode, eventData)
           .then(allowed => {
             if (!allowed) return;
-            // Workflow có thể đã bị tắt / xoá trong lúc chờ getGroupInfo
+            // The workflow may have been disabled / deleted while waiting for getGroupInfo
             if (!this.workflows.get(wf.id)?.enabled) return;
             this.dispatchMatchedWorkflow(wf, triggerNode, triggerType, eventData);
           })
@@ -727,12 +767,12 @@ class WorkflowEngineService {
   }
 
   /**
-   * Phần xử lý sau khi workflow đã khớp trigger (matchesTriggerFilter + senderRole):
-   * cooldown → debounce (gom tin nhắn liên tiếp) hoặc chạy ngay.
+   * Processing after the workflow matched the trigger (matchesTriggerFilter + senderRole):
+   * cooldown → debounce (batch consecutive messages) or run immediately.
    */
   private dispatchMatchedWorkflow(wf: Workflow, triggerNode: WorkflowNode, triggerType: string, eventData: any): void {
-    // ─── Cooldown: đã chạy cho hội thoại này trong N phút gần đây → bỏ qua ────
-    // Với debounce: kiểm tra khi tin đến (trước khi gom), ghi mốc khi lượt chạy gộp thực sự bắt đầu.
+    // ─── Cooldown: already ran for this conversation within the last N minutes → skip ────
+    // With debounce: check when the message arrives (before batching), record the timestamp when the batched run actually starts.
     const cooldown = this.getMessageCooldown(wf, triggerNode, triggerType, eventData);
     if (cooldown) {
       const until = this.cooldownUntil.get(cooldown.key);
@@ -744,15 +784,15 @@ class WorkflowEngineService {
       }
     }
 
-    // ─── Debounce for message triggers: gom tin nhắn liên tiếp ────────
+    // ─── Debounce for message triggers: batch consecutive messages ────────
     const debounceSeconds = Number(triggerNode.config.debounceSeconds || 0);
-    if ((triggerType === 'trigger.message' || triggerType === 'fb.trigger.message' || triggerType === 'tg.trigger.message') && debounceSeconds > 0) {
+    if ((triggerType === 'trigger.message' || triggerType === 'fb.trigger.message' || triggerType === 'tg.trigger.message' || triggerType === 'tgbot.trigger.message') && debounceSeconds > 0) {
       const envelope = eventData.message || eventData;
       const msg = envelope.data || eventData.data || envelope;
-      // fb:onMessage không có threadId (id hội thoại ở message.replyToID) → trước đây mọi hội thoại
-      // Facebook dùng chung 1 key và tin của hội thoại trước bị bỏ. Zalo / Telegram giữ nguyên cách đọc.
-      const threadId = triggerType === 'fb.trigger.message'
-        ? this.getFacebookThreadId(eventData)
+      // fb:onMessage has no threadId (the conversation id is in message.replyToID) → previously all conversations
+      // used one shared key on Facebook, so the previous conversation's messages were dropped. Zalo / Telegram keep their reading.
+      const threadId = triggerType === 'fb.trigger.message' || triggerType === 'tgbot.trigger.message'
+        ? this.getMessageThreadId(triggerType, eventData)
         : ((msg as any).threadId || envelope.threadId || eventData.threadId || '');
       const debounceKey = `${wf.id}:${threadId}`;
 
@@ -826,34 +866,39 @@ class WorkflowEngineService {
   }
 
   /**
-   * cooldownMinutes của trigger tin nhắn → { key: `${workflowId}:${threadId}`, ms }.
-   * null = tắt (không cấu hình / trigger khác / không xác định được hội thoại).
+   * cooldownMinutes of the message trigger → { key: `${workflowId}:${threadId}`, ms }.
+   * null = off (not configured / another trigger / conversation cannot be determined).
    */
   private getMessageCooldown(wf: Workflow, triggerNode: WorkflowNode, triggerType: string, eventData: any): { key: string; ms: number } | null {
-    if (triggerType !== 'trigger.message' && triggerType !== 'fb.trigger.message' && triggerType !== 'tg.trigger.message') return null;
+    if (triggerType !== 'trigger.message' && triggerType !== 'fb.trigger.message' && triggerType !== 'tg.trigger.message' && triggerType !== 'tgbot.trigger.message') return null;
     const ms = parseCooldownMs(triggerNode.config?.cooldownMinutes);
     if (ms <= 0) return null;
     const threadId = this.getMessageThreadId(triggerType, eventData);
     return threadId ? { key: `${wf.id}:${threadId}`, ms } : null;
   }
 
-  /** Thread id của sự kiện tin nhắn - cùng cách đọc với matchesTriggerFilter của từng kênh */
+  /** Thread id of the message event - read the same way as matchesTriggerFilter in each channel */
   private getMessageThreadId(triggerType: string, data: any): string {
     if (!data) return '';
     if (triggerType === 'fb.trigger.message') return this.getFacebookThreadId(data);
+    if (triggerType === 'tgbot.trigger.message') {
+      const envelope = data.message || data;
+      const msg = envelope.data || data.data || envelope;
+      return String(data.chatId || envelope.threadId || data.threadId || msg.idTo || '').trim();
+    }
     if (triggerType === 'tg.trigger.message') {
       const envelope = data.message || data;
       const msg = envelope.data || data.data || envelope;
       return String(data.threadId || envelope.threadId || msg.threadId || msg.chatId || '').trim();
     }
-    // trigger.message (Zalo): message.threadId = user id (1-1) hoặc group id
+    // trigger.message (Zalo): message.threadId = user id (1-1) or group id
     const msg = data.data || data.message || {};
     return String((msg as any).threadId || data.threadId || '').trim();
   }
 
   /**
-   * Thread id của sự kiện fb:onMessage. FBMQTTMessage không có threadId mà mang id hội thoại ở
-   * message.replyToID ('0' = không xác định) → cùng chuỗi fallback với $trigger.threadId (flattenTriggerData).
+   * Thread id of the fb:onMessage event. FBMQTTMessage has no threadId but carries the conversation id in
+   * message.replyToID ('0' = unknown) → same fallback chain as $trigger.threadId (flattenTriggerData).
    */
   private getFacebookThreadId(data: any): string {
     const msg = data?.message || {};
@@ -862,8 +907,8 @@ class WorkflowEngineService {
   }
 
   /**
-   * Ghi thời điểm hết cooldown (lúc workflow bắt đầu chạy + N phút). Khi map quá lớn thì dọn các
-   * mốc đã hết hạn - quét toàn bộ vì thời điểm hết hạn không theo thứ tự chèn (N khác nhau).
+   * Record the cooldown end time (when the workflow starts running + N minutes). When the map gets too big, remove the
+   * expired entries - scan them all, because expiry times do not follow insertion order (N differs).
    */
   private markCooldown(key: string, cooldownMs: number): void {
     const now = Date.now();
@@ -877,13 +922,13 @@ class WorkflowEngineService {
   }
 
   /**
-   * senderRole (trigger.message Zalo, tin nhóm): vai trò người gửi lấy từ getGroupInfo của
-   * CHÍNH tài khoản nhận tin. Tra cứu lỗi / thiếu dữ liệu → false (không kích hoạt).
+   * senderRole (Zalo trigger.message, group messages): the sender's role comes from getGroupInfo of
+   * the SAME account that received the message. Lookup error / missing data → false (does not trigger).
    */
   private async matchesSenderRole(triggerNode: WorkflowNode, data: any): Promise<boolean> {
     const msg = data?.data || data?.message || {};          // UserMessage | GroupMessage
     const msgData = (msg as any).data || {};                 // TMessage - uidFrom, mentions ...
-    // 'event:message' cũng chở tin Telegram → vai trò nhóm Zalo không áp dụng
+    // 'event:message' also carries Telegram messages → the Zalo group role does not apply
     const channel = data?.channel || (msg as any).channel || msgData.channel;
     if (channel && channel !== CHANNEL.ZALO) return false;
     const zaloId = String(data?.zaloId || '').trim();
@@ -899,7 +944,7 @@ class WorkflowEngineService {
     return isRoleAllowed(role, String(triggerNode.config?.senderRole ?? ''));
   }
 
-  /** creatorId / adminIds của nhóm: cache 10 phút theo zaloId:groupId, gộp các lượt gọi trùng */
+  /** Group creatorId / adminIds: cached for 10 minutes per zaloId:groupId, duplicate calls are merged */
   private getZaloGroupRoles(zaloId: string, groupId: string): Promise<ZaloGroupRoles | null> {
     const key = `${zaloId}:${groupId}`;
     const cached = this.groupRoleCache.get(key);
@@ -908,7 +953,7 @@ class WorkflowEngineService {
       const age = Date.now() - cached.at;
       if (age < ttl) {
         if (cached.failed) {
-          // Không gọi lại getGroupInfo dồn dập (Zalo hạn chế API) nhưng vẫn ghi lý do bỏ qua từng tin
+          // Do not call getGroupInfo again in a burst (Zalo limits the API), but still record the reason each message was skipped
           Logger.warn(`[WorkflowEngine] senderRole: tra cứu nhóm ${groupId} (tài khoản ${zaloId}) vừa lỗi ${Math.round(age / 1000)}s trước, thử lại sau ${Math.ceil((ttl - age) / 1000)}s → không kích hoạt`);
           return Promise.resolve(null);
         }
@@ -932,7 +977,7 @@ class WorkflowEngineService {
   }
 
   private async fetchZaloGroupRoles(zaloId: string, groupId: string): Promise<ZaloGroupRoles | null> {
-    // Không dùng getApi(): getApi fallback sang tài khoản khác → sai vai trò / sai nhóm
+    // Do not use getApi(): getApi falls back to another account → wrong role / wrong group
     const api = ConnectionManager.getConnection(zaloId)?.api;
     if (!api) {
       Logger.warn(`[WorkflowEngine] senderRole: tài khoản ${zaloId} chưa kết nối → không kích hoạt (nhóm ${groupId})`);
@@ -1066,8 +1111,8 @@ class WorkflowEngineService {
   }
 
   /**
-   * Public API v1 / plugin: bắn sự kiện cho node trigger.api. Đi qua đúng triggerWorkflows
-   * (cùng lọc pageIds, debounce, cooldown như mọi trigger) và trả về các workflow khớp.
+   * Public API v1 / plugin: fires an event for the trigger.api node. Goes through triggerWorkflows
+   * (same pageIds filter, debounce and cooldown as every trigger) and returns the matching workflows.
    */
   public triggerApiEvent(eventName: string, payload: any, meta: { keyId?: string; accountId?: string; source?: string } = {}): { matched: number; workflowIds: string[] } {
     const data = {
@@ -1092,8 +1137,8 @@ class WorkflowEngineService {
   }
 
   /**
-   * Plugin bắn trigger riêng của nó (deplao.workflow.trigger). Trường của payload nằm ở cấp trên
-   * cùng để dùng {{ $trigger.<field> }}; accountId (nếu có) dùng cho lọc tài khoản của workflow.
+   * A plugin fires its own trigger (deplao.workflow.trigger). The payload fields sit at the top
+   * level so they can be used as {{ $trigger.<field> }}; accountId (if present) is used to filter the workflow's accounts.
    */
   public triggerPluginEvent(type: string, payload: any, meta: { pluginId: string }): { matched: number; workflowIds: string[] } {
     const body = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : { value: payload };
@@ -1114,7 +1159,7 @@ class WorkflowEngineService {
   private matchesTriggerFilter(triggerNode: WorkflowNode, data: any): boolean {
     const cfg = triggerNode.config;
 
-    // Trigger do plugin đóng góp (contributes.triggers)
+    // Trigger contributed by a plugin (contributes.triggers)
     if ((cfg as any)?.__plugin && (cfg as any)?.__kind === 'trigger') {
       return require('../plugins/PluginNodeRegistry').default.getInstance().matchesTrigger(cfg, data);
     }
@@ -1148,7 +1193,8 @@ class WorkflowEngineService {
       if (cfg.onlyOwn && !((msg as any).isSelf || data.isSelf)) return false;
       if (cfg.keyword) {
         const rawContent = msgData.content || (msg as any).content || data.content;
-        const content = String((rawContent as any)?.msg || (typeof rawContent === 'string' ? rawContent : '') || '').toLowerCase();
+        // Link cards keep the typed text in content.title, so "/lenh https://…" can match a keyword too
+        const content = zaloMessageText(rawContent, msgData.msgType || (msg as any).msgType).toLowerCase();
         const kws: string[] = String(cfg.keyword).split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
         const mode = cfg.keywordMode || 'contains_any';
         if (mode === 'contains_any' && !kws.some(k => content.includes(k))) return false;
@@ -1159,12 +1205,12 @@ class WorkflowEngineService {
           try { if (!new RegExp(cfg.keyword, 'i').test(content)) return false; } catch { return false; }
         }
       }
-      // ── Bộ lọc mở rộng: chỉ có tác dụng khi được cấu hình (workflow cũ không đổi) ──
-      // senderRole ≠ 'all' chỉ áp dụng cho tin nhóm → tin cá nhân không kích hoạt.
-      // Vai trò thực tế (getGroupInfo) được kiểm tra bất đồng bộ trong triggerWorkflows.
+      // ── Extended filters: only take effect when configured (old workflows are unchanged) ──
+      // senderRole ≠ 'all' only applies to group messages → personal messages do not trigger.
+      // The actual role (getGroupInfo) is checked asynchronously in triggerWorkflows.
       if (hasSenderRoleFilter(cfg.senderRole) && !isGroup) return false;
       if (isExcludedId(cfg.excludeSenderIds, msgData.uidFrom || (msg as any).uidFrom || data.fromId)) return false;
-      if (isExcludedId(cfg.excludeThreadIds, (msg as any).threadId || data.threadId)) return false;
+      if (!isThreadAllowed(cfg.includeThreadIds, cfg.excludeThreadIds, (msg as any).threadId || data.threadId)) return false;
       if ((cfg.onlyWhenMentioned === true || cfg.onlyWhenMentioned === 'true') && isGroup
         && !mentionsAccount(msgData.mentions, String(data.zaloId || ''))) return false;
       const messageTypes = normalizeMessageTypes(cfg.messageTypes);
@@ -1218,15 +1264,15 @@ class WorkflowEngineService {
     }
 
     if (triggerNode.type === 'trigger.payment') {
-      // Casso (amount) và SePay (transferAmount / transferType) đã chuẩn hoá ở IntegrationRegistry
+      // Casso (amount) and SePay (transferAmount / transferType) are already normalized in IntegrationRegistry
       const payment = paymentFromEvent(data);
-      // "Khi nhận thanh toán" chỉ cho tiền vào
+      // "Khi nhận thanh toán" (on payment received) only for incoming money
       if (payment.direction === 'out') return false;
       // Filter by integration id
       if (cfg.integrationId && data.integrationId !== cfg.integrationId) return false;
       // Filter by minimum amount
       if (cfg.minAmount && payment.amount < Number(cfg.minAmount)) return false;
-      // Filter by description keyword (SePay: cả nội dung CK lẫn mô tả đầy đủ của ngân hàng)
+      // Filter by description keyword (SePay: both the transfer content and the bank's full description)
       if (cfg.descContains) {
         const desc = `${payment.description}\n${payment.bankDescription}`.toLowerCase();
         if (!desc.includes(String(cfg.descContains).toLowerCase())) return false;
@@ -1234,7 +1280,7 @@ class WorkflowEngineService {
     }
 
     if (triggerNode.type === 'trigger.posWebhook') {
-      // Chỉ webhook đã xác thực (IntegrationRegistry → posWebhook.ts); lọc nền tảng / kết nối / loại dữ liệu / sự kiện / trạng thái
+      // Only verified webhooks (IntegrationRegistry → posWebhook.ts); filter by platform / connection / data type / event / status
       if (data?.verified !== true || !matchesPosWebhookTrigger(cfg, data)) return false;
     }
 
@@ -1271,6 +1317,8 @@ class WorkflowEngineService {
       if (cfg.chatScope === 'private' && chatType !== 'private') return false;
       if (cfg.chatScope === 'group' && !['group', 'supergroup'].includes(chatType)) return false;
       if (cfg.chatScope === 'channel' && chatType !== 'channel') return false;
+      // Chat allow / deny lists (absent = every chat, as before); same chat id as the chatId filter above
+      if (!isThreadAllowed(cfg.includeThreadIds, cfg.excludeThreadIds, envelope.threadId || data.threadId || msg.idTo)) return false;
       if (triggerNode.type === 'tgbot.trigger.command') {
         const command = content.trim().split(/\s+/)[0].replace(/@[^\s]+$/, '').replace(/^\//, '').toLowerCase();
         const commands = [cfg.command, ...String(cfg.aliases || '').split(',')]
@@ -1283,7 +1331,10 @@ class WorkflowEngineService {
       if (triggerNode.type === 'tgbot.trigger.message') {
         if (cfg.fromId && String(cfg.fromId) !== String(msg.uidFrom || data.fromId || '')) return false;
         if (cfg.messageTypes && cfg.messageTypes !== 'all' && String(msg.msgType || data.msgType || 'text') !== cfg.messageTypes) return false;
-        const keywords = String(cfg.keyword).split(',').map((item: string) => item.trim().toLowerCase()).filter(Boolean);
+        const keywords = String(cfg.keyword ?? '').split(',').map((item: string) => item.trim().toLowerCase()).filter(Boolean);
+        // /commands belong to "Khi user gửi lệnh cho Bot": answering them here too gave customers two replies. A keyword
+        // that itself starts with "/" (or the option turned off) still lets this trigger take commands.
+        if (isBotCommandText(content) && cfg.ignoreCommands !== false && !keywords.some((item: string) => item.startsWith('/'))) return false;
         if (keywords.length) {
           const normalized = content.toLowerCase();
           const mode = cfg.keywordMode || 'contains_any';
@@ -1305,6 +1356,14 @@ class WorkflowEngineService {
     if (triggerNode.type === 'tgbot.trigger.joinRequest') {
       if (cfg.accountId && String(cfg.accountId) !== String(data.accountId || data.zaloId || '')) return false;
       if (cfg.chatId && String(cfg.chatId) !== String(data.chatId || data.threadId || '')) return false;
+    }
+
+    if (triggerNode.type === 'tgbot.trigger.memberUpdate') {
+      if (cfg.accountId && String(cfg.accountId) !== String(data.accountId || data.zaloId || '')) return false;
+      if (cfg.chatId && String(cfg.chatId) !== String(data.chatId || data.threadId || '')) return false;
+      if (cfg.eventType && cfg.eventType !== 'all' && cfg.eventType !== data.eventType) return false;
+      // Other bots joining (e.g. a moderation bot) are usually not people to greet
+      if (cfg.ignoreBots !== false && data.isBot) return false;
     }
 
     if (triggerNode.type === 'tgbot.trigger.editedMessage') {
@@ -1378,9 +1437,9 @@ class WorkflowEngineService {
           }
         }
       }
-      // ── Bộ lọc mở rộng (excludeSenderIds / excludeThreadIds / activeHours) ──
+      // ── Extended filters (excludeSenderIds / includeThreadIds / excludeThreadIds / activeHours) ──
       if (isExcludedId(cfg.excludeSenderIds, data.fromId || (data.message || {}).userID)) return false;
-      if (isExcludedId(cfg.excludeThreadIds, this.getFacebookThreadId(data))) return false;
+      if (!isThreadAllowed(cfg.includeThreadIds, cfg.excludeThreadIds, this.getFacebookThreadId(data))) return false;
       if (!isWithinActiveHours(cfg.activeHours, Date.now())) return false;
     }
 
@@ -1458,9 +1517,9 @@ class WorkflowEngineService {
         if (mode === 'exact' && !kws.includes(content)) return false;
         if (mode === 'starts_with' && !kws.some(k => content.startsWith(k))) return false;
       }
-      // ── Bộ lọc mở rộng (excludeSenderIds / excludeThreadIds / activeHours) ──
+      // ── Extended filters (excludeSenderIds / includeThreadIds / excludeThreadIds / activeHours) ──
       if (isExcludedId(cfg.excludeSenderIds, data.fromId || msg.fromId || msg.senderId || msg.uidFrom)) return false;
-      if (isExcludedId(cfg.excludeThreadIds, data.threadId || envelope.threadId || msg.threadId || msg.chatId)) return false;
+      if (!isThreadAllowed(cfg.includeThreadIds, cfg.excludeThreadIds, data.threadId || envelope.threadId || msg.threadId || msg.chatId)) return false;
       if (!isWithinActiveHours(cfg.activeHours, Date.now())) return false;
     }
 
@@ -1497,7 +1556,7 @@ class WorkflowEngineService {
     opts?: { simulate?: boolean },
   ): Promise<WorkflowRunLog> {
     if (!this.isRunnableWorkflow(wf)) {
-      throw new Error('Workflow không hỗ trợ chạy (channel unknown)');
+      throw new Error(tr('Workflow không hỗ trợ chạy (channel unknown)'));
     }
 
     const simulate = opts?.simulate === true;
@@ -1522,7 +1581,7 @@ class WorkflowEngineService {
       trigger: flatTrigger,
       nodes: {},
       variables: {},
-      pageId: wf.pageIds[0] || wf.pageId || triggerData?.zaloId || '',
+      pageId: this.resolveRunAccount(wf, triggerData),
       skippedNodes: new Set(),
       _wfNodes: wf.nodes,
       _wfName: wf.name,
@@ -1530,7 +1589,11 @@ class WorkflowEngineService {
 
     const sortedOrder = this.topologicalSort(wf);
     const routeNodes = startNodeId ? this.getReachableWorkflowNodes(wf, startNodeId) : null;
-    const order = routeNodes ? sortedOrder.filter(nodeId => routeNodes.has(nodeId)) : sortedOrder;
+    // The normal run never enters the branches of Telegram Bot inline buttons: they wait for the button press
+    const buttonOnly = startNodeId ? null : this.inlineButtonOnlyNodes(wf, triggeredBy);
+    const order = routeNodes
+      ? sortedOrder.filter(nodeId => routeNodes.has(nodeId))
+      : sortedOrder.filter(nodeId => !buttonOnly?.has(nodeId));
     const run: WorkflowRunState = { status: 'success', nodeResults, simulate, simulatedMessages, loopIterations: 0 };
     await this.runNodeSequence(order, wf, context, run);
     const { status, errorMessage } = run;
@@ -1558,9 +1621,20 @@ class WorkflowEngineService {
   }
 
   /**
-   * Chạy các node theo thứ tự topo. Node "Lặp qua danh sách" (logic.forEach) chạy xong thì các node nối từ cổng
-   * "Mỗi phần tử" (forEachBodyNodeIds) chạy lại cho từng phần tử, sau đó chuỗi này chạy tiếp các node còn lại — nhánh
-   * "Xong" chạy một lần. Trả về false khi workflow phải dừng (Dừng workflow nếu…, node lỗi không bật "tiếp tục khi lỗi").
+   * Account a run sends from: the account that received the event when it belongs to the workflow (a workflow set up for
+   * several accounts used to always answer from the first one, i.e. from an account that is not in the conversation),
+   * otherwise the workflow's first account (schedule, manual, webhook…).
+   */
+  private resolveRunAccount(wf: Workflow, triggerData: any): string {
+    const eventAccount = String(triggerData?.zaloId || triggerData?.fbAccountId || triggerData?.accountId || '').trim();
+    if (eventAccount && (!wf.pageIds.length || wf.pageIds.includes(eventAccount))) return eventAccount;
+    return wf.pageIds[0] || wf.pageId || eventAccount || '';
+  }
+
+  /**
+   * Runs the nodes in topological order. When the "Lặp qua danh sách" (loop over list, logic.forEach) node finishes, the nodes wired from its
+   * "Mỗi phần tử" (for each item, forEachBodyNodeIds) port run again for each item, then this chain runs the remaining nodes. The
+   * "Xong" (done) branch runs once. Returns false when the workflow must stop (Stop workflow if…, or a node error without "tiếp tục khi lỗi" (continue on error) enabled).
    */
   private async runNodeSequence(order: string[], wf: Workflow, ctx: ExecutionContext, run: WorkflowRunState, iteration?: number): Promise<boolean> {
     const loopHandled = new Set<string>();
@@ -1574,7 +1648,7 @@ class WorkflowEngineService {
       const bodyIds = forEachBodyNodeIds(wf.edges, nodeId);
       const body = order.filter(id => bodyIds.has(id));
       if (step === 'failed') {
-        // Node lặp lỗi nhưng bật "tiếp tục khi lỗi": không có danh sách → thân vòng lặp không chạy, nhánh "Xong" vẫn chạy
+        // Loop node failed but "tiếp tục khi lỗi" (continue on error) is on: no list → the loop body does not run, the "Xong" branch still runs
         for (const id of body) ctx.skippedNodes.add(id);
         continue;
       }
@@ -1585,10 +1659,10 @@ class WorkflowEngineService {
   }
 
   /**
-   * Thân vòng lặp cho từng phần tử của node forEach vừa chạy (output.items, tối đa ô "Tối đa" / 100 phần tử).
-   * Mỗi lượt: {{ $var.<tên biến> }} = phần tử, {{ $var.<tên biến>Index }} = số thứ tự từ 1; nhánh đã bỏ qua (IF / Switch)
-   * và kết quả node của lượt trước được xoá. Biến khác lưu trong vòng lặp (Lưu giá trị vào biến) còn lại sau vòng lặp
-   * để nhánh "Xong" dùng (vd. ghép danh sách rồi gửi một tin).
+   * Loop body for each item of the forEach node that just ran (output.items, up to the "Tối đa" (max) field / 100 items).
+   * Each pass: {{ $var.<variable name> }} = the item, {{ $var.<variable name>Index }} = the position from 1; skipped branches (IF / Switch)
+   * and node results from the previous pass are cleared. Other variables saved inside the loop (save value to variable node) remain after the loop
+   * for the "Xong" branch to use (e.g. join a list, then send one message).
    */
   private async runForEachLoop(node: WorkflowNode, body: string[], wf: Workflow, ctx: ExecutionContext, run: WorkflowRunState): Promise<boolean> {
     const output = ctx.nodes[node.id]?.output || {};
@@ -1599,7 +1673,7 @@ class WorkflowEngineService {
         if (bodyNode) {
           run.nodeResults.push({
             nodeId: id, nodeType: bodyNode.type, label: bodyNode.label, status: 'skipped', input: {},
-            output: { _skipped: true, reason: 'Danh sách rỗng - không có phần tử để lặp' }, durationMs: 0,
+            output: { _skipped: true, reason: tr('Danh sách rỗng - không có phần tử để lặp') }, durationMs: 0,
           });
         }
       }
@@ -1612,7 +1686,7 @@ class WorkflowEngineService {
       key, had: Object.prototype.hasOwnProperty.call(ctx.variables, key), value: ctx.variables[key],
     }));
     const baseSkipped = new Set(ctx.skippedNodes);
-    // Cùng quy tắc với forEachRecipient: workflow bị tắt / xoá trong lúc đang lặp → dừng, không chạy các phần tử còn lại
+    // Same rule as forEachRecipient: workflow disabled / deleted while looping → stop, do not run the remaining items
     const existedAtStart = this.workflows.has(wf.id);
     const stopped = (): boolean => {
       const live = this.workflows.get(wf.id);
@@ -1622,12 +1696,12 @@ class WorkflowEngineService {
       for (let i = 0; i < items.length; i++) {
         if (i > 0 && stopped()) {
           run.status = 'error';
-          run.errorMessage = `Node "${node.label || node.type}": workflow đã tắt hoặc bị xoá — dừng lặp, còn ${items.length - i}/${items.length} phần tử chưa chạy`;
+          run.errorMessage = tr('Node "{{v1}}": workflow đã tắt hoặc bị xoá — dừng lặp, còn {{v2}}/{{count}} phần tử chưa chạy', { v1: node.label || node.type, v2: items.length - i, count: items.length });
           return false;
         }
         if (++run.loopIterations > MAX_LOOP_ITERATIONS_PER_RUN) {
           run.status = 'error';
-          run.errorMessage = `Node "${node.label || node.type}" lỗi: vượt quá ${MAX_LOOP_ITERATIONS_PER_RUN} lượt lặp trong một lần chạy`;
+          run.errorMessage = tr('Node "{{v1}}" lỗi: vượt quá {{MAX_LOOP_ITERATIONS_PER_RUN}} lượt lặp trong một lần chạy', { v1: node.label || node.type, MAX_LOOP_ITERATIONS_PER_RUN });
           return false;
         }
         ctx.variables[itemVar] = items[i];
@@ -1647,9 +1721,9 @@ class WorkflowEngineService {
   }
 
   /**
-   * Chạy một node: bỏ qua nếu nằm ở nhánh không chạy, render cấu hình, chạy (hoặc mô phỏng), lưu kết quả, đánh dấu
-   * nhánh không chạy của IF / Switch. 'halt' = dừng cả workflow (Dừng workflow nếu…, lỗi không bật "tiếp tục khi lỗi"),
-   * 'failed' = node lỗi nhưng workflow chạy tiếp (trạng thái partial).
+   * Runs one node: skips it if it sits on a branch that does not run, renders the config, runs it (or simulates it), saves the result, and marks
+   * the not-run branches of IF / Switch. 'halt' = stop the whole workflow (Stop workflow if…, or an error without "tiếp tục khi lỗi" (continue on error) enabled),
+   * 'failed' = the node failed but the workflow keeps going (partial status).
    */
   private async runWorkflowNode(
     node: WorkflowNode,
@@ -1681,6 +1755,12 @@ class WorkflowEngineService {
         ? this.simulateNode(node, renderedConfig, context)
         : await this.executeNode(node, renderedConfig, context, wf);
       context.nodes[nodeId] = { output };
+      // A node that reports { success: false, error } did not do its job (Telegram / Bot / Facebook helpers return instead of
+      // throwing): it is recorded as a failure, so the run log is red and "Tiếp tục khi lỗi" decides whether the workflow goes
+      // on. The output stays readable by later steps ({{ $node.<id>.error }}).
+      if (output && typeof output === 'object' && output.success === false && typeof output.error === 'string' && output.error.trim()) {
+        throw new Error(output.error);
+      }
 
       // Simulate: capture outbound messages for the mock chat (in execution order)
       if (run.simulate && OUTBOUND_SEND_RE.test(node.type)) {
@@ -1755,7 +1835,7 @@ class WorkflowEngineService {
         return 'failed';
       }
       run.status = 'error';
-      run.errorMessage = `Node "${node.label || node.type}" lỗi: ${err.message}`;
+      run.errorMessage = tr('Node "{{v1}}" lỗi: {{message}}', { v1: node.label || node.type, message: err.message });
       return 'halt';
     }
   }
@@ -1808,7 +1888,7 @@ class WorkflowEngineService {
         fromId,
         fromName:    data.fromName      || msgData.dName            || msgData.senderInfo?.displayName
           || msgData.senderInfo?.zaloName || msgData.senderInfo?.name || (msg as any).fromName || '',
-        // Tin Zalo không mang SĐT → lấy SĐT đã lưu của người gửi (danh bạ / thông tin liên hệ)
+        // Zalo messages do not carry a phone number → use the sender's saved phone (contacts / contact info)
         fromPhone:   data.fromPhone     || (msg as any).fromPhone   || this.getSavedContactPhone(data.zaloId, fromId),
         content,
         images,
@@ -1837,21 +1917,39 @@ class WorkflowEngineService {
     if (triggerType === 'trigger.groupEvent' || triggerType.startsWith('event:groupEvent')) {
       const d = data.data || data;
       const members: any[] = d.updateMembers || [];
+      const groupId = data.groupId || d.groupId || '';
+      const memberNames = members.map((m: any) => m.dName || m.zaloName || m.id || '').filter(Boolean).join(', ');
       return {
-        groupId: data.groupId || d.groupId || '',
+        groupId,
+        // The group conversation itself: a send node right after a group event replies in the group (type 1)
+        threadId: groupId,
+        threadType: 1,
         eventType: data.eventType || '',
         actorName: members[0]?.dName || members[0]?.zaloName || '',
-        targetNames: members.map((m: any) => m.dName || m.zaloName || m.id || '').filter(Boolean).join(', '),
+        targetNames: memberNames,
+        memberNames,
+        memberIds: members.map((m: any) => String(m.id || '')).filter(Boolean).join(','),
         systemText: data.systemText || '',
         zaloId: data.zaloId || '',
       };
     }
     if (triggerType === 'trigger.reaction' || triggerType.startsWith('event:reaction')) {
+      const msgId = data.msgId || '';
+      // Group or personal conversation: from the event, otherwise from the reacted message in the DB
+      let threadType: number | '' = data.threadType !== undefined && data.threadType !== '' ? Number(data.threadType)
+        : data.isGroup !== undefined ? (data.isGroup ? 1 : 0) : '';
+      if (threadType === '' && msgId) {
+        try {
+          const stored: any = DatabaseService.getInstance().getMessageById(data.zaloId || '', String(msgId), data.threadId || undefined);
+          if (stored && stored.thread_type !== undefined && stored.thread_type !== null) threadType = Number(stored.thread_type) === 1 ? 1 : 0;
+        } catch {}
+      }
       return {
         fromId: data.uidFrom || data.fromId || '',
         fromName: data.fromName || '',
-        msgId: data.msgId || '',
+        msgId,
         threadId: data.threadId || '',
+        threadType: threadType === '' ? 0 : threadType,
         react: data.react || data.reactionType || '',
         zaloId: data.zaloId || '',
       };
@@ -1894,7 +1992,7 @@ class WorkflowEngineService {
         status:          data.status || '',
         customerName:    data.customerName || '',
         customerPhone:   data.customerPhone || '',
-        // Node tra cứu POS mặc định dùng {{ $trigger.fromPhone }} → SĐT khách của đơn / khách hàng vừa gửi
+        // The POS lookup node uses {{ $trigger.fromPhone }} by default → the customer's phone number from the order / the customer who just sent the message
         fromPhone:       data.customerPhone || '',
         total:           data.total || '',
         data:            data.data ?? {},
@@ -1932,10 +2030,12 @@ class WorkflowEngineService {
         messageId: '',
         threadId: data.threadId || '',
         fromId: data.actorFbId || '',
+        fromName: this.getSavedContactName(data.fbAccountId, data.actorFbId),
         content: '',
         body: '',
         groupEventType: data.type || '',
         participantId: data.participantId || '',
+        participantName: this.getSavedContactName(data.fbAccountId, data.participantId),
         participants: data.participants || [],
         actorFbId: data.actorFbId || '',
         attachments: null,
@@ -1946,12 +2046,15 @@ class WorkflowEngineService {
     }
     if (triggerType.startsWith('fb.trigger.')) {
       const msg = data.message || {};
+      const fbFromId = msg.userID || data.userId || data.fromId || '';
       return {
         fbAccountId: data.fbAccountId || '',
-        // fb:onMessage mang id tin ở message.messageID (fb:onReaction mới có messageId ở ngoài)
+        // fb:onMessage carries the message id in message.messageID (fb:onReaction has messageId at the top level)
         messageId: data.messageId || msg.messageID || msg.messageId || '',
         threadId: data.threadId || msg.threadId || msg.replyToID || '',
-        fromId: msg.userID || data.userId || data.fromId || '',
+        fromId: fbFromId,
+        // Facebook events carry no sender name: the saved contact name (alias first), as shown in the chat list
+        fromName: data.fromName || msg.senderName || this.getSavedContactName(data.fbAccountId, fbFromId),
         content: msg.body || '',
         body: msg.body || '',
         attachments: msg.attachments || null,
@@ -1969,7 +2072,16 @@ class WorkflowEngineService {
       const envelope = data.message || data;
       const msg = envelope.data || data.data || envelope;
       const content = String(msg.content || data.content || '');
+      // "/donhang 0901…" → {{ $trigger.command }} = donhang, {{ $trigger.args }} = 0901…
+      const { command, args } = parseBotCommand(content);
       return {
+        command,
+        args,
+        // Member join / leave (tgbot.trigger.memberUpdate) and join requests
+        memberId: data.memberId || (triggerType === 'tgbot.trigger.joinRequest' ? data.fromId || '' : ''),
+        memberName: data.memberName || (triggerType === 'tgbot.trigger.joinRequest' ? data.fromName || '' : ''),
+        memberUsername: data.memberUsername || '',
+        isBot: !!data.isBot,
         accountId: data.accountId || data.zaloId || '',
         chatId: data.chatId || envelope.threadId || data.threadId || msg.idTo || '',
         threadId: data.chatId || envelope.threadId || data.threadId || msg.idTo || '',
@@ -1991,6 +2103,28 @@ class WorkflowEngineService {
       };
     }
     // ── Telegram trigger flattening ─────────────────────────────────────────
+    if (triggerType === 'tg.trigger.groupEvent') {
+      // { zaloId, channel, groupId, eventType: member_join | member_leave, data: { updateMembers: [{ id, dName }] }, systemText }
+      const members: any[] = Array.isArray(data?.data?.updateMembers) ? data.data.updateMembers : [];
+      const chatId = String(data.groupId || data.threadId || '');
+      return {
+        accountId: data.zaloId || data.accountId || '',
+        chatId,
+        threadId: chatId,
+        groupId: chatId,
+        eventType: data.eventType || '',
+        // The member who joined / left (the first one when several were added at once)
+        fromId: String(members[0]?.id || ''),
+        fromName: String(members[0]?.dName || ''),
+        memberIds: members.map((m: any) => String(m?.id || '')).filter(Boolean).join(','),
+        memberNames: members.map((m: any) => String(m?.dName || '')).filter(Boolean).join(', '),
+        content: data.systemText || '',
+        systemText: data.systemText || '',
+        isGroup: true,
+        channel: 'telegram_user',
+        timestamp: Number(data.timestamp || Date.now()),
+      };
+    }
     if (triggerType === 'tg.trigger.message' || triggerType.startsWith('tg.trigger.')) {
       const envelope = data.message || data;
       const msg = envelope.data || data.data || envelope;
@@ -2024,10 +2158,23 @@ class WorkflowEngineService {
   }
 
   /**
-   * {{ $trigger.fromPhone }}: SĐT đã lưu của người gửi — contacts.phone (bạn bè Zalo có số, SĐT nhập ở Thông tin hội
-   * thoại / CRM); Telegram thêm số trong telegram_peers (liên hệ đã chia sẻ số). Không có → '' và các node tra cứu POS
-   * dùng biến này sẽ không tra cứu (posLookupGuard).
+   * {{ $trigger.fromPhone }}: the sender's saved phone number, contacts.phone (Zalo friends with a number, numbers entered in Conversation info /
+   * CRM); Telegram adds the number from telegram_peers (contacts that shared their number). Missing → '' and POS lookup nodes
+   * that use this variable will not look up (posLookupGuard).
    */
+  /** {{ $trigger.fromName }} for channels whose events carry no name (Facebook): the contact's alias, else its display name. */
+  private getSavedContactName(accountId: unknown, contactId: unknown): string {
+    const owner = String(accountId ?? '').trim();
+    const id = String(contactId ?? '').trim();
+    if (!owner || !id) return '';
+    try {
+      const contact: any = DatabaseService.getInstance().getContactById(owner, id);
+      return String(contact?.alias || contact?.display_name || '').trim();
+    } catch {
+      return '';
+    }
+  }
+
   private getSavedContactPhone(accountId: unknown, contactId: unknown, telegram = false): string {
     const owner = String(accountId ?? '').trim();
     const id = String(contactId ?? '').trim();
@@ -2055,7 +2202,7 @@ class WorkflowEngineService {
     }
     if (type === 'ai.generateText') {
       const prompt = String(cfg.prompt || '').replace(/\s+/g, ' ').slice(0, 80);
-      return { simulated: true, result: `[AI mô phỏng — trả lời cho: "${prompt}"]`, model: 'simulate' };
+      return { simulated: true, result: tr('[AI mô phỏng — trả lời cho: "{{prompt}}"]', { prompt }), model: 'simulate' };
     }
     if (type === 'ai.classify') {
       return { simulated: true, category: 'khác', input: String(cfg.input || '').slice(0, 80) };
@@ -2077,8 +2224,8 @@ class WorkflowEngineService {
     ctx: ExecutionContext,
     _wf: Workflow
   ): Promise<Record<string, any>> {
-    // Tra cứu khách hàng / đơn hàng POS với SĐT + mã đơn trống: không gọi API (vài nền tảng trả danh sách không lọc
-    // → workflow trả lời bằng đơn / khách của người khác) — posLookupGuard.ts.
+    // POS customer / order lookup with an empty phone number and order code: the API is not called (some platforms return an unfiltered list
+    // → the workflow would reply with someone else's order / customer, see posLookupGuard.ts.
     const posLookup = posLookupNode(node.type);
     if (posLookup && !posLookupQuery(posLookup.kind, cfg)) {
       Logger.info(`[WorkflowEngine] ${node.type}: SĐT / mã đơn trống → không tra cứu (workflow "${ctx._wfName}")`);
@@ -2104,6 +2251,7 @@ class WorkflowEngineService {
       case 'tgbot.trigger.callback':
       case 'tgbot.trigger.editedMessage':
       case 'tgbot.trigger.joinRequest':
+      case 'tgbot.trigger.memberUpdate':
         return { ...ctx.trigger };
 
       case 'action.forwardCrossChannel': {
@@ -2135,17 +2283,17 @@ class WorkflowEngineService {
 
         if (mediaPath) {
           const mediaResult = await this.sendForwardMedia(targetChannel, targetAccountId, targetChatId, mediaPath, mediaType, targetThreadType);
-          if (!mediaResult.success) throw new Error(mediaResult.error || 'Không gửi được media chuyển tiếp');
+          if (!mediaResult.success) throw new Error(mediaResult.error || tr('Không gửi được media chuyển tiếp'));
         } else if (messageId && sourceChannel === targetChannel && sourceAccountId === targetAccountId && (sourceIsMedia || !text)) {
           const sourceChatId = String(cfg.sourceChatId || ctx.trigger?.chatId || ctx.trigger?.threadId || sourceMessage?.thread_id || '');
           if (!sourceChatId) throw new Error('[action.forwardCrossChannel] sourceChatId required for native forward');
           const nativeResult = await this.forwardNativeMessage(sourceChannel, sourceAccountId, sourceChatId, targetChatId, messageId, sourceMessage);
-          if (!nativeResult.success) throw new Error(nativeResult.error || 'Không thể chuyển tiếp tin gốc');
+          if (!nativeResult.success) throw new Error(nativeResult.error || tr('Không thể chuyển tiếp tin gốc'));
           nativeForwarded = true;
         } else if (sourceIsMedia) {
-          throw new Error('Tệp nguồn chưa tải xong trong 30 giây; không thể chuyển sang kênh hoặc tài khoản khác');
+          throw new Error(tr('Tệp nguồn chưa tải xong trong 30 giây; không thể chuyển sang kênh hoặc tài khoản khác'));
         } else if (!text) {
-          throw new Error('Tin nguồn không có nội dung để chuyển tiếp');
+          throw new Error(tr('Tin nguồn không có nội dung để chuyển tiếp'));
         }
 
         // Captions and the optional compose text deliberately travel as separate
@@ -2153,14 +2301,14 @@ class WorkflowEngineService {
         const texts = [nativeForwarded ? '' : text, String(cfg.companionText || '')].map(value => value.trim()).filter(Boolean);
         for (const item of texts) {
           const result = await this.sendForwardText(targetChannel, targetAccountId, targetChatId, item, targetThreadType);
-          if (!result.success) throw new Error(result.error || 'Không gửi được nội dung chuyển tiếp');
+          if (!result.success) throw new Error(result.error || tr('Không gửi được nội dung chuyển tiếp'));
         }
         return { success: true, sourceAccountId, targetAccountId, targetChannel, mediaSent: !!mediaPath || nativeForwarded, textMessagesSent: texts.length };
       }
 
       // ── Zalo Actions ─────────────────────────────────────────────────────
       case 'zalo.sendMessage': {
-        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
+        this.getApi(ctx.pageId); // not connected → the node fails immediately, as before
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;   // guard NaN → 0
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         const continueOnError = cfg.continueOnError === true;
@@ -2168,10 +2316,12 @@ class WorkflowEngineService {
 
         // ─── Structured AI response handling ─────────────────────────────
         // Detect AI structured JSON: [{type:"text",content:"..."}, {type:"image",content:["url",...]}]
+        if (!targetThreadIds.length) return this.noRecipientsOutput(cfg, node.type);
         const segments = parseStructuredResponse(cfg.message);
         if (segments) {
           Logger.info(`[WorkflowEngine] Structured AI response: ${segments.length} segments`);
           let lastMsgId = '';
+          const tally = newSendTally();
           await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
             const api = this.getApi(ctx.pageId);
             try {
@@ -2207,39 +2357,42 @@ class WorkflowEngineService {
                   }
                 }
               }
+              tally.sent++;
             } catch (err: any) {
               Logger.warn(`[WorkflowEngine] sendMessage to ${tid} failed: ${err.message}`);
+              tally.failed++;
+              tally.lastError = err.message;
               if (!continueOnError) throw err;
             }
           });
-          return { msgId: lastMsgId, success: true, structured: true, segmentCount: segments.length };
+          tally.lastMsgId = lastMsgId;
+          return this.sendTallyOutput(tally, targetThreadIds.length, { structured: true, segmentCount: segments.length });
         }
 
-        // ─── Plain text: loop qua nhiều thread ────────────────────────────
-        let lastResult: any = { success: false, error: 'Không gửi được đến hội thoại nào' };
+        // ─── Plain text: loop over several threads ────────────────────────────
+        if (!String(cfg.message ?? '').trim()) throw new Error(tr('[zalo.sendMessage] Nội dung tin nhắn đang trống'));
+        const tally = newSendTally();
         await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
           const api = this.getApi(ctx.pageId);
           try {
             const result = await api.sendMessage({ msg: cfg.message }, tid, threadType);
-            lastResult = result;
+            tally.sent++;
+            tally.lastMsgId = (result as any)?.message?.msgId || tally.lastMsgId;
             Logger.log(`[WorkflowEngine] zalo.sendMessage to ${tid}: success=true, msgId=${(result as any)?.message?.msgId}`);
           } catch (err: any) {
             Logger.warn(`[WorkflowEngine] zalo.sendMessage to ${tid} failed: ${err.message}`);
-            lastResult = { success: false, error: err.message };
+            tally.failed++;
+            tally.lastError = err.message;
             if (!continueOnError) throw err;
           }
         });
-        return {
-          msgId: (lastResult as any)?.message?.msgId || '',
-          success: true,
-          _targetCount: targetThreadIds.length,
-        };
+        return this.sendTallyOutput(tally, targetThreadIds.length);
       }
 
       case 'zalo.sendTyping': {
-        // Gửi sự kiện "đang gõ" rồi chờ delay trước khi bước tiếp theo chạy.
-        // Mục đích: đặt thẻ này TRƯỚC zalo.sendMessage để tạo hiệu ứng tự nhiên.
-        //   threadType 0 = DM (cần destType=3), 1 = Group (không cần destType)
+        // Send the "đang gõ" (typing) event, then wait for the delay before the next step runs.
+        // Purpose: send this indicator BEFORE zalo.sendMessage so it looks natural.
+        //   threadType 0 = DM (needs destType=3), 1 = Group (no destType needed)
         const api = this.getApi(ctx.pageId);
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
         const destType   = threadType === 0 ? 3 : undefined; // DestType.User=3
@@ -2254,94 +2407,104 @@ class WorkflowEngineService {
       }
 
       case 'zalo.sendImage': {
-        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
+        this.getApi(ctx.pageId); // not connected → the node fails immediately, as before
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         const continueOnError = cfg.continueOnError === true;
-        let lastResult: any = { success: false, error: 'Không gửi được ảnh đến hội thoại nào' };
+        if (!targetThreadIds.length) return this.noRecipientsOutput(cfg, node.type);
+        if (!String(cfg.filePath || '').trim()) throw new Error(tr('[zalo.sendImage] Chưa chọn ảnh cần gửi'));
+        const tally = newSendTally();
         await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
           const api = this.getApi(ctx.pageId);
           try {
             const result = await api.sendMessage({ msg: cfg.message || '', attachments: [cfg.filePath] }, tid, threadType);
-            lastResult = result;
+            tally.sent++;
+            tally.lastMsgId = (result as any)?.attachment?.[0]?.msgId || tally.lastMsgId;
             Logger.log(`[WorkflowEngine] zalo.sendImage to ${tid}: success=true`);
           } catch (err: any) {
             Logger.warn(`[WorkflowEngine] zalo.sendImage to ${tid} failed: ${err.message}`);
-            lastResult = { success: false, error: err.message };
+            tally.failed++;
+            tally.lastError = err.message;
             if (!continueOnError) throw err;
           }
         });
-        return {
-          msgId: (lastResult as any)?.attachment?.[0]?.msgId || '',
-          success: true,
-          _targetCount: targetThreadIds.length,
-        };
+        return this.sendTallyOutput(tally, targetThreadIds.length);
       }
 
       case 'zalo.sendFile': {
-        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
+        this.getApi(ctx.pageId); // not connected → the node fails immediately, as before
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         const continueOnError = cfg.continueOnError === true;
-        let lastResult: any = { success: false, error: 'Không gửi được file đến hội thoại nào' };
+        if (!targetThreadIds.length) return this.noRecipientsOutput(cfg, node.type);
+        if (!String(cfg.filePath || '').trim()) throw new Error(tr('[zalo.sendFile] Chưa chọn file cần gửi'));
+        const tally = newSendTally();
         await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
           const api = this.getApi(ctx.pageId);
           try {
-            const result = await api.sendMessage({ msg: '', attachments: [cfg.filePath] }, tid, threadType);
-            lastResult = result;
+            await api.sendMessage({ msg: '', attachments: [cfg.filePath] }, tid, threadType);
+            tally.sent++;
             Logger.log(`[WorkflowEngine] zalo.sendFile to ${tid}: success=true`);
           } catch (err: any) {
             Logger.warn(`[WorkflowEngine] zalo.sendFile to ${tid} failed: ${err.message}`);
-            lastResult = { success: false, error: err.message };
+            tally.failed++;
+            tally.lastError = err.message;
             if (!continueOnError) throw err;
           }
         });
-        return {
-          success: true,
-          _targetCount: targetThreadIds.length,
-        };
+        return this.sendTallyOutput(tally, targetThreadIds.length);
       }
 
       case 'zalo.sendVoice': {
-        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
+        this.getApi(ctx.pageId); // not connected → the node fails immediately, as before
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         const continueOnError = cfg.continueOnError === true;
+        if (!targetThreadIds.length) return this.noRecipientsOutput(cfg, node.type);
+        const tally = newSendTally();
         await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
           const api = this.getApi(ctx.pageId);
           try {
             const up = await api.uploadAttachment([cfg.filePath], tid, threadType);
             const resp = Array.isArray(up) ? up[0] : up;
             const voiceUrl = resp?.fileUrl || '';
-            if (!voiceUrl) throw new Error('Tải tin thoại lên Zalo thất bại');
+            if (!voiceUrl) throw new Error(tr('Tải tin thoại lên Zalo thất bại'));
             await api.sendVoice({ voiceUrl }, tid, threadType);
+            tally.sent++;
           } catch (err: any) {
             Logger.warn(`[WorkflowEngine] zalo.sendVoice to ${tid} failed: ${err.message}`);
+            tally.failed++;
+            tally.lastError = err.message;
             if (!continueOnError) throw err;
           }
         });
-        return { success: true, _targetCount: targetThreadIds.length };
+        return this.sendTallyOutput(tally, targetThreadIds.length);
       }
 
       case 'zalo.sendVideo': {
-        this.getApi(ctx.pageId); // chưa kết nối → node lỗi ngay như trước
+        this.getApi(ctx.pageId); // not connected → the node fails immediately, as before
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         const continueOnError = cfg.continueOnError === true;
+        if (!targetThreadIds.length) return this.noRecipientsOutput(cfg, node.type);
+        const tally = newSendTally();
         await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
           const api = this.getApi(ctx.pageId);
           try {
             const up = await api.uploadAttachment([cfg.filePath], tid, threadType);
             const resp = Array.isArray(up) ? up[0] : up;
             const videoUrl = resp?.fileUrl || '';
-            if (!videoUrl) throw new Error('Tải video lên Zalo thất bại');
+            if (!videoUrl) throw new Error(tr('Tải video lên Zalo thất bại'));
             await api.sendVideo({ videoUrl, thumbnailUrl: videoUrl }, tid, threadType);
+            tally.sent++;
           } catch (err: any) {
             Logger.warn(`[WorkflowEngine] zalo.sendVideo to ${tid} failed: ${err.message}`);
+            tally.failed++;
+            tally.lastError = err.message;
             if (!continueOnError) throw err;
           }
         });
-        return { success: true, _targetCount: targetThreadIds.length };
+        return this.sendTallyOutput(tally, targetThreadIds.length);
       }
 
       case 'zalo.sendSticker': {
@@ -2351,33 +2514,58 @@ class WorkflowEngineService {
         const stickerId = Number(cfg.stickerId);
         if (!stickerId) throw new Error('[zalo.sendSticker] stickerId required');
         const stickersDetail = await lookupApi.getStickersDetail(stickerId);
-        if (!stickersDetail || stickersDetail.length === 0) throw new Error('Không tìm thấy sticker');
+        if (!stickersDetail || stickersDetail.length === 0) throw new Error(tr('Không tìm thấy sticker'));
         const continueOnError = cfg.continueOnError === true;
+        if (!targetThreadIds.length) return this.noRecipientsOutput(cfg, node.type);
+        const tally = newSendTally();
         await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
           const api = this.getApi(ctx.pageId);
           try {
             await api.sendSticker(stickersDetail[0], tid, threadType);
+            tally.sent++;
           } catch (err: any) {
             Logger.warn(`[WorkflowEngine] zalo.sendSticker to ${tid} failed: ${err.message}`);
+            tally.failed++;
+            tally.lastError = err.message;
             if (!continueOnError) throw err;
           }
         });
-        return { success: true, _targetCount: targetThreadIds.length };
+        return this.sendTallyOutput(tally, targetThreadIds.length);
       }
 
       case 'zalo.findUser': {
+        // zca-js 2.x: findUser(phone) → UserBasic { uid, display_name, zalo_name, avatar, … } (no `data` wrapper)
         const api = this.getApi(ctx.pageId);
-        const result: any = await api.findUser(cfg.phone);
+        const phone = String(cfg.phone || '').trim();
+        if (!phone) throw new Error(tr('[zalo.findUser] Thiếu số điện thoại'));
+        const result: any = await api.findUser(phone);
+        const user = result?.data && typeof result.data === 'object' ? result.data : (result || {});
+        const userId = String(user.uid || user.userId || '');
         return {
-          userId: result?.data?.uid || '', displayName: result?.data?.displayName || '',
-          avatar: result?.data?.avatar || '', isFriend: !!(result?.data?.isFriend),
+          userId,
+          displayName: user.display_name || user.displayName || user.zalo_name || user.zaloName || '',
+          avatar: user.avatar || '',
+          gender: user.gender ?? '',
+          isFriend: !!(user.isFr ?? user.isFriend),
+          found: !!userId,
         };
       }
 
       case 'zalo.getUserInfo': {
+        // zca-js 2.x: getUserInfo(userId) → { changed_profiles: { [uid]: profile }, unchanged_profiles, … }
         const api = this.getApi(ctx.pageId);
-        const result: any = await api.getUserInfo({ userId: cfg.userId } as any);
-        return result?.data || {};
+        const userId = String(cfg.userId || ctx.trigger?.fromId || '').trim();
+        if (!userId) throw new Error(tr('[zalo.getUserInfo] Thiếu User ID'));
+        const result: any = await api.getUserInfo(userId);
+        const profiles = result?.changed_profiles || result?.data?.changed_profiles || {};
+        const profile = profiles[userId] || profiles[`${userId}_0`] || Object.values(profiles)[0] || {};
+        return {
+          ...profile,
+          userId: String(profile.userId || profile.uid || userId),
+          displayName: profile.displayName || profile.zaloName || profile.display_name || '',
+          avatar: profile.avatar || '',
+          found: Object.keys(profile).length > 0,
+        };
       }
 
       case 'zalo.acceptFriendRequest': {
@@ -2399,29 +2587,53 @@ class WorkflowEngineService {
       }
 
       case 'zalo.addToGroup': {
+        // zca-js 2.x: addUserToGroup(memberId | memberId[], groupId)
         const api = this.getApi(ctx.pageId);
-        await api.addUserToGroup({ groupId: cfg.groupId, members: [cfg.userId] } as any);
-        return { success: true };
+        const userIds = parseIdList(String(cfg.userId || ''));
+        if (!userIds.length) throw new Error(tr('[zalo.addToGroup] Thiếu User ID'));
+        if (!cfg.groupId) throw new Error(tr('[zalo.addToGroup] Thiếu nhóm'));
+        const result: any = await api.addUserToGroup(userIds.length === 1 ? userIds[0] : userIds, String(cfg.groupId));
+        const failed: string[] = Array.isArray(result?.errorMembers) ? result.errorMembers.map(String) : [];
+        if (failed.length && failed.length === userIds.length) throw new Error(tr('Zalo không thêm được thành viên vào nhóm'));
+        return { success: true, addedCount: userIds.length - failed.length, failedIds: failed };
       }
 
       case 'zalo.removeFromGroup': {
+        // zca-js 2.x: removeUserFromGroup(memberId | memberId[], groupId)
         const api = this.getApi(ctx.pageId);
-        await api.removeUserFromGroup({ groupId: cfg.groupId, members: [cfg.userId] } as any);
-        return { success: true };
+        const userIds = parseIdList(String(cfg.userId || ''));
+        if (!userIds.length) throw new Error(tr('[zalo.removeFromGroup] Thiếu User ID'));
+        if (!cfg.groupId) throw new Error(tr('[zalo.removeFromGroup] Thiếu nhóm'));
+        await api.removeUserFromGroup(userIds.length === 1 ? userIds[0] : userIds, String(cfg.groupId));
+        return { success: true, removedCount: userIds.length };
       }
 
       case 'zalo.undoMessage': {
+        // zca-js 2.x: undo({ msgId, cliMsgId }, threadId, type). cliMsgId comes from the trigger or the stored message.
         const api = this.getApi(ctx.pageId);
-        const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
-        await api.undo({ msgId: cfg.msgId, threadId: cfg.threadId, threadType } as any);
-        return { success: true };
+        const msgId = String(cfg.msgId || '').trim();
+        if (!msgId) throw new Error(tr('[zalo.undoMessage] Thiếu ID tin nhắn'));
+        const accountId = ctx.trigger?.zaloId || ctx.pageId;
+        const stored: any = (() => { try { return DatabaseService.getInstance().getMessageById(accountId, msgId, cfg.threadId || undefined); } catch { return undefined; } })();
+        const threadId = String(cfg.threadId || stored?.thread_id || ctx.trigger?.threadId || '').trim();
+        if (!threadId) throw new Error(tr('[zalo.undoMessage] Thiếu ID hội thoại'));
+        const threadType = Number(cfg.threadType ?? stored?.thread_type ?? 0) === 1 ? 1 : 0;
+        const cliMsgId = String(cfg.cliMsgId || (msgId === String(ctx.trigger?.msgId || '') ? ctx.trigger?.cliMsgId : '') || stored?.cli_msg_id || '').trim();
+        if (!cliMsgId) throw new Error(tr('[zalo.undoMessage] Không tìm thấy Client Message ID của tin nhắn (tin chưa có trong máy)'));
+        await api.undo({ msgId, cliMsgId }, threadId, threadType);
+        return { success: true, msgId, threadId };
       }
 
       case 'zalo.setMute': {
+        // zca-js 2.x: setMute({ duration (seconds, -1 = forever), action: 1 = mute | 3 = unmute }, threadId, type)
         const api = this.getApi(ctx.pageId);
         const threadType = Number(cfg.threadType) === 1 ? 1 : 0;
-        await api.setMute(cfg.threadId, threadType, cfg.duration ?? 0, cfg.action === 'mute' ? 1 : 0);
-        return { success: true };
+        const threadId = String(cfg.threadId || ctx.trigger?.threadId || '').trim();
+        if (!threadId) throw new Error(tr('[zalo.setMute] Thiếu ID hội thoại'));
+        const mute = cfg.action !== 'unmute';
+        const seconds = Number(cfg.duration ?? 0);
+        await api.setMute(mute ? { action: 1, duration: seconds > 0 ? seconds : -1 } : { action: 3 }, threadId, threadType);
+        return { success: true, action: mute ? 'mute' : 'unmute', threadId };
       }
 
       case 'zalo.getMessageHistory': {
@@ -2441,61 +2653,60 @@ class WorkflowEngineService {
         const threadId = cfg.toThreadId;
         if (!threadId) throw new Error('[zalo.forwardMessage] toThreadId required');
 
-        const message = cfg.message || ctx.trigger?.content || '';
-        const msgId = cfg.msgId || ctx.trigger?.msgId || '';
+        const msgId = String(cfg.msgId || ctx.trigger?.msgId || '');
+        const accountId = ctx.trigger?.zaloId || ctx.pageId;
 
-        // Tra DB lấy local_paths + msg_type từ tin nhắn gốc (giống chat sendOneForward)
-        let localPaths: Record<string, string> = {};
-        let dbMsgType = '';
-        const triggerZaloId = ctx.trigger?.zaloId || ctx.pageId;
-        if (msgId && triggerZaloId) {
-          try {
-            const stored = DatabaseService.getInstance().getMessageById(triggerZaloId, msgId);
-            if (stored) {
-              dbMsgType = stored.msg_type || '';
-              if (stored.local_paths) {
-                const parsed = typeof stored.local_paths === 'string'
-                  ? JSON.parse(stored.local_paths)
-                  : stored.local_paths;
-                if (parsed && typeof parsed === 'object') localPaths = parsed;
-              }
-            }
-          } catch {}
+        // The original message from the DB (same source as "Chuyển tiếp đa kênh"): media is downloaded asynchronously, so a
+        // just-received photo / video / file waits for its local copy instead of going out as the raw attachment JSON.
+        let stored: any = null;
+        if (msgId && accountId) {
+          try { stored = DatabaseService.getInstance().getMessageById(accountId, msgId); } catch {}
         }
+        const storedType = String(stored?.msg_type || ctx.trigger?.msgType || '');
+        const isMedia = this.isForwardMedia(stored, ctx.trigger) || isZaloMediaType(storedType);
+        if (msgId && isMedia && !this.getForwardMediaPath(stored)) stored = await this.waitForForwardMedia(accountId, msgId, stored);
+        const mediaPath = this.getForwardMediaPath(stored);
 
-        // Ưu tiên gửi media (ảnh/file/video) trước - giống sendOneForward
-        const mediaPath = localPaths.file || localPaths.video || localPaths.main || localPaths.hd || '';
+        // Text: what the node sets, otherwise the readable text of the message (link card → its address, never raw JSON)
+        const rawContent = stored?.content ?? ctx.trigger?.content ?? '';
+        const message = String(cfg.message || '').trim() || this.getForwardText(rawContent) || zaloLinkText(rawContent);
+
         if (mediaPath) {
-          // Gửi media + text (caption) trong 1 lần
+          // Media + text (caption) in one call, as in chat forwarding
           await api.sendMessage({ msg: message, attachments: [mediaPath] }, threadId, threadType);
+        } else if (isMedia) {
+          throw new Error(tr('Tệp nguồn chưa tải xong trong 30 giây; không thể chuyển tiếp'));
         } else if (message) {
-          // Chỉ có text
           await api.sendMessage({ msg: message, attachments: [] }, threadId, threadType);
         } else {
-          throw new Error('[zalo.forwardMessage] Missing message content');
+          throw new Error(tr('Tin nguồn không có nội dung để chuyển tiếp'));
         }
 
-        return { success: true, msgId };
+        return { success: true, msgId, mediaSent: !!mediaPath };
       }
 
       case 'zalo.createPoll': {
+        // zca-js 2.x: createPoll({ question, options, expiredTime (ms, 0 = none), allowMultiChoices }, groupId)
         const api = this.getApi(ctx.pageId);
         const options = String(cfg.options || '').split('\n').map((s: string) => s.trim()).filter(Boolean);
-        await api.createPoll({
-          groupId: cfg.groupId,
-          question: cfg.question,
+        if (!cfg.groupId) throw new Error(tr('[zalo.createPoll] Thiếu nhóm'));
+        if (!String(cfg.question || '').trim()) throw new Error(tr('[zalo.createPoll] Thiếu câu hỏi'));
+        if (options.length < 2) throw new Error(tr('[zalo.createPoll] Cần ít nhất 2 lựa chọn'));
+        const seconds = Math.max(0, Number(cfg.expireTime ?? 0) || 0);
+        const poll: any = await api.createPoll({
+          question: String(cfg.question),
           options,
-          allowMultiVote: !!cfg.allowMultiple,
-          expiredTime: Number(cfg.expireTime ?? 0),
-        } as any);
-        return { success: true };
+          expiredTime: seconds > 0 ? Date.now() + seconds * 1000 : 0,
+          allowMultiChoices: !!cfg.allowMultiple,
+        }, String(cfg.groupId));
+        return { success: true, pollId: poll?.poll_id ?? poll?.pollId ?? '' };
       }
 
       case 'zalo.addReaction': {
         const api = this.getApi(ctx.pageId);
         const reaction = resolveZaloWorkflowReaction(cfg.reactionType ?? 'LIKE');
         if (!reaction) {
-          throw new Error('[zalo.addReaction] Reaction không hợp lệ');
+          throw new Error(tr('[zalo.addReaction] Reaction không hợp lệ'));
         }
 
         const msgId = String(cfg.msgId || ctx.trigger?.msgId || '').trim();
@@ -2523,9 +2734,9 @@ class WorkflowEngineService {
         const cliMsgId = String(
           cfg.clientMsgId || ctx.trigger?.cliMsgId || storedMessage?.cli_msg_id || msgId,
         ).trim();
-        if (!msgId) throw new Error('[zalo.addReaction] Thiếu ID tin nhắn');
-        if (!threadId) throw new Error('[zalo.addReaction] Thiếu ID hội thoại');
-        if (!cliMsgId) throw new Error('[zalo.addReaction] Thiếu Client Message ID của tin nhắn');
+        if (!msgId) throw new Error(tr('[zalo.addReaction] Thiếu ID tin nhắn'));
+        if (!threadId) throw new Error(tr('[zalo.addReaction] Thiếu ID hội thoại'));
+        if (!cliMsgId) throw new Error(tr('[zalo.addReaction] Thiếu Client Message ID của tin nhắn'));
 
         await api.addReaction(reaction, {
           data: {
@@ -2539,7 +2750,7 @@ class WorkflowEngineService {
       }
 
       case 'zalo.assignLabel': {
-        // Giải mã labelIds: mảng "source:id" (new) hoặc fallback về labelId/labelSource cũ
+        // Decode labelIds: an array of "source:id" (new), or fall back to the old labelId/labelSource
         const rawIds: string[] = Array.isArray(cfg.labelIds) && cfg.labelIds.length > 0
           ? cfg.labelIds
           : (cfg.labelId ? [`${cfg.labelSource || 'local'}:${cfg.labelId}`] : []);
@@ -2554,7 +2765,7 @@ class WorkflowEngineService {
           }
           return { success: true, source: 'local', labelIds: localIds, threadId: cfg.threadId };
         } else {
-          // Zalo: chỉ gắn 1 nhãn / hội thoại
+          // Zalo: only one label per conversation
           const api = this.getApi(ctx.pageId);
           const zaloEntry = rawIds.find(v => typeof v === 'string' && v.startsWith('zalo:')) || rawIds[0] || '';
           const zaloRawId = typeof zaloEntry === 'string' && zaloEntry.includes(':')
@@ -2564,13 +2775,17 @@ class WorkflowEngineService {
           const labelData = labelsRes?.labelData || labelsRes?.data?.labelData || [];
           const version = labelsRes?.version || labelsRes?.data?.version || 0;
           const label = labelData.find((l: any) => String(l.id) === String(zaloRawId));
-          if (label) {
-            const existingMembers = label.memberIds || [];
-            if (!existingMembers.includes(cfg.threadId)) {
-              label.memberIds = [...existingMembers, cfg.threadId];
+          if (!label) throw new Error(tr('[zalo.assignLabel] Không tìm thấy nhãn Zalo đã chọn (có thể đã bị xoá)'));
+          // Zalo keeps one label per conversation: take the conversation out of its other labels first
+          const threadId = String(cfg.threadId);
+          for (const other of labelData) {
+            if (other !== label && Array.isArray(other.memberIds) && other.memberIds.map(String).includes(threadId)) {
+              other.memberIds = other.memberIds.filter((id: any) => String(id) !== threadId);
             }
-            await (api as any).updateLabels({ labelData, version });
           }
+          const existingMembers: any[] = label.memberIds || [];
+          if (!existingMembers.map(String).includes(threadId)) label.memberIds = [...existingMembers, threadId];
+          await (api as any).updateLabels({ labelData, version });
           return { success: true, source: 'zalo', labelId: zaloRawId, threadId: cfg.threadId };
         }
       }
@@ -2590,7 +2805,7 @@ class WorkflowEngineService {
           }
           return { success: true, source: 'local', labelIds: localIds, threadId: cfg.threadId };
         } else {
-          // Zalo: gỡ 1 nhãn / hội thoại
+          // Zalo: remove one label from the conversation
           const api = this.getApi(ctx.pageId);
           const zaloEntry = rawIds.find(v => typeof v === 'string' && v.startsWith('zalo:')) || rawIds[0] || '';
           const zaloRawId = typeof zaloEntry === 'string' && zaloEntry.includes(':')
@@ -2614,35 +2829,18 @@ class WorkflowEngineService {
         if (!friendId) throw new Error('[zalo.changeAliasName] friendId required');
         if (cfg.alias === undefined || cfg.alias === '') throw new Error('[zalo.changeAliasName] alias required');
         const alias = String(cfg.alias);
-        // 1. Gọi API Zalo đổi tên gợi nhớ
+        // 1. Call the Zalo API to change the alias name
         await api.changeFriendAlias(alias, String(friendId));
-        // 2. Cập nhật DB local (giống IPC handler db:setContactAlias)
+        // 2. Update the local DB (same as the db:setContactAlias IPC handler)
         DatabaseService.getInstance().setContactAlias(ctx.pageId, String(friendId), alias);
-        // 3. Broadcast cho nhân viên đang kết nối
+        // 3. Broadcast to the employees who are connected
         EventBroadcaster.emit('db:contactAliasChanged', { ownerZaloId: ctx.pageId, contactId: String(friendId), alias });
         return { success: true, friendId, alias };
       }
 
       // ── Logic Nodes ──────────────────────────────────────────────────────
       case 'logic.if': {
-        const left  = String(cfg.left  ?? '');
-        const right = String(cfg.right ?? '');
-        const op    = cfg.operator ?? 'equals';
-        let result = false;
-        switch (op) {
-          case 'equals':       result = left === right; break;
-          case 'not_equals':   result = left !== right; break;
-          case 'contains':     result = left.includes(right); break;
-          case 'not_contains': result = !left.includes(right); break;
-          case 'starts_with':  result = left.startsWith(right); break;
-          case 'ends_with':    result = left.endsWith(right); break;
-          case 'greater_than': result = this.compareValues(left, right) > 0; break;
-          case 'less_than':    result = this.compareValues(left, right) < 0; break;
-          case 'is_empty':     result = !left || left.trim() === ''; break;
-          case 'not_empty':    result = !!left && left.trim() !== ''; break;
-          case 'regex':
-            try { result = new RegExp(right, 'i').test(left); } catch { result = false; } break;
-        }
+        const result = evaluateCondition(cfg.left, cfg.operator ?? 'equals', cfg.right);
         ctx.variables[`__if_${node.id}`] = result;
         return { result, branch: result ? 'true' : 'false' };
       }
@@ -2650,12 +2848,13 @@ class WorkflowEngineService {
       case 'logic.switch': {
         const val = String(cfg.value ?? '');
         const cases: Array<{ match: string; label: string }> = cfg.cases || [];
-        let matchedHandle = cfg.defaultLabel || 'default';
-        for (const c of cases) {
-          if (String(c.match) === val) { matchedHandle = c.label; break; }
-        }
+        // Exact match first (old behaviour); then ignoring case and surrounding spaces / punctuation, so "Hỏi giá." or
+        // "hỏi giá" from an AI step still reaches the "Hỏi giá" branch
+        const exact = cases.find(c => String(c.match) === val);
+        const loose = exact ? undefined : cases.find(c => looseText(String(c.match)) !== '' && looseText(String(c.match)) === looseText(val));
+        const matchedHandle = (exact || loose)?.label || cfg.defaultLabel || 'default';
         ctx.variables[`__switch_${node.id}`] = matchedHandle;
-        return { value: val, matchedHandle };
+        return { value: val, matchedHandle, matched: !!(exact || loose) };
       }
 
       case 'logic.wait': {
@@ -2670,30 +2869,12 @@ class WorkflowEngineService {
       }
 
       case 'logic.stopIf': {
-        const left  = String(cfg.left  ?? '');
-        const right = String(cfg.right ?? '');
-        const op    = cfg.operator ?? 'equals';
-        let stop = false;
-        switch (op) {
-          case 'equals':       stop = left === right; break;
-          case 'not_equals':   stop = left !== right; break;
-          case 'contains':     stop = left.includes(right); break;
-          case 'not_contains': stop = !left.includes(right); break;
-          case 'starts_with':  stop = left.startsWith(right); break;
-          case 'ends_with':    stop = left.endsWith(right); break;
-          case 'greater_than': stop = this.compareValues(left, right) > 0; break;
-          case 'less_than':    stop = this.compareValues(left, right) < 0; break;
-          case 'is_empty':     stop = !left || left.trim() === ''; break;
-          case 'not_empty':    stop = !!left && left.trim() !== ''; break;
-          case 'regex':
-            try { stop = new RegExp(right, 'i').test(left); } catch { stop = false; } break;
-        }
-        if (stop) throw new Error('__STOP__');
+        if (evaluateCondition(cfg.left, cfg.operator ?? 'equals', cfg.right)) throw new Error('__STOP__');
         return { stopped: false };
       }
 
       case 'logic.forEach': {
-        // Vòng lặp chạy ở runNodeSequence / runForEachLoop; node này chỉ đọc danh sách.
+        // The loop runs in runNodeSequence / runForEachLoop; this node only reads the list.
         const items = this.resolveForEachItems(node.config?.array, cfg.array, ctx);
         return { items, count: items.length, processed: Math.min(items.length, forEachItemLimit(node.config?.maxItems)) };
       }
@@ -2717,13 +2898,18 @@ class WorkflowEngineService {
       }
 
       case 'data.dateFormat': {
-        const d = cfg.date ? new Date(cfg.date) : new Date();
+        // A numeric string is a timestamp (seconds or milliseconds), not a date text
+        const raw = String(cfg.date ?? '').trim();
+        const num = /^\d{9,13}$/.test(raw) ? Number(raw) : NaN;
+        const d = !raw ? new Date() : Number.isFinite(num) ? new Date(num < 1e12 ? num * 1000 : num) : new Date(raw);
+        if (Number.isNaN(d.getTime())) throw new Error(tr('[data.dateFormat] Ngày giờ không hợp lệ: {{v1}}', { v1: raw }));
         const opts: Intl.DateTimeFormatOptions = { timeZone: 'Asia/Ho_Chi_Minh' };
         if (cfg.format === 'full') { opts.dateStyle = 'full'; opts.timeStyle = 'short'; }
         else if (cfg.format === 'date') { opts.dateStyle = 'short'; }
         else if (cfg.format === 'time') { opts.timeStyle = 'short'; }
         else { opts.dateStyle = 'short'; opts.timeStyle = 'short'; }
-        return { result: new Intl.DateTimeFormat('vi-VN', opts).format(d), timestamp: d.getTime() };
+        // Text sent to customers: the node's language (Vietnamese by default), never the app's UI language
+        return { result: new Intl.DateTimeFormat(workflowLocale(cfg.locale), opts).format(d), timestamp: d.getTime() };
       }
 
       case 'data.randomPick': {
@@ -2890,14 +3076,14 @@ class WorkflowEngineService {
             Logger.info(`[WorkflowEngine] AI assistant response: success=${!!result.result}, length=${result.result?.length || 0}, preview="${(result.result || '').substring(0, 200)}", tokens=${result.totalTokens}`);
             return { result: result.result, totalTokens: result.totalTokens, model: 'assistant' };
           } catch (e: any) {
-            throw new Error(`Trợ lý AI lỗi: ${e.message}`);
+            throw new Error(tr('Trợ lý AI lỗi: {{message}}', { message: e.message }));
           }
         }
 
         const messages: any[] = [];
         if (cfg.systemPrompt) messages.push({ role: 'system', content: cfg.systemPrompt });
 
-        // ── Chat history (ngữ cảnh cuộc hội thoại) ────────────────────────
+        // ── Chat history (conversation context) ────────────────────────
         if (cfg.chatHistory) {
           try {
             let history: any[] = [];
@@ -2955,10 +3141,11 @@ class WorkflowEngineService {
               { role: 'user', content: cfg.input },
             ];
             const result = await AIAssistantService.getInstance().chat(cfg.assistantId, chatMsgs);
-            const category = (result.result || '').trim();
-            return { category, input: cfg.input };
+            const raw = (result.result || '').trim();
+            const category = matchCategory(raw, categories);
+            return { category: category || raw, matched: !!category, raw, input: cfg.input };
           } catch (e: any) {
-            throw new Error(`Trợ lý AI lỗi: ${e.message}`);
+            throw new Error(tr('Trợ lý AI lỗi: {{message}}', { message: e.message }));
           }
         }
 
@@ -2975,12 +3162,34 @@ class WorkflowEngineService {
           maxTokens: 30,
           temperature: 0,
         });
-        return { category: response.result.trim(), input: cfg.input, model: response.model };
+        // The model may answer "Hỏi giá." / "hỏi giá" / "Danh mục: Hỏi giá": map it back to the exact category name so
+        // a Switch on {{ $node.<id>.category }} reaches the right branch
+        const raw = String(response.result || '').trim();
+        const category = matchCategory(raw, categories);
+        return { category: category || raw, matched: !!category, raw, input: cfg.input, model: response.model };
       }
 
       // ── Notify: Telegram ─────────────────────────────────────────────────
       case 'notify.telegram': {
-        // Resolve botToken: ưu tiên Integration, fallback cfg.botToken (legacy)
+        // 1. A Telegram Bot account connected in Deplao: sent through it, no token to paste
+        const botAccountId = String(cfg.botAccountId || '').trim();
+        if (botAccountId) {
+          const botMessage = this.resolveMessageFromConfigOrUpstream(node, cfg, ctx, _wf);
+          if (!botMessage.text) {
+            throw new Error(tr('[notify.telegram] Nội dung thông báo đang trống. Nhập nội dung hoặc nối một node tạo văn bản ngay trước node này.'));
+          }
+          if (!String(cfg.chatId || '').trim()) throw new Error(tr('[notify.telegram] Thiếu Chat ID nhận thông báo'));
+          const sent = await TelegramBot.sendMessage({
+            accountId: botAccountId,
+            chatId: String(cfg.chatId).trim(),
+            text: botMessage.text,
+            ...(cfg.parseMode ? { parseMode: cfg.parseMode } : {}),
+          });
+          if (!sent.success) throw new Error(sent.error || tr('Không gửi được tin qua Bot Telegram'));
+          return { success: true, messageId: sent.messageId || '', contentSource: botMessage.source };
+        }
+
+        // 2. Telegram Bot integration, or the bot token typed in the node (older workflows)
         let botToken = cfg.botToken || '';
         if (cfg.integrationId) {
           try {
@@ -2995,11 +3204,11 @@ class WorkflowEngineService {
           }
         }
         if (!botToken) {
-          return { success: false, error: 'Thiếu Bot Token. Hãy cấu hình Integration Telegram Bot trong Settings.' };
+          throw new Error(tr('Thiếu Bot Telegram: chọn Bot đã kết nối, hoặc cấu hình Integration Telegram Bot.'));
         }
         const message = this.resolveMessageFromConfigOrUpstream(node, cfg, ctx, _wf);
         if (!message.text) {
-          throw new Error('[notify.telegram] Nội dung thông báo đang trống. Nhập nội dung hoặc nối một node tạo văn bản ngay trước node này.');
+          throw new Error(tr('[notify.telegram] Nội dung thông báo đang trống. Nhập nội dung hoặc nối một node tạo văn bản ngay trước node này.'));
         }
         const payload: Record<string, any> = {
           chat_id: cfg.chatId,
@@ -3020,13 +3229,20 @@ class WorkflowEngineService {
 
       // ── Notify: Discord ───────────────────────────────────────────────────
       case 'notify.discord': {
+        if (!String(cfg.webhookUrl || '').trim()) throw new Error(tr('[notify.discord] Thiếu Webhook URL'));
+        // Same as Telegram: an empty message takes the text of the step right before
+        const discordMessage = this.resolveMessageFromConfigOrUpstream(node, cfg, ctx, _wf);
+        if (!discordMessage.text) {
+          throw new Error(tr('[notify.discord] Nội dung thông báo đang trống. Nhập nội dung hoặc nối một node tạo văn bản ngay trước node này.'));
+        }
         const payload: Record<string, any> = {
-          content: cfg.message,
+          // Discord rejects messages over 2000 characters
+          content: discordMessage.text.length > 2000 ? `${discordMessage.text.slice(0, 1997)}...` : discordMessage.text,
           username: cfg.username || 'DepLao Bot',
         };
         if (cfg.avatarUrl) payload.avatar_url = cfg.avatarUrl;
         await axios.post(cfg.webhookUrl, payload, { timeout: 10000 });
-        return { success: true };
+        return { success: true, contentSource: discordMessage.source };
       }
 
       // ── Notify: Email ─────────────────────────────────────────────────────
@@ -3037,7 +3253,9 @@ class WorkflowEngineService {
           port: Number(cfg.smtpPort || 587),
           secure: Number(cfg.smtpPort) === 465,
           auth: { user: cfg.smtpUser, pass: cfg.smtpPass },
-          tls: { rejectUnauthorized: false },
+          // Certificates are checked (the SMTP password travels over this connection); only a self-signed mail server
+          // the user explicitly trusts skips the check
+          tls: { rejectUnauthorized: !(cfg.allowInvalidCert === true || cfg.allowInvalidCert === 'true') },
         });
         const info = await transporter.sendMail({
           from: cfg.from || cfg.smtpUser,
@@ -3114,7 +3332,8 @@ class WorkflowEngineService {
           } catch {}
           orderObj = {
             ...(cfg.branchId ? { branchId: Number(cfg.branchId) } : {}),
-            ...(cfg.customerId ? { customerId: cfg.customerId } : {}),
+            // KiotViet documents the order's customer as customer{ id, … }; customerId kept for older behaviour
+            ...(cfg.customerId ? { customerId: cfg.customerId, customer: { id: Number(cfg.customerId) || cfg.customerId } } : {}),
             orderDetails,
             discount: Number(cfg.discount || 0),
             description: cfg.note || undefined,
@@ -3250,12 +3469,22 @@ class WorkflowEngineService {
           ...(cfg.toName ? { to_name: cfg.toName } : {}),
           ...(cfg.toPhone ? { to_phone: cfg.toPhone } : {}),
           ...(cfg.toAddress ? { to_address: cfg.toAddress } : {}),
+          // GHN addresses by name (developer.ghn.vn): ward + province; a district name means an old 3-level address
+          // (GHNAdapter.prepareGhnOrder sets is_new_to_address)
+          ...(cfg.toWardName ? { to_ward_name: cfg.toWardName } : {}),
+          ...(cfg.toDistrictName ? { to_district_name: cfg.toDistrictName } : {}),
+          ...(cfg.toProvinceName ? { to_province_name: cfg.toProvinceName } : {}),
+          // Legacy id fields of older workflows
           ...(cfg.toDistrictId ? { to_district_id: Number(cfg.toDistrictId) } : {}),
           ...(cfg.toWardCode ? { to_ward_code: cfg.toWardCode } : {}),
           ...(cfg.weight ? { weight: Number(cfg.weight) } : {}),
           ...(cfg.serviceTypeId ? { service_type_id: Number(cfg.serviceTypeId) } : {}),
           ...(cfg.codAmount != null && String(cfg.codAmount) !== '' ? { cod_amount: Number(cfg.codAmount) } : {}),
         };
+        // Required by GHN; the advanced JSON wins when it already has them
+        if (orderObj.required_note == null && cfg.requiredNote) orderObj.required_note = cfg.requiredNote;
+        if (orderObj.payment_type_id == null && cfg.paymentTypeId) orderObj.payment_type_id = Number(cfg.paymentTypeId);
+        if (!orderObj.content && !(Array.isArray(orderObj.items) && orderObj.items.length) && cfg.content) orderObj.content = cfg.content;
         const result = await IntegrationRegistry.executeActionByType('ghn', 'createOrder', {
           order: orderObj,
         });
@@ -3324,10 +3553,6 @@ class WorkflowEngineService {
         };
       }
 
-      // ── Telegram ──────────────────────────────────────────────────────────────
-      case 'tg.trigger.message':
-        return { ...ctx.trigger };
-
       // ── Facebook ─────────────────────────────────────────────────────────────
       case 'fb.trigger.message':
       case 'fb.trigger.image':
@@ -3347,8 +3572,8 @@ class WorkflowEngineService {
         const targetThreadIds = this.resolveTargetThreadIds(cfg, ctx.trigger?.threadId);
         if (!targetThreadIds.length) throw new Error('[fb.action.sendMessage] threadId/threadIds required');
 
-        // Parse structured AI response (giống zalo.sendMessage) - nếu là JSON array segments
-        // thì join text lại thành 1 message, tránh gửi raw JSON ra cho khách
+        // Parse the structured AI response (same as zalo.sendMessage) - if it is a JSON array of segments
+        // join the text back into 1 message, so raw JSON is not sent to the customer
         const segments = parseStructuredResponse(cfg.message);
         const finalMessage = segments
           ? segments
@@ -3358,8 +3583,8 @@ class WorkflowEngineService {
           : String(cfg.message || '');
 
         const continueOnError = cfg.continueOnError === true;
-        let lastResult: any = { success: false, error: 'Không gửi được đến hội thoại nào' };
-        // Nhiều người nhận: giãn cách từng người (Facebook dễ bắt xác minh khi gửi dồn); một người nhận gửi ngay như cũ
+        const tally = newSendTally();
+        // Several recipients: space out each one (Facebook easily triggers verification when sending in bursts); a single recipient is sent immediately, as before
         await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (tid) => {
           try {
             const result = await FacebookSendService.sendTextMessage({
@@ -3371,23 +3596,19 @@ class WorkflowEngineService {
                 : ctx.trigger?.typeChat,
               replyToMessageId: cfg.replyToMessageId,
             });
-            lastResult = result;
             Logger.log(`[WorkflowEngine] fb.action.sendMessage to ${tid}: success=${result.success}, msgId=${result.messageId}`);
-            if (!result.success && !continueOnError) {
-              throw new Error(result.error || `Không gửi được tin nhắn đến ${tid}`);
-            }
+            if (!result.success) throw new Error(result.error || tr('Không gửi được tin nhắn đến {{tid}}', { tid }));
+            tally.sent++;
+            tally.lastMsgId = result.messageId || tally.lastMsgId;
           } catch (err: any) {
             Logger.warn(`[WorkflowEngine] fb.action.sendMessage to ${tid} failed: ${err.message}`);
-            lastResult = { success: false, error: err.message };
+            tally.failed++;
+            tally.lastError = err.message;
             if (!continueOnError) throw err;
           }
         }, { queueKey: `fb:${accountId}`, single: 'direct' });
-        return {
-          success: lastResult.success,
-          messageId: lastResult.messageId,
-          ...(lastResult.error ? { error: lastResult.error } : {}),
-          _targetCount: targetThreadIds.length,
-        };
+        const out = this.sendTallyOutput(tally, targetThreadIds.length);
+        return { ...out, messageId: tally.lastMsgId || undefined };
       }
 
       case 'fb.action.addReaction': {
@@ -3400,7 +3621,7 @@ class WorkflowEngineService {
         // FacebookService resolves the message's actual thread and original
         // sender from DB, then chooses encrypted or group reaction safely.
         const result = await service.addReaction(String(messageId), cfg.emoji || '👍', cfg.action || 'add');
-        this.assertFacebookActionSucceeded('thả reaction', result);
+        this.assertFacebookActionSucceeded(tr('thả reaction'), result);
         return { success: result.success, ...(result.error ? { error: result.error } : {}) };
       }
 
@@ -3436,7 +3657,7 @@ class WorkflowEngineService {
             filePath = temporaryPath;
           }
 
-          let lastResult: any = { success: false, error: 'Không gửi được đến hội thoại nào' };
+          const tally = newSendTally();
           await this.forEachRecipient(cfg, ctx, _wf, targetThreadIds, async (threadId) => {
             try {
               const result = await FacebookSendService.sendAttachment({
@@ -3446,25 +3667,19 @@ class WorkflowEngineService {
                 body: caption || undefined,
                 typeChat: suppliedTypeChat,
               });
-              lastResult = result;
-              if (result.success) {
-                Logger.log(`[WorkflowEngine] fb.action.sendImage to ${threadId}: success, msgId=${result.messageId}`);
-              } else {
-                Logger.warn(`[WorkflowEngine] fb.action.sendImage to ${threadId} failed: ${result.error}`);
-                if (!continueOnError) throw new Error(result.error || 'Không gửi được tệp đính kèm');
-              }
+              if (!result.success) throw new Error(result.error || tr('Không gửi được tệp đính kèm'));
+              Logger.log(`[WorkflowEngine] fb.action.sendImage to ${threadId}: success, msgId=${result.messageId}`);
+              tally.sent++;
+              tally.lastMsgId = result.messageId || tally.lastMsgId;
             } catch (err: any) {
               Logger.warn(`[WorkflowEngine] fb.action.sendImage to ${threadId} failed: ${err.message}`);
-              lastResult = { success: false, error: err.message };
+              tally.failed++;
+              tally.lastError = err.message;
               if (!continueOnError) throw err;
             }
           }, { queueKey: `fb:${accountId}`, single: 'direct' });
-          return {
-            success: lastResult.success,
-            messageId: lastResult.messageId,
-            ...(lastResult.error ? { error: lastResult.error } : {}),
-            _targetCount: targetThreadIds.length,
-          };
+          const out = this.sendTallyOutput(tally, targetThreadIds.length);
+          return { ...out, messageId: tally.lastMsgId || undefined };
         } finally {
           if (temporaryPath) {
             try { fs.unlinkSync(temporaryPath); } catch {}
@@ -3491,7 +3706,7 @@ class WorkflowEngineService {
         const t2 = cfg.threadId || ctx.trigger?.threadId;
         if (!t2) throw new Error('[fb.action.markAsRead] threadId required');
         const result = await s2.markReadOnServer(String(t2));
-        this.assertFacebookActionSucceeded('đánh dấu đã đọc', result);
+        this.assertFacebookActionSucceeded(tr('đánh dấu đã đọc'), result);
         return { success: result.success, ...(result.error ? { error: result.error } : {}) };
       }
 
@@ -3499,21 +3714,35 @@ class WorkflowEngineService {
         const rawAccountId = cfg.accountId || ctx.trigger?.fbAccountId || ctx.pageId;
         if (!rawAccountId) throw new Error('[fb.action.forward] accountId required');
         const accountId = this.resolveFBAccountId(rawAccountId);
-        const threadId = cfg.targetThreadId || ctx.trigger?.threadId;
-        if (!threadId) throw new Error('[fb.action.forward] targetThreadId required');
-        const message = cfg.message || ctx.trigger?.content || '';
-        if (!message) throw new Error('[fb.action.forward] Missing message content');
-        // Resend như tin nhắn mới - giống behavior chat (sendOneForward), không dùng forwardMessage API riêng
-        const result = await FacebookSendService.sendTextMessage({
-          accountId,
-          threadId: String(threadId),
-          body: String(message),
-        });
-        this.assertFacebookActionSucceeded('gửi lại nội dung', result);
+        const threadId = String(cfg.targetThreadId || '').trim();
+        if (!threadId) throw new Error(tr('[fb.action.forward] Chưa chọn hội thoại nhận'));
+        // The message picked in the node (or the trigger message), read from the DB like "Chuyển tiếp đa kênh": its media is
+        // re-sent from the local copy and its text is the readable caption, never attachment JSON
+        const messageId = String(cfg.messageId || ctx.trigger?.messageId || '').trim();
+        let stored: any = null;
+        if (messageId) {
+          try { stored = DatabaseService.getInstance().getMessageById(accountId, messageId); } catch {}
+        }
+        const sameAsTrigger = !messageId || messageId === String(ctx.trigger?.messageId || '');
+        const triggerForMedia = sameAsTrigger ? ctx.trigger : undefined;
+        const isMedia = this.isForwardMedia(stored, triggerForMedia);
+        if (messageId && isMedia && !this.getForwardMediaPath(stored)) stored = await this.waitForForwardMedia(accountId, messageId, stored);
+        const mediaPath = this.getForwardMediaPath(stored);
+        const text = String(cfg.message || '').trim()
+          || this.getForwardText(stored?.content ?? (sameAsTrigger ? ctx.trigger?.content : '') ?? '');
+
+        const result = mediaPath
+          ? await FacebookSendService.sendAttachment({ accountId, threadId, filePath: mediaPath, body: text || undefined })
+          : isMedia
+            ? { success: false, error: tr('Tệp nguồn chưa tải xong trong 30 giây; không thể chuyển tiếp') }
+            : text
+              ? await FacebookSendService.sendTextMessage({ accountId, threadId, body: text })
+              : { success: false, error: tr('Tin nguồn không có nội dung để chuyển tiếp') };
+        this.assertFacebookActionSucceeded(tr('gửi lại nội dung'), result);
         return {
           success: result.success,
-          messageId: result.messageId,
-          ...(result.error ? { error: result.error } : {}),
+          messageId: (result as any).messageId,
+          mediaSent: !!mediaPath,
         };
       }
 
@@ -3527,7 +3756,7 @@ class WorkflowEngineService {
         const t3 = cfg.threadId || ctx.trigger?.threadId;
         if (!t3) throw new Error('[fb.action.pin] threadId required');
         const r2 = await s4.pinMessage(String(m2), String(t3));
-        this.assertFacebookActionSucceeded('ghim tin nhắn', r2);
+        this.assertFacebookActionSucceeded(tr('ghim tin nhắn'), r2);
         return { success: r2.success };
       }
 
@@ -3541,7 +3770,7 @@ class WorkflowEngineService {
         const t4 = cfg.threadId || ctx.trigger?.threadId;
         if (!t4) throw new Error('[fb.action.unpin] threadId required');
         const r3 = await s5.unpinMessage(String(m3), String(t4));
-        this.assertFacebookActionSucceeded('bỏ ghim tin nhắn', r3);
+        this.assertFacebookActionSucceeded(tr('bỏ ghim tin nhắn'), r3);
         return { success: r3.success };
       }
 
@@ -3555,7 +3784,7 @@ class WorkflowEngineService {
         if (!cfg.question) throw new Error('[fb.action.createPoll] question required');
         const opts: string[] = String(cfg.options || '').split('\n').map((x: string) => x.trim()).filter(Boolean);
         const r4 = await s6.createPoll(String(t5), String(cfg.question), opts);
-        this.assertFacebookActionSucceeded('tạo bình chọn', r4);
+        this.assertFacebookActionSucceeded(tr('tạo bình chọn'), r4);
         return { success: r4.success, pollId: r4.pollId };
       }
 
@@ -3567,7 +3796,7 @@ class WorkflowEngineService {
         const u1 = cfg.userId || ctx.trigger?.fromId;
         if (!u1) throw new Error('[fb.action.block] userId required');
         const r5 = await s7.blockUser(String(u1));
-        this.assertFacebookActionSucceeded('chặn người dùng', r5);
+        this.assertFacebookActionSucceeded(tr('chặn người dùng'), r5);
         return { success: r5.success };
       }
 
@@ -3579,7 +3808,7 @@ class WorkflowEngineService {
         const m4 = cfg.messageId || ctx.trigger?.messageId;
         if (!m4) throw new Error('[fb.action.unsend] messageId required');
         const r6 = await s8.unsendMessage(String(m4));
-        this.assertFacebookActionSucceeded('thu hồi tin nhắn', r6);
+        this.assertFacebookActionSucceeded(tr('thu hồi tin nhắn'), r6);
         return { success: r6.success };
       }
 
@@ -3593,7 +3822,7 @@ class WorkflowEngineService {
         if (!cfg.text && !cfg.newText) throw new Error('[fb.action.editMessage] text required');
         const editText = cfg.text || cfg.newText || '';
         const r7 = await s9.editMessage(String(m5), String(editText));
-        this.assertFacebookActionSucceeded('chỉnh sửa tin nhắn', r7);
+        this.assertFacebookActionSucceeded(tr('chỉnh sửa tin nhắn'), r7);
         return { success: r7.success };
       }
 
@@ -3606,7 +3835,7 @@ class WorkflowEngineService {
         if (!t6) throw new Error('[fb.action.changeName] threadId required');
         if (!cfg.name) throw new Error('[fb.action.changeName] name required');
         const r8 = await s10.changeThreadName(String(t6), String(cfg.name));
-        this.assertFacebookActionSucceeded('đổi tên nhóm', r8);
+        this.assertFacebookActionSucceeded(tr('đổi tên nhóm'), r8);
         return { success: r8 };
       }
 
@@ -3619,7 +3848,7 @@ class WorkflowEngineService {
         if (!t7) throw new Error('[fb.action.changeEmoji] threadId required');
         if (!cfg.emoji) throw new Error('[fb.action.changeEmoji] emoji required');
         const r9 = await s11.changeThreadEmoji(String(t7), String(cfg.emoji));
-        this.assertFacebookActionSucceeded('đổi biểu tượng nhóm', r9);
+        this.assertFacebookActionSucceeded(tr('đổi biểu tượng nhóm'), r9);
         return { success: r9 };
       }
 
@@ -3634,7 +3863,7 @@ class WorkflowEngineService {
         if (!u2) throw new Error('[fb.action.changeNickname] userId required');
         if (cfg.nickname === undefined) throw new Error('[fb.action.changeNickname] nickname required');
         const r10 = await s12.changeNickname(String(t8), String(u2), String(cfg.nickname));
-        this.assertFacebookActionSucceeded('đổi biệt danh', r10);
+        this.assertFacebookActionSucceeded(tr('đổi biệt danh'), r10);
         return { success: r10 };
       }
 
@@ -3784,8 +4013,9 @@ class WorkflowEngineService {
         if (!tgAcc11) throw new Error('[tg.promoteMember] accountId required');
         const tgChat11 = cfg.chatId || ctx.trigger?.chatId || ctx.trigger?.threadId;
         if (!tgChat11) throw new Error('[tg.promoteMember] chatId required');
-        const promoteUserId = cfg.userId || ctx.trigger?.fromId;
-        if (!promoteUserId) throw new Error('[tg.promoteMember] userId required');
+        // No fallback to the trigger sender: an empty field would make whoever wrote the message an admin
+        const promoteUserId = String(cfg.userId || '').trim();
+        if (!promoteUserId) throw new Error(tr('[tg.promoteMember] Thiếu User ID cần thăng / hạ quyền'));
         const isAdmin = cfg.isAdmin === true || cfg.isAdmin === 'true';
         const tgPromoteResult = await this.promoteTelegramMember(tgAcc11, String(tgChat11), String(promoteUserId), isAdmin);
         return { success: tgPromoteResult.success, ...(tgPromoteResult.error ? { error: tgPromoteResult.error } : {}) };
@@ -3923,8 +4153,9 @@ class WorkflowEngineService {
         const chatId = cfg.chatId || ctx.trigger?.chatId;
         if (!chatId) throw new Error('[tgbot.action.sendMessage] chatId required');
         const resolvedMessage = this.resolveMessageFromConfigOrUpstream(node, cfg, ctx, _wf);
-        const text = resolvedMessage.text || ctx.trigger?.content || '';
-        if (!text) throw new Error('[tgbot.action.sendMessage] message required');
+        // No fallback to the customer's own text: an empty node used to echo the message back to them
+        const text = resolvedMessage.text;
+        if (!text) throw new Error(tr('[tgbot.action.sendMessage] Nội dung tin nhắn đang trống. Nhập nội dung hoặc nối một node tạo văn bản ngay trước node này.'));
 
         const TelegramBotChannel = require('../telegram/bot/TelegramBotChannelService');
         const replyMarkup = this.buildTelegramBotReplyMarkup(cfg.keyboard);
@@ -3934,7 +4165,7 @@ class WorkflowEngineService {
           text,
           replyMarkup,
         });
-        return { success: result?.success, messageId: result?.messageId, contentSource: resolvedMessage.text ? resolvedMessage.source : 'trigger' };
+        return { success: result?.success, messageId: result?.messageId, error: result?.error, contentSource: resolvedMessage.source };
       }
 
       case 'tgbot.action.sendPhoto': {
@@ -4003,7 +4234,7 @@ class WorkflowEngineService {
         if (!botAccountId) throw new Error('[tgbot.action.sendMenu] accountId required');
         const chatId = cfg.chatId || ctx.trigger?.chatId;
         if (!chatId) throw new Error('[tgbot.action.sendMenu] chatId required');
-        const text = cfg.text || 'Chọn một tùy chọn:';
+        const text = cfg.text || tr('Chọn một tùy chọn:');
         const buttons = cfg.buttons || []; // Array of { text, callback_data }
 
         // Build inline keyboard
@@ -4032,7 +4263,7 @@ class WorkflowEngineService {
         if (!botAccountId) throw new Error('[tgbot.action.sendForm] accountId required');
         const chatId = cfg.chatId || ctx.trigger?.chatId;
         if (!chatId) throw new Error('[tgbot.action.sendForm] chatId required');
-        const formText = cfg.text || 'Vui lòng nhập thông tin:';
+        const formText = cfg.text || tr('Vui lòng nhập thông tin:');
         const fields = cfg.fields || []; // Array of { label, field_name, required }
 
         // Build form as text with buttons
@@ -4160,6 +4391,26 @@ class WorkflowEngineService {
         return { success: result.success, error: result.error };
       }
 
+      case 'tgbot.action.unbanMember': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        const userId = String(cfg.userId || '').trim();
+        if (!botAccountId || !chatId || !userId) throw new Error(tr('[tgbot.action.unbanMember] Thiếu Bot, nhóm hoặc Telegram user ID'));
+        // only_if_banned: an unban never removes a member who is still in the group
+        const result = await TelegramBot.unbanChatMember(botAccountId, chatId, userId, true);
+        return { success: result.success, error: result.error, userId };
+      }
+
+      case 'tgbot.action.approveJoinRequest': {
+        const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
+        const chatId = cfg.chatId || ctx.trigger?.chatId;
+        const userId = String(cfg.userId || ctx.trigger?.fromId || '').trim();
+        if (!botAccountId || !chatId || !userId) throw new Error(tr('[tgbot.action.approveJoinRequest] Thiếu Bot, nhóm hoặc người xin vào'));
+        const approve = cfg.decision !== 'decline';
+        const result = await TelegramBot.answerChatJoinRequest(botAccountId, String(chatId), userId, approve);
+        return { success: result.success, error: result.error, decision: approve ? 'approve' : 'decline', userId };
+      }
+
       case 'tgbot.action.answerCallback': {
         const botAccountId = cfg.accountId || ctx.trigger?.accountId || ctx.pageId;
         if (!botAccountId) throw new Error('[tgbot.action.answerCallback] accountId required');
@@ -4172,8 +4423,8 @@ class WorkflowEngineService {
       }
 
       default: {
-        // Node/trigger do plugin đóng góp: editor gắn cfg.__plugin khi thêm từ palette plugin.
-        // Node lạ không có dấu này giữ nguyên hành vi cũ (bỏ qua).
+        // Node/trigger contributed by a plugin: the editor sets cfg.__plugin when it is added from the plugin palette.
+        // Unknown nodes without this mark keep the old behavior (skipped).
         if (!cfg?.__plugin) return {};
         const registry = require('../plugins/PluginNodeRegistry').default.getInstance();
         if (cfg.__kind === 'trigger' || registry.isTrigger(node.type)) return { ...ctx.trigger };
@@ -4193,9 +4444,9 @@ class WorkflowEngineService {
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   /**
-   * Đẩy 1 tác vụ gửi tin qua hàng đợi theo account (ctx.pageId = zaloId của workflow).
-   * Nhiều workflow cùng 1 tài khoản → chung 1 hàng đợi → tin gửi tuần tự, giãn cách ngẫu nhiên
-   * theo cấu hình node (sendDelayMin/MaxSeconds) để tránh spam khi nhiều khách nhắn cùng lúc.
+   * Push one send task onto the per-account queue (ctx.pageId = the workflow's zaloId).
+   * Several workflows on the same account → one shared queue → messages are sent one by one, with a random gap
+   * set by the node config (sendDelayMin/MaxSeconds) to avoid spam when many customers message at the same time.
    */
   private enqueueSend<T>(cfg: Record<string, any>, ctx: ExecutionContext, task: () => Promise<T>): Promise<T> {
     const minMs = Number(cfg.sendDelayMinSeconds ?? 0) * 1000;
@@ -4204,15 +4455,15 @@ class WorkflowEngineService {
   }
 
   /**
-   * Gửi lần lượt tới từng người nhận của một node gửi tin.
-   *  - 0–1 người nhận (trả lời tự động): như trước — Zalo: một lượt trong hàng đợi tài khoản (enqueueSend, giãn cách
-   *    theo "Giãn cách gửi" của node); Facebook (`single: 'direct'`): gửi ngay.
-   *  - Nhiều người nhận: MỖI người một lượt riêng trong hàng đợi của tài khoản, sau mỗi lượt chờ ngẫu nhiên
-   *    recipientGapRangeMs (tối thiểu 5 giây, như chiến dịch giãn cách từng liên hệ). Trước đây cả danh sách gửi liên
-   *    tục trong một lượt (hàng đợi chỉ giãn giữa các lần chạy node). Người kế tiếp chỉ được xếp khi hàng đợi rảnh
-   *    (whenIdle) → tin trả lời tự động của cùng tài khoản xếp vào trong lúc chờ được gửi trước, không chờ hết đợt.
-   * Đợt gửi giờ kéo dài → workflow bị tắt (đang bật lúc bắt đầu) hoặc bị xoá giữa chừng thì dừng phần còn lại.
-   * `send` ném lỗi → dừng các người nhận còn lại (continueOnError do `send` tự xử lý như trước).
+   * Sends in turn to each recipient of a send node.
+   *  - 0-1 recipient (auto-reply): as before. Zalo: one turn in the account queue (enqueueSend, spaced by the node's
+   *    "Giãn cách gửi" (send gap) setting); Facebook (`single: 'direct'`): sent immediately.
+   *  - Several recipients: EACH recipient gets its own turn in the account queue, with a random wait after each turn in
+   *    recipientGapRangeMs (at least 5 seconds, like a CRM campaign spacing out contacts). Before this, the whole list was sent
+   *    back to back in one turn (the queue only spaced out between node runs). The next recipient is queued only when the queue is idle
+   *    (whenIdle) → auto-reply messages of the same account queued during the wait are sent first, instead of waiting for the whole batch.
+   * A batch now takes a long time: if the workflow is turned off (it was on when the batch started) or deleted midway, the rest is skipped.
+   * `send` throws → stop the remaining recipients (continueOnError is handled by `send` itself, as before).
    */
   private async forEachRecipient(
     cfg: Record<string, any>,
@@ -4240,23 +4491,42 @@ class WorkflowEngineService {
       if (i > 0) await queue.whenIdle(queueKey);
       await queue.enqueue(queueKey, async () => {
         if (i > 0 && stopped()) {
-          throw new Error(`Workflow đã tắt hoặc bị xoá — dừng gửi, còn ${recipients.length - i}/${recipients.length} người nhận chưa gửi`);
+          throw new Error(tr('Workflow đã tắt hoặc bị xoá — dừng gửi, còn {{v1}}/{{count}} người nhận chưa gửi', { v1: recipients.length - i, count: recipients.length }));
         }
         await send(threadId);
       }, minMs, maxMs);
     }
   }
 
+  /**
+   * Output of a send node over its recipients: sentCount / failedCount. success = false only when every recipient failed
+   * (runWorkflowNode then records the node as failed); a partial failure keeps success = true and carries the last error.
+   */
+  private sendTallyOutput(tally: SendTally, total: number, extra: Record<string, any> = {}): Record<string, any> {
+    const out: Record<string, any> = { ...extra, success: tally.failed === 0 || tally.sent > 0, sentCount: tally.sent, failedCount: tally.failed, _targetCount: total };
+    if (tally.lastMsgId) out.msgId = tally.lastMsgId;
+    if (tally.failed > 0 && tally.lastError) out.error = tally.lastError;
+    return out;
+  }
+
+  /** No recipient: an empty dynamic list ("Chọn đối tượng nhận tin") is a normal outcome; a node without any target is a setup error. */
+  private noRecipientsOutput(cfg: Record<string, any>, nodeType: string): Record<string, any> {
+    if (String(cfg.threadIdsExpr || '').trim()) return { success: true, skipped: true, sentCount: 0, failedCount: 0, _targetCount: 0 };
+    throw new Error(tr('[{{nodeType}}] Chưa có hội thoại nhận: chọn hội thoại trong node, hoặc dùng trigger có hội thoại', { nodeType }));
+  }
+
+  /**
+   * Zalo API of the workflow's account. Never switches to another account: a reply sent from the wrong account goes to a
+   * stranger (or fails). Only a workflow without any account picked uses the single connected Zalo account.
+   */
   private getApi(pageId: string): any {
-    // Try to find connection by pageId or use any connected account
-    let conn = ConnectionManager.getConnection(pageId);
-    if (!conn) {
-      // Try first available connected account
-      for (const [, c] of ConnectionManager.getAllConnections()) {
-        if (c.connected) { conn = c; break; }
-      }
+    let conn = pageId ? ConnectionManager.getConnection(pageId) : undefined;
+    if (!pageId) {
+      const connected = [...ConnectionManager.getAllConnections()].map(([, c]) => c).filter((c: any) => c?.connected && c?.api);
+      if (connected.length === 1) conn = connected[0];
+      else if (connected.length > 1) throw new Error(tr('Workflow chưa chọn tài khoản Zalo mà đang có {{count}} tài khoản kết nối: chọn tài khoản trong cài đặt workflow', { count: connected.length }));
     }
-    if (!conn || !conn.api) throw new Error(`Account ${pageId || 'unknown'} không connected`);
+    if (!conn || !conn.api) throw new Error(tr('Account {{v1}} không connected', { v1: pageId || 'unknown' }));
     return conn.api;
   }
 
@@ -4287,7 +4557,7 @@ class WorkflowEngineService {
   /** A returned { success: false } must fail the node, not produce a green run. */
   private assertFacebookActionSucceeded(action: string, result: any): void {
     const success = typeof result === 'boolean' ? result : result?.success;
-    if (!success) throw new Error(result?.error || `Facebook không thể ${action}`);
+    if (!success) throw new Error(result?.error || tr('Facebook không thể {{action}}', { action }));
   }
 
   private getForwardMediaPath(message: any): string {
@@ -4346,7 +4616,7 @@ class WorkflowEngineService {
     }
     if (channel === 'telegram_bot') return TelegramBot.sendMessage(accountId, chatId, text);
     if (channel === 'telegram_user') return TelegramUser.sendMessage(accountId, chatId, text);
-    return { success: false, error: `Kênh đích không hỗ trợ: ${channel}` };
+    return { success: false, error: tr('Kênh đích không hỗ trợ: {{channel}}', { channel }) };
   }
 
   private async sendForwardMedia(channel: string, accountId: string, chatId: string, filePath: string, mediaType: string, threadType?: number): Promise<{ success: boolean; messageId?: string; error?: string }> {
@@ -4375,7 +4645,7 @@ class WorkflowEngineService {
       return TelegramBot.sendDocument(accountId, chatId, filePath);
     }
     if (channel === 'telegram_user') return TelegramUser.sendFile(accountId, chatId, filePath, '');
-    return { success: false, error: `Kênh đích không hỗ trợ: ${channel}` };
+    return { success: false, error: tr('Kênh đích không hỗ trợ: {{channel}}', { channel }) };
   }
 
   private async forwardNativeMessage(channel: string, accountId: string, sourceChatId: string, targetChatId: string, messageId: string, sourceMessage: any): Promise<{ success: boolean; error?: string }> {
@@ -4401,7 +4671,7 @@ class WorkflowEngineService {
         return { success: result?.success !== false, error: result?.error };
       } catch (err: any) { return { success: false, error: err.message }; }
     }
-    return { success: false, error: `Kênh nguồn không hỗ trợ: ${channel}` };
+    return { success: false, error: tr('Kênh nguồn không hỗ trợ: {{channel}}', { channel }) };
   }
 
   // ─── Telegram Helpers ─────────────────────────────────────────────────────
@@ -4606,9 +4876,36 @@ class WorkflowEngineService {
         if (d === 0) queue.push(next);
       }
     }
-    // ⚠️ Nếu graph có cycle, topological sort không thể xử lý
-    // Chỉ trả về nodes có thể sort được (không cycle)
+    // ⚠️ If the graph has a cycle, the topological sort cannot process it
+    // Only return nodes that can be sorted (no cycle)
     Logger.warn(`[WorkflowEngine] topologicalSort: ${result.length}/${wf.nodes.length} nodes sorted, ${wf.nodes.length - result.length} nodes skipped due to cycle(s)`);
+    return result;
+  }
+
+  /**
+   * Nodes that only run after a Telegram Bot inline button is pressed: the buttons' target nodes (from the keyboards and the
+   * dashed route edges) and what follows them, minus anything the trigger also reaches through normal edges. Without this
+   * the normal run executed them right away (they have no incoming normal edge), before anyone pressed a button.
+   */
+  private inlineButtonOnlyNodes(wf: Workflow, triggeredBy: string): Set<string> {
+    const targets = new Set<string>();
+    for (const edge of wf.edges) if (edge.data?.telegramInline) targets.add(edge.target);
+    for (const node of wf.nodes) {
+      const keyboard = node.type === 'tgbot.action.sendMessage' ? node.config?.keyboard : null;
+      if (!keyboard?.enabled || keyboard.type !== 'inline' || !Array.isArray(keyboard.rows)) continue;
+      for (const button of keyboard.rows.flat()) {
+        if (button && (button.action || 'node') === 'node' && button.targetNodeId) targets.add(String(button.targetNodeId));
+      }
+    }
+    const result = new Set<string>();
+    if (!targets.size) return result;
+    for (const target of targets) {
+      if (!wf.nodes.some(node => node.id === target)) continue;
+      for (const id of this.getReachableWorkflowNodes(wf, target)) result.add(id);
+    }
+    const trigger = wf.nodes.find(node => node.type === triggeredBy)
+      || wf.nodes.find(node => node.type.startsWith('trigger.') || node.type.includes('.trigger.'));
+    if (trigger) for (const id of this.getReachableWorkflowNodes(wf, trigger.id)) result.delete(id);
     return result;
   }
 
@@ -4627,7 +4924,7 @@ class WorkflowEngineService {
     return reached;
   }
 
-  /** Resolve target thread IDs từ cfg, hỗ trợ cả threadIds (mảng JSON) và threadId (string cũ) */
+  /** Resolve target thread IDs from cfg, supports both threadIds (JSON array) and the old threadId (string) */
   private resolveTargetThreadIds(cfg: Record<string, any>, triggerThreadId?: string): string[] {
     if (cfg.threadIds) {
       try {
@@ -4638,12 +4935,13 @@ class WorkflowEngineService {
     if (cfg.threadIdsExpr) {
       try {
         const parsed = JSON.parse(String(cfg.threadIdsExpr));
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(String);
+        // An empty dynamic list means "nobody", never "the conversation that triggered the workflow"
+        if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
       } catch {}
     }
-    // threadIds 1 id thường (không phải mảng JSON): ô chọn hội thoại trước đây không nhận contactMode
-    // → lưu id đơn và bị bỏ qua (gửi về hội thoại trigger). Đặt sau threadIdsExpr để danh sách động
-    // (Chọn đối tượng nhận tin) vẫn được ưu tiên như trước.
+    // threadIds with one plain id (not a JSON array): the conversation picker used to ignore contactMode
+    // → the single id was saved and ignored (sent to the trigger conversation). Placed after threadIdsExpr so the dynamic list
+    // (select recipients) still takes priority, as before.
     if (typeof cfg.threadIds === 'string' && cfg.threadIds.trim() && !cfg.threadIds.trim().startsWith('[')) {
       const ids = parseIdList(cfg.threadIds);
       if (ids.length > 0) return ids;
@@ -4654,16 +4952,16 @@ class WorkflowEngineService {
   }
 
   /**
-   * Chọn đối tượng (audience): resolve danh sách threadId từ nguồn đã chọn
-   * (bạn bè / thành viên nhóm / nhãn local / CRM liên hệ) cho tài khoản Zalo.
-   * Trả về threadIds + items để node gửi tin lặp qua từng người.
+   * Audience: resolve the threadId list from the chosen source
+   * (friends / group members / local label / CRM contacts) for the Zalo account.
+   * Returns threadIds + items so the send node can loop over each recipient.
    */
   private async resolveAudience(cfg: Record<string, any>, ctx: ExecutionContext): Promise<{ threadIds: string[]; items: Array<{ threadId: string; name: string }> }> {
     const db = DatabaseService.getInstance();
     const owner = String(cfg.accountId || cfg.pageId || ctx.pageId || '');
     const limit = Math.max(1, Math.min(5000, Number(cfg.limit || 500)));
     const source = cfg.source || 'friends';
-    // Loại trừ người nhận (excludeIds): áp dụng TRƯỚC limit để vẫn đủ `limit` người nhận khi có thể
+    // Exclude recipients (excludeIds): applied BEFORE the limit so there are still `limit` recipients when possible
     const excludedIds = new Set(parseIdList(cfg.excludeIds));
     const notExcluded = (id: unknown): boolean => !excludedIds.has(String(id ?? '').trim());
     let threadIds: string[] = [];
@@ -4679,15 +4977,15 @@ class WorkflowEngineService {
         break;
       }
       case 'group_members': {
-        if (!cfg.groupId) throw new Error('[logic.forEachContact] groupId required khi chọn nguồn "thành viên nhóm"');
+        if (!cfg.groupId) throw new Error(tr('[logic.forEachContact] groupId required khi chọn nguồn "thành viên nhóm"'));
         const members = db.getGroupMembers(owner, String(cfg.groupId)).filter(m => notExcluded(m.member_id)).slice(0, limit);
         threadIds = members.map(m => String(m.member_id)).filter(Boolean);
         items = members.map(m => ({ threadId: String(m.member_id), name: m.display_name || m.member_id }));
         break;
       }
       case 'labels': {
-        // Label picker lưu "local:<id>" (nhãn Zalo "zalo:<acc>:<id>" không áp dụng cho nguồn này) hoặc số.
-        // Đã chọn nhãn nhưng không nhãn nào dùng được → không ai (gửi hàng loạt: không mở rộng thành "mọi nhãn").
+        // The label picker saves "local:<id>" (the Zalo label "zalo:<acc>:<id>" does not apply to this source) or a number.
+        // Labels were chosen but none is usable → nobody (for bulk sends: does not expand to "all labels").
         const rawLabelIds: unknown[] = Array.isArray(cfg.labelIds) ? cfg.labelIds : [];
         const labelIds: number[] = rawLabelIds
           .map((x: any) => {
@@ -4704,8 +5002,8 @@ class WorkflowEngineService {
         break;
       }
       case 'crm_contacts': {
-        // getCRMContacts cắt trang theo limit → lấy dư thêm đúng số id bị loại trừ để không hụt người nhận
-        // (phần dư có trần để câu IN (...) đếm ghi chú không vượt giới hạn tham số của SQLite)
+        // getCRMContacts pages by limit → fetch extra rows equal to the number of excluded ids, so the recipient count is not short
+        // (the extra count is capped so the IN (...) clause does not exceed SQLite's parameter limit)
         const res = db.getCRMContacts(owner, { limit: limit + Math.min(excludedIds.size, 20000) });
         const contacts = res.contacts.filter((c: any) => notExcluded(c.contact_id)).slice(0, limit);
         threadIds = contacts.map((c: any) => String(c.contact_id)).filter(Boolean).slice(0, limit);
@@ -4829,8 +5127,9 @@ class WorkflowEngineService {
         }
         if (expr.startsWith('$var.'))       return this.formatVariableValue(this.getVariableValue(ctx, expr.slice(5)));
         if (expr === '$pageId')             return ctx.pageId ?? '';
-        if (expr === '$date.now')           return new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
-        if (expr === '$date.today')         return new Date().toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+        // Text sent to customers: Vietnamese date format whatever the app UI language is
+        if (expr === '$date.now')           return new Date().toLocaleString(workflowLocale(''), { timeZone: 'Asia/Ho_Chi_Minh' });
+        if (expr === '$date.today')         return new Date().toLocaleDateString(workflowLocale(''), { timeZone: 'Asia/Ho_Chi_Minh' });
         if (expr.startsWith('$node.')) {
           const rest = expr.slice(6);
           const dotIdx = rest.indexOf('.');
@@ -4882,8 +5181,8 @@ class WorkflowEngineService {
   }
 
   /**
-   * {{ $var.<tên> }}: biến đã lưu, hoặc một trường của biến — phần tử của "Lặp qua danh sách" thường là object
-   * ({{ $var.item.name }}, {{ $var.item.variants[0].sku }}). Tên biến có dấu chấm lưu nguyên văn vẫn được ưu tiên.
+   * {{ $var.<name> }}: a saved variable, or one field of a variable. Items of "Lặp qua danh sách" (loop over list) are often objects
+   * ({{ $var.item.name }}, {{ $var.item.variants[0].sku }}). A variable name with a dot, saved verbatim, still takes priority.
    */
   private getVariableValue(ctx: ExecutionContext, path: string): any {
     const vars = ctx.variables || {};
@@ -4891,7 +5190,7 @@ class WorkflowEngineService {
     return /[.[]/.test(path) ? this.getNestedValue(vars, path) : undefined;
   }
 
-  /** Biến dạng object / mảng (phần tử danh sách) → JSON thay vì "[object Object]". */
+  /** Object / array variable (list item) → JSON instead of "[object Object]". */
   private formatVariableValue(value: any): string {
     if (value === null || value === undefined) return '';
     if (typeof value === 'object') {
@@ -4901,9 +5200,9 @@ class WorkflowEngineService {
   }
 
   /**
-   * Danh sách của node "Lặp qua danh sách": ô chỉ chứa một biến {{ … }} → lấy thẳng giá trị gốc (vd. mảng
-   * {{ $node.n3.products }} của bước trước — render ra chuỗi thì mất dữ liệu); còn lại đọc chuỗi đã render
-   * (JSON mảng hoặc mỗi dòng một phần tử).
+   * List of the "Lặp qua danh sách" (loop over list) node: if the field holds only one {{ … }} variable, take its raw value (e.g. the array
+   * {{ $node.n3.products }} of a previous step; rendering it to a string would lose the data). Otherwise read the rendered string
+   * (a JSON array, or one item per line).
    */
   private resolveForEachItems(raw: unknown, rendered: unknown, ctx: ExecutionContext): any[] {
     if (Array.isArray(raw)) return raw;
@@ -4912,7 +5211,7 @@ class WorkflowEngineService {
     return parseForEachList(typeof rendered === 'string' ? rendered : '');
   }
 
-  /** Giá trị gốc (không đổi sang chuỗi) của một biến: $trigger.*, $var.*, $node.<id hoặc tên node>.<trường>. */
+  /** Raw value (not converted to a string) of a variable: $trigger.*, $var.*, $node.<id or node name>.<field>. */
   private resolveExpressionValue(expr: string, ctx: ExecutionContext): any {
     if (expr.startsWith('$trigger.')) return this.getNestedValue(ctx.trigger, expr.slice(9));
     if (expr.startsWith('$var.')) return this.getVariableValue(ctx, expr.slice(5));
@@ -4922,7 +5221,7 @@ class WorkflowEngineService {
     if (dotIdx === -1) return undefined;
     const nodeRef = rest.slice(0, dotIdx);
     const field = rest.slice(dotIdx + 1);
-    // Cùng cách tìm node với renderTemplate: theo id, theo tên node, rồi "nN" = node thứ N (id của mẫu cũ)
+    // Find the node the same way as renderTemplate: by id, then by node name, then "nN" = the Nth node (id of old templates)
     let found: { output: any } | null = null;
     for (const [nid, ndata] of Object.entries(ctx.nodes)) {
       const labelOrId = ctx._wfNodes?.find(n => n.id === nid)?.label || nid;
@@ -4984,24 +5283,6 @@ class WorkflowEngineService {
    * Supports numbers and time strings (HH:MM or HH:MM:SS).
    * Returns positive if left > right, negative if left < right, 0 if equal.
    */
-  private compareValues(left: string, right: string): number {
-    // Try numeric comparison first
-    const ln = Number(left), rn = Number(right);
-    if (!isNaN(ln) && !isNaN(rn)) return ln - rn;
-
-    // Try time comparison: HH:MM or HH:MM:SS
-    const parseTime = (s: string): number | null => {
-      const m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-      if (!m) return null;
-      return parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + (parseInt(m[3] || '0'));
-    };
-    const lt = parseTime(left), rt = parseTime(right);
-    if (lt !== null && rt !== null) return lt - rt;
-
-    // Fallback: string comparison (lexicographic)
-    return left.localeCompare(right, 'vi');
-  }
-
   /** Get the OpenAI-compatible chat/completions URL for a given platform */
   private getOpenAICompatibleUrl(platform: string): string {
     switch (platform) {

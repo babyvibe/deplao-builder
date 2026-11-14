@@ -1,26 +1,28 @@
 /**
- * WorkersDeployer — Worker + D1 trên tài khoản Cloudflare đã kết nối, cho ứng dụng (plugin) có quyền cloudflare:workers
- * (fintrack-deplao-plugin/docs/CONTRACTS.md §1). Chạy ở main; token Cloudflare chỉ nằm trong CloudflareApi
- * (cloudflare.api()), không bao giờ đi ra ứng dụng.
+ * WorkersDeployer: Worker + D1 on the connected Cloudflare account, for apps (plugins) with the cloudflare:workers permission
+ * (fintrack-deplao-app/docs/CONTRACTS.md §1). Runs in main; the Cloudflare token only lives in CloudflareApi
+ * (cloudflare.api()) and never goes out to an app.
  *
- * Chỉ dùng qua scoped(prefix): MỌI tên Worker / D1 (kể cả D1 trong bindings) phải là prefix hoặc "<prefix>-…"
- * (prefix null = giao diện của chủ máy: chỉ kiểm định dạng tên).
- *  - status: không gọi Cloudflare khi chưa kết nối; thử quyền bằng 2 GET rẻ (Workers Scripts, D1) + đọc subdomain
- *    workers.dev; nhớ 60 s vì ngân sách 100 request / 5 phút (CloudflareApi) là của CẢ app.
- *  - d1.ensure: tìm theo tên, chưa có thì tạo (location hint 'apac').
- *  - d1.migrate: như `wrangler d1 migrations apply` — bảng d1_migrations(id, name, applied_at), file *.sql sắp theo tên,
- *    bỏ file đã áp; mỗi file MỘT lần gọi /query, INSERT tên file nằm cuối cùng lô (D1 chạy các câu của một lần gọi như
- *    một lô trong giao dịch → file lỗi không bị ghi là đã áp). Lỗi → dừng, câu lỗi nêu tên file.
- *  - d1.query: một câu SQL (đọc kiểm tra).
- *  - workers.get / workers.deployBundle: gói dựng sẵn (bundle.ts) → [asset: upload-session → từng bucket bằng JWT của
- *    phiên tải lên (fetch riêng, KHÔNG dùng token tài khoản)] → PUT script multipart → bật / tắt workers.dev → secrets.
- *    Mỗi request (kể cả tải asset) đi qua ngân sách chung; tiến độ chỉ ghi nhật ký.
- *  - zones / domain*: tên miền riêng (Workers Custom Domain) cho Worker của ứng dụng. Chỉ gắn TÊN CON MỚI của một tên miền
- *    trong tài khoản: không gắn tên miền gốc, không đè bản ghi DNS đang có (Địa chỉ Internet của Deplao, website, mail…),
- *    không lấy tên đang gắn cho Worker khác; gỡ chỉ đụng tên đang gắn cho đúng Worker đó. Cloudflare tự tạo bản ghi DNS +
- *    chứng chỉ. Ứng dụng gọi → handler IPC truyền `confirm` (hộp thoại của Deplao) chạy SAU khi kiểm xong, TRƯỚC khi ghi.
- *  - Lỗi: CloudError mã hợp đồng CF_NOT_CONNECTED | CF_PERMISSION | CF_NAME_FORBIDDEN | CF_BUNDLE_INVALID | CF_API
- *    (+ VALIDATION_ERROR, NOT_FOUND, CONFLICT). Không log token, JWT, secret hay câu SQL.
+ * Only used through scoped(prefix): EVERY Worker / D1 name (including D1 in bindings) must be the prefix or "<prefix>-…"
+ * (prefix null = the machine owner's UI: only the name format is checked).
+ *  - status: does not call Cloudflare when not connected; checks permissions with 2 cheap GETs (Workers Scripts, D1) + reads the workers.dev subdomain;
+ *    cached for 60 s because the budget of 100 requests / 5 minutes (CloudflareApi) is shared by the WHOLE app.
+ *  - d1.ensure: finds by name, creates it if missing (location hint 'apac').
+ *  - d1.migrate: like `wrangler d1 migrations apply`: table d1_migrations(id, name, applied_at), *.sql files sorted by name,
+ *    applied files skipped; one /query call per file, the INSERT of the file name at the end of that batch (D1 runs the statements of one call as
+ *    a batch in a transaction → a file that fails is not recorded as applied). Error → stop; the error message names the file.
+ *  - d1.query: one SQL statement (read check).
+ *  - workers.get / workers.deployBundle: prebuilt bundle (bundle.ts) → [asset: upload-session → each bucket with the JWT of the
+ *    upload session (separate fetch, NOT the account token)] → PUT script multipart → enable / disable workers.dev → secrets
+ *    → Cron Triggers (PUT …/schedules, only when bundle.json declares `crons`; the result then carries the active `crons`,
+ *    or `cronsError` when Cloudflare refused them: not fatal, the Worker is live and the app falls back to plugin jobs).
+ *    Every request (including asset uploads) goes through the shared budget; progress is only logged.
+ *  - zones / domain*: custom domains (Workers Custom Domain) for the app's Worker. Only attaches a NEW SUBDOMAIN of a domain
+ *    in the account: never the root domain, never overwrites existing DNS records (Deplao's Internet address, website, mail…),
+ *    never takes a name already attached to another Worker; detach only touches the name attached to that same Worker. Cloudflare creates the DNS record +
+ *    certificate itself. When an app calls it → the IPC handler passes `confirm` (Deplao's dialog), which runs AFTER the checks and BEFORE the write.
+ *  - Errors: CloudError with contract codes CF_NOT_CONNECTED | CF_PERMISSION | CF_NAME_FORBIDDEN | CF_BUNDLE_INVALID | CF_API
+ *    (+ VALIDATION_ERROR, NOT_FOUND, CONFLICT). Never logs the token, JWT, secret or SQL statement.
  */
 import * as fs from 'fs';
 import { CloudError } from '../contracts';
@@ -39,64 +41,79 @@ import {
 import type { DeployOptions } from './validate';
 import { listRecordsByName } from '../tunnel/dns';
 import { normalizeHostname } from '../tunnel/ingress';
+import { tr } from '../../../shared/i18n';
 
 export interface WorkersStatus {
     connected: boolean;
     accountId: string | null;
     accountName: string | null;
-    /** <subdomain>.workers.dev của tài khoản; null nếu chưa có / chưa đọc được. */
+    /** The account's <subdomain>.workers.dev; null if not yet set up / not readable. */
     workersSubdomain: string | null;
-    /** Tiền tố tên tài nguyên của ứng dụng. */
+    /** Resource name prefix of the app. */
     prefix: string;
-    /** Quyền token còn thiếu, vd ["Account · D1 · Edit"]; rỗng = đủ. */
+    /** Token permissions still missing, e.g. ["Account · D1 · Edit"]; empty = all present. */
     missing: string[];
 }
 
 export interface WorkerInfo { exists: boolean; modifiedOn: string | null; url: string | null }
-export interface DeployResult { name: string; url: string | null; deployedAt: number }
+export interface DeployResult {
+    name: string;
+    url: string | null;
+    deployedAt: number;
+    /**
+     * The Worker's active Cron Triggers after the deploy. Present only when bundle.json declares `crons`; an app that finds no
+     * `crons` (field not declared, or an older Deplao that ignores it) must run its periodic jobs from the plugin instead.
+     */
+    crons?: string[];
+    /**
+     * Why the declared Cron Triggers could not be set (e.g. the account already uses all its triggers). The Worker is
+     * deployed anyway and `crons` is absent, so the app falls back to plugin-driven jobs; show this to the user.
+     */
+    cronsError?: string;
+}
 export interface D1Info { uuid: string; name: string; created: boolean }
 export interface MigrateResult { applied: string[]; skipped: string[] }
 export type Progress = (message: string) => void;
-/** Tên miền (zone) đang hoạt động của tài khoản. */
+/** Active domains (zones) of the account. */
 export interface DomainZone { id: string; name: string }
-/** Tên miền riêng đang gắn cho một Worker (Workers Custom Domain). */
+/** Custom domain attached to a Worker (Workers Custom Domain). */
 export interface WorkerDomain { id: string; hostname: string; zoneId: string; zoneName: string }
-/** created = vừa gắn; false = tên đã gắn sẵn cho đúng Worker này (gọi lại không đổi gì). */
+/** created = just attached; false = the name was already attached to this same Worker (calling again changes nothing). */
 export interface DomainAttachResult extends WorkerDomain { created: boolean }
-/** Hỏi người dùng trước khi gắn (ứng dụng gọi); false → CF_DECLINED, không ghi gì. */
+/** Ask the user before attaching (called by the app); false → CF_DECLINED, nothing is written. */
 export type DomainConfirm = (info: { worker: string; hostname: string; zoneName: string }) => Promise<boolean>;
 
-/** API đã gắn tiền tố — handler IPC tạo một scope cho mỗi lời gọi. */
+/** API with the prefix already applied: the IPC handler creates one scope per call. */
 export interface WorkersScope {
     readonly prefix: string | null;
-    /** displayPrefix: tiền tố hiện trong kết quả khi scope không có tiền tố (giao diện chủ máy). */
+    /** displayPrefix: the prefix shown in results when the scope has no prefix (the machine owner's UI). */
     status(displayPrefix?: string): Promise<WorkersStatus>;
     workerGet(name: unknown): Promise<WorkerInfo>;
-    /** bundleDir: đường dẫn tuyệt đối người gọi đã kiểm vị trí (ứng dụng: nằm trong thư mục ứng dụng). */
+    /** bundleDir: absolute path already location-checked by the caller (apps: must be inside the app folder). */
     deployBundle(input: unknown, bundleDir: string, onProgress?: Progress): Promise<DeployResult>;
     d1Ensure(name: unknown): Promise<D1Info>;
-    /** dir: thư mục tuyệt đối chứa *.sql, người gọi đã kiểm vị trí. */
+    /** dir: absolute folder containing *.sql files; the caller has already checked its location. */
     d1Migrate(name: unknown, dir: string, onProgress?: Progress): Promise<MigrateResult>;
     d1Query(name: unknown, sql: unknown, params?: unknown): Promise<{ results: any[] }>;
-    /** Tên miền đang hoạt động của tài khoản (nhớ 5 phút). */
+    /** Active domains of the account (cached 5 minutes). */
     zones(): Promise<DomainZone[]>;
-    /** Tên miền riêng đang gắn cho Worker `name`. */
+    /** Custom domain attached to Worker `name`. */
     domainList(name: unknown): Promise<WorkerDomain[]>;
     domainAttach(name: unknown, hostname: unknown, confirm?: DomainConfirm): Promise<DomainAttachResult>;
-    /** removed=false: tên không gắn cho Worker này (không đụng tên của Worker khác). */
+    /** removed=false: the name is not attached to this Worker (another Worker's name is not touched). */
     domainDetach(name: unknown, hostname: unknown): Promise<{ removed: boolean }>;
 }
 
 export interface WorkersDeployerDeps {
     core: () => CloudflareCore;
-    /** fetch cho bước tải asset (Bearer = JWT phiên tải lên). Mặc định globalThis.fetch. */
+    /** fetch for the asset upload step (Bearer = upload-session JWT). Defaults to globalThis.fetch. */
     uploadFetch?: FetchLike;
-    /** Ngân sách request dùng chung (mặc định cloudflareBudget của cả app). */
+    /** Shared request budget (default: the cloudflareBudget of the whole app). */
     budget?: RequestBudget;
     apiBase?: string;
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
-    /** Chờ giữa các lần thử lại khi tải asset lỗi mạng / 5xx / 429. */
+    /** Wait between retries when an asset upload fails with a network error / 5xx / 429. */
     retryDelaysMs?: ReadonlyArray<number>;
     log?: (message: string) => void;
 }
@@ -105,7 +122,7 @@ const STATUS_TTL_MS = 60_000;
 const SUBDOMAIN_TTL_MS = 10 * 60_000;
 const D1_TTL_MS = 10 * 60_000;
 const ZONES_TTL_MS = 5 * 60_000;
-/** Danh sách tên miền của một Worker: trang Tuỳ chọn của ứng dụng đọc mỗi lần kiểm tra trạng thái. */
+/** Domain list of a Worker: the app's Options page reads it on every status check. */
 const DOMAINS_TTL_MS = 60_000;
 const DOMAIN_WRITE_TIMEOUT_MS = 60_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
@@ -113,18 +130,18 @@ const SCRIPT_TIMEOUT_MS = 120_000;
 const QUERY_TIMEOUT_MS = 60_000;
 const UPLOAD_RETRY_DELAYS_MS: ReadonlyArray<number> = [1000, 3000];
 
-/** Bảng ghi migration giống hệt wrangler (tên bảng mặc định d1_migrations). */
+/** Migration log table identical to wrangler's (default table name d1_migrations). */
 export const MIGRATIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS d1_migrations(
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT UNIQUE,
     applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );`;
 
-const NOT_CONNECTED_MESSAGE = 'Chưa kết nối Cloudflare — kết nối ở Cài đặt → Internet & Cloud trên máy chủ';
-const TOKEN_INVALID_MESSAGE = 'Token Cloudflare không còn hợp lệ — kết nối lại ở Cài đặt → Internet & Cloud';
+const NOT_CONNECTED_MESSAGE = tr('Chưa kết nối Cloudflare — kết nối ở Cài đặt → Internet & Cloud trên máy chủ');
+const TOKEN_INVALID_MESSAGE = tr('Token Cloudflare không còn hợp lệ — kết nối lại ở Cài đặt → Internet & Cloud');
 const OWN_CODES = new Set(['CF_NOT_CONNECTED', 'CF_PERMISSION', 'CF_NAME_FORBIDDEN', 'CF_BUNDLE_INVALID', 'CF_API', 'CF_DECLINED', 'VALIDATION_ERROR', 'NOT_FOUND', 'CONFLICT']);
 
-/** Quyền token cần cho một nhóm thao tác (Worker, D1, liệt kê tên miền, đọc DNS). */
+/** Token permissions needed for a group of operations (Worker, D1, listing domains, reading DNS). */
 export type WorkersNeed = 'workers' | 'd1' | 'zone' | 'dns';
 const NEED_LABELS: Record<WorkersNeed, string> = { ...WORKERS_PERMISSION_LABELS, ...DOMAIN_PERMISSION_LABELS };
 
@@ -132,16 +149,16 @@ export function permissionError(need: WorkersNeed, status?: number): CloudError 
     const label = NEED_LABELS[need];
     return new CloudError(
         'CF_PERMISSION',
-        `Token Cloudflare thiếu quyền "${label}" — thêm quyền này cho token (hoặc tạo token mới bằng link mẫu ở Cài đặt → Internet & Cloud) rồi bấm Kiểm tra lại token`,
+        tr('Token Cloudflare thiếu quyền "{{label}}" — thêm quyền này cho token (hoặc tạo token mới bằng link mẫu ở Cài đặt → Internet & Cloud) rồi bấm Kiểm tra lại token', { label }),
         status,
     );
 }
 
-/** Lỗi bất kỳ → CloudError mã hợp đồng (need: quyền cần nêu khi Cloudflare báo thiếu quyền). */
+/** Any error → CloudError with a contract code (need: the permission to name when Cloudflare reports a missing permission). */
 export function toWorkersError(err: unknown, need: WorkersNeed): CloudError {
     if (err instanceof CloudApiError) {
-        // Mã Cloudflare quyết định trước HTTP status: thiếu quyền một API (mã 10000 "Authentication error") nhiều endpoint
-        // trả HTTP 401 — vd liệt kê D1 khi token chưa có D1 — đó là thiếu quyền, không phải token hỏng / chưa kết nối.
+        // The Cloudflare error code takes precedence over the HTTP status: a missing permission for one API (code 10000 "Authentication error") makes many endpoints
+        // return HTTP 401, e.g. listing D1 when the token has no D1 permission: that is a missing permission, not a broken token / not connected.
         if (err.code === 'FORBIDDEN') return permissionError(need, err.status);
         if (err.code === 'INVALID_TOKEN' || err.status === 401) return new CloudError('CF_NOT_CONNECTED', TOKEN_INVALID_MESSAGE, err.status);
         if (err.status === 403) return permissionError(need, err.status);
@@ -153,7 +170,7 @@ export function toWorkersError(err: unknown, need: WorkersNeed): CloudError {
         if (err.code === 'INVALID_TOKEN' || err.code === 'TOKEN_INACTIVE') return new CloudError('CF_NOT_CONNECTED', TOKEN_INVALID_MESSAGE, err.status);
         return new CloudError('CF_API', err.message, err.status, err.retryAfterMs);
     }
-    return new CloudError('CF_API', `Lỗi khi gọi Cloudflare: ${String((err as any)?.message || err).slice(0, 300)}`);
+    return new CloudError('CF_API', tr('Lỗi khi gọi Cloudflare: {{v1}}', { v1: String((err as any)?.message || err).slice(0, 300) }));
 }
 
 function isNotFound(err: unknown): boolean {
@@ -168,7 +185,7 @@ export function workersDevUrl(name: string, subdomain: string): string {
     return `https://${name}.${subdomain}.workers.dev`;
 }
 
-/** Tên miền dài nhất trong tài khoản chứa `hostname` (tên miền gốc hoặc tên con của nó). */
+/** The longest domain in the account that contains `hostname` (the root domain or one of its subdomains). */
 export function zoneOf(hostname: string, zones: DomainZone[]): DomainZone | null {
     let best: DomainZone | null = null;
     for (const z of zones) {
@@ -178,7 +195,7 @@ export function zoneOf(hostname: string, zones: DomainZone[]): DomainZone | null
     return best;
 }
 
-/** Bản ghi Workers Custom Domain của Cloudflare → WorkerDomain (thiếu id / hostname → null). */
+/** Cloudflare Workers Custom Domain record → WorkerDomain (missing id / hostname → null). */
 function toDomain(raw: any): (WorkerDomain & { service: string }) | null {
     const id = typeof raw?.id === 'string' ? raw.id : '';
     const hostname = normalizeHostname(raw?.hostname);
@@ -194,7 +211,7 @@ function toDomain(raw: any): (WorkerDomain & { service: string }) | null {
 
 const publicDomain = (d: WorkerDomain): WorkerDomain => ({ id: d.id, hostname: d.hostname, zoneId: d.zoneId, zoneName: d.zoneName });
 
-/** SQL gửi cho một file migration: nội dung file + INSERT tên file vào d1_migrations (cùng một lô). */
+/** SQL sent for one migration file: the file content + INSERT of the file name into d1_migrations (same batch). */
 export function migrationSql(content: string, fileName: string): string {
     const body = stripBom(content).trimEnd();
     const insert = `INSERT INTO d1_migrations (name) VALUES ('${fileName.replace(/'/g, "''")}');`;
@@ -220,7 +237,7 @@ function fmtBytes(n: number): string {
 function networkReason(err: any): string {
     const code = err?.cause?.code || err?.code;
     if (typeof code === 'string' && code) return code;
-    return String(err?.cause?.message || err?.message || 'lỗi mạng').slice(0, 120);
+    return String(err?.cause?.message || err?.message || tr('lỗi mạng')).slice(0, 120);
 }
 
 function safeJson(text: string): any {
@@ -233,17 +250,17 @@ export class WorkersDeployer {
     private subdomainCache: { accountId: string; at: number; value: string | null } | null = null;
     private readonly d1Cache = new Map<string, { uuid: string; at: number }>();
     private zonesCache: { accountId: string; at: number; zones: DomainZone[] } | null = null;
-    /** `${accountId}/${worker}` → tên miền đang gắn. */
+    /** `${accountId}/${worker}` → the domain currently attached. */
     private readonly domainsCache = new Map<string, { at: number; domains: WorkerDomain[] }>();
     private readonly busy = new Set<string>();
     private unwatch: (() => void) | null = null;
 
     constructor(private readonly deps: WorkersDeployerDeps) {}
 
-    /** API gắn tiền tố tài nguyên (null = giao diện chủ máy, chỉ kiểm định dạng tên). */
+    /** API that applies the resource prefix (null = the machine owner's UI, only the name format is checked). */
     scoped(prefix: string | null): WorkersScope {
         if (prefix !== null && (typeof prefix !== 'string' || !prefix)) {
-            throw new CloudError('CF_NAME_FORBIDDEN', 'Thiếu tiền tố tài nguyên của ứng dụng');
+            throw new CloudError('CF_NAME_FORBIDDEN', tr('Thiếu tiền tố tài nguyên của ứng dụng'));
         }
         return {
             prefix,
@@ -262,7 +279,7 @@ export class WorkersDeployer {
         };
     }
 
-    // ── nội bộ chung ──
+    // ── shared internals ──
 
     private core(): CloudflareCore {
         return this.deps.core();
@@ -285,16 +302,16 @@ export class WorkersDeployer {
         try {
             if (this.deps.log) this.deps.log(message);
             else Logger.log(`[CloudflareWorkers] ${message}`);
-        } catch { /* ghi log không được thì thôi */ }
+        } catch { /* if logging fails, just move on */ }
     }
 
     private progress(onProgress: Progress | undefined, message: string): void {
         this.log(message);
         if (!onProgress) return;
-        try { onProgress(message); } catch { /* nơi nhận lỗi: bỏ qua */ }
+        try { onProgress(message); } catch { /* error sink: ignore */ }
     }
 
-    /** Đổi / ngắt kết nối Cloudflare → quên quyền, subdomain, uuid D1 đã nhớ. Đăng ký lười ở lần dùng đầu. */
+    /** Change / disconnect Cloudflare → forget the permissions, subdomain and D1 uuids that were cached. Lazy registration on first use. */
     private watchConnection(): void {
         if (this.unwatch) return;
         try {
@@ -322,9 +339,9 @@ export class WorkersDeployer {
         }
     }
 
-    /** Một thao tác ghi cho mỗi Worker / D1 tại một thời điểm (bấm hai lần không triển khai chồng nhau). */
+    /** One write operation per Worker / D1 at a time (two clicks do not deploy on top of each other). */
     private async exclusive<T>(key: string, label: string, fn: () => Promise<T>): Promise<T> {
-        if (this.busy.has(key)) throw new CloudError('CONFLICT', `${label} đang chạy — chờ xong rồi thử lại`);
+        if (this.busy.has(key)) throw new CloudError('CONFLICT', tr('{{label}} đang chạy — chờ xong rồi thử lại', { label }));
         this.busy.add(key);
         try {
             return await fn();
@@ -345,7 +362,7 @@ export class WorkersDeployer {
             prefix,
             missing: [],
         };
-        if (!st.connected || !st.accountId) return base; // không gọi Cloudflare khi chưa kết nối
+        if (!st.connected || !st.accountId) return base; // do not call Cloudflare when not connected
         const { api, accountId } = this.ctx();
         const cached = this.statusCache;
         if (cached && cached.accountId === accountId && this.now() - cached.at < STATUS_TTL_MS) {
@@ -361,7 +378,7 @@ export class WorkersDeployer {
         for (const [res, need] of probes) {
             if (res.status === 'fulfilled') continue;
             const mapped = toWorkersError(res.reason, need);
-            if (mapped.code !== 'CF_PERMISSION') throw mapped; // mạng / token hỏng: không kết luận được về quyền
+            if (mapped.code !== 'CF_PERMISSION') throw mapped; // network / broken token: cannot conclude anything about permissions
             missing.push(WORKERS_PERMISSION_LABELS[need]);
         }
         const subdomain = sub.status === 'fulfilled' ? cleanSubdomain(sub.value?.subdomain) : null;
@@ -403,27 +420,27 @@ export class WorkersDeployer {
                 api.request<any>('GET', `/accounts/${accountId}/workers/scripts/${name}/subdomain`),
             ]);
             if (sub && route?.enabled) url = workersDevUrl(name, sub);
-        } catch { /* không đọc được địa chỉ: vẫn báo Worker đã có */ }
+        } catch { /* cannot read the address: still report that the Worker exists */ }
         return { exists: true, modifiedOn: typeof script.modified_on === 'string' ? script.modified_on : null, url };
     }
 
     private async deployBundle(opts: DeployOptions, bundleDir: string, onProgress?: Progress): Promise<DeployResult> {
-        if (typeof bundleDir !== 'string' || !bundleDir) throw new CloudError('CF_BUNDLE_INVALID', 'Thiếu thư mục gói Worker');
+        if (typeof bundleDir !== 'string' || !bundleDir) throw new CloudError('CF_BUNDLE_INVALID', tr('Thiếu thư mục gói Worker'));
         const bundle = readBundle(bundleDir);
         const assetBinding = bundle.assets?.binding ?? null;
         if (assetBinding && bindingNames(opts).includes(assetBinding)) {
-            throw new CloudError('VALIDATION_ERROR', `Binding "${assetBinding}" của asset (bundle.json) trùng với binding khác`);
+            throw new CloudError('VALIDATION_ERROR', tr('Binding "{{assetBinding}}" của asset (bundle.json) trùng với binding khác', { assetBinding }));
         }
         const { api, accountId } = this.ctx();
-        return this.exclusive(`${accountId}:worker:${opts.name}`, `Triển khai Worker "${opts.name}"`, async () => {
+        return this.exclusive(`${accountId}:worker:${opts.name}`, tr('Triển khai Worker "{{name}}"', { name: opts.name }), async () => {
             const step = (message: string) => this.progress(onProgress, `${opts.name}: ${message}`);
 
-            // 1. Kiểm trước khi đổi gì trên Cloudflare: địa chỉ workers.dev của tài khoản, D1 cần gắn.
+            // 1. Check before changing anything on Cloudflare: the account's workers.dev address, the D1 that needs binding.
             let subdomain: string | null = null;
             if (opts.workersDev) {
                 subdomain = await this.accountSubdomain(api, accountId);
                 if (!subdomain) {
-                    throw new CloudError('CF_API', 'Tài khoản Cloudflare chưa có địa chỉ workers.dev — mở Cloudflare → Workers & Pages một lần để tạo, rồi triển khai lại');
+                    throw new CloudError('CF_API', tr('Tài khoản Cloudflare chưa có địa chỉ workers.dev — mở Cloudflare → Workers & Pages một lần để tạo, rồi triển khai lại'));
                 }
             }
             const bindings: Array<Record<string, unknown>> = [];
@@ -443,7 +460,7 @@ export class WorkersDeployer {
                 main_module: bundle.mainModule,
                 compatibility_date: bundle.compatibilityDate,
                 bindings,
-                // Giữ secret đã đặt trước (vd DEPLAO_INTEGRATION_SECRET) khi triển khai lại không kèm secrets.
+                // Keep secrets set earlier (e.g. DEPLAO_INTEGRATION_SECRET) when redeploying without secrets.
                 keep_bindings: ['secret_text', 'secret_key'],
             };
             if (bundle.compatibilityFlags.length) metadata.compatibility_flags = bundle.compatibilityFlags;
@@ -451,21 +468,21 @@ export class WorkersDeployer {
             const parts: MultipartPart[] = [{ name: 'metadata', contentType: 'application/json', data: JSON.stringify(metadata) }];
             for (const m of bundle.modules) parts.push({ name: m.name, filename: m.name, contentType: m.contentType, data: fs.readFileSync(m.absPath) });
             const form = buildMultipart(parts);
-            step(`tải mã Worker (${fmtBytes(form.body.length)})…`);
+            step(tr('tải mã Worker ({{v1}})…', { v1: fmtBytes(form.body.length) }));
             try {
                 await api.request('PUT', `/accounts/${accountId}/workers/scripts/${opts.name}`, form.body, { contentType: form.contentType, timeoutMs: SCRIPT_TIMEOUT_MS });
             } catch (err) {
                 throw toWorkersError(err, 'workers');
             }
 
-            // 4. Route <tên>.<subdomain>.workers.dev.
+            // 4. Route <name>.<subdomain>.workers.dev.
             try {
                 await api.request('POST', `/accounts/${accountId}/workers/scripts/${opts.name}/subdomain`, { enabled: opts.workersDev, previews_enabled: false });
             } catch (err) {
                 throw toWorkersError(err, 'workers');
             }
 
-            // 5. Secrets — giá trị chỉ nằm trong body request, không log.
+            // 5. Secrets: the values are only in the request body, never logged.
             for (const s of opts.secrets) {
                 try {
                     await api.request('PUT', `/accounts/${accountId}/workers/scripts/${opts.name}/secrets`, { name: s.name, text: s.value, type: 'secret_text' });
@@ -473,16 +490,38 @@ export class WorkersDeployer {
                     throw toWorkersError(err, 'workers');
                 }
             }
-            if (opts.secrets.length) step(`đã đặt ${opts.secrets.length} secret`);
+            if (opts.secrets.length) step(tr('đã đặt {{count}} secret', { count: opts.secrets.length }));
+
+            // 6. Cron Triggers: only when bundle.json declares crons. The PUT replaces the whole list ([] turns every schedule off).
+            //    Not fatal: the Worker is already live, and an app that gets no `crons` back runs its jobs from the plugin.
+            //    Typical failure: the account's trigger limit (Cloudflare Free: 5 for the WHOLE account).
+            let crons: string[] | null = null;
+            let cronsError: string | null = null;
+            if (bundle.crons) {
+                try {
+                    const res = await api.request<any>('PUT', `/accounts/${accountId}/workers/scripts/${opts.name}/schedules`, bundle.crons.map(cron => ({ cron })));
+                    const active = Array.isArray(res?.schedules)
+                        ? res.schedules.map((s: any) => s?.cron).filter((c: unknown): c is string => typeof c === 'string')
+                        : null;
+                    crons = active ?? [...bundle.crons];
+                    step(crons.length ? tr('đã đặt lịch chạy {{v1}}', { v1: crons.join(', ') }) : tr('đã tắt lịch chạy'));
+                } catch (err) {
+                    cronsError = toWorkersError(err, 'workers').message;
+                    step(tr('chưa đặt được lịch chạy ({{v1}}), ứng dụng sẽ tự chạy việc định kỳ khi Deplao mở', { v1: cronsError }));
+                }
+            }
 
             const url = opts.workersDev && subdomain ? workersDevUrl(opts.name, subdomain) : null;
             this.statusCache = null;
-            step(`đã triển khai${url ? ` → ${url}` : ''}`);
-            return { name: opts.name, url, deployedAt: this.now() };
+            step(tr('đã triển khai{{v1}}', { v1: url ? ` → ${url}` : '' }));
+            const result: DeployResult = { name: opts.name, url, deployedAt: this.now() };
+            if (crons) result.crons = crons;
+            if (cronsError) result.cronsError = cronsError;
+            return result;
         });
     }
 
-    /** Workers static assets (Direct Upload): manifest → bucket theo yêu cầu của Cloudflare → JWT hoàn tất. */
+    /** Workers static assets (Direct Upload): manifest → buckets as requested by Cloudflare → completion JWT. */
     private async uploadAssets(api: CloudflareApi, accountId: string, scriptName: string, files: BundleAsset[], step: Progress): Promise<string> {
         const manifest: Record<string, { hash: string; size: number }> = {};
         const byHash = new Map<string, BundleAsset>();
@@ -497,39 +536,39 @@ export class WorkersDeployer {
             throw toWorkersError(err, 'workers');
         }
         const jwt = typeof session?.jwt === 'string' ? session.jwt : '';
-        if (!jwt) throw new CloudError('CF_API', 'Cloudflare không trả mã phiên tải asset — thử triển khai lại');
+        if (!jwt) throw new CloudError('CF_API', tr('Cloudflare không trả mã phiên tải asset — thử triển khai lại'));
         const buckets: string[][] = Array.isArray(session?.buckets)
             ? session.buckets.filter((b: unknown) => Array.isArray(b) && b.length > 0)
             : [];
         const count = buckets.reduce((n, b) => n + b.length, 0);
-        // Không có gì cần tải (file đã có từ lần trước) → jwt của phiên chính là mã hoàn tất.
+        // Nothing to upload (files already there from last time) → the session's jwt is the completion token.
         if (!count) {
-            step(`asset không đổi (${files.length} file), bỏ qua bước tải`);
+            step(tr('asset không đổi ({{count}} file), bỏ qua bước tải', { count: files.length }));
             return jwt;
         }
-        step(`tải ${count}/${files.length} file asset (${buckets.length} lượt)…`);
+        step(tr('tải {{count}}/{{count1}} file asset ({{count2}} lượt)…', { count, count1: files.length, count2: buckets.length }));
         const remaining = this.budget().remaining();
         if (buckets.length > remaining) {
-            step(`cần ${buckets.length} lượt tải, ngân sách Cloudflare chung còn ${remaining} — các lượt sau sẽ chờ tới khi có lượt`);
+            step(tr('cần {{count}} lượt tải, ngân sách Cloudflare chung còn {{remaining}} — các lượt sau sẽ chờ tới khi có lượt', { count: buckets.length, remaining }));
         }
         let completion = '';
         for (let i = 0; i < buckets.length; i++) {
             const parts: MultipartPart[] = buckets[i].map(hash => {
                 const file = byHash.get(String(hash));
-                if (!file) throw new CloudError('CF_API', `Cloudflare yêu cầu một file không có trong gói (hash ${String(hash).slice(0, 8)}…) — thử triển khai lại`);
+                if (!file) throw new CloudError('CF_API', tr('Cloudflare yêu cầu một file không có trong gói (hash {{v1}}…) — thử triển khai lại', { v1: String(hash).slice(0, 8) }));
                 return { name: file.hash, filename: file.hash, contentType: file.contentType, data: fs.readFileSync(file.absPath).toString('base64') };
             });
             const next = await this.uploadBucket(accountId, jwt, parts);
             if (next) completion = next;
-            step(`đã tải lượt ${i + 1}/${buckets.length}`);
+            step(tr('đã tải lượt {{v1}}/{{count}}', { v1: i + 1, count: buckets.length }));
         }
-        if (!completion) throw new CloudError('CF_API', 'Cloudflare không trả mã hoàn tất sau khi tải asset — thử triển khai lại');
+        if (!completion) throw new CloudError('CF_API', tr('Cloudflare không trả mã hoàn tất sau khi tải asset — thử triển khai lại'));
         return completion;
     }
 
     /**
-     * POST /accounts/{a}/workers/assets/upload?base64=true — Bearer là JWT của phiên tải lên (không phải token tài khoản)
-     * nên không đi qua CloudflareApi; vẫn lấy lượt từ ngân sách chung. Thử lại khi lỗi mạng / 5xx / 429. Không log JWT.
+     * POST /accounts/{a}/workers/assets/upload?base64=true: the Bearer is the upload session's JWT (not the account token),
+     * so it does not go through CloudflareApi; it still takes calls from the shared budget. Retries on network error / 5xx / 429. Never logs the JWT.
      */
     private async uploadBucket(accountId: string, jwt: string, parts: MultipartPart[]): Promise<string | null> {
         const form = buildMultipart(parts);
@@ -563,8 +602,8 @@ export class WorkersDeployer {
                     continue;
                 }
                 throw new CloudError('CF_API', timedOut
-                    ? 'Tải asset lên Cloudflare quá lâu — thử triển khai lại'
-                    : `Không kết nối được Cloudflare khi tải asset (${networkReason(err)})`);
+                    ? tr('Tải asset lên Cloudflare quá lâu — thử triển khai lại')
+                    : tr('Không kết nối được Cloudflare khi tải asset ({{v1}})', { v1: networkReason(err) }));
             }
             clearTimeout(timer);
             const env = safeJson(text);
@@ -578,12 +617,12 @@ export class WorkersDeployer {
                 return typeof next === 'string' && next ? next : null;
             }
             const first = Array.isArray(env?.errors) ? env.errors[0] : null;
-            const detail = first ? `, mã ${first.code}${first.message ? `: ${String(first.message).replace(/\s+/g, ' ').slice(0, 160)}` : ''}` : '';
-            throw new CloudError('CF_API', `Cloudflare từ chối tải asset (HTTP ${status}${detail})`, status);
+            const detail = first ? tr(', mã {{code}}{{v1}}', { code: first.code, v1: first.message ? `: ${String(first.message).replace(/\s+/g, ' ').slice(0, 160)}` : '' }) : '';
+            throw new CloudError('CF_API', tr('Cloudflare từ chối tải asset (HTTP {{status}}{{detail}})', { status, detail }), status);
         }
     }
 
-    // ── Tên miền riêng (Workers Custom Domain) ──
+    // ── Custom domains (Workers Custom Domain) ──
 
     private async zoneList(fresh = false): Promise<DomainZone[]> {
         const { accountId } = this.ctx();
@@ -603,7 +642,7 @@ export class WorkersDeployer {
         return zones;
     }
 
-    /** GET …/workers/domains theo Worker hoặc theo tên; bộ lọc của Cloudflare có thể gần đúng → so khớp đúng ở đây. */
+    /** GET …/workers/domains by Worker or by name; Cloudflare's filter may be fuzzy → exact match is done here. */
     private async domainsWhere(api: CloudflareApi, accountId: string, query: { service?: string; hostname?: string }): Promise<Array<WorkerDomain & { service: string }>> {
         let list: any;
         try {
@@ -631,8 +670,8 @@ export class WorkersDeployer {
 
     private async domainAttach(name: string, hostname: string, confirm?: DomainConfirm): Promise<DomainAttachResult> {
         const { api, accountId } = this.ctx();
-        return this.exclusive(`${accountId}:domain:${hostname}`, `Gắn tên miền ${hostname}`, async () => {
-            // 1. Tên con của một tên miền trong tài khoản (danh sách nhớ 5 phút; không thấy thì đọc lại một lần).
+        return this.exclusive(`${accountId}:domain:${hostname}`, tr('Gắn tên miền {{hostname}}', { hostname }), async () => {
+            // 1. A subdomain of a domain in the account (the list is cached for 5 minutes; if not found, re-read once).
             let zones = await this.zoneList();
             let zone = zoneOf(hostname, zones);
             if (!zone) {
@@ -641,17 +680,17 @@ export class WorkersDeployer {
             }
             if (!zone) {
                 const known = zones.map(z => z.name).slice(0, 5).join(', ');
-                throw new CloudError('VALIDATION_ERROR', `${hostname} không thuộc tên miền nào của tài khoản Cloudflare đã kết nối${known ? ` (đang có: ${known})` : ''}`);
+                throw new CloudError('VALIDATION_ERROR', tr('{{hostname}} không thuộc tên miền nào của tài khoản Cloudflare đã kết nối{{v1}}', { hostname, v1: known ? tr(' (đang có: {{known}})', { known }) : '' }));
             }
             if (zone.name === hostname) {
-                throw new CloudError('VALIDATION_ERROR', `Chỉ gắn được tên con, vd ${name}.${zone.name}; tên miền gốc ${zone.name} thường đang dùng cho việc khác`);
+                throw new CloudError('VALIDATION_ERROR', tr('Chỉ gắn được tên con, vd {{name}}.{{name1}}; tên miền gốc {{name1}} thường đang dùng cho việc khác', { name, name1: zone.name }));
             }
-            // 2. Đã gắn cho chính Worker này → trả lại, không hỏi, không ghi. Đang gắn cho Worker khác → không lấy.
+            // 2. Already attached to this same Worker → return it, no prompt, no write. Attached to another Worker → do not take it.
             const existing = await this.domainsWhere(api, accountId, { hostname });
             const mine = existing.find(d => d.service === name);
             if (mine) return { ...publicDomain(mine), created: false };
-            if (existing.length) throw new CloudError('CONFLICT', `${hostname} đang được dùng cho một Worker khác, hãy chọn tên khác`);
-            // 3. Không đè bản ghi DNS đang có (Địa chỉ Internet của Deplao, website, mail…).
+            if (existing.length) throw new CloudError('CONFLICT', tr('{{hostname}} đang được dùng cho một Worker khác, hãy chọn tên khác', { hostname }));
+            // 3. Do not overwrite existing DNS records (Deplao's Internet address, website, mail…).
             let records: Array<{ type?: string }>;
             try {
                 records = await listRecordsByName(api, zone.id, hostname);
@@ -660,13 +699,13 @@ export class WorkersDeployer {
             }
             if (records.length) {
                 const types = Array.from(new Set(records.map(r => String(r?.type || '?').toUpperCase()))).join(', ');
-                throw new CloudError('CONFLICT', `${hostname} đã có bản ghi DNS (${types}), hãy chọn tên khác hoặc xoá bản ghi đó trên Cloudflare trước`);
+                throw new CloudError('CONFLICT', tr('{{hostname}} đã có bản ghi DNS ({{types}}), hãy chọn tên khác hoặc xoá bản ghi đó trên Cloudflare trước', { hostname, types }));
             }
-            // 4. Người dùng đồng ý (ứng dụng gọi: hộp thoại của Deplao) — sau khi kiểm xong, trước khi ghi.
+            // 4. The user agrees (called by the app: Deplao's dialog), after the checks and before the write.
             if (confirm && !(await confirm({ worker: name, hostname, zoneName: zone.name }))) {
-                throw new CloudError('CF_DECLINED', `Chưa gắn ${hostname}: bạn đã chọn "Không" ở hộp thoại của Deplao`);
+                throw new CloudError('CF_DECLINED', tr('Chưa gắn {{hostname}}: bạn đã chọn "Không" ở hộp thoại của Deplao', { hostname }));
             }
-            // 5. Gắn: Cloudflare tạo bản ghi DNS + chứng chỉ (vài phút sau tên mới trả lời được).
+            // 5. Attach: Cloudflare creates the DNS record + certificate (the new name answers a few minutes later).
             let res: any;
             try {
                 res = await api.request<any>('PUT', `/accounts/${accountId}/workers/domains`, { hostname, service: name, zone_id: zone.id }, { timeoutMs: DOMAIN_WRITE_TIMEOUT_MS });
@@ -682,7 +721,7 @@ export class WorkersDeployer {
 
     private async domainDetach(name: string, hostname: string): Promise<{ removed: boolean }> {
         const { api, accountId } = this.ctx();
-        return this.exclusive(`${accountId}:domain:${hostname}`, `Gỡ tên miền ${hostname}`, async () => {
+        return this.exclusive(`${accountId}:domain:${hostname}`, tr('Gỡ tên miền {{hostname}}', { hostname }), async () => {
             const mine = (await this.domainsWhere(api, accountId, { hostname })).find(d => d.service === name);
             if (!mine) return { removed: false };
             try {
@@ -708,7 +747,7 @@ export class WorkersDeployer {
         } catch (err) {
             throw toWorkersError(err, 'd1');
         }
-        // `name` của Cloudflare là tìm gần đúng → so khớp đúng tên ở đây.
+        // Cloudflare's `name` filter is fuzzy → the exact name is matched here.
         const hit = (Array.isArray(list) ? list : []).find((d: any) => d && d.name === name && typeof d.uuid === 'string' && d.uuid);
         if (!hit) {
             this.d1Cache.delete(key);
@@ -720,7 +759,7 @@ export class WorkersDeployer {
 
     private async requireD1(api: CloudflareApi, accountId: string, name: string): Promise<{ uuid: string; name: string }> {
         const db = await this.d1Find(api, accountId, name);
-        if (!db) throw new CloudError('NOT_FOUND', `Chưa có cơ sở dữ liệu D1 "${name}" — gọi d1.ensure("${name}") trước`);
+        if (!db) throw new CloudError('NOT_FOUND', tr('Chưa có cơ sở dữ liệu D1 "{{name}}" — gọi d1.ensure("{{name}}") trước', { name }));
         return db;
     }
 
@@ -731,19 +770,19 @@ export class WorkersDeployer {
         try {
             const res = await api.request<any>('POST', `/accounts/${accountId}/d1/database`, { name, primary_location_hint: 'apac' });
             const uuid = typeof res?.uuid === 'string' ? res.uuid : '';
-            if (!uuid) throw new CloudError('CF_API', 'Cloudflare không trả mã (uuid) của cơ sở dữ liệu D1 vừa tạo');
+            if (!uuid) throw new CloudError('CF_API', tr('Cloudflare không trả mã (uuid) của cơ sở dữ liệu D1 vừa tạo'));
             this.d1Cache.set(`${accountId}/${name}`, { uuid, at: this.now() });
             this.log(`Đã tạo D1 ${name} (apac)`);
             return { uuid, name, created: true };
         } catch (err) {
-            // Vừa được tạo song song / tên đã có: đọc lại một lần trước khi báo lỗi.
+            // Just created in parallel / name already exists: re-read once before reporting an error.
             const again = await this.d1Find(api, accountId, name, true).catch(() => null);
             if (again) return { ...again, created: false };
             throw toWorkersError(err, 'd1');
         }
     }
 
-    /** POST …/d1/database/{uuid}/query — trả mảng kết quả (mỗi câu một phần tử). */
+    /** POST …/d1/database/{uuid}/query: returns an array of results (one element per statement). */
     private async d1Exec(api: CloudflareApi, accountId: string, name: string, uuid: string, sql: string, params: Array<string | number | null> = []): Promise<any[]> {
         const body: Record<string, unknown> = { sql };
         if (params.length) body.params = params;
@@ -756,7 +795,7 @@ export class WorkersDeployer {
         }
         const list = Array.isArray(res) ? res : [];
         const failed = list.find((r: any) => r && r.success === false);
-        if (failed) throw new CloudError('CF_API', `D1 báo lỗi${failed.error ? `: ${String(failed.error).slice(0, 300)}` : ''}`);
+        if (failed) throw new CloudError('CF_API', tr('D1 báo lỗi{{v1}}', { v1: failed.error ? `: ${String(failed.error).slice(0, 300)}` : '' }));
         return list;
     }
 
@@ -769,7 +808,7 @@ export class WorkersDeployer {
     }
 
     private async d1Migrate(name: string, dir: string, onProgress?: Progress): Promise<MigrateResult> {
-        if (typeof dir !== 'string' || !dir) throw new CloudError('CF_BUNDLE_INVALID', 'Thiếu thư mục migration');
+        if (typeof dir !== 'string' || !dir) throw new CloudError('CF_BUNDLE_INVALID', tr('Thiếu thư mục migration'));
         const files = listMigrationFiles(dir);
         const { api, accountId } = this.ctx();
         return this.exclusive(`${accountId}:d1:${name}`, `Migration D1 "${name}"`, async () => {
@@ -789,18 +828,18 @@ export class WorkersDeployer {
                     await this.d1Exec(api, accountId, name, db.uuid, sql);
                 } catch (err) {
                     const e = toWorkersError(err, 'd1');
-                    const before = applied.length ? ` Đã áp trước đó: ${applied.join(', ')}.` : '';
-                    throw new CloudError(e.code, `Migration "${file.name}" lỗi — dừng, các file sau chưa áp.${before} ${e.message}`, e.status, e.retryAfterMs);
+                    const before = applied.length ? tr(' Đã áp trước đó: {{v1}}.', { v1: applied.join(', ') }) : '';
+                    throw new CloudError(e.code, tr('Migration "{{name}}" lỗi — dừng, các file sau chưa áp.{{before}} {{message}}', { name: file.name, before, message: e.message }), e.status, e.retryAfterMs);
                 }
                 applied.push(file.name);
-                this.progress(onProgress, `D1 ${name}: đã áp ${file.name}`);
+                this.progress(onProgress, tr('D1 {{name}}: đã áp {{name1}}', { name, name1: file.name }));
             }
             return { applied, skipped };
         });
     }
 }
 
-/** Dùng chung ở main (handler IPC cloudflare:workers:*). Lõi Cloudflare nạp lười để module nạp được trong test. */
+/** Shared in main (IPC handlers cloudflare:workers:*). The Cloudflare core is loaded lazily so the module can load in tests. */
 export const workersDeployer = new WorkersDeployer({
     core: () => (require('../CloudflareService') as typeof import('../CloudflareService')).cloudflare,
 });

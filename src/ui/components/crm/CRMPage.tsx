@@ -13,7 +13,7 @@ import BulkActionBar from './contacts/BulkActionBar';
 import CampaignList from './campaigns/CampaignList';
 import CampaignDetail from './campaigns/CampaignDetail';
 import CampaignCreateModal from './campaigns/CampaignCreateModal';
-import CampaignCloneModal from './campaigns/CampaignCloneModal';
+import CampaignCloneModal, { type CampaignCloneOptions } from './campaigns/CampaignCloneModal';
 import TargetSelector from './campaigns/TargetSelector';
 import ZaloLabelSelector from './tags/ZaloLabelSelector';
 import LocalLabelSelector from '@/components/common/inputs/LocalLabelSelector';
@@ -24,8 +24,9 @@ import CRMSearchTab from './search/CRMSearchTab';
 import CRMRequestsTab from './search/CRMRequestsTab';
 import AddToContactsModal from './contacts/AddToContactsModal';
 import AccountSelectorDropdown from '@/components/common/accounts/AccountSelectorDropdown';
-import { getCapability, type Channel } from '../../../configs/channels/channelConfig';
+import { getCapability, resolveAccountChannel, type Channel } from '../../../configs/channels/channelConfig';
 import { buildCRMContactFilters } from '../../../shared/crm/crmContactFilters';
+import { campaignInvitesToGroups } from '../../../shared/crm/campaignCopy';
 import ScanPanel from './scan/ScanPanel';
 import ScanHistoryTab from './scan/ScanHistoryTab';
 import ScanStatsTab from './scan/ScanStatsTab';
@@ -36,24 +37,26 @@ import {
   UserPlusIcon, UsersIcon, WifiIcon
 } from '@/components/common/icons';
 import { Button, EmptyState } from '@/components/ui';
+import { tr, appLocale } from '../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 /**
- * Tài khoản sở hữu danh sách liên hệ / chiến dịch đang nằm trong useCRMStore (store sống lâu hơn CRMPage).
- * Lần tải lỗi chỉ giữ danh sách cũ khi nó thuộc đúng tài khoản đang xem.
+ * The account that owns the contact list / campaigns currently in useCRMStore (the store outlives CRMPage).
+ * A failed load only keeps the old list when it belongs to the account being viewed.
  */
 let crmContactsOwner: string | null = null;
 let crmCampaignsOwner: string | null = null;
 
-/** Mảng rỗng cố định — `labels[id] || []` tạo mảng mới mỗi lần render làm truy vấn liên hệ chạy lại liên tục. */
+/** Fixed empty array: `labels[id] || []` creates a new array on every render, which makes the contact query run again and again. */
 const NO_LABELS: LabelData[] = [];
 
-/** Báo lỗi tải gọn phía trên danh sách — dữ liệu cũ (nếu có) vẫn hiện, không thay bằng "trống". */
+/** Short load-error notice above the list: the old data (if any) is still shown, not replaced by "trống" (empty). */
 function LoadFailedBanner({ text, onRetry, busy }: { text: string; onRetry: () => void; busy?: boolean }) {
   return (
     <div role="status" className="flex items-center justify-center gap-2 px-4 py-2 text-xs text-muted-foreground bg-muted/50 border-b border-border">
       <span>{text}</span>
-      <Button variant="link" size="sm" className="text-xs" onClick={onRetry} disabled={busy}>Thử lại</Button>
+      <Button variant="link" size="sm" className="text-xs" onClick={onRetry} disabled={busy}>{tr('Thử lại')}</Button>
     </div>
   );
 }
@@ -61,8 +64,8 @@ function LoadFailedBanner({ text, onRetry, busy }: { text: string; onRetry: () =
 // ── Wizard Step Indicator ────────────────────────────────────────────────
 function WizardStepIndicator({ currentStep }: { currentStep: number }) {
   const steps = [
-    { num: 1, label: 'Tạo chiến dịch' },
-    { num: 2, label: 'Thêm liên hệ' },
+    { num: 1, label: tr('Tạo chiến dịch') },
+    { num: 2, label: tr('Thêm liên hệ') },
   ];
   return (
     <div className="flex items-center justify-center gap-2 py-3">
@@ -99,7 +102,7 @@ export default function CRMPage() {
   const store = useCRMStore();
   const hasUnreadRequestDot = !!(activeAccountId && crmRequestUnseenByAccount[activeAccountId]);
 
-  // Red dot cho tab Nhóm → Quét thành viên (chưa xem)
+  // Red dot on the Groups tab → Member scan (not seen yet)
   const [hasScanNewDot, setHasScanNewDot] = useState(() => {
     try { return localStorage.getItem('scanTabSeen') !== 'true'; } catch { return false; }
   });
@@ -108,7 +111,7 @@ export default function CRMPage() {
   const channelCap = getCapability((activeAccount?.channel || CHANNEL.ZALO) as Channel);
 
   const zaloLabels: LabelData[] = (activeAccountId && labels[activeAccountId]) || NO_LABELS;
-  // Danh sách hội thoại của nhãn Zalo chỉ ảnh hưởng truy vấn khi đang lọc theo nhãn Zalo
+  // The conversation list of a Zalo label only affects the query when filtering by a Zalo label
   const labelsForFilter = store.filterLabelIds.length > 0 ? zaloLabels : NO_LABELS;
 
   const [showCreateCampaign, setShowCreateCampaign] = useState(false);
@@ -136,11 +139,11 @@ export default function CRMPage() {
   const [localLabels, setLocalLabels] = useState<Array<{ id: number; name: string; color: string; text_color?: string; emoji?: string }>>([]);
   const [localLabelThreadMap, setLocalLabelThreadMap] = useState<Record<string, number[]>>({});
 
-  // Lần tải gần nhất lỗi (employee: mất kết nối BOSS) — danh sách đang hiện là dữ liệu cũ / trống do lỗi
+  // The last load failed (employee: lost connection to BOSS): the list on screen is old data / empty because of the error
   const [contactsLoadFailed, setContactsLoadFailed] = useState(false);
   const [campaignsLoadFailed, setCampaignsLoadFailed] = useState(false);
 
-  // Tài khoản của Nhãn Local đang hiện: chỉ giữ dữ liệu cũ khi lỗi nếu nó thuộc đúng tài khoản đang xem
+  // The account of the Local label on screen: keep the old data on error only if it belongs to the account being viewed
   const labelsOwnerRef = useRef<string | null>(null);
 
   const loadLocalLabels = useCallback(async () => {
@@ -154,12 +157,12 @@ export default function CRMPage() {
       const labelsFailed = isReadFailure(labelsRes);
       const threadsFailed = isReadFailure(threadsRes);
       if ((labelsFailed || threadsFailed) && labelsOwnerRef.current !== accountId) {
-        // Lỗi ngay khi đổi tài khoản: không để nhãn của tài khoản trước hiện (và bị lọc / gán) cho tài khoản này
+        // Error right after changing the account: do not let the previous account's labels show (and be filtered / assigned) for this account
         setLocalLabels([]);
         setLocalLabelThreadMap({});
       }
       labelsOwnerRef.current = accountId;
-      // Lỗi → giữ nhãn / gán nhãn đang có của tài khoản (trước đây bị thay bằng rỗng)
+      // Error → keep the labels / label assignments of the account (they used to be replaced with empty)
       if (!labelsFailed) setLocalLabels(labelsRes?.labels || []);
       if (threadsFailed) return;
       // Build thread→labelIds map
@@ -174,10 +177,10 @@ export default function CRMPage() {
 
   useEffect(() => { loadLocalLabels(); }, [activeAccountId]);
 
-  // Listen for local-labels-changed to refresh local labels — cả gán / bỏ nhãn của tài khoản đang mở do Boss / nhân
-  // viên khác làm (relay db:localLabelThreadChanged → 'ui:threadLabelsChanged'; trước đây danh sách CRM không biết)
+  // Listen for local-labels-changed to refresh local labels: both assigning and removing labels on the open account, made by Boss or another
+  // employee (relay db:localLabelThreadChanged → 'ui:threadLabelsChanged'; before this the CRM list did not know about it)
   useEffect(() => {
-    // Đang lọc theo Nhãn Local (lọc trong DB) → tải lại cả danh sách liên hệ
+    // Filtering by Local Label (filtered in the DB) → reload the whole contact list
     const reloadLabels = () => {
       loadLocalLabels();
       if (useCRMStore.getState().filterLocalLabelIds.length > 0) loadContactsRef.current();
@@ -197,9 +200,9 @@ export default function CRMPage() {
 
   // ── Load data ────────────────────────────────────────────────────────────
   /**
-   * Tuỳ chọn truy vấn theo bộ lọc đang chọn — dùng chung cho danh sách (1 trang) và Xuất CSV (toàn bộ).
-   * Nhãn / Có SĐT / Có ghi chú / Giới tính / Sinh nhật lọc trong DB trước khi cắt trang: trước đây chúng chỉ lọc trang
-   * đang tải (liên hệ ở trang khác không bao giờ khớp, mất phân trang) và Xuất CSV bỏ qua chúng.
+   * Query options for the selected filters, shared by the list (1 page) and the CSV export (everything).
+   * Label / Has phone / Has note / Gender / Birthday are filtered in the DB before the page is cut: before, they only filtered the page
+   * being loaded (contacts on other pages never matched, and paging broke) and the CSV export ignored them.
    */
   const contactQuery = useCallback((range: { limit: number; offset: number }) => {
     const backendContactTypes = store.filterContactTypes.filter(t => t !== 'has_phone' && t !== 'has_notes');
@@ -221,7 +224,7 @@ export default function CRMPage() {
   }, [store.searchText, store.filterContactTypes, store.sortBy, store.sortDir, store.filterLabelIds,
     store.filterLocalLabelIds, store.filterGender, store.filterBirthday, labelsForFilter]);
 
-  // Đổi bộ lọc liên tục → nhiều lần tải chồng nhau: chỉ nhận kết quả của lần mới nhất
+  // Filters changed continuously → several loads overlapping: only accept the result of the latest one
   const contactsSeqRef = useRef(0);
   const loadContacts = useCallback(async () => {
     if (!activeAccountId) return;
@@ -233,16 +236,16 @@ export default function CRMPage() {
     });
     if (seq !== contactsSeqRef.current) return;
     store.setContactsLoading(false);
-    // Lỗi → GIỮ danh sách đang có của tài khoản (không thay bằng rỗng) + báo "Không tải được — Thử lại"
+    // Error → KEEP the account's current list (do not replace it with empty) + show "Không tải được - Thử lại" (Failed to load - Retry)
     const failed = isReadFailure(res);
     setContactsLoadFailed(failed);
     if (res?.success) {
       crmContactsOwner = activeAccountId;
       store.setContacts(res.contacts, res.total);
-      // Tự làm mới tên/avatar liên hệ cũ (fire-and-forget; tự bỏ qua ở chế độ nhân viên / kênh khác Zalo)
+      // Refresh the names / avatars of old contacts in the background (fire-and-forget; skipped in employee mode and for channels other than Zalo)
       refreshStaleContacts(activeAccountId, res.contacts).catch(() => {});
     } else if (failed && crmContactsOwner !== activeAccountId) {
-      // Danh sách đang hiện thuộc tài khoản khác: không giữ (thao tác hàng loạt sẽ nhắm nhầm liên hệ)
+      // The list on screen belongs to another account: do not keep it (bulk actions would hit the wrong contacts)
       crmContactsOwner = activeAccountId;
       store.setContacts([], 0);
     }
@@ -261,7 +264,7 @@ export default function CRMPage() {
       crmCampaignsOwner = activeAccountId;
       store.setCampaigns(res.campaigns);
     } else if (failed && crmCampaignsOwner !== activeAccountId) {
-      // Chiến dịch đang hiện thuộc tài khoản khác: không giữ
+      // The campaign on screen belongs to another account: do not keep it
       crmCampaignsOwner = activeAccountId;
       store.setCampaigns([]);
     }
@@ -271,7 +274,7 @@ export default function CRMPage() {
   const loadGroupCount = useCallback(async () => {
     if (!activeAccountId) return;
     const res = await DataAccessor.getConversations(activeAccountId, 999, 0);
-    if (isReadFailure(res)) return; // lỗi đọc ≠ 0 nhóm: giữ số đang hiện
+    if (isReadFailure(res)) return; // read error ≠ 0 groups: keep the number on screen
     const allContacts = res?.items || [];
     const count = (allContacts || []).filter((c: any) =>
       c.contact_type === 'group' && !(String(c.channel || '').startsWith('telegram') && c.telegram_peer_type === 'channel')
@@ -284,7 +287,7 @@ export default function CRMPage() {
     if (!activeAccountId) return;
     try {
       const recRes = await DataAccessor.getFriendRequests({ zaloId: activeAccountId, direction: 'received' });
-      if (isReadFailure(recRes)) return; // lỗi đọc ≠ 0 lời mời: giữ số + chấm đỏ đang hiện
+      if (isReadFailure(recRes)) return; // read error ≠ 0 requests: keep the number + red dot on screen
       const count = recRes?.requests?.length ?? 0;
       store.setRequestCount(count);
       if (count === 0) clearCRMRequestUnseen(activeAccountId);
@@ -303,8 +306,8 @@ export default function CRMPage() {
       scan_stats: !channelCap.supportsScanData,
     };
     if (disabledTabs[store.tab]) store.setTab('contacts');
-    // Không để filter chỉ có ý nghĩa ở Zalo còn treo khi đổi account.
-    // Nếu giữ lại, UI đã ẩn filter nhưng query Telegram vẫn trả về rỗng.
+    // Do not leave a filter that only makes sense on Zalo hanging when switching accounts.
+    // If kept, the UI has hidden the filter but the Telegram query would still return empty.
     if (!channelCap.supportsLabel) {
       store.setFilter({ filterLabelIds: [] });
     }
@@ -317,7 +320,7 @@ export default function CRMPage() {
     }
     loadContacts(); loadCampaigns(); loadGroupCount(); loadRequestCount();
   }, [activeAccountId]);
-  // contactQuery đổi khi tìm kiếm / sắp xếp / mọi bộ lọc (kể cả hội thoại của nhãn Zalo đang lọc) đổi
+  // contactQuery changes on search / sort / any filter (including the conversations of the Zalo label being filtered) change
   useEffect(() => { loadContacts(); }, [contactQuery, store.page, store.pageSize]);
 
   // Listen for crm-contacts-changed to refresh contacts list (e.g. after AddToContactsModal)
@@ -333,8 +336,8 @@ export default function CRMPage() {
     }
   }, [activeAccountId, store.tab, clearCRMRequestUnseen]);
 
-  // ── Chế độ nhân viên: kết nối BOSS phục hồi → tải lại dữ liệu CRM đang hiển thị ──
-  // (lần tải lỗi lúc mất kết nối đã giữ dữ liệu cũ; giờ làm mới). Các tab con tự tải khi mở lại.
+  // ── Employee mode: BOSS connection restored → reload the CRM data on screen ──
+  // (the failed load while the connection was lost kept the old data; now refresh). The sub-tabs load themselves when reopened.
   useEmployeeResync(() => Promise.allSettled([
     loadContacts(), loadCampaigns(), loadGroupCount(), loadRequestCount(), loadLocalLabels(),
   ]));
@@ -357,8 +360,8 @@ export default function CRMPage() {
 
   // ── Real-time queue events ────────────────────────────────────────────────
   useEffect(() => {
-    // Mỗi tin chiến dịch gửi đi = 1 crm:queueUpdate; catch-up sau khi nhân viên kết nối lại phát lại cả loạt → gộp
-    // các lần tải lại danh sách chiến dịch (trước đây mỗi event một lần gọi BOSS)
+    // Each campaign message sent = 1 crm:queueUpdate; the catch-up after an employee reconnects replays the whole batch → merged
+    // into the campaign list reloads (before, each event made one call to BOSS)
     let reloadTimer: ReturnType<typeof setTimeout> | null = null;
     const reloadCampaignsSoon = () => {
       if (reloadTimer) clearTimeout(reloadTimer);
@@ -379,7 +382,7 @@ export default function CRMPage() {
     const unsubStatus = ipc.on?.('crm:queueStatus', (data: any) => {
       if (data.zaloId !== activeAccountId) return;
       store.updateQueueStatus(data.zaloId, {
-        running: data.running ?? true,   // false khi queue dừng hẳn
+        running: data.running ?? true,   // false when the queue has fully stopped
         tokens: data.tokens,
         maxTokens: data.maxTokens ?? 60,
         lastSentAt: data.lastSentAt,
@@ -388,9 +391,9 @@ export default function CRMPage() {
     });
     const unsubDone = ipc.on?.('crm:campaignDone', (data: any) => {
       if (data.zaloId !== activeAccountId) return;
-      showNotification('Chiến dịch đã hoàn thành!', 'success');
+      showNotification(tr('Chiến dịch đã hoàn thành!'), 'success');
       loadCampaigns();
-      // Queue có thể đã dừng → refresh trạng thái để ẩn status bar nếu cần
+      // The queue may have stopped → refresh the state to hide the status bar if needed
       DataAccessor.getQueueStatus({ zaloId: activeAccountId }).then(res => {
         if (res?.success && res.status) {
           store.updateQueueStatus(activeAccountId, {
@@ -419,8 +422,8 @@ export default function CRMPage() {
 
   // ── Campaign actions ─────────────────────────────────────────────────────
   const handleCreateCampaign = async (data: any) => {
-    // activeAccountId có thể còn null nếu bấm ngay lúc khởi động (account chưa auto-select xong).
-    // Fallback về account đầu tiên trong store để không mất thao tác tạo.
+    // activeAccountId can still be null if you click right at startup (the account has not finished auto-selecting yet).
+    // Fall back to the first account in the store so the create action is not lost.
     const acctId = activeAccountId || accounts?.[0]?.zalo_id;
     if (!acctId) return;
     if (!activeAccountId) setActiveAccount(acctId);
@@ -428,7 +431,7 @@ export default function CRMPage() {
     if (res?.success) {
       await loadCampaigns();
       store.setActiveCampaign(res.id);
-      showNotification('Đã tạo chiến dịch', 'success');
+      showNotification(tr('Đã tạo chiến dịch'), 'success');
       // Wizard flow: advance to step 2 (add contacts) after saving
       if (wizardActive) {
         setWizardCampaignId(res.id);
@@ -439,12 +442,17 @@ export default function CRMPage() {
   };
 
   const handleUpdateCampaignStatus = async (id: number, status: string) => {
-    await DataAccessor.updateCampaignStatus({ campaignId: id, status });
+    const res = await DataAccessor.updateCampaignStatus({ campaignId: id, status });
     await loadCampaigns();
+    // Refused (e.g. a copy for another account with no invite group picked yet): say why instead of "đang chạy"
+    if (res && res.success === false) {
+      showNotification(res.error || tr('Không đổi được trạng thái chiến dịch'), 'error');
+      return;
+    }
     showNotification(
-      status === 'active' ? '▶ Chiến dịch đang chạy'
-        : status === 'paused' ? '⏸ Đã tạm dừng'
-        : 'Đã cập nhật',
+      status === 'active' ? tr('▶ Chiến dịch đang chạy')
+        : status === 'paused' ? tr('⏸ Đã tạm dừng')
+        : tr('Đã cập nhật'),
       'info'
     );
   };
@@ -456,20 +464,42 @@ export default function CRMPage() {
     await loadCampaigns();
   };
 
-  const handleCloneCampaign = async (includeContacts: boolean, newName: string) => {
+  const handleCloneCampaign = async ({ includeContacts, newName, targetIds }: CampaignCloneOptions) => {
     if (!activeAccountId || cloneCampaignId === null) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res: { success: boolean; id?: number; error?: string } | undefined = await (DataAccessor.cloneCampaign({ zaloId: activeAccountId, campaignId: cloneCampaignId, includeContacts, newName }) as any);
-    if (res?.success) {
+    const res = await DataAccessor.cloneCampaign({
+      zaloId: activeAccountId, campaignId: cloneCampaignId, includeContacts, newName, targetZaloIds: targetIds,
+    });
+    if (!res?.success) {
+      showNotification(tr('Lỗi nhân bản: {{v1}}', { v1: (res?.error || tr('Không rõ')) }), 'error');
+      return;
+    }
+    // An older Boss answers with the owner's copy id only
+    const copies = Array.isArray(res.copies) ? res.copies : (res.id ? [{ zaloId: activeAccountId, id: res.id, contacts: 0, inviteGroupsCleared: false }] : []);
+    const failed = Array.isArray(res.failed) ? res.failed : [];
+    // The list shows this account's campaigns: open its copy; copies in other accounts show under those accounts
+    const ownCopy = copies.find(copy => copy.zaloId === activeAccountId);
+    if (ownCopy) {
       await loadCampaigns();
-      if (res.id) store.setActiveCampaign(res.id);
-      showNotification('Đã nhân bản chiến dịch', 'success');
+      store.setActiveCampaign(ownCopy.id);
+    }
+    const otherCopy = copies.find(copy => copy.zaloId !== activeAccountId);
+    if (failed.length > 0) {
+      showNotification(tr('Đã nhân bản sang {{done}}/{{total}} tài khoản. Lỗi: {{v1}}', {
+        done: copies.length, total: copies.length + failed.length, v1: failed[0].error,
+      }), 'warning');
+    } else if (!otherCopy) {
+      showNotification(tr('Đã nhân bản chiến dịch'), 'success');
+    } else if (includeContacts) {
+      // Other accounts only get the recipients they can find by phone number (shared/crm/campaignCopy)
+      showNotification(tr('Đã nhân bản sang {{count}} tài khoản, tài khoản khác nhận {{v1}} người nhận có SĐT', {
+        count: copies.length, v1: otherCopy.contacts.toLocaleString(appLocale()),
+      }), 'success');
     } else {
-      showNotification('Lỗi nhân bản: ' + (res?.error || 'Không rõ'), 'error');
+      showNotification(tr('Đã nhân bản sang {{count}} tài khoản', { count: copies.length }), 'success');
     }
   };
 
-  // Màn chiến dịch → lọc theo hiệu quả (vd "Đã xem, chưa phản hồi") → chiến dịch nháp mới chỉ gồm các liên hệ đó
+  // From the campaign screen → filter by result (e.g. "Đã xem, chưa phản hồi" (Seen, not replied yet)) → the new draft campaign only includes those contacts
   const handleCreateCampaignFromContacts = async (sourceCampaignId: number, contactIds: string[], newName: string) => {
     if (!activeAccountId || contactIds.length === 0) return;
     const res: { success: boolean; id?: number; error?: string } | undefined = await (DataAccessor.cloneCampaign({
@@ -478,9 +508,9 @@ export default function CRMPage() {
     if (res?.success) {
       await loadCampaigns();
       if (res.id) store.setActiveCampaign(res.id);
-      showNotification(`Đã tạo chiến dịch nháp với ${contactIds.length.toLocaleString('vi-VN')} liên hệ`, 'success');
+      showNotification(tr('Đã tạo chiến dịch nháp với {{v1}} liên hệ', { v1: contactIds.length.toLocaleString(appLocale()) }), 'success');
     } else {
-      showNotification('Không tạo được chiến dịch: ' + (res?.error || 'Không rõ'), 'error');
+      showNotification(tr('Không tạo được chiến dịch: {{v1}}', { v1: (res?.error || tr('Không rõ')) }), 'error');
     }
   };
 
@@ -494,10 +524,10 @@ export default function CRMPage() {
     }
     await loadCampaigns();
     if (!res?.success) {
-      showNotification('Không thêm được liên hệ vào chiến dịch: ' + (res?.error || 'lỗi không rõ'), 'error');
+      showNotification(tr('Không thêm được liên hệ vào chiến dịch: {{v1}}', { v1: (res?.error || tr('lỗi không rõ')) }), 'error');
       return false;
     }
-    showNotification(`Đã thêm ${contacts.length} liên hệ vào chiến dịch`, 'success');
+    showNotification(tr('Đã thêm {{count}} liên hệ vào chiến dịch', { count: contacts.length }), 'success');
     return true;
   };
 
@@ -509,14 +539,14 @@ export default function CRMPage() {
       campaign: {
         ...data,
         id: store.activeCampaignId,
-        status: currentCampaign?.status ?? 'draft',  // giữ nguyên trạng thái hiện tại
+        status: currentCampaign?.status ?? 'draft',  // keep the current state
       },
     });
     if (res?.success) {
       await loadCampaigns();
-      showNotification('Đã cập nhật chiến dịch', 'success');
+      showNotification(tr('Đã cập nhật chiến dịch'), 'success');
     } else {
-      showNotification('Lỗi: Không thể lưu', 'error');
+      showNotification(tr('Lỗi: Không thể lưu'), 'error');
     }
   };
 
@@ -526,7 +556,7 @@ export default function CRMPage() {
     if (res?.success) {
       await loadCampaigns();
       if (res.id) setSelectedCampaignForAdd(res.id);
-      showNotification('Đã tạo chiến dịch', 'success');
+      showNotification(tr('Đã tạo chiến dịch'), 'success');
     }
   };
 
@@ -540,7 +570,7 @@ export default function CRMPage() {
       phone: c.phone || '',
     }));
     const added = await handleAddContactsToCampaign(wizardCampaignId, toAdd);
-    if (!added) return; // giữ wizard mở để thử lại
+    if (!added) return; // keep the wizard open so the user can retry
     // Wizard complete
     setWizardActive(false);
     setWizardStep(0);
@@ -569,7 +599,7 @@ export default function CRMPage() {
   // ── Bulk actions ─────────────────────────────────────────────────────────
   const handleBulkAddToCampaign = async () => {
     if (store.campaigns.length === 0) {
-      showNotification('Hãy tạo chiến dịch trước', 'info');
+      showNotification(tr('Hãy tạo chiến dịch trước'), 'info');
       store.setTab('campaigns');
       return;
     }
@@ -614,15 +644,15 @@ export default function CRMPage() {
         const finalLabels: LabelData[] = res.response?.labelData || updated;
         setLabels(activeAccountId, finalLabels);
         // Note: Workflow events are emitted by backend (zaloIpc.ts) to avoid duplicates
-        showNotification(`Đã gán nhãn Zalo cho ${store.selectedContactIds.size} liên hệ`, 'success');
+        showNotification(tr('Đã gán nhãn Zalo cho {{count}} liên hệ', { count: store.selectedContactIds.size }), 'success');
         setShowBulkZaloModal(false);
         setBulkLabelIds([]);
         store.clearSelection();
       } else {
-        throw new Error(res?.error || 'Không thể gán nhãn');
+        throw new Error(res?.error || tr('Không thể gán nhãn'));
       }
     } catch (err: any) {
-      showNotification('Lỗi: ' + (err?.message || 'Không rõ'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (err?.message || tr('Không rõ')) }), 'error');
     }
     setApplyingBulkLabel(false);
   };
@@ -633,26 +663,26 @@ export default function CRMPage() {
     setApplyingBulkLabel(true);
     try {
       const selectedContactIds = [...store.selectedContactIds];
-      // Single bulk call with transaction — thay vì hàng nghìn IPC calls riêng lẻ
+      // Single bulk call with a transaction, instead of thousands of separate IPC calls
       const res = await DataAccessor.bulkAssignLocalLabelToThread({
         zaloId: activeAccountId,
         labelIds: bulkLocalLabelIds,
         threadIds: selectedContactIds,
       });
       const count = res?.count ?? (bulkLocalLabelIds.length * selectedContactIds.length);
-      showNotification(`Đã gán Nhãn Local cho ${selectedContactIds.length} liên hệ (${count} assignments)`, 'success');
+      showNotification(tr('Đã gán Nhãn Local cho {{count}} liên hệ ({{count1}} assignments)', { count: selectedContactIds.length, count1: count }), 'success');
       setShowBulkLocalModal(false);
       setBulkLocalLabelIds([]);
       store.clearSelection();
       window.dispatchEvent(new CustomEvent('local-labels-changed', { detail: { zaloId: activeAccountId } }));
       loadLocalLabels();
     } catch (err: any) {
-      showNotification('Lỗi: ' + (err?.message || 'Không rõ'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (err?.message || tr('Không rõ')) }), 'error');
     }
     setApplyingBulkLabel(false);
   };
 
-  /** Bulk leave groups - rời tất cả nhóm được chọn */
+  /** Bulk leave groups: leave all the selected groups */
   const handleBulkLeaveGroup = () => setShowLeaveGroupConfirm(true);
 
   const handleConfirmLeaveGroups = async () => {
@@ -684,14 +714,14 @@ export default function CRMPage() {
     setShowLeaveGroupConfirm(false);
     store.clearSelection();
     if (ok > 0) {
-      showNotification(`Đã rời ${ok} nhóm${fail > 0 ? `, thất bại ${fail}` : ''}`, fail > 0 ? 'info' : 'success');
+      showNotification(tr('Đã rời {{ok}} nhóm{{v1}}', { ok, v1: fail > 0 ? tr(', thất bại {{fail}}', { fail }) : '' }), fail > 0 ? 'info' : 'success');
       await loadContacts();
     } else {
-      showNotification(`Không thể rời nhóm (${fail} lỗi)`, 'error');
+      showNotification(tr('Không thể rời nhóm ({{fail}} lỗi)', { fail }), 'error');
     }
   };
 
-  /** Fetch toàn bộ liên hệ theo bộ lọc hiện tại (không phân trang) để xuất CSV — cùng bộ lọc với danh sách */
+  /** Fetch all contacts for the current filter (no paging) for CSV export: same filter as the list */
   const handleExportAll = useCallback(async (): Promise<any[]> => {
     if (!activeAccountId) return [];
     const res = await DataAccessor.getCRMContacts({
@@ -733,11 +763,11 @@ export default function CRMPage() {
               }
             }}
               className={`px-4 py-1.5 rounded-md text-xs font-medium flex transition-colors ${store.tab === t ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>
-              {t === 'search' ? <><SearchIcon className="w-4 h-4 mr-2" /> Tìm kiếm</>
-                : t === 'contacts' ? <><UserIcon className="w-4 h-4 mr-2" /> Liên hệ{store.totalContacts ? ` (${store.totalContacts})` : ''}</>
+              {t === 'search' ? <>{trx('<0/> Tìm kiếm', { 0: <SearchIcon className="w-4 h-4 mr-2" /> })}</>
+                : t === 'contacts' ? <>{trx('<0/> Liên hệ{{v1}}', { 0: <UserIcon className="w-4 h-4 mr-2" />, v1: store.totalContacts ? ` (${store.totalContacts})` : '' })}</>
                 : t === 'groups' ? (
                   <span className="relative inline-flex items-center gap-1.5">
-                    <span className="flex"><UsersIcon className="w-4 h-4 mr-2" /> Nhóm{store.groupCount ? ` (${store.groupCount})` : ''}</span>
+                    <span className="flex">{trx('<0/> Nhóm{{v1}}', { 0: <UsersIcon className="w-4 h-4 mr-2" />, v1: store.groupCount ? ` (${store.groupCount})` : '' })}</span>
                     {hasScanNewDot && (
                       <span className="w-2 h-2 bg-red-500 rounded-full border border-border flex-shrink-0 animate-pulse" />
                     )}
@@ -745,17 +775,17 @@ export default function CRMPage() {
                 )
                 : t === 'requests' ? (
                   <span className="relative inline-flex items-center gap-1.5">
-                    <span className="flex"><UserPlusIcon className="w-4 h-4 mr-2" /> Lời mời{store.requestCount ? ` (${store.requestCount})` : ''}</span>
+                    <span className="flex">{trx('<0/> Lời mời{{v1}}', { 0: <UserPlusIcon className="w-4 h-4 mr-2" />, v1: store.requestCount ? ` (${store.requestCount})` : '' })}</span>
                     {hasUnreadRequestDot && (
                       <span className="w-2 h-2 bg-red-500 rounded-full border border-border flex-shrink-0" />
                     )}
                   </span>
                 )
-                : t === 'campaigns' ? <><CampaignIcon className="w-4 h-4 mr-2" /> Chiến dịch{store.campaigns.length ? ` (${store.campaigns.length})` : ''}</>
-                : t === 'history' ? <><ClipboardListIcon className="w-4 h-4 mr-2" /> Lịch sử</>
-                : t === 'scan' ? <><SearchIcon className="w-4 h-4 mr-2" /> Quét dữ liệu</>
-                : t === 'scan_history' ? <><ClipboardListIcon className="w-4 h-4 mr-2" /> Lịch sử quét</>
-                : t === 'scan_stats' ? <><ChartIcon className="w-4 h-4 mr-2" /> Thống kê</>
+                : t === 'campaigns' ? <>{trx('<0/> Chiến dịch{{v1}}', { 0: <CampaignIcon className="w-4 h-4 mr-2" />, v1: store.campaigns.length ? ` (${store.campaigns.length})` : '' })}</>
+                : t === 'history' ? <>{trx('<0/> Lịch sử', { 0: <ClipboardListIcon className="w-4 h-4 mr-2" /> })}</>
+                : t === 'scan' ? <>{trx('<0/> Quét dữ liệu', { 0: <SearchIcon className="w-4 h-4 mr-2" /> })}</>
+                : t === 'scan_history' ? <>{trx('<0/> Lịch sử quét', { 0: <ClipboardListIcon className="w-4 h-4 mr-2" /> })}</>
+                : t === 'scan_stats' ? <>{trx('<0/> Thống kê', { 0: <ChartIcon className="w-4 h-4 mr-2" /> })}</>
                 : t}
             </button>
           ))}
@@ -765,7 +795,7 @@ export default function CRMPage() {
         <button
           onClick={() => navigateToAnalytics('overview')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-          title="Xem báo cáo & phân tích"
+          title={tr('Xem báo cáo & phân tích')}
         ><ChartIcon className="w-4 h-4 inline" /> </button>
         {/* Account selector */}
         <AccountSelectorDropdown
@@ -786,7 +816,7 @@ export default function CRMPage() {
               <div className="flex-1 flex flex-col overflow-hidden">
                 {contactsLoadFailed && !store.contactsLoading && (
                   <LoadFailedBanner
-                    text={store.contacts.length > 0 ? 'Không tải được danh sách liên hệ mới nhất — đang hiện dữ liệu cũ' : 'Không tải được danh sách liên hệ'}
+                    text={store.contacts.length > 0 ? tr('Không tải được danh sách liên hệ mới nhất — đang hiện dữ liệu cũ') : tr('Không tải được danh sách liên hệ')}
                     onRetry={loadContacts}
                   />
                 )}
@@ -843,7 +873,7 @@ export default function CRMPage() {
               <div className="w-80 flex-shrink-0 border-r border-border overflow-hidden flex flex-col">
                 {campaignsLoadFailed && !store.campaignsLoading && (
                   <LoadFailedBanner
-                    text={store.campaigns.length > 0 ? 'Không tải được chiến dịch mới nhất' : 'Không tải được danh sách chiến dịch'}
+                    text={store.campaigns.length > 0 ? tr('Không tải được chiến dịch mới nhất') : tr('Không tải được danh sách chiến dịch')}
                     onRetry={loadCampaigns}
                   />
                 )}
@@ -876,9 +906,9 @@ export default function CRMPage() {
                   <EmptyState
                     className="h-full"
                     icon={<CampaignIcon className="h-6 w-6" />}
-                    title="Chọn chiến dịch để xem chi tiết"
-                    description="Tiến độ gửi, nội dung và danh sách liên hệ của chiến dịch sẽ hiện ở đây."
-                    action={<Button variant="outline" size="sm" leftIcon={<PlusIcon className="h-4 w-4" />} onClick={startWizard}>Tạo chiến dịch mới</Button>}
+                    title={tr('Chọn chiến dịch để xem chi tiết')}
+                    description={tr('Tiến độ gửi, nội dung và danh sách liên hệ của chiến dịch sẽ hiện ở đây.')}
+                    action={<Button variant="outline" size="sm" leftIcon={<PlusIcon className="h-4 w-4" />} onClick={startWizard}>{tr('Tạo chiến dịch mới')}</Button>}
                   />
                 )}
               </div>
@@ -974,14 +1004,20 @@ export default function CRMPage() {
         />
       )}
 
-      {showCloneCampaign && cloneCampaignId !== null && (() => {
+      {showCloneCampaign && cloneCampaignId !== null && activeAccountId && (() => {
         const src = store.campaigns.find(c => c.id === cloneCampaignId);
+        // A copy can go to any account of the same channel (employees: the accounts assigned to them)
+        const sourceChannel = resolveAccountChannel(activeAccount || {});
         return src ? (
           <CampaignCloneModal
             campaignName={src.name}
             totalContacts={src.total_contacts}
+            sourceAccountId={activeAccountId}
+            accounts={accounts.filter(account => resolveAccountChannel(account) === sourceChannel)}
+            canCopyPhoneRecipients={channelCap.supportsCRMPhoneImport}
+            invitesToGroups={campaignInvitesToGroups(src)}
             onClose={() => { setShowCloneCampaign(false); setCloneCampaignId(null); }}
-            onConfirm={(includeContacts, newName) => handleCloneCampaign(includeContacts, newName)}
+            onConfirm={handleCloneCampaign}
           />
         ) : null;
       })()}
@@ -992,31 +1028,30 @@ export default function CRMPage() {
           onClick={() => setShowBulkLocalModal(false)}>
           <div className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-foreground mb-1"><HardDriveIcon className="w-4 h-4 inline" /> Gán Nhãn Local</h3>
+            <h3 className="font-semibold text-foreground mb-1">{trx('<0/> Gán Nhãn Local', { 0: <HardDriveIcon className="w-4 h-4 inline" /> })}</h3>
             <p className="text-xs text-muted-foreground mb-3">
-              Áp dụng cho <span className="text-blue-400 font-medium">{store.selectedContactIds.size}</span> liên hệ đã chọn
-              <span className="text-muted-foreground ml-1">(chọn nhiều)</span>
+              {trx('Áp dụng cho <0>{{count}}</0> liên hệ đã chọn<1>(chọn nhiều)</1>', { 0: <span className="text-blue-400 font-medium" />, count: store.selectedContactIds.size, 1: <span className="text-muted-foreground ml-1" /> })}
             </p>
             {localLabels.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-4 text-center">Chưa có Nhãn Local nào.</p>
+              <p className="text-xs text-muted-foreground py-4 text-center">{tr('Chưa có Nhãn Local nào.')}</p>
             ) : (
               <LocalLabelSelector
                 labels={localLabels}
                 selectedIds={bulkLocalLabelIds}
                 onChange={setBulkLocalLabelIds}
-                placeholder="Chọn Nhãn Local..."
-                emptyText="Chưa có Nhãn Local nào"
+                placeholder={tr('Chọn Nhãn Local...')}
+                emptyText={tr('Chưa có Nhãn Local nào')}
               />
             )}
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowBulkLocalModal(false)}
                 className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">
-                Hủy
+                {tr('Hủy')}
               </button>
               <button onClick={handleApplyBulkLocalLabel}
                 disabled={bulkLocalLabelIds.length === 0 || applyingBulkLabel}
                 className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
-                {applyingBulkLabel ? 'Đang gán...' : 'Áp dụng'}
+                {applyingBulkLabel ? tr('Đang gán...') : tr('Áp dụng')}
               </button>
             </div>
           </div>
@@ -1029,13 +1064,12 @@ export default function CRMPage() {
           onClick={() => setShowBulkZaloModal(false)}>
           <div className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-foreground mb-1"><CloudIcon className="w-4 h-4 inline" /> Gán nhãn Zalo</h3>
+            <h3 className="font-semibold text-foreground mb-1">{trx('<0/> Gán nhãn Zalo', { 0: <CloudIcon className="w-4 h-4 inline" /> })}</h3>
             <p className="text-xs text-muted-foreground mb-3">
-              Áp dụng cho <span className="text-blue-400 font-medium">{store.selectedContactIds.size}</span> liên hệ đã chọn
-              <span className="text-muted-foreground ml-1">(chỉ 1 nhãn / hội thoại)</span>
+              {trx('Áp dụng cho <0>{{count}}</0> liên hệ đã chọn<1>(chỉ 1 nhãn / hội thoại)</1>', { 0: <span className="text-blue-400 font-medium" />, count: store.selectedContactIds.size, 1: <span className="text-muted-foreground ml-1" /> })}
             </p>
             {zaloLabels.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-4 text-center">Chưa có nhãn Zalo nào. Hãy đồng bộ nhãn từ header trước.</p>
+              <p className="text-xs text-muted-foreground py-4 text-center">{tr('Chưa có nhãn Zalo nào. Hãy đồng bộ nhãn từ header trước.')}</p>
             ) : (
               <ZaloLabelSelector
                 allLabels={zaloLabels}
@@ -1047,12 +1081,12 @@ export default function CRMPage() {
             <div className="flex gap-2 mt-4">
               <button onClick={() => setShowBulkZaloModal(false)}
                 className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">
-                Hủy
+                {tr('Hủy')}
               </button>
               <button onClick={handleApplyBulkLabel}
                 disabled={bulkLabelIds.length === 0 || applyingBulkLabel}
                 className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
-                {applyingBulkLabel ? 'Đang gán...' : 'Áp dụng'}
+                {applyingBulkLabel ? tr('Đang gán...') : tr('Áp dụng')}
               </button>
             </div>
           </div>
@@ -1068,14 +1102,14 @@ export default function CRMPage() {
             <div className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
               onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-foreground">Chọn chiến dịch</h3>
+                <h3 className="font-semibold text-foreground">{tr('Chọn chiến dịch')}</h3>
                 <button
                   onClick={() => setShowCreateInAddModal(true)}
                   className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors px-2 py-1 rounded-lg hover:bg-blue-500/10">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                   </svg>
-                  Tạo mới
+                  {tr('Tạo mới')}
                 </button>
               </div>
 
@@ -1087,9 +1121,9 @@ export default function CRMPage() {
                       <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
                     </svg>
                   </div>
-                  <p className="text-sm text-foreground/80 text-center font-medium">Chưa có chiến dịch phù hợp</p>
+                  <p className="text-sm text-foreground/80 text-center font-medium">{tr('Chưa có chiến dịch phù hợp')}</p>
                   <p className="text-xs text-muted-foreground text-center leading-relaxed">
-                    Tất cả chiến dịch đã hoàn thành hoặc chưa có chiến dịch nào.
+                    {tr('Tất cả chiến dịch đã hoàn thành hoặc chưa có chiến dịch nào.')}
                   </p>
                   <button
                     onClick={() => setShowCreateInAddModal(true)}
@@ -1097,11 +1131,11 @@ export default function CRMPage() {
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                     </svg>
-                    Tạo chiến dịch mới
+                    {tr('Tạo chiến dịch mới')}
                   </button>
                   <button onClick={() => setAddToCampaignModal(false)}
                     className="w-full py-1.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
-                    Hủy
+                    {tr('Hủy')}
                   </button>
                 </div>
               ) : (
@@ -1120,13 +1154,13 @@ export default function CRMPage() {
                           }`} />
                           {c.name}
                         </span>
-                        <span className="block text-xs text-muted-foreground mt-0.5 pl-3">{c.total_contacts} liên hệ</span>
+                        <span className="block text-xs text-muted-foreground mt-0.5 pl-3">{trx('{{total_contacts}} liên hệ', { total_contacts: c.total_contacts })}</span>
                       </button>
                     ))}
                   </div>
                   <div className="flex gap-2 mt-4">
                     <button onClick={() => setAddToCampaignModal(false)}
-                      className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">Hủy</button>
+                      className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent">{tr('Hủy')}</button>
                     <button disabled={!selectedCampaignForAdd}
                       onClick={async () => {
                         if (!selectedCampaignForAdd || !activeAccountId) return;
@@ -1134,12 +1168,12 @@ export default function CRMPage() {
                           .filter(c => store.selectedContactIds.has(c.contact_id))
                           .map(c => ({ contactId: c.contact_id, displayName: c.alias || c.display_name, avatar: c.avatar }));
                         const added = await handleAddContactsToCampaign(selectedCampaignForAdd, contacts);
-                        if (!added) return; // giữ lựa chọn để thử lại
+                        if (!added) return; // keep the selection so the user can retry
                         store.clearSelection();
                         setAddToCampaignModal(false);
                       }}
                       className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40">
-                      Thêm {store.selectedContactIds.size} liên hệ
+                      {trx('Thêm {{count}} liên hệ', { count: store.selectedContactIds.size })}
                     </button>
                   </div>
                 </>
@@ -1162,7 +1196,7 @@ export default function CRMPage() {
         />
       )}
 
-      {/* ── Phone import modal (Add SĐT to contacts) ── */}
+      {/* ── Phone import modal (Add phone numbers to contacts) ── */}
       {showPhoneImport && (
         <AddToContactsModal
           onClose={() => setShowPhoneImport(false)}
@@ -1188,31 +1222,31 @@ export default function CRMPage() {
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-foreground text-sm">Rời nhóm đã chọn</h3>
+                <h3 className="font-semibold text-foreground text-sm">{tr('Rời nhóm đã chọn')}</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Hành động này không thể hoàn tác
+                  {tr('Hành động này không thể hoàn tác')}
                 </p>
               </div>
             </div>
             <p className="text-xs text-foreground/80 mb-5 leading-relaxed">
-              Bạn sắp rời <span className="text-red-300 font-semibold">
-                {store.contacts.filter(c => store.selectedContactIds.has(c.contact_id) && c.contact_type === 'group').length} nhóm
-              </span>. Sau khi rời, tài khoản sẽ không còn trong nhóm đó nữa.
+              {tr('Bạn sắp rời')} <span className="text-red-300 font-semibold">
+                {store.contacts.filter(c => store.selectedContactIds.has(c.contact_id) && c.contact_type === 'group').length} {tr('nhóm')}
+              </span>{tr('. Sau khi rời, tài khoản sẽ không còn trong nhóm đó nữa.')}
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => setShowLeaveGroupConfirm(false)}
                 disabled={leavingGroups}
                 className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent disabled:opacity-40 transition-colors">
-                Hủy
+                {tr('Hủy')}
               </button>
               <button
                 onClick={handleConfirmLeaveGroups}
                 disabled={leavingGroups}
                 className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm hover:bg-red-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5">
                 {leavingGroups
-                  ? <><Spinner size={3} />Đang rời...</>
-                  : 'Xác nhận rời nhóm'
+                  ? <>{trx('<0/>Đang rời...', { 0: <Spinner size={3} /> })}</>
+                  : tr('Xác nhận rời nhóm')
                 }
               </button>
             </div>

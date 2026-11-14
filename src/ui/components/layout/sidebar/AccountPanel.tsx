@@ -9,6 +9,8 @@ import ChannelBadge from '../../common/avatars/ChannelBadge';
 import { formatPhone } from '@/lib/contacts/phoneUtils';
 import { FolderIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channels/channelHelper';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface AccountPanelProps {
   onAddAccount: () => void;
@@ -71,7 +73,7 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
       {/* Header */}
       <div className="flex items-center justify-between px-3 h-11 border-b border-border/60 flex-shrink-0">
         <span className="text-xs font-semibold text-foreground/80 uppercase tracking-wider">
-          Tài khoản <span className="font-bold">({accounts.length})</span>
+          {trx('Tài khoản <0>({{count}})</0>', { 0: <span className="font-bold" />, count: accounts.length })}
         </span>
       </div>
 
@@ -84,7 +86,7 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
           <input
             value={accountSearch}
             onChange={(e) => setAccountSearch(e.target.value)}
-            placeholder="Tìm tài khoản..."
+            placeholder={tr('Tìm tài khoản...')}
             className="w-full h-8 pl-8 pr-7 rounded-lg bg-card border border-border/60 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 transition-colors"
           />
           {accountSearch && (
@@ -128,7 +130,7 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
                     if (activeAccountId && activeThreadId) {
                       saveAccountThread(activeAccountId, activeThreadId, activeThreadType);
                     }
-                    // Reset thread trước để ChatWindow clear view cũ
+                    // Reset the thread first so ChatWindow clears the old view
                     setActiveThread(null);
                     setActiveAccount(account.zalo_id);
                     setView('chat');
@@ -167,11 +169,11 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
                   </div>
                   {/* Status indicator */}
                   {listenerDead ? (
-                    <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 rounded-full border-2 border-border" title="Listener chết" />
+                    <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 rounded-full border-2 border-border" title={tr('Listener chết')} />
                   ) : account.isConnected ? (
-                    <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-border" title="Đã kết nối" />
+                    <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-border" title={tr('Đã kết nối')} />
                   ) : (
-                    <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-accent rounded-full border-2 border-border" title="Chưa kết nối" />
+                    <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-accent rounded-full border-2 border-border" title={tr('Chưa kết nối')} />
                   )}
                   {/* Channel badge */}
                   <div className="absolute -top-1 -left-1 z-10 pointer-events-none scale-[0.7]">
@@ -196,10 +198,10 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
                       <span className="text-[10px] text-muted-foreground truncate">@{account.username}</span>
                     ) : null}
                     {!account.isConnected && !listenerDead && (
-                      <span className="text-[9px] text-red-400/70 font-medium">Chưa kết nối</span>
+                      <span className="text-[9px] text-red-400/70 font-medium">{tr('Chưa kết nối')}</span>
                     )}
                     {listenerDead && (
-                      <span className="text-[9px] text-red-400/70 font-medium">⚠ Listener</span>
+                      <span className="text-[9px] text-red-400/70 font-medium">{tr('⚠ Listener')}</span>
                     )}
                   </div>
                 </div>
@@ -219,7 +221,7 @@ export default function AccountPanel({ onAddAccount }: AccountPanelProps) {
                 <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2Z" />
               </svg>
             </div>
-            <span className="text-xs font-medium">Thêm tài khoản</span>
+            <span className="text-xs font-medium">{tr('Thêm tài khoản')}</span>
           </button>
         )}
       </div>

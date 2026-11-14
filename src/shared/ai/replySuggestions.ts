@@ -1,21 +1,21 @@
 /**
- * Gợi ý trả lời AI (thanh "Gợi ý AI" trên ô soạn tin, API ai/suggest): số câu, lời nhắc gửi AI, đọc câu trả lời.
- * Dùng chung main (AIAssistantService.getSuggestions) + renderer (cài đặt "Số câu gợi ý").
+ * AI reply suggestions (the "Gợi ý AI" (AI suggestions) bar above the compose box, API ai/suggest): number of sentences, the prompt sent to the AI, and reading the answer.
+ * Shared by main (AIAssistantService.getSuggestions) and the renderer (the "Số câu gợi ý" (suggestion count) setting).
  */
 
 export const MAX_AI_SUGGESTIONS = 5;
-/** Ô soạn tin mặc định 3 câu; nơi gọi không truyền số câu (API, nhân viên bản cũ) giữ 5 như trước. */
+/** The compose box defaults to 3 sentences; callers that do not pass a count (API, older employee builds) keep 5 as before. */
 export const DEFAULT_COMPOSER_AI_SUGGESTIONS = 3;
 export const AI_SUGGESTION_COUNT_CHOICES: readonly number[] = [1, 2, 3, 4, 5];
 
-/** Số câu hợp lệ 1..5; lạ / thiếu → `fallback`. */
+/** Valid counts are 1..5; unknown / missing → `fallback`. */
 export function normalizeSuggestionCount(value: unknown, fallback = MAX_AI_SUGGESTIONS): number {
   const n = Math.round(Number(value));
   if (!Number.isFinite(n) || n < 1) return fallback;
   return Math.min(n, MAX_AI_SUGGESTIONS);
 }
 
-/** Lời nhắc hệ thống: đúng `count` câu, trả JSON array (không dùng system prompt của trợ lý — model miễn phí hay bị lấn át). */
+/** System prompt: exactly `count` sentences, returned as a JSON array (not the assistant's system prompt, since free models are often overwhelmed by it). */
 export function suggestionSystemPrompt(count: number): string {
   const n = normalizeSuggestionCount(count);
   const sample = Array.from({ length: n }, (_, i) => `"Câu gợi ý ${i + 1}"`).join(',');
@@ -33,7 +33,7 @@ YÊU CẦU BẮT BUỘC:
 [${sample}]`;
 }
 
-/** Câu trả lời của AI → tối đa `count` câu: JSON array trước; không được thì tách dòng (bỏ số thứ tự / gạch đầu dòng), rồi tách câu. */
+/** The AI answer → at most `count` sentences: a JSON array first; if that fails, split by lines (dropping numbering / bullets), then split into sentences. */
 export function parseSuggestionResult(result: string, count: number): string[] {
   const n = normalizeSuggestionCount(count);
   const text = String(result || '');
@@ -48,7 +48,7 @@ export function parseSuggestionResult(result: string, count: number): string[] {
         suggestions = parsed.map((s: any) => String(s).trim()).filter((s) => s.length > 0);
       }
     }
-  } catch { /* tách dòng bên dưới */ }
+  } catch { /* split by lines below */ }
   if (!parsedJson) {
     suggestions = text
       .split('\n')
@@ -58,7 +58,7 @@ export function parseSuggestionResult(result: string, count: number): string[] {
       .map((s) => s.replace(/^["']|["']$/g, ''))
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
-    // Một đoạn liền: tách theo câu
+    // One continuous paragraph: split into sentences
     if (suggestions.length === 0 && text.length > 20) {
       suggestions = text.split(/[.!?]\s*/).map((s) => s.trim()).filter((s) => s.length > 20);
     }

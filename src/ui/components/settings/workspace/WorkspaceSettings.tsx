@@ -9,6 +9,8 @@ import { EditIcon, HomeIcon, LinkIcon, PlusIcon, TrashIcon, UserIcon } from '@/c
 import { Button, Input } from '@/components/ui';
 import { RadioList } from '../cloud/cloudUi';
 import { SettingsPage } from '../settingsUi';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 /**
@@ -27,8 +29,8 @@ function buildBossUrl(address: string, port: string): string {
 
 // ── WorkspaceSettings ─────────────────────────────────────────────────────────
 
-/** Workspace "trên máy này" (local, máy chủ / dùng một mình) hay "kết nối máy chủ" (remote, máy nhân viên). */
-export const WORKSPACE_KIND_LABEL = { local: 'Trên máy này', remote: 'Kết nối máy chủ' } as const;
+/** Workspace "trên máy này" (local: host or single user) or "kết nối máy chủ" (remote: employee machine). */
+export const WORKSPACE_KIND_LABEL = { local: tr('Trên máy này'), remote: tr('Kết nối máy chủ') } as const;
 
 export default function WorkspaceSettings() {
     const { workspaces, activeWorkspaceId, setWorkspaces, setActiveWorkspaceId, connectionStatuses } = useWorkspaceStore(useShallow(s => ({
@@ -52,37 +54,37 @@ export default function WorkspaceSettings() {
 
     const handleDelete = async (ws: WorkspaceInfo) => {
         const ok = await showConfirm({
-            title: `Xóa workspace "${ws.name}"?`,
+            title: tr('Xóa workspace "{{name}}"?', { name: ws.name }),
             message: ws.type === 'local'
-                ? 'DB và tất cả dữ liệu của workspace này sẽ bị xóa vĩnh viễn.'
-                : 'Kết nối tới boss sẽ bị ngắt và workspace bị xóa.',
-            confirmText: 'Xóa',
+                ? tr('DB và tất cả dữ liệu của workspace này sẽ bị xóa vĩnh viễn.')
+                : tr('Kết nối tới boss sẽ bị ngắt và workspace bị xóa.'),
+            confirmText: tr('Xóa'),
             variant: 'danger',
         });
         if (!ok) return;
         const res = await ipc.workspace?.delete(ws.id);
         if (res?.success) {
-            showNotification('Đã xóa workspace', 'success');
+            showNotification(tr('Đã xóa workspace'), 'success');
             // Always reload list; if deleted WS was active, workspace:switched event
             // fired from main process will handle full state reload.
             reload();
         } else {
-            showNotification(res?.error || 'Xóa thất bại', 'error');
+            showNotification(res?.error || tr('Xóa thất bại'), 'error');
         }
     };
 
     const handleSwitch = async (id: string) => {
         if (id === activeWorkspaceId) return;
         const res = await ipc.workspace?.switch(id);
-        if (!res?.success) showNotification(res?.error || 'Lỗi chuyển workspace', 'error');
+        if (!res?.success) showNotification(res?.error || tr('Lỗi chuyển workspace'), 'error');
     };
 
     return (
         <SettingsPage
-            title="Workspace"
-            description="Mỗi workspace có dữ liệu, tài khoản và cài đặt riêng. Tối đa 5."
+            title={tr('Workspace')}
+            description={tr('Mỗi workspace có dữ liệu, tài khoản và cài đặt riêng. Tối đa 5.')}
             actions={!showCreateForm && (
-                <Button size="sm" onClick={() => setShowCreateForm(true)} leftIcon={<PlusIcon className="h-4 w-4" />}>Thêm workspace</Button>
+                <Button size="sm" onClick={() => setShowCreateForm(true)} leftIcon={<PlusIcon className="h-4 w-4" />}>{tr('Thêm workspace')}</Button>
             )}
         >
             {/* Create form */}
@@ -127,7 +129,7 @@ function OnlineStatus({ connected, latency }: { connected: boolean; latency?: nu
     return (
         <span className={cn('flex items-center gap-1 text-[11px] font-medium', connected ? 'text-success' : 'text-muted-foreground')}>
             <span className={cn('h-1.5 w-1.5 rounded-full', connected ? 'bg-success' : 'bg-border-strong')} />
-            {connected ? `Online${latency ? ` · ${latency}ms` : ''}` : 'Offline'}
+            {connected ? tr('Online{{v1}}', { v1: latency ? ` · ${latency}ms` : '' }) : tr('Offline')}
         </span>
     );
 }
@@ -156,7 +158,7 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
                 <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-foreground">{workspace.name}</span>
                     {isActive && (
-                        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">Đang dùng</span>
+                        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">{tr('Đang dùng')}</span>
                     )}
                     <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                         {isRemote ? WORKSPACE_KIND_LABEL.remote : WORKSPACE_KIND_LABEL.local}
@@ -181,12 +183,12 @@ function WorkspaceCard({ workspace, isActive, connectionStatus, onSwitch, onEdit
             </div>
 
             <div className="flex flex-shrink-0 items-center gap-1">
-                {!isActive && <Button variant="outline" size="sm" onClick={onSwitch}>Chuyển sang</Button>}
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit} aria-label="Sửa" title="Sửa">
+                {!isActive && <Button variant="outline" size="sm" onClick={onSwitch}>{tr('Chuyển sang')}</Button>}
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit} aria-label={tr('Sửa')} title={tr('Sửa')}>
                     <EditIcon className="h-4 w-4" />
                 </Button>
                 {workspace.id !== 'default' && (
-                    <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Xoá" title="Xoá"
+                    <Button variant="ghost" size="icon" onClick={onDelete} aria-label={tr('Xoá')} title={tr('Xoá')}
                         className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
                         <TrashIcon className="h-4 w-4" />
                     </Button>
@@ -220,12 +222,12 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
             if (type === 'remote') {
                 // Step 1: Validate inputs
                 if (!ip.trim() || !port.trim()) {
-                    showNotification('Nhập IP và Port của Boss', 'warning');
+                    showNotification(tr('Nhập IP và Port của Boss'), 'warning');
                     setSaving(false);
                     return;
                 }
                 if (!username.trim() || !password.trim()) {
-                    showNotification('Nhập tên đăng nhập và mật khẩu', 'warning');
+                    showNotification(tr('Nhập tên đăng nhập và mật khẩu'), 'warning');
                     setSaving(false);
                     return;
                 }
@@ -236,7 +238,7 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                 setLoginStep('logging-in');
                 const loginRes = await ipc.workspace?.loginRemote(bossUrl, username.trim(), password);
                 if (!loginRes?.success) {
-                    showNotification(loginRes?.error || 'Đăng nhập thất bại - kiểm tra lại thông tin', 'error');
+                    showNotification(loginRes?.error || tr('Đăng nhập thất bại - kiểm tra lại thông tin'), 'error');
                     setSaving(false);
                     setLoginStep('idle');
                     return;
@@ -261,10 +263,10 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                     if (res.workspace?.id && loginRes.token) {
                         await ipc.workspace?.connectRemote(res.workspace.id, bossUrl, loginRes.token);
                     }
-                    showNotification(`Workspace "${name}" - đã kết nối thành công!`, 'success');
+                    showNotification(tr('Workspace "{{name}}" - đã kết nối thành công!', { name }), 'success');
                     onCreated();
                 } else {
-                    showNotification(res?.error || 'Tạo workspace thất bại', 'error');
+                    showNotification(res?.error || tr('Tạo workspace thất bại'), 'error');
                 }
             } else {
                 // Local workspace - simple create
@@ -274,34 +276,34 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                     icon: icon.trim() || undefined,
                 });
                 if (res?.success) {
-                    showNotification(`Workspace "${name}" đã được tạo`, 'success');
+                    showNotification(tr('Workspace "{{name}}" đã được tạo', { name }), 'success');
                     onCreated();
                 } else {
-                    showNotification(res?.error || 'Tạo thất bại', 'error');
+                    showNotification(res?.error || tr('Tạo thất bại'), 'error');
                 }
             }
         } catch {
-            showNotification('Lỗi tạo workspace', 'error');
+            showNotification(tr('Lỗi tạo workspace'), 'error');
         }
         setSaving(false);
         setLoginStep('idle');
     };
 
-    const stepLabel = loginStep === 'logging-in' ? 'Đang đăng nhập...'
-        : loginStep === 'connecting' ? 'Đang kết nối...'
-        : saving ? 'Đang tạo...' : 'Tạo workspace';
+    const stepLabel = loginStep === 'logging-in' ? tr('Đang đăng nhập...')
+        : loginStep === 'connecting' ? tr('Đang kết nối...')
+        : saving ? tr('Đang tạo...') : tr('Tạo workspace');
 
     return (
         <div className="space-y-4 rounded-xl border border-border/60 bg-card p-4">
-            <p className="text-sm font-semibold text-foreground">Tạo workspace</p>
+            <p className="text-sm font-semibold text-foreground">{tr('Tạo workspace')}</p>
 
             <div className="flex gap-2">
                 <Input
                     value={icon}
                     onChange={e => setIcon(e.target.value)}
                     placeholder="🏠"
-                    aria-label="Biểu tượng"
-                    title="Biểu tượng (emoji)"
+                    aria-label={tr('Biểu tượng')}
+                    title={tr('Biểu tượng (emoji)')}
                     className="w-14 text-center"
                 />
                 <Input
@@ -309,47 +311,47 @@ function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: () => void; o
                     value={name}
                     onChange={e => setName(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') onCancel(); }}
-                    placeholder="Tên workspace (VD: Cá nhân, Công ty ABC)"
-                    aria-label="Tên workspace"
+                    placeholder={tr('Tên workspace (VD: Cá nhân, Công ty ABC)')}
+                    aria-label={tr('Tên workspace')}
                     className="flex-1"
                 />
             </div>
 
             <RadioList
-                label="Loại workspace"
+                label={tr('Loại workspace')}
                 value={type}
                 onChange={(next) => setType(next as 'local' | 'remote')}
                 options={[
-                    { value: 'local', label: WORKSPACE_KIND_LABEL.local, description: 'Đăng nhập tài khoản chat ngay trên máy này (chủ shop, dùng một mình).' },
-                    { value: 'remote', label: WORKSPACE_KIND_LABEL.remote, description: 'Máy nhân viên: dùng tài khoản do quản lý cấp để vào dữ liệu của máy chủ.' },
+                    { value: 'local', label: WORKSPACE_KIND_LABEL.local, description: tr('Đăng nhập tài khoản chat ngay trên máy này (chủ shop, dùng một mình).') },
+                    { value: 'remote', label: WORKSPACE_KIND_LABEL.remote, description: tr('Máy nhân viên: dùng tài khoản do quản lý cấp để vào dữ liệu của máy chủ.') },
                 ]}
             />
 
             {type === 'remote' && (
                 <div className="space-y-2 border-t border-border/60 pt-3">
-                    <p className="text-xs text-muted-foreground">Địa chỉ máy chủ và tài khoản nhân viên (quản lý gửi cho bạn)</p>
+                    <p className="text-xs text-muted-foreground">{tr('Địa chỉ máy chủ và tài khoản nhân viên (quản lý gửi cho bạn)')}</p>
                     <div className="flex gap-2">
-                        <Input value={ip} onChange={e => setIp(e.target.value)} placeholder="IP máy chủ, VD 192.168.1.100" aria-label="IP máy chủ" className="flex-1" />
-                        <Input value={port} onChange={e => setPort(e.target.value)} placeholder="Cổng" aria-label="Cổng" className="w-24" />
+                        <Input value={ip} onChange={e => setIp(e.target.value)} placeholder={tr('IP máy chủ, VD 192.168.1.100')} aria-label={tr('IP máy chủ')} className="flex-1" />
+                        <Input value={port} onChange={e => setPort(e.target.value)} placeholder={tr('Cổng')} aria-label={tr('Cổng')} className="w-24" />
                     </div>
-                    <Input value={username} onChange={e => setUsername(e.target.value)} placeholder="Tên đăng nhập" aria-label="Tên đăng nhập" />
+                    <Input value={username} onChange={e => setUsername(e.target.value)} placeholder={tr('Tên đăng nhập')} aria-label={tr('Tên đăng nhập')} />
                     <Input
                         value={password}
                         onChange={e => setPassword(e.target.value)}
-                        placeholder="Mật khẩu"
-                        aria-label="Mật khẩu"
+                        placeholder={tr('Mật khẩu')}
+                        aria-label={tr('Mật khẩu')}
                         type="password"
                         onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
                     />
                     <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                         <input type="checkbox" checked={autoConnect} onChange={e => setAutoConnect(e.target.checked)} className="rounded accent-primary" />
-                        Tự kết nối khi mở app
+                        {tr('Tự kết nối khi mở app')}
                     </label>
                 </div>
             )}
 
             <div className="flex items-center justify-end gap-2">
-                <Button variant="ghost" size="sm" onClick={onCancel}>Huỷ</Button>
+                <Button variant="ghost" size="sm" onClick={onCancel}>{tr('Huỷ')}</Button>
                 <Button size="sm" onClick={handleCreate} disabled={!name.trim() || saving}>{stepLabel}</Button>
             </div>
         </div>
@@ -410,24 +412,24 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
             }
             const res = await ipc.workspace?.update(workspace.id, updates);
             if (res?.success) {
-                showNotification('Đã lưu', 'success');
+                showNotification(tr('Đã lưu'), 'success');
                 onSaved();
             } else {
-                showNotification(res?.error || 'Lưu thất bại', 'error');
+                showNotification(res?.error || tr('Lưu thất bại'), 'error');
             }
         } catch {
-            showNotification('Lỗi lưu', 'error');
+            showNotification(tr('Lỗi lưu'), 'error');
         }
         setSaving(false);
     };
 
     const handleConnect = async () => {
         if (!ip.trim() || !port.trim()) {
-            showNotification('Nhập IP và Port của Boss', 'warning');
+            showNotification(tr('Nhập IP và Port của Boss'), 'warning');
             return;
         }
         if (!username.trim() || !password.trim()) {
-            showNotification('Nhập tên đăng nhập và mật khẩu để kết nối', 'warning');
+            showNotification(tr('Nhập tên đăng nhập và mật khẩu để kết nối'), 'warning');
             return;
         }
 
@@ -438,28 +440,28 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
             // Step 1: Login to get fresh token
             const loginRes = await ipc.workspace?.loginRemote(bossUrl, username.trim(), password);
             if (!loginRes?.success || !loginRes.token) {
-                showNotification(loginRes?.error || 'Đăng nhập thất bại', 'error');
+                showNotification(loginRes?.error || tr('Đăng nhập thất bại'), 'error');
                 setConnecting(false);
                 return;
             }
 
-            // Step 2: Lưu thông tin nhân viên (KHÔNG gồm URL/token → workspace:update không tự kết nối lại)
+            // Step 2: Save the employee info (does NOT include URL/token → workspace:update does not reconnect by itself)
             await ipc.workspace?.update(workspace.id, {
                 employeeId: loginRes.employee?.employee_id,
                 employeeName: loginRes.employee?.display_name || username.trim(),
                 employeeUsername: username.trim(),
             });
 
-            // Step 3: Lưu CẢ URL + token vào cấu hình workspace rồi kết nối qua main (heartbeat + Socket.IO)
-            // → main phát employee:credentials → REST client của renderer dùng đúng URL/token mới.
+            // Step 3: Save BOTH the URL and token to the workspace config, then connect through main (heartbeat + Socket.IO)
+            // → main emits employee:credentials → the renderer's REST client uses the new URL/token.
             const res = await ipc.workspace?.connectRemote(workspace.id, bossUrl, loginRes.token);
             if (res?.success) {
-                showNotification('Đã kết nối tới boss!', 'success');
+                showNotification(tr('Đã kết nối tới boss!'), 'success');
             } else {
-                showNotification(res?.error || 'Kết nối thất bại', 'error');
+                showNotification(res?.error || tr('Kết nối thất bại'), 'error');
             }
         } catch {
-            showNotification('Lỗi kết nối', 'error');
+            showNotification(tr('Lỗi kết nối'), 'error');
         }
         setConnecting(false);
     };
@@ -467,23 +469,23 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
     const handleDisconnect = async () => {
         try {
             await ipc.workspace?.disconnectRemote(workspace.id);
-            showNotification('Đã ngắt kết nối', 'success');
+            showNotification(tr('Đã ngắt kết nối'), 'success');
         } catch {
-            showNotification('Lỗi ngắt kết nối', 'error');
+            showNotification(tr('Lỗi ngắt kết nối'), 'error');
         }
     };
 
     return (
         <div className="space-y-4 rounded-xl border border-primary/40 bg-card p-4">
-            <p className="text-sm font-semibold text-foreground">Sửa workspace</p>
+            <p className="text-sm font-semibold text-foreground">{tr('Sửa workspace')}</p>
 
             <div className="flex gap-2">
                 <Input
                     value={icon}
                     onChange={e => setIcon(e.target.value)}
                     placeholder="🏠"
-                    aria-label="Biểu tượng"
-                    title="Biểu tượng (emoji)"
+                    aria-label={tr('Biểu tượng')}
+                    title={tr('Biểu tượng (emoji)')}
                     className="w-14 text-center"
                 />
                 <Input
@@ -491,8 +493,8 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
                     value={name}
                     onChange={e => setName(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onCancel(); }}
-                    placeholder="Tên workspace"
-                    aria-label="Tên workspace"
+                    placeholder={tr('Tên workspace')}
+                    aria-label={tr('Tên workspace')}
                     className="flex-1"
                 />
             </div>
@@ -500,47 +502,47 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
             {isRemote && (
                 <div className="space-y-2 border-t border-border/60 pt-3">
                     <div className="flex items-center justify-between">
-                        <p className="text-xs font-medium text-foreground">Kết nối máy chủ</p>
+                        <p className="text-xs font-medium text-foreground">{tr('Kết nối máy chủ')}</p>
                         <OnlineStatus connected={isConnected} latency={connectionStatus?.latency} />
                     </div>
                     <div className="flex gap-2">
-                        <Input value={ip} onChange={e => setIp(e.target.value)} placeholder="192.168.1.100 hoặc https://shop.example.com"
-                            aria-label="Địa chỉ máy chủ" className="flex-1" />
+                        <Input value={ip} onChange={e => setIp(e.target.value)} placeholder={tr('192.168.1.100 hoặc https://shop.example.com')}
+                            aria-label={tr('Địa chỉ máy chủ')} className="flex-1" />
                         {!ip.startsWith('http') && (
-                            <Input value={port} onChange={e => setPort(e.target.value)} placeholder="Cổng" aria-label="Cổng" className="w-24" />
+                            <Input value={port} onChange={e => setPort(e.target.value)} placeholder={tr('Cổng')} aria-label={tr('Cổng')} className="w-24" />
                         )}
                     </div>
-                    <Input value={username} onChange={e => setUsername(e.target.value)} placeholder="Tên đăng nhập" aria-label="Tên đăng nhập" />
+                    <Input value={username} onChange={e => setUsername(e.target.value)} placeholder={tr('Tên đăng nhập')} aria-label={tr('Tên đăng nhập')} />
                     <Input
                         value={password}
                         onChange={e => setPassword(e.target.value)}
-                        placeholder="Mật khẩu (nhập để kết nối lại)"
-                        aria-label="Mật khẩu"
+                        placeholder={tr('Mật khẩu (nhập để kết nối lại)')}
+                        aria-label={tr('Mật khẩu')}
                         type="password"
                         onKeyDown={e => { if (e.key === 'Enter') handleConnect(); }}
                     />
 
                     {workspace.employeeName && (
                         <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <UserIcon className="h-3.5 w-3.5" /> Đang đăng nhập: {workspace.employeeName}
+                            {trx('<0/> Đang đăng nhập: {{employeeName}}', { 0: <UserIcon className="h-3.5 w-3.5" />, employeeName: workspace.employeeName })}
                             {workspace.employeeUsername && <span> (@{workspace.employeeUsername})</span>}
                         </p>
                     )}
 
                     <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                         <input type="checkbox" checked={autoConnect} onChange={e => setAutoConnect(e.target.checked)} className="rounded accent-primary" />
-                        Tự kết nối khi mở app
+                        {tr('Tự kết nối khi mở app')}
                     </label>
 
                     <div className="flex gap-2">
                         {isConnected ? (
                             <Button variant="outline" size="sm" onClick={handleDisconnect}
                                 className="border-destructive/40 text-destructive hover:bg-destructive/10">
-                                Ngắt kết nối
+                                {tr('Ngắt kết nối')}
                             </Button>
                         ) : (
                             <Button variant="outline" size="sm" onClick={handleConnect} disabled={connecting} leftIcon={<LinkIcon className="h-4 w-4" />}>
-                                {connecting ? 'Đang đăng nhập và kết nối...' : 'Đăng nhập và kết nối'}
+                                {connecting ? tr('Đang đăng nhập và kết nối...') : tr('Đăng nhập và kết nối')}
                             </Button>
                         )}
                     </div>
@@ -548,8 +550,8 @@ function EditWorkspaceForm({ workspace, connectionStatus, onSaved, onCancel }: {
             )}
 
             <div className="flex items-center justify-end gap-2">
-                <Button variant="ghost" size="sm" onClick={onCancel}>Huỷ</Button>
-                <Button size="sm" onClick={handleSave} disabled={!name.trim() || saving}>{saving ? 'Đang lưu...' : 'Lưu'}</Button>
+                <Button variant="ghost" size="sm" onClick={onCancel}>{tr('Huỷ')}</Button>
+                <Button size="sm" onClick={handleSave} disabled={!name.trim() || saving}>{saving ? tr('Đang lưu...') : tr('Lưu')}</Button>
             </div>
         </div>
     );

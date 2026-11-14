@@ -1,39 +1,39 @@
 /**
- * relayChannels.ts — hợp đồng kênh realtime Boss → nhân viên (phần thuần, dùng chung Boss + nhân viên + test).
+ * relayChannels.ts: realtime channel contract Boss → employee (pure part, shared by Boss, employees and tests).
  *
- * Một nguồn cho cả hai phía (trước đây Boss có RELAY_CHANNELS, nhân viên có FORWARD_CHANNELS riêng → 8 kênh Boss
- * relay nhưng nhân viên vứt đi: db:unreadChanged, db:conversationDeleted, db:contactProfileUpdated, library:*…):
- *  - RELAY_CHANNELS — HttpRelayService móc EventBroadcaster (onBeforeSend) → SocketIOService.publish; người nhận theo
- *    relayAudience.ts (id tài khoản trong payload). Thêm kênh dữ liệu mới: thêm ở đây + listener renderer + preload
- *    (test relaySyncContract.test.ts quét nguồn và báo kênh thiếu).
- *  - DIRECT_PUBLISHED_CHANNELS — Boss tự publish (không qua hook — thêm vào RELAY_CHANNELS sẽ thành phát hai lần).
- *  - RELAY_CONTROL_CHANNELS — lệnh điều khiển gửi riêng một nhân viên (HttpRelayService.pushControlToEmployee).
- *  - BOSS_ONLY_CHANNELS — kênh EventBroadcaster KHÔNG gửi nhân viên, kèm lý do.
- *  - EMPLOYEE_FORWARD_CHANNELS — nhân viên (HttpClientService.handlePushedEvent) chuyển tiếp renderer.
+ * One source for both sides (previously Boss had RELAY_CHANNELS and employees had their own FORWARD_CHANNELS, so 8 channels that Boss
+ * relays were dropped by employees: db:unreadChanged, db:conversationDeleted, db:contactProfileUpdated, library:*…):
+ *  - RELAY_CHANNELS: HttpRelayService hooks EventBroadcaster (onBeforeSend) → SocketIOService.publish; recipients are picked by
+ *    relayAudience.ts (account id in the payload). To add a new data channel: add it here + a renderer listener + preload
+ *    (test relaySyncContract.test.ts scans the source and reports missing channels).
+ *  - DIRECT_PUBLISHED_CHANNELS: Boss publishes these itself (not through the hook; adding them to RELAY_CHANNELS would send them twice).
+ *  - RELAY_CONTROL_CHANNELS: control commands sent to one employee (HttpRelayService.pushControlToEmployee).
+ *  - BOSS_ONLY_CHANNELS: EventBroadcaster channels NOT sent to employees, with the reason.
+ *  - EMPLOYEE_FORWARD_CHANNELS: employee (HttpClientService.handlePushedEvent) forwards them to the renderer.
  */
 import { BOSS_URL_CHANGED_EVENT } from '../../shared/cloud/tunnelAddress';
 
-/** Kênh Boss relay cho nhân viên (móc EventBroadcaster). Nhóm theo nguồn dữ liệu. */
+/** Boss channels relayed to employees (hooked into EventBroadcaster). Grouped by data source. */
 export const RELAY_CHANNELS: readonly string[] = Object.freeze([
-  // ─── Tin nhắn / hội thoại (Zalo, Telegram — id tài khoản: zaloId) ───────────
+  // ─── Messages / conversations (Zalo, Telegram: account id = zaloId) ───────────
   'event:message',
   'event:reaction',
   'event:telegramReaction',
   'event:messageEdited',
-  'event:messagesRepaired', // tin cũ lấy lại từ Telegram (chưa hỗ trợ → đọc được, bài kênh bỏ topic sai)
-  'event:contactPreview', // xem trước hội thoại đổi sau khi sửa tin cũ
+  'event:messagesRepaired', // old messages fetched again from Telegram (not supported yet → readable, channel posts drop the wrong topic)
+  'event:contactPreview', // conversation preview changes after an old message is edited
   'event:messagesDeleted',
   'event:undo',
   'event:delete',
   'event:localPath',
   'event:seen',
-  'event:receipt', // mốc đã nhận / đã xem tin gửi (dấu ✓ / ✓✓)
+  'event:receipt', // received / read marks of sent messages (✓ / ✓✓ ticks)
   'event:typing',
   'event:userPresence',
   'event:reminder',
   'event:pollVote',
   'event:pinsUpdated',
-  // ─── Nhóm / danh bạ ──────────────────────────────────────────────────────
+  // ─── Groups / contacts ──────────────────────────────────────────────────────
   'event:groupEvent',
   'event:groupInfoUpdate',
   'event:groupMemberAvatar',
@@ -44,12 +44,12 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'event:friendRequestRemoved',
   'event:friendAccepted',
   'event:friendRemoved',
-  // ─── Trạng thái tài khoản ────────────────────────────────────────────────
+  // ─── Account status ────────────────────────────────────────────────
   'event:connected',
   'event:disconnected',
   'event:listenerDead',
-  'event:accountProfile', // cờ Zalo Business đọc lại khi đăng nhập / kết nối
-  // ─── Facebook (id tài khoản: fbAccountId = accounts.zalo_id) ─────────────
+  'event:accountProfile', // Zalo Business flag, re-read on login / connect
+  // ─── Facebook (account id: fbAccountId = accounts.zalo_id) ─────────────
   'fb:onMessage',
   'fb:onReaction',
   'fb:onUnsend',
@@ -60,7 +60,7 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'fb:onGroupEvent',
   'fb:onContactUpdate',
   'fb:onConnectionStatus',
-  // ─── Cài đặt hội thoại / nhãn / tin nhắn nhanh / CRM ─────────────────────
+  // ─── Conversation settings / labels / quick messages / CRM ─────────────────────
   'db:localLabelChanged',
   'db:localLabelThreadChanged',
   'db:pinnedMessageChanged',
@@ -72,20 +72,20 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'db:contactProfileUpdated',
   'db:conversationDeleted',
   'db:unreadChanged',
-  'db:replyStateChanged', // đánh dấu đã trả lời / bỏ đánh dấu (tay, hàng loạt)
+  'db:replyStateChanged', // mark as replied / unmark (manual, bulk)
   'crm:noteChanged',
   'crm:campaignChanged',
   'crm:campaignDone',
-  'crm:campaignAutoStopped', // tự dừng vì lỗi liên tiếp → thông báo (dữ liệu chiến dịch đổi qua crm:campaignChanged)
+  'crm:campaignAutoStopped', // auto-stopped after consecutive errors → notify (campaign data changes via crm:campaignChanged)
   'crm:queueUpdate',
   'crm:queueStatus',
-  // ─── Thư viện media ──────────────────────────────────────────────────────
+  // ─── Media library ──────────────────────────────────────────────────────
   'library:itemAdded',
   'library:itemUpdated',
   'library:itemDeleted',
   // ─── Workflow ────────────────────────────────────────────────────────────
   'workflow:executed',
-  'workflow:changed', // lưu / xoá / bật tắt / nhân bản (workflowIpc) → danh sách workflow ở máy khác tải lại
+  'workflow:changed', // save / delete / enable / disable / duplicate (workflowIpc) → workflow list on other machines reloads
   // ─── ERP ─────────────────────────────────────────────────────────────────
   'erp:event:projectCreated',
   'erp:event:projectUpdated',
@@ -112,15 +112,15 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
 ]);
 
 /**
- * Boss publish thẳng (SocketIOService.publish / relayEventToEmployees) — KHÔNG có trong RELAY_CHANNELS: kênh này
- * EventBroadcaster.emit cho renderer Boss ngay sau khi publish, thêm hook nữa là nhân viên nhận hai lần.
+ * Boss publishes directly (SocketIOService.publish / relayEventToEmployees): NOT in RELAY_CHANNELS. This channel is
+ * emitted by EventBroadcaster to Boss's own renderer right after publishing; adding another hook would make employees receive it twice.
  */
 export const DIRECT_PUBLISHED_CHANNELS: readonly string[] = Object.freeze([
-  'relay:messageSentByEmployee', // "ai đã trả lời" — HttpRelayService.executeProxyAction
-  BOSS_URL_CHANGED_EVENT, // địa chỉ tunnel đổi — HttpRelayService.recordPublicUrl
+  'relay:messageSentByEmployee', // "ai đã trả lời" (AI replied): HttpRelayService.executeProxyAction
+  BOSS_URL_CHANGED_EVENT, // tunnel address changed: HttpRelayService.recordPublicUrl
 ]);
 
-/** Lệnh điều khiển gửi riêng một nhân viên (tức thời, không buffer) — HttpClientService xử lý riêng. */
+/** Control command sent to one employee (immediate, not buffered): HttpClientService handles it separately. */
 export const RELAY_CONTROL_CHANNELS: readonly string[] = Object.freeze([
   'relay:kicked',
   'relay:initialState',
@@ -129,8 +129,8 @@ export const RELAY_CONTROL_CHANNELS: readonly string[] = Object.freeze([
 ]);
 
 /**
- * Kênh EventBroadcaster cố ý KHÔNG gửi nhân viên (chỉ renderer của chính máy phát). Mọi kênh EventBroadcaster phát ra
- * phải nằm ở RELAY_CHANNELS, DIRECT_PUBLISHED_CHANNELS hoặc ở đây (kèm lý do) — test relaySyncContract quét nguồn.
+ * EventBroadcaster channels deliberately NOT sent to employees (only to the renderer of the machine that emits them). Every EventBroadcaster channel
+ * must be in RELAY_CHANNELS, DIRECT_PUBLISHED_CHANNELS or here (with the reason): the relaySyncContract test scans the source.
  */
 export const BOSS_ONLY_CHANNELS: Readonly<Record<string, string>> = Object.freeze({
   'employee:bossUrlChanged': 'Máy nhân viên tự báo renderer (sendDirect) sau khi nhận relay:bossUrlChanged',
@@ -138,7 +138,7 @@ export const BOSS_ONLY_CHANNELS: Readonly<Record<string, string>> = Object.freez
   'relay:employeeListUpdate': 'Danh sách nhân viên đang kết nối — màn hình quản lý relay của Boss',
   'relay:tunnelStatusUpdate': 'Trạng thái tunnel của Boss; nhân viên nhận địa chỉ mới qua relay:bossUrlChanged',
   'event:telegramSync': 'Tiến độ đồng bộ lịch sử Telegram do Boss chạy; kết quả tới nhân viên qua db:unreadChanged',
-  // Muốn báo cho nhân viên được giao tài khoản: chuyển sang RELAY_CHANNELS + EPHEMERAL (trạng thái đổ chuông không phát lại khi catch-up)
+  // To notify the employee assigned the account: move to RELAY_CHANNELS + EPHEMERAL (the ring state is not replayed during catch-up)
   'event:telegramCall': 'Báo cuộc gọi Telegram đến (đang làm) — Deplao không nghe máy được, chỉ báo trên máy Boss / điện thoại',
   'event:mobileSync': 'Tiến độ "Đồng bộ từ điện thoại" chạy trên máy Boss',
   'event:fbHistorySync': 'Tiến độ "Đồng bộ tin nhắn Facebook" chạy trên máy Boss; tin đã lưu tới nhân viên qua đọc DB của Boss',
@@ -147,6 +147,7 @@ export const BOSS_ONLY_CHANNELS: Readonly<Record<string, string>> = Object.freez
   'event:telegramBotJoinRequest': 'Chỉ làm trigger workflow trên Boss (renderer không nghe)',
   'event:telegramBotCallback': 'Chỉ làm trigger workflow trên Boss (renderer không nghe)',
   'event:telegramBotMembership': 'Chỉ làm trigger workflow trên Boss (renderer không nghe)',
+  'event:telegramBotMemberUpdate': 'Chỉ làm trigger workflow trên Boss (renderer không nghe)',
   'fb:onE2EEStatus': 'Trạng thái E2EE của phiên Facebook trên Boss — renderer chỉ ghi log',
   'fb:onPresence': 'Presence Facebook — renderer chưa dùng',
   'integration:payment': 'Trigger workflow trên Boss; chứa dữ liệu thanh toán, renderer không nghe → không gửi mọi nhân viên',
@@ -155,7 +156,7 @@ export const BOSS_ONLY_CHANNELS: Readonly<Record<string, string>> = Object.freez
   'crm:tagChanged': 'Thẻ CRM (crm_tags) không còn UI nào hiển thị (Nhãn Local thay thế)',
 });
 
-/** Nhân viên chuyển tiếp renderer: mọi kênh Boss relay / publish thẳng (trừ lệnh điều khiển + đổi địa chỉ Boss). */
+/** Employee forwards to the renderer: every channel Boss relays or publishes directly (except control commands + Boss address changes). */
 export const EMPLOYEE_FORWARD_CHANNELS: ReadonlySet<string> = new Set([
   ...RELAY_CHANNELS,
   ...DIRECT_PUBLISHED_CHANNELS.filter((channel) => channel !== BOSS_URL_CHANGED_EVENT),
@@ -163,7 +164,7 @@ export const EMPLOYEE_FORWARD_CHANNELS: ReadonlySet<string> = new Set([
 
 const RELAY_CHANNEL_SET: ReadonlySet<string> = new Set(RELAY_CHANNELS);
 
-/** Kênh EventBroadcaster được Boss móc để relay. */
+/** EventBroadcaster channels that Boss hooks to relay. */
 export function isRelayedChannel(channel: string): boolean {
   return RELAY_CHANNEL_SET.has(channel);
 }

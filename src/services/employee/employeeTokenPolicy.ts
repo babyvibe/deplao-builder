@@ -1,31 +1,31 @@
 /**
- * employeeTokenPolicy.ts — quy tắc thuần cho token đăng nhập của nhân viên (JWT do Boss ký).
- * Không đụng DB / Electron: EmployeeService đọc trạng thái nhân viên từ DB rồi hỏi các hàm ở đây.
+ * employeeTokenPolicy.ts: pure rules for the employee login token (a JWT signed by Boss).
+ * Does not touch the DB / Electron: EmployeeService reads the employee state from the DB, then asks the functions here.
  * Test: src/__tests__/employee/employeeTokenPolicy.test.ts.
  *
- * Token hợp lệ khi (sau khi kiểm chữ ký HS256 + hạn 7 ngày):
- *   1. có employee_id; nhân viên còn tồn tại và đang bật (is_active);
- *   2. phát hành SAU mốc "hợp lệ từ" (validAfterMs) của nhân viên. Mốc dời lên mỗi lần kick / khoá / xoá / đổi mật khẩu
- *      → token cũ hết hiệu lực ngay, không phải chờ hết hạn. Phát hành cùng ms với mốc = đã thu hồi.
- * Thời điểm phát hành = claim `ts` (ms, token từ bản này) → `iat`×1000 (token cũ, chỉ chính xác tới giây).
+ * A token is valid when (after checking the HS256 signature + the 7-day expiry):
+ *   1. it has an employee_id; the employee still exists and is enabled (is_active);
+ *   2. it was issued AFTER the employee's "hợp lệ từ" (valid from) mark (validAfterMs). The mark moves up on every kick / lock / delete / password change
+ *      → old tokens stop working at once, no need to wait for expiry. Issued at the same ms as the mark = revoked.
+ * Issue time = the `ts` claim (ms, tokens from this version) → `iat`×1000 (old tokens, accurate to the second only).
  *
- * Khoá ký (`employee_jwt_secret`) từng lộ cho nhân viên qua API cài đặt (đã đóng) → đổi một lần cho mỗi DB, đánh dấu
- * bằng `employee_jwt_secret_version` (planJwtSecretInit).
+ * The signing key (`employee_jwt_secret`) was once exposed to employees through the settings API (closed) → changed once per DB, marked
+ * by `employee_jwt_secret_version` (planJwtSecretInit).
  */
 import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
 
 export const JWT_SECRET_SETTING_KEY = 'employee_jwt_secret';
-/** Phiên bản khoá ký: < 2 (hoặc chưa có) = khoá có thể đã lộ → đổi khoá một lần. */
+/** Key version: < 2 (or not set) = the key may have been exposed → changed once. */
 export const JWT_SECRET_VERSION_SETTING_KEY = 'employee_jwt_secret_version';
 export const JWT_SECRET_VERSION = 2;
 
 export const EMPLOYEE_JWT_ALGORITHM = 'HS256' as const;
 export const EMPLOYEE_JWT_EXPIRES_IN = '7d' as const;
 
-/** app_settings: mốc "token hợp lệ từ" (ms) của từng nhân viên — không cần thêm cột vào bảng employees. */
+/** app_settings: the "token hợp lệ từ" (token valid from) mark (ms) of each employee: no extra column needed in the employees table. */
 const TOKEN_VALID_AFTER_KEY_PREFIX = 'employee_tokens_valid_after_';
-/** app_settings: `ts` lớn nhất đã cấp cho nhân viên — để lần thu hồi sau phủ được cả token cấp lúc đồng hồ chạy nhanh. */
+/** app_settings: the largest `ts` issued to the employee, so that a later revoke also covers tokens issued while the clock was running fast. */
 const TOKEN_LAST_ISSUED_KEY_PREFIX = 'employee_tokens_last_issued_';
 
 export function tokenValidAfterKey(employeeId: string): string {
@@ -37,15 +37,15 @@ export function tokenLastIssuedKey(employeeId: string): string {
 }
 
 /**
- * expired     — quá hạn 7 ngày
- * revoked     — phát hành trước mốc thu hồi (kick / đổi mật khẩu / bị khoá rồi mở lại…)
- * inactive    — nhân viên bị khoá hoặc đã xoá
- * invalid     — sai chữ ký (vd sau khi đổi khoá ký), sai thuật toán, thiếu claim
- * unavailable — không đọc được trạng thái nhân viên (lỗi DB phía Boss) — không phải lỗi của token
+ * expired     - older than 7 days
+ * revoked     - issued before the revoke mark (kick / password change / locked then unlocked…)
+ * inactive    - the employee is locked or deleted
+ * invalid     - bad signature (e.g. after the signing key changed), wrong algorithm, missing claim
+ * unavailable - the employee state could not be read (a DB error on the Boss side), not caused by the token
  */
 export type EmployeeTokenRejectReason = 'expired' | 'revoked' | 'inactive' | 'invalid' | 'unavailable';
 
-/** Kết quả EmployeeService.validateToken (giữ dạng cũ, thêm `reason` khi không hợp lệ). */
+/** Result of EmployeeService.validateToken (kept in the old shape, plus `reason` when invalid). */
 export interface EmployeeTokenValidation {
   valid: boolean;
   employee_id?: string;
@@ -54,11 +54,11 @@ export interface EmployeeTokenValidation {
   reason?: EmployeeTokenRejectReason;
 }
 
-/** Trạng thái của nhân viên dùng để xét token (EmployeeService đọc từ DB, cache vài giây). */
+/** Employee state used to check a token (EmployeeService reads it from the DB, cached for a few seconds). */
 export interface EmployeeTokenState {
   exists: boolean;
   active: boolean;
-  /** ms — token phát hành tại / trước mốc này đã bị thu hồi. 0 = chưa thu hồi lần nào. */
+  /** ms: tokens issued at / before this mark are revoked. 0 = never revoked. */
   validAfterMs: number;
 }
 
@@ -76,13 +76,13 @@ function positiveNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
-/** Mốc ms lưu trong app_settings → số (rỗng / hỏng → 0 = chưa có). */
+/** The ms mark stored in app_settings → a number (empty / broken → 0 = none). */
 export function parseValidAfter(raw: string | null | undefined): number {
   const value = Number(raw);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-/** Thời điểm phát hành (ms): claim `ts` → `iat`×1000 (token cũ) → null. */
+/** Issue time (ms): the `ts` claim → `iat`×1000 (old tokens) → null. */
 export function tokenIssuedAtMs(claims: unknown): number | null {
   if (!claims || typeof claims !== 'object') return null;
   const record = claims as Record<string, unknown>;
@@ -93,8 +93,8 @@ export function tokenIssuedAtMs(claims: unknown): number | null {
 }
 
 /**
- * Xét claims ĐÃ kiểm chữ ký + hạn. `state` = null khi không đọc được DB → 'unavailable'
- * (Socket.IO báo lỗi phía Boss để client thử lại, không bắt đăng nhập lại).
+ * Checks the claims AFTER the signature + expiry have been verified. `state` = null when the DB could not be read → 'unavailable'
+ * (Socket.IO reports a Boss-side error so the client retries, instead of forcing a new login).
  */
 export function evaluateEmployeeToken(claims: unknown, state: EmployeeTokenState | null): EmployeeTokenDecision {
   const employeeId = claims && typeof claims === 'object' ? (claims as Record<string, unknown>).employee_id : undefined;
@@ -108,19 +108,19 @@ export function evaluateEmployeeToken(claims: unknown, state: EmployeeTokenState
 }
 
 /**
- * Mốc mới khi thu hồi: bây giờ, nhưng không bao giờ lùi, luôn vượt mốc cũ và không thấp hơn `ts` lớn nhất đã cấp —
- * token cấp lúc đồng hồ Boss chạy nhanh (rồi bị chỉnh lùi) hoặc cấp với `ts = mốc cũ + 1` vẫn bị thu hồi.
+ * New mark on revoke: now, but never moves backwards, always goes past the old mark and is not below the largest `ts` issued:
+ * a token issued while the Boss clock ran fast (and was then set back), or issued with `ts = old mark + 1`, is still revoked.
  */
 export function nextRevocationMark(currentMark: number, now: number, lastIssuedMs = 0): number {
   return Math.max(now, (currentMark > 0 ? currentMark : 0) + 1, lastIssuedMs > 0 ? lastIssuedMs : 0);
 }
 
-/** Claim `ts` cho token mới: bây giờ, nhưng luôn SAU mốc thu hồi hiện tại (đăng nhập lại ngay sau kick vẫn hợp lệ). */
+/** `ts` claim for a new token: now, but always AFTER the current revoke mark (logging in again right after a kick is still valid). */
 export function tokenIssueTimestamp(currentMark: number, now: number): number {
   return Math.max(now, (currentMark > 0 ? currentMark : 0) + 1);
 }
 
-/** Ký token nhân viên (HS256, hạn 7 ngày) kèm `ts` = thời điểm phát hành (ms). */
+/** Sign an employee token (HS256, 7-day expiry) with `ts` = the issue time (ms). */
 export function signEmployeeToken(secret: string, claims: EmployeeTokenClaims, issuedAtMs: number): string {
   return jwt.sign(
     { employee_id: claims.employee_id, username: claims.username, role: claims.role, ts: issuedAtMs },
@@ -129,7 +129,7 @@ export function signEmployeeToken(secret: string, claims: EmployeeTokenClaims, i
   );
 }
 
-/** Kiểm chữ ký + hạn — CHỈ nhận HS256 (không để token tự chọn thuật toán). */
+/** Check the signature + expiry: accepts ONLY HS256 (a token may not choose its own algorithm). */
 export function verifyEmployeeJwt(
   token: string,
   secret: string,
@@ -145,11 +145,11 @@ export function verifyEmployeeJwt(
 }
 
 /**
- * Khởi tạo khoá ký cho một DB:
- * - create — chưa có khoá (cài mới / DB mới) → tạo khoá + ghi phiên bản;
- * - rotate — có khoá nhưng phiên bản < JWT_SECRET_VERSION (khoá cũ có thể đã lộ) → đổi khoá MỘT lần, mọi nhân viên
- *   đăng nhập lại;
- * - keep   — đã đổi rồi (ghi phiên bản cùng DB với khoá → mỗi DB chỉ đổi một lần dù pin bao nhiêu lần).
+ * Initialises the signing key for one DB:
+ * - create - no key yet (fresh install / new DB) → create the key + write the version;
+ * - rotate - a key exists but its version < JWT_SECRET_VERSION (the old key may have been exposed) → change the key ONCE, every employee
+ *   logs in again;
+ * - keep   - already changed (the version is written to the same DB as the key → each DB changes only once, however many times it is pinned).
  */
 export function planJwtSecretInit(
   existingSecret: string | null | undefined,
@@ -160,14 +160,14 @@ export function planJwtSecretInit(
   return Number.isFinite(version) && version >= JWT_SECRET_VERSION ? 'keep' : 'rotate';
 }
 
-/** Khoá ký mới: 48 byte ngẫu nhiên (base64url, 64 ký tự). */
+/** New signing key: 48 random bytes (base64url, 64 characters). */
 export function generateJwtSecret(): string {
   return crypto.randomBytes(48).toString('base64url');
 }
 
 /**
- * Thông điệp middleware Socket.IO trả client khi từ chối token. Đều khớp isAuthRejectionMessage (employeeConnection.ts,
- * cả client bản cũ) → client dừng, báo "phiên đăng nhập hết hạn"; riêng 'unavailable' = lỗi phía Boss → client thử lại.
+ * Socket.IO middleware messages sent to the client when it rejects a token. All match isAuthRejectionMessage (employeeConnection.ts,
+ * including old client builds) → the client stops and shows "phiên đăng nhập hết hạn" (login session expired); 'unavailable' alone is a Boss-side error → the client retries.
  */
 export function socketRejectionMessage(reason: EmployeeTokenRejectReason | undefined): string {
   switch (reason) {

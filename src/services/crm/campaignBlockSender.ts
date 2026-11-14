@@ -1,9 +1,9 @@
 /**
- * Gửi một khối nội dung chiến dịch (chữ + ảnh) tới một người nhận, theo tuỳ chọn ảnh của chiến
- * dịch (thứ tự chữ / ảnh, gộp ảnh + chữ thành 1 tin) — xem shared/crm/campaignSendPlan.
- * Mặc định (chữ trước, không gộp) giữ nguyên cách gửi cũ:
- *   Zalo: tin chữ (markup + @all) → 500 ms → một lần gửi tất cả ảnh;
- *   Telegram: tin chữ → từng ảnh một.
+ * Sends one block of campaign content (text + images) to one recipient, following the campaign's image option
+ * (order of text / images, merge images + text into 1 message): see shared/crm/campaignSendPlan.
+ * Default (text first, no merge) keeps the old send method:
+ *   Zalo: text message (markup + @all) → 500 ms → one send of all images;
+ *   Telegram: text message → each image one by one.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -17,6 +17,7 @@ import {
   planBlockSend,
   type CampaignSendOptions,
 } from '../../shared/crm/campaignSendPlan';
+import { tr } from '../../shared/i18n';
 
 export interface CampaignContentBlock {
   text: string;
@@ -63,7 +64,7 @@ function readZaloAttachments(images: string[]): any[] {
       return { data: buffer, filename: safeFilename, metadata: { totalSize: buffer.length, width, height } };
     } catch (readErr: any) {
       Logger.error(`[CRMQueue] Image read failed: ${filePath} → ${readErr.message}`);
-      throw new Error(`Không đọc được ảnh: ${filePath} - ${readErr.message}`);
+      throw new Error(tr('Không đọc được ảnh: {{filePath}} - {{message}}', { filePath, message: readErr.message }));
     }
   });
 }
@@ -72,12 +73,12 @@ function readZaloAttachments(images: string[]): any[] {
 function zaloTextContent(block: CampaignContentBlock, cleanText: string, styles: any[], threadType: number): any {
   const content: any = { msg: cleanText };
   let finalStyles = styles;
-  // Tag-all chỉ có nghĩa trong nhóm (threadType 1); user thường (0) bỏ qua.
+  // Tag-all only makes sense in a group (threadType 1); a normal user (0) skips it.
   if (threadType === 1 && block.tagAll) {
     const label = '@' + ((block.tagAllText || 'all').trim() || 'all');
     const prefix = label + ' ';
     content.msg = prefix + cleanText;
-    // uid "-1" = mention toàn nhóm; len phải bao đúng đoạn label (đã trừ dấu cách)
+    // uid "-1" = mention the whole group; len must cover exactly the label text (spaces already deducted)
     content.mentions = [{ pos: 0, uid: '-1', len: label.length }];
     finalStyles = styles.map(s => ({ ...s, start: s.start + prefix.length }));
   }
@@ -113,27 +114,27 @@ export async function sendCampaignBlock(
         const resp = isUser
           ? await TelegramUser.sendMessage(accountId, threadId, cleanText)
           : await TelegramBot.sendMessage(accountId, threadId, cleanText);
-        responses.push(ensureTelegram(resp, 'Telegram không gửi được tin nhắn'));
+        responses.push(ensureTelegram(resp, tr('Telegram không gửi được tin nhắn')));
       } else if (step.kind === 'images') {
         for (const filePath of step.images) {
           const resp = isUser
             ? await TelegramUser.sendFile(accountId, threadId, filePath, undefined, 'image')
             : await TelegramBot.sendPhoto(accountId, threadId, filePath);
-          responses.push(ensureTelegram(resp, 'Telegram không gửi được ảnh'));
+          responses.push(ensureTelegram(resp, tr('Telegram không gửi được ảnh')));
         }
       } else {
-        // Ảnh + chữ = 1 tin: chú thích của ảnh (nhiều ảnh → album, chú thích ở ảnh đầu).
+        // Image + text = 1 message: the text is the caption of the image (several images → album, caption on the first image).
         const resp = isUser
           ? await TelegramUser.sendAlbum(accountId, threadId, step.images, cleanText)
           : await TelegramBot.sendPhotoAlbum(accountId, threadId, step.images, cleanText);
-        responses.push(ensureTelegram(resp, 'Telegram không gửi được ảnh kèm chữ'));
+        responses.push(ensureTelegram(resp, tr('Telegram không gửi được ảnh kèm chữ')));
       }
     }
     return responses;
   }
 
   const api = target.zaloApi;
-  if (!api) throw new Error('Zalo chưa kết nối');
+  if (!api) throw new Error(tr('Zalo chưa kết nối'));
   for (let index = 0; index < plan.steps.length; index++) {
     const step = plan.steps[index];
     if (step.kind === 'images' || index > 0) await sleep(ZALO_STEP_GAP_MS);
@@ -142,8 +143,8 @@ export async function sendCampaignBlock(
     } else if (step.kind === 'images') {
       responses.push(await api.sendMessage({ msg: '', attachments: readZaloAttachments(step.images) }, threadId, threadType));
     } else {
-      // Ảnh + chữ = 1 tin: chữ thành mô tả của ảnh. Zalo không áp định dạng (đậm, màu…) cho mô tả,
-      // nên chỉ gửi chữ sạch; @all vẫn hoạt động (mention trên ảnh đơn trong nhóm).
+      // Image + text = 1 message: the text becomes the image description. Zalo does not apply formatting (bold, colour…) to descriptions,
+      // so only plain text is sent; @all still works (mention on a single image in a group).
       const caption = zaloTextContent(block, cleanText, [], threadType);
       responses.push(await api.sendMessage({ ...caption, attachments: readZaloAttachments(step.images) }, threadId, threadType));
     }

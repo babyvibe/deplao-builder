@@ -5,6 +5,7 @@ import { useAppStore } from '@/store/app/appStore';
 import { useShallow } from 'zustand/react/shallow';
 import { Spinner } from '@/components/common/PageLoading';
 import { HomeIcon, UserIcon, SettingsIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
 
 
 /** Build normalized Boss URL - handles both IP:Port and full tunnel URL */
@@ -80,7 +81,7 @@ export default function WorkspaceSwitcher() {
         try {
             const res = await ipc.workspace?.switch(id);
             if (!res?.success) {
-                showNotification(res?.error || 'Lỗi chuyển workspace', 'error');
+                showNotification(res?.error || tr('Lỗi chuyển workspace'), 'error');
                 clearTimeout(safetyTimer);
                 setIsSwitching(false);
             }
@@ -113,7 +114,7 @@ export default function WorkspaceSwitcher() {
                 ) : (
                     <span className="text-sm flex items-center gap-1">{activeWs?.icon || <HomeIcon className="w-4 h-4" />}</span>
                 )}
-                <span className="max-w-[100px] truncate">{activeWs?.name || 'Workspace'}</span>
+                <span className="max-w-[100px] truncate">{activeWs?.name || tr('Workspace')}</span>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-50">
                     <path d="M6 9l6 6 6-6" />
                 </svg>
@@ -163,7 +164,7 @@ export default function WorkspaceSwitcher() {
                                     className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-lg transition-colors"
                                 >
                                     <span>➕</span>
-                                    <span>Thêm workspace...</span>
+                                    <span>{tr('Thêm workspace...')}</span>
                                 </button>
                                 <button
                                     onClick={() => {
@@ -174,7 +175,7 @@ export default function WorkspaceSwitcher() {
                                     className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-lg transition-colors"
                                 >
                                     <SettingsIcon className="w-4 h-4" />
-                                    <span>Quản lý workspace</span>
+                                    <span>{tr('Quản lý workspace')}</span>
                                 </button>
                             </>
                         )}
@@ -211,12 +212,12 @@ function WorkspaceRow({ workspace, isActive, connectionStatus, unreadCount, onCl
                         {workspace.name}
                     </span>
                     {isActive && (
-                        <span className="text-[9px] px-1 py-0.5 rounded bg-blue-600/30 text-blue-300 font-medium">Active</span>
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-blue-600/30 text-blue-300 font-medium">{tr('Active')}</span>
                     )}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-[10px] text-muted-foreground">
-                        {workspace.type === 'local' ? 'Boss' : `Nhân viên`}
+                        {workspace.type === 'local' ? 'Boss' : tr('Nhân viên')}
                     </span>
                     {workspace.type === 'remote' && connectionStatus && (
                         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${connectionStatus.connected ? 'bg-green-400' : 'bg-red-400'}`} />
@@ -257,7 +258,7 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
         try {
             if (type === 'remote') {
                 if (!ip.trim() || !username.trim() || !password.trim()) {
-                    showNotification('Nhập đầy đủ IP, tên đăng nhập và mật khẩu', 'warning');
+                    showNotification(tr('Nhập đầy đủ IP, tên đăng nhập và mật khẩu'), 'warning');
                     setCreating(false);
                     return;
                 }
@@ -266,7 +267,7 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                 setStep('logging-in');
                 const loginRes = await ipc.workspace?.loginRemote(bossUrl, username.trim(), password);
                 if (!loginRes?.success) {
-                    showNotification(loginRes?.error || 'Đăng nhập thất bại', 'error');
+                    showNotification(loginRes?.error || tr('Đăng nhập thất bại'), 'error');
                     setCreating(false);
                     setStep('idle');
                     return;
@@ -287,28 +288,28 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                     if (res.workspace?.id && loginRes.token) {
                         await ipc.workspace?.connectRemote(res.workspace.id, bossUrl, loginRes.token);
                     }
-                    showNotification(`Workspace "${name}" - đã kết nối!`, 'success');
+                    showNotification(tr('Workspace "{{name}}" - đã kết nối!', { name }), 'success');
                     onCreated();
                 } else {
-                    showNotification(res?.error || 'Tạo thất bại', 'error');
+                    showNotification(res?.error || tr('Tạo thất bại'), 'error');
                 }
             } else {
                 const res = await ipc.workspace?.create({ name: name.trim(), type });
                 if (res?.success) {
-                    showNotification(`Workspace "${name}" đã được tạo`, 'success');
+                    showNotification(tr('Workspace "{{name}}" đã được tạo', { name }), 'success');
                     onCreated();
                 } else {
-                    showNotification(res?.error || 'Tạo thất bại', 'error');
+                    showNotification(res?.error || tr('Tạo thất bại'), 'error');
                 }
             }
         } catch {
-            showNotification('Lỗi tạo workspace', 'error');
+            showNotification(tr('Lỗi tạo workspace'), 'error');
         }
         setCreating(false);
         setStep('idle');
     };
 
-    const btnLabel = step === 'logging-in' ? '...' : step === 'connecting' ? '...' : creating ? '...' : 'Tạo';
+    const btnLabel = step === 'logging-in' ? '...' : step === 'connecting' ? '...' : creating ? '...' : tr('Tạo');
 
     return (
         <div className="space-y-2 p-1">
@@ -317,7 +318,7 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                 value={name}
                 onChange={e => setName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Escape') onCancel(); }}
-                placeholder="Tên workspace..."
+                placeholder={tr('Tên workspace...')}
                 className="w-full text-xs bg-muted border border-input rounded-lg px-2.5 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
             />
             <div className="flex items-center gap-2">
@@ -336,14 +337,14 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                         <input
                             value={ip}
                             onChange={e => setIp(e.target.value)}
-                            placeholder="IP:Port hoặc https://xxxx.loca.lt"
+                            placeholder={tr('IP:Port hoặc https://xxxx.loca.lt')}
                             className="flex-1 text-xs bg-muted border border-input rounded-lg px-2.5 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                         />
                         {!ip.startsWith('http') && (
                         <input
                             value={port}
                             onChange={e => setPort(e.target.value)}
-                            placeholder="Port"
+                            placeholder={tr('Port')}
                             className="w-14 text-xs bg-muted border border-input rounded-lg px-2 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                         />
                         )}
@@ -351,13 +352,13 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                     <input
                         value={username}
                         onChange={e => setUsername(e.target.value)}
-                        placeholder="Tên đăng nhập"
+                        placeholder={tr('Tên đăng nhập')}
                         className="w-full text-xs bg-muted border border-input rounded-lg px-2.5 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
                     <input
                         value={password}
                         onChange={e => setPassword(e.target.value)}
-                        placeholder="Mật khẩu"
+                        placeholder={tr('Mật khẩu')}
                         type="password"
                         onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
                         className="w-full text-xs bg-muted border border-input rounded-lg px-2.5 py-1.5 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
@@ -369,7 +370,7 @@ function CreateWorkspaceInline({ onCreated, onCancel }: { onCreated: () => void;
                     onClick={onCancel}
                     className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1 rounded transition-colors"
                 >
-                    Hủy
+                    {tr('Hủy')}
                 </button>
                 <button
                     onClick={handleCreate}

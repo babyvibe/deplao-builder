@@ -1,21 +1,22 @@
 /**
- * DriveApi — lớp HTTP tối giản trên Google Drive REST v3 (fetch toàn cục, không dùng SDK của Google).
+ * DriveApi: minimal HTTP layer over Google Drive REST v3 (global fetch, no Google SDK).
  *
- *  - Token Bearer lấy qua getToken() (GoogleDriveService giữ access token trong RAM + làm mới). 401 → làm mới token
- *    một lần rồi gửi lại đúng một lần (thân request dựng lại từ đầu).
- *  - Hạn chót như R2Client: request nhỏ tối đa 30 s; truyền dữ liệu huỷ khi 60 s không có byte nào.
- *  - Lỗi → CloudError với mã tầng trên (media / đồng bộ DB) đã hiểu (mapDriveError): bận / giới hạn tốc độ → 'R2_BUSY'
- *    (+ retryAfterMs), hết dung lượng → 'STORAGE_FULL', bị từ chối → 'R2_FORBIDDEN', 404 → 'R2_NOT_FOUND', mất mạng →
- *    'R2_NETWORK', quá hạn → 'R2_TIMEOUT'. GET / DELETE tự thử lại 2 lần (1 s, 3 s) khi bận / mất mạng; tải lên thì không
- *    (tạo file hai lần = file trùng) — DriveStore tự lo thử lại từng đoạn của phiên resumable.
- *  - Đếm quota: mỗi request tới được Google → record(units, { up, down }) theo GDRIVE_LIMITS (5 / 50 / 100 / 200).
- *  - Không log gì ở lớp này (URL phiên tải lên chứa upload_id, header chứa token).
+ *  - Bearer token obtained via getToken() (GoogleDriveService keeps the access token in RAM and refreshes it). 401 → refresh the token
+ *    once, then resend exactly once (the request body is rebuilt from scratch).
+ *  - Deadlines like R2Client: small requests max 30 s; data transfers abort when no bytes arrive for 60 s.
+ *  - Errors → CloudError with the codes the upper layers (media / DB sync) already understand (mapDriveError): busy / rate limit → 'R2_BUSY'
+ *    (+ retryAfterMs), out of space → 'STORAGE_FULL', refused → 'R2_FORBIDDEN', 404 → 'R2_NOT_FOUND', no network →
+ *    'R2_NETWORK', timed out → 'R2_TIMEOUT'. GET / DELETE retry themselves 2 times (after 1 s, then 3 s) when busy / no network; uploads do not
+ *    (creating a file twice = a duplicate file): DriveStore retries each chunk of a resumable session on its own.
+ *  - Quota counting: every request that reaches Google → record(units, { up, down }) per GDRIVE_LIMITS (5 / 50 / 100 / 200).
+ *  - Logs nothing at this layer (upload session URLs contain upload_id, headers contain the token).
  */
 import { randomBytes } from 'crypto';
 import { Readable, Transform, Writable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { CloudError } from '../contracts';
 import { GDRIVE_LIMITS } from '../../../shared/cloud/cloudContracts';
+import { tr } from '../../../shared/i18n';
 
 export const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 export const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
@@ -27,30 +28,30 @@ const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const BUSY_WAIT_RATE_MS = 30_000;
 const BUSY_WAIT_5XX_MS = 10_000;
 export const NETWORK_WAIT_MS = 15_000;
-/** GET / DELETE: thử lại trong lớp này sau 1 s rồi 3 s. */
+/** GET / DELETE: retried inside this layer after 1 s, then 3 s. */
 const IDEMPOTENT_BACKOFF_MS = [1000, 3000];
 
-export const MSG_BUSY = 'Google Drive đang giới hạn tốc độ / bận — tự thử lại sau.';
-export const MSG_STORAGE_FULL = 'Google Drive đã hết dung lượng — dọn bớt hoặc nâng gói Google One rồi bấm Tiếp tục.';
-export const MSG_FORBIDDEN = 'Google Drive từ chối truy cập — đăng nhập lại Google Drive.';
-export const MSG_NETWORK = 'Mạng chậm hoặc mất kết nối tới Google Drive.';
-export const MSG_TIMEOUT = 'Google Drive phản hồi quá lâu — tự thử lại sau.';
-export const MSG_NOT_FOUND = 'Không có dữ liệu này trên Google Drive';
+export const MSG_BUSY = tr('Google Drive đang giới hạn tốc độ / bận — tự thử lại sau.');
+export const MSG_STORAGE_FULL = tr('Google Drive đã hết dung lượng — dọn bớt hoặc nâng gói Google One rồi bấm Tiếp tục.');
+export const MSG_FORBIDDEN = tr('Google Drive từ chối truy cập — đăng nhập lại Google Drive.');
+export const MSG_NETWORK = tr('Mạng chậm hoặc mất kết nối tới Google Drive.');
+export const MSG_TIMEOUT = tr('Google Drive phản hồi quá lâu — tự thử lại sau.');
+export const MSG_NOT_FOUND = tr('Không có dữ liệu này trên Google Drive');
 
-// ─── Kiểu ────────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-/** Phần response cần dùng (fetch thật / bản giả khi test). */
+/** The part of the response that is used (real fetch / a fake when testing). */
 export interface DriveFetchResponse {
     status: number;
     headers: { get(name: string): string | null };
     text(): Promise<string>;
     arrayBuffer(): Promise<ArrayBuffer>;
-    /** Web ReadableStream (fetch thật) hoặc Node Readable (bản giả); null = đọc qua arrayBuffer(). */
+    /** Web ReadableStream (real fetch) or Node Readable (fake); null = read via arrayBuffer(). */
     body: any;
 }
 export type DriveFetch = (url: string, init: any) => Promise<DriveFetchResponse>;
 
-/** Metadata file Drive (chỉ các trường Deplao hỏi; số int64 Drive trả dạng chuỗi). */
+/** Drive file metadata (only the fields Deplao asks for; Drive returns int64 numbers as strings). */
 export interface DriveFileMeta {
     id: string;
     name?: string;
@@ -63,16 +64,16 @@ export interface DriveFileMeta {
     parents?: string[];
 }
 
-/** Nội dung tải lên — đọc lại được từ đầu (gửi lại sau 401, thử lại một đoạn của phiên resumable). */
+/** Upload content, readable again from the start (resent after a 401, or one chunk of a resumable session retried). */
 export interface ContentSource {
     readonly size: number;
-    /** Byte [start, end): Buffer (nội dung trong RAM) hoặc luồng đọc file. */
+    /** Bytes [start, end): a Buffer (content in RAM) or a file read stream. */
     open(start: number, end: number): Buffer | AsyncIterable<Buffer>;
 }
 
 /**
- * Trạng thái phiên resumable: file ≠ null = xong (metadata file); còn lại next = byte kế tiếp server cần.
- * (Không dùng union phân biệt bằng cờ boolean: tsconfig strict:false không thu hẹp kiểu theo cờ đó.)
+ * State of a resumable session: file ≠ null = done (file metadata); otherwise next = the next byte the server needs.
+ * (Not a union discriminated by a boolean flag: tsconfig strict:false does not narrow types by that flag.)
  */
 export interface ResumableState {
     next: number;
@@ -80,27 +81,27 @@ export interface ResumableState {
 }
 
 export interface DriveApiOptions {
-    /** Access token; force = làm mới (sau 401), rejected = token vừa bị Google từ chối. */
+    /** Access token; force = refresh it (after a 401), rejected = the token Google has just refused. */
     getToken: (opts?: { force?: boolean; rejected?: string }) => Promise<string>;
     fetchImpl?: DriveFetch;
-    /** Đếm quota sau mỗi request tới được Google. Không được ném. */
+    /** Counts quota after every request that reaches Google. Must not throw. */
     record?: (units: number, bytes: { up?: number; down?: number }) => void;
     sleep?: (ms: number) => Promise<void>;
     now?: () => number;
-    /** Request nhỏ: tổng thời gian tối đa (mặc định 30 s). */
+    /** Small requests: maximum total time (default 30 s). */
     timeoutMs?: number;
-    /** Truyền dữ liệu: huỷ khi không có byte nào trong N ms (mặc định 60 s). */
+    /** Data transfer: abort when no bytes arrive within N ms (default 60 s). */
     idleTimeoutMs?: number;
 }
 
-// ─── Tiện ích ────────────────────────────────────────────────────────────────
+// ─── Utilities ────────────────────────────────────────────────────────────────
 
-/** Giá trị chuỗi trong câu truy vấn q của Drive: `\` → `\\`, `'` → `\'`. */
+/** String value inside the Drive q query: `\` → `\\`, `'` → `\'`. */
 export function escapeQueryValue(value: string): string {
     return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
-/** Query string mã hoá kiểu %20 (bỏ giá trị undefined / null / ''). */
+/** Query string encoded like %20 (drops undefined / null / '' values). */
 export function queryString(params: Record<string, string | number | undefined | null>): string {
     return Object.entries(params)
         .filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -108,7 +109,7 @@ export function queryString(params: Record<string, string | number | undefined |
         .join('&');
 }
 
-/** Retry-After: số giây hoặc ngày giờ HTTP → ms. */
+/** Retry-After: seconds or an HTTP date → ms. */
 export function parseRetryAfter(value: string | null | undefined, nowMs: number): number | null {
     if (!value) return null;
     const v = String(value).trim();
@@ -131,12 +132,12 @@ function safeMime(mime: string | null | undefined): string {
 }
 
 function unrefTimer(timer: unknown): void {
-    try { (timer as { unref?: () => void })?.unref?.(); } catch { /* bỏ qua */ }
+    try { (timer as { unref?: () => void })?.unref?.(); } catch { /* ignore */ }
 }
 
-// ─── Lỗi ─────────────────────────────────────────────────────────────────────
+// ─── Errors ─────────────────────────────────────────────────────────────────────
 
-/** Lý do lỗi trong thân JSON của Google ({ error: { errors[].reason, details[].reason, status, message } }). */
+/** Error reason in Google's JSON body ({ error: { errors[].reason, details[].reason, status, message } }). */
 function driveErrorInfo(text: string): { reasons: string[]; first: string; message: string } {
     let j: any = null;
     try { j = text ? JSON.parse(text) : null; } catch { j = null; }
@@ -146,7 +147,7 @@ function driveErrorInfo(text: string): { reasons: string[]; first: string; messa
     const add = (r: unknown) => {
         if (typeof r !== 'string' || !r) return;
         if (!first) first = r.replace(/[^\w.-]/g, '').slice(0, 60);
-        // 'RATE_LIMIT_EXCEEDED' (ErrorInfo) và 'rateLimitExceeded' (errors[]) cùng một dạng so sánh
+        // 'RATE_LIMIT_EXCEEDED' (ErrorInfo) and 'rateLimitExceeded' (errors[]) are compared in the same form
         reasons.push(r.toLowerCase().replace(/[^a-z]/g, ''));
     };
     if (e) {
@@ -158,9 +159,9 @@ function driveErrorInfo(text: string): { reasons: string[]; first: string; messa
 }
 
 /**
- * HTTP status + thân lỗi của Drive → CloudError. Mã giữ tên R2_* vì tầng trên (classifyR2Error, SyncEngine,
- * Restore.RETRYABLE) đã phản ứng đúng theo các mã này: R2_BUSY / R2_NETWORK / R2_TIMEOUT = lùi chung rồi thử lại,
- * status 401/403 = dừng hàng đợi + báo người dùng, R2_NOT_FOUND = lỗi riêng một object.
+ * HTTP status + error body of Drive → CloudError. The codes keep the R2_* names because the upper layers (classifyR2Error, SyncEngine,
+ * Restore.RETRYABLE) already react correctly to these codes: R2_BUSY / R2_NETWORK / R2_TIMEOUT = back off the whole queue, then retry;
+ * status 401/403 = stop the queue + notify the user; R2_NOT_FOUND = an error for one object only.
  */
 export function mapDriveError(status: number, bodyText: string, retryAfter: string | null, nowMs: number = Date.now()): CloudError {
     const { reasons, first, message } = driveErrorInfo(bodyText);
@@ -175,17 +176,17 @@ export function mapDriveError(status: number, bodyText: string, retryAfter: stri
     if (status === 401 || status === 403) return new CloudError('R2_FORBIDDEN', MSG_FORBIDDEN, status);
     if (status === 404) return new CloudError('R2_NOT_FOUND', MSG_NOT_FOUND, 404);
     if (status === 408) return new CloudError('R2_TIMEOUT', MSG_TIMEOUT, 408, NETWORK_WAIT_MS);
-    return new CloudError('R2_ERROR', `Google Drive báo lỗi${first ? ` ${first}` : ''} (HTTP ${status})`, status);
+    return new CloudError('R2_ERROR', tr('Google Drive báo lỗi{{v1}} (HTTP {{status}})', { v1: first ? ` ${first}` : '', status }), status);
 }
 
-/** Lỗi mạng / hết giờ → CloudError (CloudError giữ nguyên). */
+/** Network / timeout error → CloudError (a CloudError is kept as is). */
 export function driveNetworkError(err: unknown, timedOut: boolean): CloudError {
     if (err instanceof CloudError) return err;
     if (timedOut) return new CloudError('R2_TIMEOUT', MSG_TIMEOUT, undefined, NETWORK_WAIT_MS);
     return new CloudError('R2_NETWORK', MSG_NETWORK, undefined, NETWORK_WAIT_MS);
 }
 
-/** Lỗi ghi file trên máy (đầy ổ, không có quyền…) — không phải lỗi mạng, giữ nguyên để tầng trên báo đúng. */
+/** Local file write error (disk full, no permission…): not a network error, kept as is so the upper layer reports it correctly. */
 const LOCAL_FS_CODES = new Set([
     'ENOSPC', 'EDQUOT', 'EACCES', 'EPERM', 'EROFS', 'EISDIR', 'ENOTDIR', 'ENOENT', 'EMFILE', 'ENFILE', 'EEXIST', 'EBUSY', 'ENAMETOOLONG',
 ]);
@@ -194,9 +195,9 @@ function isLocalFsError(err: unknown): boolean {
     return typeof code === 'string' && LOCAL_FS_CODES.has(code);
 }
 
-// ─── Hẹn giờ huỷ ─────────────────────────────────────────────────────────────
+// ─── Abort timer ─────────────────────────────────────────────────────────────
 
-/** AbortController + hẹn giờ; touch() gia hạn (idle timeout khi truyền dữ liệu). */
+/** AbortController + timer; touch() extends it (idle timeout during data transfer). */
 export class Watchdog {
     readonly controller = new AbortController();
     timedOut = false;
@@ -224,7 +225,7 @@ export class Watchdog {
     }
 }
 
-/** Bọc thân luồng: mỗi khối gia hạn watchdog + báo số byte đã gửi. */
+/** Wraps the stream body: each chunk extends the watchdog and reports the bytes sent so far. */
 function trackUpload(source: AsyncIterable<Buffer>, wd: Watchdog, onSent?: (sent: number) => void): AsyncIterable<Buffer> {
     return {
         [Symbol.asyncIterator]: async function* () {
@@ -234,13 +235,13 @@ function trackUpload(source: AsyncIterable<Buffer>, wd: Watchdog, onSent?: (sent
                 sent += buf.length;
                 wd.touch();
                 yield buf;
-                try { onSent?.(sent); } catch { /* callback lỗi không làm hỏng tải lên */ }
+                try { onSent?.(sent); } catch { /* a failing callback does not break the upload */ }
             }
         },
     };
 }
 
-/** Nối Buffer + luồng thành một luồng (thân multipart: phần metadata + nội dung file + đuôi). */
+/** Joins Buffers + streams into one stream (multipart body: metadata part + file content + trailer). */
 function concatParts(parts: Array<Buffer | AsyncIterable<Buffer>>): AsyncIterable<Buffer> {
     return {
         [Symbol.asyncIterator]: async function* () {
@@ -267,11 +268,11 @@ function parseJson(text: string, status: number): any {
     try {
         return JSON.parse(text);
     } catch {
-        throw new CloudError('R2_ERROR', 'Google Drive trả về dữ liệu không đọc được', status);
+        throw new CloudError('R2_ERROR', tr('Google Drive trả về dữ liệu không đọc được'), status);
     }
 }
 
-/** URL phiên tải lên do Google trả về: chỉ gửi token tới https://*.googleapis.com. */
+/** Upload session URL returned by Google: only send the token to https://*.googleapis.com. */
 function isGoogleUploadUrl(url: string): boolean {
     try {
         const u = new URL(url);
@@ -287,19 +288,19 @@ interface DriveRequest {
     method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
     url: string;
     headers?: Record<string, string>;
-    /** Dựng thân request (gọi lại khi gửi lại sau 401 / thử lại). */
+    /** Builds the request body (called again when resending after a 401 / retry). */
     body?: (() => Buffer | AsyncIterable<Buffer>) | null;
-    /** Bắt buộc khi thân là luồng. */
+    /** Required when the body is a stream. */
     contentLength?: number;
     units: number;
-    /** Byte nội dung gửi lên (để đếm). */
+    /** Content bytes sent up (for counting). */
     upBytes?: number;
-    /** GET / DELETE: được thử lại trong lớp này khi bận / mất mạng. */
+    /** GET / DELETE: retried inside this layer when busy / no network. */
     idempotent?: boolean;
-    /** Truyền dữ liệu: hạn = idle timeout (gia hạn theo từng khối) thay vì tổng 30 s. */
+    /** Data transfer: the deadline is an idle timeout (extended per chunk) instead of a 30 s total. */
     transfer?: boolean;
     onSent?: (sent: number) => void;
-    /** Mã trạng thái coi là thành công (mặc định 2xx). */
+    /** Status codes treated as success (default 2xx). */
     accept?: (status: number) => boolean;
 }
 
@@ -320,7 +321,7 @@ export class DriveApi {
         this.idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     }
 
-    /** Bản dùng token cố định (lúc đăng nhập, trước khi lưu refresh token) — 401 không làm mới được. */
+    /** Variant that uses a fixed token (at sign-in, before the refresh token is saved): a 401 cannot be refreshed. */
     withToken(token: string): DriveApi {
         return new DriveApi({ ...this.opts, getToken: async () => token });
     }
@@ -363,7 +364,7 @@ export class DriveApi {
         };
     }
 
-    /** Tạo thư mục (parentId 'root' = My Drive). */
+    /** Creates a folder (parentId 'root' = My Drive). */
     async createFolder(name: string, parentId: string): Promise<DriveFileMeta> {
         const body = Buffer.from(JSON.stringify({ name, mimeType: FOLDER_MIME, parents: [parentId] }), 'utf8');
         const r = await this.run({
@@ -376,14 +377,14 @@ export class DriveApi {
         return this.fileFrom(r);
     }
 
-    /** Xoá hẳn (không qua thùng rác). 404 ném R2_NOT_FOUND — người gọi tự coi là đã xoá. */
+    /** Deletes permanently (bypasses the trash). 404 throws R2_NOT_FOUND; the caller treats it as already deleted. */
     async deleteFile(id: string): Promise<void> {
         await this.run({ method: 'DELETE', url: `${DRIVE_API}/files/${encodeURIComponent(id)}`, units: GDRIVE_LIMITS.unitsEdit, idempotent: true });
     }
 
-    // ── Tải lên ──
+    // ── Upload ──
 
-    /** Tạo (fileId null) / cập nhật file kèm metadata trong một request (uploadType=multipart). */
+    /** Creates (fileId null) / updates a file with its metadata in one request (uploadType=multipart). */
     async uploadMultipart(p: {
         fileId?: string | null; metadata: Record<string, unknown>; mimeType: string; content: ContentSource; fields: string;
         onProgress?: (sent: number) => void;
@@ -414,7 +415,7 @@ export class DriveApi {
         return this.fileFrom(r);
     }
 
-    /** Thay nội dung file đã có (uploadType=media, giữ nguyên id). */
+    /** Replaces the content of an existing file (uploadType=media, keeps the same id). */
     async uploadMedia(p: { fileId: string; mimeType: string; content: ContentSource; fields: string; onProgress?: (sent: number) => void }): Promise<DriveFileMeta> {
         const size = p.content.size;
         const r = await this.run({
@@ -431,7 +432,7 @@ export class DriveApi {
         return this.fileFrom(r);
     }
 
-    /** Mở phiên tải lên nhiều lần (uploadType=resumable) → URL phiên (header Location). */
+    /** Opens a resumable upload session (uploadType=resumable) → session URL (Location header). */
     async startResumable(p: { fileId?: string | null; metadata: Record<string, unknown>; mimeType: string; size: number; fields: string }): Promise<string> {
         const body = Buffer.from(JSON.stringify(p.metadata), 'utf8');
         const query = queryString({ uploadType: 'resumable', fields: p.fields });
@@ -447,11 +448,11 @@ export class DriveApi {
             units: GDRIVE_LIMITS.unitsEdit,
         });
         const location = r.headers.get('location');
-        if (!location || !isGoogleUploadUrl(location)) throw new CloudError('R2_ERROR', 'Google Drive không trả về địa chỉ phiên tải lên', r.status);
+        if (!location || !isGoogleUploadUrl(location)) throw new CloudError('R2_ERROR', tr('Google Drive không trả về địa chỉ phiên tải lên'), r.status);
         return location;
     }
 
-    /** Gửi đoạn [start, end) của phiên: 308 → chưa xong (next), 200/201 → xong (file = metadata). */
+    /** Sends the chunk [start, end) of the session: 308 → not finished (next), 200/201 → finished (file = metadata). */
     async uploadChunk(sessionUrl: string, p: { start: number; end: number; total: number; content: ContentSource; onProgress?: (sentInChunk: number) => void }): Promise<ResumableState> {
         const len = p.end - p.start;
         const r = await this.run({
@@ -469,7 +470,7 @@ export class DriveApi {
         return this.resumableState(r);
     }
 
-    /** Hỏi phiên đã nhận tới đâu (Content-Range: bytes * /total, thân rỗng). */
+    /** Asks how far the session has received (Content-Range: bytes * /total, empty body). */
     async queryUpload(sessionUrl: string, total: number): Promise<ResumableState> {
         const r = await this.run({
             method: 'PUT',
@@ -482,11 +483,11 @@ export class DriveApi {
         return this.resumableState(r);
     }
 
-    // ── Tải xuống ──
+    // ── Download ──
 
     /**
-     * Tải nội dung (alt=media) vào sink (gọi sink() chỉ khi đã có response 2xx — thử lại thì tạo sink mới).
-     * bytes = số byte đã ghi; contentLength / encoded để người gọi kiểm đủ dữ liệu. 404 → R2_NOT_FOUND.
+     * Downloads the content (alt=media) into a sink (sink() is called only once a 2xx response exists; a retry creates a new sink).
+     * bytes = bytes written; contentLength / encoded let the caller check the data is complete. 404 → R2_NOT_FOUND.
      */
     async download(id: string, sink: () => Writable): Promise<{ bytes: number; contentLength: number | null; encoded: boolean }> {
         const url = `${DRIVE_API}/files/${encodeURIComponent(id)}?${queryString({ alt: 'media' })}`;
@@ -501,7 +502,7 @@ export class DriveApi {
                 const res = await this.send({ method: 'GET', url, units }, token, wd);
                 if (res.status < 200 || res.status >= 300) {
                     let text = '';
-                    try { text = await res.text(); } catch { /* bỏ qua */ }
+                    try { text = await res.text(); } catch { /* ignore */ }
                     this.record(units, {});
                     if (res.status === 401 && rejected === null) {
                         rejected = token;
@@ -541,7 +542,7 @@ export class DriveApi {
         }
     }
 
-    // ── Gửi request ──
+    // ── Send request ──
 
     private async run(req: DriveRequest): Promise<DriveReply> {
         let rejected: string | null = null;
@@ -560,7 +561,7 @@ export class DriveApi {
                 }
                 this.record(req.units, { up: req.upBytes });
                 if (res.status === 401 && rejected === null) {
-                    // Token hết hạn / bị thu hồi giữa chừng → làm mới một lần rồi gửi lại
+                    // Token expired / revoked midway → refresh once, then resend
                     rejected = token;
                     continue;
                 }
@@ -591,7 +592,7 @@ export class DriveApi {
             if (Buffer.isBuffer(body)) {
                 init.body = body;
             } else {
-                if (req.contentLength === undefined) throw new CloudError('R2_ERROR', 'Thiếu độ dài nội dung khi tải lên Google Drive');
+                if (req.contentLength === undefined) throw new CloudError('R2_ERROR', tr('Thiếu độ dài nội dung khi tải lên Google Drive'));
                 init.body = trackUpload(body, wd, req.onSent);
                 headers['content-length'] = String(req.contentLength);
                 init.duplex = 'half';
@@ -607,13 +608,13 @@ export class DriveApi {
 
     private fileFrom(r: DriveReply): DriveFileMeta {
         const data = parseJson(r.text, r.status);
-        if (!data || typeof data.id !== 'string' || !data.id) throw new CloudError('R2_ERROR', 'Google Drive không trả về mã file', r.status);
+        if (!data || typeof data.id !== 'string' || !data.id) throw new CloudError('R2_ERROR', tr('Google Drive không trả về mã file'), r.status);
         return data as DriveFileMeta;
     }
 
     private resumableState(r: DriveReply): ResumableState {
         if (r.status === 308) {
-            // Range: bytes=0-N = server đã giữ N+1 byte đầu; không có Range = chưa giữ byte nào
+            // Range: bytes=0-N = the server already holds the first N+1 bytes; no Range = it holds no bytes yet
             const m = /bytes=(\d+)-(\d+)/.exec(r.headers.get('range') || '');
             return { next: m ? Number(m[2]) + 1 : 0, file: null };
         }
@@ -627,7 +628,7 @@ export class DriveApi {
             const up = Number(bytes.up) > 0 ? Number(bytes.up) : undefined;
             const down = Number(bytes.down) > 0 ? Number(bytes.down) : undefined;
             this.opts.record(units, { up, down });
-        } catch { /* bộ đếm lỗi không làm hỏng request */ }
+        } catch { /* a failing counter does not break the request */ }
     }
 
     private now(): number {

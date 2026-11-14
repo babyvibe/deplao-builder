@@ -1,32 +1,32 @@
 /**
- * chatLoadFailures.ts - chế độ nhân viên, các màn bên chat (panel Ảnh/Video · File · Link, Nhãn Local của hội thoại):
- * lần đọc lỗi (DataAccessor trả `success: false`, xem agents/REFERENCES/EMPLOYEE_MODE.md §2.2) GIỮ dữ liệu đang có
- * thay vì biến thành danh sách trống, và không làm danh sách dừng hẳn / nhảy trang.
- * Thuần (không store / IPC / DataAccessor). Test: src/__tests__/chat/conversations/chatLoadFailures.test.ts.
+ * chatLoadFailures.ts: employee mode, the screens inside chat (Photo/Video · File · Link panel, the conversation's Local labels):
+ * a failed read (DataAccessor returns `success: false`, see agents/REFERENCES/EMPLOYEE_MODE.md §2.2) KEEPS the data on screen
+ * instead of turning it into an empty list, and does not stop the list or jump pages.
+ * Pure (no store / IPC / DataAccessor). Test: src/__tests__/chat/conversations/chatLoadFailures.test.ts.
  */
 
-/** Cùng điều kiện với `isReadFailure` của DataAccessor (module này không import DataAccessor để giữ thuần). */
+/** Same condition as `isReadFailure` in DataAccessor (this module does not import DataAccessor so it stays pure). */
 function isFailure(res: unknown): boolean {
   return !!res && typeof res === 'object' && (res as { success?: unknown }).success === false;
 }
 
-// ── Panel Ảnh/Video · File · Link (MediaSection) ──────────────────────────────
+// ── Photo/Video · File · Link panel (MediaSection) ──────────────────────────────
 
 export type MediaPanelTab = 'image' | 'file' | 'link';
 
-/** Một trang của panel, cùng hình dạng `nextConversationPaging` (DataAccessor) nhận. */
+/** One page of the panel, with the same shape that `nextConversationPaging` (DataAccessor) receives. */
 export interface MediaPanelPage {
   success: boolean;
   error?: string;
-  /** Các dòng server trả (chưa lọc dòng không hiển thị được): offset trang sau = tổng số dòng đã nhận. */
+  /** The rows the server returns (not filtering out rows that cannot be displayed): the offset of the next page = total rows received. */
   items: any[];
-  /** Trang đầy → có thể còn trang sau. */
+  /** A full page → there may be more pages. */
   hasMore: boolean;
 }
 
 /**
- * Chuẩn hoá phản hồi một trang: getMediaMessages / getFileMessages → `messages` (REST có thêm `items`), getLinks →
- * `links`. Lỗi (`success: false`, hoặc không có phản hồi vì lời gọi ném lỗi) → `success: false` — KHÔNG phải "hết".
+ * Normalizes the response of one page: getMediaMessages / getFileMessages → `messages` (REST also has `items`), getLinks →
+ * `links`. An error (`success: false`, or no response because the call threw) → `success: false`, NOT "hết" (end of list).
  */
 export function toMediaPanelPage(tab: MediaPanelTab, res: unknown, limit: number): MediaPanelPage {
   if (!res || typeof res !== 'object' || isFailure(res)) {
@@ -39,7 +39,7 @@ export function toMediaPanelPage(tab: MediaPanelTab, res: unknown, limit: number
   return { success: true, items, hasMore: items.length >= Math.max(1, Math.floor(limit) || 1) };
 }
 
-/** Khoá một dòng của panel (tin nhắn: msg_id; link: id, nếu không có thì msg_id + url). '' = không xác định. */
+/** Key of one panel row (message: msg_id; link: id, or else msg_id + url). '' = unknown. */
 export function mediaPanelRowKey(tab: MediaPanelTab, row: any): string {
   if (!row || typeof row !== 'object') return '';
   if (tab === 'link') {
@@ -50,8 +50,8 @@ export function mediaPanelRowKey(tab: MediaPanelTab, row: any): string {
 }
 
 /**
- * Nối trang sau vào danh sách đang có, bỏ dòng đã có (media mới tới trong lúc cuộn đẩy offset lệch đi → trang sau
- * lặp lại vài dòng cuối). Dòng không có khoá luôn được thêm. Trả `prev` khi không thêm được dòng nào.
+ * Appends the next page to the current list and drops rows already there (new media arriving while scrolling shifts the offset → the next page
+ * repeats a few of the last rows). Rows without a key are always added. Returns `prev` when no row could be added.
  */
 export function appendMediaPanelRows(tab: MediaPanelTab, prev: any[], rows: any[]): any[] {
   if (!rows || !rows.length) return prev;
@@ -73,10 +73,10 @@ export function appendMediaPanelRows(tab: MediaPanelTab, prev: any[], rows: any[
 }
 
 /**
- * Trang mới nhất tải lại (kết nối BOSS phục hồi): thêm lên đầu những dòng chưa có (media mới trong lúc mất kết nối),
- * giữ nguyên phần đã tải. `added` = số dòng thêm → offset trang sau tăng đúng chừng đó. `gap`: cả trang đầy đều là
- * dòng mới → giữa trang này và danh sách cũ có thể còn dòng chưa tải → người gọi tải lại từ đầu.
- * Dòng không có khoá bị bỏ qua (không biết đã có hay chưa). Trả `items === prev` khi không có gì mới.
+ * The newest page reloaded (BOSS connection restored): adds the rows not yet there to the top (new media during the disconnect),
+ * keeps what was already loaded. `added` = number of rows added → the offset of the next page goes up by that much. `gap`: when the whole page is
+ * new rows, there may still be unloaded rows between this page and the old list → the caller reloads from the start.
+ * Rows without a key are skipped (unknown whether they are already there). Returns `items === prev` when nothing is new.
  */
 export function prependMediaPanelRows(
   tab: MediaPanelTab,
@@ -104,24 +104,24 @@ export function prependMediaPanelRows(
   };
 }
 
-// ── Nhãn Local của hội thoại đang mở (ChatHeader, MessageInput) ───────────────
+// ── Local labels of the open conversation (ChatHeader, MessageInput) ───────────────
 
 export interface ThreadLocalLabelsState<L> {
-  /** Tài khoản của danh mục nhãn `labels` (null = chưa tải được cho tài khoản nào). */
+  /** Accounts of the `labels` catalog (null = not loaded for any account yet). */
   labelsAccountId: string | null;
   labels: L[];
-  /** Hội thoại (threadLabelsKey) của `threadLabelIds` (null = chưa tải được). */
+  /** Conversation (threadLabelsKey) of `threadLabelIds` (null = not loaded). */
   threadKey: string | null;
-  /** Id các Nhãn Local đang gắn cho hội thoại. */
+  /** IDs of the Local labels attached to the conversation. */
   threadLabelIds: Set<number>;
-  /** Lần tải gần nhất có phần lỗi → hiện "Thử lại". */
+  /** The latest load had a failed part → show "Thử lại" (Retry). */
   failed: boolean;
 }
 
 const NO_LABELS: never[] = [];
 const NO_LABEL_IDS: Set<number> = new Set();
 
-/** Chưa có hội thoại / tài khoản (hoặc vừa đặt lại). Dùng chung: không sửa trực tiếp `threadLabelIds`. */
+/** No conversation / account yet (or just reset). Shared: do not edit `threadLabelIds` directly. */
 export const EMPTY_THREAD_LOCAL_LABELS: ThreadLocalLabelsState<never> = Object.freeze({
   labelsAccountId: null,
   labels: NO_LABELS,
@@ -134,7 +134,7 @@ export function threadLabelsKey(accountId: string, threadId: string): string {
   return `${accountId}\u0001${threadId}`;
 }
 
-/** Nhãn Local đang bật, theo sort_order rồi tên (thứ tự trên thanh nhãn của ô nhập / header). */
+/** Local labels that are on, ordered by sort_order then name (the order on the label bar of the input / header). */
 export function sortActiveLocalLabels<L = any>(raw: unknown): L[] {
   const list: any[] = Array.isArray(raw) ? raw : [];
   return list
@@ -147,16 +147,16 @@ export function sortActiveLocalLabels<L = any>(raw: unknown): L[] {
     }) as L[];
 }
 
-/** Id các nhãn của getThreadLocalLabels (`labels: [{ id }]`). */
+/** IDs of the labels from getThreadLocalLabels (`labels: [{ id }]`). */
 export function toLabelIdSet(raw: unknown): Set<number> {
   const list: any[] = Array.isArray(raw) ? raw : [];
   return new Set(list.map((l: any) => Number(l?.id)));
 }
 
 /**
- * Trạng thái sau một lần tải Nhãn Local của hội thoại. `labels` / `threadLabelIds` = null khi lần đọc tương ứng lỗi:
- * giữ dữ liệu cũ nếu cùng tài khoản (danh mục nhãn) / cùng hội thoại (nhãn đã gắn); khác → rỗng = "chưa biết" (không
- * lấy nhãn của hội thoại trước gán cho hội thoại này). Trả `prev` khi không có gì đổi (React bỏ qua render).
+ * State after one load of the conversation's Local labels. `labels` / `threadLabelIds` = null when the matching read failed:
+ * keep the old data if it is the same account (label catalog) / the same conversation (attached labels); if different → empty = "chưa biết" (unknown)
+ * (do not take the labels of the previous conversation and assign them to this one). Returns `prev` when nothing changed (React skips the render).
  */
 export function nextThreadLocalLabels<L>(
   prev: ThreadLocalLabelsState<L>,

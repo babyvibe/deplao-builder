@@ -1,11 +1,11 @@
 /**
- * QuickChatModal - Popup soạn tin nhắn nhanh
- * Luôn hiển thị trang chi tiết (không có trang danh sách riêng).
- * Tính năng: tìm người nhận inline, chọn tài khoản gửi (avatar+tên+SĐT), lịch sử chat, tin nhắn nhanh.
+ * QuickChatModal - Quick message compose popup
+ * Always shows the detail page (no separate list page).
+ * Features: inline recipient search, pick the sending account (avatar + name + phone), chat history, quick messages.
  *
- * Mọi kênh (Zalo, Telegram, Facebook): gửi qua quickChatSend + MessageQueue như ô soạn tin của khung chat; tin của hội
- * thoại đọc từ bộ nhớ chung nên tin mới về hiện ngay trong popup. Trước đây chỉ gọi ipc.zalo: tài khoản kênh khác gửi lỗi
- * im lặng, popup không thấy tin trả lời.
+ * All channels (Zalo, Telegram, Facebook): sent through quickChatSend + MessageQueue, like the chat frame compose box; the conversation's messages
+ * are read from the shared memory, so new messages show right away in the popup. Before, it only called ipc.zalo: other channels' accounts failed
+ * silently and the popup never showed the reply.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore, QuickChatTarget } from '@/store/app/appStore';
@@ -30,28 +30,30 @@ import SharedMessageContent from '../messages/SharedMessageContent';
 import { EMOJI_CATEGORIES, QUICK_EMOJIS } from '@/lib/chat/messages/emojiUtils';
 import { CHANNEL, isZalo } from '@/lib/channels/channelHelper';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtTime(ts: number): string {
   if (!ts) return '';
   const d = new Date(ts);
   const diff = Math.floor((Date.now() - d.getTime()) / 86400000);
-  if (diff === 0) return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-  if (diff === 1) return 'Hôm qua';
-  if (diff < 7) return d.toLocaleDateString('vi-VN', { weekday: 'short' });
-  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+  if (diff === 0) return d.toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' });
+  if (diff === 1) return tr('Hôm qua');
+  if (diff < 7) return d.toLocaleDateString(appLocale(), { weekday: 'short' });
+  return d.toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit' });
 }
 
-// ── Sử dụng MessageBubble chung thay vì duplicate code ────────────────────────
-// Đã chuyển sang sử dụng MessageBubble component từ MessageBubbles.tsx
-// để tránh phải sửa 2 chỗ khi có thay đổi
+// ── Use the shared MessageBubble instead of duplicating code ────────────────────────
+// Now uses the MessageBubble component from MessageBubbles.tsx
+// so that a change does not have to be made in two places
 
-// ── Removed: MsgBubble function (đã thay bằng MessageBubble component chung) ──
-// function MsgBubble() { ... }  → xóa 280+ dòng duplicate code
+// ── Removed: MsgBubble function (replaced by the shared MessageBubble component) ──
+// function MsgBubble() { ... }  → removed 280+ lines of duplicate code
 
 // ── Placeholder for removed code (Contact card
-// ── Removed: MsgBubble function (đã thay bằng MessageBubble component chung) ──
-// function MsgBubble() { ... }  → xóa 280+ dòng duplicate code
+// ── Removed: MsgBubble function (replaced by the shared MessageBubble component) ──
+// function MsgBubble() { ... }  → removed 280+ lines of duplicate code
 
 // ── Account Selector ──────────────────────────────────────────────────────────
 function AccountSelector({ accounts, selectedId, onSelect }: {
@@ -70,7 +72,7 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
 
   const info = (a: any) => ({
     name: a.display_name || a.full_name || a.zalo_id,
-    // Tài khoản mọi kênh: ghi rõ kênh (cùng một tên có thể có cả Zalo lẫn Telegram)
+    // Accounts on every channel: state the channel (the same name can exist on both Zalo and Telegram)
     sub: [getChannelLabel((a.channel || CHANNEL.ZALO) as any), a.phone || a.zalo_id].filter(Boolean).join(' · '),
   });
 
@@ -91,7 +93,7 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
     <div ref={ref} className="relative flex-shrink-0">
       <button onClick={() => setOpen(v => !v)}
         className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs transition-colors max-w-[175px] ${open ? 'border-blue-500 bg-muted' : 'border-input hover:border-border-strong bg-card'}`}
-        title="Chọn tài khoản gửi">
+        title={tr('Chọn tài khoản gửi')}>
         {sel ? (
           <>
             {sel.avatar_url
@@ -99,7 +101,7 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
               : <div className="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0">{info(sel).name.charAt(0)}</div>}
             <span className="text-foreground/80 truncate max-w-[100px]">{info(sel).name}</span>
           </>
-        ) : <span className="text-muted-foreground">Chọn TK</span>}
+        ) : <span className="text-muted-foreground">{tr('Chọn TK')}</span>}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"
           className={`flex-shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}>
           <polyline points="6 9 12 15 18 9"/>
@@ -108,7 +110,7 @@ function AccountSelector({ accounts, selectedId, onSelect }: {
 
       {open && (
         <div className="absolute top-full right-0 mt-1 bg-card border border-input rounded-xl shadow-2xl z-[200] min-w-[220px] py-1 overflow-hidden">
-          <p className="text-[11px] text-muted-foreground px-3 pt-2 pb-1.5 font-semibold uppercase tracking-wide">Gửi từ tài khoản</p>
+          <p className="text-[11px] text-muted-foreground px-3 pt-2 pb-1.5 font-semibold uppercase tracking-wide">{tr('Gửi từ tài khoản')}</p>
           {accounts.map(a => {
             const { name, sub } = info(a);
             return (
@@ -154,7 +156,7 @@ function QuickMsgPicker({ getAuth, accountId, channel, onSelect, onClose }: {
   }, [onClose]);
 
   useEffect(() => {
-    // Như ô soạn tin: kênh chỉ có tin nhắn nhanh trên máy (Telegram, Facebook) luôn đọc bản trên máy
+    // As in the compose box: channels that only have quick messages on this machine (Telegram, Facebook) always read the local copy
     const localOnly = getCapability((channel || CHANNEL.ZALO) as any)?.quickMessageSyncMode === 'local';
     const mode = localOnly ? 'local' : ((localStorage.getItem(`qm_mode_${accountId}`) as 'zalo'|'local') || CHANNEL.ZALO);
     const auth = getAuth();
@@ -187,15 +189,15 @@ function QuickMsgPicker({ getAuth, accountId, channel, onSelect, onClose }: {
       <div className="px-3 pt-2.5 pb-2 border-b border-border flex-shrink-0">
         <p className="text-[11px] text-yellow-400 font-semibold uppercase tracking-wide mb-1.5 flex items-center gap-1">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          Tin nhắn nhanh
+          {tr('Tin nhắn nhanh')}
         </p>
         <input autoFocus value={filter} onChange={e => setFilter(e.target.value)}
-          placeholder="Tìm theo từ khoá..." onKeyDown={e => { if(e.key==='Escape') onClose(); }}
+          placeholder={tr('Tìm theo từ khoá...')} onKeyDown={e => { if(e.key==='Escape') onClose(); }}
           className="w-full bg-muted border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
       </div>
       <div className="flex-1 overflow-y-auto py-1">
         {loading && <div className="flex justify-center py-5"><div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"/></div>}
-        {!loading && filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-5">Không có tin nhắn nhanh</p>}
+        {!loading && filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-5">{tr('Không có tin nhắn nhanh')}</p>}
         {filtered.map(item => {
           const hasLocalMedia = item._localMedia && item._localMedia.length > 0;
           const imgCount = hasLocalMedia ? item._localMedia!.filter(f => f.type === 'image').length : (item.media?.items?.length ?? 0);
@@ -205,8 +207,8 @@ function QuickMsgPicker({ getAuth, accountId, channel, onSelect, onClose }: {
               className="w-full flex flex-col px-3 py-2 hover:bg-muted text-left transition-colors gap-0.5">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[11px] text-blue-400 font-mono bg-blue-500/10 px-1.5 py-0.5 rounded flex-shrink-0">/{item.keyword}</span>
-                {imgCount > 0 && <span className="text-[11px] text-muted-foreground">🖼 {imgCount} ảnh</span>}
-                {vidCount > 0 && <span className="text-[11px] text-muted-foreground">🎬 {vidCount} video</span>}
+                {imgCount > 0 && <span className="text-[11px] text-muted-foreground">{trx('🖼 {{imgCount}} ảnh', { imgCount })}</span>}
+                {vidCount > 0 && <span className="text-[11px] text-muted-foreground">{trx('🎬 {{vidCount}} video', { vidCount })}</span>}
               </div>
               <p className="text-xs text-foreground/80 line-clamp-2 leading-snug">{item.message.title}</p>
             </button>
@@ -231,7 +233,7 @@ function RecipientRow({ zaloId, channel, contacts, accounts, onSelect }: {
 
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 60); }, []);
 
-  // Liên hệ đã nạp trong máy: hiện ngay khi gõ
+  // Contacts already loaded on this machine: shown right away while typing
   const results = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return EMPTY_RESULTS;
@@ -242,7 +244,7 @@ function RecipientRow({ zaloId, channel, contacts, accounts, onSelect }: {
     }).slice(0, 20);
   }, [query, contacts]);
 
-  // DB + nền tảng: chỉ theo chữ đang gõ (danh bạ đổi liên tục lúc tin về không làm hoãn mãi lần tìm)
+  // DB + platform: only follows the text being typed (the contact list changes constantly while messages arrive, so the lookup is never postponed forever)
   useEffect(() => {
     const trimmed = query.trim();
     if (!trimmed) { setDbResults([]); setLookupResult(null); setSearching(false); return; }
@@ -250,7 +252,7 @@ function RecipientRow({ zaloId, channel, contacts, accounts, onSelect }: {
     let cancelled = false;
     const timer = setTimeout(() => {
       if (!zaloId) return;
-      // Mọi liên hệ của tài khoản trong DB, gõ không dấu cũng ra (danh sách hội thoại chỉ nạp vài trang đầu)
+      // All of the account's contacts in the DB, so typing without accents also matches (the conversation list only loads the first few pages)
       DataAccessor.searchContactsForPicker({ zaloId, search: trimmed, type: 'all', limit: 20 }).then((res) => {
         if (cancelled || !res?.success) return;
         setDbResults(res.items.map((item) => ({
@@ -258,7 +260,7 @@ function RecipientRow({ zaloId, channel, contacts, accounts, onSelect }: {
           contact_type: item.type,
         })));
       }).catch(() => {});
-      // Tìm trên nền tảng: Zalo theo số điện thoại, Telegram theo @username
+      // Platform search: Zalo by phone number, Telegram by @username
       const kind = recipientLookupKind(channel, trimmed);
       if (!kind) { setLookupResult(null); setSearching(false); return; }
       setSearching(true);
@@ -303,9 +305,9 @@ function RecipientRow({ zaloId, channel, contacts, accounts, onSelect }: {
   return (
     <div className="relative border-b border-border bg-card flex-shrink-0">
       <div className="flex items-center gap-2 px-3 py-2.5">
-        <span className="text-xs text-muted-foreground font-semibold flex-shrink-0">Đến:</span>
+        <span className="text-xs text-muted-foreground font-semibold flex-shrink-0">{tr('Đến:')}</span>
         <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
-          placeholder={isZalo(channel) ? 'Nhập tên, số điện thoại, UID…' : channel === CHANNEL.TELEGRAM_USER ? 'Nhập tên, @username, ID…' : 'Nhập tên, ID…'}
+          placeholder={isZalo(channel) ? tr('Nhập tên, số điện thoại, UID…') : channel === CHANNEL.TELEGRAM_USER ? tr('Nhập tên, @username, ID…') : tr('Nhập tên, ID…')}
           className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground focus:outline-none min-w-0"/>
         {searching && <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0"/>}
         {query && <button onClick={() => setQuery('')} className="text-muted-foreground hover:text-foreground/80 flex-shrink-0">
@@ -322,7 +324,7 @@ function RecipientRow({ zaloId, channel, contacts, accounts, onSelect }: {
                 : <PeerInitials id={c.contact_id} name={c.alias || c.display_name} className="w-8 h-8 text-xs" />}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-foreground truncate">{c.alias||c.display_name||c.contact_id}</p>
-                <p className="text-[11px] text-muted-foreground truncate">{c.contact_type==='group'?'Nhóm':(c.phone||c.contact_id)}</p>
+                <p className="text-[11px] text-muted-foreground truncate">{c.contact_type==='group'?tr('Nhóm'):(c.phone||c.contact_id)}</p>
               </div>
             </button>
           ))}
@@ -334,13 +336,13 @@ function RecipientRow({ zaloId, channel, contacts, accounts, onSelect }: {
 
 // ── Main QuickChatModal ───────────────────────────────────────────────────────
 const EMPTY_LIST: any[] = [];
-/** Số tin mới nhất đọc khi mở một hội thoại trong popup. */
+/** Number of latest messages read when opening a conversation in the popup. */
 const QUICK_CHAT_PAGE = 40;
-/** Popup chỉ vẽ ngần này tin mới nhất (khung chat có thể đã tải nhiều hơn cho cùng hội thoại). */
+/** The popup only draws this many latest messages (the chat frame may have loaded more for the same conversation). */
 const QUICK_CHAT_SHOWN = 80;
 
 export default function QuickChatModal() {
-  // Selector từng phần: popup luôn gắn trong App, không vẽ lại theo mọi thay đổi của store
+  // Partial selectors: the popup is always mounted inside App, so it does not re-render on every store change
   const quickChatOpen = useAppStore((s) => s.quickChatOpen);
   const quickChatTarget = useAppStore((s) => s.quickChatTarget);
   const quickChatZaloId = useAppStore((s) => s.quickChatZaloId);
@@ -356,7 +358,7 @@ export default function QuickChatModal() {
   // ── Target contact ───────────────────────────────────────────────────────
   const [target, setTarget] = useState<QuickChatTarget | null>(null);
 
-  // ── Messages: bộ nhớ chung của hội thoại → tin mới về, tin đang gửi, tin thật thay tin tạm đều hiện như khung chat ──
+  // ── Messages: the conversation's shared memory → new incoming messages, pending messages, and real messages replacing temp ones all show as in the chat frame ──
   const threadKey = target && selectedZaloId ? getMessageCacheKey(selectedZaloId, target.userId) : '';
   const threadMsgs: MessageItem[] = useChatStore((s) => (threadKey ? s.messages[threadKey] : undefined)) ?? EMPTY_LIST;
   const localMsgs = threadMsgs.length > QUICK_CHAT_SHOWN ? threadMsgs.slice(-QUICK_CHAT_SHOWN) : threadMsgs;
@@ -392,7 +394,7 @@ export default function QuickChatModal() {
     setTarget(quickChatTarget ?? null);
     setText(''); setClipImgs([]); setPendingQMMedia(null); setShowEmoji(false); setShowQM(false);
     if (quickChatTarget && zid) loadMessages(zid, quickChatTarget.userId, quickChatTarget.threadType);
-    // Mở lại với người nhận khác (nút "Nhắn tin" của hồ sơ khi popup đang mở) cũng khởi tạo lại
+    // Reopening with a different recipient (the profile's "Nhắn tin" (Message) button while the popup is open) also reinitializes
   }, [quickChatOpen, quickChatTarget, quickChatZaloId]);
 
   // ── Load messages for selected thread ───────────────────────────────────
@@ -403,21 +405,21 @@ export default function QuickChatModal() {
     try {
       const res: any = await DataAccessor.getMessages({ zaloId, threadId, limit: QUICK_CHAT_PAGE, offset: 0 });
       let rows: any[] = res?.messages || res?.items || [];
-      // Máy chưa có tin (người vừa mở từ hồ sơ, tìm theo @username): lịch sử từ Telegram / Facebook như khung chat
+      // Nothing on this machine yet (opened from a profile, or searched by @username): history from Telegram / Facebook, as in the chat frame
       if (!rows.length && !(useChatStore.getState().messages[key] || []).length) {
         rows = await fetchQuickChatHistory(zaloId, threadId, accountChannel, QUICK_CHAT_PAGE);
       }
-      // Gộp vào bộ nhớ, không thay: khung chat có thể đang mở hội thoại này với nhiều tin hơn
+      // Merged into memory, not replaced: the chat frame may have this conversation open with more messages
       if (rows.length) useChatStore.getState().prependMessages(zaloId, threadId, [...rows].reverse());
-      // Mở hội thoại = đã đọc, như bấm trong danh sách (Zalo "đã xem", Telegram / Facebook đã đọc)
+      // Opening a conversation = read, as when clicked in the list (Zalo "seen", Telegram / Facebook marked as read)
       useChatStore.getState().clearUnread(zaloId, threadId);
       DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
       queueBadgeRefresh((count) => ipc.app?.setBadge(count));
       void liveReadSync.syncOpenedThread({ accountId: zaloId, threadId, threadType: threadType === 1 ? 1 : 0 }, rows);
-    } catch { /* không đọc được thì để trống: gửi tin đầu tiên vẫn được */ } finally { setMsgsLoading(false); }
+    } catch { /* if it cannot be read, leave it empty: sending the first message still works */ } finally { setMsgsLoading(false); }
   }, []);
 
-  // ── Hội thoại đang hiện trong popup: tin mới của nó coi như đang xem (useZaloEvents, liveReadSync) ───────────────
+  // ── The conversation shown in the popup: its new messages count as being viewed (useZaloEvents, liveReadSync) ──────────────
   useEffect(() => {
     const setThread = useAppStore.getState().setQuickChatThread;
     if (quickChatOpen && target && selectedZaloId) {
@@ -509,7 +511,7 @@ export default function QuickChatModal() {
   };
 
   // ── Send message ─────────────────────────────────────────────────────────
-  /** Người nhận + tài khoản gửi cho quickChatSend (Zalo kèm cookie của tài khoản). */
+  /** Recipient + sending account for quickChatSend (Zalo includes the account's cookie). */
   const sendTargetOf = (): QuickSendTarget | null => {
     if (!target || !selectedZaloId) return null;
     return {
@@ -519,8 +521,8 @@ export default function QuickChatModal() {
   };
 
   /**
-   * Như ô soạn tin của khung chat: tin tạm `temp_…` hiện ngay (cả trong khung chat), MessageQueue gửi + thử lại, báo lỗi
-   * trên bong bóng, tin thật về thì thay tin tạm. Trước đây tin tạm `qc_…` không bao giờ được thay → hiện 2 lần.
+   * As in the chat frame compose box: the temp message `temp_…` shows right away (also in the chat frame), MessageQueue sends + retries, reports an error
+   * on the bubble, and the real message replaces the temp one when it comes back. Before, the temp message `qc_…` was never replaced → shown twice.
    */
   const enqueueSend = (sendTo: QuickSendTarget, temp: Partial<MessageItem>, send: () => Promise<SendResult>, imageCount = 0) => {
     const tempId = generateTempId();
@@ -535,7 +537,7 @@ export default function QuickChatModal() {
       channel: sendTo.channel as any, sendFn: send,
       onSuccess: () => {
         markReplied(sendTo.accountId, sendTo.threadId);
-        // Ảnh: giữ ảnh tạm tới khi ảnh thật về
+        // Image: keep the temp image until the real image comes back
         if (imageCount > 0) {
           messageQueue.registerImageBatch(tempId, sendTo.accountId, sendTo.threadId, imageCount,
             () => useChatStore.getState().removeMessage(sendTo.accountId, sendTo.threadId, tempId));
@@ -554,7 +556,7 @@ export default function QuickChatModal() {
   };
 
   const enqueueFile = (sendTo: QuickSendTarget, filePath: string) => {
-    const name = filePath.split(/[\\/]/).pop() || 'Tệp';
+    const name = filePath.split(/[\\/]/).pop() || tr('Tệp');
     enqueueSend(sendTo, {
       content: `📎 ${name}`, msg_type: 'file', media_type: 'file',
       attachments: JSON.stringify([{ type: 'file', localPath: filePath, name }]),
@@ -575,7 +577,7 @@ export default function QuickChatModal() {
       setTimeout(() => { justSentRef.current = false; }, 50);
     }, 0);
     try {
-      // ── Media của tin nhắn nhanh (ảnh + video) ────
+      // ── Media for quick messages (image + video) ────
       if (pendingQMMedia) {
         const { imagePaths, videoPaths } = pendingQMMedia;
         setPendingQMMedia(null);
@@ -587,7 +589,7 @@ export default function QuickChatModal() {
         }
       }
 
-      // ── Ảnh dán từ clipboard ─────────────────────────────────────────
+      // ── Image pasted from the clipboard ─────────────────────────────────────────────
       if (clipImgs.length) {
         const images = clipImgs;
         setClipImgs([]);
@@ -608,7 +610,7 @@ export default function QuickChatModal() {
     finally { setSending(false); setTimeout(() => editorRef.current?.focus(), 40); }
   };
 
-  // ── Mở hội thoại đầy đủ: như bấm trong danh sách hội thoại (đổi tài khoản, tải tin, đã đọc) ──────────────────
+  // ── Open the full conversation: same as clicking the conversation list (switch account, load messages, mark as read) ──────────────────
   const handleGoToConversation = () => {
     if (!target || !selectedZaloId) return;
     const request = {
@@ -622,7 +624,7 @@ export default function QuickChatModal() {
   if (!quickChatOpen) return null;
 
   const selfId = selectedZaloId;
-  /** Đổi tài khoản gửi: cùng kênh thì giữ người nhận (gửi từ tài khoản khác), khác kênh thì mã người nhận vô nghĩa. */
+  /** Changing the sending account: on the same channel the recipient is kept (sent from another account); on a different channel the recipient id is meaningless. */
   const switchAccount = (id: string) => {
     const nextChannel = String(accounts.find(a => a.zalo_id === id)?.channel || CHANNEL.ZALO);
     setSelectedZaloId(id);
@@ -676,11 +678,11 @@ export default function QuickChatModal() {
                 </div>
                 <button onClick={() => setTarget(null)}
                   className="text-[11px] text-muted-foreground hover:text-foreground/80 px-1.5 py-0.5 rounded hover:bg-muted transition-colors flex-shrink-0 whitespace-nowrap">
-                  đổi
+                  {tr('đổi')}
                 </button>
               </>
             ) : (
-              <span className="text-sm font-semibold text-foreground/80">Nhắn tin nhanh</span>
+              <span className="text-sm font-semibold text-foreground/80">{tr('Nhắn tin nhanh')}</span>
             )}
           </div>
 
@@ -689,7 +691,7 @@ export default function QuickChatModal() {
 
           {/* Go to full conversation */}
           {target && (
-            <button onClick={handleGoToConversation} title="Mở hội thoại đầy đủ"
+            <button onClick={handleGoToConversation} title={tr('Mở hội thoại đầy đủ')}
               className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-muted transition-colors">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
@@ -701,7 +703,7 @@ export default function QuickChatModal() {
           {/* Close */}
           <button onClick={closeQuickChat}
             className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            title="Đóng (Esc)">
+            title={tr('Đóng (Esc)')}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -727,15 +729,15 @@ export default function QuickChatModal() {
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="mb-2 opacity-20">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
-              <p className="text-sm">Nhập người nhận ở trên để bắt đầu</p>
+              <p className="text-sm">{tr('Nhập người nhận ở trên để bắt đầu')}</p>
             </div>
           )}
 
           {target && !msgsLoading && localMsgs.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <MessageCircleIcon className="w-8 h-8 mb-2 opacity-40" />
-              <p className="text-sm">Chưa có tin nhắn</p>
-              <p className="text-xs mt-1 text-muted-foreground">Gửi tin nhắn đầu tiên cho {target.displayName}</p>
+              <p className="text-sm">{tr('Chưa có tin nhắn')}</p>
+              <p className="text-xs mt-1 text-muted-foreground">{trx('Gửi tin nhắn đầu tiên cho {{displayName}}', { displayName: target.displayName })}</p>
             </div>
           )}
 
@@ -743,7 +745,7 @@ export default function QuickChatModal() {
             items={localMsgs}
             bottomRef={bottomRef}
             renderItem={(msg, idx) => {
-              // Facebook: mã tài khoản trong app khác mã người gửi → dựa vào is_sent
+              // Facebook: the account id in the app differs from the sender id → use is_sent
               const isSelf = msg.is_sent === 1 || msg.sender_id === selfId;
               const showTime = idx === 0 || (msg.timestamp - localMsgs[idx - 1].timestamp > 5 * 60 * 1000);
               return (
@@ -765,7 +767,7 @@ export default function QuickChatModal() {
           <div className="flex gap-2 px-3 py-1.5 border-t border-border bg-yellow-500/5 flex-shrink-0 flex-wrap items-center">
             <span className="text-[11px] text-yellow-400 flex-shrink-0 flex items-center gap-1">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              Kèm:
+              {tr('Kèm:')}
             </span>
             {pendingQMMedia.imagePaths.map((fp, i) => (
               <div key={`qm_img_${i}`} className="relative">
@@ -807,7 +809,7 @@ export default function QuickChatModal() {
                   const r = await ipc.file?.openDialog({ filters:[{name:'Images',extensions:['jpg','jpeg','png','gif','webp']}], multiSelect:true });
                   if (r?.canceled||!r?.filePaths?.length) return;
                   enqueueImages(sendTo, r.filePaths as string[]);
-                }} title="Gửi ảnh"
+                }} title={tr('Gửi ảnh')}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
@@ -820,7 +822,7 @@ export default function QuickChatModal() {
                   const r = await ipc.file?.openDialog({ filters:[{name:'All Files',extensions:['*']}] });
                   if (r?.canceled||!r?.filePaths?.length) return;
                   enqueueFile(sendTo, String(r.filePaths[0]));
-                }} title="Gửi file"
+                }} title={tr('Gửi file')}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
@@ -829,7 +831,7 @@ export default function QuickChatModal() {
                 {/* Quick messages ⚡ */}
                 <div className="relative">
                   <button onClick={() => setShowQM(v=>!v)}
-                    title="Tin nhắn nhanh"
+                    title={tr('Tin nhắn nhanh')}
                     className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showQM?'bg-yellow-500/20 text-yellow-400':'text-muted-foreground hover:text-foreground hover:bg-muted'}`}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
@@ -839,11 +841,11 @@ export default function QuickChatModal() {
                     <QuickMsgPicker
                       getAuth={getAuth} accountId={selectedZaloId} channel={channel}
                       onSelect={item => {
-                        // Luôn đưa text vào editor để có thể sửa trước khi gửi
+                        // Always put the text in the editor so it can be edited before sending
                         if (item.message.title) {
                           insertText(item.message.title);
                         }
-                        // Lưu media (nếu có) để gửi khi user bấm nút Gửi
+                        // Save the media (if any) to send when the user clicks Send
                         const localMedia: LocalMediaFile[] = item._localMedia || [];
                         const imgPaths = localMedia.filter(f => f.type === 'image').map(f => f.path);
                         const vidPaths = localMedia.filter(f => f.type === 'video').map(f => f.path);
@@ -859,7 +861,7 @@ export default function QuickChatModal() {
                 {/* Emoji */}
                 <div className="relative" ref={emojiRef}>
                   <button onMouseDown={e => { e.preventDefault(); setShowEmoji(v=>!v); }}
-                    title="Emoji"
+                    title={tr('Emoji')}
                     className={`w-8 h-8 rounded-lg flex items-center justify-center text-lg transition-colors ${showEmoji?'bg-blue-600':'hover:bg-muted'}`}>😊</button>
                   {showEmoji && (
                     <div className="absolute bottom-10 left-0 bg-card border border-input rounded-2xl shadow-2xl z-50 w-72 overflow-hidden">
@@ -900,21 +902,21 @@ export default function QuickChatModal() {
                     setText('');
                   }
                 }}
-                data-placeholder={target ? 'Nhập tin nhắn… (Enter gửi)' : 'Chọn người nhận trước…'}
+                data-placeholder={target ? tr('Nhập tin nhắn… (Enter gửi)') : tr('Chọn người nhận trước…')}
                 className={`min-h-[40px] max-h-[120px] overflow-y-auto bg-card border border-border rounded-xl px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-blue-500 transition-colors leading-relaxed empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground empty:before:pointer-events-none ${!target?'opacity-40 cursor-not-allowed':''}`}
               />
             </div>
 
             {/* Send / Like */}
             {text.trim() || clipImgs.length > 0 || pendingQMMedia ? (
-              <button onClick={handleSend} disabled={sending||!target} title="Gửi (Enter)"
+              <button onClick={handleSend} disabled={sending||!target} title={tr('Gửi (Enter)')}
                 className="w-9 h-9 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center text-white transition-colors flex-shrink-0">
                 {sending
                   ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>
                   : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>}
               </button>
             ) : (
-              <button disabled={!target} title="Gửi 👍"
+              <button disabled={!target} title={tr('Gửi 👍')}
                 onClick={() => {
                   const sendTo = sendTargetOf(); if (!sendTo) return;
                   enqueueSend(sendTo, { content: '👍', msg_type: 'text', media_type: 'text' } as Partial<MessageItem>,
@@ -925,7 +927,7 @@ export default function QuickChatModal() {
           </div>
 
           <div className="text-[11px] text-muted-foreground px-3 py-1">
-            Shift+Enter xuống dòng · Ctrl + Shift + N mở tính năng nhanh
+            {tr('Shift+Enter xuống dòng · Ctrl + Shift + N mở tính năng nhanh')}
           </div>
         </div>
       </div>

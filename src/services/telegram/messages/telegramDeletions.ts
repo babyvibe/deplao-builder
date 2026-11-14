@@ -1,13 +1,13 @@
 /**
- * Tin Telegram bị xoá (thu hồi) → đánh dấu trong DB, giữ nội dung + loại gốc để còn "Xem lại".
+ * Telegram message deleted (unsent / recalled) → marked in the DB, keeping its content + original type so "Xem lại" (View again) is still possible.
  *
- * Phạm vi ID của Telegram:
- * - UpdateDeleteChannelMessages: ID theo từng kênh / siêu nhóm (`-100…`), sự kiện mang sẵn kênh.
- * - UpdateDeleteMessages: hộp tin chung của tài khoản (chat riêng + nhóm thường), ID duy nhất trong tài khoản. Cùng số
- *   ở một kênh `-100…` là bài khác hoàn toàn — không được đụng tới.
+ * Telegram's ID scope:
+ * - UpdateDeleteChannelMessages: IDs per channel / supergroup (`-100…`); the event already carries the channel.
+ * - UpdateDeleteMessages: the account's common inbox (private chats + normal groups), IDs unique within the account. The same number
+ *   in a `-100…` channel is a completely different post; it must not be touched.
  *
- * Trước đây nhánh hộp tin chung không lọc hội thoại và lấy nội dung gốc từ hàng ĐẦU TIÊN trùng msg_id: tin chữ trong
- * chat riêng thành "ảnh" rỗng ([Hình ảnh]) và các bài kênh trùng số bị đánh dấu thu hồi oan.
+ * Previously the common-inbox branch did not filter by conversation and took the original content from the FIRST row with a matching msg_id: text messages in
+ * a private chat became an empty image message ("[Hình ảnh]" (Image)), and channel posts with the same number were wrongly marked as recalled.
  */
 
 export interface TelegramDeletionDb {
@@ -25,8 +25,8 @@ interface DeletedRow {
 }
 
 /**
- * Đánh dấu thu hồi các tin `messageIds`. `channelThreadId` (`-100…`) khi xoá trong kênh / siêu nhóm, bỏ trống với hộp
- * tin chung. Mỗi hàng giữ nội dung / loại gốc của CHÍNH nó. Trả về: hội thoại → các msg_id đã đánh dấu.
+ * Marks the messages `messageIds` as recalled. `channelThreadId` (`-100…`) when deleting in a channel / supergroup; left empty for the
+ * common inbox. Each row keeps the content / original type of ITS OWN. Returns: conversation → the msg_ids that were marked.
  */
 export function markTelegramMessagesDeleted(
   db: TelegramDeletionDb,
@@ -50,7 +50,7 @@ export function markTelegramMessagesDeleted(
         [msgId, accountId],
       );
     for (const row of rows) {
-      // Telegram giữ nguyên `content` khi thu hồi → nội dung gốc = recalled_content (lần trước) hoặc content
+      // Telegram keeps `content` unchanged on recall → original content = recalled_content (from last time) or content
       const recalledContent = row.recalled_content || row.content || null;
       const recalledMsgType = row.recalled_msg_type || (row.msg_type !== 'recalled' ? row.msg_type : null);
       log?.(`[TelegramUserListener] Recall msg ${msgId} in ${row.thread_id}: content="${String(recalledContent || '').slice(0, 100)}" type=${recalledMsgType || '-'}`);

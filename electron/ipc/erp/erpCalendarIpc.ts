@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import ErpCalendarService from '../../../src/services/erp/ErpCalendarService';
 import { eventInviteAction } from '../../../src/services/erp/erpAccessRules';
 import { withErpAuth, erpValidate, requireErpPermission } from './erpIpcMiddleware';
+import { tr } from '../../../src/shared/i18n';
 
 export function registerErpCalendarIpc(): void {
   const svc = () => ErpCalendarService.getInstance();
@@ -23,7 +24,7 @@ export function registerErpCalendarIpc(): void {
     if (input?.input?.end_at !== undefined && input?.input?.end_at !== null && input?.input?.end_at !== '') {
       erpValidate.int(input?.input?.end_at, 'end_at');
     }
-    // Mời người khác = cuộc họp → calendar.create_meeting (erpAccessRules.eventInviteAction)
+    // Inviting other people = a meeting → calendar.create_meeting (erpAccessRules.eventInviteAction)
     const inviteAction = eventInviteAction(input?.input?.attendees, ctx.employeeId);
     if (inviteAction) requireErpPermission(inviteAction, ctx);
     return { event: svc().createEvent(input.input, ctx.employeeId) };
@@ -48,7 +49,7 @@ export function registerErpCalendarIpc(): void {
       ? requestedEmployeeIds
       : Array.from(new Set(requestedEmployeeIds.filter((employeeId: string) => employeeId === ctx.employeeId)));
     if (ctx.employeeId !== 'boss' && requestedEmployeeIds.some((employeeId: string) => employeeId && employeeId !== ctx.employeeId)) {
-      throw new Error('Bạn không có quyền kiểm tra lịch của người khác');
+      throw new Error(tr('Bạn không có quyền kiểm tra lịch của người khác'));
     }
     erpValidate.int(input?.start_at, 'start_at');
     erpValidate.int(input?.end_at,   'end_at');

@@ -1,7 +1,7 @@
 /**
- * Cuộn của danh sách tin: thanh ghim cao / thấp đi, nội dung đổi cỡ (ảnh / video tải xong), vị trí cuộn (đáy, rời đáy
- * khi cuộn lên), tin mới (của mình hoặc đang ở đáy) → xuống đáy, sự kiện cuộn từ nơi khác (gợi ý AI, thư viện đã gửi),
- * giữ nguyên chỗ đang xem khi chèn trang tin cũ lên trên.
+ * Scrolling of the message list: the pinned bar gets taller / shorter, content changes size (photos / videos finish loading), scroll position (bottom, leaving the bottom
+ * when scrolling up), new messages (mine, or when at the bottom) → scroll to the bottom, scroll events from elsewhere (AI suggestions, library sent),
+ * and keeps the current position when older messages are inserted at the top.
  */
 import { useEffect, useLayoutEffect } from 'react';
 import type { MessageListState } from './useMessageListState';
@@ -42,27 +42,27 @@ export function useScrollFollow(list: MessageListState, deps: {
   }, [threadReady, activeThreadId, pins.length, pinnedNotes.length, scrollToBottom]);
 
 
-  // ─── ResizeObserver: auto-scroll khi content resize mà user đang ở bottom ──
+  // ─── ResizeObserver: auto-scroll when the content resizes while the user is at the bottom ──
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el || !threadReady) return;
-    // Kéo về đáy NGAY trong callback (chạy sau layout, trước khi vẽ) thay vì đợi frame sau → không thấy khung
-    // bị đẩy rồi mới giật về. So khoảng cách tới đáy chứ không so scrollHeight: khi khung cuộn thấp đi (thanh
-    // ghim / "Đã xem" / "đang nhập" hiện ra muộn, ô soạn tin cao lên) scrollHeight không đổi nhưng đáy bị che.
+    // Pull to the bottom RIGHT in the callback (runs after layout, before paint) instead of waiting for the next frame → the user never sees the frame
+    // pushed away and then jump back. Compares the distance to the bottom, not scrollHeight: when the scroll container gets shorter (the bar
+    // pinned / "Đã xem" (Seen) / "đang nhập" (typing) appear late, the composer gets taller) scrollHeight stays the same but the bottom is covered.
     const ro = new ResizeObserver(() => {
       if (!nearBottomRef.current) return;
       if (el.scrollHeight - el.scrollTop - el.clientHeight <= 1) return;
       el.scrollTop = el.scrollHeight;
     });
     ro.observe(el);
-    // Khung cuộn cao cố định nên chỉ observe khung thì không biết khi nội dung cao lên (ảnh / video tải xong
-    // sau khi đã cuộn xuống đáy) → theo dõi cả phần nội dung để vẫn bám đáy.
+    // The scroll container has a fixed height, so observing only the container would not notice when the content gets taller (photos / videos finish loading
+    // after scrolling to the bottom) → also watch the content part so it keeps sticking to the bottom.
     if (messagesContentRef.current) ro.observe(messagesContentRef.current);
     return () => ro.disconnect();
   }, [activeThreadId, threadReady]);
 
-  // Scroll event: track top/bottom position + nearBottomRef (dùng cho ResizeObserver)
-  // Tối ưu: dùng rAF throttle + chỉ setState khi giá trị thay đổi để tránh re-render liên tục
+  // Scroll event: track the top/bottom position + nearBottomRef (used by the ResizeObserver)
+  // Optimization: use rAF throttling and only setState when the value changes, to avoid constant re-renders
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
@@ -70,13 +70,13 @@ export function useScrollFollow(list: MessageListState, deps: {
     let lastAtBottom = true;
     let lastScrollTop = el.scrollTop;
     const onScroll = () => {
-      if (rafId) return; // throttle bằng rAF
+      if (rafId) return; // throttle with rAF
       rafId = requestAnimationFrame(() => {
         rafId = 0;
         const { scrollTop, scrollHeight, clientHeight } = el;
-        // Chỉ cuộn LÊN (người dùng / nhảy tới tin cũ) mới rời đáy. Nội dung cao lên cũng sinh scroll event (neo
-        // cuộn) hoặc đẩy đáy ra xa mà scrollTop không giảm — nếu tính lại ở đây thì ResizeObserver thấy "không ở
-        // đáy" và để hội thoại bị đẩy lên luôn.
+        // Only scrolling UP (the user / jumping to an old message) leaves the bottom. Content that grows taller also fires a scroll event (anchor
+        // scrolling) or pushes the bottom further away while scrollTop does not decrease. If it were recalculated here, the ResizeObserver would see "not at
+        // bottom" and the conversation would be pushed up every time.
         if (scrollHeight - scrollTop - clientHeight < 150) nearBottomRef.current = true;
         else if (scrollTop < lastScrollTop) nearBottomRef.current = false;
         lastScrollTop = scrollTop;
@@ -89,7 +89,7 @@ export function useScrollFollow(list: MessageListState, deps: {
     return () => { el.removeEventListener('scroll', onScroll); if (rafId) cancelAnimationFrame(rafId); };
   }, [activeThreadId]);
 
-  // ─── Scroll to bottom khi AI suggestions bar xuất hiện/biến mất ──────────
+  // ─── Scroll to bottom when the AI suggestions bar appears / disappears ──────────
   useEffect(() => {
     const handler = () => {
       if (nearBottomRef.current) scrollToBottom('ai-suggestions');
@@ -98,15 +98,15 @@ export function useScrollFollow(list: MessageListState, deps: {
     return () => window.removeEventListener('ai:suggestionsBarChanged', handler);
   }, [scrollToBottom]);
 
-  // Scroll to bottom khi LibraryPickerModal gửi xong
+  // Scroll to bottom when LibraryPickerModal finishes sending
   useEffect(() => {
     const handler = () => scrollToBottom('library-sent');
     window.addEventListener('chat:scrollToBottom', handler);
     return () => window.removeEventListener('chat:scrollToBottom', handler);
   }, [scrollToBottom]);
 
-  // Scroll to bottom chỉ khi có tin nhắn MỚI (tin cuối thay đổi), không scroll khi prepend tin cũ
-  // Initial load scroll được xử lý bởi consolidated scroll effect
+  // Scroll to bottom only when there is a NEW message (the last message changes), not when older messages are prepended
+  // The initial load scroll is handled by the consolidated scroll effect
   useEffect(() => {
     if (!msgs.length) return;
     const lastMsg = msgs[msgs.length - 1];
@@ -117,8 +117,8 @@ export function useScrollFollow(list: MessageListState, deps: {
         const isInitial = isInitialThreadLoadRef.current;
         isInitialThreadLoadRef.current = false;
         if (isInitial) {
-          // Cuộn lần đầu do effect gộp phía trên lo; còn tin cũ hay không thì lần tải trang (maybeLoadOlder)
-          // xác định — dò bằng 1 truy vấn riêng ở đây vô dụng vì DB trả cả tin cùng mốc (timestamp <= before).
+          // The first scroll is handled by the consolidated effect above; whether there are older messages is decided by the page load (maybeLoadOlder)
+          // determined. Checking with a separate query here is useless, because the DB returns the messages with the same timestamp too (timestamp <= before).
           return;
         }
         // Realtime messages
@@ -133,8 +133,8 @@ export function useScrollFollow(list: MessageListState, deps: {
     }
   }, [msgs, activeAccountId, activeContact?.channel, scrollToBottom]);
 
-  // Sau khi prepend tin cũ: khôi phục vị trí scroll để không bị nhảy lên đầu
-  // useLayoutEffect chạy ĐỒNG BỘ sau DOM update nhưng TRƯỚC khi paint → không bao giờ nhảy
+  // After prepending older messages: restore the scroll position so it does not jump to the top
+  // useLayoutEffect runs SYNCHRONOUSLY after the DOM update but BEFORE paint → it never jumps
   useLayoutEffect(() => {
     if (!shouldRestoreScrollRef.current || !messagesContainerRef.current) return;
     shouldRestoreScrollRef.current = false;
@@ -143,11 +143,11 @@ export function useScrollFollow(list: MessageListState, deps: {
     if (savedHeight > 0) {
       const delta = el.scrollHeight - savedHeight;
       if (delta > 0) {
-        // Vị trí lúc chèn + phần mới phía trên: đúng cả khi đang cách đỉnh (tải trước) và khi trình duyệt
-        // đã tự neo cuộn ([overflow-anchor:auto]) — đặt `delta` tuyệt đối sẽ nhảy về gần đỉnh.
+        // The position at insertion + the new content above: correct both when near the top (prefetch) and when the browser
+        // has already anchored the scroll ([overflow-anchor:auto]). Setting an absolute `delta` would jump back near the top.
         const target = savedScrollTopRef.current + delta;
-        // Neo cuộn thường đã đặt đúng chỗ: gán lại scrollTop lúc người dùng đang cuộn (chuột / touchpad) sẽ
-        // cắt quán tính cuộn → cảm giác giật mỗi lần sang trang. Chỉ sửa khi thực sự lệch.
+        // Normally the scroll anchor is already in the right place: reassigning scrollTop while the user is scrolling (mouse / touchpad) will
+        // cut the scroll momentum → a stutter on every page change. Only fix it when it is really off.
         if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
       }
     }

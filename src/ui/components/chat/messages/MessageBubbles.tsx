@@ -1,7 +1,7 @@
 /**
- * MessageBubbles - Component chung render tất cả loại tin nhắn
- * Dùng cho cả ChatWindow và QuickChatModal để tránh duplicate code
- * Style khớp với ChatWindow.tsx
+ * MessageBubbles - Shared component that renders all message types
+ * Used by both ChatWindow and QuickChatModal to avoid duplicate code
+ * Style matches ChatWindow.tsx
  */
 import React from 'react';
 import { formatBubbleTime, MediaTimeBadge } from './MessageTime';
@@ -31,6 +31,7 @@ import ZaloOaCard from '../zalo/messages/ZaloOaCard';
 import { isZinstantMsgType } from '../../../../shared/zalo/zaloZinstant';
 import { toZaloJpgUrl } from '../../../../utils/zalo/zaloImageUrl';
 import { isFacebook, isNonZalo, isTelegram, isTelegramUser } from '@/lib/channels/channelHelper';
+import { tr, appLocale } from '../../../../shared/i18n';
 
 // ── RTF style constants ───────────────────────────────────────────────────────
 const RTF_COLOR_MAP: Record<string, string> = {
@@ -79,16 +80,16 @@ function inferRecallMediaType(msg: MessageItem): string | null {
   return 'file';
 }
 
-/** attachment media Telegram → msg_type tương ứng (như normalizeTelegramMessageMedia ở main). */
+/** Telegram attachment media → the matching msg_type (as normalizeTelegramMessageMedia in main). */
 const TELEGRAM_MEDIA_MSG_TYPE: Record<string, string> = {
   photo: 'photo', sticker: 'sticker', video_note: 'video_note', voice: 'audio', audio: 'audio',
   gif: 'video', video: 'video', file: 'file',
 };
 
 /**
- * Loại xem lại của tin Telegram theo dữ liệu thật của chính hàng đó: attachment media (bỏ thẻ trình bày @tên, emoji,
- * chuyển tiếp…), hoặc 'text' khi loại lưu là media nhưng hàng không có media nào mà có chữ. Bản ghi thu hồi cũ có thể
- * mang loại của tin khác trùng msg_id (tin chữ thành "photo", bài video thành "photo"). null = giữ cách suy luận chung.
+ * Display type of a Telegram message, from that row's real data: attachment media (ignores the @name presentation card, emoji,
+ * forwards…), or 'text' when the stored type is media but the row has no media and has text. Old recall records may
+ * carry another message's type with the same msg_id (a text message as "photo", a video post as "photo"). null = keep the general inference.
  */
 function getTelegramRecalledType(msg: MessageItem, storedType: string, originalContent: string): string | null {
   let attachments: any[] = [];
@@ -148,9 +149,9 @@ function StickerBubble({ msg }: { msg: any }) {
   React.useEffect(() => {
     let cancelled = false;
 
-    // ── Facebook sticker: check local_paths trước (giống MediaBubble) ─
+    // ── Facebook sticker: check local_paths first (same as MediaBubble) ─
     if (isFacebook(msg.channel)) {
-      // Kiểm tra local file trước (đã được download từ main process)
+      // Check the local file first (already downloaded by the main process)
       try {
         const lp: Record<string, string> = typeof msg.local_paths === 'string'
           ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
@@ -165,7 +166,7 @@ function StickerBubble({ msg }: { msg: any }) {
         }
       } catch {}
 
-      // E2EE sticker: kiểm tra xem có directPath để download không
+      // E2EE sticker: check whether there is a directPath to download
       try {
         const atts = JSON.parse(msg.attachments || '[]');
         const hasDirectPath = atts[0]?.directPath;
@@ -175,20 +176,20 @@ function StickerBubble({ msg }: { msg: any }) {
           if (!cancelled) setUnsupported(true);
           return;
         }
-        // Có directPath → đang chờ main process download → giữ loading state
+        // Has a directPath → waiting for the main process to download → keep the loading state
         if (msg.isE2EE && hasDirectPath && !stickerUrl) {
-          // Loading state sẽ tự động chuyển khi event:localPath cập nhật local_paths
+          // The loading state switches automatically when event:localPath updates local_paths
         }
       } catch {}
 
-      // Không có local file → URL từ FB CDN cần auth nên không thử load trực tiếp.
-      // Khi main process download xong, event:localPath sẽ cập nhật store
-      // → component re-render → tìm thấy local_paths → hiển thị sticker.
+      // No local file → the FB CDN URL needs auth, so do not try to load it directly.
+      // When the main process finishes the download, event:localPath updates the store
+      // → component re-renders → finds local_paths → shows the sticker.
       if (!cancelled && !stickerUrl) setFailed(true);
       return;
     }
 
-    // ── Telegram sticker: từ local_paths (đã download) ───────────────
+    // ── Telegram sticker: from local_paths (already downloaded) ───────────────
     if (isTelegram(msg.channel)) {
       const media = getTelegramStickerMedia(msg);
       console.log(`[StickerBubble] msgId=${msg.msg_id} media=${JSON.stringify(media)} attachments=${msg.attachments?.slice(0,50)} local_paths=${msg.local_paths?.slice(0,80)}`);
@@ -224,9 +225,9 @@ function StickerBubble({ msg }: { msg: any }) {
           ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
         const localFile = lp.main || lp.sticker || (Object.values(lp)[0] as string) || '';
         if (localFile) {
-          // TGS file → sẽ được xử lý bởi TgsBubble component
+          // TGS file → handled by the TgsBubble component
           if (localFile.endsWith('.tgs')) {
-            if (!cancelled) setStickerUrl('tgs:' + localFile); // prefix để TgsBubble detect
+            if (!cancelled) setStickerUrl('tgs:' + localFile); // prefix so TgsBubble can detect it
             return;
           }
           const localUrl = toLocalMediaUrl(localFile);
@@ -247,7 +248,7 @@ function StickerBubble({ msg }: { msg: any }) {
       return;
     }
 
-    // ── Zalo sticker: từ content JSON ─────────────────────────────────
+    // ── Zalo sticker: from the content JSON ─────────────────────────────────
     // Try direct URL from content first
     try {
       const c = JSON.parse(msg.content || '{}');
@@ -316,11 +317,11 @@ function StickerBubble({ msg }: { msg: any }) {
     return (
       <div className="w-28 h-28 rounded-xl bg-muted/30 border border-input/30 flex flex-col items-center justify-center gap-1">
         <span className="text-2xl opacity-40">🎭</span>
-        <span className="text-[10px] text-muted-foreground text-center px-1 leading-tight">Sticker chưa hỗ trợ</span>
+        <span className="text-[10px] text-muted-foreground text-center px-1 leading-tight">{tr('Sticker chưa hỗ trợ')}</span>
       </div>
     );
   }
-  if (failed) return <span className="text-xs text-muted-foreground px-2 py-1">[Sticker]</span>;
+  if (failed) return <span className="text-xs text-muted-foreground px-2 py-1">{tr('[Sticker]')}</span>;
   if (!stickerUrl) {
     return (
       <div className="w-28 h-28 rounded-xl bg-muted/50 flex items-center justify-center animate-pulse">
@@ -342,14 +343,14 @@ function StickerBubble({ msg }: { msg: any }) {
         loop
         muted
         playsInline
-        aria-label="Telegram animated sticker"
+        aria-label={tr('Telegram animated sticker')}
         className="w-28 h-28 object-contain rounded-xl"
         onError={() => setFailed(true)}
       />
     );
   }
   return (
-    <img src={stickerUrl} alt="sticker" className="w-28 h-28 object-contain rounded-xl"
+    <img src={stickerUrl} alt={tr('sticker')} className="w-28 h-28 object-contain rounded-xl"
       onError={() => setFailed(true)} />
   );
 }
@@ -427,7 +428,7 @@ export function TgsBubble({ filePath }: { filePath: string }) {
     return (
       <div className="w-28 h-28 rounded-xl bg-muted/30 border border-input/30 flex flex-col items-center justify-center gap-1">
         <span className="text-2xl opacity-40">🎭</span>
-        <span className="text-[10px] text-muted-foreground text-center px-1 leading-tight">Animated sticker</span>
+        <span className="text-[10px] text-muted-foreground text-center px-1 leading-tight">{tr('Animated sticker')}</span>
       </div>
     );
   }
@@ -459,7 +460,7 @@ function GifBubble({ msg, onView }: { msg: any; onView?: (src: string) => void }
   }, [msg.local_paths, msg.attachments]);
 
   if (failed || !mediaUrl) {
-    return <span className="text-xs text-muted-foreground px-2 py-1">🎞️ [GIF]</span>;
+    return <span className="text-xs text-muted-foreground px-2 py-1">{tr('🎞️ [GIF]')}</span>;
   }
   return (
     <div className="max-w-[280px] max-h-[280px] rounded-xl overflow-hidden cursor-pointer"
@@ -545,7 +546,7 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
       }
     }
   } catch {}
-  // Telegram: chú thích ảnh là chữ thường trong content (không phải JSON của Zalo)
+  // Telegram: the image caption is plain text in content (not Zalo's JSON)
   if (!caption && isTelegram(msg.channel)) {
     const text = String(msg.content || '').trim();
     if (text && !text.startsWith('{') && !text.startsWith('[')) caption = text;
@@ -557,7 +558,7 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
     } catch {}
   }
 
-  // Resolve URL với cascade: workspace → cache → Boss → CDN
+  // Resolve the URL with a cascade: workspace → cache → Boss → CDN
   React.useEffect(() => {
     if (!localUrl || mode !== 'employee') {
       setResolvedUrl(null);
@@ -583,9 +584,9 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
   const viewUrl = remoteUrl || displayUrl;
 
   if ((loadFailed || !displayUrl) && !allUrls) {
-    const label = <span className="text-xs opacity-60">{loadFailed ? '[Không tải được ảnh]' : '[Hình ảnh]'}</span>;
+    const label = <span className="text-xs opacity-60">{loadFailed ? tr('[Không tải được ảnh]') : tr('[Hình ảnh]')}</span>;
     if (!caption) return label;
-    // Không có ảnh (vd. tin đã bị xoá trước khi ảnh được tải về) → vẫn giữ chú thích
+    // No image (e.g. the message was deleted before the image was downloaded) → still keep the caption
     return (
       <div className={`flex flex-col gap-1 rounded-lg px-3 py-2 border max-w-xs text-sm break-words${isSelf ? ' bg-bubble-out border-bubble-out-border' : ' bg-bubble-in border-bubble-in-border'} text-foreground`}>
         {label}
@@ -609,7 +610,7 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
 
   const imgNode = (
     <div className="relative max-w-xs">
-      {/* aspect-ratio container giữ khung cố định trước khi ảnh load → không layout shift */}
+      {/* aspect-ratio container keeps a fixed frame before the image loads → no layout shift */}
       <div className="w-full aspect-[4/3] bg-muted/30 rounded-xl overflow-hidden">
         <img
           src={displayUrl}
@@ -617,7 +618,7 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
           className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
           onClick={() => onView?.(viewUrl)}
           onError={() => {
-          // Cascade: thử nguồn tiếp theo nếu employee mode
+          // Cascade: try the next source in employee mode
           if (mode === 'employee') {
             const nextIdx = useFallback + 1;
             if (nextIdx < cascadeUrls.length) {
@@ -625,9 +626,9 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
               return;
             }
           }
-          // Fallback cũ: switch remote CDN
+          // Old fallback: switch to the remote CDN
           if (!useFallback && localUrl && remoteUrl) {
-            // Background repair: xóa file lỗi, tải lại từ CDN cho lần sau
+            // Background repair: delete the broken file, download it again from the CDN for next time
             if (!repairAttemptedRef.current && msg.msg_id) {
               repairAttemptedRef.current = true;
               const lp: Record<string, string> = (() => {
@@ -650,7 +651,7 @@ function MediaBubble({ msg, isSelf, onView }: { msg: any; isSelf: boolean; onVie
         }}
       />
       </div>
-      {/* Viền overlay */}
+      {/* Overlay border */}
       <div className={`absolute inset-0 pointer-events-none ring-1 ring-inset ring-black/[0.12]${caption ? ' rounded-t-xl' : ' rounded-xl'}`} />
     </div>
   );
@@ -705,8 +706,8 @@ function ZaloVideoBubble({ msg }: { msg: any }) {
   const handlePlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const mode = useEmployeeStore.getState().mode;
-    // Employee mode: /api/media của Boss cần token phiên nhân viên — trình duyệt ngoài không có → không mở thẳng
-    // URL Boss nữa; tải về máy qua main (MediaCacheService gắn token) rồi mở bằng trình phát mặc định.
+    // Employee mode: the Boss's /api/media needs the employee session token, which an external browser does not have → do not open it directly
+    // not the Boss URL; download to this machine via main (MediaCacheService attaches the token), then open with the default player.
     if (mode === 'employee' && videoUrl && videoUrl.startsWith('http')) {
       const { localPath } = await ensureMediaLocal(videoUrl, 'video');
       if (localPath) await ipc.file?.openPath(localPath);
@@ -720,7 +721,7 @@ function ZaloVideoBubble({ msg }: { msg: any }) {
     <div className="relative group/video cursor-pointer rounded-xl overflow-hidden bg-black"
       style={{ width: '17.5rem', height: displayHeight || 160 }} onClick={handlePlay}>
       {thumbUrl
-        ? <img src={thumbUrl} alt="video" className="w-full h-full object-cover"
+        ? <img src={thumbUrl} alt={tr('video')} className="w-full h-full object-cover"
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         : <div className="w-full h-full bg-card flex items-center justify-center">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
@@ -739,7 +740,7 @@ function ZaloVideoBubble({ msg }: { msg: any }) {
           <span className="text-[11px] text-white font-medium bg-black/50 px-1.5 py-0.5 rounded">{formatDur(duration)}</span>
         )}
         {isHD && <span className="text-[11px] text-white font-bold bg-blue-600/70 px-1.5 py-0.5 rounded">HD</span>}
-        {!videoLocalPath && !videoUrl && <span className="text-[11px] text-yellow-300 bg-black/50 px-1.5 py-0.5 rounded">Đang tải...</span>}
+        {!videoLocalPath && !videoUrl && <span className="text-[11px] text-yellow-300 bg-black/50 px-1.5 py-0.5 rounded">{tr('Đang tải...')}</span>}
       </div>
     </div>
   );
@@ -769,7 +770,7 @@ function FacebookVideoBubble({ msg }: { msg: any }) {
     }
   } catch {}
 
-  // Nếu sau 8s mà vẫn chưa có videoUrl, đánh dấu loadingFailed
+  // If there is still no videoUrl after 8 s, mark loadingFailed
   React.useEffect(() => {
     if (!videoLocalPath && !loadingFailed) {
       const timer = setTimeout(() => setLoadingFailed(true), 8000);
@@ -777,7 +778,7 @@ function FacebookVideoBubble({ msg }: { msg: any }) {
     }
   }, [videoLocalPath]);
 
-  // Kiểm tra file có đúng là video không (tránh play thumbnail JPG)
+  // Check the file really is a video (avoid playing a JPG thumbnail)
   const isPlayableVideo = videoLocalPath && /\.(mp4|webm|mov|avi|mkv|ogg|m4v)$/i.test(videoLocalPath);
   const videoUrl = isPlayableVideo ? toLocalMediaUrl(videoLocalPath) : '';
   console.log(`[FacebookVideoBubble] msgId=${msg.msg_id} local_paths=${msg.local_paths} videoLocalPath=${videoLocalPath} isPlayableVideo=${isPlayableVideo} videoUrl=${videoUrl}`);
@@ -810,8 +811,8 @@ function FacebookVideoBubble({ msg }: { msg: any }) {
         </div>
       </div>
       <div className="absolute bottom-2 left-2">
-        {!videoUrl && !loadingFailed && <span className="text-[11px] text-yellow-300 bg-black/50 px-1.5 py-0.5 rounded">Đang tải...</span>}
-        {!videoUrl && loadingFailed && <span className="text-[11px] text-red-400 bg-black/50 px-1.5 py-0.5 rounded">Tải thất bại</span>}
+        {!videoUrl && !loadingFailed && <span className="text-[11px] text-yellow-300 bg-black/50 px-1.5 py-0.5 rounded">{tr('Đang tải...')}</span>}
+        {!videoUrl && loadingFailed && <span className="text-[11px] text-red-400 bg-black/50 px-1.5 py-0.5 rounded">{tr('Tải thất bại')}</span>}
       </div>
     </div>
   );
@@ -844,7 +845,7 @@ function VoiceBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
       if (!_voiceUrl) {
         _voiceUrl = params.m4a || params.url || '';
       }
-      // Zalo lưu duration dạng ms (vd: 5000 = 5s) hoặc giây
+      // Zalo stores duration in ms (e.g. 5000 = 5s) or in seconds
       const rawDur = Number(params.duration || params.dur || 0);
       _paramsDur = rawDur > 300 ? rawDur / 1000 : rawDur;
     } catch {}
@@ -872,7 +873,7 @@ function VoiceBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
     return { voiceUrl: _voiceUrl, paramsDurationSec: _paramsDur, localPath: _localPath };
   }, [msg.content, msg.local_paths, msg.attachments]);
 
-  // Sync duration from params khi chưa có audio metadata
+  // Sync duration from params when there is no audio metadata yet
   React.useEffect(() => {
     if (paramsDurationSec > 0 && duration === 0) {
       setDuration(paramsDurationSec);
@@ -1022,7 +1023,7 @@ function LocationBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
             <circle cx="12" cy="10" r="3"/>
           </svg>
           <div className="min-w-0 flex-1">
-            <span className="text-sm font-medium">📍 Vị trí</span>
+            <span className="text-sm font-medium">{tr('📍 Vị trí')}</span>
             {description && <span className="text-xs opacity-80 ml-1">· {description}</span>}
           </div>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="opacity-50 flex-shrink-0">
@@ -1062,7 +1063,7 @@ function FileBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
     if (fbMeta.ext && !fileExt) fileExt = fbMeta.ext;
   }
 
-  // Telegram: lấy tên file từ attachments
+  // Telegram: get the file name from attachments
   if (isTelegramUser(msg.channel) && (!fileTitle || fileTitle === 'File')) {
     try {
       const atts = typeof msg.attachments === 'string' ? JSON.parse(msg.attachments || '[]') : (msg.attachments || []);
@@ -1096,8 +1097,8 @@ function FileBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
       const mode = useEmployeeStore.getState().mode;
       if (mode === 'employee' && localFilePath) {
         const bossUrl = toLocalMediaUrl(localFilePath);
-        // Employee: /api/media của Boss cần token phiên nhân viên (trình duyệt ngoài không có) → tải về máy qua main
-        // rồi mở bằng app mặc định; không được thì thử link gốc (CDN) nếu có.
+        // Employee: the Boss's /api/media needs the employee session token (an external browser does not have it) → download to this machine via main
+        // then open with the default app; if that fails, try the original link (CDN) if there is one.
         if (bossUrl && bossUrl.startsWith('http')) {
           const { localPath } = await ensureMediaLocal(bossUrl, 'file');
           if (localPath) await ipc.file?.openPath(localPath);
@@ -1146,10 +1147,10 @@ function FileBubble({ msg, isSelf }: { msg: any; isSelf: boolean }) {
         <p className="text-sm font-medium truncate">{fileTitle}</p>
         <p className={`text-xs mt-0.5 text-muted-foreground`}>
           {sizeText && <>{sizeText} · </>}
-          {opening ? 'Đang mở...'
-            : localFilePath ? '✓ Đã có trên máy'
-            : fileHref ? 'Nhấn để tải'
-            : getStatusDisplay(msg, isSelf).text || 'Đang tải về...'}
+          {opening ? tr('Đang mở...')
+            : localFilePath ? tr('✓ Đã có trên máy')
+            : fileHref ? tr('Nhấn để tải')
+            : getStatusDisplay(msg, isSelf).text || tr('Đang tải về...')}
         </p>
       </button>
       <button onClick={handleOpen} disabled={opening || !canOpen}
@@ -1187,26 +1188,26 @@ function EcardBubble({ msg, onManage }: { msg: any; onManage?: () => void }) {
 
     const startTime = Number(reminderData.startTime || 0);
     const repeat: number = Number(reminderData.repeat ?? 0);
-    const repeatText = repeat === 1 ? 'Nhắc theo ngày' : repeat === 2 ? 'Nhắc theo tuần' : repeat === 3 ? 'Nhắc theo tháng' : '';
+    const repeatText = repeat === 1 ? tr('Nhắc theo ngày') : repeat === 2 ? tr('Nhắc theo tuần') : repeat === 3 ? tr('Nhắc theo tháng') : '';
     const emoji = reminderData.emoji || '⏰';
 
     const fmt = (ts: number) => {
       if (!ts) return description || '';
       const d = new Date(ts);
       const pad = (n: number) => n.toString().padStart(2, '0');
-      const weekDays = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
-      const months = ['tháng 1', 'tháng 2', 'tháng 3', 'tháng 4', 'tháng 5', 'tháng 6', 'tháng 7', 'tháng 8', 'tháng 9', 'tháng 10', 'tháng 11', 'tháng 12'];
-      return `${weekDays[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} lúc ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const weekDays = [tr('Chủ Nhật'), tr('Thứ Hai'), tr('Thứ Ba'), tr('Thứ Tư'), tr('Thứ Năm'), tr('Thứ Sáu'), tr('Thứ Bảy')];
+      const months = [tr('tháng 1'), tr('tháng 2'), tr('tháng 3'), tr('tháng 4'), tr('tháng 5'), tr('tháng 6'), tr('tháng 7'), tr('tháng 8'), tr('tháng 9'), tr('tháng 10'), tr('tháng 11'), tr('tháng 12')];
+      return tr('{{v1}}, {{v2}} {{v3}} lúc {{v4}}:{{v5}}', { v1: weekDays[d.getDay()], v2: d.getDate(), v3: months[d.getMonth()], v4: pad(d.getHours()), v5: pad(d.getMinutes()) });
     };
     const fmtDay = (ts: number) => ts ? new Date(ts).getDate() : '';
     const fmtMonth = (ts: number) => {
       if (!ts) return '';
-      const months = ['THÁNG 1', 'THÁNG 2', 'THÁNG 3', 'THÁNG 4', 'THÁNG 5', 'THÁNG 6', 'THÁNG 7', 'THÁNG 8', 'THÁNG 9', 'THÁNG 10', 'THÁNG 11', 'THÁNG 12'];
+      const months = [tr('THÁNG 1'), tr('THÁNG 2'), tr('THÁNG 3'), tr('THÁNG 4'), tr('THÁNG 5'), tr('THÁNG 6'), tr('THÁNG 7'), tr('THÁNG 8'), tr('THÁNG 9'), tr('THÁNG 10'), tr('THÁNG 11'), tr('THÁNG 12')];
       return months[new Date(ts).getMonth()];
     };
     const fmtWeekDay = (ts: number) => {
       if (!ts) return '';
-      const days = ['CHỦ NHẬT', 'THỨ HAI', 'THỨ BA', 'THỨ TƯ', 'THỨ NĂM', 'THỨ SÁU', 'THỨ BẢY'];
+      const days = [tr('CHỦ NHẬT'), tr('THỨ HAI'), tr('THỨ BA'), tr('THỨ TƯ'), tr('THỨ NĂM'), tr('THỨ SÁU'), tr('THỨ BẢY')];
       return days[new Date(ts).getDay()];
     };
 
@@ -1269,7 +1270,7 @@ function EcardBubble({ msg, onManage }: { msg: any; onManage?: () => void }) {
             {actions.map((a: any, i: number) => (
               <button key={i} onClick={onManage}
                 className="w-full px-4 py-2.5 text-sm text-blue-400 hover:bg-muted hover:text-blue-300 transition-colors font-medium text-center">
-                {a.name || 'Quản lý nhóm'}
+                {a.name || tr('Quản lý nhóm')}
               </button>
             ))}
           </div>
@@ -1336,18 +1337,18 @@ function CallBubble({ parsed, isSelf }: { parsed: any; isSelf: boolean }) {
   const action = String(parsed.action || '');
   const isMissed = action === 'recommened.misscall';
 
-  let statusLabel = 'Cuộc gọi nhỡ';
+  let statusLabel = tr('Cuộc gọi nhỡ');
   let statusRed = true;
   if (!isMissed && duration > 0) {
     const m = Math.floor(duration / 60), s = duration % 60;
-    statusLabel = `Đã kết thúc · ${m > 0 ? `${m}p ` : ''}${s}s`;
+    statusLabel = tr('Đã kết thúc · {{v1}}{{s}}s', { v1: m > 0 ? `${m}p ` : '', s });
     statusRed = false;
   } else if (!isMissed && duration === 0) {
-    statusLabel = 'Đã kết thúc'; statusRed = false;
+    statusLabel = tr('Đã kết thúc'); statusRed = false;
   } else if (reason === 4 && isCaller) {
-    statusLabel = 'Bạn đã hủy'; statusRed = false;
+    statusLabel = tr('Bạn đã hủy'); statusRed = false;
   } else if (reason === 2) {
-    statusLabel = isCaller ? 'Đã từ chối' : 'Bạn đã từ chối';
+    statusLabel = isCaller ? tr('Đã từ chối') : tr('Bạn đã từ chối');
   }
 
   return (
@@ -1365,7 +1366,7 @@ function CallBubble({ parsed, isSelf }: { parsed: any; isSelf: boolean }) {
         </div>
         <div className="flex-1 min-w-0">
           <p className={`text-sm font-semibold ${statusRed ? 'text-red-400' : isSelf ? 'text-foreground' : 'text-foreground'}`}>{statusLabel}</p>
-          <p className={`text-xs mt-0.5`}>{isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại'}</p>
+          <p className={`text-xs mt-0.5`}>{isVideo ? tr('Cuộc gọi video') : tr('Cuộc gọi thoại')}</p>
         </div>
       </div>
     </div>
@@ -1384,7 +1385,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
   const phone = formatPhone(String(desc.phone || ''));
   const qrCodeUrl = String(desc.qrCodeUrl || '');
 
-  // Selector: mỗi danh thiếp không render lại với mọi thay đổi của store (nhân theo số hàng tin)
+  // Selector: each contact card does not re-render on every store change (scales with the number of message rows)
   const activeAccountId = useAccountStore(s => s.activeAccountId);
   const getActiveAccount = useAccountStore(s => s.getActiveAccount);
   const contactList = useChatStore(s => (activeAccountId ? s.contacts[activeAccountId] : undefined)) ?? EMPTY_CARD_CONTACTS;
@@ -1415,7 +1416,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
     ''
   ).trim();
 
-  // Check friend status: ưu tiên isFr (từ Zalo contact list), fallback is_friend
+  // Check friend status: prefer isFr (from the Zalo contact list), fall back to is_friend
   const matchedContact = byDirectId || byParamsId || byPhone;
   const isFriend = matchedContact ? (matchedContact.isFr === 1 || matchedContact.is_friend === 1) : false;
 
@@ -1438,7 +1439,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
 
   const handleOpenProfile = (e: React.MouseEvent) => {
     if (!resolvedUserId || !onOpenProfile) return;
-    // Chỉ mở profile khi click vào avatar, không block select text ở tên/SĐT
+    // Open the profile only when clicking the avatar, so selecting text on the name / phone is not blocked
     const target = e.target as HTMLElement;
     if (target.closest('.card-avatar-area')) {
       onOpenProfile(resolvedUserId, e);
@@ -1452,7 +1453,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
     if (!account) return;
     // Only supported for Zalo
     if (isNonZalo(account.channel)) {
-      useAppStore.getState().showNotification('Tính năng chưa hỗ trợ cho kênh này', 'error');
+      useAppStore.getState().showNotification(tr('Tính năng chưa hỗ trợ cho kênh này'), 'error');
       return;
     }
     setSendingReq(true);
@@ -1460,12 +1461,12 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
       const auth = buildZaloAuth(account);
       const res = await ipc.zalo?.sendFriendRequest({ auth, userId: resolvedUserId, msg: 'Làm quen qua danh thiếp Zalo' });
       if (res?.success || res?.response?.success) {
-        useAppStore.getState().showNotification('Đã gửi lời mời kết bạn', 'success');
+        useAppStore.getState().showNotification(tr('Đã gửi lời mời kết bạn'), 'success');
       } else {
-        useAppStore.getState().showNotification(res?.error || 'Gửi lời mời thất bại', 'error');
+        useAppStore.getState().showNotification(res?.error || tr('Gửi lời mời thất bại'), 'error');
       }
     } catch (err: any) {
-      useAppStore.getState().showNotification('Gửi lời mời thất bại: ' + err.message, 'error');
+      useAppStore.getState().showNotification(tr('Gửi lời mời thất bại: {{message}}', { message: err.message }), 'error');
     } finally {
       setSendingReq(false);
     }
@@ -1476,7 +1477,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
       className={`rounded-2xl max-w-[340px] ${isSelf ? 'bg-blue-600/70 text-white' : 'bg-muted text-foreground'}`}
     >
       <div className="flex items-center gap-3.5 px-4 py-3.5 select-text">
-        {/* Avatar - click mở profile */}
+        {/* Avatar: click opens the profile */}
         <div
           className={`card-avatar-area w-14 h-14 rounded-full overflow-hidden flex-shrink-0 bg-accent ${resolvedUserId && onOpenProfile ? 'cursor-pointer hover:opacity-85 transition-opacity' : ''}`}
           onClick={handleOpenProfile}
@@ -1487,9 +1488,9 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
           }
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-base font-semibold truncate select-text cursor-text">{title || 'Danh thiếp'}</p>
+          <p className="text-base font-semibold truncate select-text cursor-text">{title || tr('Danh thiếp')}</p>
           {phone && <PhoneDisplay phone={phone} className={`text-sm ${isSelf ? 'text-blue-100' : 'text-foreground/80'}`} />}
-          <p className={`text-xs mt-1 text-muted-foreground`}>Danh thiếp Zalo</p>
+          <p className={`text-xs mt-1 text-muted-foreground`}>{tr('Danh thiếp Zalo')}</p>
         </div>
         {qrCodeUrl && (
           <div className="w-12 h-12 flex-shrink-0">
@@ -1506,14 +1507,14 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
             className={`mt-2 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
               isSelf ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'
             }`}
-            title="Gửi tin nhắn"
+            title={tr('Gửi tin nhắn')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
-            Gửi tin nhắn
+            {tr('Gửi tin nhắn')}
           </button>
-          {/* Nút kết bạn - chỉ hiện nếu chưa là bạn bè */}
+          {/* Add-friend button: shown only if not already a friend */}
           {!isFriend && !isSelf && (
             <button
               onClick={handleAddFriend}
@@ -1523,7 +1524,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
                   ? 'opacity-50 cursor-not-allowed'
                   : 'hover:bg-foreground/10'
               } ${isSelf ? 'border-blue-400/30 text-blue-200' : 'border-border-strong/40 text-foreground/80'}`}
-              title="Gửi lời mời kết bạn"
+              title={tr('Gửi lời mời kết bạn')}
             >
               {sendingReq ? (
                 <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
@@ -1535,7 +1536,7 @@ function ContactCardBubble({ parsed, isSelf, onOpenProfile }: { parsed: any; isS
                   <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
                 </svg>
               )}
-              {sendingReq ? 'Đang gửi...' : 'Kết bạn'}
+              {sendingReq ? tr('Đang gửi...') : tr('Kết bạn')}
             </button>
           )}
         </div>
@@ -1567,7 +1568,7 @@ function RtfBubble({ msg }: { msg: any }) {
     styles = params.styles || [];
   } catch {}
 
-  if (!title) return <span className="text-xs opacity-60">[Tin nhắn định dạng]</span>;
+  if (!title) return <span className="text-xs opacity-60">{tr('[Tin nhắn định dạng]')}</span>;
   if (!styles.length) return <span className="whitespace-pre-wrap">{linkifyText(title)}</span>;
 
   type CharStyle = { bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; color?: string; small?: boolean; big?: boolean };
@@ -1617,7 +1618,7 @@ function RtfBubble({ msg }: { msg: any }) {
   return <span className="whitespace-pre-wrap">{nodes}</span>;
 }
 
-// ── BankCardBubble (shared component - dùng chung cho ChatWindow & QuickChat) ─
+// ── BankCardBubble (shared component, used by both ChatWindow and QuickChat) ─
 
 const BANK_CARD_COLORS: Record<number, { name: string; color: string }> = {
   970436: { name: 'Vietcombank', color: '#00663b' }, 970415: { name: 'VietinBank', color: '#004a91' },
@@ -1634,25 +1635,25 @@ const BANK_CARD_COLORS: Record<number, { name: string; color: string }> = {
 };
 
 /**
- * Tìm binBank/numAccBank/nameAccBank đệ quy trong object bất kỳ.
- * Zalo webhook trả content với nhiều cấu trúc khác nhau - cần deep search.
+ * Recursively search for binBank/numAccBank/nameAccBank in any object.
+ * Zalo webhooks return content with many different structures, so a deep search is needed.
  */
 function deepFindBankFields(obj: any, depth = 0): { binBank: number; numAccBank: string; nameAccBank: string } | null {
   if (!obj || typeof obj !== 'object' || depth > 8) return null;
-  // Nếu object trực tiếp chứa binBank + numAccBank → trả về luôn
+  // If the object directly contains binBank + numAccBank → return it right away
   const binBank = Number(obj.binBank) || 0;
   const numAccBank = String(obj.numAccBank || '');
   if (binBank && numAccBank) {
     return { binBank, numAccBank, nameAccBank: String(obj.nameAccBank || '') };
   }
-  // Duyệt đệ quy qua các field con
+  // Recurse through the child fields
   for (const key of Object.keys(obj)) {
     const val = obj[key];
     if (val && typeof val === 'object') {
       const found = deepFindBankFields(val, depth + 1);
       if (found) return found;
     }
-    // Nếu val là string JSON → thử parse rồi tìm tiếp
+    // If val is a JSON string → try to parse it, then keep searching
     if (typeof val === 'string' && val.startsWith('{')) {
       try {
         const inner = JSON.parse(val);
@@ -1665,26 +1666,26 @@ function deepFindBankFields(obj: any, depth = 0): { binBank: number; numAccBank:
 }
 
 /**
- * Parse bank card data trực tiếp từ webhook content.
+ * Parse bank card data directly from the webhook content.
  *
- * Zalo gửi bank card theo 2 kiểu:
+ * Zalo sends bank cards in 2 forms:
  *  A) Structured: { action, params: { item: { binBank, numAccBank, nameAccBank } } }
- *     → Parse trực tiếp, render custom UI.
+ *     → Parse directly, render a custom UI.
  *  B) ZInstant template: { action, params: { item: { data_url, data_type, ... } } }
- *     → Không chứa binBank/numAccBank - cần fetch data_url hoặc dùng cache.
+ *     → Does not contain binBank/numAccBank: fetch data_url or use the cache.
  */
 function parseBankCardFromContent(content: string): { binBank: number; numAccBank: string; nameAccBank: string } | null {
   try {
     const parsed = JSON.parse(content);
     if (parsed?.action !== 'zinstant.bankcard') return null;
 
-    // Thử parse params (có thể là string JSON hoặc object)
+    // Try parsing params (may be a JSON string or an object)
     let params: any = parsed.params;
     if (typeof params === 'string') {
       try { params = JSON.parse(params); } catch {}
     }
 
-    // ── Fast path: params.item / params.bubbleItem / params trực tiếp ──
+    // ── Fast path: params.item / params.bubbleItem / params directly ──
     if (params && typeof params === 'object') {
       const item = params.item || params.bubbleItem || params;
       const binBank = Number(item?.binBank) || 0;
@@ -1702,7 +1703,7 @@ function parseBankCardFromContent(content: string): { binBank: number; numAccBan
       }
     }
 
-    // ── Deep search: tìm đệ quy binBank+numAccBank trong toàn bộ parsed object ──
+    // ── Deep search: recursively find binBank+numAccBank in the whole parsed object ──
     const deep = deepFindBankFields(parsed);
     if (deep) return deep;
 
@@ -1714,7 +1715,7 @@ export function BankCardBubble({ msg }: { msg: any }) {
   const [copied, setCopied] = React.useState(false);
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
 
-  // ── Parse structured data (binBank + numAccBank) trực tiếp từ content ──
+  // ── Parse structured data (binBank + numAccBank) directly from content ──
   const data = React.useMemo(() => {
     const fromContent = parseBankCardFromContent(msg.content || '{}');
     if (fromContent) return fromContent;
@@ -1726,12 +1727,12 @@ export function BankCardBubble({ msg }: { msg: any }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [msg.content, msg.thread_id, msg.timestamp, activeAccountId]);
 
-  // ── Thẻ nhận về: template HTML trên CDN Zalo (lib/chat/zalo/bankCardTemplate: chỉ CDN zinstant, bỏ script) ──
+  // ── Received card: HTML template on the Zalo CDN (lib/chat/zalo/bankCardTemplate: only the zinstant CDN, scripts removed) ──
   const htmlUrl = React.useMemo(
     () => !data ? bankCardTemplateUrl(msg.content || '{}') : null,
     [data, msg.content],
   );
-  // Template đã tải (cuộn qua lại không tải lại, không nháy khung "Đang tải").
+  // Template already loaded (scrolling back and forth does not reload it, and the "Đang tải" (Loading) frame does not flash).
   const [template, setTemplate] = React.useState<{ url: string; html: string | null } | null>(() => {
     const html = htmlUrl ? peekBankCardTemplate(htmlUrl) : undefined;
     return htmlUrl && html ? { url: htmlUrl, html } : null;
@@ -1752,7 +1753,7 @@ export function BankCardBubble({ msg }: { msg: any }) {
     navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
   };
 
-  // ── Case 1: Có structured data (binBank + numAccBank) → render styled card + QR ──
+  // ── Case 1: Has structured data (binBank + numAccBank) → render a styled card + QR ──
   if (data) {
     const info = BANK_CARD_COLORS[data.binBank] || { name: `Bank (${data.binBank})`, color: '#1a2332' };
     const qrUrl = `https://img.vietqr.io/image/${data.binBank}-${data.numAccBank}-compact.png?accountName=${encodeURIComponent(data.nameAccBank || '')}`;
@@ -1776,34 +1777,34 @@ export function BankCardBubble({ msg }: { msg: any }) {
         <button onClick={(e) => handleCopy(data.numAccBank, e)}
           className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-medium bg-black/20 text-white/80 hover:bg-black/30 hover:text-white transition-colors">
           {copied
-            ? <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg> Đã sao chép</>
-            : <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Sao chép STK</>}
+            ? <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg> {tr('Đã sao chép')}</>
+            : <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> {tr('Sao chép STK')}</>}
         </button>
       </div>
     );
   }
 
-  // ── Case 2: Đang tải template ──
+  // ── Case 2: Template loading ──
   if (templateLoading) {
     return (
       <div className="rounded-2xl overflow-hidden shadow-lg max-w-[300px] bg-card animate-pulse">
         <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2">
           <div className="w-9 h-9 rounded-lg bg-foreground/10 flex items-center justify-center flex-shrink-0"><span className="text-lg">🏦</span></div>
-          <span className="text-foreground/60 text-sm font-semibold">Đang tải thẻ ngân hàng...</span>
+          <span className="text-foreground/60 text-sm font-semibold">{tr('Đang tải thẻ ngân hàng...')}</span>
         </div>
         <div className="h-[200px] bg-muted/50 mx-4 mb-3 rounded-lg" />
       </div>
     );
   }
 
-  // ── Case 3: Template của Zalo → iframe srcdoc, sandbox="" (không script, origin riêng: không chạm được app) ──
+  // ── Case 3: Zalo template → iframe srcdoc, sandbox="" (no script, separate origin: cannot touch the app) ──
   if (templateHtml) {
     return (
       <div className="relative rounded-2xl overflow-hidden shadow-lg max-w-[300px]">
         <MediaTimeBadge timestamp={msg.timestamp} />
         <iframe
           srcDoc={templateHtml}
-          title="Tài khoản ngân hàng"
+          title={tr('Tài khoản ngân hàng')}
           className="w-[300px] h-[230px] block border-0 rounded-2xl"
           sandbox=""
           style={{ pointerEvents: 'none', background: 'transparent' }}
@@ -1817,11 +1818,11 @@ export function BankCardBubble({ msg }: { msg: any }) {
     <div className="rounded-2xl overflow-hidden shadow-lg max-w-[300px]" style={{ background: '#1a2332' }}>
       <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2">
         <div className="w-9 h-9 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0"><span className="text-lg">🏦</span></div>
-        <span className="text-white/90 text-sm font-semibold">Tài khoản ngân hàng</span>
+        <span className="text-white/90 text-sm font-semibold">{tr('Tài khoản ngân hàng')}</span>
         <span className="ml-auto text-[11px] leading-none text-white/70 select-none">{formatBubbleTime(msg.timestamp)}</span>
       </div>
       <div className="px-4 pb-3.5 pt-1">
-        <p className="text-white/50 text-xs">Mở Zalo để xem thông tin thẻ</p>
+        <p className="text-white/50 text-xs">{tr('Mở Zalo để xem thông tin thẻ')}</p>
       </div>
     </div>
   );
@@ -1851,14 +1852,14 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
             <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 00-4-4H4"/>
           </svg>
           {isSelf
-            ? 'Bạn đã thu hồi tin nhắn'
-            : `${senderName && senderName !== msg.sender_id ? senderName : 'Người dùng'} đã thu hồi tin nhắn`}
+            ? tr('Bạn đã thu hồi tin nhắn')
+            : tr('{{v1}} đã thu hồi tin nhắn', { v1: senderName && senderName !== msg.sender_id ? senderName : tr('Người dùng') })}
           {hasOriginal && (
             <button
               onClick={() => setShowRecalledOriginal(p => !p)}
               className="ml-1.5 not-italic font-medium text-blue-400/80 hover:text-blue-400 transition-colors select-auto underline-offset-2 underline"
             >
-              {showRecalledOriginal ? 'Ẩn' : 'Xem lại'}
+              {showRecalledOriginal ? tr('Ẩn') : tr('Xem lại')}
             </button>
           )}
         </div>
@@ -1977,7 +1978,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
     );
   }
 
-  // ── Bản tin / thông báo của Official Account (zinstant) ──
+  // ── Official Account (zinstant) news / notifications ──
   if (isZinstantMsgType(mt, mc)) {
     return (
       <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-0.5`}>
@@ -2030,21 +2031,21 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
       }
     } catch {}
   }
-  // Cột dọc: nội dung cũ nằm DƯỚI bong bóng (xếp ngang thì nó thành cột hẹp bên cạnh và kéo bong bóng cao theo)
+  // Vertical column: the old content sits BELOW the bubble (laid out in a row it becomes a narrow column beside the bubble and stretches the bubble taller)
   return (
     <div className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} mb-0.5`}>
       <div className={`px-3 py-2 rounded-lg text-sm max-w-[280px] break-words whitespace-pre-wrap ${cls}`} style={{ overflowWrap: 'break-word', wordBreak: 'normal' }}>
-        {text ? linkifyText(text) : '(Không có nội dung)'}
+        {text ? linkifyText(text) : tr('(Không có nội dung)')}
         {isEdited && editHistoryEntries.length > 0 && (
           <>
             <span className="ml-1.5 text-[10px] opacity-60 select-none font-normal">
-              (đã chỉnh sửa)
+              {tr('(đã chỉnh sửa)')}
             </span>
             <button
               onClick={() => setShowEditHistory(p => !p)}
               className="ml-1.5 text-[10px] font-medium text-blue-300 transition-colors underline underline-offset-2 select-none pointer-events-auto"
             >
-              {showEditHistory ? 'Ẩn' : 'Xem nội dung cũ'}
+              {showEditHistory ? tr('Ẩn') : tr('Xem nội dung cũ')}
             </button>
           </>
         )}
@@ -2057,10 +2058,10 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
               className={`px-3 py-1.5 rounded-lg text-xs opacity-60 ${isSelf ? 'bg-blue-700/30 mr-8' : 'bg-accent/30 ml-8'}`}
             >
               <div className="text-[10px] opacity-50 mb-0.5">
-                {new Date(entry.editedAt).toLocaleString('vi-VN')}
+                {new Date(entry.editedAt).toLocaleString(appLocale())}
               </div>
               <div className="break-words whitespace-pre-wrap italic">
-                {parseTxt(entry.oldBody) ? linkifyText(parseTxt(entry.oldBody)) : '(Không có nội dung)'}
+                {parseTxt(entry.oldBody) ? linkifyText(parseTxt(entry.oldBody)) : tr('(Không có nội dung)')}
               </div>
             </div>
           ))}
@@ -2070,8 +2071,8 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
   );
 }
 
-// ─── RecalledBubble - hàm chung hiển thị tin nhắn đã thu hồi ──────────────────
-// Dùng chung cho ChatWindow và bất kỳ nơi nào render recalled messages.
+// ─── RecalledBubble - shared function that shows a recalled message ──────────────────
+// Shared by ChatWindow and any other place that renders recalled messages.
 export function RecalledBubble({
   msg,
   isSelf,
@@ -2087,13 +2088,13 @@ export function RecalledBubble({
   displayName: string;
   isRevealed: boolean;
   onToggleReveal: () => void;
-  /** Mở ảnh trong viewer (nội dung gốc vẫn xem/thao tác được như tin thường). */
+  /** Open the image in the viewer (the original content can still be viewed / acted on, as with a normal message). */
   onView?: (src: string) => void;
   onOpenProfile?: (userId: string, e: React.MouseEvent) => void;
-  /** Chuột phải: menu chỉ gồm thao tác cục bộ (sao chép, lưu ảnh/file, đánh dấu, xoá khỏi app). */
+  /** Right-click: the menu only has local actions (copy, save image/file, mark, remove from app). */
   onContextMenu?: (e: React.MouseEvent, previewMsg: MessageItem) => void;
 }) {
-  // Telegram giữ nguyên `content` khi thu hồi; bản ghi cũ có thể mất recalled_content (Zalo: content là placeholder)
+  // Telegram keeps `content` when a message is recalled; older records may lose recalled_content (Zalo: content is a placeholder)
   const originalContent = msg.recalled_content || msg.content || '';
   const hasContent = canPreviewRecalled(msg, originalContent);
   const previewMsg = React.useMemo(
@@ -2114,21 +2115,21 @@ export function RecalledBubble({
         </svg>
         <span>
           {isSelf
-            ? 'Bạn đã thu hồi tin nhắn'
-            : `${displayName && displayName !== msg.sender_id ? displayName : 'Người dùng'} đã thu hồi tin nhắn`}
+            ? tr('Bạn đã thu hồi tin nhắn')
+            : tr('{{v1}} đã thu hồi tin nhắn', { v1: displayName && displayName !== msg.sender_id ? displayName : tr('Người dùng') })}
         </span>
         {hasContent && (
           <button
             onClick={onToggleReveal}
             className="ml-1 not-italic font-medium text-primary/80 hover:text-primary underline underline-offset-2 flex-shrink-0 transition-colors"
-            title={isRevealed ? 'Ẩn nội dung' : 'Xem nội dung gốc'}
+            title={isRevealed ? tr('Ẩn nội dung') : tr('Xem nội dung gốc')}
           >
-            {isRevealed ? 'Ẩn' : 'Xem lại'}
+            {isRevealed ? tr('Ẩn') : tr('Xem lại')}
           </button>
         )}
       </div>
 
-      {/* Nội dung gốc: hiển thị và thao tác như tin thường (chọn chữ, mở ảnh, chuột phải để sao chép/lưu) */}
+      {/* Original content: shown and acted on like a normal message (select text, open image, right-click to copy/save) */}
       {hasContent && isRevealed && (
         <div className="select-text">
           <MessageBubble

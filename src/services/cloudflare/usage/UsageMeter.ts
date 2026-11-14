@@ -1,13 +1,12 @@
 /**
- * UsageMeter — bộ đếm thao tác của Deplao trên MÁY NÀY: userData/cloud-usage.json.
+ * UsageMeter: Deplao's operation counter on THIS machine: userData/cloud-usage.json.
  *
- *  - R2 theo tháng UTC ('YYYY-MM' — kỳ tính tiền của Cloudflare): Class A / B / miễn phí + byte lên / xuống; giữ 3 tháng
- *    gần nhất.
- *  - Google Drive theo ngày giờ Thái Bình Dương ('YYYY-MM-DD' — hạn mức ngày của Google đặt lại lúc 0:00 giờ LA): đơn vị
- *    quota, số request, byte lên / xuống; giữ 40 ngày.
- *  - Đường nóng (sau mỗi request R2 / Drive): O(1), không ném. File đọc lần đầu cần tới (không đọc lúc tạo); ghi gộp
- *    ~15 s một lần (file tạm + rename; lỗi ghi bỏ qua, lần sau thử lại). flush() ghi ngay (lúc thoát app).
- *  - File hỏng / thiếu → đếm lại từ 0. Không xác định được đường dẫn (chưa có electron…) → chỉ đếm trong RAM.
+ *  - R2 per UTC month ('YYYY-MM': Cloudflare's billing period): Class A / B / free + bytes up / down; keeps the 3 most recent months.
+ *  - Google Drive per Pacific-time day ('YYYY-MM-DD': Google's daily quota resets at 00:00 LA time): quota units,
+ *    request count, bytes up / down; keeps 40 days.
+ *  - Hot path (after every R2 / Drive request): O(1), never throws. The file is read the first time it is needed (not at creation); writes are batched
+ *    about every 15 s (temp file + rename; a failed write is ignored and retried next time). flush() writes at once (when the app quits).
+ *  - Broken / missing file → count again from 0. Path cannot be determined (electron not ready yet…) → count in RAM only.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -23,7 +22,7 @@ export interface R2MonthCounters {
 }
 
 export interface GoogleDayCounters {
-    /** Đơn vị quota Drive API (5 / 50 / 100 / 200 mỗi request). */
+    /** Drive API quota units (5 / 50 / 100 / 200 per request). */
     units: number;
     requests: number;
     bytesUp: number;
@@ -32,9 +31,9 @@ export interface GoogleDayCounters {
 
 export interface UsageFileData {
     version: 1;
-    /** Khoá 'YYYY-MM' (tháng UTC). */
+    /** Key 'YYYY-MM' (UTC month). */
     r2: Record<string, R2MonthCounters>;
-    /** Khoá 'YYYY-MM-DD' (ngày giờ Thái Bình Dương). */
+    /** Key 'YYYY-MM-DD' (Pacific-time day). */
     google: Record<string, GoogleDayCounters>;
 }
 
@@ -43,11 +42,11 @@ export const GOOGLE_KEEP_DAYS = 40;
 export const USAGE_SAVE_DELAY_MS = 15_000;
 
 export interface UsageMeterOptions {
-    /** Đường dẫn file (gọi muộn, lần đầu cần đọc / ghi). Ném → chỉ đếm trong RAM. */
+    /** File path (called late; the first time it is needed, read / write). Throws → count in RAM only. */
     filePath: () => string;
     now?: () => number;
     log?: (level: 'log' | 'warn', msg: string) => void;
-    /** Ghi gộp sau bấy nhiêu ms kể từ thay đổi đầu tiên chưa ghi (mặc định 15 s). */
+    /** Batched write this many ms after the first change not yet written (default 15 s). */
     saveDelayMs?: number;
 }
 
@@ -62,7 +61,7 @@ function emptyGoogle(): GoogleDayCounters {
     return { units: 0, requests: 0, bytesUp: 0, bytesDown: 0 };
 }
 
-/** Số dương hữu hạn, còn lại = 0. */
+/** A finite positive number, otherwise 0. */
 function positive(n: unknown): number {
     return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0;
 }
@@ -71,7 +70,7 @@ function isObj(v: unknown): v is Record<string, any> {
     return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
-/** Chuẩn hoá nội dung file (sai kiểu / khoá lạ → bỏ). */
+/** Normalizes the file content (wrong type / unknown key → dropped). */
 export function normalizeUsageFile(raw: unknown): UsageFileData {
     const out: UsageFileData = { version: 1, r2: {}, google: {} };
     if (!isObj(raw)) return out;
@@ -100,18 +99,18 @@ interface Slot<T> { startTs: number; endTs: number; counters: T }
 
 export class UsageMeter {
     private data: UsageFileData | null = null;
-    /** undefined = chưa xác định; null = không có nơi lưu (chỉ RAM). */
+    /** undefined = not determined yet; null = no place to store it (RAM only). */
     private file: string | null | undefined = undefined;
     private dirty = false;
     private timer: ReturnType<typeof setTimeout> | null = null;
-    /** Kỳ hiện tại + bộ đếm của nó: đường nóng chỉ so thời điểm, không tính lại khoá. */
+    /** Current period + its counters: the hot path only compares the time, it does not recompute the keys. */
     private r2Slot: Slot<R2MonthCounters> | null = null;
     private googleSlot: Slot<GoogleDayCounters> | null = null;
     private writeErrorLogged = false;
 
     constructor(private readonly opts: UsageMeterOptions) {}
 
-    /** Một request R2 đã tới R2 (kể cả trả lỗi). Loại lạ → Class A (không thấp). */
+    /** One R2 request that reached R2 (including error responses). Unknown kind → Class A (not low). */
     recordR2(op: R2OpClass, up?: number, down?: number): void {
         const c = this.r2Current();
         if (op === 'B') c.classB += 1;
@@ -122,7 +121,7 @@ export class UsageMeter {
         this.touch();
     }
 
-    /** Một request Drive API: units = đơn vị quota của request. */
+    /** One Drive API request: units = the quota units of the request. */
     recordGoogle(units: number, up?: number, down?: number): void {
         const c = this.googleCurrent();
         c.units += positive(units);
@@ -132,19 +131,19 @@ export class UsageMeter {
         this.touch();
     }
 
-    /** Số đếm R2 của tháng UTC chứa ts (bản sao). */
+    /** R2 counters of the UTC month containing ts (a copy). */
     r2Month(ts: number = this.now()): R2MonthCounters {
         const c = this.load().r2[utcMonthKey(ts)];
         return c ? { ...c } : emptyR2();
     }
 
-    /** Số đếm Google của ngày giờ Thái Bình Dương chứa ts (bản sao). */
+    /** Google counters of the Pacific-time day containing ts (a copy). */
     googleDay(ts: number = this.now()): GoogleDayCounters {
         const c = this.load().google[pacificDayKey(ts)];
         return c ? { ...c } : emptyGoogle();
     }
 
-    /** Ghi xuống đĩa ngay (đồng bộ) nếu có thay đổi chưa ghi. */
+    /** Writes to disk at once (synchronously) if there are unwritten changes. */
     flush(): void {
         if (this.timer) {
             clearTimeout(this.timer);
@@ -154,7 +153,7 @@ export class UsageMeter {
         this.write();
     }
 
-    // ── nội bộ ──
+    // ── internal ──
 
     private now(): number {
         return this.opts.now ? this.opts.now() : Date.now();
@@ -163,7 +162,7 @@ export class UsageMeter {
     private log(level: 'log' | 'warn', msg: string): void {
         try {
             this.opts.log?.(level, msg);
-        } catch { /* bỏ qua */ }
+        } catch { /* ignore */ }
     }
 
     private r2Current(): R2MonthCounters {
@@ -198,7 +197,7 @@ export class UsageMeter {
         return c;
     }
 
-    /** Bỏ tháng R2 cũ hơn 3 tháng gần nhất và ngày Google cũ hơn 40 ngày (khoá dạng chuỗi so sánh được). */
+    /** Drops R2 months older than the 3 most recent and Google days older than 40 days (keys as comparable strings). */
     private prune(now: number): void {
         const d = this.data;
         if (!d) return;
@@ -250,7 +249,7 @@ export class UsageMeter {
         return this.data;
     }
 
-    /** Ghi gộp: hẹn một lần ghi sau saveDelayMs kể từ thay đổi đầu tiên (lưu lượng đều cũng không hoãn mãi). */
+    /** Batched write: schedules one write saveDelayMs after the first unwritten change (steady traffic does not postpone it forever either). */
     private touch(): void {
         this.dirty = true;
         if (this.timer) return;
@@ -258,7 +257,7 @@ export class UsageMeter {
             this.timer = null;
             try {
                 this.flush();
-            } catch { /* bỏ qua */ }
+            } catch { /* ignore */ }
         }, this.opts.saveDelayMs ?? USAGE_SAVE_DELAY_MS);
         (this.timer as any)?.unref?.();
     }
@@ -266,7 +265,7 @@ export class UsageMeter {
     private write(): void {
         const file = this.resolveFile();
         if (!file || !this.data) {
-            this.dirty = false; // chỉ RAM
+            this.dirty = false; // RAM only
             return;
         }
         const tmp = `${file}.tmp-${process.pid}`;
@@ -277,8 +276,8 @@ export class UsageMeter {
             this.dirty = false;
             this.writeErrorLogged = false;
         } catch (err: any) {
-            try { fs.unlinkSync(tmp); } catch { /* bỏ qua */ }
-            // dirty giữ nguyên → lần ghi sau thử lại; log một lần cho tới khi ghi được.
+            try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+            // dirty stays → the next write retries it; log once until a write succeeds.
             if (!this.writeErrorLogged) {
                 this.writeErrorLogged = true;
                 this.log('warn', `[CloudUsage] chưa ghi được ${path.basename(file)} (${err?.code || err?.message || err}) — sẽ thử lại`);

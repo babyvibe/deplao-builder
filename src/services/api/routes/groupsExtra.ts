@@ -1,23 +1,24 @@
 /**
- * Nhóm & Danh bạ mở rộng — quản trị nhóm, bình chọn, ghi chú nhóm, Telegram forum topic, chặn/biệt danh/gợi ý bạn.
- * Mirror UI: GroupInfoPanel.tsx (phó nhóm, chặn, duyệt thành viên, cài đặt nhóm, giải tán, ảnh nhóm),
+ * Extended groups & contacts: group admin, polls, group notes, Telegram forum topics, block/nickname/friend suggestions.
+ * Mirrors the UI: GroupInfoPanel.tsx (deputy admin, block, member approval, group settings, disband, group avatar),
  * CreatePollDialog.tsx / PollView.tsx, NoteViewModal.tsx, adapters/*.promoteMember|blockUser|setGroupAvatar,
- * ChatHeader.tsx (biệt danh), ConversationInfo.tsx (nhóm chung), FriendRequestBar.tsx, CRMRequestsTab.tsx,
- * crm/groups (link nhóm), ForumTopic* (Telegram).
+ * ChatHeader.tsx (nickname), ConversationInfo.tsx (mutual groups), FriendRequestBar.tsx, CRMRequestsTab.tsx,
+ * crm/groups (group links), ForumTopic* (Telegram).
  */
 import { s } from '../schema';
 import { AccountInfo, ApiContext, ApiError, route, RouteDef } from '../types';
 import { CHANNELS, extractSentId, requireOnline, unsupported, zaloAuth } from '../channels/ChannelActions';
 import { ChatRouteDeps, resolveAttachment } from './chat';
 import { accountParams, scrub } from './common';
+import { tr } from '../../../shared/i18n';
 
-const groupParams = s.object({ accountId: s.id(), groupId: s.id().describe('ID nhóm (thread_id)') });
+const groupParams = s.object({ accountId: s.id(), groupId: s.id().describe(tr('ID nhóm (thread_id)')) });
 const memberParams = s.object({ accountId: s.id(), groupId: s.id(), userId: s.id() });
-const userParams = s.object({ accountId: s.id(), userId: s.id().describe('ID người dùng trên kênh') });
+const userParams = s.object({ accountId: s.id(), userId: s.id().describe(tr('ID người dùng trên kênh')) });
 const pollParams = s.object({ accountId: s.id(), pollId: s.id() });
 const topicParams = s.object({ accountId: s.id(), groupId: s.id(), topicId: s.id().describe('ID topic (root message id)') });
 
-/** Quyền admin khi Telegram bot nâng/hạ quản trị (giống TelegramBotAdapter.promoteMember). */
+/** Admin rights when a Telegram bot promotes or demotes admins (same as TelegramBotAdapter.promoteMember). */
 const TG_BOT_ADMIN = {
     canChangeInfo: true, canDeleteMessages: true, canInviteUsers: true,
     canRestrictMembers: true, canPinMessages: true, canManageVideoChats: true, canManageChat: true,
@@ -27,7 +28,7 @@ const TG_BOT_NO_ADMIN = {
     canRestrictMembers: false, canPinMessages: false, canManageVideoChats: false, canManageChat: false, canPromoteMembers: false,
 };
 
-/** Cài đặt nhóm Zalo: tên API (snake_case) ↔ khoá zca-js. */
+/** Zalo group settings: API name (snake_case) ↔ zca-js key. */
 export const ZALO_GROUP_SETTINGS: Record<string, string> = {
     block_name: 'blockName',
     sign_admin_msg: 'signAdminMsg',
@@ -46,7 +47,7 @@ export function mapZaloGroupSettings(setting: any): Record<string, boolean> {
     return out;
 }
 
-/** Nhóm chung: response getRelatedFriendGroup có nhiều dạng (như ConversationInfo.tsx). */
+/** Mutual groups: the getRelatedFriendGroup response has several shapes (as in ConversationInfo.tsx). */
 export function relatedGroupIds(raw: any, userId: string): string[] {
     if (raw?.groupRelateds && typeof raw.groupRelateds === 'object') {
         const val = raw.groupRelateds[userId] ?? raw.groupRelateds.all;
@@ -71,17 +72,17 @@ function zaloOnly(acc: AccountInfo, action: string): void {
 }
 
 function confirmRequired(ok: boolean, what: string): void {
-    if (!ok) throw new ApiError(400, 'VALIDATION_ERROR', `Thao tác ${what} không thể hoàn tác — gửi kèm confirm=true`);
+    if (!ok) throw new ApiError(400, 'VALIDATION_ERROR', tr('Thao tác {{what}} không thể hoàn tác — gửi kèm confirm=true', { what }));
 }
 
 export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
     const tags = ['Nhóm'];
     const ctags = ['Danh bạ'];
     return [
-        // ── Quản trị nhóm ──────────────────────────────────────────────────
+        // ── Group admin ──────────────────────────────────────────────────
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/admins', scope: 'chat:manage', tags, operationId: 'addGroupAdmin',
-            summary: 'Cấp quyền quản trị (Zalo: phó nhóm)',
+            summary: tr('Cấp quyền quản trị (Zalo: phó nhóm)'),
             params: groupParams,
             body: s.object({ user_id: s.id() }),
             handler: async ctx => {
@@ -100,7 +101,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/groups/:groupId/admins/:userId', scope: 'chat:manage', tags, operationId: 'removeGroupAdmin',
-            summary: 'Gỡ quyền quản trị',
+            summary: tr('Gỡ quyền quản trị'),
             params: memberParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -117,8 +118,8 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/owner', scope: 'chat:manage', tags, operationId: 'transferGroupOwner',
-            summary: 'Chuyển quyền trưởng nhóm (Zalo)',
-            description: 'Bạn sẽ mất quyền trưởng nhóm — bắt buộc `confirm: true`.',
+            summary: tr('Chuyển quyền trưởng nhóm (Zalo)'),
+            description: tr('Bạn sẽ mất quyền trưởng nhóm — bắt buộc `confirm: true`.'),
             params: groupParams,
             body: s.object({ user_id: s.id(), confirm: s.boolean().default(false) }),
             handler: async ctx => {
@@ -131,7 +132,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PUT', path: '/accounts/:accountId/groups/:groupId/avatar', scope: 'chat:manage', tags, operationId: 'setGroupAvatar',
-            summary: 'Đổi ảnh nhóm (Zalo, Telegram)',
+            summary: tr('Đổi ảnh nhóm (Zalo, Telegram)'),
             params: groupParams,
             body: s.object({
                 upload_id: s.string().optional(),
@@ -143,7 +144,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 const { groupId } = ctx.params;
                 if (![CHANNELS.ZALO, CHANNELS.TELEGRAM_USER, CHANNELS.TELEGRAM_BOT].includes(acc.channel as any)) return unsupported(acc, 'đổi ảnh nhóm');
                 const file = await resolveAttachment(ctx, deps, { ...ctx.body, kind: 'image' });
-                if (!/\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name)) throw new ApiError(400, 'VALIDATION_ERROR', 'Ảnh nhóm phải là file ảnh (jpg, png, webp…)');
+                if (!/\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name)) throw new ApiError(400, 'VALIDATION_ERROR', tr('Ảnh nhóm phải là file ảnh (jpg, png, webp…)'));
                 if (acc.channel === CHANNELS.ZALO) await zalo(ctx, acc, 'zalo:changeGroupAvatar', { avatarPath: file.path, groupId }, 120_000);
                 else if (acc.channel === CHANNELS.TELEGRAM_USER) { requireOnline(acc); await ctx.call('telegramUser:editChatPhoto', { accountId: acc.id, chatId: groupId, photoPath: file.path }, { timeoutMs: 120_000 }); }
                 else { requireOnline(acc); await ctx.call('telegram:setChatPhoto', { accountId: acc.id, chatId: groupId, photoPath: file.path }, { timeoutMs: 120_000 }); }
@@ -152,7 +153,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/groups/:groupId/settings', scope: 'chat:read', tags, operationId: 'getGroupSettings',
-            summary: 'Cài đặt nhóm Zalo (khoá đổi tên, duyệt thành viên, chỉ admin nhắn…)',
+            summary: tr('Cài đặt nhóm Zalo (khoá đổi tên, duyệt thành viên, chỉ admin nhắn…)'),
             params: groupParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -163,8 +164,8 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/groups/:groupId/settings', scope: 'chat:manage', tags, operationId: 'updateGroupSettings',
-            summary: 'Sửa cài đặt nhóm (Zalo; Facebook: chỉ join_approval)',
-            description: 'Chỉ gửi trường cần đổi; các cài đặt khác giữ nguyên (đọc cài đặt hiện tại trước, như bật/tắt từng mục trong app).',
+            summary: tr('Sửa cài đặt nhóm (Zalo; Facebook: chỉ join_approval)'),
+            description: tr('Chỉ gửi trường cần đổi; các cài đặt khác giữ nguyên (đọc cài đặt hiện tại trước, như bật/tắt từng mục trong app).'),
             params: groupParams,
             body: s.object(Object.fromEntries(Object.keys(ZALO_GROUP_SETTINGS).map(k => [k, s.boolean().optional()])) as Record<string, any>),
             examples: { request: { join_approval: true, lock_send_msg: false } },
@@ -172,9 +173,9 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 const acc = await ctx.account(ctx.params.accountId);
                 const { groupId } = ctx.params;
                 const changes = Object.entries(ctx.body || {}).filter(([, v]) => typeof v === 'boolean') as Array<[string, boolean]>;
-                if (!changes.length) throw new ApiError(400, 'VALIDATION_ERROR', 'Không có cài đặt nào để đổi');
+                if (!changes.length) throw new ApiError(400, 'VALIDATION_ERROR', tr('Không có cài đặt nào để đổi'));
                 if (acc.channel === CHANNELS.FACEBOOK) {
-                    if (changes.some(([k]) => k !== 'join_approval')) throw new ApiError(422, 'CHANNEL_UNSUPPORTED', 'Facebook chỉ hỗ trợ join_approval');
+                    if (changes.some(([k]) => k !== 'join_approval')) throw new ApiError(422, 'CHANNEL_UNSUPPORTED', tr('Facebook chỉ hỗ trợ join_approval'));
                     requireOnline(acc);
                     await ctx.call('fb:changeApprovalMode', { accountId: acc.id, threadId: groupId, approved: changes[0][1] });
                     return { join_approval: changes[0][1] };
@@ -190,8 +191,8 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/groups/:groupId', scope: 'chat:manage', tags, operationId: 'disbandGroup',
-            summary: 'Giải tán nhóm (Zalo, cần là trưởng nhóm)',
-            description: 'Không thể hoàn tác — bắt buộc `?confirm=true`.',
+            summary: tr('Giải tán nhóm (Zalo, cần là trưởng nhóm)'),
+            description: tr('Không thể hoàn tác — bắt buộc `?confirm=true`.'),
             params: groupParams,
             query: s.object({ confirm: s.boolean().default(false) }),
             handler: async ctx => {
@@ -204,7 +205,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/groups/:groupId/pending-members', scope: 'chat:read', tags, operationId: 'listPendingGroupMembers',
-            summary: 'Người xin vào nhóm đang chờ duyệt (Zalo)',
+            summary: tr('Người xin vào nhóm đang chờ duyệt (Zalo)'),
             params: groupParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -219,8 +220,8 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/pending-members/review', scope: 'chat:manage', tags, operationId: 'reviewPendingGroupMembers',
-            summary: 'Duyệt hoặc từ chối người xin vào nhóm (Zalo, Facebook)',
-            description: 'Xử lý lần lượt từng người như nút "Duyệt tất cả" trong app; `results` cho biết từng người thành công hay lỗi.',
+            summary: tr('Duyệt hoặc từ chối người xin vào nhóm (Zalo, Facebook)'),
+            description: tr('Xử lý lần lượt từng người như nút "Duyệt tất cả" trong app; `results` cho biết từng người thành công hay lỗi.'),
             params: groupParams,
             body: s.object({ user_ids: s.array(s.id()).min(1).max(100), approve: s.boolean() }),
             handler: async ctx => {
@@ -244,7 +245,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/groups/:groupId/blocked-members', scope: 'chat:read', tags, operationId: 'listBlockedGroupMembers',
-            summary: 'Thành viên bị chặn khỏi nhóm (Zalo)',
+            summary: tr('Thành viên bị chặn khỏi nhóm (Zalo)'),
             params: groupParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -254,7 +255,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/blocked-members', scope: 'chat:manage', tags, operationId: 'blockGroupMember',
-            summary: 'Chặn thành viên khỏi nhóm (Zalo; Telegram/Facebook: mời ra)',
+            summary: tr('Chặn thành viên khỏi nhóm (Zalo; Telegram/Facebook: mời ra)'),
             params: groupParams,
             body: s.object({ user_id: s.id() }),
             handler: async ctx => {
@@ -272,7 +273,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/groups/:groupId/blocked-members/:userId', scope: 'chat:manage', tags, operationId: 'unblockGroupMember',
-            summary: 'Bỏ chặn thành viên nhóm (Zalo, Telegram bot)',
+            summary: tr('Bỏ chặn thành viên nhóm (Zalo, Telegram bot)'),
             params: memberParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -285,7 +286,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/group-links/info', scope: 'chat:read', tags, operationId: 'getGroupLinkInfo',
-            summary: 'Xem nhóm từ link mời (Zalo): tên, số thành viên, trang thành viên',
+            summary: tr('Xem nhóm từ link mời (Zalo): tên, số thành viên, trang thành viên'),
             params: accountParams,
             query: s.object({ link: s.string().min(8).max(300).describe('vd https://zalo.me/g/abcxyz'), page: s.int().min(1).max(500).default(1) }),
             handler: async ctx => {
@@ -296,9 +297,9 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/group-links/join', scope: 'chat:manage', tags, operationId: 'joinGroupByLink',
-            summary: 'Vào nhóm bằng link mời (Zalo) hoặc username/ID (Telegram)',
+            summary: tr('Vào nhóm bằng link mời (Zalo) hoặc username/ID (Telegram)'),
             params: accountParams,
-            body: s.object({ link: s.string().min(3).max(300).describe('Zalo: link zalo.me/g/…; Telegram: @username hoặc ID nhóm công khai') }),
+            body: s.object({ link: s.string().min(3).max(300).describe(tr('Zalo: link zalo.me/g/…; Telegram: @username hoặc ID nhóm công khai')) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 if (acc.channel === CHANNELS.ZALO) return scrub(await zalo(ctx, acc, 'zalo:joinGroupLink', { link: ctx.body.link }));
@@ -313,7 +314,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/users/:userId/invite-to-groups', scope: 'chat:manage', tags, operationId: 'inviteUserToGroups',
-            summary: 'Mời một người vào nhiều nhóm (Zalo)',
+            summary: tr('Mời một người vào nhiều nhóm (Zalo)'),
             params: userParams,
             body: s.object({ group_ids: s.array(s.id()).min(1).max(50) }),
             handler: async ctx => {
@@ -324,7 +325,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/users/:userId/mutual-groups', scope: 'contacts:read', tags: ctags, operationId: 'listMutualGroups',
-            summary: 'Nhóm chung với một người (Zalo)',
+            summary: tr('Nhóm chung với một người (Zalo)'),
             params: userParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -334,11 +335,11 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
             },
         }),
 
-        // ── Bình chọn ──────────────────────────────────────────────────────
+        // ── Polls ──────────────────────────────────────────────────────
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/polls', scope: 'chat:send', tags, operationId: 'createPoll',
-            summary: 'Tạo bình chọn trong nhóm (Zalo, Facebook, Telegram bot)',
-            description: 'Các tuỳ chọn multiple/allow_add_option/hide_vote_preview/anonymous/expires_at chỉ áp dụng cho Zalo.',
+            summary: tr('Tạo bình chọn trong nhóm (Zalo, Facebook, Telegram bot)'),
+            description: tr('Các tuỳ chọn multiple/allow_add_option/hide_vote_preview/anonymous/expires_at chỉ áp dụng cho Zalo.'),
             params: groupParams,
             body: s.object({
                 question: s.string().min(1).max(300),
@@ -347,14 +348,14 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 allow_add_option: s.boolean().default(true),
                 hide_vote_preview: s.boolean().default(false),
                 anonymous: s.boolean().default(false),
-                expires_at: s.timestamp().optional().describe('Epoch ms; bỏ trống = không hết hạn'),
+                expires_at: s.timestamp().optional().describe(tr('Epoch ms; bỏ trống = không hết hạn')),
             }),
-            examples: { request: { question: 'Chốt lịch họp tuần sau?', options: ['Thứ 3', 'Thứ 5'], multiple: false } },
+            examples: { request: { question: tr('Chốt lịch họp tuần sau?'), options: [tr('Thứ 3'), tr('Thứ 5')], multiple: false } },
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 const b = ctx.body;
                 const { groupId } = ctx.params;
-                if (b.expires_at && b.expires_at <= Date.now()) throw new ApiError(400, 'VALIDATION_ERROR', 'expires_at phải ở tương lai');
+                if (b.expires_at && b.expires_at <= Date.now()) throw new ApiError(400, 'VALIDATION_ERROR', tr('expires_at phải ở tương lai'));
                 switch (acc.channel) {
                     case CHANNELS.ZALO:
                         return scrub(await zalo(ctx, acc, 'zalo:createPoll', {
@@ -377,7 +378,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/polls/:pollId', scope: 'chat:read', tags, operationId: 'getPoll',
-            summary: 'Chi tiết bình chọn: lựa chọn, số phiếu, người bình chọn (Zalo)',
+            summary: tr('Chi tiết bình chọn: lựa chọn, số phiếu, người bình chọn (Zalo)'),
             params: pollParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -387,14 +388,14 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/polls/:pollId/votes', scope: 'chat:send', tags, operationId: 'votePoll',
-            summary: 'Bình chọn (Zalo, Facebook). Mảng rỗng = huỷ bình chọn (Zalo)',
+            summary: tr('Bình chọn (Zalo, Facebook). Mảng rỗng = huỷ bình chọn (Zalo)'),
             params: pollParams,
             body: s.object({ option_ids: s.array(s.union(s.int(), s.string().max(64))).max(20) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 const ids = ctx.body.option_ids;
                 if (acc.channel === CHANNELS.ZALO) {
-                    if (!/^\d+$/.test(ctx.params.pollId) || ids.some((x: any) => !/^\d+$/.test(String(x)))) throw new ApiError(400, 'VALIDATION_ERROR', 'Zalo: pollId và option_ids là số');
+                    if (!/^\d+$/.test(ctx.params.pollId) || ids.some((x: any) => !/^\d+$/.test(String(x)))) throw new ApiError(400, 'VALIDATION_ERROR', tr('Zalo: pollId và option_ids là số'));
                     await zalo(ctx, acc, 'zalo:doVotePoll', { pollId: Number(ctx.params.pollId), optionIds: ids.map(Number) });
                 } else if (acc.channel === CHANNELS.FACEBOOK) {
                     requireOnline(acc);
@@ -407,33 +408,33 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/polls/:pollId/lock', scope: 'chat:manage', tags, operationId: 'lockPoll',
-            summary: 'Khoá bình chọn (Zalo, người tạo)',
+            summary: tr('Khoá bình chọn (Zalo, người tạo)'),
             params: pollParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 zaloOnly(acc, 'khoá bình chọn');
-                if (!/^\d+$/.test(ctx.params.pollId)) throw new ApiError(400, 'VALIDATION_ERROR', 'pollId là số');
+                if (!/^\d+$/.test(ctx.params.pollId)) throw new ApiError(400, 'VALIDATION_ERROR', tr('pollId là số'));
                 await zalo(ctx, acc, 'zalo:lockPoll', { pollId: Number(ctx.params.pollId) });
                 return { locked: true };
             },
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/polls/:pollId/options', scope: 'chat:send', tags, operationId: 'addPollOption',
-            summary: 'Thêm lựa chọn vào bình chọn (Zalo)',
+            summary: tr('Thêm lựa chọn vào bình chọn (Zalo)'),
             params: pollParams,
             body: s.object({ option: s.string().min(1).max(200) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 zaloOnly(acc, 'thêm lựa chọn');
-                if (!/^\d+$/.test(ctx.params.pollId)) throw new ApiError(400, 'VALIDATION_ERROR', 'pollId là số');
+                if (!/^\d+$/.test(ctx.params.pollId)) throw new ApiError(400, 'VALIDATION_ERROR', tr('pollId là số'));
                 return scrub(await zalo(ctx, acc, 'zalo:addPollOption', { pollId: Number(ctx.params.pollId), option: ctx.body.option }));
             },
         }),
 
-        // ── Ghi chú nhóm (Zalo) ───────────────────────────────────────────
+        // ── Group notes (Zalo) ───────────────────────────────────────────
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/notes', scope: 'chat:send', tags, operationId: 'createGroupNote',
-            summary: 'Tạo ghi chú nhóm (Zalo), tuỳ chọn ghim lên đầu',
+            summary: tr('Tạo ghi chú nhóm (Zalo), tuỳ chọn ghim lên đầu'),
             params: groupParams,
             body: s.object({ title: s.string().min(1).max(2000), pin: s.boolean().default(false) }),
             handler: async ctx => {
@@ -444,8 +445,8 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/groups/:groupId/notes/:noteId', scope: 'chat:send', tags, operationId: 'updateGroupNote',
-            summary: 'Sửa ghi chú nhóm (Zalo)',
-            params: s.object({ accountId: s.id(), groupId: s.id(), noteId: s.id().describe('topicId của ghi chú') }),
+            summary: tr('Sửa ghi chú nhóm (Zalo)'),
+            params: s.object({ accountId: s.id(), groupId: s.id(), noteId: s.id().describe(tr('topicId của ghi chú')) }),
             body: s.object({ title: s.string().min(1).max(2000), pin: s.boolean().default(true) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -457,7 +458,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         // ── Telegram forum topic ───────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/groups/:groupId/topics', scope: 'chat:read', tags, operationId: 'listForumTopics',
-            summary: 'Chủ đề (forum topic) của siêu nhóm Telegram',
+            summary: tr('Chủ đề (forum topic) của siêu nhóm Telegram'),
             params: groupParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -468,7 +469,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/topics', scope: 'chat:manage', tags, operationId: 'createForumTopic',
-            summary: 'Tạo chủ đề (Telegram)',
+            summary: tr('Tạo chủ đề (Telegram)'),
             params: groupParams,
             body: s.object({ title: s.string().min(1).max(128), icon_color: s.int().min(0).max(0xffffff).optional(), icon_emoji_id: s.string().max(64).optional() }),
             handler: async ctx => {
@@ -483,7 +484,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/groups/:groupId/topics/:topicId', scope: 'chat:manage', tags, operationId: 'updateForumTopic',
-            summary: 'Sửa / đóng / ghim chủ đề (Telegram)',
+            summary: tr('Sửa / đóng / ghim chủ đề (Telegram)'),
             params: topicParams,
             body: s.object({ title: s.string().min(1).max(128).optional(), icon_emoji_id: s.string().max(64).optional(), closed: s.boolean().optional(), pinned: s.boolean().optional() }),
             handler: async ctx => {
@@ -503,8 +504,8 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/groups/:groupId/topics/:topicId/messages', scope: 'chat:read', tags, operationId: 'listForumTopicMessages',
-            summary: 'Tin mới nhất của một chủ đề, lấy trực tiếp từ Telegram',
-            description: 'Tin đã lưu trong Deplao đọc bằng `GET …/conversations/{groupId}/messages?topic_id=`.',
+            summary: tr('Tin mới nhất của một chủ đề, lấy trực tiếp từ Telegram'),
+            description: tr('Tin đã lưu trong Deplao đọc bằng `GET …/conversations/{groupId}/messages?topic_id=`.'),
             params: topicParams,
             query: s.object({ limit: s.int().min(1).max(100).default(50) }),
             handler: async ctx => {
@@ -517,10 +518,10 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/groups/:groupId/topics/:topicId/messages', scope: 'chat:send', tags, operationId: 'sendForumTopicMessage',
-            summary: 'Gửi tin vào chủ đề (Telegram): chữ hoặc một file',
+            summary: tr('Gửi tin vào chủ đề (Telegram): chữ hoặc một file'),
             params: topicParams,
             body: s.object({
-                text: s.string().max(4096).optional().describe('Chữ; khi gửi kèm file thì là chú thích'),
+                text: s.string().max(4096).optional().describe(tr('Chữ; khi gửi kèm file thì là chú thích')),
                 upload_id: s.string().optional(),
                 library_uuid: s.string().optional(),
                 url: s.string().format('uri').optional(),
@@ -535,16 +536,16 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                     const file = await resolveAttachment(ctx, deps, { upload_id: b.upload_id, library_uuid: b.library_uuid, url: b.url });
                     return extractSentId(await ctx.call('telegramUser:sendTopicFile', { ...base, filePath: file.path, caption: b.text || '' }, { timeoutMs: 300_000 }));
                 }
-                if (!b.text) throw new ApiError(400, 'VALIDATION_ERROR', 'Cần text hoặc một file');
+                if (!b.text) throw new ApiError(400, 'VALIDATION_ERROR', tr('Cần text hoặc một file'));
                 return extractSentId(await ctx.call('telegramUser:sendTopicMessage', { ...base, text: b.text }));
             },
         }),
 
-        // ── Danh bạ ────────────────────────────────────────────────────────
+        // ── Contacts ────────────────────────────────────────────────────
         ...([true, false] as const).map(block => route({
             method: block ? 'POST' : 'DELETE', path: '/accounts/:accountId/users/:userId/block', scope: 'contacts:write', tags: ctags,
             operationId: block ? 'blockUser' : 'unblockUser',
-            summary: block ? 'Chặn người dùng (Zalo, Facebook, Telegram)' : 'Bỏ chặn người dùng',
+            summary: block ? tr('Chặn người dùng (Zalo, Facebook, Telegram)') : tr('Bỏ chặn người dùng'),
             params: userParams,
             handler: async (ctx: ApiContext) => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -560,9 +561,9 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         })),
         route({
             method: 'PUT', path: '/accounts/:accountId/users/:userId/alias', scope: 'contacts:write', tags: ctags, operationId: 'setUserAlias',
-            summary: 'Đặt tên gợi nhớ (Zalo: đồng bộ lên Zalo; kênh khác: lưu trong Deplao)',
+            summary: tr('Đặt tên gợi nhớ (Zalo: đồng bộ lên Zalo; kênh khác: lưu trong Deplao)'),
             params: userParams,
-            body: s.object({ alias: s.string().max(100).describe('Chuỗi rỗng = xoá tên gợi nhớ') }),
+            body: s.object({ alias: s.string().max(100).describe(tr('Chuỗi rỗng = xoá tên gợi nhớ')) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 const alias = ctx.body.alias.trim();
@@ -577,7 +578,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/friend-aliases', scope: 'contacts:read', tags: ctags, operationId: 'listFriendAliases',
-            summary: 'Tên gợi nhớ đã đặt trên Zalo',
+            summary: tr('Tên gợi nhớ đã đặt trên Zalo'),
             params: accountParams,
             query: s.object({ page: s.int().min(1).max(1000).default(1), count: s.int().min(1).max(500).default(200) }),
             handler: async ctx => {
@@ -590,8 +591,8 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/friend-recommendations', scope: 'contacts:read', tags: ctags, operationId: 'listFriendRecommendations',
-            summary: 'Gợi ý kết bạn và lời mời mới từ Zalo',
-            description: '`kind`: `request` = người ta gửi lời mời cho bạn, `suggestion` = Zalo gợi ý.',
+            summary: tr('Gợi ý kết bạn và lời mời mới từ Zalo'),
+            description: tr('`kind`: `request` = người ta gửi lời mời cho bạn, `suggestion` = Zalo gợi ý.'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -613,7 +614,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/users/:userId/friend-status', scope: 'contacts:read', tags: ctags, operationId: 'getFriendStatus',
-            summary: 'Trạng thái bạn bè với một người (Zalo)',
+            summary: tr('Trạng thái bạn bè với một người (Zalo)'),
             params: userParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -628,7 +629,7 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/contacts/search', scope: 'contacts:read', tags: ctags, operationId: 'searchContacts',
-            summary: 'Tìm liên hệ & nhóm đã lưu (không dấu: "duong" ra "Dương"), xếp theo độ khớp',
+            summary: tr('Tìm liên hệ & nhóm đã lưu (không dấu: "duong" ra "Dương"), xếp theo độ khớp'),
             params: accountParams,
             query: s.object({
                 q: s.string().max(200).default(''),
@@ -649,8 +650,8 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/usernames/:username', scope: 'contacts:read', tags: ctags, operationId: 'resolveTelegramUsername',
-            summary: 'Tra @username Telegram ra người dùng / nhóm',
-            params: s.object({ accountId: s.id(), username: s.string().min(3).max(64).describe('Có hoặc không có @') }),
+            summary: tr('Tra @username Telegram ra người dùng / nhóm'),
+            params: s.object({ accountId: s.id(), username: s.string().min(3).max(64).describe(tr('Có hoặc không có @')) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 if (acc.channel !== CHANNELS.TELEGRAM_USER) return unsupported(acc, 'tra username');

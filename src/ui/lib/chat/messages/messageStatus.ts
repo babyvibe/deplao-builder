@@ -1,11 +1,13 @@
 /**
- * Trạng thái tin MÌNH gửi — dấu cạnh giờ như Telegram: ✓ đã gửi, ✓✓ đã nhận (xám), ✓✓ đã xem (màu nhấn).
- * Mốc của hội thoại (contacts.peer_delivered_ts / peer_read_ts / peer_read_max_id + event:receipt — main
- * services/receipts/peerReceipts.ts): tin có thời điểm ≤ mốc = đã nhận / đã xem; Telegram so theo id tin.
+ * Status of a message I SENT: the tick beside the time, as in Telegram: ✓ sent, ✓✓ delivered (grey), ✓✓ read (accent colour).
+ * The conversation's marks (contacts.peer_delivered_ts / peer_read_ts / peer_read_max_id + event:receipt, main
+ * services/receipts/peerReceipts.ts): a message at or before the mark = delivered / read; Telegram compares by message id.
  *
- * Kênh hỗ trợ: Telegram cá nhân (đã gửi / đã xem — Telegram không có "đã nhận"), Zalo và Facebook (đủ 3 trạng thái).
- * Kênh không có (Telegram Bot…) → không hiện dấu.
+ * Supported channels: personal Telegram (sent / read: Telegram has no "delivered"), Zalo and Facebook (all 3 states).
+ * Channels without these (Telegram Bot...) → no tick is shown.
  */
+
+import { tr } from '../../../../shared/i18n';
 
 export type OutgoingStatus = 'sending' | 'failed' | 'sent' | 'delivered' | 'read';
 
@@ -17,7 +19,7 @@ export interface PeerReceipt {
 
 export interface ReceiptSupport {
   delivered: boolean;
-  /** Telegram: đã xem so theo id tin (read_outbox_max_id), không theo thời điểm */
+  /** Telegram: read is compared by message id (read_outbox_max_id), not by time */
   readById: boolean;
 }
 
@@ -28,7 +30,7 @@ export function receiptSupport(channel: string | null | undefined): ReceiptSuppo
   return null;
 }
 
-/** Gộp mốc đã lưu (hàng hội thoại) với mốc vừa nhận realtime — lấy giá trị lớn hơn. */
+/** Merges the saved marks (conversation row) with the marks just received in realtime, keeping the larger value. */
 export function mergePeerReceipts(...receipts: Array<PeerReceipt | null | undefined>): Required<{ [K in keyof PeerReceipt]: number }> {
   const out = { deliveredTs: 0, readTs: 0, readMaxId: 0 };
   for (const receipt of receipts) {
@@ -40,13 +42,13 @@ export function mergePeerReceipts(...receipts: Array<PeerReceipt | null | undefi
   return out;
 }
 
-/** Tin không phải người dùng gõ (thông báo hệ thống, bản tin OA / mẫu của Trang): không cho biết ai đã xem gì. */
+/** Messages not typed by a user (system notices, OA news / Page templates): they do not tell who read what. */
 const AUTOMATED_MSG_TYPES = new Set(['system', 'chat.webcontent', 'chat.webcontent.v2', 'fb.template']);
 
 /**
- * Mốc "đã xem" suy ra: người khác nhắn SAU tin mình gửi thì chắc chắn đã xem các tin trước đó (như Telegram). Zalo không
- * phải lúc nào cũng báo "đã xem" (người nhận tắt trạng thái đã xem, trả lời từ thông báo…) → tin trước câu trả lời vẫn
- * ✓✓ xám. Chỉ kênh so theo thời điểm (Zalo, Facebook); Telegram có mốc đọc chính xác theo id.
+ * The "read" mark is inferred: if someone else messages AFTER my message, they have certainly read the earlier ones (as in Telegram). Zalo does not
+ * always report "read" (the recipient turned off read status, replied from a notification...) → messages before that reply still show
+ * grey ✓✓. Only the channels compared by time (Zalo, Facebook) use this; Telegram has an exact read mark by id.
  */
 export function inferredPeerReadTs(
   messages: ReadonlyArray<{ is_sent?: number | boolean | null; timestamp?: number | string | null; msg_type?: string | null }> | null | undefined,
@@ -72,7 +74,7 @@ interface StatusMsg {
   send_status?: string | null;
 }
 
-/** Trạng thái để vẽ dấu; null = không phải tin mình gửi hoặc kênh không hỗ trợ. */
+/** Status used to draw the tick; null = not a message I sent, or the channel does not support it. */
 export function outgoingMessageStatus(msg: StatusMsg, channel: string | null | undefined, receipt: PeerReceipt | null | undefined): OutgoingStatus | null {
   if (!msg || !(msg.is_sent === 1 || msg.is_sent === true)) return null;
   const support = receiptSupport(channel);
@@ -84,7 +86,7 @@ export function outgoingMessageStatus(msg: StatusMsg, channel: string | null | u
 
   const mark = mergePeerReceipts(receipt);
   if (support.readById) {
-    // Chỉ theo mốc id: status 'read' cũ của tin gửi Telegram có thể sai (bản cũ đánh dấu ngược chiều đã đọc)
+    // Compare by id mark only: an old 'read' status of a sent Telegram message can be wrong (old versions marked the read direction backwards)
     const numericId = Number(id);
     return Number.isFinite(numericId) && numericId > 0 && numericId <= mark.readMaxId ? 'read' : 'sent';
   }
@@ -94,13 +96,13 @@ export function outgoingMessageStatus(msg: StatusMsg, channel: string | null | u
   return 'sent';
 }
 
-/** Chữ cho tooltip / trình đọc màn hình. */
+/** Text for the tooltip / screen reader. */
 export function outgoingStatusLabel(status: OutgoingStatus): string {
   switch (status) {
-    case 'sending': return 'Đang gửi';
-    case 'failed': return 'Gửi lỗi';
-    case 'sent': return 'Đã gửi';
-    case 'delivered': return 'Đã nhận';
-    case 'read': return 'Đã xem';
+    case 'sending': return tr('Đang gửi');
+    case 'failed': return tr('Gửi lỗi');
+    case 'sent': return tr('Đã gửi');
+    case 'delivered': return tr('Đã nhận');
+    case 'read': return tr('Đã xem');
   }
 }

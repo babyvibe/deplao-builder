@@ -1,10 +1,10 @@
 /**
- * employeeMediaSync - Download media từ Boss về local cache khi Employee click.
+ * employeeMediaSync - Download media from the owner's machine to the local cache when an Employee clicks it.
  *
- * Khi Employee click vào video/file/ảnh trong chat, file chỉ tồn tại trên Boss.
- * Helper này download file từ Boss REST URL → cache local → trả về local path để mở.
+ * When an Employee clicks a video/file/photo in the chat, the file only exists on the owner's machine.
+ * This helper downloads the file from the owner's machine REST URL → local cache → returns the local path to open.
  *
- * Dùng MediaCacheService (main process) với resolveUrlSync để chờ download hoàn tất.
+ * Uses MediaCacheService (main process) with resolveUrlSync to wait until the download completes.
  */
 
 import ipc from '../ipc';
@@ -19,10 +19,10 @@ export interface EmployeeMediaResult {
 
 /**
  * Ensure a media file is available locally on the Employee machine.
- * If cached → return immediately. If not → download from Boss → cache → return.
+ * If cached → return immediately. If not → download from the owner's machine → cache → return.
  *
- * @param bossUrl - Boss REST URL của file (từ toLocalMediaUrl hoặc CDN URL)
- * @param mediaType - Loại media: 'image' | 'video' | 'file'
+ * @param bossUrl - Owner's machine REST URL of the file (from toLocalMediaUrl or CDN URL)
+ * @param mediaType - Media type: 'image' | 'video' | 'file'
  * @returns { localPath, displayUrl, fromCache }
  */
 export async function ensureMediaLocal(
@@ -33,23 +33,23 @@ export async function ensureMediaLocal(
     return { localPath: '', displayUrl: '', fromCache: false };
   }
 
-  // Nếu đã là file:// URL → local sẵn rồi
+  // If it is already a file:// URL → it is already local
   if (bossUrl.startsWith('file://')) {
     const localPath = fileUrlToPath(bossUrl);
     return { localPath, displayUrl: bossUrl, fromCache: true };
   }
 
-  // Nếu không phải http (local path raw) → convert qua Boss URL
+  // If it is not http (a raw local path) → convert it through the owner's machine URL
   const resolvedUrl = bossUrl.startsWith('http')
     ? bossUrl
     : toLocalMediaUrl(bossUrl);
 
   if (!resolvedUrl || resolvedUrl.startsWith('local-media://')) {
-    // Không thể convert → không có Boss URL (standalone/Boss mode)
+    // Cannot convert → no owner's machine URL (standalone / owner's machine mode)
     return { localPath: '', displayUrl: bossUrl, fromCache: false };
   }
 
-  // Gọi IPC để download + cache
+  // Call IPC to download + cache
   try {
     const result = await ipc.file?.ensureMediaLocal(resolvedUrl, mediaType);
     if (result?.success && result.displayUrl) {
@@ -60,7 +60,7 @@ export async function ensureMediaLocal(
           fromCache: result.fromCache || false,
         };
       }
-      // Không phải file:// URL → trả về display URL (boss URL hoặc CDN)
+      // Not a file:// URL → return the display URL (owner's machine URL or CDN)
       return {
         localPath: result.localPath || '',
         displayUrl: result.displayUrl,
@@ -68,16 +68,16 @@ export async function ensureMediaLocal(
       };
     }
   } catch {
-    // Fallback: trả về URL gốc
+    // Fallback: return the original URL
   }
 
   return { localPath: '', displayUrl: resolvedUrl, fromCache: false };
 }
 
 /**
- * Đường dẫn file trên MÁY NÀY để mở / hiện trong thư mục. Máy nhân viên: local_paths là đường dẫn trên máy Boss → tải
- * bản của Boss về máy (MediaCacheService gắn token phiên nhân viên) rồi trả đường dẫn bản tải ('' = không tải được).
- * Chủ / standalone: trả nguyên đường dẫn.
+ * File path on THIS machine, to open / show in the folder. Employee machine: local_paths is a path on the owner's machine → downloads
+ * the owner's copy to this machine (MediaCacheService attaches the employee session token), then returns the downloaded path ('' = download failed).
+ * Owner / standalone: returns the path unchanged.
  */
 export async function fileOnThisMachine(
   localPath: string,
@@ -87,20 +87,20 @@ export async function fileOnThisMachine(
   let employee = false;
   try {
     employee = useEmployeeStore.getState().mode === 'employee';
-  } catch { /* store chưa sẵn sàng */ }
+  } catch { /* store not ready yet */ }
   if (!employee) return localPath;
   const { localPath: downloaded } = await ensureMediaLocal(localPath, mediaType);
   return downloaded;
 }
 
 /**
- * Chuyển đổi file:// URL thành đường dẫn local.
+ * Convert a file:// URL to a local path.
  */
 function fileUrlToPath(fileUrl: string): string {
   if (!fileUrl.startsWith('file://')) return fileUrl;
 
   let path = fileUrl.replace('file:///', '');
-  // Windows: decode và bỏ leading slash nếu có
+  // Windows: decode and remove the leading slash if present
   path = decodeURIComponent(path);
   if (process.platform === 'win32' && path.startsWith('/')) {
     path = path.slice(1);

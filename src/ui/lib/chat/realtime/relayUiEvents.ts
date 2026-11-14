@@ -1,18 +1,18 @@
 /**
- * relayUiEvents.ts — window event mà useZaloEvents phát lại từ event realtime (Boss emit / relay cho nhân viên), dùng
- * chung cho các màn hình nghe chúng (phần thuần, test: relaySyncContract.test.ts).
+ * relayUiEvents.ts: window events that useZaloEvents re-emits from realtime events (Boss emit / relay to employees), shared
+ * by the screens that listen to them (pure part, test: relaySyncContract.test.ts).
  *
- *  - 'ui:threadLabelsChanged' — db:localLabelThreadChanged { action: assign|remove|bulkAssign, ownerZaloId, labelId(s),
+ *  - 'ui:threadLabelsChanged' : db:localLabelThreadChanged { action: assign|remove|bulkAssign, ownerZaloId, labelId(s),
  *    threadId | threadIds }
- *  - 'local-pin-changed'      — { zaloId, threadId?, isPinned? } (Ctrl+P chỉ có zaloId; relay có đủ)
- *  - 'library:changed'        — thư viện media đổi ở máy khác / kết nối lại (cache đã bị xoá, màn hình mở thì tải lại)
+ *  - 'local-pin-changed'      : { zaloId, threadId?, isPinned? } (Ctrl+P only has zaloId; the relay has everything)
+ *  - 'library:changed'        : the media library changed on another machine / reconnected (cache cleared, an open screen reloads)
  */
 
 export const THREAD_LABELS_CHANGED_EVENT = 'ui:threadLabelsChanged';
 export const LOCAL_PIN_CHANGED_EVENT = 'local-pin-changed';
 export const LIBRARY_CHANGED_EVENT = 'library:changed';
 
-/** Id tài khoản trong payload (IPC Boss phát ownerZaloId, vài lệnh REST phát zaloId). */
+/** Account id in the payload (the Boss IPC sends ownerZaloId, a few REST commands send zaloId). */
 export function relayEventAccount(detail: unknown): string {
   if (!detail || typeof detail !== 'object') return '';
   const record = detail as Record<string, unknown>;
@@ -21,8 +21,8 @@ export function relayEventAccount(detail: unknown): string {
 }
 
 /**
- * Event gán / bỏ nhãn có chạm hội thoại (accountId, threadId) đang mở không. Thiếu thông tin (không rõ tài khoản /
- * hội thoại) → coi là có (tải lại thừa còn hơn hiện nhãn cũ).
+ * Whether a label assign / remove event touches the open conversation (accountId, threadId). Missing info (unknown account /
+ * conversation) → treated as touching it (an extra reload is better than showing an old label).
  */
 export function threadLabelsEventTouches(detail: unknown, accountId: string | null | undefined, threadId: string | null | undefined): boolean {
   if (!accountId || !threadId) return false;

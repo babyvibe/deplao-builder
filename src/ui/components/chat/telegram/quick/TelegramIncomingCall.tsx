@@ -1,7 +1,7 @@
 /**
- * Báo cuộc gọi Telegram đến (event:telegramCall từ main): thẻ ở góc trên phải với "Từ chối" (phone.DiscardCall) và
- * "Mở chat". Deplao chưa nghe máy được (không có bộ thoại tgcalls) — ghi rõ để người dùng nghe trên điện thoại.
- * Gắn một lần ở App (mọi màn hình).
+ * Incoming Telegram call alert (event:telegramCall from main): a card in the top-right corner with "Từ chối" (Decline, phone.DiscardCall) and
+ * "Mở chat" (Open chat). Deplao cannot answer calls yet (no tgcalls voice engine), so this is stated clearly for users to answer on their phone.
+ * Mounted once in App (every screen).
  */
 import React, { useEffect, useState } from 'react';
 import { useAccountStore } from '@/store/accounts/accountStore';
@@ -14,6 +14,8 @@ import { CloseIcon, MessageIcon } from '@/components/common/icons';
 import { accountLabel } from '../../quick/quickActions';
 import { TelegramAvatar } from './TelegramUi';
 import { PhoneGlyph } from './TelegramCallsDialog';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface RingingCall {
   zaloId: string;
@@ -25,7 +27,7 @@ interface RingingCall {
   video: boolean;
 }
 
-/** Mở hội thoại từ bất kỳ màn hình nào (như thông báo nhắc hẹn): đổi tài khoản, chọn hội thoại, tải tin, về màn chat. */
+/** Open a conversation from any screen (like a reminder notification): switch account, select the conversation, load messages, go back to the chat screen. */
 function openChatAnywhere(accountId: string, threadId: string, name: string, avatar: string): void {
   const chat = useChatStore.getState();
   if (!(chat.contacts[accountId] || []).some(contact => contact.contact_id === threadId)) {
@@ -49,14 +51,14 @@ function CallCard({ call, onDone }: { call: RingingCall; onDone: () => void }) {
     setDeclining(true);
     try {
       const res = await ipc.telegramUser?.declineCall({ accountId: call.zaloId, callId: call.callId, accessHash: call.accessHash, video: call.video });
-      if (!res?.success) useAppStore.getState().showNotification(res?.error || 'Không từ chối được cuộc gọi', 'error');
+      if (!res?.success) useAppStore.getState().showNotification(res?.error || tr('Không từ chối được cuộc gọi'), 'error');
     } finally {
       setDeclining(false);
       onDone();
     }
   };
   return (
-    <div role="alertdialog" aria-label={`Cuộc gọi Telegram từ ${call.name}`}
+    <div role="alertdialog" aria-label={tr('Cuộc gọi Telegram từ {{name}}', { name: call.name })}
       className="pointer-events-auto w-80 overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
       style={{ animation: 'popupIn 160ms ease-out' }}>
       <div className="flex items-center gap-2 bg-primary/10 px-4 py-2 text-xs font-medium text-primary">
@@ -65,8 +67,8 @@ function CallCard({ call, onDone }: { call: RingingCall; onDone: () => void }) {
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
         </span>
         <PhoneGlyph video={call.video} className="h-3.5 w-3.5" />
-        <span className="flex-1">{call.video ? 'Cuộc gọi video Telegram đến' : 'Cuộc gọi Telegram đến'}</span>
-        <button type="button" onClick={onDone} aria-label="Ẩn" className="rounded p-0.5 text-primary/70 hover:text-primary">
+        <span className="flex-1">{call.video ? tr('Cuộc gọi video Telegram đến') : tr('Cuộc gọi Telegram đến')}</span>
+        <button type="button" onClick={onDone} aria-label={tr('Ẩn')} className="rounded p-0.5 text-primary/70 hover:text-primary">
           <CloseIcon className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -74,19 +76,19 @@ function CallCard({ call, onDone }: { call: RingingCall; onDone: () => void }) {
         <TelegramAvatar id={call.userId} name={call.name} src={call.avatar} size={48} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-foreground">{call.name}</p>
-          <p className="truncate text-xs text-muted-foreground">Gọi tới {accountLabel(account) || 'tài khoản Telegram'}</p>
+          <p className="truncate text-xs text-muted-foreground">{trx('Gọi tới {{v1}}', { v1: accountLabel(account) || tr('tài khoản Telegram') })}</p>
         </div>
       </div>
-      <p className="px-4 text-[11px] leading-4 text-subtle-foreground">Nghe máy trên điện thoại hoặc Telegram Desktop — Deplao chưa nghe được cuộc gọi.</p>
+      <p className="px-4 text-[11px] leading-4 text-subtle-foreground">{tr('Nghe máy trên điện thoại hoặc Telegram Desktop — Deplao chưa nghe được cuộc gọi.')}</p>
       <div className="flex gap-2 px-4 pb-4 pt-3">
         <Button variant="destructive" size="sm" className="flex-1" loading={declining} onClick={() => void decline()}
           leftIcon={<PhoneGlyph className="h-3.5 w-3.5 rotate-[135deg]" />}>
-          Từ chối
+          {tr('Từ chối')}
         </Button>
         <Button variant="outline" size="sm" className="flex-1" disabled={declining}
           onClick={() => { openChatAnywhere(call.zaloId, call.userId, call.name, call.avatar); onDone(); }}
           leftIcon={<MessageIcon className="h-3.5 w-3.5" />}>
-          Mở chat
+          {tr('Mở chat')}
         </Button>
       </div>
     </div>
@@ -109,7 +111,7 @@ export default function TelegramIncomingCall() {
         setCalls(prev => {
           const ended = prev.find(call => call.callId === data.callId);
           if (ended && data.reason === 'missed') {
-            useAppStore.getState().showNotification(`Cuộc gọi nhỡ Telegram từ ${ended.name}`, 'info');
+            useAppStore.getState().showNotification(tr('Cuộc gọi nhỡ Telegram từ {{name}}', { name: ended.name }), 'info');
           }
           return prev.filter(call => call.callId !== data.callId);
         });

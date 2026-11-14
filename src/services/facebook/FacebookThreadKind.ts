@@ -8,6 +8,7 @@
 
 import DatabaseService from '../database/DatabaseService';
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 export type FacebookThreadKind = 'user' | 'group' | 'unknown';
 
@@ -52,7 +53,6 @@ export async function resolveThreadKind(
   // 3. Unknown — caller must handle explicitly
   return {
     kind: 'unknown',
-    error: `Không thể xác định loại hội thoại cho thread ${threadId}. ` +
-      `Vui lòng tải lại cuộc trò chuyện hoặc chọn loại chat thủ công.`,
+    error: tr('Không thể xác định loại hội thoại cho thread {{threadId}}. Vui lòng tải lại cuộc trò chuyện hoặc chọn loại chat thủ công.', { threadId }),
   };
 }

@@ -1,10 +1,11 @@
 /**
- * Tiện ích dùng chung cho module R2 media: tuỳ chọn mặc định, chờ/đánh thức, phân loại lỗi R2, băm sha256 theo luồng,
- * dung lượng ổ trống, khung giờ đêm, giới hạn băng thông. Không phụ thuộc Electron / DB (test được độc lập).
+ * Shared helpers for the R2 media module: default options, wait / wake-up, R2 error classification, streaming sha256 hashing,
+ * free disk space, the night window, bandwidth limit. No dependency on Electron / DB (testable on its own).
  */
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import { ALL_SCOPE, CloudScope, MediaSyncOptions, normalizeScope, sameScope } from '../../../shared/cloud/cloudContracts';
+import { tr } from '../../../shared/i18n';
 
 export const SECOND = 1000;
 export const MINUTE = 60 * SECOND;
@@ -13,9 +14,9 @@ export const DAY = 24 * HOUR;
 export const GIB = 1024 * 1024 * 1024;
 
 export type LogFn = (level: 'log' | 'warn' | 'error', message: string) => void;
-export const noLog: LogFn = () => { /* im lặng */ };
+export const noLog: LogFn = () => { /* silent */ };
 
-// ─── Tuỳ chọn ────────────────────────────────────────────────────────────────
+// ─── Options ────────────────────────────────────────────────────────────────
 
 export const DEFAULT_MEDIA_OPTIONS: MediaSyncOptions = {
     concurrency: 3,
@@ -34,7 +35,7 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
     return Math.min(max, Math.max(min, Math.round(n)));
 }
 
-/** Chuẩn hoá tuỳ chọn (giá trị lạ → mặc định, kẹp trong khoảng hợp lệ). */
+/** Normalizes options (unknown values → default, clamped to the valid range). */
 export function normalizeMediaOptions(input?: Partial<MediaSyncOptions> | null): MediaSyncOptions {
     const o: Partial<MediaSyncOptions> = input && typeof input === 'object' ? input : {};
     const minFree = Number(o.evictMinFreeGb);
@@ -47,28 +48,28 @@ export function normalizeMediaOptions(input?: Partial<MediaSyncOptions> | null):
         evictMinFreeGb: Number.isFinite(minFree)
             ? Math.min(100_000, Math.max(0, Math.round(minFree * 10) / 10))
             : DEFAULT_MEDIA_OPTIONS.evictMinFreeGb,
-        // Thiếu / sai kiểu → tất cả tài khoản, toàn bộ thời gian, có file dùng chung (như trước khi có phạm vi)
+        // Missing / wrong type → all accounts, all time, with shared files (as before scopes existed)
         scope: normalizeScope(o.scope),
         includeShared: typeof o.includeShared === 'boolean' ? o.includeShared : true,
     };
 }
 
-/** Phạm vi lưu (thiếu = tất cả). */
+/** Storage scope (missing = all). */
 export function mediaScopeOf(o: Partial<MediaSyncOptions> | null | undefined): CloudScope {
     return o && o.scope ? o.scope : ALL_SCOPE;
 }
 
-/** Có lưu file không thuộc tài khoản nào không (thiếu = có). */
+/** Whether files that belong to no account are stored (missing = yes). */
 export function includeSharedOf(o: Partial<MediaSyncOptions> | null | undefined): boolean {
     return !o || o.includeShared !== false;
 }
 
-/** Hai bộ tuỳ chọn cùng phạm vi lưu (tài khoản, từ ngày, file dùng chung). */
+/** Two option sets with the same storage scope (accounts, from date, shared files). */
 export function sameMediaScope(a: Partial<MediaSyncOptions> | null | undefined, b: Partial<MediaSyncOptions> | null | undefined): boolean {
     return includeSharedOf(a) === includeSharedOf(b) && sameScope(mediaScopeOf(a), mediaScopeOf(b));
 }
 
-/** Bản sao sâu (mảng tài khoản không dùng chung tham chiếu với bản đang giữ). */
+/** Deep copy (the accounts array does not share a reference with the copy being held). */
 export function cloneMediaOptions(o: MediaSyncOptions): MediaSyncOptions {
     const scope = mediaScopeOf(o);
     return {
@@ -78,28 +79,28 @@ export function cloneMediaOptions(o: MediaSyncOptions): MediaSyncOptions {
     };
 }
 
-// ─── Hẹn giờ ─────────────────────────────────────────────────────────────────
+// ─── Timers ─────────────────────────────────────────────────────────────────
 
 export function unrefTimer(timer: unknown): void {
-    try { (timer as { unref?: () => void })?.unref?.(); } catch { /* bỏ qua */ }
+    try { (timer as { unref?: () => void })?.unref?.(); } catch { /* ignore */ }
 }
 
 export function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => unrefTimer(setTimeout(resolve, Math.max(0, ms))));
 }
 
-/** Nhường vòng lặp sự kiện (giữa các thư mục / lô) để không chặn luồng chính. */
+/** Yields to the event loop (between folders / batches) so the main thread is not blocked. */
 export function yieldToLoop(): Promise<void> {
     return new Promise((resolve) => setImmediate(resolve));
 }
 
 export interface Waiter {
-    /** Chờ tối đa ms, hoặc tới khi wake(). */
+    /** Waits up to ms, or until wake(). */
     wait(ms: number): Promise<void>;
     wake(): void;
 }
 
-/** Chờ có thể đánh thức sớm (tiếp tục, đổi tuỳ chọn, có file mới, một lượt tải xong…). */
+/** A wait that can be woken early (resume, option change, new file, a download run finished…). */
 export class Waker implements Waiter {
     private readonly waiters = new Set<() => void>();
 
@@ -122,7 +123,7 @@ export class Waker implements Waiter {
     }
 }
 
-/** Promise với hạn chót: hết hạn → trả fallback (promise gốc vẫn chạy tiếp, không bị huỷ). */
+/** Promise with a deadline: when it expires → returns the fallback (the original promise keeps running, it is not cancelled). */
 export function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
     return new Promise((resolve) => {
         const timer = setTimeout(() => resolve(fallback), Math.max(0, ms));
@@ -134,7 +135,7 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Pr
     });
 }
 
-/** Khung giờ đêm 22:00–07:00 (giờ máy). 0 = đang trong khung; > 0 = số ms tới 22:00 hôm nay. */
+/** Night window 22:00 to 07:00 (machine time). 0 = inside the window; > 0 = ms until 22:00 today. */
 export function msUntilNightWindow(now: number): number {
     const d = new Date(now);
     const h = d.getHours();
@@ -143,7 +144,7 @@ export function msUntilNightWindow(now: number): number {
     return Math.max(SECOND, start - now);
 }
 
-/** ms tới lần kế tiếp đồng hồ máy chỉ hour:minute (luôn > 0). */
+/** ms until the next time the machine clock shows hour:minute (always > 0). */
 export function msUntilLocalTime(now: number, hour: number, minute = 0): number {
     const d = new Date(now);
     let target = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour, minute, 0, 0).getTime();
@@ -151,12 +152,12 @@ export function msUntilLocalTime(now: number, hour: number, minute = 0): number 
     return Math.max(SECOND, target - now);
 }
 
-// ─── Giới hạn băng thông ─────────────────────────────────────────────────────
+// ─── Bandwidth limit ─────────────────────────────────────────────────────
 
 /**
- * Token bucket theo byte. kbps = kilobit/giây (0 = không giới hạn). putFile của R2Client tự đọc file (không nhận
- * stream), nên không chặn được giữa chừng: byte gửi đi (onProgress) được trừ vào quỹ, quỹ âm = "nợ" → lượt tải sau
- * phải chờ trả hết nợ. Tốc độ trung bình đúng giới hạn; từng file vẫn có thể chạy nhanh hơn trong lúc gửi.
+ * Byte-based token bucket. kbps = kilobits/second (0 = no limit). putFile of R2Client reads the file itself (it does not take a
+ * stream), so it cannot be throttled midway: bytes sent (onProgress) are subtracted from the bucket, a negative bucket = "nợ" (debt) → the next
+ * transfer must wait until the debt is paid off. The average speed matches the limit; a single file may still run faster while it is being sent.
  */
 export class ByteRateLimiter {
     private tokens = 0;
@@ -176,7 +177,7 @@ export class ByteRateLimiter {
         if (!next) this.tokens = 0;
     }
 
-    /** byte / giây */
+    /** bytes / second */
     private get rate(): number {
         return (this.kbps * 1000) / 8;
     }
@@ -186,7 +187,7 @@ export class ByteRateLimiter {
         const dt = Math.max(0, t - this.last) / 1000;
         this.last = t;
         if (!this.kbps) return;
-        // Dồn tối đa 1 giây quỹ khi rảnh, tránh bùng nổ sau thời gian nghỉ dài
+        // Accumulate at most 1 second of budget while idle, to avoid a burst after a long pause
         this.tokens = Math.min(this.rate, this.tokens + dt * this.rate);
     }
 
@@ -196,7 +197,7 @@ export class ByteRateLimiter {
         this.tokens -= bytes;
     }
 
-    /** ms phải chờ trước khi bắt đầu lượt tải tiếp theo (0 = được tải ngay). */
+    /** ms to wait before starting the next transfer (0 = may start now). */
     waitMs(): number {
         if (!this.kbps) return 0;
         this.refill();
@@ -204,19 +205,19 @@ export class ByteRateLimiter {
     }
 }
 
-// ─── Kho lưu ─────────────────────────────────────────────────────────────────
+// ─── Storage ─────────────────────────────────────────────────────────────────
 
-/** Tên kho đang chọn cho câu báo ("R2" / "Google Drive") — xem ../storeLabel. */
+/** Name of the selected store used in messages ("R2" / "Google Drive"), see ../storeLabel. */
 export { storeLabelNow } from '../storeLabel';
 
-// ─── Lỗi R2 ──────────────────────────────────────────────────────────────────
+// ─── R2 errors ──────────────────────────────────────────────────────────────────
 
 /**
- * busy    — 429 / 5xx (CloudError 'R2_BUSY'): cả hàng đợi lùi chung.
- * network — mất mạng / hết thời gian: cả hàng đợi lùi chung.
- * auth    — token sai / thiếu quyền / chưa kết nối: dừng hàng đợi, báo người dùng.
- * bucket  — bucket không còn: dừng hàng đợi, báo người dùng.
- * other   — lỗi riêng của một file (đọc file, kích thước không khớp…): thử lại file đó sau.
+ * busy    : 429 / 5xx (CloudError 'R2_BUSY'): the whole queue backs off.
+ * network : no network / timed out: the whole queue backs off.
+ * auth    : wrong token / missing permission / not connected: stop the queue, notify the user.
+ * bucket  : the bucket no longer exists: stop the queue, notify the user.
+ * other   : an error for one file only (reading the file, size mismatch…): retry that file later.
  */
 export type R2ErrorKind = 'busy' | 'network' | 'auth' | 'bucket' | 'other';
 
@@ -228,23 +229,23 @@ export function classifyR2Error(err: unknown): R2ErrorKind {
     const status = Number(e.status ?? e.statusCode ?? 0) || 0;
     const message = String(e.message ?? '');
     if (code === 'R2_BUSY' || code === 'RATE_LIMITED' || status === 429 || status >= 500) return 'busy';
-    // R2_NOT_ENABLED / R2_CLOCK_SKEW: người dùng phải xử lý (bật R2, chỉnh giờ máy) → dừng như lỗi quyền
+    // R2_NOT_ENABLED / R2_CLOCK_SKEW: the user must fix it (turn on R2, correct the machine clock) → stop like a permission error
     if (code === 'NOT_CONNECTED' || code === 'R2_NOT_ENABLED' || code === 'R2_CLOCK_SKEW' || status === 401 || status === 403
         || /AUTH|FORBIDDEN|PERMISSION|DENIED|UNAUTHORI[SZ]ED|INVALID_?TOKEN|TOKEN_|SIGNATURE|CREDENTIAL|ACCESS_?KEY/i.test(code)) return 'auth';
-    // Chỉ "bucket không còn" mới dừng cả hàng đợi; 404 khác (R2_NO_UPLOAD, R2_NOT_FOUND) là lỗi riêng một file
+    // Only "bucket không còn" (bucket gone) stops the whole queue; other 404s (R2_NO_UPLOAD, R2_NOT_FOUND) are errors for one file only
     if (code === 'R2_NO_BUCKET' || /NO_?SUCH_?BUCKET|BUCKET_?NOT_?FOUND/i.test(code) || /NoSuchBucket/i.test(message)) return 'bucket';
     if (NETWORK_CODES.test(code) || /NETWORK|TIMEOUT|TIMED_?OUT/i.test(code) || /socket hang up|network|timed? ?out/i.test(message)) return 'network';
     return 'other';
 }
 
 export function errorText(err: unknown): string {
-    const msg = (err as { message?: unknown })?.message ?? err ?? 'Lỗi không xác định';
+    const msg = (err as { message?: unknown })?.message ?? err ?? tr('Lỗi không xác định');
     return String(msg).slice(0, 300);
 }
 
-// ─── File / ổ đĩa ────────────────────────────────────────────────────────────
+// ─── Files / disk ────────────────────────────────────────────────────────────
 
-/** sha256 (hex) đọc theo luồng 1 MiB — không nạp cả file vào RAM. */
+/** sha256 (hex) read as a stream in 1 MiB blocks (the whole file is not loaded into RAM). */
 export function sha256File(filePath: string): Promise<string> {
     return new Promise((resolve, reject) => {
         const hash = crypto.createHash('sha256');
@@ -255,7 +256,7 @@ export function sha256File(filePath: string): Promise<string> {
     });
 }
 
-/** Dung lượng còn trống (byte) của ổ chứa dir; null nếu không đọc được (fs.statfs không có / lỗi). */
+/** Free space (bytes) of the drive holding dir; null if it cannot be read (fs.statfs missing / failed). */
 export async function freeDiskBytes(dir: string): Promise<number | null> {
     try {
         const statfs = (fs.promises as unknown as { statfs?: (p: string) => Promise<{ bavail: number | bigint; bsize: number | bigint }> }).statfs;

@@ -1,4 +1,4 @@
-/** Thành phần dùng chung cho Cài đặt → Giới thiệu & Hướng dẫn sử dụng (introduction/*Panel.tsx). */
+/** Shared component for Settings → Introduction & User guide (introduction/*Panel.tsx). */
 import React from 'react';
 
 export function Badge({ text, color }: { text: string; color: string }) {

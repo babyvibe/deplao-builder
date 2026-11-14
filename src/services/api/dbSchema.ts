@@ -1,9 +1,9 @@
 /**
- * dbSchema.ts — bảng của Public API & Plugin.
+ * dbSchema.ts: tables for the Public API & Plugin.
  *
- * Tạo LAZY khi tính năng được dùng lần đầu trên mỗi file DB (workspace), không chạy
- * trong luồng khởi tạo DB của app → không ảnh hưởng người không dùng API.
- * Chỉ CREATE TABLE/INDEX IF NOT EXISTS, không ALTER bảng cũ.
+ * Created LAZILY the first time the feature is used on each DB file (workspace), not during
+ * the app's DB init flow → does not affect people who do not use the API.
+ * Only CREATE TABLE/INDEX IF NOT EXISTS, never ALTER existing tables.
  */
 
 export const API_SCHEMA_SQL = `
@@ -131,12 +131,12 @@ export const API_TABLES = [
     'webhook_deliveries', 'plugins', 'plugin_storage', 'plugin_logs',
 ] as const;
 
-/** Bề mặt DB tối thiểu mà các service API dùng (DatabaseService thật thoả mãn; test dùng node:sqlite). */
+/** Minimal DB surface used by the API services (the real DatabaseService satisfies it; tests use node:sqlite). */
 export interface ApiDb {
     exec(sql: string): void;
     run(sql: string, params?: any[]): void;
     runChanges(sql: string, params?: any[]): number;
-    /** INSERT và trả rowid mới. */
+    /** INSERT and return the new rowid. */
     runInsert(sql: string, params?: any[]): number;
     query<T = any>(sql: string, params?: any[]): T[];
     queryOne<T = any>(sql: string, params?: any[]): T | undefined;
@@ -147,13 +147,13 @@ export interface ApiDb {
 const ensured = new Set<string>();
 let dbProvider: (() => ApiDb) | null = null;
 
-/** Thay nguồn DB (test). null = DatabaseService.getInstance(). */
+/** Replace the DB source (tests). null = DatabaseService.getInstance(). */
 export function setApiDbProvider(provider: (() => ApiDb) | null): void {
     dbProvider = provider;
     ensured.clear();
 }
 
-/** Bảng API đã tồn tại trên DB hiện tại chưa (không tạo bảng). */
+/** Whether the API tables already exist on the current DB (does not create them). */
 export function apiTablesExist(): boolean {
     try {
         const db: ApiDb = dbProvider
@@ -168,7 +168,7 @@ export function apiTablesExist(): boolean {
     }
 }
 
-/** Cột thêm sau khi bảng đã tồn tại ở máy người dùng: [bảng, cột, kiểu]. */
+/** Columns added after the table already exists on users' machines: [table, column, type]. */
 const COLUMN_MIGRATIONS: Array<[string, string, string]> = [
     ['webhook_subscriptions', 'allow_private', 'INTEGER NOT NULL DEFAULT 0'],
 ];
@@ -180,7 +180,7 @@ function migrateColumns(db: ApiDb): void {
     }
 }
 
-/** DB đã đảm bảo có bảng API. Gọi ở mọi chỗ cần đọc/ghi bảng API. */
+/** Ensures the DB has the API tables. Call it wherever API tables are read or written. */
 export function apiDb(): ApiDb {
     const db: ApiDb = dbProvider
         ? dbProvider()

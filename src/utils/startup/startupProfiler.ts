@@ -1,15 +1,15 @@
 /**
- * Hồ sơ CPU lúc mở app — chẩn đoán khi Nhật ký báo "[Hiệu năng] Luồng chính bị chặn" / "Giao diện bận" mà không chỉ ra
- * được hàm nào (log chỉ có thời gian). Chỉ chạy khi được yêu cầu, một lần:
- *  - có file cờ `<appData>/Deplao/diagnostics/profile-next-startup` (đọc xong xoá ngay), hoặc
- *  - biến môi trường DEPLAO_PROFILE_STARTUP=1.
- * Ghi mẫu CPU mỗi 1 ms của main process (từ bootstrap) và của giao diện trong 120 s đầu → `<appData>/Deplao/diagnostics/
- * {main,renderer}-startup-<giờ>.cpuprofile` + `.meta.json` (mốc giờ để khớp với Nhật ký). Mở bằng Chrome DevTools
- * (Performance → Load profile) hoặc phân tích bằng script. Giữ 6 hồ sơ mới nhất.
+ * CPU profile when the app opens: diagnostics when Logs reports "[Hiệu năng] Luồng chính bị chặn" (main thread blocked) or "Giao diện bận" (UI busy) without naming
+ * a function (the log only has the time). Runs only when requested, once:
+ *  - a flag file `<appData>/Deplao/diagnostics/profile-next-startup` exists (read and deleted right away), or
+ *  - the environment variable DEPLAO_PROFILE_STARTUP=1.
+ * Writes a CPU sample every 1 ms of the main process (from bootstrap) and of the UI for the first 120 s → `<appData>/Deplao/diagnostics/
+ * {main,renderer}-startup-<time>.cpuprofile` + `.meta.json` (a time marker to match Logs). Open it with Chrome DevTools
+ * (Performance → Load profile) or analyze it with a script. Keeps the 6 newest profiles.
  *
- * KHÔNG gọi app.getPath() ở đây: startMainStartupProfile chạy trong bootstrap — hỏi getPath('userData') trước khi app có
- * tên "Deplao" làm Electron chốt thư mục "%APPDATA%/Electron" cho cả phiên → app mở một DB trống mới, tưởng mất hết dữ
- * liệu (sự cố 22/10/2026). Thư mục tự tính từ appData của hệ điều hành = userData của Deplao.
+ * DO NOT call app.getPath() here: startMainStartupProfile runs in bootstrap, and asking for getPath('userData') before the app has the name "Deplao"
+ * makes Electron lock the folder "%APPDATA%/Electron" for the whole session → the app opens a new, empty DB and looks like all data was lost (incident of 22/10/2026).
+ * The folder is computed from the OS appData = Deplao's userData.
  */
 import { app, type WebContents } from 'electron';
 import * as fs from 'fs';
@@ -17,7 +17,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as inspector from 'inspector';
 
-/** Logger nạp muộn: startMainStartupProfile chạy trong bootstrap, trước khi nạp main.ts (đo cả lúc nạp module). */
+/** Logger loaded late: startMainStartupProfile runs in bootstrap, before main.ts is loaded (it also measures the module loading). */
 const log = (level: 'log' | 'warn', message: string) => {
   try { require('../Logger').default[level](message); } catch { console[level](message); }
 };
@@ -29,19 +29,19 @@ const FLAG_FILE = 'profile-next-startup';
 
 let enabled: boolean | null = null;
 
-/** appData của Electron theo hệ điều hành (không hỏi Electron — xem đầu file). */
+/** Electron's appData for the OS (does not ask Electron, see the top of the file). */
 function appDataDir(): string {
   if (process.platform === 'win32') return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
   if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support');
   return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
 }
 
-/** = `<userData>/diagnostics` của Deplao (userData = appData/Deplao sau app.setName('Deplao')). */
+/** = Deplao's `<userData>/diagnostics` (userData = appData/Deplao after app.setName('Deplao')). */
 export function diagnosticsDir(): string {
   return path.join(appDataDir(), 'Deplao', 'diagnostics');
 }
 
-/** Lần mở app này có ghi hồ sơ không (đọc + xoá file cờ đúng một lần). */
+/** Whether this app launch writes a profile (reads and deletes the flag file exactly once). */
 export function startupProfilingEnabled(): boolean {
   if (enabled !== null) return enabled;
   enabled = process.env.DEPLAO_PROFILE_STARTUP === '1';
@@ -51,7 +51,7 @@ export function startupProfilingEnabled(): boolean {
       enabled = true;
       fs.rmSync(flag, { force: true });
     }
-  } catch { /* không đọc được thư mục → coi như không bật */ }
+  } catch { /* folder cannot be read → treat as not enabled */ }
   return enabled;
 }
 
@@ -75,10 +75,10 @@ async function saveProfile(kind: 'main' | 'renderer', profile: unknown, meta: Re
   await fs.promises.writeFile(`${base}.cpuprofile`, JSON.stringify(profile));
   await fs.promises.writeFile(`${base}.meta.json`, JSON.stringify(meta, null, 2));
   log('log', `[Hiệu năng] Đã ghi hồ sơ CPU ${kind === 'main' ? 'main process' : 'giao diện'}: ${base}.cpuprofile`);
-  try { pruneOldProfiles(dir); } catch { /* bỏ qua */ }
+  try { pruneOldProfiles(dir); } catch { /* ignore */ }
 }
 
-/** Main process: gọi trong electron/bootstrap.ts TRƯỚC khi nạp main.ts — hồ sơ gồm cả lúc nạp module + chờ app ready. */
+/** Main process: called in electron/bootstrap.ts BEFORE main.ts is loaded; the profile covers the module loading and the wait for app ready. */
 export function startMainStartupProfile(): void {
   if (!startupProfilingEnabled()) return;
   let readyAtWallMs: number | null = null;
@@ -101,13 +101,13 @@ export function startMainStartupProfile(): void {
           kind: 'main', wallStartMs, uptimeAtStartSec, readyAtWallMs, profileStartTimeUs: profile?.startTime, samplingUs: SAMPLING_US,
         }))
         .catch(err => log('warn', `[Hiệu năng] Không lưu được hồ sơ CPU main: ${err?.message || err}`))
-        .finally(() => { try { session.disconnect(); } catch { /* bỏ qua */ } });
+        .finally(() => { try { session.disconnect(); } catch { /* ignore */ } });
     }, PROFILE_MS);
     timer.unref?.();
   })().catch(err => log('warn', `[Hiệu năng] Không ghi được hồ sơ CPU main: ${err?.message || err}`));
 }
 
-/** Giao diện: gọi ngay sau khi tạo cửa sổ chính; bắt đầu ghi khi trang tải xong lần đầu. */
+/** UI: called right after the main window is created; starts recording when the page has loaded for the first time. */
 export function startRendererStartupProfile(contents: WebContents): void {
   if (!startupProfilingEnabled()) return;
   contents.once('did-finish-load', () => {
@@ -118,7 +118,7 @@ export function startRendererStartupProfile(contents: WebContents): void {
       await dbg.sendCommand('Profiler.setSamplingInterval', { interval: SAMPLING_US });
       await dbg.sendCommand('Profiler.start');
       const wallStartMs = Date.now();
-      // Mốc "N s sau khi tải giao diện" trong Nhật ký tính từ performance.timeOrigin của trang
+      // The "N s sau khi tải giao diện" (N s after the UI loaded) marker in Logs is measured from the page's performance.timeOrigin
       const origin: any = await dbg.sendCommand('Runtime.evaluate', { expression: 'performance.timeOrigin', returnByValue: true })
         .catch(() => null);
       log('log', `[Hiệu năng] Đang ghi hồ sơ CPU giao diện ${PROFILE_MS / 1000} s đầu (diagnostics)`);
@@ -130,7 +130,7 @@ export function startRendererStartupProfile(contents: WebContents): void {
             profileStartTimeUs: profile?.startTime, samplingUs: SAMPLING_US,
           }))
           .catch(err => log('warn', `[Hiệu năng] Không lưu được hồ sơ CPU giao diện: ${err?.message || err}`))
-          .finally(() => { try { dbg.detach(); } catch { /* bỏ qua */ } });
+          .finally(() => { try { dbg.detach(); } catch { /* ignore */ } });
       }, PROFILE_MS);
     })().catch(err => log('warn', `[Hiệu năng] Không ghi được hồ sơ CPU giao diện: ${err?.message || err}`));
   });

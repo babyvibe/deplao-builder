@@ -13,9 +13,11 @@ import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { formatMsgTime } from '@/lib/chat/messages/messageParser';
 import { CHANNEL, isZalo, isTelegram, isFacebook } from '@/lib/channels/channelHelper';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const PAGE_SIZE = 50;
-/** Ngay sau một lần tải lỗi, cuộn tới cuối chỉ thử lại sau chừng này (nút "Thử lại" thử ngay). */
+/** Right after a failed load, scrolling to the end retries only after this delay (the "Thử lại" (Retry) button retries at once). */
 const SCROLL_RETRY_COOLDOWN_MS = 2_000;
 
 type TabKey = 'recent' | 'friends' | 'groups' | 'categories';
@@ -24,12 +26,12 @@ type ForwardLocalLabel = { id: number; name: string; color: string; text_color?:
 const NO_LOCAL_LABELS: ForwardLocalLabel[] = [];
 const NO_LABEL_THREADS: Record<string, number[]> = {};
 
-/** Báo lỗi tải gọn ngay trong danh sách (chế độ nhân viên: mất kết nối BOSS) — không trông như "Không tìm thấy". */
+/** Show a compact load error in the list (employee mode: Boss connection lost), not "Không tìm thấy" (Not found). */
 function LoadFailedRow({ text, onRetry }: { text: string; onRetry: () => void }) {
   return (
     <div role="status" className="flex items-center justify-center gap-2 px-3 py-3 text-xs text-muted-foreground">
       <span>{text}</span>
-      <Button variant="link" size="sm" className="text-xs" onClick={() => onRetry()}>Thử lại</Button>
+      <Button variant="link" size="sm" className="text-xs" onClick={() => onRetry()}>{tr('Thử lại')}</Button>
     </div>
   );
 }
@@ -51,12 +53,12 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
   messages: any[];
   onClose: () => void;
   onForward: (messages: any[], targets: Array<{ threadId: string; threadType: number; accountId: string }>, composeText: string) => void;
-  /** share: link chia sẻ Telegram (lib/chat/links/chatLinks): chọn hội thoại, chữ được điền sẵn vào ô soạn tin, chưa gửi. */
+  /** share: Telegram share link (lib/chat/links/chatLinks): pick a conversation, the text is prefilled in the compose box, not sent yet. */
   mode?: 'forward' | 'share';
-  /** Chữ có sẵn ở ô nội dung (chia sẻ: URL + lời nhắn). */
+  /** Text already in the content box (share: URL + message). */
   initialText?: string;
 }) {
-  // Selector: modal không render lại với mọi thay đổi khác của store (tin nhắn, thông báo…)
+  // Selector: the modal does not re-render on every other store change (messages, notifications…)
   const { labels: allLabels, groupInfoCache } = useAppStore(useShallow(s => ({
     labels: s.labels, groupInfoCache: s.groupInfoCache,
   })));
@@ -78,19 +80,19 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
 
   // ── Pagination state ──
   const [contacts, setContacts] = useState<ContactItem[]>([]);
-  // Trang cuối đã tải THÀNH CÔNG (trang lỗi không tiến → cuộn / "Thử lại" tải lại đúng trang đó)
+  // Last page loaded SUCCESSFULLY (a failed page does not advance → scroll / "Thử lại" (Retry) reloads that same page)
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
-  // Trang vừa tải lỗi (chế độ nhân viên: mất kết nối BOSS) — giữ danh sách đang có, hiện "Thử lại"
+  // Page just failed to load (employee mode: Boss connection lost): keep the list, show "Thử lại" (Retry)
   const [contactsFailedPage, setContactsFailedPage] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
   const loadGenerationRef = useRef(0);
   const lastFailureAtRef = useRef(0);
 
-  // ── Local labels (theo tài khoản gửi; lần đọc lỗi giữ nhãn đang có của đúng tài khoản đó) ──
+  // ── Local labels (per sending account; a failed read keeps the labels of that same account) ──
   const [localLabelsByAccount, setLocalLabelsByAccount] = useState<Record<string, ForwardLocalLabel[]>>({});
   const [labelThreadsByAccount, setLabelThreadsByAccount] = useState<Record<string, Record<string, number[]>>>({});
   const [localLabelsFailed, setLocalLabelsFailed] = useState<Record<string, boolean>>({});
@@ -108,7 +110,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
   const effectiveLabelSource = isSelectedAccountZalo ? labelSource : 'local';
 
   // ── Load contacts from the selected sender account ──
-  // Lỗi đọc (chế độ nhân viên) → GIỮ danh sách + hasMore, không tiến trang; hiện "Thử lại" (không thành "Không tìm thấy")
+  // Read error (employee mode) → KEEP the list + hasMore, do not advance the page; show "Thử lại" (Retry), not "Không tìm thấy" (Not found)
   const loadContacts = useCallback(async (accountId: string, pageNum: number, searchQuery?: string, generation = loadGenerationRef.current) => {
     if (!accountId) return;
     if (loadingRef.current) return;
@@ -122,7 +124,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
         groups: { sortBy: 'last_message', sortDir: 'desc' },
         categories: { sortBy: 'name', sortDir: 'asc' },
       };
-      // "Bạn bè" tab: show all non-group contacts (includes Telegram 1-1, non-friend contacts)
+      // "Bạn bè" (Friends) tab: show all non-group contacts (includes Telegram 1-1, non-friend contacts)
       const contactTypeMap: Record<TabKey, string> = {
         recent: 'all', friends: 'all', groups: 'group', categories: 'all',
       };
@@ -214,20 +216,20 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
     }, 300);
   };
 
-  /** Trang tiếp theo (sau trang cuối đã tải thành công) — cũng là "thử lại" khi trang đó vừa lỗi. */
+  /** Next page (after the last successfully loaded page): also the retry when that page just failed. */
   const loadNextPage = () => {
     if (!selectedAccountId || loadingRef.current || !hasMore || search.trim()) return;
     void loadContacts(selectedAccountId, page + 1);
   };
 
-  /** Thử lại lần tải danh sách vừa lỗi (nút "Thử lại", kết nối BOSS phục hồi). */
+  /** Retry the list load that just failed ("Thử lại" (Retry) button, Boss connection restored). */
   const retryContacts = (): Promise<void> | void => {
     if (!selectedAccountId) return;
     if (contactsFailedPage !== null && contactsFailedPage > 0) {
       if (loadingRef.current) return;
       return loadContacts(selectedAccountId, contactsFailedPage);
     }
-    // Trang đầu (danh sách trống): tải lại từ đầu với từ khoá đang có
+    // First page (empty list): reload from the start with the current keyword
     loadGenerationRef.current += 1;
     loadingRef.current = false;
     const generation = loadGenerationRef.current;
@@ -239,14 +241,14 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
     const el = listRef.current;
     if (!el || loadingRef.current || !hasMore || search.trim()) return;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) {
-      // Ngay sau một lần lỗi: cuộn qua lại không bắn yêu cầu liên tục (nút "Thử lại" thử ngay)
+      // Right after an error: scrolling back and forth does not fire requests nonstop (the "Thử lại" (Retry) button retries at once)
       if (contactsFailedPage !== null && Date.now() - lastFailureAtRef.current < SCROLL_RETRY_COOLDOWN_MS) return;
       loadNextPage();
     }
   };
 
   // ── Load local labels from primary account ──
-  // Lỗi đọc → giữ nhãn / gán nhãn đang có của đúng tài khoản đó (không thay bằng rỗng), hiện "Thử lại" trên hàng nhãn
+  // Read error → keep the labels / label assignments of that same account (not replaced with empty), show "Thử lại" (Retry) on the label row
   const loadLocalLabels = useCallback(async (accountId: string) => {
     const [labelsRes, threadsRes] = await Promise.all([
       DataAccessor.getLocalLabels({ zaloId: accountId }).catch(() => null),
@@ -278,7 +280,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
     void loadLocalLabels(primaryAccountId);
   }, [primaryAccountId, loadLocalLabels]);
 
-  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại Nhãn Local + danh sách nếu lần tải trước lỗi / còn trống
+  // Employee mode: Boss connection restored → reload the Local labels + list if the last load failed or the list is still empty
   useEmployeeResync(() => {
     const tasks: Array<Promise<unknown> | void> = [];
     if (primaryAccountId) tasks.push(loadLocalLabels(primaryAccountId));
@@ -326,14 +328,14 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
   // ── Preview text ──
   const msgCount = messages.length;
   const previewText = msgCount === 1
-    ? (() => { try { const c = messages[0].content; if (!c || c === 'null') return '[Tin nhắn]'; const p = JSON.parse(c); if (typeof p === 'string') return p; if (p?.title) return `File: ${p.title}`; if (p?.href || p?.thumb) return '[Hình ảnh]'; if (p?.msg) return String(p.msg); return '[Tin nhắn]'; } catch { return messages[0].content || '[Tin nhắn]'; } })()
-    : `[${msgCount} tin nhắn]`;
+    ? (() => { try { const c = messages[0].content; if (!c || c === 'null') return tr('[Tin nhắn]'); const p = JSON.parse(c); if (typeof p === 'string') return p; if (p?.title) return `File: ${p.title}`; if (p?.href || p?.thumb) return tr('[Hình ảnh]'); if (p?.msg) return String(p.msg); return tr('[Tin nhắn]'); } catch { return messages[0].content || tr('[Tin nhắn]'); } })()
+    : tr('[{{msgCount}} tin nhắn]', { msgCount });
 
   const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-    { key: 'recent', label: 'Gần nhất', icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
-    { key: 'friends', label: 'Bạn bè', icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> },
-    { key: 'groups', label: 'Nhóm', icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
-    { key: 'categories', label: 'Nhãn', icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> },
+    { key: 'recent', label: tr('Gần nhất'), icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
+    { key: 'friends', label: tr('Bạn bè'), icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> },
+    { key: 'groups', label: tr('Nhóm'), icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
+    { key: 'categories', label: tr('Nhãn'), icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> },
   ];
 
   const grpCache = useMemo(() => groupInfoCache[selectedAccountId] || {}, [selectedAccountId, groupInfoCache]);
@@ -361,10 +363,10 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
             <h2 className="text-foreground font-semibold text-base">
-              {mode === 'share' ? 'Chia sẻ tới' : `Chuyển tiếp ${msgCount > 1 ? `${msgCount} tin nhắn` : 'tin nhắn'}`}
+              {mode === 'share' ? tr('Chia sẻ tới') : tr('Chuyển tiếp {{v1}}', { v1: msgCount > 1 ? tr('{{msgCount}} tin nhắn', { msgCount }) : tr('tin nhắn') })}
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[350px]">
-              {mode === 'share' ? 'Điền sẵn vào ô soạn tin, chưa gửi' : previewText}
+              {mode === 'share' ? tr('Điền sẵn vào ô soạn tin, chưa gửi') : previewText}
             </p>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
@@ -377,7 +379,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
           <textarea
             value={composeText}
             onChange={e => setComposeText(e.target.value)}
-            placeholder="Nhập nội dung kèm..."
+            placeholder={tr('Nhập nội dung kèm...')}
             rows={2}
             className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground resize-none focus:outline-none focus:border-blue-500"
           />
@@ -386,13 +388,13 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
         {/* Sender account selector */}
         {accounts.length > 0 && (
           <div className="px-4 py-2 border-b border-border flex-shrink-0 relative" ref={accountDropdownRef}>
-            <p className="text-[11px] text-muted-foreground mb-1.5 font-medium">Tài khoản gửi:</p>
+            <p className="text-[11px] text-muted-foreground mb-1.5 font-medium">{tr('Tài khoản gửi:')}</p>
             {/* Trigger */}
             <button
               onClick={() => setShowAccountDropdown(!showAccountDropdown)}
               className="w-full flex items-center gap-2 px-3 py-2 bg-muted border border-input rounded-lg text-sm text-left hover:border-border-strong transition-colors">
               {!selectedAccount ? (
-                <span className="text-subtle-foreground">Chọn tài khoản...</span>
+                <span className="text-subtle-foreground">{tr('Chọn tài khoản...')}</span>
               ) : (
                 <span className="text-foreground truncate">{accountName(selectedAccount)}</span>
               )}
@@ -463,7 +465,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
               <div className="flex items-center gap-1 px-3 pt-2 pb-1">
                 <button onClick={() => { setLabelSource('local'); setSelectedLabelId(null); }}
                   className={`text-[11px] px-3 py-1 rounded-full border transition-colors ${labelSource === 'local' ? 'bg-blue-600 border-blue-500 text-white' : 'border-input text-muted-foreground hover:border-border-strong'}`}>
-                  Local</button>
+                  {tr('Local')}</button>
                 <button onClick={() => { setLabelSource('zalo'); setSelectedLabelId(null); }}
                   className={`text-[11px] px-3 py-1 rounded-full border transition-colors ${labelSource === 'zalo' ? 'bg-blue-600 border-blue-500 text-white' : 'border-input text-muted-foreground hover:border-border-strong'}`}>
                   Zalo</button>
@@ -472,7 +474,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
             <div className="px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto">
               <button onClick={() => setSelectedLabelId(null)}
                 className={`flex-shrink-0 text-xs px-2.5 py-1 rounded-full border transition-colors ${selectedLabelId === null ? 'bg-blue-600 border-blue-500 text-white' : 'border-input text-muted-foreground hover:border-border-strong'}`}>
-                Tất cả</button>
+                {tr('Tất cả')}</button>
               {(effectiveLabelSource === 'local' ? localLabels : labels).map(l => (
                 <button key={l.id}
                   onClick={() => setSelectedLabelId(selectedLabelId === l.id ? null : l.id)}
@@ -482,16 +484,16 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
                   <span>{effectiveLabelSource === 'local' ? l.name : (l as any).text}</span>
                 </button>
               ))}
-              {/* Nhãn Local đọc lỗi (chế độ nhân viên): thử lại gọn ngay trên hàng nhãn thay vì trông như không có nhãn */}
+              {/* Local label read failed (employee mode): a compact retry right on the label row, instead of looking like there are no labels */}
               {effectiveLabelSource === 'local' && localLabelsFailedNow && (
                 <button
                   type="button"
                   onClick={() => { if (primaryAccountId) void loadLocalLabels(primaryAccountId); }}
                   className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-input text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors"
-                  title="Không tải được Nhãn Local — bấm để thử lại"
+                  title={tr('Không tải được Nhãn Local — bấm để thử lại')}
                 >
                   <RefreshIcon className="w-3 h-3" />
-                  <span>{localLabels.length === 0 ? 'Không tải được nhãn · Thử lại' : 'Thử lại'}</span>
+                  <span>{localLabels.length === 0 ? tr('Không tải được nhãn · Thử lại') : tr('Thử lại')}</span>
                 </button>
               )}
             </div>
@@ -506,7 +508,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
               value={search}
               onChange={e => handleSearch(e.target.value)}
               autoFocus
-              placeholder="Tìm theo tên, SĐT, ID..."
+              placeholder={tr('Tìm theo tên, SĐT, ID...')}
               className="w-full bg-muted border border-input rounded-full pl-9 pr-3 py-1.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
             />
           </div>
@@ -517,25 +519,25 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
           {loading && contacts.length === 0 && (
             <div className="flex items-center justify-center py-12 text-muted-foreground text-sm gap-2">
               <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              Đang tải...
+              {tr('Đang tải...')}
             </div>
           )}
           {!loading && filtered.length === 0 && (
             contacts.length === 0 && contactsFailedPage === 0 ? (
-              // Lần tải đầu lỗi (chế độ nhân viên: mất kết nối BOSS) ≠ "Không tìm thấy"
+              // First load failed (employee mode: Boss connection lost) ≠ "Không tìm thấy" (Not found)
               <div className="py-9">
-                <LoadFailedRow text="Không tải được danh sách liên hệ" onRetry={() => { void retryContacts(); }} />
+                <LoadFailedRow text={tr('Không tải được danh sách liên hệ')} onRetry={() => { void retryContacts(); }} />
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-2 opacity-40"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                <p className="text-sm">Không tìm thấy</p>
+                <p className="text-sm">{tr('Không tìm thấy')}</p>
               </div>
             )
           )}
           {filtered.map(c => {
             const isSelected = selected.has(c.contact_id);
-            // Telegram: hội thoại với chính mình (Tin nhắn đã lưu) = My Documents; dòng mang tên + ảnh của mình
+            // Telegram: the conversation with yourself (Saved Messages) = My Documents; the row carries your own name + image
             const rowAccount = accounts.find(a => a.zalo_id === c._accountId);
             const savedMessages = isSavedMessagesAccount(rowAccount) && isMyDocumentsContact(c, rowAccount);
             return (
@@ -567,7 +569,7 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-foreground truncate">{savedMessages ? MY_DOCUMENTS_NAME : (c.alias || c.display_name || c.contact_id)}</p>
                   {c.contact_type === 'group'
-                    ? <p className="text-xs text-muted-foreground">Nhóm</p>
+                    ? <p className="text-xs text-muted-foreground">{tr('Nhóm')}</p>
                     : c.last_message_time
                       ? <p className="text-xs text-muted-foreground">{formatMsgTime(c.last_message_time)}</p>
                       : null}
@@ -579,16 +581,16 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
           {loading && contacts.length > 0 && (
             <div className="flex items-center justify-center py-3 text-muted-foreground text-xs gap-2">
               <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              Đang tải thêm...
+              {tr('Đang tải thêm...')}
             </div>
           )}
           {!loading && contactsFailedPage !== null && contactsFailedPage > 0 && contacts.length > 0 ? (
-            // Trang tiếp theo lỗi: giữ danh sách, thử lại đúng trang đó
-            <LoadFailedRow text="Không tải được thêm" onRetry={() => { void retryContacts(); }} />
+            // Next page failed: keep the list, retry that same page
+            <LoadFailedRow text={tr('Không tải được thêm')} onRetry={() => { void retryContacts(); }} />
           ) : !loading && hasMore && !search.trim() && contacts.length > 0 && (
             <button onClick={loadNextPage}
               className="w-full py-3 text-xs text-blue-400 hover:text-blue-300 hover:bg-muted/50 transition-colors">
-              Xem thêm ({contacts.length}/{totalCount})
+              {trx('Xem thêm ({{count}}/{{totalCount}})', { count: contacts.length, totalCount })}
             </button>
           )}
         </div>
@@ -597,11 +599,11 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
         {selected.size > 0 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-border flex-shrink-0">
             <button onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-              Bỏ chọn tất cả
+              {tr('Bỏ chọn tất cả')}
             </button>
             <button onClick={handleForward}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">
-              {mode === 'share' ? 'Chia sẻ' : 'Chuyển tiếp'} ({selected.size})
+              {mode === 'share' ? tr('Chia sẻ') : tr('Chuyển tiếp')} ({selected.size})
             </button>
           </div>
         )}

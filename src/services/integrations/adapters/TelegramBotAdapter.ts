@@ -1,13 +1,14 @@
 /**
- * TelegramBotAdapter.ts - Integration adapter cho Telegram Bot API
+ * TelegramBotAdapter.ts - Integration adapter for the Telegram Bot API
  * 
- * Lưu botToken encrypted, validate qua getMe, gửi tin nhắn qua sendMessage.
- * Dùng chung cho: notify.telegram node + trigger.telegramCommand (Phase 1C).
+ * Stores botToken encrypted, validates it via getMe, sends messages via sendMessage.
+ * Shared by: notify.telegram node + trigger.telegramCommand (Phase 1C).
  */
 
 import axios from 'axios';
 import { IntegrationAdapter, IntegrationConfig, TestResult } from '../IntegrationAdapter';
 import Logger from '../../../utils/Logger';
+import { tr } from '../../../shared/i18n';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const REQUEST_TIMEOUT = 10000;
@@ -29,11 +30,11 @@ export class TelegramBotAdapter extends IntegrationAdapter {
   }
 
   /**
-   * Validate bot token bằng cách gọi getMe
+   * Validate the bot token by calling getMe
    */
   async testConnection(): Promise<TestResult> {
     if (!this.botToken) {
-      return { success: false, message: 'Thiếu Bot Token' };
+      return { success: false, message: tr('Thiếu Bot Token') };
     }
 
     try {
@@ -42,18 +43,18 @@ export class TelegramBotAdapter extends IntegrationAdapter {
         const bot = res.data.result;
         return {
           success: true,
-          message: `Kết nối thành công! Bot: @${bot.username} (${bot.first_name})`,
+          message: tr('Kết nối thành công! Bot: @{{username}} ({{first_name}})', { username: bot.username, first_name: bot.first_name }),
         };
       }
-      return { success: false, message: 'Token không hợp lệ' };
+      return { success: false, message: tr('Token không hợp lệ') };
     } catch (err: any) {
-      const msg = err.response?.data?.description || err.message || 'Lỗi kết nối';
-      return { success: false, message: `Lỗi: ${msg}` };
+      const msg = err.response?.data?.description || err.message || tr('Lỗi kết nối');
+      return { success: false, message: tr('Lỗi: {{msg}}', { msg }) };
     }
   }
 
   /**
-   * Gửi tin nhắn qua Telegram Bot API
+   * Send a message via the Telegram Bot API
    */
   async executeAction(action: string, params: Record<string, any>): Promise<any> {
     switch (action) {
@@ -64,12 +65,12 @@ export class TelegramBotAdapter extends IntegrationAdapter {
       case 'getUpdates':
         return this.getUpdates(params.offset, params.limit, params.timeout);
       default:
-        throw new Error(`Action không hỗ trợ: ${action}`);
+        throw new Error(tr('Action không hỗ trợ: {{action}}', { action }));
     }
   }
 
   /**
-   * Gửi tin nhắn
+   * Send a message
    */
   async sendMessage(chatId: string, text: string, parseMode?: string): Promise<any> {
     const payload: Record<string, any> = {
@@ -86,7 +87,7 @@ export class TelegramBotAdapter extends IntegrationAdapter {
   }
 
   /**
-   * Lấy thông tin bot
+   * Get bot info
    */
   async getMe(): Promise<any> {
     const res = await axios.get(`${this.apiBase}/getMe`, { timeout: REQUEST_TIMEOUT });
@@ -94,7 +95,7 @@ export class TelegramBotAdapter extends IntegrationAdapter {
   }
 
   /**
-   * Lấy updates (dùng cho polling)
+   * Get updates (used for polling)
    */
   async getUpdates(offset?: number, limit?: number, timeout?: number): Promise<any[]> {
     const params: Record<string, any> = {};

@@ -1,9 +1,9 @@
 /**
- * BulkMarkRepliedModal — "Đánh dấu đã trả lời hàng loạt" (menu ⋮), như "Tự động đánh dấu đã đọc": chọn khoảng thời gian
- * tin cuối, xem trước số hội thoại CHƯA TRẢ LỜI (1:1, tin cuối của khách), rồi đánh dấu đã trả lời mà không gửi tin.
+ * BulkMarkRepliedModal: "Đánh dấu đã trả lời hàng loạt" (Bulk mark as replied) (⋮ menu), like "Tự động đánh dấu đã đọc" (Auto mark as read): choose the time range of the
+ * last message, preview the number of conversations "chưa trả lời" (not replied) (1:1, the customer sent the last message), then mark them as replied without sending a message.
  *
- * Chỉ trong app (Zalo / Facebook / Telegram không có trạng thái "đã trả lời"); lưu ở DB (Boss) nên máy nhân viên cũng
- * thấy. Khách nhắn tiếp sau đó → hội thoại tự thành "chưa trả lời" lại (shared/chat/replyState: reply_marked_at).
+ * In-app only (Zalo / Facebook / Telegram have no "đã trả lời" (replied) status); stored in the DB (Boss) so the employee machine also
+ * sees it. If the customer writes again afterwards, the conversation becomes "chưa trả lời" (not replied) again (shared/chat/replyState: reply_marked_at).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChatIcon, CheckCircleIcon, CloseIcon } from '@/components/common/icons';
@@ -15,11 +15,13 @@ import { useAccountStore } from '@/store/accounts/accountStore';
 import {
   AUTO_READ_PRESETS, AutoReadPreset, isValidAutoReadRange, resolveAutoReadRange,
 } from '@/lib/chat/read/autoMarkRead';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface Props {
-  /** Tài khoản trong phạm vi (tài khoản đang xem, hoặc các tài khoản Gộp trang của kênh đang lọc). */
+  /** Accounts in scope (the account being viewed, or the merged-inbox accounts of the channel being filtered). */
   accountIds: string[];
-  /** "Shop A", "3 tài khoản"… */
+  /** "Shop A", "3 tài khoản" (3 accounts)… */
   scopeLabel: string;
   onClose: () => void;
 }
@@ -31,7 +33,7 @@ interface UnrepliedConversation {
   name: string;
 }
 
-/** Số hội thoại mỗi lần gửi lệnh (danh sách id trong một câu lệnh / một yêu cầu REST). */
+/** Number of conversations sent per command (a list of ids in one command / one REST request). */
 const MARK_CHUNK = 200;
 const CHANNEL_NAME: Record<string, string> = { zalo: 'Zalo', facebook: 'Facebook', telegram_user: 'Telegram', telegram_bot: 'Telegram Bot' };
 
@@ -51,7 +53,7 @@ export default function BulkMarkRepliedModal({ accountIds, scopeLabel, onClose }
   const rangeValid = isValidAutoReadRange(range);
   const accountsKey = accountIds.join(',');
 
-  // Xem trước: hội thoại chưa trả lời khớp lựa chọn (đọc DB — nhân viên đọc DB Boss)
+  // Preview: unreplied conversations that match the selection (reads the DB: an employee reads Boss's DB)
   useEffect(() => {
     if (phase !== 'options') return;
     if (!rangeValid || accountIds.length === 0) { setMatches([]); return; }
@@ -106,7 +108,7 @@ export default function BulkMarkRepliedModal({ accountIds, scopeLabel, onClose }
           useChatStore.getState().applyReplyStates(accountId, res.items);
           count += res.items.length;
         } else {
-          failures.push(res.error || 'Không cập nhật được');
+          failures.push(res.error || tr('Không cập nhật được'));
         }
         setDone(count);
       }
@@ -133,10 +135,10 @@ export default function BulkMarkRepliedModal({ accountIds, scopeLabel, onClose }
             <ChatIcon className="w-5 h-5" />
           </span>
           <div className="flex-1 min-w-0">
-            <p className="text-[15px] font-semibold text-foreground">Đánh dấu đã trả lời hàng loạt</p>
-            <p className="text-xs text-muted-foreground truncate">Phạm vi: {scopeLabel}</p>
+            <p className="text-[15px] font-semibold text-foreground">{tr('Đánh dấu đã trả lời hàng loạt')}</p>
+            <p className="text-xs text-muted-foreground truncate">{trx('Phạm vi: {{scopeLabel}}', { scopeLabel })}</p>
           </div>
-          <button type="button" onClick={onClose} disabled={phase === 'running'} title="Đóng (Esc)"
+          <button type="button" onClick={onClose} disabled={phase === 'running'} title={tr('Đóng (Esc)')}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40">
             <CloseIcon className="w-4 h-4" />
           </button>
@@ -145,7 +147,7 @@ export default function BulkMarkRepliedModal({ accountIds, scopeLabel, onClose }
         {phase === 'running' ? (
           <div className="px-5 py-5">
             <div className="flex items-center justify-between text-sm mb-1.5">
-              <span className="text-foreground font-medium">Đang đánh dấu {done}/{total}</span>
+              <span className="text-foreground font-medium">{trx('Đang đánh dấu {{done}}/{{total}}', { done, total })}</span>
               <span className="text-muted-foreground tabular-nums">{percent}%</span>
             </div>
             <div className="h-2 rounded-full bg-muted overflow-hidden">
@@ -159,8 +161,8 @@ export default function BulkMarkRepliedModal({ accountIds, scopeLabel, onClose }
                 <CheckCircleIcon className="w-5 h-5" />
               </span>
               <div>
-                <p className="text-sm font-semibold text-foreground">Đã đánh dấu đã trả lời {done} hội thoại</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Khách nhắn tiếp thì hội thoại tự chuyển lại "Chưa trả lời".</p>
+                <p className="text-sm font-semibold text-foreground">{trx('Đã đánh dấu đã trả lời {{done}} hội thoại', { done })}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{tr('Khách nhắn tiếp thì hội thoại tự chuyển lại "Chưa trả lời".')}</p>
               </div>
             </div>
             {errors.length > 0 && (
@@ -172,7 +174,7 @@ export default function BulkMarkRepliedModal({ accountIds, scopeLabel, onClose }
         ) : (
           <div className="px-5 py-4 space-y-4">
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thời gian tin nhắn cuối</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{tr('Thời gian tin nhắn cuối')}</p>
               <div className="flex flex-wrap gap-1.5">
                 {AUTO_READ_PRESETS.map(option => (
                   <button key={option.id} type="button" onClick={() => setPreset(option.id)}
@@ -188,38 +190,36 @@ export default function BulkMarkRepliedModal({ accountIds, scopeLabel, onClose }
               {preset === 'custom' && (
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label className="text-xs text-muted-foreground">
-                    Từ ngày
-                    <DateInputVN value={customFrom} max={customTo || undefined} onChange={e => setCustomFrom(e.target.value)}
-                      className="mt-1 w-full h-9 px-2 rounded-lg border border-input bg-background text-sm text-foreground" />
+                    {trx('Từ ngày<0/>', { 0: <DateInputVN value={customFrom} max={customTo || undefined} onChange={e => setCustomFrom(e.target.value)}
+                      className="mt-1 w-full h-9 px-2 rounded-lg border border-input bg-background text-sm text-foreground" /> })}
                   </label>
                   <label className="text-xs text-muted-foreground">
-                    Đến ngày
-                    <DateInputVN value={customTo} min={customFrom || undefined} onChange={e => setCustomTo(e.target.value)}
-                      className="mt-1 w-full h-9 px-2 rounded-lg border border-input bg-background text-sm text-foreground" />
+                    {trx('Đến ngày<0/>', { 0: <DateInputVN value={customTo} min={customFrom || undefined} onChange={e => setCustomTo(e.target.value)}
+                      className="mt-1 w-full h-9 px-2 rounded-lg border border-input bg-background text-sm text-foreground" /> })}
                   </label>
-                  {!rangeValid && <p className="col-span-2 text-xs text-red-500">"Từ ngày" phải trước "Đến ngày".</p>}
-                  {rangeValid && !customFrom && !customTo && <p className="col-span-2 text-xs text-muted-foreground">Để trống cả 2 ngày = tất cả.</p>}
+                  {!rangeValid && <p className="col-span-2 text-xs text-red-500">{tr('"Từ ngày" phải trước "Đến ngày".')}</p>}
+                  {rangeValid && !customFrom && !customTo && <p className="col-span-2 text-xs text-muted-foreground">{tr('Để trống cả 2 ngày = tất cả.')}</p>}
                 </div>
               )}
             </div>
 
             <label className="flex items-start gap-2.5 cursor-pointer">
               <input type="checkbox" checked={includeOthers} onChange={e => setIncludeOthers(e.target.checked)} className="mt-0.5 accent-blue-500 w-4 h-4" />
-              <span className="text-sm text-foreground">Gồm cả hội thoại trong "Khác (lưu trữ)"</span>
+              <span className="text-sm text-foreground">{tr('Gồm cả hội thoại trong "Khác (lưu trữ)"')}</span>
             </label>
 
             <p className="text-xs text-muted-foreground">
-              Chỉ hội thoại 1:1 mà tin cuối là của khách. Chỉ đánh dấu trong app, không gửi tin — Zalo / Facebook / Telegram không có trạng thái "đã trả lời".
+              {tr('Chỉ hội thoại 1:1 mà tin cuối là của khách. Chỉ đánh dấu trong app, không gửi tin — Zalo / Facebook / Telegram không có trạng thái "đã trả lời".')}
             </p>
 
             <div className="rounded-xl border border-border bg-muted/40 px-3 py-2.5 min-h-[52px] flex items-center">
               {scanning || matches === null ? (
-                <span className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner size={4} /> Đang tìm hội thoại chưa trả lời…</span>
+                <span className="flex items-center gap-2 text-sm text-muted-foreground">{trx('<0/> Đang tìm hội thoại chưa trả lời…', { 0: <Spinner size={4} /> })}</span>
               ) : matches.length === 0 ? (
-                <span className="text-sm text-muted-foreground">Không có hội thoại chưa trả lời nào phù hợp.</span>
+                <span className="text-sm text-muted-foreground">{tr('Không có hội thoại chưa trả lời nào phù hợp.')}</span>
               ) : (
                 <div className="min-w-0">
-                  <p className="text-sm text-foreground">Tìm thấy <b>{matches.length}</b> hội thoại chưa trả lời</p>
+                  <p className="text-sm text-foreground">{trx('Tìm thấy <0>{{count}}</0> hội thoại chưa trả lời', { 0: <b />, count: matches.length })}</p>
                   <p className="text-xs text-muted-foreground truncate">
                     {byChannel.map(([channel, count]) => `${CHANNEL_NAME[channel] || channel}: ${count}`).join(' · ')}
                     {' · '}
@@ -235,15 +235,15 @@ export default function BulkMarkRepliedModal({ accountIds, scopeLabel, onClose }
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border">
           {phase === 'done' ? (
             <>
-              <button type="button" onClick={() => { setPhase('options'); setMatches(null); }} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-foreground/80 hover:bg-muted transition-colors">Chạy lại</button>
-              <button type="button" onClick={onClose} className="h-9 px-4 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white-important transition-colors">Đóng</button>
+              <button type="button" onClick={() => { setPhase('options'); setMatches(null); }} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-foreground/80 hover:bg-muted transition-colors">{tr('Chạy lại')}</button>
+              <button type="button" onClick={onClose} className="h-9 px-4 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white-important transition-colors">{tr('Đóng')}</button>
             </>
           ) : (
             <>
-              <button type="button" onClick={onClose} disabled={phase === 'running'} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-foreground/80 hover:bg-muted transition-colors disabled:opacity-50">Huỷ</button>
+              <button type="button" onClick={onClose} disabled={phase === 'running'} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-foreground/80 hover:bg-muted transition-colors disabled:opacity-50">{tr('Huỷ')}</button>
               <button type="button" onClick={() => { void run(); }} disabled={phase === 'running' || !matches?.length || scanning || !rangeValid}
                 className="h-9 px-4 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white-important transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                Đánh dấu đã trả lời{matches?.length ? ` (${matches.length})` : ''}
+                {trx('Đánh dấu đã trả lời{{v1}}', { v1: matches?.length ? ` (${matches.length})` : '' })}
               </button>
             </>
           )}

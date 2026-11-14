@@ -1,19 +1,26 @@
 /**
- * platformOrderAdapters - Chuẩn hoá dữ liệu đơn hàng cho từng nền tảng POS
+ * platformOrderAdapters - normalizes order data for each POS platform
  *
- * Mỗi nền tảng có cấu trúc API khác nhau:
+ * Each platform has a different API structure:
  * - KiotViet:  orderDetails[], customer{id, name, contactNumber}, branchId
  * - Haravan:   line_items[], customer{first_name, phone, email}, shipping_address{...}
  * - Sapo:      line_items[], customer{}, shipping_address{}, source_name
  * - Nhanh.vn:  info{}, channel{appOrderId}, shippingAddress{}, products[], payment{}
  * - Pancake:   customer{}, items[], shippingAddress{}, paymentMethod, note
  *
- * Adapter nhận generic OrderData → trả về object đúng format API từng nền tảng.
+ * An adapter takes generic OrderData → returns an object in the exact API format of each platform.
  */
 
-import { getProvinceName, getDistrictName, getWardName, stripAdministrativePrefix } from './vnDivisions';
+import {
+  getProvinceName, getDistrictName, getWardName, stripAdministrativePrefix,
+  getProvinceNameV2, getWardNameV2,
+} from './vnDivisions';
+import { tr } from '../../../../shared/i18n';
 
 // ─── Generic Order Data (internal) ──────────────────────────────────────────
+
+/** 'new' = 2-level units after 01/07/2025 (province + ward, no district); 'old' = 3-level units. */
+export type AddressModel = 'new' | 'old';
 
 export interface GenericOrderData {
   branchId?: string | number;
@@ -21,13 +28,16 @@ export interface GenericOrderData {
     name: string;
     phone: string;
     email: string;
+    /** Missing = 'old' (orders built before the 2-level data existed). */
+    addressModel?: AddressModel;
     provinceId: string;
+    /** Empty for a new (2-level) address. */
     districtId: string;
     wardId: string;
     provinceName?: string;
     districtName?: string;
     wardName?: string;
-    address: string; // số nhà, tên đường
+    address: string; // house number, street name
   };
   items: Array<{
     productId: string;
@@ -44,26 +54,42 @@ export interface GenericOrderData {
   note: string;
 }
 
+/** Names of the picked address for either model + the full one-line address. */
+function addressParts(customer: GenericOrderData['customer']) {
+  const isNew = customer.addressModel === 'new';
+  const provinceName = customer.provinceName
+    || (isNew ? getProvinceNameV2(customer.provinceId) : getProvinceName(customer.provinceId));
+  const districtName = isNew ? '' : (customer.districtName || getDistrictName(customer.provinceId, customer.districtId));
+  const wardName = customer.wardName
+    || (isNew ? getWardNameV2(customer.wardId) : getWardName(customer.provinceId, customer.districtId, customer.wardId));
+  const fullAddress = [customer.address, wardName, districtName, provinceName].filter(Boolean).join(', ');
+  return { isNew, provinceName, districtName, wardName, fullAddress };
+}
+
 // ─── KiotViet ───────────────────────────────────────────────────────────────
-// Docs: https://www.kiotviet.vn/huong-dan-su-dung-api/
-// POST /orders - body: { branchId, customerId?, orderDetails[], discount, totalPayment, ... }
+// Docs: https://www.kiotviet.vn/huong-dan-su-dung-kiotviet/retail-ket-noi-api/public-api/ (2.5.3 Thêm mới đặt hàng)
+// POST /orders - body: { branchId, customer{}, orderDetails[], discount, method, totalPayment, orderDelivery{} }
+
+/** Paid when the order is created → KiotViet `method`; COD is paid later, so no payment is recorded. */
+const KIOTVIET_PAID_METHOD: Record<string, string> = { cash: 'Cash', bank_transfer: 'Transfer', card: 'Card' };
 
 function toKiotViet(data: GenericOrderData) {
-  const provinceName = data.customer.provinceName || getProvinceName(data.customer.provinceId);
-  const districtName = data.customer.districtName || getDistrictName(data.customer.provinceId, data.customer.districtId);
-  const wardName = data.customer.wardName || getWardName(data.customer.provinceId, data.customer.districtId, data.customer.wardId);
-  const fullAddress = [data.customer.address, wardName, districtName, provinceName].filter(Boolean).join(', ');
+  const address = addressParts(data.customer);
+  const name = data.customer.name || tr('Khách vãng lai');
   const branchId = data.branchId != null && String(data.branchId).trim() !== ''
     ? Number(data.branchId)
     : undefined;
+  const paidMethod = KIOTVIET_PAID_METHOD[data.paymentMethod];
 
   return {
     ...(branchId != null && !Number.isNaN(branchId) ? { branchId } : {}),
-    // Nếu không có customerId → KiotViet tự tạo khách từ thông tin bên dưới
-    customerName: data.customer.name || 'Khách vãng lai',
-    customerPhone: data.customer.phone || undefined,
-    customerEmail: data.customer.email || undefined,
-    customerAddress: fullAddress || undefined,
+    // customer{} without an id: KiotViet creates the customer from these fields
+    customer: {
+      name,
+      ...(data.customer.phone ? { contactNumber: data.customer.phone } : {}),
+      ...(data.customer.email ? { email: data.customer.email } : {}),
+      ...(address.fullAddress ? { address: address.fullAddress } : {}),
+    },
     orderDetails: data.items.map(item => ({
       productId: Number(item.productId) || item.productId,
       productCode: item.productCode,
@@ -73,43 +99,33 @@ function toKiotViet(data: GenericOrderData) {
       note: '',
     })),
     discount: data.discount,
-    totalPayment: data.totalPayment,
     description: data.note || undefined,
-    // KiotViet payment methods:
-    // 1 = Tiền mặt, 2 = Chuyển khoản, 3 = Thẻ, 4 = COD
-    payments: [{
-      method: data.paymentMethod === 'cash' ? 1
-        : data.paymentMethod === 'bank_transfer' ? 2
-        : data.paymentMethod === 'card' ? 3
-        : 4, // COD / default
-      amount: data.totalPayment,
-    }],
+    // totalPayment = what the customer has already paid
+    ...(paidMethod ? { method: paidMethod, totalPayment: data.totalPayment } : {}),
     // Delivery
     ...(data.shippingFee > 0 ? {
       orderDelivery: {
-        deliveryCode: '',
         price: data.shippingFee,
-        receiver: data.customer.name,
+        receiver: name,
         contactNumber: data.customer.phone,
-        address: fullAddress,
-        locationName: provinceName,
-        wardName,
-        weight: 0,
+        address: address.fullAddress,
+        wardName: address.wardName || undefined,
+        // KiotViet "Khu vực" (locationId / locationName): KiotVietAdapter looks it up in GET /locations from these two
+        provinceName: address.provinceName,
+        areaName: address.isNew ? address.wardName : address.districtName,
       },
     } : {}),
   };
 }
 
 // ─── Haravan ────────────────────────────────────────────────────────────────
-// Docs: https://docs.haravan.com/blogs/api
-// POST /admin/orders.json - body: { order: { line_items[], customer{}, shipping_address{}, ... } }
+// Docs: https://docs.haravan.com/docs/omni-apis/orders/
+// POST https://apis.haravan.com/com/orders.json - body: { order: { line_items[], customer{}, shipping_address{}, ... } }
 
 function toHaravan(data: GenericOrderData) {
-  const provinceName = data.customer.provinceName || getProvinceName(data.customer.provinceId);
-  const districtName = data.customer.districtName || getDistrictName(data.customer.provinceId, data.customer.districtId);
-  const wardName = data.customer.wardName || getWardName(data.customer.provinceId, data.customer.districtId, data.customer.wardId);
+  const { provinceName, districtName, wardName } = addressParts(data.customer);
 
-  // Haravan tách first_name / last_name
+  // Haravan splits first_name / last_name
   const nameParts = (data.customer.name || 'Khách vãng lai').split(' ');
   const lastName = nameParts.pop() || '';
   const firstName = nameParts.join(' ') || lastName;
@@ -144,8 +160,10 @@ function toHaravan(data: GenericOrderData) {
       note: data.note || undefined,
       // Haravan financial_status:
       financial_status: data.paymentMethod === 'cod' ? 'pending' : 'paid',
+      // COD orders use Haravan's COD gateway (docs: "Create an order with gateway is COD")
+      ...(data.paymentMethod === 'cod' ? { is_cod_gateway: true } : {}),
       shipping_lines: data.shippingFee > 0 ? [{
-        title: 'Phí vận chuyển',
+        title: tr('Phí vận chuyển'),
         price: data.shippingFee,
       }] : [],
       tags: 'deplaoapp',
@@ -156,12 +174,12 @@ function toHaravan(data: GenericOrderData) {
 
 // ─── Sapo ───────────────────────────────────────────────────────────────────
 // Docs: support.sapo.vn/phuong-thuc-post-cua-order-phan-2 — POST /admin/orders.json { order: {...} }
-// - line_items: { variant_id, quantity } (id PHIÊN BẢN — POS lấy variation_id do SapoAdapter trả) hoặc dòng tự do
-//   { title, price, quantity } khi không có id
-// - địa chỉ: first_name / last_name / name (không có full_name); trạng thái thanh toán: financial_status
-// - giảm giá: discount_codes (không có discount_amount trên dòng / total_discount khi tạo)
+// - line_items: { variant_id, quantity } (the VARIANT id: POS takes the variation_id that SapoAdapter returns) or a free line
+//   { title, price, quantity } when there is no id
+// - address: first_name / last_name / name (no full_name); payment status: financial_status
+// - discount: discount_codes (no discount_amount on the line / total_discount when creating)
 
-/** "Nguyễn Văn An" → họ "Nguyễn Văn" (last_name), tên "An" (first_name) — như khách Sapo. */
+/** "Nguyễn Văn An" → last_name "Nguyễn Văn", first_name "An" (same as Sapo customers). */
 function splitVietnameseName(full: string): { first_name: string; last_name: string } {
   const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return { first_name: parts[0] || '', last_name: '' };
@@ -169,10 +187,8 @@ function splitVietnameseName(full: string): { first_name: string; last_name: str
 }
 
 function toSapo(data: GenericOrderData) {
-  const provinceName = data.customer.provinceName || getProvinceName(data.customer.provinceId);
-  const districtName = data.customer.districtName || getDistrictName(data.customer.provinceId, data.customer.districtId);
-  const wardName = data.customer.wardName || getWardName(data.customer.provinceId, data.customer.districtId, data.customer.wardId);
-  const name = data.customer.name || 'Khách vãng lai';
+  const { provinceName, districtName, wardName } = addressParts(data.customer);
+  const name = data.customer.name || tr('Khách vãng lai');
   const { first_name, last_name } = splitVietnameseName(name);
   const address = {
     first_name,
@@ -196,9 +212,9 @@ function toSapo(data: GenericOrderData) {
         const variantId = Number(item.productId);
         return Number.isFinite(variantId) && variantId > 0
           ? { variant_id: variantId, quantity: item.quantity, price: item.price, title: item.productName }
-          : { title: item.productName || item.productCode || 'Sản phẩm', price: item.price, quantity: item.quantity };
+          : { title: item.productName || item.productCode || tr('Sản phẩm'), price: item.price, quantity: item.quantity };
       }),
-      // Gắn đơn với khách (Sapo khớp / tạo khách theo SĐT, email) — trước đây đơn không có khách
+      // Link the order to a customer (Sapo matches / creates the customer by phone number or email); previously the order had no customer
       customer: hasCustomer ? {
         first_name,
         last_name: last_name || undefined,
@@ -214,7 +230,7 @@ function toSapo(data: GenericOrderData) {
       source_name: 'deplaoapp',
       financial_status: data.paymentMethod === 'cod' ? 'pending' : 'paid',
       shipping_lines: data.shippingFee > 0 ? [{
-        title: 'Phí vận chuyển',
+        title: tr('Phí vận chuyển'),
         price: data.shippingFee,
       }] : undefined,
     },
@@ -222,15 +238,12 @@ function toSapo(data: GenericOrderData) {
 }
 
 // ─── Nhanh.vn ───────────────────────────────────────────────────────────────
-// Docs: https://open.nhanh.vn/
+// Docs: https://apidocs.nhanh.vn/v3/order/add
 // POST /v3.0/order/add?appId=&businessId= - body: nested v3 structure
 // appId & businessId go in query string (handled by NhanhAdapter.buildUrl)
 
 function toNhanh(data: GenericOrderData) {
-  const provinceName = data.customer.provinceName || getProvinceName(data.customer.provinceId);
-  const districtName = data.customer.districtName || getDistrictName(data.customer.provinceId, data.customer.districtId);
-  const wardName = data.customer.wardName || getWardName(data.customer.provinceId, data.customer.districtId, data.customer.wardId);
-  const fullAddress = [data.customer.address, wardName, districtName, provinceName].filter(Boolean).join(', ');
+  const { isNew, fullAddress } = addressParts(data.customer);
 
   // Nhanh v3: products is an array of { id (int), price, quantity, discount? }
   const products = data.items.map(item => {
@@ -245,7 +258,7 @@ function toNhanh(data: GenericOrderData) {
 
   const result: Record<string, any> = {
     info: {
-      type: 1, // 1 = Giao hàng tận nhà (bắt buộc theo Nhanh v3)
+      type: 1, // 1 = Home delivery (required by Nhanh v3)
       ...(data.note ? { description: data.note } : {}),
     },
     // channel.appOrderId = unique order ID on our side (Nhanh deduplicates by appId + appOrderId)
@@ -254,13 +267,14 @@ function toNhanh(data: GenericOrderData) {
       sourceName: 'deplaoapp',
     },
     shippingAddress: {
-      name: data.customer.name || 'Khách vãng lai',
+      name: data.customer.name || tr('Khách vãng lai'),
       mobile: data.customer.phone || undefined,
       ...(data.customer.email ? { email: data.customer.email } : {}),
       address: fullAddress || undefined,
       // cityId / districtId / wardId are Nhanh's own IDs - not available from our division data
       // Pass address as free-text only (all fields optional except name + mobile)
-      locationVersion: 'v1',
+      // v2 = 2-level address (province + ward), v1 = old 3-level address
+      locationVersion: isNew ? 'v2' : 'v1',
     },
     products,
   };
@@ -289,15 +303,16 @@ function toNhanh(data: GenericOrderData) {
 }
 
 // ─── Pancake POS ─────────────────────────────────────────────────────────────
-// Generic payload used by PancakeAdapter default createOrder action.
+// Docs: https://pos.pancake.vn/developers/api/en/order (POST /shops/{SHOP_ID}/orders)
+// shipping_address.address is parsed by Pancake into province / district / commune ids when province_id is empty,
+// so it carries the whole address (street, ward, district for an old address, province).
 
 function toPancake(data: GenericOrderData) {
-  const provinceDisplayName = data.customer.provinceName || getProvinceName(data.customer.provinceId);
-  const districtDisplayName = data.customer.districtName || getDistrictName(data.customer.provinceId, data.customer.districtId);
-  const wardName = data.customer.wardName || getWardName(data.customer.provinceId, data.customer.districtId, data.customer.wardId);
+  const {
+    provinceName: provinceDisplayName, districtName: districtDisplayName, wardName, fullAddress,
+  } = addressParts(data.customer);
   const provinceName = provinceDisplayName ? stripAdministrativePrefix(provinceDisplayName, 'province') : '';
   const districtName = districtDisplayName ? stripAdministrativePrefix(districtDisplayName, 'district') : '';
-  const fullAddress = [data.customer.address, wardName, districtName || districtDisplayName, provinceName || provinceDisplayName].filter(Boolean).join(', ');
 
   const items = data.items.map(item => {
     const id = String(item.productId || '').trim();
@@ -325,7 +340,7 @@ function toPancake(data: GenericOrderData) {
     shipping_address: {
       full_name: data.customer.name || 'Khach vang lai',
       phone_number: data.customer.phone || undefined,
-      address: data.customer.address || undefined,
+      address: fullAddress || data.customer.address || undefined,
       fullAddress: fullAddress || undefined,
       full_address: fullAddress || undefined,
       district_name: districtName || undefined,
@@ -359,30 +374,30 @@ const ADAPTERS: Record<PlatformType, (data: GenericOrderData) => any> = {
 };
 
 /**
- * Chuyển đổi GenericOrderData → format chuẩn API của từng nền tảng.
- * Trả về object sẵn sàng POST lên API.
+ * Converts GenericOrderData → the standard API format of each platform.
+ * Returns an object ready to POST to the API.
  */
 export function adaptOrderForPlatform(platform: string, data: GenericOrderData): any {
   const adapter = ADAPTERS[platform as PlatformType];
   if (!adapter) {
-    // Fallback: gửi nguyên generic data cho nền tảng chưa hỗ trợ
+    // Fallback: send the generic data unchanged for platforms not supported yet
     console.warn(`[adaptOrderForPlatform] No adapter for platform "${platform}", using generic data`);
     return data;
   }
   return adapter(data);
 }
 
-/** Danh sách nền tảng có hỗ trợ tạo đơn */
+/** Platforms that support creating orders */
 export const SUPPORTED_ORDER_PLATFORMS: PlatformType[] = ['kiotviet', 'haravan', 'sapo', 'nhanh', 'pancake'];
 
-/** Tên hiển thị cho payment method theo nền tảng */
+/** Display names of payment methods per platform */
 export function getPaymentMethodLabel(method: string): string {
   const MAP: Record<string, string> = {
-    cod: 'COD – Thanh toán khi nhận hàng',
-    bank_transfer: 'Chuyển khoản ngân hàng',
-    cash: 'Tiền mặt tại cửa hàng',
-    card: 'Thẻ (VISA/Master)',
-    momo: 'Ví MoMo',
+    cod: tr('COD – Thanh toán khi nhận hàng'),
+    bank_transfer: tr('Chuyển khoản ngân hàng'),
+    cash: tr('Tiền mặt tại cửa hàng'),
+    card: tr('Thẻ (VISA/Master)'),
+    momo: tr('Ví MoMo'),
     zalopay: 'ZaloPay',
     vnpay: 'VNPay',
   };

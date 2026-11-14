@@ -1,4 +1,5 @@
 import { telegramCallPreviewFromContent } from '../../../shared/telegram/telegramQuickModel';
+import { tr } from '../../../shared/i18n';
 
 /**
  * Text used outside the message detail (conversation rows, notifications and
@@ -7,29 +8,29 @@ import { telegramCallPreviewFromContent } from '../../../shared/telegram/telegra
  */
 export function getTelegramMessagePreview(msgType: string, content?: string): string {
   switch (String(msgType || 'text').toLowerCase()) {
-    // Thẻ cuộc gọi (messageActionPhoneCall, cùng định dạng thẻ cuộc gọi Zalo)
-    case 'chat.recommended': return telegramCallPreviewFromContent(content) || '📞 Cuộc gọi';
-    case 'photo': return '🖼️ Hình ảnh';
+    // Call card (messageActionPhoneCall, same format as the Zalo call card)
+    case 'chat.recommended': return telegramCallPreviewFromContent(content) || tr('📞 Cuộc gọi');
+    case 'photo': return tr('🖼️ Hình ảnh');
     case 'video': return '🎬 Video';
-    case 'video_note': return '🎥 Video tròn';
-    case 'audio': return '🎵 Tin nhắn thoại';
-    case 'voice': return '🎤 Tin nhắn thoại';
-    case 'sticker': return '🎨 Nhãn dán';
+    case 'video_note': return tr('🎥 Video tròn');
+    case 'audio': return tr('🎵 Tin nhắn thoại');
+    case 'voice': return tr('🎤 Tin nhắn thoại');
+    case 'sticker': return tr('🎨 Nhãn dán');
     case 'file':
-    case 'document': return '📎 Tệp đính kèm';
-    case 'telegram.contact': return '👤 Liên hệ';
-    case 'telegram.location': return '📍 Vị trí';
-    case 'telegram.venue': return '📍 Địa điểm';
-    case 'telegram.poll': return '📊 Bình chọn';
-    case 'telegram.dice': return '🎲 Xúc xắc';
-    case 'telegram.game': return '🎮 Trò chơi';
-    case 'telegram.invoice': return '🧾 Hóa đơn';
+    case 'document': return tr('📎 Tệp đính kèm');
+    case 'telegram.contact': return tr('👤 Liên hệ');
+    case 'telegram.location': return tr('📍 Vị trí');
+    case 'telegram.venue': return tr('📍 Địa điểm');
+    case 'telegram.poll': return tr('📊 Bình chọn');
+    case 'telegram.dice': return tr('🎲 Xúc xắc');
+    case 'telegram.game': return tr('🎮 Trò chơi');
+    case 'telegram.invoice': return tr('🧾 Hóa đơn');
     case 'telegram.story': return '📖 Tin';
     case 'telegram.giveaway': return '🎁 Giveaway';
-    case 'telegram.webpage': return '🔗 Liên kết';
-    // Danh sách việc cần làm: dòng đầu = tiêu đề
-    case 'telegram.todo': return `☑️ ${String(content || '').split('\n')[0].trim() || 'Danh sách việc cần làm'}`;
-    case 'telegram.livestream': return '📡 Phát trực tiếp';
+    case 'telegram.webpage': return tr('🔗 Liên kết');
+    // Checklist: the first line is the title
+    case 'telegram.todo': return `☑️ ${String(content || '').split('\n')[0].trim() || tr('Danh sách việc cần làm')}`;
+    case 'telegram.livestream': return tr('📡 Phát trực tiếp');
     default: return String(content || '').trim();
   }
 }

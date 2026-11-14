@@ -1,18 +1,19 @@
 /**
- * netGuard.ts — gọi HTTP ra ngoài có chặn mạng nội bộ (chống SSRF).
+ * netGuard.ts: outbound HTTP calls that block the private network (anti-SSRF).
  *
- * Dùng cho mọi request mà URL do bên ngoài cung cấp (tải file từ URL, webhook outbound).
- *  - IP được kiểm tra NGAY LÚC KẾT NỐI qua `lookup` của agent → không lách được bằng
- *    DNS rebinding (tên miền trả IP công khai lúc kiểm tra rồi IP nội bộ lúc kết nối).
- *  - Host là IP (http://10.0.0.1, http://2130706433 — URL đã chuẩn hoá về 127.0.0.1) được
- *    kiểm tra trước khi mở kết nối.
- *  - Redirect đi theo THỦ CÔNG, mỗi bước kiểm tra lại; sang origin khác thì bỏ header xác thực.
- *  - Agent keep-alive tách riêng cho "có chặn" và "cho phép nội bộ" (socket không dùng lẫn).
+ * Used for every request whose URL is supplied from outside (downloading a file from a URL, outbound webhooks).
+ *  - The IP is checked AT CONNECT TIME through the agent's `lookup` → cannot be bypassed with
+ *    DNS rebinding (a domain that returns a public IP at check time and a private IP at connect time).
+ *  - A host given as an IP (http://10.0.0.1, or http://2130706433, which is normalized to 127.0.0.1) is
+ *    checked before the connection is opened.
+ *  - Redirects are followed MANUALLY, and each step is checked again; going to another origin drops the auth headers.
+ *  - Keep-alive agents are kept separate for "blocked" and "private allowed" (sockets are never mixed).
  */
 import * as http from 'http';
 import * as https from 'https';
 import * as dns from 'dns';
 import * as net from 'net';
+import { tr } from '../../../shared/i18n';
 
 export class BlockedAddressError extends Error {
     readonly code = 'PRIVATE_ADDRESS';
@@ -30,7 +31,7 @@ export class GuardTimeoutError extends Error {
     }
 }
 
-/** IP loopback / nội bộ / link-local / CGNAT / multicast / không xác định → true. */
+/** Loopback / private / link-local / CGNAT / multicast / unknown IP → true. */
 export function isPrivateAddress(ip: string): boolean {
     let v = String(ip || '').trim().toLowerCase();
     if (v.startsWith('[') && v.endsWith(']')) v = v.slice(1, -1);
@@ -44,7 +45,7 @@ export function isPrivateAddress(ip: string): boolean {
             || a >= 224;
     }
     if (net.isIPv6(v)) {
-        // "::" đầu = unspecified, loopback, IPv4-compatible/mapped dạng hex; fc/fd = ULA; fe8-fef = link/site-local; ff = multicast
+        // Leading "::" = unspecified, loopback, IPv4-compatible/mapped in hex form; fc/fd = ULA; fe8-fef = link/site-local; ff = multicast
         return v.startsWith('::') || v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe') || v.startsWith('ff');
     }
     return true;
@@ -52,7 +53,7 @@ export function isPrivateAddress(ip: string): boolean {
 
 type LookupCallback = (err: NodeJS.ErrnoException | null, address?: any, family?: number) => void;
 
-/** `lookup` cho net.connect: phân giải rồi từ chối nếu có bất kỳ IP nội bộ nào. */
+/** `lookup` for net.connect: resolves, then rejects if any IP is private. */
 export function guardedLookup(hostname: string, options: any, callback?: LookupCallback): void {
     let cb = callback as LookupCallback;
     let opts = options;
@@ -64,7 +65,7 @@ export function guardedLookup(hostname: string, options: any, callback?: LookupC
         if (err) return cb(err);
         const list = (addresses as unknown as dns.LookupAddress[]) || [];
         if (list.length === 0) {
-            return cb(Object.assign(new Error(`Không phân giải được ${hostname}`), { code: 'ENOTFOUND' }));
+            return cb(Object.assign(new Error(tr('Không phân giải được {{hostname}}', { hostname })), { code: 'ENOTFOUND' }));
         }
         if (list.some(a => isPrivateAddress(a.address))) return cb(new BlockedAddressError(hostname));
         if (opts && opts.all) return cb(null, list);
@@ -88,21 +89,21 @@ export interface GuardedRequestOptions {
     method?: string;
     headers?: Record<string, string>;
     body?: string | Buffer;
-    /** Tổng thời gian kể cả redirect và đọc body (mặc định 30 s). */
+    /** Total time including redirects and reading the body (default 30 s). */
     timeoutMs?: number;
-    /** true = cho phép đích nội bộ (chỉ khi người gọi là chính máy / người dùng cho phép). */
+    /** true = allow private destinations (only when the caller is the machine itself or the user allows it). */
     allowPrivate?: boolean;
-    /** 0 = không đi theo redirect (trả nguyên 3xx). Mặc định 5. */
+    /** 0 = do not follow redirects (return the 3xx as is). Default 5. */
     maxRedirects?: number;
 }
 
 export interface GuardedStream {
     status: number;
     headers: http.IncomingHttpHeaders;
-    /** URL cuối cùng sau redirect. */
+    /** Final URL after redirects. */
     url: string;
     stream: http.IncomingMessage;
-    /** Gọi khi đọc xong (hoặc bỏ) body để huỷ hẹn giờ. */
+    /** Called when the body is done being read (or dropped), to cancel the timer. */
     finish: () => void;
 }
 
@@ -114,8 +115,8 @@ function hostOf(u: URL): string {
 }
 
 /**
- * Mở request, trả về khi có header phản hồi. Body là stream — người gọi đọc rồi gọi `finish()`.
- * Hết giờ → stream bị huỷ với GuardTimeoutError.
+ * Open the request and return once the response headers arrive. The body is a stream: the caller reads it, then calls `finish()`.
+ * On timeout → the stream is aborted with GuardTimeoutError.
  */
 export function guardedOpen(rawUrl: string, opts: GuardedRequestOptions = {}): Promise<GuardedStream> {
     const timeoutMs = opts.timeoutMs ?? 30_000;
@@ -132,7 +133,7 @@ export function guardedOpen(rawUrl: string, opts: GuardedRequestOptions = {}): P
     const openOnce = (u: URL, method: string, headers: Record<string, string>, body?: string | Buffer) =>
         new Promise<http.IncomingMessage>((resolve, reject) => {
             if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-                reject(new Error('Chỉ hỗ trợ http/https'));
+                reject(new Error(tr('Chỉ hỗ trợ http/https')));
                 return;
             }
             const host = hostOf(u);
@@ -197,11 +198,11 @@ export interface GuardedBufferResponse {
     headers: http.IncomingHttpHeaders;
     url: string;
     body: Buffer;
-    /** true nếu body dài hơn maxBytes và đã bị cắt. */
+    /** true if the body was longer than maxBytes and was cut. */
     truncated: boolean;
 }
 
-/** Như guardedOpen nhưng đọc body vào bộ nhớ, tối đa `maxBytes` (phần thừa bị bỏ, không lỗi). */
+/** Like guardedOpen, but reads the body into memory, up to `maxBytes` (extra bytes are dropped, no error). */
 export async function guardedRequest(rawUrl: string, opts: GuardedRequestOptions & { maxBytes?: number } = {}): Promise<GuardedBufferResponse> {
     const maxBytes = opts.maxBytes ?? 64 * 1024;
     const r = await guardedOpen(rawUrl, opts);
@@ -234,7 +235,7 @@ export async function guardedRequest(rawUrl: string, opts: GuardedRequestOptions
     }
 }
 
-/** Đóng các socket keep-alive (khi dừng app / test). */
+/** Close the keep-alive sockets (when the app stops / in tests). */
 export function destroyGuardAgents(): void {
     for (const key of Object.keys(agents)) {
         try { agents[key].destroy(); } catch { /* ignore */ }
@@ -242,5 +243,5 @@ export function destroyGuardAgents(): void {
     }
 }
 
-/** Chỉ dùng trong test. */
+/** Test only. */
 export const _internals = { agentFor };

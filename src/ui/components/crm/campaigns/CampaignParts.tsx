@@ -1,7 +1,7 @@
 /**
  * Shared pieces of the campaign screens (CampaignList + CampaignDetail):
  * type icon / status tile, stacked progress bar, avatar, and the read-only
- * "Nội dung gửi" preview (steps → message variants, friend request, groups).
+ * "Nội dung gửi" (Content sent) preview (steps → message variants, friend request, groups).
  * Data parsing lives in `@/lib/crm/campaignView` (pure, unit-tested).
  */
 import React, { useMemo, useState } from 'react';
@@ -25,6 +25,8 @@ import {
   type TemplateSegment,
 } from '@/lib/crm/campaignView';
 import { COMBINE_FALLBACK_LABEL, type CampaignSendOptions } from '../../../../shared/crm/campaignSendPlan';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ── Type icon + status tile ──────────────────────────────────────────────────
 
@@ -43,7 +45,7 @@ export const STATUS_TILE: Record<CampaignStatus, string> = {
   done: 'bg-primary/10 text-primary',
 };
 
-/** Text colour for an inline status label ("● Đang chạy"). */
+/** Text colour for an inline status label ("● Đang chạy" (Running)). */
 export const STATUS_TEXT: Record<CampaignStatus, string> = {
   draft: 'text-muted-foreground',
   active: 'text-success',
@@ -128,7 +130,7 @@ export function TemplateText({ text, formatting, className }: { text: string; fo
   return (
     <span className={cn('whitespace-pre-wrap break-words', className)}>
       {segments.map((segment, index) => (segment.variable ? (
-        <span key={index} title={`${TEMPLATE_VARIABLE_HINT[segment.variable]} — thay khi gửi`}
+        <span key={index} title={tr('{{v1}} — thay khi gửi', { v1: TEMPLATE_VARIABLE_HINT[segment.variable] })}
           className="mx-px rounded bg-primary/15 px-1 font-medium text-primary" style={segmentStyle(segment)}>
           {segment.text}
         </span>
@@ -157,7 +159,7 @@ function ImageThumb({ path }: { path: string }) {
   );
 }
 
-/** One block in the order the queue sends it (chữ / ảnh, or ảnh + chữ in one message). */
+/** One block in the order the queue sends it (text / photo, or photo + text in one message). */
 function MessageBlock({ block, formatting, channel, options }: {
   block: ContentBlock;
   formatting: boolean;
@@ -167,7 +169,7 @@ function MessageBlock({ block, formatting, channel, options }: {
   if (isEmptyBlock(block)) {
     return (
       <div className="rounded-lg border border-dashed border-warning/50 px-3 py-2 text-xs text-warning">
-        Nội dung trống — liên hệ nhận biến thể này sẽ không có gì để gửi
+        {tr('Nội dung trống — liên hệ nhận biến thể này sẽ không có gì để gửi')}
       </div>
     );
   }
@@ -196,19 +198,19 @@ function MessageBlock({ block, formatting, channel, options }: {
               {step.images.map((path, i) => <ImageThumb key={`${path}-${i}`} path={path} />)}
             </div>
             <div className="px-3 py-2 text-[13px] leading-relaxed text-foreground">
-              {/* Chú thích ảnh: Zalo bỏ định dạng, Telegram gửi nguyên văn */}
+              {/* Photo caption: Zalo drops the formatting, Telegram sends it as is */}
               <TemplateText text={captionText(block.text, channel)} formatting={false} />
             </div>
           </div>
         );
       })}
       {combined && channel === 'zalo' && hasMarkupStyles(block.text) && (
-        <p className="text-[11px] text-subtle-foreground">Mô tả ảnh trên Zalo không giữ định dạng (đậm, màu…)</p>
+        <p className="text-[11px] text-subtle-foreground">{tr('Mô tả ảnh trên Zalo không giữ định dạng (đậm, màu…)')}</p>
       )}
       {plan.fallback && <p className="text-[11px] text-warning">{COMBINE_FALLBACK_LABEL[plan.fallback]}</p>}
       {block.tagAll && (
         <Badge size="sm" variant="outline" className="font-normal text-muted-foreground">
-          Tag @{block.tagAllText || 'all'} khi gửi vào nhóm
+          {trx('Tag @{{v1}} khi gửi vào nhóm', { v1: block.tagAllText || 'all' })}
         </Badge>
       )}
     </div>
@@ -222,7 +224,7 @@ function MessageVariants({ content, formatting, channel, perMessageDelay }: {
   perMessageDelay?: string;
 }) {
   const { blocks, mode } = content;
-  if (blocks.length === 0) return <p className="text-xs italic text-subtle-foreground">Chưa có nội dung</p>;
+  if (blocks.length === 0) return <p className="text-xs italic text-subtle-foreground">{tr('Chưa có nội dung')}</p>;
   if (blocks.length === 1) return <MessageBlock block={blocks[0]} formatting={formatting} channel={channel} options={content} />;
   return (
     <div className="space-y-3">
@@ -231,13 +233,13 @@ function MessageVariants({ content, formatting, channel, perMessageDelay }: {
           ? <ShuffleIcon className="mt-px h-3.5 w-3.5 shrink-0" />
           : <RepeatIcon className="mt-px h-3.5 w-3.5 shrink-0" />}
         {mode === 'random'
-          ? `Mỗi liên hệ nhận ngẫu nhiên 1 trong ${blocks.length} biến thể`
-          : `Mỗi liên hệ nhận lần lượt cả ${blocks.length} tin${perMessageDelay ? `, cách nhau ${perMessageDelay}` : ''}`}
+          ? tr('Mỗi liên hệ nhận ngẫu nhiên 1 trong {{count}} biến thể', { count: blocks.length })
+          : tr('Mỗi liên hệ nhận lần lượt cả {{count}} tin{{v1}}', { count: blocks.length, v1: perMessageDelay ? tr(', cách nhau {{perMessageDelay}}', { perMessageDelay }) : '' })}
       </p>
       {blocks.map((block, index) => (
         <div key={`${block.id}-${index}`}>
           <p className="mb-1 text-[11px] font-medium text-subtle-foreground">
-            {mode === 'random' ? `Biến thể ${index + 1}` : `Tin ${index + 1}`}
+            {mode === 'random' ? tr('Biến thể {{v1}}', { v1: index + 1 }) : tr('Tin {{v1}}', { v1: index + 1 })}
           </p>
           <MessageBlock block={block} formatting={formatting} channel={channel} options={content} />
         </div>
@@ -246,14 +248,14 @@ function MessageVariants({ content, formatting, channel, perMessageDelay }: {
   );
 }
 
-// ── Image options (thứ tự chữ / ảnh, gộp ảnh + chữ) ─────────────────────────
+// ── Image options (text / photo order, merge photo + text) ─────────────────────────
 
 const ORDER_OPTIONS: Array<{ value: CampaignSendOptions['order']; label: string }> = [
-  { value: 'text_first', label: 'Chữ trước' },
-  { value: 'images_first', label: 'Ảnh trước' },
+  { value: 'text_first', label: tr('Chữ trước') },
+  { value: 'images_first', label: tr('Ảnh trước') },
 ];
 
-/** Checkbox options of a campaign: order of text / images and "gộp ảnh + chữ thành 1 tin". */
+/** Checkbox options of a campaign: order of text / images and "gộp ảnh + chữ thành 1 tin" (merge photo + text into 1 message). */
 export function CampaignSendOptionsControl({ value, channel = 'zalo', disabled, onChange }: {
   value: CampaignSendOptions;
   channel?: string;
@@ -264,8 +266,8 @@ export function CampaignSendOptionsControl({ value, channel = 'zalo', disabled, 
   return (
     <div className="space-y-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">Gửi trước</span>
-        <div className="inline-flex rounded-md bg-muted p-0.5" role="radiogroup" aria-label="Gửi chữ hay ảnh trước">
+        <span className="text-xs text-muted-foreground">{tr('Gửi trước')}</span>
+        <div className="inline-flex rounded-md bg-muted p-0.5" role="radiogroup" aria-label={tr('Gửi chữ hay ảnh trước')}>
           {ORDER_OPTIONS.map(option => {
             const active = value.order === option.value;
             return (
@@ -285,13 +287,13 @@ export function CampaignSendOptionsControl({ value, channel = 'zalo', disabled, 
         checked={value.combine}
         disabled={disabled}
         onCheckedChange={combine => onChange({ combine })}
-        label={<span className="text-xs font-medium">Gộp ảnh + chữ thành 1 tin</span>}
+        label={<span className="text-xs font-medium">{tr('Gộp ảnh + chữ thành 1 tin')}</span>}
         description={(
           <span className="text-[11px] leading-4">
             {telegram
-              ? 'Chữ thành chú thích của ảnh; nhiều ảnh gửi thành album. Chữ dài quá 1024 ký tự thì gửi riêng.'
-              : 'Chữ thành mô tả của ảnh. Zalo chỉ hỗ trợ khi có 1 ảnh (jpg, png, webp) và không giữ định dạng chữ.'}
-            {value.combine && ' Không gộp được thì gửi riêng theo thứ tự ở trên.'}
+              ? tr('Chữ thành chú thích của ảnh; nhiều ảnh gửi thành album. Chữ dài quá 1024 ký tự thì gửi riêng.')
+              : tr('Chữ thành mô tả của ảnh. Zalo chỉ hỗ trợ khi có 1 ảnh (jpg, png, webp) và không giữ định dạng chữ.')}
+            {value.combine && tr(' Không gộp được thì gửi riêng theo thứ tự ở trên.')}
           </span>
         )}
       />
@@ -303,7 +305,7 @@ export interface CampaignGroupRef { id: string; name: string; avatar?: string; }
 
 function InviteGroups({ groups }: { groups: CampaignGroupRef[] }) {
   if (groups.length === 0) {
-    return <p className="text-xs text-warning">Chưa chọn nhóm — bước này sẽ bị bỏ qua</p>;
+    return <p className="text-xs text-warning">{tr('Chưa chọn nhóm — bước này sẽ bị bỏ qua')}</p>;
   }
   const shown = groups.slice(0, 12);
   return (
@@ -317,16 +319,16 @@ function InviteGroups({ groups }: { groups: CampaignGroupRef[] }) {
           </span>
         ))}
         {groups.length > shown.length && (
-          <span className="self-center text-xs text-muted-foreground">+{groups.length - shown.length} nhóm</span>
+          <span className="self-center text-xs text-muted-foreground">{trx('+{{v1}} nhóm', { v1: groups.length - shown.length })}</span>
         )}
       </div>
-      <p className="text-[11px] text-subtle-foreground">Chỉ mời được người đã là bạn bè</p>
+      <p className="text-[11px] text-subtle-foreground">{tr('Chỉ mời được người đã là bạn bè')}</p>
     </div>
   );
 }
 
 function FriendRequestNote({ text }: { text: string }) {
-  if (!text.trim()) return <p className="text-xs italic text-subtle-foreground">Không có lời nhắn kèm</p>;
+  if (!text.trim()) return <p className="text-xs italic text-subtle-foreground">{tr('Không có lời nhắn kèm')}</p>;
   return (
     <div className="rounded-lg border border-dashed border-border-strong bg-muted/40 px-3 py-2 text-[13px] leading-relaxed text-foreground">
       {/* The queue sends the friend-request note as plain text (no Zalo markup). */}
@@ -336,9 +338,9 @@ function FriendRequestNote({ text }: { text: string }) {
 }
 
 const STEP_META: Record<CampaignStep['kind'], { icon: React.ComponentType<{ className?: string }>; title: string }> = {
-  message: { icon: ChatIcon, title: 'Gửi tin nhắn' },
-  friend_request: { icon: UserPlusIcon, title: 'Gửi lời mời kết bạn' },
-  invite: { icon: UsersIcon, title: 'Mời vào nhóm' },
+  message: { icon: ChatIcon, title: tr('Gửi tin nhắn') },
+  friend_request: { icon: UserPlusIcon, title: tr('Gửi lời mời kết bạn') },
+  invite: { icon: UsersIcon, title: tr('Mời vào nhóm') },
 };
 
 export interface CampaignContentPreviewProps {
@@ -378,28 +380,28 @@ export function CampaignContentPreview({ steps, content, friendMessage, groups, 
             <div className="mb-2 min-h-7">
               {(multiStep || step.fallback) && (
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-subtle-foreground">
-                  {step.fallback ? 'Dự phòng' : `Bước ${stepNumber}`}
+                  {step.fallback ? tr('Dự phòng') : tr('Bước {{stepNumber}}', { stepNumber })}
                 </p>
               )}
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <p className={cn('text-[13px] font-semibold text-foreground', !(multiStep || step.fallback) && 'leading-7')}>
                   {meta.title}
-                  {step.kind === 'invite' && groups.length > 0 ? ` (${groups.length} nhóm)` : ''}
+                  {step.kind === 'invite' && groups.length > 0 ? tr(' ({{count}} nhóm)', { count: groups.length }) : ''}
                 </p>
                 {step.kind === 'message' && content.blocks.length > 1 && (
                   <Badge size="sm" variant="primary">
-                    {content.mode === 'random' ? `${content.blocks.length} biến thể` : `${content.blocks.length} tin`}
+                    {content.mode === 'random' ? tr('{{count}} biến thể', { count: content.blocks.length }) : tr('{{count}} tin', { count: content.blocks.length })}
                   </Badge>
                 )}
                 {step.kind === 'message' && imageOptionsApply && content.combine && (
-                  <Badge size="sm" variant="info">Gộp ảnh + chữ</Badge>
+                  <Badge size="sm" variant="info">{tr('Gộp ảnh + chữ')}</Badge>
                 )}
                 {step.kind === 'message' && imageOptionsApply && content.order === 'images_first' && (
-                  <Badge size="sm">Ảnh trước</Badge>
+                  <Badge size="sm">{tr('Ảnh trước')}</Badge>
                 )}
               </div>
               {step.fallback && (
-                <p className="mt-0.5 text-[11px] text-muted-foreground">Chỉ gửi khi người nhận chặn tin nhắn từ người lạ</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">{tr('Chỉ gửi khi người nhận chặn tin nhắn từ người lạ')}</p>
               )}
             </div>
             {step.kind === 'message' && (

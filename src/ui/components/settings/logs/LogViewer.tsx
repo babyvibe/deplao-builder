@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ipc } from '@/lib/ipc';
 import { Button, Input } from '@/components/ui';
 import { SegmentedControl, SettingsPage } from '../settingsUi';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type LogLevel = 'log' | 'error' | 'warn' | 'info' | 'debug';
 interface LogEntry { ts: number; level: LogLevel; msg: string; }
@@ -15,15 +17,15 @@ const LEVEL_STYLE: Record<LogLevel, string> = {
 };
 
 const LEVEL_LABEL: Record<LogLevel, string> = {
-  error: 'LỖI', warn: 'CẢNH BÁO', info: 'INFO', debug: 'DEBUG', log: 'LOG',
+  error: tr('LỖI'), warn: tr('CẢNH BÁO'), info: 'INFO', debug: 'DEBUG', log: 'LOG',
 };
 
-// Nút lọc: chữ thường cho dễ đọc (nhãn in hoa ở trên chỉ dùng trong dòng log)
+// Filter buttons: lowercase for readability (the uppercase labels above are only used in the log line)
 const FILTER_LABEL: Record<'all' | LogLevel, string> = {
-  all: 'Tất cả', error: 'Lỗi', warn: 'Cảnh báo', info: 'Info', log: 'Log', debug: 'Debug',
+  all: tr('Tất cả'), error: tr('Lỗi'), warn: tr('Cảnh báo'), info: 'Info', log: 'Log', debug: 'Debug',
 };
 
-const MAX_RENDER = 2000; // khớp buffer main
+const MAX_RENDER = 2000; // matches the main buffer
 
 export default function LogViewer() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
@@ -32,7 +34,7 @@ export default function LogViewer() {
   const [autoScroll, setAutoScroll] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Nạp buffer sẵn có + lắng nghe log mới
+  // Load the existing buffer + listen for new log lines
   useEffect(() => {
     ipc.logs?.getBuffer().then((buf: LogEntry[]) => setEntries(buf || [])).catch(() => {});
     const unsub = ipc.on?.('log:entry', (entry: LogEntry) => {
@@ -54,7 +56,7 @@ export default function LogViewer() {
     return true;
   });
 
-  const fmt = (ts: number) => new Date(ts).toLocaleTimeString('vi-VN', { hour12: false }) +
+  const fmt = (ts: number) => new Date(ts).toLocaleTimeString(appLocale(), { hour12: false }) +
     '.' + String(ts % 1000).padStart(3, '0');
 
   const handleClear = async () => {
@@ -81,38 +83,38 @@ export default function LogViewer() {
   const FILTERS: ('all' | LogLevel)[] = ['all', 'error', 'warn', 'info', 'log', 'debug'];
 
   return (
-    // Trang cao đúng khung: vùng log tự cuộn, thanh công cụ đứng yên
+    // Page exactly the height of the frame: the log area scrolls by itself, the toolbar stays still
     <SettingsPage
-      title="Nhật ký"
-      description="Hoạt động của app theo thời gian thực (gửi tin, kết nối, lỗi…). Gửi kèm khi báo lỗi."
+      title={tr('Nhật ký')}
+      description={tr('Hoạt động của app theo thời gian thực (gửi tin, kết nối, lỗi…). Gửi kèm khi báo lỗi.')}
       width="full"
       fill
     >
       <div className="mb-2 flex flex-shrink-0 flex-wrap items-center gap-2">
         <SegmentedControl
-          label="Lọc theo mức"
+          label={tr('Lọc theo mức')}
           value={filter}
           onChange={setFilter}
           options={FILTERS.map(f => ({ value: f, label: FILTER_LABEL[f] }))}
         />
         <Input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Tìm trong nhật ký..." aria-label="Tìm trong nhật ký"
+          placeholder={tr('Tìm trong nhật ký...')} aria-label={tr('Tìm trong nhật ký')}
           className="h-8 min-w-[160px] flex-1 text-xs" />
         <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
           <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} className="accent-primary" />
-          Tự cuộn
+          {tr('Tự cuộn')}
         </label>
-        <Button variant="outline" size="sm" onClick={handleCopy}>Sao chép</Button>
-        <Button variant="outline" size="sm" onClick={handleExport}>Xuất file</Button>
-        <Button variant="ghost" size="sm" onClick={handleClear} className="text-destructive hover:bg-destructive/10 hover:text-destructive">Xoá</Button>
+        <Button variant="outline" size="sm" onClick={handleCopy}>{tr('Sao chép')}</Button>
+        <Button variant="outline" size="sm" onClick={handleExport}>{tr('Xuất file')}</Button>
+        <Button variant="ghost" size="sm" onClick={handleClear} className="text-destructive hover:bg-destructive/10 hover:text-destructive">{tr('Xoá')}</Button>
       </div>
 
-      <div className="mb-1 flex-shrink-0 text-[11px] text-subtle-foreground">{visible.length} / {entries.length} dòng</div>
+      <div className="mb-1 flex-shrink-0 text-[11px] text-subtle-foreground">{trx('{{count}} / {{count1}} dòng', { count: visible.length, count1: entries.length })}</div>
 
       {/* Log list */}
       <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-border/60 bg-card p-2 font-mono text-[11px] leading-relaxed">
         {visible.length === 0 ? (
-          <p className="py-8 text-center font-sans text-xs text-subtle-foreground">Chưa có dòng nào phù hợp</p>
+          <p className="py-8 text-center font-sans text-xs text-subtle-foreground">{tr('Chưa có dòng nào phù hợp')}</p>
         ) : visible.map((e, i) => (
           <div key={i} className="flex gap-2 rounded px-1 py-0.5 hover:bg-muted">
             <span className="flex-shrink-0 text-subtle-foreground">{fmt(e.ts)}</span>

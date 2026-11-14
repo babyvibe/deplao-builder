@@ -1,7 +1,7 @@
 /**
  * FacebookConnectionManager.ts
- * Tương tự ConnectionManager.ts cho Zalo
- * Single Source of Truth cho tất cả Facebook connections
+ * Similar to ConnectionManager.ts for Zalo
+ * Single Source of Truth for all Facebook connections
  */
 
 import { FacebookService } from '../../services/facebook/FacebookService';
@@ -11,8 +11,8 @@ class FacebookConnectionManager {
   private static connections = new Map<string, FacebookService>();
 
   /**
-   * Lấy hoặc tạo FacebookService instance
-   * Nếu đã có instance với accountId này → trả về instance cũ
+   * Get or create a FacebookService instance
+   * If an instance with this accountId already exists → return the existing instance
    */
   public static async getOrCreate(accountId: string, cookie: string, proxyId?: number | null): Promise<FacebookService> {
     if (this.connections.has(accountId)) {
@@ -38,14 +38,14 @@ class FacebookConnectionManager {
   }
 
   /**
-   * Lấy existing instance (không tạo mới)
+   * Get the existing instance (does not create a new one)
    */
   public static get(accountId: string): FacebookService | null {
     return this.connections.get(accountId) || null;
   }
 
   /**
-   * Ngắt kết nối 1 account
+   * Disconnect 1 account
    */
   public static async disconnect(accountId: string): Promise<void> {
     const service = this.connections.get(accountId);
@@ -58,7 +58,7 @@ class FacebookConnectionManager {
   }
 
   /**
-   * Ngắt tất cả connections
+   * Disconnect all connections
    */
   public static async disconnectAll(): Promise<void> {
     const ids = Array.from(this.connections.keys());
@@ -67,7 +67,7 @@ class FacebookConnectionManager {
   }
 
   /**
-   * Lấy tất cả connected account IDs
+   * Get all connected account IDs
    */
   public static getConnectedIds(): string[] {
     return Array.from(this.connections.entries())
@@ -76,7 +76,7 @@ class FacebookConnectionManager {
   }
 
   /**
-   * Health check tất cả connections
+   * Health check all connections
    */
   public static async healthCheckAll(): Promise<Array<{
     accountId: string;

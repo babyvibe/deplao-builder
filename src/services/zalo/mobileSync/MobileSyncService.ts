@@ -1,18 +1,18 @@
 /**
- * MobileSyncService — "Đồng bộ tin nhắn từ điện thoại" cho tài khoản Zalo.
+ * MobileSyncService - "Đồng bộ tin nhắn từ điện thoại" (sync messages from phone) for a Zalo account.
  *
- * Luồng (giống Zalo PC/Web):
- *   pullMobile(public_key) → điện thoại hỏi người dùng → control event syncmsgmb:
- *     user_confirm → (transfer_error status 1/2: đang chuẩn bị / máy đang ngủ) → syncmsg_info {url, encrypted_key}
- *   → tải `.db.crypt` → giải RSA lấy khoá → giải mã + giải nén ZDB4.0 → các SQLite `<uid>.db` / `group_<gid>.db`
- *   → đổi ID mobile (plain) sang ID web (noise) bằng API znoise → lưu hàng loạt vào bảng messages.
+ * Flow (same as Zalo PC/Web):
+ *   pullMobile(public_key) → the phone asks the user → control event syncmsgmb:
+ *     user_confirm → (transfer_error status 1/2: preparing / phone is asleep) → syncmsg_info {url, encrypted_key}
+ *   → download `.db.crypt` → RSA-decrypt the key → decrypt + decompress ZDB4.0 → SQLite files `<uid>.db` / `group_<gid>.db`
+ *   → convert the mobile (plain) IDs to web (noise) IDs with the znoise API → bulk-save into the messages table.
  *
- * Nhờ znoise, tin nhắn lịch sử nằm ĐÚNG hội thoại hiện có (cùng thread_id với tin realtime), không cần
- * dò tương quan msgId như cách tạm trước đây.
+ * Thanks to znoise, the history messages land in the RIGHT existing conversation (same thread_id as realtime messages), with no need to
+ * guess msgId correlations the way the earlier workaround did.
  *
- * Khoảng thời gian: người dùng chọn trên modal (mặc định 1 tuần gần nhất). `fromTs` được gửi cho điện thoại
- * làm `from_seq_id` (cách Zalo PC xin "chỉ tin mới") và cả 2 đầu được lọc ngay trong câu SQL khi đọc bản sao lưu,
- * nên điện thoại có gửi dư thì tin ngoài khoảng cũng không bị đọc / nhập.
+ * Time range: the user picks it in the modal (default: the most recent 1 week). `fromTs` is sent to the phone
+ * as `from_seq_id` (how Zalo PC asks for "new messages only") and both ends are filtered in the SQL query when the backup is read,
+ * so if the phone sends extra, messages outside the range are not read / imported.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -44,12 +44,13 @@ import {
     rowToPlainMessage,
     toZaloMessage,
 } from './mobileMessageConverter';
+import { tr, appLocale } from '../../../shared/i18n';
 
 export const MOBILE_SYNC_EVENT = 'event:mobileSync';
 
 const CONFIRM_TIMEOUT_MS = 3 * 60 * 1000;
 const BACKUP_TIMEOUT_MS = 30 * 60 * 1000;
-/** ~1000 dòng/transaction ≈ 50ms chặn main process (đã đo cả trigger FTS). */
+/** ~1000 rows per transaction ≈ 50ms blocking the main process (measured including the FTS trigger). */
 const IMPORT_BATCH_SIZE = 1000;
 const NOISE_BATCH_SIZE = 500;
 const PROFILE_BATCH_SIZE = 50;
@@ -103,7 +104,7 @@ class MobileSyncService {
     private static instance: MobileSyncService;
     private sessions = new Map<string, SyncSession>();
     private detachers = new Map<string, () => void>();
-    /** Instance zca-js đang được gắn listener cho từng tài khoản (mỗi lần reconnect là 1 api mới). */
+    /** The zca-js instance that has the listener attached for each account (each reconnect creates a new api). */
     private attachedApis = new Map<string, any>();
 
     public static getInstance(): MobileSyncService {
@@ -111,7 +112,7 @@ class MobileSyncService {
         return MobileSyncService.instance;
     }
 
-    /** Gắn API + listener sự kiện đồng bộ cho mỗi instance zca-js mới (gọi khi listener được dựng). */
+    /** Attach the API + the sync event listener to each new zca-js instance (called when the listener is built). */
     public attachToApi(zaloId: string, api: any): void {
         this.detachers.get(zaloId)?.();
         this.detachers.delete(zaloId);
@@ -130,19 +131,19 @@ class MobileSyncService {
     }
 
     /**
-     * Bắt đầu đồng bộ khoảng thời gian [fromTs, toTs] (ms). Không truyền = toàn bộ lịch sử trên điện thoại.
-     * Tin đã có trong DB được bỏ qua (INSERT OR IGNORE) nên chọn khoảng chồng lên lần trước cũng không sao.
+     * Start syncing the time range [fromTs, toTs] (ms). Not passed = the whole history on the phone.
+     * Messages already in the DB are skipped (INSERT OR IGNORE), so choosing a range that overlaps the last sync is fine.
      */
     public async start(zaloId: string, request: Partial<MobileSyncRange> = {}): Promise<{ success: boolean; status?: MobileSyncStatus; error?: string }> {
         const fromTs = positiveTs(request.fromTs);
         const toTs = positiveTs(request.toTs);
-        if (fromTs && toTs && fromTs > toTs) return { success: false, error: 'Ngày bắt đầu phải trước ngày kết thúc' };
+        if (fromTs && toTs && fromTs > toTs) return { success: false, error: tr('Ngày bắt đầu phải trước ngày kết thúc') };
         const existing = this.sessions.get(zaloId);
         if (existing && !TERMINAL_STAGES.includes(existing.status.stage)) {
-            return { success: false, status: existing.status, error: 'Đang có một phiên đồng bộ chạy cho tài khoản này' };
+            return { success: false, status: existing.status, error: tr('Đang có một phiên đồng bộ chạy cho tài khoản này') };
         }
         const conn = ConnectionManager.getConnection(zaloId);
-        if (!conn?.api || !conn.connected) return { success: false, error: 'Tài khoản không online' };
+        if (!conn?.api || !conn.connected) return { success: false, error: tr('Tài khoản không online') };
         if (this.attachedApis.get(zaloId) !== conn.api) this.attachToApi(zaloId, conn.api);
         const api = installMobileSyncApis(conn.api);
 
@@ -161,7 +162,7 @@ class MobileSyncService {
                 zaloId,
                 stage: 'requesting',
                 progress: 0,
-                message: 'Đang gửi yêu cầu tới điện thoại...',
+                message: tr('Đang gửi yêu cầu tới điện thoại...'),
                 pcName: DEFAULT_SYNC_PC_NAME,
                 range: { fromTs, toTs },
                 startedAt: now,
@@ -172,18 +173,18 @@ class MobileSyncService {
         this.emit(session, true);
 
         try {
-            // Gợi ý điện thoại chỉ gửi tin từ fromTs (Zalo PC: from_seq_id = maxSeq + 1, "seq" = TimeStamp ms).
-            // Điện thoại có bỏ qua gợi ý thì vẫn lọc đúng [fromTs, toTs] khi đọc bản sao lưu.
+            // Hint to the phone to send only messages from fromTs (Zalo PC: from_seq_id = maxSeq + 1, "seq" = TimeStamp ms).
+            // If the phone ignores the hint, the backup is still filtered to [fromTs, toTs] when it is read.
             await api.pullMobile({ public_key: publicKey, pc_name: session.pcName, from_seq_id: fromTs ?? 0, min_seq_id: 0 });
         } catch (err: any) {
-            if (!session.cancelled) this.fail(session, `Không gửi được yêu cầu đồng bộ: ${err?.message || err}`);
+            if (!session.cancelled) this.fail(session, tr('Không gửi được yêu cầu đồng bộ: {{v1}}', { v1: err?.message || err }));
             return { success: false, status: session.status, error: session.status.error };
         }
-        if (session.cancelled) return { success: false, status: session.status, error: 'Đã huỷ' };
+        if (session.cancelled) return { success: false, status: session.status, error: tr('Đã huỷ') };
 
         Logger.log(`[MobileSync] ${zaloId}: đã gửi pull_mobile_msg (from_seq_id=${fromTs ?? 0}, khoảng ${fmtTs(fromTs)} → ${fmtTs(toTs)}), chờ xác nhận trên điện thoại`);
-        this.setStage(session, 'waiting_confirm', 'Mở Zalo trên điện thoại và bấm "Đồng ý" để đồng bộ tin nhắn sang máy tính');
-        this.armTimeout(session, CONFIRM_TIMEOUT_MS, 'Hết thời gian chờ xác nhận trên điện thoại');
+        this.setStage(session, 'waiting_confirm', tr('Mở Zalo trên điện thoại và bấm "Đồng ý" để đồng bộ tin nhắn sang máy tính'));
+        this.armTimeout(session, CONFIRM_TIMEOUT_MS, tr('Hết thời gian chờ xác nhận trên điện thoại'));
         return { success: true, status: session.status };
     }
 
@@ -194,13 +195,13 @@ class MobileSyncService {
         this.clearTimer(session);
         if (!session.importing) {
             await this.cancelOnServer(session);
-            this.finish(session, 'cancelled', 'Đã huỷ đồng bộ');
+            this.finish(session, 'cancelled', tr('Đã huỷ đồng bộ'));
         }
-        // Đang tải/giải mã/nhập → vòng xử lý tự dừng ở bước kế tiếp rồi chuyển sang 'cancelled'.
+        // While downloading / decrypting / importing → the loop stops at the next step and then switches to 'cancelled'.
         return { success: true, status: session.status };
     }
 
-    // ─── Sự kiện từ điện thoại ───────────────────────────────────────────────
+    // ─── Events from the phone ───────────────────────────────────────────────
 
     private onSyncEvent(zaloId: string, event: SyncEvent): void {
         const session = this.sessions.get(zaloId);
@@ -214,12 +215,12 @@ class MobileSyncService {
             case SyncEventType.USER_CONFIRM: {
                 const action = Number(data.user_action);
                 if (action === 1 || action === 3) {
-                    this.setStage(session, 'waiting_backup', 'Điện thoại đang chuẩn bị dữ liệu tin nhắn, vui lòng giữ Zalo mở trên điện thoại...');
-                    this.armTimeout(session, BACKUP_TIMEOUT_MS, 'Hết thời gian chờ điện thoại gửi dữ liệu');
+                    this.setStage(session, 'waiting_backup', tr('Điện thoại đang chuẩn bị dữ liệu tin nhắn, vui lòng giữ Zalo mở trên điện thoại...'));
+                    this.armTimeout(session, BACKUP_TIMEOUT_MS, tr('Hết thời gian chờ điện thoại gửi dữ liệu'));
                 } else if (action === 0) {
-                    this.finish(session, 'cancelled', 'Bạn đã từ chối đồng bộ trên điện thoại');
+                    this.finish(session, 'cancelled', tr('Bạn đã từ chối đồng bộ trên điện thoại'));
                 } else if (action === 2) {
-                    this.fail(session, 'Điện thoại đang khôi phục dữ liệu, vui lòng thử lại sau');
+                    this.fail(session, tr('Điện thoại đang khôi phục dữ liệu, vui lòng thử lại sau'));
                 }
                 break;
             }
@@ -227,13 +228,13 @@ class MobileSyncService {
                 const status = Number(data.status);
                 const errorCode = Number(data.error_code || 0);
                 if (status === 1) {
-                    this.setStage(session, 'waiting_backup', 'Điện thoại đang chuẩn bị dữ liệu tin nhắn, vui lòng giữ Zalo mở trên điện thoại...');
-                    this.armTimeout(session, BACKUP_TIMEOUT_MS, 'Hết thời gian chờ điện thoại gửi dữ liệu');
+                    this.setStage(session, 'waiting_backup', tr('Điện thoại đang chuẩn bị dữ liệu tin nhắn, vui lòng giữ Zalo mở trên điện thoại...'));
+                    this.armTimeout(session, BACKUP_TIMEOUT_MS, tr('Hết thời gian chờ điện thoại gửi dữ liệu'));
                 } else if (status === 2) {
-                    this.setStage(session, 'mobile_idle', 'Điện thoại đang tạm dừng — mở Zalo trên điện thoại để tiếp tục đồng bộ');
-                    this.armTimeout(session, BACKUP_TIMEOUT_MS, 'Hết thời gian chờ điện thoại gửi dữ liệu');
+                    this.setStage(session, 'mobile_idle', tr('Điện thoại đang tạm dừng — mở Zalo trên điện thoại để tiếp tục đồng bộ'));
+                    this.armTimeout(session, BACKUP_TIMEOUT_MS, tr('Hết thời gian chờ điện thoại gửi dữ liệu'));
                 } else if (errorCode !== 0) {
-                    this.fail(session, `Điện thoại không tạo được bản sao lưu (mã ${data.error_code}${data.error_msg ? `: ${data.error_msg}` : ''})`);
+                    this.fail(session, tr('Điện thoại không tạo được bản sao lưu (mã {{error_code}}{{v1}})', { error_code: data.error_code, v1: data.error_msg ? `: ${data.error_msg}` : '' }));
                 }
                 break;
             }
@@ -247,42 +248,42 @@ class MobileSyncService {
         }
     }
 
-    // ─── Tải + giải mã + nhập ────────────────────────────────────────────────
+    // ─── Download + decrypt + import ────────────────────────────────────────────────
 
     private async runImport(session: SyncSession, info: TSyncEventSyncMsgInfo): Promise<void> {
         const startedAt = Date.now();
         const workDir = path.join(app.getPath('userData'), 'mobile-sync', session.zaloId, String(startedAt));
         const stats = emptyStats();
-        // Trạng thái kết thúc chỉ phát SAU khi dọn file tạm (tránh "Đồng bộ lại" chồng lên bước dọn dẹp).
+        // The final status is only sent AFTER the temp files are cleaned up (so "Đồng bộ lại" (sync again) does not overlap the cleanup step).
         let settle: () => void;
         try {
             const api = this.currentApi(session.zaloId);
             const dbInfo = this.parseDbInfo(info.db_info);
-            // Số tin điện thoại gửi — so với khoảng đã chọn để biết điện thoại có chỉ gửi phần mới (from_seq_id) không.
+            // Number of messages the phone sent: compared with the chosen range to tell whether the phone sent only the new ones (from_seq_id).
             Logger.log(`[MobileSync] ${session.zaloId}: bản sao lưu db_info=${JSON.stringify(dbInfo)} file_size=${info.file_size ?? '?'}`);
             const format = dbInfo.db_format ?? 0;
             if (format !== 1) {
-                throw new Error(`Định dạng sao lưu chưa được hỗ trợ (db_format=${format}). Hãy cập nhật Zalo trên điện thoại rồi thử lại.`);
+                throw new Error(tr('Định dạng sao lưu chưa được hỗ trợ (db_format={{format}}). Hãy cập nhật Zalo trên điện thoại rồi thử lại.', { format }));
             }
-            // Giống Zalo PC: origin_db (nếu có) được ưu tiên hơn backup_db; msg_total = 0 → không có gì để nhập.
+            // Same as Zalo PC: origin_db (if present) takes priority over backup_db; msg_total = 0 → nothing to import.
             const counts = dbInfo.origin_db || dbInfo.backup_db;
             if (counts && Number(counts.msg_total) === 0) {
                 settle = () => this.finish(session, 'completed', session.status.range?.fromTs
-                    ? 'Điện thoại không có tin nhắn nào trong khoảng thời gian đã chọn'
-                    : 'Điện thoại không có tin nhắn nào để đồng bộ', stats);
+                    ? tr('Điện thoại không có tin nhắn nào trong khoảng thời gian đã chọn')
+                    : tr('Điện thoại không có tin nhắn nào để đồng bộ'), stats);
                 return;
             }
 
             await fs.promises.mkdir(workDir, { recursive: true });
             const cryptPath = path.join(workDir, 'backup.db.crypt');
-            this.setStage(session, 'downloading', 'Đang tải dữ liệu từ máy chủ Zalo...');
+            this.setStage(session, 'downloading', tr('Đang tải dữ liệu từ máy chủ Zalo...'));
             await this.downloadBackup(api, session, info, cryptPath);
 
             const checksumOk = await verifyChecksum(cryptPath, info.checksum_code || info.checksum);
             if (checksumOk === false) Logger.warn(`[MobileSync] ${session.zaloId}: checksum không khớp, vẫn thử giải mã`);
             this.throwIfCancelled(session);
 
-            this.setStage(session, 'decrypting', 'Đang giải mã dữ liệu tin nhắn...');
+            this.setStage(session, 'decrypting', tr('Đang giải mã dữ liệu tin nhắn...'));
             const { aesKey } = decryptBackupKey(session.privateKey, info.encrypted_key);
             const extracted = await extractZdbBackup({
                 cryptPath,
@@ -299,14 +300,14 @@ class MobileSyncService {
             await this.importConversations(session, api, extracted.files, String(info.uid ?? ''), stats);
             stats.durationMs = Date.now() - startedAt;
             Logger.log(`[MobileSync] ${session.zaloId}: hoàn tất ${JSON.stringify(stats)}`);
-            const rangeNote = session.status.range?.fromTs || session.status.range?.toTs ? ' trong khoảng thời gian đã chọn' : '';
+            const rangeNote = session.status.range?.fromTs || session.status.range?.toTs ? tr(' trong khoảng thời gian đã chọn') : '';
             settle = () => this.finish(session, 'completed',
-                `Đã đồng bộ ${stats.messagesImported.toLocaleString('vi-VN')} tin nhắn mới từ ${stats.conversationsResolved} hội thoại${rangeNote}`,
+                tr('Đã đồng bộ {{v1}} tin nhắn mới từ {{conversationsResolved}} hội thoại{{rangeNote}}', { v1: stats.messagesImported.toLocaleString(appLocale()), conversationsResolved: stats.conversationsResolved, rangeNote }),
                 stats);
         } catch (err: any) {
             stats.durationMs = Date.now() - startedAt;
             if (session.cancelled || err instanceof MobileSyncCancelled || err?.name === 'AbortError') {
-                settle = () => this.finish(session, 'cancelled', 'Đã huỷ đồng bộ', stats);
+                settle = () => this.finish(session, 'cancelled', tr('Đã huỷ đồng bộ'), stats);
             } else {
                 Logger.error(`[MobileSync] ${session.zaloId}: lỗi ${err?.stack || err}`);
                 settle = () => this.fail(session, err?.message || String(err), stats);
@@ -327,17 +328,17 @@ class MobileSyncService {
         try {
             return JSON.parse(raw) || {};
         } catch {
-            throw new Error('Thông tin bản sao lưu từ điện thoại không hợp lệ');
+            throw new Error(tr('Thông tin bản sao lưu từ điện thoại không hợp lệ'));
         }
     }
 
     private async downloadBackup(api: any, session: SyncSession, info: TSyncEventSyncMsgInfo, destPath: string): Promise<void> {
         const ctx = api.getContext();
-        // Zalo PC gửi toàn bộ cookie phiên của domain xác thực; với phiên web (zca-js) là cookie chat.zalo.me.
+        // Zalo PC sends all session cookies of the auth domain; for a web session (zca-js) that is the chat.zalo.me cookie.
         let sessionCookie = '';
         try {
             sessionCookie = await ctx.cookie.getCookieString('https://chat.zalo.me/');
-        } catch { /* tải không cookie */ }
+        } catch { /* download without cookies */ }
         await downloadBackupFile({
             url: String(info.url || ''),
             userAgent: ctx.userAgent,
@@ -356,20 +357,20 @@ class MobileSyncService {
     ): Promise<void> {
         const zaloId = session.zaloId;
         const ownNoiseId = String(api.getOwnId?.() || zaloId);
-        // `<uid của chính mình>.db` = hội thoại với chính mình (thread = ID tài khoản). "My Documents" của Zalo là hội
-        // thoại riêng (ID send2me, ảnh thư mục) → ghép như mọi hội thoại 1-1 qua bảng ánh xạ ID, không đặt tên gì thêm.
+        // `<own uid>.db` = the conversation with yourself (thread = account ID). Zalo's "My Documents" is a
+        // private conversation (send2me ID, folder picture) → mapped like every 1-1 conversation through the ID mapping table, with no extra naming.
         const threads = files
             .map(file => ({ file, ref: parseThreadFileName(file.name) }))
             .filter(t => t.ref !== null);
         stats.conversations = threads.length;
 
-        this.setStage(session, 'resolving_ids', 'Đang ghép hội thoại với tài khoản trên máy tính...');
+        this.setStage(session, 'resolving_ids', tr('Đang ghép hội thoại với tài khoản trên máy tính...'));
         const userMap = EventBroadcaster.withBossDb(db => db.getPlainIdMappings(zaloId, 'user'));
         const groupMap = EventBroadcaster.withBossDb(db => db.getPlainIdMappings(zaloId, 'group'));
         await this.resolveNoiseIds(api, session, 'user', threads.filter(t => !t.ref.isGroup).map(t => t.ref.plainId), userMap, ownPlainId);
         await this.resolveNoiseIds(api, session, 'group', threads.filter(t => t.ref.isGroup).map(t => t.ref.plainId), groupMap, ownPlainId);
 
-        this.setStage(session, 'importing', 'Đang ghép tin nhắn vào các hội thoại...');
+        this.setStage(session, 'importing', tr('Đang ghép tin nhắn vào các hội thoại...'));
         const touched = new Map<string, boolean>(); // noise threadId → isGroup
         const fromTs = session.status.range?.fromTs ?? 0;
         const toTs = session.status.range?.toTs ?? 0;
@@ -442,13 +443,13 @@ class MobileSyncService {
         if (messages.length) {
             const res = EventBroadcaster.withBossDb(db => db.saveHistoryMessagesBulk(session.zaloId, messages));
             stats.messagesImported += res.inserted;
-            stats.messagesSkipped += res.ignored; // đã có sẵn (realtime / lần đồng bộ trước)
+            stats.messagesSkipped += res.ignored; // already there (realtime / previous sync)
             for (const threadId of res.threads) touched.set(threadId, base.thread.isGroup);
         }
         await new Promise(resolve => setImmediate(resolve));
     }
 
-    /** Đổi plain → noise qua API znoise (theo lô), lưu cache vào DB. ID không đổi được → '' (chỉ trong phiên). */
+    /** Convert plain → noise through the znoise API (in batches) and cache it in the DB. IDs that cannot be converted → '' (this session only). */
     private async resolveNoiseIds(
         api: MobileSyncApi, session: SyncSession, kind: 'user' | 'group', plainIds: string[],
         cache: Map<string, string>, ownPlainId: string,
@@ -479,10 +480,10 @@ class MobileSyncService {
                 await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
             }
         }
-        throw new Error(`Không đổi được ID hội thoại từ điện thoại: ${lastErr?.message || lastErr}`);
+        throw new Error(tr('Không đổi được ID hội thoại từ điện thoại: {{v1}}', { v1: lastErr?.message || lastErr }));
     }
 
-    /** Hội thoại chỉ có trên điện thoại (chưa có tên) → lấy tên/ảnh đại diện để danh sách hiển thị đúng. */
+    /** Conversations that only exist on the phone (no name yet) → fetch the name / avatar so the list shows them correctly. */
     private async refreshMissingProfiles(api: any, zaloId: string, touched: Map<string, boolean>): Promise<void> {
         const ids = EventBroadcaster.withBossDb(db => db.getContactIdsWithoutProfile(zaloId, Array.from(touched.keys())));
         const users = ids.filter(id => !touched.get(id)).slice(0, MAX_PROFILE_LOOKUPS);
@@ -520,11 +521,11 @@ class MobileSyncService {
         }
     }
 
-    // ─── Trạng thái / tiện ích ───────────────────────────────────────────────
+    // ─── Status / helpers ───────────────────────────────────────────────
 
     private currentApi(zaloId: string): any {
         const api = ConnectionManager.getConnection(zaloId)?.api;
-        if (!api) throw new Error('Tài khoản đã mất kết nối');
+        if (!api) throw new Error(tr('Tài khoản đã mất kết nối'));
         return installMobileSyncApis(api);
     }
 

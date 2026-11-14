@@ -1,16 +1,16 @@
 /**
- * SyncEngine — đồng bộ MỘT workspace local lên R2 (bản gốc + đoạn thay đổi + manifest + nhật ký).
+ * SyncEngine: syncs ONE local workspace to R2 (base snapshot + change segments + manifest + log).
  *
- *  - 'hourly'  : mỗi giờ một chu kỳ (đẩy hết dòng bẩn thành ≤ 5000 dòng/đoạn).
- *  - 'realtime': worker dò _cloud_dirty mỗi 2 s; có thay đổi → đẩy sau ~5 s. Không có thay đổi → không gọi R2.
- *  - Chụp gốc mới khi: chưa có gốc, DB bị thay (db_uid / đường dẫn / AUTOINCREMENT lùi), schema đổi, thiếu trigger,
- *    tổng đoạn > 25% gốc, gốc > 24 h (khung 02:00–04:00; quá 30 h thì làm ngay), một chu kỳ > 100k dòng bẩn,
- *    đổi mật khẩu sao lưu, đổi phạm vi đồng bộ (manifest ghi phạm vi khác phạm vi hiện tại).
- *    Gốc mới lên R2 + manifest trỏ tới nó rồi mới dọn gốc/đoạn cũ (R2 giữ MỘT bản).
- *  - Phạm vi (tài khoản + từ ngày) của RIÊNG workspace này (ctx.scope(id)): bản gốc lọc trên bản sao trong worker, đoạn
- *    thay đổi không gửi dòng ngoài phạm vi. Mỗi chu kỳ dùng MỘT phạm vi (đọc lúc bắt đầu) cho cả kiểm tra lẫn gói/chụp.
- *  - Mỗi workspace một hàng đợi công việc (không chồng chéo); một bản gốc tại một thời điểm cho cả máy (baseLock).
- *  - Lỗi: R2_BUSY / mạng → lùi 30 s … 5 phút; lỗi quyền → 'error' + 15 phút; 2 lần lỗi liên tiếp → báo UI.
+ *  - 'hourly'  : one cycle every hour (pushes all dirty rows as ≤ 5000 rows per segment).
+ *  - 'realtime': the worker checks _cloud_dirty every 2 s; if there are changes → push after ~5 s. No changes → R2 is not called.
+ *  - Take a new base snapshot when: there is no base yet, the DB was replaced (db_uid / path / AUTOINCREMENT went backwards), the schema changed, triggers are missing,
+ *    the total segments > 25% of the base, the base is > 24 h old (window 02:00-04:00; older than 30 h → do it right away), a cycle has > 100k dirty rows,
+ *    the backup password changed, or the sync scope changed (the manifest records a different scope than the current one).
+ *    The new base is uploaded to R2 and the manifest points to it, and only then are the old base/segments cleaned up (R2 keeps ONE copy).
+ *  - The scope (accounts + from date) of THIS workspace only (ctx.scope(id)): the base snapshot is filtered on the copy in the worker, and change
+ *    segments do not send rows outside the scope. Each cycle uses ONE scope (read at the start) for the checks as well as the packing/snapshot.
+ *  - Each workspace has one work queue (no overlaps); one base snapshot at a time for the whole machine (baseLock).
+ *  - Errors: R2_BUSY / network → back off 30 s … 5 min; permission error → 'error' + 15 min; 2 consecutive errors → report to the UI.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -35,12 +35,12 @@ import type { LogInput } from './syncLog';
 
 export const START_DELAY_MS = 20_000;
 /**
- * Vài phút đầu sau khi MỞ APP không chạy chu kỳ tự động: lúc này giao diện đang dựng và các kênh đang đồng bộ bù,
- * còn một chu kỳ có thể phải cài lại trigger + chụp bản gốc (DB 2,7 GB thật: ~1,5 phút CPU / ổ đĩa — đo 10/2026).
- * "Đồng bộ ngay" và yêu cầu chụp gốc của người dùng (requestBase) không phải chờ.
+ * No automatic cycle runs during the first few minutes after the app OPENS: the UI is still being built and the channels are catching up on sync,
+ * and a cycle may have to reinstall the triggers + take the base snapshot (a real 2.7 GB DB: ~1.5 min of CPU / disk time, measured 10/2026).
+ * "Đồng bộ ngay" (Sync now) and the user's request for a base snapshot (requestBase) do not have to wait.
  */
 export const STARTUP_QUIET_MS = 5 * 60_000;
-/** Nhịp kiểm tra máy có ngủ giữa lúc chụp bản gốc không. */
+/** Tick that checks whether the machine sleeps while the base snapshot is being taken. */
 const BASE_HEARTBEAT_MS = 10_000;
 export const RECHECK_DELAY_MS = 3_000;
 export const REALTIME_DELAY_MS = 5_000;
@@ -51,7 +51,7 @@ export const MAX_BACKOFF_MS = 5 * 60_000;
 export const AUTH_RETRY_MS = 15 * 60_000;
 const LOG_CACHE = 500;
 
-/** Trọng số các bước khi tính % cả lần chụp gốc (tải lên thường lâu nhất). */
+/** Step weights used when computing the % of the whole base snapshot (the upload is usually the longest). */
 const PHASE_WEIGHTS: Record<DbSyncProgress['phase'], number> = { copy: 0.2, filter: 0.05, compress: 0.2, encrypt: 0.05, upload: 0.5 };
 const PHASE_ORDER: Array<DbSyncProgress['phase']> = ['copy', 'filter', 'compress', 'encrypt', 'upload'];
 
@@ -93,22 +93,22 @@ export interface EngineContext {
     ops: DbOps;
     state: StateStore;
     mode(): DbSyncMode;
-    /** Phạm vi đồng bộ (tài khoản + từ ngày) của workspace này — lưu theo workspace; thiếu = tất cả. */
+    /** Sync scope (accounts + from date) of this workspace: saved per workspace; missing = all. */
     scope?(workspaceId: string): CloudScope;
-    /** Bảo đảm bucket của máy (tạo một lần) → tên bucket. */
+    /** Ensure the machine's bucket exists (created once) → the bucket name. */
     ensureBucket(): Promise<string>;
     appVersion(): string;
     log(level: 'log' | 'warn' | 'error', msg: string): void;
     notify(urgent?: boolean): void;
     baseLock: Mutex;
     now(): number;
-    /** Lúc tiến trình app khởi động (ms). Có → chu kỳ tự động không chạy trước mốc này + STARTUP_QUIET_MS. */
+    /** When the app process started (ms). If set → automatic cycles do not run before this time + STARTUP_QUIET_MS. */
     appStartedAt?(): number;
-    /** Lúc máy thức dậy / mở khoá gần nhất (powerMonitor; 0 = chưa). Chu kỳ tự động chờ như sau khi mở app. */
+    /** When the machine last woke up / was unlocked (powerMonitor; 0 = never). Automatic cycles wait the same way as after opening the app. */
     lastWakeAt?(): number;
-    /** Máy có rảnh để tự chụp bản gốc không (baseWindow.ts). Thiếu / null = không biết → chụp ngay như trước. */
+    /** Whether the machine is idle enough to take a base snapshot by itself (baseWindow.ts). Missing / null = unknown → take it right away, as before. */
     baseWindow?(): BaseWindowInfo | null;
-    /** Một workspaceUid chỉ được một engine dùng (DB sao chép giữa hai workspace → không ghi đè bản sao của nhau). */
+    /** Only one engine may use a workspaceUid (a DB copied between two workspaces must not overwrite each other's copies). */
     claimUid(uid: string, engineId: string): string | null;
     onBaseDone(engine: SyncEngine, manifest: DbManifest, bucket: string): void;
 }
@@ -117,14 +117,14 @@ class AbortJob extends Error {
     code = 'DBSYNC_ABORTED';
 }
 
-// STORAGE_FULL (Google Drive hết dung lượng): người dùng phải dọn / nâng gói → lùi như lỗi quyền, không thử dồn dập
+// STORAGE_FULL (Google Drive out of space): the user must clean up / upgrade the plan → back off like a permission error, do not retry in a burst
 const AUTH_CODES = new Set(['R2_FORBIDDEN', 'TOKEN_INACTIVE', 'INVALID_TOKEN', 'BAD_TOKEN', 'NOT_CONNECTED', 'R2_NOT_ENABLED', 'STORAGE_FULL']);
 
 export function isAuthError(err: any): boolean {
     return AUTH_CODES.has(String(err?.code || '')) || err?.status === 401 || err?.status === 403;
 }
 
-/** Câu báo lỗi tiếng Việt cho người dùng. */
+/** Vietnamese error message for the user. */
 export function userMessage(err: any): string {
     const code = String(err?.code || '');
     switch (code) {
@@ -132,7 +132,7 @@ export function userMessage(err: any): string {
         case 'TOKEN_INACTIVE':
         case 'INVALID_TOKEN':
         case 'BAD_TOKEN':
-            // Lỗi của Google Drive đã có câu riêng; còn lại là token Cloudflare
+            // Google Drive errors already have their own messages; the rest are Cloudflare token errors
             if (err instanceof CloudError && /Google/i.test(err.message)) return err.message;
             return 'Cloudflare từ chối truy cập R2 (token hết hạn hoặc thiếu quyền R2) — kiểm tra lại kết nối Cloudflare.';
         case 'NOT_CONNECTED':
@@ -159,13 +159,13 @@ function samePath(a: string | null | undefined, b: string | null | undefined): b
     return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
 }
 
-/** Mô tả ngắn phạm vi cho nhật ký (không in id tài khoản). */
+/** Short description of the scope for the log (does not print account ids). */
 export function describeScope(scope: CloudScope | null | undefined): string {
     const s = normalizeScope(scope);
     if (isAllScope(s)) return 'tất cả';
     const parts: string[] = [s.accounts === 'all' ? 'mọi tài khoản' : `${s.accounts.length} tài khoản`];
     if (s.fromTs !== null) {
-        // fromTs = 00:00 giờ máy của ngày chọn → in theo ngày giờ máy (UTC sẽ lệch sang hôm trước ở UTC+7).
+        // fromTs = 00:00 machine time on the chosen day → printed in machine date/time (UTC would shift it to the day before at UTC+7).
         const d = new Date(s.fromTs);
         const pad = (n: number) => String(n).padStart(2, '0');
         parts.push(`từ ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
@@ -173,7 +173,7 @@ export function describeScope(scope: CloudScope | null | undefined): string {
     return parts.join(', ');
 }
 
-/** Phạm vi gửi sang worker: null = toàn bộ (worker không lọc gì). */
+/** Scope sent to the worker: null = everything (the worker filters nothing). */
 function scopeArg(scope: CloudScope): CloudScope | null {
     return isAllScope(scope) ? null : scope;
 }
@@ -198,11 +198,11 @@ async function readHead(file: string, bytes: number): Promise<Buffer> {
 async function removeQuietly(...files: string[]): Promise<void> {
     for (const f of files) {
         if (!f) continue;
-        try { await fs.promises.rm(f, { force: true }); } catch { /* bỏ qua */ }
+        try { await fs.promises.rm(f, { force: true }); } catch { /* ignore */ }
     }
 }
 
-/** Chạy fn cho từng phần tử, tối đa `limit` việc song song. */
+/** Run fn for each item, at most `limit` jobs in parallel. */
 export async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
     let i = 0;
     const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
@@ -242,17 +242,17 @@ export class SyncEngine {
     private failRow: { id: number; entry: LogInput } | null = null;
     private warnedUnsupported = false;
     private sweeping = false;
-    /** Tiến độ lần chụp gốc đang chạy (null = không chạy). */
+    /** Progress of the base snapshot currently running (null = not running). */
     private progress: DbSyncProgress | null = null;
     private uploadSample: { at: number; sent: number } | null = null;
     private uploadLoggedQuarter = 0;
-    /** Engine tự thấy tiến trình vừa bị đóng băng (hẹn giờ chạy trễ) → coi như máy vừa thức dậy lúc này. */
+    /** The engine notices the process was just frozen (a timer that ran late) → treats it as the machine having just woken up now. */
     private detectedWakeAt = 0;
     private maintLastAt = 0;
-    /** Chụp gốc tự phát đang chờ máy rảnh vì lý do gì (baseWindow.ts; null = không chờ) + lý do đã ghi nhật ký. */
+    /** Why a self-triggered base snapshot is waiting for the machine to be idle (baseWindow.ts; null = not waiting), plus the reason already logged. */
     private baseWaiting: BaseWaitReason | null = null;
     private baseWaitLogged: string | null = null;
-    /** Lần chụp gốc đang chạy: tự phát thì dừng được khi máy ngủ; stamp = tên file tạm (báo worker dừng). */
+    /** The base snapshot currently running: a self-triggered one can be stopped when the machine sleeps; stamp = temp file name (tells the worker to stop). */
     private baseRun: { automatic: boolean; stamp: number; slept: boolean } | null = null;
 
     constructor(ws: EngineWorkspace, private readonly ctx: EngineContext) {
@@ -270,17 +270,17 @@ export class SyncEngine {
         return this.st.manifest;
     }
 
-    // ─── Vòng đời ─────────────────────────────────────────────────────────────
+    // ─── Lifecycle ─────────────────────────────────────────────────────────────
 
     start(): void {
         this.stopped = false;
         void this.loadLogCache();
-        // Dọn file tạm của lần chụp gốc dở (app tắt giữa chừng) — xếp vào hàng đợi để không đua với chu kỳ đầu tiên.
+        // Clean up the temp files of an unfinished base snapshot (the app quit midway): queue it so it does not race with the first cycle.
         this.chain = this.chain.then(() => this.cleanupTmp()).catch(() => undefined);
         this.applyMode(START_DELAY_MS);
     }
 
-    /** Đổi chế độ (hourly ↔ realtime) hoặc khởi động lại lịch. */
+    /** Change mode (hourly ↔ realtime) or restart the schedule. */
     applyMode(firstDelayMs = RECHECK_DELAY_MS): void {
         this.clearTimers();
         const mode = this.ctx.mode();
@@ -320,14 +320,14 @@ export class SyncEngine {
         }
     }
 
-    /** Dừng hẳn (tắt đồng bộ / xoá workspace / thoát app). Chờ việc đang chạy tối đa timeoutMs. */
+    /** Stop completely (sync turned off / workspace deleted / app quit). Waits for the running job for at most timeoutMs. */
     async stop(timeoutMs = 30_000): Promise<void> {
         this.stopped = true;
         this.pause();
         await this.idle(timeoutMs);
     }
 
-    /** Chờ hàng đợi công việc rỗng (tối đa timeoutMs). true = đã rỗng. */
+    /** Wait for the job queue to empty (at most timeoutMs). true = it is empty. */
     async idle(timeoutMs = 30_000): Promise<boolean> {
         let timer: ReturnType<typeof setTimeout> | null = null;
         const timeout = new Promise<boolean>(resolve => {
@@ -345,8 +345,8 @@ export class SyncEngine {
     }
 
     /**
-     * Sau thao tác thay file DB (pauseFor): kiểm tra lại db_uid / đường dẫn sớm.
-     * resetBackoff: vừa kết nối lại Cloudflare → bỏ thời gian lùi do lỗi quyền/mạng.
+     * After replacing the DB file (pauseFor): check db_uid / the path again early.
+     * resetBackoff: just reconnected to Cloudflare → drop the back-off time caused by permission/network errors.
      */
     recheck(resetBackoff = false): void {
         if (this.stopped || this.paused || this.ctx.mode() === 'off') return;
@@ -371,13 +371,13 @@ export class SyncEngine {
         if (!this.stopped && !this.paused && this.ctx.mode() !== 'off') this.scheduleAt(this.ctx.now() + RECHECK_DELAY_MS);
     }
 
-    /** Đồng bộ ngay (nút "Đồng bộ ngay") — bỏ qua thời gian lùi, ném lỗi cho người gọi. */
+    /** The "Đồng bộ ngay" (Sync now) button: ignores the back-off time and throws errors to the caller. */
     syncNow(): Promise<void> {
         this.backoffUntil = 0;
         return this.enqueue('manual', true);
     }
 
-    /** Sự kiện từ worker: _cloud_dirty có dòng (chế độ realtime). */
+    /** Event from the worker: _cloud_dirty has rows (realtime mode). */
     onDirty(): void {
         if (this.stopped) return;
         if (this.paused) {
@@ -389,9 +389,9 @@ export class SyncEngine {
     }
 
     /**
-     * Máy sắp ngủ / vừa thức dậy / vừa mở khoá (powerMonitor qua index.ts, hoặc engine tự thấy hẹn giờ chạy trễ).
-     * Chụp gốc tự phát đang chạy mà máy ngủ → dừng ở bước kế (worker dừng nén), không chạy nốt đúng lúc người dùng quay
-     * lại; chụp lại khi máy rảnh. Mở khoá thì không dừng (máy vẫn thức), chỉ dời lần chụp sau.
+     * The machine is about to sleep / has just woken up / has just been unlocked (powerMonitor via index.ts, or the engine notices a timer ran late).
+     * If a self-triggered base snapshot is running when the machine sleeps → stop at the next step (the worker stops compressing), instead of
+     * finishing right when the user comes back; take it again when the machine is idle. Unlocking does not stop it (the machine is still awake), it only postpones the next snapshot.
      */
     onPowerEvent(ev: 'suspend' | 'resume' | 'unlock', at = this.ctx.now()): void {
         if (ev !== 'suspend') this.detectedWakeAt = Math.max(this.detectedWakeAt, at);
@@ -403,7 +403,7 @@ export class SyncEngine {
         void this.ctx.ops.call('cancelSnapshot', { dbPath: this.dbPath, stamp: run.stamp }).catch(() => undefined);
     }
 
-    // ─── Trạng thái / nhật ký ─────────────────────────────────────────────────
+    // ─── Status / log ─────────────────────────────────────────────────────
 
     view(): DbSyncWorkspaceStatus {
         const m = this.st.manifest;
@@ -427,7 +427,7 @@ export class SyncEngine {
         };
     }
 
-    // ─── Tiến độ chụp gốc ─────────────────────────────────────────────────────
+    // ─── Base snapshot progress ─────────────────────────────────────────────────
 
     private setProgress(phase: DbSyncProgress['phase'], done: number, total: number): void {
         const now = this.ctx.now();
@@ -447,7 +447,7 @@ export class SyncEngine {
         this.ctx.notify();
     }
 
-    /** Sự kiện từ worker trong lúc chụp gốc (lọc theo phạm vi, nén). */
+    /** Events from the worker during the base snapshot (scope filtering, compression). */
     onSnapshotProgress(phase: 'filter' | 'compress', done: number, total: number): void {
         if (!this.progress) return;
         this.setProgress(phase, Number(done) || 0, Number(total) || 0);
@@ -466,7 +466,7 @@ export class SyncEngine {
             this.uploadSample = { at: now, sent };
             this.progress = { ...this.progress, rate: Math.max(0, rate) };
         }
-        // Đang chạy tiếp được → bỏ dòng "đang thử lại" sau 30 s.
+        // Can keep running → remove the "đang thử lại" (retrying) line after 30 s.
         if (this.progress.retry && now - this.progress.retry.at > 30_000) this.progress = { ...this.progress, retry: null };
         this.setProgress('upload', sent, total);
         const quarter = total > 0 ? Math.floor((sent / total) * 4) : 0;
@@ -501,7 +501,7 @@ export class SyncEngine {
             const known = new Set(this.logCache.map(e => e.id));
             this.logCache = [...this.logCache, ...(list || []).filter(e => !known.has(e.id))].sort((a, b) => b.id - a.id).slice(0, LOG_CACHE);
             this.logLoaded = true;
-        } catch { /* lần sau */ }
+        } catch { /* next time */ }
     }
 
     private cacheLog(e: SyncLogEntry): void {
@@ -558,7 +558,7 @@ export class SyncEngine {
             return;
         }
         if (result === 'error') {
-            // Một chuỗi lỗi liên tiếp = một dòng (cập nhật giờ kết thúc + lỗi mới nhất), không làm đầy nhật ký.
+            // A run of consecutive errors = one row (updates the end time + the latest error), so the log does not fill up.
             if (this.failRow) {
                 const e = { ...this.failRow.entry, endAt: now, pushes: this.failRow.entry.pushes + pushes, error };
                 this.failRow.entry = e;
@@ -576,7 +576,7 @@ export class SyncEngine {
         }
     }
 
-    // ─── Lịch ────────────────────────────────────────────────────────────────
+    // ─── Schedule ────────────────────────────────────────────────────────────
 
     private clearTimers(): void {
         if (this.timer) {
@@ -590,19 +590,19 @@ export class SyncEngine {
         }
     }
 
-    /** Mốc mở app / máy thức dậy / mở khoá gần nhất (0 = không biết). */
+    /** Most recent app open / machine wake-up / unlock (0 = unknown). */
     private wakeAt(): number {
         return Math.max(this.ctx.appStartedAt?.() || 0, this.ctx.lastWakeAt?.() || 0, this.detectedWakeAt);
     }
 
     private scheduleAt(ts: number): void {
         if (this.stopped || this.paused || this.ctx.mode() === 'off') return;
-        // Chu kỳ tự động (hẹn giờ, Realtime) chờ hết STARTUP_QUIET_MS sau khi mở app / máy thức dậy / mở khoá; chụp gốc do
-        // người dùng yêu cầu thì không.
+        // Automatic cycles (timer, Realtime) wait for STARTUP_QUIET_MS to pass after the app opens / the machine wakes up / is unlocked; a base snapshot requested by
+        // the user does not wait.
         const wake = this.forceBaseReason ? 0 : this.wakeAt();
         const quietUntil = wake ? wake + STARTUP_QUIET_MS : 0;
         const at = Math.max(ts, this.backoffUntil, quietUntil);
-        if (this.timer && this.timerAt <= at) return; // đã có lịch sớm hơn
+        if (this.timer && this.timerAt <= at) return; // a schedule earlier than this already exists
         if (this.timer) clearTimeout(this.timer);
         this.timerAt = at;
         this.timer = setTimeout(() => {
@@ -610,9 +610,9 @@ export class SyncEngine {
             const late = now - this.timerAt;
             this.timer = null;
             this.timerAt = 0;
-            // Đến hạn trong lúc máy ngủ → chạy ngay khi máy vừa thức: coi như máy vừa thức dậy lúc này.
+            // Due while the machine was asleep → run right when it wakes up: treat it as the machine having just woken up now.
             if (late > TIME_JUMP_MS && !this.forceBaseReason) this.onPowerEvent('resume', now);
-            // Hẹn từ trước khi máy thức dậy / mở khoá: chưa chạy, dời tới hết khoảng yên lặng.
+            // Scheduled before the machine woke up / was unlocked: not run yet, postponed until the quiet period is over.
             const wake = this.forceBaseReason ? 0 : this.wakeAt();
             if (wake && now < wake + STARTUP_QUIET_MS) {
                 this.scheduleAt(now);
@@ -623,14 +623,14 @@ export class SyncEngine {
         (this.timer as any)?.unref?.();
     }
 
-    /** Realtime: chu kỳ bảo trì 15 phút (bắt thay đổi sót, chụp gốc định kỳ); vừa thức dậy thì chờ như hẹn giờ. */
+    /** Realtime: a 15-minute maintenance cycle (catches missed changes, periodic base snapshots); right after waking up it waits like a timer. */
     private onMaintenanceTick(): void {
         const now = this.ctx.now();
         if (this.maintLastAt && now - this.maintLastAt > MAINTENANCE_MS + TIME_JUMP_MS) this.onPowerEvent('resume', now);
         this.maintLastAt = now;
         const wake = this.wakeAt();
         if (wake && now < wake + STARTUP_QUIET_MS) {
-            this.scheduleAt(now); // dời tới hết khoảng yên lặng
+            this.scheduleAt(now); // postponed until the quiet period is over
             return;
         }
         void this.enqueue('maintenance');
@@ -648,7 +648,7 @@ export class SyncEngine {
     private async unwatch(): Promise<void> {
         if (!this.watching) return;
         this.watching = false;
-        try { await this.ctx.ops.call('unwatch', { dbPath: this.dbPath }); } catch { /* worker đã dừng */ }
+        try { await this.ctx.ops.call('unwatch', { dbPath: this.dbPath }); } catch { /* worker already stopped */ }
     }
 
     private async rearm(): Promise<void> {
@@ -656,17 +656,17 @@ export class SyncEngine {
         try {
             const ok = await this.ctx.ops.call<boolean>('rearm', { dbPath: this.dbPath });
             if (!ok) {
-                // Worker vừa được tạo lại (chết / bị dừng) → mất vòng dò → cài lại.
+                // The worker was just recreated (died / was stopped) → the watch loop is lost → set it up again.
                 this.watching = false;
                 await this.watch();
             }
-        } catch { /* worker đã dừng — lần sau */ }
+        } catch { /* worker already stopped, next time */ }
     }
 
-    // ─── Chu kỳ đồng bộ ───────────────────────────────────────────────────────
+    // ─── Sync cycle ───────────────────────────────────────────────────────
 
     private enqueue(reason: string, throwErrors = false): Promise<void> {
-        // Đã có một chu kỳ đang chờ (chưa chạy) → dùng chung, không xếp thêm.
+        // A cycle is already waiting (not run yet) → share it, do not queue another.
         if (!throwErrors && this.queued) return this.queued;
         let entry: Promise<void> | null = null;
         const run = async () => {
@@ -700,7 +700,7 @@ export class SyncEngine {
         return p;
     }
 
-    /** Phạm vi đang cấu hình cho workspace này (không phải phạm vi của bản gốc trên R2). */
+    /** The scope configured for this workspace (not the scope of the base snapshot on R2). */
     currentScope(): CloudScope {
         try {
             return normalizeScope(this.ctx.scope ? this.ctx.scope(this.id) : ALL_SCOPE);
@@ -738,7 +738,7 @@ export class SyncEngine {
         try {
             const bucket = await this.ctx.ensureBucket();
             const r2 = this.r2For(bucket);
-            // Đổi kho (R2 ↔ Google Drive): manifest đang nhớ là của kho cũ → đọc lại trên kho mới (chưa có → chụp gốc mới)
+            // Storage switch (R2 ↔ Google Drive): the manifest in memory belongs to the old storage → read it again on the new storage (none yet → take a new base snapshot)
             const provider = this.ctx.core.storageProvider();
             if ((this.st.provider || 'r2') !== provider) {
                 this.st.provider = provider;
@@ -746,7 +746,7 @@ export class SyncEngine {
                 this.ctx.state.save();
             }
             const passphrase = this.passphrase();
-            // Một phạm vi cho cả chu kỳ: đổi phạm vi giữa chừng → chu kỳ sau thấy manifest khác phạm vi → chụp gốc mới.
+            // One scope for the whole cycle: if the scope changes midway, the next cycle sees a manifest with a different scope → take a new base snapshot.
             const scope = this.currentScope();
             this.checkRunnable();
             const t = await this.ctx.ops.call<TrackingInfo>('ensureTracking', { dbPath: this.dbPath });
@@ -778,18 +778,18 @@ export class SyncEngine {
             }
             const lastPushedId = Math.max(this.st.lastAckedId || 0, manifest?.segments.length ? manifest.segments[manifest.segments.length - 1].toId : 0, manifest?.base?.highWater || 0);
             let rebase: string | null = this.forceBaseReason
-                // Gốc bắt buộc đã hoãn chờ máy rảnh: dấu hiệu như trigger vừa cài lại chỉ có ở chu kỳ phát hiện → nhớ trong state
+                // A required base snapshot was postponed waiting for an idle machine: a sign such as "triggers just reinstalled" only exists in the cycle that detects it → remember it in the state
                 || this.st.pendingBase
                 || (t.reinstalled ? 'tracking' : null)
                 || (this.st.dbPath && !samePath(this.st.dbPath, this.dbPath) ? 'db-path' : null)
                 || (t.dirtySeq < lastPushedId ? 'older-db' : null)
-                // Gồm cả phạm vi: manifest ghi phạm vi khác (hoặc thiếu trong khi phạm vi hiện tại bị giới hạn) → gốc mới.
+                // Includes the scope: the manifest records a different scope (or none while the current scope is limited) → new base snapshot.
                 || rebaseReason(manifest, { now: this.ctx.now(), fingerprint: t.fingerprint, dbUid: t.dbUid, scope });
             if (!rebase && manifest && !(await this.chainPassOk(manifest, passphrase))) rebase = 'passphrase';
 
-            // Chụp gốc tự phát (tuổi, đoạn lớn, đổi schema…) chờ máy rảnh (baseWindow.ts); gốc định kỳ thì lúc chờ vẫn đẩy
-            // đoạn thay đổi lên gốc cũ. Người dùng yêu cầu ("Đồng bộ ngay", đổi phạm vi / kho / mật khẩu) thì không chờ.
-            // t.created: vừa bật đồng bộ trên DB này → bản gốc đầu tiên chạy luôn.
+            // Self-triggered base snapshots (age, large segments, schema change…) wait for an idle machine (baseWindow.ts); a periodic base snapshot still pushes
+            // change segments onto the old base while waiting. A user request ("Đồng bộ ngay" (Sync now), changing the scope / storage / password) does not wait.
+            // t.created: sync was just turned on for this DB → the first base snapshot runs right away.
             const automatic = reason !== 'manual' && !this.forceBaseReason && !t.created;
             this.baseWaiting = null;
             const waitBase = (why: string) => automatic && this.mustWaitForBase(why);
@@ -806,7 +806,7 @@ export class SyncEngine {
                     rebase = res.rebase;
                 }
             }
-            // Gốc bắt buộc tự phát (đổi schema…) cũng chờ, tối đa 6 giờ: lúc chờ thay đổi nằm trong DB, chưa đẩy được.
+            // A required self-triggered base snapshot (schema change…) also waits, for at most 6 hours: while waiting, the changes stay in the DB and cannot be pushed yet.
             if (rebase && !isOptionalRebase(rebase) && waitBase(rebase)) {
                 if (this.st.pendingBase !== rebase) {
                     this.st.pendingBase = rebase;
@@ -827,7 +827,7 @@ export class SyncEngine {
                 this.clearBaseWait();
             }
 
-            // Thành công
+            // Success
             const hadFailures = this.failures > 0;
             this.failures = 0;
             this.authFailed = false;
@@ -845,7 +845,7 @@ export class SyncEngine {
             this.ctx.notify(hadFailures || baseDone);
         } catch (err: any) {
             if (err instanceof AbortJob || ((this.paused || this.stopped) && !throwErrors)) {
-                // Tạm dừng giữa chừng (đổi workspace / xoá / khôi phục): không tính là lỗi, chạy lại khi tiếp tục.
+                // Paused midway (switching workspace / deleting / restoring): not counted as an error, runs again when it resumes.
                 this.pendingDirty = true;
                 return;
             }
@@ -875,14 +875,14 @@ export class SyncEngine {
         this.ctx.state.save();
         this.ctx.log('warn', `[CloudDb] ${this.id}: đồng bộ lỗi (${this.failures} lần liên tiếp, thử lại sau ${Math.round(delay / 1000)} s): ${err?.message || err}`);
         void this.logCycle(kind, startedAt, 0, 0, 0, 'error', message);
-        // Hai lần lỗi liên tiếp (hoặc lỗi quyền) → UI hiện cảnh báo.
+        // Two consecutive errors (or a permission error) → the UI shows a warning.
         if (auth || this.failures === 2) this.ctx.notify(true);
         else this.ctx.notify();
     }
 
     /**
-     * Chụp gốc tự phát có phải chờ máy rảnh không (baseWindow.ts). Ghi lúc bắt đầu cần chụp (vào state: mức chờ tối đa
-     * tính qua các lần mở app) + nhật ký một dòng mỗi lần đổi lý do. true = chưa chụp lần này.
+     * Does a self-triggered base snapshot have to wait for an idle machine (baseWindow.ts)? Recorded when a snapshot is first needed (into the state: the maximum wait
+     * counted across app openings) + one log line each time the reason changes. true = not taken in this run.
      */
     private mustWaitForBase(rebase: string): boolean {
         if (!isDeferrableRebase(rebase)) return false;
@@ -923,13 +923,13 @@ export class SyncEngine {
             this.scheduleAt(this.backoffUntil);
             return;
         }
-        // Đang chờ máy rảnh để chụp gốc: kiểm lại sớm (khoảng rảnh của người dùng có thể ngắn)
+        // Waiting for an idle machine to take the base snapshot: check again early (the user's idle window may be short)
         if (this.baseWaiting) this.scheduleAt(now + BASE_WAIT_RECHECK_MS);
         else if (mode === 'hourly') this.scheduleAt(now + HOUR_MS);
         if (mode !== 'hourly') void this.rearm();
     }
 
-    // ─── Đoạn thay đổi ────────────────────────────────────────────────────────
+    // ─── Change segments ────────────────────────────────────────────────────────
 
     private async pushSegments(
         r2: R2Client, manifest: DbManifest, passphrase: string, countAtStart: number, scope: CloudScope = ALL_SCOPE,
@@ -946,12 +946,12 @@ export class SyncEngine {
                 limit: SEGMENT_ROW_LIMIT,
                 maxBytes: SEGMENT_MAX_BYTES,
                 now: this.ctx.now(),
-                // Cùng phạm vi với bản gốc (đã kiểm ở runCycle): dòng ngoài phạm vi không được gửi nội dung.
+                // Same scope as the base snapshot (checked in runCycle): rows outside the scope must not send content.
                 scope: scopeArg(scope),
             });
             if (!packed) break;
             if (packed.rows > 0) {
-                // Schema đổi sau bản gốc (vd migration chạy giữa chừng) → đoạn không áp được lên gốc cũ → chụp gốc mới.
+                // The schema changed after the base snapshot (e.g. a migration ran midway) → the segment cannot be applied to the old base → take a new base snapshot.
                 if (packed.fingerprint !== m.schemaFingerprint) return { pushes, rows, bytes, rebase: 'schema' };
                 const enc = await this.ctx.core.crypto.encryptBuffer(asBuffer(packed.gz), passphrase);
                 const key = segmentKey(m.workspaceUid, packed.fromId, packed.toId, packed.at);
@@ -970,7 +970,7 @@ export class SyncEngine {
             this.st.lastAckedId = Math.max(this.st.lastAckedId || 0, packed.toId);
             this.ctx.state.save();
             processed += packed.rows + packed.skipped;
-            // Chỉ đẩy phần đã bẩn lúc bắt đầu chu kỳ; thay đổi mới sẽ có chu kỳ sau (realtime: worker báo lại).
+            // Only push what was dirty when the cycle started; new changes get the next cycle (realtime: the worker reports them again).
             if (!packed.hasMore || processed >= countAtStart) break;
         }
         return { pushes, rows, bytes, rebase: null };
@@ -988,19 +988,19 @@ export class SyncEngine {
         this.ctx.state.save();
     }
 
-    // ─── Bản gốc ─────────────────────────────────────────────────────────────
+    // ─── Base snapshot ─────────────────────────────────────────────────────────
 
     private tmpDir(): string {
         return path.join(path.dirname(this.dbPath), '.cloud-sync-tmp');
     }
 
     private async cleanupTmp(): Promise<void> {
-        try { await fs.promises.rm(this.tmpDir(), { recursive: true, force: true }); } catch { /* bỏ qua */ }
+        try { await fs.promises.rm(this.tmpDir(), { recursive: true, force: true }); } catch { /* ignore */ }
     }
 
     /**
-     * Đánh dấu lần chụp gốc đang chạy + nhịp kiểm tra máy ngủ (khoảng giữa hai nhịp > TIME_JUMP_MS = tiến trình bị đóng
-     * băng → onPowerEvent dừng lần chụp tự phát). Trả hàm kết thúc.
+     * Marks the base snapshot as running + a tick that checks whether the machine sleeps (a gap between two ticks > TIME_JUMP_MS = the process was frozen
+     * → onPowerEvent stops the self-triggered snapshot). Returns the end function.
      */
     private beginBaseRun(run: { automatic: boolean; stamp: number; slept: boolean }): () => void {
         this.baseRun = run;
@@ -1025,7 +1025,7 @@ export class SyncEngine {
             this.checkRunnable();
             this.runtime = 'snapshotting';
             const at = this.ctx.now();
-            // Bước sao chép: worker chép một mạch (ảnh chụp nhất quán) nên main tự đo kích thước file tạm mỗi giây.
+            // Copy step: the worker copies in one go (a consistent snapshot), so main measures the temp file size itself every second.
             const liveBytes = (await fileSize(this.dbPath)) + (await fileSize(`${this.dbPath}-wal`));
             this.progress = { phase: 'copy', percent: 0, done: 0, total: liveBytes, startedAt: at, phaseStartedAt: at, rate: null, retry: null };
             this.uploadSample = null;
@@ -1039,8 +1039,8 @@ export class SyncEngine {
                 });
             }, 1000);
             (copyPoll as any)?.unref?.();
-            // Chụp tự phát mà máy ngủ giữa chừng (Modern Standby đánh thức vài giây ban đêm, máy tự ngủ khi rảnh): dừng ở
-            // bước kế thay vì chạy nốt đúng lúc người dùng quay lại.
+            // A self-triggered snapshot that the machine sleeps through midway (Modern Standby wakes it for a few seconds at night, and it sleeps again when idle): stop at the
+            // next step instead of finishing right when the user comes back.
             const run = { automatic, stamp: at, slept: false };
             const endRun = this.beginBaseRun(run);
             const checkAwake = () => {
@@ -1049,7 +1049,7 @@ export class SyncEngine {
             };
             let snap: any;
             try {
-                // Lọc theo phạm vi làm trong worker, trên bản sao vừa backup (không đụng DB sống).
+                // Scope filtering is done in the worker, on the copy that was just backed up (does not touch the live DB).
                 snap = await this.ctx.ops.call<any>('snapshot', { dbPath: this.dbPath, tmpDir: this.tmpDir(), stamp: at, scope: scopeArg(scope) });
             } catch (err) {
                 this.progress = null;
@@ -1084,7 +1084,7 @@ export class SyncEngine {
                 const key = baseKey(uid, at);
                 this.setProgress('upload', 0, enc.bytes);
                 this.ctx.log('log', `[CloudDb] ${this.id}: bắt đầu tải bản gốc lên R2 (${mb(enc.bytes)} MB)`);
-                // Trong lúc tải bản gốc, lưu media chạy 1 file một lúc (nhường đường truyền — uploadCoordinator).
+                // While the base snapshot uploads, media saving runs one file at a time (yields bandwidth to uploadCoordinator).
                 const endUpload = beginDbBaseUpload();
                 try {
                     await r2.putFile(key, encPath, {
@@ -1113,8 +1113,8 @@ export class SyncEngine {
                 await this.writeManifest(r2, m);
                 this.chainPassphrase = passphrase;
                 this.forceBaseReason = null;
-                // Thay đổi đến trước lúc chụp đã nằm trong bản gốc. Chuỗi mới → mốc xác nhận tính lại từ bản gốc
-                // (sau khi tắt/bật lại, _cloud_dirty mới đánh số lại từ đầu).
+                // Changes that arrived before the snapshot are already in the base snapshot. New chain → the confirmation mark is recalculated from the base snapshot
+                // (after turning sync off/on, the new _cloud_dirty numbers again from the start).
                 await this.ctx.ops.call('ack', { dbPath: this.dbPath, upToId: m.base!.highWater });
                 this.st.lastAckedId = m.base!.highWater;
                 this.st.dbPath = this.dbPath;
@@ -1125,7 +1125,7 @@ export class SyncEngine {
                 const removed = Object.values<number>(snap.scopeReport?.removed || {}).reduce((s2, n) => s2 + (Number(n) || 0), 0);
                 this.ctx.log('log', `[CloudDb] ${this.id}: bản gốc ${key} (${enc.bytes} byte, lý do: ${reason}`
                     + `${snap.scopeReport ? `, phạm vi ${describeScope(scope)}: bỏ ${removed} dòng` : ''})`);
-                try { this.ctx.onBaseDone(this, m, bucket); } catch { /* bỏ qua */ }
+                try { this.ctx.onBaseDone(this, m, bucket); } catch { /* ignore */ }
                 void this.sweepOld(r2, uid, key);
                 const rows = Object.values<number>(snap.rowCounts || {}).reduce((s2, n) => s2 + (Number(n) || 0), 0);
                 return { rows, bytes: enc.bytes };
@@ -1140,8 +1140,8 @@ export class SyncEngine {
     }
 
     /**
-     * Dọn chuỗi cũ sau khi có gốc mới: mọi object dưới <uid>/db/ cũ hơn bản gốc mới (theo giờ R2), trừ manifest,
-     * nhịp tim máy dự phòng và object manifest hiện tại còn tham chiếu. Một lần List mỗi lần chụp gốc.
+     * Cleans up the old chain after a new base snapshot exists: every object under <uid>/db/ older than the new base snapshot (by R2 time), except the manifest,
+     * the standby machine heartbeats and the current manifest object that is still referenced. One List per base snapshot.
      */
     private async sweepOld(r2: R2Client, uid: string, newBaseKey: string): Promise<void> {
         if (this.sweeping) return;
@@ -1169,7 +1169,7 @@ export class SyncEngine {
                 .map(o => o.key);
             if (!victims.length) return;
             await pool(victims, 6, async key => {
-                try { await r2.deleteObject(key); } catch { /* lần dọn sau */ }
+                try { await r2.deleteObject(key); } catch { /* clean up next time */ }
             });
             this.ctx.log('log', `[CloudDb] ${this.id}: đã dọn ${victims.length} object của chuỗi cũ`);
         } catch (err: any) {

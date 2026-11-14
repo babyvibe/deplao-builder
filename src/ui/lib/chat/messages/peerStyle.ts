@@ -1,17 +1,19 @@
 /**
- * Màu & chữ viết tắt theo người / hội thoại (kiểu Telegram Desktop), dùng chung mọi kênh (Zalo, Facebook, Telegram):
- * tên người gửi trong tin nhắn, khung trích dẫn, ảnh đại diện chữ ở danh sách hội thoại / đầu khung chat / thành viên…
- * cùng một màu cho cùng một người.
+ * Colour and initials per person / conversation (Telegram Desktop style), shared by all channels (Zalo, Facebook, Telegram):
+ * the sender's name in a message, the quote block, the letter avatars in the conversation list / chat header / members...
+ * the same colour for the same person.
  *
- * Màu: id số → `id % 7` trên id "trần" (Telegram: nhóm thường -123 → 123, siêu nhóm / kênh -100123 → 123) → 0 đỏ, 1 cam,
- * 2 tím, 3 xanh lá, 4 xanh ngọc, 5 xanh dương, 6 hồng — đúng cách Telegram tô màu người dùng chưa tự chọn màu (đã đối
- * chiếu Telegram Desktop trên dữ liệu thật, 5/5 khớp). Id không phải số → băm chuỗi. Bảng màu sáng / tối: lớp
- * `chat-peer-N` trong index.css.
+ * Colour: numeric id → `id % 7` on the "bare" id (Telegram: regular group -123 → 123, supergroup / channel -100123 → 123) → 0 red, 1 orange,
+ * 2 purple, 3 green, 4 teal, 5 blue, 6 pink: exactly how Telegram colours users who have not picked a colour (checked against
+ * Telegram Desktop on real data, 5/5 match). A non-numeric id → hash of the string. Light / dark palette: the
+ * `chat-peer-N` class in index.css.
  */
+
+import { tr } from '../../../../shared/i18n';
 
 export const PEER_COLOR_COUNT = 7;
 
-/** id trần (bỏ "-" / "-100" của nhóm / kênh Telegram); không phải số → ''. */
+/** Bare id (without the "-" / "-100" of a Telegram group / channel); not a number → ''. */
 function barePeerId(peerId: string): string {
   const id = peerId.trim();
   if (/^-100\d+$/.test(id)) return id.slice(4);
@@ -26,13 +28,13 @@ function hashIndex(text: string): number {
 }
 
 /**
- * Chỉ số màu 0–6 của người / nhóm. Thiếu id số → băm `fallbackKey` (vd tên) hoặc chính id; không có gì → null.
+ * Colour index 0–6 of a person / group. Without a numeric id → hash of `fallbackKey` (e.g. the name) or the id itself; nothing at all → null.
  */
 export function peerColorIndex(peerId: string | number | null | undefined, fallbackKey?: string | null): number | null {
   const raw = peerId === null || peerId === undefined ? '' : String(peerId);
   const bare = barePeerId(raw);
   if (bare && !/^0+$/.test(bare)) {
-    // Chia lấy dư theo từng chữ số: id Zalo (19 chữ số) / kênh Telegram vượt độ chính xác an toàn của số thực
+    // Takes the remainder digit by digit: Zalo ids (19 digits) / Telegram channel ids exceed the safe precision of a real number
     let rest = 0;
     for (const digit of bare) rest = (rest * 10 + Number(digit)) % PEER_COLOR_COUNT;
     return rest;
@@ -44,8 +46,8 @@ export function peerColorIndex(peerId: string | number | null | undefined, fallb
 const LETTER_OR_NUMBER = /[\p{L}\p{N}]/u;
 
 /**
- * Chữ viết tắt trên ảnh đại diện như Telegram Desktop (EmptyUserpic::InitialsString): chữ cái đầu của từ đầu + chữ cái
- * đầu của từ cuối, bỏ qua emoji / ký hiệu ("🐶👾 BITSDuck Smart👾 BITS🦴" → "BB", "Nguyễn Bích Diệp" → "ND").
+ * Initials on the avatar, as Telegram Desktop does (EmptyUserpic::InitialsString): the first letter of the first word + the first letter
+ * of the last word, skipping emoji / symbols ("🐶👾 BITSDuck Smart👾 BITS🦴" → "BB", "Nguyễn Bích Diệp" → "ND").
  */
 export function peerInitials(name: string | null | undefined): string {
   const text = String(name || '').normalize('NFC').trim();
@@ -65,7 +67,7 @@ export function peerInitials(name: string | null | undefined): string {
       level = 0;
       letterFound = false;
     } else if (letterFound && ch === '-') {
-      // Ưu tiên từ sau dấu cách, sau đó mới tới phần sau dấu "-" (Anne-Marie → "AM")
+      // Prefer the word after a space, then the part after a "-" (Anne-Marie → "AM")
       level = 1;
       letterFound = false;
     }
@@ -83,8 +85,8 @@ export function peerInitials(name: string | null | undefined): string {
 }
 
 /**
- * Một chữ đại diện cho tên: chữ cái / số đầu tiên. Trước đây `charAt(0)` của tên mở đầu bằng emoji lấy nửa cặp
- * surrogate → hiện ô "�". Không có chữ nào → ký tự (emoji) đầu tiên nguyên vẹn.
+ * One letter representing the name: the first letter / digit. Before, `charAt(0)` of a name starting with an emoji took half of a
+ * surrogate pair → the box showed "�". If there is no letter → the first character (emoji) in full.
  */
 export function nameInitial(name: string | null | undefined, fallback = '?'): string {
   const text = String(name || '').normalize('NFC').trim();
@@ -95,35 +97,35 @@ export function nameInitial(name: string | null | undefined, fallback = '?'): st
   return Array.from(text)[0] || fallback;
 }
 
-/** Vai trò trong nhóm Telegram (telegram_group_admins): 1 = người tạo, 2 = quản trị viên. */
+/** Role in a Telegram group (telegram_group_admins): 1 = creator, 2 = administrator. */
 export interface TelegramGroupAdmin {
   memberId: string;
   role: number;
-  /** Chức vụ tự đặt (vd "I.... am.... mod"); rỗng → nhãn mặc định. */
+  /** Custom title set by the user (e.g. "I.... am.... mod"); empty → the default label. */
   rank: string;
 }
 
-/** Telegram: chức vụ tự đặt, không có thì "Chủ nhóm" / "Quản trị viên" (như Telegram). */
+/** Telegram: the custom title; if none, "Chủ nhóm" (Group owner) / "Quản trị viên" (Administrator), as in Telegram. */
 export function telegramRankLabel(admin: Pick<TelegramGroupAdmin, 'role' | 'rank'> | null | undefined): string {
   if (!admin) return '';
   const rank = String(admin.rank || '').trim();
   if (rank) return rank;
-  if (Number(admin.role) === 1) return 'Chủ nhóm';
-  if (Number(admin.role) === 2) return 'Quản trị viên';
+  if (Number(admin.role) === 1) return tr('Chủ nhóm');
+  if (Number(admin.role) === 2) return tr('Quản trị viên');
   return '';
 }
 
 /**
- * Nhãn chức vụ từ `role` của thành viên nhóm (page_group_member) — quy ước theo kênh (shared/chat/groupMemberRoles):
- * Telegram 1 = người tạo / 2 = quản trị viên; Zalo 2 = trưởng nhóm / 1 = phó nhóm; Facebook: quản trị viên.
+ * Role label from the `role` of a group member (page_group_member), following each channel's convention (shared/chat/groupMemberRoles):
+ * Telegram 1 = creator / 2 = administrator; Zalo 2 = group leader / 1 = deputy leader; Facebook: administrator.
  */
 export function groupRankLabel(channel: string | null | undefined, role: number | string | null | undefined): string {
   const value = Number(role || 0);
   if (!value) return '';
   const ch = String(channel || '');
   if (ch.startsWith('telegram')) return telegramRankLabel({ role: value, rank: '' });
-  if (ch === 'facebook') return 'Quản trị viên';
-  if (value === 2) return 'Trưởng nhóm';
-  if (value === 1) return 'Phó nhóm';
+  if (ch === 'facebook') return tr('Quản trị viên');
+  if (value === 2) return tr('Trưởng nhóm');
+  if (value === 1) return tr('Phó nhóm');
   return '';
 }

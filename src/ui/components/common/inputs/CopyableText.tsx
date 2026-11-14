@@ -1,19 +1,20 @@
 import React, { useState } from 'react';
+import { tr } from '../../../../shared/i18n';
 
 interface CopyableTextProps {
-  /** Giá trị sẽ được copy (UID, mã, link…). */
+  /** The value that will be copied (UID, code, link…). */
   value: string | undefined | null;
-  /** Nội dung hiển thị, mặc định = value. */
+  /** Displayed content, default = value. */
   children?: React.ReactNode;
   className?: string;
-  /** Tooltip khi rê chuột. */
+  /** Tooltip on hover. */
   title?: string;
 }
 
 /**
- * Chuỗi có nút copy hiện khi hover, click vào bất kỳ đâu để copy (cùng kiểu với PhoneDisplay).
+ * A string with a copy button shown on hover; click anywhere to copy it (same style as PhoneDisplay).
  */
-export default function CopyableText({ value, children, className = '', title = 'Click để copy' }: CopyableTextProps) {
+export default function CopyableText({ value, children, className = '', title = tr('Click để copy') }: CopyableTextProps) {
   const [copied, setCopied] = useState(false);
   if (!value) return null;
 
@@ -32,7 +33,7 @@ export default function CopyableText({ value, children, className = '', title = 
       onClick={handleCopy}
     >
       <span className="group-hover:text-primary transition-colors">{children ?? value}</span>
-      {/* Clipboard icon – hiện khi hover */}
+      {/* Clipboard icon: shown on hover */}
       <svg
         className="opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0"
         width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -42,7 +43,7 @@ export default function CopyableText({ value, children, className = '', title = 
       </svg>
       {copied && (
         <span className="absolute -top-7 left-1/2 -translate-x-1/2 bg-popover border border-border text-success text-[11px] px-2 py-0.5 rounded shadow whitespace-nowrap z-50 pointer-events-none">
-          ✓ Đã copy
+          {tr('✓ Đã copy')}
         </span>
       )}
     </span>

@@ -1,15 +1,15 @@
 import React from 'react';
 
 /**
- * Tự phát video không tiếng trong khung chat (như Telegram) mà không làm nặng app:
- * - chỉ video đang hiện ≥ 50% trên màn hình; ra khỏi màn hình thì gỡ hẳn trình phát (giải phóng bộ giải mã),
- * - tối đa MAX_INLINE_AUTOPLAY video cùng lúc (video thứ 4 chờ tới lượt, hiện ảnh bìa),
- * - dừng khi cửa sổ bị ẩn / thu nhỏ, khi đang mở trình phát toàn màn hình, hoặc hệ thống bật "giảm chuyển động".
+ * Autoplay videos muted inside the chat frame (like Telegram) without making the app heavy:
+ * - only videos at least 50% visible on screen; when they leave the screen the player is removed completely (frees the decoder),
+ * - at most MAX_INLINE_AUTOPLAY videos at once (the 4th video waits for its turn and shows the cover image),
+ * - stops when the window is hidden / minimized, when the fullscreen player is open, or when the system turns on "giảm chuyển động" (reduce motion).
  */
 export const MAX_INLINE_AUTOPLAY = 3;
 
 const holders = new Set<object>();
-const waiting = new Map<object, () => void>(); // thứ tự chèn = hàng đợi
+const waiting = new Map<object, () => void>(); // insertion order = queue order
 let suspended = false;
 const listeners = new Set<() => void>();
 
@@ -34,14 +34,14 @@ export function releaseAutoplaySlot(token: object): void {
   grant();
 }
 
-/** Đang mở trình phát toàn màn hình (có tiếng) → dừng mọi video tự phát trong khung chat. */
+/** Fullscreen player open (with sound) → stop all autoplaying videos in the chat frame. */
 export function setInlineAutoplaySuspended(value: boolean): void {
   if (suspended === value) return;
   suspended = value;
   listeners.forEach((listener) => listener());
 }
 
-// Bật tiếng ngay trong khung chat: mỗi lúc chỉ 1 video có tiếng — bật video khác thì video trước tự tắt tiếng.
+// Unmute inside the chat frame: only 1 video can have sound at a time; unmuting another video mutes the previous one.
 let soundOwner: object | null = null;
 const soundLosers = new Map<object, () => void>();
 
@@ -60,7 +60,7 @@ export function releaseInlineSound(token: object): void {
   soundLosers.delete(token);
 }
 
-/** Chỉ dùng trong test. */
+/** Test only. */
 export function getInlineAutoplayState() {
   return { playing: holders.size, waiting: waiting.size, suspended, hasSound: !!soundOwner };
 }
@@ -86,7 +86,7 @@ function useSuspended(): boolean {
   return value;
 }
 
-/** true khi video ở `ref` được phép phát ngay lúc này. */
+/** true when the video in `ref` is allowed to play right now. */
 export function useInlineAutoplay(ref: React.RefObject<HTMLElement | null>, enabled: boolean): boolean {
   const [inView, setInView] = React.useState(false);
   const [granted, setGranted] = React.useState(false);

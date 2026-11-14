@@ -1,31 +1,31 @@
 /**
- * Shared avatar retry logic cho Zalo, Facebook và Telegram contacts.
- * Xử lý khi avatar load lỗi (403, expired CDN, broken URL, file missing) bằng cách
- * gọi API refresh và cập nhật lại contact store.
+ * Shared avatar retry logic for Zalo, Facebook and Telegram contacts.
+ * Handles an avatar that fails to load (403, expired CDN, broken URL, file missing) by
+ * calling the refresh API and updating the contact store again.
  *
- * Dùng ở: ConversationList, ChatWindow, AccountCard, GroupInfoPanel...
+ * Used in: ConversationList, ChatWindow, AccountCard, GroupInfoPanel...
  */
 
 import ipc from '../ipc';
 import { CHANNEL, isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { useAccountStore } from '@/store/accounts/accountStore';
 
-// ─── Module-level debounce: tránh gọi refresh trùng lặp ─────────────────────
+// ─── Module-level debounce: avoids duplicate refresh calls ─────────────────────
 const _pending = new Map<string, Promise<string | null>>();
 
-// TTL cache: nếu vừa refresh xong mà vẫn lỗi → không retry nữa trong 60 phút
+// TTL cache: if the refresh just finished and it still fails → no more retries for 60 minutes
 const _recentlyFailed = new Map<string, number>();
 const FAIL_COOLDOWN_MS = 60 * 60 * 1000;
 
 /**
- * Xử lý khi avatar load lỗi (img onError).
- * Tự detect channel (Zalo/Facebook) và gọi API refresh phù hợp.
+ * Handles an avatar that fails to load (img onError).
+ * Detects the channel itself (Zalo/Facebook) and calls the matching refresh API.
  *
- * @returns URL avatar mới nếu refresh thành công, null nếu thất bại.
+ * @returns the new avatar URL if the refresh succeeds, null if it fails.
  */
 export async function handleAvatarError(opts: {
-  ownerId: string;        // zaloId của tài khoản đang đăng nhập
-  contactId: string;      // userId / contact_id của người có avatar lỗi
+  ownerId: string;        // zaloId of the logged-in account
+  contactId: string;      // userId / contact_id of the person whose avatar failed
   channel?: string;       // 'zalo' | 'facebook' | ...
   signal?: AbortSignal;   // optional abort
 }): Promise<string | null> {
@@ -34,11 +34,11 @@ export async function handleAvatarError(opts: {
 
   const cacheKey = `${ownerId}_${contactId}`;
 
-  // Cooldown: vừa fail gần đây → skip
+  // Cooldown: failed recently → skip
   const lastFail = _recentlyFailed.get(cacheKey);
   if (lastFail && Date.now() - lastFail < FAIL_COOLDOWN_MS) return null;
 
-  // Đang có request pending cho cùng contact → reuse promise
+  // A request is already pending for the same contact → reuse the promise
   const existing = _pending.get(cacheKey);
   if (existing) return existing;
 
@@ -54,13 +54,13 @@ async function _doRefresh(ownerId: string, contactId: string, channel: string): 
     let newUrl: string | undefined;
 
     if (isFacebook(channel)) {
-      // Facebook: dùng refreshContactAvatar (GraphQL re-fetch)
+      // Facebook: use refreshContactAvatar (GraphQL re-fetch)
       const res = await ipc.fb?.refreshContactAvatar({ accountId: ownerId, userId: contactId });
       if (res?.success && res.avatarUrl) {
         newUrl = res.avatarUrl;
       }
     } else if (isTelegram(channel)) {
-      // Telegram: re-fetch avatar khi file bị xóa (404)
+      // Telegram: re-fetch the avatar when its file was deleted (404)
       if (contactId === ownerId) {
         // Self avatar
         try {
@@ -80,8 +80,8 @@ async function _doRefresh(ownerId: string, contactId: string, channel: string): 
       }
       if (!newUrl) return null;
     } else {
-      // Zalo: nếu là chính account mình → checkAndRefreshAvatar
-      // Nếu là contact khác → getUserInfo để lấy avatar mới
+      // Zalo: if it is my own account → checkAndRefreshAvatar
+      // If it is another contact → getUserInfo to get the new avatar
       if (contactId === ownerId) {
         const res = await ipc.login?.checkAndRefreshAvatar(ownerId);
         if (res?.success && res.refreshed && res.avatar_url) {
@@ -111,8 +111,8 @@ async function _doRefresh(ownerId: string, contactId: string, channel: string): 
 }
 
 /**
- * Build auth object minimal cho IPC calls.
- * Dùng buildZaloAuth nếu có, không thì fallback.
+ * Builds a minimal auth object for IPC calls.
+ * Uses buildZaloAuth if it exists, otherwise a fallback.
  */
 function _buildAuth(ownerId: string) {
   try {
@@ -125,7 +125,7 @@ function _buildAuth(ownerId: string) {
 }
 
 /**
- * Clear cooldown cho 1 contact (dùng khi user chủ động refresh).
+ * Clears the cooldown for 1 contact (used when the user refreshes on purpose).
  */
 export function clearAvatarCooldown(contactId: string) {
   _recentlyFailed.delete(contactId);

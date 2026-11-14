@@ -2,9 +2,9 @@ import { isErpPermissionDeniedResponse, reportErpPermissionDenied } from '@/lib/
 import { useEmployeeStore } from '@/store/employee/employeeStore';
 
 /**
- * Lệnh ghi ERP qua DataAccessor bị từ chối quyền (`code: 'permission_denied'` — handler IPC, hoặc Boss khi nhân viên
- * đi REST) → cùng hộp thoại "không có quyền ERP" như bộ bọc ipc.erp. Chế độ nhân viên không qua bộ bọc đó nên trước
- * đây bị từ chối là im lặng. Trả lại nguyên kết quả để người gọi đọc `success` / `error`.
+ * An ERP write command through DataAccessor denied for lack of permission (`code: 'permission_denied'`: the IPC handler, or the owner's machine when an employee
+ * goes through REST) → shows the same "không có quyền ERP" (no ERP permission) dialog as the ipc.erp wrapper. Employee mode did not go through that wrapper, so before
+ * this, a denial was silent. The original result is returned so the caller can read `success` / `error`.
  */
 export function withErpDeniedNotice<T>(res: T): T {
   if (isErpPermissionDeniedResponse(res)) reportErpPermissionDenied(res);
@@ -12,9 +12,9 @@ export function withErpDeniedNotice<T>(res: T): T {
 }
 
 /**
- * Nhân viên chắc chắn không được bật module ERP: không gọi Boss (Boss trả 403 MODULE_FORBIDDEN cho mọi /erp/*) — dùng
- * cho phần tải nền ngoài trang ERP (chuông thông báo, chấm công hôm nay trên thanh trên cùng). Quyền module chưa nạp
- * (vừa mở app) → vẫn gọi: Boss tự từ chối nếu không có quyền, người gọi giữ giá trị đang hiện.
+ * Employees who are certainly not allowed the ERP module: do not call the owner's machine (it returns 403 MODULE_FORBIDDEN for every /erp/*). Used for
+ * background loading outside the ERP page (notification bell, today's timesheet on the top bar). Module permissions not loaded yet
+ * (app just opened) → still calls: the owner's machine refuses by itself if there is no permission, and the caller keeps the value currently shown.
  */
 export function isErpModuleOff(): boolean {
   try {

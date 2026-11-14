@@ -1,13 +1,15 @@
 /**
- * Dải cảnh báo sau khi khôi phục dữ liệu từ Cloudflare: chiến dịch, workflow và lịch của ứng dụng đang tạm dừng
- * (tránh gửi trùng với máy cũ) cho tới khi người dùng xác nhận máy cũ đã tắt → db.resumeAutomations().
- * Đọc db.restoreState() khi mở và khi main báo phần 'db' đổi. Bản app cũ không có các hàm này → không hiện gì.
- * Dùng ở Cài đặt → Internet & Cloud; có thể gắn thêm ở Dashboard.
+ * Warning bar after restoring data from Cloudflare: campaigns, workflows and schedules of the app stay paused
+ * (to avoid sending duplicates with the old machine) until the user confirms the old machine is off → db.resumeAutomations().
+ * Reads db.restoreState() on open and when main reports that the 'db' section changed. Old app builds without these functions → show nothing.
+ * Used in Settings → Internet & Cloud; can also be added to the Dashboard.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { showConfirm } from '@/components/common/ConfirmDialog';
 import { Button } from '@/components/ui';
 import { cloudApi, Notice, useCloudAction, useCloudChanged } from '../cloudUi';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export interface RestoreState {
   pausedAutomations: boolean;
@@ -16,9 +18,9 @@ export interface RestoreState {
 
 export interface RestoreStateBannerProps {
   className?: string;
-  /** Có thì hiện nút "Xem tài khoản" khi còn kênh phải đăng nhập lại. */
+  /** If set, shows the "Xem tài khoản" (View accounts) button when some channels still need to log in again. */
   onOpenAccounts?: () => void;
-  /** Trạng thái đã đọc trước (test). */
+  /** Restore state read earlier (test). */
   initialState?: RestoreState | null;
 }
 
@@ -32,7 +34,7 @@ export function RestoreStateBanner({ className, onOpenAccounts, initialState = n
     try {
       const res = await db.restoreState();
       if (res?.success) setState({ pausedAutomations: !!res.pausedAutomations, pendingRelogin: !!res.pendingRelogin });
-    } catch { /* bản app cũ / main chưa sẵn sàng: giữ nguyên */ }
+    } catch { /* old app build / main not ready: leave as is */ }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -42,9 +44,9 @@ export function RestoreStateBanner({ className, onOpenAccounts, initialState = n
 
   const resume = async () => {
     const ok = await showConfirm({
-      title: 'Bật lại tự động hoá?',
-      message: 'Chỉ bật khi máy cũ đã tắt hoặc đã ngắt Deplao.',
-      confirmText: 'Bật lại',
+      title: tr('Bật lại tự động hoá?'),
+      message: tr('Chỉ bật khi máy cũ đã tắt hoặc đã ngắt Deplao.'),
+      confirmText: tr('Bật lại'),
       variant: 'warning',
     });
     if (!ok) return;
@@ -52,7 +54,7 @@ export function RestoreStateBanner({ className, onOpenAccounts, initialState = n
     const res = await run(
       'resume',
       () => (db && typeof db.resumeAutomations === 'function' ? db.resumeAutomations() : undefined),
-      'Đã bật lại chiến dịch, workflow và lịch của ứng dụng',
+      tr('Đã bật lại chiến dịch, workflow và lịch của ứng dụng'),
     );
     if (res) {
       setState(prev => (prev ? { ...prev, pausedAutomations: false } : prev));
@@ -69,21 +71,20 @@ export function RestoreStateBanner({ className, onOpenAccounts, initialState = n
       action={(
         <>
           {state.pausedAutomations && canResume && (
-            <Button size="sm" loading={busy === 'resume'} onClick={() => void resume()}>Bật lại tự động hoá</Button>
+            <Button size="sm" loading={busy === 'resume'} onClick={() => void resume()}>{tr('Bật lại tự động hoá')}</Button>
           )}
           {state.pendingRelogin && onOpenAccounts && (
-            <Button size="sm" variant="outline" onClick={onOpenAccounts}>Xem tài khoản</Button>
+            <Button size="sm" variant="outline" onClick={onOpenAccounts}>{tr('Xem tài khoản')}</Button>
           )}
         </>
       )}
     >
       {state.pausedAutomations && (
         <p>
-          <strong className="text-foreground">Đã khôi phục dữ liệu.</strong> Chiến dịch, workflow và lịch của ứng dụng đang
-          tạm dừng để tránh gửi trùng với máy cũ.
+          {trx('<0>Đã khôi phục dữ liệu.</0> Chiến dịch, workflow và lịch của ứng dụng đang tạm dừng để tránh gửi trùng với máy cũ.', { 0: <strong className="text-foreground" /> })}
         </p>
       )}
-      {state.pendingRelogin && <p>Một số kênh cần đăng nhập lại.</p>}
+      {state.pendingRelogin && <p>{tr('Một số kênh cần đăng nhập lại.')}</p>}
     </Notice>
   );
 }

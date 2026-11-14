@@ -1,20 +1,20 @@
 /**
- * Đồng bộ tin nhắn Facebook theo khoảng thời gian (popup giống "Đồng bộ tin nhắn từ điện thoại" của Zalo): tải lịch sử
- * từng hội thoại qua bridge (LightSpeed FetchMessagesTask, lùi theo mốc thời gian) cho tới khi phủ hết khoảng đã chọn —
- * không giới hạn số tin; mỗi trang lưu ngay. Kiểu trạng thái dùng chung main ↔ renderer + quy tắc thuần
+ * Facebook message sync by time range (popup like Zalo's "Đồng bộ tin nhắn từ điện thoại" (Sync messages from phone)): downloads the history
+ * of each conversation via the bridge (LightSpeed FetchMessagesTask, stepping back by timestamp) until the selected range is fully covered,
+ * with no limit on the number of messages; each page is saved right away. Status types shared by main ↔ renderer + pure rules
  * (test: src/__tests__/facebook/facebookHistorySync.test.ts).
  */
 
 export type FbHistorySyncStage = 'idle' | 'listing' | 'syncing' | 'completed' | 'failed' | 'cancelled';
 
-/** ms; null = không giới hạn phía đó (fromTs null + toTs null = toàn bộ lịch sử). */
+/** ms; null = no limit on that side (fromTs null + toTs null = the whole history). */
 export interface FbHistorySyncRange {
   fromTs: number | null;
   toTs: number | null;
 }
 
 export interface FbHistorySyncStatus {
-  /** Tài khoản Facebook (facebook_id = zalo_id trong danh sách tài khoản). */
+  /** Facebook account (facebook_id = zalo_id in the account list). */
   accountId: string;
   stage: FbHistorySyncStage;
   range: FbHistorySyncRange;
@@ -23,16 +23,16 @@ export interface FbHistorySyncStatus {
   threadsTotal: number;
   threadsDone: number;
   currentThreadName?: string;
-  /** Tin mới lưu vào máy (tin đã có không tính). */
+  /** New messages saved to the machine (messages already stored are not counted). */
   messagesSaved: number;
-  /** Tin Facebook trả về trong khoảng đã chọn (kể cả tin đã có). */
+  /** Facebook messages returned for the selected range (including ones already stored). */
   messagesReceived: number;
-  /** Hội thoại mã hoá đầu cuối — Facebook không cho thiết bị mới đọc tin cũ. */
+  /** End-to-end encrypted conversation: Facebook does not let a new device read old messages. */
   skippedE2EE: number;
   failedThreads: number;
   startedAt: number;
   finishedAt?: number;
-  /** Đang nghỉ (nhịp người dùng thật) tới thời điểm này, ms. */
+  /** Pausing (to mimic a real user's rhythm) until this time, in ms. */
   pausedUntil?: number;
   /** pace / reading / thread / list / break / long_break / budget / slowdown */
   pauseReason?: string;
@@ -46,21 +46,21 @@ export function isFbHistorySyncActive(status?: Pick<FbHistorySyncStatus, 'stage'
   return !!status && ACTIVE.includes(status.stage);
 }
 
-/** Mốc thời gian lưu lẫn giây (thread list GraphQL) và mili giây (bridge / tin nhắn) → luôn mili giây. */
+/** Timestamps come in seconds (thread list GraphQL) or milliseconds (bridge / messages) → always convert to milliseconds. */
 export function activityMs(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return 0;
   return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
 }
 
-/** Hội thoại có hoạt động trong khoảng (không biết thời điểm → vẫn đồng bộ, an toàn hơn bỏ sót). */
+/** Conversation with activity in the range (unknown time → still synced, which is safer than missing it). */
 export function threadActiveInRange(lastActivity: unknown, range: FbHistorySyncRange): boolean {
   const ms = activityMs(lastActivity);
   if (!ms) return true;
   return range.fromTs == null || ms >= range.fromTs;
 }
 
-/** Tin nằm trong khoảng đã chọn. */
+/** Message within the selected range. */
 export function messageInRange(timestampMs: unknown, range: FbHistorySyncRange): boolean {
   const ms = activityMs(timestampMs);
   if (!ms) return true;
@@ -70,17 +70,17 @@ export function messageInRange(timestampMs: unknown, range: FbHistorySyncRange):
 }
 
 /**
- * Mã tin Messenger thường (LightSpeed / GraphQL: `mid.$…`) — mốc hợp lệ cho FetchMessagesTask. Mã tin E2EE (dạng số),
- * tin tạm (`temp_…`) không phải: Facebook không tìm được vị trí trong hội thoại.
+ * Regular Messenger message IDs (LightSpeed / GraphQL: `mid.$…`) are valid anchors for FetchMessagesTask. E2EE message IDs (numeric)
+ * and temporary messages (`temp_…`) are not: Facebook cannot find their position in the conversation.
  */
 export function isLightSpeedMessageId(id: unknown): boolean {
   return /^mid\.\$./.test(String(id ?? ''));
 }
 
 /**
- * Sau một trang lịch sử: tải tiếp hay dừng. `count` = số tin trong trang (kể cả tin ngoài khoảng — khoảng kết thúc
- * trong quá khứ phải lùi qua các trang mới hơn). Dừng khi Facebook báo hết, trang rỗng, tin cũ nhất đã trước đầu khoảng
- * thời gian, hoặc mốc không lùi được (tránh lặp vô hạn khi Facebook trả lại đúng trang cũ).
+ * After one history page: keep loading or stop. `count` = number of messages in the page (including messages outside the range: a range that ends
+ * in the past must step back through newer pages). Stop when Facebook reports no more, the page is empty, the oldest message is already before the start of the
+ * time range, or the anchor cannot move back (avoids an endless loop when Facebook returns the same old page).
  */
 export function nextHistoryAnchor(
   page: { count: number; hasMoreBefore: boolean; minTimestampMs: number; minMessageId?: string },

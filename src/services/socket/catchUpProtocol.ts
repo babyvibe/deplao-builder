@@ -1,35 +1,35 @@
 /**
- * catchUpProtocol.ts — giao thức catch-up Boss ↔ nhân viên qua Socket.IO (phần thuần, dùng chung hai phía).
+ * catchUpProtocol.ts: the catch-up protocol between Boss and employees over Socket.IO (pure part, shared by both sides).
  *
- * Wire (tương thích ngược — mỗi phía bỏ qua field / event lạ):
- *   Boss → nhân viên   'event'    { seqId, channel, data, bootId }   (Boss cũ: không có bootId)
- *   Boss → nhân viên   'seq'      { bootId, seqId }                  mốc "đã gửi đủ tới seqId" cho nhân viên ít event
- *   nhân viên → Boss   'catch-up' { proto: 2, lastSeqId, bootId, sinceTs? } + ack(CatchUpResult)
- *                                 (client cũ: { lastSeqId }, không ack)
+ * Wire (backward compatible: each side ignores unknown fields / events):
+ *   Boss → employee   'event'    { seqId, channel, data, bootId }   (old Boss: no bootId)
+ *   Boss → employee   'seq'      { bootId, seqId }                  a "sent everything up to seqId" mark for employees with few events
+ *   employee → Boss   'catch-up' { proto: 2, lastSeqId, bootId, sinceTs? } + ack(CatchUpResult)
+ *                                 (old client: { lastSeqId }, no ack)
  *
  * Boss (planCatchUp):
- *  - client mới, cùng bootId, buffer còn phủ lastSeqId → phát lại event SAU lastSeqId mà nhân viên được nhận
- *    (≤ maxEvents, vượt → reset);
- *  - bootId khác (Boss khởi động lại) → reset 'boss-restart'; buffer đã cắt qua vị trí của client
- *    (oldestSeqId > lastSeqId + 1) / client đi trước Boss / quá nhiều → reset 'catchup-gap';
- *    reset = không phát lại, ack { mode: 'reset', bootId, headSeqId } → client nhảy tới headSeqId và resync toàn bộ;
- *  - kết nối mới (chưa có vị trí) → chỉ phát lại event từ `sinceTs` (giờ Boss lúc nhân viên đăng ký qua heartbeat —
- *    phủ khe giữa lúc tải REST và lúc socket vào phòng) hoặc FRESH_WINDOW gần nhất; không còn gửi cả buffer;
- *  - client cũ (không ack, không hiểu reset) → như cũ (seqId > lastSeqId) nhưng LỌC theo nhân viên và chỉ gửi
- *    legacyMaxEvents event mới nhất; kết nối mới của client cũ → cửa sổ FRESH_WINDOW.
- * Nhân viên (trackEnvelope / applyCatchUpResult): lưu { bootId, lastSeqId }; Boss cũ không ack → làm như cũ +
- *  resync nếu là kết nối lại ('catchup-unverified').
+ *  - new client, same bootId, buffer still covers lastSeqId → replays the events AFTER lastSeqId that the employee may receive
+ *    (≤ maxEvents, over the limit → reset);
+ *  - different bootId (Boss restarted) → reset 'boss-restart'; the buffer has trimmed past the client's position
+ *    (oldestSeqId > lastSeqId + 1) / the client is ahead of Boss / too many events → reset 'catchup-gap';
+ *    reset = nothing is replayed, ack { mode: 'reset', bootId, headSeqId } → the client jumps to headSeqId and resyncs everything;
+ *  - new connection (no position yet) → only replays events from `sinceTs` (Boss time when the employee registered through the heartbeat:
+ *    covers the gap between loading REST and joining the room) or the latest FRESH_WINDOW; the whole buffer is no longer sent;
+ *  - old client (no ack, does not understand reset) → as before (seqId > lastSeqId) but FILTERED per employee and only sends the
+ *    newest legacyMaxEvents events; a new connection from an old client → the FRESH_WINDOW.
+ * Employee (trackEnvelope / applyCatchUpResult): stores { bootId, lastSeqId }; an old Boss that does not ack → as before +
+ *  resync on reconnect ('catchup-unverified').
  */
 import type { EmployeeResyncReason } from '../../shared/employee/employeeConnection';
 import type { BufferedEvent, CollectResult, CollectSinceTsResult } from './EventBuffer';
 
 export const CATCH_UP_PROTOCOL = 2;
 
-/** Lý do reset do Boss trả về — cũng là lý do employee:resync phát ra ở nhân viên. */
+/** Reset reason returned by Boss; the employee side reports the same reason in employee:resync. */
 export type CatchUpResetReason = Extract<EmployeeResyncReason, 'boss-restart' | 'catchup-gap'>;
 export type CatchUpMode = 'replay' | 'fresh' | 'reset';
 
-/** Envelope 'event' (Boss cũ: không có bootId; event tức thời như typing: không có seqId). */
+/** 'event' envelope (old Boss: no bootId; instant events such as typing: no seqId). */
 export interface EventEnvelope {
   seqId?: number;
   channel: string;
@@ -37,7 +37,7 @@ export interface EventEnvelope {
   bootId?: string;
 }
 
-/** 'seq' — mọi event dành cho nhân viên này có seqId <= seqId đã được gửi trước mốc này. */
+/** 'seq': every event for this employee with seqId <= seqId has been sent before this mark. */
 export interface SeqWatermark {
   bootId: string;
   seqId: number;
@@ -47,7 +47,7 @@ export interface CatchUpRequest {
   proto: number;
   lastSeqId: number;
   bootId: string | null;
-  /** Giờ Boss (ms) — chỉ dùng khi chưa có vị trí (kết nối mới). */
+  /** Boss time (ms): only used when there is no position yet (new connection). */
   sinceTs?: number;
 }
 
@@ -56,19 +56,19 @@ export interface CatchUpResult {
   mode: CatchUpMode;
   reason?: CatchUpResetReason;
   bootId: string;
-  /** seqId mới nhất của Boss lúc trả lời — client đứng ở đây sau catch-up. */
+  /** Boss's latest seqId when it replied: the client is at this point after catch-up. */
   headSeqId: number;
   replayed: number;
 }
 
 export interface CatchUpLimits {
-  /** Client mới: tối đa số event phát lại; vượt → reset 'catchup-gap' (resync rẻ hơn gửi hàng nghìn event). */
+  /** New client: maximum number of events to replay; over the limit → reset 'catchup-gap' (a resync is cheaper than sending thousands of events). */
   maxEvents: number;
-  /** Client cũ (không resync được): chỉ gửi ngần này event MỚI nhất. */
+  /** Old client (cannot resync): only sends this many of the NEWEST events. */
   legacyMaxEvents: number;
-  /** Kết nối mới không gửi sinceTs: phát lại event trong cửa sổ này. */
+  /** New connection without sinceTs: replays the events within this window. */
   freshWindowMs: number;
-  /** sinceTs cũ hơn ngần này được kẹp lại. */
+  /** A sinceTs older than this is clamped. */
   freshMaxLookbackMs: number;
 }
 
@@ -79,10 +79,10 @@ export const DEFAULT_CATCH_UP_LIMITS: Readonly<CatchUpLimits> = Object.freeze({
   freshMaxLookbackMs: 5 * 60_000,
 });
 
-/** Boss gửi mốc 'seq' cho nhân viên đã bị bỏ qua ngần này event liên tiếp (giữ vị trí của nhân viên ít event gần đầu). */
+/** Boss sends a 'seq' mark to an employee after this many consecutive events were skipped (keeps the position of employees with few events near the head). */
 export const SEQ_WATERMARK_EVERY = 250;
 
-/** Nhân viên chờ ack catch-up tối đa ngần này; quá → coi là Boss bản cũ (hoặc mạng quá chậm). */
+/** The employee waits at most this long for the catch-up ack; after that it is treated as an old Boss build (or the network is too slow). */
 export const CATCH_UP_ACK_TIMEOUT_MS = 10_000;
 
 const MAX_BOOT_ID_LENGTH = 128;
@@ -105,7 +105,7 @@ function toTs(value: unknown): number | undefined {
 
 // ── Boss ───────────────────────────────────────────────────────────
 
-/** Đọc payload 'catch-up' từ client (mới hoặc cũ) — không tin dữ liệu client. */
+/** Reads the 'catch-up' payload from the client (new or old): the client data is not trusted. */
 export function parseCatchUpRequest(payload: unknown): CatchUpRequest {
   const p = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
   const proto = toSeq(p.proto) || 1;
@@ -118,7 +118,7 @@ export function parseCatchUpRequest(payload: unknown): CatchUpRequest {
   };
 }
 
-/** Phần EventBuffer mà planCatchUp cần (EventBuffer thoả mãn). */
+/** The part of EventBuffer that planCatchUp needs (EventBuffer satisfies it). */
 export interface CatchUpBuffer<A> {
   readonly bootId: string;
   readonly headSeqId: number;
@@ -128,22 +128,22 @@ export interface CatchUpBuffer<A> {
 }
 
 export interface CatchUpPlan<A> {
-  /** Client mới (gửi ack) — nhận `result` qua ack. */
+  /** New client (sends an ack): receives `result` through the ack. */
   modern: boolean;
   mode: CatchUpMode | 'legacy';
   reason?: CatchUpResetReason;
-  /** Event phát lại, theo thứ tự seqId. */
+  /** Replayed events, in seqId order. */
   events: BufferedEvent<A>[];
-  /** Client cũ: có event cũ hơn bị bỏ vì vượt legacyMaxEvents. */
+  /** Old client: some older events were dropped for exceeding legacyMaxEvents. */
   truncated: boolean;
-  /** Trả qua ack (client mới); null với client cũ. */
+  /** Returned through the ack (new client); null for an old client. */
   result: CatchUpResult | null;
   request: CatchUpRequest;
 }
 
 /**
- * Mốc thời gian (giờ Boss) bắt đầu phát lại cho kết nối mới: sinceTs của client (không quá `now`) hoặc cửa sổ
- * freshWindowMs gần nhất. null = mốc cũ hơn freshMaxLookbackMs → không phát lại, client phải resync.
+ * Time mark (Boss time) where replay starts for a new connection: the client's sinceTs (not later than `now`) or the latest
+ * freshWindowMs window. null = the mark is older than freshMaxLookbackMs → nothing is replayed, the client must resync.
  */
 export function freshReplaySince(sinceTs: number | undefined, now: number, limits: CatchUpLimits = DEFAULT_CATCH_UP_LIMITS): number | null {
   const since = sinceTs === undefined ? now - limits.freshWindowMs : Math.min(now, sinceTs);
@@ -151,8 +151,8 @@ export function freshReplaySince(sinceTs: number | undefined, now: number, limit
 }
 
 /**
- * Quyết định catch-up cho một socket. `accept` = nhân viên này được nhận event không (relayAudience).
- * `hasAck` = client gửi kèm ack (client mới).
+ * Catch-up decision for one socket. `accept` = whether this employee may receive the event (relayAudience).
+ * `hasAck` = the client sent an ack (new client).
  */
 export function planCatchUp<A>(
   payload: unknown,
@@ -167,8 +167,8 @@ export function planCatchUp<A>(
   const headSeqId = buffer.headSeqId;
 
   if (!hasAck) {
-    // Client cũ: vị trí theo seqId như trước. seqId luồng mới > mọi seqId luồng cũ → lastSeqId của lần khởi động
-    // trước vẫn nhận đủ luồng mới. lastSeqId > head (đồng hồ lùi…) → không rõ luồng → gửi cả buffer.
+    // Old client: position by seqId as before. The new stream's seqIds are larger than all old ones, so a lastSeqId from before the restart
+    // still receives the full new stream. lastSeqId > head (clock set back...) → the stream is unclear → send the whole buffer.
     const L = request.lastSeqId;
     const legacy = L <= 0
       ? buffer.collectSinceTs(now - limits.freshWindowMs, accept, limits.legacyMaxEvents, true)
@@ -195,7 +195,7 @@ export function planCatchUp<A>(
   });
 
   if (!request.bootId) {
-    // Có vị trí nhưng không có bootId: vị trí của Boss bản cũ (trước khi nâng cấp) — không đối chiếu được
+    // Has a position but no bootId: the position of an old Boss build (before the upgrade) → cannot be verified
     if (request.lastSeqId > 0) return reset('boss-restart');
     const since = freshReplaySince(request.sinceTs, now, limits);
     if (since === null) return reset('catchup-gap');
@@ -205,21 +205,21 @@ export function planCatchUp<A>(
   }
   if (request.bootId !== bootId) return reset('boss-restart');
   if (request.lastSeqId > headSeqId) return reset('catchup-gap');
-  // Event (lastSeqId, oldestSeqId) đã bị cắt khỏi buffer — có thể có event của nhân viên này
+  // Events between (lastSeqId, oldestSeqId) were trimmed from the buffer → this employee may have missed some
   if (buffer.oldestSeqId > request.lastSeqId + 1) return reset('catchup-gap');
   const replay = buffer.collectAfter(request.lastSeqId, accept, limits.maxEvents);
   if (replay.overflow) return reset('catchup-gap');
   return done('replay', replay.events);
 }
 
-/** Envelope gửi đi cho một event đã buffer. */
+/** Envelope sent for one buffered event. */
 export function toEnvelope<A>(event: BufferedEvent<A>, bootId: string): EventEnvelope {
   return { seqId: event.seqId, channel: event.channel, data: event.data, bootId };
 }
 
-// ── Nhân viên ──────────────────────────────────────────────────────
+// ── Employee ──────────────────────────────────────────────────────
 
-/** Vị trí catch-up của nhân viên: luồng (bootId của Boss, null = chưa biết / Boss cũ) + seqId cuối đã nhận. */
+/** The employee's catch-up position: the stream (Boss bootId, null = unknown / old Boss) + the last seqId received. */
 export interface ClientSyncState {
   bootId: string | null;
   lastSeqId: number;
@@ -229,12 +229,12 @@ export function initialClientSyncState(): ClientSyncState {
   return { bootId: null, lastSeqId: 0 };
 }
 
-/** Chưa có vị trí nào (kết nối mới). */
+/** No position yet (new connection). */
 export function isFreshClientState(state: ClientSyncState): boolean {
   return !state.bootId && state.lastSeqId <= 0;
 }
 
-/** Payload 'catch-up' của client mới. sinceTs chỉ gửi khi chưa có vị trí. */
+/** The 'catch-up' payload of a new client. sinceTs is only sent when there is no position yet. */
 export function buildCatchUpRequest(state: ClientSyncState, sinceTs?: number): CatchUpRequest {
   const ts = toTs(sinceTs);
   return {
@@ -247,39 +247,39 @@ export function buildCatchUpRequest(state: ClientSyncState, sinceTs?: number): C
 
 export interface TrackResult {
   state: ClientSyncState;
-  /** Envelope không có bootId → Boss bản cũ. */
+  /** Envelope without bootId → old Boss build. */
   legacy: boolean;
-  /** Vị trí cũ không còn ý nghĩa (đổi luồng ngoài dự kiến) — nên resync. */
+  /** The old position no longer makes sense (the stream changed unexpectedly): a resync is advised. */
   streamChanged: boolean;
 }
 
-/** Cập nhật vị trí khi nhận 'event' (event vẫn luôn được chuyển tiếp như cũ). */
+/** Updates the position when an 'event' is received (the event is still always forwarded as before). */
 export function trackEnvelope(state: ClientSyncState, envelope: unknown): TrackResult {
   const env = envelope && typeof envelope === 'object' ? (envelope as Record<string, unknown>) : {};
   const seq = toSeq(env.seqId);
   const bootId = toBootId(env.bootId);
 
   if (!bootId) {
-    // Boss bản cũ: theo dõi max seqId như trước. Đang đứng ở luồng của Boss mới → đổi hệ quy chiếu.
+    // Old Boss build: tracks the max seqId as before. Currently on a new Boss stream → switch the reference frame.
     if (state.bootId !== null) {
       return { state: { bootId: null, lastSeqId: seq }, legacy: true, streamChanged: true };
     }
     return { state: seq > state.lastSeqId ? { bootId: null, lastSeqId: seq } : state, legacy: true, streamChanged: false };
   }
-  // Event tức thời (không có seqId) không đổi vị trí
+  // Instant events (no seqId) do not change the position
   if (seq <= 0) return { state, legacy: false, streamChanged: false };
   if (state.bootId === bootId) {
     return { state: seq > state.lastSeqId ? { bootId, lastSeqId: seq } : state, legacy: false, streamChanged: false };
   }
   if (state.bootId === null) {
-    // Kết nối mới (phát lại trước ack) → nhận luồng này. Đang giữ vị trí của Boss cũ → vị trí đó vô nghĩa.
+    // New connection (replay before the ack) → accept this stream. Holding the position of an old Boss → that position is meaningless.
     return { state: { bootId, lastSeqId: seq }, legacy: false, streamChanged: state.lastSeqId > 0 };
   }
-  // Luồng khác mà ack chưa báo (không xảy ra khi Boss đúng giao thức) → nhận luồng mới, cần resync
+  // A different stream that the ack has not reported (does not happen when Boss follows the protocol) → accept the new stream, resync needed
   return { state: { bootId, lastSeqId: seq }, legacy: false, streamChanged: true };
 }
 
-/** Mốc 'seq' cùng luồng → tiến vị trí (không lùi). */
+/** A 'seq' mark in the same stream → moves the position forward (never back). */
 export function trackWatermark(state: ClientSyncState, watermark: unknown): ClientSyncState {
   const wm = watermark && typeof watermark === 'object' ? (watermark as Record<string, unknown>) : {};
   const bootId = toBootId(wm.bootId);
@@ -288,7 +288,7 @@ export function trackWatermark(state: ClientSyncState, watermark: unknown): Clie
   return seq > state.lastSeqId ? { bootId, lastSeqId: seq } : state;
 }
 
-/** Đọc ack của Boss; null nếu không hợp lệ. */
+/** Reads Boss's ack; null if invalid. */
 export function parseCatchUpResult(value: unknown): CatchUpResult | null {
   if (!value || typeof value !== 'object') return null;
   const r = value as Record<string, unknown>;
@@ -308,13 +308,13 @@ export function parseCatchUpResult(value: unknown): CatchUpResult | null {
 
 export interface ApplyCatchUpResult {
   state: ClientSyncState;
-  /** Lý do resync (Boss reset); null = catch-up đủ. */
+  /** Resync reason (Boss reset); null = catch-up is complete. */
   resync: CatchUpResetReason | null;
-  /** false = ack không hợp lệ (giữ nguyên vị trí). */
+  /** false = invalid ack (position kept as is). */
   valid: boolean;
 }
 
-/** Áp dụng ack catch-up (đến SAU các event phát lại): reset → nhảy tới head + resync; còn lại → đứng ở head. */
+/** Applies the catch-up ack (arrives AFTER the replayed events): reset → jump to head + resync; otherwise → stay at head. */
 export function applyCatchUpResult(state: ClientSyncState, value: unknown): ApplyCatchUpResult {
   const result = parseCatchUpResult(value);
   if (!result) return { state, resync: null, valid: false };

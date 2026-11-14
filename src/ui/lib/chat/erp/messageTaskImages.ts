@@ -1,12 +1,12 @@
 /**
- * Ảnh của tin cho "Tạo task" từ tin nhắn (lib/chat/erp/messageToErp.taskDraftFromMessages): đọc ảnh của tin ảnh Zalo /
- * Telegram / Facebook thành data URL (thu nhỏ, cạnh dài ≤ 1600px) để chèn vào nội dung task — nội dung task lưu cả ảnh,
- * mở ở máy nào cũng thấy, link Zalo hết hạn vẫn còn.
+ * Images of a message for "Tạo task" (Create task) from a message (lib/chat/erp/messageToErp.taskDraftFromMessages): reads the image of an image message from Zalo /
+ * Telegram / Facebook into a data URL (shrunk, longest side ≤ 1600px) to insert into the task content. The task content saves the image itself,
+ * so it shows on any machine, and the Zalo link expiring does not matter.
  *
- * Nguồn: file trên máy (máy nhân viên: bản trên máy Boss qua /api/media), không có thì link gốc; ảnh Zalo máy Boss chưa lưu
- * thì nhờ Boss lưu trước (lib/media/ensureMessageImage). Đọc qua main (file:readImageAsBase64: file trên máy, link Boss
- * gắn token phiên, link CDN) — giao diện tự fetch thì vướng CORS. Tối đa MAX_TASK_IMAGES ảnh, đọc song song, mỗi bước chờ
- * ≤ 6 giây (popup tạo task không chờ quá lâu vì một ảnh lỗi).
+ * Source: the file on the machine (employee machine: the copy on the Boss machine via /api/media), otherwise the original link; a Zalo image that the Boss machine
+ * has not saved yet is first saved by the Boss (lib/media/ensureMessageImage). Read through main (file:readImageAsBase64: file on the machine, Boss link
+ * with the session token, CDN link): fetching it from the UI hits CORS. At most MAX_TASK_IMAGES images, read in parallel, each step waits
+ * ≤ 6 seconds (the create-task popup does not wait too long because of one broken image).
  */
 import ipc from '@/lib/ipc';
 import { isFacebook, isTelegram, isZalo } from '@/lib/channels/channelHelper';
@@ -33,7 +33,7 @@ function parseJson(value: unknown): any {
   try { return JSON.parse(value); } catch { return null; }
 }
 
-/** Ảnh của tin ảnh (album: mỗi tin một ảnh); tin khác → null. */
+/** Image of an image message (album: one image per message); other messages → null. */
 export function messageImageSource(msg: any): MessageImageSource | null {
   const type = String(msg?.msg_type || '').toLowerCase();
   if (isZalo(msg?.channel)) {
@@ -61,7 +61,7 @@ export function messageImageSource(msg: any): MessageImageSource | null {
   return null;
 }
 
-/** Chú thích của tin ảnh (Zalo: title; Telegram / Facebook: chữ của tin). */
+/** Caption of an image message (Zalo: title; Telegram / Facebook: the message text). */
 export function messageImageCaption(msg: any): string {
   const content = parseJson(msg?.content);
   if (content) {
@@ -88,7 +88,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Ảnh lớn → JPEG cạnh dài ≤ MAX_SIDE (nền trắng cho ảnh trong suốt); GIF giữ nguyên (ảnh động). */
+/** Large image → JPEG, longest side ≤ MAX_SIDE (white background for transparent images); GIF kept as is (animated). */
 async function shrinkToDataUrl(base64: string, mimeType: string): Promise<string> {
   const raw = `data:${mimeType || 'image/jpeg'};base64,${base64}`;
   if (mimeType === 'image/gif') return raw;
@@ -116,11 +116,11 @@ async function readOne(params: { localPath?: string; remoteUrl?: string }): Prom
   return shrinkToDataUrl(res.base64, res.mimeType || 'image/jpeg');
 }
 
-/** Ảnh của một tin thành data URL; không đọc được → null. */
+/** Image of one message as a data URL; unreadable → null. */
 export async function messageImageDataUrl(msg: any): Promise<string | null> {
   let source = messageImageSource(msg);
   if (!source) return null;
-  // Ảnh Zalo máy Boss chưa lưu (chỉ có link): nhờ Boss tải bằng phiên tài khoản trước
+  // A Zalo image on the Boss machine not saved yet (link only): ask the Boss to download it first with the account session
   if (!source.localPath && isZalo(msg?.channel)) {
     const saved = await withTimeout(ensureMessageImage(msg), READ_TIMEOUT_MS);
     if (saved?.success && saved.newLocalPath) source = { ...source, localPath: saved.newLocalPath };
@@ -128,7 +128,7 @@ export async function messageImageDataUrl(msg: any): Promise<string | null> {
   const employee = useEmployeeStore.getState().mode === 'employee';
   const attempts: Array<{ localPath?: string; remoteUrl?: string }> = [];
   if (source.localPath) {
-    // Máy nhân viên: đường dẫn là của máy Boss → đọc bản trên Boss (main gắn token phiên)
+    // Employee machine: the path belongs to the Boss machine → read the copy on the Boss (main attaches the session token)
     const bossUrl = employee ? toLocalMediaUrl(source.localPath) : '';
     attempts.push(employee ? { remoteUrl: /^https?:\/\//i.test(bossUrl) ? bossUrl : undefined } : { localPath: source.localPath });
   }
@@ -141,7 +141,7 @@ export async function messageImageDataUrl(msg: any): Promise<string | null> {
   return null;
 }
 
-/** Ảnh của các tin (theo thứ tự tin), tối đa MAX_TASK_IMAGES tin ảnh đầu; key = msg_id. */
+/** Images of the messages (in message order), at most the first MAX_TASK_IMAGES image messages; key = msg_id. */
 export async function messageImagesForTask(msgs: readonly any[]): Promise<Map<string, string[]>> {
   const photos = msgs.filter(msg => messageImageSource(msg)).slice(0, MAX_TASK_IMAGES);
   const results = await Promise.all(photos.map(msg => messageImageDataUrl(msg).catch(() => null)));

@@ -1,11 +1,12 @@
 /**
- * Dropdown chọn tài khoản (API cũ: options / activeId / onSelect) — nay vẽ bằng ô chọn chuẩn AccountSelect để mọi nơi
- * (CRM, đồng bộ tin cũ, sao chép nhãn / tin nhắn nhanh…) cùng một kiểu: ảnh kèm huy hiệu kênh, tên, "Kênh · SĐT", chia
- * theo kênh. Kênh lấy từ danh sách tài khoản của app theo id. Nơi mới dùng thẳng AccountSelect.
+ * Account picker dropdown (old API: options / activeId / onSelect), now drawn with the standard AccountSelect picker so every place
+ * (CRM, old message sync, copying labels / quick messages…) uses the same style: account picture with a channel badge, name, "Kênh · SĐT" (Channel · phone), grouped
+ * by channel. The channel comes from the app's account list by id. New places use AccountSelect directly.
  */
 import React, { useMemo } from 'react';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import AccountSelect, { type SelectableAccount } from './AccountSelect';
+import { tr } from '../../../../shared/i18n';
 
 export interface AccountOption {
   id: string;
@@ -18,19 +19,19 @@ interface Props {
   options: AccountOption[];
   activeId: string | null;
   onSelect: (id: string) => void;
-  /** Placeholder khi chưa chọn tài khoản */
+  /** Placeholder shown when no account is selected */
   placeholder?: string;
   /**
-   * Vị trí dropdown:
-   * - 'down-right' (mặc định): mở xuống, căn phải
-   * - 'up-left': mở lên, căn trái - dùng trong modal để tránh tràn màn hình
+   * Dropdown position:
+   * - 'down-right' (default): opens downward, right-aligned
+   * - 'up-left': opens upward, left-aligned; used in modals to avoid overflowing the screen
    */
   position?: 'down-right' | 'up-left';
-  /** Trigger button chiếm toàn bộ chiều ngang */
+  /** Trigger button takes the full width */
   fullWidth?: boolean;
 }
 
-export default function AccountSelectorDropdown({ options, activeId, onSelect, placeholder = 'Chọn tài khoản', position = 'down-right', fullWidth = false }: Props) {
+export default function AccountSelectorDropdown({ options, activeId, onSelect, placeholder = tr('Chọn tài khoản'), position = 'down-right', fullWidth = false }: Props) {
   const storeAccounts = useAccountStore((s) => s.accounts);
   const accounts = useMemo<SelectableAccount[]>(() => {
     const byId = new Map(storeAccounts.map((account) => [account.zalo_id, account]));

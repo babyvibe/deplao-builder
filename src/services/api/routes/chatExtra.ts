@@ -1,12 +1,12 @@
 /**
- * Chat mở rộng — thao tác hội thoại đồng bộ lên kênh, tải lịch sử cũ từ server, tin đặc biệt,
- * nhắc hẹn Zalo, danh sách nháp. Mirror đúng luồng UI:
+ * Extended chat: conversation actions synced to the channel, loading old history from the server, special messages,
+ * Zalo reminders, draft list. Mirrors the UI flow exactly:
  *  - ConversationList.tsx: handleTogglePin, handleMute/handleUnmute, handleMoveToOthers/handleRemoveFromOthers,
  *    handleMarkRead(asRead=false), handleDeleteConversation
- *  - ConversationList.tsx / khung chat (chat/window/channels): lấy tin cũ (telegramUser:getMessages, fb:fetchThreadMessages, zalo:getGroupChatHistory)
- *  - MessageInput.tsx: danh thiếp (zalo:sendCard), ghi âm (zalo:uploadVoiceFile → zalo:sendVoice); BankCardModal.tsx
+ *  - ConversationList.tsx / chat window (chat/window/channels): load old messages (telegramUser:getMessages, fb:fetchThreadMessages, zalo:getGroupChatHistory)
+ *  - MessageInput.tsx: contact card (zalo:sendCard), voice note (zalo:uploadVoiceFile → zalo:sendVoice); BankCardModal.tsx
  *  - ReminderPanel.tsx: zalo:getListReminder/createReminder/editReminder/removeReminder
- * Cờ hội thoại lưu như appStore.setMuted/addToOthers: tắt vô thời hạn = is_muted 1; có hạn = mute_until.
+ * Conversation flags are stored like appStore.setMuted/addToOthers: muted indefinitely = is_muted 1; timed = mute_until.
  */
 import { s } from '../schema';
 import { AccountInfo, ApiContext, ApiError, route, RouteDef } from '../types';
@@ -14,10 +14,11 @@ import { getCapability } from '../../../configs/channels/channelConfig';
 import { CHANNELS, buildQuotePayload, extractSentId, markRead, requireOnline, threadTypeNum, unsupported, zaloAuth } from '../channels/ChannelActions';
 import { ChatRouteDeps, loadMessage, resolveAttachment, threadTypeOf } from './chat';
 import { accountParams, scrub, threadParams, threadTypeSchema } from './common';
+import { tr } from '../../../shared/i18n';
 
 const TG_MUTE_FOREVER = 2147483647;
 
-/** Như muteUntilToDuration (ConversationList.tsx): 0 = vô thời hạn (-1), 1h/4h/đến 8h sáng, còn lại số giây. */
+/** Same as muteUntilToDuration (ConversationList.tsx): 0 = indefinitely (-1), 1h/4h/until 8 AM, otherwise the number of seconds. */
 export function zaloMuteDuration(until: number, now = Date.now()): number | string {
     if (until === 0) return -1;
     const remainSec = Math.round((until - now) / 1000);
@@ -28,20 +29,20 @@ export function zaloMuteDuration(until: number, now = Date.now()): number | stri
     return remainSec > 0 ? remainSec : -1;
 }
 
-/** Cờ lưu DB như appStore.setMuted: vô thời hạn → is_muted=1; có hạn → mute_until=epoch. */
+/** Flag saved in the DB like appStore.setMuted: indefinitely → is_muted=1; timed → mute_until=epoch. */
 export function muteFlags(until: number): { is_muted: number; mute_until: number } {
     return until === 0 ? { is_muted: 1, mute_until: 0 } : { is_muted: 0, mute_until: until };
 }
 
-/** Đồng bộ lên kênh là phụ (UI cũng bỏ qua lỗi): trả true/false để bên gọi biết. */
+/** Syncing to the channel is secondary (the UI also ignores its errors): returns true/false so the caller knows. */
 async function trySync(fn: () => Promise<any>): Promise<boolean> {
     try { await fn(); return true; } catch { return false; }
 }
 
 const fileInput = s.object({
-    upload_id: s.string().optional().describe('ID từ POST /media/uploads'),
-    library_uuid: s.string().optional().describe('UUID item trong thư viện media'),
-    url: s.string().format('uri').optional().describe('Link http/https công khai, server tự tải về'),
+    upload_id: s.string().optional().describe(tr('ID từ POST /media/uploads')),
+    library_uuid: s.string().optional().describe(tr('UUID item trong thư viện media')),
+    url: s.string().format('uri').optional().describe(tr('Link http/https công khai, server tự tải về')),
 });
 
 const REPEAT = ['none', 'daily', 'weekly', 'monthly'] as const;
@@ -76,11 +77,11 @@ async function zaloThread(ctx: ApiContext, acc: AccountInfo, threadId: string, e
 export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
     const tags = ['Chat'];
     return [
-        // ── Trạng thái hội thoại, đồng bộ lên kênh ─────────────────────────
+        // ── Conversation state, sync to the channel ─────────────────────────
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/unread', scope: 'chat:manage', tags, operationId: 'markConversationUnread',
-            summary: 'Đánh dấu chưa đọc (đồng bộ lên Zalo)',
-            description: 'Như menu "Đánh dấu chưa đọc": Zalo gắn dấu chưa đọc trên server (`zalo:addUnreadMark`). Bỏ dấu bằng `DELETE …/unread`.',
+            summary: tr('Đánh dấu chưa đọc (đồng bộ lên Zalo)'),
+            description: tr('Như menu "Đánh dấu chưa đọc": Zalo gắn dấu chưa đọc trên server (`zalo:addUnreadMark`). Bỏ dấu bằng `DELETE …/unread`.'),
             params: threadParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -92,8 +93,8 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId/unread', scope: 'chat:manage', tags, operationId: 'clearConversationUnread',
-            summary: 'Bỏ đánh dấu chưa đọc (đã đọc + gỡ dấu trên Zalo)',
-            description: 'Như menu "Đánh dấu đã đọc": đánh dấu đã đọc như `POST …/read`, Zalo gỡ thêm dấu chưa đọc trên server (`zalo:removeUnreadMark`).',
+            summary: tr('Bỏ đánh dấu chưa đọc (đã đọc + gỡ dấu trên Zalo)'),
+            description: tr('Như menu "Đánh dấu đã đọc": đánh dấu đã đọc như `POST …/read`, Zalo gỡ thêm dấu chưa đọc trên server (`zalo:removeUnreadMark`).'),
             params: threadParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -110,8 +111,8 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         ...([true, false] as const).map(pin => route({
             method: pin ? 'POST' : 'DELETE', path: '/accounts/:accountId/conversations/:threadId/pin', scope: 'chat:manage', tags,
             operationId: pin ? 'pinConversation' : 'unpinConversation',
-            summary: pin ? 'Ghim hội thoại (trên kênh nếu kênh hỗ trợ)' : 'Bỏ ghim hội thoại',
-            description: 'Như menu "Ghim hội thoại": Zalo/Telegram ghim trên server (hiện ở mọi thiết bị); kênh không hỗ trợ thì ghim trong Deplao. `where` cho biết đã ghim ở đâu.',
+            summary: pin ? tr('Ghim hội thoại (trên kênh nếu kênh hỗ trợ)') : tr('Bỏ ghim hội thoại'),
+            description: tr('Như menu "Ghim hội thoại": Zalo/Telegram ghim trên server (hiện ở mọi thiết bị); kênh không hỗ trợ thì ghim trong Deplao. `where` cho biết đã ghim ở đâu.'),
             params: threadParams,
             handler: async (ctx: ApiContext) => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -132,15 +133,15 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         })),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/mute', scope: 'chat:manage', tags, operationId: 'muteConversation',
-            summary: 'Tắt thông báo (lưu trong Deplao + đồng bộ lên Zalo/Telegram)',
-            description: '`until` = epoch ms hết hạn; bỏ trống hoặc 0 = vô thời hạn. `synced` = đã đồng bộ lên kênh hay chưa (kênh không hỗ trợ / lỗi mạng vẫn tắt trong Deplao).',
+            summary: tr('Tắt thông báo (lưu trong Deplao + đồng bộ lên Zalo/Telegram)'),
+            description: tr('`until` = epoch ms hết hạn; bỏ trống hoặc 0 = vô thời hạn. `synced` = đã đồng bộ lên kênh hay chưa (kênh không hỗ trợ / lỗi mạng vẫn tắt trong Deplao).'),
             params: threadParams,
             body: s.object({ until: s.timestamp().default(0) }).optional(),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 const threadId = ctx.params.threadId;
                 const until = Number(ctx.body?.until) || 0;
-                if (until && until <= Date.now()) throw new ApiError(400, 'VALIDATION_ERROR', '`until` phải ở tương lai (hoặc 0 = vô thời hạn)');
+                if (until && until <= Date.now()) throw new ApiError(400, 'VALIDATION_ERROR', tr('`until` phải ở tương lai (hoặc 0 = vô thời hạn)'));
                 await ctx.call('db:setContactFlags', { zaloId: acc.id, contactId: threadId, flags: muteFlags(until) });
                 let synced = false;
                 if (acc.online && acc.channel === CHANNELS.TELEGRAM_USER) {
@@ -156,7 +157,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId/mute', scope: 'chat:manage', tags, operationId: 'unmuteConversation',
-            summary: 'Bật lại thông báo',
+            summary: tr('Bật lại thông báo'),
             params: threadParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -177,7 +178,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         ...([true, false] as const).map(into => route({
             method: into ? 'POST' : 'DELETE', path: '/accounts/:accountId/conversations/:threadId/others', scope: 'chat:manage', tags,
             operationId: into ? 'moveConversationToOthers' : 'moveConversationToMain',
-            summary: into ? 'Chuyển vào "Khác (lưu trữ)" (tắt thông báo, Telegram: lưu trữ)' : 'Đưa về danh sách chính (bật thông báo)',
+            summary: into ? tr('Chuyển vào "Khác (lưu trữ)" (tắt thông báo, Telegram: lưu trữ)') : tr('Đưa về danh sách chính (bật thông báo)'),
             params: threadParams,
             handler: async (ctx: ApiContext) => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -205,12 +206,12 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         })),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId', scope: 'chat:manage', tags, operationId: 'deleteConversation',
-            summary: 'Xoá hội thoại (toàn bộ tin trong Deplao; Zalo xoá cả trên server)',
-            description: 'Không thể hoàn tác — bắt buộc `?confirm=true`. Như menu "Xóa hội thoại": Zalo gọi `zalo:deleteChat` theo tin cuối rồi xoá khỏi DB.',
+            summary: tr('Xoá hội thoại (toàn bộ tin trong Deplao; Zalo xoá cả trên server)'),
+            description: tr('Không thể hoàn tác — bắt buộc `?confirm=true`. Như menu "Xóa hội thoại": Zalo gọi `zalo:deleteChat` theo tin cuối rồi xoá khỏi DB.'),
             params: threadParams,
-            query: s.object({ confirm: s.boolean().default(false).describe('Phải là true') }),
+            query: s.object({ confirm: s.boolean().default(false).describe(tr('Phải là true')) }),
             handler: async ctx => {
-                if (!ctx.query.confirm) throw new ApiError(400, 'VALIDATION_ERROR', 'Thêm ?confirm=true để xác nhận xoá hội thoại');
+                if (!ctx.query.confirm) throw new ApiError(400, 'VALIDATION_ERROR', tr('Thêm ?confirm=true để xác nhận xoá hội thoại'));
                 const acc = await ctx.account(ctx.params.accountId);
                 const threadId = ctx.params.threadId;
                 let channelDeleted = false;
@@ -231,10 +232,10 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/history/sync', scope: 'chat:read', tags, operationId: 'syncConversationHistory',
-            summary: 'Tải tin cũ từ server của kênh vào Deplao',
+            summary: tr('Tải tin cũ từ server của kênh vào Deplao'),
             description: [
-                'Lưu vào DB rồi đọc bằng `GET …/messages`. Telegram: `before_msg_id` = msg_id cũ nhất bạn đang có để lấy trang cũ hơn.',
-                'Facebook: dùng `next_cursor` của lần trước làm `before_cursor`. Zalo: chỉ nhóm (Zalo không cho tải lịch sử chat 1-1).',
+                tr('Lưu vào DB rồi đọc bằng `GET …/messages`. Telegram: `before_msg_id` = msg_id cũ nhất bạn đang có để lấy trang cũ hơn.'),
+                tr('Facebook: dùng `next_cursor` của lần trước làm `before_cursor`. Zalo: chỉ nhóm (Zalo không cho tải lịch sử chat 1-1).'),
             ].join(' '),
             params: threadParams,
             body: s.object({
@@ -251,7 +252,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 switch (acc.channel) {
                     case CHANNELS.TELEGRAM_USER: {
                         const raw = ctx.body?.before_msg_id ? String(ctx.body.before_msg_id).replace(/^tg_/, '') : '';
-                        if (raw && !/^\d+$/.test(raw)) throw new ApiError(400, 'VALIDATION_ERROR', 'before_msg_id của Telegram là số');
+                        if (raw && !/^\d+$/.test(raw)) throw new ApiError(400, 'VALIDATION_ERROR', tr('before_msg_id của Telegram là số'));
                         const res = await ctx.call('telegramUser:getMessages', {
                             accountId: acc.id, chatId: threadId, limit,
                             ...(raw ? { offsetId: Number(raw) } : {}),
@@ -277,7 +278,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/drafts', scope: 'chat:read', tags, operationId: 'listDrafts',
-            summary: 'Mọi tin nháp đang soạn của tài khoản (mới sửa trước)',
+            summary: tr('Mọi tin nháp đang soạn của tài khoản (mới sửa trước)'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -286,15 +287,15 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
             },
         }),
 
-        // ── Tin đặc biệt ───────────────────────────────────────────────────
+        // ── Special messages ───────────────────────────────────────────────
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/messages/contact-card', scope: 'chat:send', tags, operationId: 'sendContactCard',
-            summary: 'Gửi danh thiếp (Zalo: theo user_id; Telegram bot: theo số điện thoại)',
+            summary: tr('Gửi danh thiếp (Zalo: theo user_id; Telegram bot: theo số điện thoại)'),
             params: threadParams,
             body: s.object({
-                user_id: s.id().optional().describe('Zalo: ID người được giới thiệu'),
-                phone: s.string().max(30).optional().describe('Zalo: tuỳ chọn; Telegram bot: bắt buộc'),
-                name: s.string().max(100).optional().describe('Telegram bot: tên hiển thị (bắt buộc)'),
+                user_id: s.id().optional().describe(tr('Zalo: ID người được giới thiệu')),
+                phone: s.string().max(30).optional().describe(tr('Zalo: tuỳ chọn; Telegram bot: bắt buộc')),
+                name: s.string().max(100).optional().describe(tr('Telegram bot: tên hiển thị (bắt buộc)')),
                 thread_type: threadTypeSchema.optional(),
                 quote_msg_id: s.string().optional(),
             }),
@@ -304,7 +305,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 const threadId = ctx.params.threadId;
                 const b = ctx.body;
                 if (acc.channel === CHANNELS.ZALO) {
-                    if (!b.user_id) throw new ApiError(400, 'VALIDATION_ERROR', 'Zalo cần user_id');
+                    if (!b.user_id) throw new ApiError(400, 'VALIDATION_ERROR', tr('Zalo cần user_id'));
                     const { auth, type } = await zaloThread(ctx, acc, threadId, b.thread_type);
                     const quote = b.quote_msg_id ? buildQuotePayload(await loadMessage(ctx, acc.id, threadId, b.quote_msg_id)) : null;
                     const res = await ctx.call('zalo:sendCard', {
@@ -313,7 +314,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                     return extractSentId(res);
                 }
                 if (acc.channel === CHANNELS.TELEGRAM_BOT) {
-                    if (!b.phone || !b.name) throw new ApiError(400, 'VALIDATION_ERROR', 'Telegram bot cần phone và name');
+                    if (!b.phone || !b.name) throw new ApiError(400, 'VALIDATION_ERROR', tr('Telegram bot cần phone và name'));
                     requireOnline(acc);
                     const [firstName, ...rest] = b.name.trim().split(/\s+/);
                     const res = await ctx.call('telegram:sendContact', { accountId: acc.id, chatId: threadId, phone: b.phone, firstName, lastName: rest.join(' ') || undefined });
@@ -324,12 +325,12 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/messages/bank-card', scope: 'chat:send', tags, operationId: 'sendBankCard',
-            summary: 'Gửi thẻ ngân hàng (Zalo) — thẻ đã lưu hoặc nhập trực tiếp',
-            description: 'Truyền `bank_card_id` (từ GET /accounts/{accountId}/bank-cards) hoặc đủ `bin_bank`, `account_number`, `account_name`.',
+            summary: tr('Gửi thẻ ngân hàng (Zalo) — thẻ đã lưu hoặc nhập trực tiếp'),
+            description: tr('Truyền `bank_card_id` (từ GET /accounts/{accountId}/bank-cards) hoặc đủ `bin_bank`, `account_number`, `account_name`.'),
             params: threadParams,
             body: s.object({
                 bank_card_id: s.int().min(1).optional(),
-                bin_bank: s.int().min(100000).max(999999).optional().describe('Mã BIN ngân hàng (6 số)'),
+                bin_bank: s.int().min(100000).max(999999).optional().describe(tr('Mã BIN ngân hàng (6 số)')),
                 account_number: s.string().min(4).max(40).optional(),
                 account_name: s.string().min(1).max(100).optional(),
                 thread_type: threadTypeSchema.optional(),
@@ -341,10 +342,10 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 let { bin_bank, account_number, account_name } = ctx.body;
                 if (ctx.body.bank_card_id) {
                     const card = ((await ctx.call('db:getBankCards', { zaloId: acc.id }))?.cards || []).find((c: any) => Number(c.id) === ctx.body.bank_card_id);
-                    if (!card) throw new ApiError(404, 'NOT_FOUND', `Không tìm thấy thẻ ${ctx.body.bank_card_id}`);
+                    if (!card) throw new ApiError(404, 'NOT_FOUND', tr('Không tìm thấy thẻ {{bank_card_id}}', { bank_card_id: ctx.body.bank_card_id }));
                     ({ bin_bank, account_number, account_name } = card);
                 }
-                if (!bin_bank || !account_number || !account_name) throw new ApiError(400, 'VALIDATION_ERROR', 'Cần bank_card_id hoặc đủ bin_bank, account_number, account_name');
+                if (!bin_bank || !account_number || !account_name) throw new ApiError(400, 'VALIDATION_ERROR', tr('Cần bank_card_id hoặc đủ bin_bank, account_number, account_name'));
                 const { auth, type } = await zaloThread(ctx, acc, ctx.params.threadId, ctx.body.thread_type);
                 const res = await ctx.call('zalo:sendBankCard', {
                     auth, payload: { binBank: Number(bin_bank), numAccBank: String(account_number), nameAccBank: String(account_name) },
@@ -355,8 +356,8 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/messages/voice', scope: 'chat:send', tags, operationId: 'sendVoiceMessage',
-            summary: 'Gửi tin nhắn thoại (Zalo, Telegram bot)',
-            description: 'File âm thanh (m4a/mp3/ogg…) qua `upload_id`, `library_uuid` hoặc `url`. Zalo: upload rồi gửi dạng ghi âm như nút micro trong app. Kênh khác: gửi file âm thanh bằng POST …/messages.',
+            summary: tr('Gửi tin nhắn thoại (Zalo, Telegram bot)'),
+            description: tr('File âm thanh (m4a/mp3/ogg…) qua `upload_id`, `library_uuid` hoặc `url`. Zalo: upload rồi gửi dạng ghi âm như nút micro trong app. Kênh khác: gửi file âm thanh bằng POST …/messages.'),
             params: threadParams,
             body: fileInput,
             handler: async ctx => {
@@ -372,15 +373,15 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 const up = await ctx.call('zalo:uploadVoiceFile', { auth, voicePath: file.path, threadId, type }, { timeoutMs: 180_000 });
                 const r = up?.response;
                 const voiceUrl = r?.fileUrl || r?.normalUrl || r?.hdUrl || r?.url || r?.href || '';
-                if (!voiceUrl) throw new ApiError(502, 'UPSTREAM_ERROR', 'Upload file ghi âm lên Zalo thất bại');
+                if (!voiceUrl) throw new ApiError(502, 'UPSTREAM_ERROR', tr('Upload file ghi âm lên Zalo thất bại'));
                 return extractSentId(await ctx.call('zalo:sendVoice', { auth, options: { voiceUrl }, threadId, type }));
             },
         }),
 
-        // ── Nhắc hẹn (Zalo) ────────────────────────────────────────────────
+        // ── Reminders (Zalo) ────────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/reminders', scope: 'chat:read', tags, operationId: 'listReminders',
-            summary: 'Nhắc hẹn trong hội thoại (Zalo)',
+            summary: tr('Nhắc hẹn trong hội thoại (Zalo)'),
             params: threadParams,
             query: s.object({ limit: s.int().min(1).max(50).default(20) }),
             handler: async ctx => {
@@ -393,20 +394,20 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/reminders', scope: 'chat:manage', tags, operationId: 'createReminder',
-            summary: 'Tạo nhắc hẹn (Zalo)',
+            summary: tr('Tạo nhắc hẹn (Zalo)'),
             params: threadParams,
             body: s.object({
                 title: s.string().min(1).max(200),
-                start_time: s.timestamp().describe('Epoch ms, phải ở tương lai'),
+                start_time: s.timestamp().describe(tr('Epoch ms, phải ở tương lai')),
                 repeat: s.enum(REPEAT).default('none'),
                 emoji: s.string().max(16).default('⏰'),
             }),
-            examples: { request: { title: 'Gọi lại cho khách', start_time: 1767225600000, repeat: 'none' } },
+            examples: { request: { title: tr('Gọi lại cho khách'), start_time: 1767225600000, repeat: 'none' } },
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 if (acc.channel !== CHANNELS.ZALO) return unsupported(acc, 'nhắc hẹn');
                 const b = ctx.body;
-                if (b.start_time <= Date.now()) throw new ApiError(400, 'VALIDATION_ERROR', 'Thời gian nhắc hẹn phải ở trong tương lai');
+                if (b.start_time <= Date.now()) throw new ApiError(400, 'VALIDATION_ERROR', tr('Thời gian nhắc hẹn phải ở trong tương lai'));
                 const { auth, type } = await zaloThread(ctx, acc, ctx.params.threadId);
                 const res = await ctx.call('zalo:createReminder', {
                     auth,
@@ -418,7 +419,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/conversations/:threadId/reminders/:reminderId', scope: 'chat:manage', tags, operationId: 'updateReminder',
-            summary: 'Sửa nhắc hẹn (Zalo)',
+            summary: tr('Sửa nhắc hẹn (Zalo)'),
             params: s.object({ accountId: s.id(), threadId: s.id(), reminderId: s.id() }),
             body: s.object({
                 title: s.string().min(1).max(200),
@@ -430,7 +431,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 const acc = await ctx.account(ctx.params.accountId);
                 if (acc.channel !== CHANNELS.ZALO) return unsupported(acc, 'nhắc hẹn');
                 const b = ctx.body;
-                if (b.start_time <= Date.now()) throw new ApiError(400, 'VALIDATION_ERROR', 'Thời gian nhắc hẹn phải ở trong tương lai');
+                if (b.start_time <= Date.now()) throw new ApiError(400, 'VALIDATION_ERROR', tr('Thời gian nhắc hẹn phải ở trong tương lai'));
                 const { auth, type } = await zaloThread(ctx, acc, ctx.params.threadId);
                 const res = await ctx.call('zalo:editReminder', {
                     auth,
@@ -442,7 +443,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId/reminders/:reminderId', scope: 'chat:manage', tags, operationId: 'deleteReminder',
-            summary: 'Xoá nhắc hẹn (Zalo)',
+            summary: tr('Xoá nhắc hẹn (Zalo)'),
             params: s.object({ accountId: s.id(), threadId: s.id(), reminderId: s.id() }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);

@@ -1,19 +1,19 @@
 /**
- * Ingress + địa chỉ công khai của "Cloudflare tự động" — phần THUẦN (không gọi API, không Electron).
+ * Ingress + public address of "Cloudflare tự động" (automatic Cloudflare): the PURE part (no API calls, no Electron).
  * Test: src/__tests__/cloudflare/tunnelIngress.test.ts.
  *
- * Layout 'single' (mặc định): một tên `<prefix>.<zone>` cho mọi dịch vụ, chia theo đường dẫn (SINGLE_HOST_PATH_RULES,
- * cloudflared chuyển nguyên đường dẫn tới server gốc):
- *   ^/webhook/               → http://127.0.0.1:9888  (thanh toán / tích hợp)
- *   ^/api/workflow/webhook/  → http://127.0.0.1:9889  (webhook workflow)
- *   còn lại                  → http://127.0.0.1:9900  (relay: nhân viên, API v1, Socket.IO, SSE)
- * Layout 'split': `<prefix>` / `<prefix>-pay` / `<prefix>-hook` — tên MỘT cấp (Universal SSL miễn phí chỉ phủ một cấp).
- * Dùng 127.0.0.1 (server 9888/9889 chỉ nghe 127.0.0.1).
+ * Layout 'single' (default): one name `<prefix>.<zone>` for every service, split by path (SINGLE_HOST_PATH_RULES;
+ * cloudflared passes the path through unchanged to the origin server):
+ *   ^/webhook/               → http://127.0.0.1:9888  (payments / integrations)
+ *   ^/api/workflow/webhook/  → http://127.0.0.1:9889  (workflow webhook)
+ *   everything else          → http://127.0.0.1:9900  (relay: employees, API v1, Socket.IO, SSE)
+ * Layout 'split': `<prefix>` / `<prefix>-pay` / `<prefix>-hook`: ONE-level names (free Universal SSL only covers one level).
+ * Uses 127.0.0.1 (servers 9888/9889 only listen on 127.0.0.1).
  *
- * Dịch vụ tắt → bỏ rule của nó (đổi ingress, không chạy lại cloudflared). Tên miền của layout mà không còn rule bắt hết
- * (vd 'single' tắt relay nhưng bật thanh toán) → thêm 404 riêng cho tên đó, nên đường dẫn không bật luôn trả 404 kể cả
- * khi người dùng có rule wildcard. Rule của tên miền KHÁC (người dùng tự thêm trên dashboard) giữ nguyên, đặt SAU rule
- * của Deplao (wildcard của họ không nuốt tên của Deplao). Rule cuối luôn { service: 'http_status:404' }.
+ * A service that is turned off → its rule is dropped (the ingress changes, cloudflared is not restarted). A layout name that no rule catches any more
+ * (e.g. 'single' with the relay off but payments on) → a separate 404 is added for that name, so the paths of services that are off always return 404,
+ * even when the user has a wildcard rule. Rules of OTHER domains (the user added them in the dashboard) are kept, placed AFTER Deplao's rules
+ * (their wildcard does not swallow Deplao's names). The last rule is always { service: 'http_status:404' }.
  */
 import {
     SINGLE_HOST_PATH_RULES,
@@ -24,13 +24,14 @@ import {
     type TunnelMode,
     type TunnelServiceId,
 } from '../../../shared/cloud/cloudContracts';
+import { tr } from '../../../shared/i18n';
 
 export const TUNNEL_SERVICES: readonly TunnelServiceId[] = ['relay', 'payments', 'workflow'];
 
-/** Rule cuối của ingress (Cloudflare bắt buộc rule cuối không có hostname). */
+/** The last ingress rule (Cloudflare requires the last rule to have no hostname). */
 export const CATCH_ALL_404 = 'http_status:404';
 
-/** Tiền tố + hậu tố dài nhất ('-hook') phải vừa một nhãn DNS (≤ 63 ký tự). */
+/** The prefix + the longest suffix ('-hook') must fit in one DNS label (≤ 63 characters). */
 export const HOST_PREFIX_MAX = 58;
 
 export interface IngressRule {
@@ -54,13 +55,13 @@ export function isTunnelService(value: unknown): value is TunnelServiceId {
     return value === 'relay' || value === 'payments' || value === 'workflow';
 }
 
-/** Lỗi (tiếng Việt) của tiền tố tên, hoặc null khi hợp lệ. Chỉ a-z, 0-9, '-' (không ở đầu/cuối). */
+/** Error message (Vietnamese) for the name prefix, or null if valid. Only a-z, 0-9, '-' (not at the start / end). */
 export function hostPrefixError(prefix: string): string | null {
     const value = String(prefix ?? '');
-    if (!value) return 'Nhập tên cho địa chỉ, vd "shop" → shop.tenmien.vn';
-    if (value.length > HOST_PREFIX_MAX) return `Tên tối đa ${HOST_PREFIX_MAX} ký tự`;
+    if (!value) return tr('Nhập tên cho địa chỉ, vd "shop" → shop.tenmien.vn');
+    if (value.length > HOST_PREFIX_MAX) return tr('Tên tối đa {{HOST_PREFIX_MAX}} ký tự', { HOST_PREFIX_MAX });
     if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value)) {
-        return 'Tên chỉ gồm chữ thường a-z, số 0-9 và dấu "-" (không đặt "-" ở đầu hoặc cuối)';
+        return tr('Tên chỉ gồm chữ thường a-z, số 0-9 và dấu "-" (không đặt "-" ở đầu hoặc cuối)');
     }
     return null;
 }
@@ -78,7 +79,7 @@ export function originFor(service: TunnelServiceId, ports?: ServicePorts): strin
     return `http://127.0.0.1:${portOf(service, ports)}`;
 }
 
-/** Tên host của một dịch vụ theo cấu hình ('single': cả ba chung một tên). */
+/** Host name of a service per the config ('single': all three share one name). */
 export function hostnameFor(config: HostConfig, service: TunnelServiceId): string {
     const prefix = normalizeHostname(config.hostPrefix);
     const zone = normalizeHostname(config.zoneName);
@@ -94,12 +95,12 @@ export function hostnamesFor(config: HostConfig): Record<TunnelServiceId, string
     };
 }
 
-/** Các tên cần bản ghi DNS theo layout ('single': 1, 'split': 3). */
+/** The names that need DNS records per layout ('single': 1, 'split': 3). */
 export function distinctHostnames(config: HostConfig): string[] {
     return Array.from(new Set(TUNNEL_SERVICES.map((service) => hostnameFor(config, service))));
 }
 
-/** Mọi tên Deplao có thể dùng với tiền tố này (cả hai layout) — rule của chúng luôn do Deplao quản lý. */
+/** Every Deplao name that can be used with this prefix (both layouts): their rules are always managed by Deplao. */
 export function managedHostnames(prefix: string, zoneName: string): string[] {
     const p = normalizeHostname(prefix);
     const zone = normalizeHostname(zoneName);
@@ -107,7 +108,7 @@ export function managedHostnames(prefix: string, zoneName: string): string[] {
     return Array.from(new Set(TUNNEL_SERVICES.map((service) => splitHostname(p, service, zone))));
 }
 
-/** Rule người dùng tự thêm (tên miền không do Deplao quản lý) — giữ nguyên khi PUT thay cả cấu hình. */
+/** Rules the user added (domains not managed by Deplao): kept as they are when PUT replaces the whole config. */
 export function foreignRules(existingRules: unknown, managed: Iterable<string>): IngressRule[] {
     if (!Array.isArray(existingRules)) return [];
     const managedSet = new Set(Array.from(managed, normalizeHostname));
@@ -120,7 +121,7 @@ export function foreignRules(existingRules: unknown, managed: Iterable<string>):
         if (host) {
             if (managedSet.has(host)) continue;
         } else if (!(typeof rule.path === 'string' && rule.path.trim())) {
-            continue; // rule bắt hết cũ — thay bằng 404 cuối
+            continue; // old catch-all rule: replaced by the final 404
         }
         kept.push({ ...rule });
     }
@@ -128,9 +129,9 @@ export function foreignRules(existingRules: unknown, managed: Iterable<string>):
 }
 
 /**
- * Ingress đầy đủ để PUT …/configurations (PUT thay CẢ cấu hình): rule của Deplao theo layout + dịch vụ đang bật,
- * rồi rule của tên miền khác lấy từ cấu hình hiện tại, cuối cùng là 404.
- * opts.managedHosts: tên Deplao đã dùng trước đó (đổi tiền tố / tên miền) — rule cũ của chúng bị bỏ.
+ * The full ingress for PUT …/configurations (PUT replaces the WHOLE config): Deplao's rules per the layout + the services that are on,
+ * then the other domains' rules taken from the current config, and finally the 404.
+ * opts.managedHosts: Deplao names used before (prefix / domain changed): their old rules are dropped.
  */
 export function buildIngress(
     layout: AddressLayout,
@@ -143,7 +144,7 @@ export function buildIngress(
     const config: HostConfig = { layout: layout === 'split' ? 'split' : 'single', hostPrefix: prefix, zoneName: zone };
     const ours: IngressRule[] = [];
     const covered = new Set<string>();
-    // Thứ tự SINGLE_HOST_PATH_RULES: rule có đường dẫn đứng trước rule bắt hết của cùng tên.
+    // SINGLE_HOST_PATH_RULES order: a rule with a path comes before the catch-all rule of the same name.
     for (const rule of SINGLE_HOST_PATH_RULES) {
         if (!enabled?.[rule.service]) continue;
         const hostname = hostnameFor(config, rule.service);
@@ -162,7 +163,7 @@ export function buildIngress(
     return [...ours, ...foreignRules(existingRules, managed), { service: CATCH_ALL_404 }];
 }
 
-/** JSON với khoá sắp xếp (đối tượng rỗng / thiếu → ''), để so sánh không phụ thuộc thứ tự khoá. */
+/** JSON with sorted keys (empty / missing object → ''), so the comparison does not depend on key order. */
 function stableJson(value: unknown): string {
     if (value === undefined || value === null) return '';
     if (typeof value !== 'object') return JSON.stringify(value);
@@ -173,7 +174,7 @@ function stableJson(value: unknown): string {
     return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`;
 }
 
-/** Khoá so sánh ingress (bỏ qua khác biệt vô hại: hoa/thường tên host, originRequest rỗng Cloudflare tự thêm). */
+/** Comparison key for ingress (ignores harmless differences: host name case, an empty originRequest that Cloudflare adds by itself). */
 export function ingressKey(rules: unknown): string {
     if (!Array.isArray(rules)) return '[]';
     return JSON.stringify(rules.map((rule: any) => [
@@ -184,23 +185,23 @@ export function ingressKey(rules: unknown): string {
     ]));
 }
 
-// ─── Địa chỉ công khai ───────────────────────────────────────────────────────
+// ─── Public address ───────────────────────────────────────────────────────
 
 export type ProcessState = 'active' | 'starting' | 'restarting' | 'stopped';
 
 export interface AutoAddressState {
     mode: TunnelMode;
     enabled: boolean;
-    /** Tiến trình cloudflared dùng chung. */
+    /** The shared cloudflared process. */
     process: ProcessState;
     error?: string | null;
-    /** Lỗi chặn riêng tên của dịch vụ (vd bản ghi DNS đang trỏ sang máy khác) → state 'error' dù tiến trình chạy. */
+    /** A blocking error for the service's own name (e.g. a DNS record pointing at another machine) → state 'error' even though the process is running. */
     blocked?: string | null;
 }
 
 /**
- * PublicAddress của "Cloudflare tự động". url = địa chỉ GỐC (https://host, không đường dẫn) — code hiện có tự nối
- * `/api/v1`, `/webhook/<loại>`, `/api/workflow/webhook/<token>` như với tunnelUrl hôm nay. Dịch vụ tắt → url null.
+ * PublicAddress of "Cloudflare tự động" (automatic Cloudflare). url = the BASE address (https://host, no path); the existing code still appends
+ * `/api/v1`, `/webhook/<kind>`, `/api/workflow/webhook/<token>` itself, as it does with tunnelUrl today. A service that is off → url null.
  */
 export function addressFor(service: TunnelServiceId, config: TunnelAutoConfig | null, state: AutoAddressState): PublicAddress {
     const configured = !!config && !!normalizeHostname(config.hostPrefix) && !!normalizeHostname(config.zoneName);
@@ -222,7 +223,7 @@ export function addressFor(service: TunnelServiceId, config: TunnelAutoConfig | 
     return { service, url, kind: url ? 'fixed' : null, state: addressState, enabled, mode: state.mode, error };
 }
 
-/** Trạng thái tunnel kiểu cũ của cổng dịch vụ (TunnelService.getState). */
+/** State of the old-style tunnel of the service port (TunnelService.getState). */
 export interface LegacyTunnelState {
     url: string | null;
     state: 'starting' | 'active' | 'restarting';
@@ -230,7 +231,7 @@ export interface LegacyTunnelState {
     lastError?: string | null;
 }
 
-/** PublicAddress khi KHÔNG ở chế độ tự động: phản chiếu tunnel cũ (Quick / ngrok / Cloudflare thủ công) của cổng. */
+/** PublicAddress when NOT in automatic mode: mirrors the port's old tunnel (Quick / ngrok / manual Cloudflare). */
 export function legacyAddressFor(service: TunnelServiceId, mode: TunnelMode, legacy: LegacyTunnelState | null): PublicAddress {
     if (!legacy) return { service, url: null, kind: null, state: 'stopped', enabled: false, mode, error: null };
     return {

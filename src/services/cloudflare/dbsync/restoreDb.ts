@@ -1,21 +1,21 @@
 /**
- * restoreDb — thao tác trên FILE bản sao (khôi phục / máy dự phòng): chuẩn bị connection áp đoạn, dựng lại FTS,
- * kiểm tra toàn vẹn + số dòng.
+ * restoreDb: operations on the COPY FILE (restore / standby machine): prepares the connection that applies segments, rebuilds FTS,
+ * checks integrity + row counts.
  */
 import { dropTracking } from './DirtyTracker';
 import { SqlConn, quoteIdent, tableExists, toNumber } from './sqlConn';
 import { tableColumns } from './tableSelection';
 
 /**
- * - foreign_keys = OFF: thứ tự cha/con trong một đoạn tuỳ ý, trạng thái cuối mới là nhất quán.
- * - recursive_triggers = ON: dòng bị INSERT OR REPLACE gỡ vẫn chạy trigger DELETE của app (messages_fts_ad…).
+ * - foreign_keys = OFF: the parent/child order within a segment is arbitrary; only the final state has to be consistent.
+ * - recursive_triggers = ON: a row removed by INSERT OR REPLACE still runs the app's DELETE trigger (messages_fts_ad…).
  */
 export function prepareApplyConnection(conn: SqlConn): void {
     conn.exec('PRAGMA foreign_keys = OFF');
     conn.exec('PRAGMA recursive_triggers = ON');
 }
 
-/** Bản sao không cần ghi _cloud_dirty khi áp đoạn: gỡ trigger/bảng theo dõi (bản gốc chụp kèm chúng). */
+/** The copy does not need to write _cloud_dirty when applying segments: remove the trigger/tracking tables (the base snapshot captured them too). */
 export function prepareRestoreCopy(conn: SqlConn): void {
     dropTracking(conn);
     prepareApplyConnection(conn);
@@ -28,10 +28,10 @@ export interface FtsRebuildReport {
 }
 
 /**
- * FTS5 của app (messages_fts) là bảng FTS thường (tự giữ nội dung), đồng bộ bằng trigger trên messages.
- * - Bảng "<x>_fts" có bảng nguồn "<x>" chứa đủ cột FTS: số dòng lệch → nạp lại toàn bộ từ bảng nguồn theo rowid
- *   (bản gốc từ máy nguồn có thể đã lệch sẵn: INSERT OR REPLACE của app gỡ dòng mà không chạy trigger DELETE).
- * - Còn lại: lệnh 'rebuild' của FTS5 (bảng contentless không hỗ trợ → bỏ qua, ghi cảnh báo).
+ * The app's FTS5 (messages_fts) is a normal FTS table (it keeps its own content), synced by triggers on messages.
+ * - A table "<x>_fts" whose source table "<x>" has all the FTS columns: row count mismatch → reload everything from the source table by rowid
+ *   (the base snapshot from the source machine may already be out of sync: the app's INSERT OR REPLACE removes rows without running the DELETE trigger).
+ * - Otherwise: the FTS5 'rebuild' command (contentless tables do not support it → skipped, a warning is logged).
  */
 export function rebuildFts(conn: SqlConn): FtsRebuildReport {
     const report: FtsRebuildReport = { rebuilt: [], repopulated: [], warnings: [] };
@@ -43,7 +43,7 @@ export function rebuildFts(conn: SqlConn): FtsRebuildReport {
         try {
             const sourceName = name.toLowerCase().endsWith('_fts') ? name.slice(0, -4) : '';
             if (sourceName && tableExists(conn, sourceName) && !/content\s*=/i.test(String(v.sql || ''))) {
-                // Cột khai báo của FTS (bỏ cột ẩn: tên bảng, rank)
+                // The declared FTS columns (skip the hidden columns: table name, rank)
                 const ftsCols = tableColumns(conn, name).insertable;
                 const srcCols = new Set(tableColumns(conn, sourceName).all.map(c => c.toLowerCase()));
                 if (ftsCols.length && ftsCols.every(c => srcCols.has(c.toLowerCase()))) {
@@ -57,7 +57,7 @@ export function rebuildFts(conn: SqlConn): FtsRebuildReport {
                             conn.exec(`INSERT INTO ${ft} (rowid, ${cols}) SELECT rowid, ${cols} FROM ${quoteIdent(sourceName)}`);
                             conn.exec('COMMIT');
                         } catch (err) {
-                            try { conn.exec('ROLLBACK'); } catch { /* đã huỷ */ }
+                            try { conn.exec('ROLLBACK'); } catch { /* cancelled */ }
                             throw err;
                         }
                         report.repopulated.push(name);
@@ -75,9 +75,9 @@ export function rebuildFts(conn: SqlConn): FtsRebuildReport {
 }
 
 export interface VerifyExpectation {
-    /** Số dòng lúc chụp gốc (manifest.rowCounts). */
+    /** Row counts when the base snapshot was taken (manifest.rowCounts). */
     rowCounts?: Record<string, number> | null;
-    /** Tổng số bản ghi đã áp theo bảng (upsert + delete) sau bản gốc — sai lệch cho phép. */
+    /** Total records applied per table (upsert + delete) since the base snapshot: the allowed deviation. */
     touched?: Record<string, number> | null;
 }
 
@@ -89,8 +89,8 @@ export interface VerifyResult {
 }
 
 /**
- * PRAGMA integrity_check + so số dòng với manifest. Số dòng trong manifest là lúc chụp gốc (đếm lại mỗi đoạn quá tốn
- * ở chế độ realtime) → bảng không có đoạn nào chạm phải khớp tuyệt đối; bảng có chạm cho phép lệch ≤ số bản ghi đã áp.
+ * PRAGMA integrity_check + compare row counts with the manifest. The manifest's row counts are from the time of the base snapshot (recounting after every segment is too costly
+ * in realtime mode) → a table that no segment touched must match exactly; a touched table may differ by ≤ the number of records applied.
  */
 export function verifyRestoredDb(conn: SqlConn, expect: VerifyExpectation = {}): VerifyResult {
     const integrity = conn.prepare('PRAGMA integrity_check').all().map((r: any) => String(Object.values(r)[0]));
@@ -110,7 +110,7 @@ export function verifyRestoredDb(conn: SqlConn, expect: VerifyExpectation = {}):
     return { integrityOk, integrity: integrity.slice(0, 10), counts, mismatches };
 }
 
-/** DB "trống" (chưa dùng): không tài khoản, không tin nhắn, không liên hệ — khôi phục đè lên được. */
+/** A DB that is "trống" (empty, not used yet): no accounts, no messages, no contacts → the restore can overwrite it. */
 export function isEffectivelyEmpty(conn: SqlConn): boolean {
     for (const t of ['accounts', 'fb_accounts', 'messages', 'fb_messages', 'contacts', 'workflows', 'crm_campaigns']) {
         if (!tableExists(conn, t)) continue;

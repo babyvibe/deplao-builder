@@ -1,7 +1,7 @@
 /**
- * Dòng trạng thái truy cập Zalo (ZL-01) trong hồ sơ / chi tiết hội thoại 1:1: "Trực tuyến", "Truy cập 14:05",
- * "Đã ẩn trạng thái truy cập". Chỉ hỏi Zalo khi mở (main đệm 60 s cho mỗi người); không lấy được → ẩn dòng, chỉ còn nút
- * thử lại nhỏ. Kết quả online / offline ghi vào chatStore.userPresence như Telegram.
+ * Zalo access status line (ZL-01) in the profile / details of a 1:1 conversation: "Trực tuyến" (Online), "Truy cập 14:05" (Last seen 14:05),
+ * "Đã ẩn trạng thái truy cập" (Last seen hidden). It asks Zalo only when opened (main caches for 60 s per person); if it cannot be fetched, the line is hidden and only a small
+ * retry button is left. Online / offline results are written to chatStore.userPresence, like Telegram.
  */
 import React from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
@@ -10,6 +10,7 @@ import { useChatStore } from '@/store/chat/chatStore';
 import { RefreshIcon } from '@/components/common/icons';
 import { describeZaloPresence, type ZaloPresence } from '../../../../../shared/zalo/zaloPresence';
 import { capitalizeFirst } from '../../../../../shared/chat/presenceText';
+import { tr } from '../../../../../shared/i18n';
 
 export function useZaloPresence(accountId: string | null | undefined, userId: string | null | undefined, enabled: boolean) {
   const [presence, setPresence] = React.useState<ZaloPresence | null>(null);
@@ -63,7 +64,7 @@ export default function ZaloPresenceLine({ accountId, userId, enabled = true, cl
     if (!failed) return null;
     return (
       <button type="button" onClick={refresh} disabled={loading}
-        title="Chưa lấy được trạng thái truy cập — thử lại" aria-label="Thử lại trạng thái truy cập"
+        title={tr('Chưa lấy được trạng thái truy cập — thử lại')} aria-label={tr('Thử lại trạng thái truy cập')}
         className={`inline-flex items-center text-muted-foreground opacity-60 hover:opacity-100 disabled:opacity-30 ${className}`}>
         <RefreshIcon className="w-3 h-3" />
       </button>
@@ -71,7 +72,7 @@ export default function ZaloPresenceLine({ accountId, userId, enabled = true, cl
   }
   const online = presence?.status === 'online';
   return (
-    <p className={`inline-flex items-center gap-1.5 text-[11px] text-muted-foreground ${className}`} title="Trạng thái truy cập theo Zalo">
+    <p className={`inline-flex items-center gap-1.5 text-[11px] text-muted-foreground ${className}`} title={tr('Trạng thái truy cập theo Zalo')}>
       <span aria-hidden="true" className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${online ? 'bg-green-500' : 'bg-muted-foreground/50'}`} />
       {text}
     </p>

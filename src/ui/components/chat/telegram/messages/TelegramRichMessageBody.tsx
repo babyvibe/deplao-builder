@@ -1,10 +1,10 @@
 /**
- * Tin định dạng phong phú Telegram (layer 23x, message.richMessage) vẽ như Telegram: tiêu đề đậm, đoạn, danh sách / ô
- * đánh dấu, trích dẫn, bảng, mã, nút — và ẢNH / VIDEO THẬT trong tin (trước đây chỉ là nhãn "🖼 Ảnh").
+ * Telegram rich message (layer 23x, message.richMessage) drawn like Telegram: bold titles, paragraphs, lists / checkboxes,
+ * quotes, tables, code, buttons, and REAL IMAGES / VIDEO inside the message (previously it was only the label "🖼 Ảnh" (Image)).
  *
- * Khối do main dựng sẵn (attachments `rich_message`, services/telegram/messages/telegramRichMessage.ts → RichBlock). Ảnh tải tự
- * động ở main (local_paths["rich_<id>"]); thiếu (mở lại app, tin cũ) → xin tải một lần. Video / âm thanh / tệp: bấm mới
- * tải (telegramUser:downloadRichMedia với mediaId), tải xong phát / mở tại chỗ.
+ * The block is built by main (attachments `rich_message`, services/telegram/messages/telegramRichMessage.ts → RichBlock). Images download automatically
+ * in main (local_paths["rich_<id>"]); if missing (app reopened, older message) → request one download. Video / audio / files: click to
+ * download (telegramUser:downloadRichMedia with mediaId), then play / open in place.
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
@@ -12,6 +12,7 @@ import { openChatLink } from '@/lib/chat/links/chatLinks';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import type { MediaViewerImage } from '../../media/MediaViewer';
 import { TextWithMentions } from '../../messages/ChatWindowBubbles';
+import { tr } from '../../../../../shared/i18n';
 
 export type RichBlock =
   | { t: 'h1' | 'h2' | 'h3' | 'p' | 'kicker' | 'footer' | 'meta' | 'thinking'; text: string }
@@ -36,7 +37,7 @@ function parseJson(value: unknown): any {
   }
 }
 
-/** Khối của tin định dạng phong phú (null = tin thường). */
+/** Rich message block (null = normal message). */
 export function getRichMessageBlocks(msg: any): RichBlock[] | null {
   const attachments = parseJson(msg?.attachments);
   if (!Array.isArray(attachments)) return null;
@@ -65,13 +66,13 @@ function formatDuration(seconds?: number): string {
 function aspectOf(block: { w?: number; h?: number }): string {
   const w = Number(block.w) || 0;
   const h = Number(block.h) || 0;
-  // Ảnh quá dọc không cao vô hạn (như Telegram), chưa biết kích thước → 4:3
+  // A very tall image is not allowed to grow infinitely (as in Telegram); size unknown → 4:3
   return w > 0 && h > 0 ? String(Math.max(w / h, 0.6)) : String(4 / 3);
 }
 
 export interface TelegramRichMessageBodyProps {
   msg: any;
-  /** Mở trình xem ảnh với mọi ảnh của tin, đứng ở ảnh được bấm. */
+  /** Open the image viewer with every image of the message, standing on the one clicked. */
   onOpenImages?: (images: MediaViewerImage[], index: number) => void;
   highlight?: string;
   allContacts?: any[];
@@ -99,7 +100,7 @@ export default function TelegramRichMessageBody({ msg, onOpenImages, highlight, 
   );
   const missingPhotos = photos.some((photo) => !paths[`rich_${photo.id}`]);
 
-  // Ảnh chưa có file (mở lại app, tin cũ / tin vừa sửa): xin main tải một lần cho cả tin
+  // Image with no file yet (app reopened, older message / just edited): request one download for the whole message from main
   React.useEffect(() => {
     if (!canDownload || !missingPhotos || askedPhotosRef.current) return;
     askedPhotosRef.current = true;
@@ -213,7 +214,7 @@ export default function TelegramRichMessageBody({ msg, onOpenImages, highlight, 
               ) : (
                 <button type="button" disabled={!canDownload || !!busy[block.id]} onClick={() => void download(block)}
                   className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-                  {busy[block.id] ? 'Đang tải ảnh…' : failed[block.id] ? 'Không tải được ảnh — bấm để thử lại' : 'Đang tải ảnh…'}
+                  {busy[block.id] ? tr('Đang tải ảnh…') : failed[block.id] ? tr('Không tải được ảnh — bấm để thử lại') : tr('Đang tải ảnh…')}
                 </button>
               )}
             </div>
@@ -244,7 +245,7 @@ export default function TelegramRichMessageBody({ msg, onOpenImages, highlight, 
                     )}
                   </span>
                   <span className="rounded bg-black/55 px-1.5 py-0.5 text-[11px]">
-                    {failed[block.id] ? 'Không tải được video — bấm để thử lại' : busy[block.id] ? 'Đang tải video…' : meta || 'Video'}
+                    {failed[block.id] ? tr('Không tải được video — bấm để thử lại') : busy[block.id] ? tr('Đang tải video…') : meta || tr('Video')}
                   </span>
                 </button>
               )}
@@ -256,7 +257,7 @@ export default function TelegramRichMessageBody({ msg, onOpenImages, highlight, 
       case 'audio':
       case 'file': {
         const path = paths[`rich_${block.id}`];
-        const label = block.name || (block.t === 'audio' ? 'Âm thanh' : 'Tệp');
+        const label = block.name || (block.t === 'audio' ? tr('Âm thanh') : tr('Tệp'));
         if (path && block.t === 'audio') {
           return (
             <div>
@@ -279,7 +280,7 @@ export default function TelegramRichMessageBody({ msg, onOpenImages, highlight, 
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm">{label}</span>
                 <span className="block text-[11px] text-muted-foreground">
-                  {failed[block.id] ? 'Không tải được — bấm để thử lại' : busy[block.id] ? 'Đang tải…' : [formatBytes(block.size), path ? 'Bấm để mở' : 'Bấm để tải'].filter(Boolean).join(' · ')}
+                  {failed[block.id] ? tr('Không tải được — bấm để thử lại') : busy[block.id] ? tr('Đang tải…') : [formatBytes(block.size), path ? tr('Bấm để mở') : tr('Bấm để tải')].filter(Boolean).join(' · ')}
                 </span>
               </span>
             </button>
@@ -319,7 +320,7 @@ export default function TelegramRichMessageBody({ msg, onOpenImages, highlight, 
               <button type="button" className="break-all text-left text-primary hover:underline" onClick={() => openChatLink(block.url)}>
                 {block.url}
               </button>
-            ) : <span className="text-muted-foreground">Nội dung nhúng</span>}
+            ) : <span className="text-muted-foreground">{tr('Nội dung nhúng')}</span>}
             {caption(block.caption)}
           </div>
         );

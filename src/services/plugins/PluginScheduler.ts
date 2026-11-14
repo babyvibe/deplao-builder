@@ -1,6 +1,6 @@
 /**
- * PluginScheduler — contributes.schedules (node-cron) gọi handlers[handler]() của backend plugin.
- * Lượt trước chưa xong thì bỏ lượt sau (không chồng lấn); ghi thời gian chạy vào log plugin.
+ * PluginScheduler: contributes.schedules (node-cron) call handlers[handler]() of the plugin backend.
+ * If the previous run has not finished, the next run is skipped (no overlap); the run time is written to the plugin log.
  */
 import type { PluginRecord, PluginRuntimeHandle } from './PluginManager';
 import { TIMEOUTS } from './PluginSandbox';
@@ -8,9 +8,9 @@ import { TIMEOUTS } from './PluginSandbox';
 export interface SchedulerDeps {
     runtimeFor(id: string): PluginRuntimeHandle | null;
     log(id: string, level: 'debug' | 'info' | 'warn' | 'error', message: string): void;
-    /** Mặc định node-cron; test truyền bản giả. */
+    /** Defaults to node-cron; tests pass a fake one. */
     cron?: { schedule(expr: string, fn: () => void): { stop(): void }; validate(expr: string): boolean };
-    /** true = tạm dừng mọi lịch (vừa khôi phục DB, chờ người dùng xác nhận máy cũ đã tắt). */
+    /** true = all schedules paused (the DB was just restored, waiting for the user to confirm the old machine is turned off). */
     paused?: () => boolean;
 }
 

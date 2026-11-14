@@ -5,11 +5,13 @@ import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { mergeZaloReactionAliases } from '../../../../../shared/zalo/zaloReactions';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
+import { tr, appLocale } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
-/** Tin Zalo (bản ghi cũ không có channel). */
+/** Zalo message (old records have no channel). */
 const isZaloChannel = (channel?: string) => !channel || channel === 'zalo';
 
-/** Parse reactions từ msg.reactions -> { emoji: count } (dùng cho hiển thị bubble) */
+/** Parse reactions from msg.reactions -> { emoji: count } (used to display the bubble) */
 function reactionKey(value: string, channel?: string): string {
   return channel === 'telegram_user' ? value : zaloCodeToEmoji(value);
 }
@@ -33,8 +35,8 @@ const EMOJI_NORMALIZE: Record<string, string> = {
   '😍': '😍️', '😍︎': '😍️',
 };
 
-// Chuỗi reaction chuẩn của Telegram không có U+FE0F ("☃", "✍", "🕊", "🤷‍♂"…): các ký tự mặc định kiểu chữ này hiện đen
-// trắng / tách rời nếu thiếu → thêm U+FE0F CHỈ khi hiển thị (so sánh, gửi vẫn dùng chuỗi chuẩn).
+// Telegram's standard reaction strings lack U+FE0F ("☃", "✍", "🕊", "🤷‍♂"…): without it, these text-style characters render black
+// or split apart → add U+FE0F ONLY when displaying (comparison and sending still use the standard string).
 const TEXT_DEFAULT_EMOJI = /([\u2764\u2603\u270D\u2642\u2640\u263A\u2639]|\uD83D\uDD4A)(?!\uFE0F)/g;
 
 function displayReactionEmoji(value: string): string {
@@ -59,7 +61,7 @@ function parseReactions(raw: any, channel?: string): Record<string, number> {
 
   const toEmoji = (k: string) => reactionKey(k, channel);
 
-  // Format mới: { total, lastReact, emoji: { emojiChar: { total, users } } }
+  // New format: { total, lastReact, emoji: { emojiChar: { total, users } } }
   if (parsed.emoji && typeof parsed.emoji === 'object') {
     const counts: Record<string, number> = {};
     for (const [emojiChar, data] of Object.entries(parsed.emoji as any)) {
@@ -71,7 +73,7 @@ function parseReactions(raw: any, channel?: string): Record<string, number> {
     return counts;
   }
 
-  // Format cũ: { userId: emojiChar }
+  // Old format: { userId: emojiChar }
   const counts: Record<string, number> = {};
   for (const val of Object.values(parsed)) {
     if (val && typeof val === 'string') {
@@ -82,7 +84,7 @@ function parseReactions(raw: any, channel?: string): Record<string, number> {
   return counts;
 }
 
-/** Parse reactions ra full ReactionData (có users) để check current user và hiển thị popup */
+/** Parse reactions into full ReactionData (with users) to check the current user and show the popup */
 function parseReactionsFull(raw: any, channel?: string): { total: number; emoji: Record<string, { total: number; users: Record<string, number> }> } {
   const empty = { total: 0, emoji: {} };
   if (!raw) return empty;
@@ -106,7 +108,7 @@ function parseReactionsFull(raw: any, channel?: string): { total: number; emoji:
       }
     }
     const result = { total: parsed.total || 0, emoji: converted };
-    // Zalo: "haha" từng lưu 2 kiểu (😄 lúc thả, 😆 từ echo) → gộp, cùng người lấy số lớn hơn
+    // Zalo: "haha" was stored in 2 forms (😄 when reacted, 😆 from the echo) → merged, the same person takes the larger count
     return isZaloChannel(channel) ? mergeZaloReactionAliases(result) : result;
   }
 
@@ -152,7 +154,7 @@ function ReactionContextMenu({ x, y, msg, myEmoji, onClose, onReact, onCancel }:
 
   return (
     <div ref={menuRef} style={style} className="bg-card border border-input rounded-xl shadow-2xl py-2 px-2">
-      <p className="text-xs text-muted-foreground px-2 mb-1.5">Thả cảm xúc</p>
+      <p className="text-xs text-muted-foreground px-2 mb-1.5">{tr('Thả cảm xúc')}</p>
       <div className="flex items-center gap-1 flex-wrap max-w-[220px]">
         {REACTION_EMOJIS.map(emoji => (
           <button
@@ -169,9 +171,9 @@ function ReactionContextMenu({ x, y, msg, myEmoji, onClose, onReact, onCancel }:
           <button
             onClick={() => onCancel(msg)}
             className="text-sm px-2 py-1 rounded-lg bg-muted hover:bg-red-700 text-foreground/80 hover:text-white transition-colors ml-1"
-            title="Huỷ reaction của bạn"
+            title={tr('Huỷ reaction của bạn')}
           >
-            ✕ Huỷ
+            {tr('✕ Huỷ')}
           </button>
         )}
       </div>
@@ -192,15 +194,15 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
   const [loading, setLoading] = React.useState(false);
   const ownAvatar = useAccountStore((s) => s.accounts.find((account) => account.zalo_id === currentUserId)?.avatar_url || '');
   const [brokenAvatars, setBrokenAvatars] = React.useState<Set<string>>(() => new Set());
-  // Kênh phát tin Telegram: không ai xem được người thả cảm xúc (Telegram ẩn để bảo vệ người theo dõi, kể cả với quản
-  // trị viên — API trả BROADCAST_FORBIDDEN), chỉ có số lượng từng biểu cảm.
+  // Telegram channels: nobody can see who reacted (Telegram hides them to protect subscribers, even from admins
+  // the API returns BROADCAST_FORBIDDEN), only the count per emoji is available.
   const channelPost = msg.channel === 'telegram_user' && !!getTelegramPostMeta(msg);
   const [anonymous, setAnonymous] = React.useState(channelPost);
   const baseData = parseReactionsFull(msg.reactions, msg.channel);
   const data = fetchedData || baseData;
   const totalAll = data.total;
 
-  // Fetch full reaction list từ Telegram API khi popup mở
+  // Fetch the full reaction list from the Telegram API when the popup opens
   React.useEffect(() => {
     if (!ownerZaloId || msg.channel !== 'telegram_user' || channelPost) return;
     const threadId = msg.thread_id || msg.owner_zalo_id;
@@ -254,7 +256,7 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
   };
 
   const getName = (uid: string) => {
-    if (uid === currentUserId) return 'Bạn';
+    if (uid === currentUserId) return tr('Bạn');
     const c = contacts.find(c => c.contact_id === uid);
     if (c?.alias || c?.display_name) return c.alias || c.display_name;
     // Fallback: look up in group members list
@@ -263,7 +265,7 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
     return uid;
   };
   const getAvatar = (uid: string) => {
-    // Chính mình: ảnh của tài khoản — dòng danh bạ "tự chat" của Zalo hay giữ URL ảnh cũ đã hỏng
+    // Me: the account's avatar. The Zalo "self chat" contact row often keeps an old, broken image URL
     if (uid === currentUserId && ownAvatar) return toLocalMediaUrl(ownAvatar);
     const c = contacts.find(c => c.contact_id === uid);
     if (c?.avatar_url) return toLocalMediaUrl(c.avatar_url);
@@ -277,7 +279,7 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
       <div className="bg-card rounded-2xl w-96 max-h-[70vh] flex flex-col shadow-2xl border border-border" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-semibold text-foreground">Biểu cảm</h3>
+          <h3 className="text-sm font-semibold text-foreground">{tr('Biểu cảm')}</h3>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground w-6 h-6 flex items-center justify-center rounded-full hover:bg-muted">✕</button>
         </div>
         {/* Tabs */}
@@ -286,7 +288,7 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
             onClick={() => setTab('all')}
             className={`flex items-center gap-1 px-3 py-2 text-xs whitespace-nowrap border-b-2 transition-colors ${tab === 'all' ? 'text-foreground border-blue-500' : 'text-muted-foreground border-transparent hover:text-foreground'}`}
           >
-            Tất cả <span className="bg-muted px-1.5 py-0.5 rounded-full text-foreground/80">{totalAll}</span>
+            {trx('Tất cả <0>{{totalAll}}</0>', { 0: <span className="bg-muted px-1.5 py-0.5 rounded-full text-foreground/80" />, totalAll })}
           </button>
           {Object.entries(data.emoji).map(([emo, emoData]) => (
             <button
@@ -324,16 +326,16 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
             <div className="px-3 py-5 text-center">
               <p className="text-sm text-foreground">
                 {tab === 'all'
-                  ? `${totalAll.toLocaleString('vi-VN')} lượt thả cảm xúc`
-                  : <>{displayReactionEmoji(tab)} {(data.emoji[tab]?.total || 0).toLocaleString('vi-VN')} lượt</>}
+                  ? tr('{{v1}} lượt thả cảm xúc', { v1: totalAll.toLocaleString(appLocale()) })
+                  : <>{trx('{{v1}} {{v2}} lượt', { v1: displayReactionEmoji(tab), v2: (data.emoji[tab]?.total || 0).toLocaleString(appLocale()) })}</>}
               </p>
               <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-                Kênh Telegram ẩn danh người thả cảm xúc — Telegram chỉ cho xem số lượng, kể cả với quản trị viên kênh.
+                {tr('Kênh Telegram ẩn danh người thả cảm xúc — Telegram chỉ cho xem số lượng, kể cả với quản trị viên kênh.')}
               </p>
             </div>
           ) : (
             <p className="text-xs text-muted-foreground text-center py-6">
-              {loading ? 'Đang tải...' : 'Chưa có ai thả cảm xúc này'}
+              {loading ? tr('Đang tải...') : tr('Chưa có ai thả cảm xúc này')}
             </p>
           ))}
         </div>

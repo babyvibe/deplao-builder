@@ -1,7 +1,7 @@
 /**
- * Trạng thái kết nối nhân viên của trang Cài đặt → Nhân viên: máy chủ cho nhân viên (relay) bật / tắt, cổng, địa chỉ
- * trong mạng, nhân viên đang online, địa chỉ Internet (tunnel) kiểu cũ. Đọc lại 5 s/lần khi trang đang mở + nghe sự
- * kiện của main (danh sách nhân viên online, tunnel đổi). `enabled = false` (máy nhân viên): không đọc gì.
+ * Employee connection status for the Settings → Employees page: the server for employees (relay) on / off, port, address
+ * on the network, employees currently online, the old-style Internet address (tunnel). Re-read every 5 s while the page is open + listens to
+ * main's events (online employee list, tunnel changes). `enabled = false` (employee machine): reads nothing.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -10,6 +10,7 @@ import { useAppStore } from '@/store/app/appStore';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { sortLanIps } from '@/lib/employee/employeeSettingsView';
 import { STOPPED_RELAY_TUNNEL, type RelayTunnelStatus } from '../../../../shared/cloud/tunnelAddress';
+import { tr } from '../../../../shared/i18n';
 
 const REFRESH_MS = 5000;
 const DEFAULT_PORT = 9900;
@@ -20,7 +21,7 @@ function normalizeTunnel(data: Partial<RelayTunnelStatus> | null | undefined): R
 
 export interface RelayConnection {
   running: boolean;
-  /** Đang bật / tắt (chờ main trả lời). */
+  /** On / off in progress (waiting for main to reply). */
   busy: boolean;
   port: number;
   localIPs: string[];
@@ -29,7 +30,7 @@ export interface RelayConnection {
   start: (port: number) => Promise<boolean>;
   stop: () => Promise<void>;
   setAutoStart: (on: boolean, port: number) => Promise<void>;
-  /** Đổi cổng khi đang tắt: lưu vào workspace (lần bật sau / tự bật khi mở app dùng cổng này). */
+  /** Changing the port while off: saved to the workspace (the next time it is turned on / auto-start when the app opens uses this port). */
   savePort: (port: number) => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -61,7 +62,7 @@ export function useRelayConnection(enabled = true): RelayConnection {
         tunnelUrl: res.tunnelUrl ?? null,
         state: res.tunnelActive ? 'active' : 'stopped',
       }));
-    } catch { /* main chưa sẵn sàng → lần sau */ }
+    } catch { /* main not ready → next time */ }
   }, [setRunning, setPort, setConnected]);
 
   useEffect(() => {
@@ -85,12 +86,12 @@ export function useRelayConnection(enabled = true): RelayConnection {
     }).catch(() => {});
   }, [enabled]);
 
-  /** Lưu cổng (và tự bật) vào workspace: lần mở app sau bật lại đúng cổng này. */
+  /** Save the port (and auto-on) to the workspace: the next app launch turns on this exact port. */
   const saveWorkspace = useCallback(async (updates: { relayPort?: number; relayAutoStart?: boolean }) => {
     try {
       const res = await ipc.workspace?.getActive();
       if (res?.success && res.workspace?.id) await ipc.workspace?.update(res.workspace.id, updates);
-    } catch { /* không lưu được thì lần sau vẫn dùng cổng mặc định */ }
+    } catch { /* if it cannot be saved, the next time still uses the default port */ }
   }, []);
 
   const start = useCallback(async (wanted: number) => {
@@ -99,7 +100,7 @@ export function useRelayConnection(enabled = true): RelayConnection {
       const target = Number.isInteger(wanted) && wanted > 0 && wanted < 65536 ? wanted : DEFAULT_PORT;
       const res = await ipc.relay?.startServer(target);
       if (!res?.success) {
-        showNotification(res?.error || 'Không mở được kết nối cho nhân viên', 'error');
+        showNotification(res?.error || tr('Không mở được kết nối cho nhân viên'), 'error');
         return false;
       }
       setRunning(true);
@@ -108,7 +109,7 @@ export function useRelayConnection(enabled = true): RelayConnection {
       await refresh();
       return true;
     } catch (err: any) {
-      showNotification(err?.message || 'Không mở được kết nối cho nhân viên', 'error');
+      showNotification(err?.message || tr('Không mở được kết nối cho nhân viên'), 'error');
       return false;
     } finally {
       setBusy(false);
@@ -118,7 +119,7 @@ export function useRelayConnection(enabled = true): RelayConnection {
   const stop = useCallback(async () => {
     setBusy(true);
     try {
-      // Tắt kết nối thì tắt luôn địa chỉ Internet kiểu cũ (không để địa chỉ trỏ vào cổng không còn phục vụ)
+      // Turning the connection off also turns off the old-style Internet address (so an address does not point at a port that no longer serves)
       if (tunnel.state !== 'stopped') {
         await ipc.relay?.stopTunnel();
         setTunnel(STOPPED_RELAY_TUNNEL);

@@ -3,14 +3,14 @@ import { CHANNEL } from '@/lib/channels/channelHelper';
 import { liveReadSync, type ReadRow } from '@/lib/chat/read/liveReadSync';
 
 /**
- * Gửi sự kiện đã xem (sendSeenEvent) cho một hội thoại Zalo — giữ cho code cũ. Đường mới: liveReadSync (mọi kênh, mốc là
- * tin NHẬN mới nhất; trước đây lấy tin mới nhất kể cả tin của mình / tin hệ thống nên Zalo không nhận).
+ * Sends the seen event (sendSeenEvent) for a Zalo conversation: kept for old code. The new path is liveReadSync (all channels, the mark is the
+ * newest RECEIVED message; before, the newest message was used even if it was the user's own / a system message, so Zalo did not receive it).
  *
  * @param zaloId - owner zalo ID
  * @param threadId - contactId / groupId
  * @param threadType - 0 = User, 1 = Group
- * @param _authOverride - không dùng nữa (auth lấy theo tài khoản)
- * @param lastMsg - tin vừa có sẵn (tránh query lại DB); không phải tin nhận thì đọc DB
+ * @param _authOverride - no longer used (auth comes from the account)
+ * @param lastMsg - message already available (avoids querying the DB again); if it is not a received message, the DB is read
  */
 export function sendSeenForThread(
   zaloId: string,

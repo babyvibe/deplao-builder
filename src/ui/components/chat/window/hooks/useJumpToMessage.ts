@@ -1,7 +1,7 @@
 /**
- * Nhảy tới một tin: đang có trong khung → cuộn tới + nháy viền; chưa có → tải các tin quanh nó từ DB (không có trong DB
- * thì kênh tải từ server nếu được, channels/: Telegram) rồi cuộn tới, bật "Về tin nhắn mới nhất". Yêu cầu nhảy từ nơi
- * khác (Tin đánh dấu) chờ hội thoại tải xong.
+ * Jump to a message: if it is already in the window → scroll to it and flash its border; if not → load the messages around it from the DB (if it is not in the DB
+ * either, the channel loads it from the server when possible, channels/: Telegram), then scroll to it and turn on "Về tin nhắn mới nhất" (Back to latest). A jump requested from elsewhere
+ * (starred messages) waits until the conversation has finished loading.
  */
 import { useEffect, useRef } from 'react';
 import { MESSAGE_AROUND_LIMIT } from '@/lib/chat/constants';
@@ -9,6 +9,7 @@ import { getMessageCacheKey, useChatStore } from '@/store/chat/chatStore';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { chatWindowChannel } from '../channels';
 import type { MessageListState } from './useMessageListState';
+import { tr } from '../../../../../shared/i18n';
 
 export function useJumpToMessage(list: MessageListState, deps: {
   activeAccountId: string | null;
@@ -25,24 +26,24 @@ export function useJumpToMessage(list: MessageListState, deps: {
   } = list;
   const { activeAccountId, activeThreadId, activeTopicId, activeContact, messagesLoading, setMessages, showNotification } = deps;
 
-  // Cuộn đến tin nhắn gốc khi click vào quote / pinned / search result
-  // Nếu tin nhắn không có trong DOM (nằm ở trang cũ), load messages xung quanh nó
-  // altMsgId: cliMsgId của quote — Zalo để msgId (globalMsgId) = "0" khi trích dẫn tin chưa có ID chính thức
-  // (hay gặp với ảnh trong album), lúc đó chỉ tìm được theo cliMsgId.
+  // Scroll to the original message when clicking a quote / pinned / search result
+  // If the message is not in the DOM (it is on an older page), load the messages around it
+  // altMsgId: the quote's cliMsgId. Zalo sets msgId (globalMsgId) = "0" when quoting a message that has no official ID yet
+  // (common with photos in an album); in that case it can only be found by cliMsgId.
   const handleScrollToMsg = async (msgId: string, altMsgId?: string) => {
     const ids = [msgId, altMsgId].map(id => String(id || '')).filter(id => id && id !== '0');
     if (ids.length === 0) return;
 
     // Helper: highlight + scroll to element
     const scrollAndHighlight = (el: HTMLElement) => {
-      nearBottomRef.current = false; // rời đáy: ResizeObserver không được kéo về đáy giữa lúc cuộn tới tin
+      nearBottomRef.current = false; // leaving the bottom: ResizeObserver must not pull back to the bottom while scrolling to a message
       suppressLoadOlderUntilRef.current = Date.now() + 1500;
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.classList.add('ring-2', 'ring-yellow-400', 'ring-opacity-75', 'transition-all');
       setTimeout(() => el.classList.remove('ring-2', 'ring-yellow-400', 'ring-opacity-75', 'transition-all'), 2000);
     };
 
-    // Hàng đang hiển thị tin: id="msg-…", hoặc data-msg-ids (cliMsgId, ảnh trong album, sticker trong nhóm)
+    // A row showing a message: id="msg-…", or data-msg-ids (cliMsgId, photos in an album, stickers in a group)
     const findMsgElement = (id: string): HTMLElement | null =>
       document.getElementById(`msg-${id}`)
       || document.querySelector<HTMLElement>(`[data-msg-ids~="${CSS.escape(id)}"]`);
@@ -67,7 +68,7 @@ export function useJumpToMessage(list: MessageListState, deps: {
           break;
         }
       }
-      // Không có trong DB: kênh tải được tin từ server (channels/: Telegram) → tải rồi nhảy tới
+      // Not in the DB: the channel can load the message from the server (channels/: Telegram) → load it, then jump to it
       const ensureMessage = chatWindowChannel(activeContact?.channel).ensureMessage;
       if (!targetMsg?.timestamp && ensureMessage) {
         const ensured = await ensureMessage({
@@ -80,7 +81,7 @@ export function useJumpToMessage(list: MessageListState, deps: {
         targetMsg = ensured.message;
       }
       if (!targetMsg?.timestamp) {
-        showNotification('Không tìm thấy tin nhắn trong hội thoại này', 'error');
+        showNotification(tr('Không tìm thấy tin nhắn trong hội thoại này'), 'error');
         return;
       }
       // A Zalo quote can identify a media message by globalMsgId while the
@@ -114,7 +115,7 @@ export function useJumpToMessage(list: MessageListState, deps: {
       });
 
       // Replace current messages with the "around" set
-      nearBottomRef.current = false; // danh sách mới không phải tin mới nhất → không bám đáy
+      nearBottomRef.current = false; // the new list is not the latest message → do not stick to the bottom
       suppressLoadOlderUntilRef.current = Date.now() + 1500;
       setMessages(activeAccountId, activeThreadId, mappedAround, activeTopicId);
       // Async fixup: query DB for original messages not in the loaded batch
@@ -146,9 +147,9 @@ export function useJumpToMessage(list: MessageListState, deps: {
           }
         })();
       }
-      setHasMore(true); // Có thể còn tin cũ hơn phía trên
-      setOlderKnown(false); // chưa biết chắc → không hiện nút, cuộn lên gần đỉnh sẽ tự tải
-      setIsViewingHistory(true); // Đánh dấu đang xem tin cũ → hiện nút "Về tin mới nhất"
+      setHasMore(true); // There may be older messages above
+      setOlderKnown(false); // not certain → the button is not shown; scrolling up near the top loads them automatically
+      setIsViewingHistory(true); // Mark as viewing old messages → show the "Về tin mới nhất" (Back to latest) button
 
       // Wait for React to render new messages, then scroll
       await new Promise<void>(resolve => {
@@ -166,7 +167,7 @@ export function useJumpToMessage(list: MessageListState, deps: {
     }
   };
 
-  // Nhảy tới tin của hội thoại KHÁC (Tin đánh dấu): hội thoại đang được mở → nhảy khi đã tải xong
+  // Jump to a message in a DIFFERENT conversation (starred messages): if that conversation is open → jump once it has loaded
   const pendingJumpRef = useRef<{ accountId: string; threadId: string; messageId: string; at: number } | null>(null);
   useEffect(() => {
     const handleJumpRequest = (event: Event) => {
@@ -195,7 +196,7 @@ export function useJumpToMessage(list: MessageListState, deps: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadReady, initialScrollDone, messagesLoading, activeAccountId, activeThreadId]);
 
-  // Tải lại tin nhắn mới nhất và cuộn xuống cuối - dùng khi đang xem tin nhắn cũ (isViewingHistory)
+  // Reload the latest messages and scroll to the bottom, used when viewing old messages (isViewingHistory)
   const handleReturnToLatest = async () => {
     if (!activeAccountId || !activeThreadId || loadingLatest) return;
     setLoadingLatest(true);

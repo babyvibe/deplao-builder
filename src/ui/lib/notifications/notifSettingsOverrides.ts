@@ -1,14 +1,14 @@
 /**
- * Cài đặt thông báo riêng của từng tài khoản (Cài đặt → Thông báo → "Áp dụng cho tài khoản"): âm thanh, popup màn hình,
- * âm lượng. Chỉ lưu phần tài khoản chỉnh KHÁC mặc định, trên từng máy (localStorage, như cài đặt mặc định
- * `app_notifSettings`): máy Boss và máy nhân viên chỉnh riêng, không ảnh hưởng nhau.
+ * Per-account notification settings (Settings → Notifications → "Áp dụng cho tài khoản" (Apply to account)): sound, screen popup,
+ * volume. Only saves the account settings that DIFFER from the default, per machine (localStorage, like the default settings
+ * `app_notifSettings`): the owner's machine and employee machines are set separately and do not affect each other.
  *
- * - Chỉnh một mục về đúng mặc định → bỏ phần riêng của mục đó (tài khoản lại theo mặc định cho mục đó).
- * - Mục không chỉnh lần này giữ nguyên lựa chọn riêng trước đó.
- * - Đổi mặc định sau này vẫn áp cho các mục tài khoản không chỉnh riêng.
+ * - Setting an item back to its default → drops that item's override (the account follows the default for that item again).
+ * - Items not changed this time keep their earlier custom choice.
+ * - Changing the default later still applies to the items the account does not override.
  *
- * Trước đây phần riêng chỉ nằm trong bộ nhớ: máy Boss gọi một hàm preload không tồn tại (lỗi bị nuốt) và không nơi nào
- * đọc lại khi mở app → khởi động lại là mất.
+ * Previously the overrides lived only in memory: the owner's machine called a preload function that did not exist (the error was swallowed), and nothing
+ * read them back when the app opened → they were lost on restart.
  */
 import type { NotifSettings } from '../../store/app/appStore';
 
@@ -18,7 +18,7 @@ export const NOTIF_OVERRIDES_STORAGE_KEY = 'app_notifSettingsByAccount';
 
 const FIELDS = ['soundEnabled', 'desktopEnabled', 'volume'] as const;
 
-/** Đọc giá trị đã lưu: bỏ mục sai kiểu, âm lượng ép về 0–1, tài khoản không còn mục nào thì bỏ. */
+/** Read the saved value: drop items of the wrong type, clamp volume to 0–1, drop an account that has no items left. */
 export function normalizeNotifOverrides(raw: unknown): Record<string, NotifSettingsOverride> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const overrides: Record<string, NotifSettingsOverride> = {};
@@ -34,12 +34,12 @@ export function normalizeNotifOverrides(raw: unknown): Record<string, NotifSetti
   return overrides;
 }
 
-/** Cài đặt tài khoản đang dùng: mặc định + phần riêng. */
+/** Settings in use for the account: defaults + its overrides. */
 export function effectiveNotifSettings(defaults: NotifSettings, override?: NotifSettingsOverride | null): NotifSettings {
   return override ? { ...defaults, ...override } : defaults;
 }
 
-/** Chỉnh một tài khoản: mục bằng mặc định thì bỏ phần riêng của mục đó, khác thì lưu riêng. */
+/** Change one account: an item equal to the default drops its override, a different value is saved as an override. */
 export function withAccountNotifSettings(
   defaults: NotifSettings,
   overrides: Readonly<Record<string, NotifSettingsOverride>>,

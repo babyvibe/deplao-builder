@@ -1,22 +1,23 @@
 /**
- * Gửi tin từ "Nhắn tin nhanh" (Ctrl+Shift+N, nút "Nhắn tin" của hồ sơ) cho mọi kênh. Trước đây popup chỉ gọi ipc.zalo:
- * chọn tài khoản Telegram / Facebook vẫn được nhưng gửi chữ, 👍, ảnh, tệp đều lỗi im lặng.
+ * Sends a message from "Nhắn tin nhanh" (Quick message) (Ctrl+Shift+N, the "Nhắn tin" button of the profile) for every channel. Before, the popup only called ipc.zalo:
+ * picking a Telegram / Facebook account was allowed, but text, 👍, photos and files all failed silently.
  *
- * Mỗi hàm trả SendResult cho MessageQueue (tin tạm `temp_…` hiện ngay, gửi lại khi lỗi, tin thật về thì thay tin tạm),
- * giống ô soạn tin của khung chat.
+ * Each function returns a SendResult for MessageQueue (the temp message `temp_…` shows at once, is sent again on error, and is replaced when the real message comes back),
+ * the same as the composer in the chat window.
  */
 import ipc from '@/lib/ipc';
 import { getAdapter } from '@/lib/channels/adapters/registry';
 import { extractMsgIdFromResponse, type SendResult } from '@/lib/chat/send/MessageQueue';
 import { isFacebook, isTelegramUser, isZalo } from '@/lib/channels/channelHelper';
 import DataAccessor from '@/lib/data/DataAccessor';
+import { tr } from '../../../../shared/i18n';
 
 export interface QuickSendTarget {
   accountId: string;
   channel: string;
   threadId: string;
   threadType: number;
-  /** Zalo: cookie / imei của tài khoản gửi */
+  /** Zalo: cookie / imei of the sending account */
   auth?: any;
 }
 
@@ -36,14 +37,14 @@ export async function sendQuickText(target: QuickSendTarget, text: string): Prom
     const res: any = await getAdapter(target.channel as any).sendMessage({
       accountId: target.accountId, threadId: target.threadId, body: text, threadType: target.threadType,
     });
-    if (!res?.success) return failed(res, 'Gửi tin thất bại');
+    if (!res?.success) return failed(res, tr('Gửi tin thất bại'));
     return { success: true, msgId: res.messageId || res.msgId ? String(res.messageId || res.msgId) : undefined };
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) };
   }
 }
 
-/** Nhiều ảnh: Zalo / Facebook gửi một lần (album), Telegram từng ảnh như khung chat. */
+/** Several photos: Zalo / Facebook send them in one go (album), Telegram sends each photo one by one, as in the chat window. */
 export async function sendQuickImages(target: QuickSendTarget, filePaths: string[]): Promise<SendResult> {
   try {
     if (isZalo(target.channel)) {
@@ -55,7 +56,7 @@ export async function sendQuickImages(target: QuickSendTarget, filePaths: string
         accountId: target.accountId, threadId: target.threadId, filePaths,
         typeChat: target.threadType === 0 ? 'user' : null,
       });
-      if (!res?.success) return failed(res, 'Gửi ảnh Facebook thất bại');
+      if (!res?.success) return failed(res, tr('Gửi ảnh Facebook thất bại'));
       return { success: true, msgId: res.messageId ? String(res.messageId) : undefined };
     }
     const msgIds: string[] = [];
@@ -63,7 +64,7 @@ export async function sendQuickImages(target: QuickSendTarget, filePaths: string
       const res: any = await getAdapter(target.channel as any).sendAttachment({
         accountId: target.accountId, threadId: target.threadId, threadType: target.threadType, filePath, fileType: 'image',
       });
-      if (!res?.success) return failed(res, 'Gửi ảnh thất bại');
+      if (!res?.success) return failed(res, tr('Gửi ảnh thất bại'));
       if (res.messageId) msgIds.push(String(res.messageId));
     }
     return { success: true, msgId: msgIds[msgIds.length - 1], msgIds };
@@ -81,14 +82,14 @@ export async function sendQuickFile(target: QuickSendTarget, filePath: string): 
     const res: any = await getAdapter(target.channel as any).sendAttachment({
       accountId: target.accountId, threadId: target.threadId, threadType: target.threadType, filePath, fileType: 'file',
     });
-    if (!res?.success) return failed(res, 'Gửi tệp thất bại');
+    if (!res?.success) return failed(res, tr('Gửi tệp thất bại'));
     return { success: true, msgId: res.messageId ? String(res.messageId) : undefined };
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) };
   }
 }
 
-/** Video (media của tin nhắn nhanh): Zalo tải ảnh bìa + video lên rồi gửi, kênh khác gửi tệp video. */
+/** Video (media of a quick message): Zalo uploads the cover photo + the video and then sends, other channels send the video file. */
 export async function sendQuickVideo(target: QuickSendTarget, filePath: string): Promise<SendResult> {
   try {
     const meta: any = await ipc.file?.getVideoMeta?.({ filePath }).catch(() => null);
@@ -98,7 +99,7 @@ export async function sendQuickVideo(target: QuickSendTarget, filePath: string):
       width: meta?.width || undefined, height: meta?.height || undefined,
       ...(isZalo(target.channel) ? { auth: target.auth } : {}),
     });
-    if (!res?.success) return failed(res, 'Gửi video thất bại');
+    if (!res?.success) return failed(res, tr('Gửi video thất bại'));
     return { success: true, msgId: res.messageId || res.msgId ? String(res.messageId || res.msgId) : undefined };
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) };
@@ -106,8 +107,8 @@ export async function sendQuickVideo(target: QuickSendTarget, filePath: string):
 }
 
 /**
- * Lịch sử khi máy chưa có tin của hội thoại (người vừa mở từ hồ sơ / tìm theo @username): Telegram lấy từ server, Facebook
- * qua bridge rồi đọc lại DB — như khi bấm hội thoại trong danh sách. Trả tin mới → cũ.
+ * History when the machine has no messages of the conversation yet (the person was just opened from a profile / found by @username): Telegram fetches it from the server, Facebook
+ * through the bridge and then reads the DB again, as when a conversation is tapped in the list. Returns messages new → old.
  */
 export async function fetchQuickChatHistory(accountId: string, threadId: string, channel: string, limit: number): Promise<any[]> {
   try {
@@ -125,12 +126,12 @@ export async function fetchQuickChatHistory(accountId: string, threadId: string,
       return again?.messages || again?.items || [];
     }
   } catch {
-    // Không lấy được thì để trống: gửi tin đầu tiên vẫn được
+    // If it cannot be fetched, leave it empty: sending the first message still works
   }
   return [];
 }
 
-/** Ô "Đến:" tìm thêm trên nền tảng: Zalo theo số điện thoại, Telegram theo @username. */
+/** The "Đến:" (To:) box searches the platform further: Zalo by phone number, Telegram by @username. */
 export function recipientLookupKind(channel: string, query: string): 'zalo_phone' | 'telegram_username' | null {
   const value = query.trim().replace(/\s/g, '');
   if (isZalo(channel) && /^(\+84|0)\d{8,10}$/.test(value)) return 'zalo_phone';

@@ -1,23 +1,24 @@
 /**
- * Nút / chip cảm xúc ở góc dưới bong bóng — DÙNG CHUNG cho khung chat và phần bình luận bài đăng kênh, để thả cảm xúc ở
- * đâu cũng giống nhau (trước đây phần bình luận có nút riêng nằm xa tin, phải bấm mới mở).
+ * Reaction button / chip at the bottom corner of the bubble, SHARED by the chat frame and the channel post comments, so reacting works the same
+ * everywhere (before, the comments had their own button far from the message, and you had to click to open it).
  *
- * Như các app lớn: nút nằm ở góc dưới, phía TRONG khung chat (tin của mình → góc trái, tin người khác → góc phải), hiện khi
- * rê chuột lên tin; giữ chuột trên nút REACTION_PICKER_HOVER_DELAY_MS thì mở thanh chọn (lia ngang qua không tự bật), bấm
- * thì mở ngay; rời nút / thanh chọn thì đóng sau REACTION_PICKER_CLOSE_DELAY_MS. Có cảm xúc rồi: chip luôn hiện ở góc đó
- * (Telegram: mỗi cảm xúc một chip; Zalo / Facebook: một chip gộp), bấm chip = xem ai đã thả.
- * Hàng tin phải có lớp `group/msg` (nút ẩn hiện theo rê chuột), khối chứa nút phải `relative` (+ `mb-3` khi có cảm xúc).
+ * As in big apps: the button sits in the bottom corner, on the INSIDE of the chat frame (own messages → left corner, others' → right corner), shown on
+ * hover over the message. Holding the mouse on the button for REACTION_PICKER_HOVER_DELAY_MS opens the picker (passing over it does not open it);
+ * clicking opens it at once. Leaving the button / picker closes it after REACTION_PICKER_CLOSE_DELAY_MS. Once there are reactions, a chip is always shown in that corner
+ * (Telegram: one chip per reaction; Zalo / Facebook: one combined chip). Clicking the chip shows who reacted.
+ * The message row needs a `group/msg` class (the button shows and hides on hover), and the container holding the button must be `relative` (+ `mb-3` when there are reactions).
  */
 import React from 'react';
 import { displayReactionEmoji } from './ReactionComponents';
 import { ReactionHoverPicker } from './ReactionPicker';
+import { tr } from '../../../../../shared/i18n';
 
-/** Giữ chuột trên nút "Thả cảm xúc" bao lâu thì mới mở thanh chọn (lia ngang qua không tự bật). */
+/** How long to hold the mouse on the "Thả cảm xúc" (React) button before the picker opens (passing over it does not open it). */
 export const REACTION_PICKER_HOVER_DELAY_MS = 300;
-/** Rời nút / thanh chọn bao lâu thì đóng (đi chéo / trượt ra ngoài một chút không bị mất ngay). */
+/** How long after leaving the button / picker it closes (diagonal moves or slipping slightly outside do not close it right away). */
 export const REACTION_PICKER_CLOSE_DELAY_MS = 250;
 
-/** Thanh chọn cảm xúc đang mở cho tin nào (một thanh tại một thời điểm) + hẹn giờ mở / đóng theo rê chuột. */
+/** Which message the reaction picker is open for (one picker at a time) + the timers that open / close it on hover. */
 export function useReactionHoverPicker() {
   const [openId, setOpenId] = React.useState<string | null>(null);
   const openIdRef = React.useRef<string | null>(null);
@@ -25,7 +26,7 @@ export function useReactionHoverPicker() {
   const openTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /** Bấm nút: mở ngay. */
+  /** On click: open immediately. */
   const open = React.useCallback((id: string) => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
     if (openTimer.current) clearTimeout(openTimer.current);
@@ -33,14 +34,14 @@ export function useReactionHoverPicker() {
     setOpenId(id);
   }, []);
 
-  /** Chuột vào nút / thanh chọn: tin đang mở → giữ; tin khác → mở sau khi giữ đủ lâu. */
+  /** Mouse over the button / picker: if this message is open → keep it; another message → open after holding long enough. */
   const arm = React.useCallback((id: string, onOpen?: () => void) => {
     if (openIdRef.current === id) {
-      // Quay lại đúng tin đang mở (đi chéo giữa nút và thanh chọn): giữ thanh chọn
+      // Back on the message that is open (diagonal move between button and picker): keep the picker
       if (closeTimer.current) clearTimeout(closeTimer.current);
       return;
     }
-    // Tin khác: thanh chọn đang mở (nếu có) vẫn đóng theo hẹn; tin này mở sau khi giữ đủ lâu
+    // Another message: the picker that is open (if any) still closes on its timer; this message opens after holding long enough
     if (openTimer.current) clearTimeout(openTimer.current);
     openTimer.current = setTimeout(() => {
       openTimer.current = null;
@@ -49,7 +50,7 @@ export function useReactionHoverPicker() {
     }, REACTION_PICKER_HOVER_DELAY_MS);
   }, []);
 
-  /** Chuột rời: chưa giữ đủ lâu → huỷ, không mở; đang mở → đóng sau một chút. */
+  /** Mouse leaves: not held long enough → cancel, do not open; already open → close after a short while. */
   const scheduleClose = React.useCallback(() => {
     if (openTimer.current) clearTimeout(openTimer.current);
     openTimer.current = null;
@@ -57,7 +58,7 @@ export function useReactionHoverPicker() {
     closeTimer.current = setTimeout(() => setOpenId(null), REACTION_PICKER_CLOSE_DELAY_MS);
   }, []);
 
-  /** Đóng ngay + huỷ hẹn giờ (đã chọn cảm xúc, đổi hội thoại — tin bị gỡ khỏi DOM nên không có mouseleave). */
+  /** Close immediately + cancel the timer (a reaction was selected or the conversation changed; the message was removed from the DOM, so there is no mouseleave). */
   const close = React.useCallback(() => {
     if (openTimer.current) clearTimeout(openTimer.current);
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -75,25 +76,25 @@ export function useReactionHoverPicker() {
 
 export interface MessageReactionCornerProps {
   isSent: boolean;
-  /** Cảm xúc → số lượt */
+  /** Reaction → count */
   counts: Record<string, number>;
-  /** Cảm xúc mình đã thả (null = chưa) */
+  /** Reaction I added (null = none) */
   myEmoji: string | null;
-  /** chips = mỗi cảm xúc một chip (Telegram), summary = một chip gộp 3 cảm xúc nhiều nhất + tổng (Zalo / Facebook) */
+  /** chips = one chip per reaction (Telegram), summary = one combined chip with the top 3 reactions + total (Zalo / Facebook) */
   variant: 'chips' | 'summary';
-  /** Cảm xúc đã vẽ chỗ khác (bài đăng kênh: trong khung bài) → ở đây chỉ còn nút 👍 khi rê chuột */
+  /** Reaction already drawn elsewhere (channel post: inside the post frame) → here only the 👍 button remains on hover */
   hideCounts?: boolean;
   pickerOpen: boolean;
   pickerEmojis: readonly string[];
-  /** Chuột vào nút / thanh chọn (hẹn giờ mở) */
+  /** Mouse over the button / picker (timer to open) */
   onArm: () => void;
-  /** Chuột rời */
+  /** Mouse leaves */
   onLeave: () => void;
-  /** Bấm 👍: mở thanh chọn ngay */
+  /** Click 👍: open the picker right away */
   onOpenPicker: () => void;
-  /** Chọn trên thanh (chọn lại cảm xúc của mình = gỡ — nơi dùng tự xử lý) */
+  /** Select on the picker (selecting my own reaction again = remove; the caller handles it) */
   onPick: (emoji: string) => void;
-  /** Bấm chip: xem ai đã thả ('all' = chip gộp) */
+  /** Click a chip: see who reacted ('all' = combined chip) */
   onShowReactors: (emoji: string) => void;
 }
 
@@ -109,7 +110,7 @@ export function MessageReactionCorner({
       onMouseEnter={onArm}
       onMouseLeave={onLeave}
     >
-      {/* Thanh chọn: hàng dọc trên / dưới nút tuỳ chỗ trống (như Telegram), cuộn được; bấm lại cảm xúc của mình = gỡ */}
+      {/* Picker: vertical row above / below the button depending on free space (as in Telegram), scrollable; clicking my own reaction again removes it */}
       {pickerOpen && (
         <ReactionHoverPicker emojis={pickerEmojis} myEmoji={myEmoji} align={isSent ? 'left' : 'right'} onPick={onPick} />
       )}
@@ -144,7 +145,7 @@ export function MessageReactionCorner({
         <button
           type="button"
           className="w-6 h-6 bg-card hover:bg-muted border border-input rounded-full flex items-center justify-center text-sm shadow-sm transition-colors"
-          title="Thả cảm xúc (bấm hoặc giữ chuột)"
+          title={tr('Thả cảm xúc (bấm hoặc giữ chuột)')}
           onClick={onOpenPicker}
         >👍</button>
       )}

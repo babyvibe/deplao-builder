@@ -1,12 +1,11 @@
 /**
- * Sửa một lần mốc thời gian tin Telegram (cá nhân / bot) đã gửi từ Deplao trước bản 26.10.3: các tin này đóng dấu bằng
- * giờ máy (có mili-giây — giờ server Telegram chỉ có giây), nên máy chạy nhanh vài giây thì khách trả lời ngay bị xếp
- * TRƯỚC tin mình (máy chủ dự án nhanh 6,4 s: "nhớ update vào repo…" 16:53:00.646 đứng sau 2 tin khách 16:52:58 / :59).
+ * One-time fix for the timestamps of Telegram messages (personal / bot) sent from Deplao before version 26.10.3: these messages were stamped with the
+ * machine's clock (with milliseconds, while the Telegram server clock only has seconds), so when the machine runs a few seconds fast, a customer's immediate reply gets sorted
+ * BEFORE my message (the project server is 6.4 s fast: "nhớ update vào repo…" (remember to update the repo…) at 16:53:00.646 sorted after 2 customer messages at 16:52:58 / :59).
  *
- * Không gọi Telegram: id tin Telegram tăng dần theo thứ tự gửi trong một hội thoại, nên giờ thật của tin nằm giữa giờ
- * server của tin kề trước và kề sau theo id → kẹp mốc cũ vào khoảng đó (chỉ đổi khi sai thứ tự; cùng giây thì giao diện
- * xếp theo id). Xét 30 ngày gần nhất, chạy sau khi app ổn định, chia từng ngày (nhường luồng chính giữa các phần), đánh
- * dấu xong theo tài khoản trong app_settings.
+ * Does not call Telegram: Telegram message ids increase in send order within a conversation, so a message's real time lies between the server time of the
+ * neighbouring message before it and after it (by id) → clamp the old stamp into that range (changed only when the order is wrong; within the same second the UI
+ * sorts by id). Looks at the last 30 days, runs after the app settles, one day at a time (yielding the main thread between parts), and marks each account done in app_settings.
  */
 import DatabaseService from '../../database/DatabaseService';
 import Logger from '../../../utils/Logger';
@@ -14,14 +13,14 @@ import { whenStartupSettled } from '../../../utils/startup/startupSettle';
 
 const DAY_MS = 24 * 60 * 60_000;
 const REPAIR_DAYS = 30;
-/** Tin kề trước / sau xét trong khoảng này quanh mốc cũ (độ lệch đồng hồ máy thường vài giây — vài phút là dư). */
+/** Neighbouring messages checked within this range around the old stamp (the machine's clock drift is usually a few seconds; a few minutes is plenty). */
 const NEIGHBOR_WINDOW_MS = 10 * 60_000;
-/** id thật của Telegram ngắn; id dự phòng `String(Date.now())` (13 chữ số) không theo thứ tự gửi → bỏ qua. */
+/** Telegram's real short ids; the fallback id `String(Date.now())` (13 digits) does not follow the send order → skipped. */
 const REAL_ID = /^\d{1,11}$/;
 const FLAG_PREFIX = 'tg_sent_ts_repair_v1_';
 const START_DELAY_MS = 30_000;
 
-/** Kẹp mốc tin gửi vào [giờ tin server kề trước, giờ tin server kề sau] (theo id); không có tin kề thì giữ nguyên phía đó. */
+/** Clamp a sent message's stamp into [server time of the neighbour before, server time of the neighbour after] (by id); with no neighbour on that side, keep that side as it is. */
 export function repairedSentTimestamp(stored: number, prevServerTs: number | null, nextServerTs: number | null): number {
   let ts = stored;
   if (nextServerTs !== null && ts > nextServerTs) ts = nextServerTs;
@@ -31,12 +30,12 @@ export function repairedSentTimestamp(stored: number, prevServerTs: number | nul
 
 interface SentRow { id: number; thread_id: string; msg_id: string; timestamp: number }
 
-/** Phần DatabaseService dùng ở đây (test truyền DB SQLite riêng). */
+/** The DatabaseService part used here (tests pass their own SQLite DB). */
 export type RepairDb = Pick<DatabaseService, 'query' | 'queryOne' | 'run'>;
 
 const yieldToMain = () => new Promise<void>(resolve => setImmediate(resolve));
 
-/** Sửa các tin đã gửi của một tài khoản Telegram; trả số tin đã đổi mốc. */
+/** Fix the sent messages of one Telegram account; returns the number of messages whose stamp changed. */
 export async function repairTelegramSentTimestampsForAccount(
   accountId: string, now = Date.now(), db: RepairDb = DatabaseService.getInstance(),
 ): Promise<number> {
@@ -51,7 +50,7 @@ export async function repairTelegramSentTimestampsForAccount(
       const msgId = String(row.msg_id || '');
       if (!REAL_ID.test(msgId)) continue;
       const near = [accountId, row.thread_id, row.timestamp - NEIGHBOR_WINDOW_MS, row.timestamp + NEIGHBOR_WINDOW_MS, Number(msgId)];
-      // Tin có giờ server (tròn giây, id thật) kề sau / kề trước theo id
+      // Messages with a server time (whole seconds, real id) after / before it by id
       const next = db.queryOne<{ ts: number | null }>(
         `SELECT MIN(timestamp) AS ts FROM messages
           WHERE owner_zalo_id = ? AND thread_id = ? AND timestamp BETWEEN ? AND ? AND timestamp % 1000 = 0
@@ -75,7 +74,7 @@ export async function repairTelegramSentTimestampsForAccount(
   return fixed;
 }
 
-/** Mọi tài khoản Telegram chưa sửa (mỗi tài khoản một lần). */
+/** Every Telegram account not fixed yet (once per account). */
 export async function repairTelegramSentTimestamps(): Promise<void> {
   const db = DatabaseService.getInstance();
   const accounts = db.query<{ zalo_id: string }>(
@@ -94,7 +93,7 @@ export async function repairTelegramSentTimestamps(): Promise<void> {
   }
 }
 
-/** Lên lịch sửa sau khi app ổn định (không tranh CPU / DB lúc mở app). */
+/** Schedule the fix after the app settles (does not compete with CPU / DB when the app opens). */
 export function scheduleTelegramSentTimestampRepair(): void {
   whenStartupSettled(() => {
     setTimeout(() => {

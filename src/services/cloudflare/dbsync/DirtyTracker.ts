@@ -1,23 +1,23 @@
 /**
- * DirtyTracker — ghi nhận dòng nào đã đổi kể từ lần đẩy trước, bằng trigger trong chính DB workspace.
+ * DirtyTracker: records which rows have changed since the last push, using triggers inside the workspace DB itself.
  *
  *   _cloud_dirty(id AUTOINCREMENT, tbl, rid, UNIQUE(tbl, rid))
- *   _cloud_meta(key, value)            — db_uid (ngẫu nhiên, tạo một lần) + fingerprint lúc cài trigger
- *   _cloud_t_<bảng>_{i,u,d}            — AFTER INSERT/UPDATE/DELETE: xoá dòng cũ của (bảng, rowid) rồi chèn lại
- *                                        → chạm lại một dòng = id mới lớn hơn (đoạn đang đẩy không "nuốt" mất thay đổi mới).
+ *   _cloud_meta(key, value)            : db_uid (random, created once) + fingerprint at the time the triggers were installed
+ *   _cloud_t_<table>_{i,u,d}           - AFTER INSERT/UPDATE/DELETE: delete the old row for (table, rowid), then insert it again
+ *                                        → touching a row again = a larger new id (the part being pushed does not "swallow" new changes).
  *
- * Trigger chạy cho MỌI connection ghi vào DB (app có nhiều connection). Dùng DELETE + INSERT (không INSERT OR REPLACE)
- * vì trong trigger, chính sách xung đột của câu lệnh ngoài (vd INSERT OR IGNORE của app) sẽ thay chính sách của câu
- * bên trong — OR REPLACE có thể bị biến thành IGNORE và giữ id cũ.
- * UPDATE đổi chính rowid (hiếm) → ghi cả rowid cũ (để bản sao xoá nó) lẫn rowid mới.
+ * Triggers run for EVERY connection that writes to the DB (the app has several connections). Uses DELETE + INSERT (not INSERT OR REPLACE)
+ * because inside a trigger, the conflict policy of the outer statement (e.g. the app's INSERT OR IGNORE) would replace the policy of the
+ * inner one: OR REPLACE could turn into IGNORE and keep the old id.
+ * UPDATE changes the rowid itself (rare) → record both the old rowid (so the copy deletes it) and the new rowid.
  *
- *   _cloud_t_<bảng>_c (BEFORE INSERT, chỉ bảng có khoá UNIQUE): INSERT OR REPLACE của app gỡ dòng trùng khoá mà KHÔNG
- *   chạy trigger DELETE (recursive_triggers tắt) → nếu dòng mới bị xoá trước lần đẩy, bản sao giữ mãi dòng cũ ("dòng
- *   ma": workflow đã xoá, tin đã bỏ ghim… hiện lại sau khi khôi phục). Trigger này đánh dấu trước các dòng trùng khoá.
- *   Bỏ qua bảng messages (app chỉ INSERT OR IGNORE, rất nhiều bản trùng — đánh dấu chỉ làm gửi lại dòng không đổi).
+ *   _cloud_t_<table>_c (BEFORE INSERT, only for tables with a UNIQUE key): the app's INSERT OR REPLACE removes a row with the same key WITHOUT
+ *   running the DELETE trigger (recursive_triggers is off) → if the new row is deleted before the next push, the copy keeps the old row forever (a "ghost
+ *   row": a deleted workflow, an unpinned message… reappears after a restore). This trigger marks the rows with the same key beforehand.
+ *   Skipped for the messages table (the app only does INSERT OR IGNORE and there are many duplicates; marking would only resend unchanged rows).
  *
- * Mọi trigger được biên dịch thử (prepare INSERT/UPDATE/DELETE) trong cùng giao dịch cài đặt — lỗi → huỷ, không bao giờ
- * để lại trigger làm hỏng lệnh ghi của app.
+ * Every trigger is test-compiled (prepare INSERT/UPDATE/DELETE) in the same install transaction: on error → rollback, never
+ * leaves a trigger that breaks the app's write statements.
  */
 import { randomUUID } from 'crypto';
 import { SqlConn, quoteIdent, quoteLiteral, tableExists, toNumber, writeTx } from './sqlConn';
@@ -26,9 +26,9 @@ import { TableSelection, TrackedTable, schemaFingerprint, selectTables } from '.
 export const DIRTY_TABLE = '_cloud_dirty';
 export const META_TABLE = '_cloud_meta';
 export const TRIGGER_PREFIX = '_cloud_t_';
-/** app_settings: mã workspace = tiền tố khoá R2 (module media dùng chung khoá này). */
+/** app_settings: the workspace id = the R2 key prefix (the media module shares this key). */
 export const WORKSPACE_UID_KEY = 'cloud_workspace_uid';
-/** Không gắn trigger đánh dấu xung đột (xem đầu file). */
+/** Do not attach the conflict-marking trigger (see the top of the file). */
 export const NO_CONFLICT_TRIGGER: ReadonlySet<string> = new Set(['messages']);
 
 const CREATE_DIRTY_SQL =
@@ -47,7 +47,7 @@ export interface UniqueKey {
     columns: Array<{ name: string; coll: string | null }>;
 }
 
-/** Khoá UNIQUE (kể cả PRIMARY KEY không phải rowid) chỉ gồm cột thường, không phải index một phần. */
+/** UNIQUE keys (including a PRIMARY KEY that is not the rowid) only cover normal columns, not a partial index. */
 export function uniqueKeys(conn: SqlConn, table: string): UniqueKey[] {
     const out: UniqueKey[] = [];
     const list = conn.prepare(`SELECT name, "unique" AS u, partial FROM pragma_index_list(${quoteLiteral(table)})`).all();
@@ -56,7 +56,7 @@ export function uniqueKeys(conn: SqlConn, table: string): UniqueKey[] {
         const cols = conn.prepare(`SELECT cid, name, coll, key FROM pragma_index_xinfo(${quoteLiteral(String(ix.name))})`)
             .all()
             .filter((c: any) => Number(c.key) === 1);
-        // Khoá theo biểu thức (cid = -2) / rowid → bỏ qua
+        // Keys based on an expression (cid = -2) / rowid → skip
         if (!cols.length || cols.some((c: any) => Number(c.cid) < 0 || c.name === null || c.name === undefined)) continue;
         out.push({ columns: cols.map((c: any) => ({ name: String(c.name), coll: c.coll ? String(c.coll) : null })) });
     }
@@ -105,7 +105,7 @@ export function triggerStatements(t: TrackedTable, keys: UniqueKey[] = []): stri
                     return `${quoteIdent(c.name)} = NEW.${quoteIdent(c.name)}${coll}`;
                 })
                 .join(' AND ');
-            // Dòng khác (rowid khác dòng sắp chèn) trùng khoá → sẽ bị REPLACE gỡ âm thầm → đánh dấu trước.
+            // Another row (a different rowid from the row about to be inserted) with the same key → REPLACE would silently remove it → mark it first.
             const match = `FROM ${T} WHERE ${cond} AND ${r} IS NOT NEW.${r}`;
             parts.push(`DELETE FROM _cloud_dirty WHERE tbl = ${L} AND rid IN (SELECT ${r} ${match});`);
             parts.push(`INSERT INTO _cloud_dirty (tbl, rid) SELECT ${L}, ${r} ${match};`);
@@ -115,7 +115,7 @@ export function triggerStatements(t: TrackedTable, keys: UniqueKey[] = []): stri
     return out;
 }
 
-/** Biên dịch thử lệnh ghi của bảng (biên dịch luôn chương trình trigger) — trigger lỗi thì ném ngay, chưa COMMIT. */
+/** Test-compile the table's write statements (this also compiles the trigger program); if a trigger fails, throw right away, before COMMIT. */
 function compileCheck(conn: SqlConn, t: TrackedTable): void {
     const T = quoteIdent(t.name);
     conn.prepare(`INSERT INTO ${T} DEFAULT VALUES`);
@@ -143,7 +143,7 @@ function setMeta(conn: SqlConn, key: string, value: string): void {
     conn.prepare('INSERT INTO _cloud_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 }
 
-/** Giá trị AUTOINCREMENT hiện tại của _cloud_dirty (id lớn nhất từng cấp, kể cả dòng đã xoá). */
+/** Current AUTOINCREMENT value of _cloud_dirty (the largest id ever issued, including deleted rows). */
 export function dirtySeq(conn: SqlConn): number {
     try {
         const row = conn.prepare("SELECT seq FROM sqlite_sequence WHERE name = '_cloud_dirty'").get();
@@ -156,13 +156,13 @@ export function dirtySeq(conn: SqlConn): number {
 export interface TrackingInfo {
     dbUid: string;
     fingerprint: string;
-    /** app_settings.cloud_workspace_uid (null: DB không có bảng app_settings). */
+    /** app_settings.cloud_workspace_uid (null: the DB has no app_settings table). */
     workspaceUid: string | null;
     included: string[];
     unsupported: string[];
-    /** Lần đầu cài trên DB này (chưa có _cloud_dirty). */
+    /** First install on this DB (no _cloud_dirty yet). */
     created: boolean;
-    /** Có bảng được theo dõi mà trước đó thiếu trigger → thay đổi cũ có thể đã lọt → cần chụp gốc mới. */
+    /** A tracked table was missing its triggers before → older changes may have slipped through → a new base snapshot is needed. */
     reinstalled: boolean;
     dirtySeq: number;
 }
@@ -199,7 +199,7 @@ function readTrackingState(conn: SqlConn, plans: TriggerPlan[], fingerprint: str
     };
 }
 
-/** Đọc (tạo nếu create và chưa có) app_settings.cloud_workspace_uid — INSERT OR IGNORE, dùng chung với module media. */
+/** Read app_settings.cloud_workspace_uid (created if create is set and it does not exist yet) with INSERT OR IGNORE; shared with the media module. */
 export function ensureWorkspaceUid(conn: SqlConn, create: boolean): string | null {
     if (!tableExists(conn, 'app_settings')) return null;
     const read = (): string | null => {
@@ -217,8 +217,8 @@ export function ensureWorkspaceUid(conn: SqlConn, create: boolean): string | nul
 }
 
 /**
- * Bảo đảm bảng/trigger theo dõi khớp schema hiện tại. Chỉ lấy khoá ghi khi thật sự cần (lần đầu, sau migration,
- * bảng mới, đổi tên bảng) — gọi được ở mỗi nhịp đồng bộ.
+ * Makes sure the tracking table / triggers match the current schema. Only takes the write lock when really needed (first time, after a migration,
+ * a new table, a renamed table). Can be called on every sync tick.
  */
 export function ensureTracking(conn: SqlConn, opts: { createWorkspaceUid?: boolean } = {}): TrackingInfo {
     let sel = selectTables(conn);
@@ -229,7 +229,7 @@ export function ensureTracking(conn: SqlConn, opts: { createWorkspaceUid?: boole
     let reinstalled = false;
     if (state.needsWrite) {
         writeTx(conn, () => {
-            // Đọc lại trong giao dịch ghi: schema có thể vừa đổi giữa hai lần đọc.
+            // Read again inside the write transaction: the schema may have changed between the two reads.
             sel = selectTables(conn);
             fingerprint = schemaFingerprint(conn, sel);
             plans = planTriggers(conn, sel);
@@ -240,7 +240,7 @@ export function ensureTracking(conn: SqlConn, opts: { createWorkspaceUid?: boole
             if (!state.triggersOk) {
                 for (const name of state.existingTriggers) conn.exec(`DROP TRIGGER IF EXISTS ${quoteIdent(name)}`);
                 for (const p of plans) for (const sql of triggerStatements(p.table, p.keys)) conn.exec(sql);
-                // Lệnh ghi của app phải còn biên dịch được với trigger mới; không → ROLLBACK (writeTx) + ném lỗi.
+                // The app's write statements must still compile with the new triggers; if not → ROLLBACK (writeTx) + throw an error.
                 for (const p of plans) compileCheck(conn, p.table);
                 reinstalled = state.missingTriggers > 0;
             }
@@ -262,13 +262,13 @@ export function ensureTracking(conn: SqlConn, opts: { createWorkspaceUid?: boole
     };
 }
 
-/** Gỡ hết trigger + bảng theo dõi (tắt đồng bộ / bản sao khôi phục). Bảng cloud_sync_log giữ nguyên. */
+/** Remove all triggers + tracking tables (sync turned off / restored copy). The cloud_sync_log table is kept. */
 export function dropTracking(conn: SqlConn): { triggers: number; tables: number } {
     const triggers = listTrackingTriggers(conn);
     const tables = [DIRTY_TABLE, META_TABLE].filter(t => tableExists(conn, t));
     if (!triggers.length && !tables.length) return { triggers: 0, tables: 0 };
     writeTx(conn, () => {
-        // Trigger trước, bảng sau, cùng một giao dịch — trigger còn mà _cloud_dirty mất sẽ làm mọi lệnh ghi của app lỗi.
+        // Triggers first, then the table, in the same transaction: if a trigger remains but _cloud_dirty is gone, every write of the app fails.
         for (const name of listTrackingTriggers(conn)) conn.exec(`DROP TRIGGER IF EXISTS ${quoteIdent(name)}`);
         conn.exec('DROP TABLE IF EXISTS _cloud_dirty');
         conn.exec('DROP TABLE IF EXISTS _cloud_meta');
@@ -292,7 +292,7 @@ export function dirtyStats(conn: SqlConn): DirtyStats {
     return { count: toNumber(row?.n), minId: toNumber(row?.lo), maxId: toNumber(row?.hi) };
 }
 
-/** Rẻ (một lần dò chỉ mục) — vòng theo dõi realtime gọi mỗi 2 s. */
+/** Cheap (one index probe); the realtime watch loop calls it every 2 s. */
 export function hasDirtyRows(conn: SqlConn): boolean {
     try {
         return !!conn.prepare('SELECT 1 AS x FROM _cloud_dirty LIMIT 1').get();
@@ -301,7 +301,7 @@ export function hasDirtyRows(conn: SqlConn): boolean {
     }
 }
 
-/** Xoá các dòng đã đẩy (id ≤ upToId). Dòng bị chạm lại trong lúc đẩy đã có id mới > upToId nên còn nguyên. */
+/** Delete the pushed rows (id ≤ upToId). A row touched again during the push already has a new id > upToId, so it stays. */
 export function ackDirty(conn: SqlConn, upToId: number): number {
     if (!(upToId > 0) || !tableExists(conn, DIRTY_TABLE)) return 0;
     return toNumber(conn.prepare('DELETE FROM _cloud_dirty WHERE id <= ?').run(upToId).changes);

@@ -1,19 +1,20 @@
 /**
- * PaymentsTunnel — địa chỉ Internet của cổng nhận webhook thanh toán / tích hợp (IntegrationRegistry, mặc định 9888:
- * Casso, SePay, phần mềm bán hàng…). Một luồng logic cho:
- *   - ipcMain 'tunnel:start' / 'tunnel:stop' / 'tunnel:status' (electron/ipc/integrations/integrationIpc.ts — chỉ gọi vào đây);
- *   - module tunnel (src/services/cloudflare/tunnel) khi bật / tắt dịch vụ 'payments' ở
- *     Cài đặt → Internet & Cloud → Địa chỉ Internet (chế độ Địa chỉ tạm / ngrok / Cloudflare thủ công).
+ * PaymentsTunnel: the Internet address of the port that receives payment / integration webhooks (IntegrationRegistry, default 9888:
+ * Casso, SePay, POS software...). One logical flow for:
+ *   - ipcMain 'tunnel:start' / 'tunnel:stop' / 'tunnel:status' (electron/ipc/integrations/integrationIpc.ts: calls only go here);
+ *   - the tunnel module (src/services/cloudflare/tunnel) when the 'payments' service is switched on / off in
+ *     Settings → Internet & Cloud → Internet address (Temporary address / ngrok / manual Cloudflare modes).
  *
- * Chế độ 'cloudflare_auto': địa chỉ là dịch vụ 'payments' của tunnel cố định dùng chung (src/services/cloudflare/tunnel,
- * nạp lười — lỗi nạp → null = chạy như cũ). Chế độ khác: Cloudflare Quick Tunnel riêng cho cổng (TunnelService, địa chỉ
- * tạm) — ngrok / Cloudflare thủ công chỉ áp dụng cho relay. Mọi thay đổi địa chỉ báo renderer qua 'tunnel:changed'.
- * Kết quả giữ đúng dạng của IPC cũ: start → { success, url?, error? }, stop → { success, error? }, status → { active, url }.
+ * Mode 'cloudflare_auto': the address is the 'payments' service of the shared fixed tunnel (src/services/cloudflare/tunnel,
+ * lazy-loaded: a load error → null = behaves as before). Other modes: a Cloudflare Quick Tunnel dedicated to the port (TunnelService, temporary
+ * address); ngrok / manual Cloudflare only apply to the relay. Every address change is reported to the renderer via 'tunnel:changed'.
+ * Results keep the exact shape of the old IPC: start → { success, url?, error? }, stop → { success, error? }, status → { active, url }.
  */
 import { BrowserWindow } from 'electron';
 import IntegrationRegistry from './IntegrationRegistry';
 import TunnelService from '../tunnel/TunnelService';
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 type CloudTunnelApi = typeof import('../cloudflare/tunnel');
 
@@ -26,7 +27,7 @@ function cloudTunnelIfAuto(): CloudTunnelApi | null {
     }
 }
 
-/** Địa chỉ gốc đang dùng được (renderer tự nối /webhook/<loại> như với tunnelUrl cũ). */
+/** The base address currently usable (the renderer appends /webhook/<type> itself, as with the old tunnelUrl). */
 function cloudPaymentsUrl(cloud: CloudTunnelApi): string | null {
     const address = cloud.cloudTunnel.addressOf('payments');
     return address.state === 'active' && address.url ? address.url : null;
@@ -41,7 +42,7 @@ function sendTunnelChanged(port: number, url: string | null): void {
 let cloudPaymentsWatchOff: (() => void) | null = null;
 let lastCloudPaymentsUrl: string | null = null;
 
-/** Địa chỉ thanh toán đổi (tiến trình lên/xuống, bật/tắt ở màn Internet & Cloud) → 'tunnel:changed' như tunnel cũ. */
+/** The payment address changes (process up/down, on/off in the Internet & Cloud screen) → 'tunnel:changed' like the old tunnel. */
 function watchCloudPayments(cloud: CloudTunnelApi): void {
     if (cloudPaymentsWatchOff) return;
     lastCloudPaymentsUrl = cloudPaymentsUrl(cloud);
@@ -54,27 +55,27 @@ function watchCloudPayments(cloud: CloudTunnelApi): void {
     });
 }
 
-/** Bật địa chỉ nhận webhook thanh toán (như 'tunnel:start'). */
+/** Turn on the payment webhook receiving address (like 'tunnel:start'). */
 export async function startPaymentsTunnel(): Promise<{ success: boolean; url?: string; error?: string }> {
     try {
         const port = IntegrationRegistry.getWebhookPort();
         const cloud = cloudTunnelIfAuto();
         if (cloud) {
-            // Bật dịch vụ 'payments' trên tunnel dùng chung (chỉ đổi ingress, không chạy lại cloudflared)
+            // Enable the 'payments' service on the shared tunnel (only changes the ingress, does not restart cloudflared)
             await cloud.cloudTunnel.setServiceEnabled('payments', true);
             watchCloudPayments(cloud);
             const cloudUrl = cloudPaymentsUrl(cloud);
-            // Đã có địa chỉ cố định → tunnel cũ của cổng này (Quick Tunnel…) không còn dùng
+            // A fixed address exists → this port's old tunnel (Quick Tunnel...) is no longer used
             if (cloudUrl && TunnelService.getState(port)) void TunnelService.stop(port).catch(() => {});
             lastCloudPaymentsUrl = cloudUrl;
             sendTunnelChanged(port, cloudUrl);
             if (cloudUrl) return { success: true, url: cloudUrl };
-            return { success: false, error: cloud.cloudTunnel.addressOf('payments').error || 'Địa chỉ Cloudflare chưa kết nối xong — đang tự thử lại' };
+            return { success: false, error: cloud.cloudTunnel.addressOf('payments').error || tr('Địa chỉ Cloudflare chưa kết nối xong — đang tự thử lại') };
         }
         const url = await TunnelService.start(port, 'Webhook Gateway');
         // Notify all renderer windows of the tunnel URL change
         BrowserWindow.getAllWindows().forEach(w => w.webContents.send('tunnel:changed', { port, url }));
-        // Tunnel chết / tự chạy lại (Quick Tunnel → URL mới) → báo renderer. Listener theo phiên: tự xoá khi tắt/bật lại.
+        // Tunnel died / restarted by itself (Quick Tunnel → new URL) → notify the renderer. Listener per session: removed automatically when switched off / on again.
         TunnelService.onChange(port, (nextUrl) => {
             BrowserWindow.getAllWindows().forEach(w => {
                 if (!w.isDestroyed()) w.webContents.send('tunnel:changed', { port, url: nextUrl });
@@ -87,7 +88,7 @@ export async function startPaymentsTunnel(): Promise<{ success: boolean; url?: s
     }
 }
 
-/** Tắt địa chỉ nhận webhook thanh toán (như 'tunnel:stop'). */
+/** Turn off the payment webhook receiving address (like 'tunnel:stop'). */
 export async function stopPaymentsTunnel(): Promise<{ success: boolean; error?: string }> {
     try {
         const port = IntegrationRegistry.getWebhookPort();
@@ -106,8 +107,8 @@ export async function stopPaymentsTunnel(): Promise<{ success: boolean; error?: 
 }
 
 /**
- * Địa chỉ gốc để đăng ký webhook lên phần mềm bán hàng (posWebhookRegistration.ts): Cloudflare tự động = địa chỉ cố định;
- * chế độ khác = Quick Tunnel của cổng — địa chỉ tạm, đổi mỗi lần khởi động lại (phải đăng ký lại).
+ * Base address used to register webhooks on the POS software (posWebhookRegistration.ts): Cloudflare automatic = fixed address;
+ * other modes = the port's Quick Tunnel: a temporary address that changes on every restart (webhooks must be registered again).
  */
 export function paymentsWebhookAddress(): { url: string | null; temporary: boolean } {
     const cloud = cloudTunnelIfAuto();
@@ -119,7 +120,7 @@ export function paymentsWebhookAddress(): { url: string | null; temporary: boole
     return { url: TunnelService.isActive(port) ? TunnelService.getUrl(port) : null, temporary: true };
 }
 
-/** Địa chỉ nhận webhook thanh toán đang dùng được (như 'tunnel:status'). */
+/** The payment webhook receiving address currently usable (like 'tunnel:status'). */
 export function paymentsTunnelStatus(): { active: boolean; url: string | null } {
     const port = IntegrationRegistry.getWebhookPort();
     const cloud = cloudTunnelIfAuto();

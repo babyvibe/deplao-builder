@@ -1,28 +1,28 @@
 /**
- * bankCardTemplate - thẻ tài khoản ngân hàng Zalo (action `zinstant.bankcard`) nhận về.
+ * bankCardTemplate: the Zalo bank card (action `zinstant.bankcard`) that is received.
  *
- * Tin chỉ kèm link template trên CDN zinstant của Zalo: params.pcItem.data_url (`?data=html`, data_type 4) là HTML cho
- * PC; item / bubbleItem (data_type 2) là dữ liệu nén cho app điện thoại. Ngân hàng, số tài khoản, QR nằm trong HTML.
+ * The message only includes a template link on Zalo's zinstant CDN: params.pcItem.data_url (`?data=html`, data_type 4) is HTML for
+ * PC; item / bubbleItem (data_type 2) is compressed data for the phone app. The bank, account number and QR are in the HTML.
  *
- * An toàn (HTML lấy theo link nằm trong tin nhắn):
- *  - chỉ tải https từ CDN zinstant của Zalo (zinst*.zadn.vn);
- *  - bỏ <script>: đó là mã runtime zinstant của app điện thoại, trình duyệt không chạy được;
- *  - BankCardBubble vẽ bằng iframe srcdoc + sandbox="" (không script, origin riêng): template không chạm được giao diện
- *    hay electronAPI. srcdoc không qua CSP frame-src nên bản cài vẽ được (khung blob: bị chặn, thẻ trắng).
+ * Safety (the HTML is fetched from the link inside the message):
+ *  - only https is downloaded, from Zalo's zinstant CDN (zinst*.zadn.vn);
+ *  - <script> is removed: it is the zinstant runtime code of the phone app, which the browser cannot run;
+ *  - BankCardBubble draws it with an iframe srcdoc + sandbox="" (no script, its own origin): the template cannot reach the UI or
+ *    electronAPI. srcdoc does not go through the CSP frame-src, so the installed build can draw it (a blob: frame is blocked, leaving a blank card).
  */
 
 const TEMPLATE_HOST_RE = /^zinst[a-z0-9-]*\.zadn\.vn$/i;
 const MAX_TEMPLATE_CHARS = 512 * 1024;
 const MAX_CACHED_TEMPLATES = 50;
 
-/** CSS thêm vào template: ẩn phần của app điện thoại, cố định chiều cao cho khung 300 x 230. */
+/** CSS added to the template: hides the phone app's part, fixes the height for the 300 x 230 frame. */
 const CARD_CSS = `<style>
   .mobile_element { display: none !important; }
   .card_wrapper { height: 230px !important; min-height: 200px !important; }
   body { margin: 0; padding: 0; overflow: hidden; background: transparent; }
 </style>`;
 
-/** Link có phải CDN zinstant của Zalo không (https, không user:pass, cổng mặc định). */
+/** Whether the link is on Zalo's zinstant CDN (https, no user:pass, default port). */
 export function isZaloTemplateUrl(raw: unknown): raw is string {
     if (typeof raw !== 'string') return false;
     let url: URL;
@@ -30,7 +30,7 @@ export function isZaloTemplateUrl(raw: unknown): raw is string {
     return url.protocol === 'https:' && !url.username && !url.password && !url.port && TEMPLATE_HOST_RE.test(url.hostname);
 }
 
-/** Link template HTML của thẻ trong nội dung tin; null nếu không có hoặc không phải CDN của Zalo. */
+/** HTML template link of the card in the message content; null if there is none or it is not Zalo's CDN. */
 export function bankCardTemplateUrl(content: string): string | null {
     let parsed: any;
     try { parsed = JSON.parse(content); } catch { return null; }
@@ -42,14 +42,14 @@ export function bankCardTemplateUrl(content: string): string | null {
     if (!params || typeof params !== 'object') return null;
     const pcUrl = params.pcItem?.data_url;
     if (isZaloTemplateUrl(pcUrl)) return pcUrl;
-    // Không có pcItem: chỉ nhận item khi là HTML (item thường là dữ liệu nén của app điện thoại).
+    // No pcItem: only accept the item when it is HTML (the item is usually compressed data of the phone app).
     const item = params.item;
     const itemUrl = item?.data_url;
     if (isZaloTemplateUrl(itemUrl) && (Number(item.data_type) === 4 || /[?&]data=html(&|$)/.test(itemUrl))) return itemUrl;
     return null;
 }
 
-/** Template cho srcdoc: bỏ script, thêm CSS khung; null nếu không phải HTML (vd dữ liệu nén) hoặc quá lớn. */
+/** Template for srcdoc: drops the script, adds the frame CSS; null if it is not HTML (e.g. compressed data) or too large. */
 export function prepareBankCardHtml(html: string): string | null {
     if (typeof html !== 'string' || html.length < 50 || html.length > MAX_TEMPLATE_CHARS) return null;
     if (!/^[\s\uFEFF]*</.test(html)) return null;
@@ -74,12 +74,12 @@ async function fetchBankCardTemplate(url: string): Promise<string | null> {
     }
 }
 
-/** Template đã tải xong (vẽ ngay khi bubble mount lại lúc cuộn); undefined nếu chưa có. */
+/** Template already loaded (drawn at once when the bubble mounts again while scrolling); undefined if not loaded yet. */
 export function peekBankCardTemplate(url: string): string | undefined {
     return templates.get(url)?.html;
 }
 
-/** Tải template: mỗi link một lần, giữ 50 thẻ gần nhất; lỗi thì lần sau tải lại. */
+/** Loads templates: once per link, keeps the 50 most recent cards; after an error it loads again next time. */
 export function loadBankCardTemplate(url: string): Promise<string | null> {
     if (!isZaloTemplateUrl(url)) return Promise.resolve(null);
     const hit = templates.get(url);
@@ -99,7 +99,7 @@ export function loadBankCardTemplate(url: string): Promise<string | null> {
     return entry.job;
 }
 
-/** Test: xoá bộ nhớ đệm template. */
+/** Test: clears the template cache. */
 export function resetBankCardTemplates(): void {
     templates.clear();
 }

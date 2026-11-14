@@ -37,9 +37,9 @@ const MAX_CRITICAL_QUEUE_SIZE = 2000;
 const DEDUP_WINDOW_MS = 5000;
 
 /**
- * Khoá chống trùng của một sự kiện bridge: loại + id tin; cảm xúc thêm người thả, cảm xúc, thời điểm; sửa tin thêm lần
- * sửa. Trước đây chỉ là id tin → cảm xúc / sửa / thu hồi tới trong 5 s sau chính tin đó bị coi là bản trùng và bỏ (thu
- * hồi là sự kiện quan trọng nên còn làm khởi động lại bridge).
+ * Dedup key of a bridge event: type + message id; reactions add the reacting person, the reaction, the time; edits add the edit count.
+ * Before, only the message id was used → a reaction / edit / unsend arriving within 5 s of the message itself was treated as a duplicate and dropped (an unsend
+ * is an important event, so it also restarts the bridge).
  */
 export function bridgeEventKey(evt: any): string {
   const type = String(evt?.type || '');
@@ -172,8 +172,8 @@ export class FacebookEventPipeline {
   }
 
   /**
-   * Sự kiện cùng khoá đang chờ hoặc vừa xử lý xong (trong DEDUP_WINDOW_MS): enqueue sẽ bỏ như bản trùng. Người gọi dùng
-   * để phân biệt "bỏ vì trùng" (đã xử lý rồi) với "bỏ vì hàng đợi đầy" (cần khôi phục).
+   * An event with the same key that is waiting or has just been processed (within DEDUP_WINDOW_MS): enqueue drops it as a duplicate. The caller uses it
+   * to tell "dropped as a duplicate" (already handled) from "dropped because the queue is full" (needs recovery).
    */
   isDuplicate(id: string): boolean {
     const lastSeen = this.seenEvents.get(id);

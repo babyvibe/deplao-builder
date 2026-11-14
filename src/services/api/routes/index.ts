@@ -1,5 +1,5 @@
 /**
- * Danh mục route v1. Thêm nhóm mới: tạo file trong routes/ rồi khai báo ở đây.
+ * Index of the v1 routes. To add a new group: create a file in routes/, then declare it here.
  */
 import type { RouteDef } from '../types';
 import type { UploadStore } from '../UploadStore';
@@ -22,7 +22,7 @@ import { employeeRoutes } from './employees';
 
 export interface RouteDeps {
     uploads: UploadStore;
-    /** Route bổ sung (events, webhooks, plugins) do ApiPlatform cung cấp. */
+    /** Extra routes (events, webhooks, plugins) provided by ApiPlatform. */
     extra?: Array<() => RouteDef[]>;
 }
 

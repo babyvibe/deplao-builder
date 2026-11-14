@@ -1,14 +1,14 @@
 /**
  * FacebookScanService.ts
- * Core scan engine cho Facebook data scanning.
- * Dịch từ ChatCore Engine (background.ts) của babyvibe/facebook-scan-data-extension.
+ * Core scan engine for Facebook data scanning.
+ * Adapted from the ChatCore Engine (background.ts) of babyvibe/facebook-scan-data-extension.
  *
- * Chức năng:
- * - Quản lý session + auth cho scan operations
- * - Xây dựng GraphQL params
- * - Tìm docId từ Facebook JS bundles
- * - Parse responses + cursor-based pagination
- * - 8 loại scan: group members, group keyword, fanpage followers/following/keyword,
+ * Features:
+ * - Manages session + auth for scan operations
+ * - Builds GraphQL params
+ * - Finds the docId from Facebook JS bundles
+ * - Parses responses + cursor-based pagination
+ * - 8 scan types: group members, group keyword, fanpage followers/following/keyword,
  *   post comments, post reactions, post keyword
  */
 
@@ -33,6 +33,7 @@ import { fbHeaders } from '../FacebookSession';
 import DatabaseService from '../../database/DatabaseService';
 import { secureGet } from '../../secure/SecureSettingsService';
 import Logger from '../../../utils/Logger';
+import { tr } from '../../../shared/i18n';
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ interface ScanContext {
   sprinkle_config: SprinkleConfig;
   WebConnectionClass: WebConnectionClass;
   clientRevision: string;
-  // Extra fields từ original background.js
+  // Extra fields from the original background.js
   serverRevision: string;
   sequenceId: string;
   messengerRegion: string;
@@ -109,7 +110,7 @@ interface ScanContext {
   __spin_r?: string;
   __spin_b?: string;
   __spin_t?: string;
-  // Extra fields từ extension mới
+  // Extra fields from the new extension
   __dyn: string;
   __hsdp: string;
   __hblp: string;
@@ -121,7 +122,7 @@ interface ScanParams {
 }
 
 // ─── handleWebSesion ───────────────────────────────────────────────────
-// Port từ background.js - tạo compound __s param: "sessionId:tabId:pageId"
+// Ported from background.js: builds the compound __s param "sessionId:tabId:pageId"
 
 const WEB_SESSION_POOL = Math.pow(36, 6);
 
@@ -142,23 +143,23 @@ let _webSessionPageId: string | null = null;
 function webSessionGetId(serverNonce?: string): string {
   const now = Date.now();
 
-  // Reset session nếu expired
+  // Reset the session if it expired
   if (now >= _webSessionExpiry) {
     _webSessionId = null;
     _webSessionExpiry = now + 35000; // 35s
   }
 
-  // Tạo session ID mới nếu chưa có
+  // Create a new session ID if there is none yet
   if (!_webSessionId) {
     _webSessionId = webSessionId();
   }
 
-  // Tab ID (tồn tại suốt phiên)
+  // Tab ID (lasts for the whole session)
   if (!_webSessionTabId) {
     _webSessionTabId = webSessionId();
   }
 
-  // Page ID (mới mỗi lần gọi)
+  // Page ID (new on every call)
   _webSessionPageId = webSessionId();
 
   const sid = _webSessionId || '';
@@ -170,14 +171,14 @@ function webSessionGetId(serverNonce?: string): string {
 // ─── Helper Functions ──────────────────────────────────────────────────
 
 /**
- * Parse GraphQL response, xử lý for(;;); prefix.
- * Nhận cả string (axios trả về text) và object (axios tự parse JSON).
+ * Parse the GraphQL response, handling the for(;;); prefix.
+ * Accepts both a string (axios returns text) and an object (axios parsed the JSON itself).
  */
 function parseGraphQLResponse(response: any, functionName: string = ''): any {
   try {
     let data: any;
 
-    // Nếu axios đã parse sẵn thành object → dùng trực tiếp
+    // If axios has already parsed it into an object → use it directly
     if (typeof response === 'object' && response !== null) {
       data = response;
     } else if (typeof response === 'string') {
@@ -185,7 +186,7 @@ function parseGraphQLResponse(response: any, functionName: string = ''): any {
       if (responseText.includes('for (;;);')) {
         data = JSON.parse(responseText.replace('for (;;);', ''));
       } else {
-        // Có thể multiple JSON objects trên nhiều dòng
+        // There may be multiple JSON objects across several lines
         const jsonObjects = responseText.trim().split('\n')
           .filter(Boolean)
           .map((str: string) => {
@@ -202,7 +203,7 @@ function parseGraphQLResponse(response: any, functionName: string = ''): any {
       return { data: null, error: 'Empty response' };
     }
 
-    // Kiểm tra lỗi từ Facebook - nhiều format khác nhau
+    // Check for Facebook errors: several different formats
     if (data?.error) {
       const err = data.error;
       const errorCode = err.code || err.error_code || err;
@@ -214,10 +215,10 @@ function parseGraphQLResponse(response: any, functionName: string = ''): any {
         log(`${functionName}: Session expired error detected:`, errorCode);
         return { replay: 1, error: errorMsg };
       }
-      return { data: null, error: `Facebook lỗi (${errorCode}): ${errorMsg}` };
+      return { data: null, error: tr('Facebook lỗi ({{errorCode}}): {{errorMsg}}', { errorCode, errorMsg }) };
     }
 
-    // Kiểm tra lỗi summary nếu có (một số response có errorSummary ở root)
+    // Check the summary error if present (some responses have errorSummary at the root)
     if (data?.errorSummary) {
       logError(`[${functionName}] Error summary: ${data.errorSummary}`);
       return { data: null, error: data.errorSummary };
@@ -238,10 +239,10 @@ function isSessionExpiredError(errorCode: any): boolean {
 }
 
 /**
- * Tính jazoest từ fb_dtsg
+ * Compute jazoest from fb_dtsg
  */
 function calcJazoest(data: string): string {
-  // Extension thực tế dùng SUM (số ngắn: "25643"), không phải concatenation
+  // The real extension uses SUM (a short number: "25643"), not concatenation
   let t = 0;
   for (let r = 0; r < data.length; r++) {
     t += data.charCodeAt(r);
@@ -250,10 +251,10 @@ function calcJazoest(data: string): string {
 }
 
 /**
- * Tính jazoest V2 (có sprinkle_config)
+ * Compute jazoest V2 (with sprinkle_config)
  */
 function calcJazoestV2(data: string, sprinkleConfig: SprinkleConfig): string {
-  // Extension thực tế dùng SUM
+  // The real extension uses SUM
   let t = 0;
   for (let r = 0; r < data.length; r++) {
     t += data.charCodeAt(r);
@@ -310,14 +311,14 @@ export class FacebookScanService {
   // ─── Session Management ────────────────────────────────────────────
 
   /**
-   * Lấy cookie từ secure storage
+   * Get the cookie from secure storage
    */
   private getCookie(accountId: string): string | null {
     return secureGet(fbCookieKey(accountId));
   }
 
   /**
-   * Khởi tạo context cho account: fetch HTML, parse fb_dtsg, userID, LSD, SiteData...
+   * Initialize the context for an account: fetch the HTML, parse fb_dtsg, userID, LSD, SiteData...
    */
   async initContext(accountId: string, cookie?: string): Promise<{ success: boolean; error?: string }> {
     try {
@@ -326,11 +327,11 @@ export class FacebookScanService {
 
       const ctx = this.createEmptyContext();
 
-      // Fetch homepage HTML + dual-fetch fallback (giống original ChatCore.init)
+      // Fetch the homepage HTML + dual-fetch fallback (same as the original ChatCore.init)
       const html = await fetchFBHomepage(ck);
       this.parseHtmlContext(html, ctx);
 
-      // Dual-fetch: nếu không isCQuick, fetch lại với URL khác (giống original)
+      // Dual fetch: if not isCQuick, fetch again with another URL (same as the original)
       if (!ctx.env.isCQuick && ctx.userId) {
         await this.delay(1000);
         const altUrl = this.makeBusinessUrl(ctx.userId);
@@ -344,12 +345,12 @@ export class FacebookScanService {
             maxRedirects: 5,
           });
           const altHtml = res.data as string;
-          // Merge thêm fields từ HTML mới (không ghi đè)
+          // Merge in extra fields from the new HTML (do not overwrite)
           this.parseHtmlContext(altHtml, ctx, true);
         } catch {}
       }
 
-      // Fallback: lấy userId từ cookie nếu HTML không parse được
+      // Fallback: get the userId from the cookie if the HTML cannot be parsed
       if (!ctx.userId) {
         const fbIdFromCookie = getFacebookIDFromCookie(ck);
         if (fbIdFromCookie) {
@@ -367,7 +368,7 @@ export class FacebookScanService {
   }
 
   /**
-   * Tạo empty context
+   * Create an empty context
    */
   private createEmptyContext(): ScanContext {
     return {
@@ -396,12 +397,12 @@ export class FacebookScanService {
   }
 
   /**
-   * Parse HTML vào context - giống original background.js loadHtml()
+   * Parse the HTML into the context, same as the original background.js loadHtml()
    */
   private parseHtmlContext(html: string, ctx: ScanContext, mergeOnly: boolean = false): void {
     let data: RegExpMatchArray | null;
 
-    // Parse userID - thử nhiều pattern (FB thay đổi thường xuyên)
+    // Parse userID: try several patterns (FB changes them often)
     if (!ctx.userId) {
       const userIdMatch = html.match(/"userID":"(\d+)"/);
       if (userIdMatch) {
@@ -413,7 +414,7 @@ export class FacebookScanService {
       }
     }
 
-    // Parse fb_dtsg (chỉ ghi nếu chưa có)
+    // Parse fb_dtsg (only written if not already set)
     if (!ctx.fb_dtsg) {
       const dtsgMatch = html.match(/"DTSGInitialData",\[\],\{"token":"([^"]+)"/);
       if (dtsgMatch) {
@@ -424,7 +425,7 @@ export class FacebookScanService {
       }
     }
 
-    // Parse USIDMetadata - PHẢI parse TRƯỚC LSD (extension gốc parse USIDMetadata rồi mới LSD)
+    // Parse USIDMetadata: it MUST be parsed BEFORE LSD (the original extension parses USIDMetadata first, then LSD)
     if (!ctx.usidMetadata) {
       data = html.match(/\["USIDMetadata",\[\],([^\]]+),\d+\]/);
       if (data) {
@@ -432,8 +433,8 @@ export class FacebookScanService {
       }
     }
 
-    // Parse LSD - ORIGINAL EXTENSION: chỉ parse khi usid_metadata ĐÃ TỒN TẠI
-    // Nếu parse LSD không có usid_metadata → LSD sai session → Facebook lỗi 1357054
+    // Parse LSD. ORIGINAL EXTENSION: only parse when usid_metadata ALREADY EXISTS
+    // If LSD parsing finds no usid_metadata → the LSD belongs to a different session → Facebook returns error 1357054
     if (!ctx.lsd && ctx.usidMetadata) {
       const lsdMatch = html.match(/\["LSD",\[\],([^\]]+),\d+\]/);
       if (lsdMatch) {
@@ -503,7 +504,7 @@ export class FacebookScanService {
       }
     }
 
-    // Parse env (cquick detection từ business URL)
+    // Parse env (cquick detection from the business URL)
     if (!mergeOnly) {
       const envMatch = html.match(/cquick=([^&"]+)/);
       if (envMatch) {
@@ -525,22 +526,22 @@ export class FacebookScanService {
           ctx.__dyn = dynConfig?.dyn || '';
         } catch { ctx.__dyn = ''; }
       }
-      // Fallback: __dyn từ pattern khác
+      // Fallback: __dyn from another pattern
       if (!ctx.__dyn) {
         data = html.match(/"__dyn":"([^"]+)"/);
         if (data) ctx.__dyn = data[1];
       }
-      // Fallback: __dyn từ siteData (dyn field)
+      // Fallback: __dyn from siteData (dyn field)
       if (!ctx.__dyn && ctx.siteData) {
         ctx.__dyn = (ctx.siteData as any).dyn || (ctx.siteData as any).__dyn || '';
       }
     }
 
-    // ⚠️ __hsdp/__hblp/__sjsp - KHÔNG parse từ HTML nữa
-    // Working extension luôn gửi empty string cho các params này
-    // Parse giá trị thật từ HTML gây sai lệch → Facebook reject request
+    // ⚠️ __hsdp/__hblp/__sjsp: NO LONGER parsed from the HTML
+    // The working extension always sends an empty string for these params
+    // Parsing the real values from the HTML caused mismatches → Facebook rejects the request
 
-    // Lưu spin params từ ctx để fallback trong buildParams
+    // Save the spin params from ctx to fall back on in buildParams
     if ((ctx as any).__spin_r === '') {
       const sr = (html.match(/__spin_r":(\d+)/) || [])[1];
       const sb = (html.match(/__spin_b":(\d+)/) || [])[1];
@@ -552,7 +553,7 @@ export class FacebookScanService {
   }
 
   /**
-   * Tạo business URL giống original markeUrl
+   * Build the business URL the same way as the original markeUrl
    */
   private makeBusinessUrl(userId: string): string {
     return `https://business.facebook.com/latest/inbox/all?asset_id=${userId}&nav_ref=diode_page_inbox&mailbox_id=${userId}`;
@@ -566,7 +567,7 @@ export class FacebookScanService {
   }
 
   /**
-   * Lấy context từ cache, nếu không có thì khởi tạo
+   * Get the context from the cache; if missing, initialize it
    */
   async ensureContext(accountId: string): Promise<{ ctx?: ScanContext; error?: string }> {
     let ctx = this.contextCache.get(accountId);
@@ -583,8 +584,8 @@ export class FacebookScanService {
   // ─── DocId Management ──────────────────────────────────────────────
 
   /**
-   * Tìm docId từ Facebook JS bundles
-   * Mỗi GraphQL query cần một docId (số) xác định query
+   * Find the docId from the Facebook JS bundles
+   * Each GraphQL query needs a docId (a number) that identifies it
    */
   async loadDocId(
     url: string,
@@ -603,7 +604,7 @@ export class FacebookScanService {
       return this.docIdCache.get(cacheKey)!;
     }
 
-    // URL ưu tiên theo type
+    // URL priority by type
     const primaryUrl = (() => {
       switch (options.type) {
         case 'postProfile': return url;
@@ -623,7 +624,7 @@ export class FacebookScanService {
     };
 
     try {
-      // Dùng fbHeaders() giống FacebookSession - đã được kiểm chứng hoạt động
+      // Use fbHeaders() like FacebookSession: already verified to work
       const fetchHtml = async (fetchUrl: string): Promise<string> => {
         const res = await axios.get(fetchUrl, {
           headers: {
@@ -636,7 +637,7 @@ export class FacebookScanService {
         return res.data as string;
       };
 
-      // Thử primary URL, nếu fail thì thử fallback URLs
+      // Try the primary URL; if it fails, try the fallback URLs
       let html: string | null = null;
       try {
         html = await fetchHtml(primaryUrl);
@@ -655,16 +656,16 @@ export class FacebookScanService {
 
       if (!html) return null;
 
-      // Helper: extract docId từ JS text bằng module name
+      // Helper: extract the docId from JS text by module name
       const extractDocIdFromJS = (jsText: string, moduleName: string): string | null => {
         const escapedName = moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // Pattern: "ModuleName"[...]exports = "123456" (có thể có/và không space quanh =)
+        // Pattern: "ModuleName"[...]exports = "123456" (may or may not have spaces around =)
         const r = new RegExp('"' + escapedName + '"[\\s\\S]{0,400}?\\.exports\\s*=\\s*"(\\d+)"');
         const m = r.exec(jsText);
         return m ? m[1] : null;
       };
 
-      // ── Module names mapping ── (thêm cả bare name không suffix để fallback)
+      // ── Module names mapping ── (also add the bare name without suffix as a fallback)
       const MODULE_NAMES: Record<string, string[]> = {
         group: ['GroupsCometMembersPageNewMembersSectionRefetchQuery_facebookRelayOperation'],
         search: ['SearchCometResultsPaginatedResultsQuery_facebookRelayOperation'],
@@ -682,20 +683,20 @@ export class FacebookScanService {
         pagesList: ['PagesCometLaunchPointUnifiedQueryPagesListRedesignedUpdatedPagesSectionQuery_facebookRelayOperation'],
       };
 
-      // Helper: extract docId bằng friendly name (fallback khi module name không match)
+      // Helper: extract the docId by friendly name (fallback when the module name does not match)
       const extractDocIdByQueryName = (jsText: string, queryName: string): string | null => {
         const escaped = queryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // Pattern chính: "QueryName"[...]exports = "docId" (có thể space quanh =)
+        // Main pattern: "QueryName"[...]exports = "docId" (may have spaces around =)
         const r1 = new RegExp('"' + escaped + '"[\\s\\S]{0,400}?\\.exports\\s*=\\s*"(\\d+)"');
         const m1 = r1.exec(jsText);
         if (m1) return m1[1];
-        // Pattern fallback: QueryName gần số dài (docId) trong vòng 300 ký tự
+        // Fallback pattern: QueryName near a long number (docId) within 300 characters
         const r2 = new RegExp('"' + escaped + '"[\\s\\S]{0,300}?(\\d{10,})');
         const m2 = r2.exec(jsText);
         return m2 ? m2[1] : null;
       };
 
-      // Helper: try extract từ 1 URL JS
+      // Helper: try to extract from one JS URL
       const tryExtractFromUrl = async (scriptUrl: string): Promise<string | null> => {
         try {
           const res = await axios.get(scriptUrl, {
@@ -720,7 +721,7 @@ export class FacebookScanService {
               const found = extractDocIdFromJS(jsText, name);
               if (found) return found;
             }
-            // Fallback: search by friendly name directly (bỏ suffix _facebookRelayOperation)
+            // Fallback: search directly by friendly name (drop the _facebookRelayOperation suffix)
             if (names.length > 0) {
               const baseName = names[0].replace(/_facebookRelayOperation$/, '');
               const found = extractDocIdByQueryName(jsText, baseName);
@@ -733,7 +734,7 @@ export class FacebookScanService {
 
       let docId: string | null = null;
 
-      // ── Bước 1: Collect inline <script> content ──
+      // ── Step 1: collect the inline <script> content ──
       const inlineParts: string[] = [];
       for (const m of html.matchAll(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) {
         if (m[1] && m[1].length > 10) inlineParts.push(m[1]);
@@ -754,7 +755,7 @@ export class FacebookScanService {
         if (docId) { this.docIdCache.set(cacheKey, docId); return docId; }
       }
 
-      // ── Bước 2 (đặc biệt): postReact - tìm qua CometUFIReactionsDialog.react ──
+      // ── Step 2 (special): postReact: find it via CometUFIReactionsDialog.react ──
       if (!docId && options.type === 'postReact') {
         log('loadDocId: postReact - searching via CometUFIReactionsDialog.react');
         const regexRArray = /"CometUFIReactionsDialog\.react"\s*:\s*\{[^]*?"r"\s*:\s*\[([^]*?)\]/g;
@@ -777,7 +778,7 @@ export class FacebookScanService {
         }
       }
 
-      // ── Bước 2: Tìm lazy bundle qua BootloaderMap trong HTML ──
+      // ── Step 2: find the lazy bundle via BootloaderMap in the HTML ──
       if (!docId) {
         const getModuleNameForType = (): string | null => {
           const names = MODULE_NAMES[options.type] || [];
@@ -808,7 +809,7 @@ export class FacebookScanService {
         }
       }
 
-      // ── Bước 3: Thu thập TẤT CẢ JS URLs từ HTML ──
+      // ── Step 3: collect ALL JS URLs from the HTML ──
       if (!docId) {
         const allUrls: string[] = [];
         // link tags with as="script"
@@ -817,7 +818,7 @@ export class FacebookScanService {
           const hm = /\bhref="([^"]+)"/.exec(attrs);
           if (hm) allUrls.push(hm[1]);
         }
-        // script src - tất cả các dạng
+        // script src: all forms
         for (const m of html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/g)) {
           allUrls.push(m[1]);
         }
@@ -832,7 +833,7 @@ export class FacebookScanService {
         for (const m of html.matchAll(/["'](https?:\/\/[^"']*\/haste[^"']*)["']/g)) {
           allUrls.push(m[1]);
         }
-        // Tất cả URL chứa .js
+        // All URLs containing .js
         for (const m of html.matchAll(/["'](https?:\/\/[^"']*\.js(?:[?#][^"']*)?)["']/g)) {
           if (!allUrls.includes(m[1])) allUrls.push(m[1]);
         }
@@ -846,7 +847,7 @@ export class FacebookScanService {
         }
       }
 
-      // ── Bước 4: Fallback cuối - search docId trực tiếp trong HTML bằng friendly name ──
+      // ── Step 4: last fallback: search the HTML directly for the docId by friendly name ──
       if (!docId) {
         log(`loadDocId: Step 4 - searching inline scripts by friendly name for type: ${options.type}`);
         const names = MODULE_NAMES[options.type] || [];
@@ -876,7 +877,7 @@ export class FacebookScanService {
   // ─── Params Builder ────────────────────────────────────────────────
 
   /**
-   * Xây dựng params cơ bản cho GraphQL request (dùng cho non-profile queries)
+   * Build the basic params for a GraphQL request (for non-profile queries)
    */
   buildParams(ctx: ScanContext): ScanParams {
     const params: ScanParams = {
@@ -901,7 +902,7 @@ export class FacebookScanService {
       params.__rev = ctx.siteData.client_revision;
       params.__hsi = ctx.siteData.hsi;
       params.__hs = ctx.siteData.haste_session;
-      // __comet_req: siteData có comet_env (field thật từ FB HTML)
+      // __comet_req: siteData has comet_env (a real field from the FB HTML)
       params.__comet_req = (ctx.siteData as any).comet_env ?? 15;
       // Spin params
       if (ctx.siteData.spin) {
@@ -914,14 +915,14 @@ export class FacebookScanService {
       }
     }
 
-    // Extra params - luôn gửi dạng rỗng (giống working extension)
-    // ⚠️ KHÔNG dùng giá trị parse từ HTML vì working extension gửi empty string
+    // Extra params: always sent empty (same as the working extension)
+    // ⚠️ Do NOT use values parsed from the HTML, because the working extension sends empty strings
     params.__dyn = ctx.__dyn || '';
     params.__hsdp = '';
     params.__hblp = '';
     params.__sjsp = '';
 
-    // ServerNonce - extension dùng __sudn (không phải __s)
+    // ServerNonce: the extension uses __sudn (not __s)
     if (ctx.ServerNonce?.ServerNonce) {
       params.__sudn = webSessionGetId(ctx.ServerNonce.ServerNonce);
     }
@@ -938,17 +939,17 @@ export class FacebookScanService {
     // fb_dtsg - original extension ALWAYS sets this
     if (ctx.fb_dtsg) params.fb_dtsg = ctx.fb_dtsg;
 
-    // jazoest standalone param (extension có gửi)
+    // Standalone jazoest param (the extension sends it)
     if (ctx.fb_dtsg) {
       params.jazoest = calcJazoest(ctx.fb_dtsg);
     }
 
-    // force_blue (nếu siteData yêu cầu)
+    // force_blue (if siteData requires it)
     if (ctx.siteData?.force_blue) {
       params.force_blue = 1;
     }
 
-    // Fallback spin params từ ctx nếu chưa có từ siteData
+    // Fallback spin params from ctx if not yet set from siteData
     if (!params.__spin_r && (ctx as any).__spin_r) {
       params.__spin_r = (ctx as any).__spin_r;
       params.__spin_b = (ctx as any).__spin_b;
@@ -959,10 +960,10 @@ export class FacebookScanService {
   }
 
   /**
-   * Xây dựng params cho profile-scoped queries
+   * Build the params for profile-scoped queries
    */
   buildParamsProfile(ctx: ScanContext): ScanParams {
-    // Khớp với original background.js buildParamsProfile + extension mới
+    // Matches the original background.js buildParamsProfile + the new extension
     const params: ScanParams = {
       av: ctx.userId,
       __user: ctx.userId,
@@ -971,14 +972,14 @@ export class FacebookScanService {
       __req: getNextReqId(),
     };
 
-    // Extra params - luôn gửi dạng rỗng (giống working extension)
-    // ⚠️ KHÔNG dùng giá trị parse từ HTML vì working extension gửi empty string
+    // Extra params: always sent empty (same as the working extension)
+    // ⚠️ Do NOT use values parsed from the HTML, because the working extension sends empty strings
     params.__dyn = ctx.__dyn || '';
     params.__hsdp = '';
     params.__hblp = '';
     params.__sjsp = '';
 
-    // ServerNonce - dùng handleWebSesion.getId() - extension dùng __sudn
+    // ServerNonce: use handleWebSesion.getId(); the extension uses __sudn
     if (ctx.ServerNonce?.ServerNonce) {
       params.__sudn = webSessionGetId(ctx.ServerNonce.ServerNonce);
     }
@@ -996,11 +997,11 @@ export class FacebookScanService {
       } else if (ctx.sprinkle_config?.param_name) {
         params[ctx.sprinkle_config.param_name] = calcJazoest(ctx.fb_dtsg);
       }
-      // jazoest standalone param (extension có gửi)
+      // Standalone jazoest param (the extension sends it)
       params.jazoest = calcJazoest(ctx.fb_dtsg);
     }
 
-    // Fallback spin params từ ctx
+    // Fallback spin params from ctx
     if (!params.__spin_r && (ctx as any).__spin_r) {
       params.__spin_r = (ctx as any).__spin_r;
       params.__spin_b = (ctx as any).__spin_b;
@@ -1013,7 +1014,7 @@ export class FacebookScanService {
   // ─── GraphQL Request ──────────────────────────────────────────────
 
   /**
-   * Delay ngẫu nhiên 300-800ms giữa các request để tránh rate limit
+   * Random delay of 300-800ms between requests to avoid rate limits
    */
   private async rateLimitDelay(): Promise<void> {
     const ms = 300 + Math.floor(Math.random() * 500);
@@ -1021,7 +1022,7 @@ export class FacebookScanService {
   }
 
   /**
-   * Gửi GraphQL request đến Facebook
+   * Send a GraphQL request to Facebook
    */
   async graphQLRequest(
     cookie: string,
@@ -1031,7 +1032,7 @@ export class FacebookScanService {
     variables: any,
     lsdForHeader?: string
   ): Promise<{ data?: any; error?: string; replay?: number; _requestPayload?: string; _responsePreview?: string; _requestHeaders?: string; _responseHeaders?: string }> {
-    // Rate limit delay - giống original có delay 500ms giữa requests
+    // Rate limit delay: like the original, which has a 500ms delay between requests
     await this.rateLimitDelay();
 
     const allParams: ScanParams = {
@@ -1043,25 +1044,25 @@ export class FacebookScanService {
       doc_id: docId,
     };
 
-    // Build form data - KHÔNG include lsd (working extension không gửi lsd trong form body)
+    // Build the form data. Do NOT include lsd (the working extension does not send lsd in the form body)
     const formData = Object.entries(allParams)
       .map(([key, val]) => encodeURIComponent(key) + '=' + encodeURIComponent(String(val)))
       .join('&');
 
-    // Debug: log request params (che dấu cookie)
+    // Debug: log the request params (cookies masked)
     log(`[GraphQL] → ${friendlyName} docId=${docId} av=${params.av} __user=${params.__user} lsd=${lsdForHeader?.slice(0,8) || '(none)'}... fb_dtsg=${params.fb_dtsg?.slice(0,8)}...`);
 
-    // Capture request headers (che dấu cookie)
+    // Capture the request headers (cookies masked)
     const lsd = lsdForHeader || params.lsd || '';
     const reqHeaders: Record<string, string> = {
       'Content-Type': 'application/x-www-form-urlencoded',
       'x-fb-friendly-name': friendlyName,
-      'x-fb-lsd': lsd,                              // ⚠️ LUÔN gửi header (working extension luôn gửi, kể cả "undefined")
+      'x-fb-lsd': lsd,                              // ⚠️ ALWAYS send the header (the working extension always sends it, even as "undefined")
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36',
       'Origin': 'https://www.facebook.com',
       'Referer': 'https://www.facebook.com/',
-      // ⚠️ Browser headers - Chrome tự động thêm, axios/Node không có
-      // Facebook kiểm tra sec-fetch-site để chống CSRF → thiếu → lỗi 1357054
+      // ⚠️ Browser headers: Chrome adds them automatically, axios/Node does not
+      // Facebook checks sec-fetch-site against CSRF → missing it causes error 1357054
       'Accept': '*/*',
       'Accept-Language': 'vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5',
       'Cache-Control': 'no-cache',
@@ -1080,7 +1081,7 @@ export class FacebookScanService {
         timeout: 60000,
       });
 
-      // Capture request payload (che dấu cookie & fb_dtsg)
+      // Capture the request payload (cookies & fb_dtsg masked)
       const sanitizedParams = { ...allParams };
       if (sanitizedParams.fb_dtsg) sanitizedParams.fb_dtsg = sanitizedParams.fb_dtsg.slice(0, 8) + '...';
       const requestPayload = JSON.stringify({ docId, friendlyName, variables, params: sanitizedParams });
@@ -1102,8 +1103,8 @@ export class FacebookScanService {
       }
       const responseHeadersStr = JSON.stringify(respHeadersSafe, null, 2);
 
-      // Capture response preview (2000 ký tự đầu để debug)
-      // axios có thể tự parse JSON → response.data là object, cần normalize về string
+      // Capture the response preview (first 2000 characters, for debugging)
+      // axios may parse JSON itself, so response.data is an object: normalize it to a string
       const rawResponse: any = response.data;
       const responseText: string = typeof rawResponse === 'string'
         ? rawResponse
@@ -1134,19 +1135,19 @@ export class FacebookScanService {
   // ─── Retry Helper ─────────────────────────────────────────────────
 
   /**
-   * Xử lý replay khi session expired: re-init context + retry (tối đa 1 lần)
-   * Giống original background.js: chỉ replay 1 lần, nếu vẫn lỗi thì báo luôn
+   * Handle replay when the session expires: re-init the context + retry (at most once)
+   * Same as the original background.js: replays only once; if it still fails, report the error right away
    */
   async handleReplay(
     accountId: string,
     fn: (retryCount?: number) => Promise<any>,
     retryCount: number = 0,
-    /** Dữ liệu gốc từ request bị lỗi, được merge vào error response khi retry thất bại */
+    /** Original data from the failed request, merged into the error response when the retry fails */
     fallbackData?: Record<string, any>
   ): Promise<any> {
     if (retryCount >= 1) {
       return {
-        error: 'Phiên Facebook đã hết hạn hoặc có lỗi kết nối. Vui lòng cập nhật cookie Facebook và thử lại.',
+        error: tr('Phiên Facebook đã hết hạn hoặc có lỗi kết nối. Vui lòng cập nhật cookie Facebook và thử lại.'),
         ...(fallbackData || {}),
       };
     }
@@ -1154,11 +1155,11 @@ export class FacebookScanService {
     const initResult = await this.initContext(accountId);
     if (!initResult.success) {
       return {
-        error: 'Không thể refresh phiên Facebook. Vui lòng cập nhật cookie.',
+        error: tr('Không thể refresh phiên Facebook. Vui lòng cập nhật cookie.'),
         ...(fallbackData || {}),
       };
     }
-    // Retry với retryCount + 1
+    // Retry with retryCount + 1
     return await fn(retryCount + 1);
   }
 
@@ -1181,7 +1182,7 @@ export class FacebookScanService {
       docId = await this.loadDocId(`https://www.facebook.com/groups/${groupId}`, { type: 'group' }, cookie) || '';
     }
     if (!docId) {
-      return { success: false, items: [], pageInfo: { endCursor: null, hasNextPage: false }, error: 'Không thể tìm docId. Vui lòng thử lại hoặc kiểm tra kết nối.' };
+      return { success: false, items: [], pageInfo: { endCursor: null, hasNextPage: false }, error: tr('Không thể tìm docId. Vui lòng thử lại hoặc kiểm tra kết nối.') };
     }
 
     const params = this.buildParamsProfile(ctx);
@@ -1192,7 +1193,7 @@ export class FacebookScanService {
       recruitingGroupFilterNonCompliant: false,
       scale: 1.5,
       id: groupId,
-      // KHÔNG thêm __relay_internal__pv__ - giống original background.js
+      // Do NOT add __relay_internal__pv__ (same as the original background.js)
     };
 
     const result = await this.graphQLRequest(
@@ -1215,14 +1216,14 @@ export class FacebookScanService {
       return { success: false, items: [], pageInfo: { endCursor: null, hasNextPage: false }, error: result.error, _lastPayload: result._requestPayload || '', _lastResponse: result._responsePreview || '', _lastDocId: docId, _lastRequestHeaders: result._requestHeaders || '', _lastResponseHeaders: result._responseHeaders || '' };
     }
 
-    // Parse items từ response (khớp với original background.js)
+    // Parse the items from the response (matches the original background.js)
     const items: any[] = [];
     let endCursor: string | null = null;
     let hasNextPage = false;
 
     try {
       const data = result.data;
-      // Original dùng: data?.data?.node?.new_members?.edges
+      // Original uses: data?.data?.node?.new_members?.edges
       const edges = data?.data?.node?.new_members?.edges
         || data?.data?.node?.members?.edges
         || [];
@@ -1239,7 +1240,7 @@ export class FacebookScanService {
         }
       }
 
-      // Original dùng: data?.data?.node?.new_members?.page_info?.end_cursor
+      // Original uses: data?.data?.node?.new_members?.page_info?.end_cursor
       endCursor = data?.data?.node?.new_members?.page_info?.end_cursor
         || data?.data?.node?.members?.page_info?.end_cursor
         || null;
@@ -1265,7 +1266,7 @@ export class FacebookScanService {
   // ─── Scan: Search Comet (groups, pages, posts) ────────────────────
 
   /**
-   * Search comet - dùng chung cho search groups, pages, posts
+   * Comet search: shared by search for groups, pages, posts
    */
   async scanSearchComet(
     accountId: string,
@@ -1290,16 +1291,16 @@ export class FacebookScanService {
       docId = await this.loadDocId('https://www.facebook.com/search/groups?q=test', { type: 'search' }, cookie) || '';
     }
     if (!docId) {
-      return { success: false, items: [], pageInfo: { endCursor: null, hasNextPage: false }, error: 'Không thể tìm docId cho search.' };
+      return { success: false, items: [], pageInfo: { endCursor: null, hasNextPage: false }, error: tr('Không thể tìm docId cho search.') };
     }
 
-    // ⚠️ Dùng buildParams (full params) thay vì buildParamsProfile - khớp với extension thực tế
+    // ⚠️ Uses buildParams (full params) instead of buildParamsProfile, to match the real extension
     const params = this.buildParams(ctx);
 
-    // Build filters - map từ options.filters (giống original)
+    // Build filters: map from options.filters (same as the original)
     const filters = options.filters || [];
 
-    // Xác định typeSearch và URL giống original
+    // Determine typeSearch and the URL, same as the original
     let typeSearch = 'GROUPS_TAB';
     let searchUrl = `https://www.facebook.com/search/groups?q=${encodeURIComponent(options.keyword)}`;
     if (options.type === 'post') {
@@ -1310,7 +1311,7 @@ export class FacebookScanService {
       typeSearch = 'PAGES_TAB';
     }
 
-    // Build search variables - khớp hoàn toàn với original background.js scanSearchComet
+    // Build the search variables, matching the original background.js scanSearchComet exactly
     const searchVariables: any = {
       // Group variables
       ...(options.type === 'group' ? {} : {
@@ -1354,7 +1355,7 @@ export class FacebookScanService {
       'useDefaultActor': false,
     };
 
-    // ── Relay providers: KHÁC NHAU cho group vs post/page (giống original background.js) ──
+    // ── Relay providers: DIFFERENT for group vs post/page (same as the original background.js) ──
     if (options.type === 'group') {
       Object.assign(searchVariables, {
         '__relay_internal__pv__GHLShouldChangeAdIdFieldNamerelayprovider': true,
@@ -1441,9 +1442,9 @@ export class FacebookScanService {
       const edges = data?.data?.serpResponse?.results?.edges || [];
 
       for (const edge of edges) {
-        // ⚠️ Extension gốc parse ở EDGE LEVEL (edge.rendering_strategy), KHÔNG phải edge.node!
-        // Facebook API mới trả rendering_strategy trực tiếp trên edge object
-        const item = edge?.node || edge; // fallback: edge.node nếu có, không thì dùng edge
+        // ⚠️ The original extension parses at the EDGE LEVEL (edge.rendering_strategy), NOT edge.node!
+        // The new Facebook API returns rendering_strategy directly on the edge object
+        const item = edge?.node || edge; // fallback: edge.node if present, otherwise use edge
         const renderStrategy = edge?.rendering_strategy || edge?.relay_rendering_strategy
                             || item?.rendering_strategy || item?.relay_rendering_strategy;
         const viewModel = renderStrategy?.view_model || renderStrategy;
@@ -1469,12 +1470,12 @@ export class FacebookScanService {
             followers: followersMatch ? followersMatch[0] : 0,
           });
         } else if (options.type === 'post') {
-          // Original handleScanPostKeyword: extract từ story structure (edge level)
+          // Original handleScanPostKeyword: extracts from the story structure (edge level)
           const story = viewModel?.click_model?.story;
           const postId = story?.post_id || edge?.id || item?.id || '';
-          // Lấy reaction/comment count từ FEEDBACK
+          // Get the reaction/comment count from FEEDBACK
           const fbContainer = story?.comet_sections?.feedback?.story;
-          // Tìm feedback bằng recursive search nếu path cố định không ra
+          // Find the feedback by recursive search if the fixed path finds nothing
           function deepFindFeedback(obj: any, depth: number = 0): any {
             if (!obj || depth > 8) return null;
             if (obj?.comet_ufi_summary_and_actions_renderer?.feedback?.reaction_count) {
@@ -1489,11 +1490,11 @@ export class FacebookScanService {
             return null;
           }
           const fbFeedback =
-            // Path 1: qua story_ufi_container (từ JSON thật)
+            // Path 1: through story_ufi_container (from real JSON)
             fbContainer?.story_ufi_container?.story?.feedback_context?.feedback_target_with_context?.comet_ufi_summary_and_actions_renderer?.feedback
-            // Path 2: feedback_context trực tiếp dưới feedback.story
+            // Path 2: feedback_context directly under feedback.story
             || fbContainer?.feedback_context?.feedback_target_with_context?.comet_ufi_summary_and_actions_renderer?.feedback
-            // Path 3: search toàn bộ edge data
+            // Path 3: search the whole edge data
             || deepFindFeedback(edge)
             || null;
           // Reactions: sum top_reactions.edges, fallback reaction_count.count
@@ -1523,7 +1524,7 @@ export class FacebookScanService {
         }
       }
 
-      // Extract bsid/tsid từ item đầu tiên - EDGE LEVEL (giống original extension)
+      // Extract bsid/tsid from the first item: EDGE LEVEL (same as the original extension)
       if (edges.length > 0) {
         const firstEdge = edges[0];
         const firstRender = firstEdge?.relay_rendering_strategy || firstEdge?.rendering_strategy
@@ -1535,7 +1536,7 @@ export class FacebookScanService {
         }
       }
 
-      // Tìm endCursor từ response - giống original extension: parse 4 path + multi-object fallback
+      // Find the endCursor in the response: same as the original extension, 4 paths + multi-object fallback
       const serpResponse = data?.data?.serpResponse;
       endCursor = data?.data?.serpResponse?.results?.page_info?.end_cursor
         || data?.data?.serpResponse?.page_info?.end_cursor
@@ -1548,7 +1549,7 @@ export class FacebookScanService {
         || data?.serpResponse?.page_info?.has_next_page
         || false;
 
-      // Nếu có items nhưng không tìm thấy endCursor → thử parse từ responsePreview (multi-line JSON)
+      // If there are items but no endCursor was found → try parsing from responsePreview (multi-line JSON)
       if (items.length > 0 && !endCursor && result._responsePreview) {
         try {
           const preview = result._responsePreview;
@@ -1562,7 +1563,7 @@ export class FacebookScanService {
         } catch {}
       }
 
-      // ⚠️ Nếu không có items → chắc chắn không còn trang tiếp theo
+      // ⚠️ If there are no items → there is certainly no next page
       if (items.length === 0) {
         endCursor = null;
         hasNextPage = false;
@@ -1571,7 +1572,7 @@ export class FacebookScanService {
       logError('scanSearchComet parse error:', e.message);
     }
 
-    // Return pagination params bao gồm bsid/tsid cho lần tiếp theo
+    // Return the pagination params, including bsid/tsid for the next request
     return {
       success: true,
       items,
@@ -1644,7 +1645,7 @@ export class FacebookScanService {
     feedbackTargetID: string,
     cursor?: string | null,
     retryCount: number = 0,
-    level?: string, // '' | '1' | '2' - hỗ trợ nested comments (giống original)
+    level?: string, // '' | '1' | '2': supports nested comments (same as the original)
     expansionToken?: string
   ): Promise<{ success: boolean; items: any[]; pageInfo: { endCursor: string | null; hasNextPage: boolean }; error?: string; _lastPayload?: string; _lastResponse?: string; _lastDocId?: string; _lastRequestHeaders?: string; _lastResponseHeaders?: string; _feedbackIds?: any[]; _level?: string }> {
     const { ctx, error: ctxError } = await this.ensureContext(accountId);
@@ -1663,7 +1664,7 @@ export class FacebookScanService {
 
     const params = this.buildParamsProfile(ctx);
 
-    // Xác định friendly_name và variables dựa trên level (giống original)
+    // Determine friendly_name and variables based on the level (same as the original)
     let friendlyName = 'CommentsListComponentsPaginationQuery';
     let beforeParams: any = {};
 
@@ -1709,7 +1710,7 @@ export class FacebookScanService {
       '__relay_internal__pv__IsWorkUserrelayprovider': false,
     };
 
-    // Thêm __crn cho post comment (giống Facebook thực tế)
+    // Add __crn for post comments (same as real Facebook)
     const commentParams = {
       ...params,
       __crn: 'comet.fbweb.CometSinglePostDialogRoute',
@@ -1743,7 +1744,7 @@ export class FacebookScanService {
 
     try {
       const data = result.data;
-      // Nếu level (nested) - different path
+      // If level (nested): a different path
       let edges: any[] = [];
       if (level) {
         edges = data?.data?.node?.replies_connection?.edges || [];
@@ -1763,7 +1764,7 @@ export class FacebookScanService {
       for (const edge of edges) {
         const node = edge.node;
         if (node?.id) {
-          // Kiểm tra feedback để hỗ trợ nested comments (giống original)
+          // Check feedback to support nested comments (same as the original)
           const feedback = node?.feedback;
           const hasSubComments = feedback?.total_comment_count > 0;
           items.push({
@@ -1774,7 +1775,7 @@ export class FacebookScanService {
             body: node?.body?.text || '',
             timestamp: node?.created_time || node?.timestamp || 0,
             reactions: node?.comment_reactions?.count || 0,
-            // Hỗ trợ nested comments
+            // Support nested comments
             _hasSubComments: hasSubComments,
             _feedbackId: hasSubComments ? feedback?.id : null,
             _expansionToken: hasSubComments ? feedback?.expansion_info?.expansion_token : null,
@@ -1799,7 +1800,7 @@ export class FacebookScanService {
     };
   }
 
-  // ─── Scan: Post Timeline (bài đăng từ profile/fanpage/group) ─────
+  // ─── Scan: Post Timeline (posts from a profile/fanpage/group) ─────
 
   async scanPostTimeline(
     accountId: string,
@@ -1814,7 +1815,7 @@ export class FacebookScanService {
     const cookie = this.getCookie(accountId);
     if (!cookie) return { success: false, items: [], pageInfo: { endCursor: null, hasNextPage: false }, error: 'Cookie not found' };
 
-    // Xác định docId và friendly_name theo loại nguồn
+    // Determine the docId and friendly_name by source type
     let docType: 'postProfile' | 'postGroup';
     let friendlyName: string;
     let docCacheKey: string;
@@ -1845,7 +1846,7 @@ export class FacebookScanService {
 
     const params = this.buildParamsProfile(ctx);
 
-    // Build variables - giống original background.js scanPost
+    // Build the variables, same as the original background.js scanPost
     let variables: any;
     if (sourceType === 'group') {
       variables = {
@@ -1942,7 +1943,7 @@ export class FacebookScanService {
       return { success: false, items: [], pageInfo: { endCursor: null, hasNextPage: false }, error: result.error, _lastPayload: result._requestPayload || '', _lastResponse: result._responsePreview || '', _lastDocId: docId, _lastRequestHeaders: result._requestHeaders || '', _lastResponseHeaders: result._responseHeaders || '' };
     }
 
-    // Parse posts - khớp original background.js scanPost + parseScanPostResponse
+    // Parse the posts: matches the original background.js scanPost + parseScanPostResponse
     const items: any[] = [];
     let endCursor: string | null = null;
     let hasNextPage = false;
@@ -1950,8 +1951,8 @@ export class FacebookScanService {
     try {
       const data = result.data;
 
-      // Original dùng parseScanPostResponse - xử lý multiple JSON objects
-      // Path khác nhau cho group vs profile/fanpage
+      // The original uses parseScanPostResponse: handles multiple JSON objects
+      // Different paths for group vs profile/fanpage
       let edges: any[] = [];
       if (sourceType === 'group') {
         edges = data?.data?.node?.group_feed?.edges || [];
@@ -1999,11 +2000,11 @@ export class FacebookScanService {
   // ─── Batch Scans ─────────────────────────────────────────────────
 
   /**
-   * Quét thành viên nhiều nhóm cùng lúc (batch)
+   * Scan the members of several groups at once (batch)
    * @param accountId FB account ID
-   * @param groupIds Danh sách group IDs
-   * @param threadCount Số luồng đồng thời (1-20)
-   * @param onProgress Callback báo tiến độ (done, total, currentId)
+   * @param groupIds List of group IDs
+   * @param threadCount Number of concurrent threads (1-20)
+   * @param onProgress Callback reporting progress (done, total, currentId)
    */
   async scanGroupMembersBatch(
     accountId: string,
@@ -2021,7 +2022,7 @@ export class FacebookScanService {
       if (res.success && res.items) {
         allItems.push(...res.items.map((item: any) => ({ ...item, _batchSource: id })));
       } else {
-        errors.push(`${id}: ${res.error || 'Không có dữ liệu'}`);
+        errors.push(`${id}: ${res.error || tr('Không có dữ liệu')}`);
       }
       done++;
       onProgress?.(done, groupIds.length, '');
@@ -2033,7 +2034,7 @@ export class FacebookScanService {
   }
 
   /**
-   * Quét bình luận nhiều bài viết cùng lúc (batch)
+   * Scan the comments of several posts at once (batch)
    */
   async scanPostCommentsBatch(
     accountId: string,
@@ -2051,7 +2052,7 @@ export class FacebookScanService {
       if (res.success && res.items) {
         allItems.push(...res.items.map((item: any) => ({ ...item, _batchSource: id })));
       } else {
-        errors.push(`${id}: ${res.error || 'Không có dữ liệu'}`);
+        errors.push(`${id}: ${res.error || tr('Không có dữ liệu')}`);
       }
       done++;
       onProgress?.(done, postIds.length, '');

@@ -1,6 +1,6 @@
 /**
- * Thao tác trên tin: thu hồi, xoá phía mình, xoá khỏi app, thả / gỡ cảm xúc (cập nhật ngay trên giao diện), chuyển
- * tiếp (cả album), lưu vào My Documents (Zalo), đánh dấu sao, ghim (Telegram ghim trên server; Zalo tối đa 3 tin).
+ * Message actions: unsend / recall, delete for me, delete from the app, add / remove reaction (updated on screen at once), forward
+ * (the whole album included), save to My Documents (Zalo), star, pin (Telegram pins on the server; Zalo allows up to 3 messages).
  */
 import { useEffect } from 'react';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -16,6 +16,7 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { runForwardJob, type ForwardJobLabels, type ForwardJobTarget } from '@/lib/chat/forward/forwardSend';
 import type { MessageContextMenuState } from './useChatWindowDialogs';
+import { tr } from '../../../../../shared/i18n';
 
 export function useMessageActions(deps: {
   activeAccountId: string | null;
@@ -74,17 +75,17 @@ export function useMessageActions(deps: {
         type: msg.thread_type,
       });
       const undoRes: any = await ipc.zalo?.undoMessage({ auth, message: messagePayload });
-      // IPC trả { success: false } (không ném) khi Zalo / Boss từ chối — không được đánh dấu "đã thu hồi" giả
-      if (undoRes?.success === false) throw new Error(undoRes.error || 'Zalo từ chối');
+      // IPC returns { success: false } (does not throw) when Zalo / Boss refuses → must not fake-mark it as "đã thu hồi" (recalled)
+      if (undoRes?.success === false) throw new Error(undoRes.error || tr('Zalo từ chối'));
       }
-      // Đánh dấu thu hồi thay vì xóa - hiển thị "Tin nhắn đã thu hồi"
+      // Mark as unsent instead of deleting → shows "Tin nhắn đã thu hồi" (Message unsent)
       if (activeAccountId) {
         useChatStore.getState().recallMessage(activeAccountId, msg.msg_id, msg.thread_id);
         DataAccessor.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id, threadId: msg.thread_id }).catch(() => {});
       }
-      showNotification('Đã thu hồi tin nhắn', 'success');
+      showNotification(tr('Đã thu hồi tin nhắn'), 'success');
     } catch (e: any) {
-      showNotification('Thu hồi thất bại: ' + e.message, 'error');
+      showNotification(tr('Thu hồi thất bại: {{message}}', { message: e.message }), 'error');
     }
   };
 
@@ -103,16 +104,16 @@ export function useMessageActions(deps: {
         type: msg.thread_type,
       });
       const deleteRes: any = await ipc.zalo?.deleteMessage({ auth, message: messagePayload, onlyMe: true });
-      if (deleteRes?.success === false) throw new Error(deleteRes.error || 'Zalo từ chối');
+      if (deleteRes?.success === false) throw new Error(deleteRes.error || tr('Zalo từ chối'));
       }
-      // Đánh dấu đã xoá trong DB (recalled) thay vì xoá hẳn - nhất quán với thu hồi
+      // Mark as deleted in the DB (recalled) instead of removing the row, consistent with unsend
       if (activeAccountId) {
         useChatStore.getState().recallMessage(activeAccountId, msg.msg_id, msg.thread_id);
         DataAccessor.markMessageRecalled?.({ zaloId: activeAccountId, msgId: msg.msg_id, threadId: msg.thread_id }).catch(() => {});
       }
-      showNotification('Đã xóa tin nhắn', 'success');
+      showNotification(tr('Đã xóa tin nhắn'), 'success');
     } catch (e: any) {
-      showNotification('Xóa thất bại: ' + e.message, 'error');
+      showNotification(tr('Xóa thất bại: {{message}}', { message: e.message }), 'error');
     }
   };
 
@@ -121,9 +122,9 @@ export function useMessageActions(deps: {
     try {
       await DataAccessor.deleteMessages({ zaloId: activeAccountId, msgIds: [msg.msg_id], threadId: msg.thread_id });
       removeMessage(activeAccountId, msg.thread_id, msg.msg_id);
-      showNotification('Đã xóa vĩnh viễn tin nhắn khỏi app', 'success');
+      showNotification(tr('Đã xóa vĩnh viễn tin nhắn khỏi app'), 'success');
     } catch (e: any) {
-      showNotification('Xóa thất bại: ' + e.message, 'error');
+      showNotification(tr('Xóa thất bại: {{message}}', { message: e.message }), 'error');
     }
   };
 
@@ -134,14 +135,14 @@ export function useMessageActions(deps: {
 
       // Optimistic update: show reaction immediately in UI
       const accId = activeAccountId || '';
-      // Telegram: SendReaction THAY reaction của mình (mỗi người 1) và số đếm là tổng hợp do Telegram trả — main
-      // process lưu số chính thức từ kết quả gửi. Không cộng dồn vào DB kiểu Zalo (trước đây cộng nhầm vào tin
-      // trùng ID ở hội thoại khác → "1 đống icon").
+      // Telegram: SendReaction REPLACES your own reaction (one per person) and the counts are the totals Telegram returns, main
+      // process saves the official counts from the send result. It does not add into the DB the way Zalo does (it used to add onto a message
+      // with the same ID in another conversation → "1 đống icon" (a pile of icons)).
       const isTelegramUserMsg = ch === 'telegram_user';
       useChatStore.getState().updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, emoji, isTelegramUserMsg ? 'set' : 'accumulate');
 
       if (!isTelegramUserMsg) {
-        // Persist reaction to DB immediately (so it survives conversation switch); echo Zalo của lần bấm này bỏ qua
+        // Persist the reaction to the DB immediately (so it survives a conversation switch); the Zalo echo of this click is ignored
         markLocalReaction(accId, msg.msg_id, emoji);
         DataAccessor.updateReaction?.({ zaloId: accId, msgId: msg.msg_id, threadId: msg.thread_id, userId: accId, emoji }).catch(() => {});
       }
@@ -169,7 +170,7 @@ export function useMessageActions(deps: {
     } catch {}
   };
 
-  // Huỷ reaction: gửi Reactions.NONE = "" để xoá
+  // Cancel a reaction: send Reactions.NONE = "" to remove it
   const handleCancelReaction = async (msg: any) => {
     try {
       const contact = contactList.find(c => c.contact_id === msg.thread_id);
@@ -178,8 +179,8 @@ export function useMessageActions(deps: {
       // Optimistic update: remove reaction immediately in UI
       const accId = activeAccountId || '';
       useChatStore.getState().updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, '');
-      // Lưu luôn việc gỡ (trước đây không lưu → mở lại hội thoại reaction hiện lại). Gỡ lặp lại với echo Zalo vô hại.
-      // Telegram: main process lưu số chính thức từ kết quả gửi.
+      // Always save the removal (it used to be skipped, so reopening the conversation brought the reaction back). A repeated removal with the Zalo echo is harmless.
+      // Telegram: the main process saves the official counts from the send result.
       if (ch !== 'telegram_user') {
         DataAccessor.updateReaction?.({ zaloId: accId, msgId: msg.msg_id, threadId: msg.thread_id, userId: accId, emoji: '' }).catch(() => {});
       }
@@ -205,14 +206,14 @@ export function useMessageActions(deps: {
     } catch {}
   };
 
-  // Album ảnh (nhiều tin ảnh cùng groupLayoutId, hiển thị 1 bubble) → chuyển tiếp cả album, không chỉ ảnh đầu
+  // Photo album (several photo messages with the same groupLayoutId, shown as 1 bubble) → forward the whole album, not just the first photo
   const handleForward = (msg: any) => {
     setForwardMsgs(groupedFirstMsgs[msg.msg_id] || [msg]);
   };
 
   /**
-   * Gửi các tin tới từng người nhận (chuyển tiếp / Lưu vào My Documents): album gộp 1 lần, còn lại từng tin;
-   * nội dung soạn kèm (nếu có) là 1 tin mới sau cùng. Chạy nền, không block UI (lib/chat/forward/forwardSend).
+   * Send the messages to each recipient (forward / Save to My Documents): an album is sent as one unit, the rest one message at a time;
+   * the draft text attached (if any) is sent last as one new message. Runs in the background, does not block the UI (lib/chat/forward/forwardSend).
    */
   const runForward = (
     messages: any[],
@@ -223,24 +224,24 @@ export function useMessageActions(deps: {
     albums: groupedFirstMsgs, accounts: allAccounts, sourceAccountId: activeAccountId, notify: showNotification,
   }, labels);
 
-  // Zalo: "Lưu vào My Documents" = gửi bản sao tin vào hội thoại My Documents CÓ SẴN của Zalo (ID = send2me_id của
-  // phiên đăng nhập — không phải hội thoại với UID của chính mình). Telegram: vào Tin nhắn đã lưu (hội thoại với chính mình)
+  // Zalo: "Lưu vào My Documents" (Save to My Documents) = send a copy of the message into Zalo's EXISTING My Documents conversation (ID = send2me_id of the
+  // login session, not a conversation with your own UID). Telegram: goes to Saved Messages (a conversation with yourself)
   const handleSaveToMyDocuments = async (target: any) => {
     if (!activeAccountId || !target) return;
     const myDocsId = myDocumentsThreadId(allAccounts.find(a => a.zalo_id === activeAccountId));
     if (!myDocsId) {
-      showNotification('Chưa xác định được hội thoại My Documents của tài khoản này, hãy kết nối lại tài khoản rồi thử lại', 'error');
+      showNotification(tr('Chưa xác định được hội thoại My Documents của tài khoản này, hãy kết nối lại tài khoản rồi thử lại'), 'error');
       return;
     }
-    // Ảnh trong album được bấm chuột phải → chỉ ảnh đó; còn lại cả album / tin
+    // A photo in an album that is right-clicked → only that photo; otherwise the whole album / message
     const messages = contextMenu?.mediaMsg ? [target] : (groupedFirstMsgs[target.msg_id] || [target]);
     runForward(messages, [{ accountId: activeAccountId, threadId: myDocsId, threadType: 0 }], '', {
-      progress: (done, total) => `Đang lưu vào My Documents ${done}/${total}...`,
-      done: 'Đã lưu vào My Documents',
+      progress: (done, total) => tr('Đang lưu vào My Documents {{done}}/{{total}}...', { done, total }),
+      done: tr('Đã lưu vào My Documents'),
     });
   };
 
-  // ─── Tin đánh dấu (như Zalo) ──────────────────────────────────────────────
+  // ─── Starred messages (like Zalo) ──────────────────────────────────────────────
   useEffect(() => {
     if (activeAccountId) void useStarredStore.getState().load(activeAccountId);
   }, [activeAccountId]);
@@ -270,27 +271,27 @@ export function useMessageActions(deps: {
         channel: activeContact?.channel || CHANNEL.ZALO,
       }) : undefined,
     });
-    if (ok) showNotification(starred ? 'Đã đánh dấu tin nhắn - xem ở menu ⋮ → Tin đánh dấu' : 'Đã bỏ đánh dấu tin nhắn', 'success');
-    else showNotification('Không lưu được đánh dấu tin nhắn', 'error');
+    if (ok) showNotification(starred ? tr('Đã đánh dấu tin nhắn - xem ở menu ⋮ → Tin đánh dấu') : tr('Đã bỏ đánh dấu tin nhắn'), 'success');
+    else showNotification(tr('Không lưu được đánh dấu tin nhắn'), 'error');
   };
 
   const handlePin = async (msg: any) => {
     if (!activeAccountId || !activeThreadId) return;
-    // Lấy tên người gửi
-    // Nếu là tin của mình (is_sent=1), dùng tên account đang đăng nhập
+    // Get the sender's name
+    // If it is your own message (is_sent=1), use the name of the logged-in account
     let senderName = '';
     if (msg.is_sent) {
       const activeAccount = getActiveAccount();
-      senderName = activeAccount?.full_name || 'Tôi';
+      senderName = activeAccount?.full_name || tr('Tôi');
     } else {
       const contact = getContact(msg.sender_id);
       const groupMember = getGroupMember(msg.sender_id);
-      // Không dùng sender_id (UID dài) làm tên - fallback về 'Người dùng'
+      // Do not use sender_id (a long UID) as the name; fall back to 'Người dùng' ('User')
       const contactName = contact?.alias || contact?.display_name || '';
       senderName = (contactName && contactName !== msg.sender_id ? contactName : '')
         || groupMember?.displayName
         || contactName
-        || 'Người dùng';
+        || tr('Người dùng');
     }
     const pin = buildPinFromMsg(msg, senderName);
 
@@ -306,29 +307,30 @@ export function useMessageActions(deps: {
       if (ch === 'telegram_user') {
         const res = await ipc.telegramUser?.pinMessage({ accountId: activeAccountId, chatId: activeThreadId, messageId: String(msg.msg_id) });
         if (!res?.success) {
-          showNotification('Ghim trên Telegram thất bại: ' + (res?.error || 'Unknown'), 'error');
+          showNotification(tr('Ghim trên Telegram thất bại: {{v1}}', { v1: (res?.error || 'Unknown') }), 'error');
           return;
         }
       }
 
-      const pinRes: any = await ipc.db?.pinMessage({ zaloId: activeAccountId, threadId: activeThreadId, pin });
-      // Nhân viên: ghim chờ Boss xác nhận — Boss từ chối / mất kết nối thì báo lỗi (trước đây luôn "Đã ghim")
+      // Zalo: the main process pins on Zalo too (the phone sees it); over Zalo's limit the pin stays in the app only
+      const pinRes: any = await ipc.db?.pinMessage({ zaloId: activeAccountId, threadId: activeThreadId, pin, localOnly: overLimit });
+      // Employee: pin waits for Boss to confirm; if Boss refuses or the connection drops, show an error (it used to always show "Đã ghim" (Pinned))
       if (pinRes?.success === false) {
-        showNotification('Ghim thất bại: ' + (pinRes.error || 'lỗi không xác định'), 'error');
+        showNotification(tr('Ghim thất bại: {{v1}}', { v1: (pinRes.error || tr('lỗi không xác định')) }), 'error');
         return;
       }
       // Reload pins
-      // Đọc qua DataAccessor: chế độ nhân viên lấy từ Boss (IPC trả stub rỗng → danh sách ghim bị xoá trắng sau khi ghim)
+      // Read through DataAccessor: employee mode gets it from Boss (the IPC returns an empty stub → the pinned list was wiped right after pinning)
       const res = await DataAccessor.getPinnedMessages({ zaloId: activeAccountId, threadId: activeThreadId });
       if (res?.success) setPins(res.pins || []);
       if (overLimit) {
-        // Zalo API chỉ hỗ trợ 3 tin ghim - ghim thành công trong ứng dụng nhưng không đồng bộ lên API
-        showNotification('Đã ghim (chỉ áp dụng trong app - Zalo giới hạn 3 tin ghim)', 'success');
+        // The Zalo API only supports 3 pinned messages: pinning succeeds in the app but does not sync to the API
+        showNotification(tr('Đã ghim (chỉ áp dụng trong app - Zalo giới hạn 3 tin ghim)'), 'success');
       } else {
-        showNotification('Đã ghim tin nhắn', 'success');
+        showNotification(tr('Đã ghim tin nhắn'), 'success');
       }
     } catch (e: any) {
-      showNotification('Ghim thất bại: ' + e.message, 'error');
+      showNotification(tr('Ghim thất bại: {{message}}', { message: e.message }), 'error');
     }
   };
 

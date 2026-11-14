@@ -1,25 +1,25 @@
 /**
- * MediaScanner — đưa file media trên đĩa vào chỉ mục cloud_media (không tải gì lên).
+ * MediaScanner: puts the media files on disk into the cloud_media index (uploads nothing).
  *
- *  1. Quét toàn bộ (lần đầu và mỗi 7 ngày), tiếp tục được sau khi tắt app (app_settings.cloud_media_scan_cursor):
- *       a. lần đầu: ưu tiên media Zalo đã hết hạn trên CDN (messages.media_expired = 1 → local_paths), đi theo khoảng id;
- *       b. duyệt thư mục media sâu trước, thư mục con theo tên giảm dần (ngày mới nhất trước), nhường vòng lặp giữa
- *          các thư mục, ghi chỉ mục theo lô ≤ 500.
- *  2. noteFileWritten: gom đường dẫn vừa ghi, ghi chỉ mục sau vài giây.
- *  3. Quét nhẹ định kỳ (10 phút): chỉ đọc lại thư mục có mtime đổi (bắt file do đường ghi không gọi hook — Telegram,
- *     thư viện, avatar, file nhân viên tải lên…).
+ *  1. Full scan (the first time and every 7 days), resumable after the app is closed (app_settings.cloud_media_scan_cursor):
+ *       a. first time: Zalo media expired on the CDN first (messages.media_expired = 1 → local_paths), walked by id range;
+ *       b. walks the media folder depth-first, subfolders by name in descending order (newest day first), yields to the event loop between
+ *          folders, and writes the index in batches of ≤ 500.
+ *  2. noteFileWritten: collects the paths just written and writes the index a few seconds later.
+ *  3. Periodic light scan (every 10 minutes): only re-reads folders whose mtime changed (catches files written by paths that do not call the hook: Telegram,
+ *     libraries, avatars, employee uploads…).
  *
- * Quét toàn bộ ĐỊNH KỲ (đã có lượt xong trước đó) chỉ chạy khi máy rảnh (utils/startup/systemIdle.ts): không ngay sau
- * khi máy thức dậy / mở khoá / mở app, người dùng không chạm máy ≥ 10 phút, đang cắm sạc; người dùng quay lại giữa
- * chừng thì dừng ở thư mục kế (lần sau đi tiếp từ con trỏ); quá 72 giờ thì vẫn chạy. Lượt quét đầu tiên / sau khi đổi
- * phạm vi chạy ngay. Quét nhẹ chờ 5 phút sau khi mở app / máy thức dậy.
+ * The PERIODIC full scan (a previous run has already finished) only runs when the machine is idle (utils/startup/systemIdle.ts): not right after
+ * the machine wakes / unlocks / the app opens, the user has not touched the machine for ≥ 10 minutes, and it is plugged in. If the user comes back midway,
+ * it stops at the next folder (the next run continues from the cursor); after 72 hours it runs anyway. The first scan / a scan after a scope change
+ * runs right away. The light scan waits 5 minutes after the app opens / the machine wakes.
  *
- * Bỏ qua file tạm / đang ghi dở, file rỗng, cache sticker, thư mục ẩn, symlink/junction (không thoát khỏi thư mục media).
+ * Skips temp / half-written files, empty files, the sticker cache, hidden folders, symlinks / junctions (never leaves the media folder).
  *
- * Phạm vi lưu (tài khoản / từ ngày / file dùng chung — MediaSyncOptions.scope + includeShared): mọi đường đưa file vào
- * chỉ mục chỉ nhận file trong phạm vi; nhánh thư mục chắc chắn ngoài phạm vi bị bỏ qua cả nhánh (không đọc, không stat).
- * Đổi phạm vi (khác app_settings.cloud_media_scope) → rà lại chỉ mục (pending ngoài phạm vi → excluded, excluded nay
- * trong phạm vi → pending) rồi quét lại từ đầu. File đã lên R2 giữ nguyên (vẫn tải về được).
+ * Storage scope (account / from date / shared files; MediaSyncOptions.scope + includeShared): every path that adds files to the
+ * index only accepts files in scope; a folder branch that is certainly outside the scope is skipped as a whole (no read, no stat call).
+ * A scope change (different from app_settings.cloud_media_scope) → re-check the index (pending outside scope → excluded, excluded now in scope → pending)
+ * and then scan again from the start. Files already on R2 stay as they are (they can still be downloaded).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -35,13 +35,13 @@ import { DAY, errorText, HOUR, LogFn, MINUTE, noLog, SECOND, unrefTimer, Waiter,
 export interface ScanCursor {
     v: 1;
     phase: 'expired' | 'walk' | 'done';
-    /** phase 'expired': đã xử lý tới messages.id này. */
+    /** phase 'expired': processed up to this messages.id. */
     afterId?: number;
-    /** phase 'walk': thư mục (rel) cuối cùng đã xử lý xong file của nó. */
+    /** phase 'walk': the last folder (rel) whose files have all been processed. */
     dir?: string | null;
-    /** Lượt quét hiện tại bắt đầu lúc. */
+    /** The current scan run started at. */
     startedAt?: number;
-    /** Lượt quét toàn bộ gần nhất đã xong (tính theo lúc bắt đầu lượt đó). */
+    /** The latest completed full scan (counted from when that run started). */
     doneAt?: number;
 }
 
@@ -54,33 +54,33 @@ export interface ScannerFs {
 export interface ScannerDeps {
     ctx: ContextSource;
     waiter: Waiter;
-    /** Đồng bộ media đang chạy (đã bật, chưa dừng). */
+    /** Media sync is running (turned on, not stopped). */
     isActive(): boolean;
     isPaused(): boolean;
-    /** Có dòng chờ tải mới → đánh thức hàng đợi tải lên. */
+    /** New rows waiting to upload → wakes the upload queue. */
     onIndexed(count: number): void;
-    /** Phạm vi lưu đang áp; null / không có = mọi file. Gọi lại mỗi lượt / mỗi thư mục → đổi phạm vi có hiệu lực ngay. */
+    /** Storage scope in effect; null / missing = every file. Read again on every pass / every folder → a scope change takes effect immediately. */
     scope?(ctx: MediaContext): MediaScopeFilter | null;
     fs?: ScannerFs;
     now?(): number;
     log?: LogFn;
-    /** Mốc mở app / máy thức dậy + trạng thái máy (utils/startup/systemIdle.ts). Thiếu (test) = không chờ máy rảnh. */
+    /** Timestamps of app open / machine wake + machine state (utils/startup/systemIdle.ts). Missing (tests) = do not wait for the machine to be idle. */
     idle?(): { wakeAt: number; info: SystemIdleInfo | null };
 }
 
 export const RECENT_SCAN_INTERVAL_MS = 10 * MINUTE;
 export const RECENT_WINDOW_MS = 3 * DAY;
 export const FULL_RESCAN_AFTER_MS = 7 * DAY;
-/** Quét toàn bộ định kỳ mà máy không rảnh: chờ tối đa 72 giờ sau khi đến hạn. */
+/** Periodic full scan while the machine is busy: waits up to 72 hours after it is due. */
 export const FULL_RESCAN_MAX_WAIT_MS = 72 * HOUR;
-/** Quét nhẹ chờ từng này sau khi mở app / máy thức dậy / mở khoá. */
+/** The light scan waits this long after the app opens / the machine wakes / unlocks. */
 export const RECENT_SCAN_WAKE_QUIET_MS = 5 * MINUTE;
 export const NOTE_FLUSH_DELAY_MS = 3 * SECOND;
 const NOTE_BUFFER_MAX = 20_000;
 const CURSOR_SAVE_EVERY_MS = 30 * SECOND;
 const EXPIRED_ID_STEP = 2000;
 const STAT_CHUNK = 500;
-/** Rà lại chỉ mục khi đổi phạm vi: mỗi truy vấn đọc ≤ 500 dòng theo khoá chính, nhường vòng lặp giữa các trang. */
+/** Re-checks the index on a scope change: each query reads ≤ 500 rows by primary key, yielding to the event loop between pages. */
 const RECONCILE_PAGE = 500;
 
 export class MediaScanner {
@@ -89,13 +89,13 @@ export class MediaScanner {
     private notes = new Set<string>();
     private noteTimer: ReturnType<typeof setTimeout> | null = null;
     private flushing = false;
-    /** rel thư mục → mtime lần đọc trước + thư mục con (quét nhẹ chỉ đọc lại thư mục đã đổi). */
+    /** folder rel → mtime at the previous read + subfolders (the light scan only re-reads folders that changed). */
     private dirCache = new Map<string, { mtimeMs: number; subdirs: string[] }>();
     private dirCacheCtx = 0;
     private lastRecentAt = 0;
-    /** Tăng mỗi lần người dùng đổi phạm vi: lượt quét đang chạy dừng lại, vòng lặp áp phạm vi mới rồi quét lại từ đầu. */
+    /** Incremented every time the user changes the scope: the scan run in progress stops, and the loop applies the new scope and scans again from the start. */
     private scopeGen = 0;
-    /** Lý do quét toàn bộ định kỳ đang chờ máy rảnh đã ghi nhật ký (không ghi lặp). */
+    /** The reason a periodic full scan is waiting for an idle machine has been logged (not logged repeatedly). */
     private fullWaitLogged: IdleWaitReason | null = null;
 
     constructor(private readonly deps: ScannerDeps) {
@@ -107,7 +107,7 @@ export class MediaScanner {
         return this.deps.now ? this.deps.now() : Date.now();
     }
 
-    /** Dừng / đổi workspace: bỏ bộ đệm và bộ nhớ thư mục. */
+    /** Stop / change workspace: drop the buffers and the folder memory. */
     reset(): void {
         this.notes.clear();
         if (this.noteTimer) clearTimeout(this.noteTimer);
@@ -117,14 +117,14 @@ export class MediaScanner {
         this.lastRecentAt = 0;
     }
 
-    /** Người dùng đổi phạm vi lưu: dừng lượt quét đang chạy; vòng lặp rà lại chỉ mục và quét lại từ đầu. */
+    /** The user changes the storage scope: stop the scan run in progress; the loop re-checks the index and scans again from the start. */
     scopeChanged(): void {
         this.scopeGen++;
         this.dirCache.clear();
         this.lastRecentAt = 0;
     }
 
-    // ─── Phạm vi lưu ───────────────────────────────────────────────────
+    // ─── Storage scope ───────────────────────────────────────────────────
 
     private filterFor(ctx: MediaContext): MediaScopeFilter | null {
         try {
@@ -134,22 +134,22 @@ export class MediaScanner {
         }
     }
 
-    /** Chỉ giữ file trong phạm vi lưu. */
+    /** Keep only files in the storage scope. */
     private keepInScope(ctx: MediaContext, files: ScannedFile[]): ScannedFile[] {
         const filter = this.filterFor(ctx);
         return filter ? files.filter((f) => relInScope(f.rel, f.mtimeMs, filter)) : files;
     }
 
-    /** false = cả nhánh thư mục ngoài phạm vi (không đọc, không stat). */
+    /** false = the whole folder branch is outside the scope (no read, no stat call). */
     private dirAllowed(ctx: MediaContext, segs: string[]): boolean {
         return !segs.length || dirMayHaveInScope(segs, this.filterFor(ctx));
     }
 
     /**
-     * Phạm vi hiện tại khác phạm vi chỉ mục đang theo (app_settings) → đặt lại con trỏ quét về đầu, rà chỉ mục theo
-     * trang (pending ngoài phạm vi → excluded; excluded nay trong phạm vi → pending), xong mới ghi phạm vi mới.
-     * Dừng giữa chừng (tắt, đổi workspace, đổi phạm vi lần nữa) → false, lượt sau làm lại (mọi bước đều làm lại được).
-     * Chưa từng ghi phạm vi = chỉ mục theo "tất cả" (bản trước khi có phạm vi).
+     * The current scope differs from the scope the index follows (app_settings) → reset the scan cursor to the start, re-check the index
+     * page by page (pending outside scope → excluded; excluded now in scope → pending), and only then write the new scope.
+     * Stopped midway (turned off, workspace changed, scope changed again) → false, the next run starts over (every step can be redone).
+     * Scope never written = the index follows "tất cả" (all), as in the version before scopes existed.
      */
     async applyScope(ctx: MediaContext, isCurrent: () => boolean): Promise<boolean> {
         const filter = this.filterFor(ctx);
@@ -191,7 +191,7 @@ export class MediaScanner {
 
     note(absPath: string): void {
         if (!absPath || typeof absPath !== 'string') return;
-        // Tràn bộ đệm: bỏ qua — lượt quét nhẹ định kỳ sẽ bắt các file này
+        // Buffer overflow: skip it; the periodic light scan will catch these files
         if (this.notes.size >= NOTE_BUFFER_MAX) return;
         this.notes.add(absPath);
         this.scheduleFlush(NOTE_FLUSH_DELAY_MS);
@@ -234,7 +234,7 @@ export class MediaScanner {
         }
     }
 
-    /** Đường dẫn bất kỳ → rel đúng hoa/thường trên đĩa (realpath) + kích thước; null nếu không phải file media hợp lệ. */
+    /** Any path → rel with the correct case on disk (realpath) + size; null if it is not a valid media file. */
     private async describe(ctx: MediaContext, p: string): Promise<ScannedFile | null> {
         let abs = p;
         if (!path.isAbsolute(abs)) {
@@ -254,7 +254,7 @@ export class MediaScanner {
         }
     }
 
-    // ─── Vòng lặp ──────────────────────────────────────────────────────
+    // ─── Loop ──────────────────────────────────────────────────────────
 
     async run(isCurrent: () => boolean): Promise<void> {
         while (isCurrent()) {
@@ -263,7 +263,7 @@ export class MediaScanner {
                 const ctx = await this.deps.ctx.get();
                 if (!isCurrent()) break;
                 if (!ctx) { await this.deps.waiter.wait(15 * SECOND); continue; }
-                // Đổi phạm vi giữa chừng → lượt đang chạy dừng, vòng sau áp phạm vi mới ngay (không chờ)
+                // Scope changed midway → the run in progress stops; the next pass applies the new scope at once (no waiting)
                 const gen = this.scopeGen;
                 const current = () => isCurrent() && this.scopeGen === gen;
                 if (!(await this.applyScope(ctx, current))) {
@@ -297,8 +297,8 @@ export class MediaScanner {
     }
 
     /**
-     * Quét toàn bộ định kỳ (con trỏ có doneAt = đã có lượt xong) phải chờ máy rảnh không; lượt đầu tiên / sau khi đổi
-     * phạm vi (không có doneAt) chạy ngay. Ghi nhật ký một dòng mỗi lần đổi lý do.
+     * Whether a periodic full scan (a cursor with doneAt = a run has finished) must wait for an idle machine; the first run / a run after a scope change
+     * (no doneAt) runs right away. Writes one log line each time the reason changes.
      */
     private fullScanWait(cursor: ScanCursor): IdleWaitReason | null {
         if (!this.deps.idle || !cursor.doneAt) return null;
@@ -320,7 +320,7 @@ export class MediaScanner {
         return wait;
     }
 
-    /** Quét nhẹ chưa chạy trước mốc này (mở app / máy thức dậy + RECENT_SCAN_WAKE_QUIET_MS); 0 = không chờ. */
+    /** The light scan does not run before this time (app open / machine wake + RECENT_SCAN_WAKE_QUIET_MS); 0 = do not wait. */
     private recentScanQuietUntil(): number {
         if (!this.deps.idle) return 0;
         try {
@@ -338,18 +338,18 @@ export class MediaScanner {
                 const c = JSON.parse(raw);
                 if (c && c.v === 1 && (c.phase === 'expired' || c.phase === 'walk' || c.phase === 'done')) return c as ScanCursor;
             }
-        } catch { /* hỏng → quét lại từ đầu */ }
+        } catch { /* corrupt → scan again from the start */ }
         return { v: 1, phase: 'expired', afterId: 0 };
     }
 
     private saveCursor(ctx: MediaContext, cursor: ScanCursor): void {
         if (!this.deps.isActive() || !this.deps.ctx.isValid(ctx)) return;
-        try { ctx.index.setSetting(SETTING_SCAN_CURSOR, JSON.stringify(cursor)); } catch { /* lần sau */ }
+        try { ctx.index.setSetting(SETTING_SCAN_CURSOR, JSON.stringify(cursor)); } catch { /* next time */ }
     }
 
-    // ─── Quét toàn bộ ──────────────────────────────────────────────────
+    // ─── Full scan ──────────────────────────────────────────────────
 
-    /** true = xong; false = dừng giữa chừng (tạm dừng, tắt, đổi workspace) — lần sau đi tiếp từ con trỏ. */
+    /** true = finished; false = stopped midway (paused, turned off, workspace changed): the next run continues from the cursor. */
     async fullScan(ctx: MediaContext, start: ScanCursor, isCurrent: () => boolean): Promise<boolean> {
         let cursor: ScanCursor = start.phase === 'done'
             ? { v: 1, phase: 'walk', dir: null, startedAt: this.now(), doneAt: start.doneAt }
@@ -419,14 +419,14 @@ export class MediaScanner {
                 if (!this.alive(ctx, isCurrent)) { save(); return false; }
             }
             const segs = stack.pop() as string[];
-            // Nhánh ngoài phạm vi lưu (tài khoản không chọn, thư mục ngày trước "từ ngày", file chung đã tắt): bỏ cả nhánh
+            // A branch outside the storage scope (account not selected, day folder before "từ ngày" (from date), shared files turned off): skip the whole branch
             if (!this.dirAllowed(ctx, segs)) continue;
             let processFiles = true;
             if (after) {
                 const cmp = preOrderCompare(segs, after);
-                // Cả nhánh nằm trước con trỏ → đã xong
+                // The whole branch is before the cursor → already done
                 if (cmp < 0 && !isAncestorOf(segs, after)) continue;
-                // Tổ tiên của con trỏ / chính con trỏ: file đã xong, chỉ đi tiếp vào thư mục con
+                // Ancestors of the cursor / the cursor itself: files already done, only continue into subfolders
                 if (cmp <= 0) processFiles = false;
             }
             const listing = await this.list(ctx, segs);
@@ -452,7 +452,7 @@ export class MediaScanner {
         const files: string[] = [];
         const subdirs: string[] = [];
         for (const e of entries) {
-            // Symlink / junction: không đi theo (không thoát khỏi thư mục media, không lặp vô hạn)
+            // Symlink / junction: do not follow (does not leave the media folder, does not loop forever)
             if (e.isDirectory()) { if (!isSkippedDirName(e.name)) subdirs.push(e.name); }
             else if (e.isFile() && !isSkippedFileName(e.name)) files.push(e.name);
         }
@@ -460,7 +460,7 @@ export class MediaScanner {
         return { files, subdirs };
     }
 
-    /** stat theo lô 500 rồi ghi chỉ mục; onlyUnknown: chỉ file chưa có trong chỉ mục (quét nhẹ). */
+    /** stat in batches of 500, then write the index; onlyUnknown: only files not yet in the index (light scan). */
     private async indexNames(ctx: MediaContext, segs: string[], names: string[], isCurrent: () => boolean, onlyUnknown: boolean): Promise<boolean> {
         const base = segs.length ? absPathFor(ctx.realRoot, segs.join('/')) : ctx.realRoot;
         const prefix = segs.length ? `${segs.join('/')}/` : '';
@@ -489,11 +489,11 @@ export class MediaScanner {
         return true;
     }
 
-    // ─── Quét nhẹ định kỳ ──────────────────────────────────────────────
+    // ─── Periodic light scan ──────────────────────────────────────────────
 
     /**
-     * stat mọi thư mục (rẻ), chỉ đọc lại thư mục có mtime đổi so với lần trước. Lần đầu trong phiên: chỉ thư mục đổi trong
-     * 3 ngày qua hoặc sau lượt quét toàn bộ gần nhất (thư mục cũ hơn đã được lượt quét toàn bộ ghi nhận).
+     * stat every folder (cheap), re-read only the folders whose mtime changed since last time. First time in the session: only folders changed within
+     * the last 3 days, or after the latest full scan (older folders were already recorded by that full scan).
      */
     async recentScan(ctx: MediaContext, isCurrent: () => boolean): Promise<void> {
         if (this.dirCacheCtx !== ctx.id) { this.dirCache.clear(); this.dirCacheCtx = ctx.id; }

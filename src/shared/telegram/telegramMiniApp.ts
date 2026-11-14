@@ -1,15 +1,15 @@
 /**
- * telegramMiniApp.ts: Mini App và nút đăng nhập của bot Telegram, phần thuần dùng chung main + renderer.
+ * telegramMiniApp.ts: Mini Apps and login buttons of Telegram bots, the pure part shared by main + renderer.
  *
- * Làm như client Telegram (https://core.telegram.org/api/bots/webapps, /api/web-events, /api/url-authorization):
- *  - Mini App (nút web_app trong tin, nút menu bot, "Mở" app chính) chạy NGAY TRONG app: Telegram trả link có initData
- *    của người dùng (tgWebAppData) nên Mini App tự biết ai đang dùng, không cần đăng nhập lại.
- *  - Nút đăng nhập (keyboardButtonUrlAuth): hỏi người dùng rồi messages.acceptUrlAuth, mở link Telegram trả về (đã kèm
- *    chữ ký đăng nhập) bằng trình duyệt của máy; không đồng ý thì mở link gốc.
- *  - Nút link thường: mở bằng trình duyệt của máy như Telegram.
+ * Works like a Telegram client (https://core.telegram.org/api/bots/webapps, /api/web-events, /api/url-authorization):
+ *  - Mini Apps (web_app button in a message, bot menu button, the main "Mở" (Open) app) run RIGHT INSIDE the app: Telegram returns a link with the user's
+ *    initData (tgWebAppData), so the Mini App knows who is using it without logging in again.
+ *  - Login button (keyboardButtonUrlAuth): asks the user, then messages.acceptUrlAuth, and opens the Telegram link that comes back (already containing
+ *    the login signature) in the machine's browser; if the user declines, the original link is opened.
+ *  - Normal link button: opens in the machine's browser, as in Telegram.
  */
 
-/** tgWebAppPlatform: Deplao là app máy tính, Mini App xử lý như Telegram Desktop. */
+/** tgWebAppPlatform: Deplao is a desktop app, so the Mini App is handled like Telegram Desktop. */
 export const MINI_APP_PLATFORM = 'tdesktop';
 
 export const MINI_APP_THEME_KEYS = [
@@ -27,7 +27,7 @@ export function isHexColor(value: unknown): value is string {
   return typeof value === 'string' && HEX_COLOR_RE.test(value);
 }
 
-/** Theme gửi cho Telegram (renderer → main): chỉ khoá đã biết, màu #RRGGBB. */
+/** Theme sent to Telegram (renderer → main): only known keys, colours in #RRGGBB. */
 export function sanitizeMiniAppTheme(raw: unknown): MiniAppThemeParams | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const out: MiniAppThemeParams = {};
@@ -38,12 +38,12 @@ export function sanitizeMiniAppTheme(raw: unknown): MiniAppThemeParams | undefin
   return Object.keys(out).length ? out : undefined;
 }
 
-/** Phương thức riêng của bot mà Mini App gọi qua Telegram (CloudStorage: getStorageValues, saveStorageValue…). */
+/** Bot-specific methods that the Mini App calls through Telegram (CloudStorage: getStorageValues, saveStorageValue…). */
 export const MINI_APP_METHOD_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
-/** Tham số của một lần gọi (JSON): CloudStorage tối đa 4 KB / giá trị, chừa rộng. */
+/** Parameters of one call (JSON): CloudStorage allows up to 4 KB per value, with a generous margin. */
 export const MINI_APP_PARAMS_MAX_CHARS = 64 * 1024;
 
-/** Tham số phương thức riêng hợp lệ: object JSON không quá lớn. Trả chuỗi JSON để gửi Telegram, null nếu sai. */
+/** Valid custom method parameters: a JSON object that is not too large. Returns a JSON string to send to Telegram, null if invalid. */
 export function miniAppParamsJson(params: unknown): string | null {
   if (params === undefined || params === null) return '{}';
   if (typeof params !== 'object' || Array.isArray(params)) return null;
@@ -52,26 +52,26 @@ export function miniAppParamsJson(params: unknown): string | null {
   return json.length <= MINI_APP_PARAMS_MAX_CHARS ? json : null;
 }
 
-/** Kết quả messages.requestUrlAuth / acceptUrlAuth đã đổi sang dữ liệu thuần. */
+/** The result of messages.requestUrlAuth / acceptUrlAuth has been changed to plain data. */
 export type UrlAuthInfo =
   | {
     kind: 'request';
-    /** Trang sẽ đăng nhập, vd comments.app */
+    /** Page that will log in, e.g. comments.app */
     domain: string;
     botId: string;
     botName: string;
     botUsername?: string;
-    /** Trang xin cho bot nhắn tin cho người dùng */
+    /** Page asking for the bot to message the user */
     requestWriteAccess: boolean;
-    /** Trang xin số điện thoại */
+    /** Page asking for a phone number */
     requestPhoneNumber: boolean;
   }
   | { kind: 'accepted'; url: string | null }
   | { kind: 'default' };
 
 /**
- * urlAuthResultRequest / Accepted / Default (GramJS) → dữ liệu thuần. Nút đăng nhập của bot không dùng mã khớp
- * (match_codes, chỉ có ở luồng OAuth): gặp thì mở link gốc, không đăng nhập.
+ * urlAuthResultRequest / Accepted / Default (GramJS) → plain data. The bot's login button does not use match codes
+ * (match_codes, only present in the OAuth flow): if one shows up, open the original link, do not log in.
  */
 export function urlAuthInfo(result: any): UrlAuthInfo {
   const kind = String(result?.className || '');

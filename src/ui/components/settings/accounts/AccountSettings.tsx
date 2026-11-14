@@ -1,10 +1,10 @@
 /**
- * Cài đặt → Tài khoản: mỗi tài khoản là một thẻ, cài đặt riêng của tài khoản hiện ngay dưới dòng tài khoản kèm trạng
- * thái hiện tại, bấm dòng nào mở phần chỉnh của dòng đó ngay bên dưới (trước đây giấu sau nút bánh răng → hộp thoại).
- * "Thông báo trong app" là công tắc ngay trên dòng (InAppNotifySettings).
- * "Tự động xoá media" có ở mọi kênh và đọc cấu hình khi mở trang (chỉ đọc app_settings trên máy); Zalo thêm
- * "Quyền riêng tư Zalo" và "Hội thoại ẩn" — hai mục này gọi Zalo nên chỉ tải khi mở ra.
- * "Proxy" (Zalo, Facebook, máy chủ): thêm / đổi / bỏ proxy, tài khoản tự kết nối lại (AccountProxyLine).
+ * Settings → Accounts: each account is a card; the account's own settings appear right under the account row with its
+ * current status. Click a row to open its editor right below it (previously hidden behind the gear button → dialog).
+ * "Thông báo trong app" (In-app notifications) is a switch right on the row (InAppNotifySettings).
+ * "Tự động xoá media" (Auto-delete media) is available on every channel and reads its config when the page opens (reads app_settings on the machine only); Zalo adds
+ * "Quyền riêng tư Zalo" (Zalo privacy) and "Hội thoại ẩn" (Hidden conversations): these two call Zalo, so they only load when opened.
+ * "Proxy" (Zalo, Facebook, server): add / change / remove a proxy, the account reconnects by itself (AccountProxyLine).
  */
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -24,6 +24,8 @@ import AccountProxyLine, { type ProxyOption } from './AccountProxyLine';
 import { supportsAccountProxy } from '../../../../shared/accounts/accountProxy';
 import { InAppNotifyAccountLine, MiniAccountAvatar } from '../notifications/InAppNotifySettings';
 import { SettingLine, SettingsPage } from '../settingsUi';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type MediaConfig = { enabled: boolean; days: number };
 type MediaDraft = { enabled: boolean; days: string };
@@ -31,7 +33,7 @@ type SettingId = 'proxy' | 'media' | 'privacy' | 'hidden';
 
 const DEFAULT_MEDIA: MediaConfig = { enabled: false, days: 30 };
 const toDraft = (config: MediaConfig): MediaDraft => ({ enabled: config.enabled, days: String(config.days) });
-/** Số ngày 1–365; ô để trống / gõ sai thì giữ số đã lưu. */
+/** Number of days 1–365; if the field is empty or the input is invalid, keep the saved number. */
 const clampDays = (text: string, fallback: number) => {
   const n = parseInt(text, 10);
   return Number.isFinite(n) ? Math.min(365, Math.max(1, n)) : fallback;
@@ -39,7 +41,7 @@ const clampDays = (text: string, fallback: number) => {
 
 function AccountCard({ acc, proxies, onDelete }: {
   acc: AccountInfo;
-  /** Danh sách proxy (null = đang tải, undefined = không hiện dòng Proxy) */
+  /** Proxy list (null = loading, undefined = the Proxy row is not shown) */
   proxies?: ProxyOption[] | null;
   onDelete: () => void;
 }) {
@@ -48,7 +50,7 @@ function AccountCard({ acc, proxies, onDelete }: {
   const zalo = isZalo(acc.channel);
   const [open, setOpen] = useState<ReadonlySet<SettingId>>(() => new Set());
 
-  // Tự động xoá media — saved = cấu hình đang lưu (null khi chưa đọc xong / đọc lỗi), draft = đang chỉnh
+  // Auto-delete media: saved = the config currently saved (null while not yet read / on read error), draft = being edited
   const [saved, setSaved] = useState<MediaConfig | null>(null);
   const [draft, setDraft] = useState<MediaDraft>(() => toDraft(DEFAULT_MEDIA));
   const [loadError, setLoadError] = useState('');
@@ -66,10 +68,10 @@ function AccountCard({ acc, proxies, onDelete }: {
         setSaved(config);
         setDraft(toDraft(config));
       } else {
-        setLoadError(extractApiError(res, 'Không đọc được cấu hình'));
+        setLoadError(extractApiError(res, tr('Không đọc được cấu hình')));
       }
     } catch (err: any) {
-      if (mySeq === loadSeq.current) setLoadError(err?.message || 'Không đọc được cấu hình');
+      if (mySeq === loadSeq.current) setLoadError(err?.message || tr('Không đọc được cấu hình'));
     }
   }, [acc.zalo_id]);
 
@@ -80,7 +82,7 @@ function AccountCard({ acc, proxies, onDelete }: {
 
   const toggle = (id: SettingId) => {
     const closing = open.has(id);
-    // Đóng "Tự động xoá media" = bỏ thay đổi chưa lưu
+    // Closing "Tự động xoá media" (Auto-delete media) = discard unsaved changes
     if (closing && id === 'media' && saved) setDraft(toDraft(saved));
     setOpen((prev) => {
       const next = new Set(prev);
@@ -106,24 +108,24 @@ function AccountCard({ acc, proxies, onDelete }: {
           next.delete('media');
           return next;
         });
-        showNotification(res.message || 'Đã lưu cấu hình xoá media', 'success');
+        showNotification(res.message || tr('Đã lưu cấu hình xoá media'), 'success');
       } else {
-        showNotification(extractApiError(res, 'Lỗi lưu cấu hình'), 'error');
+        showNotification(extractApiError(res, tr('Lỗi lưu cấu hình')), 'error');
       }
     } catch (err: any) {
-      showNotification(err?.message || 'Lỗi lưu cấu hình', 'error');
+      showNotification(err?.message || tr('Lỗi lưu cấu hình'), 'error');
     } finally {
       setSaving(false);
     }
   };
 
   const mediaSummary = saved
-    ? (saved.enabled ? <><span className="font-medium text-foreground">Bật</span> · xoá media cũ hơn {saved.days} ngày</> : 'Tắt')
-    : (loadError ? 'Không đọc được' : 'Đang tải...');
+    ? (saved.enabled ? <>{trx('<0>Bật</0> · xoá media cũ hơn {{days}} ngày', { 0: <span className="font-medium text-foreground" />, days: saved.days })}</> : tr('Tắt'))
+    : (loadError ? tr('Không đọc được') : tr('Đang tải...'));
 
   return (
     <div className="rounded-xl border border-border/60 bg-card">
-      {/* Dòng tài khoản */}
+      {/* Account row */}
       <div className="flex items-center gap-3 px-3 py-2.5">
         <MiniAccountAvatar account={acc} size={40} />
         <div className="flex-1 min-w-0">
@@ -133,37 +135,37 @@ function AccountCard({ acc, proxies, onDelete }: {
               {getChannelLabel(resolveAccountChannel(acc))}
             </span>
           </div>
-          <p className="truncate text-xs text-muted-foreground" title={acc.phone ? `UID ${acc.zalo_id} · SĐT ${acc.phone}` : `UID ${acc.zalo_id}`}>
+          <p className="truncate text-xs text-muted-foreground" title={acc.phone ? tr('UID {{zalo_id}} · SĐT {{phone}}', { zalo_id: acc.zalo_id, phone: acc.phone }) : `UID ${acc.zalo_id}`}>
             {acc.zalo_id}
-            {acc.phone && <> · SĐT {acc.phone}</>}
+            {acc.phone && <> {trx('· SĐT {{phone}}', { phone: acc.phone })}</>}
           </p>
         </div>
         <span className={`flex flex-shrink-0 items-center gap-1.5 text-xs ${acc.isOnline ? 'text-success' : 'text-muted-foreground'}`}>
           <span className={`h-1.5 w-1.5 rounded-full ${acc.isOnline ? 'bg-success' : 'bg-border-strong'}`} />
-          {acc.isOnline ? 'Online' : 'Offline'}
+          {acc.isOnline ? tr('Online') : tr('Offline')}
         </span>
-        <Button variant="ghost" size="icon" onClick={onDelete} aria-label="Xoá tài khoản" title="Xoá tài khoản"
+        <Button variant="ghost" size="icon" onClick={onDelete} aria-label={tr('Xoá tài khoản')} title={tr('Xoá tài khoản')}
           className="h-8 w-8 flex-shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
           <TrashIcon className="h-4 w-4" />
         </Button>
       </div>
 
-      {/* Cài đặt riêng của tài khoản */}
+      {/* Account's own settings */}
       <div className="border-t border-border/60 px-1.5 py-1">
         <InAppNotifyAccountLine accountId={acc.zalo_id} />
         {proxies !== undefined && supportsAccountProxy(acc.channel) && (
           <AccountProxyLine account={acc} proxies={proxies} panelId={`${baseId}-proxy`}
             open={open.has('proxy')} onToggle={() => toggle('proxy')} />
         )}
-        <SettingLine panelId={`${baseId}-media`} icon={<FolderIcon className="h-4 w-4" />} title="Tự động xoá media"
+        <SettingLine panelId={`${baseId}-media`} icon={<FolderIcon className="h-4 w-4" />} title={tr('Tự động xoá media')}
           summary={mediaSummary} open={open.has('media')} onToggle={() => toggle('media')}>
           {saved ? (
             <div className="space-y-3">
               <Switch size="sm" checked={draft.enabled} disabled={saving}
                 onCheckedChange={(on) => setDraft((d) => ({ ...d, enabled: on }))}
-                label="Bật tự động xoá" description="Xoá ảnh, video, file trên máy cũ hơn số ngày dưới đây (tin nhắn vẫn giữ)" />
+                label={tr('Bật tự động xoá')} description={tr('Xoá ảnh, video, file trên máy cũ hơn số ngày dưới đây (tin nhắn vẫn giữ)')} />
               <div className="flex items-center gap-2">
-                <label htmlFor={`${baseId}-days`} className="text-xs text-muted-foreground">Xoá sau</label>
+                <label htmlFor={`${baseId}-days`} className="text-xs text-muted-foreground">{tr('Xoá sau')}</label>
                 <input
                   id={`${baseId}-days`}
                   type="number"
@@ -175,41 +177,41 @@ function AccountCard({ acc, proxies, onDelete }: {
                   onBlur={() => setDraft((d) => ({ ...d, days: String(clampDays(d.days, saved.days)) }))}
                   className="w-20 rounded-lg border border-input bg-muted px-2.5 py-1.5 text-sm text-foreground transition-colors disabled:opacity-60"
                 />
-                <span className="text-xs text-muted-foreground">ngày</span>
+                <span className="text-xs text-muted-foreground">{tr('ngày')}</span>
               </div>
               <p className="text-[11px] leading-relaxed text-muted-foreground">
-                Tự dọn mỗi ngày lúc 3:00. Lưu khi đang bật thì dọn ngay.
+                {tr('Tự dọn mỗi ngày lúc 3:00. Lưu khi đang bật thì dọn ngay.')}
               </p>
               <div className="flex justify-end gap-2">
                 {dirty && (
-                  <Button variant="ghost" size="sm" onClick={() => setDraft(toDraft(saved))} disabled={saving}>Huỷ</Button>
+                  <Button variant="ghost" size="sm" onClick={() => setDraft(toDraft(saved))} disabled={saving}>{tr('Huỷ')}</Button>
                 )}
                 <Button size="sm" onClick={() => void saveMedia()} disabled={saving || (!dirty && !draft.enabled)}>
-                  {saving ? 'Đang lưu...' : draft.enabled ? 'Lưu & chạy ngay' : 'Lưu'}
+                  {saving ? tr('Đang lưu...') : draft.enabled ? tr('Lưu & chạy ngay') : tr('Lưu')}
                 </Button>
               </div>
             </div>
           ) : loadError ? (
             <div className="flex items-center gap-2 text-xs">
               <span role="alert" className="text-destructive">{loadError}</span>
-              <Button variant="ghost" size="sm" onClick={() => void loadMedia()}>Thử lại</Button>
+              <Button variant="ghost" size="sm" onClick={() => void loadMedia()}>{tr('Thử lại')}</Button>
             </div>
           ) : (
             <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
               <div className="w-3 h-3 border-2 border-border-strong border-t-transparent rounded-full animate-spin" />
-              Đang tải cấu hình...
+              {tr('Đang tải cấu hình...')}
             </div>
           )}
         </SettingLine>
 
         {zalo && (
           <>
-            <SettingLine panelId={`${baseId}-privacy`} icon={<ShieldIcon className="h-4 w-4" />} title="Quyền riêng tư Zalo"
-              summary="Nhắn tin, gọi điện, ngày sinh, trạng thái truy cập…" open={open.has('privacy')} onToggle={() => toggle('privacy')}>
+            <SettingLine panelId={`${baseId}-privacy`} icon={<ShieldIcon className="h-4 w-4" />} title={tr('Quyền riêng tư Zalo')}
+              summary={tr('Nhắn tin, gọi điện, ngày sinh, trạng thái truy cập…')} open={open.has('privacy')} onToggle={() => toggle('privacy')}>
               <ZaloPrivacySettings accountId={acc.zalo_id} />
             </SettingLine>
-            <SettingLine panelId={`${baseId}-hidden`} icon={<EyeOffIcon className="h-4 w-4" />} title="Hội thoại ẩn"
-              summary="Mã PIN, đặt lại khi quên" open={open.has('hidden')} onToggle={() => toggle('hidden')}>
+            <SettingLine panelId={`${baseId}-hidden`} icon={<EyeOffIcon className="h-4 w-4" />} title={tr('Hội thoại ẩn')}
+              summary={tr('Mã PIN, đặt lại khi quên')} open={open.has('hidden')} onToggle={() => toggle('hidden')}>
               <ZaloHiddenPinSection accountId={acc.zalo_id} />
             </SettingLine>
           </>
@@ -223,9 +225,9 @@ export default function AccountSettings() {
   const accounts = useAccountStore((s) => s.accounts);
   const removeAccount = useAccountStore((s) => s.removeAccount);
   const showNotification = useAppStore((s) => s.showNotification);
-  // Proxy do máy chủ quản lý: máy nhân viên không có dòng Proxy
+  // Proxy managed by the server: employee machines do not have a Proxy row
   const isEmployeeMachine = useEmployeeStore((s) => s.mode) === 'employee';
-  // Tìm nhanh theo tên, UID, SĐT
+  // Quick search by name, UID, phone number
   const [query, setQuery] = useState('');
   const visible = useMemo(() => accounts.filter((acc) => matchAccountSearch(acc, query)), [accounts, query]);
   const [proxies, setProxies] = useState<ProxyOption[] | null>(null);
@@ -238,7 +240,7 @@ export default function AccountSettings() {
     return () => { alive = false; };
   }, [isEmployeeMachine]);
 
-  // Hộp xoá tài khoản: mặc định "Chỉ xoá tài khoản" (giữ dữ liệu), xoá hết dữ liệu phải chọn rõ
+  // Delete account dialog: defaults to "Chỉ xoá tài khoản" (Delete account only) (keeps data); deleting all data must be chosen explicitly
   const [deleteModalAcc, setDeleteModalAcc] = useState<string | null>(null);
   const [deleteWithData, setDeleteWithData] = useState(false);
   const openDelete = (zaloId: string) => {
@@ -248,11 +250,11 @@ export default function AccountSettings() {
 
   const handleDeleteAccount = async (zaloId: string) => {
     const ok = await showConfirm({
-      title: deleteWithData ? 'Xoá tài khoản và tất cả dữ liệu?' : 'Xoá tài khoản này?',
+      title: deleteWithData ? tr('Xoá tài khoản và tất cả dữ liệu?') : tr('Xoá tài khoản này?'),
       message: deleteWithData
-        ? 'Tài khoản, tin nhắn, hội thoại, danh bạ, khách hàng, file media, nhãn, ghi chú và tất cả dữ liệu CRM sẽ bị XOÁ VĨNH VIỄN. Không thể khôi phục!'
-        : 'Tài khoản sẽ bị xoá khỏi ứng dụng. Bạn cần đăng nhập lại để thêm lại. Dữ liệu tin nhắn và media được giữ lại.',
-      confirmText: deleteWithData ? 'Xoá tất cả' : 'Xoá tài khoản',
+        ? tr('Tài khoản, tin nhắn, hội thoại, danh bạ, khách hàng, file media, nhãn, ghi chú và tất cả dữ liệu CRM sẽ bị XOÁ VĨNH VIỄN. Không thể khôi phục!')
+        : tr('Tài khoản sẽ bị xoá khỏi ứng dụng. Bạn cần đăng nhập lại để thêm lại. Dữ liệu tin nhắn và media được giữ lại.'),
+      confirmText: deleteWithData ? tr('Xoá tất cả') : tr('Xoá tài khoản'),
       variant: deleteWithData ? 'danger' : 'warning',
     });
     if (!ok) return;
@@ -260,12 +262,12 @@ export default function AccountSettings() {
     if (res?.success) {
       removeAccount(zaloId);
       showNotification(
-        deleteWithData ? 'Đã xoá tài khoản và toàn bộ dữ liệu' : 'Đã xoá tài khoản',
+        deleteWithData ? tr('Đã xoá tài khoản và toàn bộ dữ liệu') : tr('Đã xoá tài khoản'),
         'success'
       );
       setDeleteModalAcc(null);
     } else {
-      showNotification(extractApiError(res, 'Xoá tài khoản thất bại'), 'error');
+      showNotification(extractApiError(res, tr('Xoá tài khoản thất bại')), 'error');
     }
   };
 
@@ -292,12 +294,12 @@ export default function AccountSettings() {
 
   return (
     <SettingsPage
-      title="Tài khoản"
-      description="Bấm một dòng dưới tài khoản để chỉnh ngay tại chỗ."
+      title={tr('Tài khoản')}
+      description={tr('Bấm một dòng dưới tài khoản để chỉnh ngay tại chỗ.')}
       actions={accounts.length > 0 ? (
         <div className="relative w-56">
           <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm tên, UID, SĐT" aria-label="Tìm tài khoản"
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr('Tìm tên, UID, SĐT')} aria-label={tr('Tìm tài khoản')}
             className="h-8 pl-8" />
         </div>
       ) : undefined}
@@ -308,24 +310,24 @@ export default function AccountSettings() {
             onDelete={() => openDelete(acc.zalo_id)} />
         ))}
         {accounts.length === 0 && (
-          <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">Chưa có tài khoản nào</p>
+          <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">{tr('Chưa có tài khoản nào')}</p>
         )}
         {accounts.length > 0 && visible.length === 0 && (
           <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            Không thấy tài khoản khớp &quot;{query.trim()}&quot;.{' '}
-            <button type="button" onClick={() => setQuery('')} className="font-medium text-primary hover:underline">Xoá tìm kiếm</button>
+            {trx('Không thấy tài khoản khớp "{{v1}}". ', { v1: query.trim() })}
+            <button type="button" onClick={() => setQuery('')} className="font-medium text-primary hover:underline">{tr('Xoá tìm kiếm')}</button>
           </div>
         )}
       </div>
 
-      {/* ── Hộp xác nhận xoá tài khoản ── */}
+      {/* ── Delete account confirmation dialog ── */}
       {deleteModalAcc && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setDeleteModalAcc(null)}>
           <div role="dialog" aria-modal="true" aria-labelledby="delete-account-title"
             className="w-full max-w-md overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="border-b border-border px-5 pb-3 pt-5">
               <h3 id="delete-account-title" className="flex items-center gap-2 text-base font-semibold text-foreground">
-                <TrashIcon className="h-4 w-4 text-destructive" /> Xoá tài khoản
+                {trx('<0/> Xoá tài khoản', { 0: <TrashIcon className="h-4 w-4 text-destructive" /> })}
               </h3>
               <p className="mt-1 text-xs text-muted-foreground">
                 {accounts.find(a => a.zalo_id === deleteModalAcc)?.full_name || deleteModalAcc}
@@ -333,14 +335,14 @@ export default function AccountSettings() {
             </div>
 
             <div className="space-y-2.5 p-4">
-              {deleteOption(false, 'Chỉ xoá tài khoản', 'Gỡ khỏi danh sách đăng nhập. Tin nhắn, danh bạ, CRM và file vẫn giữ trên máy.')}
-              {deleteOption(true, 'Xoá tất cả dữ liệu', 'Xoá vĩnh viễn tin nhắn, hội thoại, danh bạ, khách hàng, nhãn, ghi chú, chiến dịch, workflow và mọi file của tài khoản. Không thể khôi phục.')}
+              {deleteOption(false, tr('Chỉ xoá tài khoản'), tr('Gỡ khỏi danh sách đăng nhập. Tin nhắn, danh bạ, CRM và file vẫn giữ trên máy.'))}
+              {deleteOption(true, tr('Xoá tất cả dữ liệu'), tr('Xoá vĩnh viễn tin nhắn, hội thoại, danh bạ, khách hàng, nhãn, ghi chú, chiến dịch, workflow và mọi file của tài khoản. Không thể khôi phục.'))}
             </div>
 
             <div className="flex gap-2 px-4 pb-4">
-              <Button variant="ghost" className="flex-1" onClick={() => setDeleteModalAcc(null)}>Huỷ</Button>
+              <Button variant="ghost" className="flex-1" onClick={() => setDeleteModalAcc(null)}>{tr('Huỷ')}</Button>
               <Button variant="destructive" className="flex-1" onClick={() => handleDeleteAccount(deleteModalAcc)}>
-                {deleteWithData ? 'Xoá tất cả' : 'Xoá tài khoản'}
+                {deleteWithData ? tr('Xoá tất cả') : tr('Xoá tài khoản')}
               </Button>
             </div>
           </div>

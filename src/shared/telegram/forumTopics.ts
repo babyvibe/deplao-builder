@@ -1,23 +1,24 @@
 import type { TelegramStickerItem } from './telegramStickers';
+import { appLocale, tr } from '../i18n';
 
-/** Một dòng trong danh sách chủ đề forum Telegram (main → renderer, lưu cả trong localStorage). */
+/** One row in the Telegram forum topic list (main → renderer, also stored in localStorage). */
 export interface ForumTopicRow {
-  /** ForumTopic.id = id tin gốc của chủ đề (không đổi). General = '1'. */
+  /** ForumTopic.id = id of the topic's root message (never changes). General = '1'. */
   id: string;
   forumTopicId?: string;
   rootMessageId?: string;
   title: string;
   iconEmojiId: string;
-  /** Màu biểu tượng mặc định (RGB), dùng khi không có emoji tuỳ chỉnh */
+  /** Default icon colour (RGB), used when there is no custom emoji */
   iconColor: number;
-  /** Emoji tuỳ chỉnh làm biểu tượng (Document đã nhớ ở main → tải qua getStickerFile) */
+  /** Custom emoji used as the icon (Document cached in main → downloaded via getStickerFile) */
   iconEmoji?: TelegramStickerItem | null;
   topMessageId: string;
-  /** Giây — giờ tin mới nhất (chủ đề chưa có tin: lúc tạo) */
+  /** Seconds: time of the latest message (a topic with no messages yet: its creation time) */
   topMessageDate: number;
   createdDate?: number;
   lastMessageText?: string;
-  /** Tên ngắn người gửi tin mới nhất ('' = tin hệ thống / tin của mình — xem lastIsOut) */
+  /** Short name of the latest message's sender ('' = system message / my own message, see lastIsOut) */
   lastSenderName?: string;
   lastIsOut?: boolean;
   unreadCount: number;
@@ -26,29 +27,29 @@ export interface ForumTopicRow {
   isClosed: boolean;
   isHidden?: boolean;
   isShort?: boolean;
-  /** Tắt thông báo riêng của chủ đề tới (giây); null / thiếu = theo nhóm */
+  /** Mute the topic's own notifications until (seconds); null / missing = follow the group */
   muteUntil?: number | null;
-  /** Thứ tự Telegram trả về (chủ đề ghim theo thứ tự ghim) */
+  /** Order returned by Telegram (pinned topics in pin order) */
   order?: number;
   creatorId?: string;
   creatorName?: string;
 }
 
-/** General của forum (id 1) — Telegram vẽ biểu tượng "#". */
+/** The forum's General topic (id 1): Telegram draws a "#" icon. */
 export const FORUM_GENERAL_TOPIC_ID = '1';
 
 export function isGeneralForumTopic(topic: Pick<ForumTopicRow, 'id'>): boolean {
   return String(topic.id) === FORUM_GENERAL_TOPIC_ID;
 }
 
-/** Chủ đề có id (một trong 3 id tương đương: id, gốc, forumTopicId — so dạng chuỗi) không. */
+/** Whether the topic has this id (one of 3 equivalent ids: id, root, forumTopicId; compared as strings). */
 export function forumTopicHasId(topic: Pick<ForumTopicRow, 'id' | 'rootMessageId' | 'forumTopicId'>, id: string | null | undefined): boolean {
   if (id == null || id === '') return false;
   const key = String(id);
   return [topic.rootMessageId, topic.id, topic.forumTopicId].some((value) => value != null && value !== '' && String(value) === key);
 }
 
-/** Thứ tự như Telegram: chủ đề ghim trước (theo thứ tự ghim), còn lại tin mới nhất trước. */
+/** Order like Telegram: pinned topics first (in pin order), the rest newest message first. */
 export function sortForumTopics<T extends Pick<ForumTopicRow, 'isPinned' | 'order' | 'topMessageDate'>>(list: T[]): T[] {
   const orderOf = (topic: T) => (typeof topic.order === 'number' ? topic.order : Number.MAX_SAFE_INTEGER);
   return [...list].sort((a, b) => {
@@ -58,7 +59,7 @@ export function sortForumTopics<T extends Pick<ForumTopicRow, 'isPinned' | 'orde
   });
 }
 
-/** 6 màu biểu tượng chủ đề của Telegram; màu lạ / 0 → xanh mặc định. */
+/** The 6 topic icon colours of Telegram; unknown colour / 0 → default blue. */
 export const FORUM_TOPIC_COLORS = [0x6fb9f0, 0xffd67e, 0xcb86db, 0x8eee98, 0xff93b2, 0xfb6f5f];
 
 export function forumTopicColor(iconColor: number | null | undefined): string {
@@ -67,31 +68,31 @@ export function forumTopicColor(iconColor: number | null | undefined): string {
 }
 
 /**
- * Giờ tin mới nhất (giây) như danh sách hội thoại: hôm nay → giờ, hôm qua, trong tuần → số ngày, cũ hơn → ngày / tháng
- * (khác năm thì thêm năm).
+ * Latest message time (seconds), formatted like the conversation list: today → time of day, yesterday, within the week → number of days, older → day / month
+ * (add the year if it is a different year).
  */
 export function formatForumTopicTime(seconds: number, now = new Date()): string {
   if (!seconds) return '';
   const date = new Date(seconds * 1000);
   const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
   const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
-  if (days <= 0) return date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-  if (days === 1) return 'Hôm qua';
-  if (days < 7) return `${days} ngày`;
-  // Tự ghép (toLocaleDateString của Electron cho "08-06")
+  if (days <= 0) return date.toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' });
+  if (days === 1) return tr('Hôm qua');
+  if (days < 7) return tr('{{days}} ngày', { days });
+  // Built by hand (Electron's toLocaleDateString gives "08-06")
   const pad = (value: number) => String(value).padStart(2, '0');
   const dayMonth = `${pad(date.getDate())}/${pad(date.getMonth() + 1)}`;
   return date.getFullYear() === now.getFullYear() ? dayMonth : `${dayMonth}/${pad(date.getFullYear() % 100)}`;
 }
 
-/** Badge xám như Telegram: chủ đề tắt thông báo riêng, hoặc theo nhóm (đang tắt) khi chủ đề không đặt riêng. */
+/** Grey badge like Telegram: the topic has its own notifications muted, or it follows the group (muted) when the topic has no setting of its own. */
 export function isForumTopicMuted(topic: Pick<ForumTopicRow, 'muteUntil'>, groupMuted: boolean, nowSec = Math.floor(Date.now() / 1000)): boolean {
   if (typeof topic.muteUntil === 'number') return topic.muteUntil > nowSec;
   return groupMuted;
 }
 
 export interface ForumTopicLiveMessage {
-  /** Gốc chủ đề của tin; thiếu = General */
+  /** Topic root of the message; missing = General */
   topicId?: string | null;
   msgId: string;
   /** ms */
@@ -103,9 +104,9 @@ export interface ForumTopicLiveMessage {
 }
 
 /**
- * Tin mới tới (realtime) → dòng chủ đề của tin: tin mới nhất, giờ, chưa đọc +1 (trừ tin của mình / chủ đề đang mở), như
- * Telegram mà không gọi lại API. Trả null khi không đổi gì (không có chủ đề đó, tin cũ hơn tin đang hiện).
- * `open`: forum đang mở ở khung chat (topicId null = chưa chọn chủ đề → đang xem General); null = không mở.
+ * New incoming message (realtime) → the topic row for the message: latest message, time, unread +1 (except my own messages / the open topic), like
+ * Telegram, without calling the API again. Returns null when nothing changes (no such topic, or the message is older than the one shown).
+ * `open`: the forum is open in the chat pane (topicId null = no topic chosen yet → viewing General); null = not open.
  */
 export function applyForumTopicMessage<T extends ForumTopicRow>(
   list: T[],
@@ -118,8 +119,8 @@ export function applyForumTopicMessage<T extends ForumTopicRow>(
   const topic = list[index];
   const date = Math.floor(Number(message.timestamp || 0) / 1000);
   const sameMessage = String(topic.topMessageId || '') === String(message.msgId);
-  // Tin cũ hơn tin đang hiện (lấy bù lịch sử, đồng bộ lại sau mất mạng — Telegram đã tính vào số chưa đọc) → bỏ qua.
-  // Id tin trong một nhóm tăng dần; id không phải số (tin tạm) thì chỉ so giờ.
+  // Older than the message shown (history backfill, resync after a network drop; Telegram already counted it in the unread count) → skip.
+  // Message IDs in a group increase; a non-numeric id (temporary message) is compared by time only.
   const newId = Number(message.msgId);
   const topId = Number(topic.topMessageId);
   const olderId = Number.isSafeInteger(newId) && Number.isSafeInteger(topId) && topId > 0 && newId <= topId;
@@ -133,7 +134,7 @@ export function applyForumTopicMessage<T extends ForumTopicRow>(
     lastMessageText: text,
     lastSenderName: message.isSelf || message.isSystem ? '' : String(message.senderName || '').trim(),
     lastIsOut: message.isSelf && !message.isSystem,
-    // Mình gửi = đã đọc tới đó (như Telegram)
+    // My own sent message = read up to there (like Telegram)
     unreadCount: message.isSelf ? 0 : sameMessage || isOpen ? topic.unreadCount : (topic.unreadCount || 0) + 1,
   };
   const updated = [...list];

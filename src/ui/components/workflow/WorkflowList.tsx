@@ -12,6 +12,8 @@ import type { Channel } from '../../../configs/channels/channelConfig';
 import { getChannelColor, normalizeChannel, getChannelLabel } from '../../../configs/channels/channelConfig';
 import { ChatIcon, HomeIcon, LightningIcon, PackageIcon, PlayIcon, SearchIcon, SmartphoneIcon, TagIcon, UsersIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channels/channelHelper';
+import { tr, appLocale } from '../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface PageAccount {
   zalo_id: string;
@@ -45,8 +47,8 @@ function CreateWorkflowChannelModal({
       <div className="w-full max-w-xl rounded-2xl border border-border bg-popover shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div>
-            <h2 className="text-foreground font-semibold">Chọn kênh cho workflow mới</h2>
-            <p className="text-muted-foreground text-sm mt-0.5">Mỗi workflow hiện được cấu hình theo một kênh riêng để trigger và action đúng loại.</p>
+            <h2 className="text-foreground font-semibold">{tr('Chọn kênh cho workflow mới')}</h2>
+            <p className="text-muted-foreground text-sm mt-0.5">{tr('Mỗi workflow hiện được cấu hình theo một kênh riêng để trigger và action đúng loại.')}</p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -66,7 +68,7 @@ function CreateWorkflowChannelModal({
               </div>
               <div className="text-center">
                 <p className="text-foreground font-semibold text-sm">Zalo</p>
-                <p className="text-muted-foreground text-xs mt-0.5">Tạo workflow cho Zalo</p>
+                <p className="text-muted-foreground text-xs mt-0.5">{tr('Tạo workflow cho Zalo')}</p>
               </div>
             </button>
 
@@ -79,7 +81,7 @@ function CreateWorkflowChannelModal({
               </div>
               <div className="text-center">
                 <p className="text-foreground font-semibold text-sm">Facebook</p>
-                <p className="text-muted-foreground text-xs mt-0.5">Tạo workflow cho Facebook</p>
+                <p className="text-muted-foreground text-xs mt-0.5">{tr('Tạo workflow cho Facebook')}</p>
               </div>
             </button>
 
@@ -91,8 +93,8 @@ function CreateWorkflowChannelModal({
                 <TelegramIcon size={32} />
               </div>
               <div className="text-center">
-                <p className="text-foreground font-semibold text-sm">Telegram (Cá nhân)</p>
-                <p className="text-muted-foreground text-xs mt-0.5">MTProto — tài khoản cá nhân</p>
+                <p className="text-foreground font-semibold text-sm">{tr('Telegram (Cá nhân)')}</p>
+                <p className="text-muted-foreground text-xs mt-0.5">{tr('MTProto — tài khoản cá nhân')}</p>
               </div>
             </button>
 
@@ -105,7 +107,7 @@ function CreateWorkflowChannelModal({
               </div>
               <div className="text-center">
                 <p className="text-foreground font-semibold text-sm">Telegram (Bot)</p>
-                <p className="text-muted-foreground text-xs mt-0.5">Bot API — tài khoản bot</p>
+                <p className="text-muted-foreground text-xs mt-0.5">{tr('Bot API — tài khoản bot')}</p>
               </div>
             </button>
           </div>
@@ -143,10 +145,10 @@ function PageFilterButton({
 
   const label =
     filterPages.length === 0
-      ? 'Tất cả tài khoản'
+      ? tr('Tất cả tài khoản')
       : filterPages.length === 1
         ? accounts.find(a => a.zalo_id === filterPages[0])?.full_name || filterPages[0]
-        : `${filterPages.length} tài khoản`;
+        : tr('{{count}} tài khoản', { count: filterPages.length });
 
   return (
     <div ref={ref} className="relative">
@@ -190,18 +192,18 @@ function PageFilterButton({
         <div className="absolute right-0 top-full mt-1.5 w-[270px] bg-popover border border-border rounded-xl shadow-2xl z-50 overflow-hidden">
           {/* Dropdown header */}
           <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-            <span className="text-muted-foreground text-[11px] font-medium">Lọc theo tài khoản</span>
+            <span className="text-muted-foreground text-[11px] font-medium">{tr('Lọc theo tài khoản')}</span>
             {filterPages.length > 0 && (
               <button onClick={() => onChange([])} className="text-blue-400 text-[11px] hover:text-blue-300 transition-colors">
-                Xóa lọc
+                {tr('Xóa lọc')}
               </button>
             )}
           </div>
 
-          {/* "Tất cả" option */}
+          {/* "Tất cả" (All) option */}
           <label className={`flex items-center gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:bg-card/70 ${filterPages.length === 0 ? 'bg-card/40' : ''}`}>
             <input type="checkbox" checked={filterPages.length === 0} onChange={() => onChange([])} className="accent-blue-500 w-3.5 h-3.5" />
-            <span className="text-foreground text-xs font-medium">Tất cả tài khoản</span>
+            <span className="text-foreground text-xs font-medium">{tr('Tất cả tài khoản')}</span>
           </label>
 
           <div className="h-px bg-card mx-3" />
@@ -260,11 +262,11 @@ function CloneModal({ workflow, accounts, onClose, onDone }: {
     try {
       const res = await ipc.workflow?.clone(workflow.id, targetId);
       if (res?.success) {
-        showNotification('Đã nhân bản workflow sang tài khoản mới', 'success');
+        showNotification(tr('Đã nhân bản workflow sang tài khoản mới'), 'success');
         onDone();
         onClose();
       } else {
-        showNotification(res?.error || 'Lỗi nhân bản', 'error');
+        showNotification(res?.error || tr('Lỗi nhân bản'), 'error');
       }
     } finally {
       setLoading(false);
@@ -277,7 +279,7 @@ function CloneModal({ workflow, accounts, onClose, onDone }: {
       <div className="bg-popover border border-border rounded-2xl shadow-2xl w-[380px] overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div>
-            <p className="text-foreground font-semibold text-sm">Nhân bản workflow</p>
+            <p className="text-foreground font-semibold text-sm">{tr('Nhân bản workflow')}</p>
             <p className="text-muted-foreground text-[11px] mt-0.5 truncate">"{workflow.name}"</p>
           </div>
           <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
@@ -288,12 +290,12 @@ function CloneModal({ workflow, accounts, onClose, onDone }: {
         </div>
         <div className="p-5 space-y-4">
           <p className="text-muted-foreground text-xs leading-relaxed">
-            Chọn tài khoản đích để sao chép workflow. Tất cả nodes, edges và cấu hình sẽ được copy - chỉ tài khoản áp dụng thay đổi.
+            {tr('Chọn tài khoản đích để sao chép workflow. Tất cả nodes, edges và cấu hình sẽ được copy - chỉ tài khoản áp dụng thay đổi.')}
           </p>
           {available.length === 0 ? (
             <div className="bg-card border border-border rounded-xl px-4 py-5 text-center">
-              <p className="text-muted-foreground text-xs">Không có tài khoản nào khác để nhân bản vào.</p>
-              <p className="text-muted-foreground text-[11px] mt-1">Đăng nhập thêm tài khoản Zalo để dùng tính năng này.</p>
+              <p className="text-muted-foreground text-xs">{tr('Không có tài khoản nào khác để nhân bản vào.')}</p>
+              <p className="text-muted-foreground text-[11px] mt-1">{tr('Đăng nhập thêm tài khoản Zalo để dùng tính năng này.')}</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -329,12 +331,12 @@ function CloneModal({ workflow, accounts, onClose, onDone }: {
         {available.length > 0 && (
           <div className="px-5 pb-5 flex gap-2">
             <button onClick={onClose} className="flex-1 px-4 py-2 bg-card hover:bg-muted text-foreground/80 text-sm font-medium rounded-xl transition-colors">
-              Hủy
+              {tr('Hủy')}
             </button>
             <button onClick={handleClone} disabled={!targetId || loading}
               className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2">
               {loading && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-              Nhân bản
+              {tr('Nhân bản')}
             </button>
           </div>
         )}
@@ -362,11 +364,11 @@ function CloneAllModal({ sourceZaloId, accounts, onClose, onDone }: {
     try {
       const res = await ipc.workflow?.cloneAll(sourceZaloId, targetId);
       if (res?.success) {
-        showNotification(`Đã nhân bản ${res.count} workflow sang tài khoản mới`, 'success');
+        showNotification(tr('Đã nhân bản {{count}} workflow sang tài khoản mới', { count: res.count }), 'success');
         onDone();
         onClose();
       } else {
-        showNotification(res?.error || 'Lỗi nhân bản', 'error');
+        showNotification(res?.error || tr('Lỗi nhân bản'), 'error');
       }
     } finally {
       setLoading(false);
@@ -379,9 +381,9 @@ function CloneAllModal({ sourceZaloId, accounts, onClose, onDone }: {
       <div className="bg-popover border border-border rounded-2xl shadow-2xl w-[400px] overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div>
-            <p className="text-foreground font-semibold text-sm">Nhân bản tất cả workflows</p>
+            <p className="text-foreground font-semibold text-sm">{tr('Nhân bản tất cả workflows')}</p>
             <p className="text-muted-foreground text-[11px] mt-0.5 flex items-center gap-1.5">
-              <span>Từ:</span>
+              <span>{tr('Từ:')}</span>
               {sourceAcc?.avatar_url && <img src={sourceAcc.avatar_url} className="w-4 h-4 rounded-full object-cover" alt="" />}
               <span className="text-blue-400">{sourceAcc?.full_name || sourceZaloId}</span>
             </p>
@@ -395,16 +397,16 @@ function CloneAllModal({ sourceZaloId, accounts, onClose, onDone }: {
         <div className="p-5 space-y-4">
           <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3">
             <p className="text-amber-300 text-xs leading-relaxed">
-              ⚠ Tất cả workflows của tài khoản nguồn sẽ được sao chép sang tài khoản đích. Các workflows đã tồn tại ở tài khoản đích sẽ không bị thay thế.
+              {tr('⚠ Tất cả workflows của tài khoản nguồn sẽ được sao chép sang tài khoản đích. Các workflows đã tồn tại ở tài khoản đích sẽ không bị thay thế.')}
             </p>
           </div>
           {available.length === 0 ? (
             <div className="bg-card border border-border rounded-xl px-4 py-5 text-center">
-              <p className="text-muted-foreground text-xs">Không có tài khoản nào khác để nhân bản vào.</p>
+              <p className="text-muted-foreground text-xs">{tr('Không có tài khoản nào khác để nhân bản vào.')}</p>
             </div>
           ) : (
             <div className="space-y-2">
-              <p className="text-muted-foreground text-xs font-medium">Chọn tài khoản đích:</p>
+              <p className="text-muted-foreground text-xs font-medium">{tr('Chọn tài khoản đích:')}</p>
               {available.map(acc => (
                 <label key={acc.zalo_id}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${
@@ -437,12 +439,12 @@ function CloneAllModal({ sourceZaloId, accounts, onClose, onDone }: {
         {available.length > 0 && (
           <div className="px-5 pb-5 flex gap-2">
             <button onClick={onClose} className="flex-1 px-4 py-2 bg-card hover:bg-muted text-foreground/80 text-sm font-medium rounded-xl transition-colors">
-              Hủy
+              {tr('Hủy')}
             </button>
             <button onClick={handleCloneAll} disabled={!targetId || loading}
               className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2">
               {loading && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-              Nhân bản tất cả
+              {tr('Nhân bản tất cả')}
             </button>
           </div>
         )}
@@ -465,7 +467,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [selectedFriend, setSelectedFriend] = useState<{ userId: string; displayName: string } | null>(null);
   const [search, setSearch] = useState('');
-  const [testContent, setTestContent] = useState('Xin chào, đây là tin nhắn thử nghiệm từ workflow');
+  const [testContent, setTestContent] = useState(tr('Xin chào, đây là tin nhắn thử nghiệm từ workflow'));
 
   const availableAccounts = workflowPageIds.length > 0
     ? accounts.filter(a => workflowPageIds.includes(a.zalo_id))
@@ -481,7 +483,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
     if (!selectedAccount) return;
     setLoadingFriends(true);
     setSelectedFriend(null);
-    // DataAccessor: chế độ nhân viên đọc danh sách bạn từ Boss (IPC trả stub rỗng → danh sách luôn trống)
+    // DataAccessor: in employee mode, the workflow list is read from the Boss (IPC returns an empty stub → the list is always empty)
     DataAccessor.getFriends({ zaloId: selectedAccount }).then((res: any) => {
       if (res?.success) {
         const list = (res.friends || []).filter((f: any) => f.userId !== selectedAccount);
@@ -526,8 +528,8 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
       <div className="bg-popover border border-border rounded-2xl shadow-2xl w-[440px] max-h-[85vh] flex flex-col overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between flex-shrink-0">
           <div>
-            <p className="text-foreground font-semibold text-sm flex items-center gap-2"><PlayIcon className="w-4 h-4" /> Chạy thử Workflow</p>
-            <p className="text-muted-foreground text-[11px] mt-0.5">{isFriendRequest ? 'Chọn người để mô phỏng lời mời kết bạn' : 'Chọn người nhận để gửi tin nhắn thử nghiệm'}</p>
+            <p className="text-foreground font-semibold text-sm flex items-center gap-2">{trx('<0/> Chạy thử Workflow', { 0: <PlayIcon className="w-4 h-4" /> })}</p>
+            <p className="text-muted-foreground text-[11px] mt-0.5">{isFriendRequest ? tr('Chọn người để mô phỏng lời mời kết bạn') : tr('Chọn người nhận để gửi tin nhắn thử nghiệm')}</p>
           </div>
           <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -538,7 +540,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
         <div className="p-5 space-y-4 overflow-y-auto flex-1">
           {availableAccounts.length > 1 && (
             <div>
-              <label className="text-muted-foreground text-xs font-medium mb-1.5 block">Tài khoản gửi</label>
+              <label className="text-muted-foreground text-xs font-medium mb-1.5 block">{tr('Tài khoản gửi')}</label>
               <div className="space-y-1.5">
                 {availableAccounts.map(acc => (
                   <button key={acc.zalo_id} type="button"
@@ -565,34 +567,34 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
           )}
           {!isFriendRequest && (
           <div>
-            <label className="text-muted-foreground text-xs font-medium mb-1.5 block">Nội dung tin nhắn thử ($trigger.content)</label>
+            <label className="text-muted-foreground text-xs font-medium mb-1.5 block">{tr('Nội dung tin nhắn thử ($trigger.content)')}</label>
             <textarea
               value={testContent}
               onChange={e => setTestContent(e.target.value)}
               className="w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:border-blue-500 outline-none resize-none"
               rows={2}
-              placeholder="Nhập tin nhắn thử nghiệm..."
+              placeholder={tr('Nhập tin nhắn thử nghiệm...')}
             />
           </div>
           )}
           <div>
             <label className="text-muted-foreground text-xs font-medium mb-1.5 block">
-              {isFriendRequest ? 'Chọn người gửi lời mời kết bạn' : 'Chọn người nhận'} <span className="text-muted-foreground">(không thể gửi cho chính mình)</span>
+              {isFriendRequest ? tr('Chọn người gửi lời mời kết bạn') : tr('Chọn người nhận')} <span className="text-muted-foreground">{tr('(không thể gửi cho chính mình)')}</span>
             </label>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:border-blue-500 outline-none mb-2"
-              placeholder="Tìm tên hoặc ID..."
+              placeholder={tr('Tìm tên hoặc ID...')}
             />
             {loadingFriends ? (
               <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground text-xs">
                 <span className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-                Đang tải danh bạ…
+                {tr('Đang tải danh bạ…')}
               </div>
             ) : filteredFriends.length === 0 ? (
               <div className="py-4 text-center text-muted-foreground text-xs">
-                {friends.length === 0 ? 'Chưa có bạn bè nào' : 'Không tìm thấy'}
+                {friends.length === 0 ? tr('Chưa có bạn bè nào') : tr('Không tìm thấy')}
               </div>
             ) : (
               <div className="max-h-[200px] overflow-y-auto space-y-1 pr-1">
@@ -631,12 +633,12 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
         </div>
         <div className="px-5 py-4 border-t border-border flex gap-2 flex-shrink-0">
           <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-card hover:bg-muted text-foreground/80 text-sm font-medium rounded-xl transition-colors">
-            Hủy
+            {tr('Hủy')}
           </button>
           <button onClick={handleRun} disabled={!selectedFriend || !selectedAccount}
             className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            Chạy thử
+            {tr('Chạy thử')}
           </button>
         </div>
       </div>
@@ -661,14 +663,14 @@ function ChannelFilterButton({ value, onChange }: {
   }, []);
 
   const options: { key: 'all' | Channel; label: string }[] = [
-    { key: 'all', label: 'Tất cả kênh' },
+    { key: 'all', label: tr('Tất cả kênh') },
     { key: CHANNEL.ZALO, label: 'Zalo' },
     { key: CHANNEL.FACEBOOK, label: 'Facebook' },
-    { key: CHANNEL.TELEGRAM_USER, label: 'Telegram (Cá nhân)' },
+    { key: CHANNEL.TELEGRAM_USER, label: tr('Telegram (Cá nhân)') },
     { key: CHANNEL.TELEGRAM_BOT, label: 'Telegram (Bot)' },
   ];
 
-  const selectedLabel = options.find(o => o.key === value)?.label || 'Tất cả kênh';
+  const selectedLabel = options.find(o => o.key === value)?.label || tr('Tất cả kênh');
 
   return (
     <div ref={ref} className="relative">
@@ -756,7 +758,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
   useEffect(() => {
     load();
     if (isEmployeeMode) {
-      // Employee: accounts từ accountStore (đã load từ workspace:initialState)
+      // Employee: accounts from accountStore (already loaded by workspace:initialState)
       const accs = useAccountStore.getState().accounts;
       if (accs.length > 0) {
         setAccounts(accs.map((a: any) => ({
@@ -795,8 +797,8 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
     }
   }, [isEmployeeMode]);
 
-  // Workflow đổi ở máy khác (Boss / nhân viên khác lưu, xoá, bật tắt, nhân bản — event relay workflow:changed) → tải
-  // lại danh sách; gom các event dồn dập (nhân bản hàng loạt) thành một lần tải.
+  // A workflow changed on another machine (saved, deleted, toggled or duplicated by the Boss or another employee; workflow:changed relay event) → load
+  // the list again; bursts of events (bulk duplicating) are merged into one load.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const unsub = ipc.on?.('workflow:changed', () => {
@@ -810,7 +812,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
     const id = uuidv4();
     const wfData = {
       channel,
-      id, name: 'Workflow mới', description: '', enabled: false,
+      id, name: tr('Workflow mới'), description: '', enabled: false,
       nodes: [], edges: [], createdAt: Date.now(), updatedAt: Date.now(),
     };
     const res = isEmployeeMode
@@ -820,7 +822,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
       setShowCreateChannelModal(false);
       onEdit(id);
     }
-    else showNotification('Lỗi tạo workflow', 'error');
+    else showNotification(tr('Lỗi tạo workflow'), 'error');
   };
 
   const handleToggle = async (id: string, enabled: boolean) => {
@@ -831,14 +833,14 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
       setWorkflows(ws => ws.map(w => w.id === id ? { ...w, enabled } : w));
       return;
     }
-    showNotification(res?.error || 'Không thể cập nhật trạng thái workflow', 'error');
+    showNotification(res?.error || tr('Không thể cập nhật trạng thái workflow'), 'error');
   };
 
   const handleDelete = async (id: string, name: string) => {
     const ok = await showConfirm({
-      title: `Xóa workflow "${name}"?`,
-      message: 'Tất cả lịch sử chạy cũng sẽ bị xóa. Hành động này không thể hoàn tác.',
-      confirmText: 'Xóa', cancelText: 'Hủy', variant: 'danger',
+      title: tr('Xóa workflow "{{name}}"?', { name }),
+      message: tr('Tất cả lịch sử chạy cũng sẽ bị xóa. Hành động này không thể hoàn tác.'),
+      confirmText: tr('Xóa'), cancelText: tr('Hủy'), variant: 'danger',
     });
     if (!ok) return;
     const res = isEmployeeMode
@@ -846,9 +848,9 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
       : await ipc.workflow?.delete(id);
     if (res?.success) {
       setWorkflows(ws => ws.filter(w => w.id !== id));
-      showNotification('Đã xóa workflow', 'success');
+      showNotification(tr('Đã xóa workflow'), 'success');
     } else {
-      showNotification(res?.error || 'Lỗi xóa workflow', 'error');
+      showNotification(res?.error || tr('Lỗi xóa workflow'), 'error');
     }
   };
 
@@ -871,8 +873,8 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
     setRunningId(id);
     try {
       const res = await ipc.workflow?.runManual(id, triggerData);
-      if (res?.success) showNotification(`Chạy xong - ${res.log?.status}`, 'success');
-      else showNotification(res?.error || 'Lỗi chạy workflow', 'error');
+      if (res?.success) showNotification(tr('Chạy xong - {{status}}', { status: res.log?.status }), 'success');
+      else showNotification(res?.error || tr('Lỗi chạy workflow'), 'error');
     } finally {
       setRunningId(null);
     }
@@ -899,7 +901,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showNotification('Đã xuất workflow thành file JSON', 'success');
+    showNotification(tr('Đã xuất workflow thành file JSON'), 'success');
   };
 
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -910,10 +912,10 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
       try {
         const data = JSON.parse(ev.target?.result as string);
         if (!data._deplaoWorkflow) {
-          showNotification('File không phải workflow Deplao hợp lệ', 'error');
+          showNotification(tr('File không phải workflow Deplao hợp lệ'), 'error');
           return;
         }
-        // File cũ không có channel → mặc định Zalo
+        // Old file without a channel → defaults to Zalo
         const importChannel = normalizeWorkflowChannel(data.channel);
         // Create new IDs for all nodes/edges
         const idMap: Record<string, string> = {};
@@ -933,7 +935,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
         const importWf = {
           channel: importChannel,
           id: newId,
-          name: data.name ? `${data.name} (nhập)` : 'Workflow nhập',
+          name: data.name ? tr('{{name}} (nhập)', { name: data.name }) : tr('Workflow nhập'),
           description: data.description || '',
           enabled: false,
           nodes: importedNodes,
@@ -946,13 +948,13 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
           : await ipc.workflow?.save(importWf);
 
         if (res?.success) {
-          showNotification(`Đã nhập workflow "${data.name || 'Imported'}"`, 'success');
+          showNotification(tr('Đã nhập workflow "{{v1}}"', { v1: data.name || 'Imported' }), 'success');
           load();
         } else {
-          showNotification(res?.error || 'Lỗi nhập workflow', 'error');
+          showNotification(res?.error || tr('Lỗi nhập workflow'), 'error');
         }
       } catch (err: any) {
-        showNotification('Lỗi đọc file JSON: ' + (err.message || 'Invalid JSON'), 'error');
+        showNotification(tr('Lỗi đọc file JSON: {{v1}}', { v1: (err.message || 'Invalid JSON') }), 'error');
       }
     };
     reader.readAsText(file);
@@ -996,13 +998,13 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
   })();
 
   const triggerTypeLabel: Record<string, string> = {
-    'trigger.message':       'Tin nhắn',
-    'trigger.friendRequest': 'Kết bạn',
-    'trigger.groupEvent':    'Sự kiện nhóm',
-    'trigger.reaction':      'Cảm xúc',
-    'trigger.labelAssigned': 'Gán nhãn',
-    'trigger.schedule':      'Lịch trình',
-    'trigger.manual':        'Thủ công',
+    'trigger.message':       tr('Tin nhắn'),
+    'trigger.friendRequest': tr('Kết bạn'),
+    'trigger.groupEvent':    tr('Sự kiện nhóm'),
+    'trigger.reaction':      tr('Cảm xúc'),
+    'trigger.labelAssigned': tr('Gán nhãn'),
+    'trigger.schedule':      tr('Lịch trình'),
+    'trigger.manual':        tr('Thủ công'),
   };
 
   const getTriggerLabel = (wf: any) => {
@@ -1016,7 +1018,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
       ? wf.pageIds
       : (wf.pageId ? [wf.pageId] : []);
     if (ids.length === 0) {
-      return <span className="text-muted-foreground text-[11px]"><SmartphoneIcon className="w-4 h-4 inline" /> Tất cả tài khoản</span>;
+      return <span className="text-muted-foreground text-[11px]">{trx('<0/> Tất cả tài khoản', { 0: <SmartphoneIcon className="w-4 h-4 inline" /> })}</span>;
     }
     if (ids.length === 1) {
       const acc = accounts.find(a => a.zalo_id === ids[0]);
@@ -1034,7 +1036,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
     return (
       <span className="flex items-center gap-1 text-muted-foreground text-[11px]" title={names.join(', ')}>
         <span><SmartphoneIcon className="w-4 h-4" /></span>
-        <span>{ids.length} tài khoản</span>
+        <span>{trx('{{count}} tài khoản', { count: ids.length })}</span>
       </span>
     );
   };
@@ -1052,7 +1054,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
     );
   };
 
-  if (loading) return <PageLoading text="Đang tải workflow..." />;
+  if (loading) return <PageLoading text={tr('Đang tải workflow...')} />;
 
   return (
     <div className="flex flex-col h-full">
@@ -1061,9 +1063,9 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-foreground text-xl font-bold flex items-center gap-2">
-              <LightningIcon className="w-5 h-5" /> WorkFlow Automation
+              {trx('<0/> WorkFlow Automation', { 0: <LightningIcon className="w-5 h-5" /> })}
             </h1>
-            <p className="text-muted-foreground text-sm mt-0.5">Tự động hoá công việc với Workflow Automation</p>
+            <p className="text-muted-foreground text-sm mt-0.5">{tr('Tự động hoá công việc với Workflow Automation')}</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1072,13 +1074,13 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
                 <button
                     onClick={() => setCloneAllSource(filterPages[0])}
                     className="flex items-center gap-1.5 px-3.5 py-2.5 bg-amber-600/20 hover:bg-amber-600/30 border border-amber-600/30 text-amber-400 text-sm font-medium rounded-xl whitespace-nowrap transition-colors"
-                    title="Nhân bản tất cả workflows của tài khoản này sang tài khoản khác"
+                    title={tr('Nhân bản tất cả workflows của tài khoản này sang tài khoản khác')}
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                   </svg>
-                  Clone tất cả
+                  {tr('Clone tất cả')}
                 </button>
             )}
 
@@ -1090,18 +1092,18 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
                 </svg>
-                Kho mẫu 🔥
+                {tr('Kho mẫu 🔥')}
               </button>
             )}
             <button
               onClick={() => importFileRef.current?.click()}
               className="flex items-center gap-2 px-4 py-2.5 bg-card hover:bg-muted border border-border text-foreground/80 text-sm font-medium rounded-xl transition-colors"
-              title="Nhập workflow từ file JSON"
+              title={tr('Nhập workflow từ file JSON')}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
               </svg>
-              Nhập JSON
+              {tr('Nhập JSON')}
             </button>
             <input ref={importFileRef} type="file" accept=".json" className="hidden" onChange={handleImportFile} />
             <button
@@ -1111,7 +1113,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
-              Tạo workflow
+              {tr('Tạo workflow')}
             </button>
           </div>
         </div>
@@ -1127,7 +1129,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
               <input
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Tìm workflow theo tên hoặc mô tả..."
+                placeholder={tr('Tìm workflow theo tên hoặc mô tả...')}
                 className="w-full bg-card border border-border rounded-xl pl-10 pr-4 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 outline-none transition-all"
               />
               {searchQuery && (
@@ -1151,14 +1153,14 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-green-500" />
-                {workflows.filter(w => w.enabled).length} đang bật
+                {workflows.filter(w => w.enabled).length} {tr('đang bật')}
               </span>
               <span className="text-gray-700">·</span>
-              <span>{workflows.length} tổng cộng</span>
+              <span>{trx('{{count}} tổng cộng', { count: workflows.length })}</span>
               {filteredWorkflows.length !== workflows.length && (
                 <>
                   <span className="text-gray-700">·</span>
-                  <span className="text-blue-400">{filteredWorkflows.length} kết quả</span>
+                  <span className="text-blue-400">{trx('{{count}} kết quả', { count: filteredWorkflows.length })}</span>
                 </>
               )}
             </div>
@@ -1188,12 +1190,12 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
-              Tạo workflow đầu tiên
+              {tr('Tạo workflow đầu tiên')}
             </button>
             {onOpenStore && (
               <button onClick={onOpenStore}
                 className="flex items-center gap-2 px-5 py-2.5 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/40 text-violet-300 text-sm font-medium rounded-xl transition-colors mt-3">
-                <span><PackageIcon className="w-4 h-4" /></span> Hoặc chọn từ Kho mẫu có sẵn
+                {trx('<0><1/></0> Hoặc chọn từ Kho mẫu có sẵn', { 0: <span />, 1: <PackageIcon className="w-4 h-4" /> })}
               </button>
             )}
           </div>
@@ -1202,10 +1204,10 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
         {!loading && workflows.length > 0 && filteredWorkflows.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <p className="text-muted-foreground text-sm">
-              {searchQuery ? `Không tìm thấy workflow nào với "${searchQuery}"` : 'Không có workflow nào khớp với bộ lọc.'}
+              {searchQuery ? tr('Không tìm thấy workflow nào với "{{searchQuery}}"', { searchQuery }) : tr('Không có workflow nào khớp với bộ lọc.')}
             </p>
             <button onClick={() => { setFilterPages([]); setSearchQuery(''); }} className="mt-3 text-blue-400 text-xs hover:text-blue-300 transition-colors">
-              Xóa bộ lọc
+              {tr('Xóa bộ lọc')}
             </button>
           </div>
         )}
@@ -1240,7 +1242,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
                       <button
                         onClick={(e) => { e.stopPropagation(); handleToggle(wf.id, !wf.enabled); }}
                         className="flex-shrink-0"
-                        title={wf.enabled ? 'Đang bật - nhấn để tắt' : 'Đang tắt - nhấn để bật'}
+                        title={wf.enabled ? tr('Đang bật - nhấn để tắt') : tr('Đang tắt - nhấn để bật')}
                       >
                         <div className={`w-9 h-[20px] rounded-full transition-colors relative ${wf.enabled ? 'bg-blue-600' : 'bg-muted'}`}>
                           <span className={`absolute top-[3px] w-[14px] h-[14px] bg-white rounded-full shadow transition-all ${wf.enabled ? 'left-[19px]' : 'left-[3px]'}`} />
@@ -1258,7 +1260,7 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
                   <span className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
                     {getTriggerLabel(wf)}
                   </span>
-                  <span className="text-[11px] text-muted-foreground">{(wf.nodes || []).length} nodes</span>
+                  <span className="text-[11px] text-muted-foreground">{trx('{{count}} nodes', { count: (wf.nodes || []).length })}</span>
                   <span className="text-subtle-foreground">·</span>
                   {renderPageBadges(wf)}
                 </div>
@@ -1266,39 +1268,39 @@ export default function WorkflowList({ onEdit, onOpenStore }: Props) {
                 {/* Card footer */}
                 <div className="px-4 py-3 border-t border-border/60 flex items-center justify-between mt-auto">
                   <span className="text-[11px] text-muted-foreground">
-                    {new Date(wf.updatedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                    {new Date(wf.updatedAt).toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' })}
                   </span>
 
                   <div className="flex items-center gap-1">
-                    <button onClick={() => handleRunClick(wf)} disabled={isRunning} title="Chạy thử"
+                    <button onClick={() => handleRunClick(wf)} disabled={isRunning} title={tr('Chạy thử')}
                       className="h-7 px-2.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-green-400 hover:bg-green-500/10 disabled:opacity-40 transition-colors">
                       {isRunning
                         ? <span className="w-3 h-3 border-2 border-green-500/30 border-t-green-500 rounded-full animate-spin" />
                         : <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                       }
-                      <span className="hidden sm:inline">Chạy thử</span>
+                      <span className="hidden sm:inline">{tr('Chạy thử')}</span>
                     </button>
-                    <button onClick={() => handleExport(wf)} title="Xuất JSON"
+                    <button onClick={() => handleExport(wf)} title={tr('Xuất JSON')}
                       className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                       </svg>
                     </button>
-                    <button onClick={() => setCloningWf(wf)} title="Nhân bản"
+                    <button onClick={() => setCloningWf(wf)} title={tr('Nhân bản')}
                       className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-amber-400 hover:bg-amber-500/10 transition-colors">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                       </svg>
                     </button>
-                    <button onClick={() => onEdit(wf.id)} title="Chỉnh sửa"
+                    <button onClick={() => onEdit(wf.id)} title={tr('Chỉnh sửa')}
                       className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                         <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
                       </svg>
                     </button>
-                    <button onClick={() => handleDelete(wf.id, wf.name)} title="Xóa"
+                    <button onClick={() => handleDelete(wf.id, wf.name)} title={tr('Xóa')}
                       className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polyline points="3 6 5 6 21 6"/>

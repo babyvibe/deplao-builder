@@ -1,14 +1,14 @@
 /**
- * RestApiHandlers - REST API handlers cho HttpRelayService.
+ * RestApiHandlers: REST API handlers for HttpRelayService.
  *
- * Các hàm này được HttpRelayService gọi khi employee request:
+ * These functions are called by HttpRelayService when an employee makes a request:
  *   /api/query/*    → READ (GET)
  *   /api/command/*  → WRITE (POST, PUT, PATCH, DELETE)
  *   /api/boot       → INITIAL DATA
- *   /api/media/*    → FILE SERVING (trong mediaHandler.ts)
+ *   /api/media/*    → FILE SERVING (in mediaHandler.ts)
  *   /api/search/*   → SEARCH
  *
- * Tất cả handler đều nhận (employee, params) và trả về JSON-serializable object.
+ * Every handler receives (employee, params) and returns a JSON-serializable object.
  */
 
 import DatabaseService from '../../database/DatabaseService';
@@ -18,6 +18,7 @@ import {
   labelsVisibleToAccounts, maskProxyRow, ownedByAccounts, toConversationItem, toMessageItem,
   workflowRowToDto, workflowVisibleToAccounts,
 } from '../employeeRestRead';
+import { tr } from '../../../shared/i18n';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -63,24 +64,24 @@ function assignedAnalyticsAccounts(employee: RegisteredEmployee, raw: any): { id
   const ids = Array.from(new Set(list.map(id => String(id ?? '').trim()).filter(Boolean)));
   if (ids.length === 0) return { error: 'Missing zaloIds' };
   const assigned = new Set(employee.assigned_accounts || []);
-  if (ids.some(id => !assigned.has(id))) return { error: 'Không có quyền truy cập tài khoản này' };
+  if (ids.some(id => !assigned.has(id))) return { error: tr('Không có quyền truy cập tài khoản này') };
   return { ids };
 }
 
-/** Tài khoản được giao của nhân viên (chuỗi). */
+/** The employee's assigned accounts (strings). */
 function assignedIds(employee: RegisteredEmployee): string[] {
   return (employee.assigned_accounts || []).map(String);
 }
 
-/** limit trong [1, max], mặc định `fallback` (tham số REST luôn là chuỗi). */
+/** limit within [1, max], default `fallback` (REST parameters are always strings). */
 function clampLimit(raw: unknown, fallback: number, max: number): number {
   const n = Math.floor(Number(raw));
   return Math.min(Math.max(Number.isFinite(n) && n > 0 ? n : fallback, 1), max);
 }
 
 /**
- * Dữ liệu khởi động của MỘT tài khoản (/api/boot → byAccount): trang hội thoại đầu, nhãn + gắn nhãn, tin nhắn nhanh,
- * ghim, cờ (tắt tiếng / Khác / lưu trữ), cài đặt thông báo. Mỗi phần lỗi riêng → rỗng, không làm hỏng cả boot.
+ * Boot data for ONE account (/api/boot → byAccount): first page of conversations, labels + label assignments, quick messages,
+ * pins, flags (mute / Other / archive), notification settings. Each part fails on its own → empty, without breaking the whole boot.
  */
 function bootAccountData(zaloId: string): Record<string, any> {
   const safe = <T,>(fn: () => T, fallback: T): T => { try { return fn() ?? fallback; } catch { return fallback; } };
@@ -110,7 +111,7 @@ function bootAccountData(zaloId: string): Record<string, any> {
 
 export const handlers = {
   // ═══════════════════════════════════════════════════════════════
-  // BOOT API — toàn bộ data cần thiết cho employee mới connect
+  // BOOT API: all the data a newly connected employee needs
   // ═══════════════════════════════════════════════════════════════
 
   getBoot(employee: RegisteredEmployee, _params: any): JsonResponse {
@@ -121,8 +122,8 @@ export const handlers = {
       settings: {}, drafts: [], byAccount: {},
     });
 
-    // Dữ liệu khởi động của MỌI tài khoản được giao (trước đây chỉ tài khoản đầu tiên — nhân viên nhiều tài khoản
-    // thiếu dữ liệu tài khoản thứ hai). Các trường cấp trên (conversations, labels…) giữ = tài khoản đầu cho bản cũ.
+    // Boot data for EVERY assigned account (previously only the first account: employees with several accounts
+    // were missing the second account's data). The top-level fields (conversations, labels...) still equal the first account for old builds.
     const byAccount: Record<string, Record<string, any>> = {};
     for (const zaloId of zaloIds) byAccount[zaloId] = bootAccountData(zaloId);
 
@@ -151,7 +152,7 @@ export const handlers = {
         const rows = db().query<any>('SELECT zalo_id, full_name, avatar_url, phone, is_active, listener_active FROM accounts WHERE zalo_id=?', [zaloId]);
         acc = rows[0] || { zalo_id: zaloId, full_name: '', avatar_url: '', phone: '', is_active: 1, listener_active: 0 };
       } catch { acc = { zalo_id: zaloId, full_name: '', avatar_url: '', phone: '', is_active: 1, listener_active: 0 }; }
-      // Zalo My Documents (hội thoại có sẵn của Zalo)
+      // Zalo My Documents (the built-in Zalo conversation)
       let send2meId = '';
       try { send2meId = db().getMyDocumentsId(zaloId) || ''; } catch {}
       return { ...acc, send2me_id: send2meId };
@@ -178,12 +179,12 @@ export const handlers = {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId) return error('Missing zaloId');
 
-    // Trần 500 như nhánh IPC (DataAccessor.getConversations): CRM / nhóm xin 500–999 — trước đây nhân viên chỉ nhận 200
+    // Cap of 500 like the IPC path (DataAccessor.getConversations): CRM / groups ask for 500-999; previously employees only got 200
     const limit = clampLimit(params.limit, 50, 500);
     const offset = Math.max(parseInt(params.offset) || 0, 0);
     const search = params.search !== undefined && params.search !== null ? String(params.search) : '';
 
-    // Build query với SQL LIMIT/OFFSET — không load all
+    // Build the query with SQL LIMIT/OFFSET, do not load everything
     let whereClause = 'owner_zalo_id = ?';
     const queryParams: any[] = [zaloId];
     const countParams: any[] = [zaloId];
@@ -194,7 +195,7 @@ export const handlers = {
       queryParams.push(q, q, q);
       countParams.push(q, q, q);
     }
-    // ids=a,b,c: chỉ các hội thoại này (hội thoại ghim nằm ở trang sau — ConversationList tải bù), tối đa 200
+    // ids=a,b,c: only these conversations (pinned conversations are on a later page: ConversationList loads them separately), at most 200
     if (params.ids !== undefined && params.ids !== null && params.ids !== '') {
       const ids = [...new Set((Array.isArray(params.ids) ? params.ids : String(params.ids).split(','))
         .map((id: any) => String(id).trim()).filter(Boolean))].slice(0, 200);
@@ -209,13 +210,13 @@ export const handlers = {
       `SELECT COUNT(*) as cnt FROM contacts WHERE ${whereClause}`, countParams
     ))[0]?.cnt || 0;
 
-    // is_replied (đã / chưa trả lời theo tin thật mới nhất) như nhánh IPC getContactsFiltered
+    // is_replied (replied / not replied, based on the latest real message) like the IPC getContactsFiltered path
     const page = db().query<any>(
       `SELECT contacts.*, ${db().replyStateColumnSql()} AS is_replied FROM contacts WHERE ${whereClause} ORDER BY last_message_time DESC LIMIT ? OFFSET ?`,
       [...queryParams, limit, offset]
     ) || [];
 
-    // Dòng đầy đủ như IPC (channel, is_in_others, is_forum, telegram_*…) — xem toConversationItem
+    // Full row like IPC (channel, is_in_others, is_forum, telegram_*...), see toConversationItem
     const items = page.map(toConversationItem);
 
     return success({ items, total }, {
@@ -227,9 +228,9 @@ export const handlers = {
   },
 
   /**
-   * Như IPC db:getContactsFiltered — bộ lọc của danh sách hội thoại (kênh, tìm, Chưa đọc, Khác, Chưa trả lời, khoảng
-   * ngày) chạy DatabaseService.getContactsFiltered trên DB Boss cho tài khoản được giao (checkEmployeeAccess đã kiểm
-   * `zaloId`). Không có limit → mọi hội thoại khớp, như nhánh IPC.
+   * Like IPC db:getContactsFiltered: the conversation list filters (channel, search, Unread, Other, Not replied, date
+   * range) run DatabaseService.getContactsFiltered on the Boss DB for the assigned account (checkEmployeeAccess has already checked
+   * `zaloId`). No limit → every matching conversation, like the IPC path.
    */
   getConversationsFiltered(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
@@ -298,20 +299,20 @@ export const handlers = {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId || !params.threadId) return error('Missing zaloId or threadId');
 
-    // Trần 200 như IPC db:getMessages (ChatHeader xin 200 — trước đây nhân viên chỉ nhận 100)
+    // Cap of 200 like IPC db:getMessages (ChatHeader asks for 200; previously employees only got 100)
     const limit = clampLimit(params.limit, 50, 200);
     const offset = Math.max(parseInt(params.offset) || 0, 0);
     const before = params.before ? parseInt(params.before) : undefined;
 
-    // Nếu có before → cursor-based, nếu không → offset-based
+    // If before is given → cursor-based, otherwise → offset-based
     const topicId = params.topicId ? String(params.topicId) : undefined;
     const messages = db().getMessages(zaloId, params.threadId, limit, before ? 0 : offset, before, topicId);
     const hasMore = messages.length >= limit;
 
     console.log(`[RestApi] getMessages: zaloId=${zaloId} threadId=${params.threadId} limit=${limit} → ${messages.length} msgs`);
 
-    // Dòng đầy đủ như IPC (channel, reply_to_id, status, is_edited…) — trước đây thiếu → trích dẫn / album / sửa tin
-    // hiển thị khác chủ (xem toMessageItem)
+    // Full row like IPC (channel, reply_to_id, status, is_edited...); previously missing → quotes / albums / edited-message display broke
+    // display differs by owner (see toMessageItem)
     const items = messages.map(toMessageItem);
 
     return success({ items, total: items.length }, {
@@ -324,10 +325,10 @@ export const handlers = {
 
   getMessagesAround(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
-    const rawTs = params.timestamp ?? params.msgId; // DataAccessor gửi cả hai (msgId = timestamp, tên cũ)
+    const rawTs = params.timestamp ?? params.msgId; // DataAccessor sends both (msgId = timestamp, the old name)
     if (!zaloId || !params.threadId || !rawTs) return error('Missing params');
 
-    // Tin quanh mốc timestamp — mặc định 50, trần 200 như IPC (trước đây 20 / trần 50: "nhảy tới tin" thiếu ngữ cảnh)
+    // Messages around a timestamp: default 50, cap 200 like IPC (previously 20 / cap 50: "jump to message" lacked context)
     const timestamp = parseInt(rawTs) || Date.now();
     const limit = clampLimit(params.limit, 50, 200);
 
@@ -389,19 +390,19 @@ export const handlers = {
 
   searchMessages(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
-    // DataAccessor gửi `query` (cùng tên tham số IPC db:searchMessages); bản cũ gửi `q`. Trước đây chỉ đọc `q` →
-    // tìm tin của nhân viên luôn lỗi "Missing zaloId or query".
+    // DataAccessor sends `query` (same parameter name as IPC db:searchMessages); old builds send `q`. Previously only `q` was read →
+    // employee message search always failed with "Missing zaloId or query".
     const raw = params.query ?? params.q;
     if (!zaloId || raw === undefined || raw === null) return error('Missing zaloId or query');
 
     const query = String(raw).trim();
     if (!query) return success({ items: [], total: 0 });
 
-    // Như IPC: tối đa 100 dòng của DB (người gọi lọc theo hội thoại rồi mới cắt)
+    // Like IPC: at most 100 DB rows (the caller filters by conversation first, then cuts)
     const limit = clampLimit(params.limit, 100, 100);
     const messages = db().searchMessages(zaloId, query);
 
-    // Dòng tin đầy đủ như IPC (`content` để lọc / hiển thị, `timestamp` để nhảy tới tin) + thread_name/snippet cũ
+    // Full message row like IPC (`content` for filtering / display, `timestamp` for jumping to the message) + the old thread_name/snippet
     const items = (messages || []).slice(0, limit).map((m: any) => ({
       ...m,
       thread_name: m.thread_name || m.thread_id || '',
@@ -412,8 +413,8 @@ export const handlers = {
   },
 
   /**
-   * Ô chọn liên hệ (workflow, AI workflow): tìm không dấu + lọc loại + phân trang — như IPC db:searchContactsForPicker
-   * (trước đây nhân viên nhận stub rỗng). Bắt buộc zaloId (không đoán tài khoản đầu tiên).
+   * Contact picker (workflow, AI workflow): accent-insensitive search + type filter + paging, like IPC db:searchContactsForPicker
+   * (previously employees got an empty stub). zaloId is required (the first account is never guessed).
    */
   searchContactsForPicker(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId ? String(params.zaloId) : '';
@@ -431,7 +432,7 @@ export const handlers = {
     return success(result || { items: [], total: 0, counts: { all: 0, user: 0, group: 0 } });
   },
 
-  /** Liên hệ theo số điện thoại (gợi ý danh thiếp khi gõ số) — như IPC db:searchContactByPhone; null = không có. */
+  /** Contact by phone number (business card suggestion when typing a number), like IPC db:searchContactByPhone; null = none. */
   searchContactByPhone(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId ? String(params.zaloId) : '';
     const phone = String(params.phone ?? '').trim();
@@ -456,7 +457,7 @@ export const handlers = {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId || !params.userId) return error('Missing zaloId or userId');
     try {
-      // Cùng quy tắc IPC db:isFriend: bảng friends, rồi cờ contacts.is_friend (danh sách bạn chưa đồng bộ)
+      // Same rule as IPC db:isFriend: the friends table, then the contacts.is_friend flag (the friend list is not synced yet)
       return success({ isFriend: !!db().checkIsFriend(String(zaloId), String(params.userId)) });
     } catch {
       return success({ isFriend: false });
@@ -474,8 +475,8 @@ export const handlers = {
     const direction = params.direction === 'sent' ? 'sent' : 'received';
     const all = db().getFriendRequests(zaloId, direction) || [];
     const total = all.length;
-    // Như IPC: trả ĐỦ danh sách (trước đây cắt 50 → nhân viên thấy tối đa 50 lời mời, số đếm sai); chỉ cắt trang khi
-    // người gọi truyền limit
+    // Like IPC: returns the FULL list (previously cut at 50 → employees saw at most 50 friend requests and the count was wrong); only paginate when
+    // the caller passes a limit
     const paged = params.limit !== undefined && params.limit !== '';
     const offset = Math.max(parseInt(params.offset) || 0, 0);
     const items = paged ? all.slice(offset, offset + clampLimit(params.limit, 50, 500)) : all;
@@ -495,7 +496,7 @@ export const handlers = {
     return success({ items: members });
   },
 
-  /** Như IPC db:getGroupMembersPage: một trang thành viên + tổng, tìm theo `query`. */
+  /** Like IPC db:getGroupMembersPage: one page of members + total, searched by `query`. */
   getGroupMembersPage(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId || !params.groupId) return error('Missing zaloId or groupId');
@@ -538,7 +539,7 @@ export const handlers = {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId) return error('Missing zaloId');
 
-    // Như IPC crm:getCampaigns: kênh không hỗ trợ chiến dịch → danh sách rỗng
+    // Like IPC crm:getCampaigns: a channel without campaign support → empty list
     if (!getCRMChannelDecision(String(zaloId), 'campaign').allowed) return success({ items: [] });
     const campaigns = db().getCRMCampaigns(zaloId) || [];
     return success({ items: campaigns });
@@ -551,8 +552,8 @@ export const handlers = {
   getLabels(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId ? String(params.zaloId) : '';
     if (zaloId) return success({ items: db().getLocalLabels(zaloId) || [] });
-    // Không truyền tài khoản (Cài đặt → Nhãn, workflow): nhãn chung + nhãn của MỌI tài khoản được giao — nhánh IPC trả
-    // mọi nhãn của máy; trước đây Boss trả nhãn của tài khoản được giao ĐẦU TIÊN (thiếu nhãn tài khoản thứ hai)
+    // No account passed (Settings → Labels, workflow): shared labels + labels of EVERY assigned account, the IPC path returns
+    // every label on the machine; previously Boss returned the labels of the FIRST assigned account (the second account's labels were missing)
     return success({ items: labelsVisibleToAccounts(db().getLocalLabels() || [], assignedIds(employee)) });
   },
 
@@ -630,12 +631,12 @@ export const handlers = {
   },
 
   // ═══════════════════════════════════════════════════════════════
-  // TỰ ĐỘNG ĐÁNH DẤU ĐÃ ĐỌC
+  // AUTO MARK AS READ
   // ═══════════════════════════════════════════════════════════════
 
   getUnreadConversations(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = String(params.zaloId || employee.assigned_accounts[0] || '');
-    if (!zaloId || !(employee.assigned_accounts || []).map(String).includes(zaloId)) return error('Không có quyền truy cập tài khoản này');
+    if (!zaloId || !(employee.assigned_accounts || []).map(String).includes(zaloId)) return error(tr('Không có quyền truy cập tài khoản này'));
     const number = (value: unknown) => (value === undefined || value === null || value === '' ? undefined : Number(value));
     const items = db().getUnreadConversations(zaloId, {
       from: number(params.from),
@@ -656,7 +657,7 @@ export const handlers = {
       ? params.zaloIds.map(String)
       : [String(params.zaloId || employee.assigned_accounts[0] || '')];
     const zaloIds = requested.filter(id => id && assigned.has(id));
-    if (!zaloIds.length) return error('Không có quyền truy cập tài khoản này');
+    if (!zaloIds.length) return error(tr('Không có quyền truy cập tài khoản này'));
     if (params.mode === 'keys') return success({ items: db().getStarredMessageKeys(zaloIds[0]) });
     const limit = Math.max(1, Math.min(200, Number(params.limit) || 50));
     const rows = db().getStarredMessages(zaloIds, limit + 1, Math.max(0, Number(params.offset) || 0));
@@ -725,7 +726,7 @@ export const handlers = {
   // PROXIES
   // ═══════════════════════════════════════════════════════════════
 
-  // Mật khẩu proxy không bao giờ rời máy Boss (trước đây trả nguyên dòng cho mọi nhân viên)
+  // The proxy password never leaves the Boss machine (previously the whole row was returned to every employee)
   getProxies(employee: RegisteredEmployee, _params: any): JsonResponse {
     const proxies = (db().getProxies() || []).map(maskProxyRow);
     return success({ items: proxies });
@@ -770,8 +771,8 @@ export const handlers = {
   getKeywordStickersHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     if (!params.keyword) return error('Missing keyword');
     const stickerIds = db().getKeywordStickers(String(params.keyword));
-    // null = từ khoá CHƯA có trong cache (người gọi hỏi API), [] = đã tìm, không có sticker — như IPC. Trước đây null
-    // thành [] → gợi ý sticker của nhân viên không bao giờ gọi API cho từ khoá mới.
+    // null = keyword NOT in the cache yet (the caller asks the API), [] = searched, no sticker found, like IPC. Previously null
+    // became [] → the employee's sticker suggestions never called the API for a new keyword.
     return success({ stickerIds: Array.isArray(stickerIds) ? stickerIds : null });
   },
 
@@ -802,33 +803,33 @@ export const handlers = {
   getCampaignContactsHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     const id = parseInt(params.campaignId) || 0;
     if (!id) return error('Missing campaignId');
-    // Chỉ có campaignId (không có tham số tài khoản → checkEmployeeAccess không chặn được): chiến dịch phải thuộc
-    // tài khoản được giao. Không phân biệt "không có" với "không được giao".
+    // Only campaignId (no account parameter → checkEmployeeAccess cannot block it): the campaign must belong to
+    // an assigned account. "Does not exist" and "not assigned" are not told apart.
     const campaign = db().getCRMCampaign(id);
     if (!campaign || !assignedIds(employee).includes(String(campaign.owner_zalo_id))) {
-      return error('Không tìm thấy chiến dịch');
+      return error(tr('Không tìm thấy chiến dịch'));
     }
     const contacts = db().getCampaignContacts(id) || [];
     return success({ items: contacts });
   },
 
-  /** Hiệu quả chiến dịch (đã nhận / đã xem / đã phản hồi): như danh sách liên hệ, chiến dịch phải thuộc tài khoản được giao. */
+  /** Campaign performance (delivered / seen / replied): like the contact list, the campaign must belong to an assigned account. */
   getCampaignEngagementHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     const id = parseInt(params.campaignId) || 0;
     if (!id) return error('Missing campaignId');
     const campaign = db().getCRMCampaign(id);
     if (!campaign || !assignedIds(employee).includes(String(campaign.owner_zalo_id))) {
-      return error('Không tìm thấy chiến dịch');
+      return error(tr('Không tìm thấy chiến dịch'));
     }
     const report = db().getCampaignEngagement(id);
-    if (!report) return error('Không tìm thấy chiến dịch');
+    if (!report) return error(tr('Không tìm thấy chiến dịch'));
     return success(report);
   },
 
   getSendLogHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId) return error('Missing zaloId');
-    // Như IPC crm:getSendLog: kênh không có lịch sử CRM → rỗng
+    // Like IPC crm:getSendLog: a channel with no CRM history → empty
     if (!getCRMChannelDecision(String(zaloId), 'history').allowed) return success({ items: [] });
     const logs = db().getSendLog(zaloId, params.opts || {}) || [];
     return success({ items: logs });
@@ -837,8 +838,8 @@ export const handlers = {
   getQueueStatusHandler(employee: RegisteredEmployee, params: any): JsonResponse {
     const zaloId = params.zaloId || employee.assigned_accounts[0];
     if (!zaloId) return error('Missing zaloId');
-    // Trạng thái hàng đợi sống trong CRMQueueService (như IPC crm:getQueueStatus). Trước đây đọc app_settings
-    // `queue_status_<id>` — khoá không ai ghi → nhân viên luôn thấy "đang dừng".
+    // The queue status lives in CRMQueueService (like IPC crm:getQueueStatus). Previously it read app_settings
+    // `queue_status_<id>`: a key nobody writes → employees always saw "stopped".
     const CRMQueueService = require('../../crm/CRMQueueService').default;
     return success(CRMQueueService.getInstance().getStatus(String(zaloId)));
   },
@@ -882,7 +883,7 @@ export const handlers = {
   // ═══════════════════════════════════════════════════════════════
 
   getAllQuickMessagesHandler(employee: RegisteredEmployee, _params: any): JsonResponse {
-    // Chỉ tin nhắn nhanh của tài khoản được giao (trước đây trả của MỌI tài khoản trên máy Boss)
+    // Only quick messages of the assigned account (previously returned those of EVERY account on the Boss machine)
     const items = ownedByAccounts(db().getAllLocalQuickMessages() || [], assignedIds(employee));
     return success({ items });
   },
@@ -1060,8 +1061,8 @@ export const handlers = {
   // WORKFLOWS
   // ═══════════════════════════════════════════════════════════════
 
-  // Hình dạng `Workflow` như IPC workflow:list (pageIds, nodes/edges đã parse, enabled boolean — trước đây trả dòng thô
-  // nodes_json/page_ids) và chỉ workflow chung hoặc gắn tài khoản được giao (cùng quy tắc nhánh nhân viên của workflowIpc)
+  // `Workflow` shape like IPC workflow:list (pageIds, nodes/edges parsed, enabled boolean; previously the raw row was returned
+  // nodes_json/page_ids), and only shared workflows or workflows attached to an assigned account (same employee rule as workflowIpc)
   getWorkflows(employee: RegisteredEmployee, _params: any): JsonResponse {
     const assigned = assignedIds(employee);
     const workflows = (db().getWorkflows() || []).map(workflowRowToDto).filter(wf => workflowVisibleToAccounts(wf, assigned));
@@ -1078,9 +1079,9 @@ export const handlers = {
   getWorkflowRunLogs(employee: RegisteredEmployee, params: any): JsonResponse {
     const workflowId = params.workflowId || params.id;
     if (!workflowId) return error('Missing workflow id');
-    // Nhật ký chạy chứa nội dung tin của trang gắn workflow: chỉ workflow nhân viên được thấy (như getWorkflows)
+    // Run logs contain the message content of the page the workflow is attached to: the employee only sees workflows they may see (like getWorkflows)
     const row = db().getWorkflowById(workflowId);
-    if (!row || !workflowVisibleToAccounts(workflowRowToDto(row), assignedIds(employee))) return error('Không tìm thấy workflow');
+    if (!row || !workflowVisibleToAccounts(workflowRowToDto(row), assignedIds(employee))) return error(tr('Không tìm thấy workflow'));
     const limit = Math.min(parseInt(params.limit) || 50, 200);
     const logs = db().getWorkflowRunLogs(workflowId, limit) || [];
     return success({ items: logs });
@@ -1099,8 +1100,8 @@ export const handlers = {
   // ═══════════════════════════════════════════════════════════════
 
   getIntegrations(employee: RegisteredEmployee, _params: any): JsonResponse {
-    // Như IPC integration:list: cấu hình KHÔNG kèm thông tin xác thực + cổng webhook. Trước đây trả dòng thô
-    // (credentials_encrypted — JSON thường khi máy không có safeStorage; settings là chuỗi; enabled là số).
+    // Like IPC integration:list: the config WITHOUT credentials + the webhook port. Previously the raw row was returned
+    // (credentials_encrypted: plain JSON when the machine has no safeStorage; settings is a string; enabled is a number).
     const { IntegrationRegistry } = require('../../integrations/IntegrationRegistry');
     return success({ items: IntegrationRegistry.listConfigs(), webhookPort: IntegrationRegistry.getWebhookPort() });
   },
@@ -1120,7 +1121,7 @@ export const handlers = {
     const id = params.id || '';
     const AIAssistantService = require('../../ai/AIAssistantService').default;
     const assistant = AIAssistantService.getInstance().getAssistant(id);
-    if (!assistant) return error('Không tìm thấy trợ lý AI');
+    if (!assistant) return error(tr('Không tìm thấy trợ lý AI'));
     return success({ ...assistant, apiKey: assistant.apiKey ? '***' : '' });
   },
 
@@ -1172,10 +1173,10 @@ export const handlers = {
     return success(result);
   },
 
-  // ERP: route /api/query/erp/* + /api/command/erp/* chạy handler IPC erp:* (ErpRestRoutes + HttpRelayService.executeErpRest)
+  // ERP: routes /api/query/erp/* + /api/command/erp/* run the erp:* IPC handlers (ErpRestRoutes + HttpRelayService.executeErpRest)
 };
 
-// ── Helper: trích snippet từ content JSON ─────────────────────────
+// ── Helper: extract a snippet from content JSON ─────────────────────────
 
 function extractSnippet(contentRaw: any, query: string): string {
   try {

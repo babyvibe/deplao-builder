@@ -1,6 +1,6 @@
 /**
- * pluginStore — điểm mở rộng UI của plugin đang bật (trang sidebar, panel chat, nút soạn tin).
- * Tải khi mở app và mỗi khi main báo 'plugins:changed'. Dùng selector khi đọc.
+ * pluginStore: UI extension points of the enabled plugins (sidebar pages, chat panels, composer buttons).
+ * Loaded when the app opens and each time main reports 'plugins:changed'. Use selectors when reading.
  */
 import { create } from 'zustand';
 import ipc, { PluginContributions, PluginInfo } from '@/lib/ipc';
@@ -11,7 +11,7 @@ export const EMPTY_PLUGINS: PluginInfo[] = [];
 
 interface PluginStore {
   contributions: PluginContributions;
-  /** Mọi plugin đã cài ở workspace này (kể cả đang tắt) — cho trang Plugin. */
+  /** All plugins installed in this workspace (including disabled ones), for the Plugin page. */
   plugins: PluginInfo[];
   loaded: boolean;
   load: () => Promise<void>;
@@ -37,7 +37,7 @@ export const usePluginStore = create<PluginStore>((set) => ({
 
 let wired = false;
 
-/** Gọi một lần ở App: tải contribution và nghe thay đổi. */
+/** Called once in App: loads the contributions and listens for changes. */
 export function initPluginStore(): () => void {
   if (wired || !ipc.plugins) return () => undefined;
   wired = true;

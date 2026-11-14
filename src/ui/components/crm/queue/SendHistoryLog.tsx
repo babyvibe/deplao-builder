@@ -7,6 +7,8 @@ import { formatPhone } from '@/lib/contacts/phoneUtils';
 import { CampaignIcon, ChatIcon, ClipboardListIcon, SearchIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 import type { Channel } from '../../../../configs/channels/channelConfig';
 import { CHANNEL } from '@/lib/channels/channelHelper';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface SendLogEntry {
   id: number;
@@ -37,7 +39,7 @@ function today(): string { return new Date().toISOString().split('T')[0]; }
 
 function escapeCSV(val: any): string {
   const s = String(val ?? '');
-  // Excel tự chuyển số dài (SĐT, UID) thành scientific notation → ép giữ dạng text
+  // Excel auto-converts long numbers (phone numbers, UIDs) to scientific notation → force them to stay as text
   if (/^\d+$/.test(s) && s.length >= 5)
     return '="' + s + '"';
   if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r'))
@@ -46,7 +48,7 @@ function escapeCSV(val: any): string {
 }
 
 function tryFmtJson(raw: string | undefined): string {
-  if (!raw?.trim()) return '(trống)';
+  if (!raw?.trim()) return tr('(trống)');
   try { return JSON.stringify(JSON.parse(raw), null, 2); }
   catch { return raw; }
 }
@@ -55,7 +57,7 @@ function tryFmtJson(raw: string | undefined): string {
 function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }) {
   const campName = log.campaign_id ? `#${log.campaign_id}` : '-';
   const fmt = (ts: number) => ts
-    ? new Date(ts).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    ? new Date(ts).toLocaleString(appLocale(), { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : '-';
 
   return (
@@ -65,12 +67,9 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border flex-shrink-0">
           <div>
-            <h3 className="text-sm font-semibold text-foreground"><SearchIcon className="w-4 h-4 inline" /> Debug Log #{log.id}</h3>
+            <h3 className="text-sm font-semibold text-foreground">{trx('<0/> Debug Log #{{id}}', { 0: <SearchIcon className="w-4 h-4 inline" />, id: log.id })}</h3>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              {log.display_name || log.contact_id}
-              {log.phone ? ` · ${formatPhone(log.phone)}` : ''}
-              {' · '}Chiến dịch {campName}
-              {' · '}{fmt(log.sent_at)}
+              {trx('{{v1}}{{v2}} · Chiến dịch {{campName}} · {{v3}}', { v1: log.display_name || log.contact_id, v2: log.phone ? ` · ${formatPhone(log.phone)}` : '', campName, v3: fmt(log.sent_at) })}
             </p>
           </div>
           <button onClick={onClose}
@@ -81,12 +80,12 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
           {/* Meta row */}
           <div className="flex flex-wrap gap-2 text-xs">
             <span className="px-2 py-1 rounded-lg bg-muted text-foreground/80">
-              UID: <span className="text-foreground font-mono">{log.contact_id}</span>
+              {trx('UID: <0>{{contact_id}}</0>', { 0: <span className="text-foreground font-mono" />, contact_id: log.contact_id })}
             </span>
             <span className={`px-2 py-1 rounded-lg font-medium ${
               log.status === 'sent' ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'
             }`}>
-              {log.status === 'sent' ? '✓ Đã gửi' : '✕ Lỗi'}
+              {log.status === 'sent' ? tr('✓ Đã gửi') : tr('✕ Lỗi')}
             </span>
             {log.send_type && (
               <span className="px-2 py-1 rounded-lg bg-blue-500/15 text-blue-300">{log.send_type}</span>
@@ -98,15 +97,15 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
 
           {/* Message */}
           <div>
-            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">Nội dung gửi</p>
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">{tr('Nội dung gửi')}</p>
             <div className="bg-card border border-border rounded-xl px-3 py-2.5 text-xs text-foreground whitespace-pre-wrap break-word">
-              {log.message || '(trống)'}
+              {log.message || tr('(trống)')}
             </div>
           </div>
 
           {/* Request */}
           <div>
-            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">Data Request</p>
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">{tr('Data Request')}</p>
             <pre className="bg-card border border-border rounded-xl px-3 py-2.5 text-[11px] text-green-300 overflow-x-auto whitespace-pre-wrap break-word leading-relaxed max-h-48 overflow-y-auto">
               {tryFmtJson(log.data_request)}
             </pre>
@@ -114,7 +113,7 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
 
           {/* Response */}
           <div>
-            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">Data Response</p>
+            <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1.5">{tr('Data Response')}</p>
             <pre className="bg-card border border-border rounded-xl px-3 py-2.5 text-[11px] text-blue-300 overflow-x-auto whitespace-pre-wrap break-word leading-relaxed max-h-48 overflow-y-auto">
               {tryFmtJson(log.data_response)}
             </pre>
@@ -124,7 +123,7 @@ function DebugModal({ log, onClose }: { log: SendLogEntry; onClose: () => void }
         <div className="px-5 py-3 border-t border-border flex-shrink-0">
           <button onClick={onClose}
             className="w-full py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
-            Đóng
+            {tr('Đóng')}
           </button>
         </div>
       </div>
@@ -210,7 +209,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
   }, [activeAccountId, loadData]);
 
   const fmt = (ts: number) => ts
-    ? new Date(ts).toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+    ? new Date(ts).toLocaleString(appLocale(), { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '-';
 
   const selectCampaign = (c: { id: number; name: string }) => {
@@ -221,7 +220,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
     setFilterCampaignName(val); setSelectedCampaignId(null); setShowSuggestions(true); setPage(0);
   };
 
-  // ── Filter logic (dùng log.send_type trực tiếp, không còn case 'mixed') ──
+  // ── Filter logic (uses log.send_type directly, no longer a 'mixed' case) ──
   const filtered = logs.filter(log => {
     if (filterStatus !== 'all' && log.status !== filterStatus) return false;
     if (filterSearch.trim()) {
@@ -254,21 +253,21 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
 
   const exportToCSV = useCallback(() => {
     if (filtered.length === 0) return;
-    const headers = ['ID', 'Người nhận', 'SĐT', 'UID', 'Loại liên hệ', 'Chiến dịch', 'Nội dung', 'Loại gửi', 'Trạng thái', 'Lỗi', 'Thời gian'];
+    const headers = ['ID', tr('Người nhận'), tr('SĐT'), 'UID', tr('Loại liên hệ'), tr('Chiến dịch'), tr('Nội dung'), tr('Loại gửi'), tr('Trạng thái'), tr('Lỗi'), tr('Thời gian')];
     const rows = filtered.map(log => {
       const campInfo = campaignMap[log.campaign_id ?? -1];
       const st = log.send_type || 'message';
-      const stLabel = st === 'friend_request' ? 'Kết bạn' : st === 'invite_to_group' ? 'Mời vào nhóm' : 'Tin nhắn';
+      const stLabel = st === 'friend_request' ? tr('Kết bạn') : st === 'invite_to_group' ? tr('Mời vào nhóm') : tr('Tin nhắn');
       return [
         log.id,
         escapeCSV(log.display_name || log.contact_id),
         escapeCSV(log.phone ? formatPhone(log.phone) : ''),
         escapeCSV(log.contact_id),
-        log.contact_type === 'group' ? 'Nhóm' : 'Người dùng',
+        log.contact_type === 'group' ? tr('Nhóm') : tr('Người dùng'),
         escapeCSV(campInfo?.name || (log.campaign_id ? `#${log.campaign_id}` : '')),
         escapeCSV(log.message),
         stLabel,
-        log.status === 'sent' ? 'Đã gửi' : 'Lỗi',
+        log.status === 'sent' ? tr('Đã gửi') : tr('Lỗi'),
         escapeCSV(log.error || ''),
         fmt(log.sent_at),
       ].join(',');
@@ -295,26 +294,26 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
 
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-border flex-shrink-0">
-        <h3 className="text-sm font-semibold text-foreground"><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử gửi</h3>
+        <h3 className="text-sm font-semibold text-foreground">{trx('<0/> Lịch sử gửi', { 0: <ClipboardListIcon className="w-4 h-4 inline" /> })}</h3>
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-green-400">{sentCount} đã gửi</span>
-          {failedCount > 0 && <span className="text-red-400">{failedCount} lỗi</span>}
-          <span className="text-muted-foreground">/ {logs.length} tổng</span>
+          <span className="text-green-400">{trx('{{sentCount}} đã gửi', { sentCount })}</span>
+          {failedCount > 0 && <span className="text-red-400">{trx('{{failedCount}} lỗi', { failedCount })}</span>}
+          <span className="text-muted-foreground">{trx('/ {{count}} tổng', { count: logs.length })}</span>
         </div>
         <div className="ml-auto flex items-center gap-2">
           {filtered.length > 0 && (
             <button onClick={exportToCSV}
-              title={`Xuất ${filtered.length} dòng đang hiển thị ra CSV`}
+              title={tr('Xuất {{count}} dòng đang hiển thị ra CSV', { count: filtered.length })}
               className="flex items-center gap-1.5 text-xs text-foreground/80 hover:text-foreground bg-muted hover:bg-accent px-3 py-1.5 rounded-lg transition-colors border border-input hover:border-border-strong">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                 <polyline points="7 10 12 15 17 10"/>
                 <line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
-              Xuất CSV
+              {tr('Xuất CSV')}
             </button>
           )}
-          <button onClick={loadData} className="text-xs text-muted-foreground hover:text-foreground transition-colors">↻ Tải lại</button>
+          <button onClick={loadData} className="text-xs text-muted-foreground hover:text-foreground transition-colors">{tr('↻ Tải lại')}</button>
         </div>
       </div>
 
@@ -327,7 +326,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input value={filterSearch} onChange={e => { setFilterSearch(e.target.value); setPage(0); }}
-            placeholder="Tên, SĐT, UID, nội dung..."
+            placeholder={tr('Tên, SĐT, UID, nội dung...')}
             className="bg-muted border border-input rounded-full pl-7 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 w-44" />
         </div>
 
@@ -337,7 +336,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
             <input value={filterCampaignName}
               onChange={e => handleCampaignInput(e.target.value)}
               onFocus={() => { if (filterCampaignName.trim()) setShowSuggestions(true); }}
-              placeholder="Tên chiến dịch..."
+              placeholder={tr('Tên chiến dịch...')}
               className="bg-transparent pl-3 pr-1 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none w-36" />
             {filterCampaignName && (
               <button onClick={clearCampaignFilter} className="pr-2.5 text-muted-foreground hover:text-foreground text-xs flex-shrink-0">✕</button>
@@ -354,14 +353,14 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
           )}
           {showSuggestions && filterCampaignName.trim() && suggestions.length === 0 && (
             <div className="absolute top-full left-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 px-3 py-2 min-w-[200px]">
-              <p className="text-xs text-muted-foreground">Không tìm thấy chiến dịch</p>
+              <p className="text-xs text-muted-foreground">{tr('Không tìm thấy chiến dịch')}</p>
             </div>
           )}
         </div>
 
         {/* Date range */}
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <span className="flex-shrink-0">Từ</span>
+          <span className="flex-shrink-0">{tr('Từ')}</span>
           <DateInputVN value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(0); }}
             className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500 w-32" />
           <span className="flex-shrink-0">→</span>
@@ -369,7 +368,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
             className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500 w-32" />
           {(dateFrom || dateTo) && (
             <button onClick={() => { setDateFrom(''); setDateTo(''); setPage(0); }}
-              className="text-muted-foreground hover:text-foreground text-xs" title="Xóa lọc ngày">✕</button>
+              className="text-muted-foreground hover:text-foreground text-xs" title={tr('Xóa lọc ngày')}>✕</button>
           )}
         </div>
 
@@ -378,9 +377,9 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
           value={filterStatus}
           onChange={e => { setFilterStatus(e.target.value as typeof filterStatus); setPage(0); }}
           className="bg-muted border border-input rounded-full text-xs text-foreground/80 px-2.5 py-1.5 focus:outline-none focus:border-blue-500 flex-shrink-0">
-          <option value="all">Tất cả trạng thái</option>
-          <option value="sent">✓ Đã gửi</option>
-          <option value="failed">✕ Lỗi</option>
+          <option value="all">{tr('Tất cả trạng thái')}</option>
+          <option value="sent">{tr('✓ Đã gửi')}</option>
+          <option value="failed">{tr('✕ Lỗi')}</option>
         </select>
 
         {/* Send type filter */}
@@ -388,13 +387,13 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
           value={filterSendType}
           onChange={e => { setFilterSendType(e.target.value as typeof filterSendType); setPage(0); }}
           className="bg-muted border border-input rounded-full text-xs text-foreground/80 px-2.5 py-1.5 focus:outline-none focus:border-blue-500 flex-shrink-0">
-          <option value="all">Tất cả loại</option>
+          <option value="all">{tr('Tất cả loại')}</option>
           <option value="message"><ChatIcon className="w-4 h-4 inline" /> Tin nhắn</option>
           {supportsZaloCampaignActions && <option value="friend_request"><UserCheckIcon className="w-4 h-4 inline" /> Kết bạn</option>}
           {supportsZaloCampaignActions && <option value="invite_to_group"><UsersIcon className="w-4 h-4 inline" /> Mời nhóm</option>}
         </select>
 
-        <span className="ml-auto text-xs text-muted-foreground">{filtered.length} kết quả</span>
+        <span className="ml-auto text-xs text-muted-foreground">{trx('{{count}} kết quả', { count: filtered.length })}</span>
       </div>
 
       {/* Table */}
@@ -406,21 +405,21 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-40">
               <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/>
             </svg>
-            <p className="text-sm">Không có lịch sử gửi</p>
+            <p className="text-sm">{tr('Không có lịch sử gửi')}</p>
             {(dateFrom || dateTo) && (
               <button onClick={() => { setDateFrom(''); setDateTo(''); setPage(0); }}
-                className="mt-2 text-xs text-blue-400 hover:text-blue-300">Xóa lọc ngày →</button>
+                className="mt-2 text-xs text-blue-400 hover:text-blue-300">{tr('Xóa lọc ngày →')}</button>
             )}
           </div>
         ) : (
           <>
             {/* Column headers - added debug col at end */}
             <div className="grid grid-cols-[1fr_2fr_1fr_90px_80px_28px] gap-2 px-5 py-2 text-[11px] text-muted-foreground border-b border-border sticky top-0 bg-card z-10">
-              <span>Người nhận</span>
-              <span>Nội dung</span>
-              <span>Chiến dịch</span>
-              <span>Loại gửi</span>
-              <span className="text-right">Trạng thái / Giờ</span>
+              <span>{tr('Người nhận')}</span>
+              <span>{tr('Nội dung')}</span>
+              <span>{tr('Chiến dịch')}</span>
+              <span>{tr('Loại gửi')}</span>
+              <span className="text-right">{tr('Trạng thái / Giờ')}</span>
               <span />
             </div>
             {paged.map(log => {
@@ -440,7 +439,7 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
                     <div className="flex items-center gap-1.5">
                       <p className="text-foreground/80 truncate font-medium">{recipientName}</p>
                       {log.contact_type === 'group' && (
-                        <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">nhóm</span>
+                        <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">{tr('nhóm')}</span>
                       )}
                       {log.channel?.startsWith('telegram') && (
                         <span className="text-[9px] text-sky-400 flex-shrink-0 bg-sky-400/10 px-1 rounded">Telegram</span>
@@ -460,28 +459,28 @@ export default function SendHistoryLog(_props: SendHistoryLogProps) {
                   </div>
                   {/* Campaign */}
                   <span className="text-muted-foreground truncate self-center">
-                    {campaignName || (log.campaign_id ? `#${log.campaign_id} - Đã xoá` : '-')}
+                    {campaignName || (log.campaign_id ? tr('#{{campaign_id}} - Đã xoá', { campaign_id: log.campaign_id }) : '-')}
                   </span>
                   {/* Send type badge - 3 types only */}
                   <span className="flex-shrink-0 self-center">
                     {sendType === 'friend_request' ? (
-                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30"><UserCheckIcon className="w-4 h-4 inline" /> Kết bạn</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30">{trx('<0/> Kết bạn', { 0: <UserCheckIcon className="w-4 h-4 inline" /> })}</span>
                     ) : sendType === 'invite_to_group' ? (
-                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30"><UsersIcon className="w-4 h-4 inline" /> Mời nhóm</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">{trx('<0/> Mời nhóm', { 0: <UsersIcon className="w-4 h-4 inline" /> })}</span>
                     ) : (
-                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30"><ChatIcon className="w-4 h-4 inline" /> Tin nhắn</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">{trx('<0/> Tin nhắn', { 0: <ChatIcon className="w-4 h-4 inline" /> })}</span>
                     )}
                   </span>
                   {/* Status + time */}
                   <div className="text-right self-center">
                     <div className="flex items-center justify-center">
                         <span className={`block font-medium ${log.status === 'sent' ? 'text-green-400' : 'text-red-400'}`}>
-                          {log.status === 'sent' ? '✓ Đã gửi' : '✕ Lỗi'}
+                          {log.status === 'sent' ? tr('✓ Đã gửi') : tr('✕ Lỗi')}
                         </span>
                         <span>
                         <button
                             onClick={() => setDebugLog(log)}
-                            title="Xem data request / response"
+                            title={tr('Xem data request / response')}
                             className="transition-opacity w-5 h-5 rounded flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="16 18 22 12 16 6"/>

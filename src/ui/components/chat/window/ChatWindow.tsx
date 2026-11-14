@@ -1,10 +1,10 @@
 /**
- * Khung chat của hội thoại đang mở. File này chỉ GHÉP các phần (mỗi phần một file nhỏ, sửa / nâng cấp riêng):
- *   hooks/      logic (hội thoại, danh sách tin + cuộn, tải tin cũ, nhảy tới tin, chọn nhiều tin, thao tác trên tin…)
- *   rows/       một hàng tin (renderMessageRow) + dữ liệu hàng cần (rowContext)
- *   parts/      phần giao diện nhỏ (thanh chọn nhiều tin, đang nhập, đã xem, nút cuộn, popup / hộp thoại…)
- *   channels/   phần riêng từng kênh (tải tin cũ từ server, tải tin để nhảy tới, thành viên nhóm; Telegram: topic forum…)
- * Thứ tự gọi hook giữ đúng thứ tự effect của bản cũ (reset khi đổi hội thoại → thanh ghim → khôi phục cuộn). Xem README.md.
+ * Chat window of the open conversation. This file only ASSEMBLES the parts (each part is a small file, edited / upgraded on its own):
+ *   hooks/      logic (conversation, message list + scrolling, loading older messages, jumping to a message, multi-select, message actions…)
+ *   rows/       one message row (renderMessageRow) + the data a row needs (rowContext)
+ *   parts/      small UI pieces (multi-select bar, typing, seen, scroll button, popups / dialogs…)
+ *   channels/   per-channel parts (load older messages from the server, load messages to jump to, group members; Telegram: forum topics…)
+ * The hook call order keeps the same effect order as the old version (reset on conversation change → pinned bar → restore scroll). See README.md.
  */
 import { useRef } from 'react';
 import { useQuickErpAccess } from '@/hooks/erp/useQuickErpAccess';
@@ -44,9 +44,10 @@ import { SelectionBar } from './parts/SelectionBar';
 import { TypingIndicator } from './parts/TypingIndicator';
 import { SeenIndicator } from './parts/SeenIndicator';
 import { ChatWindowModals } from './parts/ChatWindowModals';
+import { tr } from '../../../../shared/i18n';
 
 export default function ChatWindow() {
-  // ─── Hội thoại đang mở (chỉ đúng phần store của hội thoại này) ────────────────────────────────────────────────────
+  // ─── Open conversation (only the store slice of this conversation) ────────────────────────────────────────────────────
   const thread = useOpenThread();
   const {
     activeAccountId, getActiveAccount, allAccounts, activeThreadId, activeTopicId, activeForumTopicId, activeTopicTitle,
@@ -55,25 +56,25 @@ export default function ChatWindow() {
     telegramGroupAdmins, postReplierPeers, showNotification, searchHighlightQuery,
   } = thread;
 
-  // ─── Danh sách tin: khung cuộn, cờ sẵn sàng, phân trang (dùng chung cho các hook bên dưới) ─────────────────────────
+  // ─── Message list: scroll container, ready flag, paging (shared by the hooks below) ─────────────────────────
   const list = useMessageListState();
   const {
     bottomRef, messagesContainerRef, messagesContentRef, pinnedBarWrapperRef, loadingMore, hasMore, olderKnown, loadError,
     atBottom, isViewingHistory, loadingLatest, threadReady, initialLoading, loadingSpinner,
   } = list;
 
-  // Quản lý công việc: "Thêm vào lịch" / "Lưu vào ghi chú" từ tin (chuột phải một tin, hoặc chọn nhiều tin)
+  // Task management: "Thêm vào lịch" (Add to calendar) / "Lưu vào ghi chú" (Save to notes) from a message (right-click a message, or select several messages)
   const erpAccess = useQuickErpAccess();
-  // Thanh chọn cảm xúc: giữ chuột 300 ms trên nút mới mở (lia ngang qua không tự bật), bấm thì mở ngay, rời thì đóng sau
-  // 250 ms — dùng chung với phần bình luận bài đăng kênh (MessageReactionCorner)
+  // Reaction bar: hold the mouse 300 ms on the newly opened button (a quick pass over it does not open it); a click opens it at once, leaving closes it after a delay
+  // 250 ms: shared with the comment part of channel posts (MessageReactionCorner)
   const {
     openId: reactionPickerMsgId, open: openReactionPicker, arm: armReactionPicker,
     scheduleClose: scheduleCloseReactionPicker, close: closeReactionPicker,
   } = useReactionHoverPicker();
-  // Telegram: reaction dùng được trong hội thoại đang mở (tải khi mở thanh chọn / menu chuột phải)
+  // Telegram: reactions available in the open conversation (loaded when the reaction bar / right-click menu opens)
   const telegramReactions = useTelegramChatReactions(activeAccountId, activeThreadId, activeContact?.channel === 'telegram_user');
 
-  // ─── Menu / popup / hộp thoại, trạng thái hiển thị hàng, trình xem media, kéo thả file, chọn nhiều tin ────────────
+  // ─── Menus / popups / dialogs, row display state, media viewer, file drag & drop, multi-select ────────────
   const dialogs = useChatWindowDialogs(telegramReactions);
   const {
     contextMenu, setContextMenu, forwardMsgs, setForwardMsgs, erpDraft, setErpDraft,
@@ -95,15 +96,15 @@ export default function ChatWindow() {
   } = useMessageSelection(msgsRef);
   const typingNow = useTypingTicker(activeAccountId, activeThreadId, threadTypingKey);
 
-  // ─── Pinned messages + notes (OPTIMIZED: 1 IPC call thay vì 2) ──────────────
+  // ─── Pinned messages + notes (OPTIMIZED: 1 IPC call instead of 2) ──────────────
   const { pins, setPins, pinnedNotes, setPinnedNotes, ready: pinsReady } = usePinnedData(activeAccountId, activeThreadId, activeContact?.channel);
 
   msgsRef.current = msgs;
 
-  // ─── Riêng từng kênh khi mở hội thoại (Telegram: tin topic forum, sửa dữ liệu cũ, đồng bộ cảm xúc) ─────────────────
+  // ─── Per-channel work when opening a conversation (Telegram: forum topic messages, fixing old data, syncing reactions) ─────────────────
   useChannelThreadSync({ activeAccountId, activeThreadId, activeTopicId, activeContact, msgs, threadKey, threadReady, setMessages });
 
-  // ─── Gom tin để vẽ + tra người gửi ─────────────────────────────────────────────────────────────────────────────────
+  // ─── Collect messages to render + look up senders ─────────────────────────────────────────────────────────────────────────────────
   const {
     groupedFirstMsgs, groupedSkipIds, pollSkipIds, groupedStickerFirstMsgs, groupedStickerSkipIds,
     dayStartIds, msgIndexById, findMsgById, msgTypeCache, getRowMsgIds,
@@ -112,15 +113,15 @@ export default function ChatWindow() {
     contactMap, getContact, groupMembers, getGroupMember, erpSourceOf, isGroupAdmin, resolveQuoteAuthor, resolveStarSender,
   } = useSenderDirectory({ contactList, threadGroupInfo, activeAccountId, activeThreadId, activeContact, allAccounts, findMsgById });
 
-  // ─── Vòng đời hội thoại, tải tin cũ, bám đáy / giữ vị trí cuộn ─────────────────────────────────────────────────────
+  // ─── Conversation lifecycle, loading older messages, stick to bottom / keep scroll position ─────────────────────────────────────────────────────
   useThreadLifecycle(list, {
     activeAccountId, activeThreadId, threadKey, msgs, messagesLoading, pinsReady,
     onThreadSwitch: () => {
       // Reset selection mode when switching threads
       setIsSelecting(false);
       setSelectedMsgIds(new Set());
-      // Thanh chọn reaction của hội thoại trước: tin đó bị gỡ khỏi DOM nên không có mouseleave → đóng + huỷ hẹn giờ
-      // (kẻo bật lên trên lớp "Đang tải..." hoặc quay lại hội thoại cũ vẫn thấy thanh mở)
+      // The reaction bar of the previous conversation: that message is removed from the DOM, so no mouseleave fires → close it and cancel its timer
+      // (otherwise it would pop up over the "Đang tải..." (Loading...) layer, or the old conversation would still show the bar open when you return)
       closeReactionPicker();
     },
   });
@@ -129,11 +130,11 @@ export default function ChatWindow() {
   });
   useScrollFollow(list, { activeAccountId, activeThreadId, activeContact, msgs, pins, pinnedNotes, maybeLoadOlder });
 
-  // ─── Chạy nền khi mở hội thoại: ảnh hỏng / nạp sẵn media, thành viên nhóm + người gửi chưa biết ────────────────────
+  // ─── Background work when opening a conversation: broken images / preloading media, group members + unknown senders ────────────────────
   useThreadMediaMaintenance({ threadReady, activeAccountId, activeThreadId, msgs });
   useGroupMembers({ activeAccountId, activeThreadId, msgs, threadGroupInfo, activeContact, getContact, getGroupMember });
 
-  // ─── Thao tác trên tin + nhảy tới tin ──────────────────────────────────────────────────────────────────────────────
+  // ─── Message actions + jump to message ──────────────────────────────────────────────────────────────────────────────
   const {
     getAuth, handleUndo, handleDelete, handleDeleteFromDb, handleReact, handleCancelReaction, handleForward, runForward,
     handleSaveToMyDocuments, contextTargetStarred, handleToggleStar, handlePin,
@@ -149,7 +150,7 @@ export default function ChatWindow() {
     return <NoThreadSelected />;
   }
 
-  // Dữ liệu cho từng hàng tin (rows/rowContext.ts)
+  // Data for each message row (rows/rowContext.ts)
   const rowCtx: MessageRowContext = {
     activeAccountId, activeThreadId, activeContact, channelCap, msgs, contactList, threadReceipt,
     telegramGroupAdmins, postReplierPeers, searchHighlightQuery, updateContact, removeMessage, setReplyTo,
@@ -183,7 +184,7 @@ export default function ChatWindow() {
         <ForumTopicBar activeForumTopicId={activeForumTopicId} activeTopicTitle={activeTopicTitle} />
       )}
 
-      {/* ── Pinned messages + notes bar - chỉ hiện khi ready ── */}
+      {/* ── Pinned messages + notes bar: shown only when ready ── */}
       {threadReady && activeAccountId && activeThreadId && (
         <div ref={pinnedBarWrapperRef}>
           {(pins.length > 0 || pinnedNotes.length > 0) && (
@@ -201,35 +202,35 @@ export default function ChatWindow() {
         </div>
       )}
 
-      {/* ── Friend request bar (chỉ hiện khi chat 1-1 với người chưa là bạn bè) ── */}
+      {/* ── Friend request bar (shown only in a 1-1 chat with someone who is not a friend yet) ── */}
       {threadReady && activeAccountId && activeThreadId && (
         <FriendRequestArea activeAccountId={activeAccountId} activeThreadId={activeThreadId} allAccounts={allAccounts}
           contactMap={contactMap} getAuth={getAuth} messagesContainerRef={messagesContainerRef} />
       )}
 
-      {/* ── Floating button: cuộn xuống / về tin nhắn mới nhất ── */}
-      {/* z-30: trên chip reaction của tin (absolute z-20, nằm SAU nút trong DOM nên trước đây đè lên nút); dưới bảng chọn
-          reaction và lớp "Đang tải..." (z-30, sau trong DOM), lớp thả file (z-40), hộp thoại (z-50). Nền card + viền +
-          bóng nổi rõ trên nền hội thoại cả 2 theme (bg-muted/80 cũ gần trùng màu nền sáng #eceef3). */}
+      {/* ── Floating button: scroll down / back to the latest message ── */}
+      {/* z-30: above the message's reaction chip (absolute z-20, comes AFTER the button in the DOM, so it used to cover the button); below the reaction
+          picker and the "Đang tải..." (Loading...) layer (z-30, later in the DOM), the file drop layer (z-40), dialogs (z-50). Card background + border +
+          shadow clearly visible on the conversation background in both themes (the old bg-muted/80 was almost the same color as the light background #eceef3). */}
       {threadReady && !atBottom && (
         <ScrollToLatestButton isViewingHistory={isViewingHistory} handleReturnToLatest={handleReturnToLatest}
           bottomRef={bottomRef} loadingLatest={loadingLatest} />
       )}
 
-      {/* Messages container - luôn render khi có thread active, skeleton hiển thị bên trong khi loading */}
-      {/* Giúp tránh "double flash" do container mount/unmount khi chuyển thread */}
+      {/* Messages container: always rendered when a thread is active, the skeleton shows inside while loading */}
+      {/* Avoids a "double flash" caused by the container mounting / unmounting when switching threads */}
       {activeAccountId && activeThreadId && (
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto [overflow-anchor:auto] relative" style={{ willChange: 'scroll-position' }}>
         <StickyDayPill containerRef={messagesContainerRef} />
-        {/* Lớp "Đang tải..." khi mở hội thoại: z-30 — trên chip reaction / nút 👍 (z-20), nhãn ngày dính (z-20) và nút cuộn
-            xuống (z-30, trước trong DOM); dưới popup ô soạn tin (z-30, sau trong DOM), lớp thả file (z-40), hộp thoại (z-50).
-            Không xuyên chuột: rê / bấm không trúng tin đang ẩn bên dưới (thanh chọn reaction z-30 không mở được khi đang tải).
-            Vòng xoay chỉ hiện khi tải lâu hơn ~300 ms (chat-loading-reveal): tin trong máy mở gần như tức thì → không nháy
-            "Đang tải..." mỗi lần chuyển hội thoại; lớp nền vẫn che ngay để không thấy danh sách trước khi cuộn xuống đáy. */}
-        {loadingSpinner && <div className="absolute inset-0 z-30 flex items-center justify-center bg-background"><div className="chat-loading-reveal flex flex-col items-center gap-3"><div className="w-8 h-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div><p className="text-sm text-muted-foreground">Đang tải...</p></div></div>}
+        {/* "Đang tải..." (Loading...) layer when opening a conversation: z-30, above the reaction chip / 👍 button (z-20), the sticky date label (z-20) and the scroll-down button
+            (z-30, earlier in the DOM); below the composer popup (z-30, later in the DOM), the file drop layer (z-40), dialogs (z-50).
+            Mouse events do not pass through: hovering / clicking does not hit the messages hidden underneath (the reaction bar at z-30 cannot open while loading).
+            The spinner only appears when loading takes longer than ~300 ms (chat-loading-reveal): messages on this machine open almost at once → no flicker of
+            "Đang tải..." on each conversation switch; the background layer still covers at once so the list is not seen before scrolling to the bottom. */}
+        {loadingSpinner && <div className="absolute inset-0 z-30 flex items-center justify-center bg-background"><div className="chat-loading-reveal flex flex-col items-center gap-3"><div className="w-8 h-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div><p className="text-sm text-muted-foreground">{tr('Đang tải...')}</p></div></div>}
         <div ref={messagesContentRef} className="p-4 space-y-1.5">
-        {/* Load More Button - Hiển thị trên tin nhắn đầu tiên (cũ nhất). Chỉ khi đang tải lâu, lỗi, hoặc đã biết
-            chắc còn tin cũ — "có thể còn" (mặc định khi mở) không hiện: cuộn gần đỉnh sẽ tự tải. */}
+        {/* Load More Button: shown on the first (oldest) message. Only when loading is slow, on error, or when older messages are known to remain
+            - "có thể còn" (may have more, the default on open) does not show it: scrolling near the top loads them automatically. */}
         {msgs.length > 0 && (loadError || loadingMore || (hasMore && olderKnown)) && (
           <LoadOlderButton handleLoadMore={handleLoadMore} loadingMore={loadingMore} loadError={loadError} />
         )}
@@ -249,7 +250,7 @@ export default function ChatWindow() {
           setErpDraft={setErpDraft} channelCap={channelCap} setForwardMsgs={setForwardMsgs} />
       )}
 
-      {/* Typing indicator - hiển thị phía trên input, không chồng lên nội dung */}
+      {/* Typing indicator: shown above the input, does not overlap the content */}
       {threadReady && activeAccountId && activeThreadId && typingNow > 0 && (
         <TypingIndicator activeAccountId={activeAccountId} activeThreadId={activeThreadId} contactList={contactList} />
       )}

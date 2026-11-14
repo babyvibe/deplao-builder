@@ -1,20 +1,20 @@
 /**
- * Module tunnel của "Cloudflare tự động" — `cloudTunnel: CloudTunnelModule` (hợp đồng ở ../contracts.ts).
- * Logic: CloudflareTunnelManager.ts (cấp phát / ingress / DNS / sức khoẻ), ingress.ts, dns.ts.
+ * The module for "Cloudflare tự động" (automatic Cloudflare): `cloudTunnel: CloudTunnelModule` (contract in ../contracts.ts).
+ * Logic: CloudflareTunnelManager.ts (provisioning / ingress / DNS / health), ingress.ts, dns.ts.
  *
- * Tiến trình: MỘT cloudflared cho cả ba dịch vụ, chạy qua TunnelService (tự chạy lại theo backoff, make-before-break khi
- * đổi tunnel) với khoá phiên giả CLOUD_TUNNEL_SESSION_PORT (không phải cổng thật). Token đi qua biến môi trường
- * TUNNEL_TOKEN (không lộ trong danh sách tiến trình), metrics 127.0.0.1:<cổng ngẫu nhiên> để đọc /ready.
+ * Process: ONE cloudflared for all three services, run through TunnelService (restarts itself with backoff, make-before-break when
+ * the tunnel changes) with the fake session key CLOUD_TUNNEL_SESSION_PORT (not a real port). The token is passed through the environment variable
+ * TUNNEL_TOKEN (not visible in the process list), metrics on 127.0.0.1:<random port> to read /ready.
  *
- * Nơi dùng địa chỉ (chỉ khi chế độ 'cloudflare_auto'; chế độ khác chạy y như cũ):
- *   - integrations/PaymentsTunnel.ts     (tunnel:start/stop/status)   → dịch vụ 'payments'
- *   - WebhookGatewayService              startTunnel/stopTunnel/status → dịch vụ 'workflow'
- *   - HttpRelayService                   startTunnel/stopTunnel/status → dịch vụ 'relay'
- * Các nơi đó nạp module này LƯỜI (require trong hàm, lỗi → null) và gọi isCloudTunnelAuto() trước.
+ * Where the address is used (only when the mode is 'cloudflare_auto'; other modes run exactly as before):
+ *   - integrations/PaymentsTunnel.ts     (tunnel:start/stop/status)   → service 'payments'
+ *   - WebhookGatewayService              startTunnel/stopTunnel/status → service 'workflow'
+ *   - HttpRelayService                   startTunnel/stopTunnel/status → service 'relay'
+ * Those places load this module LAZILY (require inside the function, error → null) and call isCloudTunnelAuto() first.
  *
- * Chế độ khác (Địa chỉ tạm / ngrok / Cloudflare thủ công): Cài đặt → Internet & Cloud → Địa chỉ Internet là nơi DUY
- * NHẤT bật / tắt địa chỉ. setServiceEnabled đi qua cầu legacyBridge bên dưới vào đúng các hàm cũ ở trên (nạp lười), nên
- * hành vi từng cổng giữ nguyên: relay dùng nhà cung cấp đã chọn, thanh toán / workflow dùng Quick Tunnel riêng.
+ * Other modes (temporary address / ngrok / manual Cloudflare): Settings → Internet & Cloud → Internet address is the ONLY place that turns the address on / off.
+ * setServiceEnabled goes through the legacyBridge below into the same old functions above (lazy load), so the behavior of each port stays the same:
+ * relay uses the chosen provider, payments / workflow use their own Quick Tunnel.
  */
 import * as http from 'http';
 import Logger from '../../../utils/Logger';
@@ -31,17 +31,18 @@ import {
     type RunnerStartInput,
 } from './CloudflareTunnelManager';
 import { defaultServicePort, type ServicePorts } from './ingress';
+import { tr } from '../../../shared/i18n';
 
-/** Khoá phiên TunnelService của tiến trình cloudflared dùng chung (một tiến trình phục vụ cả 3 cổng). */
+/** TunnelService session key of the shared cloudflared process (one process serves all 3 ports). */
 export const CLOUD_TUNNEL_SESSION_PORT = 0;
-const SESSION_LABEL = 'Cloudflare tự động';
-/** Đọc /ready nền khi cloudflared chạy. */
+const SESSION_LABEL = tr('Cloudflare tự động');
+/** Background /ready read while cloudflared runs. */
 const READY_POLL_MS = 15_000;
 const READY_TIMEOUT_MS = 2_500;
 
-// ─── Tiến trình cloudflared (TunnelService) ──────────────────────────────────
+// ─── cloudflared process (TunnelService) ──────────────────────────────────
 
-/** GET http://127.0.0.1:<port>/ready — 200 = có kết nối, 503 = chưa / mất kết nối; lỗi mạng → null. */
+/** GET http://127.0.0.1:<port>/ready: 200 = connected, 503 = not yet / connection lost; network error → null. */
 function fetchReady(port: number): Promise<ReadyInfo | null> {
     return new Promise((resolve) => {
         const req = http.get({ host: '127.0.0.1', port, path: '/ready', timeout: READY_TIMEOUT_MS }, (res) => {
@@ -70,9 +71,9 @@ function createTunnelServiceRunner(): CloudTunnelRunner {
         provider: 'cloudflare_named',
         token: input.token,
         publicUrl: input.publicUrl,
-        // Địa chỉ cố định: lần bật đầu lỗi (chưa có mạng…) vẫn tự thử lại
+        // Fixed address: if the first start fails (no network yet…), it still retries by itself
         keepAlive: true,
-        // Ingress do Deplao quản lý qua API (nhiều tên / đường dẫn) — không đối chiếu kiểu một Public Hostname
+        // Ingress is managed by Deplao through the API (many names / paths): not matched like a single Public Hostname
         managedIngress: true,
     });
     return {
@@ -87,7 +88,7 @@ function createTunnelServiceRunner(): CloudTunnelRunner {
             try {
                 await TunnelService.replace(CLOUD_TUNNEL_SESSION_PORT, SESSION_LABEL, options(input));
             } catch (err) {
-                // replace() lỗi khi đang có tunnel chạy → tunnel cũ giữ nguyên; không có thì phiên mới vẫn tự thử lại
+                // replace() fails while a tunnel is running → the old tunnel stays; if none is running, the new session still retries by itself
                 if (hadActive) tunnelId = previous;
                 throw err;
             }
@@ -120,9 +121,9 @@ function createTunnelServiceRunner(): CloudTunnelRunner {
     };
 }
 
-// ─── Cổng dịch vụ + tunnel kiểu cũ ───────────────────────────────────────────
+// ─── Service ports + old-style tunnels ───────────────────────────────────────────
 
-/** Cổng thật của dịch vụ (thanh toán tự lùi sang cổng kế khi 9888 bận; relay có thể đổi cổng). */
+/** The real port of the service (payments step back to the next port when 9888 is busy; the relay may change its port). */
 function servicePort(service: TunnelServiceId): number {
     try {
         if (service === 'payments') return Number(require('../../integrations/IntegrationRegistry').default.getWebhookPort()) || defaultServicePort(service);
@@ -137,7 +138,7 @@ function currentPorts(): ServicePorts {
     return { relay: servicePort('relay'), payments: servicePort('payments'), workflow: servicePort('workflow') };
 }
 
-/** relay_tunnel_provider (cấu hình relay cũ, trong DB workspace) ↔ TunnelMode. */
+/** relay_tunnel_provider (old relay config, in the workspace DB) ↔ TunnelMode. */
 const PROVIDER_TO_MODE: Record<string, TunnelMode> = { cloudflare: 'quick', ngrok: 'ngrok', cloudflare_named: 'cloudflare_manual' };
 const MODE_TO_PROVIDER: Partial<Record<TunnelMode, string>> = { quick: 'cloudflare', ngrok: 'ngrok', cloudflare_manual: 'cloudflare_named' };
 
@@ -145,12 +146,12 @@ function settingsDb(): any | null {
     try { return require('../../database/DatabaseService').default.getInstance(); } catch { return null; }
 }
 
-/** "Tự bật tunnel khi mở app" của relay (relay:setTunnelConfig { autoStart } ghi cùng khoá; relay đọc khi server chạy). */
+/** The relay's "Tự bật tunnel khi mở app" (start tunnel on app launch) (relay:setTunnelConfig { autoStart } writes the same key; the relay reads it when its server runs). */
 const RELAY_TUNNEL_AUTOSTART_KEY = 'relay_tunnel_autostart';
 
 const SERVICE_LABEL: Record<TunnelServiceId, string> = {
-    relay: 'Nhân viên và API',
-    payments: 'Thanh toán, tích hợp',
+    relay: tr('Nhân viên và API'),
+    payments: tr('Thanh toán, tích hợp'),
     workflow: 'Webhook workflow',
 };
 
@@ -158,35 +159,35 @@ function legacyFailure(service: TunnelServiceId, on: boolean, detail: unknown): 
     const text = String((detail as any)?.message ?? detail ?? '').trim();
     return new CloudError(
         on ? 'TUNNEL_START_FAILED' : 'TUNNEL_STOP_FAILED',
-        `Không ${on ? 'bật' : 'tắt'} được địa chỉ ${SERVICE_LABEL[service]}${text ? `: ${text}` : ''}`,
+        tr('Không {{v1}} được địa chỉ {{v2}}{{v3}}', { v1: on ? tr('bật') : tr('tắt'), v2: SERVICE_LABEL[service], v3: text ? `: ${text}` : '' }),
     );
 }
 
-/** Cổng relay đã lưu của workspace đang mở (như lúc mở app tự bật relay); không đọc được → cổng relay đang nhớ. */
+/** The saved relay port of the open workspace (as when the app launches and auto-starts the relay); if it cannot be read → the relay port currently remembered. */
 function workspaceRelayPort(): number | undefined {
     try {
         const ws = require('../../../utils/app/WorkspaceManager').default.getInstance().getActiveWorkspace();
         const port = Number(ws?.relayPort);
         if (ws?.type !== 'remote' && Number.isInteger(port) && port > 0 && port < 65536) return port;
-    } catch { /* WorkspaceManager chưa sẵn sàng */ }
+    } catch { /* WorkspaceManager not ready yet */ }
     return undefined;
 }
 
 /**
- * Bật tunnel kiểu cũ của một dịch vụ — đúng các hàm mà relay:startTunnel / tunnel:start / workflow:startTunnel gọi.
- * Chỉ chạy khi KHÔNG ở 'cloudflare_auto' (manager kiểm trong hàng đợi) nên các hàm đó không gọi ngược setServiceEnabled.
+ * Starts the old-style tunnel of a service: exactly the functions that relay:startTunnel / tunnel:start / workflow:startTunnel call.
+ * Runs only when NOT in 'cloudflare_auto' (the manager checks it inside the queue), so those functions do not call setServiceEnabled back.
  */
 async function startLegacyTunnel(service: TunnelServiceId): Promise<void> {
     if (service === 'relay') {
         const relay = require('../../http/HttpRelayService').default.getInstance();
         if (!relay.isRunning()) {
-            // Như nút bật nhanh ở Cài đặt → Nhân viên: máy chủ nhân viên (LAN) chưa chạy → bật trước (relay:startServer)
+            // Same as the quick switch in Settings → Employees: the employee server (LAN) is not running → start it first (relay:startServer)
             const port: number = workspaceRelayPort() ?? (Number(relay.getStatus().port) || defaultServicePort('relay'));
             const started = await relay.start(port);
             if (!started?.success) {
                 throw new CloudError(
                     'RELAY_NOT_RUNNING',
-                    `Bật máy chủ nhân viên (LAN) trước: chưa bật được trên cổng ${port}${started?.error ? ` (${started.error})` : ''}. Kiểm tra ở Cài đặt → Nhân viên → Kết nối rồi thử lại.`,
+                    tr('Bật máy chủ nhân viên (LAN) trước: chưa bật được trên cổng {{port}}{{v1}}. Kiểm tra ở Cài đặt → Nhân viên → Kết nối rồi thử lại.', { port, v1: started?.error ? ` (${started.error})` : '' }),
                 );
             }
             Logger.log(`[CloudTunnel] Đã bật máy chủ nhân viên (LAN) trên cổng ${started.port ?? port} để bật địa chỉ Internet`);
@@ -204,13 +205,13 @@ async function startLegacyTunnel(service: TunnelServiceId): Promise<void> {
     const gateway = require('../../workflow/WebhookGatewayService').default.getInstance();
     const status = gateway.getStatus();
     if (!status.running) {
-        throw new CloudError('GATEWAY_NOT_RUNNING', `Máy chủ nhận webhook workflow (cổng ${status.port}) chưa chạy — khởi động lại Deplao rồi thử lại`);
+        throw new CloudError('GATEWAY_NOT_RUNNING', tr('Máy chủ nhận webhook workflow (cổng {{port}}) chưa chạy — khởi động lại Deplao rồi thử lại', { port: status.port }));
     }
     const res = await gateway.startTunnel();
     if (!res?.success) throw legacyFailure(service, true, res?.error);
 }
 
-/** Tắt tunnel kiểu cũ của một dịch vụ (relay:stopTunnel / tunnel:stop / workflow:stopTunnel). */
+/** Stops the old-style tunnel of a service (relay:stopTunnel / tunnel:stop / workflow:stopTunnel). */
 async function stopLegacyTunnel(service: TunnelServiceId): Promise<void> {
     let res: { success: boolean; error?: string } | undefined;
     if (service === 'relay') {
@@ -248,7 +249,7 @@ const legacyBridge: LegacyTunnelBridge = {
     },
     setAutoStart(on) {
         const db = settingsDb();
-        if (!db) throw new CloudError('DB_UNAVAILABLE', 'Chưa đọc được dữ liệu workspace — thử lại sau');
+        if (!db) throw new CloudError('DB_UNAVAILABLE', tr('Chưa đọc được dữ liệu workspace — thử lại sau'));
         db.setSetting(RELAY_TUNNEL_AUTOSTART_KEY, on ? '1' : '0');
     },
 };
@@ -271,7 +272,7 @@ const manager = new CloudflareTunnelManager({
 
 export const cloudTunnel: CloudTunnelModule = manager;
 
-/** Đang ở chế độ 'cloudflare_auto' (đọc cloud-settings; lỗi → false = chạy như cũ). */
+/** Whether the mode is 'cloudflare_auto' (reads cloud-settings; error → false = run as before). */
 export function isCloudTunnelAuto(): boolean {
     try {
         return cloudflare.settings.get()?.tunnel?.mode === 'cloudflare_auto';
@@ -280,12 +281,12 @@ export function isCloudTunnelAuto(): boolean {
     }
 }
 
-/** Nghe thay đổi địa chỉ / tiến trình (relay, integrationIpc). Trả hàm huỷ. */
+/** Listens for address / process changes (relay, integrationIpc). Returns an unsubscribe function. */
 export function onCloudTunnelChange(cb: () => void): () => void {
     return manager.subscribe(cb);
 }
 
-/** Chi tiết tiến trình cloudflared dùng chung (restarts, attempt, nextRetryAt…) — null khi không chạy. */
+/** Details of the shared cloudflared process (restarts, attempt, nextRetryAt…); null when it is not running. */
 export function cloudTunnelProcessInfo(): RunnerSnapshot | null {
     return manager.processInfo();
 }

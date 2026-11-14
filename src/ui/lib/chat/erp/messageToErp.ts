@@ -1,18 +1,19 @@
 /**
- * Tin nhắn → lịch hẹn / ghi chú của Quản lý công việc (ERP): chuột phải tin → "Thêm vào lịch" / "Lưu vào ghi chú", chọn
- * nhiều tin rồi bấm ở thanh dưới, hoặc nút "Tạo lịch hẹn" ngay dưới tin có ngày giờ sắp tới. Dữ liệu điền sẵn cho
- * QuickEventDialog / QuickNoteDialog: tiêu đề lấy từ tin (bỏ phần ngày giờ, từ đệm), ngày giờ đọc trong tin
- * (lib/chat/erp/viDateTime, tính từ lúc tin được gửi: "mai 9h" trong tin hôm qua là 9:00 hôm nay), ghi chú = nội dung tin kèm
- * người gửi, giờ gửi và hội thoại. Nhắc mặc định 15 phút trước (chuông) + đúng giờ hẹn (popup như nhắc hẹn Zalo).
+ * Message → appointment / note of Task management (ERP): right-click a message → "Thêm vào lịch" (Add to calendar) / "Lưu vào ghi chú" (Save to note), select
+ * several messages and click in the bar below, or the "Tạo lịch hẹn" (Create appointment) button right under a message with an upcoming date and time. The data pre-fills
+ * QuickEventDialog / QuickNoteDialog: the title comes from the message (date and time removed, filler words dropped), the date and time are read from the message
+ * (lib/chat/erp/viDateTime, counted from the moment the message was sent: "mai 9h" (tomorrow 9h) in yesterday's message is 9:00 today), the note = the message content with
+ * the sender, the time sent and the conversation. Default reminder 15 minutes before (bell) + at the appointment time (popup like a Zalo appointment reminder).
  */
 import type { ErpEventType } from '../../../../models/erp/CalendarEvent';
 import { DEFAULT_ERP_REMINDERS } from '../../../../shared/erp/erpReminderText';
 import { parseViDateTime, titleWithoutDateTime } from './viDateTime';
+import { tr } from '../../../../shared/i18n';
 
 export interface ErpSourceMessage {
-  /** Nội dung chữ của tin (extractMsgText). */
+  /** The text content of the message (extractMsgText). */
   text: string;
-  /** Tên người gửi; tin của mình: "Bạn". */
+  /** Sender name; my own messages: "Bạn" (You). */
   sender: string;
   timestamp: number;
 }
@@ -26,15 +27,15 @@ export interface ErpSourceContext {
 
 export interface ErpEventDraft {
   title: string;
-  /** null = không đọc được ngày giờ trong tin (hộp thoại dùng giờ mặc định). */
+  /** null = the date and time could not be read from the message (the dialog uses the default time). */
   start: number | null;
-  /** Chỉ đọc được ngày, không có giờ. */
+  /** Only the date could be read, no time. */
   dateOnly: boolean;
   type: ErpEventType;
-  /** Mốc nhắc (phút trước giờ hẹn, 0 = đúng giờ hẹn). */
+  /** Reminder time (minutes before the appointment, 0 = at the appointment time). */
   reminders: number[];
   description: string;
-  /** Vị trí (trong danh sách truyền vào) của tin cho tiêu đề / ngày giờ: lịch gắn với tin này. */
+  /** Position (in the list passed in) of the message for the title / date and time: the appointment is attached to this message. */
   sourceIndex: number;
 }
 
@@ -47,14 +48,14 @@ const stamp = (ts: number) => {
 const usable = (messages: readonly ErpSourceMessage[]) =>
   messages.filter(m => m.text && m.text.trim() && m.text !== '[Tin nhắn]');
 
-/** Ghi chú: mỗi tin một dòng "[10:24 26/10] Hà: …", cuối là hội thoại · kênh · tài khoản. */
+/** Note: one line per message "[10:24 26/10] Hà: …", the end is conversation · channel · account. */
 export function messagesAsNote(messages: readonly ErpSourceMessage[], ctx: ErpSourceContext): string {
   const lines = usable(messages).map(m => `[${stamp(m.timestamp)}] ${m.sender}: ${m.text.trim()}`);
   const from = [`Hội thoại: ${ctx.conversation}`, ctx.channelLabel, ctx.accountName].filter(Boolean).join(' · ');
   return [...lines, '', from].join('\n').trim();
 }
 
-/** "họp" có dấu; tin gõ không dấu thì "hop" đứng riêng. */
+/** "họp" (meeting) with diacritics; a message typed without diacritics: "hop" stands alone. */
 function looksLikeMeeting(text: string): boolean {
   const lower = text.normalize('NFC').toLowerCase();
   if (/(?<![\p{L}\p{N}])họp(?![\p{L}\p{N}])/u.test(lower)) return true;
@@ -65,7 +66,7 @@ function looksLikeMeeting(text: string): boolean {
 export function eventDraftFromMessages(messages: readonly ErpSourceMessage[], ctx: ErpSourceContext): ErpEventDraft {
   const now = ctx.now ?? new Date();
   const list = usable(messages);
-  // Ngày giờ: tin chọn SAU CÙNG có ngày giờ (thường là tin chốt lại); tiêu đề lấy từ chính tin đó
+  // Date and time: the LAST selected message that has a date and time (usually the one that confirms it); the title comes from that message
   let parsed: ReturnType<typeof parseViDateTime> = null;
   let source = list[0];
   for (const message of list) {
@@ -75,7 +76,7 @@ export function eventDraftFromMessages(messages: readonly ErpSourceMessage[], ct
   const sourceIndex = Math.max(0, source ? messages.indexOf(source) : 0);
   const firstLine = (source?.text || '').split(/\r?\n/).map(line => line.trim()).find(Boolean) || '';
   const title = (parsed ? titleWithoutDateTime(firstLine, parsed.spans.filter(([start]) => start < firstLine.length)) : titleWithoutDateTime(firstLine, []))
-    || `Hẹn với ${ctx.conversation}`;
+    || tr('Hẹn với {{conversation}}', { conversation: ctx.conversation });
   return {
     title,
     start: parsed ? parsed.at : null,
@@ -92,22 +93,22 @@ export function noteDraftFromMessages(messages: readonly ErpSourceMessage[], ctx
   const firstLine = (first?.text || '').split(/\r?\n/).map(line => line.trim()).find(Boolean) || '';
   const title = firstLine
     ? (firstLine.length > 60 ? `${firstLine.slice(0, 57)}…` : firstLine)
-    : `Ghi chú từ ${ctx.conversation}`;
+    : tr('Ghi chú từ {{conversation}}', { conversation: ctx.conversation });
   return { title, content: messagesAsNote(messages, ctx) };
 }
 
 // ─── Task ───────────────────────────────────────────────────────────────────
 
 export interface ErpTaskSourceMessage extends ErpSourceMessage {
-  /** Ảnh của tin (data URL / link) chèn vào nội dung task. */
+  /** Image of the message (data URL / link) inserted into the task content. */
   images?: string[];
 }
 
 export interface ErpTaskDraft {
   title: string;
-  /** Nội dung task (HTML cho trình soạn của task). */
+  /** Task content (HTML for the task editor). */
   description: string;
-  /** Hạn hoàn thành đọc trong tin ("mai 9h gửi báo giá"); null = không có. */
+  /** Due date read from the message ("mai 9h gửi báo giá" (tomorrow 9h, send the quote)); null = none. */
   dueAt: number | null;
 }
 
@@ -117,9 +118,9 @@ const escapeHtml = (text: string) => text
 const textParagraph = (text: string) => `<p>${text.split(/\r?\n/).map(escapeHtml).join('<br>')}</p>`;
 
 /**
- * "Tạo task" từ tin nhắn: tiêu đề = dòng chữ đầu (bỏ phần ngày giờ), hạn = ngày giờ đọc trong tin (tin chọn sau cùng có
- * ngày giờ, như lịch hẹn; chỉ có ngày → 17:00 ngày đó), nội dung = mỗi tin một khối "Hà · 10:24 26/10" + chữ + ảnh của
- * tin, cuối là hội thoại · kênh · tài khoản. Tin chỉ có ảnh vẫn được lấy.
+ * "Tạo task" (Create task) from a message: title = the first line of text (date and time removed), due = the date and time read from the message (the last selected message with
+ * a date and time, like an appointment; date only → 17:00 that day), content = one block per message "Hà · 10:24 26/10" + text + the message's image,
+ * and the end is conversation · channel · account. Image-only messages are included too.
  */
 export function taskDraftFromMessages(messages: readonly ErpTaskSourceMessage[], ctx: ErpSourceContext): ErpTaskDraft {
   const now = ctx.now ?? new Date();
@@ -137,7 +138,7 @@ export function taskDraftFromMessages(messages: readonly ErpTaskSourceMessage[],
     : '';
   const title = cleaned
     ? (cleaned.length > 80 ? `${cleaned.slice(0, 77)}…` : cleaned)
-    : `Task từ ${ctx.conversation}`;
+    : tr('Task từ {{conversation}}', { conversation: ctx.conversation });
 
   let dueAt: number | null = null;
   if (parsed) {
@@ -152,6 +153,6 @@ export function taskDraftFromMessages(messages: readonly ErpTaskSourceMessage[],
     for (const src of m.images || []) parts.push(`<p><img src="${escapeHtml(src)}"></p>`);
     return parts.join('');
   });
-  const from = [`Hội thoại: ${ctx.conversation}`, ctx.channelLabel, ctx.accountName].filter(Boolean).join(' · ');
+  const from = [tr('Hội thoại: {{conversation}}', { conversation: ctx.conversation }), ctx.channelLabel, ctx.accountName].filter(Boolean).join(' · ');
   return { title, description: [...blocks, `<p><em>${escapeHtml(from)}</em></p>`].join(''), dueAt };
 }

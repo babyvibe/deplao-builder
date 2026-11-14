@@ -1,23 +1,23 @@
 /**
- * Bài đăng kênh Telegram vẽ như Telegram: khung bài cố định chiều rộng, ảnh / video / album rộng hết khung (sát mép trên),
- * chữ ở dưới có khoảng đệm, cảm xúc trong khung, chân bài (người đăng · lượt xem · đã sửa · giờ), thanh bình luận.
- * Ảnh / video dọc: khung không hẹp lại theo ảnh — hai bên lấp bằng chính ảnh làm mờ, chữ có chỗ rộng (trước đây khung
- * co theo ảnh dọc nên chữ dồn thành cột hẹp).
+ * Telegram-style channel post: fixed-width frame, photo / video / album filling the frame edge to edge (flush with the top),
+ * text below with padding, reactions inside the frame, post footer (author · views · edited · time), comment bar.
+ * Portrait photo / video: the frame does not narrow to the image. Both sides are filled with the blurred image itself, and the text gets room
+ * (before, the frame shrank to the portrait image, so the text was squeezed into a narrow column).
  */
 import React from 'react';
 
-/** true = đang vẽ bên trong bài đăng kênh (media rộng hết khung, không khung / giờ riêng). */
+/** true = currently drawing inside a channel post (media fills the frame, no separate frame or time). */
 export const TelegramPostLayoutContext = React.createContext(false);
 
-/** Chiều rộng tối đa của khung bài. */
+/** Maximum width of the post frame. */
 export const TELEGRAM_POST_MAX_WIDTH = '30rem';
-/** Chiều rộng khung bài (CSS): tối đa 30rem, không vượt cột chat. */
+/** Post frame width (CSS): max 30rem, not wider than the chat column. */
 export const TELEGRAM_POST_WIDTH = `min(${TELEGRAM_POST_MAX_WIDTH}, 100%)`;
 
-/** Ảnh / video cao hơn tỉ lệ này (rộng / cao) thì lấp hai bên bằng ảnh mờ thay vì cao vô hạn. */
+/** Photos / videos taller than this ratio (width / height) get a blurred image on both sides instead of growing infinitely tall. */
 export const TELEGRAM_POST_MIN_ASPECT = 0.9;
 
-/** Tỉ lệ khung media trong bài: theo media, nhưng không cao quá TELEGRAM_POST_MIN_ASPECT. */
+/** Media frame ratio in a post: follows the media, but never taller than TELEGRAM_POST_MIN_ASPECT. */
 export function telegramPostMediaAspect(width?: number | null, height?: number | null): { box: number; letterbox: boolean } {
   const w = Number(width) || 0;
   const h = Number(height) || 0;
@@ -27,8 +27,8 @@ export function telegramPostMediaAspect(width?: number | null, height?: number |
 }
 
 /**
- * Số gọn đúng như Telegram Desktop (Lang::FormatCountToShort): dưới 10 000 giữ nguyên ("1166"), từ 10 000 → K, từ
- * 1 000 000 → M, một chữ số thập phân CẮT (không làm tròn): 12 399 → "12.3K", 10 050 → "10K", 2 150 000 → "2.1M".
+ * Compact numbers exactly as Telegram Desktop does (Lang::FormatCountToShort): below 10 000 kept as is ("1166"), from 10 000 → K, from
+ * 1 000 000 → M, one decimal digit TRUNCATED (not rounded): 12 399 → "12.3K", 10 050 → "10K", 2 150 000 → "2.1M".
  */
 export function formatTelegramPostCount(value: number): string {
   const n = Math.max(0, Math.floor(Number(value) || 0));
@@ -54,24 +54,24 @@ export interface TelegramPostMetaLike {
 }
 
 export interface TelegramPostStatsView {
-  /** Tin mở phần bình luận (album: tin mang số bình luận). */
+  /** Message that opens the comments (album: the message that carries the comment count). */
   postId: string;
   postAuthor: string;
   views: number;
   comments: number;
   recentRepliers: string[];
-  /** Kênh có nhóm thảo luận → hiện thanh bình luận (kể cả 0 bình luận: "Để lại bình luận"). */
+  /** Channel with a discussion group → show the comment bar (even with 0 comments: "Để lại bình luận" (Leave a comment)). */
   hasDiscussion: boolean;
   /**
-   * Có bình luận mới từ lần đọc trước (chấm xanh trên thanh bình luận, như Telegram). Chưa từng mở phần bình luận
-   * (Telegram không gửi mốc đã đọc) thì không tính là chưa đọc.
+   * New comments since the last read (green dot on the comment bar, like Telegram). If the comments were never opened
+   * (Telegram does not send a read mark), they do not count as unread.
    */
   unread: boolean;
 }
 
 /**
- * Số liệu một bài (album = nhiều tin): lượt xem lớn nhất, bình luận lấy ở tin mang thông tin bình luận — Telegram chỉ gắn
- * số bình luận vào một tin của album, trước đây đọc tin đầu album nên lệch / mất số bình luận.
+ * Stats of one post (album = several messages): the highest view count, and comments read from the message that carries the comment info. Telegram
+ * attaches the comment count to only one message of an album. Before, the first message of the album was read, so the count was off or lost.
  */
 export function pickTelegramPostStats(items: Array<{ msgId: string; meta: TelegramPostMetaLike | null }>): TelegramPostStatsView | null {
   const posts = items.filter((item): item is { msgId: string; meta: TelegramPostMetaLike } => !!item.meta && !!item.msgId);

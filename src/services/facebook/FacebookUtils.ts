@@ -1,11 +1,12 @@
 /**
  * FacebookUtils.ts
- * Port từ Python _core/_utils.py
- * Helper functions dùng chung cho tất cả Facebook services
+ * Ported from Python _core/_utils.py
+ * Helper functions shared by all Facebook services
  */
 
 import { FBSessionData } from './FacebookTypes';
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 // ─── Base Conversion ──────────────────────────────────────────────────────────
 
@@ -25,7 +26,7 @@ export function strBase(number: number, base: number): string {
 // ─── Cookie Helpers ───────────────────────────────────────────────────────────
 
 /**
- * Parse cookie string thành object
+ * Parse a cookie string into an object
  * "c_user=123; xs=abc; ..." → { c_user: "123", xs: "abc" }
  */
 export function parseCookieString(cookieString: string): Record<string, string> {
@@ -43,7 +44,7 @@ export function parseCookieString(cookieString: string): Record<string, string> 
 }
 
 /**
- * Lấy c_user (Facebook ID) từ cookie string
+ * Get c_user (Facebook ID) from the cookie string
  */
 export function getFacebookIDFromCookie(cookie: string): string | null {
   const parsed = parseCookieString(cookie);
@@ -77,8 +78,8 @@ export function randStr(length: number): string {
 }
 
 /**
- * Generate threading ID (offline_threading_id / message_id)
- * Port từ Python gen_threading_id()
+ * Generate a threading ID (offline_threading_id / message_id)
+ * Ported from Python gen_threading_id()
  */
 export function genThreadingId(): string {
   const timeBinary = (Date.now()).toString(2);
@@ -115,8 +116,8 @@ export function buildHeaders(cookie: string, contentLength?: number, host: strin
 }
 
 /**
- * Build standard form data từ FBSessionData
- * Port từ Python formAll() trong _utils.py
+ * Build the standard form data from FBSessionData
+ * Ported from Python formAll() in _utils.py
  */
 export function buildFormData(
   dataFB: FBSessionData,
@@ -155,8 +156,8 @@ export function jsonMinimal(data: any): string {
 }
 
 /**
- * Extract data từ HTML string bằng cặp delimiters
- * Port từ Python dataSplit()
+ * Extract data from an HTML string using a pair of delimiters
+ * Ported from Python dataSplit()
  */
 export function dataSplit(html: string, before: string, after: string): string {
   const startIdx = html.indexOf(before);
@@ -168,7 +169,7 @@ export function dataSplit(html: string, before: string, after: string): string {
 }
 
 /**
- * Parse "for (;;);" prefix từ Facebook JSON responses
+ * Parse the "for (;;);" prefix from Facebook JSON responses
  */
 export function parseFBResponse(text: string): any {
   const cleaned = text.replace(/^for\s*\(;;\);/, '').trim();
@@ -176,7 +177,7 @@ export function parseFBResponse(text: string): any {
 }
 
 /**
- * Build axios config cho một POST request đến Facebook
+ * Build the axios config for a POST request to Facebook
  */
 export function buildPostConfig(
   url: string,
@@ -199,7 +200,7 @@ export function buildPostConfig(
 }
 
 /**
- * Build axios config cho một GET request đến Facebook
+ * Build the axios config for a GET request to Facebook
  */
 export function buildGetConfig(url: string, cookie: string, host: string = 'www.facebook.com', httpsAgent?: any) {
   return {
@@ -218,8 +219,8 @@ export function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Rate limit delay ngẫu nhiên để tránh bị FB detect spam
- * 300–800ms
+ * Random rate-limit delay to avoid being flagged as spam by FB
+ * 300-800ms
  */
 export function rateLimitDelay(): Promise<void> {
   const ms = 300 + Math.floor(Math.random() * 500);
@@ -236,9 +237,9 @@ export const E2EE_REQUIRED_COOKIES = ['c_user', 'xs'];
 export const E2EE_OPTIONAL_COOKIES = ['datr', 'fr', 'sb'];
 
 /**
- * Chuẩn hóa target thành JID đầy đủ cho E2EE.
- * Hỗ trợ: fbid:123 / facebook:123 / 12345678 / 12345678@msgr
- * Port từ Python normalize_chat_jid()
+ * Normalize a target into a full JID for E2EE.
+ * Supported: fbid:123 / facebook:123 / 12345678 / 12345678@msgr
+ * Ported from Python normalize_chat_jid()
  */
 export function normalizeChatJid(
   target: string | number,
@@ -271,17 +272,17 @@ export function normalizeChatJid(
 }
 
 /**
- * Tạo JID từ Facebook user ID
- * Port từ Python chat_jid_from_user_id()
+ * Create a JID from a Facebook user ID
+ * Ported from Python chat_jid_from_user_id()
  */
 export function chatJidFromUserId(userId: string | number): string {
   return normalizeChatJid(userId);
 }
 
 /**
- * Parse cookie string → trích cookies cần cho E2EE bridge.
- * Chỉ thực sự require: c_user + xs. Các cookie còn lại (datr, fr, sb) là optional.
- * wd, presence là ephemeral/JS-set - không bao giờ có trong saved cookie.
+ * Parse a cookie string → extract the cookies needed by the E2EE bridge.
+ * Only c_user + xs are strictly required. The other cookies (datr, fr, sb) are optional.
+ * wd and presence are ephemeral/JS-set, so they are never in the saved cookie.
  */
 export function parseE2EECookies(cookieString: string): Record<string, string> {
   const all = parseCookieString(cookieString);
@@ -293,16 +294,15 @@ export function parseE2EECookies(cookieString: string): Record<string, string> {
     if (allE2EE.has(k)) result[k] = v;
   }
 
-  // Chỉ kiểm tra 2 cookies bắt buộc
+  // Check only the 2 required cookies
   const missing = E2EE_REQUIRED_COOKIES.filter(k => !result[k]);
   if (missing.length > 0) {
     throw new Error(
-      `Thiếu cookie bắt buộc cho E2EE bridge: ${missing.join(', ')}. ` +
-      `Đảm bảo cookie chứa: c_user và xs`,
+      tr('Thiếu cookie bắt buộc cho E2EE bridge: {{v1}}. Đảm bảo cookie chứa: c_user và xs', { v1: missing.join(', ') }),
     );
   }
 
-  // Log optional missing cookies (không throw)
+  // Log missing optional cookies (does not throw)
   const optionalMissing = E2EE_OPTIONAL_COOKIES.filter(k => !result[k]);
   if (optionalMissing.length > 0) {
     Logger.warn(`[parseE2EECookies] Thiếu cookies optional: ${optionalMissing.join(', ')} - bridge có thể limited`);
@@ -312,8 +312,8 @@ export function parseE2EECookies(cookieString: string): Record<string, string> {
 }
 
 /**
- * Tìm một binary Go trong src/bridge-e2ee/build/ (cùng chỗ với E2EE bridge).
- * Thứ tự: biến môi trường `envVar` → process.resourcesPath → build/ khi dev.
+ * Find a Go binary in src/bridge-e2ee/build/ (same place as the E2EE bridge).
+ * Order: the `envVar` environment variable → process.resourcesPath → build/ in dev.
  */
 function findBridgeBinary(baseName: string, envVar: string): string | null {
   // 1. Environment variable override
@@ -369,8 +369,8 @@ function findBridgeBinary(baseName: string, envVar: string): string | null {
 }
 
 /**
- * Resolve đường dẫn đến Go bridge binary.
- * Thứ tự: FBCHAT_E2EE_BIN env → process.resourcesPath → error
+ * Resolve the path to the Go bridge binary.
+ * Order: FBCHAT_E2EE_BIN env → process.resourcesPath → error
  */
 export function resolveE2EEBinaryPath(): string {
   const found = findBridgeBinary('fbchat-bridge-e2ee', 'FBCHAT_E2EE_BIN');
@@ -384,17 +384,16 @@ export function resolveE2EEBinaryPath(): string {
 }
 
 /**
- * Resolve đường dẫn đến trình đăng nhập Facebook (fbchat-login-bridge, build
- * từ src/bridge-e2ee/login cùng lúc với E2EE bridge).
- * Thứ tự: FBCHAT_LOGIN_BIN env → process.resourcesPath → build/ khi dev
+ * Resolve the path to the Facebook login program (fbchat-login-bridge, built
+ * from src/bridge-e2ee/login at the same time as the E2EE bridge).
+ * Order: FBCHAT_LOGIN_BIN env → process.resourcesPath → build/ in dev
  */
 export function resolveNativeLoginBinaryPath(): string {
   const found = findBridgeBinary('fbchat-login-bridge', 'FBCHAT_LOGIN_BIN');
   if (found) return found;
   const binaryName = process.platform === 'win32' ? 'fbchat-login-bridge.exe' : 'fbchat-login-bridge';
   throw new Error(
-    `Thiếu trình đăng nhập Facebook (${binaryName}). ` +
-    `Bản cài đặt cần được cập nhật; khi phát triển, chạy lại "npm run dev" hoặc "npm run build:bridge-e2ee" để build.`,
+    tr('Thiếu trình đăng nhập Facebook ({{binaryName}}). Bản cài đặt cần được cập nhật; khi phát triển, chạy lại "npm run dev" hoặc "npm run build:bridge-e2ee" để build.', { binaryName }),
   );
 }
 

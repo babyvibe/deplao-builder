@@ -3,6 +3,8 @@ import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/app/appStore';
 import { useWorkspaceStore } from '@/store/app/workspaceStore';
 import { Spinner } from '@/components/common/PageLoading';import { UserIcon } from '@/components/common/icons';
+import { tr } from '../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 /** Build normalized Boss URL - handles both IP:Port and full tunnel URL */
@@ -31,7 +33,7 @@ export default function EmployeeLoginModal({ onClose }: Props) {
 
   const handleLogin = async () => {
     if (!ip.trim() || !username.trim() || !password.trim()) {
-      setError('Vui lòng nhập đầy đủ thông tin');
+      setError(tr('Vui lòng nhập đầy đủ thông tin'));
       return;
     }
     setLoading(true);
@@ -43,7 +45,7 @@ export default function EmployeeLoginModal({ onClose }: Props) {
       setStep('logging-in');
       const loginRes = await ipc.workspace?.loginRemote(bossUrl, username.trim(), password);
       if (!loginRes?.success) {
-        setError(loginRes?.error || 'Đăng nhập thất bại. Kiểm tra lại thông tin.');
+        setError(loginRes?.error || tr('Đăng nhập thất bại. Kiểm tra lại thông tin.'));
         setLoading(false);
         setStep('idle');
         return;
@@ -65,7 +67,7 @@ export default function EmployeeLoginModal({ onClose }: Props) {
       });
 
       if (!res?.success) {
-        setError(res?.error || 'Tạo workspace thất bại');
+        setError(res?.error || tr('Tạo workspace thất bại'));
         setLoading(false);
         setStep('idle');
         return;
@@ -88,26 +90,26 @@ export default function EmployeeLoginModal({ onClose }: Props) {
         useWorkspaceStore.getState().setWorkspaces(listRes.workspaces);
       }
 
-      showNotification(`Đã đăng nhập workspace "${wsName}"`, 'success');
+      showNotification(tr('Đã đăng nhập workspace "{{wsName}}"', { wsName }), 'success');
       onClose();
     } catch (err: any) {
-      setError(err?.message || 'Lỗi không xác định');
+      setError(err?.message || tr('Lỗi không xác định'));
     }
     setLoading(false);
     setStep('idle');
   };
 
-  const stepLabel = step === 'logging-in' ? 'Đang đăng nhập...'
-    : step === 'connecting' ? 'Đang kết nối...'
-    : step === 'switching' ? 'Đang chuyển workspace...'
-    : 'Đăng nhập';
+  const stepLabel = step === 'logging-in' ? tr('Đang đăng nhập...')
+    : step === 'connecting' ? tr('Đang kết nối...')
+    : step === 'switching' ? tr('Đang chuyển workspace...')
+    : tr('Đăng nhập');
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
       <div className="bg-card rounded-2xl w-full max-w-md shadow-2xl border border-border" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <h2 className="text-foreground font-semibold"><UserIcon className="w-4 h-4 inline" /> Đăng nhập nhân viên</h2>
+          <h2 className="text-foreground font-semibold">{trx('<0/> Đăng nhập nhân viên', { 0: <UserIcon className="w-4 h-4 inline" /> })}</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
               <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
@@ -118,32 +120,32 @@ export default function EmployeeLoginModal({ onClose }: Props) {
         {/* Body */}
         <div className="px-6 py-5 space-y-4">
           <p className="text-muted-foreground text-sm">
-            Nhập thông tin kết nối tới máy Boss để đăng nhập dưới vai trò nhân viên.
+            {tr('Nhập thông tin kết nối tới máy Boss để đăng nhập dưới vai trò nhân viên.')}
           </p>
 
           <div>
-            <label className="text-xs text-muted-foreground font-medium mb-1 block">Tên workspace (tùy chọn)</label>
+            <label className="text-xs text-muted-foreground font-medium mb-1 block">{tr('Tên workspace (tùy chọn)')}</label>
             <input
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="VD: NV Công ty ABC"
+              placeholder={tr('VD: NV Công ty ABC')}
               className="w-full text-sm bg-muted border border-input rounded-lg px-3 py-2 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
             />
           </div>
 
           <div className="flex gap-2">
             <div className="flex-1">
-              <label className="text-xs text-muted-foreground font-medium mb-1 block">Địa chỉ BOSS</label>
+              <label className="text-xs text-muted-foreground font-medium mb-1 block">{tr('Địa chỉ BOSS')}</label>
               <input
                 value={ip}
                 onChange={e => setIp(e.target.value)}
-                placeholder="192.168.1.100 hoặc https://xxxx.loca.lt"
+                placeholder={tr('192.168.1.100 hoặc https://xxxx.loca.lt')}
                 className="w-full text-sm bg-muted border border-input rounded-lg px-3 py-2 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
             </div>
             {!ip.startsWith('http') && (
             <div className="w-20">
-              <label className="text-xs text-muted-foreground font-medium mb-1 block">Port</label>
+              <label className="text-xs text-muted-foreground font-medium mb-1 block">{tr('Port')}</label>
               <input
                 value={port}
                 onChange={e => setPort(e.target.value)}
@@ -155,17 +157,17 @@ export default function EmployeeLoginModal({ onClose }: Props) {
           </div>
 
           <div>
-            <label className="text-xs text-muted-foreground font-medium mb-1 block">Tên đăng nhập</label>
+            <label className="text-xs text-muted-foreground font-medium mb-1 block">{tr('Tên đăng nhập')}</label>
             <input
               value={username}
               onChange={e => setUsername(e.target.value)}
-              placeholder="username"
+              placeholder={tr('username')}
               className="w-full text-sm bg-muted border border-input rounded-lg px-3 py-2 text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
             />
           </div>
 
           <div>
-            <label className="text-xs text-muted-foreground font-medium mb-1 block">Mật khẩu</label>
+            <label className="text-xs text-muted-foreground font-medium mb-1 block">{tr('Mật khẩu')}</label>
             <input
               value={password}
               onChange={e => setPassword(e.target.value)}

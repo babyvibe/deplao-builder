@@ -1,6 +1,8 @@
 import React from 'react';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { useAppStore } from '@/store/app/appStore';import { ChartIcon, KeyIcon, RefreshIcon, SmartphoneIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 /**
@@ -35,14 +37,14 @@ export default function EmployeeConnectionBanner() {
                             {previewEmp?.display_name?.charAt(0)?.toUpperCase() || '?'}
                         </div>
                     )}
-                    <span className="font-semibold text-amber-100"><RefreshIcon className="w-4 h-4 inline" /> Đang giả lập: {previewEmp?.display_name || 'Nhân viên'}
+                    <span className="font-semibold text-amber-100">{trx('<0/> Đang giả lập: {{v1}}', { 0: <RefreshIcon className="w-4 h-4 inline" />, v1: previewEmp?.display_name || tr('Nhân viên') })}
                     </span>
                 </div>
 
                 {/* Stats */}
                 <div className="flex items-center gap-3 text-[11px] text-amber-300/70">
-                    <span><SmartphoneIcon className="w-4 h-4 inline" /> {assignedCount} TK Zalo</span>
-                    <span title={permModules.join(', ')}><KeyIcon className="w-4 h-4 inline" /> {permCount} modules</span>
+                    <span>{trx('<0/> {{assignedCount}} TK Zalo', { 0: <SmartphoneIcon className="w-4 h-4 inline" />, assignedCount })}</span>
+                    <span title={permModules.join(', ')}>{trx('<0/> {{permCount}} modules', { 0: <KeyIcon className="w-4 h-4 inline" />, permCount })}</span>
                     <span>@{previewEmp?.username}</span>
                 </div>
 
@@ -52,8 +54,8 @@ export default function EmployeeConnectionBanner() {
                 <button
                     onClick={() => useAppStore.getState().setView('dashboard')}
                     className="flex items-center gap-1 text-[11px] font-medium text-amber-300/80 hover:text-amber-100 px-2 py-0.5 rounded-md hover:bg-amber-800/30 transition-colors"
-                    title="Xem Dashboard với góc nhìn nhân viên"
-                ><ChartIcon className="w-4 h-4 inline" /> Dashboard NV
+                    title={tr('Xem Dashboard với góc nhìn nhân viên')}
+                >{trx('<0/> Dashboard NV', { 0: <ChartIcon className="w-4 h-4 inline" /> })}
                 </button>
 
                 {/* Exit button */}
@@ -64,7 +66,7 @@ export default function EmployeeConnectionBanner() {
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
-                    Thoát giả lập
+                    {tr('Thoát giả lập')}
                 </button>
             </div>
         );

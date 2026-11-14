@@ -9,6 +9,7 @@ import ErpNotificationService from './ErpNotificationService';
 import { erpReminderLeadText, normalizeErpReminderMinutes } from '../../shared/erp/erpReminderText';
 import { erpTimeRangeText, erpWhenText } from '../../shared/erp/erpNotifyText';
 import { erpPersonName } from './erpPeople';
+import { tr } from '../../shared/i18n';
 
 export default class ErpCalendarService {
   private static instance: ErpCalendarService;
@@ -138,19 +139,19 @@ export default class ErpCalendarService {
     });
     const event = this.getEvent(id)!;
     this.scheduleEventReminders(event);
-    // Notify attendees: "09:00 - 10:30 31/10 · Phòng A · Mời bởi Lan"
+    // Notify attendees: "09:00 - 10:30 31/10 · Phòng A · Mời bởi Lan" (Room A, invited by Lan)
     if (input.attendees?.length) {
       const inviteBody = [
         erpTimeRangeText(input.start_at, normalizedEndAt, !!input.all_day, now),
         input.location,
-        `Mời bởi ${erpPersonName(organizerId)}`,
+        tr('Mời bởi {{v1}}', { v1: erpPersonName(organizerId) }),
       ].filter(Boolean).join(' · ');
       for (const empId of input.attendees) {
         if (empId && empId !== organizerId) {
           try {
             ErpNotificationService.getInstance().notify(
               empId, 'event_invited',
-              `Mời tham dự: ${input.title}`,
+              tr('Mời tham dự: {{title}}', { title: input.title }),
               inviteBody,
               `erp://event/${id}`,
               { eventId: id, channels: ['toast', 'zalo'] }
@@ -166,7 +167,7 @@ export default class ErpCalendarService {
   updateEvent(id: string, patch: Partial<CreateCalendarEventInput>): ErpCalendarEvent {
     const now = Date.now();
     const existing = this.getEvent(id);
-    if (!existing) throw new Error('Không tìm thấy sự kiện');
+    if (!existing) throw new Error(tr('Không tìm thấy sự kiện'));
     const normalizedEndAt = patch.start_at !== undefined || patch.end_at !== undefined
       ? this._normalizeEnd(patch.start_at ?? existing.start_at, patch.end_at ?? existing.end_at)
       : undefined;
@@ -189,11 +190,11 @@ export default class ErpCalendarService {
         this.db().run(`UPDATE erp_calendar_events SET ${fields.join(', ')} WHERE id = ?`, vals);
       }
       if (replaceReminders) {
-        // Sửa mốc nhắc (trang Lịch): thay cả danh sách; mốc đã qua (đã nhắc, hoặc vừa thêm khi đã quá mốc) không nhắc lại
+        // Edit the reminders (Calendar page): replace the whole list; reminders already passed (already sent, or added after the time had passed) are not sent again
         this.db().run(`DELETE FROM erp_event_reminders WHERE event_id = ?`, [id]);
         this._insertReminders(id, patch.reminders!, startAt, now);
       } else if (startChanged) {
-        // Dời giờ hẹn: mốc còn ở phía trước thì nhắc lại theo giờ mới
+        // Time moved: reminders still ahead are sent again at the new time
         this.db().run(
           `UPDATE erp_event_reminders SET triggered = CASE WHEN ? - minutes_before * 60000 <= ? THEN 1 ELSE 0 END WHERE event_id = ?`,
           [startAt, now, id],
@@ -208,7 +209,7 @@ export default class ErpCalendarService {
 
   updateEventForEmployee(id: string, patch: Partial<CreateCalendarEventInput>, employeeId: string): ErpCalendarEvent {
     const existing = this.getEvent(id);
-    if (!existing || !this.isEventOrganizer(existing, employeeId)) throw new Error('Bạn không có quyền sửa sự kiện này');
+    if (!existing || !this.isEventOrganizer(existing, employeeId)) throw new Error(tr('Bạn không có quyền sửa sự kiện này'));
     return this.updateEvent(id, patch);
   }
 
@@ -226,7 +227,7 @@ export default class ErpCalendarService {
 
   deleteEventForEmployee(id: string, employeeId: string): void {
     const existing = this.getEvent(id);
-    if (!existing || !this.isEventOrganizer(existing, employeeId)) throw new Error('Bạn không có quyền xóa sự kiện này');
+    if (!existing || !this.isEventOrganizer(existing, employeeId)) throw new Error(tr('Bạn không có quyền xóa sự kiện này'));
     this.deleteEvent(id);
   }
 
@@ -254,7 +255,7 @@ export default class ErpCalendarService {
   respondToEvent(eventId: string, employeeId: string, status: 'accepted' | 'declined' | 'tentative'): void {
     const event = this.getEvent(eventId);
     if (!this.canAccessEvent(event, employeeId)) {
-      throw new Error('Bạn không có quyền phản hồi sự kiện này');
+      throw new Error(tr('Bạn không có quyền phản hồi sự kiện này'));
     }
     const now = Date.now();
     this.db().run(
@@ -296,8 +297,8 @@ export default class ErpCalendarService {
   }
 
   /**
-   * Ghi mốc nhắc (bỏ trùng / số lạ). Mốc đã qua lúc ghi = coi như đã nhắc: lịch tạo / dời sát giờ không bắn ngay "10 phút
-   * nữa tới lịch hẹn" (người tạo vừa thấy lịch), lịch ghi lại cho ngày đã qua không bật "Đã lỡ lịch".
+   * Writes the reminder marks (drops duplicates / odd values). A mark already past at write time counts as sent: an event created or moved right before its start does not fire "10 phút nữa tới lịch hẹn" (10 minutes until the event)
+   * (the creator has just seen the event), and an event written again for a past day does not show "Đã lỡ lịch" (Missed event).
    */
   private _insertReminders(
     eventId: string,
@@ -323,16 +324,16 @@ export default class ErpCalendarService {
       );
       if (!changed.length) return; // already fired
       const now = Date.now();
-      // Bản mới nhất (người được mời vừa từ chối, đổi tiêu đề…): timer giữ bản lúc hẹn giờ
+      // Latest version (the invitee just declined, the title changed…): the timer keeps the version from when it was scheduled
       const current = this.getEvent(event.id) ?? event;
-      // Nhắc trước mà lịch đã bắt đầu (máy tắt lúc tới mốc, mở lại muộn): bỏ, đã có nhắc đúng giờ
+      // A reminder before the event that has already started (the machine was off at the mark, opened late): skipped, the on-time reminder already happened
       if (minutesBefore > 0 && current.start_at <= now) return;
       EventBroadcaster.emit('erp:event:reminder', {
         event: current,
-        // Đúng giờ (0): popup như nhắc hẹn Zalo (App.tsx); nhắc trước: chuông trên thanh tiêu đề
+        // On time (0): a popup like the Zalo appointment reminder (App.tsx); before the time: a bell on the title bar
         minutesBefore,
-        title: `Nhắc nhở: ${current.title}`,
-        body: minutesBefore > 0 ? `Sự kiện bắt đầu sau ${minutesBefore} phút` : 'Sự kiện bắt đầu bây giờ',
+        title: tr('Nhắc nhở: {{title}}', { title: current.title }),
+        body: minutesBefore > 0 ? tr('Sự kiện bắt đầu sau {{minutesBefore}} phút', { minutesBefore }) : tr('Sự kiện bắt đầu bây giờ'),
       });
       if (minutesBefore > 0) this._notifyUpcoming(current, minutesBefore, now);
     } catch (err: any) {
@@ -342,8 +343,8 @@ export default class ErpCalendarService {
   }
 
   /**
-   * Nhắc trước: thông báo thường trong chuông (hộp thư ERP, đọc là đã đọc) cho người tổ chức + người được mời chưa từ
-   * chối. Chữ theo thời gian còn lại thật (máy vừa mở lại, nhắc bù qua cron: "9 phút nữa tới lịch hẹn").
+   * Reminder before the event: a normal notification in the bell (ERP inbox, read = already read) for the organiser + the invitees who have not declined.
+   * The text uses the real time left (the machine just reopened, a catch-up reminder via cron: "9 phút nữa tới lịch hẹn" (9 minutes until the event)).
    */
   private _notifyUpcoming(event: ErpCalendarEvent, minutesBefore: number, now: number): void {
     const recipients = new Set<string>(
@@ -394,7 +395,7 @@ export default class ErpCalendarService {
         JOIN erp_calendar_events e ON e.id = r.event_id
         WHERE r.triggered = 0 AND (e.start_at - r.minutes_before * 60000) <= ?
       `, [now]);
-      // Nhiều mốc nhắc trước cùng tới hạn một lúc (máy vừa mở, lịch dời sát giờ): chỉ báo mốc gần giờ hẹn nhất
+      // Several reminders before the event come due at once (the machine just opened, the event was moved close to its time): only report the mark closest to the event time
       const nearestAdvance = new Map<string, number>();
       for (const row of due) {
         if (row.minutes_before > 0) nearestAdvance.set(row.event_id, Math.min(nearestAdvance.get(row.event_id) ?? Infinity, row.minutes_before));
@@ -404,8 +405,8 @@ export default class ErpCalendarService {
           this.db().run(`UPDATE erp_event_reminders SET triggered = 1 WHERE id = ?`, [row.reminder_id]);
           continue;
         }
-        // Sự kiện đầy đủ (có người tham gia): relay gửi nhắc lịch cho người tổ chức + người tham gia (relayAudience) —
-        // trước đây bản dựng từ dòng SQL không có attendees → nhắc lịch qua cron chỉ tới người tổ chức
+        // Full event (with attendees): the relay sends the reminder to the organiser + the attendees (relayAudience);
+        // before, the build from the SQL row had no attendees → a cron reminder reached only the organiser
         const evt: ErpCalendarEvent = this.getEvent(row.event_id) ?? ({
           ...row,
           id: row.event_id,

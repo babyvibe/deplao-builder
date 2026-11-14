@@ -27,6 +27,8 @@ import { PluginPanelToggle } from '@/components/plugins/contributions/PluginChat
 import { CHANNEL, isZalo, isFacebook, isTelegram, isTelegramUser, resolveChannel } from '@/lib/channels/channelHelper';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
 import { ZaloHeaderPresence } from '../zalo/presence/ZaloOnlinePresence';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface HeaderLocalLabel {
   id: number;
@@ -39,11 +41,11 @@ interface HeaderLocalLabel {
 }
 
 export default function ChatHeader() {
-  // Selector: không render lại header với mọi tin nhắn / đang gõ / đã xem của các hội thoại khác
+  // Selector: the header does not re-render on every message / typing / seen event from other conversations
   const { activeThreadId, activeThreadType, contacts, updateContact } = useChatStore(useShallow(s => ({
     activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType, contacts: s.contacts, updateContact: s.updateContact,
   })));
-  // getActiveAccount() đọc accounts → chọn kèm để vẫn cập nhật khi tài khoản đổi
+  // getActiveAccount() reads accounts → select it too so it still updates when the account changes
   const { activeAccountId, getActiveAccount } = useAccountStore(useShallow(s => ({
     activeAccountId: s.activeAccountId, getActiveAccount: s.getActiveAccount, accounts: s.accounts,
   })));
@@ -87,12 +89,12 @@ export default function ChatHeader() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Local labels for the active thread. Lần đọc lỗi (chế độ nhân viên: mất kết nối BOSS) giữ nhãn đang có của đúng
-  // tài khoản / hội thoại (không thay bằng rỗng) và hiện "Thử lại" gọn trên hàng nhãn.
+  // Local labels for the active thread. A failed read (employee mode: Boss connection lost) keeps the labels already there for the right
+  // account / conversation (not replaced with empty) and shows a compact "Thử lại" (Retry) on the label row.
   const [headerLabelState, setHeaderLabelState] = useState<ThreadLocalLabelsState<HeaderLocalLabel>>(EMPTY_THREAD_LOCAL_LABELS);
   const headerLocalLabels = headerLabelState.labels;
   const headerThreadLabelIds = headerLabelState.threadLabelIds;
-  // Hội thoại đang mở: phản hồi muộn của hội thoại trước không được ghi đè nhãn của hội thoại này
+  // Open conversation: a late reply for the previous conversation must not overwrite this conversation's labels
   const headerLabelOwnerRef = useRef('');
   headerLabelOwnerRef.current = activeAccountId && activeThreadId ? threadLabelsKey(activeAccountId, activeThreadId) : '';
 
@@ -124,11 +126,11 @@ export default function ChatHeader() {
     loadHeaderLocalLabels();
   }, [loadHeaderLocalLabels]);
 
-  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại Nhãn Local của hội thoại đang mở
+  // Employee mode: Boss connection restored → reload the Local labels of the open conversation
   useEmployeeResync(loadHeaderLocalLabels);
 
-  // Reload when local labels are changed externally (e.g. from MessageInput) — và khi Boss / nhân viên khác gán / bỏ
-  // nhãn của hội thoại đang mở (relay db:localLabelThreadChanged → 'ui:threadLabelsChanged')
+  // Reload when local labels are changed externally (e.g. from MessageInput), and when the Boss / another employee assigns or removes
+  // a label on the open conversation (relay db:localLabelThreadChanged → 'ui:threadLabelsChanged')
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -166,7 +168,7 @@ export default function ChatHeader() {
   }, [activeThreadId]);
 
 
-  // ── Auto-fetch user info khi vào hội thoại mới mà chưa có thông tin ──────
+  // ── Auto-fetch user info when opening a new conversation that has no info yet ──────
   useEffect(() => {
     if (!activeAccountId || !activeThreadId) return;
     const isGroupThread = activeThreadType === 1;
@@ -177,10 +179,10 @@ export default function ChatHeader() {
 
     const acc = getActiveAccount();
     const channel = ct.channel || acc?.channel || CHANNEL.ZALO;
-    // Kiểm tra nếu chưa có tên thật (display_name = contact_id hoặc chỉ toàn số)
+    // Check whether there is a real name yet (display_name = contact_id or all digits)
     const hasRealName = !!(ct.display_name && ct.display_name !== activeThreadId && !/^\d+$/.test(ct.display_name));
     const hasAvatar = !!ct.avatar_url;
-    const isBotUnknown = ct.is_cov_bot == null; // null = chưa load, 0/1 = đã load
+    const isBotUnknown = ct.is_cov_bot == null; // null = not loaded yet, 0/1 = loaded
     if (isGroupThread) {
       if (isTelegram(channel)) {
         import('@/lib/channels/adapters/registry').then(({ getAdapter }) =>
@@ -215,15 +217,15 @@ export default function ChatHeader() {
       }
       return;
     }
-    // Telegram user: nếu is_cov_bot chưa biết (null) → phải fetch profile để xác định
+    // Telegram user: if is_cov_bot is still unknown (null), fetch the profile to find out
     const isTelegramUserDM = !isGroupThread && isTelegram(channel);
     if (hasRealName && hasAvatar && !(isTelegramUserDM && isBotUnknown)) return;
 
     if (isZalo(channel)) {
-      // Dùng fetchContactInfo đã có cache 7 ngày + xử lý alias
+      // Use fetchContactInfo, which has a 7-day cache and alias handling
       fetchContactInfo(activeAccountId, activeThreadId).catch(() => {});
     } else if (isFacebook(channel)) {
-      // Facebook: lấy tên + avatar từ HTML profile
+      // Facebook: get the name + avatar from the profile HTML
       ipc.fb?.getUserInfoFacebook({ accountId: activeAccountId, userId: activeThreadId })
         .then((res: any) => {
           if (res?.success && (res.name || res.avatarUrl)) {
@@ -234,7 +236,7 @@ export default function ChatHeader() {
           }
         })
         .catch(() => {});
-      // Refresh avatar từ CDN (FB avatar CDN thường hết hạn)
+      // Refresh the avatar from the CDN (Facebook avatar CDN links often expire)
       if (/^\d+$/.test(activeThreadId)) {
         ipc.fb?.refreshContactAvatar({ accountId: activeAccountId, userId: activeThreadId })
           .then((res: any) => {
@@ -257,8 +259,8 @@ export default function ChatHeader() {
             ...(profile.phone ? { phone: profile.phone } : {}), channel: 'telegram_user',
             is_cov_bot: profile.isBot ? 1 : 0,
             ...(profile.menuButton ? { menu_button: JSON.stringify(profile.menuButton) } : {}),
-            // Only set has_main_app if not already set (prevent overwrite)
-            ...((ct?.has_main_app == null) ? (profile.hasMainApp ? { has_main_app: 1 } : { has_main_app: 0 }) : {}),
+            // A main Mini App always shows "Open"; "none" is only written when nothing is known yet (a cached profile has no flag)
+            ...(profile.hasMainApp ? { has_main_app: 1 } : ct?.has_main_app == null ? { has_main_app: 0 } : {}),
           });
           DataAccessor.updateContactProfile({
             zaloId: activeAccountId, contactId: activeThreadId, displayName: name,
@@ -282,7 +284,7 @@ export default function ChatHeader() {
       setSearching(true);
       try {
         const res = await DataAccessor.searchMessages({ zaloId: activeAccountId, query: q.trim() });
-        // Đọc lỗi (chế độ nhân viên: mất kết nối BOSS) ≠ "Không tìm thấy": báo "Không tìm được · Thử lại"
+        // A failed read (employee mode: Boss connection lost) ≠ "Không tìm thấy" (Not found): show "Không tìm được · Thử lại" (Could not load · Retry)
         if (isReadFailure(res)) {
           console.warn('[ChatHeader] Không tìm được tin nhắn:', readFailureMessage(res));
           setSearchResults([]);
@@ -414,16 +416,16 @@ export default function ChatHeader() {
           result = await ipc.zalo?.updateLabels({ auth, labelData: retryUpdated, version: freshVersion });
           if (result?.success) {
             setLabels(activeAccountId, retryUpdated); setLabelsVersion(result?.response?.version ?? freshVersion);
-            showNotification(retryAlreadyHas ? 'Đã gỡ nhãn' : `Đã gán nhãn "${target.text}"`, 'success');
+            showNotification(retryAlreadyHas ? tr('Đã gỡ nhãn') : tr('Đã gán nhãn "{{text}}"', { text: target.text }), 'success');
             // Note: Workflow events are emitted by backend (zaloIpc.ts) to avoid duplicates
             setLabelPickerOpen(null); return;
           }
         }
       } catch {}
     }
-    if (!result?.success) { showNotification('Lỗi: ' + (result?.error || 'Không thể cập nhật nhãn'), 'error'); setLabelPickerOpen(null); return; }
+    if (!result?.success) { showNotification(tr('Lỗi: {{v1}}', { v1: (result?.error || tr('Không thể cập nhật nhãn')) }), 'error'); setLabelPickerOpen(null); return; }
     setLabels(activeAccountId, updated); setLabelsVersion(result?.response?.version ?? freshVersion);
-    showNotification(alreadyHas ? 'Đã gỡ nhãn' : `Đã gán nhãn "${target.text}"`, 'success');
+    showNotification(alreadyHas ? tr('Đã gỡ nhãn') : tr('Đã gán nhãn "{{text}}"', { text: target.text }), 'success');
     // Note: Workflow events are emitted by backend (zaloIpc.ts) to avoid duplicates
     setLabelPickerOpen(null);
   };
@@ -436,7 +438,7 @@ export default function ChatHeader() {
     }).catch(() => {});
   };
 
-  /** Mở popup sửa tên gợi nhớ - pre-fill tên hiện tại giống Zalo PC */
+  /** Open the popup to edit the alias: pre-fill the current name, like Zalo PC. */
   const handleOpenAliasEdit = (e: React.MouseEvent) => {
     if (!contact) return;
     setAliasInputValue(displayName);
@@ -444,7 +446,7 @@ export default function ChatHeader() {
     setAliasEditOpen(true);
   };
 
-  /** Lưu alias mới qua API Zalo */
+  /** Save the new alias through the Zalo API. */
   const handleSaveAlias = async () => {
     if (!activeThreadId || !activeAccountId) return;
     const acc = getActiveAccount();
@@ -452,12 +454,12 @@ export default function ChatHeader() {
     setAliasSaving(true);
     try {
       const trimmed = aliasInputValue.trim();
-      // Zalo: sync to API. Facebook/kênh khác: save locally only.
+      // Zalo: sync to the API. Facebook / other channels: save locally only.
       if (isZalo(acc.channel)) {
         const auth = buildZaloAuth(acc, activeAccountId);
         const res = await ipc.zalo?.changeFriendAlias({ auth, alias: trimmed, friendId: activeThreadId });
         if (res && !res.success && res.error) {
-          showNotification('Lỗi cập nhật biệt danh: ' + res.error, 'error');
+          showNotification(tr('Lỗi cập nhật biệt danh: {{error}}', { error: res.error }), 'error');
           return;
         }
       }
@@ -466,26 +468,26 @@ export default function ChatHeader() {
       DataAccessor.setContactAlias({
         zaloId: activeAccountId, contactId: activeThreadId, alias: trimmed,
       }).catch(() => {});
-      showNotification('Đã cập nhật tên gợi nhớ', 'success');
+      showNotification(tr('Đã cập nhật tên gợi nhớ'), 'success');
       setAliasEditOpen(false);
     } catch (e: any) {
-      showNotification('Lỗi: ' + (e.message || 'Không thể sửa tên gợi nhớ'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (e.message || tr('Không thể sửa tên gợi nhớ')) }), 'error');
     } finally {
       setAliasSaving(false);
     }
   };
 
-  /** Tải tin nhắn từ Telegram API */
+  /** Load messages from the Telegram API. */
   const handleTgDownload = async () => {
     if (!activeAccountId || !activeThreadId) return;
     const requestedLimit = parseInt(tgDownloadCount, 10);
     if (isNaN(requestedLimit) || requestedLimit <= 0) return;
     const limit = Math.min(requestedLimit, 5000);
     if (requestedLimit > limit) {
-      showNotification('Mỗi lần chỉ có thể tải tối đa 5.000 tin nhắn Telegram.', 'info');
+      showNotification(tr('Mỗi lần chỉ có thể tải tối đa 5.000 tin nhắn Telegram.'), 'info');
     }
     setTgDownloading(true);
-    showNotification(`Đang tải ${limit} tin nhắn từ Telegram...`, 'info');
+    showNotification(tr('Đang tải {{limit}} tin nhắn từ Telegram...', { limit }), 'info');
     try {
       const res = await ipc.telegramUser?.getMessages({
         accountId: activeAccountId,
@@ -514,25 +516,25 @@ export default function ChatHeader() {
             });
           }
         }
-        showNotification(`Đã tải ${downloadedCount} tin nhắn`, 'success');
+        showNotification(tr('Đã tải {{downloadedCount}} tin nhắn', { downloadedCount }), 'success');
       } else {
         // Skip noisy Telegram errors — CHANNEL_PRIVATE is expected for restricted channels
         const err = res?.error || '';
         if (err.includes('CHANNEL_PRIVATE') || err.includes('USER_BANNED_IN_CHANNEL')) {
-          showNotification('Kênh này không cho phép tải tin nhắn cũ', 'info');
+          showNotification(tr('Kênh này không cho phép tải tin nhắn cũ'), 'info');
         } else {
-          showNotification(err || 'Không có tin nhắn mới', 'info');
+          showNotification(err || tr('Không có tin nhắn mới'), 'info');
         }
       }
     } catch (err: any) {
-      showNotification(err?.message || 'Lỗi tải tin nhắn', 'error');
+      showNotification(err?.message || tr('Lỗi tải tin nhắn'), 'error');
     } finally {
       setTgDownloading(false);
       setTgDownloadOpen(false);
     }
   };
 
-  /** Reload alias + user info từ API Zalo - lưu toàn bộ alias + cập nhật thông tin hội thoại hiện tại */
+  /** Reload the aliases + user info from the Zalo API: save all aliases + update the current conversation's info. */
   const handleRefreshAlias = async () => {
     if (!activeThreadId || !activeAccountId || activeThreadType === 1) return;
     const acc = getActiveAccount();
@@ -541,7 +543,7 @@ export default function ChatHeader() {
     try {
       if (isZalo(acc.channel)) {
         const auth = buildZaloAuth(acc, activeAccountId);
-        // 1. Update toàn bộ alias từ fetchAllAliases (pagination, count=200)
+        // 1. Update all aliases from fetchAllAliases (paginated, count=200)
         const aliasItems = await fetchAllAliases(auth);
         for (const item of aliasItems) {
           if (item.alias && item.userId) {
@@ -549,7 +551,7 @@ export default function ChatHeader() {
             DataAccessor.setContactAlias({ zaloId: activeAccountId, contactId: item.userId, alias: item.alias }).catch(() => {});
           }
         }
-        // 2. Fetch full profile (tên, avatar, SĐT) cho hội thoại hiện tại
+        // 2. Fetch the full profile (name, avatar, phone) for the current conversation
         const infoRes = await ipc.zalo?.getUserInfo({ auth, userId: activeThreadId });
         const rawProfile = infoRes?.response?.changed_profiles?.[activeThreadId]
           || infoRes?.response?.data?.[activeThreadId];
@@ -573,7 +575,7 @@ export default function ChatHeader() {
           }
         }
       } else {
-        // Facebook: refresh tên + avatar từ profile HTML
+        // Facebook: refresh the name + avatar from the profile HTML
         const fbRes = await ipc.fb?.getUserInfoFacebook({ accountId: activeAccountId, userId: activeThreadId });
         if (fbRes?.success && (fbRes.name || fbRes.avatarUrl)) {
           const patch: any = { contact_id: activeThreadId };
@@ -581,14 +583,14 @@ export default function ChatHeader() {
           if (fbRes.avatarUrl) patch.avatar_url = fbRes.avatarUrl;
           if (Object.keys(patch).length > 1) updateContact(activeAccountId, patch);
         }
-        showNotification('Đã cập nhật thông tin từ Facebook', 'success');
+        showNotification(tr('Đã cập nhật thông tin từ Facebook'), 'success');
       }
     } catch {} finally {
       setAliasRefreshing(false);
     }
   };
 
-  /** Đổi tên nhóm - Zalo: API changeGroupName, Facebook: note local-only */
+  /** Rename the group. Zalo: API changeGroupName; Facebook: note, local only. */
   const handleOpenGroupNameEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
     setGroupNameInput(displayName);
@@ -608,25 +610,25 @@ export default function ChatHeader() {
         const auth = buildZaloAuth(acc, activeAccountId);
         const res = await ipc.zalo?.changeGroupName({ name: trimmed, groupId: activeThreadId });
         if (res && !res.success && res.error) {
-          showNotification('Lỗi đổi tên nhóm: ' + res.error, 'error');
+          showNotification(tr('Lỗi đổi tên nhóm: {{error}}', { error: res.error }), 'error');
           return;
         }
-        showNotification('Đã đổi tên nhóm thành công', 'success');
+        showNotification(tr('Đã đổi tên nhóm thành công'), 'success');
       } else {
-        // Facebook / other: chỉ lưu local
-        showNotification('Tên nhóm đã được cập nhật (chỉ áp dụng trên app)', 'success');
+        // Facebook / other: save locally only
+        showNotification(tr('Tên nhóm đã được cập nhật (chỉ áp dụng trên app)'), 'success');
       }
-      // Cập nhật tên hiển thị
+      // Update display name
       updateContact(activeAccountId, { contact_id: activeThreadId, display_name: trimmed });
       setGroupNameEditing(false);
     } catch (e: any) {
-      showNotification('Lỗi: ' + (e.message || 'Không thể đổi tên nhóm'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (e.message || tr('Không thể đổi tên nhóm')) }), 'error');
     } finally {
       setGroupNameSaving(false);
     }
   };
 
-  /** Reload thông tin Facebook từ HTML (tên + avatar) - chỉ cho 1-1 */
+  /** Reload Facebook info from the HTML (name + avatar), 1-1 only. */
   const handleRefreshFacebookInfo = async () => {
     if (!activeThreadId || !activeAccountId || isGroup) return;
     const acc = getActiveAccount();
@@ -639,12 +641,12 @@ export default function ChatHeader() {
         if (res.name) patch.display_name = res.name;
         if (res.avatarUrl) patch.avatar_url = res.avatarUrl;
         updateContact(activeAccountId, patch);
-        showNotification('Đã cập nhật thông tin từ Facebook', 'success');
+        showNotification(tr('Đã cập nhật thông tin từ Facebook'), 'success');
       } else {
-        showNotification(res?.error || 'Không thể lấy thông tin từ Facebook', 'error');
+        showNotification(res?.error || tr('Không thể lấy thông tin từ Facebook'), 'error');
       }
     } catch (e: any) {
-      showNotification('Lỗi: ' + (e.message || 'Không thể làm mới'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (e.message || tr('Không thể làm mới')) }), 'error');
     } finally {
       setRefreshingFBInfo(false);
     }
@@ -657,14 +659,14 @@ export default function ChatHeader() {
   const contactList = contacts[activeAccountId] || [];
   const contact = contactList.find((c) => c.contact_id === activeThreadId);
   const activeAccount = getActiveAccount();
-  // Zalo "My Documents": hội thoại có sẵn của Zalo (ID = send2me_id của phiên, không phải UID của mình); Telegram: Tin nhắn
-  // đã lưu (hội thoại với chính mình) cũng hiện là My Documents
+  // Zalo "My Documents": the existing Zalo conversation (ID = the session's send2me_id, not your own UID); Telegram: Saved Messages
+  // (the conversation with yourself) also shows as My Documents
   const isMyDocs = isMyDocumentsThread(activeAccount, activeThreadId, contact?.avatar_url);
-  // Ưu tiên alias → display_name
+  // Prefer alias → display_name
   const displayName = isMyDocs ? myDocumentsTitle(contact, activeAccount) : (contact?.alias || contact?.display_name || activeThreadId);
   const avatarUrl = toLocalMediaUrl(contact?.avatar_url || '');
   const isGroup = activeThreadType === 1 || contact?.contact_type === 'group';
-  // Kênh thật của hội thoại (resolveChannel): dòng cũ mang 'zalo' / hội thoại ghim chưa có trong store không thành Zalo
+  // The real channel of the conversation (resolveChannel): old rows tagged 'zalo', or pinned conversations not yet in the store, are not Zalo
   const threadChannel = resolveChannel(contact, activeAccount);
   const isFacebookDM = !isGroup && isFacebook(activeAccount?.channel);
   const groupInfo = isGroup ? (groupInfoCache[activeAccountId] || {})[activeThreadId] : undefined;
@@ -684,7 +686,7 @@ export default function ChatHeader() {
 
   // Render avatar: group composite or user avatar
   const renderAvatar = () => {
-    // My Documents: ảnh thư mục của Zalo; biểu tượng đám mây khi thiếu / lỗi ảnh và với Telegram (dòng mang ảnh của mình)
+    // My Documents: Zalo folder image; cloud icon when the image is missing / broken, and for Telegram (the row carrying your own image)
     if (isMyDocs && showsMyDocumentsIcon(activeAccount, avatarUrl, avatarFailed)) {
       return (
         <div className="w-9 h-9 rounded-full flex items-center justify-center bg-gradient-to-br from-sky-400 to-blue-600" style={{ color: '#fff' }}>
@@ -696,7 +698,7 @@ export default function ChatHeader() {
       return <img src={avatarUrl} alt={displayName} className={`w-9 h-9 rounded-full object-cover ${!isGroup ? 'hover:ring-2 hover:ring-blue-400 transition-all' : ''}`}
         onError={() => {
           setAvatarFailed(true);
-          // Retry avatar cho cả Zalo + Facebook
+          // Retry the avatar for both Zalo and Facebook
           if (activeAccountId && activeThreadId) {
             import('@/lib/contacts/avatarRetry').then(({ handleAvatarError }) =>
               handleAvatarError({ ownerId: activeAccountId, contactId: activeThreadId, channel: threadChannel })
@@ -775,7 +777,7 @@ export default function ChatHeader() {
           <button
             onClick={() => setMobileShowChat(false)}
             className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            title="Quay lại"
+            title={tr('Quay lại')}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6"/>
@@ -791,7 +793,7 @@ export default function ChatHeader() {
               setShowProfile(true);
             }
           }}
-          title={isGroup ? '' : 'Xem thông tin'}
+          title={isGroup ? '' : tr('Xem thông tin')}
         >
           {renderAvatar()}
         </div>
@@ -802,7 +804,7 @@ export default function ChatHeader() {
             {/* Name - click to copy */}
             <button
               onClick={handleCopyName}
-              title={copied ? 'Đã sao chép!' : 'Nhấn để sao chép tên'}
+              title={copied ? tr('Đã sao chép!') : tr('Nhấn để sao chép tên')}
               className="flex items-center gap-1 group text-left min-w-0 overflow-hidden"
             >
               <p className="text-md font-semibold text-foreground truncate group-hover:text-blue-300 transition-colors">{displayName}</p>
@@ -813,17 +815,17 @@ export default function ChatHeader() {
                   </svg>
               }
             </button>
-            {/* Tự xoá tin nhắn đang bật trên Zalo (ZL-05) — Deplao vẫn giữ tin */}
+            {/* Auto-delete messages is on in Zalo (ZL-05): Deplao still keeps the messages */}
             {isZalo(activeAccount?.channel) && Number(contact?.zalo_auto_delete_ttl) > 0 && (
               <span className="flex-shrink-0 text-muted-foreground ml-1"
-                title={`Zalo tự xoá tin nhắn mới sau ${zaloAutoDeleteLabel(Number(contact?.zalo_auto_delete_ttl))} — Deplao vẫn giữ tin trên máy này`}>
+                title={tr('Zalo tự xoá tin nhắn mới sau {{v1}} — Deplao vẫn giữ tin trên máy này', { v1: zaloAutoDeleteLabel(Number(contact?.zalo_auto_delete_ttl)) })}>
                 <ClockIcon className="w-3.5 h-3.5" />
               </span>
             )}
-            {/* Group rename button - chỉ cho nhóm Zalo (có API) */}
+            {/* Group rename button: Zalo groups only (they have an API) */}
             {isGroup && channelCap.supportsGroupRename && isZalo(activeAccount?.channel) && (
               <button
-                title="Đổi tên nhóm"
+                title={tr('Đổi tên nhóm')}
                 onClick={(e) => handleOpenGroupNameEdit(e)}
                 className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors ml-1.5"
               >
@@ -833,10 +835,10 @@ export default function ChatHeader() {
                 </svg>
               </button>
             )}
-            {/* Reload user info + alias button - chỉ hiện cho user DM có hỗ trợ alias */}
+            {/* Reload user info + alias button: shown only for user DMs that support aliases */}
             {!isGroup && channelCap.supportsAlias && isZalo(activeAccount?.channel) && (
               <button
-                title="Cập nhật thông tin + tên gợi nhớ"
+                title={tr('Cập nhật thông tin + tên gợi nhớ')}
                 onClick={handleRefreshAlias}
                 disabled={aliasRefreshing}
                 className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors ml-1.5"
@@ -848,10 +850,10 @@ export default function ChatHeader() {
                 </svg>
               </button>
             )}
-            {/* Facebook info reload - chỉ cho FB 1-1 */}
+            {/* Facebook info reload: FB 1-1 only */}
             {isFacebookDM && (
                 <button
-                    title="Tải lại thông tin từ Facebook"
+                    title={tr('Tải lại thông tin từ Facebook')}
                     onClick={handleRefreshFacebookInfo}
                     disabled={refreshingFBInfo}
                     className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors ml-1.5"
@@ -863,10 +865,10 @@ export default function ChatHeader() {
                   </svg>
                 </button>
             )}
-            {/* Edit alias button - sửa tên gợi nhớ (mọi kênh; My Documents của Telegram giữ tên cố định) */}
+            {/* Edit alias button: change the alias (all channels; Telegram's My Documents keeps a fixed name) */}
             {!isGroup && channelCap.supportsAlias && !(isMyDocs && isSavedMessagesAccount(activeAccount)) && (
               <button
-                title={isZalo(activeAccount?.channel) ? 'Sửa tên gợi nhớ (đồng bộ Zalo)' : 'Sửa tên gợi nhớ (lưu local trên app)'}
+                title={isZalo(activeAccount?.channel) ? tr('Sửa tên gợi nhớ (đồng bộ Zalo)') : tr('Sửa tên gợi nhớ (lưu local trên app)')}
                 onClick={handleOpenAliasEdit}
                 className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors ml-1.5"
               >
@@ -877,11 +879,11 @@ export default function ChatHeader() {
               </button>
             )}
           </div>
-          {/* Hộp thư gộp: My Documents của tài khoản nào */}
+          {/* Merged inbox: which account's My Documents */}
           {isMyDocs && mergedInboxMode && (
             <p className="mt-0.5 text-[11px] text-muted-foreground truncate">{activeAccount?.full_name || activeAccountId}</p>
           )}
-          {/* Zalo 1:1: "Trực tuyến" / "Truy cập 14:05" từ dữ liệu đã có — không hỏi Zalo thêm (ZL-01 giai đoạn 2) */}
+          {/* Zalo 1:1: "Trực tuyến" (Online) / "Truy cập 14:05" (Last seen 14:05) from data already present, no extra Zalo request (ZL-01 phase 2) */}
           {!isGroup && !isMyDocs && isZalo(activeAccount?.channel) && (
             <ZaloHeaderPresence accountId={activeAccountId} userId={activeThreadId} />
           )}
@@ -890,11 +892,11 @@ export default function ChatHeader() {
               type="button"
               onClick={openTelegramMembers}
               className="mt-0.5 text-[11px] text-muted-foreground hover:text-blue-300 transition-colors text-left"
-              title="Xem danh sách thành viên"
+              title={tr('Xem danh sách thành viên')}
             >
               {telegramMemberCount > 0 && `${telegramMemberCount.toLocaleString()} ${telegramAudienceLabel}`}
               {telegramMemberCount > 0 && telegramOnlineCount > 0 && ' · '}
-              {telegramOnlineCount > 0 && `${telegramOnlineCount.toLocaleString()} online`}
+              {telegramOnlineCount > 0 && tr('{{v1}} online', { v1: telegramOnlineCount.toLocaleString() })}
             </button>
           )}
           {/* Active labels row - clickable to open label picker */}
@@ -912,17 +914,17 @@ export default function ChatHeader() {
             {(() => {
               const activeLocalLabels = headerLocalLabels.filter(l => headerThreadLabelIds.has(l.id));
               if (activeLocalLabels.length === 0) {
-                // Đọc lỗi (chế độ nhân viên) và chưa biết nhãn nào: "Thử lại" gọn thay vì trông như không có nhãn
+                // Read failed (employee mode) and no label known yet: a compact "Thử lại" (Retry) instead of looking like there are no labels
                 if (!headerLabelState.failed) return null;
                 return (
                   <button
                     type="button"
                     onClick={() => { void loadHeaderLocalLabels(); }}
                     className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                    title="Không tải được Nhãn Local — bấm để thử lại"
+                    title={tr('Không tải được Nhãn Local — bấm để thử lại')}
                   >
                     <RefreshIcon className="w-3 h-3" />
-                    <span>Nhãn Local: Thử lại</span>
+                    <span>{tr('Nhãn Local: Thử lại')}</span>
                   </button>
                 );
               }
@@ -938,7 +940,7 @@ export default function ChatHeader() {
                       key={`local-${label.id}`}
                       className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-1 rounded-full leading-none hover:opacity-80 transition-opacity cursor-pointer"
                       style={{ backgroundColor: label.color || '#3b82f6', color: label.text_color || '#ffffff' }}
-                      title={`${label.name} - Nhãn Local`}
+                      title={tr('{{name}} - Nhãn Local', { name: label.name })}
                     >
                       {label.emoji && <span>{label.emoji}</span>}
                       <span>{label.name}</span>
@@ -957,7 +959,7 @@ export default function ChatHeader() {
 
         <div className="flex items-center gap-1">
           <button
-            title="Tìm kiếm tin nhắn"
+            title={tr('Tìm kiếm tin nhắn')}
             onClick={toggleSearch}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${searchOpen ? 'bg-blue-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           >
@@ -965,11 +967,11 @@ export default function ChatHeader() {
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
           </button>
-          {/* Tải tin nhắn từ Telegram API */}
+          {/* Load messages from the Telegram API */}
           {isTelegramUser(threadChannel) && (
             <div className="relative group">
               <button
-                title="Tải tin nhắn từ Telegram"
+                title={tr('Tải tin nhắn từ Telegram')}
                 onClick={() => setTgDownloadOpen(true)}
                 className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-muted text-muted-foreground hover:text-foreground"
               >
@@ -979,10 +981,10 @@ export default function ChatHeader() {
               </button>
             </div>
           )}
-          {/* Bảng tin nhóm */}
+          {/* Group board */}
           {isGroup && channelCap.supportsGroupBoard && (
             <button
-              title="Bảng tin nhóm"
+              title={tr('Bảng tin nhóm')}
               onClick={() => setShowGroupBoard(!showGroupBoard)}
               className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showGroupBoard ? 'bg-blue-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
             >
@@ -994,12 +996,12 @@ export default function ChatHeader() {
             </button>
           )}
           <button
-            title={showAIQuickPanel ? 'Đóng trợ lý AI' : 'Trợ lý AI'}
+            title={showAIQuickPanel ? tr('Đóng trợ lý AI') : tr('Trợ lý AI')}
             onClick={toggleAIQuickPanel}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showAIQuickPanel ? 'bg-purple-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           ><BotIcon className="w-5 h-5 inline" /> </button>
           <button
-            title={showIntegrationQuickPanel ? 'Đóng tích hợp' : 'Tích hợp nhanh'}
+            title={showIntegrationQuickPanel ? tr('Đóng tích hợp') : tr('Tích hợp nhanh')}
             onClick={toggleIntegrationQuickPanel}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showIntegrationQuickPanel ? 'bg-blue-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           >
@@ -1010,7 +1012,7 @@ export default function ChatHeader() {
           </button>
           <PluginPanelToggle />
           <button
-            title={showConversationInfo ? 'Ẩn thông tin' : 'Thông tin hội thoại'}
+            title={showConversationInfo ? tr('Ẩn thông tin') : tr('Thông tin hội thoại')}
             onClick={toggleConversationInfo}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showConversationInfo ? 'bg-blue-600 text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           >
@@ -1041,7 +1043,7 @@ export default function ChatHeader() {
                 else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); navigateResult('next'); }
                 else if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); navigateResult('prev'); }
               }}
-              placeholder="Tìm trong hội thoại..."
+              placeholder={tr('Tìm trong hội thoại...')}
               className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground focus:outline-none min-w-0"
             />
             {searching && (
@@ -1067,7 +1069,7 @@ export default function ChatHeader() {
               </span>
               <button
                 onClick={() => navigateResult('prev')}
-                title="Kết quả trước (Shift+Enter)"
+                title={tr('Kết quả trước (Shift+Enter)')}
                 className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -1076,7 +1078,7 @@ export default function ChatHeader() {
               </button>
               <button
                 onClick={() => navigateResult('next')}
-                title="Kết quả tiếp theo (Enter)"
+                title={tr('Kết quả tiếp theo (Enter)')}
                 className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -1085,20 +1087,19 @@ export default function ChatHeader() {
               </button>
             </div>
           )}
-          {/* No results indicator (lần tìm lỗi → "Thử lại" thay vì "Không tìm thấy") */}
+          {/* No results indicator (a failed search → "Thử lại" (Retry) instead of "Không tìm thấy" (Not found)) */}
           {searchQuery.trim() && !searching && searchResults.length === 0 && (
             searchFailed ? (
               <button
                 type="button"
                 onClick={() => handleSearchChange(searchQuery)}
                 className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground flex-shrink-0 whitespace-nowrap transition-colors"
-                title="Không tìm được (mất kết nối) — bấm để thử lại"
+                title={tr('Không tìm được (mất kết nối) — bấm để thử lại')}
               >
-                <RefreshIcon className="w-3 h-3" />
-                Không tìm được · Thử lại
+                {trx('<0/>Không tìm được · Thử lại', { 0: <RefreshIcon className="w-3 h-3" /> })}
               </button>
             ) : (
-              <span className="text-xs text-muted-foreground flex-shrink-0 whitespace-nowrap">Không tìm thấy</span>
+              <span className="text-xs text-muted-foreground flex-shrink-0 whitespace-nowrap">{tr('Không tìm thấy')}</span>
             )
           )}
 
@@ -1107,7 +1108,7 @@ export default function ChatHeader() {
             onClick={() => setSearchOpen(false)}
             className="text-sm text-blue-400 hover:text-blue-300 flex-shrink-0 font-medium transition-colors"
           >
-            Đóng
+            {tr('Đóng')}
           </button>
         </div>
       )}
@@ -1151,11 +1152,11 @@ export default function ChatHeader() {
         />
       )}
 
-      {/* Group name edit popup - đổi tên nhóm */}
+      {/* Group name edit popup: rename the group */}
       {groupNameEditing && groupNameEditPos && isGroup && (
         <AliasEditPopup
-          title="Đổi tên nhóm"
-          placeholder="Nhập tên nhóm mới..."
+          title={tr('Đổi tên nhóm')}
+          placeholder={tr('Nhập tên nhóm mới...')}
           value={groupNameInput}
           onChange={setGroupNameInput}
           saving={groupNameSaving}
@@ -1166,7 +1167,7 @@ export default function ChatHeader() {
         />
       )}
 
-      {/* Alias edit popup - sửa tên gợi nhớ */}
+      {/* Alias edit popup: change the alias */}
       {aliasEditOpen && aliasEditPos && contact && (
         <AliasEditPopup
           value={aliasInputValue}
@@ -1185,8 +1186,8 @@ export default function ChatHeader() {
           onClick={() => { if (!tgDownloading) setTgDownloadOpen(false); }}>
           <div className="bg-card border border-input rounded-2xl w-80 p-5 shadow-2xl"
             onClick={e => e.stopPropagation()}>
-            <h3 className="font-semibold text-foreground mb-1">Tải tin nhắn từ Telegram</h3>
-            <p className="text-xs text-muted-foreground mb-3">Nhập số lượng tin nhắn muốn tải từ Telegram API (tối đa 5.000).</p>
+            <h3 className="font-semibold text-foreground mb-1">{tr('Tải tin nhắn từ Telegram')}</h3>
+            <p className="text-xs text-muted-foreground mb-3">{tr('Nhập số lượng tin nhắn muốn tải từ Telegram API (tối đa 5.000).')}</p>
             <input
               type="number"
               value={tgDownloadCount}
@@ -1201,11 +1202,11 @@ export default function ChatHeader() {
             <div className="flex gap-2">
               <button onClick={() => setTgDownloadOpen(false)} disabled={tgDownloading}
                 className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent disabled:opacity-40">
-                Hủy
+                {tr('Hủy')}
               </button>
               <button onClick={handleTgDownload} disabled={tgDownloading || !tgDownloadCount}
                 className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40 flex items-center justify-center gap-1.5">
-                {tgDownloading ? <><Spinner size={3} /> Đang tải...</> : 'Tải'}
+                {tgDownloading ? <>{trx('<0/> Đang tải...', { 0: <Spinner size={3} /> })}</> : tr('Tải')}
               </button>
             </div>
           </div>
@@ -1275,9 +1276,9 @@ function HeaderLabelPickerPopup({ contactId, isGroup, x, y, labels, onAssign, on
             if (res?.response?.labelData) {
               setLabels(activeAccountId, res.response.labelData);
               setLabelsVersion(res.response.version || 0);
-              showNotification('Đã cập nhật danh sách nhãn', 'success');
+              showNotification(tr('Đã cập nhật danh sách nhãn'), 'success');
             }
-          } catch { showNotification('Lỗi cập nhật nhãn', 'error'); }
+          } catch { showNotification(tr('Lỗi cập nhật nhãn'), 'error'); }
           finally { setSyncingLabels(false); }
         }}
         syncingLabels={syncingLabels}
@@ -1328,13 +1329,13 @@ function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anc
       style={{ top: Math.max(8, top), left: Math.max(8, left) }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <div className="text-xs text-muted-foreground font-medium mb-2">{title || 'Sửa tên gợi nhớ'}</div>
+      <div className="text-xs text-muted-foreground font-medium mb-2">{title || tr('Sửa tên gợi nhớ')}</div>
       <input
         ref={inputRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 mb-2"
-        placeholder={placeholder || 'Nhập tên gợi nhớ...'}
+        placeholder={placeholder || tr('Nhập tên gợi nhớ...')}
         onKeyDown={(e) => {
           if (e.key === 'Enter') onSave();
           if (e.key === 'Escape') onClose();
@@ -1345,7 +1346,7 @@ function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anc
           onClick={onClose}
           className="px-3 py-1.5 text-xs text-foreground/80 hover:text-foreground bg-muted hover:bg-accent rounded-lg transition-colors"
         >
-          Huỷ
+          {tr('Huỷ')}
         </button>
         <button
           onClick={onSave}
@@ -1355,7 +1356,7 @@ function AliasEditPopup({ value, onChange, saving, onSave, onClose, anchorX, anc
           {saving && (
             <Spinner size={3} />
           )}
-          Lưu
+          {tr('Lưu')}
         </button>
       </div>
     </div>

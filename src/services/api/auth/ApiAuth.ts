@@ -1,16 +1,17 @@
 /**
- * ApiAuth — quy mọi request về một Principal và kiểm tra quyền TRƯỚC khi vào IPC.
+ * ApiAuth: maps every request to one Principal and checks permissions BEFORE reaching IPC.
  *
- *  - API key: `Authorization: Bearer dpk_...` hoặc `X-Api-Key: dpk_...`
- *  - Nhân viên: JWT hiện có của employee mode (Bearer <jwt>), quyền module → scope.
- *  - Plugin: principal tạo trong process (PluginApiBridge), không qua HTTP.
+ *  - API key: `Authorization: Bearer dpk_...` or `X-Api-Key: dpk_...`
+ *  - Employee: the existing JWT of employee mode (Bearer <jwt>), module permission → scope.
+ *  - Plugin: a principal created inside the process (PluginApiBridge), not through HTTP.
  */
 import type { IncomingMessage } from 'http';
 import ApiKeyService from './ApiKeyService';
 import { ApiError, ApiScope, ErpRoleName, Principal } from '../types';
 import { getApiSettingNumber } from '../settings';
+import { tr } from '../../../shared/i18n';
 
-/** Module quyền nhân viên → scope API v1. */
+/** Employee permission module → API v1 scope. */
 export const EMPLOYEE_MODULE_SCOPES: Record<string, ApiScope[]> = {
     chat: ['accounts:read', 'chat:read', 'chat:send', 'chat:manage', 'media:read', 'media:write', 'events:subscribe'],
     friends: ['contacts:read', 'contacts:write'],
@@ -62,7 +63,7 @@ export function employeePrincipal(
     };
 }
 
-/** Xác thực token (API key hoặc JWT nhân viên). null = không hợp lệ. */
+/** Verifies a token (API key or employee JWT). null = not valid. */
 export function authenticateToken(token: string, ip: string): Principal | null {
     if (!token) return null;
     const keys = ApiKeyService.getInstance();
@@ -85,7 +86,7 @@ export function authenticateToken(token: string, ip: string): Principal | null {
         try {
             const ErpAuthContext = require('../../erp/ErpAuthContext').default;
             role = ErpAuthContext.forEmployee(v.employee_id).role;
-        } catch { /* giữ member */ }
+        } catch { /* keep member */ }
         return employeePrincipal(emp, permissions, role);
     } catch {
         return null;
@@ -114,7 +115,7 @@ export function hasScope(p: Principal, scope: ApiScope): boolean {
 export function requireScope(p: Principal, scope: ApiScope | 'any' | null): void {
     if (scope === null || scope === 'any') return;
     if (hasScope(p, scope)) return;
-    throw new ApiError(403, 'FORBIDDEN_SCOPE', `Cần scope ${scope}`, { required: scope });
+    throw new ApiError(403, 'FORBIDDEN_SCOPE', tr('Cần scope {{scope}}', { scope }), { required: scope });
 }
 
 export function accountAllowed(p: Principal, accountId: string): boolean {
@@ -123,7 +124,7 @@ export function accountAllowed(p: Principal, accountId: string): boolean {
 
 export function requireAccount(p: Principal, accountId: string): void {
     if (accountAllowed(p, accountId)) return;
-    throw new ApiError(403, 'FORBIDDEN_ACCOUNT', 'Key không được cấp quyền cho tài khoản này', { account_id: accountId });
+    throw new ApiError(403, 'FORBIDDEN_ACCOUNT', tr('Key không được cấp quyền cho tài khoản này'), { account_id: accountId });
 }
 
 export function principalSummary(p: Principal) {

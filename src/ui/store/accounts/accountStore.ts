@@ -8,7 +8,7 @@ export interface AccountInfo {
   full_name: string;
   avatar_url: string;
   phone?: string;
-  /** 1 = tài khoản Zalo Business (trả phí), 0 = tài khoản cá nhân */
+  /** 1 = Zalo Business account (paid), 0 = personal account */
   is_business?: number;
   imei: string;
   user_agent: string;
@@ -22,7 +22,7 @@ export interface AccountInfo {
   facebook_id?: string;
   proxy_id?: number | null;
   username?: string; // @username telegram
-  /** Zalo: ID hội thoại "My Documents" có sẵn của Zalo (loginInfo.send2me_id), không phải zalo_id */
+  /** Zalo: ID of Zalo's built-in "My Documents" conversation (loginInfo.send2me_id), not zalo_id */
   send2me_id?: string;
 }
 
@@ -65,20 +65,20 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
           && a.isConnected === b?.isConnected
           && a.listenerActive === b?.listenerActive
           && a.channel === b?.channel
-          // proxy đổi / bị xoá ở Cài đặt → nạp lại danh sách phải thấy proxy mới
+          // proxy changed / removed in Settings → reloading the list must show the new proxy
           && (a.proxy_id ?? null) === (b?.proxy_id ?? null);
       })
     ) {
-      // Danh sách không đổi, nhưng vẫn đảm bảo có active account nếu đang thiếu.
+      // The list did not change, but still make sure there is an active account if one is missing.
       const cur = get().activeAccountId;
       if ((!cur || !current.some(a => a.zalo_id === cur)) && accounts.length > 0) {
         set({ activeAccountId: accounts[0].zalo_id });
       }
       return;
     }
-    // Tự chọn active account đầu tiên nếu chưa có hoặc active cũ không còn tồn tại.
-    // Nhiều đường load account (workspace switch, employee snapshot, reconnect) không tự set active
-    // → thiếu bước này khiến CRM/nhãn/campaign nhận activeAccountId=null lúc khởi động.
+    // Auto-select the first account as active if there is none, or the old active one no longer exists.
+    // Many account load paths (workspace switch, employee snapshot, reconnect) do not set active by themselves
+    // → without this step, CRM / labels / campaigns receive activeAccountId=null at startup.
     const curActive = get().activeAccountId;
     const stillValid = curActive && accounts.some(a => a.zalo_id === curActive);
     set({

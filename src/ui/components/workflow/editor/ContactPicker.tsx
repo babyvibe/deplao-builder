@@ -3,7 +3,7 @@
  *
  * - Context aware: only accounts of the field's channel (cross-channel field → its own channel,
  *   else the workflow channel); when the workflow runs for specific accounts only those are
- *   offered; the type (người dùng / nhóm) follows the field.
+ *   offered; the type (user / group) follows the field.
  * - Large address books: the main process searches (accent-insensitive), filters and pages
  *   (`db.searchContactsForPicker`); the list loads 50 rows at a time while scrolling.
  * - Selected ids show real names (looked up by id), raw ids can still be typed in.
@@ -16,6 +16,8 @@ import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import GroupAvatar from '@/components/common/avatars/GroupAvatar';
 import { CloseIcon, PlusIcon, SearchIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 import { CHANNEL_NAME, ChannelMark, NodeChannel } from '../nodes/nodeVisuals';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type ContactType = 'user' | 'group' | 'all';
 
@@ -60,11 +62,11 @@ export function resolvePickerAccounts(accounts: AccountInfo[], opts: {
 function relativeTime(ms: number): string {
   if (!ms) return '';
   const diff = Date.now() - ms;
-  if (diff < 60_000) return 'vừa xong';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} phút trước`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} giờ trước`;
-  if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)} ngày trước`;
-  return new Date(ms).toLocaleDateString('vi-VN');
+  if (diff < 60_000) return tr('vừa xong');
+  if (diff < 3_600_000) return tr('{{v1}} phút trước', { v1: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return tr('{{v1}} giờ trước', { v1: Math.floor(diff / 3_600_000) });
+  if (diff < 30 * 86_400_000) return tr('{{v1}} ngày trước', { v1: Math.floor(diff / 86_400_000) });
+  return new Date(ms).toLocaleDateString(appLocale());
 }
 
 function useDebounced<T>(value: T, delay: number): T {
@@ -155,12 +157,12 @@ function ContactPickerModal({
 
   const fetchPage = React.useCallback(async (offset: number) => {
     if (!selectedAccountId) return null;
-    // DataAccessor: chế độ nhân viên tìm trong danh bạ Boss (IPC trả stub rỗng → ô chọn liên hệ trống)
+    // DataAccessor: in employee mode, search uses the Boss's address book (IPC returns an empty stub → the contact picker is empty)
     const res = await DataAccessor.searchContactsForPicker({
       zaloId: selectedAccountId, search, type: effectiveType, limit: PAGE_SIZE, offset,
     });
-    if (!res) return { items: [], total: 0, counts: EMPTY_COUNTS, error: 'Không đọc được danh bạ' };
-    return { items: res.items || [], total: res.total || 0, counts: res.counts || EMPTY_COUNTS, error: res.success === false ? (res.error || 'Không đọc được danh bạ') : '' };
+    if (!res) return { items: [], total: 0, counts: EMPTY_COUNTS, error: tr('Không đọc được danh bạ') };
+    return { items: res.items || [], total: res.total || 0, counts: res.counts || EMPTY_COUNTS, error: res.success === false ? (res.error || tr('Không đọc được danh bạ')) : '' };
   }, [selectedAccountId, search, effectiveType]);
 
   // First page whenever the account / search / type changes
@@ -177,7 +179,7 @@ function ContactPickerModal({
       setError(page.error);
       listRef.current?.scrollTo({ top: 0 });
     }).catch(err => {
-      if (requestId === requestRef.current) setError(err?.message || 'Không đọc được danh bạ');
+      if (requestId === requestRef.current) setError(err?.message || tr('Không đọc được danh bạ'));
     }).finally(() => {
       if (requestId === requestRef.current) setLoading(false);
     });
@@ -209,7 +211,7 @@ function ContactPickerModal({
     return () => observer.disconnect();
   }, [open, loadMore, items.length]);
 
-  // Remember names of everything shown, for the "Đã chọn" chips
+  // Remember names of everything shown, for the "Đã chọn" (selected) chips
   React.useEffect(() => {
     if (!items.length) return;
     setSeen(prev => {
@@ -249,11 +251,11 @@ function ContactPickerModal({
     }
   };
 
-  const title = contactType === 'group' ? 'Chọn nhóm' : contactType === 'user' ? 'Chọn người nhận' : 'Chọn hội thoại / nhóm';
+  const title = contactType === 'group' ? tr('Chọn nhóm') : contactType === 'user' ? tr('Chọn người nhận') : tr('Chọn hội thoại / nhóm');
   const tabs: Array<{ id: ContactType; label: string; icon: React.ReactNode; count: number }> = [
-    { id: 'all', label: 'Tất cả', icon: null, count: counts.all },
-    { id: 'user', label: 'Cá nhân', icon: <UserIcon className="w-3.5 h-3.5" />, count: counts.user },
-    { id: 'group', label: 'Nhóm', icon: <UsersIcon className="w-3.5 h-3.5" />, count: counts.group },
+    { id: 'all', label: tr('Tất cả'), icon: null, count: counts.all },
+    { id: 'user', label: tr('Cá nhân'), icon: <UserIcon className="w-3.5 h-3.5" />, count: counts.user },
+    { id: 'group', label: tr('Nhóm'), icon: <UsersIcon className="w-3.5 h-3.5" />, count: counts.group },
   ];
   const selectedChips = contactMode === 'multi' ? value : [];
   const chipName = (id: string) => (isTemplate(id) ? id : (seen[id] || knownItems[id])?.name || id);
@@ -275,19 +277,19 @@ function ContactPickerModal({
           <div className="flex-1 min-w-0">
             <p className="wf-panel__title truncate">{title}</p>
             <p className="wf-panel__desc truncate">
-              {channelName ? `Danh bạ ${channelName}` : 'Danh bạ'}
+              {channelName ? tr('Danh bạ {{channelName}}', { channelName }) : tr('Danh bạ')}
               {selectedAccount ? ` · ${accountName(selectedAccount)}` : ''}
-              {restricted && !accountId ? ' · theo tài khoản của workflow' : ''}
+              {restricted && !accountId ? tr(' · theo tài khoản của workflow') : ''}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="wf-icon-btn" title="Đóng (Esc)"><CloseIcon className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} className="wf-icon-btn" title={tr('Đóng (Esc)')}><CloseIcon className="w-4 h-4" /></button>
         </div>
 
         <div className="flex flex-1 min-h-0">
           {/* Accounts (only when there is a choice) */}
           {candidates.length > 1 && (
             <div className="w-52 flex-shrink-0 border-r border-[color:var(--wf-panel-border)] flex flex-col min-h-0">
-              <p className="px-4 pt-3 pb-2 wf-section-title">Tài khoản</p>
+              <p className="px-4 pt-3 pb-2 wf-section-title">{tr('Tài khoản')}</p>
               <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
                 {candidates.map(account => {
                   const active = account.zalo_id === selectedAccountId;
@@ -319,7 +321,7 @@ function ContactPickerModal({
               <div className="relative">
                 <SearchIcon className="w-4 h-4 wf-faint absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input ref={searchRef} value={query} onChange={e => setQuery(e.target.value)}
-                  placeholder="Tìm theo tên, biệt danh, SĐT hoặc ID (không cần dấu)…"
+                  placeholder={tr('Tìm theo tên, biệt danh, SĐT hoặc ID (không cần dấu)…')}
                   className="wf-input !pl-9" />
               </div>
               {contactType === 'all' && (
@@ -328,26 +330,26 @@ function ContactPickerModal({
                     <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
                       className="wf-seg__btn flex-1 !h-7" data-active={String(tab === t.id)}>
                       {t.icon}<span>{t.label}</span>
-                      <span className="text-[10.5px] font-semibold wf-faint tabular-nums">{t.count.toLocaleString('vi-VN')}</span>
+                      <span className="text-[10.5px] font-semibold wf-faint tabular-nums">{t.count.toLocaleString(appLocale())}</span>
                     </button>
                   ))}
                 </div>
               )}
               {selectedChips.length > 0 && (
                 <div className="flex items-start gap-2">
-                  <span className="pt-1 text-[11px] font-semibold wf-muted flex-shrink-0">Đã chọn {selectedChips.length}:</span>
+                  <span className="pt-1 text-[11px] font-semibold wf-muted flex-shrink-0">{trx('Đã chọn {{count}}:', { count: selectedChips.length })}</span>
                   <div className="flex-1 min-w-0 flex flex-wrap gap-1 max-h-[3.75rem] overflow-y-auto">
                     {selectedChips.map(id => (
                       <span key={id} className="wf-chip max-w-[12rem]" title={id}>
                         <span className="truncate">{chipName(id)}</span>
                         <button type="button" onClick={() => onChange(value.filter(x => x !== id))}
-                          className="flex-shrink-0 opacity-60 hover:opacity-100" title="Bỏ chọn">
+                          className="flex-shrink-0 opacity-60 hover:opacity-100" title={tr('Bỏ chọn')}>
                           <CloseIcon className="w-3 h-3" />
                         </button>
                       </span>
                     ))}
                   </div>
-                  <button type="button" onClick={() => onChange([])} className="wf-btn wf-btn--sm wf-btn--ghost wf-btn--danger flex-shrink-0">Bỏ chọn</button>
+                  <button type="button" onClick={() => onChange([])} className="wf-btn wf-btn--sm wf-btn--ghost wf-btn--danger flex-shrink-0">{tr('Bỏ chọn')}</button>
                 </div>
               )}
             </div>
@@ -355,8 +357,8 @@ function ContactPickerModal({
             <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-2">
               {!candidates.length ? (
                 <div className="wf-empty mt-6">
-                  <p className="text-sm font-semibold wf-text">Chưa có tài khoản {channelName || ''} nào</p>
-                  <p className="wf-help !mt-0">Thêm tài khoản rồi mở lại, hoặc nhập ID thủ công bên dưới.</p>
+                  <p className="text-sm font-semibold wf-text">{trx('Chưa có tài khoản {{v1}} nào', { v1: channelName || '' })}</p>
+                  <p className="wf-help !mt-0">{tr('Thêm tài khoản rồi mở lại, hoặc nhập ID thủ công bên dưới.')}</p>
                 </div>
               ) : error ? (
                 <div className="wf-callout mt-2" data-tone="warn"><span>{error}</span></div>
@@ -374,9 +376,9 @@ function ContactPickerModal({
                 </div>
               ) : !items.length ? (
                 <div className="wf-empty mt-6">
-                  <p className="text-sm font-semibold wf-text">{search ? `Không tìm thấy "${search}"` : 'Chưa có dữ liệu danh bạ'}</p>
+                  <p className="text-sm font-semibold wf-text">{search ? tr('Không tìm thấy "{{search}}"', { search }) : tr('Chưa có dữ liệu danh bạ')}</p>
                   <p className="wf-help !mt-0">
-                    {search ? 'Thử tên khác, SĐT hoặc nhập ID thủ công bên dưới.' : 'Mở tài khoản này trong ứng dụng để đồng bộ danh bạ, hoặc nhập ID thủ công.'}
+                    {search ? tr('Thử tên khác, SĐT hoặc nhập ID thủ công bên dưới.') : tr('Mở tài khoản này trong ứng dụng để đồng bộ danh bạ, hoặc nhập ID thủ công.')}
                   </p>
                 </div>
               ) : (
@@ -394,7 +396,7 @@ function ContactPickerModal({
                           <span className="block truncate text-[13px] font-semibold wf-text">{item.name}</span>
                           <span className="flex items-center gap-1.5 min-w-0 text-[11px] wf-muted">
                             <span className="wf-badge !h-4 flex-shrink-0" data-tone={item.type === 'group' ? 'orange' : item.isFriend ? 'green' : 'gray'}>
-                              {item.type === 'group' ? 'NHÓM' : item.isFriend ? 'BẠN BÈ' : 'CÁ NHÂN'}
+                              {item.type === 'group' ? tr('NHÓM') : item.isFriend ? tr('BẠN BÈ') : tr('CÁ NHÂN')}
                             </span>
                             {item.originalName && <span className="truncate">{item.originalName}</span>}
                             <span className="truncate font-mono text-[10.5px] wf-faint">ID {item.id}</span>
@@ -405,7 +407,7 @@ function ContactPickerModal({
                     );
                   })}
                   <div ref={sentinelRef} className="h-px" />
-                  {loadingMore && <p className="py-2 text-center text-[11px] wf-faint">Đang tải thêm…</p>}
+                  {loadingMore && <p className="py-2 text-center text-[11px] wf-faint">{tr('Đang tải thêm…')}</p>}
                 </div>
               )}
             </div>
@@ -415,17 +417,17 @@ function ContactPickerModal({
         {/* Footer */}
         <div className="wf-panel__footer flex items-center gap-2 px-5 py-3">
           <span className="text-xs wf-muted tabular-nums">
-            {total.toLocaleString('vi-VN')} kết quả{items.length < total ? ` · đang hiện ${items.length.toLocaleString('vi-VN')}` : ''}
+            {trx('{{v1}} kết quả{{v2}}', { v1: total.toLocaleString(appLocale()), v2: items.length < total ? tr(' · đang hiện {{v1}}', { v1: items.length.toLocaleString(appLocale()) }) : '' })}
           </span>
           <div className="ml-auto flex items-center gap-1.5">
             <input value={manualId} onChange={e => setManualId(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addManual(); } }}
-              placeholder="Nhập ID thủ công" className="wf-input wf-input--sm !w-40" />
+              placeholder={tr('Nhập ID thủ công')} className="wf-input wf-input--sm !w-40" />
             <button type="button" onClick={addManual} disabled={!manualId.trim()} className="wf-btn wf-btn--sm">
-              <PlusIcon className="w-3.5 h-3.5" /> Thêm
+              {trx('<0/> Thêm', { 0: <PlusIcon className="w-3.5 h-3.5" /> })}
             </button>
             <button type="button" onClick={onClose} className={`wf-btn ${contactMode === 'multi' ? 'wf-btn--primary' : ''}`}>
-              {contactMode === 'multi' ? `Xong${value.length ? ` (${value.length})` : ''}` : 'Đóng'}
+              {contactMode === 'multi' ? tr('Xong{{v1}}', { v1: value.length ? ` (${value.length})` : '' }) : tr('Đóng')}
             </button>
           </div>
         </div>
@@ -455,7 +457,7 @@ export function ContactPickerField({
   const [showModal, setShowModal] = React.useState(false);
   const [known, setKnown] = React.useState<Record<string, PickerItem>>({});
 
-  // Giá trị: string đơn hoặc JSON array
+  // Value: a single string or a JSON array
   const selectedIds: string[] = React.useMemo(() => {
     if (!value) return [];
     try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed.map(String) : [value]; }
@@ -501,28 +503,28 @@ export function ContactPickerField({
             selectedIds.map(id => {
               const item = known[id];
               return (
-                <span key={id} className={`wf-chip max-w-full${isTemplate(id) ? ' font-mono' : ''}`} title={item ? `${item.name} · ID ${id}` : id}>
+                <span key={id} className={`wf-chip max-w-full${isTemplate(id) ? ' font-mono' : ''}`} title={item ? tr('{{name}} · ID {{id}}', { name: item.name, id }) : id}>
                   {item && <span className="flex-shrink-0">{item.type === 'group' ? <UsersIcon className="w-3 h-3" /> : <UserIcon className="w-3 h-3" />}</span>}
                   <span className="min-w-0 truncate">{item?.name || id}</span>
                   <button type="button" onClick={() => handleChange(selectedIds.filter(x => x !== id))}
-                    className="-mr-0.5 flex-shrink-0 opacity-60 transition-opacity hover:opacity-100" title="Bỏ chọn">
+                    className="-mr-0.5 flex-shrink-0 opacity-60 transition-opacity hover:opacity-100" title={tr('Bỏ chọn')}>
                     <CloseIcon className="w-3 h-3" />
                   </button>
                 </span>
               );
             })
           ) : (
-            <span className="px-1 text-xs wf-faint">{placeholder || 'Nhập ID hoặc chọn từ danh bạ'}</span>
+            <span className="px-1 text-xs wf-faint">{placeholder || tr('Nhập ID hoặc chọn từ danh bạ')}</span>
           )}
         </div>
         <button type="button" onClick={() => setShowModal(true)} className="wf-btn wf-btn--sm flex-shrink-0">
-          <UsersIcon className="w-3.5 h-3.5" /> Chọn
+          {trx('<0/> Chọn', { 0: <UsersIcon className="w-3.5 h-3.5" /> })}
         </button>
       </div>
 
       {templateVars && templateVars.length > 0 && (
         <div className="px-3 py-2 border-t border-[color:var(--wf-card-border)]">
-          <div className="mb-1.5 text-[10.5px] font-medium wf-muted">Hoặc dùng biến:</div>
+          <div className="mb-1.5 text-[10.5px] font-medium wf-muted">{tr('Hoặc dùng biến:')}</div>
           <div className="flex flex-wrap gap-1">
             {templateVars.map(v => (
               <button key={v} type="button" onClick={() => handleChange([`{{ ${v} }}`])}

@@ -8,29 +8,30 @@ import { ERP_DATE_FILTER_OPTIONS, getDefaultCustomRange, resolveErpDateRange, ty
 import { EmployeeAvatar, RichContentPreview } from '../shared/ErpBadges';
 import type { ErpTask, ErpTaskPriority, ErpTaskStatus } from '../../../../models/erp';
 import { AlertIcon, ChatIcon, CircleIcon, CloseIcon, TargetIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../../shared/i18n';
 
 
 const STATUS_COLS: { id: ErpTaskStatus; label: string; color: string }[] = [
-  { id: 'todo',      label: 'Cần làm',    color: 'bg-muted/50 border-input' },
-  { id: 'doing',     label: 'Đang làm',   color: 'bg-blue-900/30 border-blue-700/40' },
-  { id: 'review',    label: 'Xem xét',    color: 'bg-yellow-900/30 border-yellow-700/40' },
-  { id: 'done',      label: 'Hoàn thành', color: 'bg-green-900/30 border-green-700/40' },
-  { id: 'cancelled', label: 'Huỷ',        color: 'bg-card/50 border-border' },
+  { id: 'todo',      label: tr('Cần làm'),    color: 'bg-muted/50 border-input' },
+  { id: 'doing',     label: tr('Đang làm'),   color: 'bg-blue-900/30 border-blue-700/40' },
+  { id: 'review',    label: tr('Xem xét'),    color: 'bg-yellow-900/30 border-yellow-700/40' },
+  { id: 'done',      label: tr('Hoàn thành'), color: 'bg-green-900/30 border-green-700/40' },
+  { id: 'cancelled', label: tr('Huỷ'),        color: 'bg-card/50 border-border' },
 ];
 
 const PRIORITY_META: Record<string, { color: string; label: string; icon: React.ReactNode }> = {
-  low: { color: 'text-muted-foreground', label: 'Thấp', icon: <CircleIcon className="w-4 h-4" /> },
-  normal: { color: 'text-blue-400', label: 'Bình thường', icon: <TargetIcon className="w-4 h-4" /> },
-  high: { color: 'text-orange-400', label: 'Cao', icon: <AlertIcon className="w-4 h-4" /> },
-  urgent: { color: 'text-red-400', label: 'Khẩn cấp', icon: <CloseIcon className="w-4 h-4" /> },
+  low: { color: 'text-muted-foreground', label: tr('Thấp'), icon: <CircleIcon className="w-4 h-4" /> },
+  normal: { color: 'text-blue-400', label: tr('Bình thường'), icon: <TargetIcon className="w-4 h-4" /> },
+  high: { color: 'text-orange-400', label: tr('Cao'), icon: <AlertIcon className="w-4 h-4" /> },
+  urgent: { color: 'text-red-400', label: tr('Khẩn cấp'), icon: <CloseIcon className="w-4 h-4" /> },
 };
 
 const STATUS_LABELS: Record<ErpTaskStatus, string> = {
-  todo: 'Cần làm',
-  doing: 'Đang làm',
-  review: 'Xem xét',
-  done: 'Hoàn thành',
-  cancelled: 'Huỷ',
+  todo: tr('Cần làm'),
+  doing: tr('Đang làm'),
+  review: tr('Xem xét'),
+  done: tr('Hoàn thành'),
+  cancelled: tr('Huỷ'),
 };
 
 export default function TaskBoardPage() {
@@ -117,28 +118,28 @@ export default function TaskBoardPage() {
             onChange={e => setActiveProject(e.target.value || null)}
             className="min-w-[180px] bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground"
           >
-            <option value="">Tất cả dự án</option>
+            <option value="">{tr('Tất cả dự án')}</option>
             {projects.map(project => (
               <option key={project.id} value={project.id}>{project.name}</option>
             ))}
           </select>
 
           <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="min-w-[160px] bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground">
-            <option value="">Tất cả nhân viên</option>
+            <option value="">{tr('Tất cả nhân viên')}</option>
             <option value="boss">Boss</option>
             {employees.map((employee: any) => <option key={employee.employee_id} value={employee.employee_id}>{employee.display_name}</option>)}
           </select>
 
           <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value as '' | ErpTaskPriority)} className="min-w-[140px] bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground">
-            <option value="">Mọi mức ưu tiên</option>
-            <option value="low">Thấp</option>
-            <option value="normal">Bình thường</option>
-            <option value="high">Cao</option>
-            <option value="urgent">Khẩn cấp</option>
+            <option value="">{tr('Mọi mức ưu tiên')}</option>
+            <option value="low">{tr('Thấp')}</option>
+            <option value="normal">{tr('Bình thường')}</option>
+            <option value="high">{tr('Cao')}</option>
+            <option value="urgent">{tr('Khẩn cấp')}</option>
           </select>
 
           <select value={dateFilter} onChange={e => setDateFilter(e.target.value as '' | ErpDateFilterPreset)} className="min-w-[160px] bg-card border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground">
-            <option value="">Tất cả hạn chót</option>
+            <option value="">{tr('Tất cả hạn chót')}</option>
             {ERP_DATE_FILTER_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
 
@@ -171,7 +172,7 @@ export default function TaskBoardPage() {
               }}
               className="px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
             >
-              Xóa lọc
+              {tr('Xóa lọc')}
             </button>
           )}
         </div>
@@ -181,7 +182,7 @@ export default function TaskBoardPage() {
             onClick={() => { setNewProjectName(''); setNewProjectModal(true); setTimeout(() => newProjectInputRef.current?.focus(), 50); }}
             className="px-3 py-1.5 rounded-lg text-xs bg-blue-600 hover:bg-blue-500 text-white whitespace-nowrap"
           >
-            + Tạo dự án
+            {tr('+ Tạo dự án')}
           </button>
         </div>
       </div>
@@ -223,7 +224,7 @@ export default function TaskBoardPage() {
                       {/* Delete button */}
                       <button
                         onClick={(e) => { e.stopPropagation(); setDeleteTarget(task); }}
-                        title="Xoá task"
+                        title={tr('Xoá task')}
                         className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded text-[11px] text-muted-foreground hover:text-red-400 hover:bg-muted/80 opacity-0 group-hover:opacity-100 transition-opacity"
                       >✕</button>
 
@@ -243,7 +244,7 @@ export default function TaskBoardPage() {
                         )}
                         {task.due_date && (
                           <span className={`text-[10px] ml-auto ${task.due_date < Date.now() ? 'text-red-400' : 'text-muted-foreground'}`}>
-                            {new Date(task.due_date).toLocaleDateString('vi-VN', { month: 'short', day: 'numeric' })}
+                            {new Date(task.due_date).toLocaleDateString(appLocale(), { month: 'short', day: 'numeric' })}
                           </span>
                         )}
                       </div>
@@ -257,7 +258,7 @@ export default function TaskBoardPage() {
                       )}
                       {!!task.watchers?.length && (
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-lg border border-violet-500/20 bg-violet-500/5 px-2 py-1 text-[10px] text-violet-500">
-                          <span className="font-semibold uppercase tracking-wide text-violet-500">👀 Theo dõi</span>
+                          <span className="font-semibold uppercase tracking-wide text-violet-500">{tr('👀 Theo dõi')}</span>
                           {task.watchers.slice(0, 2).map((employeeId: string) => (
                             <EmployeeAvatar key={`watcher-${task.id}-${employeeId}`} employeeId={employeeId} size={16} showName={false} />
                           ))}
@@ -283,7 +284,7 @@ export default function TaskBoardPage() {
                     onClick={() => setEditorState({ status: col.id })}
                     className="w-full text-left text-xs text-muted-foreground hover:text-muted-foreground hover:bg-muted/40 px-2 py-1.5 rounded-lg transition-colors"
                   >
-                    + Thêm task
+                    {tr('+ Thêm task')}
                   </button>
                 </div>
               </div>
@@ -305,7 +306,7 @@ export default function TaskBoardPage() {
       {/* Delete confirm */}
       {deleteTarget && (
         <ConfirmDialog
-          message={`Xoá task "${deleteTarget.title}"? Hành động không thể hoàn tác.`}
+          message={tr('Xoá task "{{title}}"? Hành động không thể hoàn tác.', { title: deleteTarget.title })}
           onConfirm={async () => { await deleteTask(deleteTarget.id); setDeleteTarget(null); }}
           onCancel={() => setDeleteTarget(null)}
         />
@@ -314,8 +315,8 @@ export default function TaskBoardPage() {
       {/* Cancel-drop confirm (M13) */}
       {cancelConfirm && (
         <ConfirmDialog
-          message={`Chuyển task "${cancelConfirm.task.title}" sang cột "Huỷ"?`}
-          confirmLabel="Huỷ task"
+          message={tr('Chuyển task "{{title}}" sang cột "Huỷ"?', { title: cancelConfirm.task.title })}
+          confirmLabel={tr('Huỷ task')}
           danger
           onConfirm={() => { updateTaskStatus(cancelConfirm.task.id, 'cancelled'); setCancelConfirm(null); }}
           onCancel={() => setCancelConfirm(null)}
@@ -326,7 +327,7 @@ export default function TaskBoardPage() {
       {newProjectModal && (
         <ErpOverlay onClose={() => setNewProjectModal(false)} className="z-50" backdropClassName="bg-black/50">
           <ErpModalCard className="w-80 p-5">
-            <h3 className="text-sm font-semibold text-foreground mb-3">Tạo project mới</h3>
+            <h3 className="text-sm font-semibold text-foreground mb-3">{tr('Tạo project mới')}</h3>
             <input
               ref={newProjectInputRef}
               value={newProjectName}
@@ -340,7 +341,7 @@ export default function TaskBoardPage() {
                 }
                 if (e.key === 'Escape') setNewProjectModal(false);
               }}
-              placeholder="Tên project..."
+              placeholder={tr('Tên project...')}
               className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 mb-3"
             />
             <div className="flex gap-2">
@@ -356,13 +357,13 @@ export default function TaskBoardPage() {
                 disabled={!newProjectName.trim()}
                 className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm rounded-lg transition-colors"
               >
-                Tạo
+                {tr('Tạo')}
               </button>
               <button
                 onClick={() => setNewProjectModal(false)}
                 className="px-4 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg text-sm transition-colors"
               >
-                Huỷ
+                {tr('Huỷ')}
               </button>
             </div>
           </ErpModalCard>

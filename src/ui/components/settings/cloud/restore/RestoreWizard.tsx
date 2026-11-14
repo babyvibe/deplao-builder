@@ -1,15 +1,15 @@
 /**
- * Trình khôi phục từ Cloudflare — 6 bước:
- *   1 Kết nối Cloudflare · 2 Chọn workspace · 3 Nhập mật khẩu · 4 Khôi phục dữ liệu · 5 Đăng nhập lại kênh ·
- *   6 Bật lại tự động hoá.
- *  - mode 'new'     : máy mới / cài lại Windows, đi đủ 6 bước. Mở từ màn đầu hoặc hộp Thêm tài khoản bằng
- *                     openRestoreWizard() (tự gắn vào document.body, không cần đặt component ở đâu).
- *  - mode 'same'    : khôi phục trên máy này (Đồng bộ dữ liệu → Khôi phục…), bắt đầu ở bước 2.
- *  - mode 'promote' : máy dự phòng đang theo dõi → dùng bản đã có trên máy (bỏ qua bước 2–3).
- * Dữ liệu khôi phục không bao giờ tự kết nối kênh; tự động hoá tạm dừng tới khi người dùng xác nhận máy cũ đã tắt
- * (db.resumeAutomations). Tiến độ bước 4 lấy từ CLOUD_RESTORE_PROGRESS_EVENT.
- * Kho lưu: hộp tự đọc storage.status() (mở bằng openRestoreWizard thì không nằm trong CloudSettings). Bước 1 cho chọn
- * bản sao nằm ở Cloudflare R2 hay Google Drive; Google Drive thì bước 1 là đăng nhập Google thay cho token Cloudflare.
+ * Cloudflare restore wizard - 6 steps:
+ *   1 Connect Cloudflare · 2 Choose workspace · 3 Enter password · 4 Restore data · 5 Log in to channels again ·
+ *   6 Turn automations back on.
+ *  - mode 'new'     : new machine / Windows reinstall, goes through all 6 steps. Opened from the first screen or from the Add account box via
+ *                     openRestoreWizard() (attaches itself to document.body, no need to place a component anywhere).
+ *  - mode 'same'    : restore on this machine (Data sync → Restore…), starts at step 2.
+ *  - mode 'promote' : standby machine being monitored → use the copy already on the machine (skips steps 2–3).
+ * Restored data never connects channels by itself; automations stay paused until the user confirms the old machine is off
+ * (db.resumeAutomations). Step 4 progress comes from CLOUD_RESTORE_PROGRESS_EVENT.
+ * Storage: the box reads storage.status() itself (when opened by openRestoreWizard it is not inside CloudSettings). Step 1 lets you choose
+ * whether the copy is on Cloudflare R2 or Google Drive; for Google Drive, step 1 is a Google sign-in instead of the Cloudflare token.
  */
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -67,17 +67,19 @@ import {
 } from '../cloudUi';
 import { ConnectForm } from '../CloudConnect';
 import { EMPTY_GOOGLE_STATUS, GoogleAccountBlock } from '../sync/StoragePicker';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export type RestoreWizardMode = 'new' | 'same' | 'promote';
 
 export interface RestoreWizardOptions {
-  /** 'new' (mặc định) = máy mới · 'same' = khôi phục trên máy này · 'promote' = máy dự phòng chuyển thành máy chính. */
+  /** 'new' (default) = new machine · 'same' = restore on this machine · 'promote' = standby machine becomes the main machine. */
   mode?: RestoreWizardMode;
-  /** Workspace chọn sẵn (same) / workspace đang theo dõi (promote). */
+  /** Workspace preselected (same) / workspace being monitored (promote). */
   workspaceId?: string;
-  /** promote: tên máy chủ đang được theo dõi. */
+  /** promote: name of the main machine being monitored. */
   sourceMachine?: string;
-  /** Máy này đã lưu mật khẩu sao lưu (cho phép để trống ở bước 3). */
+  /** This machine has a saved backup password (can be left empty at step 3). */
   passphraseSet?: boolean;
 }
 
@@ -89,44 +91,44 @@ export interface RestoreWizardProps extends RestoreWizardOptions {
 type StepNo = 1 | 2 | 3 | 4 | 5 | 6;
 
 export const RESTORE_STEPS = [
-  'Kết nối Cloudflare',
-  'Chọn workspace',
-  'Nhập mật khẩu',
-  'Khôi phục dữ liệu',
-  'Đăng nhập lại kênh',
-  'Bật lại tự động hoá',
+  tr('Kết nối Cloudflare'),
+  tr('Chọn workspace'),
+  tr('Nhập mật khẩu'),
+  tr('Khôi phục dữ liệu'),
+  tr('Đăng nhập lại kênh'),
+  tr('Bật lại tự động hoá'),
 ] as const;
 
-/** Bước 1 khi bản sao nằm trên Google Drive. */
-const GOOGLE_FIRST_STEP = 'Đăng nhập Google Drive';
+/** Step 1 when the copy is on Google Drive. */
+const GOOGLE_FIRST_STEP = tr('Đăng nhập Google Drive');
 
-/** Tên các bước theo kho: Google Drive thì bước 1 là đăng nhập Google. */
+/** Step names per storage: on Google Drive, step 1 is the Google sign-in. */
 export function restoreSteps(provider: CloudStorageProvider = 'r2'): readonly string[] {
   return provider === 'gdrive' ? [GOOGLE_FIRST_STEP, ...RESTORE_STEPS.slice(1)] : RESTORE_STEPS;
 }
 
-/** Tiêu đề bước 4 theo tiến độ; `label` = tên kho. */
+/** Step 4 title by progress; `label` = storage name. */
 function progressLabel(step: RestoreProgress['step'], label: string): string {
   switch (step) {
-    case 'download': return `Đang tải bản sao từ ${label}`;
-    case 'decrypt': return 'Đang giải mã';
-    case 'apply': return 'Đang ghép các đoạn thay đổi';
-    case 'verify': return 'Đang kiểm tra dữ liệu';
-    case 'swap': return 'Đang thay dữ liệu trên máy';
-    case 'done': return 'Đã khôi phục xong';
-    default: return 'Khôi phục bị lỗi';
+    case 'download': return tr('Đang tải bản sao từ {{label}}', { label });
+    case 'decrypt': return tr('Đang giải mã');
+    case 'apply': return tr('Đang ghép các đoạn thay đổi');
+    case 'verify': return tr('Đang kiểm tra dữ liệu');
+    case 'swap': return tr('Đang thay dữ liệu trên máy');
+    case 'done': return tr('Đã khôi phục xong');
+    default: return tr('Khôi phục bị lỗi');
   }
 }
 
 const CHANNEL_INFO: Record<string, { label: string; how: string }> = {
-  zalo: { label: 'Zalo', how: 'Cần đăng nhập lại bằng mã QR' },
-  facebook: { label: 'Facebook', how: 'Cần đăng nhập lại tài khoản Facebook' },
-  telegram_user: { label: 'Telegram', how: 'Cần đăng nhập lại bằng số điện thoại' },
-  telegram_bot: { label: 'Telegram bot', how: 'Cần dán lại token bot' },
+  zalo: { label: 'Zalo', how: tr('Cần đăng nhập lại bằng mã QR') },
+  facebook: { label: 'Facebook', how: tr('Cần đăng nhập lại tài khoản Facebook') },
+  telegram_user: { label: 'Telegram', how: tr('Cần đăng nhập lại bằng số điện thoại') },
+  telegram_bot: { label: 'Telegram bot', how: tr('Cần dán lại token bot') },
 };
 
 function channelInfo(channel: string) {
-  return CHANNEL_INFO[channel] ?? { label: channel || 'Zalo', how: 'Cần đăng nhập lại' };
+  return CHANNEL_INFO[channel] ?? { label: channel || 'Zalo', how: tr('Cần đăng nhập lại') };
 }
 
 interface WizardAccount {
@@ -137,13 +139,13 @@ interface WizardAccount {
   proxyId: number | null;
 }
 
-// ─── Mảnh dùng lại ──────────────────────────────────────────────────────────────────────
+// ─── Reused pieces ──────────────────────────────────────────────────────────────────────
 
-/** Cột các bước bên trái hộp khôi phục. `provider` thiếu = theo kho trong StorageContext (chưa biết = R2). */
+/** Column of steps on the left of the restore box. `provider` missing = follows the storage in StorageContext (unknown = R2). */
 export function RestoreStepper({ step, skipped = [], provider }: { step: number; skipped?: number[]; provider?: CloudStorageProvider }) {
   const contextProvider = useStorage()?.provider;
   return (
-    <ol className="space-y-1" aria-label="Các bước khôi phục">
+    <ol className="space-y-1" aria-label={tr('Các bước khôi phục')}>
       {restoreSteps(provider ?? contextProvider ?? 'r2').map((label, index) => {
         const n = index + 1;
         const current = n === step;
@@ -170,53 +172,53 @@ export function RestoreStepper({ step, skipped = [], provider }: { step: number;
   );
 }
 
-/** Bản sao chỉ có một phần dữ liệu (chọn tài khoản hoặc từ ngày). Bản cũ không ghi phạm vi = đủ. */
+/** The copy holds only part of the data (chosen accounts or from a date). An old copy with no recorded scope = complete. */
 export function isPartialCopy(copy: Pick<RemoteDbCopy, 'scope'>): boolean {
   return !!copy.scope && !isAllScope(normalizeScope(copy.scope));
 }
 
-/** Phạm vi của bản sao: "Tất cả tài khoản", "Shop Hoa Lan (Zalo), Kho tổng (Facebook) · từ 01/01/2026", "3 tài khoản". */
+/** Scope of the copy: "Tất cả tài khoản" (All accounts), "Shop Hoa Lan (Zalo), Kho tổng (Facebook) · từ 01/01/2026" (from 01/01/2026), "3 tài khoản" (3 accounts). */
 export function describeCopyScope(copy: Pick<RemoteDbCopy, 'scope' | 'accountNames'>): string {
   const scope = normalizeScope(copy.scope);
-  let who = 'Tất cả tài khoản';
+  let who = tr('Tất cả tài khoản');
   if (scope.accounts !== 'all') {
     const ids = scope.accounts;
     const byId = new Map((copy.accountNames ?? []).map(a => [a.id, a] as const));
     const named = ids.map(id => byId.get(id)).filter((a): a is NonNullable<typeof a> => !!a);
     if (!named.length) {
-      who = ids.length ? `${fmtNum(ids.length)} tài khoản` : 'Chưa có tài khoản';
+      who = ids.length ? tr('{{v1}} tài khoản', { v1: fmtNum(ids.length) }) : tr('Chưa có tài khoản');
     } else {
       const shown = named.slice(0, 3).map(a => `${a.name || a.id}${a.channel ? ` (${channelInfo(a.channel).label})` : ''}`);
       const rest = ids.length - shown.length;
-      who = rest > 0 ? `${shown.join(', ')} và ${fmtNum(rest)} tài khoản khác` : shown.join(', ');
+      who = rest > 0 ? tr('{{v1}} và {{v2}} tài khoản khác', { v1: shown.join(', '), v2: fmtNum(rest) }) : shown.join(', ');
     }
   }
-  return scope.fromTs ? `${who} · từ ${fmtDate(scope.fromTs)}` : who;
+  return scope.fromTs ? tr('{{who}} · từ {{v1}}', { who, v1: fmtDate(scope.fromTs) }) : who;
 }
 
-/** Cảnh báo khi bản sao chỉ có một phần dữ liệu (bước xác nhận khôi phục, chọn bản để theo dõi). */
+/** Warning when the copy holds only part of the data (confirm-restore step, choosing the copy to monitor). */
 export function CopyScopeNotice({ copy }: { copy: RemoteDbCopy }) {
   if (!isPartialCopy(copy)) return null;
   return (
-    <Notice tone="warning" title={`Gồm: ${describeCopyScope(copy)}`}>
-      <p>Bản sao chỉ có các tài khoản / khoảng thời gian trên.</p>
+    <Notice tone="warning" title={tr('Gồm: {{v1}}', { v1: describeCopyScope(copy) })}>
+      <p>{tr('Bản sao chỉ có các tài khoản / khoảng thời gian trên.')}</p>
     </Notice>
   );
 }
 
-/** Chi tiết một bản sao trên R2: tên, máy, lần đồng bộ, dung lượng, phạm vi ("Gồm: …"), phiên bản Deplao. */
+/** Details of one copy on R2: name, machine, last sync, size, scope ("Gồm: …" (Includes: …)), Deplao version. */
 export function RemoteCopyDetails({ copy, appVersion = APP_VERSION }: { copy: RemoteDbCopy; appVersion?: string }) {
   const newer = isNewerThanApp(copy.appVersion, appVersion);
   return (
     <span className="block min-w-0 flex-1">
       <span className="block truncate text-sm font-semibold text-foreground">{copy.name}</span>
       <span className="block text-xs text-muted-foreground">
-        Máy {copy.machine} · đồng bộ {fmtWhen(copy.lastSyncAt)} · {fmtBytes(copy.bytes)}
+        {trx('Máy {{machine}} · đồng bộ {{v1}} · {{v2}}', { machine: copy.machine, v1: fmtWhen(copy.lastSyncAt), v2: fmtBytes(copy.bytes) })}
       </span>
-      <span className="block text-xs text-muted-foreground">Gồm: {describeCopyScope(copy)}</span>
+      <span className="block text-xs text-muted-foreground">{trx('Gồm: {{v1}}', { v1: describeCopyScope(copy) })}</span>
       <span className={cn('block text-[11px]', newer ? 'text-warning' : 'text-subtle-foreground')}>
         {newer
-          ? `Tạo bởi Deplao ${copy.appVersion}, mới hơn bản đang dùng (${appVersion}). Cập nhật app trước khi khôi phục.`
+          ? tr('Tạo bởi Deplao {{appVersion}}, mới hơn bản đang dùng ({{appVersion1}}). Cập nhật app trước khi khôi phục.', { appVersion: copy.appVersion, appVersion1: appVersion })
           : `Deplao ${copy.appVersion}`}
       </span>
     </span>
@@ -224,8 +226,8 @@ export function RemoteCopyDetails({ copy, appVersion = APP_VERSION }: { copy: Re
 }
 
 /**
- * Danh sách bản sao workspace trên R2 (chọn một). Bản do Deplao mới hơn tạo bị khoá.
- * `onDelete` + `canDelete`: nút "Xoá bản này trên R2" cạnh bản được phép xoá (nằm ngoài nút chọn).
+ * List of workspace copies on R2 (pick one). A copy made by a newer Deplao is locked.
+ * `onDelete` + `canDelete`: the "Xoá bản này trên R2" (Delete this copy on R2) button next to the copies that may be deleted (outside the select button).
  */
 export function RemoteCopyList({ copies, selectedId, onSelect, appVersion = APP_VERSION, canDelete, onDelete, deletingId = null }: {
   copies: RemoteDbCopy[];
@@ -234,13 +236,13 @@ export function RemoteCopyList({ copies, selectedId, onSelect, appVersion = APP_
   appVersion?: string;
   canDelete?: (copy: RemoteDbCopy) => boolean;
   onDelete?: (copy: RemoteDbCopy) => void;
-  /** Bản đang xoá (nút hiện vòng quay). */
+  /** Copy being deleted (the button shows a spinner). */
   deletingId?: string | null;
 }) {
   const label = useStoreLabel();
-  const deleteLabel = `Xoá bản này trên ${label}`;
+  const deleteLabel = tr('Xoá bản này trên {{label}}', { label });
   return (
-    <div role="radiogroup" aria-label={`Bản sao trên ${label}`} className="space-y-2">
+    <div role="radiogroup" aria-label={tr('Bản sao trên {{label}}', { label })} className="space-y-2">
       {copies.map(copy => {
         const newer = isNewerThanApp(copy.appVersion, appVersion);
         const active = copy.workspaceId === selectedId;
@@ -302,16 +304,16 @@ function Loading({ text }: { text: string }) {
   return <p className="flex items-center gap-2 py-6 text-xs text-muted-foreground"><CloudSpinner className="h-3.5 w-3.5" />{text}</p>;
 }
 
-/** Workspace vừa khôi phục chưa phải workspace đang mở → chuyển sang (App tải lại tài khoản qua workspace:switched). */
+/** Restored workspace is not the open workspace yet → switch to it (App reloads accounts through workspace:switched). */
 async function switchToWorkspace(id: string): Promise<void> {
   try {
     const active = await ipc.workspace?.getActive();
     const activeId = active?.workspace?.id;
     if (activeId && activeId !== id) await ipc.workspace?.switch(id);
-  } catch { /* main tự chuyển khi thay DB */ }
+  } catch { /* main switches by itself when the DB is replaced */ }
 }
 
-// ─── Trình khôi phục ────────────────────────────────────────────────────────────────────
+// ─── Restore wizard ────────────────────────────────────────────────────────────────────
 
 export function RestoreWizard({
   open,
@@ -331,7 +333,7 @@ export function RestoreWizard({
   const skipped = mode === 'promote' ? [1, 2, 3] : [];
   const [connection, setConnection] = useState<CloudConnectionStatus | null>(null);
   const [connectionLoaded, setConnectionLoaded] = useState(false);
-  // Kho lưu: hộp tự đọc (mở từ màn đầu thì không nằm trong CloudSettings); chưa đọc xong thì dùng kho của trang Cài đặt.
+  // Storage: the box reads it itself (when opened from the first screen it is not inside CloudSettings); until it has been read, use the storage of the Settings page.
   const [ownStorage, setOwnStorage] = useState<CloudStorageStatus | null>(null);
   const [storageLoaded, setStorageLoaded] = useState(false);
   const [tunnelAuto, setTunnelAuto] = useState(false);
@@ -371,7 +373,7 @@ export function RestoreWizard({
     try {
       const res = await api.storage.status();
       if (res?.success && res.storage) setOwnStorage(res.storage);
-    } catch { /* bản cũ / lỗi: coi như kho R2 */ }
+    } catch { /* old build / error: treat as the R2 storage */ }
     finally {
       setStorageLoaded(true);
     }
@@ -379,12 +381,12 @@ export function RestoreWizard({
   useEffect(() => {
     if (open) void loadStorage();
   }, [open, loadStorage]);
-  // Đăng nhập / ngắt Google, đổi kho ở nơi khác → main báo 'connection'.
+  // Signing in / out of Google, or changing storage elsewhere → main reports 'connection'.
   useCloudChanged(areas => {
     if (open && areas.includes('connection')) void loadStorage();
   });
 
-  // Đổi kho ở bước 1 → danh sách bản sao của kho cũ không còn đúng.
+  // Changing storage in step 1 → the list of copies of the old storage is no longer valid.
   const shownProvider = useRef(provider);
   useEffect(() => {
     if (shownProvider.current === provider) return;
@@ -393,7 +395,7 @@ export function RestoreWizard({
     setCopiesError(null);
   }, [provider]);
 
-  // Kết nối + cấu hình tunnel (bước 6 hỏi chuyển địa chỉ Internet khi đang dùng Cloudflare tự động).
+  // Connection + tunnel config (step 6 asks to switch the Internet address when Cloudflare automatic is in use).
   useEffect(() => {
     if (!open) return;
     const api = cloudApi();
@@ -425,7 +427,7 @@ export function RestoreWizard({
           : list.find(c => !isNewerThanApp(c.appVersion))?.workspaceId ?? ''));
       } else {
         setCopies([]);
-        setCopiesError(res?.error || `Không đọc được danh sách bản sao trên ${labelRef.current}.`);
+        setCopiesError(res?.error || tr('Không đọc được danh sách bản sao trên {{current}}.', { current: labelRef.current }));
       }
     } catch (err) {
       setCopies([]);
@@ -457,7 +459,7 @@ export function RestoreWizard({
     if (open && step === 5) void loadAccounts();
   }, [open, step, loadAccounts]);
 
-  // Bước 5: ẩn hộp khôi phục khi hộp Thêm tài khoản đang mở; đóng xong thì đọc lại danh sách tài khoản.
+  // Step 5: hide the restore box while the Add account box is open; once it closes, reload the account list.
   useEffect(() => {
     if (!loginPending) return;
     if (addAccountOpen) { sawLoginModal.current = true; return; }
@@ -482,7 +484,7 @@ export function RestoreWizard({
     if (res) void loadStorage();
   };
 
-  /** Bước 1 (máy mới): bản sao nằm ở kho nào. Main từ chối khi đồng bộ trên máy này đang bật (run() báo lỗi). */
+  /** Step 1 (new machine): which storage the copy is on. Main refuses when sync is on on this machine (run() reports an error). */
   const pickStore = async (next: CloudStorageProvider) => {
     if (next === provider) return;
     const res = await run('provider', () => cloudApi()?.storage?.setProvider(next));
@@ -508,7 +510,7 @@ export function RestoreWizard({
       if (untilTs) req.untilTs = untilTs;
       const res = await api.db.restore(req);
       if (!res?.success) {
-        setRestoreError(res?.error || 'Khôi phục không thành công.');
+        setRestoreError(res?.error || tr('Khôi phục không thành công.'));
         setProgress(prev => ({ step: 'error', percent: prev?.percent ?? 0 }));
         return;
       }
@@ -529,7 +531,7 @@ export function RestoreWizard({
     if (step === 1) { setStep(2); return; }
     if (step === 2) { if (selected && !isNewerThanApp(selected.appVersion)) setStep(3); return; }
     if (step === 3) {
-      if (!passphrase && !passphraseSet) { setPassError('Nhập mật khẩu sao lưu.'); return; }
+      if (!passphrase && !passphraseSet) { setPassError(tr('Nhập mật khẩu sao lưu.')); return; }
       if (untilTs && selected && (untilTs < selected.baseAt || untilTs > selected.lastSyncAt)) {
         setPassError(null);
         return;
@@ -555,7 +557,7 @@ export function RestoreWizard({
   };
 
   const rehydrate = async () => {
-    await run('rehydrate', () => cloudApi()?.media.rehydrateAll(), `Đang tải media từ ${label} về máy`);
+    await run('rehydrate', () => cloudApi()?.media.rehydrateAll(), tr('Đang tải media từ {{label}} về máy', { label }));
   };
 
   const finish = async () => {
@@ -564,11 +566,11 @@ export function RestoreWizard({
     setFinishing(true);
     try {
       if (moveAddress) {
-        const moved = await run('move', () => api.tunnel.moveHere(), 'Đã chuyển địa chỉ Internet sang máy này');
+        const moved = await run('move', () => api.tunnel.moveHere(), tr('Đã chuyển địa chỉ Internet sang máy này'));
         if (moved?.addresses) publishPublicAddresses(moved.addresses);
       }
       if (typeof api.db.resumeAutomations === 'function') {
-        const res = await run('resume', () => api.db.resumeAutomations(), 'Đã bật lại chiến dịch, workflow và lịch của ứng dụng');
+        const res = await run('resume', () => api.db.resumeAutomations(), tr('Đã bật lại chiến dịch, workflow và lịch của ứng dụng'));
         if (!res) return;
       }
       onClose();
@@ -580,20 +582,20 @@ export function RestoreWizard({
   const untilOutOfRange = !!(untilTs && selected && (untilTs < selected.baseAt || untilTs > selected.lastSyncAt));
   const canResume = typeof cloudApi()?.db?.resumeAutomations === 'function';
   const subtitle = mode === 'promote'
-    ? `Dùng bản theo dõi của ${sourceMachine || 'máy chủ'} trên máy này.`
+    ? tr('Dùng bản theo dõi của {{v1}} trên máy này.', { v1: sourceMachine || tr('máy chủ') })
     : mode === 'same'
-      ? `Khôi phục dữ liệu của máy này từ bản sao trên ${label}.`
-      : `Cài máy mới hoặc cài lại Windows: lấy lại dữ liệu từ bản sao trên ${label}.`;
+      ? tr('Khôi phục dữ liệu của máy này từ bản sao trên {{label}}.', { label })
+      : tr('Cài máy mới hoặc cài lại Windows: lấy lại dữ liệu từ bản sao trên {{label}}.', { label });
 
   let body: React.ReactNode = null;
   if (step === 1) {
-    // Máy mới: chọn bản sao nằm ở kho nào (bản app có chọn kho), rồi kết nối kho đó.
+    // New machine: choose which storage the copy is on (app build with storage choice), then connect that storage.
     const canPickStore = !!storage && typeof cloudApi()?.storage?.setProvider === 'function';
     const storeChoice = canPickStore ? (
       <div className="space-y-1.5">
-        <p className="text-xs font-medium text-foreground">Bản sao lưu nằm ở</p>
+        <p className="text-xs font-medium text-foreground">{tr('Bản sao lưu nằm ở')}</p>
         <PillGroup
-          label="Kho lưu của bản sao"
+          label={tr('Kho lưu của bản sao')}
           value={provider}
           disabled={busy === 'provider'}
           onChange={next => void pickStore(next)}
@@ -606,14 +608,14 @@ export function RestoreWizard({
     ) : null;
     let connectBody: React.ReactNode;
     if (!connectionLoaded || !storageLoaded) {
-      connectBody = <Loading text="Đang kiểm tra kết nối…" />;
+      connectBody = <Loading text={tr('Đang kiểm tra kết nối…')} />;
     } else if (gdrive && storage) {
       connectBody = (
         <div className="space-y-3">
-          <StepTitle title={GOOGLE_FIRST_STEP}>Đăng nhập đúng tài khoản Google đã dùng để sao lưu trên máy cũ.</StepTitle>
+          <StepTitle title={GOOGLE_FIRST_STEP}>{tr('Đăng nhập đúng tài khoản Google đã dùng để sao lưu trên máy cũ.')}</StepTitle>
           {storage.ready && (
-            <Notice tone="success" title="Đã đăng nhập Google Drive">
-              <p>Tiếp tục để chọn bản sao lưu trên Google Drive.</p>
+            <Notice tone="success" title={tr('Đã đăng nhập Google Drive')}>
+              <p>{tr('Tiếp tục để chọn bản sao lưu trên Google Drive.')}</p>
             </Notice>
           )}
           <GoogleAccountBlock google={storage.google ?? EMPTY_GOOGLE_STATUS} onStorage={setOwnStorage} />
@@ -622,8 +624,8 @@ export function RestoreWizard({
     } else if (connection?.connected) {
       connectBody = (
         <div className="space-y-3">
-          <Notice tone="success" title={`Đã kết nối Cloudflare${connection.accountName ? ` · ${connection.accountName}` : ''}`}>
-            <p>Tiếp tục để chọn bản sao lưu trên R2.</p>
+          <Notice tone="success" title={tr('Đã kết nối Cloudflare{{v1}}', { v1: connection.accountName ? ` · ${connection.accountName}` : '' })}>
+            <p>{tr('Tiếp tục để chọn bản sao lưu trên R2.')}</p>
           </Notice>
           <R2RequiredNotice connection={connection} onRecheck={() => void recheck()} rechecking={busy === 'recheck'} />
         </div>
@@ -631,7 +633,7 @@ export function RestoreWizard({
     } else {
       connectBody = (
         <div className="space-y-3">
-          <StepTitle title="Kết nối Cloudflare">Dán token Cloudflare cho máy này: token của máy cũ được khoá theo máy cũ.</StepTitle>
+          <StepTitle title={tr('Kết nối Cloudflare')}>{tr('Dán token Cloudflare cho máy này: token của máy cũ được khoá theo máy cũ.')}</StepTitle>
           <ConnectForm onConnected={setConnection} initialAccountId={connection?.accountId ?? ''} />
         </div>
       );
@@ -640,15 +642,15 @@ export function RestoreWizard({
   } else if (step === 2) {
     body = (
       <div className="space-y-3">
-        <StepTitle title="Chọn workspace">{`Mỗi workspace có một bản trên ${label}. Chọn bản cần khôi phục về máy này.`}</StepTitle>
+        <StepTitle title={tr('Chọn workspace')}>{tr('Mỗi workspace có một bản trên {{label}}. Chọn bản cần khôi phục về máy này.', { label })}</StepTitle>
         {copies === null ? (
-          <Loading text={`Đang đọc bản sao trên ${label}…`} />
+          <Loading text={tr('Đang đọc bản sao trên {{label}}…', { label })} />
         ) : copies.length === 0 ? (
           <Notice
             tone={copiesError ? 'destructive' : 'info'}
-            action={<Button size="sm" variant="ghost" leftIcon={<RefreshIcon className="h-4 w-4" />} onClick={() => void loadCopies()}>Tải lại</Button>}
+            action={<Button size="sm" variant="ghost" leftIcon={<RefreshIcon className="h-4 w-4" />} onClick={() => void loadCopies()}>{tr('Tải lại')}</Button>}
           >
-            <p>{copiesError || `Chưa có bản sao lưu nào trên ${label} của tài khoản này.`}</p>
+            <p>{copiesError || tr('Chưa có bản sao lưu nào trên {{label}} của tài khoản này.', { label })}</p>
           </Notice>
         ) : (
           <RemoteCopyList copies={copies} selectedId={selectedId} onSelect={setSelectedId} />
@@ -658,14 +660,14 @@ export function RestoreWizard({
   } else if (step === 3) {
     body = (
       <div className="space-y-4">
-        <StepTitle title="Nhập mật khẩu sao lưu">
-          Mật khẩu đặt khi bật Đồng bộ dữ liệu trên máy chủ. Deplao giải mã trên máy này, không gửi mật khẩu đi đâu.
+        <StepTitle title={tr('Nhập mật khẩu sao lưu')}>
+          {tr('Mật khẩu đặt khi bật Đồng bộ dữ liệu trên máy chủ. Deplao giải mã trên máy này, không gửi mật khẩu đi đâu.')}
         </StepTitle>
         <FormField
-          label="Mật khẩu sao lưu"
+          label={tr('Mật khẩu sao lưu')}
           htmlFor={passId}
           error={passError}
-          hint={passphraseSet ? 'Máy này đã lưu mật khẩu: để trống để dùng mật khẩu đã lưu.' : undefined}
+          hint={passphraseSet ? tr('Máy này đã lưu mật khẩu: để trống để dùng mật khẩu đã lưu.') : undefined}
         >
           <Input
             id={passId}
@@ -679,33 +681,32 @@ export function RestoreWizard({
         </FormField>
         {selected && selected.baseAt > 0 && (
           <details className="rounded-lg bg-muted px-3 py-2">
-            <summary className="cursor-pointer select-none text-xs font-medium text-foreground">Khôi phục tới một thời điểm cũ hơn</summary>
+            <summary className="cursor-pointer select-none text-xs font-medium text-foreground">{tr('Khôi phục tới một thời điểm cũ hơn')}</summary>
             <div className="mt-2 space-y-2 text-xs text-muted-foreground">
               <p>
-                Chọn thời điểm trong khoảng từ bản gốc ({fmtWhen(selected.baseAt)}) tới lần đồng bộ cuối
-                ({fmtWhen(selected.lastSyncAt)}). Để trống là bản mới nhất.
+                {trx('Chọn thời điểm trong khoảng từ bản gốc ({{v1}}) tới lần đồng bộ cuối ({{v2}}). Để trống là bản mới nhất.', { v1: fmtWhen(selected.baseAt), v2: fmtWhen(selected.lastSyncAt) })}
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <Input
                   type="datetime-local"
                   className="w-60"
-                  aria-label="Khôi phục tới thời điểm"
+                  aria-label={tr('Khôi phục tới thời điểm')}
                   min={toLocalInput(selected.baseAt)}
                   max={toLocalInput(selected.lastSyncAt)}
                   value={untilTs ? toLocalInput(untilTs) : ''}
                   invalid={untilOutOfRange}
                   onChange={e => setUntilTs(e.target.value ? new Date(e.target.value).getTime() : null)}
                 />
-                {untilTs && <Button size="sm" variant="ghost" onClick={() => setUntilTs(null)}>Dùng bản mới nhất</Button>}
+                {untilTs && <Button size="sm" variant="ghost" onClick={() => setUntilTs(null)}>{tr('Dùng bản mới nhất')}</Button>}
               </div>
-              {untilOutOfRange && <p className="text-destructive">Thời điểm phải nằm trong khoảng trên.</p>}
+              {untilOutOfRange && <p className="text-destructive">{tr('Thời điểm phải nằm trong khoảng trên.')}</p>}
             </div>
           </details>
         )}
         {selected && <CopyScopeNotice copy={selected} />}
         <Notice tone="warning">
           <p>
-            {`Dữ liệu của workspace này trên máy sẽ được thay bằng bản trên ${label}. Kênh chat không tự kết nối; chiến dịch, workflow và lịch của ứng dụng tạm dừng tới bước 6.`}
+            {tr('Dữ liệu của workspace này trên máy sẽ được thay bằng bản trên {{label}}. Kênh chat không tự kết nối; chiến dịch, workflow và lịch của ứng dụng tạm dừng tới bước 6.', { label })}
           </p>
         </Notice>
       </div>
@@ -714,11 +715,10 @@ export function RestoreWizard({
     const notStarted = mode === 'promote' && !restoring && !restored && !restoreError && !progress;
     body = notStarted ? (
       <div className="space-y-3">
-        <StepTitle title="Chuyển sang máy này">
-          Dữ liệu của {sourceMachine || 'máy chủ'} đã có trên máy này. Bấm Chuyển sang máy này để dùng ngay; kênh chat
-          đăng nhập lại ở bước sau.
+        <StepTitle title={tr('Chuyển sang máy này')}>
+          {trx('Dữ liệu của {{v1}} đã có trên máy này. Bấm Chuyển sang máy này để dùng ngay; kênh chat đăng nhập lại ở bước sau.', { v1: sourceMachine || tr('máy chủ') })}
         </StepTitle>
-        <Notice tone="warning"><p>Chỉ làm khi máy chủ cũ đã hỏng hoặc đã tắt, tránh hai máy cùng gửi tin.</p></Notice>
+        <Notice tone="warning"><p>{tr('Chỉ làm khi máy chủ cũ đã hỏng hoặc đã tắt, tránh hai máy cùng gửi tin.')}</p></Notice>
       </div>
     ) : (
       <div className="space-y-3">
@@ -726,24 +726,24 @@ export function RestoreWizard({
         <ProgressBar
           value={progress?.percent ?? 0}
           tone={restoreError ? 'destructive' : restored ? 'success' : 'primary'}
-          label="Tiến độ khôi phục"
+          label={tr('Tiến độ khôi phục')}
         />
         <p className="text-xs text-muted-foreground">{progress?.message || `${Math.round(progress?.percent ?? 0)}%`}</p>
-        {restoring && <Notice tone="warning"><p>Không đóng app trong lúc khôi phục.</p></Notice>}
+        {restoring && <Notice tone="warning"><p>{tr('Không đóng app trong lúc khôi phục.')}</p></Notice>}
         {restoreError && <Notice tone="destructive"><p>{restoreError}</p></Notice>}
-        {restored && <Notice tone="success"><p>Dữ liệu đã về máy. Bước tiếp theo: đăng nhập lại các kênh chat.</p></Notice>}
+        {restored && <Notice tone="success"><p>{tr('Dữ liệu đã về máy. Bước tiếp theo: đăng nhập lại các kênh chat.')}</p></Notice>}
       </div>
     );
   } else if (step === 5) {
     body = (
       <div className="space-y-3">
-        <StepTitle title="Đăng nhập lại từng kênh">
-          Lịch sử đã khôi phục; đăng nhập xong, tin mới vào đúng hội thoại. Tài khoản chưa đăng nhập vẫn xem được lịch sử.
+        <StepTitle title={tr('Đăng nhập lại từng kênh')}>
+          {tr('Lịch sử đã khôi phục; đăng nhập xong, tin mới vào đúng hội thoại. Tài khoản chưa đăng nhập vẫn xem được lịch sử.')}
         </StepTitle>
         {accounts === null ? (
-          <Loading text="Đang đọc danh sách tài khoản…" />
+          <Loading text={tr('Đang đọc danh sách tài khoản…')} />
         ) : accounts.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Bản khôi phục không có tài khoản kênh nào.</p>
+          <p className="text-xs text-muted-foreground">{tr('Bản khôi phục không có tài khoản kênh nào.')}</p>
         ) : (
           <ul className="divide-y divide-border rounded-xl border border-border">
             {accounts.map(acc => {
@@ -754,25 +754,25 @@ export function RestoreWizard({
                     <p className="truncate text-sm font-semibold text-foreground">{acc.name} · {info.label}</p>
                     {acc.connected ? (
                       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />Đã đăng nhập
+                        <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />{tr('Đã đăng nhập')}
                       </p>
                     ) : (
                       <p className="text-xs text-muted-foreground">{info.how}</p>
                     )}
                   </div>
-                  {!acc.connected && <Button size="sm" onClick={() => login(acc)}>Đăng nhập</Button>}
+                  {!acc.connected && <Button size="sm" onClick={() => login(acc)}>{tr('Đăng nhập')}</Button>}
                 </li>
               );
             })}
           </ul>
         )}
-        <Notice tone="warning" title="Chiến dịch, workflow và lịch của ứng dụng đang tạm dừng">
-          <p>Bật lại ở bước 6, khi đã chắc máy cũ không còn chạy.</p>
+        <Notice tone="warning" title={tr('Chiến dịch, workflow và lịch của ứng dụng đang tạm dừng')}>
+          <p>{tr('Bật lại ở bước 6, khi đã chắc máy cũ không còn chạy.')}</p>
         </Notice>
         <p className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-          {`Media tự tải từ ${label} khi mở. Muốn có sẵn trên máy:`}
+          {tr('Media tự tải từ {{label}} khi mở. Muốn có sẵn trên máy:', { label })}
           <Button variant="link" size="sm" className="text-xs" leftIcon={<DownloadIcon className="h-3.5 w-3.5" />} loading={busy === 'rehydrate'} onClick={() => void rehydrate()}>
-            Tải hết media về máy
+            {tr('Tải hết media về máy')}
           </Button>
         </p>
       </div>
@@ -780,21 +780,20 @@ export function RestoreWizard({
   } else {
     body = (
       <div className="space-y-4">
-        <StepTitle title="Bật lại tự động hoá">
-          Chiến dịch, workflow và lịch của ứng dụng đang tạm dừng để không gửi trùng với máy cũ. Chỉ bật khi máy cũ đã tắt
-          hoặc đã ngắt Deplao.
+        <StepTitle title={tr('Bật lại tự động hoá')}>
+          {tr('Chiến dịch, workflow và lịch của ứng dụng đang tạm dừng để không gửi trùng với máy cũ. Chỉ bật khi máy cũ đã tắt hoặc đã ngắt Deplao.')}
         </StepTitle>
-        <Checkbox checked={oldMachineOff} onCheckedChange={setOldMachineOff} label="Máy cũ đã tắt hoặc đã ngắt Deplao" />
+        <Checkbox checked={oldMachineOff} onCheckedChange={setOldMachineOff} label={tr('Máy cũ đã tắt hoặc đã ngắt Deplao')} />
         {tunnelAuto && (
           <Checkbox
             checked={moveAddress}
             onCheckedChange={setMoveAddress}
-            label="Chuyển địa chỉ Internet sang máy này"
-            description="Trỏ tên miền về máy này để nhân viên ở xa, Casso, SePay, website tiếp tục dùng địa chỉ cũ."
+            label={tr('Chuyển địa chỉ Internet sang máy này')}
+            description={tr('Trỏ tên miền về máy này để nhân viên ở xa, Casso, SePay, website tiếp tục dùng địa chỉ cũ.')}
           />
         )}
         {!canResume && (
-          <Notice tone="info"><p>Bản app này chưa tự bật lại được: mở Chiến dịch và Workflow để bật lại từng mục.</p></Notice>
+          <Notice tone="info"><p>{tr('Bản app này chưa tự bật lại được: mở Chiến dịch và Workflow để bật lại từng mục.')}</p></Notice>
         )}
       </div>
     );
@@ -804,60 +803,60 @@ export function RestoreWizard({
   if (step === 1) {
     footer = (
       <>
-        <Button variant="ghost" onClick={requestClose}>Huỷ</Button>
-        <Button disabled={!storageLoaded || !storeReady} onClick={goNext}>Tiếp tục</Button>
+        <Button variant="ghost" onClick={requestClose}>{tr('Huỷ')}</Button>
+        <Button disabled={!storageLoaded || !storeReady} onClick={goNext}>{tr('Tiếp tục')}</Button>
       </>
     );
   } else if (step === 2) {
     footer = (
       <>
         {mode === 'new'
-          ? <Button variant="ghost" onClick={goBack}>Quay lại</Button>
-          : <Button variant="ghost" onClick={requestClose}>Huỷ</Button>}
-        <Button disabled={!selected || isNewerThanApp(selected.appVersion)} onClick={goNext}>Tiếp tục</Button>
+          ? <Button variant="ghost" onClick={goBack}>{tr('Quay lại')}</Button>
+          : <Button variant="ghost" onClick={requestClose}>{tr('Huỷ')}</Button>}
+        <Button disabled={!selected || isNewerThanApp(selected.appVersion)} onClick={goNext}>{tr('Tiếp tục')}</Button>
       </>
     );
   } else if (step === 3) {
     footer = (
       <>
-        <Button variant="ghost" onClick={goBack}>Quay lại</Button>
-        <Button disabled={untilOutOfRange} onClick={goNext}>Khôi phục</Button>
+        <Button variant="ghost" onClick={goBack}>{tr('Quay lại')}</Button>
+        <Button disabled={untilOutOfRange} onClick={goNext}>{tr('Khôi phục')}</Button>
       </>
     );
   } else if (step === 4) {
     if (restoring) {
-      footer = <Button disabled leftIcon={<CloudSpinner className="h-4 w-4 text-current" />}>Đang khôi phục…</Button>;
+      footer = <Button disabled leftIcon={<CloudSpinner className="h-4 w-4 text-current" />}>{tr('Đang khôi phục…')}</Button>;
     } else if (restored) {
-      footer = <Button onClick={goNext}>Tiếp tục</Button>;
+      footer = <Button onClick={goNext}>{tr('Tiếp tục')}</Button>;
     } else if (restoreError) {
       footer = (
         <>
           {mode === 'promote'
-            ? <Button variant="ghost" onClick={requestClose}>Đóng</Button>
-            : <Button variant="ghost" onClick={goBack}>Quay lại</Button>}
-          <Button onClick={() => void startRestore()}>Thử lại</Button>
+            ? <Button variant="ghost" onClick={requestClose}>{tr('Đóng')}</Button>
+            : <Button variant="ghost" onClick={goBack}>{tr('Quay lại')}</Button>}
+          <Button onClick={() => void startRestore()}>{tr('Thử lại')}</Button>
         </>
       );
     } else {
       footer = (
         <>
-          <Button variant="ghost" onClick={requestClose}>Huỷ</Button>
-          <Button onClick={() => void startRestore()}>Chuyển sang máy này</Button>
+          <Button variant="ghost" onClick={requestClose}>{tr('Huỷ')}</Button>
+          <Button onClick={() => void startRestore()}>{tr('Chuyển sang máy này')}</Button>
         </>
       );
     }
   } else if (step === 5) {
     footer = (
       <>
-        <Button variant="ghost" onClick={requestClose}>Để sau</Button>
-        <Button onClick={goNext}>Tiếp tục</Button>
+        <Button variant="ghost" onClick={requestClose}>{tr('Để sau')}</Button>
+        <Button onClick={goNext}>{tr('Tiếp tục')}</Button>
       </>
     );
   } else {
     footer = (
       <>
-        <Button variant="ghost" onClick={requestClose}>Để sau</Button>
-        <Button disabled={!oldMachineOff} loading={finishing} onClick={() => void finish()}>Bật lại tự động hoá</Button>
+        <Button variant="ghost" onClick={requestClose}>{tr('Để sau')}</Button>
+        <Button disabled={!oldMachineOff} loading={finishing} onClick={() => void finish()}>{tr('Bật lại tự động hoá')}</Button>
       </>
     );
   }
@@ -874,7 +873,7 @@ export function RestoreWizard({
       >
         <DialogHeader className="border-b border-border">
           <div className="min-w-0">
-            <DialogTitle>{gdrive ? 'Khôi phục từ Google Drive' : 'Khôi phục từ Cloudflare'}</DialogTitle>
+            <DialogTitle>{gdrive ? tr('Khôi phục từ Google Drive') : tr('Khôi phục từ Cloudflare')}</DialogTitle>
             <DialogDescription>{subtitle}</DialogDescription>
           </div>
           {!restoring && <DialogClose />}
@@ -891,13 +890,13 @@ export function RestoreWizard({
   );
 }
 
-// ─── Mở từ bất kỳ đâu (màn đầu, hộp Thêm tài khoản…) ──────────────────────────────────────
+// ─── Opened from anywhere (first screen, Add account box…) ──────────────────────────────────────
 
 let closeActiveWizard: (() => void) | null = null;
 
 /**
- * Mở trình khôi phục bằng một root React riêng gắn vào document.body (không cần đặt component trong cây).
- * Mở lần nữa khi đang mở thì dùng lại hộp đang mở. Trả hàm đóng.
+ * Opens the restore wizard with its own React root attached to document.body (no need to place a component in the tree).
+ * Opening it again while it is open reuses the open box. Returns a close function.
  */
 export function openRestoreWizard(options: RestoreWizardOptions = {}): () => void {
   if (closeActiveWizard) return closeActiveWizard;
@@ -913,7 +912,7 @@ export function openRestoreWizard(options: RestoreWizardOptions = {}): () => voi
     }, 0);
   };
   closeActiveWizard = close;
-  // Hộp Thêm tài khoản (nếu đang mở) nhường chỗ cho trình khôi phục.
+  // The Add account box (if open) makes room for the restore wizard.
   const app = useAppStore.getState();
   if (app.addAccountModalOpen) app.setAddAccountModalOpen(false);
   root.render(<RestoreWizard {...options} open onClose={close} />);

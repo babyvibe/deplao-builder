@@ -1,18 +1,19 @@
 /**
- * Bản tin của Official Account Zalo (msgType `chat.list.action`, MsgType 15 trên mobile).
+ * News from a Zalo Official Account (OA) (msgType `chat.list.action`, MsgType 15 on mobile).
  *
- * content là mảng bài viết, vd:
+ * content is an array of articles, e.g.:
  *   [{ type: 'l.a.header.only', title, href, thumb, description, childNumber },
  *    { type: 'l.a.child.full',  title, href, thumb, description }, ...]
- * Mục header hiển thị ảnh lớn + tiêu đề + mô tả, các mục con là danh sách tiêu đề + ảnh nhỏ (giống Zalo).
- * Bấm vào mục nào thì mở link bài viết đó.
+ * The header item shows a large image + title + description, the child items are a list of titles + small images (like Zalo).
+ * Clicking an item opens that article's link.
  *
- * Lưu ý line-clamp: KHÔNG đặt padding lên chính phần tử bị clamp — overflow cắt theo mép padding nên dòng
- * bị ẩn sẽ lộ nửa dòng trong vùng padding. Padding luôn đặt ở thẻ bọc ngoài.
+ * Note on line-clamp: do NOT put padding on the clamped element itself. Overflow is cut at the padding edge, so a hidden line
+ * would show half a line inside the padding area. Padding is always put on the outer wrapper.
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
 import {BubbleTime} from '../../messages/MessageTime';
+import { tr } from '../../../../../shared/i18n';
 
 export interface OaListItem {
     type: string;
@@ -48,7 +49,7 @@ function openLink(href: string) {
     if (/^https?:\/\//i.test(href)) void ipc.shell?.openExternal(href);
 }
 
-/** Ảnh bài viết — ẩn khi lỗi (ảnh CDN của OA cũng có thể hết hạn). */
+/** Article image: hidden on error (the OA's CDN images can also expire). */
 function OaThumb({src, className}: { src: string; className: string }) {
     const [failed, setFailed] = React.useState(false);
     React.useEffect(() => setFailed(false), [src]);
@@ -56,7 +57,7 @@ function OaThumb({src, className}: { src: string; className: string }) {
     return <img src={src} alt="" draggable={false} className={className} onError={() => setFailed(true)}/>;
 }
 
-/** Mô tả bài chính: thu gọn 4 dòng, có "Xem thêm" khi dài hơn. */
+/** Main description: collapsed to 4 lines, with "Xem thêm" (See more) when longer. */
 function OaDescription({text}: { text: string }) {
     const ref = React.useRef<HTMLParagraphElement>(null);
     const [expanded, setExpanded] = React.useState(false);
@@ -81,7 +82,7 @@ function OaDescription({text}: { text: string }) {
                             setExpanded(v => !v);
                         }}
                         className="mt-1 text-[11px] font-medium text-blue-400 hover:text-blue-300 hover:underline transition-colors">
-                    {expanded ? 'Thu gọn' : 'Xem thêm'}
+                    {expanded ? tr('Thu gọn') : tr('Xem thêm')}
                 </button>
             )}
         </div>
@@ -89,19 +90,19 @@ function OaDescription({text}: { text: string }) {
 }
 
 /**
- * `timestamp`: giờ gửi in ở cuối thẻ (ChatWindow không bọc / không in giờ cho tin thẻ). Bỏ trống = không in
- * (QuickChat dùng chung component nhưng không in giờ từng tin).
+ * `timestamp`: the send time printed at the bottom of the card (ChatWindow does not wrap or print the time for card messages). Leave empty = not printed
+ * (QuickChat uses the same component but does not print the time of each message).
  */
 export default function OaListBubble({msg, timestamp}: { msg: any; timestamp?: number | string | null }) {
     const items = React.useMemo(() => parseOaListItems(msg?.content), [msg?.content]);
-    if (!items.length) return <span className="text-xs opacity-60">[Bản tin Official Account]</span>;
+    if (!items.length) return <span className="text-xs opacity-60">{tr('[Bản tin Official Account]')}</span>;
 
     const headerIdx = Math.max(0, items.findIndex(item => item.type.startsWith('l.a.header')));
     const header = items[headerIdx];
     const children = items.filter((_, i) => i !== headerIdx);
     const headerDesc = header.description && header.description !== header.title ? header.description : '';
 
-    // Bản tin OA luôn là tin nhận → bề mặt bong bóng nhận (trắng ở theme sáng)
+    // OA news is always an incoming message → the incoming bubble surface (white in the light theme)
     return (
         <div className="flex flex-col overflow-hidden rounded-lg w-[300px] max-w-full bg-bubble-in text-foreground border border-bubble-in-border text-left">
             <button type="button" onClick={() => openLink(header.href)} title={header.href || header.title}

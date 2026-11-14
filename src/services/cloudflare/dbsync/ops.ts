@@ -1,9 +1,9 @@
 /**
- * ops — bộ xử lý thao tác SQLite của đồng bộ DB. Chạy trong worker_threads (worker.ts) để main không bao giờ phải chờ
- * SQLite lâu (chụp gốc, gói/áp đoạn, kiểm tra toàn vẹn…). Test gọi thẳng trong tiến trình (DbOpsClient.inProcessOps).
+ * ops: the SQLite operation handler of the DB sync. Runs in worker_threads (worker.ts) so main never has to wait for
+ * long SQLite work (base snapshots, packing/applying segments, integrity checks…). Tests call it directly in the process (DbOpsClient.inProcessOps).
  *
- * Connection theo đường dẫn file được giữ lại giữa các lần gọi; 'close' / 'closeAll' nhả file (đổi thư mục lưu trữ,
- * xoá workspace, thay DB khi khôi phục).
+ * Connections are kept per file path between calls; 'close' / 'closeAll' release the file (changing the storage folder,
+ * deleting a workspace, replacing the DB during a restore).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -22,7 +22,7 @@ const gunzip = promisify(zlib.gunzip);
 
 export type DbOpsEvent =
     | { type: 'dirty'; dbPath: string }
-    /** Tiến độ chụp bản gốc trong worker (bước sao chép do main tự đo kích thước file — worker bận chép một mạch). */
+    /** Base snapshot progress inside the worker (the copy step is measured by main itself, since the worker is busy copying in one go). */
     | { type: 'progress'; dbPath: string; phase: 'filter' | 'compress'; done: number; total: number };
 
 export interface OpsHandler {
@@ -39,7 +39,7 @@ function toBuffer(v: unknown): Buffer {
 
 export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) => void): OpsHandler {
     const conns = new Map<string, SqlConn>();
-    /** Lần chụp gốc đang chạy / đã được main báo dừng (máy ngủ giữa chừng), theo đường dẫn DB + mốc file tạm. */
+    /** The base snapshot currently running / already told to stop by main (the machine slept midway), by DB path + temp file mark. */
     const snapshotsRunning = new Set<string>();
     const snapshotsCancelled = new Set<string>();
     const watches = new Map<string, { timer: ReturnType<typeof setInterval>; armed: boolean }>();
@@ -70,7 +70,7 @@ export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) =
             watches.delete(k);
         }
     };
-    /** Connection dùng một lần (dò DB khác mà không giữ file). */
+    /** One-off connection (probes another DB without keeping the file). */
     const withTemp = <T>(dbPath: string, fn: (c: SqlConn) => T): T | null => {
         if (!dbPath || !fs.existsSync(dbPath)) return null;
         const existing = conns.get(keyOf(dbPath));
@@ -96,7 +96,7 @@ export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) =
             case 'hasTracking':
                 return withTemp(a.dbPath, c => hasTracking(c)) ?? false;
             case 'probe':
-                // Dò workspace khác: mã workspace (không tạo) + DB còn trống không.
+                // Probe another workspace: its workspace id (not created) + whether the DB is still empty.
                 return withTemp(a.dbPath, c => ({ workspaceUid: ensureWorkspaceUid(c, false), empty: isEffectivelyEmpty(c) }));
             case 'dirtyStats':
                 return dirtyStats(conn(a.dbPath));
@@ -114,7 +114,7 @@ export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) =
                 const tmpDir = String(a.tmpDir);
                 const stamp = String(a.stamp || Date.now());
                 const runKey = `${keyOf(a.dbPath)}|${stamp}`;
-                // Main báo dừng (cancelSnapshot): bước sao chép một mạch không ngắt được, các bước sau dừng ngay.
+                // Main reports a stop (cancelSnapshot): the copy step in one go cannot be interrupted, the following steps stop right away.
                 const stopped = () => snapshotsCancelled.has(runKey);
                 const cancelled = () => Object.assign(new Error('Đã dừng chụp bản gốc'), { code: 'DBSYNC_SNAPSHOT_CANCELLED' });
                 snapshotsRunning.add(runKey);
@@ -128,7 +128,7 @@ export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) =
                     await live.backupTo(raw);
                     if (stopped()) throw cancelled();
                     emit({ type: 'progress', dbPath: String(a.dbPath), phase: 'filter', done: 0, total: 0 });
-                    // scratch: file tạm của riêng worker — cho phép journal_mode = OFF khi lọc theo phạm vi.
+                    // scratch: the worker's own temp file → allows journal_mode = OFF when filtering by scope.
                     const copy = openConn(raw, { mustExist: true, scratch: true });
                     let info;
                     try {
@@ -152,7 +152,7 @@ export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) =
                 }
             }
             case 'cancelSnapshot': {
-                // Chỉ ghi nhận khi lần chụp đó còn chạy (báo trễ sau khi xong thì bỏ qua, không đọng lại).
+                // Only recorded while that snapshot is still running (a late report after it finished is ignored, nothing is left behind).
                 const runKey = `${keyOf(a.dbPath)}|${String(a.stamp)}`;
                 if (!snapshotsRunning.has(runKey)) return false;
                 snapshotsCancelled.add(runKey);
@@ -176,7 +176,7 @@ export function createOpsHandler(openConn: OpenSqlConn, emit: (ev: DbOpsEvent) =
                             w.armed = false;
                             emit({ type: 'dirty', dbPath });
                         }
-                    } catch { /* DB đang bận / vừa đóng — lần sau thử lại */ }
+                    } catch { /* DB busy / just closed → try again next time */ }
                 }, Math.max(500, Number(a.intervalMs) || 2000));
                 (w.timer as any)?.unref?.();
                 watches.set(keyOf(dbPath), w);

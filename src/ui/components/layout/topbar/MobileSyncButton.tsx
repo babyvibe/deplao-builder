@@ -13,6 +13,8 @@ import { markFeatureSeen, useFeatureSeen } from '@/lib/app/settingsSeenTabs';
 import {
   type RangePreset, SyncRangePicker, WEEK_DAYS, describeRange, resolveRange, startOfDaysAgo, toDateInput,
 } from '@/components/common/inputs/SyncRangePicker';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const ACTIVE_STAGES: MobileSyncStage[] = [
   'requesting', 'waiting_confirm', 'waiting_backup', 'mobile_idle',
@@ -20,11 +22,11 @@ const ACTIVE_STAGES: MobileSyncStage[] = [
 ];
 
 const STEPS: Array<{ label: string; stages: MobileSyncStage[] }> = [
-  { label: 'Xác nhận trên điện thoại', stages: ['requesting', 'waiting_confirm'] },
-  { label: 'Điện thoại chuẩn bị dữ liệu', stages: ['waiting_backup', 'mobile_idle'] },
-  { label: 'Tải dữ liệu về máy', stages: ['downloading'] },
-  { label: 'Giải mã', stages: ['decrypting'] },
-  { label: 'Ghép tin nhắn vào hội thoại', stages: ['resolving_ids', 'importing'] },
+  { label: tr('Xác nhận trên điện thoại'), stages: ['requesting', 'waiting_confirm'] },
+  { label: tr('Điện thoại chuẩn bị dữ liệu'), stages: ['waiting_backup', 'mobile_idle'] },
+  { label: tr('Tải dữ liệu về máy'), stages: ['downloading'] },
+  { label: tr('Giải mã'), stages: ['decrypting'] },
+  { label: tr('Ghép tin nhắn vào hội thoại'), stages: ['resolving_ids', 'importing'] },
 ];
 
 const PROGRESS_STAGES: MobileSyncStage[] = ['downloading', 'decrypting', 'importing'];
@@ -33,7 +35,7 @@ const isActive = (status?: MobileSyncStatus | null) => !!status && ACTIVE_STAGES
 const stepIndexOf = (stage?: MobileSyncStage) => STEPS.findIndex(step => stage && step.stages.includes(stage));
 const isZaloAccount = (acc?: AccountInfo) => !!acc && !isFacebook(acc.channel) && !isTelegram(acc.channel);
 
-/** Tải lại danh sách hội thoại + hội thoại đang mở sau khi nhập xong. */
+/** Reload the conversation list + the open conversation after the import finishes. */
 async function reloadConversations(zaloId: string) {
   const conversations = await DataAccessor.getConversations(zaloId, 500, 0);
   if (conversations?.items) useChatStore.getState().setContacts(zaloId, conversations.items);
@@ -60,23 +62,23 @@ export default function MobileSyncButton() {
   const [open, setOpen] = useState(false);
   const [statuses, setStatuses] = useState<Record<string, MobileSyncStatus>>({});
   const [busy, setBusy] = useState(false);
-  /** Chế độ Gộp trang: tài khoản người dùng chọn trong modal. */
+  /** Merged inbox mode: the accounts the user picks in the modal. */
   const [pickedId, setPickedId] = useState<string | null>(null);
-  /** Khoảng thời gian đồng bộ: mặc định 1 tuần gần nhất. */
+  /** Sync time range: defaults to the last 1 week. */
   const [rangePreset, setRangePreset] = useState<RangePreset>('week');
   const [customFrom, setCustomFrom] = useState(() => toDateInput(startOfDaysAgo(WEEK_DAYS)));
   const [customTo, setCustomTo] = useState(() => toDateInput(new Date()));
-  // Bước cuối cùng đang chạy trước khi lỗi/huỷ — để đánh dấu đúng bước trên stepper.
+  // The last step that was running before the error / cancel, so the right step is marked on the stepper.
   const lastStepRef = useRef<Record<string, number>>({});
   const openRef = useRef(open);
   openRef.current = open;
-  // Tính năng mới: chấm đỏ trên nút cho tới khi người dùng mở modal lần đầu.
+  // New feature: red dot on the button until the user opens the modal for the first time.
   const featureSeen = useFeatureSeen('mobileSync');
   useEffect(() => {
     if (open) markFeatureSeen('mobileSync');
   }, [open]);
 
-  // Gộp trang: không có "tài khoản đang mở" rõ ràng → cho chọn trong các tài khoản Zalo đang gộp.
+  // Merged inbox: there is no single clearly open account → let the user pick among the merged Zalo accounts.
   const mergedZaloAccounts = useMemo(() => {
     if (!mergedInboxMode) return [];
     const inMerged = new Set(mergedInboxAccounts);
@@ -88,7 +90,7 @@ export default function MobileSyncButton() {
     const ids = mergedZaloAccounts.map(a => a.zalo_id);
     const has = (id?: string | null): id is string => !!id && ids.includes(id);
     if (has(pickedId)) return pickedId;
-    // Ưu tiên tài khoản đang đồng bộ dở, rồi tài khoản đang lọc, rồi tài khoản đang mở hội thoại.
+    // Priority: the account that is mid-sync, then the account being filtered, then the account with an open conversation.
     const runningId = ids.find(id => isActive(statuses[id]));
     if (runningId) return runningId;
     if (has(mergedInboxFilterAccount)) return mergedInboxFilterAccount;
@@ -105,7 +107,7 @@ export default function MobileSyncButton() {
 
   const status = targetId ? statuses[targetId] : undefined;
   const account = accounts.find(a => a.zalo_id === targetId);
-  // Nút trên topbar: gộp trang → sáng khi BẤT KỲ tài khoản đang gộp nào đang đồng bộ.
+  // Topbar button: merged inbox → lit up when ANY merged account is syncing.
   const runningAccount = mergedInboxMode
     ? mergedZaloAccounts.find(a => isActive(statuses[a.zalo_id]))
     : (isActive(status) ? account : undefined);
@@ -120,14 +122,14 @@ export default function MobileSyncButton() {
 
       if (data.stage === 'completed') {
         void reloadConversations(data.zaloId).catch(() => {});
-        if (!openRef.current) showNotification(data.message || 'Đã đồng bộ tin nhắn từ điện thoại', 'success');
+        if (!openRef.current) showNotification(data.message || tr('Đã đồng bộ tin nhắn từ điện thoại'), 'success');
       } else if (data.stage === 'failed' && !openRef.current) {
-        showNotification(data.error || 'Đồng bộ tin nhắn từ điện thoại thất bại', 'error');
+        showNotification(data.error || tr('Đồng bộ tin nhắn từ điện thoại thất bại'), 'error');
       }
     });
   }, [showNotification]);
 
-  // Mở modal / đổi tài khoản → lấy trạng thái phiên gần nhất (nếu có) của tài khoản đang chọn.
+  // Opening the modal / switching account → fetch the latest session state (if any) of the selected account.
   useEffect(() => {
     if (!open || !targetId || !ipc.mobileSync) return;
     let cancelled = false;
@@ -144,16 +146,16 @@ export default function MobileSyncButton() {
     if (!targetId || !ipc.mobileSync || busy) return;
     const { range, error } = resolveRange(rangePreset, customFrom, customTo);
     if (!range) {
-      showNotification(error || 'Khoảng thời gian không hợp lệ', 'error');
+      showNotification(error || tr('Khoảng thời gian không hợp lệ'), 'error');
       return;
     }
     setBusy(true);
     try {
       const res = await ipc.mobileSync.start(targetId, range);
       if (res?.status) setStatuses(prev => ({ ...prev, [targetId]: res.status as MobileSyncStatus }));
-      if (!res?.success && !res?.status) showNotification(res?.error || 'Không thể bắt đầu đồng bộ', 'error');
+      if (!res?.success && !res?.status) showNotification(res?.error || tr('Không thể bắt đầu đồng bộ'), 'error');
     } catch (e: any) {
-      showNotification('Lỗi: ' + (e?.message || 'Không thể bắt đầu đồng bộ'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (e?.message || tr('Không thể bắt đầu đồng bộ')) }), 'error');
     } finally {
       setBusy(false);
     }
@@ -165,7 +167,7 @@ export default function MobileSyncButton() {
     if (res?.status) setStatuses(prev => ({ ...prev, [targetId]: res.status as MobileSyncStatus }));
   }, [targetId]);
 
-  // Luôn mount để không lỡ sự kiện khi đang ở tài khoản khác; chỉ hiện nút khi có tài khoản Zalo để đồng bộ.
+  // Always mounted so no event is missed while on another account; the button only shows when there is a Zalo account to sync.
   if (!targetId || !isZaloAccount(account)) return null;
   const running = isActive(status);
   const showAccountPicker = mergedInboxMode && accountOptions.length > 1;
@@ -184,14 +186,14 @@ export default function MobileSyncButton() {
         onClick={() => setOpen(true)}
         className={`group relative w-9 h-9 flex items-center justify-center transition-colors ${open || runningAccount ? 'text-blue-400 bg-muted' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         title={runningAccount
-          ? `Đang đồng bộ từ điện thoại${mergedInboxMode ? ` (${runningAccount.full_name || runningAccount.zalo_id})` : ''}: ${statuses[runningAccount.zalo_id]?.message || ''}`
-          : 'Đồng bộ tin nhắn từ điện thoại'}
-        aria-label="Đồng bộ tin nhắn từ điện thoại"
+          ? tr('Đang đồng bộ từ điện thoại{{v1}}: {{v2}}', { v1: mergedInboxMode ? ` (${runningAccount.full_name || runningAccount.zalo_id})` : '', v2: statuses[runningAccount.zalo_id]?.message || '' })
+          : tr('Đồng bộ tin nhắn từ điện thoại')}
+        aria-label={tr('Đồng bộ tin nhắn từ điện thoại')}
       >
         <span className="relative inline-flex">
           <SmartphoneIcon className="w-3.5 h-3.5" />
-          {/* Huy hiệu tải xuống góc phải dưới ("tải tin nhắn từ điện thoại về"): nền cùng màu icon, mũi tên + viền màu
-              nền nút → trông như khoét vào icon (idle: bg-card, hover / đang mở / đang đồng bộ: bg-muted) */}
+          {/* Download badge at the bottom right ("tải tin nhắn từ điện thoại về" (download messages from phone)): background in the icon color, arrow + border in the
+              button background → looks cut out of the icon (idle: bg-card; hover / open / syncing: bg-muted) */}
           <span className={`absolute -right-[5px] -bottom-[3px] w-2.5 h-2.5 rounded-full bg-current ring-[1.5px] flex items-center justify-center pointer-events-none ${open || runningAccount ? 'ring-muted' : 'ring-card group-hover:ring-muted'}`}>
             <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
               className={`w-[7px] h-[7px] ${open || runningAccount ? 'text-muted' : 'text-card group-hover:text-muted'}`}>
@@ -216,10 +218,10 @@ export default function MobileSyncButton() {
                 <SmartphoneIcon className="w-6 h-6" />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
-                <h3 className="text-foreground font-semibold text-base leading-snug">Đồng bộ tin nhắn từ điện thoại</h3>
+                <h3 className="text-foreground font-semibold text-base leading-snug">{tr('Đồng bộ tin nhắn từ điện thoại')}</h3>
                 {showAccountPicker ? (
                   <div className="mt-2">
-                    <p className="text-[11px] text-muted-foreground mb-1">Tài khoản Zalo cần đồng bộ</p>
+                    <p className="text-[11px] text-muted-foreground mb-1">{tr('Tài khoản Zalo cần đồng bộ')}</p>
                     <AccountSelectorDropdown
                       options={accountOptions}
                       activeId={targetId}
@@ -231,7 +233,7 @@ export default function MobileSyncButton() {
                   <p className="text-muted-foreground text-xs mt-0.5 truncate">{account?.full_name || targetId}</p>
                 )}
                 {status?.range && status.stage !== 'idle' && (
-                  <p className="text-subtle-foreground text-[11px] mt-1 truncate">Khoảng thời gian: {describeRange(status.range)}</p>
+                  <p className="text-subtle-foreground text-[11px] mt-1 truncate">{trx('Khoảng thời gian: {{v1}}', { v1: describeRange(status.range) })}</p>
                 )}
               </div>
             </div>
@@ -239,11 +241,11 @@ export default function MobileSyncButton() {
             <div className="px-6 pb-5 space-y-4">
               {!status || (status.stage === 'idle') ? (
                 <div className="text-sm text-foreground/80 space-y-2 leading-relaxed">
-                  <p>Lấy tin nhắn trên Zalo điện thoại trong khoảng thời gian bạn chọn và ghép vào đúng các hội thoại trên Deplao.</p>
+                  <p>{tr('Lấy tin nhắn trên Zalo điện thoại trong khoảng thời gian bạn chọn và ghép vào đúng các hội thoại trên Deplao.')}</p>
                   <ol className="list-decimal list-inside text-muted-foreground space-y-1">
-                    <li>Bấm <span className="text-foreground">Bắt đầu đồng bộ</span>.</li>
-                    <li>Mở Zalo trên điện thoại, chọn <span className="text-foreground">Đồng ý</span> ở yêu cầu đồng bộ tin nhắn (thiết bị “{status?.pcName || 'Web'}”).</li>
-                    <li>Giữ Zalo mở trên điện thoại tới khi tải xong. Tin đã có sẽ được bỏ qua nên có thể đồng bộ lại nhiều lần.</li>
+                    <li>{trx('Bấm <0>Bắt đầu đồng bộ</0>.', { 0: <span className="text-foreground" /> })}</li>
+                    <li>{trx('Mở Zalo trên điện thoại, chọn <0>Đồng ý</0> ở yêu cầu đồng bộ tin nhắn (thiết bị “{{v1}}”).', { 0: <span className="text-foreground" />, v1: status?.pcName || 'Web' })}</li>
+                    <li>{tr('Giữ Zalo mở trên điện thoại tới khi tải xong. Tin đã có sẽ được bỏ qua nên có thể đồng bộ lại nhiều lần.')}</li>
                   </ol>
                 </div>
               ) : (
@@ -289,25 +291,25 @@ export default function MobileSyncButton() {
                   {stats && (status.stage === 'completed' || stopped) && (
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div className="rounded-lg bg-card border border-border px-3 py-2">
-                        <div className="text-subtle-foreground">Tin nhắn mới</div>
-                        <div className="text-foreground font-semibold text-sm">{stats.messagesImported.toLocaleString('vi-VN')}</div>
+                        <div className="text-subtle-foreground">{tr('Tin nhắn mới')}</div>
+                        <div className="text-foreground font-semibold text-sm">{stats.messagesImported.toLocaleString(appLocale())}</div>
                       </div>
                       <div className="rounded-lg bg-card border border-border px-3 py-2">
-                        <div className="text-subtle-foreground">Hội thoại</div>
+                        <div className="text-subtle-foreground">{tr('Hội thoại')}</div>
                         <div className="text-foreground font-semibold text-sm">
-                          {stats.conversationsResolved.toLocaleString('vi-VN')}
-                          <span className="text-subtle-foreground font-normal">/{stats.conversations.toLocaleString('vi-VN')}</span>
+                          {stats.conversationsResolved.toLocaleString(appLocale())}
+                          <span className="text-subtle-foreground font-normal">/{stats.conversations.toLocaleString(appLocale())}</span>
                         </div>
                       </div>
                       {(stats.messagesSkipped > 0 || stats.conversationsUnresolved > 0) && (
                         <div className="col-span-2 text-subtle-foreground leading-relaxed">
-                          Bỏ qua {stats.messagesSkipped.toLocaleString('vi-VN')} tin đã có hoặc không hỗ trợ
-                          {stats.conversationsUnresolved > 0 && `, ${stats.conversationsUnresolved} hội thoại không còn truy cập được (đã xoá/rời nhóm)`}.
+                          {trx('Bỏ qua {{v1}} tin đã có hoặc không hỗ trợ', { v1: stats.messagesSkipped.toLocaleString(appLocale()) })}
+                          {stats.conversationsUnresolved > 0 && tr(', {{conversationsUnresolved}} hội thoại không còn truy cập được (đã xoá/rời nhóm)', { conversationsUnresolved: stats.conversationsUnresolved })}.
                         </div>
                       )}
                       {(stats.messagesOutOfRange ?? 0) > 0 && (
                         <div className="col-span-2 text-subtle-foreground leading-relaxed">
-                          {(stats.messagesOutOfRange ?? 0).toLocaleString('vi-VN')} tin ngoài khoảng thời gian đã chọn không được tải.
+                          {trx('{{v1}} tin ngoài khoảng thời gian đã chọn không được tải.', { v1: (stats.messagesOutOfRange ?? 0).toLocaleString(appLocale()) })}
                         </div>
                       )}
                     </div>
@@ -315,7 +317,7 @@ export default function MobileSyncButton() {
                 </>
               )}
 
-              {/* Chọn khoảng thời gian trước khi đồng bộ / đồng bộ lại */}
+              {/* Pick the time range before syncing / re-syncing */}
               {!running && (
                 <div className={status && status.stage !== 'idle' ? 'pt-3 border-t border-border/60' : ''}>
                   <SyncRangePicker
@@ -325,7 +327,7 @@ export default function MobileSyncButton() {
                     onPreset={setRangePreset}
                     onFrom={setCustomFrom}
                     onTo={setCustomTo}
-                    allHint="Toàn bộ lịch sử trên điện thoại — có thể mất nhiều thời gian với tài khoản nhiều tin nhắn."
+                    allHint={tr('Toàn bộ lịch sử trên điện thoại — có thể mất nhiều thời gian với tài khoản nhiều tin nhắn.')}
                   />
                 </div>
               )}
@@ -336,16 +338,16 @@ export default function MobileSyncButton() {
               <button
                 onClick={() => setOpen(false)}
                 className="px-4 py-2 rounded-xl text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-muted transition-colors"
-                title={running ? 'Đồng bộ vẫn tiếp tục chạy nền' : undefined}
+                title={running ? tr('Đồng bộ vẫn tiếp tục chạy nền') : undefined}
               >
-                {running ? 'Ẩn' : 'Đóng'}
+                {running ? tr('Ẩn') : tr('Đóng')}
               </button>
               {running ? (
                 <button
                   onClick={handleCancel}
                   className="px-5 py-2 rounded-xl text-sm font-semibold transition-colors bg-red-600 hover:bg-red-700 text-white"
                 >
-                  Huỷ đồng bộ
+                  {tr('Huỷ đồng bộ')}
                 </button>
               ) : (
                 <button
@@ -354,7 +356,7 @@ export default function MobileSyncButton() {
                   className="px-5 py-2 rounded-xl text-sm font-semibold transition-colors bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60 flex items-center gap-2"
                 >
                   {busy && <Spinner size={3} />}
-                  {status && status.stage !== 'idle' ? 'Đồng bộ lại' : 'Bắt đầu đồng bộ'}
+                  {status && status.stage !== 'idle' ? tr('Đồng bộ lại') : tr('Bắt đầu đồng bộ')}
                 </button>
               )}
             </div>

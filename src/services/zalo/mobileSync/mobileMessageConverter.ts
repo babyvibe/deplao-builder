@@ -1,15 +1,15 @@
 /**
- * Chuyển dòng `ChatContent` (SQLite con trong bản sao lưu mobile) sang đúng hình dạng message
- * mà zca-js phát ra (UserMessage / GroupMessage), để lưu chung đường với tin realtime.
+ * Convert a `ChatContent` row (a SQLite file inside the mobile backup) into the exact message shape
+ * that zca-js emits (UserMessage / GroupMessage), so it is saved through the same path as realtime messages.
  *
- * Bám theo Zalo PC 26.9 (`convertCrossV2ToCrossV1` + `crossMsgToNormalMsg`):
- *   - MsgType số của mobile → msgType chuỗi của web (bảng bên dưới), bỏ các loại Zalo PC bỏ.
- *   - Mọi ID "plain" (người gửi, mention, quote.ownerId, danh thiếp) phải đổi sang ID "noise"
- *     (ID web, 19 số) — tin không xác định được người gửi bị bỏ qua giống Zalo PC.
+ * Follows Zalo PC 26.9 (`convertCrossV2ToCrossV1` + `crossMsgToNormalMsg`):
+ *   - The numeric MsgType of mobile → the string msgType of web (table below), dropping the types Zalo PC drops.
+ *   - Every "plain" ID (sender, mention, quote.ownerId, contact card) must be converted to a "noise" ID
+ *     (web ID, 19 digits) - a message whose sender cannot be identified is skipped, same as Zalo PC.
  */
 import { BinNetData, BinNetMention, BinNetProperty, BinNetQuote, parseBinNet } from './binNet';
 
-/** Bảng `je` của Zalo PC: MsgType mobile → msgType web. */
+/** The `je` table of Zalo PC: mobile MsgType → web msgType. */
 export const MOBILE_MSG_TYPES: Record<number, string> = {
     0: 'webchat',
     2: 'chat.doodle',
@@ -33,10 +33,10 @@ export const MOBILE_MSG_TYPES: Record<number, string> = {
     53: 'chat.webcontent.v2',
 };
 
-/** MsgType Zalo PC loại ngay trong câu SQL. */
+/** MsgType that Zalo PC drops directly in the SQL statement. */
 export const EXCLUDED_MOBILE_MSG_TYPES = [20, 21, 25, 26, 29, 32, 34, 35, 45, 51, 52];
 
-/** chat.delete là control xoá tin của admin, không phải tin hiển thị → không nhập. */
+/** chat.delete is an admin control that deletes messages, not a visible message → not imported. */
 const SKIPPED_WEB_TYPES = new Set(['chat.delete']);
 
 const MOBILE_TYPE_OA = 15;
@@ -53,7 +53,7 @@ function tsBound(value: unknown): number {
     return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** Điều kiện SQL cho khoảng [fromTs, toTs] (ms); '' nếu không giới hạn. Giá trị đã ép số nguyên → không SQL injection. */
+/** SQL condition for the range [fromTs, toTs] (ms); '' if unlimited. Values are forced to integers → no SQL injection. */
 function rangeCondition(fromTs: number, toTs: number): string {
     const parts: string[] = [];
     const from = tsBound(fromTs);
@@ -63,13 +63,13 @@ function rangeCondition(fromTs: number, toTs: number): string {
     return parts.join(' AND ');
 }
 
-/** Chỉ lấy tin có TimeStamp trong [fromTs, toTs] — tin ngoài khoảng không bị đọc/parse. */
+/** Only take messages whose TimeStamp is in [fromTs, toTs]; messages outside the range are not read / parsed. */
 export function chatContentQueryRange(fromTs: number, toTs: number): string {
     const cond = rangeCondition(fromTs, toTs);
     return CHAT_CONTENT_COLUMNS + CHAT_CONTENT_WHERE + (cond ? `AND ${cond} ` : '') + 'ORDER BY TimeStamp ASC';
 }
 
-/** Số tin ngoài khoảng của 1 hội thoại (báo "bỏ qua N tin ngoài khoảng thời gian đã chọn"). */
+/** Number of messages outside the range in one conversation (reported as "bỏ qua N tin ngoài khoảng thời gian đã chọn" (skipped N messages outside the chosen time range)). */
 export function chatContentOutOfRangeCount(fromTs: number, toTs: number): string | null {
     const cond = rangeCondition(fromTs, toTs);
     if (!cond) return null;
@@ -81,7 +81,7 @@ export interface MobileThreadRef {
     isGroup: boolean;
 }
 
-/** `<uid>.db` → chat 1-1, `group_<gid>.db` → nhóm (ID phải là số không có số 0 đầu). */
+/** `<uid>.db` → 1-1 chat, `group_<gid>.db` → group (the ID must be a number with no leading zero). */
 export function parseThreadFileName(fileName: string): MobileThreadRef | null {
     const m = /^(group_)?(\d+)\.db$/.exec(fileName);
     if (!m) return null;
@@ -116,14 +116,14 @@ function num(v: unknown): number {
     return Number.isFinite(n) ? n : 0;
 }
 
-/** Đọc 1 dòng ChatContent (giá trị INTEGER có thể là bigint khi bật safeIntegers). */
+/** Read 1 ChatContent row (INTEGER values can be bigint when safeIntegers is on). */
 export function rowToPlainMessage(row: any): PlainMessage | null {
     const mobileType = num(row.MsgType);
     const msgType = MOBILE_MSG_TYPES[mobileType];
     if (!msgType || SKIPPED_WEB_TYPES.has(msgType)) return null;
 
     const binNet: BinNetData | null = parseBinNet(row.BinNet);
-    if (!binNet) return null; // BinNet hỏng → Zalo PC cũng bỏ tin này
+    if (!binNet) return null; // Broken BinNet → Zalo PC also drops this message
 
     let attach: any;
     if (binNet.attachs && binNet.attachs.length > 0) {
@@ -158,7 +158,7 @@ function isContactCard(attach: any): boolean {
         && /^\d+$/.test(String(attach.params || ''));
 }
 
-/** Gom các UID plain cần đổi sang noise cho 1 tin (người gửi, mention, quote, danh thiếp). */
+/** Collect the plain UIDs that must be converted to noise for one message (sender, mention, quote, contact card). */
 export function collectPlainUserIds(m: PlainMessage, out: Set<string>): void {
     if (m.fromPlain) out.add(m.fromPlain);
     for (const mention of m.mentions || []) {
@@ -168,9 +168,9 @@ export function collectPlainUserIds(m: PlainMessage, out: Set<string>): void {
     if (isContactCard(m.attach)) out.add(String(m.attach.params));
 }
 
-// ─── Dựng content theo từng loại (giống crossMsgToNormalMsg) ─────────────────
+// ─── Build the content for each type (same as crossMsgToNormalMsg) ─────────────────
 
-/** Hàm `d()` của Zalo PC: object (lỡ parse nhầm) → giá trị mặc định. */
+/** The `d()` function of Zalo PC: an object (wrongly parsed) → the default value. */
 function plain(v: unknown, fallback: any = ''): any {
     if (v !== null && typeof v === 'object' && Object.keys(v as object).length > 0) return fallback;
     return v || fallback;
@@ -184,7 +184,7 @@ function attachContent(attach: any, fields: string[]): any {
     return content;
 }
 
-/** Trả `undefined` nếu tin không hợp lệ (vd zinstant thiếu pcItem — Zalo PC cũng bỏ). */
+/** Returns `undefined` if the message is invalid (e.g. zinstant missing pcItem - Zalo PC also drops it). */
 function buildContent(m: PlainMessage, resolveUser: (plainId: string) => string | undefined): any {
     const a = m.attach;
     switch (m.msgType) {
@@ -237,16 +237,16 @@ function buildContent(m: PlainMessage, resolveUser: (plainId: string) => string 
 }
 
 export interface ConvertContext {
-    /** UID web của chính tài khoản (ctx.uid của zca-js). */
+    /** Web UID of the account itself (zca-js ctx.uid). */
     ownNoiseId: string;
-    /** UID plain của chính tài khoản (syncmsg_info.uid). */
+    /** Plain UID of the account itself (syncmsg_info.uid). */
     ownPlainId: string;
     thread: MobileThreadRef & { noiseId: string };
-    /** plain uid → noise uid (undefined nếu server không trả). */
+    /** plain uid → noise uid (undefined if the server does not return it). */
     resolveUser: (plainId: string) => string | undefined;
 }
 
-/** Message cùng hình dạng UserMessage/GroupMessage của zca-js (sau constructor). */
+/** Message with the same shape as zca-js UserMessage/GroupMessage (after the constructor). */
 export interface ImportedZaloMessage {
     type: 0 | 1;
     threadId: string;
@@ -259,7 +259,7 @@ export function toZaloMessage(m: PlainMessage, ctx: ConvertContext): ImportedZal
     const resolve = (plainId: string) => (plainId && plainId === ctx.ownPlainId ? ctx.ownNoiseId : ctx.resolveUser(plainId));
     const uidFrom = resolve(m.fromPlain);
     if (!uidFrom) return null;
-    // So theo ID web để vẫn đúng khi sự kiện thiếu uid plain của chính mình.
+    // Compare by web ID so it still works when the event lacks the plain uid of the account itself.
     const isSelf = uidFrom === ctx.ownNoiseId;
     if (!m.cliMsgId && !m.globalMsgId) return null;
 
@@ -298,7 +298,7 @@ export function toZaloMessage(m: PlainMessage, ctx: ConvertContext): ImportedZal
         isSelf,
         isRecalled: m.msgType === 'chat.undo',
         data: {
-            // Tin chưa có global id (hiếm) → id cố định theo cliMsgId để đồng bộ lại không bị nhân đôi.
+            // Message with no global id yet (rare) → a fixed id based on cliMsgId, so re-syncing does not duplicate it.
             msgId: m.globalMsgId || `mb_${m.cliMsgId}`,
             cliMsgId: m.cliMsgId,
             msgType: m.msgType,

@@ -1,7 +1,9 @@
 /**
- * Lớp phủ khi đang kéo file / ảnh vào khung chat (thả → useFileDrop gửi qua MessageInput).
+ * Overlay shown while dragging a file / photo into the chat window (drop → useFileDrop sends it through MessageInput).
  */
 
+
+import { tr } from '../../../../../shared/i18n';
 
 export function DropOverlay() {
   return (
@@ -18,8 +20,8 @@ export function DropOverlay() {
           <polyline points="17 8 12 3 7 8"/>
           <line x1="12" y1="3" x2="12" y2="15"/>
         </svg>
-        <p className="text-blue-400 font-medium text-sm">Thả file / ảnh để gửi</p>
-        <p className="text-muted-foreground text-xs">Hỗ trợ ảnh, video, file</p>
+        <p className="text-blue-400 font-medium text-sm">{tr('Thả file / ảnh để gửi')}</p>
+        <p className="text-muted-foreground text-xs">{tr('Hỗ trợ ảnh, video, file')}</p>
       </div>
     </div>
   );

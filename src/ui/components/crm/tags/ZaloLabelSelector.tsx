@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import type { LabelData } from '@/store/app/appStore';
 import ZaloLabelBadge from './ZaloLabelBadge';
+import { tr } from '../../../../shared/i18n';
 
 interface ZaloLabelSelectorProps {
   allLabels: LabelData[];
@@ -41,16 +42,16 @@ export default function ZaloLabelSelector({ allLabels, selectedIds, onChange, si
       >
         {selected.length > 0
           ? selected.map(l => <ZaloLabelBadge key={l.id} label={l} size="xs" />)
-          : <span className="text-xs text-muted-foreground">Chọn nhãn...</span>}
+          : <span className="text-xs text-muted-foreground">{tr('Chọn nhãn...')}</span>}
         <span className="ml-auto text-muted-foreground text-xs">▾</span>
       </div>
       {open && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto">
           {allLabels.length === 0 && (
-            <p className="text-xs text-muted-foreground p-3 text-center">Chưa có nhãn nào</p>
+            <p className="text-xs text-muted-foreground p-3 text-center">{tr('Chưa có nhãn nào')}</p>
           )}
           {singleSelect && (
-            <p className="text-[10px] text-muted-foreground px-3 pt-2 pb-1">Zalo chỉ cho 1 nhãn / hội thoại</p>
+            <p className="text-[10px] text-muted-foreground px-3 pt-2 pb-1">{tr('Zalo chỉ cho 1 nhãn / hội thoại')}</p>
           )}
           {allLabels.map(label => {
             const isSelected = selectedIds.includes(label.id);

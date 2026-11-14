@@ -1,10 +1,10 @@
 /**
  * FacebookAttachment.ts
- * Port từ Python _messaging/_attachments.py
- * Upload file đính kèm lên Facebook
+ * Ported from Python _messaging/_attachments.py
+ * Uploads attachments to Facebook
  *
- * Lưu ý: Sử dụng manual multipart body để tránh lỗi 0KB do form-data
- * npm package không tương thích với môi trường Electron Node.js.
+ * Note: uses a manual multipart body to avoid the 0KB errors caused by the form-data
+ * npm package, which is not compatible with the Electron Node.js environment.
  */
 
 import axios from 'axios';
@@ -40,8 +40,8 @@ function buildTextPart(boundary: string, name: string, value: string): Buffer {
  * Build a single multipart field (file value)
  */
 function buildFilePart(boundary: string, name: string, filename: string, contentType: string, data: Buffer): Buffer {
-  // Không dùng Content-Transfer-Encoding - header này không chuẩn trong
-  // multipart/form-data và gây lỗi parser của Facebook (file về 0KB).
+  // Do not use Content-Transfer-Encoding: this header is non-standard in
+  // multipart/form-data and breaks Facebook's parser (the file arrives as 0KB).
   const header = Buffer.from(
     `--${boundary}\r\n` +
     `Content-Disposition: form-data; name="${name}"; filename="${filename}"\r\n` +
@@ -59,8 +59,8 @@ function buildClosingBoundary(boundary: string): Buffer {
 }
 
 /**
- * Upload file đính kèm lên Facebook
- * Trả về attachmentId để dùng khi send message
+ * Upload an attachment to Facebook
+ * Returns the attachmentId to use when sending the message
  */
 export async function uploadAttachment(
   dataFB: FBSessionData,
@@ -81,9 +81,9 @@ export async function uploadAttachment(
 
   const fileSize = fileBuffer.length;
 
-  // WebM audio recordings (từ MediaRecorder) có mimeType audio/webm nhưng
-  // mime.lookup(filePath) chỉ dùng extension → trả về video/webm cho file .webm.
-  // Heuristic: nếu file < 5MB và extension là .webm hoặc .ogg, coi như audio.
+  // WebM audio recordings (from MediaRecorder) have mimeType audio/webm but
+  // mime.lookup(filePath) only uses the extension → returns video/webm for a .webm file.
+  // Heuristic: if the file is < 5MB and the extension is .webm or .ogg, treat it as audio.
   if ((mimeType === 'video/webm' || mimeType === 'video/ogg') && fileSize < 5 * 1024 * 1024) {
     mimeType = mimeType === 'video/webm' ? 'audio/webm' : 'audio/ogg';
   }
@@ -159,8 +159,8 @@ export async function uploadAttachment(
     }
 
     // Extract attachment info from metadata
-    // Quan trọng: dùng local mimeType thay vì values[2] từ FB response,
-    // vì FB có thể trả về type sai (ví dụ audio/webm → video/mp4).
+    // Important: use the local mimeType instead of values[2] from the FB response,
+    // because FB may return the wrong type (for example audio/webm → video/mp4).
     const values = Array.isArray(metadata) ? metadata : Object.values(metadata);
     const attachmentId = values[0];
     const attachmentUrl = (values[3] as string | undefined) || undefined;

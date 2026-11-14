@@ -1,39 +1,39 @@
 /**
  * FacebookE2EEBridge.ts
- * Port từ Python _BridgeProcess class trong fbchat-v2 _listening_e2ee.py
+ * Ported from the Python _BridgeProcess class in fbchat-v2 _listening_e2ee.py
  *
- * Quản lý Go bridge binary (fbchat-bridge-e2ee) qua child_process.spawn.
- * Giao tiếp qua JSON-RPC line-delimited stdin/stdout.
+ * Manages the Go bridge binary (fbchat-bridge-e2ee) through child_process.spawn.
+ * Communicates via line-delimited JSON-RPC over stdin/stdout.
  *
- * Go bridge xử lý TOÀN BỘ crypto (Signal Protocol + Meta Labyrinth).
- * TypeScript layer chỉ quản lý process lifecycle + serialize/deserialize JSON-RPC.
+ * The Go bridge handles ALL the crypto (Signal Protocol + Meta Labyrinth).
+ * The TypeScript layer only manages the process lifecycle + serialize/deserialize JSON-RPC.
  *
  * ── BUILD GO BRIDGE ─────────────────────────────────────────────────────────────
- * 1. Tạo thư mục bridge-e2ee/ ở project root:
+ * 1. Create the bridge-e2ee/ folder at the project root:
  *    mkdir bridge-e2ee
  *    cd bridge-e2ee
  *
- * 2. Clone mautrix/meta (thư viện Go của Meta Messenger protocol):
+ * 2. Clone mautrix/meta (the Go library for the Meta Messenger protocol):
  *    git clone https://github.com/mautrix/meta
  *    cd meta
  *
- * 3. Build binary:
+ * 3. Build the binary:
  *    go mod tidy
  *    go build -o ../build/fbchat-bridge-e2ee.exe .
  *    cd ../..
  *
- * 4. Hoặc set biến môi trường để trỏ tới binary đã build sẵn:
+ * 4. Or set an environment variable pointing to the prebuilt binary:
  *    set FBCHAT_E2EE_BIN=C:\path\to\fbchat-bridge-e2ee.exe
  *
- * Yêu cầu: Go 1.24+, RAM ~300MB cho lần build đầu (Go module cache)
- * Binary sau build ~25-40MB, RAM runtime ~80-150MB.
+ * Requirements: Go 1.24+, ~300MB RAM for the first build (Go module cache)
+ * The binary is ~25-40MB after the build, runtime RAM ~80-150MB.
  *
  * ── COOKIE ───────────────────────────────────────────────────────────────────────
- * Bridge cần Facebook cookie chứa ít nhất c_user + xs.
- * Các cookie khác (datr, fr, sb) là optional.
- * wd, presence là ephemeral do JavaScript set - KHÔNG cần.
+ * The bridge needs a Facebook cookie containing at least c_user + xs.
+ * The other cookies (datr, fr, sb) are optional.
+ * wd and presence are ephemeral, set by JavaScript: NOT needed.
  *
- * Tham khảo: https://github.com/m008v/fbchat-v2
+ * Reference: https://github.com/m008v/fbchat-v2
  */
 
 import { ChildProcess, spawn } from 'child_process';
@@ -76,8 +76,8 @@ export const E2EE_REQUIRED_CAPABILITIES: readonly string[] = [
 export const NATIVE_LOGIN_REQUIRED_CAPABILITIES: readonly string[] = ['nativeLogin'];
 
 /**
- * Các bridge methods được hỗ trợ.
- * Tham chiếu: bridge-e2ee/main.go `handle()` switch statement.
+ * The supported bridge methods.
+ * Reference: bridge-e2ee/main.go `handle()` switch statement.
  */
 export const BRIDGE_METHODS = [
   'hello',
@@ -154,21 +154,21 @@ export interface BridgeInitialData {
     timestampMs?: number;
     attachments?: any[];
     replyTo?: { messageId?: string };
-    /** Tin đã thu hồi (lịch sử) — bridge DEPLAO_ADAPTER */
+    /** Unsent message (history): bridge DEPLAO_ADAPTER */
     isUnsent?: boolean;
-    /** Tin hệ thống (đổi tên nhóm, ghim…) */
+    /** System message (group renamed, pinned…) */
     isAdminMsg?: boolean;
-    /** Nội dung bridge chưa hiển thị được (view_once, payment…) */
+    /** Bridge content that cannot be displayed yet (view once, payment…) */
     unsupported?: string;
   }>;
 }
 
-/** Một trang lịch sử của một hội thoại (bridge `fetchMessages` — LightSpeed FetchMessagesTask), mới → cũ. */
+/** One page of a conversation's history (bridge `fetchMessages`, LightSpeed FetchMessagesTask), newest → oldest. */
 export interface BridgeHistoryPage {
   threadId: string;
   messages: NonNullable<BridgeInitialData['messages']>;
   hasMoreBefore: boolean;
-  /** Mốc của tin cũ nhất trong trang — truyền lại để lấy trang tiếp theo. */
+  /** Marker of the oldest message on the page, passed back to fetch the next page. */
   minTimestampMs: number;
   minMessageId?: string;
 }
@@ -298,7 +298,7 @@ export class FacebookE2EEBridge extends EventEmitter {
 
   // ─── Static helpers ────────────────────────────────────────────────────────
   // Bridge Go struct expects threadId as int64, not string.
-  // Facebook thread IDs là số, parse sang number để JSON serialize đúng.
+  // Facebook thread IDs are numbers; parse them to number so JSON serializes them correctly.
   private static toIntThreadId(threadId: string): number {
     const n = parseInt(String(threadId), 10);
     return isNaN(n) ? (threadId as any) : n;
@@ -306,29 +306,29 @@ export class FacebookE2EEBridge extends EventEmitter {
 
   // ─── Static Init ───────────────────────────────────────────────────────────
   // TypeScript 5.9+ strict check: EventEmitter constructor(options?) conflicts
-  // với constructor(binaryPath). Dùng builder pattern để tránh.
+  // with constructor(binaryPath). Use the builder pattern to avoid this.
   static create(binaryPath: string): FacebookE2EEBridge {
     const bridge = new FacebookE2EEBridge();
     bridge.binaryPath = binaryPath;
     return bridge;
   }
 
-  // Private constructor - chỉ dùng qua create() để tránh TS 5.9 EventEmitter conflict
+  // Private constructor: use create() only, to avoid the TS 5.9 EventEmitter conflict
   private constructor() { super(); }
 
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
   /**
-   * Khởi động Go bridge child process và reader loop.
+   * Start the Go bridge child process and the reader loop.
    */
   public spawn(): void {
-    // Cho phép spawn mới nếu process cũ đã bị kill hoặc null
+    // Allow spawning a new process if the old one was killed or is null
     if (this.process && !this.process.killed) {
       Logger.warn('[FBE2EEBridge] Already spawned with alive process');
       return;
     }
-    // Cleanup process cũ đã chết
+    // Clean up the old process that has already died
     if (this.process) {
       this.process.removeAllListeners();
       this.process = null;
@@ -373,12 +373,12 @@ export class FacebookE2EEBridge extends EventEmitter {
 
     // ─── Stdout reader (brace-counting JSON parser) ─────────────────────
     //
-    // Không dùng split('\n') vì Windows pipe có thể chunk data ở bất kỳ
-    // vị trí nào - kể cả giữa JSON value. Split theo \n sẽ cắt hỏng JSON
-    // nếu chunk boundary không trùng với \n boundary.
+    // Do not use split('\n') because a Windows pipe can chunk data at any
+    // position, including in the middle of a JSON value. Splitting on \n would break the JSON
+    // when the chunk boundary does not match a \n boundary.
     //
-    // Giải pháp: đếm { và } (đúng chuẩn JSON string escape) để tách
-    // các JSON objects hoàn chỉnh, bất kể chunk boundary ở đâu.
+    // Solution: count { and } (following the JSON string escape rules) to split
+    // the complete JSON objects, wherever the chunk boundary falls.
     //
     this.process.stdout?.on('data', (chunk: Buffer) => {
       if (this.process !== spawnedProcess || this.generation !== spawnedGeneration) return;
@@ -493,8 +493,8 @@ export class FacebookE2EEBridge extends EventEmitter {
         if (crashLine && settled) Logger.warn(`[FBE2EEBridge] Bridge crashed: ${crashLine}`);
       }
       if (this.process !== spawnedProcess) return;
-      // Login bridge logs at WarnLevel (không có credentials), ghi nội dung thật
-      // để chẩn đoán lỗi đăng nhập thay vì chỉ ghi số byte.
+      // The login bridge logs at WarnLevel (no credentials), so write the real content
+      // to diagnose login errors instead of only logging the byte count.
       const cleaned = text.replace(/[ -]/g, ' ').replace(/\s+/g, ' ').trim();
       if (cleaned) {
         Logger.log(`[FBE2EEBridge:stderr] ${cleaned.slice(0, 500)}`);
@@ -517,7 +517,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Đọc từng message từ stdout → phân loại response vs event
+   * Read each message from stdout → classify it as a response or an event
    */
   private processMessage(msg: any, generation: number): void {
     if (generation !== this.generation) {
@@ -570,7 +570,7 @@ export class FacebookE2EEBridge extends EventEmitter {
     this.writeQueue = [];
     this.writing = false;
 
-    // Drain tất cả pending requests - bridge đã chết
+    // Drain all pending requests: the bridge has died
     const reason = `Bridge exited (code=${code}${signal ? `, signal=${signal}` : ''})${crash ? `: ${crash}` : ''}`;
     for (const [, pending] of this.pending) {
       pending.reject(new BridgeError(reason));
@@ -583,14 +583,14 @@ export class FacebookE2EEBridge extends EventEmitter {
   // ─── JSON-RPC Call ────────────────────────────────────────────────────────
 
   /**
-   * Gửi một JSON-RPC request đến Go bridge và chờ response.
-   * Port từ Python `_BridgeProcess.call()`
+   * Send a JSON-RPC request to the Go bridge and wait for the response.
+   * Ported from Python `_BridgeProcess.call()`
    *
-   * @param method  Tên method (phải match case trong main.go)
+   * @param method  Method name (must match a case in main.go)
    * @param params  Parameters object (serialized as JSON)
-   * @param timeout Timeout ms (default 120s)
-   * @returns Response data từ bridge
-   * @throws BridgeError nếu bridge trả lỗi hoặc timeout
+   * @param timeout Timeout in ms (default 120s)
+   * @returns Response data from the bridge
+   * @throws BridgeError if the bridge returns an error or times out
    */
   public async call(
     method: BridgeMethod | string,
@@ -766,7 +766,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   // ─── Connection Sequence ──────────────────────────────────────────────────
 
   /**
-   * Khởi tạo client mới trong bridge
+   * Initialize a new client in the bridge
    */
   public async newClient(config: {
     cookies: Record<string, string>;
@@ -833,8 +833,8 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Một trang tin cũ hơn mốc (beforeTimestampMs, beforeMessageId) của một hội thoại — như Messenger web tải lịch sử.
-   * Bridge chờ trang trên socket LightSpeed tối đa `waitMs`; tin không phát thành tin realtime.
+   * One page of messages older than the marker (beforeTimestampMs, beforeMessageId) of a conversation, the way Messenger web loads history.
+   * The bridge waits for the page on the LightSpeed socket for at most `waitMs`; messages are not emitted as realtime messages.
    */
   public async fetchMessages(
     params: { threadId: string; beforeTimestampMs?: number; beforeMessageId?: string },
@@ -845,8 +845,8 @@ export class FacebookE2EEBridge extends EventEmitter {
 
   /** Resolve a Messenger contact through the bridge's GetContactsFull task. */
   /**
-   * DEPLAO_ADAPTER: create a Messenger group (quick "Tạo nhóm"). Ids cross the boundary as
-   * strings (int64 precision); the bridge returns the new thread id as a string too.
+   * DEPLAO_ADAPTER: create a Messenger group (quick "Tạo nhóm" / Create group). IDs cross the boundary as
+   * strings (int64 precision); the bridge returns the new thread ID as a string too.
    */
   public async createGroup(params: { participants: string[]; name: string }): Promise<{ threadId: string; renameError?: string }> {
     return this.call('createGroup', {
@@ -867,14 +867,14 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Kiểm tra trạng thái kết nối
+   * Check the connection status
    */
   public async isConnected(): Promise<{ connected: boolean; e2eeConnected: boolean }> {
     return this.call('isConnected');
   }
 
   /**
-   * Gửi tin nhắn E2EE mã hóa
+   * Send an encrypted E2EE message
    */
   public async sendE2EEMessage(params: {
     chatJid: string;
@@ -891,7 +891,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi reaction cho tin nhắn E2EE 1:1
+   * Send a reaction to an E2EE 1:1 message
    */
   public async sendE2EEReaction(params: {
     chatJid: string;
@@ -908,7 +908,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi sticker trong chat E2EE 1:1
+   * Send a sticker in an E2EE 1:1 chat
    */
   public async sendE2EESticker(params: {
     chatJid: string;
@@ -918,7 +918,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi ảnh qua E2EE 1:1
+   * Send an image via E2EE 1:1
    */
   public async sendE2EEImage(params: {
     chatJid: string;
@@ -933,7 +933,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi video qua E2EE 1:1
+   * Send a video via E2EE 1:1
    */
   public async sendE2EEVideo(params: {
     chatJid: string;
@@ -948,7 +948,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi audio qua E2EE 1:1
+   * Send audio via E2EE 1:1
    */
   public async sendE2EEAudio(params: {
     chatJid: string;
@@ -963,7 +963,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi tài liệu/file qua E2EE 1:1
+   * Send a document/file via E2EE 1:1
    */
   public async sendE2EEDocument(params: {
     chatJid: string;
@@ -978,8 +978,8 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Tải xuống và giải mã E2EE media attachment (ảnh/video/audio/file)
-   * Trả về bytes đã giải mã dưới dạng base64
+   * Download and decrypt an E2EE media attachment (image/video/audio/file)
+   * Returns the decrypted bytes as base64
    */
   public async downloadE2EEAttachment(params: {
     directPath: string;
@@ -994,7 +994,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi tin nhắn text vào group (non-E2EE)
+   * Send a text message to a group (non-E2EE)
    */
   public async sendMessage(params: {
     threadId: string;
@@ -1009,7 +1009,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi reaction vào group (non-E2EE)
+   * Send a reaction to a group (non-E2EE)
    */
   public async sendReaction(params: {
     threadId: string;
@@ -1024,7 +1024,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi ảnh vào group (non-E2EE)
+   * Send an image to a group (non-E2EE)
    */
   public async sendImage(params: {
     threadId: string;
@@ -1039,7 +1039,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi file vào group (non-E2EE)
+   * Send a file to a group (non-E2EE)
    */
   public async sendFile(params: {
     threadId: string;
@@ -1056,7 +1056,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   // ─── Phase 6: Typing & Mark Read ──────────────────────────────────────────
 
   /**
-   * Gửi typing indicator (normal group)
+   * Send a typing indicator (normal group)
    */
   public async sendTypingIndicator(params: {
     threadId: string;
@@ -1073,7 +1073,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Gửi typing indicator cho E2EE 1:1
+   * Send a typing indicator for an E2EE 1:1 chat
    */
   public async sendE2EETyping(params: {
     chatJid: string;
@@ -1086,7 +1086,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Đánh dấu thread đã đọc trên Facebook server
+   * Mark the thread as read on the Facebook server
    */
   public async markRead(params: {
     threadId: string;
@@ -1109,7 +1109,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Chỉnh sửa tin nhắn E2EE
+   * Edit an E2EE message
    */
   public async editE2EEMessage(params: {
     chatJid: string;
@@ -1124,7 +1124,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Thu hồi tin nhắn E2EE
+   * Unsend an E2EE message
    */
   public async unsendE2EEMessage(params: {
     chatJid: string;
@@ -1139,7 +1139,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   // ─── Shutdown ─────────────────────────────────────────────────────────────
 
   /**
-   * Graceful shutdown: gửi disconnect → đóng stdin → kill sau 5s
+   * Graceful shutdown: send disconnect → close stdin → kill after 5s
    */
   public async close(): Promise<void> {
     if (this.closed || this.closing || !this.process) return;
@@ -1185,7 +1185,7 @@ export class FacebookE2EEBridge extends EventEmitter {
   }
 
   /**
-   * Kiểm tra bridge process còn sống
+   * Check whether the bridge process is still alive
    */
   public isAlive(): boolean {
     return !this.closed && !!this.process && !this.process.killed;

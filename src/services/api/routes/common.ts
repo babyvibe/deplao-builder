@@ -1,36 +1,37 @@
 /**
- * common.ts — schema và hàm chuẩn hoá dùng chung cho các route v1.
+ * common.ts: shared schemas and normalizing functions for the v1 routes.
  *
- * Quy ước dữ liệu trả ra: snake_case theo cột DB; cột JSON (attachments, reactions,
- * quote_data) được parse sẵn thành object; KHÔNG trả đường dẫn file trên máy.
+ * Output data conventions: snake_case, following the DB columns; JSON columns (attachments, reactions,
+ * quote_data) are parsed into objects ahead of time; file paths on the machine are NEVER returned.
  */
 import { s } from '../schema';
 import { messageText, threadTypeName } from '../channels/ChannelActions';
 import { ApiContext, ApiError, Pagination, paged } from '../types';
 import { isLocalRequest } from '../http/ip';
 import { getApiSettingBool } from '../settings';
+import { tr } from '../../../shared/i18n';
 
 export const accountParams = s.object({
-    accountId: s.id().describe('ID tài khoản (accounts.zalo_id). Facebook dùng Facebook ID, Telegram dùng ID tài khoản Telegram.'),
+    accountId: s.id().describe(tr('ID tài khoản (accounts.zalo_id). Facebook dùng Facebook ID, Telegram dùng ID tài khoản Telegram.')),
 });
 
 export const threadParams = s.object({
-    accountId: s.id().describe('ID tài khoản'),
-    threadId: s.id().describe('ID hội thoại (user id hoặc group id của kênh)'),
+    accountId: s.id().describe(tr('ID tài khoản')),
+    threadId: s.id().describe(tr('ID hội thoại (user id hoặc group id của kênh)')),
 });
 
 export const messageParams = s.object({
-    accountId: s.id().describe('ID tài khoản'),
-    threadId: s.id().describe('ID hội thoại'),
-    msgId: s.id().describe('ID tin nhắn (msg_id)'),
+    accountId: s.id().describe(tr('ID tài khoản')),
+    threadId: s.id().describe(tr('ID hội thoại')),
+    msgId: s.id().describe(tr('ID tin nhắn (msg_id)')),
 });
 
 export const pageShape = {
-    limit: s.int().min(1).max(200).default(50).describe('Số bản ghi tối đa (1–200)'),
-    offset: s.int().min(0).default(0).describe('Bỏ qua N bản ghi đầu'),
+    limit: s.int().min(1).max(200).default(50).describe(tr('Số bản ghi tối đa (1–200)')),
+    offset: s.int().min(0).default(0).describe(tr('Bỏ qua N bản ghi đầu')),
 };
 
-export const threadTypeSchema = s.enum(['user', 'group'] as const).describe('user = chat 1-1, group = nhóm');
+export const threadTypeSchema = s.enum(['user', 'group'] as const).describe(tr('user = chat 1-1, group = nhóm'));
 
 export function parseJson<T>(raw: any, fallback: T): T {
     if (raw === null || raw === undefined || raw === '') return fallback;
@@ -43,7 +44,7 @@ function hasLocalMedia(raw: any): boolean {
     return !!lp && typeof lp === 'object' && Object.values(lp).some(v => typeof v === 'string' && v.length > 0);
 }
 
-/** Chuẩn hoá một dòng bảng messages (mọi kênh). */
+/** Normalize one row of the messages table (all channels). */
 export function mapMessage(row: any): any {
     if (!row) return null;
     return {
@@ -73,7 +74,7 @@ export function mapMessage(row: any): any {
     };
 }
 
-/** Chuẩn hoá một dòng bảng contacts thành hội thoại. */
+/** Normalize one row of the contacts table into a conversation. */
 export function mapConversation(row: any): any {
     if (!row) return null;
     return {
@@ -108,8 +109,8 @@ export function offsetPage<T>(items: T[], limit: number, offset: number, total?:
 }
 
 /**
- * Được trỏ vào mạng nội bộ (URL file, webhook) không? Chỉ khi request gọi từ chính máy
- * (không qua tunnel), từ app, hoặc người dùng bật api_allow_private_urls.
+ * May it point to the private network (file URL, webhook)? Only when the request is made from the machine itself
+ * (not through the tunnel), from the app, or when the user has enabled api_allow_private_urls.
  */
 export function allowPrivateTargets(ctx: ApiContext): boolean {
     if (getApiSettingBool('api_allow_private_urls')) return true;
@@ -118,10 +119,10 @@ export function allowPrivateTargets(ctx: ApiContext): boolean {
 }
 
 export function notFound(what: string): never {
-    throw new ApiError(404, 'NOT_FOUND', `Không tìm thấy ${what}`);
+    throw new ApiError(404, 'NOT_FOUND', tr('Không tìm thấy {{what}}', { what }));
 }
 
-/** Bỏ trường nhạy cảm khỏi object (đệ quy một cấp). */
+/** Remove sensitive fields from an object (one level deep). */
 export function stripSecrets<T extends Record<string, any>>(obj: T, keys: string[]): T {
     if (!obj || typeof obj !== 'object') return obj;
     const out: any = Array.isArray(obj) ? [...obj] : { ...obj };
@@ -135,7 +136,7 @@ export const SECRET_FIELDS = [
     '_localPath', '_thumbLocalPath', 'file_path', 'thumb_path', 'local_paths',
 ];
 
-/** Bỏ đệ quy các trường nhạy cảm (dùng cho dữ liệu trả thẳng từ handler). */
+/** Recursively remove sensitive fields (used for data returned directly from a handler). */
 export function scrub(value: any, depth = 0): any {
     if (depth > 6 || value === null || value === undefined) return value;
     if (Array.isArray(value)) return value.map(v => scrub(v, depth + 1));

@@ -1,6 +1,6 @@
 /**
- * Nội dung tin video: file trên máy → khung phát (Telegram tự phát không tiếng khi nhỏ); Zalo chưa có file → ảnh bìa +
- * phát từ CDN; Telegram chưa tải → tải khi bấm. Chú thích (link / @tên bấm được), thẻ link có video (Telegram).
+ * Video message content: a local file → player frame (Telegram auto-plays small files silently); Zalo with no local file → cover image +
+ * playback from the CDN; Telegram not downloaded yet → download on click. Caption (clickable link / @name), Telegram link card with a video.
  */
 import { isFacebook, isTelegramUser, isZalo } from '@/lib/channels/channelHelper';
 import { getLocalMediaPath } from '@/lib/media/mediaResolver';
@@ -11,7 +11,7 @@ import { getTelegramVideoMedia, TelegramVideoPending, TextWithMentions } from '.
 import { getTelegramWebpageMeta, TelegramLinkPreviewCard, TelegramPreviewRefresh } from '../../telegram/messages/TelegramLinkPreview';
 import type { MessageRowContext, RowLocals } from './rowContext';
 
-/** Video Telegram tự phát không tiếng trong khung chat: chỉ file nhỏ (= nhóm tự tải), như Telegram. */
+/** Telegram video that auto-plays silently in the chat window: only small files (= downloaded automatically), like Telegram. */
 const TELEGRAM_INLINE_AUTOPLAY_MAX_BYTES = 10 * 1024 * 1024;
 
 type VideoMessageBodyProps = { ctx: MessageRowContext } & Pick<RowLocals, 'msg' | 'telegramPostMeta'>;
@@ -38,15 +38,15 @@ export function VideoMessageBody({ ctx, msg, telegramPostMeta }: VideoMessageBod
     videoCaption = typeof parsed === 'string' ? parsed : (parsed.title || parsed.text || parsed.caption || '');
   } catch { videoCaption = ''; }
   if (!videoCaption && msg.content && !msg.content.startsWith('{')) videoCaption = msg.content;
-  // Zalo chưa có file local (vd tin đồng bộ từ điện thoại) → thumbnail + phát từ CDN,
-  // hiện "Video đã hết hạn" khi Zalo không còn lưu file
+  // Zalo has no local file (e.g. a message synced from the phone) → thumbnail + playback from the CDN,
+  // shows "Video đã hết hạn" (Video expired) when Zalo no longer keeps the file
   const videoNode = !videoPath && isZalo(msg.channel)
     ? <ZaloRemoteVideoThumb msg={msg} onPlay={() => openVideoPlayer(msg)} />
-    // Telegram chưa có file: tải khi bấm (≤ 10 MB tự tải) rồi mở trình phát — trước đây bấm không làm gì
+    // Telegram has no file: download on click (≤ 10 MB downloads automatically), then open the player. Before, clicking did nothing
     : !videoPath && isTelegramUser(msg.channel)
       ? <TelegramVideoPending msg={msg} onPlay={(downloaded) => openVideoPlayer(downloaded)} />
       : (() => {
-          // Telegram: khung theo tỉ lệ thật + ảnh bìa mờ trong lúc chụp khung hình đầu (khớp lúc chưa tải)
+          // Telegram: frame at the real aspect ratio + a blurred cover image while the first frame is captured (matches the not-yet-loaded state)
           const tgVideo = isTelegramUser(msg.channel) ? getTelegramVideoMedia(msg) : null;
           return (
             <FBVideoThumb videoPath={videoPath} onPlay={() => openVideoPlayer(msg)} dimsMsg={msg}
@@ -56,16 +56,16 @@ export function VideoMessageBody({ ctx, msg, telegramPostMeta }: VideoMessageBod
               duration={tgVideo?.duration || undefined} />
           );
         })();
-  // Link preview có video (vd. fxTikTok): link ở trên, thẻ tên trang / tiêu đề / mô tả bọc video — như Telegram
+  // Link preview with a video (e.g. fxTikTok): link on top, site name / title / description card wrapping the video, like Telegram
   const videoWebpage = isTelegramUser(msg.channel) ? getTelegramWebpageMeta(msg) : null;
-  // Chú thích: link / @tên bấm được (trước đây là chữ thô)
+  // Caption: clickable link / @name (previously plain text)
   const captionNode = videoCaption ? (
     <TextWithMentions text={videoCaption} channel={msg.channel} allContacts={contactList} groupMembersList={groupMembers}
       mentionRanges={getMentionRanges(msg.attachments)}
       highlight={searchHighlightQuery}
       onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
   ) : null;
-  // Bản ghi cũ (video link chưa có thẻ / thiếu tiêu đề): xin Telegram bù khi hiện ra, gom theo lô
+  // Old record (video link without a card / missing title): ask Telegram to fill it in when shown, batched
   const previewRefresh = isTelegramUser(msg.channel) ? <TelegramPreviewRefresh msg={msg} /> : null;
   if (videoWebpage) {
     return (

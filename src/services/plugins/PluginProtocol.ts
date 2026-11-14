@@ -1,18 +1,19 @@
 /**
- * PluginProtocol — phục vụ UI plugin qua deplao-plugin://<id>/<path> (mỗi plugin một origin riêng,
- * khác origin của app → iframe plugin không chạm được DOM/IPC của app).
+ * PluginProtocol: serves the plugin UI through deplao-plugin://<id>/<path> (each plugin has its own origin,
+ * different from the app's origin → the plugin iframe cannot reach the app's DOM / IPC).
  *
- *  - Chỉ plugin đang bật; file nằm trong thư mục plugin (kiểm tra realpath, chặn symlink ra ngoài).
- *  - CSP chặt: script/style chỉ từ chính plugin; không fetch ra ngoài trừ ui.connectSrc, không tải ảnh ngoài trừ ui.imgSrc
- *    (cả hai cần quyền network).
- *  - /__deplao/sdk.js trả SDK web nhúng sẵn trong app.
- *  - Trang bị nhúng từ web ngoài (Referer http/https lạ) bị từ chối.
+ *  - Only enabled plugins; files must be inside the plugin folder (realpath is checked, symlinks pointing outside are blocked).
+ *  - Strict CSP: script/style only from the plugin itself; no fetch to the outside except ui.connectSrc, no external images except ui.imgSrc
+ *    (both need the network permission).
+ *  - /__deplao/sdk.js returns the web SDK embedded in the app.
+ *  - Pages embedded from an unknown external web (unfamiliar http/https Referer) are rejected.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import type { PluginRecord } from './PluginManager';
 import { isImageSource } from './manifest';
 import { WEB_SDK_JS } from './webSdk';
+import { tr } from '../../shared/i18n';
 
 export const PLUGIN_SCHEME = 'deplao-plugin';
 export const SDK_PATH = '__deplao/sdk.js';
@@ -43,8 +44,8 @@ export function parsePluginUrl(raw: string): { pluginId: string; relPath: string
 }
 
 /**
- * Đường dẫn file thật bên trong root, hoặc null nếu ra ngoài (.., tuyệt đối, symlink, ký tự lạ).
- * Thư mục → index.html bên trong.
+ * The real file path inside root, or null if it is outside (.., absolute, symlink, odd characters).
+ * A folder → index.html inside it.
  */
 export function resolvePluginFile(root: string, relPath: string): string | null {
     if (!relPath || relPath.includes('\0') || relPath.includes('\\') || relPath.includes(':')) return null;
@@ -72,9 +73,9 @@ export function buildCsp(rec: PluginRecord, devOrigin = DEV_RENDERER_ORIGIN): st
     const img = ["'self'", 'data:', 'blob:'];
     if (rec.granted_permissions.includes('network')) {
         for (const o of rec.manifest.ui?.connectSrc || []) {
-            try { connect.push(new URL(o).origin); } catch { /* manifest đã kiểm tra */ }
+            try { connect.push(new URL(o).origin); } catch { /* manifest already checked */ }
         }
-        // Ảnh ngoài (vd ảnh đại diện Zalo https://*.zadn.vn) — chỉ nguồn đã khai trong ui.imgSrc, kiểm lại định dạng.
+        // External images (e.g. Zalo avatars at https://*.zadn.vn): only sources declared in ui.imgSrc, the format is checked again.
         for (const o of rec.manifest.ui?.imgSrc || []) {
             if (isImageSource(o)) img.push(o);
         }
@@ -90,14 +91,14 @@ export function buildCsp(rec: PluginRecord, devOrigin = DEV_RENDERER_ORIGIN): st
         "object-src 'none'",
         "base-uri 'self'",
         "form-action 'self'",
-        // Ai được nhúng trang ứng dụng: chính ứng dụng, giao diện Deplao bản cài (file://) và bản dev (Vite). Không dùng
-        // '*': theo CSP, '*' chỉ khớp http/https/ws/wss nên chặn giao diện file:// của bản cài (trang trắng), lại cho
-        // mọi trang web ngoài nhúng.
+        // Who may embed the app pages: the app itself, the installed Deplao UI (file://) and the dev build (Vite). Do not use
+        // '*': under CSP, '*' only matches http/https/ws/wss, so it would block the installed file:// UI (blank page) and also allow
+        // any external web page to embed it.
         `frame-ancestors 'self' file: ${devOrigin}`,
     ].join('; ');
 }
 
-/** Referer là trang web ngoài (không phải app) → không phục vụ trang plugin. */
+/** Referer is an external web page (not the app) → the plugin page is not served. */
 export function isForeignReferrer(referrer: string | null | undefined, devOrigin = DEV_RENDERER_ORIGIN): boolean {
     const ref = String(referrer || '');
     if (!/^https?:/i.test(ref)) return false;
@@ -105,7 +106,7 @@ export function isForeignReferrer(referrer: string | null | undefined, devOrigin
 }
 
 export interface ProtocolDeps {
-    /** Plugin đang bật (null nếu không). */
+    /** The enabled plugin (null if none). */
     activeRecord(pluginId: string): PluginRecord | null;
     devOrigin?: string;
 }
@@ -125,7 +126,7 @@ export async function handlePluginRequest(request: { url: string; method?: strin
     if (isForeignReferrer(referrer, deps.devOrigin)) return new Response('Forbidden', { status: 403 });
 
     const rec = deps.activeRecord(parsed.pluginId);
-    if (!rec) return new Response('Ứng dụng chưa bật', { status: 404 });
+    if (!rec) return new Response(tr('Ứng dụng chưa bật'), { status: 404 });
     const file = resolvePluginFile(rec.install_path, parsed.relPath || 'index.html');
     if (!file) return new Response('Not Found', { status: 404 });
 
@@ -137,14 +138,14 @@ export async function handlePluginRequest(request: { url: string; method?: strin
     return new Response(data, { status: 200, headers });
 }
 
-/** Origin của app được đọc file qua local-media:// (không có Origin = request cùng app / no-cors). */
+/** App origin allowed to read files through local-media:// (no Origin = same-app request / no-cors). */
 export function isTrustedAppOrigin(origin: string | null | undefined, devOrigin = DEV_RENDERER_ORIGIN): boolean {
     if (origin === null || origin === undefined || origin === '') return true;
     const o = origin.trim();
     return o === 'null' || o === 'file://' || o === devOrigin;
 }
 
-/** Request local-media:// đến từ plugin hoặc trang web ngoài → chặn (ACAO * + bypassCSP sẽ lộ mọi file). */
+/** A local-media:// request from a plugin or an external web page → blocked (ACAO * + bypassCSP would expose every file). */
 export function isBlockedMediaRequest(headers: { get(name: string): string | null }, referrer?: string, devOrigin = DEV_RENDERER_ORIGIN): boolean {
     if (!isTrustedAppOrigin(headers.get('origin'), devOrigin)) return true;
     const ref = String(headers.get('referer') || referrer || '');
@@ -152,7 +153,7 @@ export function isBlockedMediaRequest(headers: { get(name: string): string | nul
     return false;
 }
 
-/** iframe đang ở deplao-plugin://<id> chỉ được điều hướng trong chính origin đó. */
+/** An iframe at deplao-plugin://<id> may only navigate inside that same origin. */
 export function shouldBlockPluginFrameNavigation(currentUrl: string, targetUrl: string): boolean {
     if (!String(currentUrl || '').startsWith(`${PLUGIN_SCHEME}:`)) return false;
     try {

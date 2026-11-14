@@ -1,21 +1,22 @@
 /**
- * Mở rộng zca-js (>= 2.2.0) cho tính năng đồng bộ tin nhắn từ điện thoại — port từ zca-js PR #269
- * nhưng không fork thư viện:
- *   - API mới đăng ký qua điểm mở rộng chính thức `api.custom(...)`.
- *   - Sự kiện `sync_event` (control event act_type="syncmsgmb", WS cmd 601) đọc bằng một listener
- *     phụ gắn vào websocket của zca-js (zca-js 2.2.0 bỏ qua act_type này).
+ * Extends zca-js (>= 2.2.0) for the sync-messages-from-phone feature (a port of zca-js PR #269,
+ * but without forking the library):
+ *   - the new API is registered through the official extension point `api.custom(...)`.
+ *   - the `sync_event` event (control event act_type="syncmsgmb", WS cmd 601) is read by an extra listener
+ *     attached to the zca-js websocket (zca-js 2.2.0 ignores this act_type).
  *
- * Endpoint/params bám theo Zalo Web (zpw_type=30, client mà zca-js giả lập):
+ * Endpoints/params follow Zalo Web (zpw_type=30, the client that zca-js imitates):
  *   - pull_mobile_msg / cancel_pull_mobile_msg (file domain)
- *   - znoise (profile domain): đổi UID/GroupID "plain" (mobile) → "noise" (web) — Zalo PC dùng đúng
- *     API này khi nhập dữ liệu đồng bộ (REQUEST_NOISE_ID → getnuid).
+ *   - znoise (profile domain): converts UID/GroupID "plain" (mobile) → "noise" (web) - Zalo PC uses exactly
+ *     this API when importing sync data (REQUEST_NOISE_ID → getnuid).
  */
 import * as crypto from 'crypto';
 import * as zlib from 'zlib';
 import Logger from '../../../utils/Logger';
 import { initializeSyncEvent, NoisedIdsResult, PullMobileParams, SyncEvent } from './types';
+import { tr } from '../../../shared/i18n';
 
-/** pc_name mà Zalo Web gửi lên — điện thoại hiển thị tên này và trả lại trong các sự kiện. */
+/** pc_name that Zalo Web sends - the phone shows this name and returns it in the events. */
 export const DEFAULT_SYNC_PC_NAME = 'Web';
 
 const CMD_CONTROL = 601;
@@ -29,8 +30,8 @@ export interface MobileSyncApi {
 }
 
 /**
- * pull_mobile_msg / cancel_pull_mobile_msg trả `data` rỗng (PR #269) → resolve của zca-js có thể lỗi
- * khi JSON.parse chuỗi rỗng. Server đã nhận yêu cầu nếu error_code ngoài cùng = 0.
+ * pull_mobile_msg / cancel_pull_mobile_msg return an empty `data` (PR #269) → the zca-js resolve can fail
+ * when JSON.parse gets an empty string. The server has received the request if the outer error_code = 0.
  */
 async function resolveLenient(utils: any, response: any): Promise<any> {
     const copy = typeof response?.clone === 'function' ? response.clone() : null;
@@ -38,21 +39,21 @@ async function resolveLenient(utils: any, response: any): Promise<any> {
         return await utils.resolve(response);
     } catch (err) {
         let json: any = null;
-        try { json = copy ? await copy.json() : null; } catch { /* không phải JSON */ }
+        try { json = copy ? await copy.json() : null; } catch { /* not JSON */ }
         if (json && Number(json.error_code) === 0) return null;
         throw err;
     }
 }
 
 /**
- * Domain dịch vụ (vd `file`, `profile`). zca-js chỉ lưu service map ở `api.zpwServiceMap`
- * (tham số constructor API) — `ctx.zpwServiceMap` có trong type nhưng không bao giờ được gán.
+ * Service domain (e.g. `file`, `profile`). zca-js only stores the service map in `api.zpwServiceMap`
+ * (an API constructor parameter); `ctx.zpwServiceMap` exists in the type but is never assigned.
  */
 function serviceDomain(api: any, ctx: any, key: 'file' | 'profile'): string {
     const domain = api?.zpwServiceMap?.[key]?.[0]
         || ctx?.loginInfo?.zpw_service_map_v3?.[key]?.[0]
         || ctx?.zpwServiceMap?.[key]?.[0];
-    if (!domain) throw new Error(`Thiếu ${key} service domain`);
+    if (!domain) throw new Error(tr('Thiếu {{key}} service domain', { key }));
     return domain;
 }
 
@@ -72,12 +73,12 @@ function normalizeNoised(list: any, expected: number, stripGroupPrefix: boolean)
 }
 
 /**
- * Đăng ký các API đồng bộ vào instance zca-js. `api.custom` định nghĩa property không thể ghi đè
- * nên chỉ đăng ký 1 lần cho mỗi instance.
+ * Register the sync APIs on the zca-js instance. `api.custom` defines non-writable properties,
+ * so registration happens only once per instance.
  */
 export function installMobileSyncApis(api: any): MobileSyncApi {
     if (!api || typeof api.custom !== 'function') {
-        throw new Error('zca-js API không hỗ trợ api.custom (cần zca-js >= 2.0)');
+        throw new Error(tr('zca-js API không hỗ trợ api.custom (cần zca-js >= 2.0)'));
     }
     if (typeof api.pullMobile === 'function') return api as MobileSyncApi;
 
@@ -94,7 +95,7 @@ export function installMobileSyncApis(api: any): MobileSyncApi {
             imei: ctx.imei,
         };
         const encrypted = utils.encodeAES(JSON.stringify(params));
-        if (!encrypted) throw new Error('Không mã hoá được params pullMobile');
+        if (!encrypted) throw new Error(tr('Không mã hoá được params pullMobile'));
         const url = utils.makeURL(`${fileDomain}/api/message/pull_mobile_msg`, { params: encrypted });
         return resolveLenient(utils, await utils.request(url, { method: 'GET' }));
     });
@@ -122,7 +123,7 @@ export function installMobileSyncApis(api: any): MobileSyncApi {
 
         let data: any;
         try {
-            // Zalo Web: GET {profile}/api/znoise (cookie zpw_sek thuộc domain chat.zalo.me)
+            // Zalo Web: GET {profile}/api/znoise (the zpw_sek cookie belongs to the chat.zalo.me domain)
             const url = utils.makeURL(`${serviceDomain(api, ctx, 'profile')}/api/znoise`, { params: encrypted });
             data = await utils.resolve(await utils.request(url, { method: 'GET' }));
         } catch (err: any) {
@@ -147,9 +148,9 @@ export function installMobileSyncApis(api: any): MobileSyncApi {
     return api as MobileSyncApi;
 }
 
-// ─── Đọc control event syncmsgmb từ websocket của zca-js ─────────────────────
+// ─── Read the syncmsgmb control event from the zca-js websocket ─────────────────────
 
-/** Giải mã payload event WS (tương đương utils.decodeEventData của zca-js). */
+/** Decode a WS event payload (equivalent to utils.decodeEventData in zca-js). */
 export function decodeWsEventData(parsed: any, cipherKey: string | null | undefined): any {
     if (typeof parsed?.data !== 'string' || typeof parsed?.encrypt !== 'number') return null;
     const encryptType: number = parsed.encrypt;
@@ -172,7 +173,7 @@ export function decodeWsEventData(parsed: any, cipherKey: string | null | undefi
     return text ? JSON.parse(text) : null;
 }
 
-/** Lấy các sync event từ 1 frame WS (trả mảng rỗng nếu không phải control syncmsgmb). */
+/** Get the sync events from one WS frame (returns an empty array if it is not a syncmsgmb control event). */
 export function extractSyncEvents(frame: Buffer, cipherKey: string | null | undefined): SyncEvent[] {
     if (!Buffer.isBuffer(frame) || frame.length < 5) return [];
     const version = frame[0];
@@ -190,7 +191,7 @@ export function extractSyncEvents(frame: Buffer, cipherKey: string | null | unde
         if (!content || content.act_type !== SYNC_ACT_TYPE) continue;
         let data = content.data;
         if (typeof data === 'string') {
-            try { data = JSON.parse(data); } catch { /* giữ nguyên chuỗi */ }
+            try { data = JSON.parse(data); } catch { /* keep the string as is */ }
         }
         events.push(initializeSyncEvent(data, String(content.act || ''), String(content.act_type)));
     }
@@ -198,8 +199,8 @@ export function extractSyncEvents(frame: Buffer, cipherKey: string | null | unde
 }
 
 /**
- * Gắn listener phụ vào websocket hiện tại của `api.listener` (gắn lại sau mỗi lần `connected`).
- * Trả về hàm huỷ đăng ký.
+ * Attach an extra listener to the current websocket of `api.listener` (re-attached after every `connected`).
+ * Returns the unsubscribe function.
  */
 export function attachSyncEventListener(api: any, onEvent: (event: SyncEvent) => void): () => void {
     const listener = api?.listener;
@@ -208,7 +209,7 @@ export function attachSyncEventListener(api: any, onEvent: (event: SyncEvent) =>
     let boundWs: any = null;
     const onFrame = (data: any) => {
         if (!Buffer.isBuffer(data)) return;
-        // Chỉ quan tâm cmd 601 — kiểm tra header trước khi decode để không tốn chi phí cho tin nhắn thường.
+        // Only care about cmd 601 - check the header before decoding so that normal messages cost nothing.
         if (data.length < 4 || data[0] !== 1 || data.readUInt16LE(1) !== CMD_CONTROL) return;
         try {
             for (const event of extractSyncEvents(data, listener.cipherKey)) onEvent(event);

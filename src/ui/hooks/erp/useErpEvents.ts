@@ -8,17 +8,17 @@ import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
 
-/** Gom các event công việc liền nhau thành MỘT lần tải lại hộp việc (event công việc tới mọi nhân viên). */
+/** Groups consecutive task events into ONE reload of the task inbox (task events go to every employee). */
 const INBOX_RELOAD_DEBOUNCE_MS = 400;
 
 /**
- * Mount once (ErpPage): nghe event realtime ERP và đồng bộ store. Boss nhận emit của chính mình (kể cả thay đổi nhân
- * viên làm qua REST — Boss chạy cùng service nên event phát đúng một lần); nhân viên nhận bản relay Socket.IO theo
- * người nhận (relayAudience), kể cả tiếng vọng thay đổi của chính mình → mọi handler idempotent.
- * Đọc store qua getState() — không subscribe cả store (trước đây ErpPage render lại mỗi khi BẤT KỲ store ERP nào đổi).
+ * Mounted once (ErpPage): listens for realtime ERP events and syncs the store. The Boss receives its own emits (including changes made by employees
+ * via REST: the Boss runs the same service, so each event fires exactly once); employees receive the Socket.IO relay copy per recipient
+ * (relayAudience), including the echo of their own changes → every handler is idempotent.
+ * Reads the store via getState() without subscribing to the whole store (previously ErpPage re-rendered whenever ANY ERP store changed).
  */
 export function useErpEvents() {
-  // Danh tính dữ liệu (không phải danh tính xem thử): Boss = 'boss' (IPC), nhân viên = employee_id (token REST)
+  // Data identity (not the viewing identity): Boss = 'boss' (IPC), employee = employee_id (REST token)
   const isEmployee = useEmployeeStore(s => s.mode === 'employee');
   const employeeId = useEmployeeStore(s => s.currentEmployee?.employee_id || '');
   const myIdRef = useRef('boss');
@@ -31,8 +31,8 @@ export function useErpEvents() {
     const notes = () => useErpNoteStore.getState();
     const notifications = () => useErpNotificationStore.getState();
     const hrm = () => useErpEmployeeStore.getState();
-    // Lịch / ghi chú giới hạn người xem (visibleEmployeeIds không rỗng) mà mình không nằm trong đó: UI Boss nhận MỌI emit
-    // cục bộ (nhân viên chỉ nhận bản relay của mình) — không hiện lịch / note riêng của người khác rồi mất khi tải lại.
+    // Calendar / notes with restricted viewers (visibleEmployeeIds not empty) that I am not part of: the Boss UI receives ALL emits
+    // locally (an employee only receives their own relay copy): do not show someone else's calendar / notes, which would disappear after a reload.
     const notForMe = (d: any) => Array.isArray(d?.visibleEmployeeIds) && d.visibleEmployeeIds.length > 0
       && !d.visibleEmployeeIds.includes(myIdRef.current);
 
@@ -44,7 +44,7 @@ export function useErpEvents() {
 
     const unsubs: (() => void)[] = [];
 
-    // Payload thiếu trường (Boss bản khác / event lỗi) → bỏ qua thay vì ném lỗi trong listener
+    // Payload missing fields (other Boss version / broken event) → skip it instead of throwing inside the listener
     unsubs.push(ipc.on('erp:event:projectCreated', (d: any) => { if (d?.project) tasks()._onProjectCreated(d.project); }));
     unsubs.push(ipc.on('erp:event:projectUpdated', (d: any) => { if (d?.project) tasks()._onProjectUpdated(d.project); }));
     unsubs.push(ipc.on('erp:event:projectDeleted', (d: any) => { if (d?.projectId) tasks()._onProjectDeleted(d.projectId); }));
@@ -80,17 +80,17 @@ export function useErpEvents() {
       else notes()._onNoteUpdated(d.note);
     }));
     unsubs.push(ipc.on('erp:event:noteDeleted', (d: any) => { if (d?.noteId) notes()._onNoteDeleted(d.noteId); }));
-    // Chia sẻ / phạm vi đổi (không mang nội dung): tải lại danh sách theo quyền — người vừa mất quyền bỏ note khỏi danh sách
+    // Sharing / scope changed (no content carried): reload the list according to permissions: someone who just lost access drops the note from the list
     unsubs.push(ipc.on('erp:event:noteShared', () => { void notes().refreshVisible(); }));
-    // Chỉ thông báo của mình: UI Boss nhận MỌI emit cục bộ (cả thông báo gửi nhân viên) — trước đây cộng vào hộp thư Boss
+    // Only my own notifications: the Boss UI receives ALL local emits (including notifications sent to employees); previously they were added to the Boss's inbox
     unsubs.push(ipc.on('erp:event:notification', (d: any) => {
       const n = d?.notification;
       if (n && (n.recipient_id === undefined || String(n.recipient_id) === myIdRef.current)) notifications()._onNewNotification(n);
     }));
-    // 'erp:event:reminder' (tới giờ nhắc lịch): App.tsx nghe ở mọi trang và hiện popup như nhắc hẹn Zalo
+    // 'erp:event:reminder' (reminder time reached): App.tsx listens on every page and shows a popup like a Zalo appointment reminder
 
-    // Nghỉ phép: cập nhật đơn đang hiện; người duyệt đang mở danh sách chờ duyệt thì tải lại (đơn mới của người mình
-    // quản lý — Boss lọc theo quản lý trực tiếp)
+    // Leave: update the request on screen; if the approver has the pending list open, reload it (new requests from people I
+    // manage: the Boss filters by direct manager)
     const onLeave = (d: any) => {
       if (!d?.leave) return;
       hrm()._onLeaveChanged(d.leave);
@@ -109,7 +109,7 @@ export function useErpEvents() {
     };
   }, []);
 
-  // Nhân viên: kết nối lại / catch-up reset → tải lại phần ERP đã mở (event lỡ trong lúc mất kết nối không phát lại)
+  // Employee: reconnect / catch-up reset → reload the ERP parts that are open (events missed while disconnected are not replayed)
   useEmployeeResync(() => {
     const t = useErpTaskStore.getState();
     const c = useErpCalendarStore.getState();

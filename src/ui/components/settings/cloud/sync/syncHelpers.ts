@@ -1,8 +1,8 @@
 /**
- * syncHelpers — phần thuần (không React) của Cài đặt → Internet & Cloud → Đồng bộ dữ liệu: nhãn chế độ, giá trị mặc
- * định khi main chưa trả trạng thái, so sánh nháp với thiết lập đã lưu, câu tóm tắt
- * "2 tài khoản (A, B) · từ 01/01/2026 · Theo giờ · kèm ảnh" và nhãn của thẻ phần ("Theo giờ · 13:03", "ảnh 614/24.625").
- * Câu có nhắc tới kho nhận thêm `label` (tên kho: "R2" mặc định, "Google Drive" — storageLabel()).
+ * syncHelpers - the pure part (no React) of Settings → Internet & Cloud → Data sync: mode labels, default values
+ * used when main has not returned a status yet, comparing the draft with the saved settings, the summary sentence
+ * "2 tài khoản (A, B) · từ 01/01/2026 · Theo giờ · kèm ảnh" (2 accounts (A, B) · from 01/01/2026 · Hourly · with images) and the label of the section card ("Theo giờ · 13:03", "ảnh 614/24.625").
+ * Sentences that mention the storage take an extra `label` (storage name: "R2" by default, "Google Drive" - storageLabel()).
  */
 import type { BadgeVariant } from '@/components/ui';
 import {
@@ -28,21 +28,22 @@ import {
   scopeAccountName,
   type ScopeAccount,
 } from '../cloudUi';
+import { tr } from '../../../../../shared/i18n';
 
 export const SYNC_MODES: DbSyncMode[] = ['off', 'hourly', 'realtime'];
 
-export const SYNC_MODE_LABEL: Record<DbSyncMode, string> = { off: 'Tắt', hourly: 'Theo giờ', realtime: 'Realtime' };
+export const SYNC_MODE_LABEL: Record<DbSyncMode, string> = { off: tr('Tắt'), hourly: tr('Theo giờ'), realtime: 'Realtime' };
 
-/** Dòng giải thích dưới nút chọn chế độ; `label` = tên kho ("R2", "Google Drive"). */
+/** Explanation line under the mode choice buttons; `label` = storage name ("R2", "Google Drive"). */
 export function syncModeNote(mode: DbSyncMode, label = 'R2'): string {
   switch (mode) {
-    case 'hourly': return `Đẩy thay đổi mỗi giờ · không có thay đổi thì không gọi ${label}`;
-    case 'realtime': return `Trễ tối đa 5 giây · không có thay đổi thì không gọi ${label}`;
-    default: return `Không đồng bộ. Bản đã có trên ${label} vẫn giữ và khôi phục được.`;
+    case 'hourly': return tr('Đẩy thay đổi mỗi giờ · không có thay đổi thì không gọi {{label}}', { label });
+    case 'realtime': return tr('Trễ tối đa 5 giây · không có thay đổi thì không gọi {{label}}', { label });
+    default: return tr('Không đồng bộ. Bản đã có trên {{label}} vẫn giữ và khôi phục được.', { label });
   }
 }
 
-/** Như syncModeNote với kho R2 (giữ cho chỗ dùng cũ). */
+/** Same as syncModeNote with the R2 storage (kept for the existing callers). */
 export const SYNC_MODE_NOTE: Record<DbSyncMode, string> = {
   off: syncModeNote('off'),
   hourly: syncModeNote('hourly'),
@@ -79,7 +80,7 @@ export const EMPTY_MEDIA_STATUS: MediaSyncStatus = {
   lastError: null,
 };
 
-/** Thiết lập từ main / nháp → dạng chuẩn (thiếu "kèm ảnh" / "file chung" = bật). */
+/** Settings from main / the draft → standard shape (a missing "kèm ảnh" (with images) / "file chung" (shared files) = on). */
 export function normalizeSyncConfig(value: Partial<SyncConfig> | null | undefined): SyncConfig {
   const v = value || {};
   return {
@@ -90,7 +91,7 @@ export function normalizeSyncConfig(value: Partial<SyncConfig> | null | undefine
   };
 }
 
-/** Overview luôn đủ trường để vẽ (main chưa trả / bản cũ thiếu trường → mặc định). */
+/** The overview always has all fields to draw (main has not returned it / old build missing fields → defaults). */
 export function overviewOrDefault(overview: SyncOverview | null | undefined): SyncOverview {
   const media = overview?.media ?? EMPTY_MEDIA_STATUS;
   return {
@@ -107,50 +108,50 @@ export function sameSyncConfig(a: SyncConfig, b: SyncConfig): boolean {
     && a.includeShared === b.includeShared;
 }
 
-/** "Tất cả tài khoản" · "1 tài khoản (Shop Hoa Lan)" · "2 tài khoản (Shop Hoa Lan, Kho tổng)" · "5 tài khoản (A, B, C, …)". */
+/** "Tất cả tài khoản" (All accounts) · "1 tài khoản (Shop Hoa Lan)" (1 account) · "2 tài khoản (Shop Hoa Lan, Kho tổng)" (2 accounts) · "5 tài khoản (A, B, C, …)" (5 accounts). */
 export function describeSyncAccounts(scope: CloudScope | null | undefined, accounts: ReadonlyArray<ScopeAccount> = []): string {
   const s = normalizeScope(scope);
-  if (s.accounts === 'all') return 'Tất cả tài khoản';
-  if (s.accounts.length === 0) return 'Chưa chọn tài khoản';
+  if (s.accounts === 'all') return tr('Tất cả tài khoản');
+  if (s.accounts.length === 0) return tr('Chưa chọn tài khoản');
   const byId = new Map(accounts.map(a => [a.zalo_id, a] as [string, ScopeAccount]));
   const names = s.accounts
     .map(id => byId.get(id))
     .filter((a): a is ScopeAccount => !!a)
     .map(scopeAccountName);
-  const count = `${fmtNum(s.accounts.length)} tài khoản`;
+  const count = tr('{{v1}} tài khoản', { v1: fmtNum(s.accounts.length) });
   if (!names.length) return count;
   const shown = names.slice(0, 3);
   return `${count} (${shown.join(', ')}${s.accounts.length > shown.length ? ', …' : ''})`;
 }
 
-/** Câu tóm tắt thiết lập: "2 tài khoản (A, B) · từ 01/01/2026 · Theo giờ · kèm ảnh". */
+/** Settings summary sentence: "2 tài khoản (A, B) · từ 01/01/2026 · Theo giờ · kèm ảnh" (2 accounts (A, B) · from 01/01/2026 · Hourly · with images). */
 export function describeSyncConfig(config: SyncConfig, accounts: ReadonlyArray<ScopeAccount> = []): string {
   return [
     describeSyncAccounts(config.scope, accounts),
     describeScopeTime(config.scope),
     SYNC_MODE_LABEL[config.mode],
-    config.includeMedia ? 'kèm ảnh' : 'không kèm ảnh',
+    config.includeMedia ? tr('kèm ảnh') : tr('không kèm ảnh'),
   ].join(' · ');
 }
 
-/** Thông báo sau khi lưu thiết lập; `label` = tên kho. */
+/** Message after the settings are saved; `label` = storage name. */
 export function syncSavedMessage(before: SyncConfig, after: SyncConfig, rebase: boolean, label = 'R2'): string {
   if (before.mode === 'off' && after.mode !== 'off') {
-    return `Đã bật đồng bộ ${SYNC_MODE_LABEL[after.mode]}. Deplao chụp bản gốc ngay${after.includeMedia ? `, ảnh và file tải dần lên ${label}` : ''}.`;
+    return tr('Đã bật đồng bộ {{v1}}. Deplao chụp bản gốc ngay{{v2}}.', { v1: SYNC_MODE_LABEL[after.mode], v2: after.includeMedia ? tr(', ảnh và file tải dần lên {{label}}', { label }) : '' });
   }
-  if (before.mode !== 'off' && after.mode === 'off') return `Đã tắt đồng bộ. Bản trên ${label} vẫn giữ.`;
-  if (rebase) return 'Đã lưu. Deplao tạo bản gốc mới theo lựa chọn mới.';
-  return 'Đã lưu thiết lập đồng bộ';
+  if (before.mode !== 'off' && after.mode === 'off') return tr('Đã tắt đồng bộ. Bản trên {{label}} vẫn giữ.', { label });
+  if (rebase) return tr('Đã lưu. Deplao tạo bản gốc mới theo lựa chọn mới.');
+  return tr('Đã lưu thiết lập đồng bộ');
 }
 
-// ─── Nhãn của thẻ phần (CloudSettings) ─────────────────────────────────────────────────
+// ─── Labels of the section cards (CloudSettings) ─────────────────────────────────────────────────
 
 export type SyncMeta = { text: string; variant: BadgeVariant } | null;
 
 /**
- * "Chưa kết nối" · "Chưa đăng nhập Google" · "Đang tắt" · "Đang chụp bản gốc · 45%" · "Theo giờ · 13:03" ·
- * "Máy dự phòng · trễ 40 giây". `storage` (storage.status()) thiếu = kho R2 như trước: chưa kết nối Cloudflare là
- * "Chưa kết nối"; kho Google Drive thì không cần Cloudflare, chỉ cần đã đăng nhập Google.
+ * "Chưa kết nối" (Not connected) · "Chưa đăng nhập Google" (Not signed in to Google) · "Đang tắt" (Off) · "Đang chụp bản gốc · 45%" (Taking base snapshot · 45%) · "Theo giờ · 13:03" (Hourly · 13:03) ·
+ * "Máy dự phòng · trễ 40 giây" (Standby machine · lag 40 seconds). `storage` (storage.status()) missing = R2 storage as before: not connected to Cloudflare means
+ * "Chưa kết nối" (Not connected); Google Drive storage does not need Cloudflare, it only needs a Google sign-in.
  */
 export function syncMeta(
   connection: CloudConnectionStatus | null,
@@ -160,24 +161,24 @@ export function syncMeta(
 ): SyncMeta {
   if (storage?.provider === 'gdrive') {
     if (!storage.ready) {
-      // Đang bật đồng bộ mà mất đăng nhập Google → cảnh báo; đang tắt thì chỉ là chưa thiết lập.
+      // Sync is on but the Google sign-in was lost → warning; when sync is off it only means not set up yet.
       const syncing = !!overview && normalizeSyncConfig(overview.config).mode !== 'off';
-      return { text: 'Chưa đăng nhập Google', variant: syncing ? 'warning' : 'default' };
+      return { text: tr('Chưa đăng nhập Google'), variant: syncing ? 'warning' : 'default' };
     }
   } else if (!connection?.connected) {
-    return { text: 'Chưa kết nối', variant: 'default' };
+    return { text: tr('Chưa kết nối'), variant: 'default' };
   }
   if (!overview) return null;
   const { config, db, media } = overviewOrDefault(overview);
-  if (db.following) return { text: `Máy dự phòng · trễ ${fmtLag(db.following.lagMs)}`, variant: 'primary' };
+  if (db.following) return { text: tr('Máy dự phòng · trễ {{v1}}', { v1: fmtLag(db.following.lagMs) }), variant: 'primary' };
   if (config.mode === 'off') {
-    // Thiết lập cũ: dữ liệu tắt nhưng ảnh vẫn tải lên (bật riêng ở màn hình cũ)
-    return media.enabled ? { text: 'Chỉ đang tải ảnh, file', variant: 'warning' } : { text: 'Đang tắt', variant: 'default' };
+    // Old settings: data off but images still uploaded (turned on separately in the old screen)
+    return media.enabled ? { text: tr('Chỉ đang tải ảnh, file'), variant: 'warning' } : { text: tr('Đang tắt'), variant: 'default' };
   }
   const snapshot = db.workspaces.find(w => w.progress)?.progress;
-  if (snapshot) return { text: `Đang chụp bản gốc · ${snapshot.percent}%`, variant: 'primary' };
+  if (snapshot) return { text: tr('Đang chụp bản gốc · {{percent}}%', { percent: snapshot.percent }), variant: 'primary' };
   const last = db.workspaces.reduce<number | null>((acc, w) => (w.lastSyncAt && (!acc || w.lastSyncAt > acc) ? w.lastSyncAt : acc), null);
-  const text = `${SYNC_MODE_LABEL[config.mode]} · ${last ? fmtShortWhen(last, now) : 'chưa đồng bộ'}`;
+  const text = `${SYNC_MODE_LABEL[config.mode]} · ${last ? fmtShortWhen(last, now) : tr('chưa đồng bộ')}`;
   if (db.workspaces.some(w => w.state === 'error')) return { text, variant: 'destructive' };
   const mediaOn = config.includeMedia && media.enabled;
   if (mediaOn && media.lastError && !isMediaBackingOff(media, now)) return { text, variant: 'destructive' };
@@ -185,10 +186,10 @@ export function syncMeta(
   return { text, variant: 'success' };
 }
 
-/** "ảnh 614/24.625" cạnh nhãn của thẻ phần khi đang kèm ảnh; không kèm / chưa có file → null. */
+/** "ảnh 614/24.625" (images 614/24.625) next to the section card label while images are included; not included / no file yet → null. */
 export function syncMediaHint(overview: SyncOverview | null): string | null {
   if (!overview) return null;
   const { config, media } = overviewOrDefault(overview);
   if (!config.includeMedia || !media.enabled || media.totals.files <= 0) return null;
-  return `ảnh ${fmtNum(media.totals.uploaded)}/${fmtNum(media.totals.files)}`;
+  return tr('ảnh {{v1}}/{{v2}}', { v1: fmtNum(media.totals.uploaded), v2: fmtNum(media.totals.files) });
 }

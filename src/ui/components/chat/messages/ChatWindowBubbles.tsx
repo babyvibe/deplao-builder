@@ -1,7 +1,7 @@
 /**
- * ChatWindowBubbles.tsx - Các bubble components dùng trong ChatWindow
- * Tách ra từ ChatWindow.tsx để giảm kích thước file.
- * Các components này là phiên bản ChatWindow-specific (khác với MessageBubbles.tsx).
+ * ChatWindowBubbles.tsx - the bubble components used in ChatWindow
+ * Split out of ChatWindow.tsx to reduce file size.
+ * These components are ChatWindow-specific versions (different from MessageBubbles.tsx).
  */
 import React, {useState,} from 'react';
 import {useChatStore} from '@/store/chat/chatStore';
@@ -16,7 +16,7 @@ import {appendUrlParam, toLocalMediaUrl, withCloudWaitHint} from '@/lib/media/lo
 import {fileOnThisMachine} from '@/lib/media/employeeMediaSync';
 import {formatPhone} from '@/lib/contacts/phoneUtils';
 import PhoneDisplay from '../../common/inputs/PhoneDisplay';
-import {convertZaloEmojis} from '@/lib/chat/messages/emojiUtils';
+import {COLOR_EMOJI_TEXT_FONT, convertZaloEmojis} from '@/lib/chat/messages/emojiUtils';
 import {findLinkRanges, findUrlRanges, getMentionRanges, linkifyText, type MentionRange} from '@/lib/chat/messages/messageParser';
 import { openChatLink } from '@/lib/chat/links/chatLinks';
 import {isMediaType, isOaListType} from '@/lib/chat/messages/messageTypeUtils';
@@ -25,7 +25,16 @@ import OaListBubble from '../zalo/messages/OaListBubble';
 import {BubbleTime, MediaTimeBadge, TextWithInlineTime, formatBubbleTime} from './MessageTime';
 import {checkZaloMediaExpired, ExpiredMediaPlaceholder, isMediaExpired, setMediaExpiredInStore} from '../zalo/messages/ZaloMediaExpiry';
 import {toZaloJpgUrl} from '../../../../utils/zalo/zaloImageUrl';
-import {fitMediaBox, getKnownDims, ratioDiffers, rememberDims, type MediaDims} from '@/lib/chat/media/mediaDims';
+import {
+    CAPTION_BUBBLE_MAX_WIDTH,
+    CAPTION_BUBBLE_MIN_WIDTH,
+    captionMediaLayout,
+    fitMediaBox,
+    getKnownDims,
+    ratioDiffers,
+    rememberDims,
+    type MediaDims,
+} from '@/lib/chat/media/mediaDims';
 import {getTelegramWebpageMeta, TelegramLinkPreviewCard} from '../telegram/messages/TelegramLinkPreview';
 import {requestTelegramPreviewRefresh} from '@/lib/chat/telegram/telegramPreviewRefresh';
 import {fitVideoBox} from '../media/FBVideoThumb';
@@ -38,6 +47,7 @@ import {attachVideoSource} from '@/lib/media/videoSource';
 import {getGroupLayoutId} from '@/lib/chat/messages/messageGrouping';
 import {useInView} from '@/lib/media/inView';
 import Logger from '../../../../utils/Logger';
+import { tr } from '../../../../shared/i18n';
 
 type TelegramMediaRepairResult = {
     success: boolean;
@@ -50,8 +60,8 @@ type TelegramMediaRepairResult = {
 const telegramMediaRepairInFlight = new Map<string, Promise<TelegramMediaRepairResult>>();
 
 /**
- * Bề mặt bong bóng chuẩn cho các loại tin tự vẽ khung (ảnh/album có caption, file, link, danh thiếp, cuộc gọi):
- * nhận = trắng, gửi = xanh nhạt ở theme sáng. ChatWindow không bọc các loại này nên component tự vẽ.
+ * Standard bubble surface for message types that draw their own frame (image / album with caption, file, link, contact card, call):
+ * incoming = white, outgoing = light blue in the light theme. ChatWindow does not wrap these types, so the component draws its own.
  */
 function bubbleSurface(isSent?: boolean): string {
     return isSent
@@ -60,8 +70,8 @@ function bubbleSurface(isSent?: boolean): string {
 }
 
 /**
- * Tin trả lời (có trích dẫn) loại ảnh / album / file / thẻ: ChatWindow vẽ MỘT khung bong bóng bao cả trích dẫn
- * lẫn nội dung (như Telegram) → component con không vẽ nền / viền riêng nữa.
+ * Reply (with a quote) of image / album / file / card type: ChatWindow draws ONE bubble frame around both the quote
+ * and the content (as in Telegram) → the child component no longer draws its own background / border.
  */
 export const BubbleEmbedContext = React.createContext(false);
 
@@ -71,8 +81,8 @@ function useBubbleSurface(isSent?: boolean): string {
 }
 
 /**
- * Giờ gửi mà bubble tự in (ChatWindow không in giờ cho ảnh/album/file/thẻ/sticker).
- * Bài đăng kênh Telegram: ChatWindow đã in giờ ở chân bài → null để không in hai lần.
+ * Sent time that the bubble prints itself (ChatWindow does not print the time for image/album/file/card/sticker).
+ * Telegram channel post: ChatWindow already prints the time in the post footer → null so it is not printed twice.
  */
 function ownTimestamp(msg: any): number | string | null {
     if (!msg || getTelegramPostMeta(msg)) return null;
@@ -80,9 +90,9 @@ function ownTimestamp(msg: any): number | string | null {
 }
 
 /**
- * local_paths có file đã tải về máy — cùng điều kiện effect "useLocal" của MediaBubble / SingleImageInGroup.
- * Dùng làm giá trị đầu: trước đây mỗi ảnh mount với CDN rồi mới đổi sang local ở effect → thêm 1 request
- * mạng + 1 lần render cho từng ảnh mỗi lần mở hội thoại.
+ * local_paths with a file downloaded to this machine: same condition as the "useLocal" effect of MediaBubble / SingleImageInGroup.
+ * Used as the initial value: before, each image mounted with the CDN and only switched to local in an effect → one extra
+ * network request + one extra render for every image each time the conversation opened.
  */
 function hasLocalMediaPath(localPaths: unknown): boolean {
     try {
@@ -144,7 +154,7 @@ export function useTelegramMediaRepair(msg: any, shouldAutoRepair: boolean) {
             localPathState = 'invalid_json';
         }
 
-        // Log chi tiết để debug tại sao ảnh không load
+        // Detailed log to debug why an image does not load
         let lpDetail = 'none';
         try {
             const lp = JSON.parse(msg?.local_paths || '{}');
@@ -167,7 +177,7 @@ export function useTelegramMediaRepair(msg: any, shouldAutoRepair: boolean) {
         try {
             let request = telegramMediaRepairInFlight.get(repairKey);
             if (!request) {
-                // Bấm tải / thử lại → lên đầu hàng tải; bong bóng tự xin → mức "đang hiện" (main ưu tiên hội thoại đang mở)
+                // Click download / retry → move to the front of the download queue; the bubble requests priority "visible" (main favors the open conversation)
                 request = ipc.telegramUser.repairMessageMedia({accountId, chatId: threadId, messageId, urgent: reason === 'manual_retry'})
                     .finally(() => telegramMediaRepairInFlight.delete(repairKey));
                 telegramMediaRepairInFlight.set(repairKey, request);
@@ -215,15 +225,15 @@ export function useTelegramMediaRepair(msg: any, shouldAutoRepair: boolean) {
 }
 
 // ─── EmployeeAvatar ────────────────────────────────────────────────
-// Hiển thị avatar của nhân viên trong bong bóng chat (bên phải).
-// Nếu avatar load lỗi (404) → fallback sang chữ cái đầu của tên.
+// Show the employee's avatar in the chat bubble (right side).
+// If the avatar fails to load (404) → fall back to the first letter of the name.
 export function EmployeeAvatar({name, avatarUrl}: { name: string; avatarUrl?: string }) {
     const [imgError, setImgError] = useState(false);
     if (!avatarUrl || imgError) {
         return (
             <div
                 className="w-6 h-6 rounded-full bg-purple-600/30 flex items-center justify-center text-purple-300 text-[10px] font-bold ring-1 ring-purple-500/40 flex-shrink-0 self-end mb-0.5"
-                title={`Gửi bởi: ${name}`}>
+                title={tr('Gửi bởi: {{name}}', { name })}>
                 {(name || 'N').charAt(0).toUpperCase()}
             </div>
         );
@@ -231,7 +241,7 @@ export function EmployeeAvatar({name, avatarUrl}: { name: string; avatarUrl?: st
     return (
         <img src={avatarUrl} alt={name}
              className="w-6 h-6 rounded-full object-cover ring-1 ring-purple-500/40 flex-shrink-0 self-end mb-0.5"
-             title={`Gửi bởi: ${name}`}
+             title={tr('Gửi bởi: {{name}}', { name })}
              onError={() => setImgError(true)}
         />
     );
@@ -242,21 +252,21 @@ export function EmployeeAvatar({name, avatarUrl}: { name: string; avatarUrl?: st
 
 // Type detection helpers: imported from @/lib/chat/messages/messageTypeUtils
 
-/** FileBubble - hiển thị tin nhắn file đính kèm (share.file) */
+/** FileBubble: shows a file attachment message (share.file) */
 export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     const surface = useBubbleSurface(isSent);
-    // Máy nhân viên: local_paths là đường dẫn trên máy Boss (không phải "đã có trên máy này")
+    // Employee machine: local_paths are paths on the Boss machine, not "đã có trên máy này" (already on this machine)
     const employeeView = useEmployeeStore(s => s.mode === 'employee');
     const [opening, setOpening] = React.useState(false);
     const [previewFailed, setPreviewFailed] = React.useState(false);
     const repairAttemptedRef = React.useRef(false);
 
-    // Auto-repair: tải file từ Telegram nếu chưa có local_paths
+    // Auto-repair: download the file from Telegram when local_paths is missing
     React.useEffect(() => {
         if (repairAttemptedRef.current) return;
         if (!isTelegramUser(msg?.channel)) return;
         const lp = typeof msg?.local_paths === 'string' ? (() => { try { return JSON.parse(msg.local_paths); } catch { return {}; } })() : (msg?.local_paths || {});
-        if (lp.file || lp.main) return; // đã có file
+        if (lp.file || lp.main) return; // file already present
         repairAttemptedRef.current = true;
         const accountId = msg.owner_zalo_id;
         const chatId = msg.thread_id;
@@ -296,7 +306,7 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
         if (fbMeta.ext && !fileExt) fileExt = fbMeta.ext;
     }
 
-    // Telegram: lấy tên file từ attachments
+    // Telegram: get the file name from attachments
     if (isTelegramUser(msg.channel) && (!fileTitle || fileTitle === 'File')) {
         try {
             const atts = typeof msg.attachments === 'string' ? JSON.parse(msg.attachments || '[]') : (msg.attachments || []);
@@ -333,14 +343,14 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
         if (opening) return;
         setOpening(true);
         try {
-            // Máy nhân viên: tải bản Boss đã lưu về máy rồi mở (trước đây mở đường dẫn của Boss trên máy nhân viên → không
-            // có gì xảy ra). Không mở được file trên máy → mở link gốc (trình duyệt tải về), không có link thì báo lỗi.
+            // Employee machine: download the Boss's saved copy to this machine and open it (before, it opened the Boss's path on this machine → nothing
+            // happened). If the file cannot be opened here → open the original link (the browser downloads it); with no link, show an error.
             const onThisMachine = await fileOnThisMachine(localFilePath, 'file');
             const opened = onThisMachine ? await ipc.file?.openPath(onThisMachine) : null;
             if (opened?.success) return;
             if (fileHref) ipc.shell?.openExternal(fileHref);
             else if (localFilePath) {
-                useAppStore.getState().showNotification(`Không mở được file${opened?.error ? `: ${opened.error}` : ''}`, 'error');
+                useAppStore.getState().showNotification(tr('Không mở được file{{v1}}', { v1: opened?.error ? `: ${opened.error}` : '' }), 'error');
             }
         } catch {
         } finally {
@@ -400,16 +410,16 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     const hasLocal = !!localFilePath && !employeeView;
     const canOpen = !!localFilePath || !!fileHref;
     const {icon, bg, text} = getFileIconAndColor(fileExt);
-    // Telegram cho phép gửi ảnh dưới dạng document. Đây vẫn là file (có tên,
-    // dung lượng và nút mở file), nhưng client Telegram hiển thị thumbnail và
-    // caption thay vì biến nó thành một MessageMediaPhoto thông thường.
+    // Telegram can send an image as a document. It is still a file (with a name,
+    // size and an open button), but Telegram clients show a thumbnail and
+    // caption instead of turning it into a regular MessageMediaPhoto.
     const isImageDocument = fileMimeType.startsWith('image/')
         || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'avif'].includes(fileExt);
     const previewUrl = !previewFailed && isImageDocument
         ? (localFilePath ? toLocalMediaUrl(localFilePath) : fileHref)
         : '';
-    // Với Telegram, `message.message` là caption của document và được lưu ở
-    // content. Đừng parse JSON của các kênh khác thành caption file.
+    // For Telegram, `message.message` is the document's caption and is stored in
+    // content. Do not parse other channels' JSON as the file caption.
     const rawCaption = isTelegramUser(msg.channel) ? String(msg.content || '').trim() : '';
     const caption = rawCaption && !rawCaption.startsWith('{') && rawCaption !== fileTitle
         ? rawCaption
@@ -425,7 +435,7 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                         onClick={handleOpen}
                         disabled={opening || !canOpen}
                         className="w-16 h-16 overflow-hidden rounded-lg flex-shrink-0 bg-foreground/5 disabled:cursor-default"
-                        title={canOpen ? 'Nhấn để mở ảnh' : ''}
+                        title={canOpen ? tr('Nhấn để mở ảnh') : ''}
                     >
                         <img
                             src={previewUrl}
@@ -440,7 +450,7 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                         onClick={handleOpen}
                         disabled={opening || !canOpen}
                         className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 font-bold text-[11px] ${bg} ${text} ${canOpen ? 'hover:opacity-80 cursor-pointer' : 'cursor-default opacity-60'} transition-opacity`}
-                        title={canOpen ? 'Nhấn để mở' : ''}
+                        title={canOpen ? tr('Nhấn để mở') : ''}
                     >
                         {icon}
                     </button>
@@ -451,29 +461,29 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                     onClick={handleOpen}
                     disabled={opening || !canOpen}
                     className="flex-1 min-w-0 text-left"
-                    title={canOpen ? 'Nhấn để mở' : ''}
+                    title={canOpen ? tr('Nhấn để mở') : ''}
                 >
                     <p className="text-sm font-medium truncate">{fileTitle}</p>
                     <p className="text-xs mt-0.5 flex items-center gap-1 text-muted-foreground">
                         {sizeText && <span>{sizeText}</span>}
                         {sizeText && hasLocal && <span>•</span>}
-                        {opening ? <span>Đang mở...</span>
+                        {opening ? <span>{tr('Đang mở...')}</span>
                             : hasLocal ? <>
                                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                          strokeWidth="2.5">
                                         <polyline points="20 6 9 17 4 12"/>
                                     </svg>
-                                    <span>Đã có trên máy</span></>
-                                : (fileHref || localFilePath) ? <span>Nhấn để tải</span>
+                                    <span>{tr('Đã có trên máy')}</span></>
+                                : (fileHref || localFilePath) ? <span>{tr('Nhấn để tải')}</span>
                                     : (isFacebook(msg.channel) && isSent) ? <span>{getStatusDisplay(msg, true).text}</span>
-                                        : <span>Đang tải về...</span>}
+                                        : <span>{tr('Đang tải về...')}</span>}
                     </p>
                 </button>
 
                 {/* Action buttons: folder + download */}
                 <div className="flex items-center gap-1 flex-shrink-0">
                     {hasLocal && (
-                        <button onClick={handleOpenFolder} title="Mở thư mục"
+                        <button onClick={handleOpenFolder} title={tr('Mở thư mục')}
                                 className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors text-muted-foreground hover:text-foreground hover:bg-foreground/10">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                  strokeWidth="2">
@@ -481,7 +491,7 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                             </svg>
                         </button>
                     )}
-                    <button onClick={handleOpen} disabled={opening || !canOpen} title={hasLocal ? 'Mở file' : 'Tải xuống'}
+                    <button onClick={handleOpen} disabled={opening || !canOpen} title={hasLocal ? tr('Mở file') : tr('Tải xuống')}
                             className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 text-muted-foreground hover:text-foreground hover:bg-foreground/10">
                         {hasLocal
                             ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -500,7 +510,7 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                     </button>
                 </div>
             </div>
-            {/* Có caption → giờ ở cuối khung caption; không caption → cuối thẻ file */}
+            {/* With a caption → time at the bottom of the caption frame; without a caption → bottom of the file card */}
             {!caption && <BubbleTime timestamp={fileTime}/>}
         </div>
     );
@@ -518,16 +528,16 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     );
 }
 
-/** Ảnh Zalo đang "Không tải được ảnh": tự thử lại 1 lần sau chừng này (mạng chập chờn), và mỗi khi có mạng lại. */
+/** Zalo image showing "Không tải được ảnh": retry once after this delay (unstable network), and again whenever the network comes back. */
 const ZALO_FAILED_REARM_MS = 30_000;
 
-/** File local dạng JPEG XL (tải trước khi đổi sang bản JPG) — Chromium không hiển thị → coi như chưa có file. */
+/** Local JPEG XL file (downloaded before switching to the JPG version): Chromium cannot display it, so treat it as no file. */
 const isUndisplayableLocalImage = (filePath: string) => /\.jxl$/i.test(filePath);
 
 /**
- * Ảnh xem trước của link Telegram (MessageMediaWebPage). Bản ghi mới có `source: 'webpage'`
- * trong attachments; bản ghi cũ nhận ra bằng chú thích có URL. Preview lỗi / chưa tải được thì
- * ẩn hẳn, bong bóng chỉ còn chữ + link (thay vì ảnh vỡ hoặc ô xám trống).
+ * Preview image of a Telegram link (MessageMediaWebPage). New records have `source: 'webpage'`
+ * in attachments; old records are recognized by a caption containing a URL. If the preview fails or is not loaded yet, it is
+ * hidden entirely, and the bubble shows only the text + link (instead of a broken image or an empty grey box).
  */
 function isTelegramLinkPreview(msg: any, caption: string): boolean {
     if (!isTelegramUser(msg?.channel)) return false;
@@ -536,11 +546,11 @@ function isTelegramLinkPreview(msg: any, caption: string): boolean {
             ? JSON.parse(msg.attachments || '[]')
             : (msg?.attachments || []);
         if (Array.isArray(attachments) && attachments.some((attachment: any) => attachment?.source === 'webpage')) return true;
-    } catch { /* attachments hỏng → dựa vào chú thích */ }
+    } catch { /* attachments broken → rely on the caption */ }
     return findUrlRanges(caption).length > 0;
 }
 
-/** Hiển thị bubble ảnh dùng React state - tự retry khi local_paths được cập nhật sau khi tải xong */
+/** Image bubble uses React state: retries itself when local_paths is updated after the download finishes */
 export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList, onMentionClick}: {
     msg: any;
     onView: (src: string) => void;
@@ -549,11 +559,11 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     groupMembersList?: any[];
     onMentionClick?: (userId: string, e: React.MouseEvent) => void;
 }) {
-    // Bài đăng kênh Telegram: khung / nền do bài đăng vẽ → không lồng thêm bong bóng bên trong
+    // Telegram channel post: the post draws the frame / background → do not nest another bubble inside
     const bubbleSurface = useBubbleSurface(isSent);
     const surface = React.useContext(TelegramPostLayoutContext) ? '' : bubbleSurface;
-    // Remote-first: hiển thị CDN ngay lập tức, chuyển sang local sau khi tải xong
-    // useLocal=true khi local_paths đã có → thử dùng file local (nhanh hơn, bền vững hơn)
+    // Remote-first: show the CDN image immediately, switch to local once the download finishes
+    // useLocal=true when local_paths exists → try the local file first (faster, more durable)
     const [useLocal, setUseLocal] = React.useState(() => hasLocalMediaPath(msg.local_paths));
     const [loadFailed, setLoadFailed] = React.useState(false);
     const [saving, setSaving] = React.useState(false);
@@ -564,7 +574,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     const localPathsStr = typeof msg.local_paths === 'string' ? msg.local_paths : JSON.stringify(msg.local_paths ?? '');
     React.useEffect(() => {
         setLoadFailed(false);
-        // Chỉ dùng local khi local_paths thực sự có path (file đã tải về máy)
+        // Use local only when local_paths really has a path (file downloaded to this machine)
         try {
             const lp: Record<string, string> = JSON.parse(localPathsStr || '{}');
             const hasPath = !!(lp.main || lp.hd || (Object.values(lp)[0] as string));
@@ -611,7 +621,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                     paramsObj = null;
                 }
             }
-            // Ảnh JPEG XL (tin lưu trước bản sửa) → bản JPG trên CDN
+            // JPEG XL image (message saved before the fix) → the JPG version on the CDN
             remoteUrl = toZaloJpgUrl(paramsObj?.hd || paramsObj?.rawUrl || parsed.href || parsed.thumb || '');
             if (parsed.title && typeof parsed.title === 'string') {
                 const t = parsed.title.trim();
@@ -635,13 +645,13 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     }
 
     const mediaExpired = isMediaExpired(msg);
-    // File trên máy đã được dọn lên Cloudflare R2 mà link CDN của kênh hết hạn / không có → R2 là nguồn duy nhất:
-    // local-media chờ R2 lâu hơn thay vì trả lỗi sớm (còn link CDN thì chờ ngắn rồi hiện link CDN, R2 tải tiếp ở nền).
+    // The file on this machine was moved to Cloudflare R2 and the channel's CDN link has expired or is missing → R2 is the only source:
+    // local-media waits longer for R2 instead of returning an early error (if a CDN link exists, it waits briefly and shows the CDN link while R2 keeps downloading in the background).
     if (localUrl && (mediaExpired || !remoteUrl)) localUrl = withCloudWaitHint(localUrl);
     const mediaTime = ownTimestamp(msg);
     const embedded = React.useContext(BubbleEmbedContext);
     const postLayout = React.useContext(TelegramPostLayoutContext);
-    // Kích thước thật của ảnh (metadata hoặc đã đo) → khung đúng tỉ lệ ngay từ đầu, không nhảy khi ảnh tải xong
+    // True image size (metadata or measured) → frame has the right ratio from the start, no jump when the image finishes loading
     const dimsKey = `${msg?.thread_id}:${msg?.msg_id}`;
     const [measured, setMeasured] = React.useState<{ key: string; dims: MediaDims } | null>(null);
     const mediaDims: MediaDims | null = measured?.key === dimsKey ? measured.dims : getKnownDims(msg);
@@ -658,8 +668,8 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         if (ratioDiffers(mediaDims, {w, h})) setMeasured({key: dimsKey, dims: {w, h}});
     };
 
-    // Trạng thái của ảnh ĐANG VẼ (src hiện tại). Sửa chạy nền (tải lại về máy) thất bại chỉ được hiện "Không tải được
-    // ảnh" khi chính ảnh đang vẽ đã lỗi — trước đây lượt sửa cuối thất bại là che luôn ảnh CDN / file đang hiện bình thường.
+    // State of the image BEING DRAWN (current src). A failed background repair (re-download to this machine) shows the
+    // "Không tải được ảnh" (Failed to load image) state only if the drawn image itself failed. Before, a failed last repair also hid a working CDN image / file.
     const shownImageRef = React.useRef<{ src: string; state: 'loading' | 'ok' | 'error' }>({src: '', state: 'loading'});
     const repairTimersRef = React.useRef<number[]>([]);
     const clearRepairTimers = () => {
@@ -681,11 +691,11 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
             clearRepairTimers();
             setLoadFailed(false);
         }
-        // Máy nhân viên: main chuyển lên Boss (file:repairImage → file:ensureMessageImage) — Boss kiểm tra bản của nó, thiếu /
-        // hỏng thì tải lại bằng phiên tài khoản; kết quả là đường dẫn trên máy Boss (hiện qua /api/media), không tải về máy
-        // nhân viên (đường dẫn máy nhân viên Boss không có → ảnh lỗi → lại tải → ảnh nháy liên tục).
+        // Employee machine: main hands it to the Boss (file:repairImage → file:ensureMessageImage); the Boss checks its own copy, and if it is missing /
+        // broken, re-downloads it with the account session; the result is the path on the Boss machine (served via /api/media), not downloaded to the
+        // employee machine (the Boss path does not exist on the employee machine → image error → download again → image flickers nonstop).
         if (zaloRepairingRef.current) return;
-        // Hết lượt của chu kỳ này (zaloImageRepairBudget) → dừng; chỉ báo lỗi khi ảnh đang vẽ đã lỗi
+        // Budget for this cycle used up (zaloImageRepairBudget) → stop; only report an error when the image being drawn has failed
         if (takeZaloRepairAttempt(repairKey) === null) {
             failIfShownImageBroken();
             return;
@@ -700,7 +710,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                 return;
             }
             repairTimersRef.current.push(window.setTimeout(() => {
-                // Ảnh đã hiện được (CDN / file từ nơi khác tải về) → thôi
+                // The image is already showing (CDN / file downloaded from elsewhere) → stop
                 if (shownImageRef.current.state === 'ok') return;
                 void requestZaloRepairRef.current(false);
             }, 1500 * used));
@@ -715,13 +725,13 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                 force,
             });
             if (result?.success) {
-                // Boss vẫn còn nguyên đúng file đang hiện lỗi (máy nhân viên): lỗi không do file → không vẽ lại cùng file
-                // (lỗi → sửa → vẽ lại → lỗi…). Bấm "Thử tải lại" thì vẽ lại.
+                // The Boss still has the exact file that failed to show (employee machine): the error is not from the file → do not redraw the same file
+                // (error → repair → redraw → error…). Clicking "Thử tải lại" (Retry download) redraws it.
                 if (result.cached && result.newLocalPath === localFilePath && !force) {
                     failIfShownImageBroken();
                     return;
                 }
-                // Đường dẫn mới vào store ngay (event:localPath có thể tới sau) — không vẽ lại file cũ vừa được thay
+                // The new path goes into the store right away (event:localPath may arrive later) → do not redraw the old file that was just replaced
                 if (result.newLocalPath && msg.thread_id) {
                     useChatStore.getState().updateMessageLocalPath(
                         String(msg.owner_zalo_id), String(msg.thread_id), String(msg.msg_id), {main: result.newLocalPath},
@@ -733,7 +743,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                 return;
             }
             if (result?.expired) {
-                // Zalo không còn lưu ảnh → hiện "Ảnh đã hết hạn", không thử lại nữa
+                // Zalo no longer keeps the image → show "Ảnh đã hết hạn" (Image expired), no more retries
                 setMediaExpiredInStore(msg, true);
                 setLoadFailed(true);
                 return;
@@ -747,15 +757,15 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [localFilePath, msg, remoteUrl, repairKey]);
-    // Lượt thử lại hẹn giờ dùng hàm mới nhất (đường dẫn / link hiện tại), không phải bản lúc hẹn
+    // Scheduled retries use the latest function (current path / link), not the one from when they were scheduled
     const requestZaloRepairRef = React.useRef(requestZaloRepair);
     requestZaloRepairRef.current = requestZaloRepair;
 
-    // Ảnh chỉ có link Zalo (máy Boss chưa lưu: tin đồng bộ lịch sử, Boss tắt máy lúc nhận, tải lỗi…) → nhờ máy Boss tải về
-    // rồi đổi sang bản đã lưu (máy nhân viên: qua Boss), để link hết hạn vẫn còn ảnh — lib/media/ensureMessageImage
+    // Image has only a Zalo link (the Boss machine has not saved it: history-synced message, Boss was off when it arrived, download failed…) → ask the Boss machine to download it
+    // then switch to the saved copy (employee machine: via the Boss), so the image survives after the link expires: lib/media/ensureMessageImage
     useEnsureMessageImage(msg, isZalo(msg?.channel) && !localFilePath && !!remoteUrl && !mediaExpired);
 
-    // "Không tải được ảnh" (Zalo, chưa hết hạn): tự thử lại khi có mạng lại, và 1 lần sau ZALO_FAILED_REARM_MS
+    // "Không tải được ảnh" (Zalo, not expired yet): retry when the network returns, and once after ZALO_FAILED_REARM_MS
     const rearmedRef = React.useRef(false);
     React.useEffect(() => {
         if (!loadFailed || mediaExpired || !isZalo(msg?.channel)) return undefined;
@@ -774,24 +784,24 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         };
     }, [loadFailed, mediaExpired, msg?.channel, repairKey]);
 
-    // Remote-first: CDN hiển thị ngay; chuyển local khi file đã tải xong
-    // Nếu local lỗi (race condition file chưa kịp ghi) → tự fallback về CDN
-    // Media Zalo đã hết hạn: chỉ còn bản local (nếu có), không gọi CDN nữa
+    // Remote-first: CDN shows immediately; switch to local once the file is downloaded
+    // If local fails (race condition: file not written yet) → fall back to the CDN automatically
+    // Zalo media has expired: only the local copy is left (if any), do not call the CDN any more
     const displayUrl = mediaExpired ? localUrl : (useLocal ? (localUrl || remoteUrl) : (remoteUrl || localUrl));
     const viewUrl = mediaExpired ? displayUrl : (remoteUrl || displayUrl);
     const telegramRepair = useTelegramMediaRepair(msg, !displayUrl);
     const linkPreview = isTelegramLinkPreview(msg, caption);
-    // Preview link không tải được → ẩn ảnh. Reset khi có file mới / sửa xong để thử hiện lại.
+    // Link preview could not load → hide the image. Reset when a new file arrives or the repair finishes, so it tries to show again.
     const [previewBroken, setPreviewBroken] = React.useState(false);
     React.useEffect(() => {
         setPreviewBroken(false);
     }, [localPathsStr, msg?.msg_id, telegramRepair.repairedAt]);
-    // Ảnh preview lưu bằng bản cũ (chỉ có tên trang) → xin Telegram bù tiêu đề / mô tả, gom theo lô
+    // Preview image saved in the old format (site name only) → ask Telegram for the title / description, batched
     React.useEffect(() => {
         if (linkPreview) requestTelegramPreviewRefresh(msg);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [linkPreview, msg?.msg_id, msg?.attachments]);
-    // Sửa xong ghi đè file cùng đường dẫn → thêm tham số để <img> tải lại (local-media bỏ qua query).
+    // Repaired file overwrote the same path → add a parameter so <img> reloads it (local-media ignores the query).
     const imgSrc = telegramRepair.repairedAt && displayUrl.startsWith('local-media://')
         ? appendUrlParam(displayUrl, 'r', String(telegramRepair.repairedAt))
         : displayUrl;
@@ -803,21 +813,21 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         if (mediaExpired) {
             setLoadFailed(true);
         } else if (useLocal && remoteUrl) {
-            setUseLocal(false); // local lỗi → fallback CDN ngay, không flash
-            // Sắp vẽ ảnh CDN: sửa nền thất bại không được báo lỗi trước khi biết CDN có hiện được không
+            setUseLocal(false); // local failed → fall back to the CDN immediately, no flash
+            // About to draw the CDN image: a failed background repair must not be reported before knowing whether the CDN image can show
             if (imgSrc !== remoteUrl) shownImageRef.current = {src: remoteUrl, state: 'loading'};
             if (isZalo(msg.channel)) void requestZaloRepair(false);
         } else if (isZalo(msg.channel)) {
             void requestZaloRepair(false);
         } else if (linkPreview) {
-            // Preview link: ẩn ảnh vỡ ngay, thử tải lại ảnh preview một lần; không được thì chỉ còn chữ + link.
+            // Link preview: hide the broken image at once, retry loading the preview image once; if that fails, only text + link remain.
             setPreviewBroken(true);
             if (retryCountRef.current === 0) {
                 retryCountRef.current = 1;
                 void telegramRepair.requestRepair('image_load_error', true);
             }
         } else {
-            // Auto-retry repair nếu lần đầu fail (tối đa 3 lần, delay 2s)
+            // Auto-retry the repair if the first attempt fails (max 3 times, 2 s delay)
             if (retryCountRef.current < 3) {
                 retryCountRef.current++;
                 console.log(`[TelegramMedia] image_load_error msgId=${msg?.msg_id} retry=${retryCountRef.current}/3`);
@@ -901,7 +911,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                         onMentionClick={onMentionClick}
                     />
                 )}
-                {/* Ảnh preview hỏng / chưa tải: thẻ vẫn còn tên trang, tiêu đề, mô tả */}
+                {/* Broken or unloaded preview image: the card still keeps the site name, title, description */}
                 {webpageMeta && <TelegramLinkPreviewCard meta={webpageMeta} className={caption ? 'mt-1.5' : ''}/>}
                 <BubbleTime timestamp={mediaTime}/>
             </div>
@@ -920,7 +930,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                     <polyline points="21 15 16 10 5 21"/>
                     <line x1="2" y1="2" x2="22" y2="22" strokeWidth="1.5"/>
                 </svg>
-                <span className="text-xs opacity-60">Không tải được ảnh</span>
+                <span className="text-xs opacity-60">{tr('Không tải được ảnh')}</span>
                 {isTelegramUser(msg.channel) && (
                     <button
                         onClick={() => {
@@ -931,25 +941,25 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                         }}
                         disabled={telegramRepair.repairing}
                         className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50">
-                        {telegramRepair.repairing ? 'Đang tải lại...' : 'Thử tải lại'}
+                        {telegramRepair.repairing ? tr('Đang tải lại...') : tr('Thử tải lại')}
                     </button>
                 )}
                 {isZalo(msg.channel) && (
                     <button onClick={() => void requestZaloRepair(true)} disabled={zaloRepairing}
                             className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline transition-colors disabled:opacity-50">
-                        {zaloRepairing ? 'Đang tải lại...' : 'Thử tải lại'}
+                        {zaloRepairing ? tr('Đang tải lại...') : tr('Thử tải lại')}
                     </button>
                 )}
                 {remoteUrl && (
                     <button onClick={() => ipc.shell?.openExternal(remoteUrl)}
                             className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline transition-colors">
-                        Mở link Zalo
+                        {tr('Mở link Zalo')}
                     </button>
                 )}
             </div>
         );
         if (!caption) return failedNode;
-        // Ảnh lỗi nhưng vẫn giữ chú thích của tin (trước đây chữ biến mất cùng ảnh)
+        // Image failed but the message caption is kept (before, the text disappeared with the image)
         return (
             <div className="flex w-full max-w-xs flex-col gap-1.5">
                 {failedNode}
@@ -985,7 +995,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     }
 
     if (!displayUrl) {
-        // Không có cả remote lẫn local - hiển thị placeholder tĩnh (không animation)
+        // Neither remote nor local: show a static placeholder (no animation)
         return (
             <button
                 type="button"
@@ -994,7 +1004,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                     else if (isZalo(msg.channel)) void requestZaloRepair(true);
                 }}
                 disabled={(!isTelegramUser(msg.channel) && !isZalo(msg.channel)) || telegramRepair.repairing || zaloRepairing}
-                title={isTelegramUser(msg.channel) ? 'Tải lại ảnh Telegram này' : isZalo(msg.channel) ? 'Tải lại ảnh Zalo này' : undefined}
+                title={isTelegramUser(msg.channel) ? tr('Tải lại ảnh Telegram này') : isZalo(msg.channel) ? tr('Tải lại ảnh Zalo này') : undefined}
                 className="relative flex flex-col gap-1 items-center justify-center max-w-xs w-full h-32 rounded-xl bg-muted/40 text-muted-foreground select-none disabled:cursor-default">
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
                      className="opacity-30">
@@ -1002,14 +1012,36 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                     <circle cx="8.5" cy="8.5" r="1.5"/>
                     <polyline points="21 15 16 10 5 21"/>
                 </svg>
-                {(telegramRepair.repairing || zaloRepairing) && <span className="text-[10px] opacity-60">Đang tải lại...</span>}
+                {(telegramRepair.repairing || zaloRepairing) && <span className="text-[10px] opacity-60">{tr('Đang tải lại...')}</span>}
                 <MediaTimeBadge timestamp={mediaTime}/>
             </button>
         );
     }
 
-    // Bài đăng kênh Telegram: ảnh rộng hết khung bài, sát mép; ảnh dọc → hai bên là chính ảnh làm mờ (như Telegram),
-    // chữ ở dưới rộng bằng khung bài. Giờ / khung / viền do bài đăng vẽ.
+    // Button shown on hover over the image: open the folder / save to this machine
+    const mediaActions = (
+        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity">
+            {localFilePath && (
+                <button onClick={handleShowInFolder} title={tr('Mở trong thư mục')}
+                        className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors backdrop-blur-sm">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                    </svg>
+                </button>
+            )}
+            <button onClick={handleSaveAs} disabled={saving} title={tr('Lưu về máy')}
+                    className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors backdrop-blur-sm disabled:opacity-40">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+            </button>
+        </div>
+    );
+
+    // Telegram channel post: image full width of the post, flush to the edge; portrait image → the sides are the image itself blurred (as in Telegram),
+    // text below is as wide as the post. Border / time / frame are drawn by the post.
     if (postLayout && !webpageMeta) {
         const {box: postAspect, letterbox} = telegramPostMediaAspect(mediaDims?.w, mediaDims?.h);
         return (
@@ -1029,24 +1061,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                         onError={handleImgError}
                         onLoad={handleImgLoad}
                     />
-                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity">
-                        {localFilePath && (
-                            <button onClick={handleShowInFolder} title="Mở trong thư mục"
-                                    className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors backdrop-blur-sm">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-                                </svg>
-                            </button>
-                        )}
-                        <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
-                                className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors backdrop-blur-sm disabled:opacity-40">
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                                <polyline points="7 10 12 15 17 10"/>
-                                <line x1="12" y1="15" x2="12" y2="3"/>
-                            </svg>
-                        </button>
-                    </div>
+                    {mediaActions}
                 </div>
                 {caption && (
                     <div className="px-3 pt-2 text-sm break-words">
@@ -1064,10 +1079,10 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
         );
     }
 
-    // Khung ảnh theo tỉ lệ thật (như Telegram). Chưa biết kích thước → khung tạm 4:3, đo khi tải xong rồi nhớ lại.
+    // Image frame at the true ratio (as in Telegram). Size unknown → temporary 4:3 frame, measured when loaded, then remembered.
     const box = mediaDims ? fitMediaBox(mediaDims) : {width: 240, height: 180};
-    // Có caption: bong bóng rộng đúng bằng ảnh (tối thiểu 200px) → chữ xuống dòng trong khung ảnh, không tràn
-    const shellWidth = caption ? Math.max(box.width, 200) : box.width;
+    // With a caption: the bubble is at least 200px wide (as in Telegram)
+    const shellWidth = caption ? Math.max(box.width, CAPTION_BUBBLE_MIN_WIDTH) : box.width;
     const letterboxed = shellWidth > box.width;
     const standalone = !caption && !embedded;
     const imgNode = (
@@ -1085,36 +1100,16 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
                     onLoad={handleImgLoad}
                 />
             </div>
-            {/* Viền mờ cho ảnh đứng riêng - rõ ở cả giao diện sáng lẫn tối */}
+            {/* Faint border for a standalone image: visible in both light and dark themes */}
             {standalone && <div className="absolute inset-0 pointer-events-none rounded-xl ring-1 ring-inset ring-black/[0.08]"/>}
-            {/* Hover action buttons */}
-            <div
-                className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/media:opacity-100 transition-opacity">
-                {localFilePath && (
-                    <button onClick={handleShowInFolder} title="Mở trong thư mục"
-                            className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors backdrop-blur-sm">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                             strokeWidth="2">
-                            <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-                        </svg>
-                    </button>
-                )}
-                <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
-                        className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors backdrop-blur-sm disabled:opacity-40">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                        <polyline points="7 10 12 15 17 10"/>
-                        <line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                </button>
-            </div>
-            {/* Ảnh không caption: giờ nổi góc dưới phải; có caption: giờ nằm dưới caption */}
+            {mediaActions}
+            {/* Image without a caption: time floats at the bottom right; with a caption: time under the caption */}
             {!caption && <MediaTimeBadge timestamp={mediaTime}/>}
         </div>
     );
 
     if (webpageMeta) {
-        // Link preview như Telegram: chữ (link) ở trên, thẻ tên trang / tiêu đề / mô tả bọc ảnh ở dưới
+        // Link preview as in Telegram: the link text on top, the site name / title / description card wrapping the image below
         return (
             <div className={postLayout ? 'flex flex-col px-3 pt-2 text-sm break-words' : `flex flex-col rounded-lg px-3 py-2 text-sm break-words ${surface}`}
                  style={postLayout ? undefined : {width: Math.max(shellWidth, 220) + 44, maxWidth: '100%'}}>
@@ -1136,11 +1131,37 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
 
     if (!caption) return imgNode;
 
-    // Có caption: ảnh ở trên, caption ở dưới, chung một khung bong bóng (nền + viền theo gửi/nhận), rộng bằng ảnh
+    // With a caption: image on top, caption below, in one bubble (background + border by sent/received). As in Telegram, the bubble
+    // is as wide as the caption (up to CAPTION_BUBBLE_MAX_WIDTH), not shrunk to a narrow image, so the text does not pile into a narrow column: the image
+    // a bit narrower than the bubble is stretched to full width, much narrower is centered, with the image blurred on both sides
+    // (captionMediaLayout). The browser measures itself: the image frame takes the image width, the caption takes the width of one line of text.
+    const layout = captionMediaLayout(box);
     return (
-        <div className={`flex flex-col rounded-lg overflow-hidden ${surface}`} style={{width: shellWidth, maxWidth: '100%'}}>
-            {imgNode}
-            <div className="px-3 py-2 text-sm break-words">
+        <div className={`flex flex-col rounded-lg overflow-hidden ${surface}`} style={{width: 'fit-content', maxWidth: '100%'}}>
+            {/* containerType: inside the image frame, 100cqw = bubble width */}
+            <div className="relative group/media overflow-hidden"
+                 style={{width: shellWidth, minWidth: '100%', maxWidth: '100%', containerType: 'inline-size'}}>
+                <div className="relative flex justify-center overflow-hidden bg-foreground/5 cursor-pointer"
+                     style={{height: layout.areaHeight}} onClick={() => onView(viewUrl)}>
+                    <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 overflow-hidden bg-black"
+                         style={{width: layout.fillWidth}}>
+                        <img src={imgSrc} alt="" draggable={false} decoding="async" loading="lazy"
+                             className="h-full w-full scale-125 object-cover opacity-80 blur-xl"/>
+                    </div>
+                    <img
+                        src={imgSrc}
+                        alt=""
+                        decoding="async"
+                        loading={mediaDims ? 'lazy' : 'eager'}
+                        className="relative h-full shrink-0 object-cover hover:opacity-90 transition-opacity"
+                        style={{width: layout.photoWidth}}
+                        onError={handleImgError}
+                        onLoad={handleImgLoad}
+                    />
+                </div>
+                {mediaActions}
+            </div>
+            <div className="px-3 py-2 text-sm break-words" style={{maxWidth: `max(${CAPTION_BUBBLE_MAX_WIDTH}, ${shellWidth}px)`}}>
                 <TextWithInlineTime timestamp={mediaTime}>
                     <TextWithMentions
                         text={caption}
@@ -1156,7 +1177,7 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     );
 }
 
-/** Video Telegram ≤ 10 MB tự tải khi hiện ra (như Telegram); lớn hơn thì bấm để tải. */
+/** Telegram videos ≤ 10 MB download automatically when shown (as in Telegram); larger ones download on click. */
 const TELEGRAM_VIDEO_AUTO_DOWNLOAD_BYTES = 10 * 1024 * 1024;
 const TELEGRAM_VIDEO_TYPES = new Set(['video', 'gif', 'video_note']);
 
@@ -1171,11 +1192,11 @@ function formatVideoDuration(seconds: number): string {
 }
 
 /**
- * Video Telegram chưa có file trên máy (hầu hết video kênh, link preview như fxTikTok…): trước đây khung đen + nút phát
- * không làm gì vì chỉ phát được file đã tải. Giờ: ảnh bìa mờ có sẵn trong tin + dung lượng + thời lượng; video nhỏ tự
- * tải, bấm = tải rồi mở trình phát. Tải xong, ChatWindow thay bằng FBVideoThumb (khung hình đầu của file).
+ * Telegram video not yet on this machine (most channel videos, link previews like fxTikTok…): before, a black frame with a play button
+ * did nothing, since only downloaded files can play. Now: the blurred cover image included in the message + size + duration; small videos
+ * download automatically, click = download then open the player. When done, ChatWindow swaps in FBVideoThumb (the first frame of the file).
  */
-/** Attachment video / GIF / video tròn của tin Telegram: dung lượng, thời lượng, kích thước, ảnh bìa mờ (data URL). */
+/** Video / GIF / round video attachment of a Telegram message: size, duration, dimensions, blurred cover image (data URL). */
 export function getTelegramVideoMedia(msg: any): { size: number; duration: number; width: number; height: number; thumb: string } | null {
     let media: any = null;
     try {
@@ -1195,14 +1216,14 @@ export function getTelegramVideoMedia(msg: any): { size: number; duration: numbe
 export function TelegramVideoPending({msg, onPlay}: { msg: any; onPlay: (downloaded: any) => void }) {
     const {size, duration, width, height, thumb} = getTelegramVideoMedia(msg) || {size: 0, duration: 0, width: 0, height: 0, thumb: ''};
     const repair = useTelegramMediaRepair(msg, size > 0 && size <= TELEGRAM_VIDEO_AUTO_DOWNLOAD_BYTES);
-    // Lượt tải đang chạy (tin mới về tự tải / bấm tải): vòng tiến độ + "2.1 / 5.0 MB" như Telegram; trong lúc tải bấm
-    // không làm gì — tải xong bong bóng có file (FBVideoThumb) mới phát được, trình phát không gặp file dở
+    // Download in progress (new message auto-downloading / clicked download): progress ring + "2.1 / 5.0 MB" as in Telegram; while downloading, clicking
+    // does nothing. Only after the download finishes does the bubble have a playable file (FBVideoThumb), so the player never gets a partial file
     const progress = useMessageMediaProgress(msg);
     const transferring = isTransferring(progress);
     const [failed, setFailed] = React.useState(false);
-    // Cùng khung với FBVideoThumb sau khi tải (theo tỉ lệ thật, không cắt) → không nhảy kích thước
+    // Same frame as FBVideoThumb after download (at the true ratio, not cropped) → no size jump
     const box = fitVideoBox(width && height ? {w: width, h: height} : null);
-    // Bài đăng kênh: rộng hết khung bài, video dọc không làm khung hẹp lại
+    // Channel post: full width of the post, a portrait video does not narrow the frame
     const postLayout = React.useContext(TelegramPostLayoutContext);
     const postBox = postLayout ? telegramPostMediaAspect(width, height) : null;
 
@@ -1221,7 +1242,7 @@ export function TelegramVideoPending({msg, onPlay}: { msg: any; onPlay: (downloa
             onClick={download}
             className={`relative overflow-hidden ${postBox ? '' : 'rounded-xl '}bg-black select-none ${busy ? 'cursor-progress' : 'cursor-pointer'}`}
             style={postBox ? {width: '100%', aspectRatio: String(postBox.box)} : {width: box.width, height: box.height, maxWidth: '100%'}}
-            title={busy ? 'Đang tải video — xem được khi tải xong' : 'Tải và phát video'}
+            title={busy ? tr('Đang tải video — xem được khi tải xong') : tr('Tải và phát video')}
         >
             {thumb && <img src={thumb} alt="" className="absolute inset-0 h-full w-full scale-110 object-cover blur-md"/>}
             {transferring && progress ? (
@@ -1246,23 +1267,23 @@ export function TelegramVideoPending({msg, onPlay}: { msg: any; onPlay: (downloa
                 {duration > 0 && <span className="rounded bg-black/55 px-1.5 py-0.5">{formatVideoDuration(duration)}</span>}
                 {!transferring && (
                     <span className="rounded bg-black/55 px-1.5 py-0.5">
-                        {repair.repairing ? 'Đang tải…' : size > 0 ? formatVideoBytes(size) : 'Video'}
+                        {repair.repairing ? tr('Đang tải…') : size > 0 ? formatVideoBytes(size) : tr('Video')}
                     </span>
                 )}
             </div>
             {(failed || progress?.state === 'failed') && !busy && (
                 <div className="absolute left-2 right-2 top-2 rounded bg-black/65 px-2 py-1 text-center text-[11px] text-white-important">
-                    Không tải được video — bấm để thử lại
+                    {tr('Không tải được video — bấm để thử lại')}
                 </div>
             )}
         </div>
     );
 }
 
-/** VideoBubble - hiển thị tin nhắn video với thumbnail và nút play */
+/** VideoBubble - shows a video message with a thumbnail and a play button */
 export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     const [saving, setSaving] = React.useState(false);
-    // local-first thumbnail; fallback remote khi local chưa tải hoặc lỗi
+    // local-first thumbnail; fall back to remote when local is not downloaded yet or failed
     const [thumbSrcMode, setThumbSrcMode] = React.useState<'local' | 'remote'>('local');
 
     const localPathsStr = typeof msg.local_paths === 'string' ? msg.local_paths : JSON.stringify(msg.local_paths ?? '');
@@ -1281,7 +1302,7 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     } catch {
     }
 
-    // Parse remote URLs từ content
+    // Parse remote URLs from content
     let remoteThumb = '';
     let remoteVideo = '';
     let duration = 0;
@@ -1299,7 +1320,7 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     }
 
     const localThumbUrl = thumbLocalPath ? toLocalMediaUrl(thumbLocalPath) : '';
-    // Local-first: ưu tiên local; fallback remote khi local lỗi (file chưa tải xong)
+    // Local-first: prefer local; fall back to remote when local fails (file not fully downloaded yet)
     const thumbUrl = thumbSrcMode === 'remote'
         ? (remoteThumb || localThumbUrl)
         : (localThumbUrl || remoteThumb);
@@ -1307,7 +1328,7 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     const employeeView = useEmployeeStore(s => s.mode === 'employee');
     const handlePlay = async (e: React.MouseEvent) => {
         e.stopPropagation();
-        // Mở video trên máy trước (máy nhân viên: tải bản của Boss về), không được thì mở link gốc
+        // Open the video on this machine first (employee machine: download the Boss's copy), otherwise open the original link
         const onThisMachine = await fileOnThisMachine(videoLocalPath, 'video');
         const opened = onThisMachine ? await ipc.file?.openPath(onThisMachine) : null;
         if (!opened?.success && remoteVideo) ipc.shell?.openExternal(remoteVideo);
@@ -1364,9 +1385,9 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                     className="w-full h-full object-cover"
                     onError={(e) => {
                         if (thumbSrcMode === 'local' && remoteThumb && remoteThumb !== thumbUrl) {
-                            setThumbSrcMode('remote'); // Local lỗi → thử remote Zalo CDN
+                            setThumbSrcMode('remote'); // Local failed → try the remote Zalo CDN
                         } else {
-                            (e.target as HTMLImageElement).style.display = 'none'; // Cả hai lỗi → ẩn
+                            (e.target as HTMLImageElement).style.display = 'none'; // Both failed → hide
                         }
                     }}
                 />
@@ -1383,7 +1404,7 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
             {/* Overlay gradient */}
             <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/50"/>
 
-            {/* Play button ở giữa */}
+            {/* Play button in the middle */}
             <div className="absolute inset-0 flex items-center justify-center">
                 <div
                     className="w-14 h-14 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center group-hover/video:bg-black/80 transition-colors shadow-lg">
@@ -1404,7 +1425,7 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                     <span className="text-[11px] text-white font-bold bg-blue-600/70 px-1.5 py-0.5 rounded">HD</span>
                 )}
                 {!videoLocalPath && (
-                    <span className="text-[11px] text-yellow-300 bg-black/50 px-1.5 py-0.5 rounded">Đang tải...</span>
+                    <span className="text-[11px] text-yellow-300 bg-black/50 px-1.5 py-0.5 rounded">{tr('Đang tải...')}</span>
                 )}
             </div>
 
@@ -1412,7 +1433,7 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
             <div
                 className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/video:opacity-100 transition-opacity">
                 {videoLocalPath && !employeeView && (
-                    <button onClick={handleOpenFolder} title="Mở thư mục"
+                    <button onClick={handleOpenFolder} title={tr('Mở thư mục')}
                             className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                              strokeWidth="2">
@@ -1420,7 +1441,7 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                         </svg>
                     </button>
                 )}
-                <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
+                <button onClick={handleSaveAs} disabled={saving} title={tr('Lưu về máy')}
                         className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors disabled:opacity-40">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
@@ -1433,7 +1454,7 @@ export function VideoBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     );
 }
 
-/** VoiceBubble - hiển thị tin nhắn ghi âm (chat.voice) */
+/** VoiceBubble - shows a voice message (chat.voice) */
 export function VoiceBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     const [isPlaying, setIsPlaying] = React.useState(false);
     const [progress, setProgress] = React.useState(0);
@@ -1453,7 +1474,7 @@ export function VoiceBubble({msg, isSent}: { msg: any; isSent: boolean }) {
             if (!_voiceUrl) {
                 _voiceUrl = params.m4a || params.url || '';
             }
-            // Zalo lưu duration dạng ms (vd: 5000 = 5s) hoặc giây
+            // Zalo stores duration in ms (e.g. 5000 = 5s) or in seconds
             const rawDur = Number(params.duration || params.dur || 0);
             _paramsDur = rawDur > 300 ? rawDur / 1000 : rawDur;
         } catch {
@@ -1469,7 +1490,7 @@ export function VoiceBubble({msg, isSent}: { msg: any; isSent: boolean }) {
         return {voiceUrl: _voiceUrl, paramsDurationSec: _paramsDur, localPath: _localPath};
     }, [msg.content, msg.local_paths]);
 
-    // Sync duration from params khi chưa có audio metadata
+    // Sync duration from params when there is no audio metadata yet
     React.useEffect(() => {
         if (paramsDurationSec > 0 && duration === 0) {
             setDuration(paramsDurationSec);
@@ -1525,8 +1546,8 @@ export function VoiceBubble({msg, isSent}: { msg: any; isSent: boolean }) {
         setCurrentTime(audio.currentTime);
     };
 
-    // ChatWindow đã bọc tin voice trong bong bóng (nền + giờ) → không vẽ thêm khung nền bên trong;
-    // nút phát / sóng âm dùng màu primary để rõ trên cả bong bóng trắng (nhận) lẫn xanh nhạt (gửi).
+    // ChatWindow already wraps voice messages in a bubble (background + time) → do not draw another background frame inside;
+    // the play button / waveform use the primary color so they stand out on both the white (received) and light blue (sent) bubbles.
     return (
         <div className="flex items-center gap-2.5 px-3 py-2 rounded-2xl min-w-[200px] max-w-[280px]">
             <audio
@@ -1592,9 +1613,9 @@ export function VoiceBubble({msg, isSent}: { msg: any; isSent: boolean }) {
 }
 
 /**
- * Phiên Zalo để hỏi chi tiết sticker: tài khoản nhận tin trước. Máy nhân viên không có phiên Zalo — lệnh zalo:* được
- * chuyển cho Boss, Boss chọn phiên theo accountId (tài khoản Boss giao, có trong danh sách tài khoản của giao diện);
- * trước đây máy nhân viên lấy tài khoản từ DB của máy (rỗng) nên sticker chỉ hiện "[Sticker]".
+ * Zalo session used to look up sticker details: the account that received the message first. The employee machine has no Zalo session; zalo:* commands
+ * are passed to the Boss, which picks the session by accountId (the account the Boss assigned, present in the UI's account list);
+ * before, the employee machine took the account from its local DB (empty), so the sticker only showed "[Sticker]".
  */
 async function stickerDetailAuth(ownerId?: string): Promise<ReturnType<typeof buildZaloAuth> | null> {
     const known = useAccountStore.getState().accounts;
@@ -1610,7 +1631,7 @@ async function stickerDetailAuth(ownerId?: string): Promise<ReturnType<typeof bu
     return active ? buildZaloAuth(active) : null;
 }
 
-/** Preview sticker nhỏ dùng trong khung trích dẫn (quote) - tải URL từ DB cache hoặc API */
+/** Small sticker preview used in the quote frame: loads the URL from the DB cache or the API */
 export function QuotedStickerPreview({content}: { content: string }) {
     const [stickerUrl, setStickerUrl] = React.useState<string | null>(null);
 
@@ -1676,10 +1697,10 @@ export function QuotedStickerPreview({content}: { content: string }) {
             </div>
         );
     }
-    return <img src={stickerUrl} alt="sticker" className="w-12 h-12 object-contain rounded-lg flex-shrink-0"/>;
+    return <img src={stickerUrl} alt={tr('sticker')} className="w-12 h-12 object-contain rounded-lg flex-shrink-0"/>;
 }
 
-/** Hiển thị nhiều sticker liền nhau từ cùng người gửi trong 30 phút - mỗi sticker có thể right-click riêng */
+/** Shows several consecutive stickers from the same sender within 30 minutes; each sticker can be right-clicked separately */
 export function StickerGroupBubble({
                                        msgs: groupMsgs,
                                        onContextMenu,
@@ -1687,7 +1708,7 @@ export function StickerGroupBubble({
     msgs: any[];
     onContextMenu: (e: React.MouseEvent, msg: any) => void;
 }) {
-    // w-28 = 112px × 3 + gap-1.5 (6px) × 2 = 348px → maxWidth 22rem = 352px đủ để hiện 3/dòng
+    // w-28 = 112px × 3 + gap-1.5 (6px) × 2 = 348px → maxWidth 22rem = 352px is enough to show 3 per row
     return (
         <div className="flex flex-wrap gap-1.5" style={{maxWidth: '22rem'}}>
             {groupMsgs.map((stickerMsg) => (
@@ -1707,10 +1728,10 @@ export function StickerGroupBubble({
     );
 }
 
-/** Trích xuất groupLayoutId từ tin nhắn ảnh gửi theo nhóm (is_group_layout=1) — lib/chat/messages/messageGrouping */
+/** Extracts groupLayoutId from an image message sent as a group (is_group_layout=1): lib/chat/messages/messageGrouping */
 export { getGroupLayoutId };
 
-/** Hiển thị nhóm ảnh gửi cùng 1 batch - tối đa 4 ảnh/hàng, chiều cao cố định */
+/** Shows a group of images sent in the same batch: up to 4 images per row, fixed height */
 export function MediaGroupBubble({
                                      msgs: groupMsgs,
                                      onView,
@@ -1755,17 +1776,17 @@ export function MediaGroupBubble({
             return text && !/^(?:🖼️\s*)?(?:Hình ảnh|Image)$/i.test(text);
         });
     }, [sorted]);
-    // Giờ của album = giờ mới nhất trong các ảnh. groupMsgs[0] là tin của hàng trong ChatWindow:
-    // bài đăng kênh Telegram thì ChatWindow đã in giờ ở chân bài → không in lại.
+    // The album's time = the latest time among its images. groupMsgs[0] is the row's message in ChatWindow:
+    // for a Telegram channel post, ChatWindow already prints the time in the post footer → do not print it again.
     const albumTime = React.useMemo(() => {
         if (!groupMsgs.length || getTelegramPostMeta(groupMsgs[0])) return null;
         return Math.max(...groupMsgs.map((m) => Number(m.timestamp) || 0)) || null;
     }, [groupMsgs]);
 
-    // Chia thành hàng, mỗi hàng tối đa 4 ảnh
+    // Split into rows, each row up to 4 images
     const rows: any[][] = [];
     for (let i = 0; i < sorted.length; i += 4) rows.push(sorted.slice(i, i + 4));
-    // Bài đăng kênh Telegram: lưới rộng hết khung bài, hàng ít ảnh thì cao hơn (như Telegram); khung / giờ do bài vẽ
+    // Telegram channel post: the grid is the full width of the post; rows with fewer images are taller (as in Telegram); frame / time are drawn by the post
     const postLayout = React.useContext(TelegramPostLayoutContext);
     const postRowHeight = (count: number) => (count <= 1 ? 'h-72' : count === 2 ? 'h-52' : count === 3 ? 'h-40' : 'h-32');
 
@@ -1789,7 +1810,7 @@ export function MediaGroupBubble({
                         ))}
                     </div>
                 ))}
-                {/* Album không caption: giờ nổi góc dưới phải lưới ảnh */}
+                {/* Album without a caption: time floats at the bottom right of the image grid */}
                 {!telegramCaptionMessage && <MediaTimeBadge timestamp={albumTime}/>}
             </div>
             {telegramCaptionMessage && (
@@ -1810,7 +1831,7 @@ export function MediaGroupBubble({
     );
 }
 
-/** Ảnh đơn bên trong MediaGroupBubble - chiều cao cố định h-40 (bài đăng kênh: theo số ảnh trong hàng) */
+/** Single image inside MediaGroupBubble: fixed height h-40 (channel post: depends on the number of images in the row) */
 export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectingProp, isSelected, onToggleSelect, onVideoPlay, allContacts, groupMembersList, onMentionClick, tileHeightClass = 'h-40'}: {
     msg: any; onView: (src: string) => void; isSent?: boolean;
     isSelecting?: boolean; isSelected?: boolean; onToggleSelect?: (msgId: string) => void;
@@ -1820,7 +1841,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
     onMentionClick?: (userId: string, e: React.MouseEvent) => void;
     tileHeightClass?: string;
 }) {
-    // Remote-first: hiển thị CDN ngay; chuyển local khi file đã tải xong
+    // Remote-first: show the CDN immediately; switch to local once the file is downloaded
     const [useLocal, setUseLocal] = React.useState(() => hasLocalMediaPath(msg.local_paths));
     const [loadFailed, setLoadFailed] = React.useState(false);
     const [saving, setSaving] = React.useState(false);
@@ -1862,36 +1883,36 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
         const parsed = JSON.parse(msg.content || '{}');
         if (parsed && typeof parsed === 'object') {
             const params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {});
-            // Ảnh JPEG XL (tin lưu trước bản sửa) → bản JPG trên CDN
+            // JPEG XL image (message saved before the fix) → the JPG version on the CDN
             remoteUrl = toZaloJpgUrl(params.hd || params.rawUrl || parsed.href || parsed.thumb || '');
         }
     } catch {
     }
-    // FB fallback: lấy URL từ attachments via MediaResolver
+    // FB fallback: get the URL from attachments via MediaResolver
     if (!remoteUrl && isFacebook(msg.channel)) {
         const att = extractAttachments(msg)[0];
         remoteUrl = att?.url || att?.href || att?.thumb || '';
     }
 
     const isVideoTile = ['video', 'chat.video.msg', 'gif'].includes(String(msg.msg_type || '').toLowerCase());
-    // Media Zalo đã hết hạn: chỉ còn bản local (nếu có), không gọi CDN nữa
+    // Zalo media has expired: only the local copy is left (if any), do not call the CDN any more
     const mediaExpired = isMediaExpired(msg);
 
-    // Remote-first: CDN hiển thị ngay; chuyển local khi file đã tải xong
+    // Remote-first: CDN shows immediately; switch to local once the file is downloaded
     const displayUrl = mediaExpired ? localUrl : (useLocal ? (localUrl || remoteUrl) : (remoteUrl || localUrl));
     const viewUrl = mediaExpired ? displayUrl : (remoteUrl || displayUrl);
 
     const telegramRepair = useTelegramMediaRepair(msg, !displayUrl);
-    // Ảnh chỉ có link Zalo → nhờ máy Boss lưu (như MediaBubble)
+    // Image has only a Zalo link → ask the Boss machine to save it (as in MediaBubble)
     useEnsureMessageImage(msg, isZalo(msg?.channel) && !isVideoTile && !localFilePath && !!remoteUrl && !mediaExpired);
     const handleImgError = () => {
         if (useLocal && remoteUrl && !mediaExpired) {
-            setUseLocal(false); // local lỗi → fallback CDN ngay
+            setUseLocal(false); // local failed → fall back to the CDN immediately
         } else {
             setLoadFailed(true);
             if (isZalo(msg.channel) && !mediaExpired && remoteUrl) {
-                // Ảnh: nhờ máy Boss tải lại (có bản mới → đường dẫn mới vào store, ô tự vẽ lại). Không được → kiểm tra media
-                // đã hết hạn chưa (hết hạn → ô hiện "Ảnh/Video đã hết hạn")
+                // Image: ask the Boss machine to download it again (a newer copy → new path into the store, the frame redraws itself). If that fails → check whether the media
+                // has expired (expired → the frame shows "Ảnh/Video đã hết hạn" (Image/video expired))
                 const ensured = isVideoTile ? Promise.resolve(null) : ensureMessageImage(msg);
                 void ensured.then((res) => {
                     if (res?.expired) setMediaExpiredInStore(msg, true);
@@ -1951,7 +1972,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
                 type="button"
                 onClick={() => void telegramRepair.requestRepair('manual_retry', true)}
                 disabled={!isTelegramUser(msg.channel) || telegramRepair.repairing}
-                title={isTelegramUser(msg.channel) ? 'Tải lại ảnh Telegram này' : undefined}
+                title={isTelegramUser(msg.channel) ? tr('Tải lại ảnh Telegram này') : undefined}
                 className={`${tileHeightClass} flex-1 min-w-0 bg-foreground/5 flex flex-col gap-1 items-center justify-center text-muted-foreground select-none disabled:cursor-default`}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
                      className="opacity-30">
@@ -1960,7 +1981,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
                     <polyline points="21 15 16 10 5 21"/>
                     {loadFailed && <line x1="2" y1="2" x2="22" y2="22"/>}
                 </svg>
-                {telegramRepair.repairing && <span className="text-[10px] opacity-60">Đang tải lại...</span>}
+                {telegramRepair.repairing && <span className="text-[10px] opacity-60">{tr('Đang tải lại...')}</span>}
             </button>
         );
     }
@@ -2000,7 +2021,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
             <div
                 className={`relative flex-1 min-w-0 group/singleimg cursor-pointer bg-black${isSelected ? ' ring-2 ring-blue-500' : ''}`}
                 onClick={openVideo}
-                title={localFilePath ? 'Mở video' : 'Video đang được tải'}
+                title={localFilePath ? tr('Mở video') : tr('Video đang được tải')}
             >
                 <video
                     src={displayUrl}
@@ -2068,7 +2089,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
                     </div>
                 </div>
             )}
-            {/* Viền overlay - hiển thị ở cả giao diện sáng lẫn tối */}
+            {/* Overlay border: shown in both light and dark themes */}
             <div className="absolute inset-0 pointer-events-none ring-1 ring-inset ring-black/[0.12]"/>
             {/* Hover action buttons - hidden in selection mode */}
             {!isSelectingProp && (
@@ -2079,7 +2100,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
                             e.stopPropagation();
                             ipc.file?.showItemInFolder(localFilePath);
                         }}
-                                title="Mở trong thư mục"
+                                title={tr('Mở trong thư mục')}
                                 className="w-6 h-6 bg-black/60 hover:bg-black/80 rounded-md flex items-center justify-center text-white-important transition-colors">
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                  strokeWidth="2">
@@ -2087,7 +2108,7 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
                             </svg>
                         </button>
                     )}
-                    <button onClick={handleSaveAs} disabled={saving} title="Lưu về máy"
+                    <button onClick={handleSaveAs} disabled={saving} title={tr('Lưu về máy')}
                             className="w-6 h-6 bg-black/60 hover:bg-black/80 rounded-md flex items-center justify-center text-white-important transition-colors disabled:opacity-40">
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                              strokeWidth="2">
@@ -2103,12 +2124,12 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
 }
 
 /**
- * StickerBubble - hiển thị sticker với lazy load từ DB cache hoặc API. `onOpenSet` (Telegram cá nhân): bấm sticker mở
- * popup bộ sticker (xem / thêm bộ / gửi lại) như Telegram.
+ * StickerBubble - shows a sticker with lazy loading from the DB cache or the API. `onOpenSet` (Telegram personal chats): clicking the sticker opens
+ * the sticker-set popup (view / add set / send again), as in Telegram.
  */
 /**
- * File sticker Telegram trên máy. Lượt tải vừa xong (event:localPath / tải lại) đứng trước đường dẫn đang lưu trong tin
- * (có thể là file hỏng vừa được thay); không có thì attachment / local_paths của tin.
+ * Telegram sticker file on this machine. The most recent download (event:localPath / re-download) comes before the path saved in the message
+ * (it may be a broken file that was just replaced); if there is none, use the message's attachment / local_paths.
  */
 export function telegramStickerFile(msg: any, realtime: Record<string, string> | null): string {
     const fromRealtime = realtime?.sticker || realtime?.file || realtime?.main || realtime?.video || '';
@@ -2124,9 +2145,9 @@ export function telegramStickerFile(msg: any, realtime: Record<string, string> |
 }
 
 /**
- * Sticker động dạng video (webm / mp4) của Telegram. Mỗi <video> giữ một trình phát của Chromium, mỗi trang có giới hạn
- * (cỡ 75): nhóm nhiều sticker động / GIF, cuộn thêm vài trang là sticker mới không phát được (lỗi → "[Sticker]"). Chỉ dựng
- * <video> khi sticker ở gần vùng đang xem; ra xa thì gỡ hẳn trình phát.
+ * Animated video stickers of Telegram (webm / mp4). Each <video> holds a Chromium player, and each page has a limit
+ * (about 75): with many animated stickers / GIFs, scrolling a few more pages makes new stickers unable to play (error → "[Sticker]"). Only build
+ * <video> when the sticker is near the visible area; when far away, remove the player entirely.
  */
 function TelegramVideoSticker({src, onError}: { src: string; onError: (event: React.SyntheticEvent<HTMLVideoElement>) => void }) {
     const boxRef = React.useRef<HTMLDivElement>(null);
@@ -2140,9 +2161,9 @@ function TelegramVideoSticker({src, onError}: { src: string; onError: (event: Re
 
 function ReleasingVideoSticker({src, onError}: { src: string; onError: (event: React.SyntheticEvent<HTMLVideoElement>) => void }) {
     const ref = React.useRef<HTMLVideoElement>(null);
-    // Gỡ khỏi DOM chưa trả trình phát ngay (chờ dọn rác) → bỏ nguồn để trả chỗ cho sticker / video khác. Nguồn gắn trong
-    // effect (lib/media/videoSource), không qua prop: StrictMode (bản dev) dọn rồi dựng lại effect trên CÙNG thẻ, lượt dọn
-    // gỡ src mà React không gắn lại → sticker động trống, chỉ còn giờ.
+    // Removed from the DOM but the player is not returned yet (waiting for cleanup) → drop the source to free room for other stickers / videos. The source is attached
+    // inside the effect (lib/media/videoSource), not through a prop: StrictMode (dev build) cleans up then re-creates the effect on the SAME element, and the cleanup
+    // removes src and React does not set it again → the animated sticker is blank, only the time remains.
     React.useEffect(() => {
         const video = ref.current;
         return video ? attachVideoSource(video, src) : undefined;
@@ -2154,7 +2175,7 @@ function ReleasingVideoSticker({src, onError}: { src: string; onError: (event: R
             loop
             muted
             playsInline
-            aria-label="Telegram animated sticker"
+            aria-label={tr('Telegram animated sticker')}
             className="w-28 h-28 object-contain rounded-xl"
             onError={onError}
         />
@@ -2170,9 +2191,9 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
     // not lose a fast download that races with that cache update.
     const [realtimeLocalPaths, setRealtimeLocalPaths] = React.useState<Record<string, string> | null>(null);
 
-    // ── Telegram: tải sticker chưa có trên máy, thử lại khi không phát được ─────
-    // Lịch sử chỉ tự tải media của tin < 24 giờ, bình luận kênh không tự tải → sticker cũ chờ mãi (ô 🎭 nhấp nháy). Xin tải
-    // như ảnh / video (repairMessageMedia, cùng hàng tải). Không phát được (file hỏng, trình phát hết chỗ) → thử lại.
+    // ── Telegram: download stickers not yet on this machine, retry when they fail to play ─────
+    // History only auto-downloads the media of messages < 24 hours old, and channel comments do not auto-download → old stickers wait forever (the 🎭 box flickers). Request a download
+    // like images / videos (repairMessageMedia, same download queue). If it cannot play (broken file, player out of room) → retry.
     const telegramRepair = useTelegramMediaRepair(msg, false);
     const telegramFile = isTelegram(msg.channel) ? telegramStickerFile(msg, realtimeLocalPaths) : '';
     const needsTelegramFile = isTelegramUser(msg.channel) && !telegramFile;
@@ -2204,17 +2225,17 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
             return;
         }
         const errors = ++mediaErrorsRef.current;
-        // Lý do (mã MediaError của trình phát) vào Nhật ký: lần sau khách báo "[Sticker]" thì biết do file hay do trình phát
+        // Log the reason (the player's MediaError code) so next time a customer reports "[Sticker]" we know whether it is the file or the player
         const mediaError = (event?.currentTarget as HTMLVideoElement | undefined)?.error;
         Logger.warn(`[Sticker] Telegram msg=${msg.msg_id} thread=${msg.thread_id} lỗi lần ${errors}`
             + (mediaError ? ` code=${mediaError.code} ${mediaError.message || ''}` : '') + ` file=${telegramFile ? 'có' : 'không'}`);
         if (errors === 1) {
-            // Trình phát chưa có chỗ / file vừa ghi xong: dựng lại một lần
+            // Player had no room / file just finished writing: rebuild once
             retryTimerRef.current = window.setTimeout(() => setRetryKey((k) => k + 1), 1500);
             return;
         }
         if (errors === 2) {
-            // Vẫn lỗi → file trên máy có thể hỏng: tải lại từ Telegram
+            // Still failing → the file on this machine may be broken: download again from Telegram
             void telegramRepair.requestRepair('image_load_error', true).then((paths) => {
                 if (!paths) {
                     setFailed(true);
@@ -2266,7 +2287,7 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
         if (isTelegram(msg.channel)) {
             const media = getTelegramStickerMedia(msg);
             const realtimeLocalPath = realtimeLocalPaths?.sticker || realtimeLocalPaths?.file || realtimeLocalPaths?.main || realtimeLocalPaths?.video || '';
-            // Bản vừa tải (event:localPath / tải lại) mới hơn đường dẫn đang lưu trong tin (có thể là file hỏng)
+            // The copy just downloaded (event:localPath / re-download) is newer than the path saved in the message (which may be broken)
             const localPath = realtimeLocalPath || media?.localPath || '';
             const format = media?.format || (localPath.toLowerCase().endsWith('.tgs') ? 'tgs' : 'webp');
             if (localPath) {
@@ -2301,14 +2322,14 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
                 }
             } catch {}
 
-            // A recognized sticker may still be waiting for event:localPath. Telegram cá nhân: đang xin tải (ở trên).
+            // A recognized sticker may still be waiting for event:localPath. Personal Telegram: a download is requested (above).
             if (!media && !isTelegramUser(msg.channel) && !cancelled) setFailed(true);
             return;
         }
 
         // ── Facebook sticker ────────────────────────────────────────────────
         if (isFacebook(msg.channel)) {
-            // Check local file trước (đã được download từ main process)
+            // Check the local file first (already downloaded by the main process)
             try {
                 const lp: Record<string, string> = typeof msg.local_paths === 'string'
                     ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
@@ -2316,7 +2337,7 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
                 if (localFile) {
                     const localUrl = toLocalMediaUrl(localFile);
                     if (localUrl) {
-                        // Reset failed trước đó (set ở lần effect chạy đầu khi chưa có local_paths)
+                        // Reset the earlier failed flag (set on the first effect run when there was no local_paths yet)
                         setFailed(false);
                         setStickerUrl(localUrl);
                         return;
@@ -2325,7 +2346,7 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
             } catch {
             }
 
-            // E2EE sticker không có directPath → unsupported (bridge không cung cấp)
+            // E2EE sticker without a directPath → unsupported (the bridge does not provide it)
             const atts = extractAttachments(msg);
             const hasDirectPath = atts[0]?.directPath;
             if (!hasDirectPath && !atts[0]?.url) {
@@ -2333,7 +2354,7 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
                 return;
             }
 
-            // Có directPath nhưng chưa có local file → đang download, giữ loading
+            // Has a directPath but no local file yet → downloading, keep the loading state
             if (!cancelled && !stickerUrl) setFailed(true);
             return;
         }
@@ -2377,7 +2398,7 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
                 }
                 const detailRes = await ipc.zalo?.getStickersDetail({auth, stickerIds: [stickerId]});
                 if (!detailRes?.success) {
-                    // Máy nhân viên: lỗi do Boss / mạng (lệnh chuyển cho Boss), không phải sticker không hỗ trợ
+                    // Employee machine: the error is from the Boss / network (the command was passed to the Boss), not an unsupported sticker
                     if (employee) {
                         if (!cancelled) setFailed(true);
                         return;
@@ -2413,13 +2434,13 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
         };
     }, [msg.content, msg.local_paths, msg.attachments, realtimeLocalPaths]);
 
-    // Sticker không có khung bong bóng → giờ nổi góc dưới phải. w-fit: khung bám đúng sticker
-    // kể cả khi hàng tin rộng hơn (vd có trích dẫn phía trên).
+    // A sticker has no bubble frame → time floats at the bottom right. w-fit: the frame fits the sticker exactly
+    // even when the message row is wider (e.g. with a quote above).
     const stickerTime = ownTimestamp(msg);
     const withTime = (node: React.ReactNode) => (
         <div className="relative w-fit">
             {onOpenSet ? (
-                <button type="button" onClick={onOpenSet} title="Xem bộ sticker" aria-label="Xem bộ sticker"
+                <button type="button" onClick={onOpenSet} title={tr('Xem bộ sticker')} aria-label={tr('Xem bộ sticker')}
                         className="block cursor-pointer rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
                     {node}
                 </button>
@@ -2433,7 +2454,7 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
             <div
                 className="w-28 h-28 rounded-xl bg-muted/30 border border-input/30 flex flex-col items-center justify-center gap-1">
                 <span className="text-2xl opacity-40">🎭</span>
-                <span className="text-[10px] text-muted-foreground text-center px-1 leading-tight">Sticker chưa hỗ trợ</span>
+                <span className="text-[10px] text-muted-foreground text-center px-1 leading-tight">{tr('Sticker chưa hỗ trợ')}</span>
             </div>
         );
     }
@@ -2443,10 +2464,10 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
             const emoji = getTelegramStickerMedia(msg) && extractAttachments(msg).find((item: any) => item?.is_sticker || item?.type === 'sticker')?.emoji;
             return (
                 <div className="relative w-fit">
-                    <button type="button" onClick={retrySticker} title="Bấm để tải lại sticker" aria-label="Tải lại sticker"
+                    <button type="button" onClick={retrySticker} title={tr('Bấm để tải lại sticker')} aria-label={tr('Tải lại sticker')}
                             className="w-28 h-28 rounded-xl bg-muted/30 border border-input/30 flex flex-col items-center justify-center gap-1 hover:bg-muted/50 transition-colors">
                         <span className="text-4xl leading-none">{emoji || '🎭'}</span>
-                        <span className="text-[10px] text-muted-foreground">Bấm để tải lại</span>
+                        <span className="text-[10px] text-muted-foreground">{tr('Bấm để tải lại')}</span>
                     </button>
                     <MediaTimeBadge timestamp={stickerTime}/>
                 </div>
@@ -2454,7 +2475,7 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
         }
         return (
             <div className="w-fit">
-                <span className="text-xs text-muted-foreground px-2 py-1">[Sticker]</span>
+                <span className="text-xs text-muted-foreground px-2 py-1">{tr('[Sticker]')}</span>
                 <BubbleTime timestamp={stickerTime} className="px-2"/>
             </div>
         );
@@ -2472,7 +2493,7 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
         return withTime(<TgsBubble filePath={stickerUrl.slice(4)}/>);
     }
 
-    // Tải lại xong ghi đè file cùng đường dẫn → thêm tham số để trình duyệt đọc lại (local-media bỏ qua query)
+    // A re-download overwrote the file at the same path → add a parameter so the browser reads it again (local-media ignores the query)
     const stickerSrc = telegramRepair.repairedAt && stickerUrl.startsWith('local-media://')
         ? appendUrlParam(stickerUrl, 'r', String(telegramRepair.repairedAt))
         : stickerUrl;
@@ -2487,7 +2508,7 @@ export function StickerBubble({msg, onOpenSet}: { msg: any; onOpenSet?: () => vo
         <img
             key={retryKey}
             src={stickerSrc}
-            alt="sticker"
+            alt={tr('sticker')}
             className="w-28 h-28 object-contain rounded-xl"
             onError={handleStickerError}
         />
@@ -2514,7 +2535,7 @@ export function MsgActionBtn({title, onClick, children}: {
 }
 
 // ─── CardBubble - dispatches to LinkBubble, CallBubble or ContactCardBubble ───
-// ─── EcardBubble - thông báo hệ thống dạng thẻ (vd: trở thành phó nhóm, nhắc hẹn) ─────
+// ─── EcardBubble - system notice as a card (e.g. became a deputy, a reminder) ─────
 export function EcardBubble({msg, onManage}: { msg: any; onManage?: () => void }) {
     let parsed: any = {};
     try {
@@ -2552,28 +2573,28 @@ export function EcardBubble({msg, onManage}: { msg: any; onManage?: () => void }
 
         const startTime = Number(reminderData.startTime || 0);
         const repeat: number = Number(reminderData.repeat ?? 0);
-        const repeatText = repeat === 1 ? 'Nhắc theo ngày' : repeat === 2 ? 'Nhắc theo tuần' : repeat === 3 ? 'Nhắc theo tháng' : '';
+        const repeatText = repeat === 1 ? tr('Nhắc theo ngày') : repeat === 2 ? tr('Nhắc theo tuần') : repeat === 3 ? tr('Nhắc theo tháng') : '';
         const emoji = reminderData.emoji || '⏰';
 
         const formatReminderDateFull = (ts: number) => {
             if (!ts) return description || '';
             const d = new Date(ts);
             const pad = (n: number) => n.toString().padStart(2, '0');
-            const weekDays = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
-            const months = ['tháng 1', 'tháng 2', 'tháng 3', 'tháng 4', 'tháng 5', 'tháng 6', 'tháng 7', 'tháng 8', 'tháng 9', 'tháng 10', 'tháng 11', 'tháng 12'];
-            return `${weekDays[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} lúc ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            const weekDays = [tr('Chủ Nhật'), tr('Thứ Hai'), tr('Thứ Ba'), tr('Thứ Tư'), tr('Thứ Năm'), tr('Thứ Sáu'), tr('Thứ Bảy')];
+            const months = [tr('tháng 1'), tr('tháng 2'), tr('tháng 3'), tr('tháng 4'), tr('tháng 5'), tr('tháng 6'), tr('tháng 7'), tr('tháng 8'), tr('tháng 9'), tr('tháng 10'), tr('tháng 11'), tr('tháng 12')];
+            return tr('{{v1}}, {{v2}} {{v3}} lúc {{v4}}:{{v5}}', { v1: weekDays[d.getDay()], v2: d.getDate(), v3: months[d.getMonth()], v4: pad(d.getHours()), v5: pad(d.getMinutes()) });
         };
 
         const formatDayNum = (ts: number) => ts ? new Date(ts).getDate() : '';
         const formatMonth = (ts: number) => {
             if (!ts) return '';
             const d = new Date(ts);
-            const months = ['THÁNG 1', 'THÁNG 2', 'THÁNG 3', 'THÁNG 4', 'THÁNG 5', 'THÁNG 6', 'THÁNG 7', 'THÁNG 8', 'THÁNG 9', 'THÁNG 10', 'THÁNG 11', 'THÁNG 12'];
+            const months = [tr('THÁNG 1'), tr('THÁNG 2'), tr('THÁNG 3'), tr('THÁNG 4'), tr('THÁNG 5'), tr('THÁNG 6'), tr('THÁNG 7'), tr('THÁNG 8'), tr('THÁNG 9'), tr('THÁNG 10'), tr('THÁNG 11'), tr('THÁNG 12')];
             return months[d.getMonth()];
         };
         const formatWeekDay = (ts: number) => {
             if (!ts) return '';
-            const days = ['CHỦ NHẬT', 'THỨ HAI', 'THỨ BA', 'THỨ TƯ', 'THỨ NĂM', 'THỨ SÁU', 'THỨ BẢY'];
+            const days = [tr('CHỦ NHẬT'), tr('THỨ HAI'), tr('THỨ BA'), tr('THỨ TƯ'), tr('THỨ NĂM'), tr('THỨ SÁU'), tr('THỨ BẢY')];
             return days[new Date(ts).getDay()];
         };
 
@@ -2642,7 +2663,7 @@ export function EcardBubble({msg, onManage}: { msg: any; onManage?: () => void }
         <div className="flex justify-center w-full my-1">
             <div
                 className="bg-bubble-in rounded-2xl overflow-hidden max-w-[280px] w-full shadow-sm">
-                {/* Ảnh header */}
+                {/* Header image */}
                 {imageHref && (
                     <div className="w-full h-28 overflow-hidden bg-muted">
                         <img
@@ -2655,7 +2676,7 @@ export function EcardBubble({msg, onManage}: { msg: any; onManage?: () => void }
                         />
                     </div>
                 )}
-                {/* Nội dung */}
+                {/* Content */}
                 <div className="px-4 py-3 space-y-1">
                     {title && (
                         <p className="text-foreground font-semibold text-sm leading-snug">{linkifyText(title)}</p>
@@ -2664,7 +2685,7 @@ export function EcardBubble({msg, onManage}: { msg: any; onManage?: () => void }
                         <p className="text-muted-foreground text-xs leading-relaxed">{linkifyText(description)}</p>
                     )}
                 </div>
-                {/* Actions - chỉ nút Quản lý nhóm */}
+                {/* Actions: only the Manage group button */}
                 {actions.length > 0 && onManage && (
                     <div className="border-t border-border">
                         {actions.map((a: any, i: number) => (
@@ -2673,7 +2694,7 @@ export function EcardBubble({msg, onManage}: { msg: any; onManage?: () => void }
                                 onClick={onManage}
                                 className="w-full px-4 py-2.5 text-sm text-blue-400 hover:bg-muted hover:text-blue-300 transition-colors font-medium text-center"
                             >
-                                {a.name || 'Quản lý nhóm'}
+                                {a.name || tr('Quản lý nhóm')}
                             </button>
                         ))}
                     </div>
@@ -2690,7 +2711,7 @@ export function CardBubble({msg, isSent, onOpenProfile, allContacts, groupMember
     allContacts?: any[];
     groupMembersList?: any[];
 }) {
-    // ChatWindow không bọc / không in giờ cho tin thẻ → mỗi thẻ tự in giờ ở cuối khung
+    // ChatWindow does not wrap or print the time for card messages → each card prints its own time at the bottom of the frame
     const cardTime = ownTimestamp(msg);
     if (isOaListType(msg.msg_type)) return <OaListBubble msg={msg} timestamp={cardTime}/>;
     let parsed: any = {};
@@ -2711,14 +2732,14 @@ export function CardBubble({msg, isSent, onOpenProfile, allContacts, groupMember
             timestamp={cardTime}
         />;
     }
-    // recommened.calltime = cuộc gọi có thời gian, recommened.misscall = cuộc gọi nhỡ
+    // recommened.calltime = a call with a duration, recommened.misscall = a missed call
     if (action === 'recommened.calltime' || action === 'recommened.misscall') return <CallBubble parsed={parsed}
                                                                                                  isSent={isSent}
                                                                                                  timestamp={cardTime}/>;
     return <ContactCardBubble parsed={parsed} isSent={isSent} onOpenProfile={onOpenProfile} timestamp={cardTime}/>;
 }
 
-// ─── LinkBubble - hiển thị tin nhắn link preview như Zalo ────────────────────
+// ─── LinkBubble - shows a link preview message like Zalo ────────────────────
 export function LinkBubble({
     parsed, isSent, channel, allContacts, groupMembersList, mentionRanges, onMentionClick, timestamp,
 }: {
@@ -2729,7 +2750,7 @@ export function LinkBubble({
     groupMembersList?: any[];
     mentionRanges?: MentionRange[];
     onMentionClick?: (userId: string, e: React.MouseEvent) => void;
-    /** Giờ gửi in ở cuối thẻ (bỏ trống = không in) */
+    /** Sent time printed at the bottom of the card (leave empty = not printed) */
     timestamp?: number | string | null;
 }) {
     const surface = useBubbleSurface(isSent);
@@ -2748,8 +2769,8 @@ export function LinkBubble({
     const description = String(parsed.description || '').trim();
     const thumb = String(parsed.thumb || '');
 
-    // chat.recommended có thể chứa "text + url" trong title.
-    // Ưu tiên tách phần text user nhập để hiển thị đúng ý nghĩa tin nhắn.
+    // chat.recommended may contain "text + url" in the title.
+    // Prefer splitting out the text the user typed, so the message meaning displays correctly.
     const stripKnownLinks = (txt: string): string => {
         let out = txt;
         if (href) out = out.split(href).join(' ');
@@ -2784,7 +2805,7 @@ export function LinkBubble({
         <div
             className={`flex flex-col overflow-hidden rounded-lg min-w-[260px] max-w-sm text-left ${surface}`}
         >
-            {/* Message content: text + link - hiển thị bình thường, không bấm mở link */}
+            {/* Message content: text + link: shown normally, the link does not open on click */}
             <div className="px-3 py-2.5 space-y-1.5 select-text cursor-text">
                 {displayTitle && (
                     <p className="text-sm text-foreground leading-snug">
@@ -2815,7 +2836,7 @@ export function LinkBubble({
                 )}
             </div>
 
-            {/* Preview section - CHỈ bấm vào đây mới mở link (ô bên trong bong bóng: bg-foreground/5 hợp cả nền trắng lẫn xanh) */}
+            {/* Preview section: ONLY clicking here opens the link (the box inside the bubble: bg-foreground/5 works on both white and blue backgrounds) */}
             <button
                 onClick={() => href && openChatLink(href)}
                 className="mx-2 mb-2 border border-foreground/10 rounded-xl overflow-hidden bg-foreground/5 text-left cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all"
@@ -2843,7 +2864,7 @@ export function LinkBubble({
                     )}
                 </div>
             </button>
-            {/* Giờ gửi: -mt-1 bù mt-1 của BubbleTime → cách ô preview đúng 8px như lề dưới */}
+            {/* Sent time: -mt-1 offsets the mt-1 of BubbleTime → exactly 8px from the preview box, same as the bottom margin */}
             {!!formatBubbleTime(timestamp) && (
                 <div className="px-3 pb-2 -mt-1">
                     <BubbleTime timestamp={timestamp}/>
@@ -2853,11 +2874,11 @@ export function LinkBubble({
     );
 }
 
-// ─── CallBubble - hiển thị tin nhắn cuộc gọi ─────────────────────────────────
+// ─── CallBubble - shows a call message ─────────────────────────────────
 export function CallBubble({parsed, isSent, timestamp}: {
     parsed: any;
     isSent: boolean;
-    /** Giờ gửi in ở cuối thẻ (bỏ trống = không in) */
+    /** Sent time printed at the bottom of the card (leave empty = not printed) */
     timestamp?: number | string | null;
 }) {
     const surface = useBubbleSurface(isSent);
@@ -2873,25 +2894,25 @@ export function CallBubble({parsed, isSent, timestamp}: {
     const reason: number = params.reason || 0;
     const isCaller: boolean = params.isCaller === 1;
     const isVideo: boolean = params.calltype === 1;
-    const callTypeLabel = isVideo ? 'Cuộc gọi video' : 'Cuộc gọi thoại';
+    const callTypeLabel = isVideo ? tr('Cuộc gọi video') : tr('Cuộc gọi thoại');
     const action = String(parsed.action || '');
     const isMissed = action === 'recommened.misscall';
 
-    let statusLabel = 'Cuộc gọi nhỡ';
+    let statusLabel = tr('Cuộc gọi nhỡ');
     let statusRed = true;
     if (!isMissed && duration > 0) {
         const m = Math.floor(duration / 60), s = duration % 60;
-        statusLabel = `Đã kết thúc · ${m > 0 ? `${m}p ` : ''}${s}s`;
+        statusLabel = tr('Đã kết thúc · {{v1}}{{s}}s', { v1: m > 0 ? `${m}p ` : '', s });
         statusRed = false;
     } else if (!isMissed && duration === 0) {
-        // calltime nhưng duration=0 → cuộc gọi rất ngắn / vừa kết thúc
-        statusLabel = 'Đã kết thúc';
+        // calltime but duration=0 → a very short call / just ended
+        statusLabel = tr('Đã kết thúc');
         statusRed = false;
     } else if (reason === 4 && isCaller) {
-        statusLabel = 'Bạn đã hủy';
+        statusLabel = tr('Bạn đã hủy');
         statusRed = false;
     } else if (reason === 2) {
-        statusLabel = isCaller ? 'Đã từ chối' : 'Bạn đã từ chối';
+        statusLabel = isCaller ? tr('Đã từ chối') : tr('Bạn đã từ chối');
     }
 
     return (
@@ -2924,14 +2945,14 @@ export function CallBubble({parsed, isSent, timestamp}: {
     );
 }
 
-// ─── ContactCardBubble - hiển thị danh thiếp Zalo ────────────────────────────
+// ─── ContactCardBubble - shows a Zalo contact card ────────────────────────────
 const EMPTY_CARD_CONTACTS: any[] = [];
 
 export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
     parsed: any;
     isSent: boolean;
     onOpenProfile?: (userId: string, e: React.MouseEvent) => void;
-    /** Giờ gửi in ở cuối thẻ (bỏ trống = không in) */
+    /** Sent time printed at the bottom of the card (leave empty = not printed) */
     timestamp?: number | string | null;
 }) {
     const surface = useBubbleSurface(isSent);
@@ -2948,7 +2969,7 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
         : (parsed.description || {});
     let phone = formatPhone(String(desc.phone || ''));
     const qrCodeUrl = String(desc.qrCodeUrl || '');
-    // Selector: mỗi danh thiếp không render lại với mọi thay đổi của store (nhân theo số hàng tin)
+    // Selector: each contact card does not re-render on every store change (scales with the number of message rows)
     const activeAccountId = useAccountStore(s => s.activeAccountId);
     const getActiveAccount = useAccountStore(s => s.getActiveAccount);
     const contactList = useChatStore(s => (activeAccountId ? s.contacts[activeAccountId] : undefined)) ?? EMPTY_CARD_CONTACTS;
@@ -2997,7 +3018,7 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
     const isFriend = matchedContact ? (matchedContact.isFr === 1 || matchedContact.is_friend === 1) : false;
 
     const [sendingReq, setSendingReq] = React.useState(false);
-    // Sau khi ấn "Gửi tin nhắn" → ẩn thanh nút hành động cho gọn (kết bạn thì giữ nguyên hiển thị)
+    // After clicking "Gửi tin nhắn" (Send message), hide the action button bar to keep things tidy (adding a friend keeps it visible)
     const [cardChatOpened, setCardChatOpened] = React.useState(false);
 
     const handleOpenCardChat = (e: React.MouseEvent) => {
@@ -3019,7 +3040,7 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
 
     const handleOpenProfile = (e: React.MouseEvent) => {
         if (!resolvedUserId || !onOpenProfile) return;
-        // Chỉ mở profile khi click vào avatar, không block select text ở tên/SĐT
+        // Open the profile only when clicking the avatar, so selecting text on the name / phone is not blocked
         const target = e.target as HTMLElement;
         if (target.closest('.card-avatar-area')) {
             onOpenProfile(resolvedUserId, e);
@@ -3033,7 +3054,7 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
         if (!account) return;
         // Only supported for Zalo
         if (isNonZalo(account.channel)) {
-            useAppStore.getState().showNotification('Tính năng chưa hỗ trợ cho kênh này', 'error');
+            useAppStore.getState().showNotification(tr('Tính năng chưa hỗ trợ cho kênh này'), 'error');
             return;
         }
         setSendingReq(true);
@@ -3045,12 +3066,12 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
                 msg: 'Làm quen qua danh thiếp Zalo'
             });
             if (res?.success || res?.response?.success) {
-                useAppStore.getState().showNotification('Đã gửi lời mời kết bạn', 'success');
+                useAppStore.getState().showNotification(tr('Đã gửi lời mời kết bạn'), 'success');
             } else {
-                useAppStore.getState().showNotification(res?.error || 'Gửi lời mời thất bại', 'error');
+                useAppStore.getState().showNotification(res?.error || tr('Gửi lời mời thất bại'), 'error');
             }
         } catch (err: any) {
-            useAppStore.getState().showNotification('Gửi lời mời thất bại: ' + err.message, 'error');
+            useAppStore.getState().showNotification(tr('Gửi lời mời thất bại: {{message}}', { message: err.message }), 'error');
         } finally {
             setSendingReq(false);
         }
@@ -3061,7 +3082,7 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
             className={`rounded-lg max-w-[340px] ${surface}`}
         >
             <div className="flex items-center gap-3.5 px-4 py-3.5 select-text">
-                {/* Avatar - click mở profile */}
+                {/* Avatar: click opens the profile */}
                 <div
                     className={`card-avatar-area w-14 h-14 rounded-full overflow-hidden flex-shrink-0 bg-foreground/5 ${resolvedUserId && onOpenProfile ? 'cursor-pointer hover:opacity-85 transition-opacity' : ''}`}
                     onClick={handleOpenProfile}
@@ -3076,10 +3097,10 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
                     )}
                 </div>
                 <div className="flex-1 min-w-0">
-                    <p className="text-base font-semibold truncate select-text cursor-text">{title || 'Danh thiếp'}</p>
+                    <p className="text-base font-semibold truncate select-text cursor-text">{title || tr('Danh thiếp')}</p>
                     {phone && <PhoneDisplay phone={phone}
                                             className="text-sm text-foreground/80"/>}
-                    <p className="text-xs mt-1 text-muted-foreground">Danh thiếp Zalo</p>
+                    <p className="text-xs mt-1 text-muted-foreground">{tr('Danh thiếp Zalo')}</p>
                 </div>
                 {qrCodeUrl && (
                     <div className="w-12 h-12 flex-shrink-0">
@@ -3100,15 +3121,15 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
                                 ? 'bg-blue-600 hover:bg-blue-500 text-white'
                                 : 'bg-blue-600 hover:bg-blue-700 text-white'
                         }`}
-                        title="Gửi tin nhắn"
+                        title={tr('Gửi tin nhắn')}
                     >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                              strokeWidth="2.2">
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                         </svg>
-                        Gửi tin nhắn
+                        {tr('Gửi tin nhắn')}
                     </button>
-                    {/* Nút kết bạn - chỉ hiện nếu chưa là bạn bè */}
+                    {/* Add-friend button: shown only if not already a friend */}
                     {!isFriend && !isSent && (
                         <button
                             onClick={handleAddFriend}
@@ -3118,7 +3139,7 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
                                     ? 'opacity-50 cursor-not-allowed'
                                     : 'hover:bg-foreground/10'
                             } ${isSent ? 'border-blue-400/30 text-blue-200' : 'border-border-strong/40 text-foreground/80'}`}
-                            title="Gửi lời mời kết bạn"
+                            title={tr('Gửi lời mời kết bạn')}
                         >
                             {sendingReq ? (
                                 <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
@@ -3134,12 +3155,12 @@ export function ContactCardBubble({parsed, isSent, onOpenProfile, timestamp}: {
                                     <line x1="22" y1="11" x2="16" y2="11"/>
                                 </svg>
                             )}
-                            {sendingReq ? 'Đang gửi...' : 'Kết bạn'}
+                            {sendingReq ? tr('Đang gửi...') : tr('Kết bạn')}
                         </button>
                     )}
                 </div>
             )}
-            {/* Giờ gửi ở cuối thẻ: -mt-2 kéo lại lề dưới 14px của khối phía trên → cách nội dung ~10px */}
+            {/* Sent time at the bottom of the card: -mt-2 pulls back the 14px bottom margin of the block above → about 10px from the content */}
             {!!formatBubbleTime(timestamp) && (
                 <div className="px-4 pb-2.5 -mt-2">
                     <BubbleTime timestamp={timestamp}/>
@@ -3235,7 +3256,7 @@ export function applyRtfStyles(text: string, styles: RtfStyle[], mentions?: RtfM
         if (cs.small) cls.push('text-xs');
         if (cs.big) cls.push('text-base font-medium');
         if (cs.mentionUid) {
-            // Màu @nhắc tên: .chat-mention (index.css), giao diện tối xanh sáng dễ đọc trên bong bóng gửi
+            // @mention colour: .chat-mention (index.css), dark theme in bright blue so it reads well on the sent bubble
             cls.push('font-semibold chat-mention');
             if (onMentionClick && cs.mentionUid !== 'unknown') cls.push('cursor-pointer hover:underline');
         } else if (cs.color) {
@@ -3281,9 +3302,8 @@ export function TextWithMentions({
     // Telegram already sends Unicode (including a fallback glyph for custom
     // emoji entities). Zalo's text-code converter must not rewrite it.
     const converted = isTelegram(channel) ? text : convertZaloEmojis(text);
-    const emojiFontStyle: React.CSSProperties = isTelegram(channel)
-        ? { fontFamily: '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif' }
-        : {};
+    // Telegram text: color emoji fonts AFTER the text fonts (first, they drew digits / spaces on macOS: wide, letters in serif)
+    const emojiFontStyle: React.CSSProperties = isTelegram(channel) ? { fontFamily: COLOR_EMOJI_TEXT_FONT } : {};
 
     // Helper: wrap text segment with search highlight marks + URL detection
     const applyHighlight = (str: string, key: string | number, detectMentions = true): React.ReactNode => {
@@ -3333,7 +3353,7 @@ export function TextWithMentions({
                 <span
                     key={`native-mention-${range.offset}`}
                     className={`chat-mention font-semibold${canClick ? ' cursor-pointer hover:underline' : ''}`}
-                    title={range.isAll ? 'Thông báo tất cả thành viên' : undefined}
+                    title={range.isAll ? tr('Thông báo tất cả thành viên') : undefined}
                     onClick={canClick ? async (e) => {
                         e.stopPropagation();
                         if (!onMentionClick) return;
@@ -3345,7 +3365,7 @@ export function TextWithMentions({
                             const accountId = useAccountStore.getState().activeAccountId || '';
                             const resolved = await ipc.telegramUser?.resolveUsername?.({ accountId, username });
                             if (!resolved?.success || !resolved.peer?.peerId) return;
-                            // @kênh / @nhóm: mở như link t.me (đã tham gia thì vào thẳng, chưa thì xem trước + Tham gia)
+                            // @channel / @group: open like a t.me link (if already joined, go straight in; if not, preview + Join)
                             if (resolved.peer.peerType && resolved.peer.peerType !== 'user') {
                                 openChatLink(`https://t.me/${username}`, { accountId });
                                 return;
@@ -3370,8 +3390,8 @@ export function TextWithMentions({
     const allPeople = [...(allContacts || []), ...(groupMembersList || [])];
 
     // Build segments by scanning for @ then greedily matching known display names.
-    // "@" nằm trong URL (vd threads.com/@user/post/…) hoặc email (a@gmail.com) không phải mention → bỏ qua, để
-    // linkifyText giữ nguyên cả URL / địa chỉ email.
+    // "@" inside a URL (e.g. threads.com/@user/post/…) or an email (a@gmail.com) is not a mention → skip it, so
+    // linkifyText keeps the whole URL / email address intact.
     const linkRanges = findLinkRanges(converted);
     const nextMentionAt = (from: number): number => {
         let idx = converted.indexOf('@', from);
@@ -3496,7 +3516,7 @@ export function RtfBubble({
     } catch {
     }
 
-    if (!title) return <span className="text-xs opacity-60">[Tin nhắn định dạng]</span>;
+    if (!title) return <span className="text-xs opacity-60">{tr('[Tin nhắn định dạng]')}</span>;
 
     return (
         <span>{applyRtfStyles(title, styles, mentions, onMentionClick)}</span>
@@ -3519,6 +3539,6 @@ export function ActionRow({icon, label, onClick, textColor = 'text-foreground/80
     );
 }
 
-// ─── Telegram: "Chuyển tiếp từ …" (TelegramForwardHeader.tsx, giữ đường import cũ) ─────────────────────────────
+// ─── Telegram: "Chuyển tiếp từ …" (TelegramForwardHeader.tsx, keep the old import path) ─────────────────────────────
 
 export { TelegramForwardHeader } from '../telegram/messages/TelegramForwardHeader';

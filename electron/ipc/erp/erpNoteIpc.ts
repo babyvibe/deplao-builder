@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import ErpNoteService from '../../../src/services/erp/ErpNoteService';
 import { withErpAuth, erpValidate } from './erpIpcMiddleware';
+import { tr } from '../../../src/shared/i18n';
 
 export function registerErpNoteIpc(): void {
   const svc = () => ErpNoteService.getInstance();
@@ -34,7 +35,7 @@ export function registerErpNoteIpc(): void {
   ipcMain.handle('erp:note:get', withErpAuth('erp.access', async (input: any, ctx) => {
     erpValidate.string(input?.id, 'id');
     const note = svc().getNoteForEmployee(input.id, ctx.employeeId);
-    if (!note) throw new Error('Không tìm thấy note');
+    if (!note) throw new Error(tr('Không tìm thấy note'));
     return { note };
   }));
 

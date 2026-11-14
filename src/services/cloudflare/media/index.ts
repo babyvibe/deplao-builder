@@ -1,27 +1,27 @@
 /**
- * cloudMedia — lưu media lên Cloudflare R2 (tuỳ chọn, mặc định tắt). Hợp đồng: CloudMediaModule (../contracts.ts).
+ * cloudMedia: stores media on Cloudflare R2 (optional, off by default). Contract: CloudMediaModule (../contracts.ts).
  *
- * Thiết kế (người dùng đã chốt):
- *  - Media vẫn ghi xuống máy trước; R2 là bản lưu dài hạn. messages.local_paths KHÔNG đổi. Xoá tin trong app KHÔNG xoá gì
- *    trên R2 (R2 là kho lưu trữ; chỉ công cụ dọn R2 do người dùng chạy mới xoá object).
- *  - Một bucket riêng tư mỗi máy `deplao-media-<8 ký tự machineId>`; khoá `<workspaceUid>/<đường dẫn trong media/>` (NFC, '/').
- *    workspaceUid + bucket ghi trong app_settings của DB workspace → DB khôi phục ở máy khác vẫn tìm được media.
- *  - Chỉ mục `cloud_media` trong DB của workspace đang mở; workspace nhân viên (remote) không tải lên (máy Boss lo).
- *  - Tắt = không hẹn giờ, không ghi DB, không quét. Không chặn luồng chính (theo lô, nhường vòng lặp).
- *  - Không bao giờ xoá file trên máy khi chưa xác nhận có trên R2 (MediaEvictor), và chỉ khi người dùng bật "giải phóng
- *    ổ đĩa" (evictEnabled — mặc định giữ nguyên file trên máy).
- *  - Phạm vi lưu (options.scope: tài khoản + từ ngày; options.includeShared: file không thuộc tài khoản) THEO WORKSPACE
- *    (app_settings.cloud_media_scope_choice của DB workspace — tài khoản thuộc workspace); các tuỳ chọn khác dùng chung cả
- *    máy. Chỉ file trong phạm vi được đưa vào hàng đợi; đổi phạm vi → quét lại từ đầu, file chờ tải nay ngoài phạm vi →
- *    excluded; file đã lên R2 giữ nguyên và vẫn tải về được.
- *  - Dọn file trên R2 chỉ khi người dùng chạy công cụ dọn (cleanupPreview → cleanupRun, MediaCleanup).
+ * Design (agreed with the user):
+ *  - Media is still written to the machine first; R2 is the long-term copy. messages.local_paths does NOT change. Deleting a message in the app does NOT delete anything
+ *    on R2 (R2 is an archive; only the R2 cleanup tool that the user runs deletes objects).
+ *  - One private bucket per machine `deplao-media-<8 characters of machineId>`; key `<workspaceUid>/<path inside media/>` (NFC, '/').
+ *    workspaceUid + bucket are stored in the app_settings of the workspace DB, so a DB restored on another machine can still find its media.
+ *  - Index `cloud_media` in the DB of the open workspace; an employee workspace (remote) does not upload (the Boss machine handles it).
+ *  - Off = no timer, no DB writes, no scan. Does not block the main flow (in batches, yielding to the event loop).
+ *  - Never deletes a file on the machine unless its presence on R2 is confirmed (MediaEvictor), and only when the user turns on "giải phóng ổ đĩa"
+ *    (free disk space; evictEnabled, off by default: files stay on the machine).
+ *  - Storage scope (options.scope: accounts + from date; options.includeShared: files that belong to no account) PER WORKSPACE
+ *    (app_settings.cloud_media_scope_choice of the workspace DB; the accounts belong to the workspace); the other options are shared by the whole machine.
+ *    Only files in scope are queued; changing the scope → rescan from the start, queued files that are now outside the scope →
+ *    excluded; files already on R2 stay and can still be downloaded.
+ *  - Cleanup on R2 happens only when the user runs the cleanup tool (cleanupPreview → cleanupRun, MediaCleanup).
  *
- * Điểm nối:
- *  - FileStorageService: noteFileWritten(absPath) sau khi lưu media; cleanupOldMedia → evictOldAccountMedia(): R2 nhận
- *    việc "tự xoá media cũ" chỉ khi đang bật + bật giải phóng ổ đĩa + tài khoản trong phạm vi; còn lại dọn như trước.
- *  - local-media:// (electron/main.ts) và /api/media/* (MediaHandler): resolveMissingMediaFile(absPath, { waitMs })
- *    trước khi trả 404.
- *  - electron/main.ts: init() sau khi DB sẵn sàng, shutdown() khi thoát. IPC cloudflare:media:* → các hàm còn lại.
+ * Connection points:
+ *  - FileStorageService: noteFileWritten(absPath) after media is saved; cleanupOldMedia → evictOldAccountMedia(): R2 takes over
+ *    "auto-delete old media" only when it is on + free disk space is on + the account is in scope; otherwise cleanup runs as before.
+ *  - local-media:// (electron/main.ts) and /api/media/* (MediaHandler): resolveMissingMediaFile(absPath, { waitMs })
+ *    before returning a 404.
+ *  - electron/main.ts: init() after the DB is ready, shutdown() on exit. IPC cloudflare:media:* → the remaining functions.
  */
 import * as fs from 'fs';
 import {
@@ -45,15 +45,16 @@ import {
     sameMediaScope, SECOND, unrefTimer, Waker,
 } from './util';
 import { lastWakeOrStartAt, systemIdleInfo } from '../../../utils/startup/systemIdle';
+import { tr } from '../../../shared/i18n';
 
 export interface CloudMediaServiceDeps {
     core(): CloudflareCore;
-    /** SQL trên DB của workspace đang mở; null nếu DB chưa sẵn sàng. */
+    /** SQL on the DB of the open workspace; null if the DB is not ready yet. */
     activeDb(): MediaDb | null;
     activeDbPath(): string;
     /** FileStorageService.getBaseDir() */
     mediaRoot(): string;
-    /** false khi đang mở workspace nhân viên (remote). */
+    /** false when an employee workspace (remote) is open. */
     supportedWorkspace(): boolean;
     now?(): number;
     log?: LogFn;
@@ -61,11 +62,11 @@ export interface CloudMediaServiceDeps {
 
 const NOTIFY_MIN_INTERVAL_MS = 2 * SECOND;
 const TOTALS_TTL_MS = 5 * SECOND;
-/** Bí danh thư mục tài khoản (fb_accounts) đọc lại tối đa mỗi 10 phút. */
+/** Account folder aliases (fb_accounts) re-read at most every 10 minutes. */
 const ALIAS_TTL_MS = 10 * MINUTE;
-/** Phạm vi lưu của workspace (app_settings) đọc lại tối đa mỗi 30 giây (đổi qua setOptions / đổi workspace → đọc ngay). */
+/** Storage scope of the workspace (app_settings) re-read at most every 30 seconds (changed via setOptions / workspace switch → read at once). */
 const SCOPE_TTL_MS = 30 * SECOND;
-/** Sau mỗi ~2 GB / 2000 file tải lên: kiểm tra dọn ổ (nếu bật) thay vì đợi 03:00. */
+/** After every ~2 GB / 2000 uploaded files: check disk cleanup (if on), instead of waiting for 03:00. */
 const EVICT_AFTER_BYTES = 2 * GIB;
 const EVICT_AFTER_FILES = 2000;
 
@@ -76,7 +77,7 @@ function ensureMediaSettings(d: CloudSettingsData): CloudSettingsData['media'] {
     return d.media;
 }
 
-/** Tuỳ chọn dùng chung cả máy (cloud-settings.json) — phạm vi lưu thuộc từng workspace, không ghi ở đây. */
+/** Options shared by the whole machine (cloud-settings.json); the storage scope belongs to each workspace, it is not written here. */
 function machineOptions(o: MediaSyncOptions): MediaSyncOptions {
     const { scope: _scope, includeShared: _shared, ...rest } = o;
     return rest;
@@ -85,7 +86,7 @@ function machineOptions(o: MediaSyncOptions): MediaSyncOptions {
 function describeScope(c: MediaScopeChoice): string {
     const accounts = c.scope.accounts === 'all' ? 'tất cả tài khoản' : `${c.scope.accounts.length} tài khoản`;
     const from = c.scope.fromTs ? `từ ${new Date(c.scope.fromTs).toISOString().slice(0, 10)}` : 'toàn bộ thời gian';
-    return `${accounts}, ${from}, ${c.includeShared ? 'có' : 'không'} file chung`;
+    return `${accounts}, ${from}, ${c.includeShared ? tr('có') : tr('không')} file chung`;
 }
 
 export class CloudMediaService implements CloudMediaModule {
@@ -106,7 +107,7 @@ export class CloudMediaService implements CloudMediaModule {
     private readonly evictor: MediaEvictor;
     private readonly cleanup: MediaCleanup;
     private aliasCache: { ctxId: number; at: number; map: ReadonlyMap<string, string> } | null = null;
-    /** Phạm vi lưu của workspace đang mở (theo đường dẫn DB). */
+    /** Storage scope of the open workspace (by DB path). */
     private scopeCache: { dbPath: string; at: number; choice: MediaScopeChoice } | null = null;
     private dailyTimer: ReturnType<typeof setTimeout> | null = null;
     private evictKickTimer: ReturnType<typeof setTimeout> | null = null;
@@ -158,7 +159,7 @@ export class CloudMediaService implements CloudMediaModule {
             scope,
             now,
             log: this.log,
-            // Quét toàn bộ định kỳ chỉ khi máy rảnh, quét nhẹ chờ sau khi máy thức dậy (MediaScanner.fullScanWait)
+            // The periodic full scan runs only when the machine is idle; the light scan waits after the machine wakes (MediaScanner.fullScanWait)
             idle: () => ({ wakeAt: lastWakeOrStartAt(), info: systemIdleInfo() }),
         });
         this.rehydrator = new MediaRehydrate({
@@ -204,7 +205,7 @@ export class CloudMediaService implements CloudMediaModule {
         return this.started && this.gen === gen;
     }
 
-    /** Kho đang chọn ('r2' mặc định — core giả trong test không có hàm này). */
+    /** Selected store ('r2' by default; a fake core in tests does not have this function). */
     private providerNow(): string {
         try {
             const core = this.deps.core() as Partial<CloudflareCore>;
@@ -214,13 +215,13 @@ export class CloudMediaService implements CloudMediaModule {
         }
     }
 
-    /** Kho đang chọn dùng được không (core giả trong test: theo status().connected). */
+    /** Whether the selected store is usable (fake core in tests: based on status().connected). */
     private storageReadyNow(): { ready: boolean; reason: string | null } {
         try {
             const core = this.deps.core() as Partial<CloudflareCore>;
             if (typeof core.storageReady === 'function') return core.storageReady();
             const conn = core.status?.();
-            return conn?.connected ? { ready: true, reason: null } : { ready: false, reason: 'Mất kết nối Cloudflare' };
+            return conn?.connected ? { ready: true, reason: null } : { ready: false, reason: tr('Mất kết nối Cloudflare') };
         } catch {
             return { ready: false, reason: null };
         }
@@ -267,7 +268,7 @@ export class CloudMediaService implements CloudMediaModule {
             paused: this.paused,
             totals: this.totals(),
             backoffUntil: this.uploader.backoffUntil > now ? this.uploader.backoffUntil : null,
-            // Tuỳ chọn của máy + phạm vi lưu của workspace đang mở
+            // Machine options + the storage scope of the open workspace
             options: this.withWorkspaceScope(this.initDone ? this.opts : normalizeMediaOptions(media?.options)),
             lastError: this.lastError(),
         };
@@ -290,21 +291,21 @@ export class CloudMediaService implements CloudMediaModule {
         }
         if (this.providerNow() === 'gdrive') {
             const ready = this.storageReadyNow();
-            if (!ready.ready) throw new CloudError('NOT_CONNECTED', ready.reason || 'Chưa đăng nhập Google Drive — đăng nhập Google trước khi bật lưu ảnh, file.');
+            if (!ready.ready) throw new CloudError('NOT_CONNECTED', ready.reason || tr('Chưa đăng nhập Google Drive — đăng nhập Google trước khi bật lưu ảnh, file.'));
         } else {
             const conn = core.status();
             if (!conn || !conn.connected) {
-                throw new CloudError('NOT_CONNECTED', 'Chưa kết nối Cloudflare — kết nối tài khoản trước khi bật lưu media lên R2.');
+                throw new CloudError('NOT_CONNECTED', tr('Chưa kết nối Cloudflare — kết nối tài khoản trước khi bật lưu media lên R2.'));
             }
             const r2Check = (conn.permissions || []).find((p) => p.feature === 'r2');
             if (r2Check && !r2Check.ok) {
                 throw r2Check.r2NotEnabled
-                    ? new CloudError('R2_NOT_ENABLED', 'R2 chưa được bật trên tài khoản Cloudflare — bật R2 trong trang quản trị Cloudflare rồi thử lại.')
-                    : new CloudError('R2_PERMISSION', `Token Cloudflare thiếu quyền R2${r2Check.missing && r2Check.missing.length ? ` (${r2Check.missing.join(', ')})` : ''}.`);
+                    ? new CloudError('R2_NOT_ENABLED', tr('R2 chưa được bật trên tài khoản Cloudflare — bật R2 trong trang quản trị Cloudflare rồi thử lại.'))
+                    : new CloudError('R2_PERMISSION', tr('Token Cloudflare thiếu quyền R2{{v1}}.', { v1: r2Check.missing && r2Check.missing.length ? ` (${r2Check.missing.join(', ')})` : '' }));
             }
         }
         const settings = core.settings.get();
-        // Bucket: đã có trong cấu hình máy → bucket mà DB workspace này đã dùng (DB khôi phục) → tạo theo machineId
+        // Bucket: if it is already in the machine config → the bucket this workspace DB already uses (restored DB) → otherwise create one from machineId
         const bucket = settings.media?.bucket || this.pinnedBucket() || mediaBucketName(settings.machineId);
         await core.ensureBucket(bucket);
         const opts = normalizeMediaOptions(settings.media?.options);
@@ -341,11 +342,11 @@ export class CloudMediaService implements CloudMediaModule {
         this.uploader.clearBackoff();
         if (this.enabled && !this.started) this.start();
         if (this.started) {
-            // "Tiếp tục" = thử lại cả các file đã lỗi quá số lần
+            // "Tiếp tục" (Resume) = also retry the files that failed too many times
             try {
                 const ctx = this.ctxMgr.current();
                 if (ctx) ctx.index.unparkFailed();
-            } catch { /* lượt sau */ }
+            } catch { /* next time */ }
         }
         this.uploadWaker.wake();
         this.scanWaker.wake();
@@ -353,21 +354,21 @@ export class CloudMediaService implements CloudMediaModule {
     }
 
     /**
-     * scope / includeShared: phạm vi của workspace đang mở (ghi vào app_settings của DB workspace — tài khoản thuộc
-     * workspace). Các tuỳ chọn khác (song song, ban đêm, băng thông, giải phóng ổ đĩa) dùng chung cả máy (cloud-settings).
+     * scope / includeShared: the scope of the open workspace (written to the app_settings of the workspace DB; accounts belong to the
+     * workspace). The other options (parallel, night, bandwidth, free disk space) are shared by the whole machine (cloud-settings).
      */
     async setOptions(partial: Partial<MediaSyncOptions>): Promise<MediaSyncStatus> {
-        // Trước init(): this.opts còn là mặc định → gộp vào tuỳ chọn đã lưu, không ghi đè bằng mặc định
+        // Before init(): this.opts is still the default → merge into the saved options, do not overwrite them with the defaults
         const base = this.initDone ? this.opts : normalizeMediaOptions(this.settingsMedia()?.options);
-        // Trường không gửi / undefined giữ giá trị cũ (không vô tình đặt lại phạm vi về "tất cả")
+        // A field not sent / undefined keeps its old value (does not accidentally reset the scope to "tất cả" (all))
         const patch: Partial<MediaSyncOptions> = {};
         if (partial && typeof partial === 'object') {
             for (const [k, v] of Object.entries(partial)) if (v !== undefined) (patch as Record<string, unknown>)[k] = v;
         }
         const { scope: scopePatch, includeShared: sharedPatch, ...machinePatch } = patch;
 
-        // 1. Phạm vi của workspace (ghi trước: lỗi thì không đổi gì). Gửi lại đúng phạm vi đang có (giao diện gửi cả bộ
-        //    tuỳ chọn) → không ghi gì, kể cả ở workspace nhân viên.
+        // 1. The workspace scope (written first: on error nothing changes). Send back the scope currently in place (the UI sends the whole set
+        //    of options) → nothing is written, including in an employee workspace.
         let scopeChanged = false;
         if (scopePatch !== undefined || sharedPatch !== undefined) {
             const current = this.workspaceScope();
@@ -384,7 +385,7 @@ export class CloudMediaService implements CloudMediaModule {
             }
         }
 
-        // 2. Tuỳ chọn của máy
+        // 2. Machine options
         const next = normalizeMediaOptions({ ...base, ...machinePatch });
         this.deps.core().settings.update((d) => { ensureMediaSettings(d).options = machineOptions(next); });
         const evictTurnedOn = next.evictEnabled && !base.evictEnabled;
@@ -395,7 +396,7 @@ export class CloudMediaService implements CloudMediaModule {
         }
         if (this.started) {
             if (evictTurnedOn) this.kickEvict(MINUTE);
-            // Phạm vi mới: lượt quét đang chạy dừng, rà lại chỉ mục rồi quét lại từ đầu (file đã lên R2 giữ nguyên)
+            // New scope: the running scan stops, the index is re-checked and scanned again from the start (files already on R2 are kept)
             if (scopeChanged) {
                 this.scanner.scopeChanged();
                 this.scanWaker.wake();
@@ -406,9 +407,9 @@ export class CloudMediaService implements CloudMediaModule {
         return this.status();
     }
 
-    /** Bắt đầu tải lại (nền) mọi file đã dọn khỏi máy; trả về ngay — tiến độ xem qua status().totals.evicted. */
+    /** Starts re-downloading (in the background) every file cleaned off the machine; returns at once: progress is shown via status().totals.evicted. */
     async rehydrateAll(): Promise<void> {
-        if (!this.started) throw new CloudError('MEDIA_DISABLED', `Bật lưu media lên ${this.storeName()} trước khi tải lại các file đã dọn.`);
+        if (!this.started) throw new CloudError('MEDIA_DISABLED', tr('Bật lưu media lên {{v1}} trước khi tải lại các file đã dọn.', { v1: this.storeName() }));
         if (this.fatal) throw new CloudError('MEDIA_BLOCKED', this.fatal.message);
         const gen = this.gen;
         this.notice = null;
@@ -420,12 +421,12 @@ export class CloudMediaService implements CloudMediaModule {
 
     noteFileWritten(absPath: string): void {
         if (!this.started || !absPath) return;
-        try { this.scanner.note(absPath); } catch { /* không bao giờ ảnh hưởng nơi lưu file */ }
+        try { this.scanner.note(absPath); } catch { /* never affects where files are stored */ }
     }
 
     /**
-     * waitMs: chờ tối đa bấy nhiêu (kẹp 0…120 s, mặc định 60 s) rồi trả null — việc tải vẫn chạy tiếp ở nền, lần mở sau
-     * có file ngay (hoặc nhập vào cùng lượt tải).
+     * waitMs: waits up to this long (clamped to 0…120 s, default 60 s), then returns null: the download keeps running in the background, so the next
+     * time the file is there at once (or it joins the same download).
      */
     async resolveMissingMediaFile(absPath: string, opts?: { waitMs?: number }): Promise<string | null> {
         if (!this.started || this.fatal || !absPath) return null;
@@ -436,14 +437,14 @@ export class CloudMediaService implements CloudMediaModule {
         }
     }
 
-    /** Dọn R2 bước 1: quét (theo lô, không chặn luồng chính), nhớ danh sách 15 phút. Không xoá gì. */
+    /** R2 cleanup step 1: scan (in batches, does not block the main thread), remember the list for 15 minutes. Deletes nothing. */
     async cleanupPreview(req: R2CleanupRequest, onProgress?: (p: R2CleanupProgress) => void): Promise<R2CleanupPreview> {
         this.assertCleanupReady();
         const gen = this.gen;
         return this.cleanup.preview(req, () => this.isGen(gen), onProgress);
     }
 
-    /** Dọn R2 bước 2: xoá đúng danh sách đã xem; dòng chỉ mục → 'removed' (không tự tải lên lại). */
+    /** R2 cleanup step 2: delete exactly the list that was reviewed; index rows → 'removed' (not uploaded again automatically). */
     async cleanupRun(previewId: string, onProgress?: (p: R2CleanupProgress) => void): Promise<R2CleanupResult> {
         this.assertCleanupReady();
         const gen = this.gen;
@@ -456,7 +457,7 @@ export class CloudMediaService implements CloudMediaModule {
     }
 
     private assertCleanupReady(): void {
-        if (!this.started) throw new CloudError('MEDIA_DISABLED', `Bật lưu media lên ${this.storeName()} trước khi dọn file trên ${this.storeName()}.`);
+        if (!this.started) throw new CloudError('MEDIA_DISABLED', tr('Bật lưu media lên {{v1}} trước khi dọn file trên {{v1}}.', { v1: this.storeName() }));
         if (this.fatal) throw new CloudError('MEDIA_BLOCKED', this.fatal.message);
     }
 
@@ -464,12 +465,12 @@ export class CloudMediaService implements CloudMediaModule {
         this.stop();
     }
 
-    // ─── Ngoài hợp đồng: thay "tự xoá media cũ" của từng tài khoản ─────
+    // ─── Outside the contract: replaces the per-account "tự xoá media cũ" (auto-delete old media) ─────
 
     /**
-     * R2 có nhận việc "tự xoá media cũ sau N ngày" của tài khoản này không: chỉ khi lưu media lên R2 đang bật, người
-     * dùng bật "giải phóng ổ đĩa" (evictEnabled) và tài khoản trong phạm vi lưu. Còn lại (tắt R2, giữ file trên máy — mặc
-     * định, tài khoản ngoài phạm vi, workspace nhân viên) → cài đặt cũ chạy y như trước khi có R2.
+     * Whether R2 takes over the "tự xoá media cũ sau N ngày" (auto-delete old media after N days) of this account: only when media storage on R2 is on, the user
+     * turns on "giải phóng ổ đĩa" (free disk space; evictEnabled) and the account is in the storage scope. Otherwise (R2 off, files kept on the machine (the default),
+     * account outside the scope, employee workspace) → the old setting runs exactly as before R2 existed.
      */
     handlesAccountCleanup(accountDir: string): boolean {
         let on = this.started;
@@ -485,17 +486,17 @@ export class CloudMediaService implements CloudMediaModule {
         } catch {
             return false;
         }
-        // Tài khoản ngoài phạm vi lưu của workspace: R2 không giữ file của nó → cài đặt cũ chạy như trước
+        // Account outside the workspace's storage scope: R2 does not keep its files → the old setting runs as before
         return scopeIncludesAccount(this.workspaceScope().scope, String(accountDir || ''));
     }
 
     /**
-     * Gọi từ FileStorageService.cleanupOldMedia. true = R2 đã nhận việc (handlesAccountCleanup; chạy nền, chỉ dọn file đã
-     * xác minh trên R2) → nơi gọi KHÔNG được xoá thư mục như cũ. false → nơi gọi dọn như trước.
+     * Called from FileStorageService.cleanupOldMedia. true = R2 has taken the job (handlesAccountCleanup; runs in the background, only cleans files
+     * verified on R2) → the caller must NOT delete the folder as before. false → the caller cleans as before.
      */
     evictOldAccountMedia(accountDir: string, olderThanDays: number): boolean {
         if (!this.handlesAccountCleanup(accountDir)) return false;
-        // Đã bật nhưng chưa khởi động xong: lần này bỏ qua (không xoá file chưa sao lưu)
+        // Turned on but not fully started yet: skip this time (do not delete files that are not backed up)
         if (!this.started) return true;
         const name = String(accountDir || '');
         if (!name || /[\\/]/.test(name) || name === '.' || name === '..' || !(olderThanDays > 0)) return true;
@@ -516,7 +517,7 @@ export class CloudMediaService implements CloudMediaModule {
         return true;
     }
 
-    // ─── Nội bộ ────────────────────────────────────────────────────────
+    // ─── Internal ────────────────────────────────────────────────────────
 
     private start(): void {
         if (this.started) return;
@@ -544,7 +545,7 @@ export class CloudMediaService implements CloudMediaModule {
         this.dailyTimer = null;
         this.evictKickTimer = null;
         this.notifyTimer = null;
-        try { this.unsubscribe?.(); } catch { /* bỏ qua */ }
+        try { this.unsubscribe?.(); } catch { /* ignore */ }
         this.unsubscribe = null;
         this.scanner.reset();
         this.rehydrator.reset();
@@ -554,7 +555,7 @@ export class CloudMediaService implements CloudMediaModule {
         this.aliasCache = null;
         this.scopeCache = null;
         this.sinceEvict = { bytes: 0, files: 0 };
-        // Đánh thức để các vòng lặp thấy đã dừng và thoát ngay
+        // Wake the loops so they see it has stopped and exit at once
         this.uploadWaker.wake();
         this.scanWaker.wake();
     }
@@ -562,23 +563,23 @@ export class CloudMediaService implements CloudMediaModule {
     private onContextChanged(): void {
         this.totalsCache = null;
         this.aliasCache = null;
-        // Đổi workspace / DB bị thay: đọc lại phạm vi của workspace mới (lượt quét sau áp phạm vi đó)
+        // Workspace / DB replaced: read the new workspace's scope again (the scan after this applies that scope)
         this.scopeCache = null;
         this.rehydrator.reset();
     }
 
-    // ─── Phạm vi lưu theo workspace ────────────────────────────────────
+    // ─── Storage scope per workspace ────────────────────────────────────
 
-    /** Phạm vi lưu đang áp cho context này; null = không giới hạn (tất cả tài khoản, toàn bộ thời gian, có file chung). */
+    /** Storage scope in effect for this context; null = no limit (all accounts, all time, including shared files). */
     private scopeFilter(ctx: MediaContext): MediaScopeFilter | null {
         const choice = this.scopeChoiceOf(ctx.dbPath, () => ctx.index);
         if (choice.includeShared && isAllScope(choice.scope)) return null;
-        // Bí danh thư mục chỉ cần khi chọn một số tài khoản
+        // Folder aliases are only needed when some accounts are selected
         const aliases = choice.scope.accounts !== 'all' ? this.aliasesFor(ctx) : null;
         return { scope: choice.scope, includeShared: choice.includeShared, aliases };
     }
 
-    /** Phạm vi đã chọn của workspace có DB dbPath (app_settings; nhớ ≤ 30 s). Đọc lỗi → tất cả. */
+    /** Selected scope of the workspace whose DB is dbPath (app_settings; remembered ≤ 30 s). A read error → all. */
     private scopeChoiceOf(dbPath: string, index: () => CloudMediaIndex | null): MediaScopeChoice {
         if (!dbPath) return ALL_MEDIA_SCOPE;
         const now = this.now();
@@ -595,7 +596,7 @@ export class CloudMediaService implements CloudMediaModule {
         return choice;
     }
 
-    /** Phạm vi lưu của workspace đang mở (workspace nhân viên / chưa có DB → tất cả). */
+    /** Storage scope of the open workspace (employee workspace / no DB yet → all). */
     private workspaceScope(): MediaScopeChoice {
         try {
             if (!this.deps.supportedWorkspace()) return ALL_MEDIA_SCOPE;
@@ -609,26 +610,26 @@ export class CloudMediaService implements CloudMediaModule {
         }
     }
 
-    /** Nơi ghi phạm vi: DB của workspace đang mở (không phải workspace nhân viên). */
+    /** Where the scope is written: the DB of the open workspace (not an employee workspace). */
     private scopeTarget(): { dbPath: string; index: CloudMediaIndex } {
         let supported = true;
         try { supported = this.deps.supportedWorkspace(); } catch { supported = true; }
         if (!supported) {
-            throw new CloudError('REMOTE_WORKSPACE', 'Đang mở workspace nhân viên — media do máy Boss lưu lên R2, không đặt phạm vi ở máy này.');
+            throw new CloudError('REMOTE_WORKSPACE', tr('Đang mở workspace nhân viên — media do máy Boss lưu lên R2, không đặt phạm vi ở máy này.'));
         }
         const dbPath = this.deps.activeDbPath();
         const db = dbPath ? this.deps.activeDb() : null;
-        if (!dbPath || !db) throw new CloudError('NO_DB', 'Chưa mở được dữ liệu của workspace — thử lại sau ít giây.');
+        if (!dbPath || !db) throw new CloudError('NO_DB', tr('Chưa mở được dữ liệu của workspace — thử lại sau ít giây.'));
         return { dbPath, index: new CloudMediaIndex(db) };
     }
 
-    /** Tuỳ chọn của máy + phạm vi lưu của workspace đang mở (bản sao, không dùng chung mảng tài khoản). */
+    /** Machine options + the storage scope of the open workspace (a copy; does not share the accounts array). */
     private withWorkspaceScope(o: MediaSyncOptions): MediaSyncOptions {
         const choice = this.workspaceScope();
         return cloneMediaOptions({ ...o, scope: choice.scope, includeShared: choice.includeShared });
     }
 
-    /** Thư mục Facebook đặt theo fb_accounts.id → facebook_id (đọc DB tối đa mỗi 10 phút / context). */
+    /** Facebook folders named by fb_accounts.id → facebook_id (reads the DB at most every 10 minutes / context). */
     private aliasesFor(ctx: MediaContext): ReadonlyMap<string, string> {
         const now = this.now();
         const cached = this.aliasCache;
@@ -649,18 +650,18 @@ export class CloudMediaService implements CloudMediaModule {
             if (!ready.ready) {
                 if (!this.fatal) {
                     this.fatal = this.providerNow() === 'gdrive'
-                        ? { kind: 'connection', message: `${(ready.reason || 'Mất đăng nhập Google Drive').replace(/[.\s]+$/, '')} — lưu ảnh, file lên Google Drive tạm dừng.` }
-                        : { kind: 'connection', message: 'Mất kết nối Cloudflare — lưu media lên R2 tạm dừng.' };
+                        ? { kind: 'connection', message: tr('{{v1}} — lưu ảnh, file lên Google Drive tạm dừng.', { v1: (ready.reason || 'Mất đăng nhập Google Drive').replace(/[.\s]+$/, '') }) }
+                        : { kind: 'connection', message: tr('Mất kết nối Cloudflare — lưu media lên R2 tạm dừng.') };
                 }
             } else if (this.fatal) {
-                // Kết nối lại / token mới → thử lại
+                // Reconnected / new token → retry
                 this.fatal = null;
                 this.uploader.clearBackoff();
                 this.uploadWaker.wake();
                 this.scanWaker.wake();
             }
             this.notify(true);
-        } catch { /* bỏ qua */ }
+        } catch { /* ignore */ }
     }
 
     private onFatal(kind: 'auth' | 'bucket', message: string): void {
@@ -699,7 +700,7 @@ export class CloudMediaService implements CloudMediaModule {
         }
     }
 
-    /** Mỗi ngày ~03:00 (+ ngẫu nhiên ≤ 10 phút): thử lại file lỗi, dọn ổ nếu bật. Chỉ hẹn khi đang chạy. */
+    /** Daily at ~03:00 (+ a random ≤ 10 minutes): retry failed files, clean the disk if on. Only scheduled while running. */
     private scheduleDaily(): void {
         if (this.dailyTimer) { clearTimeout(this.dailyTimer); this.dailyTimer = null; }
         if (!this.started) return;
@@ -718,7 +719,7 @@ export class CloudMediaService implements CloudMediaModule {
         try {
             const ctx = await this.ctxMgr.get();
             if (ctx && this.isGen(gen) && this.ctxMgr.isValid(ctx) && ctx.index.unparkFailed() > 0) this.uploadWaker.wake();
-        } catch { /* lần sau */ }
+        } catch { /* next time */ }
         if (this.opts.evictEnabled && this.isGen(gen)) await this.runSpaceEviction(gen);
     }
 
@@ -740,7 +741,7 @@ export class CloudMediaService implements CloudMediaModule {
 
     private emitChanged(): void {
         this.lastNotifyAt = Date.now();
-        try { this.deps.core().notifyChanged('media'); } catch { /* core chưa sẵn sàng */ }
+        try { this.deps.core().notifyChanged('media'); } catch { /* core not ready yet */ }
     }
 
     private lastError(): string | null {
@@ -748,18 +749,18 @@ export class CloudMediaService implements CloudMediaModule {
         if (this.notice) return this.notice;
         if (this.uploader.transientError) return this.uploader.transientError;
         if (this.started) {
-            if (this.ctxMgr.blocked === 'remote_workspace') return `Đang mở workspace nhân viên — media do máy Boss lưu lên ${this.storeName()}, máy này không tải lên.`;
-            if (this.ctxMgr.blocked === 'no_bucket') return `Chưa có nơi lưu media trên ${this.storeName()} — tắt rồi bật lại đồng bộ ảnh, file.`;
+            if (this.ctxMgr.blocked === 'remote_workspace') return tr('Đang mở workspace nhân viên — media do máy Boss lưu lên {{v1}}, máy này không tải lên.', { v1: this.storeName() });
+            if (this.ctxMgr.blocked === 'no_bucket') return tr('Chưa có nơi lưu media trên {{v1}} — tắt rồi bật lại đồng bộ ảnh, file.', { v1: this.storeName() });
             if (this.ctxMgr.blocked === 'store_mismatch') {
                 const m = this.ctxMgr.mismatch;
                 const from = m?.from === 'gdrive' ? 'Google Drive' : 'R2';
-                return `Workspace này còn ${m?.evicted ?? 0} file chỉ nằm trên ${from} (đã dọn khỏi máy) — chọn lại kho ${from}, tải hết về máy (Nâng cao → Tải lại toàn bộ file đã dọn) rồi mới đổi kho.`;
+                return tr('Workspace này còn {{v1}} file chỉ nằm trên {{from}} (đã dọn khỏi máy) — chọn lại kho {{from}}, tải hết về máy (Nâng cao → Tải lại toàn bộ file đã dọn) rồi mới đổi kho.', { v1: m?.evicted ?? 0, from });
             }
         }
         return null;
     }
 
-    /** Bucket mà DB workspace đang mở đã dùng (chỉ đọc). */
+    /** The bucket the open workspace's DB already uses (read only). */
     private pinnedBucket(): string | null {
         try {
             if (!this.deps.supportedWorkspace()) return null;
@@ -770,7 +771,7 @@ export class CloudMediaService implements CloudMediaModule {
         }
     }
 
-    /** Tổng hợp từ chỉ mục (chỉ đọc; cache ≤ 5 s). Đọc được cả khi đang tắt (nếu bảng có). */
+    /** Totals from the index (read only; cache ≤ 5 s). Can be read even when off (if the table exists). */
     private totals(): MediaTotals {
         try {
             const dbPath = this.deps.activeDbPath();
@@ -790,7 +791,7 @@ export class CloudMediaService implements CloudMediaModule {
     }
 }
 
-// ─── Kết nối thật (require lười: nạp module này không kéo Electron / DB / Cloudflare core vào) ───
+// ─── Real connection (lazy require: loading this module does not pull Electron / DB / the Cloudflare core in) ───
 
 function dbService(): any {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -837,7 +838,7 @@ export function createDefaultDeps(): CloudMediaServiceDeps {
                 // eslint-disable-next-line @typescript-eslint/no-var-requires
                 const logger = require('../../../utils/Logger').default;
                 (logger[level] || logger.log).call(logger, message);
-            } catch { /* bỏ qua */ }
+            } catch { /* ignore */ }
         },
     };
 }
@@ -845,8 +846,8 @@ export function createDefaultDeps(): CloudMediaServiceDeps {
 export const cloudMedia = new CloudMediaService(createDefaultDeps());
 
 /**
- * FileStorageService.cleanupOldMedia: true = đồng bộ media R2 đang bật và đã nhận việc (chỉ dọn file đã có trên R2, chạy
- * nền) → nơi gọi không xoá thư mục như cũ. false = tắt → dọn như trước.
+ * FileStorageService.cleanupOldMedia: true = media sync to R2 is on and has taken the job (only cleans files already on R2, runs in the
+ * background) → the caller does not delete the folder as before. false = off → cleans as before.
  */
 export function evictOldAccountMedia(accountDir: string, olderThanDays: number): boolean {
     try {
@@ -857,8 +858,8 @@ export function evictOldAccountMedia(accountDir: string, olderThanDays: number):
 }
 
 /**
- * Lưu media R2 có nhận việc "tự xoá media cũ" của tài khoản này không (đang bật + bật giải phóng ổ đĩa + tài khoản trong
- * phạm vi) — để màn cài đặt tài khoản báo đúng điều sẽ xảy ra. false → cài đặt cũ chạy như trước khi có R2.
+ * Whether media saved on R2 takes over the "tự xoá media cũ" (auto-delete old media) of this account (on + free disk space on + account in scope), so the account
+ * settings screen reports what will really happen. false → the old setting runs as before R2 existed.
  */
 export function handlesAccountMediaCleanup(accountDir: string): boolean {
     try {

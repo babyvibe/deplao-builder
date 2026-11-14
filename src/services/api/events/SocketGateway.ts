@@ -1,6 +1,6 @@
 /**
- * SocketGateway — namespace Socket.IO `/v1` cho app ngoài & plugin (tách khỏi namespace gốc
- * của nhân viên, không đụng logic employee).
+ * SocketGateway: Socket.IO namespace `/v1` for external apps & plugins (separate from the root namespace
+ * used by employees, does not touch employee logic).
  *
  *   const s = io('http://127.0.0.1:9900/v1', { auth: { apiKey: 'dpk_...' } });
  *   s.on('hello', ({ seq_now }) => s.emit('subscribe', { types: ['message.*'], since: lastSeq ?? seq_now }));
@@ -93,7 +93,7 @@ export class SocketGateway {
                 const accountIds: string[] | null = Array.isArray(opts?.account_ids) ? opts.account_ids.map(String).slice(0, 200) : null;
                 const filter = { principal, types, accountIds };
 
-                // Đăng ký trước, giữ event mới trong hàng chờ cho tới khi phát lại xong → không hụt.
+                // Register first, hold new events in a queue until the replay finishes → nothing is missed.
                 let replaying = true;
                 const pending: ApiEvent[] = [];
                 let lastReplayed = Number(opts?.since) || 0;

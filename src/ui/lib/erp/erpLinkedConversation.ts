@@ -1,6 +1,6 @@
 /**
- * Lịch Quản lý công việc gắn với hội thoại ("Thêm vào lịch" từ tin nhắn): mở đúng hội thoại (đổi tài khoản, báo đã đọc
- * như bấm thông báo) rồi nhảy tới tin đã thêm vào lịch. Dùng ở popup nhắc lịch (App.tsx) và chi tiết lịch (CalendarPage).
+ * ERP calendar linked to a conversation ("Thêm vào lịch" from a message): opens the right conversation (switches account, marks it read
+ * like clicking the notification), then jumps to the message added to the calendar. Used in the reminder popup (App.tsx) and the calendar detail (CalendarPage).
  */
 import ipc from '@/lib/ipc';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -19,7 +19,7 @@ export function openLinkedConversation(event: LinkedEvent): void {
   const contact = (useChatStore.getState().contacts[accountId] || []).find(c => c.contact_id === threadId);
   ipc.app?.openThread({ zaloId: accountId, threadId, threadType: contact?.contact_type === 'group' ? 1 : 0 });
   if (event.linked_msg_id) {
-    // ChatWindow chờ hội thoại tải xong mới nhảy (pendingJumpRef)
+    // ChatWindow waits for the conversation to finish loading before jumping (pendingJumpRef)
     window.dispatchEvent(new CustomEvent('chat:jumpToMessage', {
       detail: { accountId, threadId, messageId: String(event.linked_msg_id) },
     }));

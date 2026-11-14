@@ -7,6 +7,8 @@ import { useAppStore } from '@/store/app/appStore';
 import { PollDetailView as SharedPollDetailView } from '../polls/PollView';
 import { Spinner } from '@/components/common/PageLoading';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 const EMPTY_BOARD_LIST: any[] = [];
@@ -50,8 +52,8 @@ function formatTime(ts: number): string {
   const d = new Date(ts);
   const now = new Date();
   const isToday = d.toDateString() === now.toDateString();
-  const hm = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-  return isToday ? `Hôm nay lúc ${hm}` : d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ` lúc ${hm}`;
+  const hm = d.toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' });
+  return isToday ? tr('Hôm nay lúc {{hm}}', { hm }) : tr('{{v1}} lúc {{hm}}', { v1: (d.toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' })), hm });
 }
 
 function parsePoll(msg: any): BoardItem['poll'] | null {
@@ -75,9 +77,9 @@ function parsePoll(msg: any): BoardItem['poll'] | null {
 }
 
 function renderPinPreview(pin: PinnedMsg): string {
-  if (pin.preview_image) return '[Hình ảnh]';
+  if (pin.preview_image) return tr('[Hình ảnh]');
   const t = pin.msg_type || '';
-  if (t === 'photo' || t === 'image') return '[Hình ảnh]';
+  if (t === 'photo' || t === 'image') return tr('[Hình ảnh]');
   if (t.includes('video')) return '[Video]';
   if (t.includes('file') || t === 'share.file') return '[File]';
   if (t === 'sticker') return '[Sticker]';
@@ -86,7 +88,7 @@ function renderPinPreview(pin: PinnedMsg): string {
     if (p?.msg) return String(p.msg);
     if (p?.title) return String(p.title);
   } catch {}
-  return pin.content?.slice(0, 100) || '[Tin nhắn]';
+  return pin.content?.slice(0, 100) || tr('[Tin nhắn]');
 }
 
 // ─── Main Component ──────────────────────────────────────────────────────────
@@ -191,11 +193,11 @@ export default function GroupBoardPanel({
             <polyline points="15 18 9 12 15 6"/>
           </svg>
         </button>
-        <span className="flex-1 font-semibold text-foreground text-base">Bảng tin nhóm</span>
+        <span className="flex-1 font-semibold text-foreground text-base">{tr('Bảng tin nhóm')}</span>
         <button
           onClick={onCreateNote}
           className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          title="Tạo ghi chú"
+          title={tr('Tạo ghi chú')}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <line x1="12" y1="5" x2="12" y2="19"/>
@@ -207,7 +209,7 @@ export default function GroupBoardPanel({
       {/* Tabs */}
       <div className="flex border-b border-border bg-card flex-shrink-0">
         {(['all', 'pin', 'note', 'poll'] as Tab[]).map(key => {
-          const label = key === 'all' ? 'Tất cả' : key === 'pin' ? 'Tin ghim' : key === 'note' ? 'Ghi chú' : 'Bình chọn';
+          const label = key === 'all' ? tr('Tất cả') : key === 'pin' ? 'Tin ghim' : key === 'note' ? tr('Ghi chú') : tr('Bình chọn');
           return (
             <button
               key={key}
@@ -242,7 +244,7 @@ export default function GroupBoardPanel({
               <line x1="9" y1="9" x2="15" y2="9"/>
               <line x1="9" y1="13" x2="13" y2="13"/>
             </svg>
-            <p className="text-sm">Chưa có nội dung</p>
+            <p className="text-sm">{tr('Chưa có nội dung')}</p>
           </div>
         ) : (
           <div className="p-3 space-y-3">
@@ -302,13 +304,13 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-foreground truncate">{note.creatorName || 'Thành viên'}</p>
+            <p className="text-sm font-semibold text-foreground truncate">{note.creatorName || tr('Thành viên')}</p>
             <div className="flex items-center gap-1">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
                 <polyline points="14 2 14 8 20 8"/>
               </svg>
-              <span className="text-[11px] text-orange-400 font-medium">Ghi chú</span>
+              <span className="text-[11px] text-orange-400 font-medium">{tr('Ghi chú')}</span>
             </div>
           </div>
         </div>
@@ -321,7 +323,7 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
             onClick={e => { e.stopPropagation(); onNoteClick?.(note); }}
             className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors"
           >
-            Xem ghi chú
+            {tr('Xem ghi chú')}
           </button>
         </div>
       </div>
@@ -340,12 +342,12 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
             </svg>
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-foreground truncate">{pin.sender_name || 'Thành viên'}</p>
+            <p className="text-sm font-semibold text-foreground truncate">{pin.sender_name || tr('Thành viên')}</p>
             <div className="flex items-center gap-1">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" strokeWidth="2">
                 <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
               </svg>
-              <span className="text-[11px] text-blue-400 font-medium">Tin nhắn</span>
+              <span className="text-[11px] text-blue-400 font-medium">{tr('Tin nhắn')}</span>
             </div>
           </div>
         </div>
@@ -375,7 +377,7 @@ function BoardCard({ item, onNoteClick, onScrollToMsg, zaloId, threadId }: {
             }}
             className="text-xs text-blue-400 hover:text-blue-300 disabled:text-subtle-foreground font-semibold transition-colors"
           >
-            {opening ? 'Đang tải...' : 'Xem tin nhắn'}
+            {opening ? tr('Đang tải...') : tr('Xem tin nhắn')}
           </button>
         </div>
       </div>
@@ -391,11 +393,11 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
   const [detail, setDetail] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  // Fallback ngoài selector: `|| []` trong selector tạo mảng mới mỗi lần → zustand 5 render lặp
+  // Fallback outside the selector: `|| []` inside a selector creates a new array every time → zustand 5 re-renders in a loop
   const contacts = useChatStore(s => s.contacts[zaloId]) ?? EMPTY_BOARD_LIST;
   const groupMembers: any[] = useAppStore(s => s.groupInfoCache?.[zaloId]?.[threadId]?.members) ?? EMPTY_BOARD_LIST;
 
-  // Merge contacts + group members → đủ thông tin voter
+  // Merge contacts + group members → enough info to identify voters
   const allContacts = React.useMemo(() => {
     const map = new Map<string, any>();
     contacts.forEach((c: any) => map.set(String(c.contact_id), c));
@@ -459,17 +461,17 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
           }
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-foreground truncate">{creatorName || 'Thành viên'}</p>
+          <p className="text-sm font-semibold text-foreground truncate">{creatorName || tr('Thành viên')}</p>
           <div className="flex items-center gap-1">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
               <line x1="8" y1="9" x2="16" y2="9"/>
             </svg>
-            <span className="text-[11px] text-green-400 font-medium">Bình chọn</span>
-            {isAnon && <span className="text-[11px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-1">Ẩn danh</span>}
+            <span className="text-[11px] text-green-400 font-medium">{tr('Bình chọn')}</span>
+            {isAnon && <span className="text-[11px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-1">{tr('Ẩn danh')}</span>}
             {(isClosed || isExpired) && (
               <span className="text-[11px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-1">
-                {isClosed ? 'Đã khoá' : 'Hết hạn'}
+                {isClosed ? tr('Đã khoá') : tr('Hết hạn')}
               </span>
             )}
           </div>
@@ -479,8 +481,8 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
       {/* Question */}
       <div className="px-4 pb-2">
         <p className="text-sm font-bold text-foreground">{poll.question}</p>
-        {allowMulti && <p className="text-xs text-muted-foreground mt-0.5">Chọn nhiều phương án</p>}
-        {totalVotes > 0 && <p className="text-xs text-blue-400 font-semibold mt-0.5">{totalVotes} lượt bình chọn</p>}
+        {allowMulti && <p className="text-xs text-muted-foreground mt-0.5">{tr('Chọn nhiều phương án')}</p>}
+        {totalVotes > 0 && <p className="text-xs text-blue-400 font-semibold mt-0.5">{trx('{{totalVotes}} lượt bình chọn', { totalVotes })}</p>}
       </div>
 
       {/* Expanded detail - shared component */}
@@ -502,7 +504,7 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
             showAddOption={true}
           />
         ) : (
-          <p className="text-xs text-muted-foreground py-2 text-center px-4">Không có dữ liệu</p>
+          <p className="text-xs text-muted-foreground py-2 text-center px-4">{tr('Không có dữ liệu')}</p>
         )
       )}
 
@@ -520,7 +522,7 @@ function PollBoardCard({ poll, zaloId, threadId }: { poll: NonNullable<BoardItem
               <polyline points={expanded ? '18 15 12 9 6 15' : '6 9 12 15 18 9'}/>
             </svg>
           )}
-          {expanded ? 'Thu gọn' : 'Xem bình chọn'}
+          {expanded ? tr('Thu gọn') : tr('Xem bình chọn')}
         </button>
       </div>
     </div>

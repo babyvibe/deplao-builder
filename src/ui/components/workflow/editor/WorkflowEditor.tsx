@@ -25,15 +25,17 @@ import DataAccessor from '@/lib/data/DataAccessor';;
 import { useAppStore } from '@/store/app/appStore';
 import PageLoading from '../../common/PageLoading';
 import { SearchIcon, SmartphoneIcon, PlayIcon, SparklesIcon, LayoutIcon, UndoIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // Use node types from registry (centralized node component mapping)
 const nodeTypes = reactFlowNodeTypes;
 
 /** Auto layout: nodes glide for this long (`.wf-canvas--animating` in index.css). */
 const LAYOUT_ANIMATION_MS = 400;
-/** How long the "Hoàn tác" button stays after an auto layout. */
+/** How long the "Hoàn tác" (Undo) button stays after an auto layout. */
 const LAYOUT_UNDO_MS = 10_000;
-/** How long "Hoàn tác AI" stays after applying an AI copilot proposal. */
+/** How long "Hoàn tác AI" (Undo AI) stays after applying an AI copilot proposal. */
 const AI_UNDO_MS = 30_000;
 
 /** Saved / generated edge → React Flow edge (Telegram inline-button routes are dashed). */
@@ -74,7 +76,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [selectedFriend, setSelectedFriend] = useState<{ userId: string; displayName: string } | null>(null);
   const [search, setSearch] = useState('');
-  const [testContent, setTestContent] = useState('Xin chào, đây là tin nhắn thử nghiệm từ workflow');
+  const [testContent, setTestContent] = useState(tr('Xin chào, đây là tin nhắn thử nghiệm từ workflow'));
 
   // Filter accounts: only show accounts in workflow's pageIds (or all if none set)
   const availableAccounts = workflowPageIds.length > 0
@@ -139,8 +141,8 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
         {/* Header */}
         <div className="px-5 py-4 border-b border-border flex items-center justify-between flex-shrink-0">
           <div>
-            <p className="text-foreground font-semibold text-sm flex items-center gap-2"><PlayIcon className="w-4 h-4" /> Chạy thử Workflow</p>
-            <p className="text-muted-foreground text-[11px] mt-0.5">{isFriendRequest ? 'Chọn người để mô phỏng lời mời kết bạn' : 'Chọn người nhận để gửi tin nhắn thử nghiệm'}</p>
+            <p className="text-foreground font-semibold text-sm flex items-center gap-2">{trx('<0/> Chạy thử Workflow', { 0: <PlayIcon className="w-4 h-4" /> })}</p>
+            <p className="text-muted-foreground text-[11px] mt-0.5">{isFriendRequest ? tr('Chọn người để mô phỏng lời mời kết bạn') : tr('Chọn người nhận để gửi tin nhắn thử nghiệm')}</p>
           </div>
           <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -153,7 +155,7 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
           {/* Account selector */}
           {availableAccounts.length > 1 && (
             <div>
-              <label className="text-muted-foreground text-xs font-medium mb-1.5 block">Tài khoản gửi</label>
+              <label className="text-muted-foreground text-xs font-medium mb-1.5 block">{tr('Tài khoản gửi')}</label>
               <div className="space-y-1.5">
                 {availableAccounts.map(acc => (
                   <button key={acc.zalo_id} type="button"
@@ -182,13 +184,13 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
           {/* Test message content */}
           {!isFriendRequest && (
           <div>
-            <label className="text-muted-foreground text-xs font-medium mb-1.5 block">Nội dung tin nhắn thử ($trigger.content)</label>
+            <label className="text-muted-foreground text-xs font-medium mb-1.5 block">{tr('Nội dung tin nhắn thử ($trigger.content)')}</label>
             <textarea
               value={testContent}
               onChange={e => setTestContent(e.target.value)}
               className="w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:border-blue-500 outline-none resize-none"
               rows={2}
-              placeholder="Nhập tin nhắn thử nghiệm..."
+              placeholder={tr('Nhập tin nhắn thử nghiệm...')}
             />
           </div>
           )}
@@ -196,23 +198,23 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
           {/* Friend picker */}
           <div>
             <label className="text-muted-foreground text-xs font-medium mb-1.5 block">
-              {isFriendRequest ? 'Chọn người gửi lời mời kết bạn' : 'Chọn người nhận'} <span className="text-muted-foreground">(không thể gửi cho chính mình)</span>
+              {isFriendRequest ? tr('Chọn người gửi lời mời kết bạn') : tr('Chọn người nhận')} <span className="text-muted-foreground">{tr('(không thể gửi cho chính mình)')}</span>
             </label>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:border-blue-500 outline-none mb-2"
-              placeholder="Tìm tên hoặc ID..."
+              placeholder={tr('Tìm tên hoặc ID...')}
             />
 
             {loadingFriends ? (
               <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground text-xs">
                 <span className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-                Đang tải danh bạ…
+                {tr('Đang tải danh bạ…')}
               </div>
             ) : filteredFriends.length === 0 ? (
               <div className="py-4 text-center text-muted-foreground text-xs">
-                {friends.length === 0 ? 'Chưa có bạn bè nào' : 'Không tìm thấy'}
+                {friends.length === 0 ? tr('Chưa có bạn bè nào') : tr('Không tìm thấy')}
               </div>
             ) : (
               <div className="max-h-[200px] overflow-y-auto space-y-1 pr-1">
@@ -253,12 +255,12 @@ function TestRunModal({ accounts, workflowPageIds, triggerType, onRun, onClose }
         {/* Footer */}
         <div className="px-5 py-4 border-t border-border flex gap-2 flex-shrink-0">
           <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-card hover:bg-muted text-foreground/80 text-sm font-medium rounded-xl transition-colors">
-            Hủy
+            {tr('Hủy')}
           </button>
           <button onClick={handleRun} disabled={!selectedFriend || !selectedAccount}
             className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            Chạy thử
+            {tr('Chạy thử')}
           </button>
         </div>
       </div>
@@ -328,7 +330,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
   useEffect(() => {
     if (!workflowId) return;
     setLoadingEditor(true);
-    // DataAccessor: chế độ nhân viên đọc workflow từ Boss (IPC workflow:get trả "Không khả dụng" → không mở được)
+    // DataAccessor: in employee mode, the workflow is read from the Boss (IPC workflow:get returns "Không khả dụng" (unavailable) → cannot open)
     DataAccessor.getWorkflow(workflowId).then((res: any) => {
       if (!res?.success || !res.workflow) return;
       const wf = res.workflow;
@@ -407,8 +409,8 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     if (selectedNode?.id === nodeId) setSelectedNode((p: any) => ({ ...p, label }));
   };
 
-  // ── Auto layout ("Sắp xếp tự động") ──────────────────────────────────────
-  // Only moves nodes in local state; positions are persisted when the user presses "Lưu".
+  // ── Auto layout ("Sắp xếp tự động" (auto arrange)) ──────────────────────────────────────
+  // Only moves nodes in local state; positions are persisted when the user presses "Lưu" (Save).
 
   /** Glides the nodes to `positions` (nodes missing from it stay put), then fits the view. */
   const moveNodesAnimated = (positions: LayoutPositions) => {
@@ -464,7 +466,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     try {
       const res = await ipc.workflow?.save(buildWorkflow());
       if (res?.success) {
-        showNotification('Đã lưu workflow', 'success');
+        showNotification(tr('Đã lưu workflow'), 'success');
         // Apply generated webhook token to local node state
         if (res.webhookToken) {
           setNodes(prev => prev.map(n => {
@@ -481,7 +483,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
           }));
         }
       } else {
-        showNotification(res?.error || 'Lỗi lưu workflow', 'error');
+        showNotification(res?.error || tr('Lỗi lưu workflow'), 'error');
       }
     } finally {
       setSaving(false);
@@ -494,8 +496,8 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
       // Save first, then run
       await ipc.workflow?.save(buildWorkflow());
       const res = await ipc.workflow?.runManual(workflowId, triggerData);
-      if (res?.success) showNotification(`Chạy thành công - ${res.log?.status}`, 'success');
-      else showNotification(res?.error || 'Lỗi chạy workflow', 'error');
+      if (res?.success) showNotification(tr('Chạy thành công - {{status}}', { status: res.log?.status }), 'success');
+      else showNotification(res?.error || tr('Lỗi chạy workflow'), 'error');
     } finally {
       setRunning(false);
     }
@@ -538,11 +540,11 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     clearTimeout(timers.fit);
     timers.fit = setTimeout(() => rfInstanceRef.current?.fitView({ padding: 0.2, duration: LAYOUT_ANIMATION_MS }), 80);
     const parts = [
-      result.addedIds.length ? `thêm ${result.addedIds.length} node` : '',
-      mode === 'append' && result.updatedIds.length ? `sửa ${result.updatedIds.length} node` : '',
-      result.removedIds.length ? `xoá ${result.removedIds.length} node` : '',
+      result.addedIds.length ? tr('thêm {{count}} node', { count: result.addedIds.length }) : '',
+      mode === 'append' && result.updatedIds.length ? tr('sửa {{count}} node', { count: result.updatedIds.length }) : '',
+      result.removedIds.length ? tr('xoá {{count}} node', { count: result.removedIds.length }) : '',
     ].filter(Boolean).join(', ');
-    showNotification(`Đã áp dụng "${title}"${parts ? ` (${parts})` : ''} - nhớ bấm Lưu!`, 'success');
+    showNotification(tr('Đã áp dụng "{{title}}"{{v1}} - nhớ bấm Lưu!', { title, v1: parts ? ` (${parts})` : '' }), 'success');
   };
 
   const handleUndoAI = () => {
@@ -579,7 +581,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showNotification('Đã xuất workflow thành file JSON', 'success');
+    showNotification(tr('Đã xuất workflow thành file JSON'), 'success');
   };
 
   // ── Import workflow from JSON ───────────────────────────────────────────
@@ -591,10 +593,10 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
       try {
         const data = JSON.parse(ev.target?.result as string);
         if (!data._deplaoWorkflow) {
-          showNotification('File không phải workflow Deplao hợp lệ', 'error');
+          showNotification(tr('File không phải workflow Deplao hợp lệ'), 'error');
           return;
         }
-        // File cũ không có channel → mặc định Zalo
+        // Old file without a channel → defaults to Zalo
         const importChannel = normalizeWorkflowChannel(data.channel);
 
         // Assign new IDs to avoid conflicts
@@ -643,9 +645,9 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
           description: data.description || m.description,
         }));
         setSelectedNode(null);
-        showNotification(`Đã nhập workflow "${data.name || 'Imported'}" - nhớ Lưu để áp dụng!`, 'success');
+        showNotification(tr('Đã nhập workflow "{{v1}}" - nhớ Lưu để áp dụng!', { v1: data.name || 'Imported' }), 'success');
       } catch (err: any) {
-        showNotification('Lỗi đọc file JSON: ' + (err.message || 'Invalid JSON'), 'error');
+        showNotification(tr('Lỗi đọc file JSON: {{v1}}', { v1: (err.message || 'Invalid JSON') }), 'error');
       }
     };
     reader.readAsText(file);
@@ -663,10 +665,10 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
 
   // Page selector label
   const pageLabel = workflowMeta.pageIds.length === 0
-    ? <span className="text-amber-400">⚠ Tất cả tài khoản {channelLabel} ({filteredAccounts.length})</span>
+    ? <span className="text-amber-400">{trx('⚠ Tất cả tài khoản {{channelLabel}} ({{count}})', { channelLabel, count: filteredAccounts.length })}</span>
     : workflowMeta.pageIds.length === 1
       ? <span className="text-blue-300"><SmartphoneIcon className="w-4 h-4 inline" /> {accounts.find(a => a.zalo_id === workflowMeta.pageIds[0])?.full_name || workflowMeta.pageIds[0]}</span>
-      : <span className="text-blue-300"><SmartphoneIcon className="w-4 h-4 inline" /> {workflowMeta.pageIds.length} tài khoản</span>;
+      : <span className="text-blue-300">{trx('<0/> {{count}} tài khoản', { 0: <SmartphoneIcon className="w-4 h-4 inline" />, count: workflowMeta.pageIds.length })}</span>;
 
   const togglePage = (zaloId: string) => {
     setWorkflowMeta(m => ({
@@ -677,7 +679,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
     }));
   };
 
-  if (loadingEditor) return <PageLoading text="Đang tải workflow..." />;
+  if (loadingEditor) return <PageLoading text={tr('Đang tải workflow...')} />;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -687,14 +689,14 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 bg-card border-b border-border flex-shrink-0 flex-wrap">
         <button onClick={onBack} className="text-muted-foreground hover:text-foreground text-sm flex items-center gap-1">
-          ← Quay lại
+          {tr('← Quay lại')}
         </button>
         <div className="w-px h-5 bg-muted" />
         <input
           value={workflowMeta.name}
           onChange={e => setWorkflowMeta(m => ({ ...m, name: e.target.value }))}
           className="bg-transparent border-b border-border focus:border-blue-500 text-foreground text-sm px-1 py-0.5 outline-none min-w-0 w-48"
-          placeholder="Tên workflow..."
+          placeholder={tr('Tên workflow...')}
         />
 
         <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs ${
@@ -704,7 +706,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
               ? 'bg-[#1877F2]/10 border-[#1877F2]/30 text-[#1877F2]'
               : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-600'
         }`}>
-          <span>Kênh: {channelLabel}</span>
+          <span>{trx('Kênh: {{channelLabel}}', { channelLabel })}</span>
         </div>
 
         {/* ── Page selector ─────────────────────────────────────────── */}
@@ -721,10 +723,10 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
           {showPagePicker && (
             <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-xl shadow-xl min-w-[220px] py-2">
               <p className="text-[11px] text-muted-foreground px-3 pb-1.5 font-medium uppercase tracking-wider">
-                Workflow áp dụng cho tài khoản {channelLabel}
+                {trx('Workflow áp dụng cho tài khoản {{channelLabel}}', { channelLabel })}
               </p>
               {filteredAccounts.length === 0 && (
-                <p className="text-muted-foreground text-xs px-3 py-2">Chưa có tài khoản {channelLabel} nào</p>
+                <p className="text-muted-foreground text-xs px-3 py-2">{trx('Chưa có tài khoản {{channelLabel}} nào', { channelLabel })}</p>
               )}
               {filteredAccounts.map(acc => (
                 <label key={acc.zalo_id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-card cursor-pointer">
@@ -747,8 +749,8 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
               <div className="border-t border-border mt-1 pt-1 px-3">
                 <p className="text-[11px] text-muted-foreground leading-relaxed">
                   {workflowMeta.pageIds.length === 0
-                    ? `⚠ Chưa chọn tài khoản - workflow sẽ chạy cho TẤT CẢ tài khoản ${channelLabel} (${filteredAccounts.length})`
-                    : `✓ Sẽ chạy cho ${workflowMeta.pageIds.length} tài khoản ${channelLabel} đã chọn`}
+                    ? tr('⚠ Chưa chọn tài khoản - workflow sẽ chạy cho TẤT CẢ tài khoản {{channelLabel}} ({{count}})', { channelLabel, count: filteredAccounts.length })
+                    : tr('✓ Sẽ chạy cho {{count}} tài khoản {{channelLabel}} đã chọn', { count: workflowMeta.pageIds.length, channelLabel })}
                 </p>
               </div>
             </div>
@@ -757,23 +759,23 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
 
         <div className="ml-auto flex items-center gap-3">
           {/* Export */}
-          <button onClick={handleExport} title="Xuất workflow ra JSON"
+          <button onClick={handleExport} title={tr('Xuất workflow ra JSON')}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-card hover:bg-muted border border-border text-foreground/80 text-xs font-medium rounded-xl transition-colors">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
-            Xuất
+            {tr('Xuất')}
           </button>
           {/* Import */}
-          <button onClick={() => importFileRef.current?.click()} title="Nhập workflow từ JSON"
+          <button onClick={() => importFileRef.current?.click()} title={tr('Nhập workflow từ JSON')}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-card hover:bg-muted border border-border text-foreground/80 text-xs font-medium rounded-xl transition-colors">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
-            Nhập
+            {tr('Nhập')}
           </button>
           {/* AI Builder */}
-          <button onClick={() => setShowAIDialog(true)} title="Trợ lý AI: trò chuyện để thiết kế hoặc sửa workflow"
+          <button onClick={() => setShowAIDialog(true)} title={tr('Trợ lý AI: trò chuyện để thiết kế hoặc sửa workflow')}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 border border-violet-500/50 text-white/90 text-xs font-medium rounded-xl transition-all shadow-sm shadow-violet-500/20">
             <SparklesIcon className="w-3.5 h-3.5" /> AI
           </button>
@@ -784,34 +786,34 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
           <button
             onClick={() => setWorkflowMeta(m => ({ ...m, enabled: !m.enabled }))}
             className="flex items-center gap-2 cursor-pointer"
-            title={workflowMeta.enabled ? 'Đang bật - nhấn để tắt' : 'Đang tắt - nhấn để bật'}
+            title={workflowMeta.enabled ? tr('Đang bật - nhấn để tắt') : tr('Đang tắt - nhấn để bật')}
           >
             <div className={`w-8 h-[18px] rounded-full transition-colors relative ${workflowMeta.enabled ? 'bg-blue-600' : 'bg-muted'}`}>
               <span className={`absolute top-[2px] w-[14px] h-[14px] bg-white rounded-full shadow transition-all ${workflowMeta.enabled ? 'left-[18px]' : 'left-[2px]'}`} />
             </div>
             <span className={`text-xs font-medium transition-colors ${workflowMeta.enabled ? 'text-blue-400' : 'text-muted-foreground'}`}>
-              {workflowMeta.enabled ? 'Bật' : 'Tắt'}
+              {workflowMeta.enabled ? tr('Bật') : tr('Tắt')}
             </span>
           </button>
 
           <div className="w-px h-4 bg-muted" />
 
           <button onClick={() => setShowSimulateModal(true)} disabled={running}
-            title="Chạy thử khô (không gửi tin thật) - xem luồng dạng chat mô phỏng"
+            title={tr('Chạy thử khô (không gửi tin thật) - xem luồng dạng chat mô phỏng')}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 border border-cyan-500/50 text-white/90 text-xs font-medium rounded-xl transition-all shadow-sm shadow-cyan-500/20 disabled:opacity-40">
-            <SparklesIcon className="w-3.5 h-3.5" /> Mô phỏng
+            {trx('<0/> Mô phỏng', { 0: <SparklesIcon className="w-3.5 h-3.5" /> })}
           </button>
           <button onClick={handleRunClick} disabled={running}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white text-xs font-medium rounded-xl transition-colors">
             {running ? <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               : <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>}
-            Chạy thử
+            {tr('Chạy thử')}
           </button>
           <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-medium rounded-xl transition-colors">
             {saving ? <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>}
-            Lưu
+            {tr('Lưu')}
           </button>
         </div>
       </div>
@@ -836,7 +838,7 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
               deleteKeyCode={['Backspace', 'Delete']}
               onInit={inst => { rfInstanceRef.current = inst; }}
               fitView proOptions={{ hideAttribution: true }}
-              // Mặc định 0.5 → "Sắp xếp tự động" của workflow lớn không thu vừa màn hình
+              // Default 0.5 → "Sắp xếp tự động" (auto arrange) of a large workflow does not fit the screen
               minZoom={0.2}
               defaultEdgeOptions={{ type: 'custom', markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: '#4b5563' } }}
             >
@@ -855,24 +857,24 @@ export default function WorkflowEditor({ workflowId, onBack }: Props) {
             <div className="wf-canvas-toolbar">
               {canUndoAI && (
                 <button type="button" className="wf-btn" onClick={handleUndoAI}
-                  title="Đưa sơ đồ về trước khi áp dụng đề xuất của AI">
-                  <UndoIcon className="w-3.5 h-3.5" /> Hoàn tác AI
+                  title={tr('Đưa sơ đồ về trước khi áp dụng đề xuất của AI')}>
+                  {trx('<0/> Hoàn tác AI', { 0: <UndoIcon className="w-3.5 h-3.5" /> })}
                 </button>
               )}
               {canUndoLayout && (
                 <button type="button" className="wf-btn" onClick={handleUndoLayout}
-                  title="Đưa các node về vị trí trước khi sắp xếp">
-                  <UndoIcon className="w-3.5 h-3.5" /> Hoàn tác
+                  title={tr('Đưa các node về vị trí trước khi sắp xếp')}>
+                  {trx('<0/> Hoàn tác', { 0: <UndoIcon className="w-3.5 h-3.5" /> })}
                 </button>
               )}
               <button type="button" className="wf-btn" onClick={handleAutoLayout} disabled={nodes.length < 2}
-                title="Tự động sắp xếp các node theo luồng (có thể hoàn tác)">
-                <LayoutIcon className="w-3.5 h-3.5" /> Sắp xếp tự động
+                title={tr('Tự động sắp xếp các node theo luồng (có thể hoàn tác)')}>
+                {trx('<0/> Sắp xếp tự động', { 0: <LayoutIcon className="w-3.5 h-3.5" /> })}
               </button>
             </div>
             {/* UX hint */}
             <div className="wf-canvas-hint">
-              Chọn liên kết rồi bấm <span className="wf-kbd">✕</span> hoặc <span className="wf-kbd">Del</span> để xóa
+              {trx('Chọn liên kết rồi bấm <0>✕</0> hoặc <1>Del</1> để xóa', { 0: <span className="wf-kbd" />, 1: <span className="wf-kbd" /> })}
             </div>
           </div>
           <RunHistoryPanel workflowId={workflowId} />

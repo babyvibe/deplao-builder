@@ -1,11 +1,11 @@
 /**
- * Đồng bộ dữ liệu → Nâng cao (mở sẵn mặc định, bấm tiêu đề để thu gọn):
- *  - Ảnh & file: tải song song, giới hạn băng thông, chỉ chạy 22:00–07:00 (media.setOptions, lưu ngay khi đổi);
- *    "Sau khi lưu lên R2": giữ nguyên file trên máy (mặc định) / xoá bản trên máy của file cũ (số ngày giữ, GB trống);
- *    Dọn file trên R2 (R2CleanupDialog: quét trước, xem rồi mới xoá) + Tải lại toàn bộ file đã dọn.
- *  - Máy dự phòng (khi máy này chưa theo dõi máy khác — đang theo dõi thì thẻ nằm ở đầu phần), Bản sao DB trên R2,
- *    Nhật ký đồng bộ (chỉ đọc khi mở phần này).
- * Câu chữ dùng tên kho đang chọn (useStoreLabel: "R2" / "Google Drive").
+ * Data sync → Advanced (open by default, click the title to collapse):
+ *  - Images & files: download in parallel, bandwidth limit, runs only 22:00–07:00 (media.setOptions, saved immediately on change);
+ *    "Sau khi lưu lên R2" (After saving to R2): keep the files on the machine (default) / delete the copy on the machine of older files (days to keep, GB free);
+ *    File cleanup on R2 (R2CleanupDialog: scan first, review, then delete) + re-download all cleaned files.
+ *  - Standby machine (when this machine is not monitoring another machine - if it is, the card sits at the top of the section), DB copy on R2,
+ *    sync log (read only when this section is open).
+ * The wording uses the selected storage name (useStoreLabel: "R2" / "Google Drive").
  */
 import React, { useEffect, useId, useState } from 'react';
 import { showConfirm } from '@/components/common/ConfirmDialog';
@@ -23,23 +23,25 @@ import { cloudApi, CloudSpinner, fmtNum, RadioList, useCloudAction, useStoragePr
 import { R2CleanupDialog } from './R2CleanupDialog';
 import type { RestoreWizardOptions } from '../restore/RestoreWizard';
 import { RemoteCopiesCard, remoteCopyRules, StandbyCard, SyncLogTable } from './syncParts';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export interface SyncAdvancedProps {
-  /** Trạng thái đủ trường (overviewOrDefault). */
+  /** Status with all fields filled in (overviewOrDefault). */
   overview: SyncOverview;
   ready: boolean;
-  /** Trạng thái media mới từ main (setOptions). */
+  /** New media status from main (setOptions). */
   onMedia?: (status: MediaSyncStatus) => void;
-  /** Trạng thái DB mới từ main (bật / tắt theo dõi). */
+  /** New DB status from main (turned on / off following). */
   onDb?: (status: DbSyncStatus) => void;
   onRefresh?: () => void;
-  /** Mở trình khôi phục (máy dự phòng → Chuyển sang máy này). */
+  /** Open the restore wizard (standby machine → Switch to this machine). */
   onWizard: (options: RestoreWizardOptions) => void;
-  /** Thẻ Máy dự phòng đã hiện ở đầu phần (máy này đang theo dõi máy khác) → không lặp lại. */
+  /** The Standby machine card is already shown at the top of the section (this machine is monitoring another machine) → do not repeat it. */
   hideStandby?: boolean;
-  /** Mở sẵn khi vào trang (mặc định có). */
+  /** Open by default when the page is entered (default on). */
   initialOpen?: boolean;
-  /** Nhật ký đã đọc trước (test). */
+  /** Log read earlier (test). */
   initialLog?: SyncLogEntry[] | null;
 }
 
@@ -51,7 +53,7 @@ const LIMITS = {
   evictMinFreeGb: [1, 10_000],
 } as const;
 
-/** Ô số: nháp khi gõ, lưu khi rời ô hoặc Enter; ngoài khoảng cho phép thì trả lại số cũ. */
+/** Number field: draft while typing, saved on leaving the field or on Enter; outside the allowed range it restores the old number. */
 function NumberInput({ value, limits, label, id, disabled, className, onCommit, onInvalid }: {
   value: number;
   limits: readonly [number, number];
@@ -70,7 +72,7 @@ function NumberInput({ value, limits, label, id, disabled, className, onCommit, 
     const n = Math.round(Number(text));
     if (!Number.isFinite(n) || n < min || n > max) {
       setText(String(value));
-      onInvalid(`Nhập số từ ${fmtNum(min)} đến ${fmtNum(max)}`);
+      onInvalid(tr('Nhập số từ {{v1}} đến {{v2}}', { v1: fmtNum(min), v2: fmtNum(max) }));
       return;
     }
     if (n !== value) onCommit(n);
@@ -116,7 +118,7 @@ export function SyncAdvanced({
   const [open, setOpen] = useState(initialOpen);
   const [cleanupOpen, setCleanupOpen] = useState(false);
 
-  // Nhật ký: chỉ đọc khi phần này đang mở, đọc lại mỗi khi có lần đồng bộ mới.
+  // Log: read only while this section is open, re-read each time a new sync happens.
   const [log, setLog] = useState<SyncLogEntry[] | null>(initialLog);
   const [logLimit, setLogLimit] = useState(20);
   const logKey = db.workspaces.map(w => `${w.workspaceId}:${w.lastSyncAt ?? 0}:${w.baseAt ?? 0}:${w.state}`).join('|');
@@ -131,7 +133,7 @@ export function SyncAdvanced({
     return () => { alive = false; };
   }, [open, logKey, logLimit]);
 
-  // Tuỳ chọn ảnh & file chỉ có tác dụng khi đồng bộ kèm ảnh.
+  // Image & file options only take effect when the sync includes images.
   const mediaOff = !config.includeMedia;
   const optsDisabled = !ready || mediaOff || busy === 'options';
   const concurrencyChoices = CONCURRENCY.includes(opts.concurrency)
@@ -146,75 +148,74 @@ export function SyncAdvanced({
 
   const warn = (message: string) => notify(message, 'warning');
 
-  /** Giữ nguyên file trên máy (mặc định) hay xoá bản trên máy của file cũ (hỏi lại trước khi bật). */
+  /** Keep the files on the machine (default) or delete the copy on the machine of older files (asks again before turning on). */
   const chooseEvict = async (on: boolean) => {
     if (on === opts.evictEnabled) return;
     if (on) {
       const ok = await showConfirm({
-        title: 'Xoá bản trên máy của file cũ?',
-        message: `Chỉ xoá bản trên máy của file đã có trên ${label} và không mở trong ${fmtNum(opts.evictKeepDays)} ngày, khi ổ còn trống dưới ${fmtNum(opts.evictMinFreeGb)} GB. Mở lại thì tự tải về từ ${label}.`,
-        confirmText: 'Xoá bản trên máy',
+        title: tr('Xoá bản trên máy của file cũ?'),
+        message: tr('Chỉ xoá bản trên máy của file đã có trên {{label}} và không mở trong {{v1}} ngày, khi ổ còn trống dưới {{v2}} GB. Mở lại thì tự tải về từ {{label}}.', { label, v1: fmtNum(opts.evictKeepDays), v2: fmtNum(opts.evictMinFreeGb) }),
+        confirmText: tr('Xoá bản trên máy'),
         variant: 'warning',
       });
       if (!ok) return;
     }
-    await setOptions({ evictEnabled: on }, on ? 'Đã chọn xoá bản trên máy của file cũ' : 'Đã chọn giữ nguyên file trên máy');
+    await setOptions({ evictEnabled: on }, on ? tr('Đã chọn xoá bản trên máy của file cũ') : tr('Đã chọn giữ nguyên file trên máy'));
   };
 
   const rehydrate = async () => {
     const ok = await showConfirm({
-      title: 'Tải lại toàn bộ file đã dọn?',
-      message: `${fmtNum(totals.evicted)} file sẽ được tải từ ${label} về máy này, cần đủ chỗ trống trên ổ.`,
-      confirmText: 'Tải về máy',
+      title: tr('Tải lại toàn bộ file đã dọn?'),
+      message: tr('{{v1}} file sẽ được tải từ {{label}} về máy này, cần đủ chỗ trống trên ổ.', { v1: fmtNum(totals.evicted), label }),
+      confirmText: tr('Tải về máy'),
       variant: 'info',
     });
     if (!ok) return;
-    if (await run('rehydrate', () => cloudApi()?.media.rehydrateAll(), 'Đang tải file đã dọn về máy')) onRefresh?.();
+    if (await run('rehydrate', () => cloudApi()?.media.rehydrateAll(), tr('Đang tải file đã dọn về máy'))) onRefresh?.();
   };
 
   const { canDelete, tagOf } = remoteCopyRules(db);
   const wsNames = db.workspaces.length > 1
     ? new Map<string, string>(db.workspaces.map(w => [w.workspaceId, w.name] as [string, string]))
     : null;
-  // R2 gọi là bucket; Google Drive là thư mục.
-  const container = provider === 'gdrive' ? 'Thư mục' : 'Bucket';
+  // R2 is called a bucket; Google Drive is a folder.
+  const container = provider === 'gdrive' ? tr('Thư mục') : 'Bucket';
   const buckets = [
-    db.bucket ? `${container} dữ liệu ${db.bucket} · mã hoá trên máy trước khi tải lên` : null,
-    media.bucket ? `${container} ảnh, file ${media.bucket} · riêng tư` : null,
+    db.bucket ? tr('{{container}} dữ liệu {{bucket}} · mã hoá trên máy trước khi tải lên', { container, bucket: db.bucket }) : null,
+    media.bucket ? tr('{{container}} ảnh, file {{bucket}} · riêng tư', { container, bucket: media.bucket }) : null,
   ].filter((line): line is string => !!line);
-  const afterSaveTitle = `Sau khi lưu lên ${label}`;
-  const cleanupTitle = `Dọn file trên ${label}`;
+  const afterSaveTitle = tr('Sau khi lưu lên {{label}}', { label });
+  const cleanupTitle = tr('Dọn file trên {{label}}', { label });
 
   return (
     <details open={open} onToggle={e => setOpen(e.currentTarget.open)} className="group rounded-xl border border-border bg-card">
       <summary className="cursor-pointer select-none rounded-xl px-4 py-3 text-sm font-medium text-foreground hover:bg-muted/50">
-        Nâng cao
-        <span className="ml-2 text-xs font-normal text-muted-foreground">{`tải ảnh, giữ file trên máy, dọn ${label}, máy dự phòng, nhật ký`}</span>
+        {trx('Nâng cao<0>{{v1}}</0>', { 0: <span className="ml-2 text-xs font-normal text-muted-foreground" />, v1: tr('tải ảnh, giữ file trên máy, dọn {{label}}, máy dự phòng, nhật ký', { label }) })}
       </summary>
       <div className="space-y-4 border-t border-border p-4">
         <Card className="divide-y divide-border px-4">
           <div className={cn('space-y-3 py-4', mediaOff && 'opacity-60')}>
             <div>
-              <p className="text-sm font-semibold text-foreground">Tải ảnh &amp; file</p>
-              {mediaOff && <p className="mt-0.5 text-xs text-muted-foreground">Chỉ dùng khi đồng bộ kèm ảnh, video, file.</p>}
+              <p className="text-sm font-semibold text-foreground">{tr('Tải ảnh & file')}</p>
+              {mediaOff && <p className="mt-0.5 text-xs text-muted-foreground">{tr('Chỉ dùng khi đồng bộ kèm ảnh, video, file.')}</p>}
             </div>
             <div className="flex flex-wrap items-end gap-4">
-              <FormField label="Tải song song" htmlFor={concurrencyId} className="w-36">
+              <FormField label={tr('Tải song song')} htmlFor={concurrencyId} className="w-36">
                 <Select
                   id={concurrencyId}
                   value={String(opts.concurrency)}
                   disabled={optsDisabled}
                   onChange={e => void setOptions({ concurrency: Number(e.target.value) })}
                 >
-                  {concurrencyChoices.map(n => <option key={n} value={n}>{n} file</option>)}
+                  {concurrencyChoices.map(n => <option key={n} value={n}>{tr('{{n}} file', { n })}</option>)}
                 </Select>
               </FormField>
-              <FormField label="Giới hạn băng thông (Kbps)" htmlFor={bandwidthId} hint="0 = không giới hạn">
+              <FormField label={tr('Giới hạn băng thông (Kbps)')} htmlFor={bandwidthId} hint={tr('0 = không giới hạn')}>
                 <NumberInput
                   id={bandwidthId}
                   value={opts.bandwidthKbps}
                   limits={LIMITS.bandwidthKbps}
-                  label="Giới hạn băng thông (Kbps)"
+                  label={tr('Giới hạn băng thông (Kbps)')}
                   disabled={!ready || mediaOff}
                   className="w-32"
                   onCommit={n => void setOptions({ bandwidthKbps: n })}
@@ -226,7 +227,7 @@ export function SyncAdvanced({
               checked={opts.nightOnly}
               disabled={optsDisabled}
               onCheckedChange={next => void setOptions({ nightOnly: next })}
-              label="Chỉ chạy từ 22:00 đến 07:00"
+              label={tr('Chỉ chạy từ 22:00 đến 07:00')}
             />
           </div>
 
@@ -240,41 +241,37 @@ export function SyncAdvanced({
               options={[
                 {
                   value: 'keep',
-                  label: <>Giữ nguyên file trên máy <span className="text-muted-foreground">(mặc định)</span></>,
-                  description: `Không xoá gì trên máy; ${label} giữ thêm một bản sao.`,
+                  label: <>{trx('Giữ nguyên file trên máy <0>(mặc định)</0>', { 0: <span className="text-muted-foreground" /> })}</>,
+                  description: tr('Không xoá gì trên máy; {{label}} giữ thêm một bản sao.', { label }),
                 },
                 {
                   value: 'evict',
-                  label: 'Xoá bản trên máy của file cũ để giải phóng ổ',
-                  description: `Chỉ xoá bản trên máy của file đã có trên ${label}; mở lại thì tự tải về.`,
+                  label: tr('Xoá bản trên máy của file cũ để giải phóng ổ'),
+                  description: tr('Chỉ xoá bản trên máy của file đã có trên {{label}}; mở lại thì tự tải về.', { label }),
                 },
               ]}
             />
             {opts.evictEnabled && (
               <div className="flex flex-wrap items-center gap-x-8 gap-y-2 pl-[26px] text-xs text-foreground">
                 <span className="flex items-center gap-2">
-                  Giữ file mở trong
-                  <NumberInput
+                  {trx('Giữ file mở trong<0/>ngày gần đây', { 0: <NumberInput
                     value={opts.evictKeepDays}
                     limits={LIMITS.evictKeepDays}
-                    label="Số ngày giữ file trên máy"
+                    label={tr('Số ngày giữ file trên máy')}
                     disabled={!ready || mediaOff}
                     onCommit={n => void setOptions({ evictKeepDays: n })}
                     onInvalid={warn}
-                  />
-                  ngày gần đây
+                  /> })}
                 </span>
                 <span className="flex items-center gap-2">
-                  Giữ ổ còn trống ít nhất
-                  <NumberInput
+                  {trx('Giữ ổ còn trống ít nhất<0/>GB', { 0: <NumberInput
                     value={opts.evictMinFreeGb}
                     limits={LIMITS.evictMinFreeGb}
-                    label="Số GB trống tối thiểu"
+                    label={tr('Số GB trống tối thiểu')}
                     disabled={!ready || mediaOff}
                     onCommit={n => void setOptions({ evictMinFreeGb: n })}
                     onInvalid={warn}
-                  />
-                  GB
+                  /> })}
                 </span>
               </div>
             )}
@@ -284,15 +281,15 @@ export function SyncAdvanced({
             <div>
               <p className="text-sm font-semibold text-foreground">{cleanupTitle}</p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                {`Xoá tin trong app vẫn giữ file trên ${label}. Muốn bớt dung lượng thì dùng ${cleanupTitle}.`}
+                {tr('Xoá tin trong app vẫn giữ file trên {{label}}. Muốn bớt dung lượng thì dùng {{cleanupTitle}}.', { label, cleanupTitle })}
               </p>
             </div>
             {totals.evicted > 0 && (
-              <p className="text-xs text-muted-foreground">{`Đã dọn ${fmtNum(totals.evicted)} file khỏi máy, vẫn mở được từ ${label}.`}</p>
+              <p className="text-xs text-muted-foreground">{tr('Đã dọn {{v1}} file khỏi máy, vẫn mở được từ {{label}}.', { v1: fmtNum(totals.evicted), label })}</p>
             )}
-            {/* Main chỉ quét / dọn / tải lại khi đồng bộ ảnh đang chạy (cần chỉ mục cloud_media của workspace đang mở). */}
+            {/* Main only scans / cleans up / re-downloads while the image sync is running (needs the cloud_media index of the open workspace). */}
             {!media.enabled && (
-              <p className="text-xs text-muted-foreground">Bật đồng bộ kèm ảnh, video, file để dùng các nút này.</p>
+              <p className="text-xs text-muted-foreground">{tr('Bật đồng bộ kèm ảnh, video, file để dùng các nút này.')}</p>
             )}
             <div className="flex flex-wrap gap-2">
               <Button
@@ -313,7 +310,7 @@ export function SyncAdvanced({
                   disabled={!ready || !media.enabled}
                   onClick={() => void rehydrate()}
                 >
-                  Tải lại toàn bộ file đã dọn
+                  {tr('Tải lại toàn bộ file đã dọn')}
                 </Button>
               )}
             </div>
@@ -326,15 +323,15 @@ export function SyncAdvanced({
 
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-foreground">Nhật ký đồng bộ</p>
+            <p className="text-sm font-semibold text-foreground">{tr('Nhật ký đồng bộ')}</p>
             {log && log.length >= logLimit && logLimit < 200 && (
-              <Button variant="link" size="sm" className="text-xs" onClick={() => setLogLimit(200)}>Xem tất cả</Button>
+              <Button variant="link" size="sm" className="text-xs" onClick={() => setLogLimit(200)}>{tr('Xem tất cả')}</Button>
             )}
           </div>
           {!log ? (
-            <p className="flex items-center gap-2 text-xs text-subtle-foreground"><CloudSpinner className="h-3.5 w-3.5" /> Đang tải…</p>
+            <p className="flex items-center gap-2 text-xs text-subtle-foreground">{trx('<0/> Đang tải…', { 0: <CloudSpinner className="h-3.5 w-3.5" /> })}</p>
           ) : log.length === 0 ? (
-            <p className="text-xs text-subtle-foreground">Chưa có lần đồng bộ nào.</p>
+            <p className="text-xs text-subtle-foreground">{tr('Chưa có lần đồng bộ nào.')}</p>
           ) : (
             <SyncLogTable entries={log} workspaceNames={wsNames} />
           )}
@@ -342,7 +339,7 @@ export function SyncAdvanced({
 
         <div className="space-y-0.5 border-t border-border pt-3 text-xs text-subtle-foreground">
           {buckets.map(line => <p key={line}>{line}</p>)}
-          <p>{`Mỗi workspace của máy chủ có thư mục riêng trên ${label}; máy nhân viên không tải lên.`}</p>
+          <p>{tr('Mỗi workspace của máy chủ có thư mục riêng trên {{label}}; máy nhân viên không tải lên.', { label })}</p>
         </div>
       </div>
 

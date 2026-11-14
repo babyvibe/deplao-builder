@@ -1,11 +1,11 @@
 /**
- * StarredMessagesPanel - "Tin đánh dấu" (like Zalo), shown in place of the conversation list
- * (menu ⋮ → Tin đánh dấu). Starred messages grouped by the day they were starred; each row:
+ * StarredMessagesPanel - "Tin đánh dấu" (starred messages, like Zalo), shown in place of the conversation list
+ * (menu ⋮ → "Tin đánh dấu"). Starred messages grouped by the day they were starred; each row:
  * sender, message time, text or image preview, the conversation. Click → open the conversation
  * at that message; the star button removes it from the list.
  *
  * Own messages show the CURRENT account (name + avatar from the account store), not the name / avatar
- * stored with the star. Merged inbox ("Gộp trang"): the stars of every merged account (only the account
+ * stored with the star. Merged inbox: the stars of every merged account (only the account
  * picked in the merged filter when there is one), newest first, each row tagged with its account.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -25,6 +25,8 @@ import {
   StarredAccountInfo, StarredItem, buildStarredPreview, formatStarredMessageTime, groupStarredByDay,
   resolveStarredSender, starredAccountName, starredScopeAccountIds, toStarredItem,
 } from '@/lib/chat/messages/starredMessages';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const PAGE_SIZE = 50;
 
@@ -66,7 +68,7 @@ function Avatar({ sources, name, size = 40, zaloId, id }: { sources: string[]; n
 function AccountChip({ ownerId, account }: { ownerId: string; account?: StarredAccountInfo }) {
   const name = starredAccountName(account, ownerId);
   return (
-    <span title={`Tài khoản: ${name}`}
+    <span title={tr('Tài khoản: {{name}}', { name })}
       className="ml-auto inline-flex items-center gap-1 min-w-0 max-w-[50%] flex-shrink-0 rounded-full bg-muted py-0.5 pl-0.5 pr-2 text-[11px] text-foreground/80">
       <Avatar sources={account?.avatar_url ? [account.avatar_url] : []} name={name} size={16} zaloId={ownerId} />
       <span className="truncate">{name}</span>
@@ -184,7 +186,7 @@ export default function StarredMessagesPanel({ accountIds, showChannel, onOpen, 
   const unstar = async (item: StarredItem) => {
     const ok = await useStarredStore.getState().setStarred({ zaloId: item.ownerId, threadId: item.threadId, msgId: item.msgId, starred: false });
     if (ok) setItems(prev => prev.filter(entry => entry.key !== item.key));
-    else showNotification('Không bỏ được đánh dấu', 'error');
+    else showNotification(tr('Không bỏ được đánh dấu'), 'error');
   };
 
   /**
@@ -207,12 +209,12 @@ export default function StarredMessagesPanel({ accountIds, showChannel, onOpen, 
     <div className="flex-1 flex flex-col min-h-0 bg-card">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border flex-shrink-0">
-        <button type="button" onClick={onClose} title="Quay lại danh sách hội thoại"
+        <button type="button" onClick={onClose} title={tr('Quay lại danh sách hội thoại')}
           className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
           <ArrowLeftIcon className="w-4 h-4" />
         </button>
         <span className="text-yellow-500 flex-shrink-0"><StarIcon className="w-4 h-4" /></span>
-        <span className="text-base font-semibold text-foreground flex-1 truncate">Tin đánh dấu</span>
+        <span className="text-base font-semibold text-foreground flex-1 truncate">{tr('Tin đánh dấu')}</span>
         {items.length > 0 && <span className="text-xs text-muted-foreground tabular-nums">{items.length}{hasMore ? '+' : ''}</span>}
       </div>
 
@@ -224,9 +226,9 @@ export default function StarredMessagesPanel({ accountIds, showChannel, onOpen, 
             <span className="w-12 h-12 rounded-full bg-yellow-500/15 text-yellow-500 flex items-center justify-center">
               <StarIcon className="w-6 h-6" />
             </span>
-            <p className="text-sm font-semibold text-foreground">Chưa có tin đánh dấu</p>
+            <p className="text-sm font-semibold text-foreground">{tr('Chưa có tin đánh dấu')}</p>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Nhấn chuột phải vào tin nhắn → <b className="text-foreground/80">Đánh dấu tin nhắn</b> để lưu lại và xem nhanh ở đây.
+              {trx('Nhấn chuột phải vào tin nhắn → <0>Đánh dấu tin nhắn</0> để lưu lại và xem nhanh ở đây.', { 0: <b className="text-foreground/80" /> })}
             </p>
           </div>
         ) : (
@@ -245,7 +247,7 @@ export default function StarredMessagesPanel({ accountIds, showChannel, onOpen, 
                     <Avatar sources={sender.avatars} name={sender.name} zaloId={item.ownerId} id={item.senderId} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-1.5 min-w-0 pr-7">
-                        <span className="text-sm font-semibold text-foreground truncate">{sender.name || 'Người gửi'}</span>
+                        <span className="text-sm font-semibold text-foreground truncate">{sender.name || tr('Người gửi')}</span>
                         <span className="text-xs text-muted-foreground flex-shrink-0">- {formatStarredMessageTime(item.timestamp || item.starredAt)}</span>
                       </div>
                       <div className="mt-1.5">
@@ -271,12 +273,12 @@ export default function StarredMessagesPanel({ accountIds, showChannel, onOpen, 
                       </div>
                       <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground min-w-0">
                         {showChannel && <ChannelBadge channel={(item.channel || 'zalo') as Channel} size="sm" />}
-                        <span className="truncate">{item.threadType === 1 ? 'Nhóm' : 'Chat'} {item.threadName}</span>
-                        {item.missing && <span className="flex-shrink-0">· đã xoá khỏi app</span>}
+                        <span className="truncate">{item.threadType === 1 ? tr('Nhóm') : tr('Chat')} {item.threadName}</span>
+                        {item.missing && <span className="flex-shrink-0">{tr('· đã xoá khỏi app')}</span>}
                         {mergedInboxMode && <AccountChip ownerId={item.ownerId} account={account} />}
                       </div>
                     </div>
-                    <button type="button" title="Bỏ đánh dấu"
+                    <button type="button" title={tr('Bỏ đánh dấu')}
                       onClick={e => { e.stopPropagation(); void unstar(item); }}
                       className="absolute top-2.5 right-3 w-7 h-7 rounded-md flex items-center justify-center text-yellow-500 opacity-0 group-hover/star:opacity-100 hover:bg-yellow-500/15 transition">
                       <StarIcon className="w-4 h-4" />

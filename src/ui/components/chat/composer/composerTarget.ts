@@ -1,24 +1,24 @@
 /**
- * Ô soạn tin (MessageInput) gửi vào một chỗ KHÁC hội thoại đang mở — hiện dùng cho phần bình luận bài đăng kênh Telegram:
- * gửi vào NHÓM THẢO LUẬN, chuỗi bình luận = chủ đề (tin gốc trong nhóm), như gửi vào một chủ đề forum.
+ * The composer (MessageInput) sends to a place OTHER than the open conversation: currently used for the Telegram channel post comments:
+ * sends to the DISCUSSION GROUP, the comment thread = the topic (the root message in the group), like sending to a forum topic.
  *
- * Có context → MessageInput lấy tài khoản / hội thoại / chủ đề / liên hệ từ đây thay vì hội thoại đang mở, gửi đầy đủ
- * như khung chat (chữ, ảnh, video, tệp, ghi âm, sticker, GIF, @nhắc tên, tin nhắn nhanh, dán / kéo thả ảnh, trả lời
- * bình luận) và tắt phần thuộc về hội thoại (nhãn, gợi ý AI, nhắc hẹn, ghi chú, bình chọn, phím tắt chuyển hội thoại,
- * đang gõ). Chỉ một MessageInput được gắn tại một thời điểm (App bỏ ô của kênh khi đang mở phần bình luận) nên trích dẫn,
- * dán, kéo thả vẫn dùng chung trạng thái như cũ.
+ * With a context → MessageInput takes the account / conversation / topic / contact from here instead of the open conversation, and sends everything
+ * like the chat window does (text, images, video, files, voice recordings, stickers, GIFs, @mentions, quick messages, paste / drag and drop images, comment
+ * replies), and turns off the parts that belong to the conversation (labels, AI suggestions, appointment reminders, notes, polls, conversation-switch shortcuts,
+ * typing). Only one MessageInput is mounted at a time (App removes the channel's box while the comments are open), so quoting, pasting and
+ * dragging still share the same state as before.
  */
 import React from 'react';
 
 export interface ComposerTarget {
   kind: 'telegramComments';
   accountId: string;
-  /** Nhóm thảo luận */
+  /** Discussion group */
   threadId: string;
   threadType: number;
-  /** Tin gốc của chuỗi bình luận trong nhóm thảo luận */
+  /** Root message of the comment thread in the discussion group */
   topicId: string;
-  /** Liên hệ của nhóm (khi nhóm chưa có trong danh sách hội thoại — chưa tham gia) */
+  /** The group's contact (when the group is not in the conversation list yet, i.e. not joined) */
   contact: { contact_id: string; channel: string; contact_type?: string; display_name?: string; [key: string]: unknown };
   placeholder?: string;
 }

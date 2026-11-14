@@ -1,18 +1,20 @@
 /**
- * autoMarkRead.ts - "Tự động đánh dấu đã đọc" (menu ⋮ → Tự động): which unread conversations to
+ * autoMarkRead.ts - "Tự động đánh dấu đã đọc" (Auto mark as read) (menu ⋮ → "Tự động" (Auto)): which unread conversations to
  * process (time range of their last message) and how fast to call the platforms.
  * Pure, unit-tested in src/__tests__/chat/conversations/autoMarkRead.test.ts; the runner lives in store/chat/autoReadStore.
  */
 
+import { tr } from '../../../../shared/i18n';
+
 export type AutoReadPreset = 'all' | 'today' | '7d' | '30d' | 'older7d' | 'custom';
 
 export const AUTO_READ_PRESETS: Array<{ id: AutoReadPreset; label: string }> = [
-  { id: 'all', label: 'Tất cả' },
-  { id: 'today', label: 'Hôm nay' },
-  { id: '7d', label: '7 ngày qua' },
-  { id: '30d', label: '30 ngày qua' },
-  { id: 'older7d', label: 'Cũ hơn 7 ngày' },
-  { id: 'custom', label: 'Tuỳ chọn' },
+  { id: 'all', label: tr('Tất cả') },
+  { id: 'today', label: tr('Hôm nay') },
+  { id: '7d', label: tr('7 ngày qua') },
+  { id: '30d', label: tr('30 ngày qua') },
+  { id: 'older7d', label: tr('Cũ hơn 7 ngày') },
+  { id: 'custom', label: tr('Tuỳ chọn') },
 ];
 
 /** Range of the last message time, ms, inclusive; a missing bound = open. */

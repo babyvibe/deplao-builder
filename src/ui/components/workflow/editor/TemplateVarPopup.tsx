@@ -3,6 +3,8 @@ import { CalendarIcon, CloseIcon, LightbulbIcon, LightningIcon, LinkIcon, Packag
 import { getNodeLabel } from '../nodes/workflowConfig';
 import { NodeIconTile } from '../nodes/nodeVisuals';
 import { buildVarCatalog, TemplateVarGroup, TemplateVarInfo, VarNode } from './templateVars';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface Props {
   open: boolean;
@@ -76,10 +78,10 @@ export default function TemplateVarPopup({ open, onClose, onSelect, triggerTypes
       <span className="flex-1 min-w-0">
         <span className="flex items-center gap-2 min-w-0">
           <span className="text-[13px] font-semibold wf-text truncate">{v.label}</span>
-          {v.isPattern && <span className="wf-badge !h-4 flex-shrink-0" data-tone="yellow">SỬA SAU KHI CHÈN</span>}
+          {v.isPattern && <span className="wf-badge !h-4 flex-shrink-0" data-tone="yellow">{tr('SỬA SAU KHI CHÈN')}</span>}
         </span>
         {v.description && <span className="block mt-0.5 text-[11.5px] leading-[1.05rem] wf-muted">{v.description}</span>}
-        {v.example && <span className="block mt-0.5 text-[11px] wf-faint">VD: <span className="font-mono">{v.example}</span></span>}
+        {v.example && <span className="block mt-0.5 text-[11px] wf-faint">{trx('VD: <0>{{example}}</0>', { 0: <span className="font-mono" />, example: v.example })}</span>}
       </span>
       <code className="wf-var flex-shrink-0 max-w-[45%] truncate !text-[11px] !px-1.5 !py-0.5" title={`{{ ${v.key} }}`}>{`{{ ${v.key} }}`}</code>
     </button>
@@ -95,19 +97,19 @@ export default function TemplateVarPopup({ open, onClose, onSelect, triggerTypes
           <span className="inline-flex w-10 h-10 items-center justify-center rounded-xl flex-shrink-0 font-mono font-bold"
             style={{ background: 'var(--wf-var-bg)', color: 'var(--wf-var-fg)' }}>{'{ }'}</span>
           <div className="flex-1 min-w-0">
-            <p className="wf-panel__title truncate">Chèn biến động</p>
+            <p className="wf-panel__title truncate">{tr('Chèn biến động')}</p>
             <p className="wf-panel__desc truncate">
-              {noTrigger ? 'Workflow chưa có node kích hoạt' : `Kích hoạt: ${triggerNames}`}
-              {fieldLabel ? ` · chèn vào "${fieldLabel}"` : ' · bấm để copy'}
+              {noTrigger ? tr('Workflow chưa có node kích hoạt') : tr('Kích hoạt: {{triggerNames}}', { triggerNames })}
+              {fieldLabel ? tr(' · chèn vào "{{fieldLabel}}"', { fieldLabel }) : tr(' · bấm để copy')}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="wf-icon-btn" title="Đóng (Esc)"><CloseIcon className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} className="wf-icon-btn" title={tr('Đóng (Esc)')}><CloseIcon className="w-4 h-4" /></button>
         </div>
 
         <div className="flex flex-1 min-h-0">
           {/* Groups */}
           <div className="w-48 flex-shrink-0 border-r border-[color:var(--wf-panel-border)] overflow-y-auto p-2 space-y-0.5">
-            {[{ id: 'all' as const, label: 'Tất cả', count: totalCount }, ...catalog.groups.map(g => ({ id: g.id, label: g.label, count: g.vars.length }))].map(g => (
+            {[{ id: 'all' as const, label: tr('Tất cả'), count: totalCount }, ...catalog.groups.map(g => ({ id: g.id, label: g.label, count: g.vars.length }))].map(g => (
               <button key={g.id} type="button" onClick={() => setActiveGroup(g.id)}
                 className="wf-choice !gap-2 !px-2.5 !py-1.5" data-active={String(activeGroup === g.id)}>
                 <span className="wf-muted flex-shrink-0">{g.id === 'all' ? <SearchIcon className="w-3.5 h-3.5" /> : GROUP_ICON[g.id]}</span>
@@ -123,7 +125,7 @@ export default function TemplateVarPopup({ open, onClose, onSelect, triggerTypes
               <div className="relative">
                 <SearchIcon className="w-4 h-4 wf-faint absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Tìm theo tên, cú pháp, mô tả…" className="wf-input !pl-9" />
+                  placeholder={tr('Tìm theo tên, cú pháp, mô tả…')} className="wf-input !pl-9" />
               </div>
             </div>
             <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
@@ -131,14 +133,14 @@ export default function TemplateVarPopup({ open, onClose, onSelect, triggerTypes
                 <div className="wf-callout" data-tone="tip">
                   <LightbulbIcon className="w-4 h-4" />
                   <span>{noTrigger
-                    ? 'Chưa có node kích hoạt nên chưa có biến $trigger. Thêm node "Kích hoạt" để dùng dữ liệu tin nhắn / sự kiện.'
-                    : 'Chạy theo lịch không có dữ liệu kích hoạt — dùng kết quả node trước, biến tự đặt hoặc ngày giờ.'}</span>
+                    ? tr('Chưa có node kích hoạt nên chưa có biến $trigger. Thêm node "Kích hoạt" để dùng dữ liệu tin nhắn / sự kiện.')
+                    : tr('Chạy theo lịch không có dữ liệu kích hoạt — dùng kết quả node trước, biến tự đặt hoặc ngày giờ.')}</span>
                 </div>
               )}
               {visibleGroups.length === 0 ? (
                 <div className="wf-empty">
-                  <p className="text-sm font-semibold wf-text">Không tìm thấy biến</p>
-                  <p className="wf-help !mt-0">Thử từ khoá khác hoặc chọn nhóm "Tất cả".</p>
+                  <p className="text-sm font-semibold wf-text">{tr('Không tìm thấy biến')}</p>
+                  <p className="wf-help !mt-0">{tr('Thử từ khoá khác hoặc chọn nhóm "Tất cả".')}</p>
                 </div>
               ) : visibleGroups.map(group => (
                 <section key={group.id}>
@@ -166,9 +168,9 @@ export default function TemplateVarPopup({ open, onClose, onSelect, triggerTypes
         {/* Footer */}
         <div className="wf-panel__footer flex items-center gap-2 px-5 py-3">
           <span className="text-xs wf-muted">
-            {visibleCount} biến{q ? ` khớp "${search.trim()}"` : ''} · chỉ hiện biến dùng được ở bước này
+            {trx('{{visibleCount}} biến{{v1}} · chỉ hiện biến dùng được ở bước này', { visibleCount, v1: q ? tr(' khớp "{{v1}}"', { v1: search.trim() }) : '' })}
           </span>
-          <button type="button" onClick={onClose} className="wf-btn ml-auto">Đóng</button>
+          <button type="button" onClick={onClose} className="wf-btn ml-auto">{tr('Đóng')}</button>
         </div>
       </div>
     </div>

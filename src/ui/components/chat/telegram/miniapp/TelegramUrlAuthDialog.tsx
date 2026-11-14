@@ -1,9 +1,9 @@
 /**
- * Nút "đăng nhập bằng Telegram" của bot (keyboardButtonUrlAuth), như Telegram (https://core.telegram.org/api/url-authorization):
- *  - messages.requestUrlAuth: Telegram cho biết trang cần đăng nhập → hỏi "Mở {trang}?" với ô "Đăng nhập bằng tài khoản
- *    Telegram" (bật sẵn), "Cho bot nhắn tin" / "Chia sẻ số điện thoại" nếu trang xin (tắt sẵn).
- *  - Mở có đăng nhập: messages.acceptUrlAuth, mở link Telegram trả về (đã kèm chữ ký đăng nhập) bằng trình duyệt của máy.
- *    Bỏ chọn đăng nhập: mở link gốc của nút. Telegram tự đăng nhập luôn (không cần hỏi) hoặc không hỗ trợ: mở ngay.
+ * Bot "log in with Telegram" button (keyboardButtonUrlAuth), as in Telegram (https://core.telegram.org/api/url-authorization):
+ *  - messages.requestUrlAuth: Telegram says the page needs login → asks "Mở {trang}?" (Open {page}?) with a "Đăng nhập bằng tài khoản Telegram" (Log in with Telegram account) option (on by default),
+ *    and "Cho bot nhắn tin" (Allow the bot to message) / "Chia sẻ số điện thoại" (Share phone number) if the page asks for them (off by default).
+ *  - Open with login: messages.acceptUrlAuth, then open the Telegram link returned (it includes the login signature) in the machine's browser.
+ *    Login unchecked: open the button's original link. If Telegram logs in directly (no need to ask) or does not support it: open right away.
  */
 import React from 'react';
 import {
@@ -13,6 +13,8 @@ import ipc from '@/lib/ipc';
 import type { UrlAuthRequest } from '@/lib/chat/telegram/telegramMiniApp';
 import { openExternalLink } from '@/lib/chat/links/externalLink';
 import type { UrlAuthInfo } from '../../../../../shared/telegram/telegramMiniApp';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type LoginRequest = Extract<UrlAuthInfo, { kind: 'request' }>;
 
@@ -37,7 +39,7 @@ export default function TelegramUrlAuthDialog({ request, onClose }: { request: U
         const result = res?.success ? res.info : undefined;
         if (result?.kind === 'request') setInfo(result);
         else if (result?.kind === 'accepted') openAndClose(result.url || url);
-        else openAndClose(url); // urlAuthResultDefault / lỗi: mở link gốc như Telegram
+        else openAndClose(url); // urlAuthResultDefault / error: open the original link, as Telegram does
       })
       .catch(() => { if (!cancelled) openAndClose(url); });
     return () => { cancelled = true; };
@@ -60,14 +62,14 @@ export default function TelegramUrlAuthDialog({ request, onClose }: { request: U
         sharePhone: info.requestPhoneNumber && sharePhone,
       });
       if (!res?.success) {
-        setError(res?.error ? `Không đăng nhập được: ${res.error}` : 'Không đăng nhập được');
+        setError(res?.error ? tr('Không đăng nhập được: {{error}}', { error: res.error }) : tr('Không đăng nhập được'));
         return;
       }
       const target = res.url || url;
       if (target) openExternalLink(target);
       onClose();
     } catch (err: any) {
-      setError(`Không đăng nhập được: ${err?.message || err}`);
+      setError(tr('Không đăng nhập được: {{v1}}', { v1: err?.message || err }));
     } finally {
       setBusy(false);
     }
@@ -77,7 +79,7 @@ export default function TelegramUrlAuthDialog({ request, onClose }: { request: U
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }} size="sm" className="max-w-[420px]">
       <DialogHeader>
         <div className="min-w-0">
-          <DialogTitle className="truncate">Mở {info.domain}?</DialogTitle>
+          <DialogTitle className="truncate">{trx('Mở {{domain}}?', { domain: info.domain })}</DialogTitle>
           {url && <DialogDescription className="mt-0.5 truncate text-xs" title={url}>{url}</DialogDescription>}
         </div>
         <DialogClose />
@@ -86,15 +88,15 @@ export default function TelegramUrlAuthDialog({ request, onClose }: { request: U
         <Checkbox
           checked={login}
           onCheckedChange={setLogin}
-          label={`Đăng nhập ${info.domain} bằng tài khoản Telegram`}
-          description="Trang nhận tên, ảnh đại diện và tên người dùng Telegram của bạn."
+          label={tr('Đăng nhập {{domain}} bằng tài khoản Telegram', { domain: info.domain })}
+          description={tr('Trang nhận tên, ảnh đại diện và tên người dùng Telegram của bạn.')}
         />
         {info.requestWriteAccess && (
           <Checkbox
             checked={login && allowWrite}
             onCheckedChange={setAllowWrite}
             disabled={!login}
-            label={`Cho ${info.botName} nhắn tin cho bạn`}
+            label={tr('Cho {{botName}} nhắn tin cho bạn', { botName: info.botName })}
           />
         )}
         {info.requestPhoneNumber && (
@@ -102,14 +104,14 @@ export default function TelegramUrlAuthDialog({ request, onClose }: { request: U
             checked={login && sharePhone}
             onCheckedChange={setSharePhone}
             disabled={!login}
-            label={`Chia sẻ số điện thoại với ${info.domain}`}
+            label={tr('Chia sẻ số điện thoại với {{domain}}', { domain: info.domain })}
           />
         )}
         {error && <p className="text-xs text-destructive">{error}</p>}
       </DialogBody>
       <DialogFooter>
-        <Button variant="ghost" onClick={onClose} disabled={busy}>Huỷ</Button>
-        <Button onClick={() => void open()} loading={busy}>Mở</Button>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>{tr('Huỷ')}</Button>
+        <Button onClick={() => void open()} loading={busy}>{tr('Mở')}</Button>
       </DialogFooter>
     </Dialog>
   );

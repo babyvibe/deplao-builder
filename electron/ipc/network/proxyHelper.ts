@@ -7,6 +7,7 @@ import { PROXY_FILE_PATH_FIELDS, PROXY_FILE_PATH_LIST_FIELDS } from '../../../sr
 import {
     BOSS_ONLY_CHANNEL_CODE, BOSS_ONLY_CHANNEL_ERROR, PROXY_DEFAULT_TIMEOUT_MS, employeeChannelSpec,
 } from '../../../src/services/http/employeeChannelRoutes';
+import { tr } from '../../../src/shared/i18n';
 
 /**
  * Fire-and-forget proxy: send a DB/CRM mutation to the Boss when running in Employee mode.
@@ -27,7 +28,7 @@ export function proxyToBoss(channel: string, params: any): void {
         if (!HCM.getInstance().isConnected(activeWs.id)) return;
 
         HCM.getInstance().proxyAction(activeWs.id, channel, params).then((result: any) => {
-            // Boss từ chối (kênh / tài khoản / file) hoặc handler lỗi: trước đây im lặng — ghi Nhật ký để còn dấu vết
+            // Boss rejected it (channel / account / file) or the handler failed: this used to be silent → now written to the Log as a trace
             if (result && result.success === false) {
                 Logger.warn(`[proxyToBoss] ${channel} bị Boss từ chối: ${result.code || ''} ${result.error || ''}`.trim());
             }
@@ -38,24 +39,24 @@ export function proxyToBoss(channel: string, params: any): void {
 }
 
 /**
- * Proxy chờ kết quả: dùng cho thao tác người dùng thấy được (thẻ ngân hàng, ghi chú, trợ lý AI, tích hợp…) — UI nhận
- * đúng `{ success, error, code, … }` của handler trên Boss thay vì `{ success: true }` giả rồi lỗi im lặng.
- * Không phải chế độ nhân viên / chưa nối Boss / lỗi mạng → `{ success: false, error, code }` (không ném lỗi).
+ * Wait-for-result proxy: used for actions the user sees (bank cards, notes, AI assistant, integrations…): the UI receives
+ * the exact `{ success, error, code, … }` the handler returns on Boss, instead of a fake `{ success: true }` followed by a silent failure.
+ * Not employee mode / not connected to Boss / network error → `{ success: false, error, code }` (does not throw).
  */
 export async function proxyToBossWithResult(channel: string, params: any, opts: { timeoutMs?: number } = {}): Promise<any> {
     try {
         const WsMgr = require('../../../src/utils/app/WorkspaceManager').default;
         const activeWs = WsMgr.getInstance().getActiveWorkspace();
         if (!activeWs || activeWs.type !== 'remote') {
-            return { success: false, error: 'Không kết nối tới Boss', code: 'NOT_CONNECTED' };
+            return { success: false, error: tr('Không kết nối tới Boss'), code: 'NOT_CONNECTED' };
         }
         const HCM = require('../../../src/services/http/HttpConnectionManager').default;
         if (!HCM.getInstance().isConnected(activeWs.id)) {
-            return { success: false, error: 'Chưa kết nối tới Boss', code: 'NOT_CONNECTED' };
+            return { success: false, error: tr('Chưa kết nối tới Boss'), code: 'NOT_CONNECTED' };
         }
         const result = await HCM.getInstance().proxyAction(activeWs.id, channel, params, opts.timeoutMs);
         if (!result || typeof result !== 'object') {
-            return { success: false, error: 'Boss không trả kết quả', code: 'BAD_RESPONSE' };
+            return { success: false, error: tr('Boss không trả kết quả'), code: 'BAD_RESPONSE' };
         }
         if (result.success === false) {
             Logger.warn(`[proxyToBossWithResult] ${channel} bị Boss từ chối: ${result.code || ''} ${result.error || ''}`.trim());
@@ -63,7 +64,7 @@ export async function proxyToBossWithResult(channel: string, params: any, opts: 
         return result;
     } catch (err: any) {
         Logger.warn(`[proxyToBossWithResult] ${channel} failed: ${err?.message || err}`);
-        return { success: false, error: err?.message || 'Không gửi được yêu cầu tới Boss', code: 'NETWORK_ERROR' };
+        return { success: false, error: err?.message || tr('Không gửi được yêu cầu tới Boss'), code: 'NETWORK_ERROR' };
     }
 }
 
@@ -78,19 +79,19 @@ export async function proxyToBossWithResult(channel: string, params: any, opts: 
  * @returns Boss-resolved absolute file paths (preserves order)
  */
 export async function uploadEmployeeMedia(filePaths: string[], zaloId?: string): Promise<string[]> {
-    // Cùng tiêu chí "chế độ nhân viên" với các handler (workspace đang mở là workspace từ xa) — trước đây theo
-    // AppModeManager: máy Boss mở workspace nhân viên của Boss khác thì không upload, Boss kia từ chối đường dẫn.
+    // Same criteria as "chế độ nhân viên" (employee mode) in the handlers (the open workspace is a remote one). Before, it followed
+    // AppModeManager: a Boss machine that opens another Boss's employee workspace does not upload, and that other Boss rejects the path.
     const WsMgr = require('../../../src/utils/app/WorkspaceManager').default;
     const activeWs = WsMgr.getInstance().getActiveWorkspace();
     if (!activeWs || activeWs.type !== 'remote') return filePaths;
 
     const HCM = require('../../../src/services/http/HttpConnectionManager').default;
     const client = HCM.getInstance().getServiceForWorkspace(activeWs.id);
-    if (!client) throw new Error('Không kết nối tới Boss');
+    if (!client) throw new Error(tr('Không kết nối tới Boss'));
 
     const bossPaths: string[] = new Array(filePaths.length);
 
-    // Upload parallel all files để giảm thời gian chờ (nhất là khi gửi nhiều ảnh)
+    // Upload all files in parallel to cut the wait time (especially when sending many images)
     const uploadTasks = filePaths.map(async (fp, index) => {
         if (!fp) { bossPaths[index] = fp; return; }
         if (!fs.existsSync(fp)) {
@@ -100,17 +101,17 @@ export async function uploadEmployeeMedia(filePaths: string[], zaloId?: string):
         }
         const filename = path.basename(fp);
         try {
-            // Đọc không chặn tiến trình main (file tới 1 GB — readFileSync làm đơ cả app trong lúc đọc)
+            // Read without blocking the main process (files up to 1 GB: readFileSync froze the whole app while reading)
             const buffer = await fs.promises.readFile(fp);
             const result = await client.uploadMedia(buffer, filename, zaloId);
             if (result.success && result.bossPath) {
                 bossPaths[index] = result.bossPath;
                 Logger.log(`[uploadEmployeeMedia] ✅ ${fp} → ${result.bossPath}`);
             } else {
-                throw new Error(result.error || 'Upload thất bại');
+                throw new Error(result.error || tr('Upload thất bại'));
             }
         } catch (err: any) {
-            throw new Error(`Không thể upload file ${fp}: ${err.message}`);
+            throw new Error(tr('Không thể upload file {{fp}}: {{message}}', { fp, message: err.message }));
         }
     });
 
@@ -118,9 +119,9 @@ export async function uploadEmployeeMedia(filePaths: string[], zaloId?: string):
     return bossPaths;
 }
 
-// ─── File trong tham số + handler Facebook / Telegram ở chế độ nhân viên ─────────────────────────────
+// ─── Files in params + Facebook / Telegram handlers in employee mode ─────────────────────────────
 
-/** Id tài khoản trong auth (buildZaloAuth: accountId; markConversationRead: zaloId) — object hoặc chuỗi JSON. */
+/** Account id in auth (buildZaloAuth: accountId; markConversationRead: zaloId): an object or a JSON string. */
 function authAccountId(auth: any): string {
     try {
         const authObj = typeof auth === 'string' ? JSON.parse(auth) : auth;
@@ -131,11 +132,11 @@ function authAccountId(auth: any): string {
 }
 
 /**
- * Upload file cục bộ của máy nhân viên lên Boss trước khi proxy (đường dẫn máy nhân viên không có trên máy Boss), thay
- * bằng đường dẫn Boss trả về. Đúng các trường Boss kiểm tra (PROXY_FILE_PATH_FIELDS / PROXY_FILE_PATH_LIST_FIELDS của
- * proxyActionPolicy) — dùng chung zaloIpc.wrap (Zalo) và routeEmployeeChannel (Facebook / Telegram).
- * File lưu vào thư mục media của tài khoản thực hiện: `accountId` (Facebook / Telegram: params.accountId), không có thì
- * zaloId / auth (Zalo). Workspace đang mở không phải từ xa → giữ nguyên (uploadEmployeeMedia không upload).
+ * Upload the employee machine's local files to Boss before proxying (the employee machine's path does not exist on the Boss machine), replacing them with
+ * the Boss path returned. Exactly the fields Boss checks (PROXY_FILE_PATH_FIELDS / PROXY_FILE_PATH_LIST_FIELDS of
+ * proxyActionPolicy): shared by zaloIpc.wrap (Zalo) and routeEmployeeChannel (Facebook / Telegram).
+ * Files are saved to the media folder of the account performing the action: `accountId` (Facebook / Telegram: params.accountId), otherwise
+ * zaloId / auth (Zalo). If the open workspace is not remote → left unchanged (uploadEmployeeMedia does not upload).
  */
 export async function prepareLocalFilesForProxy(params: any, accountId?: string): Promise<any> {
     if (!params || typeof params !== 'object' || Array.isArray(params)) return params;
@@ -159,7 +160,7 @@ export async function prepareLocalFilesForProxy(params: any, accountId?: string)
 
 type InvokeListener = (event: IpcMainInvokeEvent, ...args: any[]) => any;
 
-/** Workspace đang mở là workspace từ xa (máy nhân viên) — cùng tiêu chí zaloIpc.wrap / uploadEmployeeMedia. */
+/** The open workspace is a remote one (employee machine): same criteria as zaloIpc.wrap / uploadEmployeeMedia. */
 function isRemoteWorkspaceActive(): boolean {
     try {
         const WsMgr = require('../../../src/utils/app/WorkspaceManager').default;
@@ -170,11 +171,11 @@ function isRemoteWorkspaceActive(): boolean {
 }
 
 /**
- * Bọc một handler Facebook / Telegram cá nhân theo bảng employeeChannelRoutes. Máy Boss / standalone, lệnh Boss chạy hộ
- * nhân viên (`_fromRelay`) hoặc kênh "local" → handler chạy như cũ. Máy nhân viên (workspace từ xa):
- *   - proxy: upload file trong tham số lên Boss → /api/proxy/action → trả kết quả THẬT của handler trên Boss (Boss từ chối
- *     / lỗi mạng → `{ success: false, error, code }`, không ném);
- *   - boss_only: `{ success: false, error, code: 'BOSS_ONLY' }` — không chạy cục bộ (máy nhân viên không có phiên).
+ * Wraps a personal Facebook / Telegram handler according to the employeeChannelRoutes table. On Boss / standalone machines, or for Boss commands running on behalf of an
+ * employee (`_fromRelay`) or the "local" channel → the handler runs as before. Employee machines (remote workspace):
+ *   - proxy: uploads the files in the params to Boss → /api/proxy/action → returns the REAL result of the handler on Boss (if Boss rejects it
+ *     / network error → `{ success: false, error, code }`, does not throw);
+ *   - boss_only: `{ success: false, error, code: 'BOSS_ONLY' }` - does not run locally (the employee machine has no session).
  */
 export function routeEmployeeChannel(channel: string, listener: InvokeListener): InvokeListener {
     const spec = employeeChannelSpec(channel);
@@ -187,22 +188,22 @@ export function routeEmployeeChannel(channel: string, listener: InvokeListener):
             return { success: false, error: BOSS_ONLY_CHANNEL_ERROR, code: BOSS_ONLY_CHANNEL_CODE };
         }
         if (!params || typeof params !== 'object' || Array.isArray(params)) {
-            return { success: false, error: 'Tham số không hợp lệ', code: 'BAD_REQUEST' };
+            return { success: false, error: tr('Tham số không hợp lệ'), code: 'BAD_REQUEST' };
         }
         let prepared: any;
         try {
             prepared = await prepareLocalFilesForProxy(params, String(params.accountId || '') || undefined);
         } catch (err: any) {
             Logger.warn(`[proxyHelper] ${channel}: upload file lên Boss lỗi: ${err?.message || err}`);
-            return { success: false, error: err?.message || 'Không tải được file lên Boss', code: 'UPLOAD_FAILED' };
+            return { success: false, error: err?.message || tr('Không tải được file lên Boss'), code: 'UPLOAD_FAILED' };
         }
         return proxyToBossWithResult(channel, prepared, { timeoutMs: spec.timeoutMs ?? PROXY_DEFAULT_TIMEOUT_MS });
     };
 }
 
 /**
- * `ipcMain` của facebookIpc.ts / telegramUserIpc.ts: `handle(channel, fn)` đăng ký handler đã bọc routeEmployeeChannel —
- * handler mới tự theo bảng employeeChannelRoutes (chưa phân loại → chạy như cũ; test proxyActionPolicy báo đỏ).
+ * The `ipcMain` of facebookIpc.ts / telegramUserIpc.ts: `handle(channel, fn)` registers a handler wrapped by routeEmployeeChannel:
+ * a new handler follows the employeeChannelRoutes table by itself (not yet classified → runs as before; the proxyActionPolicy test turns red).
  */
 export function employeeRoutedIpcMain(target: Pick<IpcMain, 'handle'>): Pick<IpcMain, 'handle'> {
     return {

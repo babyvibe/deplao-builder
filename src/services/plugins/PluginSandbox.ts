@@ -1,14 +1,15 @@
 /**
- * PluginSandbox — chạy backend plugin local trong tiến trình riêng, RPC hai chiều, timeout,
- * tự khởi động lại khi crash (2 s, 10 s, 60 s; lần 4 → tắt plugin), ping 30 s để đo RAM.
+ * PluginSandbox: runs the local plugin backend in its own process, two-way RPC, timeouts,
+ * automatic restart on crash (after 2 s, 10 s, 60 s; the 4th time → the plugin is disabled), a 30 s ping to measure RAM.
  *
- * Electron dùng utilityProcess (forkElectron); test và môi trường không có Electron dùng
- * child_process.fork (forkNode). Môi trường của tiến trình con chỉ gồm vài biến cần thiết,
- * không thừa hưởng biến môi trường của app.
+ * Electron uses utilityProcess (forkElectron); tests and environments without Electron use
+ * child_process.fork (forkNode). The child process environment only contains a few required variables,
+ * it does not inherit the app's environment variables.
  */
 import * as path from 'path';
 import * as fs from 'fs';
 import type { PluginRuntimeHandle, RuntimeContext, RuntimeStats } from './PluginManager';
+import { tr } from '../../shared/i18n';
 
 export interface ChildLike {
     readonly pid?: number;
@@ -37,7 +38,7 @@ const RESTART_DELAYS = [2_000, 10_000, 60_000];
 const STABLE_RESET_MS = 10 * 60_000;
 const PING_EVERY_MS = 30_000;
 
-/** Biến môi trường tối thiểu cho tiến trình plugin (không lộ biến môi trường của app). */
+/** Minimal environment variables for the plugin process (does not expose the app's environment variables). */
 export function pluginEnv(extra: Record<string, string>): Record<string, string> {
     const keep = ['SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'PATH', 'Path', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'NUMBER_OF_PROCESSORS'];
     const env: Record<string, string> = {};
@@ -47,7 +48,7 @@ export function pluginEnv(extra: Record<string, string>): Record<string, string>
     return { ...env, NODE_ENV: 'production', ...extra };
 }
 
-/** Đường dẫn worker (đã unpack khỏi asar khi đóng gói). */
+/** Worker path (already unpacked from asar when packaged). */
 export function defaultWorkerPath(): string {
     const p = path.join(__dirname, 'plugin-worker.js');
     if (p.includes('app.asar') && !p.includes('app.asar.unpacked')) {
@@ -67,7 +68,7 @@ export const forkNode: ForkFn = (workerPath, o) => {
         onExit: cb => child.on('exit', (code: number | null) => cb(code)),
         stdout: child.stdout,
         stderr: child.stderr,
-        kill: () => { try { child.kill(); } catch { /* đã thoát */ } },
+        kill: () => { try { child.kill(); } catch { /* already exited */ } },
     };
 };
 
@@ -76,12 +77,12 @@ export const forkElectron: ForkFn = (workerPath, o) => {
     const child = utilityProcess.fork(workerPath, [], { serviceName: o.serviceName, execArgv: o.execArgv, env: o.env, stdio: 'pipe' });
     return {
         get pid() { return child.pid; },
-        send: (m: any) => { try { child.postMessage(m); } catch { /* đã thoát */ } },
+        send: (m: any) => { try { child.postMessage(m); } catch { /* already exited */ } },
         onMessage: cb => child.on('message', cb),
         onExit: cb => child.on('exit', (code: number) => cb(code)),
         stdout: child.stdout,
         stderr: child.stderr,
-        kill: () => { try { child.kill(); } catch { /* đã thoát */ } },
+        kill: () => { try { child.kill(); } catch { /* already exited */ } },
     };
 };
 
@@ -147,13 +148,13 @@ export class PluginSandbox implements PluginRuntimeHandle {
         return new Promise<void>((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.readyWaiter = null;
-                reject(new Error('Tiến trình của ứng dụng không phản hồi khi khởi động'));
+                reject(new Error(tr('Tiến trình của ứng dụng không phản hồi khi khởi động')));
             }, TIMEOUTS.activate);
             this.readyWaiter = ok => {
                 clearTimeout(timer);
                 this.readyWaiter = null;
                 if (ok) resolve();
-                else reject(new Error(this.lastError || 'Tiến trình của ứng dụng thoát khi khởi động'));
+                else reject(new Error(this.lastError || tr('Tiến trình của ứng dụng thoát khi khởi động')));
             };
         });
     }
@@ -170,7 +171,7 @@ export class PluginSandbox implements PluginRuntimeHandle {
                 this.pending.delete(msg.id);
                 clearTimeout(p.timer);
                 if (msg.error) {
-                    const err: any = new Error(msg.error.message || 'Lỗi ứng dụng');
+                    const err: any = new Error(msg.error.message || tr('Lỗi ứng dụng'));
                     err.code = msg.error.code;
                     err.status = msg.error.status;
                     p.reject(err);
@@ -205,17 +206,17 @@ export class PluginSandbox implements PluginRuntimeHandle {
         if (child !== this.child) return;
         this.child = null;
         this.stopPing();
-        this.failAll(`Tiến trình của ứng dụng đã thoát (code ${code ?? '?'})`);
+        this.failAll(tr('Tiến trình của ứng dụng đã thoát (code {{v1}})', { v1: code ?? '?' }));
         if (this.readyWaiter) {
-            // Chết khi đang khởi động: boot() sẽ reject, nơi gọi boot() quyết định thử lại.
-            this.lastError = `Tiến trình của ứng dụng thoát khi khởi động (code ${code ?? '?'})`;
+            // Died while starting: boot() will reject, and the caller of boot() decides whether to retry.
+            this.lastError = tr('Tiến trình của ứng dụng thoát khi khởi động (code {{v1}})', { v1: code ?? '?' });
             this.readyWaiter(false);
             return;
         }
         this.scheduleRestart(`Crash (code ${code ?? '?'})`);
     }
 
-    /** Điểm duy nhất hẹn khởi động lại (chốt bằng restartTimer → không bao giờ chạy 2 tiến trình). */
+    /** The only place that schedules a restart (guarded by restartTimer → two processes never run at once). */
     private scheduleRestart(reason: string): void {
         if (this.stopping || this.restartTimer) return;
         if (this.startedAt && Date.now() - this.startedAt > STABLE_RESET_MS) this.crashes = 0;
@@ -224,7 +225,7 @@ export class PluginSandbox implements PluginRuntimeHandle {
         this.ctx.onLog('error', `${reason} — lần ${this.crashes}`);
         const delays = this.opts.restartDelays || RESTART_DELAYS;
         if (this.crashes > delays.length) {
-            this.ctx.onFatal(`Ứng dụng lỗi ${this.crashes} lần liên tiếp: ${reason}`);
+            this.ctx.onFatal(tr('Ứng dụng lỗi {{crashes}} lần liên tiếp: {{reason}}', { crashes: this.crashes, reason }));
             return;
         }
         this.restartTimer = setTimeout(() => {
@@ -234,10 +235,10 @@ export class PluginSandbox implements PluginRuntimeHandle {
             this.boot().catch(err => {
                 const c = this.child;
                 if (c) {
-                    this.child = null; // exit của tiến trình cũ sẽ bị bỏ qua trong onExit
+                    this.child = null; // the exit of the old process is ignored in onExit
                     c.kill();
                 }
-                this.scheduleRestart(`Khởi động lại thất bại: ${err?.message || err}`);
+                this.scheduleRestart(tr('Khởi động lại thất bại: {{v1}}', { v1: err?.message || err }));
             });
         }, delays[this.crashes - 1]);
     }
@@ -289,7 +290,7 @@ export class PluginSandbox implements PluginRuntimeHandle {
             c?.kill();
             throw err;
         } finally {
-            // prevVersion chỉ dùng cho lần bật đầu tiên sau cập nhật.
+            // prevVersion is only used for the first enable after an update.
             this.init = { settings: init.settings };
         }
     }
@@ -303,7 +304,7 @@ export class PluginSandbox implements PluginRuntimeHandle {
         if (!child) return;
         try {
             await this.call('deactivate', {}, TIMEOUTS.deactivate);
-        } catch { /* hết giờ hoặc lỗi → vẫn kill */ }
+        } catch { /* timeout or error → still kill */ }
         const exited = new Promise<void>(resolve => {
             const t = setTimeout(resolve, 2_000);
             child.onExit(() => { clearTimeout(t); resolve(); });
@@ -311,17 +312,17 @@ export class PluginSandbox implements PluginRuntimeHandle {
         child.kill();
         await exited;
         if (this.child === child) this.child = null;
-        this.failAll('Ứng dụng đã tắt');
+        this.failAll(tr('Ứng dụng đã tắt'));
     }
 
     call(method: string, params: any, timeoutMs = TIMEOUTS.default): Promise<any> {
         const child = this.child;
-        if (!child) return Promise.reject(new Error('Ứng dụng không chạy'));
+        if (!child) return Promise.reject(new Error(tr('Ứng dụng không chạy')));
         const id = this.nextId++;
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.pending.delete(id);
-                reject(Object.assign(new Error(`Ứng dụng không trả lời "${method}" sau ${Math.round(timeoutMs / 1000)} giây`), { code: 'TIMEOUT', status: 504 }));
+                reject(Object.assign(new Error(tr('Ứng dụng không trả lời "{{method}}" sau {{v1}} giây', { method, v1: Math.round(timeoutMs / 1000) })), { code: 'TIMEOUT', status: 504 }));
             }, timeoutMs);
             this.pending.set(id, { resolve, reject, timer, method });
             child.send({ t: 'req', id, method, params });

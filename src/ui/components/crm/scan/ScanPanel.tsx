@@ -9,6 +9,8 @@ import ScanHistoryPanel from './ScanHistoryPanel';
 import { Spinner } from '@/components/common/PageLoading';
 import { ClipboardListIcon, HardDriveIcon, SearchIcon } from '@/components/common/icons';
 import { showConfirm } from '../../common/ConfirmDialog';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const SCAN_WARNING_KEY = 'fb_scan_warning_dismissed';
 
@@ -41,7 +43,7 @@ export default function ScanPanel({ accountId }: Props) {
 
   const activeTab = tabs.find(t => t.id === activeTabId);
 
-  // Wrap setActiveTabId để đồng thời cập nhật updated_at trên DB
+  // Wrap setActiveTabId so updated_at is also updated in the DB
   const handleSetActiveTab = useCallback((tabId: string) => {
     setActiveTabId(tabId);
     ipc.fb?.scanTouchTab({ id: tabId }).catch(() => {});
@@ -60,7 +62,7 @@ export default function ScanPanel({ accountId }: Props) {
         ]);
         if (cancelled) return;
         if (activeRes?.success && activeRes.tabs?.length > 0) {
-          // Load saved data for each tab (items + pageInfo từ lần scan trước)
+          // Load saved data for each tab (items + pageInfo from the previous scan)
           const loaded = await Promise.all(activeRes.tabs.map(async (t: any) => {
             let config: any = {};
             try { config = JSON.parse(t.config || '{}'); } catch {}
@@ -86,7 +88,7 @@ export default function ScanPanel({ accountId }: Props) {
               cursor: savedPageInfo.endCursor,
               scanning: false,
               error: '',
-              progress: savedItems.length > 0 ? `Đã có ${savedItems.length} kết quả` : '',
+              progress: savedItems.length > 0 ? tr('Đã có {{count}} kết quả', { count: savedItems.length }) : '',
               batchMode: config.batchMode || false,
               batchInput: config.batchInput || '',
               threadCount: config.threadCount || 1,
@@ -104,7 +106,7 @@ export default function ScanPanel({ accountId }: Props) {
           const defaultTab = createScanTab('group_members');
           setTabs([defaultTab]);
           setActiveTabId(defaultTab.id);
-          saveTabConfig(defaultTab); // 💾 Lưu ngay
+          saveTabConfig(defaultTab); // 💾 Save now
         }
         if (archivedRes?.success) setArchivedTabs(archivedRes.tabs || []);
       } catch {}
@@ -146,7 +148,7 @@ export default function ScanPanel({ accountId }: Props) {
     }
   }, [accountId]);
 
-  // Debounce save: chỉ lưu khi tabs dừng thay đổi 2s
+  // Debounced save: only save once the tabs stop changing for 2s
   const saveTimerRef = useRef<any>(null);
   useEffect(() => {
     if (tabs.length === 0 || !accountId) return;
@@ -214,7 +216,7 @@ export default function ScanPanel({ accountId }: Props) {
     }
   }, [tabs, saveScanLog]);
 
-  // 💾 Save all tabs to DB when unmounting (đổi module)
+  // 💾 Save all tabs to DB when unmounting (module switch)
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const saveTabsToDbRef = useRef(saveTabsToDb);
@@ -223,7 +225,7 @@ export default function ScanPanel({ accountId }: Props) {
     return () => {
       const currentTabs = tabsRef.current;
       if (currentTabs.length > 0 && accountId) {
-        // Save ngay, không đợi debounce
+        // Save now, do not wait for the debounce
         for (const tab of currentTabs) {
           const config = JSON.stringify({
             scanType: tab.scanType, url: tab.url, keyword: tab.keyword,
@@ -255,7 +257,7 @@ export default function ScanPanel({ accountId }: Props) {
     setTabs(prev => [tab, ...prev]);
     setActiveTabId(tab.id);
     setShowNewTabMenu(false);
-    // 💾 Lưu tab config ngay lập tức (không đợi debounce)
+    // 💾 Save the tab config immediately (do not wait for the debounce)
     saveTabConfig(tab);
   }, [tabs, accountId, saveTabConfig]);
 
@@ -349,16 +351,16 @@ export default function ScanPanel({ accountId }: Props) {
 
   const permanentlyDeleteTab = useCallback(async (tabId: string) => {
     const ok = await showConfirm({
-      title: 'Xoá tab vĩnh viễn?',
-      message: 'Toàn bộ dữ liệu liên quan sẽ bị xoá và không thể khôi phục!',
-      confirmText: 'Xoá vĩnh viễn',
+      title: tr('Xoá tab vĩnh viễn?'),
+      message: tr('Toàn bộ dữ liệu liên quan sẽ bị xoá và không thể khôi phục!'),
+      confirmText: tr('Xoá vĩnh viễn'),
       variant: 'danger',
     });
     if (!ok) return;
     try {
       await ipc.fb?.scanDeleteTab({ id: tabId });
       setArchivedTabs(prev => prev.filter((t: any) => t.id !== tabId));
-      // Nếu tab đang active, xoá khỏi danh sách active
+      // If the tab is active, remove it from the active list
       setTabs(prev => {
         const filtered = prev.filter(t => t.id !== tabId);
         if (filtered.length === 0) {
@@ -376,7 +378,7 @@ export default function ScanPanel({ accountId }: Props) {
     const newTab: ScanTabData = {
       ...JSON.parse(JSON.stringify(tab)),
       id: `${tab.scanType}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      label: tab.label + ' (copy)',
+      label: tr('{{v1}} (copy)', { v1: (tab.label) }),
       items: [],
       pageInfo: { endCursor: null, hasNextPage: false },
       cursor: null,
@@ -406,7 +408,7 @@ export default function ScanPanel({ accountId }: Props) {
     return urlTrim;
   }, []);
 
-  // ─── Scan one page (dùng chung cho start & loadMore) ────────────
+  // ─── Scan one page (shared by start & loadMore) ────────────
 
   const scanOnePage = useCallback(async (tabId: string, cursorVal: string | null): Promise<any> => {
     const tab = tabs.find(t => t.id === tabId);
@@ -431,7 +433,7 @@ export default function ScanPanel({ accountId }: Props) {
     }
   }, [accountId, tabs, extractIdFromUrl]);
 
-  // ─── Apply one page result vào tab (merge + dedup + save) ──────
+  // ─── Apply one page result to the tab (merge + dedup + save) ──────
 
   const applyPageResult = useCallback((tabId: string, baseItems: any[], result: any, prevCursor: string | null): {
     mergedItems: any[]; shouldContinue: boolean; nextCursor: string | null; nextBsid: string; nextTsid: string;
@@ -464,13 +466,13 @@ export default function ScanPanel({ accountId }: Props) {
     const tab = tabs.find(t => t.id === tabId);
     if (!tab || !accountId || tab.scanning) return;
 
-    // Nếu đã có items và chưa chọn mode → hỏi người dùng
+    // If there are items and no mode is chosen yet → ask the user
     if (tab.items.length > 0 && !mode) {
       const ok = await showConfirm({
-        title: 'Bắt đầu quét mới?',
-        message: `Tab "${tab.label}" đã có ${tab.items.length} kết quả.\n\nBạn muốn làm mới (xoá dữ liệu cũ) hay tiếp tục quét thêm?`,
-        confirmText: 'Làm mới',
-        cancelText: 'Tiếp tục',
+        title: tr('Bắt đầu quét mới?'),
+        message: tr('Tab "{{label}}" đã có {{count}} kết quả.\n\nBạn muốn làm mới (xoá dữ liệu cũ) hay tiếp tục quét thêm?', { label: tab.label, count: tab.items.length }),
+        confirmText: tr('Làm mới'),
+        cancelText: tr('Tiếp tục'),
         variant: 'warning',
       });
       handleStartScan(tabId, ok ? 'reset' : 'continue');
@@ -482,16 +484,16 @@ export default function ScanPanel({ accountId }: Props) {
     const filterArgs = buildFilterArgs(scanType, tab.filters);
     const targetCount = tab.filters.maxResults || 100;
 
-    // Abort scan trước đó của tab này (nếu có)
+    // Abort the previous scan of this tab (if any)
     stopScanRef.current[tabId] = false;
-    // 💾 Đảm bảo tab config đã được lưu trước khi bắt đầu quét
+    // 💾 Make sure the tab config is saved before the scan starts
     saveTabConfig(tab);
 
     if (isBatch) {
-      // ── BATCH MODE: quét nhiều ID cùng lúc với thread pool ──
+      // ── BATCH MODE: scan many IDs at once with a thread pool ──
       const lines = tab.batchInput.trim().split('\n').filter(Boolean).map(l => l.trim());
       if (lines.length === 0) {
-        updateTab(tabId, { error: 'Vui lòng nhập ít nhất 1 ID', scanning: false });
+        updateTab(tabId, { error: tr('Vui lòng nhập ít nhất 1 ID'), scanning: false });
         return;
       }
 
@@ -499,12 +501,12 @@ export default function ScanPanel({ accountId }: Props) {
       updateTab(tabId, {
         scanning: true, error: '', items: [], cursor: null,
         pageInfo: { endCursor: null, hasNextPage: false },
-        batchProgress: { done: 0, total: lines.length, current: 'Đang khởi tạo...' },
+        batchProgress: { done: 0, total: lines.length, current: tr('Đang khởi tạo...') },
         progress: '',
       });
 
-      // ── Gọi batch IPC handlers để backend xử lý thread pool ──
-      updateTab(tabId, { batchProgress: { done: 0, total: lines.length, current: 'Đang xử lý...' } });
+      // ── Call the batch IPC handlers so the backend runs the thread pool ──
+      updateTab(tabId, { batchProgress: { done: 0, total: lines.length, current: tr('Đang xử lý...') } });
 
       let batchResult: any = null;
       const ids = lines.map(l => extractIdFromUrl(l)).filter(Boolean);
@@ -518,7 +520,7 @@ export default function ScanPanel({ accountId }: Props) {
             batchResult = await ipc.fb?.scanPostCommentsBatch({ accountId, postIds: ids, threadCount });
             break;
           default:
-            // Fallback: xử lý từng ID bằng single calls + thread pool trên UI
+            // Fallback: process each ID with single calls + a thread pool in the UI
             batchResult = await fallbackBatchScan(accountId, scanType, lines, extractIdFromUrl, filterArgs, threadCount, (done, total, current) => {
               updateTab(tabId, { batchProgress: { done, total, current } });
             });
@@ -541,17 +543,17 @@ export default function ScanPanel({ accountId }: Props) {
           batchProgress: { done: lines.length, total: lines.length, current: '' },
           progress: '',
           scanning: false,
-          error: batchResult.errors?.length ? `${batchResult.errors.length} dòng lỗi` : '',
+          error: batchResult.errors?.length ? tr('{{count}} dòng lỗi', { count: batchResult.errors.length }) : '',
         });
       }
     } else {
-      // ── SINGLE MODE: quét 1 URL/keyword với auto-pagination ──
+      // ── SINGLE MODE: scan 1 URL/keyword with auto-pagination ──
       const isContinue = mode === 'continue';
       const baseItems: any[] = isContinue ? [...tab.items] : [];
       const startCursor: string | null = isContinue ? (tab.cursor || null) : null;
 
       updateTab(tabId, {
-        scanning: true, error: '', progress: `Đang quét... (mục tiêu: ${targetCount})`,
+        scanning: true, error: '', progress: tr('Đang quét... (mục tiêu: {{targetCount}})', { targetCount }),
         items: isContinue ? tab.items : [],
         cursor: isContinue ? tab.cursor : null,
         pageInfo: isContinue ? tab.pageInfo : { endCursor: null, hasNextPage: false },
@@ -565,9 +567,9 @@ export default function ScanPanel({ accountId }: Props) {
 
       try {
         while (allItems.length < targetCount && !stopScanRef.current[tabId]) {
-          // Cập nhật progress
+          // Update progress
           if (pageCount > 0) {
-            updateTab(tabId, { progress: `Đang tải trang ${pageCount + 1}... (đã có ${allItems.length}/${targetCount})` });
+            updateTab(tabId, { progress: tr('Đang tải trang {{v1}}... (đã có {{count}}/{{targetCount}})', { v1: pageCount + 1, count: allItems.length, targetCount }) });
           }
 
           const result = await scanOnePage(tabId, currentCursor);
@@ -575,7 +577,7 @@ export default function ScanPanel({ accountId }: Props) {
 
           if (!result?.success) {
             updateTab(tabId, {
-              error: result?.error || 'Không thể quét dữ liệu.',
+              error: result?.error || tr('Không thể quét dữ liệu.'),
               progress: '', scanning: false,
               _lastPayload: result?._lastPayload || tab._lastPayload || '',
               _lastResponse: result?._lastResponse || tab._lastResponse || '',
@@ -592,12 +594,12 @@ export default function ScanPanel({ accountId }: Props) {
           currentBsid = applied.nextBsid || currentBsid;
           currentTsid = applied.nextTsid || currentTsid;
 
-          // Cập nhật UI sau mỗi trang
+          // Update the UI after each page
           updateTab(tabId, {
             items: allItems,
             pageInfo: { endCursor: currentCursor, hasNextPage: applied.shouldContinue },
             cursor: currentCursor,
-            progress: `Đã thu thập ${allItems.length}/${targetCount} kết quả`,
+            progress: tr('Đã thu thập {{count}}/{{targetCount}} kết quả', { count: allItems.length, targetCount }),
             _nextBsid: currentBsid,
             _nextTsid: currentTsid,
             _lastPayload: result._lastPayload || tab._lastPayload || '',
@@ -607,7 +609,7 @@ export default function ScanPanel({ accountId }: Props) {
             _lastResponseHeaders: result._lastResponseHeaders || tab._lastResponseHeaders || '',
           });
 
-          // Lưu data sau mỗi trang (await để tránh race với saveScanLog)
+          // Save data after each page (await to avoid a race with saveScanLog)
           if (allItems.length > 0) {
             try {
               await ipc.fb?.scanSaveTabData({
@@ -618,9 +620,9 @@ export default function ScanPanel({ accountId }: Props) {
             } catch {}
           }
 
-          // Điều kiện dừng
+          // Stop condition
           if (!applied.shouldContinue) {
-            // 💾 Lưu data lần cuối trước khi kết thúc
+            // 💾 Save data one last time before finishing
             if (allItems.length > 0) {
               try {
                 await ipc.fb?.scanSaveTabData({
@@ -631,18 +633,18 @@ export default function ScanPanel({ accountId }: Props) {
               } catch {}
             }
             updateTab(tabId, {
-              progress: `Hoàn tất: ${allItems.length} kết quả (không còn dữ liệu)`,
+              progress: tr('Hoàn tất: {{count}} kết quả (không còn dữ liệu)', { count: allItems.length }),
               scanning: false,
             });
             return;
           }
 
-          // Delay giữa các trang để tránh rate limit
+          // Delay between pages to avoid rate limits
           await new Promise(r => setTimeout(r, 800 + Math.random() * 700));
         }
 
-        // Kết thúc: đủ số lượng hoặc bị dừng
-        // 💾 Lưu data lần cuối trước khi báo hoàn tất
+        // Finish: target count reached or stopped
+        // 💾 Save data one last time before reporting completion
         if (allItems.length > 0) {
           try {
             await ipc.fb?.scanSaveTabData({
@@ -654,14 +656,14 @@ export default function ScanPanel({ accountId }: Props) {
         }
         updateTab(tabId, {
           progress: allItems.length >= targetCount
-            ? `Hoàn tất: ${allItems.length}/${targetCount} kết quả`
-            : `Đã dừng: ${allItems.length} kết quả`,
+            ? tr('Hoàn tất: {{count}}/{{targetCount}} kết quả', { count: allItems.length, targetCount })
+            : tr('Đã dừng: {{count}} kết quả', { count: allItems.length }),
           scanning: false,
           pageInfo: { endCursor: currentCursor, hasNextPage: currentCursor ? true : false },
           cursor: currentCursor,
         });
       } catch (err: any) {
-        updateTab(tabId, { error: err?.message || 'Lỗi không xác định', progress: '', scanning: false });
+        updateTab(tabId, { error: err?.message || tr('Lỗi không xác định'), progress: '', scanning: false });
       }
     }
   }, [accountId, tabs, extractIdFromUrl, updateTab, scanOnePage, applyPageResult, saveTabConfig]);
@@ -670,7 +672,7 @@ export default function ScanPanel({ accountId }: Props) {
 
   const handleStopScan = useCallback((tabId: string) => {
     stopScanRef.current[tabId] = true;
-    updateTab(tabId, { scanning: false, progress: 'Đã dừng quét' });
+    updateTab(tabId, { scanning: false, progress: tr('Đã dừng quét') });
   }, [updateTab]);
 
   // ─── Load more (manual pagination button) ───────────────────────
@@ -679,7 +681,7 @@ export default function ScanPanel({ accountId }: Props) {
     const tab = tabs.find(t => t.id === tabId);
     if (!tab || !accountId || !tab.cursor) return;
 
-    updateTab(tabId, { scanning: true, progress: 'Đang tải thêm...' });
+    updateTab(tabId, { scanning: true, progress: tr('Đang tải thêm...') });
 
     try {
       const result = await scanOnePage(tabId, tab.cursor);
@@ -691,8 +693,8 @@ export default function ScanPanel({ accountId }: Props) {
           pageInfo: { endCursor: applied.nextCursor, hasNextPage: applied.shouldContinue },
           cursor: applied.nextCursor,
           progress: applied.mergedItems.length > tab.items.length
-            ? `Đã thu thập ${applied.mergedItems.length} kết quả`
-            : `Đã thu thập ${tab.items.length} kết quả (không còn dữ liệu mới)`,
+            ? tr('Đã thu thập {{count}} kết quả', { count: applied.mergedItems.length })
+            : tr('Đã thu thập {{count}} kết quả (không còn dữ liệu mới)', { count: tab.items.length }),
           scanning: false,
           _nextBsid: applied.nextBsid || tab._nextBsid || '',
           _nextTsid: applied.nextTsid || tab._nextTsid || '',
@@ -709,7 +711,7 @@ export default function ScanPanel({ accountId }: Props) {
         }
       }
     } catch (err: any) {
-      updateTab(tabId, { error: err?.message || 'Lỗi khi tải thêm', scanning: false });
+      updateTab(tabId, { error: err?.message || tr('Lỗi khi tải thêm'), scanning: false });
     }
   }, [accountId, tabs, scanOnePage, applyPageResult]);
 
@@ -753,11 +755,11 @@ export default function ScanPanel({ accountId }: Props) {
       URL.revokeObjectURL(url2);
 
       const { useAppStore } = await import('@/store/app/appStore');
-      useAppStore.getState().showNotification?.('Đã xuất Excel thành công!', 'success');
+      useAppStore.getState().showNotification?.(tr('Đã xuất Excel thành công!'), 'success');
     } catch (err: any) {
       const { useAppStore } = await import('@/store/app/appStore');
 
-      useAppStore.getState().showNotification?.('Lỗi xuất Excel: ' + err.message, 'error');
+      useAppStore.getState().showNotification?.(tr('Lỗi xuất Excel: {{message}}', { message: err.message }), 'error');
     }
   }, [tabs]);
 
@@ -765,7 +767,7 @@ export default function ScanPanel({ accountId }: Props) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* ⚠️ Warning: tài khoản phụ */}
+      {/* ⚠️ Warning: secondary account */}
       {showWarning && (
         <div className="flex-shrink-0 flex items-start gap-2.5 px-4 py-2.5 bg-red-100 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800/30">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-red-500 flex-shrink-0 mt-0.5">
@@ -773,7 +775,7 @@ export default function ScanPanel({ accountId }: Props) {
             <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <p className="flex-1 text-[12px] text-red-700 dark:text-red-300 leading-relaxed">
-            Quét dữ liệu nên dùng <strong className="text-red-800 dark:text-red-200">tài khoản phụ</strong> - chức năng có thể bị phát hiện bởi Facebook. Tài khoản chính sẽ gặp rủi ro: dễ bị đăng xuất, checkpoint, mất ổn định.
+            {trx('Quét dữ liệu nên dùng <0>tài khoản phụ</0> - chức năng có thể bị phát hiện bởi Facebook. Tài khoản chính sẽ gặp rủi ro: dễ bị đăng xuất, checkpoint, mất ổn định.', { 0: <strong className="text-red-800 dark:text-red-200" /> })}
           </p>
           <button
             onClick={() => {
@@ -781,7 +783,7 @@ export default function ScanPanel({ accountId }: Props) {
               try { localStorage.setItem(SCAN_WARNING_KEY, '1'); } catch {}
             }}
             className="flex-shrink-0 p-0.5 rounded hover:bg-red-200 dark:hover:bg-red-800/40 text-red-400 hover:text-red-600 dark:hover:text-red-300 transition-colors"
-            title="Đóng, không hiển thị lại"
+            title={tr('Đóng, không hiển thị lại')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -793,7 +795,7 @@ export default function ScanPanel({ accountId }: Props) {
       {/* ── Tab bar ────────────────────────────────────────────── */}
       <div className="flex-shrink-0 bg-card border-b border-border/60">
         <div className="flex items-center">
-          {/* Tabs - Max 5 hiển thị, còn lại trong menu "..." */}
+          {/* Tabs - show max 5, the rest go in the "..." menu */}
           <div className="flex items-center flex-1 min-w-0 pl-1">
             {(() => {
               const MAX_VISIBLE = 5;
@@ -830,7 +832,7 @@ export default function ScanPanel({ accountId }: Props) {
                         ref={(el) => { tabMenuRef.current[tab.id] = el; }}
                         onClick={(e) => { e.stopPropagation(); setOpenMenuTabId(openMenuTabId === tab.id ? null : tab.id); }}
                         className="p-0.5 rounded hover:bg-accent/40 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground/80"
-                        title="Tuỳ chọn"
+                        title={tr('Tuỳ chọn')}
                       >
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
                           <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
@@ -849,7 +851,7 @@ export default function ScanPanel({ accountId }: Props) {
                               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors"
                             >
                               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                              Đổi tên
+                              {tr('Đổi tên')}
                             </button>
                             <div className="border-t border-border/50 my-0.5" />
                             <button
@@ -857,14 +859,14 @@ export default function ScanPanel({ accountId }: Props) {
                               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors"
                             >
                               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 8v13H3V8M1 3h22v5H1z"/></svg>
-                              Lưu trữ
+                              {tr('Lưu trữ')}
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); setOpenMenuTabId(null); permanentlyDeleteTab(tab.id); }}
                               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
                             >
                               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                              Xoá tab
+                              {tr('Xoá tab')}
                             </button>
                           </div>
                         </>
@@ -874,7 +876,7 @@ export default function ScanPanel({ accountId }: Props) {
                 </div>
               );
             })}
-                  {/* Overflow menu - tabs ẩn nếu > MAX_VISIBLE */}
+                  {/* Overflow menu - tabs hidden when count > MAX_VISIBLE */}
                   {hasOverflow && (
                     <div className="relative flex-shrink-0">
                       <button
@@ -932,7 +934,7 @@ export default function ScanPanel({ accountId }: Props) {
                   {archivedTabs.length > 0 && (<span className="text-[10px] bg-amber-600/30 text-amber-300 rounded-full px-1.5 py-0.5 leading-none">{archivedTabs.length}</span>)}
                 </button>
                 <button onClick={() => setShowHistory(true)}
-                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-card transition-colors" title="Lịch sử quét"
+                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-card transition-colors" title={tr('Lịch sử quét')}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 </button>
@@ -942,9 +944,9 @@ export default function ScanPanel({ accountId }: Props) {
                   <div className="fixed inset-0 z-10" onClick={() => { setShowArchive(false); setArchiveSearch(''); }} />
                   <div className="absolute z-20 right-0 top-full mt-1 bg-card border border-input/50 rounded-xl shadow-2xl py-2 w-[340px] max-h-[420px] flex flex-col">
                     <div className="px-3 pb-2 flex items-center gap-2 flex-shrink-0">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Đã lưu trữ</span>
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">{tr('Đã lưu trữ')}</span>
                       <span className="text-[10px] text-muted-foreground">({archivedTabs.length})</span>
-                      <button onClick={loadArchivedTabs} className="p-0.5 hover:text-foreground ml-auto" title="Làm mới">
+                      <button onClick={loadArchivedTabs} className="p-0.5 hover:text-foreground ml-auto" title={tr('Làm mới')}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M21 2v6h-6M3 12a9 9 0 0115.36-6.36L21 8M3 22v-6h6M21 12a9 9 0 01-15.36 6.36L3 16"/>
                         </svg>
@@ -952,7 +954,7 @@ export default function ScanPanel({ accountId }: Props) {
                     </div>
                     <div className="px-3 pb-2 flex-shrink-0">
                       <input type="text" value={archiveSearch} onChange={(e) => setArchiveSearch(e.target.value)}
-                        placeholder="🔍 Tìm theo tên..."
+                        placeholder={tr('🔍 Tìm theo tên...')}
                         className="w-full bg-muted/50 text-foreground text-[11px] rounded-lg px-2.5 py-1.5 border border-input/30 focus:outline-none focus:border-blue-500 placeholder-subtle-foreground" />
                     </div>
                     <div className="flex-1 overflow-y-auto">
@@ -961,22 +963,22 @@ export default function ScanPanel({ accountId }: Props) {
                           .filter((t: any) => !archiveSearch || t.name?.toLowerCase().includes(archiveSearch.toLowerCase()))
                           .sort((a: any, b: any) => (b.createdAt || b.created_at || 0) - (a.createdAt || a.created_at || 0));
                         if (filtered.length === 0) {
-                          return <div className="px-3 py-4 text-xs text-muted-foreground text-center">{archiveSearch ? 'Không tìm thấy' : 'Không có tab nào được lưu trữ'}</div>;
+                          return <div className="px-3 py-4 text-xs text-muted-foreground text-center">{archiveSearch ? tr('Không tìm thấy') : tr('Không có tab nào được lưu trữ')}</div>;
                         }
                         return filtered.map((t: any) => (
                           <div key={t.id} className="flex items-center gap-2 px-3 py-2 hover:bg-muted/60 group">
                             <div className="flex-1 min-w-0">
                               <div className="text-xs text-foreground/80 truncate">{t.name}</div>
                               <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-[10px] text-muted-foreground">{t.items_count ?? t.itemsCount ?? 0} items</span>
+                                <span className="text-[10px] text-muted-foreground">{trx('{{v1}} items', { v1: t.items_count ?? t.itemsCount ?? 0 })}</span>
                                 <span className="text-[10px] text-gray-700">·</span>
                                 <span className="text-[10px] text-muted-foreground">{formatArchivedDate(t.createdAt || t.created_at)}</span>
                               </div>
                             </div>
                             <button onClick={() => restoreTab(t.id)}
-                              className="text-[10px] px-2 py-0.5 rounded bg-blue-700/40 text-blue-300 hover:bg-blue-700/60 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">Khôi phục</button>
+                              className="text-[10px] px-2 py-0.5 rounded bg-blue-700/40 text-blue-300 hover:bg-blue-700/60 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">{tr('Khôi phục')}</button>
                             <button onClick={() => permanentlyDeleteTab(t.id)}
-                              className="text-[10px] px-2 py-0.5 rounded bg-red-800/40 text-red-400 hover:bg-red-800/60 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">Xoá</button>
+                              className="text-[10px] px-2 py-0.5 rounded bg-red-800/40 text-red-400 hover:bg-red-800/60 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">{tr('Xoá')}</button>
                           </div>
                         ));
                       })()}
@@ -995,7 +997,7 @@ export default function ScanPanel({ accountId }: Props) {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
-                <span className="hidden sm:inline">Tab mới</span>
+                <span className="hidden sm:inline">{tr('Tab mới')}</span>
               </button>
               {showNewTabMenu && (
                 <>
@@ -1006,7 +1008,7 @@ export default function ScanPanel({ accountId }: Props) {
                       right: newTabMenuRef.current ? document.documentElement.clientWidth - newTabMenuRef.current.getBoundingClientRect().right : 0,
                     }}
                   >
-                    <div className="px-3 py-1.5 text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Loại quét</div>
+                    <div className="px-3 py-1.5 text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">{tr('Loại quét')}</div>
                     <div className="max-h-[320px] overflow-y-auto">
                       {SCAN_CONFIGS.map(cfg => (
                         <button key={cfg.scanType}
@@ -1019,7 +1021,7 @@ export default function ScanPanel({ accountId }: Props) {
                             <span className="text-[10px] text-muted-foreground">{cfg.description}</span>
                           </div>
                           {cfg.comingSoon && (
-                            <span className="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500 font-medium">Đang phát triển</span>
+                            <span className="flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500 font-medium">{tr('Đang phát triển')}</span>
                           )}
                         </button>
                       ))}
@@ -1036,7 +1038,7 @@ export default function ScanPanel({ accountId }: Props) {
       {showRenameDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-card border border-input/50 rounded-2xl shadow-2xl p-6 w-[360px]">
-            <h3 className="text-sm font-semibold text-foreground mb-4">Đổi tên tab</h3>
+            <h3 className="text-sm font-semibold text-foreground mb-4">{tr('Đổi tên tab')}</h3>
             <input
               ref={editInputRef}
               type="text" value={editingLabel}
@@ -1048,11 +1050,11 @@ export default function ScanPanel({ accountId }: Props) {
             <div className="flex items-center gap-2 justify-end">
               <button onClick={() => { setShowRenameDialog(false); setEditingTabId(null); }}
                 className="px-4 py-2 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-                Huỷ
+                {tr('Huỷ')}
               </button>
               <button onClick={commitRename}
                 className="px-4 py-2 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 transition-colors">
-                Lưu
+                {tr('Lưu')}
               </button>
             </div>
           </div>
@@ -1069,7 +1071,7 @@ export default function ScanPanel({ accountId }: Props) {
               tabName={activeTab?.label}
               onClose={() => setShowHistory(false)}
               onRestoreInput={(log) => {
-                // Khôi phục input từ log
+                // Restore input from the log
                 if (activeTab) {
                   const patch: any = {};
                   if (log.input) {
@@ -1107,7 +1109,7 @@ export default function ScanPanel({ accountId }: Props) {
         />
       ) : (
         <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-          Chọn hoặc mở tab mới để bắt đầu quét
+          {tr('Chọn hoặc mở tab mới để bắt đầu quét')}
         </div>
       )}
     </div>
@@ -1119,12 +1121,12 @@ export default function ScanPanel({ accountId }: Props) {
 function buildFilterArgs(scanType: ScanType, filters: ScanFilters): string[] | undefined {
   const args: string[] = [];
 
-  // Group: public groups filter - giống original {"name":"public_groups","args":""}
+  // Group: public groups filter - same as the original {"name":"public_groups","args":""}
   if (filters.public && scanType === 'group_keyword') {
     args.push('{"name":"public_groups","args":""}');
   }
 
-  // Post: recent posts filter - giống original {"name":"recent_posts","args":""}
+  // Post: recent posts filter - same as the original {"name":"recent_posts","args":""}
   if (filters.recent && scanType === 'post_keyword') {
     args.push('{"name":"recent_posts","args":""}');
   }
@@ -1167,7 +1169,7 @@ function ActiveTabContent({
   const filteredItems = React.useMemo(() => {
     let result = tab.items;
 
-    // Lọc bình luận theo từ khóa
+    // Filter comments by keyword
     if (tab.scanType === 'post_comments' && tab.filters.commentKeyword?.trim()) {
       const kw = tab.filters.commentKeyword.trim().toLowerCase();
       result = result.filter(item =>
@@ -1176,7 +1178,7 @@ function ActiveTabContent({
       );
     }
 
-    // Lọc bình luận có chứa SĐT Việt Nam
+    // Filter comments that contain a Vietnamese phone number
     if (tab.scanType === 'post_comments' && tab.filters.detectPhone) {
       result = result.filter(item => hasVietnamesePhone(item.body || ''));
     }
@@ -1209,7 +1211,7 @@ function ActiveTabContent({
           {!batchMode && config.showKeywordInput && (
             <input type="text" value={tab.keyword}
               onChange={(e) => onUpdate({ keyword: e.target.value })}
-              placeholder={config.keywordPlaceholder || 'Nhập từ khóa...'}
+              placeholder={config.keywordPlaceholder || tr('Nhập từ khóa...')}
               className="flex-1 bg-muted/80 text-foreground text-sm rounded-xl px-4 py-2 border border-input/30 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 placeholder-subtle-foreground transition-all"
               onKeyDown={(e) => e.key === 'Enter' && onStart()} />
           )}
@@ -1230,14 +1232,14 @@ function ActiveTabContent({
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/>
               </svg>
-              {batchMode ? 'Batch' : 'Đơn'}
+              {batchMode ? tr('Batch') : tr('Đơn')}
             </button>
           )}
 
           {/* Threads (batch only) */}
           {batchMode && (
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-muted-foreground">Luồng:</span>
+              <span className="text-[10px] text-muted-foreground">{tr('Luồng:')}</span>
               <select value={threadCount} onChange={(e) => onUpdate({ threadCount: Number(e.target.value) })}
                 className="bg-muted/50 text-foreground/80 text-[11px] rounded-lg px-2 py-1.5 border border-input/30 focus:outline-none focus:border-blue-500">
                 <option value={1}>1</option><option value={5}>5</option><option value={10}>10</option><option value={20}>20</option>
@@ -1247,7 +1249,7 @@ function ActiveTabContent({
 
           {/* Target count */}
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-muted-foreground">Mục tiêu:</span>
+            <span className="text-[10px] text-muted-foreground">{tr('Mục tiêu:')}</span>
             <select value={tab.filters.maxResults} onChange={(e) => onUpdate({ filters: { ...tab.filters, maxResults: Number(e.target.value) } })}
               className="bg-muted/50 text-foreground/80 text-[11px] rounded-lg px-2 py-1.5 border border-input/30 focus:outline-none focus:border-blue-500">
               <option value={10}>10</option><option value={20}>20</option><option value={50}>50</option>
@@ -1270,18 +1272,18 @@ function ActiveTabContent({
             <button onClick={onStop}
               className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white hover:bg-red-500 transition-colors shadow-sm">
               <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-              Dừng quét
+              {tr('Dừng quét')}
             </button>
           ) : (
             <button onClick={onStart} disabled={!accountId}
               className="flex items-center gap-1.5 px-5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-blue-600 to-blue-500 text-white-important hover:from-blue-500 hover:to-blue-400 transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-              Bắt đầu quét
+              {tr('Bắt đầu quét')}
             </button>
           )}
 
           <button onClick={onDuplicate}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground/80 hover:bg-muted/60 transition-colors" title="Nhân bản tab">
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground/80 hover:bg-muted/60 transition-colors" title={tr('Nhân bản tab')}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
             </svg>
@@ -1291,7 +1293,7 @@ function ActiveTabContent({
         {/* Batch textarea */}
         {batchMode && (
           <textarea value={batchInput} onChange={(e) => onUpdate({ batchInput: e.target.value })}
-            placeholder="Mỗi dòng 1 URL hoặc ID Facebook..."
+            placeholder={tr('Mỗi dòng 1 URL hoặc ID Facebook...')}
             className="w-full bg-muted/60 text-foreground text-xs rounded-xl px-4 py-2.5 border border-input/30 focus:outline-none focus:border-purple-500 placeholder-subtle-foreground resize-none"
             rows={3} />
         )}
@@ -1325,7 +1327,7 @@ function ActiveTabContent({
             {/* Batch progress */}
             {tab.scanning && batchMode && batchProgress.total > 0 && (
               <div className="flex items-center gap-2 text-xs">
-                <span className="text-blue-400">Batch:</span>
+                <span className="text-blue-400">{tr('Batch:')}</span>
                 <span className="text-foreground/80 font-medium">{batchProgress.done}/{batchProgress.total}</span>
                 <div className="flex-1 h-1.5 bg-muted/50 rounded-full overflow-hidden max-w-[200px]">
                   <div className="h-full bg-gradient-to-r from-purple-500 to-pink-400 rounded-full transition-all duration-300"
@@ -1364,7 +1366,7 @@ function ActiveTabContent({
   );
 }
 
-// ─── Fallback: xử lý batch UI-side cho scan types chưa có backend batch ──
+// ─── Fallback: UI-side batch processing for scan types that have no backend batch yet ──
 
 async function fallbackBatchScan(
   accountId: string,
@@ -1383,7 +1385,7 @@ async function fallbackBatchScan(
   const scanOne = async (input: string, idx: number) => {
     const id = extractIdFromUrl(input);
     if (!id) {
-      errors.push(`${input}: ID không hợp lệ`);
+      errors.push(tr('{{input}}: ID không hợp lệ', { input }));
       return;
     }
 
@@ -1400,14 +1402,14 @@ async function fallbackBatchScan(
           res = await ipc.fb?.scanPostKeyword({ accountId, keyword: id, filters: filterArgs });
           break;
         default:
-          errors.push(`${input}: Không hỗ trợ batch cho loại này`);
+          errors.push(tr('{{input}}: Không hỗ trợ batch cho loại này', { input }));
           return;
       }
 
       if (res?.success && res.items) {
         allItems.push(...res.items.map((item: any) => ({ ...item, _batchSource: id, _batchIndex: idx })));
       } else {
-        errors.push(`${id}: ${res?.error || 'Không có dữ liệu'}`);
+        errors.push(`${id}: ${res?.error || tr('Không có dữ liệu')}`);
       }
     } catch (err: any) {
       errors.push(`${id}: ${err.message}`);
@@ -1452,9 +1454,9 @@ function formatArchivedDate(ts: number | undefined): string {
   const d = new Date(ts);
   const now = new Date();
   const diff = now.getTime() - d.getTime();
-  if (diff < 60_000) return 'Vừa xong';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} phút trước`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} giờ trước`;
-  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)} ngày trước`;
-  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  if (diff < 60_000) return tr('Vừa xong');
+  if (diff < 3_600_000) return tr('{{v1}} phút trước', { v1: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return tr('{{v1}} giờ trước', { v1: Math.floor(diff / 3_600_000) });
+  if (diff < 604_800_000) return tr('{{v1}} ngày trước', { v1: Math.floor(diff / 86_400_000) });
+  return d.toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' });
 }

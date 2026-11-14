@@ -2,6 +2,8 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { submitSharedGroup, DEFAULT_CATEGORIES, type SharedGroupCategory } from '@/lib/crm/backendService';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── Icons ──────────────────────────────────────────────────────────────────
 
@@ -68,11 +70,11 @@ export default function ShareGroupModal({
   } | null>(null);
   const autoResolveRef = useRef(false);
 
-  // ── Auto-resolve link khi modal mở với link có sẵn ───────────────────────
+  // ── Auto-resolve the link when the modal opens with a link already filled in ───────────────────────
   useEffect(() => {
     if (initGroupId && !autoResolveRef.current) {
       autoResolveRef.current = true;
-      // Delay nhẹ để render xong
+      // Short delay so rendering finishes
       setTimeout(() => handleResolveLink(), 100);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -92,10 +94,10 @@ export default function ShareGroupModal({
 
     try {
       const acc = useAccountStore.getState().getActiveAccount();
-      if (!acc) { setLinkError('Không tìm thấy tài khoản'); return; }
+      if (!acc) { setLinkError(tr('Không tìm thấy tài khoản')); return; }
       const auth = buildZaloAuth(acc, pageId);
 
-      // Nếu chỉ nhập ID → convert sang link dạng https://zalo.me/g/...
+      // If only an ID is entered → convert it to a link of the form https://zalo.me/g/...
       let linkOrId = linkInput.trim();
       if (/^\d+$/.test(linkOrId)) {
         linkOrId = `https://zalo.me/g/${linkOrId}`;
@@ -103,7 +105,7 @@ export default function ShareGroupModal({
 
       const res: any = await ipc.zalo?.getGroupLinkInfo({ auth, link: linkOrId, memberPage: 1 });
       if (!res?.success || !res?.response?.groupId) {
-        setLinkError(res?.error || 'Không tìm thấy nhóm từ link này');
+        setLinkError(res?.error || tr('Không tìm thấy nhóm từ link này'));
         return;
       }
       const data = res.response;
@@ -114,7 +116,7 @@ export default function ShareGroupModal({
 
       setResolvedGroup({ groupId: gid, name, avatar, memberCount });
     } catch (err: any) {
-      setLinkError(err.message || 'Lỗi không xác định');
+      setLinkError(err.message || tr('Lỗi không xác định'));
     } finally {
       setLinkLoading(false);
     }
@@ -140,7 +142,7 @@ export default function ShareGroupModal({
         setTimeout(() => onSubmitted(), 3000);
       }
     } catch (err: any) {
-      setResult({ success: false, message: err.message || 'Lỗi không xác định' });
+      setResult({ success: false, message: err.message || tr('Lỗi không xác định') });
     } finally {
       setSubmitting(false);
     }
@@ -163,8 +165,8 @@ export default function ShareGroupModal({
             </svg>
           </div>
           <div className="flex-1">
-            <h3 className="font-semibold text-foreground text-sm">Chia sẻ nhóm</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">Chia sẻ nhóm lên hệ thống chờ admin duyệt</p>
+            <h3 className="font-semibold text-foreground text-sm">{tr('Chia sẻ nhóm')}</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">{tr('Chia sẻ nhóm lên hệ thống chờ admin duyệt')}</p>
           </div>
           <button onClick={onClose} className="text-subtle-foreground hover:text-foreground/80 transition-colors p-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -184,8 +186,8 @@ export default function ShareGroupModal({
                   {CheckIcon}
                 </div>
                 <div>
-                  <p className="text-sm text-green-400 font-semibold">Chia sẻ thành công!</p>
-                  <p className="text-xs text-muted-foreground mt-1">Nhóm của bạn đang chờ admin duyệt</p>
+                  <p className="text-sm text-green-400 font-semibold">{tr('Chia sẻ thành công!')}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{tr('Nhóm của bạn đang chờ admin duyệt')}</p>
                 </div>
               </div>
               <div className="bg-muted/50 rounded-xl p-4 flex items-center gap-3">
@@ -198,17 +200,17 @@ export default function ShareGroupModal({
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-foreground font-medium truncate">{displayName || 'Người dùng'}</p>
-                  <p className="text-[11px] text-subtle-foreground">UID: {pageId}</p>
+                  <p className="text-sm text-foreground font-medium truncate">{displayName || tr('Người dùng')}</p>
+                  <p className="text-[11px] text-subtle-foreground">{trx('UID: {{pageId}}', { pageId })}</p>
                 </div>
               </div>
               <div className="text-center py-1">
-                <p className="text-xs text-muted-foreground">Cảm ơn bạn đã đóng góp nhóm cho cộng đồng! 🎉</p>
-                <p className="text-[11px] text-subtle-foreground mt-1">Nhóm sẽ xuất hiện sau khi admin duyệt.</p>
+                <p className="text-xs text-muted-foreground">{tr('Cảm ơn bạn đã đóng góp nhóm cho cộng đồng! 🎉')}</p>
+                <p className="text-[11px] text-subtle-foreground mt-1">{tr('Nhóm sẽ xuất hiện sau khi admin duyệt.')}</p>
               </div>
               <button onClick={onClose}
                 className="w-full py-2.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
-                Đóng
+                {tr('Đóng')}
               </button>
             </div>
           )}
@@ -223,21 +225,21 @@ export default function ShareGroupModal({
           {/* Form */}
           {!result && (
             <>
-              {/* ── Step 1: Nhập link nhóm ──────────────────────────────── */}
+              {/* ── Step 1: Enter the group link ──────────────────────────────── */}
               <div>
-                <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Link nhóm Zalo</label>
+                <label className="text-xs text-muted-foreground mb-1.5 block font-medium">{tr('Link nhóm Zalo')}</label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <div className="absolute left-3 top-1/2 -translate-y-1/2 text-subtle-foreground">{LinkIcon}</div>
                     <input type="text" value={linkInput} onChange={e => { setLinkInput(e.target.value); setLinkError(''); setResolvedGroup(null); }}
                       onKeyDown={e => { if (e.key === 'Enter' && !linkLoading) handleResolveLink(); }}
-                      placeholder="https://zalo.me/g/xxxxxx hoặc Group ID"
+                      placeholder={tr('https://zalo.me/g/xxxxxx hoặc Group ID')}
                       className="w-full bg-muted border border-input rounded-xl pl-9 pr-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-green-500" />
                   </div>
                   <button onClick={handleResolveLink}
                     disabled={linkLoading || !linkInput.trim()}
                     className="px-4 py-2 bg-accent hover:bg-accent disabled:opacity-50 text-foreground text-sm font-medium rounded-xl transition-colors flex items-center gap-1.5 flex-shrink-0">
-                    {linkLoading ? <>{SpinIcon} Đang tải...</> : 'Tra cứu'}
+                    {linkLoading ? <>{trx('{{SpinIcon}} Đang tải...', { SpinIcon })}</> : tr('Tra cứu')}
                   </button>
                 </div>
 
@@ -261,16 +263,16 @@ export default function ShareGroupModal({
                     )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-foreground font-medium truncate">{resolvedGroup.name}</p>
-                      <p className="text-[11px] text-muted-foreground">ID: {resolvedGroup.groupId}</p>
+                      <p className="text-[11px] text-muted-foreground">{trx('ID: {{groupId}}', { groupId: resolvedGroup.groupId })}</p>
                     </div>
-                    <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-[10px] font-medium rounded-full">Hợp lệ ✓</span>
+                    <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-[10px] font-medium rounded-full">{tr('Hợp lệ ✓')}</span>
                   </div>
                 )}
               </div>
 
-              {/* ── Step 2: Chọn danh mục ──────────────────────────────── */}
+              {/* ── Step 2: Choose a category ──────────────────────────────── */}
               <div>
-                <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Chọn danh mục</label>
+                <label className="text-xs text-muted-foreground mb-1.5 block font-medium">{tr('Chọn danh mục')}</label>
                 <div className="grid grid-cols-4 gap-1.5 max-h-[240px] overflow-y-auto pr-1">
                   {DEFAULT_CATEGORIES.map(cat => (
                     <button key={cat.id} onClick={() => setSelectedCategoryId(cat.id)}
@@ -285,11 +287,11 @@ export default function ShareGroupModal({
                 </div>
               </div>
 
-              {/* ── Step 3: Ghi chú ────────────────────────────────────── */}
+              {/* ── Step 3: Note ────────────────────────────────────── */}
               <div>
-                <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Ghi chú (tùy chọn)</label>
+                <label className="text-xs text-muted-foreground mb-1.5 block font-medium">{tr('Ghi chú (tùy chọn)')}</label>
                 <textarea value={note} onChange={e => setNote(e.target.value)}
-                  placeholder="Nhóm chất lượng, nhiều người mua hàng, nên tham gia..."
+                  placeholder={tr('Nhóm chất lượng, nhiều người mua hàng, nên tham gia...')}
                   rows={2}
                   className="w-full bg-muted border border-input rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-green-500 resize-none" />
               </div>
@@ -302,18 +304,18 @@ export default function ShareGroupModal({
           <div className="flex gap-2 px-6 py-4 border-t border-border flex-shrink-0">
             <button onClick={onClose}
               className="flex-1 py-2.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
-              Hủy
+              {tr('Hủy')}
             </button>
             <button onClick={handleSubmit}
               disabled={!canSubmit}
               className="flex-1 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2">
-              {submitting ? <>{SpinIcon} Đang gửi...</> : (
+              {submitting ? <>{trx('{{SpinIcon}} Đang gửi...', { SpinIcon })}</> : (
                 <>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
                     <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
                   </svg>
-                  Chia sẻ nhóm này
+                  {tr('Chia sẻ nhóm này')}
                 </>
               )}
             </button>

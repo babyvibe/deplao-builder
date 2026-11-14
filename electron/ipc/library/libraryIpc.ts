@@ -1,6 +1,6 @@
 /**
- * libraryIpc - IPC handlers cho thư viện Media (boss side).
- * Boss dùng IPC trực tiếp, employee dùng REST API.
+ * libraryIpc - IPC handlers for the Media library (boss side).
+ * Boss uses IPC directly, employees use the REST API.
  */
 
 import { ipcMain } from 'electron';
@@ -12,8 +12,8 @@ import Logger from '../../../src/utils/Logger';
 const lib = () => LibraryService.getInstance();
 
 /**
- * URL local-media:// cho file trên chính máy Boss (handler trong electron/main.ts nhận đường dẫn tuyệt đối).
- * UI Boss không đi qua HTTP /api/library/* nữa: route đó cần token phiên nhân viên, và cổng relay không cố định 9900.
+ * local-media:// URL for files on the Boss machine itself (the handler in electron/main.ts takes an absolute path).
+ * The Boss UI no longer goes through HTTP /api/library/*: that route needs an employee session token, and the relay port is not fixed at 9900.
  */
 function localMediaUrl(filePath: string | null | undefined): string | null {
   if (!filePath) return null;
@@ -22,7 +22,7 @@ function localMediaUrl(filePath: string | null | undefined): string | null {
   return `local-media://${withSlash.split('/').map(encodeURIComponent).join('/')}`;
 }
 
-/** Item thư viện cho UI Boss: ẩn file_path/thumb_path, URL hiển thị local-media://, giữ _localPath để gửi file. */
+/** Library item for the Boss UI: hides file_path/thumb_path, displays local-media:// URLs, keeps _localPath to send the file. */
 function toBossUiItem(item: any): any {
   return {
     ...item,

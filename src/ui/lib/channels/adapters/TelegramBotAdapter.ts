@@ -1,6 +1,6 @@
 /**
- * TelegramBotAdapter.ts - Adapter cho kênh Telegram Bot
- * Gọi IPC telegram:* để gửi tin nhắn, kiểm tra health, etc.
+ * TelegramBotAdapter.ts - Adapter for the Telegram Bot channel
+ * Calls the telegram:* IPC to send messages, check health, etc.
  */
 
 import { BaseChannelAdapter } from './BaseChannelAdapter';
@@ -10,6 +10,7 @@ import {
   ForwardParams, EditParams, PollParams, GroupNameParams, BlockParams,
 } from './ChannelAdapter';
 import ipc from '../../ipc';
+import { tr } from '../../../../shared/i18n';
 
 export class TelegramBotAdapter extends BaseChannelAdapter {
   readonly channel = 'telegram_bot' as const;
@@ -288,7 +289,7 @@ export class TelegramBotAdapter extends BaseChannelAdapter {
 
   async connectAccount(params: ConnectParams): Promise<ActionResult> {
     try {
-      // Lấy botToken từ accounts qua IPC (đã decrypt ở main process)
+      // Get the botToken from accounts via IPC (already decrypted in the main process)
       let botToken = params.auth?.botToken || '';
       let botName = params.auth?.botName || '';
       if (!botToken) {
@@ -301,7 +302,7 @@ export class TelegramBotAdapter extends BaseChannelAdapter {
           botName = botAccount?.full_name || '';
         } catch {}
       }
-      if (!botToken) return { success: false, error: 'Bot token không tồn tại. Vui lòng đăng nhập lại.' };
+      if (!botToken) return { success: false, error: tr('Bot token không tồn tại. Vui lòng đăng nhập lại.') };
       const res = await ipc.telegram?.startBot({
         accountId: params.accountId,
         botToken,

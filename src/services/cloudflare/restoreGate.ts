@@ -1,13 +1,13 @@
 /**
- * restoreGate — sau khi khôi phục DB từ R2 (máy mới / máy dự phòng), mọi tự động hoá có thể gửi tin
- * (chiến dịch CRM, workflow, lịch của ứng dụng) phải chờ người dùng xác nhận máy cũ đã tắt (bước 6 của
- * trình khôi phục) — tránh hai máy cùng gửi một chiến dịch.
+ * restoreGate: after the DB is restored from R2 (a new machine / a backup machine), all automation that can send messages
+ * (CRM campaigns, workflows, the app's schedules) must wait until the user confirms the old machine is turned off (step 6 of the
+ * restore wizard), so two machines do not send the same campaign.
  *
- * Cờ nằm trong app_settings của workspace (Restore ghi vào file đã khôi phục trước khi thay DB):
- *  - 'cloud_restore_paused_automations' = '1' → tạm dừng tự động hoá.
- *  - 'cloud_restore_pending_relogin'    = '1' → còn kênh cần đăng nhập lại (chỉ để giao diện nhắc).
+ * The flags live in the app_settings of the workspace (Restore writes them into the file it restored before replacing the DB):
+ *  - 'cloud_restore_paused_automations' = '1' → automation paused.
+ *  - 'cloud_restore_pending_relogin'    = '1' → a channel still needs to sign in again (only for the UI to remind).
  *
- * Đọc cờ rẻ (một SELECT theo khoá chính, nhớ 5 s, đổi workspace là đọc lại) nên gọi được ở đường nóng.
+ * Reading the flags is cheap (one SELECT by primary key, cached for 5 s, reread when the workspace changes), so it can be called on the hot path.
  */
 import DatabaseService from '../database/DatabaseService';
 import Logger from '../../utils/Logger';
@@ -18,7 +18,7 @@ export const RESTORE_RELOGIN_KEY = 'cloud_restore_pending_relogin';
 const CACHE_MS = 5000;
 let cache: { value: boolean; at: number; dbPath: string } | null = null;
 
-/** true khi workspace đang mở vừa được khôi phục và người dùng chưa bật lại tự động hoá. */
+/** true when the open workspace was just restored and the user has not turned automation back on. */
 export function automationsPausedAfterRestore(): boolean {
     try {
         const db = DatabaseService.getInstance();
@@ -41,14 +41,14 @@ export function restorePendingRelogin(): boolean {
     }
 }
 
-/** Bước 6 của trình khôi phục: người dùng xác nhận máy cũ đã tắt → bỏ cờ và chạy lại chiến dịch đang dở. */
+/** Step 6 of the restore wizard: the user confirms the old machine is off → clear the flags and run the interrupted campaign again. */
 export function resumeAutomationsAfterRestore(): void {
     const db = DatabaseService.getInstance();
     db.setSetting(RESTORE_PAUSED_KEY, '0');
     db.setSetting(RESTORE_RELOGIN_KEY, '0');
     cache = null;
     try {
-        // require lười: tránh vòng import CRMQueueService ↔ DatabaseService lúc khởi động.
+        // lazy require: avoids an import cycle CRMQueueService ↔ DatabaseService at startup.
         const CRMQueueService = require('../crm/CRMQueueService').default;
         CRMQueueService.getInstance().resumeActiveCampaigns();
     } catch (err: any) {
@@ -57,7 +57,7 @@ export function resumeAutomationsAfterRestore(): void {
     Logger.log('[restoreGate] Automations resumed after restore');
 }
 
-/** Gọi khi DB được thay/đổi workspace để lần đọc sau lấy giá trị mới ngay. */
+/** Called when the DB is replaced / the workspace changes, so the next read gets the new value at once. */
 export function invalidateRestoreGate(): void {
     cache = null;
 }

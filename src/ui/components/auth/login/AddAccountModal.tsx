@@ -11,17 +11,19 @@ import { Spinner } from '@/components/common/PageLoading';
 import { AlertIcon, BookIcon, CheckIcon, ClockIcon, CloseIcon, EyeIcon, EyeOffIcon, KeyIcon, LockIcon, PinIcon, PluginIcon, RefreshIcon, SmartphoneIcon, StarIcon, SunIcon, WrenchIcon } from '@/components/common/icons';
 import TelegramBotLoginStep from './TelegramBotLoginStep';
 import PhoneLoginTab from './PhoneLoginTab';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface AddAccountModalProps {
   onClose: () => void;
 }
 
-/** Footer điều khoản - dùng chung cho cả QR và Cookie tab */
+/** Terms footer, shared by the QR and Cookie tabs */
 function TosFooter() {
   const { setView, setAddAccountModalOpen } = useAppStore();
   return (
     <p className="text-muted-foreground text-[11px] text-center pt-3 leading-relaxed">
-      Khi bạn đăng nhập là đã đồng ý{' '}
+      {tr('Khi bạn đăng nhập là đã đồng ý ')}
       <button
         type="button"
         onClick={() => {
@@ -31,7 +33,7 @@ function TosFooter() {
         }}
         className="text-blue-500 hover:text-blue-400 underline underline-offset-2 transition-colors"
       >
-        điều khoản sử dụng tại đây
+        {tr('điều khoản sử dụng tại đây')}
       </button>
     </p>
   );
@@ -44,7 +46,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
   const { addAccountInitialChannel, addAccountInitialProxyId } = useAppStore();
   const initialCh = addAccountInitialChannel as Channel | null;
 
-  // Nếu có initialChannel (re-login) → skip channel selection
+  // If there is an initialChannel (re-login) → skip channel selection
   const getInitialStep = (): Step => {
     if (!initialCh) return 'channel';
     if (isTelegramBot(initialCh)) return 'telegram';
@@ -54,26 +56,26 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
 
   const [step, setStep] = useState<Step>(getInitialStep());
   const [channel, setChannel] = useState<Channel>(initialCh || 'zalo');
-  // Chuyển máy: khôi phục dữ liệu từ bản sao trên Cloudflare R2 (máy chủ, bản app có module Cloudflare).
+  // Move to another machine: restore data from the copy on Cloudflare R2 (server, app build with the Cloudflare module).
   const canRestoreFromCloud = useEmployeeStore(s => s.mode) !== 'employee' && !!(ipc as { cloudflare?: unknown }).cloudflare;
   const openCloudRestore = () => {
     void import('../../settings/cloud/restore/RestoreWizard').then(m => { m.openRestoreWizard({ mode: 'new' }); });
   };
   const [tab, setTab] = useState<'qr' | 'cookie'>('qr');
   const [fbTab, setFbTab] = useState<'messenger_lite' | 'cookie'>('messenger_lite');
-  // Đăng nhập lại: chọn sẵn proxy tài khoản đang dùng (vẫn đổi được ở bước proxy)
+  // Re-login: preselect the account's current proxy (it can still be changed at the proxy step)
   const [selectedProxyId, setSelectedProxyId] = useState<number | null>(addAccountInitialProxyId);
   const [proxies, setProxies] = useState<any[]>([]);
   const [proxyLoading, setProxyLoading] = useState(false);
 
-  // Load proxies khi bước proxy được hiển thị
+  // Load proxies when the proxy step is shown
   useEffect(() => {
     if (step === 'proxy') {
       setProxyLoading(true);
       ipc.proxy?.list().then((res) => {
         const list = res?.proxies || [];
         setProxies(list);
-        // Proxy chọn sẵn khi đăng nhập lại có thể đã bị xoá
+        // The proxy preselected for re-login may have been deleted
         if (Array.isArray(res?.proxies)) {
           setSelectedProxyId((id) => (id != null && !list.some((p: any) => p.id === id) ? null : id));
         }
@@ -99,12 +101,12 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
   };
 
   const headerTitle =
-    step === 'channel' ? 'Thêm tài khoản'
-    : step === 'proxy' ? 'Chọn Proxy (tuỳ chọn)'
-    : step === 'telegram' ? 'Kết nối Telegram Bot'
-    : step === 'telegram_user' ? 'Đăng nhập Telegram cá nhân'
-    : channel === CHANNEL.ZALO ? `Đăng nhập ${getChannelLabel('zalo')} cá nhân`
-    : `Đăng nhập ${getChannelLabel('facebook')} cá nhân`;
+    step === 'channel' ? tr('Thêm tài khoản')
+    : step === 'proxy' ? tr('Chọn Proxy (tuỳ chọn)')
+    : step === 'telegram' ? tr('Kết nối Telegram Bot')
+    : step === 'telegram_user' ? tr('Đăng nhập Telegram cá nhân')
+    : channel === CHANNEL.ZALO ? tr('Đăng nhập {{v1}} cá nhân', { v1: getChannelLabel('zalo') })
+    : tr('Đăng nhập {{v1}} cá nhân', { v1: getChannelLabel('facebook') });
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
@@ -116,7 +118,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
               <button
                 onClick={handleBack}
                 className="text-muted-foreground hover:text-foreground transition-colors"
-                title="Quay lại"
+                title={tr('Quay lại')}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <polyline points="15 18 9 12 15 6" />
@@ -135,7 +137,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
         {/* Step 1 - Channel Selection */}
         {step === 'channel' && (
           <div className="p-6 space-y-4">
-            <p className="text-muted-foreground text-sm text-center mb-6">Chọn kênh bạn muốn thêm tài khoản</p>
+            <p className="text-muted-foreground text-sm text-center mb-6">{tr('Chọn kênh bạn muốn thêm tài khoản')}</p>
             <div className="grid grid-cols-2 gap-4">
               {/* Zalo */}
               <button
@@ -146,8 +148,8 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                   <ZaloIcon size={32} />
                 </div>
                 <div className="text-center">
-                  <p className="text-foreground font-semibold text-sm">Zalo cá nhân</p>
-                  <p className="text-muted-foreground text-xs mt-0.5">QR Code hoặc Cookie</p>
+                  <p className="text-foreground font-semibold text-sm">{tr('Zalo cá nhân')}</p>
+                  <p className="text-muted-foreground text-xs mt-0.5">{tr('QR Code hoặc Cookie')}</p>
                 </div>
               </button>
 
@@ -160,8 +162,8 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                   <FacebookIcon size={32} />
                 </div>
                 <div className="text-center">
-                  <p className="text-foreground font-semibold text-sm">Facebook cá nhân</p>
-                  <p className="text-muted-foreground text-xs mt-0.5">Tài khoản hoặc Cookie</p>
+                  <p className="text-foreground font-semibold text-sm">{tr('Facebook cá nhân')}</p>
+                  <p className="text-muted-foreground text-xs mt-0.5">{tr('Tài khoản hoặc Cookie')}</p>
                 </div>
               </button>
               {/* Telegram User */}
@@ -174,7 +176,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                 </div>
                 <div className="text-center">
                   <p className="text-foreground font-semibold text-sm">Telegram</p>
-                  <p className="text-muted-foreground text-xs mt-0.5">Đăng nhập bằng SĐT</p>
+                  <p className="text-muted-foreground text-xs mt-0.5">{tr('Đăng nhập bằng SĐT')}</p>
                 </div>
               </button>
               {/* Telegram Bot */}
@@ -187,26 +189,26 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                 </div>
                 <div className="text-center">
                   <p className="text-foreground font-semibold text-sm">Telegram Bot</p>
-                  <p className="text-muted-foreground text-xs mt-0.5">Nhập Bot Token</p>
+                  <p className="text-muted-foreground text-xs mt-0.5">{tr('Nhập Bot Token')}</p>
                 </div>
               </button>
             </div>
 
             <p className="text-muted-foreground text-[11px] text-center pt-2">
-              Thêm nhiều tài khoản để quản lý tin nhắn đa kênh
+              {tr('Thêm nhiều tài khoản để quản lý tin nhắn đa kênh')}
             </p>
             {canRestoreFromCloud && (
               <p className="text-muted-foreground text-[11px] text-center">
-                Chuyển từ máy khác?{' '}
+                {tr('Chuyển từ máy khác? ')}
                 <button type="button" onClick={openCloudRestore} className="text-primary hover:underline underline-offset-2">
-                  Khôi phục dữ liệu từ đám mây
+                  {tr('Khôi phục dữ liệu từ đám mây')}
                 </button>
               </p>
             )}
           </div>
         )}
 
-        {/* Step 2 - Proxy selection (chỉ Zalo) */}
+        {/* Step 2 - Proxy selection (Zalo only) */}
         {step === 'proxy' && (
           <ProxySelectStep
             proxies={proxies}
@@ -226,7 +228,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                 <div className="flex items-center gap-2 bg-green-900/20 border border-green-700/40 rounded-lg px-3 py-1.5">
                   <span className="text-green-400 text-sm"><LockIcon className="w-4 h-4" /></span>
                   <span className="text-xs text-green-300">
-                    Proxy: <strong>{proxies.find(p => p.id === selectedProxyId)?.name}</strong>
+                    {tr('Proxy:')} <strong>{proxies.find(p => p.id === selectedProxyId)?.name}</strong>
                   </span>
                   <button
                     onClick={() => setSelectedProxyId(null)}
@@ -247,7 +249,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  {t === 'qr' ? 'Quét mã QR' : 'Cookies / IMEI'}
+                  {t === 'qr' ? tr('Quét mã QR') : tr('Cookies / IMEI')}
                 </button>
               ))}
             </div>
@@ -269,7 +271,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                 <div className="flex items-center gap-2 bg-green-900/20 border border-green-700/40 rounded-lg px-3 py-1.5">
                   <span className="text-green-400 text-sm"><LockIcon className="w-4 h-4" /></span>
                   <span className="text-xs text-green-300">
-                    Proxy: <strong>{proxies.find(p => p.id === selectedProxyId)?.name}</strong>
+                    {tr('Proxy:')} <strong>{proxies.find(p => p.id === selectedProxyId)?.name}</strong>
                   </span>
                   <button
                     onClick={() => setSelectedProxyId(null)}
@@ -290,7 +292,7 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  {t === 'messenger_lite' ? 'Đăng nhập tài khoản' : 'Cookie'}
+                  {t === 'messenger_lite' ? tr('Đăng nhập tài khoản') : tr('Cookie')}
                 </button>
               ))}
             </div>
@@ -353,11 +355,11 @@ function ProxySelectStep({
       setTestState('ok');
     } else {
       setTestState('fail');
-      setTestError(res?.error || 'Proxy không hoạt động');
+      setTestError(res?.error || tr('Proxy không hoạt động'));
     }
   };
 
-  // Reset test state khi đổi proxy
+  // Reset the test state when the proxy changes
   const handleSelect = (id: number | null) => {
     onSelect(id);
     setTestState('idle');
@@ -367,8 +369,7 @@ function ProxySelectStep({
   return (
     <div className="p-6 space-y-4">
       <p className="text-muted-foreground text-sm">
-        Chọn proxy cho tài khoản này <strong>(không bắt buộc)</strong>.
-        Nếu bỏ qua, tài khoản sẽ kết nối trực tiếp.
+        {trx('Chọn proxy cho tài khoản này <0>(không bắt buộc)</0>. Nếu bỏ qua, tài khoản sẽ kết nối trực tiếp.', { 0: <strong /> })}
       </p>
 
       {loading ? (
@@ -378,7 +379,7 @@ function ProxySelectStep({
       ) : proxies.length === 0 ? (
         <div className="text-center py-6 space-y-3">
           <div className="text-3xl justify-items-center"><LockIcon className="w-4 h-4" /></div>
-          <p className="text-sm text-muted-foreground">Chưa có proxy nào được cài đặt</p>
+          <p className="text-sm text-muted-foreground">{tr('Chưa có proxy nào được cài đặt')}</p>
           <button
             onClick={() => {
               setAddAccountModalOpen(false);
@@ -387,7 +388,7 @@ function ProxySelectStep({
             }}
             className="text-blue-400 hover:text-blue-300 text-xs underline"
           >
-            Vào Cài đặt → Proxy để thêm
+            {tr('Vào Cài đặt → Proxy để thêm')}
           </button>
         </div>
       ) : (
@@ -403,8 +404,8 @@ function ProxySelectStep({
           >
             <span className="text-lg"><CloseIcon className="w-4 h-4" /></span>
             <div className="text-left">
-              <p className="text-sm font-medium">Không dùng proxy</p>
-              <p className="text-xs text-muted-foreground">Kết nối trực tiếp</p>
+              <p className="text-sm font-medium">{tr('Không dùng proxy')}</p>
+              <p className="text-xs text-muted-foreground">{tr('Kết nối trực tiếp')}</p>
             </div>
             {selectedProxyId === null && (
               <svg className="ml-auto text-blue-400" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -439,7 +440,7 @@ function ProxySelectStep({
         </div>
       )}
 
-      {/* Test proxy section (khi đã chọn proxy cụ thể) */}
+      {/* Test proxy section (when a specific proxy is selected) */}
       {selectedProxy && (
         <div className={`rounded-xl p-3 border ${
           testState === 'ok' ? 'bg-green-900/20 border-green-700/40' :
@@ -447,7 +448,7 @@ function ProxySelectStep({
           'bg-muted border-input'
         }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Kiểm tra kết nối proxy trước khi đăng nhập</span>
+            <span className="text-xs text-muted-foreground">{tr('Kiểm tra kết nối proxy trước khi đăng nhập')}</span>
             <button
               type="button"
               onClick={handleTest}
@@ -459,10 +460,10 @@ function ProxySelectStep({
               }`}
             >
               {testState === 'testing' ? (
-                <><Spinner size={3} /> Đang test...</>
-              ) : testState === 'ok' ? <><CheckIcon className="w-4 h-4 inline" /> Kết nối tốt</>
-              : testState === 'fail' ? <><RefreshIcon className="w-4 h-4 inline" /> Test lại</>
-              : 'Test ngay'}
+                <>{trx('<0/> Đang test...', { 0: <Spinner size={3} /> })}</>
+              ) : testState === 'ok' ? <>{trx('<0/> Kết nối tốt', { 0: <CheckIcon className="w-4 h-4 inline" /> })}</>
+              : testState === 'fail' ? <>{trx('<0/> Test lại', { 0: <RefreshIcon className="w-4 h-4 inline" /> })}</>
+              : tr('Test ngay')}
             </button>
           </div>
           {testState === 'fail' && testError && (
@@ -471,12 +472,12 @@ function ProxySelectStep({
         </div>
       )}
 
-      {/* Cảnh báo khi proxy lỗi */}
+      {/* Warning when the proxy has an error */}
       {testState === 'fail' && (
         <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-xl p-3">
-          <p className="text-xs text-yellow-400 font-medium"><AlertIcon className="w-4 h-4 inline" /> Proxy không hoạt động</p>
+          <p className="text-xs text-yellow-400 font-medium">{trx('<0/> Proxy không hoạt động', { 0: <AlertIcon className="w-4 h-4 inline" /> })}</p>
           <p className="text-xs text-yellow-300/70 mt-1">
-            Đăng nhập qua proxy lỗi sẽ thất bại. Bạn vẫn có thể tiếp tục không dùng proxy.
+            {tr('Đăng nhập qua proxy lỗi sẽ thất bại. Bạn vẫn có thể tiếp tục không dùng proxy.')}
           </p>
         </div>
       )}
@@ -485,7 +486,7 @@ function ProxySelectStep({
         onClick={onContinue}
         className="btn-primary w-full"
       >
-        {selectedProxyId ? <><CheckIcon className="w-4 h-4 inline" /> Tiếp tục với proxy</> : 'Tiếp tục không cần proxy →'}
+        {selectedProxyId ? <>{trx('<0/> Tiếp tục với proxy', { 0: <CheckIcon className="w-4 h-4 inline" /> })}</> : tr('Tiếp tục không cần proxy →')}
       </button>
     </div>
   );
@@ -494,8 +495,8 @@ function ProxySelectStep({
 // ─── QR Login Tab ─────────────────────────────────────────────────────────────
 
 /**
- * zca-js huỷ mã QR sau 100 s (kể từ lúc tạo mã). Trước đây đếm 60 s: mã còn dùng được đã bị ẩn và báo hết hạn, người
- * dùng bấm Làm mới huỷ đúng lượt vừa quét → điện thoại báo đăng nhập thành công mà Deplao không có tài khoản.
+ * zca-js cancels the QR code 100 s after it is created. It used to count 60 s: a code that could still be used was hidden and reported as expired, and the user
+ * clicked Refresh, which cancelled the exact attempt just scanned → the phone reported a successful login but Deplao had no account.
  */
 const QR_TIMEOUT_SECONDS = 100;
 
@@ -504,7 +505,7 @@ type QRStatus = 'idle' | 'loading' | 'waiting' | 'scanned' | 'success' | 'expire
 function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: number | null }) {
   const [qrData, setQrData] = useState<string>('');
   const [status, setStatusState] = useState<QRStatus>('idle');
-  // Trạng thái hiện tại cho lúc đóng cửa sổ (cleanup của effect chỉ thấy giá trị lúc mount)
+  // Current state for when the window closes (the effect's cleanup only sees the value at mount time)
   const statusRef = useRef<QRStatus>('idle');
   const setStatus = (next: QRStatus) => {
     statusRef.current = next;
@@ -538,7 +539,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
   };
 
   const startQR = async () => {
-    // Tạo tempId mới mỗi lần refresh
+    // Create a new tempId on every refresh
     tempId.current = `qr_${Date.now()}`;
     setQrData('');
     setErrorText('');
@@ -550,7 +551,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
   };
 
   const handleRefresh = async () => {
-    // Abort QR cũ trước
+    // Abort the old QR first
     if (tempId.current) {
       await ipc.login?.loginQRAbort?.(tempId.current).catch(() => {});
     }
@@ -565,7 +566,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
       if (data.tempId !== tempId.current) return;
 
       if (data.status === 'waiting' && data.qrDataUrl) {
-        // Đảm bảo luôn có prefix
+        // Make sure the prefix is always there
         const url = data.qrDataUrl.startsWith('data:')
           ? data.qrDataUrl
           : `data:image/png;base64,${data.qrDataUrl}`;
@@ -582,7 +583,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
       if (data.status === 'success') {
         clearTimer();
         setStatus('success');
-        showNotification('Đăng nhập thành công! 🎉 Đang hoàn tất thiết lập tài khoản...', 'success');
+        showNotification(tr('Đăng nhập thành công! 🎉 Đang hoàn tất thiết lập tài khoản...'), 'success');
         const existingIds = new Set(existingAccounts.map(a => a.zalo_id));
 
         const loadAccounts = async () => {
@@ -591,7 +592,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
             setAccounts(res.accounts);
             const newAccounts = res.accounts.filter((acc: any) => !existingIds.has(acc.zalo_id));
             if (newAccounts.length > 0) {
-              showNotification('✅ Tài khoản đã được thêm vào ứng dụng!', 'success');
+              showNotification(tr('✅ Tài khoản đã được thêm vào ứng dụng!'), 'success');
             }
             return true;
           }
@@ -604,7 +605,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
             await loadAccounts();
           }
           // 2nd pass sau 2.5s: ZaloLoginHelper fetch phone async sau success broadcast
-          // → cần reload lại để store có đủ thông tin (phone, isBusiness)
+          // → needs a reload so the store has enough info (phone, isBusiness)
           setTimeout(loadAccounts, 2500);
         });
         setTimeout(onSuccess, 1800);
@@ -628,9 +629,9 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
     return () => {
       clearTimer();
       unsub();
-      // Huỷ QR đang chờ để tránh orphaned background process. Đã quét, đang xác nhận trên điện thoại → để lượt đăng nhập
-      // chạy tiếp: đóng cửa sổ lúc này từng huỷ đúng lượt điện thoại vừa xác nhận ("Operation aborted"); xong thì
-      // useZaloEvents nạp lại danh sách tài khoản.
+      // Cancel the pending QR to avoid an orphaned background process. Already scanned, waiting for confirmation on the phone → let the login attempt
+      // keep running: closing the window at this point used to cancel the exact attempt the phone had just confirmed ("Operation aborted"); after that
+      // useZaloEvents reloads the account list.
       if (statusRef.current === 'scanned') return;
       ipc.login?.loginQRAbort?.(tempId.current).catch(() => {});
     };
@@ -644,7 +645,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
           <div className="w-48 h-48 bg-muted rounded-xl flex items-center justify-center">
             <Spinner size={8} />
           </div>
-          <p className="text-muted-foreground text-sm">Đang tạo mã QR...</p>
+          <p className="text-muted-foreground text-sm">{tr('Đang tạo mã QR...')}</p>
         </div>
       ) : null}
 
@@ -652,9 +653,9 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
       {status === 'waiting' && (
         <div className="flex flex-col items-center gap-3">
           <div className="bg-white p-3 rounded-xl shadow-lg">
-            <img src={qrData} alt="QR Code" className="w-52 h-52 object-contain" />
+            <img src={qrData} alt={tr('QR Code')} className="w-52 h-52 object-contain" />
           </div>
-          <p className="text-foreground/80 text-sm">Mở Zalo → Quét mã QR</p>
+          <p className="text-foreground/80 text-sm">{tr('Mở Zalo → Quét mã QR')}</p>
           <div className={`text-sm font-mono font-medium ${timeLeft <= 10 ? 'text-red-400' : 'text-muted-foreground'}`}>
             ⏱ {String(Math.floor(timeLeft / 60)).padStart(2, '0')}:{String(timeLeft % 60).padStart(2, '0')}
           </div>
@@ -665,7 +666,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
       {status === 'scanned' && (
         <div className="py-8 flex flex-col items-center gap-3">
           <div className="text-5xl"><SmartphoneIcon className="w-4 h-4" /></div>
-          <p className="text-green-400 font-medium">Đã quét! Đang xác nhận trên điện thoại...</p>
+          <p className="text-green-400 font-medium">{tr('Đã quét! Đang xác nhận trên điện thoại...')}</p>
           <Spinner size={5} className="text-green-400" />
         </div>
       )}
@@ -674,18 +675,18 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
       {status === 'success' && (
         <div className="py-8 flex flex-col items-center gap-3">
           <div className="text-5xl"><StarIcon className="w-4 h-4" /></div>
-          <p className="text-green-400 font-semibold text-lg">Đăng nhập thành công!</p>
+          <p className="text-green-400 font-semibold text-lg">{tr('Đăng nhập thành công!')}</p>
         </div>
       )}
 
-      {/* Expired / Declined / Error → hiện nút Làm mới */}
+      {/* Expired / Declined / Error → show the Refresh button */}
       {(status === 'expired' || status === 'declined' || status === 'error') && (
         <div className="py-6 flex flex-col items-center gap-4">
           <div className="text-5xl">{status === 'expired' ? <ClockIcon className="w-5 h-5" /> : <CloseIcon className="w-5 h-5" />}</div>
           <p className="text-foreground/80 text-sm">
-            {status === 'expired' ? 'Mã QR đã hết hạn'
-              : status === 'declined' ? 'Đã từ chối đăng nhập trên điện thoại'
-              : (errorText || 'Có lỗi xảy ra')}
+            {status === 'expired' ? tr('Mã QR đã hết hạn')
+              : status === 'declined' ? tr('Đã từ chối đăng nhập trên điện thoại')
+              : (errorText || tr('Có lỗi xảy ra'))}
           </p>
           <button
             onClick={handleRefresh}
@@ -695,7 +696,7 @@ function QRLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId?: n
               <polyline points="23 4 23 10 17 10" />
               <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
             </svg>
-            Làm mới QR
+            {tr('Làm mới QR')}
           </button>
         </div>
       )}
@@ -718,8 +719,8 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
   const { setAccounts } = useAccountStore();
 
   const handleLogin = async () => {
-    if (!username.trim()) { setError('Vui lòng nhập email hoặc số điện thoại Facebook'); return; }
-    if (!password) { setError('Vui lòng nhập mật khẩu'); return; }
+    if (!username.trim()) { setError(tr('Vui lòng nhập email hoặc số điện thoại Facebook')); return; }
+    if (!password) { setError(tr('Vui lòng nhập mật khẩu')); return; }
     setLoading(true);
     setError('');
     try {
@@ -730,18 +731,18 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
         proxyId,
       });
       if (result?.success) {
-        showNotification('Đăng nhập Facebook thành công! 🎉 Đang hoàn tất thiết lập tài khoản...', 'success');
+        showNotification(tr('Đăng nhập Facebook thành công! 🎉 Đang hoàn tất thiết lập tài khoản...'), 'success');
 
         const res = await ipc.login?.getAccounts();
         if (res?.accounts) setAccounts(res.accounts);
 
-        showNotification('✅ Tài khoản Facebook đã được thêm vào ứng dụng!', 'success');
+        showNotification(tr('✅ Tài khoản Facebook đã được thêm vào ứng dụng!'), 'success');
         onSuccess();
       } else if (result?.need2FA) {
         setNeed2FA(true);
-        setError(result?.error || 'Tài khoản yêu cầu xác thực 2 yếu tố (2FA). Vui lòng nhập mã bí mật 2FA.');
+        setError(result?.error || tr('Tài khoản yêu cầu xác thực 2 yếu tố (2FA). Vui lòng nhập mã bí mật 2FA.'));
       } else {
-        setError(result?.error || 'Đăng nhập thất bại');
+        setError(result?.error || tr('Đăng nhập thất bại'));
       }
     } catch (err: any) {
       setError(err.message);
@@ -754,13 +755,13 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
     <div className="space-y-3">
       <div>
         <label className="text-xs text-muted-foreground mb-1 block font-medium">
-          Email hoặc số điện thoại
+          {tr('Email hoặc số điện thoại')}
         </label>
         <input
           type="text"
           value={username}
           onChange={(e) => { setUsername(e.target.value); setError(''); }}
-          placeholder="example@gmail.com hoặc số điện thoại"
+          placeholder={tr('example@gmail.com hoặc số điện thoại')}
           className="input-field text-sm"
           disabled={loading}
           autoComplete="username"
@@ -770,7 +771,7 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
 
       <div>
         <label className="text-xs text-muted-foreground mb-1 block font-medium">
-          Mật khẩu
+          {tr('Mật khẩu')}
         </label>
         <input
           type="password"
@@ -783,7 +784,7 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
         />
       </div>
 
-      {/* 2FA field - luôn hiển thị */}
+      {/* 2FA field - always shown */}
       <div className={`rounded-xl p-3 border transition-all ${
         need2FA
           ? 'bg-red-900/20 border-red-700/40'
@@ -792,9 +793,9 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
         <div className="flex items-center justify-between mb-2">
           <p className={`text-xs font-medium ${need2FA ? 'text-red-400' : 'text-indigo-300'}`}>
             {need2FA ? (
-              <><AlertIcon className="w-4 h-4 inline" /> Tài khoản yêu cầu xác thực 2 yếu tố (2FA)</>
+              <>{trx('<0/> Tài khoản yêu cầu xác thực 2 yếu tố (2FA)', { 0: <AlertIcon className="w-4 h-4 inline" /> })}</>
             ) : (
-              'Mã bí mật 2FA (2FA Secret Key)'
+              tr('Mã bí mật 2FA (2FA Secret Key)')
             )}
           </p>
           <button
@@ -807,7 +808,7 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
               <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
-            Hướng dẫn lấy mã
+            {tr('Hướng dẫn lấy mã')}
           </button>
         </div>
         <input
@@ -815,8 +816,8 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
           value={twoFASecret}
           onChange={(e) => { setTwoFASecret(e.target.value); setError(''); }}
           placeholder={need2FA
-            ? 'Nhập mã bí mật 2FA để đăng nhập (32 ký tự)'
-            : 'Nhập mã bí mật 2FA từ Facebook (để trống nếu không có)'
+            ? tr('Nhập mã bí mật 2FA để đăng nhập (32 ký tự)')
+            : tr('Nhập mã bí mật 2FA từ Facebook (để trống nếu không có)')
           }
           className={`input-field text-sm font-mono ${
             need2FA && !twoFASecret.trim()
@@ -832,7 +833,7 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
-            Bắt buộc nhập mã bí mật 2FA để đăng nhập
+            {tr('Bắt buộc nhập mã bí mật 2FA để đăng nhập')}
           </p>
         )}
       </div>
@@ -850,10 +851,9 @@ function FacebookAccountLoginTab({ onSuccess, proxyId }: { onSuccess: () => void
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
-            <Spinner size={4} />
-            Đang đăng nhập...
+            {trx('<0/>Đang đăng nhập...', { 0: <Spinner size={4} /> })}
           </span>
-        ) : '💙 Đăng nhập Facebook'}
+        ) : tr('💙 Đăng nhập Facebook')}
       </button>
 
       <TosFooter />
@@ -895,7 +895,7 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
     if (!result.success) {
       // A wait interrupted by "Thử cách khác" or cancel: the caller moved on.
       if (result.cancelled) return;
-      setError(result.error || 'Xác thực Facebook thất bại.');
+      setError(result.error || tr('Xác thực Facebook thất bại.'));
       if (result.expired) resetSession();
       return;
     }
@@ -903,22 +903,22 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
       waitGenRef.current++;
       sessionRef.current = '';
       setSessionId('');
-      showNotification('Đăng nhập Facebook thành công! Đang hoàn tất thiết lập tài khoản...', 'success');
+      showNotification(tr('Đăng nhập Facebook thành công! Đang hoàn tất thiết lập tài khoản...'), 'success');
       const accounts = await ipc.login?.getAccounts();
       if (accounts?.accounts) setAccounts(accounts.accounts);
-      showNotification('Tài khoản Facebook đã được thêm vào ứng dụng!', 'success');
+      showNotification(tr('Tài khoản Facebook đã được thêm vào ứng dụng!'), 'success');
       onSuccess();
       return;
     }
     const nextStep = result.step;
     if (!result.sessionId || !nextStep) {
-      setError('Facebook chưa trả về bước xác thực tiếp theo. Vui lòng thử lại.');
+      setError(tr('Facebook chưa trả về bước xác thực tiếp theo. Vui lòng thử lại.'));
       return;
     }
     sessionRef.current = result.sessionId;
     setSessionId(result.sessionId);
     setStep(nextStep);
-    // Sai mật khẩu → Facebook trả lại bước nhập cũ: giữ email/tên đã gõ, chỉ xoá mật khẩu và mã
+    // Wrong password → Facebook returns to the old input step: keep the typed email/name, only clear the password and code
     setValues((prev) => Object.fromEntries((nextStep.user_input?.fields || []).map((field) => [
       field.id,
       field.default_value || (field.type === 'username' ? prev[field.id] || '' : ''),
@@ -938,7 +938,7 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
         const result = await ipc.fb?.waitMessengerLiteLogin({ sessionId: sid });
         if (gen !== waitGenRef.current || sessionRef.current !== sid) return;
         if (!result) {
-          setError('Không kiểm tra được trạng thái xác nhận.');
+          setError(tr('Không kiểm tra được trạng thái xác nhận.'));
           return;
         }
         if (result.success && result.waiting) continue;
@@ -946,7 +946,7 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
         return;
       }
     } catch (err: any) {
-      if (gen === waitGenRef.current) setError(err?.message || 'Không kiểm tra được trạng thái xác nhận.');
+      if (gen === waitGenRef.current) setError(err?.message || tr('Không kiểm tra được trạng thái xác nhận.'));
     } finally {
       if (gen === waitGenRef.current) setWaiting(false);
     }
@@ -959,10 +959,10 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
     setError('');
     try {
       const result = await ipc.fb?.startMessengerLiteLogin({ proxyId });
-      await applyResult(result || { success: false, error: 'Không thể khởi tạo đăng nhập Facebook.' });
+      await applyResult(result || { success: false, error: tr('Không thể khởi tạo đăng nhập Facebook.') });
       if (!result?.success) hasStartedRef.current = false;
     } catch (err: any) {
-      setError(err.message || 'Không thể khởi tạo đăng nhập Facebook.');
+      setError(err.message || tr('Không thể khởi tạo đăng nhập Facebook.'));
       hasStartedRef.current = false;
     } finally {
       setLoading(false);
@@ -988,11 +988,11 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
     const fields = step?.user_input?.fields || [];
     const missing = fields.find((field) => !values[field.id]?.trim());
     if (missing) {
-      setError(`Vui lòng nhập ${translateMessengerLiteField(missing.name, missing.id).toLowerCase()}.`);
+      setError(tr('Vui lòng nhập {{v1}}.', { v1: translateMessengerLiteField(missing.name, missing.id).toLowerCase() }));
       document.getElementById(messengerLiteFieldId(missing.id))?.focus();
       return;
     }
-    await runAction(() => ipc.fb?.submitMessengerLiteLogin({ sessionId, input: values, proxyId }), 'Không thể tiếp tục đăng nhập.');
+    await runAction(() => ipc.fb?.submitMessengerLiteLogin({ sessionId, input: values, proxyId }), tr('Không thể tiếp tục đăng nhập.'));
   };
 
   const back = async () => {
@@ -1001,13 +1001,13 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
     // Stop the wait loop; the login helper interrupts its pending poll itself.
     waitGenRef.current++;
     setWaiting(false);
-    await runAction(() => ipc.fb?.backMessengerLiteLogin({ sessionId: sid }), 'Không thể chuyển sang cách xác minh khác.');
+    await runAction(() => ipc.fb?.backMessengerLiteLogin({ sessionId: sid }), tr('Không thể chuyển sang cách xác minh khác.'));
   };
 
   const openVerification = async () => {
     const sid = sessionRef.current;
     if (!sid) return;
-    await runAction(() => ipc.fb?.runMessengerLiteWebStep({ sessionId: sid }), 'Không hoàn tất được bước xác minh.');
+    await runAction(() => ipc.fb?.runMessengerLiteWebStep({ sessionId: sid }), tr('Không hoàn tất được bước xác minh.'));
   };
 
   // "Huỷ" abandons this attempt and reopens the credential form.
@@ -1028,8 +1028,8 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
     if (sessionRef.current) void ipc.fb?.cancelMessengerLiteLogin({ sessionId: sessionRef.current });
   }, []);
 
-  // Bước nhập mới: đặt con trỏ vào ô trống đầu tiên (gõ xong Enter là đi tiếp). Chờ hết loading vì ô
-  // đang bị khoá thì không focus được; mỗi bước chỉ focus một lần.
+  // New input step: put the cursor in the first empty field (type, press Enter to continue). Wait for loading to finish, because a field
+  // that is locked cannot take focus; each step only focuses once.
   const focusedStepRef = useRef<NativeLoginIpcStep | null>(null);
   useEffect(() => {
     if (loading || !step || step.type !== 'user_input' || focusedStepRef.current === step) return;
@@ -1050,12 +1050,12 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
   return (
     <div className="space-y-3">
       <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-3 text-xs leading-relaxed text-foreground/80">
-        <p className="font-semibold text-blue-400 mb-1">Đăng nhập trực tiếp, không cần tự quản lý Cookie</p>
-        Bạn không cần sao chép hay thay Cookie thủ công khi Cookie hết hạn. Ứng dụng quản lý phiên đăng nhập; nếu Facebook yêu cầu xác minh lại, bạn chỉ cần đăng nhập lại tại đây.
+        <p className="font-semibold text-blue-400 mb-1">{tr('Đăng nhập trực tiếp, không cần tự quản lý Cookie')}</p>
+        {tr('Bạn không cần sao chép hay thay Cookie thủ công khi Cookie hết hạn. Ứng dụng quản lý phiên đăng nhập; nếu Facebook yêu cầu xác minh lại, bạn chỉ cần đăng nhập lại tại đây.')}
       </div>
 
-      {!started && !error && <div className="flex justify-center gap-2 py-5 text-sm text-muted-foreground"><Spinner size={4} /> Đang mở biểu mẫu đăng nhập...</div>}
-      {!started && error && <button onClick={start} disabled={loading} className="btn-primary w-full">Thử lại</button>}
+      {!started && !error && <div className="flex justify-center gap-2 py-5 text-sm text-muted-foreground">{trx('<0/> Đang mở biểu mẫu đăng nhập...', { 0: <Spinner size={4} /> })}</div>}
+      {!started && error && <button onClick={start} disabled={loading} className="btn-primary w-full">{tr('Thử lại')}</button>}
 
       {started && step && (
         <>
@@ -1065,19 +1065,19 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
               <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-2">
                 {waiting && <Spinner size={4} />}
                 {waiting
-                  ? 'Đang chờ bạn xác nhận trên thiết bị khác... Đăng nhập sẽ tự tiếp tục khi bạn đồng ý.'
-                  : 'Hãy xác nhận đăng nhập trên thiết bị khác rồi bấm "Kiểm tra lại".'}
+                  ? tr('Đang chờ bạn xác nhận trên thiết bị khác... Đăng nhập sẽ tự tiếp tục khi bạn đồng ý.')
+                  : tr('Hãy xác nhận đăng nhập trên thiết bị khác rồi bấm "Kiểm tra lại".')}
               </p>
             )}
             {isWebStep && !isGoogleStep && (
-              <p className="text-xs text-muted-foreground mt-1.5">Một cửa sổ xác minh sẽ mở ra. Hoàn tất thử thách trong cửa sổ đó, cửa sổ sẽ tự đóng và đăng nhập tiếp tục.</p>
+              <p className="text-xs text-muted-foreground mt-1.5">{tr('Một cửa sổ xác minh sẽ mở ra. Hoàn tất thử thách trong cửa sổ đó, cửa sổ sẽ tự đóng và đăng nhập tiếp tục.')}</p>
             )}
             {isGoogleStep && (
-              <p className="text-xs text-amber-400 mt-1.5">Ứng dụng chưa hỗ trợ xác minh bằng Google. Hãy thêm ứng dụng xác thực hoặc SMS làm xác thực hai lớp cho tài khoản Facebook, hoặc dùng tab đăng nhập bằng Cookie.</p>
+              <p className="text-xs text-amber-400 mt-1.5">{tr('Ứng dụng chưa hỗ trợ xác minh bằng Google. Hãy thêm ứng dụng xác thực hoặc SMS làm xác thực hai lớp cho tài khoản Facebook, hoặc dùng tab đăng nhập bằng Cookie.')}</p>
             )}
           </div>
-          {attachment?.content && <img src={`data:${attachment.info?.mimetype || 'image/png'};base64,${attachment.content}`} alt="Captcha" className="mx-auto max-h-28 rounded-lg border border-input" />}
-          {/* Enter trong ô nhập = bấm "Tiếp tục" (noValidate: kiểm tra ở submit(), không dùng bong bóng của trình duyệt) */}
+          {attachment?.content && <img src={`data:${attachment.info?.mimetype || 'image/png'};base64,${attachment.content}`} alt={tr('Captcha')} className="mx-auto max-h-28 rounded-lg border border-input" />}
+          {/* Enter in the input = click "Tiếp tục" (Continue) (noValidate: validation happens in submit(), not with the browser's bubbles) */}
           <form
             noValidate
             className="space-y-3"
@@ -1086,22 +1086,22 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
             {fields.map((field) => <MessengerLiteLoginField key={field.id} field={field} value={values[field.id] || ''} disabled={loading} onChange={(value) => { setValues((current) => ({ ...current, [field.id]: value })); setError(''); }} />)}
             {canTryAnotherWay && (
               <button type="button" onClick={back} disabled={loading} className="text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2 disabled:opacity-50">
-                Thử cách xác minh khác
+                {tr('Thử cách xác minh khác')}
               </button>
             )}
             <div className="flex gap-2">
-              <button type="button" onClick={cancel} disabled={loading} className="btn-secondary flex-1">Huỷ</button>
+              <button type="button" onClick={cancel} disabled={loading} className="btn-secondary flex-1">{tr('Huỷ')}</button>
               {isInputStep && (
                 <button type="submit" disabled={loading} className="btn-primary flex-[2]">
-                  {loading ? <span className="flex items-center justify-center gap-2"><Spinner size={4} /> Đang xác thực...</span> : 'Tiếp tục'}
+                  {loading ? <span className="flex items-center justify-center gap-2">{trx('<0/> Đang xác thực...', { 0: <Spinner size={4} /> })}</span> : tr('Tiếp tục')}
                 </button>
               )}
               {isWaitStep && !waiting && (
-                <button type="button" onClick={() => void waitForApproval(sessionId)} disabled={loading} className="btn-primary flex-[2]">Kiểm tra lại</button>
+                <button type="button" onClick={() => void waitForApproval(sessionId)} disabled={loading} className="btn-primary flex-[2]">{tr('Kiểm tra lại')}</button>
               )}
               {isWebStep && !isGoogleStep && (
                 <button type="button" onClick={openVerification} disabled={loading} className="btn-primary flex-[2]">
-                  {loading ? <span className="flex items-center justify-center gap-2"><Spinner size={4} /> Đang xác minh...</span> : 'Mở cửa sổ xác minh'}
+                  {loading ? <span className="flex items-center justify-center gap-2">{trx('<0/> Đang xác minh...', { 0: <Spinner size={4} /> })}</span> : tr('Mở cửa sổ xác minh')}
                 </button>
               )}
             </div>
@@ -1115,7 +1115,7 @@ function FacebookMessengerLiteLoginTab({ onSuccess, proxyId }: { onSuccess: () =
   );
 }
 
-/** id của ô nhập trong bước đăng nhập — để gắn nhãn và đặt con trỏ vào ô cần nhập. */
+/** id of the input in the login step: used to attach the label and put the cursor in the field that needs input. */
 function messengerLiteFieldId(fieldId: string): string {
   return `fb-native-login-${fieldId}`;
 }
@@ -1123,11 +1123,11 @@ function messengerLiteFieldId(fieldId: string): string {
 function MessengerLiteLoginField({ field, value, disabled, onChange }: { field: NativeLoginIpcField; value: string; disabled: boolean; onChange: (value: string) => void }) {
   const isSecret = field.type === 'password';
   const isCode = field.type === '2fa_code' || field.type === 'captcha_code';
-  // Hiện mật khẩu để đối chiếu trước khi gửi
+  // Show the password to check it before sending
   const [revealed, setRevealed] = useState(false);
   const inputId = messengerLiteFieldId(field.id);
   const input = (
-    <input id={inputId} type={isSecret && !revealed ? 'password' : 'text'} inputMode={isCode ? 'numeric' : undefined} autoComplete={isSecret ? 'current-password' : 'off'} spellCheck={isSecret ? false : undefined} autoCapitalize={isSecret ? 'off' : undefined} autoCorrect={isSecret ? 'off' : undefined} value={value} onChange={(event) => onChange(event.target.value)} placeholder={field.type === '2fa_code' ? 'Mã 6 chữ số' : translateMessengerLiteField(field.name, field.id)} maxLength={field.max_length || undefined} pattern={field.pattern || undefined} disabled={disabled} className={`input-field text-sm ${isCode ? 'font-mono tracking-wider' : ''} ${isSecret ? 'pr-10' : ''}`} />
+    <input id={inputId} type={isSecret && !revealed ? 'password' : 'text'} inputMode={isCode ? 'numeric' : undefined} autoComplete={isSecret ? 'current-password' : 'off'} spellCheck={isSecret ? false : undefined} autoCapitalize={isSecret ? 'off' : undefined} autoCorrect={isSecret ? 'off' : undefined} value={value} onChange={(event) => onChange(event.target.value)} placeholder={field.type === '2fa_code' ? tr('Mã 6 chữ số') : translateMessengerLiteField(field.name, field.id)} maxLength={field.max_length || undefined} pattern={field.pattern || undefined} disabled={disabled} className={`input-field text-sm ${isCode ? 'font-mono tracking-wider' : ''} ${isSecret ? 'pr-10' : ''}`} />
   );
   return (
     <div>
@@ -1135,19 +1135,19 @@ function MessengerLiteLoginField({ field, value, disabled, onChange }: { field: 
       {field.description && <p className="text-[11px] text-muted-foreground mb-1">{translateMessengerLiteInstruction(field.description)}</p>}
       {field.type === 'select' ? (
         <select id={inputId} value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="input-field text-sm">
-          <option value="">Chọn một mục</option>
+          <option value="">{tr('Chọn một mục')}</option>
           {(field.options || []).map((option) => <option key={option} value={option}>{translateMessengerLiteOption(option)}</option>)}
         </select>
       ) : isSecret ? (
         <div className="relative">
           {input}
-          {/* Giống ô mật khẩu của Facebook: mắt gạch = đang ẩn, mắt = đang hiện */}
+          {/* Like Facebook's password field: crossed-out eye = hidden, eye = shown */}
           <button
             type="button"
             onClick={() => setRevealed((v) => !v)}
             className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground transition-colors"
-            title={revealed ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-            aria-label={revealed ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+            title={revealed ? tr('Ẩn mật khẩu') : tr('Hiện mật khẩu')}
+            aria-label={revealed ? tr('Ẩn mật khẩu') : tr('Hiện mật khẩu')}
             aria-pressed={revealed}
           >
             {revealed ? <EyeIcon size={4} /> : <EyeOffIcon size={4} />}
@@ -1160,57 +1160,57 @@ function MessengerLiteLoginField({ field, value, disabled, onChange }: { field: 
 
 function translateMessengerLiteField(label: string, id: string): string {
   const mapped: Record<string, string> = {
-    username: 'Email hoặc tên người dùng', password: 'Mật khẩu', email_code: 'Mã xác minh từ email',
-    totp_code: 'Mã xác thực 6 chữ số', sms_code: 'Mã xác minh qua SMS', whatsapp_code: 'Mã xác minh qua WhatsApp',
-    backup_code: 'Mã dự phòng', captcha_code: 'Mã captcha', mfatype: 'Phương thức xác thực',
-    otp_code: 'Mã xác minh được gửi cho bạn', contact_point: 'Nơi nhận mã xác minh', dialog_action: 'Lựa chọn',
+    username: tr('Email hoặc tên người dùng'), password: tr('Mật khẩu'), email_code: tr('Mã xác minh từ email'),
+    totp_code: tr('Mã xác thực 6 chữ số'), sms_code: tr('Mã xác minh qua SMS'), whatsapp_code: tr('Mã xác minh qua WhatsApp'),
+    backup_code: tr('Mã dự phòng'), captcha_code: tr('Mã captcha'), mfatype: tr('Phương thức xác thực'),
+    otp_code: tr('Mã xác minh được gửi cho bạn'), contact_point: tr('Nơi nhận mã xác minh'), dialog_action: tr('Lựa chọn'),
   };
   return mapped[id] || ({
-    'Username or email address': 'Email hoặc tên người dùng', Password: 'Mật khẩu', 'Six-digit code': 'Mã xác thực 6 chữ số',
-    'Code from email': 'Mã xác minh từ email', 'Login method': 'Phương thức xác thực', 'Captcha code': 'Mã captcha',
-    'One-time code sent to you': 'Mã xác minh được gửi cho bạn', 'Phone number or email': 'Số điện thoại hoặc email',
-    'Backup code': 'Mã dự phòng', 'Continue login': 'Lựa chọn',
+    'Username or email address': tr('Email hoặc tên người dùng'), Password: tr('Mật khẩu'), 'Six-digit code': tr('Mã xác thực 6 chữ số'),
+    'Code from email': tr('Mã xác minh từ email'), 'Login method': tr('Phương thức xác thực'), 'Captcha code': tr('Mã captcha'),
+    'One-time code sent to you': tr('Mã xác minh được gửi cho bạn'), 'Phone number or email': tr('Số điện thoại hoặc email'),
+    'Backup code': tr('Mã dự phòng'), 'Continue login': tr('Lựa chọn'),
   }[label] || label);
 }
 
 function translateMessengerLiteOption(value: string): string {
   return ({
-    totp: 'Ứng dụng xác thực', sms: 'Tin nhắn SMS', whatsapp: 'WhatsApp', backup_code: 'Mã dự phòng',
-    'Notification on another device': 'Thông báo trên thiết bị khác', 'Authentication app': 'Ứng dụng xác thực',
-    Email: 'Email', 'Text message': 'Tin nhắn SMS', 'Backup code': 'Mã dự phòng', 'Verify with Google': 'Xác minh bằng Google',
-    Continue: 'Tiếp tục', Cancel: 'Huỷ', Other: 'Khác', OK: 'OK', 'Try another way': 'Thử cách khác',
+    totp: tr('Ứng dụng xác thực'), sms: tr('Tin nhắn SMS'), whatsapp: 'WhatsApp', backup_code: tr('Mã dự phòng'),
+    'Notification on another device': tr('Thông báo trên thiết bị khác'), 'Authentication app': tr('Ứng dụng xác thực'),
+    Email: 'Email', 'Text message': tr('Tin nhắn SMS'), 'Backup code': tr('Mã dự phòng'), 'Verify with Google': tr('Xác minh bằng Google'),
+    Continue: tr('Tiếp tục'), Cancel: tr('Huỷ'), Other: tr('Khác'), OK: 'OK', 'Try another way': tr('Thử cách khác'),
   }[value] || value);
 }
 
 function translateMessengerLiteInstruction(value: string): string {
-  if (!value) return 'Hoàn tất bước xác thực trên Facebook.';
+  if (!value) return tr('Hoàn tất bước xác thực trên Facebook.');
   if (value.includes('Enter your Facebook credentials')) {
-    if (value.includes('Invalid username or password')) return 'Email hoặc mật khẩu chưa chính xác. Vui lòng kiểm tra và thử lại.';
-    if (value.includes('rejected that login')) return 'Facebook từ chối lần đăng nhập này. Vui lòng kiểm tra thông tin và thử lại.';
-    return 'Nhập email và mật khẩu Facebook của bạn.';
+    if (value.includes('Invalid username or password')) return tr('Email hoặc mật khẩu chưa chính xác. Vui lòng kiểm tra và thử lại.');
+    if (value.includes('rejected that login')) return tr('Facebook từ chối lần đăng nhập này. Vui lòng kiểm tra thông tin và thử lại.');
+    return tr('Nhập email và mật khẩu Facebook của bạn.');
   }
-  if (value.includes('Invalid username or password')) return 'Email hoặc mật khẩu chưa chính xác. Vui lòng kiểm tra và thử lại.';
-  if (value.includes("isn't connected to a Messenger account")) return 'Tài khoản này chưa được liên kết với Messenger.';
-  if (value.includes('rejected that code')) return 'Mã xác minh chưa đúng. Vui lòng kiểm tra và nhập lại.';
-  if (value.includes('That code was not sent')) return 'Mã chưa được gửi tới Facebook. Vui lòng thử lại.';
-  if (value.includes('backup codes')) return 'Nhập một mã dự phòng của xác thực hai lớp.';
-  if (value.includes('Facebook requires solving a captcha')) return 'Facebook yêu cầu nhập mã captcha hiển thị bên trên.';
-  if (value.includes('rejected that captcha')) return 'Mã captcha chưa đúng. Vui lòng thử lại.';
-  if (value.includes('Google reCAPTCHA')) return 'Facebook yêu cầu hoàn tất thử thách Google reCAPTCHA.';
-  if (value.includes('Sign in with your Google account')) return 'Facebook yêu cầu xác minh bằng tài khoản Google.';
-  if (value.includes('Choose the Facebook account')) return 'Chọn tài khoản Facebook cần kết nối.';
-  if (value.includes('Choose how to finish signing in')) return 'Chọn phương thức để hoàn tất đăng nhập.';
-  if (value.includes('Choose where to receive')) return 'Chọn nơi nhận mã xác minh.';
-  if (value.includes('rejected the login without providing a reason')) return 'Facebook từ chối đăng nhập mà không nêu lý do. Hãy thử lại, đăng nhập trên ứng dụng/website Facebook trước, hoặc đổi cài đặt xác thực hai lớp.';
+  if (value.includes('Invalid username or password')) return tr('Email hoặc mật khẩu chưa chính xác. Vui lòng kiểm tra và thử lại.');
+  if (value.includes("isn't connected to a Messenger account")) return tr('Tài khoản này chưa được liên kết với Messenger.');
+  if (value.includes('rejected that code')) return tr('Mã xác minh chưa đúng. Vui lòng kiểm tra và nhập lại.');
+  if (value.includes('That code was not sent')) return tr('Mã chưa được gửi tới Facebook. Vui lòng thử lại.');
+  if (value.includes('backup codes')) return tr('Nhập một mã dự phòng của xác thực hai lớp.');
+  if (value.includes('Facebook requires solving a captcha')) return tr('Facebook yêu cầu nhập mã captcha hiển thị bên trên.');
+  if (value.includes('rejected that captcha')) return tr('Mã captcha chưa đúng. Vui lòng thử lại.');
+  if (value.includes('Google reCAPTCHA')) return tr('Facebook yêu cầu hoàn tất thử thách Google reCAPTCHA.');
+  if (value.includes('Sign in with your Google account')) return tr('Facebook yêu cầu xác minh bằng tài khoản Google.');
+  if (value.includes('Choose the Facebook account')) return tr('Chọn tài khoản Facebook cần kết nối.');
+  if (value.includes('Choose how to finish signing in')) return tr('Chọn phương thức để hoàn tất đăng nhập.');
+  if (value.includes('Choose where to receive')) return tr('Chọn nơi nhận mã xác minh.');
+  if (value.includes('rejected the login without providing a reason')) return tr('Facebook từ chối đăng nhập mà không nêu lý do. Hãy thử lại, đăng nhập trên ứng dụng/website Facebook trước, hoặc đổi cài đặt xác thực hai lớp.');
   if (/^We sent an? .*notification|^Check your notifications|^Open the notification|^You need to sign in on/.test(value)) {
-    return 'Facebook đã gửi thông báo xác nhận đến một thiết bị khác của bạn. Hãy mở thông báo và chọn đồng ý đăng nhập.';
+    return tr('Facebook đã gửi thông báo xác nhận đến một thiết bị khác của bạn. Hãy mở thông báo và chọn đồng ý đăng nhập.');
   }
-  if (value.includes('SMS code')) return 'Nhập mã SMS vừa được gửi tới số điện thoại của bạn.';
-  if (value.includes('WhatsApp')) return 'Nhập mã vừa được gửi qua WhatsApp.';
-  if (value.includes('code from your email') || value.startsWith('Enter the code') || value.startsWith('We sent a code')) return 'Nhập mã xác minh Facebook vừa gửi cho bạn.';
-  if (value.includes('six-digit')) return 'Nhập mã xác minh gồm 6 chữ số từ ứng dụng xác thực.';
-  if (value.includes('captcha')) return 'Nhập mã captcha hiển thị bên trên.';
-  if (value.includes('requires a confirmation')) return 'Facebook yêu cầu xác nhận để tiếp tục.';
+  if (value.includes('SMS code')) return tr('Nhập mã SMS vừa được gửi tới số điện thoại của bạn.');
+  if (value.includes('WhatsApp')) return tr('Nhập mã vừa được gửi qua WhatsApp.');
+  if (value.includes('code from your email') || value.startsWith('Enter the code') || value.startsWith('We sent a code')) return tr('Nhập mã xác minh Facebook vừa gửi cho bạn.');
+  if (value.includes('six-digit')) return tr('Nhập mã xác minh gồm 6 chữ số từ ứng dụng xác thực.');
+  if (value.includes('captcha')) return tr('Nhập mã captcha hiển thị bên trên.');
+  if (value.includes('requires a confirmation')) return tr('Facebook yêu cầu xác nhận để tiếp tục.');
   // Dialogs and pages carry Facebook's own wording; show it rather than a
   // generic line that hides what is being asked.
   return value;
@@ -1227,23 +1227,23 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
   const { setAccounts } = useAccountStore();
 
   const handleLogin = async () => {
-    if (!cookie.trim()) { setError('Vui lòng dán cookie Facebook'); return; }
+    if (!cookie.trim()) { setError(tr('Vui lòng dán cookie Facebook')); return; }
     setLoading(true);
     setError('');
     try {
       const result = await ipc.fb?.addAccount({ cookie: cookie.trim(), proxyId });
       if (result?.success) {
-        showNotification('Đăng nhập Facebook thành công! 🎉 Đang hoàn tất thiết lập tài khoản...', 'success');
+        showNotification(tr('Đăng nhập Facebook thành công! 🎉 Đang hoàn tất thiết lập tài khoản...'), 'success');
 
         // Reload accounts - FB account is now in unified accounts table
         const res = await ipc.login?.getAccounts();
         if (res?.accounts) setAccounts(res.accounts);
 
-        showNotification('✅ Tài khoản Facebook đã được thêm vào ứng dụng!', 'success');
+        showNotification(tr('✅ Tài khoản Facebook đã được thêm vào ứng dụng!'), 'success');
 
         onSuccess();
       } else {
-        setError(result?.error || 'Thêm tài khoản Facebook thất bại');
+        setError(result?.error || tr('Thêm tài khoản Facebook thất bại'));
       }
     } catch (err: any) {
       setError(err.message);
@@ -1256,8 +1256,7 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
     <div className="space-y-3">
       <div>
         <label className="text-xs text-muted-foreground mb-1 block font-medium">
-          Cookie Facebook{' '}
-          <span className="text-muted-foreground font-normal">- dán chuỗi cookie từ trình duyệt</span>
+          {trx('Cookie Facebook <0>- dán chuỗi cookie từ trình duyệt</0>', { 0: <span className="text-muted-foreground font-normal" /> })}
         </label>
         <textarea
           value={cookie}
@@ -1274,7 +1273,7 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
             type="button"
             onClick={() => setShowGuide(true)}
             className="text-blue-400 hover:text-blue-300 underline underline-offset-2 transition-colors"
-          ><BookIcon className="w-4 h-4 inline" /> Xem hướng dẫn lấy Cookie Facebook
+          >{trx('<0/> Xem hướng dẫn lấy Cookie Facebook', { 0: <BookIcon className="w-4 h-4 inline" /> })}
           </button>
         </p>
       </div>
@@ -1283,9 +1282,9 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
       <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-3 flex gap-2.5 items-start">
         <span className="text-orange-400 mt-0.5"><AlertIcon className="w-4 h-4" /></span>
         <div>
-          <p className="text-orange-500 text-xs font-semibold mb-0.5">Lưu ý: Cookie có thời hạn</p>
+          <p className="text-orange-500 text-xs font-semibold mb-0.5">{tr('Lưu ý: Cookie có thời hạn')}</p>
           <p className="text-orange-400 text-[11px] leading-relaxed">
-            Cookie Facebook sẽ <strong className="text-orange-300">hết hạn nếu bạn đăng xuất</strong> khỏi Facebook trên trình duyệt hoặc sau một thời gian dài không hoạt động hoặc Facebook nghi ngờ hoạt động bất thường. Khi cookie hết hạn, tài khoản sẽ bị ngắt kết nối và bạn cần lấy cookie mới để đăng nhập lại.
+            {trx('Cookie Facebook sẽ <0>hết hạn nếu bạn đăng xuất</0> khỏi Facebook trên trình duyệt hoặc sau một thời gian dài không hoạt động hoặc Facebook nghi ngờ hoạt động bất thường. Khi cookie hết hạn, tài khoản sẽ bị ngắt kết nối và bạn cần lấy cookie mới để đăng nhập lại.', { 0: <strong className="text-orange-300" /> })}
           </p>
         </div>
       </div>
@@ -1303,10 +1302,9 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
-            <Spinner size={4} />
-            Đang đăng nhập...
+            {trx('<0/>Đang đăng nhập...', { 0: <Spinner size={4} /> })}
           </span>
-        ) : '💙 Đăng nhập Facebook'}
+        ) : tr('💙 Đăng nhập Facebook')}
       </button>
 
       {showGuide && <CookieGuidePopup onClose={() => setShowGuide(false)} />}
@@ -1318,12 +1316,12 @@ function FacebookCookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void;
 
 function CookieGuidePopup({ onClose }: { onClose: () => void }) {
   const steps = [
-    { title: 'Mở Facebook trên trình duyệt, đăng nhập', desc: 'Dùng Chrome, Edge hoặc Cốc Cốc.' },
-    { title: 'Nhấn F12 → chọn tab Network', desc: 'Developer Tools hiện ra. Click vào tab "Network" (Mạng).' },
-    { title: 'Gõ "graphql" vào ô Filter hoặc Tìm trên danh sách request', desc: 'Nếu chưa thấy request, nhấn F5 để tải lại trang.' },
-    { title: 'Click vào request graphql → tab Headers', desc: 'Bảng chi tiết mở ra, chọn tab "Headers".' },
-    { title: 'Tìm dòng "Cookie" trong Request Headers', desc: 'Kéo xuống phần Request Headers, tìm dòng bắt đầu bằng cookie:.' },
-    { title: 'Copy toàn bộ giá trị → dán vào ô bên trái', desc: 'Bôi đen toàn bộ chuỗi dài sau "Cookie" → Copy → Dán vào app.' },
+    { title: tr('Mở Facebook trên trình duyệt, đăng nhập'), desc: tr('Dùng Chrome, Edge hoặc Cốc Cốc.') },
+    { title: tr('Nhấn F12 → chọn tab Network'), desc: tr('Developer Tools hiện ra. Click vào tab "Network" (Mạng).') },
+    { title: tr('Gõ "graphql" vào ô Filter hoặc Tìm trên danh sách request'), desc: tr('Nếu chưa thấy request, nhấn F5 để tải lại trang.') },
+    { title: tr('Click vào request graphql → tab Headers'), desc: tr('Bảng chi tiết mở ra, chọn tab "Headers".') },
+    { title: tr('Tìm dòng "Cookie" trong Request Headers'), desc: tr('Kéo xuống phần Request Headers, tìm dòng bắt đầu bằng cookie:.') },
+    { title: tr('Copy toàn bộ giá trị → dán vào ô bên trái'), desc: tr('Bôi đen toàn bộ chuỗi dài sau "Cookie" → Copy → Dán vào app.') },
   ];
 
   return (
@@ -1333,7 +1331,7 @@ function CookieGuidePopup({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <div className="flex items-center gap-2.5">
             <span className="text-blue-400 text-xl">🍪</span>
-            <h3 className="text-foreground font-semibold">Hướng dẫn lấy Cookie Facebook</h3>
+            <h3 className="text-foreground font-semibold">{tr('Hướng dẫn lấy Cookie Facebook')}</h3>
           </div>
           <button
             type="button"
@@ -1367,7 +1365,7 @@ function CookieGuidePopup({ onClose }: { onClose: () => void }) {
           <div className="w-1/2 p-3 flex items-center justify-center">
             <img
               src={cookieGuideImg}
-              alt="Hướng dẫn lấy cookie Facebook"
+              alt={tr('Hướng dẫn lấy cookie Facebook')}
               className="max-w-full max-h-full object-contain rounded-lg"
             />
           </div>
@@ -1380,7 +1378,7 @@ function CookieGuidePopup({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             className="px-5 py-2 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
           >
-            <CheckIcon className="w-4 h-4 inline" /> Đã hiểu, dán cookie ngay!
+            {trx('<0/> Đã hiểu, dán cookie ngay!', { 0: <CheckIcon className="w-4 h-4 inline" /> })}
           </button>
         </div>
       </div>
@@ -1397,37 +1395,37 @@ function CookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId
   const { showNotification } = useAppStore();
   const { setAccounts } = useAccountStore();
 
-  // Validate JSON khi user nhập
+  // Validate JSON as the user types
   const jsonError = (() => {
     if (!authJson.trim()) return '';
     try {
       const p = JSON.parse(authJson);
-      if (!p.imei) return 'Thiếu trường "imei"';
-      if (!p.cookies) return 'Thiếu trường "cookies"';
-      if (!p.userAgent) return 'Thiếu trường "userAgent"';
+      if (!p.imei) return tr('Thiếu trường "imei"');
+      if (!p.cookies) return tr('Thiếu trường "cookies"');
+      if (!p.userAgent) return tr('Thiếu trường "userAgent"');
       return '';
     } catch {
-      return 'JSON không hợp lệ';
+      return tr('JSON không hợp lệ');
     }
   })();
 
   const handleLogin = async () => {
-    if (!authJson.trim()) { setError('Vui lòng dán thông tin auth'); return; }
+    if (!authJson.trim()) { setError(tr('Vui lòng dán thông tin auth')); return; }
     if (jsonError) { setError(jsonError); return; }
     setLoading(true);
     setError('');
     try {
       const result = await ipc.login?.loginAuth(authJson.trim(), proxyId ?? null);
       if (result?.success) {
-        showNotification('Đăng nhập thành công! 🎉 Đang hoàn tất thiết lập tài khoản...', 'success');
+        showNotification(tr('Đăng nhập thành công! 🎉 Đang hoàn tất thiết lập tài khoản...'), 'success');
         const res = await ipc.login?.getAccounts();
         if (res?.accounts) setAccounts(res.accounts);
         if (result.zaloId) {
-          showNotification('✅ Tài khoản đã được thêm vào ứng dụng!', 'success');
+          showNotification(tr('✅ Tài khoản đã được thêm vào ứng dụng!'), 'success');
         }
         onSuccess();
       } else {
-        setError(result?.error || 'Đăng nhập thất bại');
+        setError(result?.error || tr('Đăng nhập thất bại'));
       }
     } catch (err: any) {
       setError(err.message);
@@ -1440,10 +1438,7 @@ function CookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId
     <div className="space-y-3">
       <div>
         <label className="text-xs text-muted-foreground mb-1 block font-medium">
-          Auth JSON{' '}
-          <span className="text-muted-foreground font-normal">
-            - dán nguyên khối từ tool extract
-          </span>
+          {trx('Auth JSON <0>- dán nguyên khối từ tool extract</0>', { 0: <span className="text-muted-foreground font-normal" /> })}
         </label>
         <textarea
           value={authJson}
@@ -1474,14 +1469,13 @@ function CookieLoginTab({ onSuccess, proxyId }: { onSuccess: () => void; proxyId
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
-            <Spinner size={4} />
-            Đang đăng nhập...
+            {trx('<0/>Đang đăng nhập...', { 0: <Spinner size={4} /> })}
           </span>
-        ) : 'Đăng nhập'}
+        ) : tr('Đăng nhập')}
       </button>
 
       <p className="text-muted-foreground text-xs text-center pt-1">
-        Lấy auth JSON bằng cách chạy tool extract cookies từ trình duyệt
+        {tr('Lấy auth JSON bằng cách chạy tool extract cookies từ trình duyệt')}
       </p>
       <TosFooter />
     </div>
@@ -1500,7 +1494,7 @@ function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <div className="flex items-center gap-2.5">
             <span className="text-indigo-400 text-xl"><LockIcon className="w-4 h-4" /></span>
-            <h3 className="text-foreground font-semibold">Hướng dẫn lấy mã bí mật 2FA (Secret Key) từ Facebook</h3>
+            <h3 className="text-foreground font-semibold">{tr('Hướng dẫn lấy mã bí mật 2FA (Secret Key) từ Facebook')}</h3>
           </div>
           <button
             type="button"
@@ -1523,7 +1517,7 @@ function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            <CheckIcon className="w-4 h-4 inline" /> Đã có 2FA - Cách lấy Secret Key
+            {trx('<0/> Đã có 2FA - Cách lấy Secret Key', { 0: <CheckIcon className="w-4 h-4 inline" /> })}
           </button>
           <button
             onClick={() => setTab('setup-2fa')}
@@ -1532,7 +1526,7 @@ function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
                 ? 'text-indigo-400 border-b-2 border-indigo-400'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
-          ><WrenchIcon className="w-4 h-4 inline" /> Chưa có 2FA - Cách thiết lập
+          >{trx('<0/> Chưa có 2FA - Cách thiết lập', { 0: <WrenchIcon className="w-4 h-4 inline" /> })}
           </button>
         </div>
 
@@ -1548,7 +1542,7 @@ function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             className="px-5 py-2 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
           >
-            <CheckIcon className="w-4 h-4 inline" /> Đã hiểu
+            {trx('<0/> Đã hiểu', { 0: <CheckIcon className="w-4 h-4 inline" /> })}
           </button>
         </div>
       </div>
@@ -1559,50 +1553,38 @@ function SecretKeyGuidePopup({ onClose }: { onClose: () => void }) {
 function Have2FAGuide() {
   const steps = [
     {
-      title: 'Vào Facebook → Ảnh đại diện → Cài đặt & quyền riêng tư → Cài đặt',
-      desc: 'Mở Facebook trên trình duyệt (khuyến nghị Chrome/Edge), nhấn vào ảnh đại diện góc trên bên phải, chọn "Cài đặt & quyền riêng tư" → "Cài đặt".',
+      title: tr('Vào Facebook → Ảnh đại diện → Cài đặt & quyền riêng tư → Cài đặt'),
+      desc: tr('Mở Facebook trên trình duyệt (khuyến nghị Chrome/Edge), nhấn vào ảnh đại diện góc trên bên phải, chọn "Cài đặt & quyền riêng tư" → "Cài đặt".'),
     },
     {
-      title: 'Chọn Trung tâm tài khoản (Accounts Center)',
-      desc: 'Trong menu bên trái, tìm và chọn "Trung tâm tài khoản" (Accounts Center) - mục này thường nằm ở phía trên cùng hoặc dưới phần "Đăng nhập".',
+      title: tr('Chọn Trung tâm tài khoản (Accounts Center)'),
+      desc: tr('Trong menu bên trái, tìm và chọn "Trung tâm tài khoản" (Accounts Center) - mục này thường nằm ở phía trên cùng hoặc dưới phần "Đăng nhập".'),
     },
     {
-      title: 'Mật khẩu và bảo mật → Xác thực hai yếu tố',
-      desc: 'Trong Trung tâm tài khoản, chọn "Mật khẩu và bảo mật", sau đó chọn "Xác thực hai yếu tố" (Two-Factor Authentication).',
+      title: tr('Mật khẩu và bảo mật → Xác thực hai yếu tố'),
+      desc: tr('Trong Trung tâm tài khoản, chọn "Mật khẩu và bảo mật", sau đó chọn "Xác thực hai yếu tố" (Two-Factor Authentication).'),
     },
     {
-      title: 'Chọn tài khoản Facebook',
-      desc: 'Nếu bạn có nhiều tài khoản, chọn tài khoản Facebook bạn muốn lấy mã bí mật.',
+      title: tr('Chọn tài khoản Facebook'),
+      desc: tr('Nếu bạn có nhiều tài khoản, chọn tài khoản Facebook bạn muốn lấy mã bí mật.'),
     },
     {
-      title: 'Chọn "Ứng dụng xác thực" (Authentication App)',
-      desc: 'Phương thức xác thực bạn cần tìm là "Ứng dụng xác thực" - bấm vào đó để xem chi tiết.',
+      title: tr('Chọn "Ứng dụng xác thực" (Authentication App)'),
+      desc: tr('Phương thức xác thực bạn cần tìm là "Ứng dụng xác thực" - bấm vào đó để xem chi tiết.'),
     },
     {
-      title: 'Tìm tùy chọn hiện mã bí mật',
+      title: tr('Tìm tùy chọn hiện mã bí mật'),
       desc: (
         <span>
-          Lúc này Facebook thường hiển thị <strong className="text-indigo-300">mã QR</strong>. Bên dưới hoặc cạnh mã QR
-          sẽ có một trong các liên kết sau:
-          <br />• "Nhập khóa theo cách thủ công"
-          <br />• "Không quét được mã?"
-          <br />• "Thiết lập trên thiết bị khác"
-          <br />• "Can't scan it?"
-          <br /><br />
-          <strong className="text-indigo-300">Bấm vào đó!</strong>
+          {trx('Lúc này Facebook thường hiển thị <0>mã QR</0>. Bên dưới hoặc cạnh mã QR sẽ có một trong các liên kết sau:<1/>• "Nhập khóa theo cách thủ công"<2/>• "Không quét được mã?"<3/>• "Thiết lập trên thiết bị khác"<4/>• "Can\'t scan it?"<5/><6/><7>Bấm vào đó!</7>', { 0: <strong className="text-indigo-300" />, 1: <br />, 2: <br />, 3: <br />, 4: <br />, 5: <br />, 6: <br />, 7: <strong className="text-indigo-300" /> })}
         </span>
       ),
     },
     {
-      title: 'Sao chép mã bí mật (Secret Key)',
+      title: tr('Sao chép mã bí mật (Secret Key)'),
       desc: (
         <span>
-          Facebook sẽ hiển thị một chuỗi ký tự dạng:
-          <br />
-          <code className="block bg-card text-indigo-300 px-3 py-2 rounded-lg my-2 text-center text-xs font-mono tracking-widest select-all">
-            ABCD EFGH IJKL MNOP QRST UVWX YZ12 3456
-          </code>
-          Đó là mã bí mật 2FA (Secret Key) - <strong className="text-indigo-300">copy nguyên chuỗi này</strong> (kể cả khoảng trắng, app tự xử lý) và dán vào ô "Mã bí mật 2FA" phía trên.
+          {trx('Facebook sẽ hiển thị một chuỗi ký tự dạng:<0/><1>ABCD EFGH IJKL MNOP QRST UVWX YZ12 3456</1>Đó là mã bí mật 2FA (Secret Key) - <2>copy nguyên chuỗi này</2> (kể cả khoảng trắng, app tự xử lý) và dán vào ô "Mã bí mật 2FA" phía trên.', { 0: <br />, 1: <code className="block bg-card text-indigo-300 px-3 py-2 rounded-lg my-2 text-center text-xs font-mono tracking-widest select-all" />, 2: <strong className="text-indigo-300" /> })}
         </span>
       ),
     },
@@ -1612,8 +1594,7 @@ function Have2FAGuide() {
     <div className="space-y-1">
       <div className="bg-indigo-900/20 border border-indigo-700/30 rounded-xl p-3 mb-4">
         <p className="text-indigo-300 text-xs leading-relaxed">
-          <strong><PinIcon className="w-4 h-4 inline" /> Mục "Mã bí mật (Secret Key)"</strong> không phải tài khoản Facebook nào cũng hiện sẵn vì Facebook thường xuyên thay đổi giao diện.
-          Nếu bạn không thấy Secret Key trong giao diện hiện tại, hãy làm theo các bước dưới đây.
+          {trx('<0><1/> Mục "Mã bí mật (Secret Key)"</0> không phải tài khoản Facebook nào cũng hiện sẵn vì Facebook thường xuyên thay đổi giao diện. Nếu bạn không thấy Secret Key trong giao diện hiện tại, hãy làm theo các bước dưới đây.', { 0: <strong />, 1: <PinIcon className="w-4 h-4 inline" /> })}
         </p>
       </div>
       {steps.map((s, i) => (
@@ -1630,11 +1611,11 @@ function Have2FAGuide() {
 
       {/* Tips */}
       <div className="bg-emerald-600 border border-emerald-700/30 rounded-xl p-3 mt-4 space-y-2">
-        <p className="text-emerald-300 text-xs font-semibold"><SunIcon className="w-4 h-4 inline" /> Mẹo nhỏ</p>
+        <p className="text-emerald-300 text-xs font-semibold">{trx('<0/> Mẹo nhỏ', { 0: <SunIcon className="w-4 h-4 inline" /> })}</p>
         <ul className="text-white-important text-[11px] space-y-1.5 list-disc list-inside leading-relaxed">
-          <li>Nếu đã thấy mục "Ứng dụng xác thực" hiển thị trạng thái "Đã bật" - bấm vào để xem lại mã.</li>
-          <li>Dùng trình duyệt trên máy tính (không dùng app điện thoại) để dễ thao tác.</li>
-          <li>Secret Key không thay đổi trừ khi bạn tắt và thiết lập lại 2FA.</li>
+          <li>{tr('Nếu đã thấy mục "Ứng dụng xác thực" hiển thị trạng thái "Đã bật" - bấm vào để xem lại mã.')}</li>
+          <li>{tr('Dùng trình duyệt trên máy tính (không dùng app điện thoại) để dễ thao tác.')}</li>
+          <li>{tr('Secret Key không thay đổi trừ khi bạn tắt và thiết lập lại 2FA.')}</li>
         </ul>
       </div>
     </div>
@@ -1644,66 +1625,50 @@ function Have2FAGuide() {
 function Setup2FAGuide() {
   const steps = [
     {
-      title: 'Vào Facebook → Cài đặt & quyền riêng tư → Cài đặt',
-      desc: 'Mở Facebook trên trình duyệt, nhấn ảnh đại diện → "Cài đặt & quyền riêng tư" → "Cài đặt".',
+      title: tr('Vào Facebook → Cài đặt & quyền riêng tư → Cài đặt'),
+      desc: tr('Mở Facebook trên trình duyệt, nhấn ảnh đại diện → "Cài đặt & quyền riêng tư" → "Cài đặt".'),
     },
     {
-      title: 'Chọn Trung tâm tài khoản (Accounts Center)',
-      desc: 'Tìm "Trung tâm tài khoản" trong menu bên trái.',
+      title: tr('Chọn Trung tâm tài khoản (Accounts Center)'),
+      desc: tr('Tìm "Trung tâm tài khoản" trong menu bên trái.'),
     },
     {
-      title: 'Mật khẩu và bảo mật → Xác thực hai yếu tố',
-      desc: 'Chọn "Mật khẩu và bảo mật" → "Xác thực hai yếu tố". Chọn tài khoản Facebook cần cấu hình.',
+      title: tr('Mật khẩu và bảo mật → Xác thực hai yếu tố'),
+      desc: tr('Chọn "Mật khẩu và bảo mật" → "Xác thực hai yếu tố". Chọn tài khoản Facebook cần cấu hình.'),
     },
     {
-      title: 'Thêm phương thức bảo mật → Chọn "Ứng dụng xác thực"',
+      title: tr('Thêm phương thức bảo mật → Chọn "Ứng dụng xác thực"'),
       desc: (
         <span>
-          Nếu chưa có phương thức nào, Facebook sẽ yêu cầu chọn loại xác thực. Chọn <strong className="text-indigo-300">"Ứng dụng xác thực"</strong>
-          {' '}(Authentication App) - <strong className="text-indigo-300">KHÔNG chọn SMS</strong> vì SMS không cung cấp Secret Key.
+          {trx('Nếu chưa có phương thức nào, Facebook sẽ yêu cầu chọn loại xác thực. Chọn <0>"Ứng dụng xác thực"</0> (Authentication App) - <1>KHÔNG chọn SMS</1> vì SMS không cung cấp Secret Key.', { 0: <strong className="text-indigo-300" />, 1: <strong className="text-indigo-300" /> })}
         </span>
       ),
     },
     {
-      title: 'Xác nhận mật khẩu',
-      desc: 'Facebook sẽ yêu cầu nhập lại mật khẩu để xác nhận quyền truy cập.',
+      title: tr('Xác nhận mật khẩu'),
+      desc: tr('Facebook sẽ yêu cầu nhập lại mật khẩu để xác nhận quyền truy cập.'),
     },
     {
-      title: 'Quét mã QR - nhưng hãy tìm Secret Key',
+      title: tr('Quét mã QR - nhưng hãy tìm Secret Key'),
       desc: (
         <span>
-          Facebook hiển thị mã QR để quét. <strong className="text-indigo-300">Đừng vội quét!</strong> Hãy tìm một trong các liên kết sau:
-          <br />• <strong className="text-indigo-300">"Nhập khóa theo cách thủ công"</strong>
-          <br />• "Không quét được mã?"
-          <br />• "Thiết lập trên thiết bị khác"
-          <br />• "Can't scan it?"
-          <br /><br />
-          Bấm vào đó để hiển thị Secret Key.
+          {trx('Facebook hiển thị mã QR để quét. <0>Đừng vội quét!</0> Hãy tìm một trong các liên kết sau:<1/>• <2>"Nhập khóa theo cách thủ công"</2><3/>• "Không quét được mã?"<4/>• "Thiết lập trên thiết bị khác"<5/>• "Can\'t scan it?"<6/><7/>Bấm vào đó để hiển thị Secret Key.', { 0: <strong className="text-indigo-300" />, 1: <br />, 2: <strong className="text-indigo-300" />, 3: <br />, 4: <br />, 5: <br />, 6: <br />, 7: <br /> })}
         </span>
       ),
     },
     {
-      title: 'Sao chép Secret Key và dán vào app',
+      title: tr('Sao chép Secret Key và dán vào app'),
       desc: (
         <span>
-          Bạn sẽ thấy một chuỗi ký tự dạng:
-          <br />
-          <code className="block bg-card text-indigo-300 px-3 py-2 rounded-lg my-2 text-center text-xs font-mono tracking-widest select-all">
-            ABCD EFGH IJKL MNOP QRST UVWX YZ12 3456
-          </code>
-          Copy chuỗi này và dán vào ô <strong className="text-indigo-300">"Mã bí mật 2FA"</strong> trong app.
+          {trx('Bạn sẽ thấy một chuỗi ký tự dạng:<0/><1>ABCD EFGH IJKL MNOP QRST UVWX YZ12 3456</1>Copy chuỗi này và dán vào ô <2>"Mã bí mật 2FA"</2> trong app.', { 0: <br />, 1: <code className="block bg-card text-indigo-300 px-3 py-2 rounded-lg my-2 text-center text-xs font-mono tracking-widest select-all" />, 2: <strong className="text-indigo-300" /> })}
         </span>
       ),
     },
     {
-      title: 'Hoàn tất thiết lập 2FA trên Facebook',
+      title: tr('Hoàn tất thiết lập 2FA trên Facebook'),
       desc: (
         <span>
-          Sau khi lấy được Secret Key, hãy hoàn tất các bước còn lại trên Facebook:
-          <br />• Mở Google Authenticator, Authy hoặc 2FAS trên điện thoại
-          <br />• Quét mã QR (hoặc nhập Secret Key thủ công)
-          <br />• Nhập mã 6 số từ ứng dụng xác thực vào Facebook để xác nhận
-          <br />• Lưu lại mã dự phòng nếu Facebook cung cấp
+          {trx('Sau khi lấy được Secret Key, hãy hoàn tất các bước còn lại trên Facebook:<0/>• Mở Google Authenticator, Authy hoặc 2FAS trên điện thoại<1/>• Quét mã QR (hoặc nhập Secret Key thủ công)<2/>• Nhập mã 6 số từ ứng dụng xác thực vào Facebook để xác nhận<3/>• Lưu lại mã dự phòng nếu Facebook cung cấp', { 0: <br />, 1: <br />, 2: <br />, 3: <br /> })}
         </span>
       ),
     },
@@ -1713,8 +1678,7 @@ function Setup2FAGuide() {
     <div className="space-y-1">
       <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl p-3 mb-4">
         <p className="text-amber-300 text-xs leading-relaxed">
-          <strong><AlertIcon className="w-4 h-4 inline" /> Hướng dẫn dành cho tài khoản CHƯA bật 2FA</strong>
-          {' - hoặc đã bật 2FA nhưng không tìm thấy Secret Key, cần thiết lập lại từ đầu.'}
+          {trx('<0><1/> Hướng dẫn dành cho tài khoản CHƯA bật 2FA</0> - hoặc đã bật 2FA nhưng không tìm thấy Secret Key, cần thiết lập lại từ đầu.', { 0: <strong />, 1: <AlertIcon className="w-4 h-4 inline" /> })}
         </p>
       </div>
 
@@ -1732,18 +1696,18 @@ function Setup2FAGuide() {
 
       {/* When secret key is hidden */}
       <div className="bg-red-900/20 border border-red-700/30 rounded-xl p-3 mt-4">
-        <p className="text-red-300 text-xs font-semibold mb-2">❓ Vẫn không thấy Secret Key?</p>
+        <p className="text-red-300 text-xs font-semibold mb-2">{tr('❓ Vẫn không thấy Secret Key?')}</p>
         <ul className="text-red-400 text-[11px] space-y-1.5 list-disc list-inside leading-relaxed">
-          <li>Bạn đã bật 2FA từ trước - Facebook chỉ hiện QR mà không hiện khóa thủ công.</li>
-          <li>Tài khoản đang dùng Passkey hoặc phương thức bảo mật khác.</li>
+          <li>{tr('Bạn đã bật 2FA từ trước - Facebook chỉ hiện QR mà không hiện khóa thủ công.')}</li>
+          <li>{tr('Tài khoản đang dùng Passkey hoặc phương thức bảo mật khác.')}</li>
         </ul>
         <div className="bg-card rounded-lg p-3 mt-2">
-          <p className="text-foreground/80 text-xs font-medium mb-1">Giải pháp:</p>
+          <p className="text-foreground/80 text-xs font-medium mb-1">{tr('Giải pháp:')}</p>
           <ol className="text-muted-foreground text-[11px] space-y-1.5 list-decimal list-inside leading-relaxed">
-            <li>Tắt phương thức <strong className="text-red-300">"Ứng dụng xác thực"</strong> hiện tại.</li>
-            <li>Thiết lập lại từ đầu theo hướng dẫn phía trên.</li>
-            <li>Ở bước quét QR, tìm tùy chọn <strong className="text-red-300">"Can't scan it?"</strong> hoặc <strong className="text-red-300">"Nhập mã thủ công"</strong> để lấy Secret Key.</li>
-            <li>Hoặc dùng ứng dụng 2FA đã quét trước đó để xem lại Secret Key (Authy/2FAS có tùy chọn hiển thị).</li>
+            <li>{trx('Tắt phương thức <0>"Ứng dụng xác thực"</0> hiện tại.', { 0: <strong className="text-red-300" /> })}</li>
+            <li>{tr('Thiết lập lại từ đầu theo hướng dẫn phía trên.')}</li>
+            <li>{trx('Ở bước quét QR, tìm tùy chọn <0>"Can\'t scan it?"</0> hoặc <1>"Nhập mã thủ công"</1> để lấy Secret Key.', { 0: <strong className="text-red-300" />, 1: <strong className="text-red-300" /> })}</li>
+            <li>{tr('Hoặc dùng ứng dụng 2FA đã quét trước đó để xem lại Secret Key (Authy/2FAS có tùy chọn hiển thị).')}</li>
           </ol>
         </div>
       </div>

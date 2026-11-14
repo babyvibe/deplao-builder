@@ -1,14 +1,14 @@
 /**
- * Cài đặt → Internet & Cloud (chỉ máy chủ): mọi cấu hình Cloudflare ở một chỗ.
- *  - Dải tài khoản Cloudflare ở đầu (đã kết nối: quyền từng tính năng + Quản lý; chưa kết nối: thẻ Kết nối 3 bước).
- *  - Hai thẻ lớn chọn phần (cùng kiểu trang Ứng dụng, API & Webhook): Địa chỉ Internet · Đồng bộ dữ liệu (dữ liệu +
- *    ảnh/file chung một thiết lập — SyncSection, đọc bằng sync.get()).
- *  - Trạng thái đọc khi mở, 15 s/lần khi cửa sổ đang hiện, và ngay khi main báo CLOUD_CHANGED_EVENT (gộp dồn dập).
- *    Các lệnh đọc trạng thái đều cục bộ ở main; lệnh gọi Cloudflare (recheck, health) chỉ chạy khi người dùng bấm.
- *  - nav:settings { tab: 'cloud', subtab: 'address' | 'sync' } mở đúng phần ('media' / 'db' cũ → 'sync'); phần đang
- *    chọn được nhớ tới khi tắt app.
- *  - Kho lưu (R2 / Google Drive): storage.status() đọc cùng lúc với kết nối (area 'connection'), đặt vào StorageContext
- *    và truyền xuống SyncSection. Bản app cũ không có storage → như trước (R2).
+ * Settings → Internet & Cloud (server only): all Cloudflare configuration in one place.
+ *  - The Cloudflare account bar at the top (connected: permission per feature + Manage; not connected: the 3-step Connect card).
+ *  - Two big cards pick the section (same style as the Apps, API & Webhook page): Internet address · Data sync (data +
+ *    images/files under one setting - SyncSection, read with sync.get()).
+ *  - State is read on open, every 15 s while the window is visible, and right away when main reports CLOUD_CHANGED_EVENT (bursts are merged).
+ *    All state reads are local in main; Cloudflare calls (recheck, health) only run when the user clicks.
+ *  - nav:settings { tab: 'cloud', subtab: 'address' | 'sync' } opens the right section ('media' / 'db' old ids → 'sync'); the section
+ *    last chosen is remembered until the app is closed.
+ *  - Storage (R2 / Google Drive): storage.status() is read together with the connection (area 'connection'), set into StorageContext
+ *    and passed down to SyncSection. Old app builds without storage → as before (R2).
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/store/app/appStore';
@@ -63,30 +63,32 @@ import {
   type CloudSection,
 } from './cloudUi';
 import { SettingsPage } from '../settingsUi';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export type { CloudSection } from './cloudUi';
 
-/** Dữ liệu ban đầu (test / đã đọc trước). */
+/** Initial data (test / pre-read). */
 export interface CloudSnapshot {
   connection: CloudConnectionStatus | null;
   tunnelConfig: TunnelConfigView | null;
   addresses: PublicAddress[];
-  /** Đồng bộ dữ liệu (sync.get()). */
+  /** Data sync (sync.get()). */
   sync: SyncOverview | null;
-  /** Kho lưu (storage.status()); null = chưa biết / bản app cũ → R2 như trước. */
+  /** Storage (storage.status()); null = unknown / old app build → R2 as before. */
   storage: CloudStorageStatus | null;
 }
 
 export interface CloudSettingsProps {
-  /** Phần mở sẵn (nav:settings { tab: 'cloud', subtab }); nhận cả id cũ 'media' / 'db' (→ 'sync'). */
+  /** Section to open by default (nav:settings { tab: 'cloud', subtab }); also accepts the old ids 'media' / 'db' (→ 'sync'). */
   initialSubtab?: CloudSection | 'media' | 'db' | null;
   initial?: Partial<CloudSnapshot>;
 }
 
-// Phần đang chọn, nhớ tới khi tắt app (rời tab Cài đặt rồi quay lại vẫn đúng chỗ).
+// Section currently selected, remembered until the app is closed (leaving the Settings tab and coming back still lands in the right place).
 let rememberedSection: CloudSection = 'address';
 
-/** Nhóm đọc trạng thái: 'media' / 'db' của main đều đọc lại overview của Đồng bộ dữ liệu. */
+/** Status read group: both main's 'media' and 'db' re-read the Data sync overview. */
 type CloudLoad = 'connection' | 'tunnel' | 'sync';
 
 function loadsFor(areas: CloudArea[]): CloudLoad[] {
@@ -98,58 +100,58 @@ type Meta = { text: string; variant: BadgeVariant } | null;
 function addressMeta(config: TunnelConfigView | null, addresses: PublicAddress[]): Meta {
   if (!config) return null;
   const enabled = addresses.filter(a => a.enabled);
-  if (enabled.some(a => a.state === 'error')) return { text: 'Có lỗi', variant: 'destructive' };
-  if (enabled.some(a => a.state === 'restarting')) return { text: 'Đang chạy lại', variant: 'warning' };
+  if (enabled.some(a => a.state === 'error')) return { text: tr('Có lỗi'), variant: 'destructive' };
+  if (enabled.some(a => a.state === 'restarting')) return { text: tr('Đang chạy lại'), variant: 'warning' };
   if (config.mode === 'cloudflare_auto') {
-    if (!config.auto) return { text: 'Chưa cấu hình', variant: 'default' };
-    if (!enabled.length) return { text: 'Đang tắt', variant: 'default' };
-    return { text: config.auto.layout === 'split' ? 'Cố định · 3 tên' : 'Cố định · 1 tên miền', variant: 'success' };
+    if (!config.auto) return { text: tr('Chưa cấu hình'), variant: 'default' };
+    if (!enabled.length) return { text: tr('Đang tắt'), variant: 'default' };
+    return { text: config.auto.layout === 'split' ? tr('Cố định · 3 tên') : tr('Cố định · 1 tên miền'), variant: 'success' };
   }
-  if (!enabled.length) return { text: 'Đang tắt', variant: 'default' };
-  if (config.mode === 'quick') return { text: 'Địa chỉ tạm', variant: 'warning' };
+  if (!enabled.length) return { text: tr('Đang tắt'), variant: 'default' };
+  if (config.mode === 'quick') return { text: tr('Địa chỉ tạm'), variant: 'warning' };
   const relay = addresses.find(a => a.service === 'relay');
-  const label = config.mode === 'ngrok' ? 'ngrok' : 'thủ công';
+  const label = config.mode === 'ngrok' ? 'ngrok' : tr('thủ công');
   return relay?.kind === 'temporary'
-    ? { text: `Địa chỉ tạm · ${label}`, variant: 'warning' }
-    : { text: `Cố định · ${label}`, variant: 'success' };
+    ? { text: tr('Địa chỉ tạm · {{label}}', { label }), variant: 'warning' }
+    : { text: tr('Cố định · {{label}}', { label }), variant: 'success' };
 }
 
 /**
- * Câu tóm tắt quyền của token + các vấn đề cần sửa. Kho lưu là Google Drive thì quyền R2 không còn cần cho Đồng bộ dữ
- * liệu → không nhắc.
+ * Summary of the token's permissions + the issues to fix. When the storage is Google Drive, R2 permissions are no longer needed for Data sync
+ * → no reminder.
  */
 function connectionSummary(c: CloudConnectionStatus, now = Date.now(), provider: CloudStorageProvider = 'r2') {
-  const zonesText = c.zones.length ? `tên miền ${c.zones.map(z => z.name).join(', ')}` : 'chưa có tên miền';
+  const zonesText = c.zones.length ? tr('tên miền {{v1}}', { v1: c.zones.map(z => z.name).join(', ') }) : tr('chưa có tên miền');
   const tunnel = permissionOf(c, 'tunnel');
   const r2 = provider === 'r2' ? permissionOf(c, 'r2') : null;
   const issues: Array<{ tone: 'warning' | 'destructive'; text: string }> = [];
   if (tunnel && !tunnel.ok) {
-    issues.push({ tone: 'warning', text: `Địa chỉ cố định: thiếu ${tunnel.missing?.length ? tunnel.missing.join(', ') : 'quyền Cloudflare Tunnel, DNS'}` });
+    issues.push({ tone: 'warning', text: tr('Địa chỉ cố định: thiếu {{v1}}', { v1: tunnel.missing?.length ? tunnel.missing.join(', ') : tr('quyền Cloudflare Tunnel, DNS') }) });
   }
   if (r2?.r2NotEnabled) {
-    issues.push({ tone: 'warning', text: 'Đồng bộ dữ liệu: tài khoản chưa bật R2 (Cloudflare → R2 Object Storage)' });
+    issues.push({ tone: 'warning', text: tr('Đồng bộ dữ liệu: tài khoản chưa bật R2 (Cloudflare → R2 Object Storage)') });
   } else if (r2 && !r2.ok) {
-    issues.push({ tone: 'warning', text: `Đồng bộ dữ liệu: thiếu ${r2.missing?.length ? r2.missing.join(', ') : 'quyền Workers R2 Storage'}` });
+    issues.push({ tone: 'warning', text: tr('Đồng bộ dữ liệu: thiếu {{v1}}', { v1: r2.missing?.length ? r2.missing.join(', ') : tr('quyền Workers R2 Storage') }) });
   }
   if (c.tokenExpiresOn) {
     const exp = Date.parse(c.tokenExpiresOn);
     if (Number.isFinite(exp)) {
       const days = (exp - now) / 86_400_000;
-      if (days < 0) issues.push({ tone: 'destructive', text: `Token đã hết hạn ngày ${fmtDate(exp)}, tạo token mới rồi bấm Quản lý → Đổi token.` });
-      else if (days <= 14) issues.push({ tone: 'warning', text: `Token hết hạn ngày ${fmtDate(exp)}.` });
+      if (days < 0) issues.push({ tone: 'destructive', text: tr('Token đã hết hạn ngày {{v1}}, tạo token mới rồi bấm Quản lý → Đổi token.', { v1: fmtDate(exp) }) });
+      else if (days <= 14) issues.push({ tone: 'warning', text: tr('Token hết hạn ngày {{v1}}.', { v1: fmtDate(exp) }) });
     }
   }
   if (c.lastError) issues.push({ tone: 'destructive', text: c.lastError });
   const allOk = !issues.length;
   const perms = provider === 'r2' ? 'Tunnel, DNS, R2' : 'Tunnel, DNS';
-  const line = allOk ? `Token hợp lệ · đủ quyền ${perms} · ${zonesText}` : `Token hợp lệ · ${zonesText}`;
+  const line = allOk ? tr('Token hợp lệ · đủ quyền {{perms}} · {{zonesText}}', { perms, zonesText }) : tr('Token hợp lệ · {{zonesText}}', { zonesText });
   const dot = issues.some(i => i.tone === 'destructive') ? 'bg-destructive' : allOk ? 'bg-success' : 'bg-warning';
   return { line, issues, dot };
 }
 
 const SECTIONS: Array<{ id: CloudSection; icon: React.ReactNode; title: string; desc: string }> = [
-  { id: 'address', icon: <GlobeIcon />, title: 'Địa chỉ Internet', desc: 'Cho nhân viên ở xa, API, thanh toán và webhook' },
-  { id: 'sync', icon: <RefreshIcon />, title: 'Đồng bộ dữ liệu', desc: 'Sao lưu tin nhắn, danh bạ, ảnh, file lên R2 hoặc Google Drive; khôi phục khi đổi máy' },
+  { id: 'address', icon: <GlobeIcon />, title: tr('Địa chỉ Internet'), desc: tr('Cho nhân viên ở xa, API, thanh toán và webhook') },
+  { id: 'sync', icon: <RefreshIcon />, title: tr('Đồng bộ dữ liệu'), desc: tr('Sao lưu tin nhắn, danh bạ, ảnh, file lên R2 hoặc Google Drive; khôi phục khi đổi máy') },
 ];
 
 function safe<T>(p: Promise<T> | undefined): Promise<T | null> {
@@ -189,7 +191,7 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
   const [editingToken, setEditingToken] = useState(false);
   const connectRef = useRef<HTMLDivElement | null>(null);
 
-  /** Kho lưu (bản app cũ không có storage → giữ null = R2 như trước). */
+  /** Storage (old app build without storage → keep null = R2 as before). */
   const loadStorage = useCallback(async () => {
     const cf = cloudApi();
     if (typeof cf?.storage?.status !== 'function') return;
@@ -201,7 +203,7 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
     const cf = cloudApi();
     if (!cf) return;
     if (what === 'connection') {
-      // Kho lưu đổi cùng nhóm 'connection' (main báo khi đổi kho / đăng nhập Google).
+      // Storage changes come in the same 'connection' group (main reports when the storage or the Google login changes).
       const [res] = await Promise.all([safe(cf.status()), loadStorage()]);
       if (res?.success && res.connection) setConnection(res.connection);
     } else if (what === 'tunnel') {
@@ -235,25 +237,25 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
   }, [connection?.connected]);
 
   const recheck = async () => {
-    const res = await run('recheck', () => cloudApi()?.recheck(), 'Đã kiểm tra lại token');
+    const res = await run('recheck', () => cloudApi()?.recheck(), tr('Đã kiểm tra lại token'));
     if (res?.connection) setConnection(res.connection);
     if (res) {
-      void loadStorage(); // R2 sẵn sàng hay chưa đổi theo quyền của token
+      void loadStorage(); // Whether R2 is ready changes with the token's permissions
       void refresh(['tunnel', 'media', 'db']);
     }
   };
 
   const disconnect = async () => {
     const ok = await showConfirm({
-      title: 'Ngắt kết nối Cloudflare?',
+      title: tr('Ngắt kết nối Cloudflare?'),
       message: storage?.provider === 'gdrive'
-        ? 'Địa chỉ cố định trên máy này sẽ dừng; đồng bộ dữ liệu lên Google Drive vẫn chạy. Dữ liệu đã có trên Cloudflare vẫn giữ nguyên.'
-        : 'Địa chỉ cố định và đồng bộ dữ liệu trên máy này sẽ dừng. Dữ liệu đã có trên Cloudflare vẫn giữ nguyên.',
-      confirmText: 'Ngắt kết nối',
+        ? tr('Địa chỉ cố định trên máy này sẽ dừng; đồng bộ dữ liệu lên Google Drive vẫn chạy. Dữ liệu đã có trên Cloudflare vẫn giữ nguyên.')
+        : tr('Địa chỉ cố định và đồng bộ dữ liệu trên máy này sẽ dừng. Dữ liệu đã có trên Cloudflare vẫn giữ nguyên.'),
+      confirmText: tr('Ngắt kết nối'),
       variant: 'danger',
     });
     if (!ok) return;
-    if (await run('disconnect', () => cloudApi()?.disconnect(), 'Đã ngắt kết nối Cloudflare')) void refresh();
+    if (await run('disconnect', () => cloudApi()?.disconnect(), tr('Đã ngắt kết nối Cloudflare'))) void refresh();
   };
 
   const onConnected = (next: CloudConnectionStatus) => {
@@ -263,15 +265,15 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
   };
 
   const pageDescription = storage?.provider === 'gdrive'
-    ? 'Địa chỉ cố định cho nhân viên và đối tác trên Cloudflare, lưu media và sao lưu lên Google Drive của bạn'
-    : 'Địa chỉ cố định cho nhân viên và đối tác, lưu media, sao lưu trên Cloudflare, Google Drive của bạn';
+    ? tr('Địa chỉ cố định cho nhân viên và đối tác trên Cloudflare, lưu media và sao lưu lên Google Drive của bạn')
+    : tr('Địa chỉ cố định cho nhân viên và đối tác, lưu media, sao lưu trên Cloudflare, Google Drive của bạn');
 
   if (!api) {
     return (
-      <SettingsPage title="Internet & Cloud" description={pageDescription} width="wide">
+      <SettingsPage title={tr('Internet & Cloud')} description={pageDescription} width="wide">
       <div className="space-y-5">
-        <Notice tone="warning" title="Bản app này chưa có tính năng Cloudflare">
-          <p>Cập nhật Deplao lên bản mới nhất để dùng địa chỉ cố định, lưu media và sao lưu lên Cloudflare.</p>
+        <Notice tone="warning" title={tr('Bản app này chưa có tính năng Cloudflare')}>
+          <p>{tr('Cập nhật Deplao lên bản mới nhất để dùng địa chỉ cố định, lưu media và sao lưu lên Cloudflare.')}</p>
         </Notice>
       </div>
       </SettingsPage>
@@ -284,26 +286,26 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
     address: addressMeta(tunnelConfig, addresses),
     sync: syncMeta(connection, sync, Date.now(), storage),
   };
-  // "ảnh 614/24.625" cạnh nhãn Đồng bộ dữ liệu khi đang kèm ảnh.
+  // "ảnh 614/24.625" (images 614/24.625) next to the Data sync label while images are included.
   const hints: Partial<Record<CloudSection, string | null>> = { sync: syncMediaHint(sync) };
 
   let strip: React.ReactNode;
   if (!loaded) {
     strip = (
       <Card className="flex items-center gap-2 px-4 py-3 text-xs text-muted-foreground">
-        <CloudSpinner className="h-3.5 w-3.5" /> Đang đọc trạng thái Cloudflare…
+        {trx('<0/> Đang đọc trạng thái Cloudflare…', { 0: <CloudSpinner className="h-3.5 w-3.5" /> })}
       </Card>
     );
   } else if (connected && !editingToken) {
     const summary = connectionSummary(connection!, Date.now(), storage?.provider ?? 'r2');
-    // Worker + D1 cho ứng dụng: không bắt buộc → dòng thông tin, không đổi chấm màu / vấn đề của kết nối.
+    // Worker + D1 for apps: not required → an info line only, it does not change the color dot / connection issues.
     const workersLine = workersAccessLine(connection);
     strip = (
-      <Card className="flex flex-wrap items-center gap-3 px-4 py-3" title={connection!.checkedAt ? `Kiểm tra lúc ${new Date(connection!.checkedAt).toLocaleString('vi-VN')}` : undefined}>
+      <Card className="flex flex-wrap items-center gap-3 px-4 py-3" title={connection!.checkedAt ? tr('Kiểm tra lúc {{v1}}', { v1: new Date(connection!.checkedAt).toLocaleString(appLocale()) }) : undefined}>
         <span className={cn('h-2.5 w-2.5 flex-shrink-0 rounded-full', summary.dot)} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-foreground">
-            Cloudflare đã kết nối{connection!.accountName ? ` · ${connection!.accountName}` : ''}
+            {trx('Cloudflare đã kết nối{{v1}}', { v1: connection!.accountName ? ` · ${connection!.accountName}` : '' })}
           </p>
           <p className="text-xs text-muted-foreground">{summary.line}</p>
           {summary.issues.map(issue => (
@@ -315,17 +317,17 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
           align="end"
           trigger={(
             <Button variant="outline" size="sm" loading={busy === 'recheck' || busy === 'disconnect'} rightIcon={<ChevronDownIcon className="h-4 w-4" />}>
-              Quản lý
+              {tr('Quản lý')}
             </Button>
           )}
         >
-          <DropdownMenuItem icon={<RefreshIcon />} onSelect={() => void recheck()}>Kiểm tra lại token</DropdownMenuItem>
-          <DropdownMenuItem icon={<KeyIcon />} onSelect={() => setEditingToken(true)}>Đổi token</DropdownMenuItem>
+          <DropdownMenuItem icon={<RefreshIcon />} onSelect={() => void recheck()}>{tr('Kiểm tra lại token')}</DropdownMenuItem>
+          <DropdownMenuItem icon={<KeyIcon />} onSelect={() => setEditingToken(true)}>{tr('Đổi token')}</DropdownMenuItem>
           <DropdownMenuItem icon={<ExternalLinkIcon />} onSelect={() => openExternalUrl(connection!.accountId ? `https://dash.cloudflare.com/${connection!.accountId}` : 'https://dash.cloudflare.com/')}>
-            Mở Cloudflare
+            {tr('Mở Cloudflare')}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem destructive icon={<UnlinkIcon />} onSelect={() => void disconnect()}>Ngắt kết nối</DropdownMenuItem>
+          <DropdownMenuItem destructive icon={<UnlinkIcon />} onSelect={() => void disconnect()}>{tr('Ngắt kết nối')}</DropdownMenuItem>
         </DropdownMenu>
       </Card>
     );
@@ -333,12 +335,12 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
     strip = (
       <div ref={connectRef} className="space-y-3">
         {brokenToken && !editingToken && (
-          <Notice tone="destructive" title="Token Cloudflare không còn dùng được">
-            <p>{connection?.lastError || 'Token đã bị thu hồi hoặc hết hạn.'} Dán token mới để các tính năng chạy lại.</p>
+          <Notice tone="destructive" title={tr('Token Cloudflare không còn dùng được')}>
+            <p>{trx('{{v1}} Dán token mới để các tính năng chạy lại.', { v1: connection?.lastError || tr('Token đã bị thu hồi hoặc hết hạn.') })}</p>
           </Notice>
         )}
         <ConnectCard
-          title={connected ? 'Đổi token Cloudflare' : 'Kết nối Cloudflare'}
+          title={connected ? tr('Đổi token Cloudflare') : tr('Kết nối Cloudflare')}
           initialAccountId={connection?.accountId ?? ''}
           onConnected={onConnected}
           onCancel={connected ? () => setEditingToken(false) : undefined}
@@ -348,12 +350,12 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
   }
 
   const page = (
-    <SettingsPage title="Internet & Cloud" description={pageDescription} width="wide">
+    <SettingsPage title={tr('Internet & Cloud')} description={pageDescription} width="wide">
     <div className="space-y-5">
       <RestoreStateBanner onOpenAccounts={() => setView('dashboard')} />
       {strip}
 
-      <div role="tablist" aria-label="Phần của trang" className="grid gap-3 md:grid-cols-2">
+      <div role="tablist" aria-label={tr('Phần của trang')} className="grid gap-3 md:grid-cols-2">
         {SECTIONS.map(sec => {
           const active = section === sec.id;
           const meta = metas[sec.id];
@@ -428,6 +430,6 @@ export default function CloudSettings({ initialSubtab, initial }: CloudSettingsP
     </SettingsPage>
   );
 
-  // Kho lưu cho mọi mảnh bên dưới (SyncSection, hộp dọn file, trình khôi phục mở từ trang này…).
+  // Storage for every piece below (SyncSection, the file cleanup dialog, the restore wizard opened from this page…).
   return <StorageContext.Provider value={storage}>{page}</StorageContext.Provider>;
 }

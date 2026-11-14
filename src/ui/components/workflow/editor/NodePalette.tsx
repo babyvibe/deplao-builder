@@ -3,6 +3,7 @@ import { NODE_GROUPS } from '../nodes/workflowConfig';
 import { Channel } from '../../../../configs/channels/channelConfig';
 import { FAMILY_META, NodeIconTile, PALETTE_GROUP_FAMILY, accentStyle } from '../nodes/nodeVisuals';
 import { pluginPaletteGroups, useLoadPluginNodes, usePluginNodeStore } from '../nodes/pluginNodes';
+import { tr } from '../../../../shared/i18n';
 
 interface Props {
   channel?: Channel;
@@ -11,7 +12,7 @@ interface Props {
 export default function NodePalette({ channel }: Props) {
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  // Node/trigger do plugin đang bật đóng góp (nhóm "Ứng dụng · …" sau các nhóm có sẵn).
+  // Node/trigger contributed by an enabled plugin (group "Ứng dụng · …" (Apps · …), after the built-in groups).
   useLoadPluginNodes();
   const pluginDefs = usePluginNodeStore(s => s.defs);
 
@@ -42,7 +43,7 @@ export default function NodePalette({ channel }: Props) {
     <div className="w-60 wf-palette border-r flex flex-col h-full overflow-hidden flex-shrink-0">
       {/* Header + search */}
       <div className="px-3 pt-3 pb-2.5 flex-shrink-0">
-        <p className="text-[11px] font-semibold wf-muted mb-2">Kéo node vào sơ đồ</p>
+        <p className="text-[11px] font-semibold wf-muted mb-2">{tr('Kéo node vào sơ đồ')}</p>
         <div className="relative">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
             className="wf-faint absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
@@ -51,7 +52,7 @@ export default function NodePalette({ channel }: Props) {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Tìm node..."
+            placeholder={tr('Tìm node...')}
             className="wf-input wf-input--sm !pl-8 !pr-7"
           />
           {search && (
@@ -113,7 +114,7 @@ export default function NodePalette({ channel }: Props) {
         })}
 
         {filtered.length === 0 && (
-          <p className="text-xs wf-muted text-center py-6">Không tìm thấy node</p>
+          <p className="text-xs wf-muted text-center py-6">{tr('Không tìm thấy node')}</p>
         )}
       </div>
     </div>

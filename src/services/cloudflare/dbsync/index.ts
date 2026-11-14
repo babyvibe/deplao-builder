@@ -1,16 +1,16 @@
 /**
- * dbsync — đồng bộ DB workspace lên Cloudflare R2 (tuỳ chọn, mặc định tắt). Hợp đồng: CloudDbModule (../contracts).
+ * dbsync: syncs the workspace DB to Cloudflare R2 (optional, off by default). Contract: CloudDbModule (../contracts).
  *
- *  - Một SyncEngine cho mỗi workspace LOCAL có file DB; bucket của máy: deplao-backup-<8 ký tự machineId>.
- *  - Mọi thao tác SQLite chạy trong worker_threads (connection riêng) — main không chờ SQLite lâu.
- *  - 'off' = không trigger (gỡ khi tắt), không hẹn giờ, không worker.
- *  - pauseFor(): bọc thao tác thay file DB (đổi thư mục lưu trữ, đổi/xoá workspace, khôi phục).
- *  - Khôi phục vào workspace đang mở: đóng DB của app → thay file → mở lại NGAY trong cùng một nhịp (DatabaseService
- *    close()/reinitialize() không có await bên trong) → báo renderer 'workspace:switched' để nạp lại. Workspace khác:
- *    chỉ thay file (lần mở sau chạy migration như thường). Không khớp workspace nào → workspace DB trống / workspace mới.
- *  - Phạm vi đồng bộ (tài khoản + từ ngày) THEO WORKSPACE (tài khoản thuộc từng workspace): cloud-settings.json →
- *    db.scopes[workspaceId], thiếu = tất cả. setScope đặt cho workspace local đang mở; chỉ engine của workspace đó chụp
- *    gốc mới theo phạm vi mới (gốc + đoạn cũ trên R2 bị thay như mọi lần chụp gốc). Mỗi engine lọc theo phạm vi của mình.
+ *  - One SyncEngine per LOCAL workspace that has a DB file; the machine's bucket: deplao-backup-<8 characters of machineId>.
+ *  - All SQLite operations run in worker_threads (their own connection), so main does not wait on SQLite for long.
+ *  - 'off' = no triggers (removed when turned off), no timers, no worker.
+ *  - pauseFor(): wraps an operation that replaces the DB file (changing the storage folder, changing/deleting a workspace, restoring).
+ *  - Restoring into the open workspace: close the app's DB → replace the file → reopen RIGHT AWAY in the same tick (DatabaseService
+ *    close()/reinitialize() has no await inside) → notify the renderer 'workspace:switched' to reload. Another workspace:
+ *    only replace the file (the next open runs the migration as usual). If no workspace matches → an empty workspace DB / a new workspace.
+ *  - Sync scope (accounts + from date) PER WORKSPACE (accounts belong to each workspace): cloud-settings.json →
+ *    db.scopes[workspaceId], missing = all. setScope sets it for the open local workspace; only that workspace's engine takes a
+ *    new base snapshot for the new scope (the old base + segments on R2 are replaced, as with every base snapshot). Each engine filters by its own scope.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -43,14 +43,14 @@ const FOLLOWERS_REFRESH_MS = 10 * 60_000;
 const FOLLOWER_MAX_AGE_MS = 7 * 24 * 3600_000;
 const PAUSE_WAIT_MS = 30_000;
 
-// ─── Tiện ích ───────────────────────────────────────────────────────────────
+// ─── Utilities ───────────────────────────────────────────────────────────────
 
 function logLine(level: 'log' | 'warn' | 'error', msg: string): void {
     try {
         if (level === 'error') Logger.error(msg);
         else if (level === 'warn') Logger.warn(msg);
         else Logger.log(msg);
-    } catch { /* Logger chưa sẵn sàng */ }
+    } catch { /* Logger not ready yet */ }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -60,7 +60,7 @@ function sleep(ms: number): Promise<void> {
     });
 }
 
-/** true nếu xong trước hạn. */
+/** true if it finished before the deadline. */
 async function within(p: Promise<unknown>, ms: number): Promise<boolean> {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<boolean>(resolve => {
@@ -88,7 +88,7 @@ function userDataDir(): string {
     }
 }
 
-/** Cùng nguồn với API / plugin (dev đọc package.json — electron.exe dev mang version cũ). */
+/** Same source as the API / plugins (dev reads package.json; the dev electron.exe carries an old version). */
 function appVersion(): string {
     try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -99,7 +99,7 @@ function appVersion(): string {
     }
 }
 
-/** Mã hoá cục bộ bằng safeStorage (mật khẩu theo dõi khác mật khẩu đồng bộ của máy này). null = không mã hoá được. */
+/** Local encryption with safeStorage (the follow password is different from this machine's sync password). null = cannot be encrypted. */
 function encryptLocal(value: string): string | null {
     try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -136,7 +136,7 @@ function currentMode(): DbSyncMode {
     return m === 'hourly' || m === 'realtime' ? m : 'off';
 }
 
-/** Phạm vi đồng bộ của một workspace trong cấu hình đã đọc (thiếu / sai kiểu = tất cả). */
+/** Sync scope of one workspace in the config that was read (missing / wrong type = all). */
 function scopeIn(s: ReturnType<typeof settingsSafe>, workspaceId: string): CloudScope {
     const scopes = s?.db?.scopes;
     return normalizeScope(scopes && typeof scopes === 'object' ? scopes[workspaceId] : undefined);
@@ -146,7 +146,7 @@ function scopeOf(workspaceId: string): CloudScope {
     return scopeIn(settingsSafe(), workspaceId);
 }
 
-/** Workspace đang mở nếu là workspace local (phạm vi chỉ đặt được cho workspace có DB trên máy này). */
+/** The open workspace, if it is a local workspace (a scope can only be set for a workspace whose DB is on this machine). */
 function activeLocalWorkspaceId(): string | null {
     try {
         const id = WorkspaceManager.getInstance().getActiveWorkspaceId();
@@ -169,13 +169,13 @@ function ownBucket(): string {
     return s.db.bucket || backupBucketName(s.machineId);
 }
 
-/** Kho đang chọn (R2 / Google Drive) dùng được — tên hàm giữ từ khi chỉ có Cloudflare. */
+/** Whether the selected storage (R2 / Google Drive) is usable; the function name is kept from when only Cloudflare existed. */
 function requireConnected(): void {
     const s = cloudflare.storageReady();
     if (!s.ready) throw new CloudError('NOT_CONNECTED', s.reason || 'Chưa kết nối kho lưu.');
 }
 
-/** Tên kho đang chọn cho câu báo ("R2" / "Google Drive"). */
+/** Name of the selected storage for the message ("R2" / "Google Drive"). */
 function storeName(): string {
     try {
         return storageLabel(cloudflare.storageProvider());
@@ -198,7 +198,7 @@ function localWorkspaces(): LocalWs[] {
         .map(w => ({ ws: w, id: w.id, name: w.name, dbPath: wm.resolveDbPath(w.dbPath || DEFAULT_DB) }));
 }
 
-// ─── Trạng thái module ──────────────────────────────────────────────────────
+// ─── Module state ──────────────────────────────────────────────────────────
 
 const store = new StateStore(() => path.join(userDataDir(), 'cloud-dbsync-state.json'));
 const engines = new Map<string, SyncEngine>();
@@ -227,7 +227,7 @@ function ops(): DbOps {
     return mainOps;
 }
 
-/** Worker phụ cho khôi phục / máy dự phòng — không chặn đồng bộ của các workspace. */
+/** Secondary worker for restore / standby machines: does not block the sync of the workspaces. */
 let auxOpsInst: DbOps | null = null;
 function auxOps(): DbOps {
     if (!auxOpsInst) auxOpsInst = createWorkerOps({ log: m => logLine('warn', m) });
@@ -251,7 +251,7 @@ function onOpsEvent(ev: DbOpsEvent): void {
 function notify(urgent = false): void {
     const fire = () => {
         lastNotify = Date.now();
-        try { cloudflare.notifyChanged('db'); } catch { /* bỏ qua */ }
+        try { cloudflare.notifyChanged('db'); } catch { /* ignore */ }
     };
     const now = Date.now();
     if (urgent || now - lastNotify >= 2000) {
@@ -298,7 +298,7 @@ function releaseUid(engineId: string): void {
     for (const [uid, owner] of uidOwners) if (owner === engineId) uidOwners.delete(uid);
 }
 
-/** db-index.json của bucket: danh sách workspace có bản sao (máy mới tìm bản sao không cần List). */
+/** The bucket's db-index.json: list of workspaces that have a copy (a new machine finds the copy without a List). */
 function onBaseDone(_engine: SyncEngine, m: DbManifest, bucket: string): void {
     indexChain = indexChain
         .then(async () => {
@@ -324,14 +324,14 @@ function onBaseDone(_engine: SyncEngine, m: DbManifest, bucket: string): void {
         .catch(err => logLine('warn', `[CloudDb] không cập nhật được ${INDEX_KEY}: ${err?.message || err}`));
 }
 
-/** Lúc tiến trình app khởi động — chu kỳ đồng bộ tự động chờ STARTUP_QUIET_MS sau mốc này (SyncEngine.scheduleAt). */
+/** When the app process started: automatic sync cycles wait STARTUP_QUIET_MS after this time (SyncEngine.scheduleAt). */
 const APP_STARTED_AT = Date.now() - Math.round(process.uptime() * 1000);
 
-// Máy sắp ngủ / vừa thức dậy / vừa mở khoá (powerMonitor ở main.ts): chu kỳ tự động chờ như sau khi mở app, bản gốc chờ
-// máy rảnh (baseWindow.ts); máy ngủ giữa lúc tự chụp gốc → dừng lần chụp đó.
+// The machine is about to sleep / has just woken up / has just been unlocked (powerMonitor in main.ts): automatic cycles wait as after opening the app, the base snapshot waits
+// for an idle machine (baseWindow.ts); if the machine sleeps while a self-triggered base snapshot runs → stop that snapshot.
 onSystemPower((ev, at) => {
     for (const e of engines.values()) {
-        try { e.onPowerEvent(ev, at); } catch { /* bỏ qua */ }
+        try { e.onPowerEvent(ev, at); } catch { /* ignore */ }
     }
 });
 
@@ -356,16 +356,16 @@ const engineCtx: EngineContext = {
 
 // ─── Engine ─────────────────────────────────────────────────────────────────
 
-/** Khớp danh sách engine với workspace local hiện có (tạo / thay khi đổi đường dẫn / bỏ khi xoá). */
+/** Match the engine list to the existing local workspaces (create / replace when the path changes / remove when deleted). */
 function reconcileEngines(): void {
     if (currentMode() === 'off' || shuttingDown) return;
     const seen = new Set<string>();
     const locals = localWorkspaces();
-    // Workspace đã xoá → bỏ trạng thái đồng bộ của nó (bản sao trên R2 vẫn giữ, khôi phục được từ listRemote).
+    // Workspace deleted → drop its sync state (the copy on R2 is kept and can still be restored from listRemote).
     const known = new Set(locals.map(w => w.id));
     for (const id of store.workspaceIds()) if (!known.has(id)) store.removeWorkspace(id);
     for (const w of locals) {
-        if (!fs.existsSync(w.dbPath)) continue; // workspace chưa từng mở → chưa có DB
+        if (!fs.existsSync(w.dbPath)) continue; // workspace never opened → no DB yet
         seen.add(w.id);
         const cur = engines.get(w.id);
         if (cur && samePath(cur.dbPath, w.dbPath)) {
@@ -415,7 +415,7 @@ async function stopAllEngines(dropTracking: boolean): Promise<void> {
     if (mainOps) await mainOps.terminate();
 }
 
-/** Mode 'off' lúc khởi động mà lần trước gỡ trigger dở (app tắt giữa chừng) → gỡ nốt, rồi dừng worker. */
+/** Mode 'off' at startup, when the previous run was removing the triggers midway (the app quit in the middle) → finish removing them, then stop the worker. */
 async function cleanupLeftoverTracking(): Promise<void> {
     const pending = localWorkspaces().filter(w => store.hasWorkspace(w.id) && store.workspace(w.id).trackingInstalled);
     if (!pending.length) return;
@@ -425,7 +425,7 @@ async function cleanupLeftoverTracking(): Promise<void> {
     if (mainOps && !engines.size) await mainOps.terminate();
 }
 
-// ─── Người theo dõi (máy dự phòng) & followers phía máy nguồn ───────────────
+// ─── Followers (standby machines) and the followers list on the source machine ───────────────
 
 function followPassphrase(): string | null {
     const st = store.follow();
@@ -451,7 +451,7 @@ async function stopFollowing(deleteCopy: boolean): Promise<void> {
     if (st) {
         try {
             await cloudflare.r2(st.bucket).deleteObject(followerKey(st.workspaceUid, cloudflare.settings.get().machineId));
-        } catch { /* nhịp tim tự cũ đi */ }
+        } catch { /* the heartbeat goes stale */ }
         if (deleteCopy) {
             if (auxOpsInst && auxOpsInst.isActive()) {
                 await auxOpsInst.call('close', { dbPath: follower.copyPath(st.workspaceUid) }).catch(() => undefined);
@@ -464,11 +464,11 @@ async function stopFollowing(deleteCopy: boolean): Promise<void> {
     memoryFollowPass = null;
     try {
         if (cloudflare.settings.get().db.following) cloudflare.settings.update(d => { d.db.following = null; });
-    } catch { /* bỏ qua */ }
+    } catch { /* ignore */ }
     terminateAuxIfIdle();
 }
 
-/** Khởi động lại theo dõi đã bật từ phiên trước. */
+/** Restart the following that was turned on in the previous session. */
 function resumeFollowing(): void {
     const following = settingsSafe()?.db?.following;
     if (!following) return;
@@ -482,7 +482,7 @@ function resumeFollowing(): void {
     follower.start(30_000);
 }
 
-/** status() đọc nhịp tim máy dự phòng tối đa 10 phút/lần (List là Class A). */
+/** status() reads the standby machines' heartbeats at most once every 10 minutes (List is Class A). */
 function maybeRefreshFollowers(): void {
     if (currentMode() === 'off' || followersBusy || !engines.size || Date.now() - followersAt < FOLLOWERS_REFRESH_MS) return;
     const bucket = settingsSafe()?.db?.bucket;
@@ -506,7 +506,7 @@ function maybeRefreshFollowers(): void {
                         if (!seenAt || Date.now() - seenAt > FOLLOWER_MAX_AGE_MS) continue;
                         const lag = hb?.lagMs === null || hb?.lagMs === undefined ? null : Number(hb.lagMs);
                         out.push({ machine: String(hb?.machine || hb?.machineId || 'máy dự phòng'), lagMs: Number.isFinite(lag as number) ? lag : null, seenAt });
-                    } catch { /* bỏ qua nhịp tim hỏng */ }
+                    } catch { /* ignore a broken heartbeat */ }
                 }
             }
             out.sort((a, b) => b.seenAt - a.seenAt);
@@ -521,7 +521,7 @@ function maybeRefreshFollowers(): void {
     })();
 }
 
-// ─── Bản sao trên R2 ────────────────────────────────────────────────────────
+// ─── Copies on R2 ────────────────────────────────────────────────────────
 
 interface ResolvedCopy {
     bucket: string;
@@ -532,7 +532,7 @@ interface ResolvedCopy {
 async function discoverBuckets(): Promise<string[]> {
     const names = new Set<string>();
     try {
-        // R2: bucket của tài khoản; Google Drive: thư mục con của thư mục Deplao
+        // R2: the account's bucket; Google Drive: a subfolder of the Deplao folder
         for (const n of await cloudflare.listBuckets('deplao-backup-')) {
             if (/^deplao-backup-[a-z0-9-]+$/.test(n)) names.add(n);
         }
@@ -543,7 +543,7 @@ async function discoverBuckets(): Promise<string[]> {
     return [...names];
 }
 
-/** Mã workspace (cloud_workspace_uid) của một workspace local: engine → trạng thái đã lưu → dò file DB (không tạo). */
+/** Workspace id (cloud_workspace_uid) of a local workspace: engine → saved state → probe the DB file (does not create it). */
 async function localWorkspaceUid(id: string): Promise<string | null> {
     const e = engines.get(id);
     let uid = e?.workspaceUid || (store.hasWorkspace(id) ? store.workspace(id).workspaceUid : null);
@@ -557,7 +557,7 @@ async function localWorkspaceUid(id: string): Promise<string | null> {
     return uid || null;
 }
 
-/** id = "<bucket>/<workspaceUid>" (RemoteDbCopy.workspaceId) hoặc id workspace local (bản sao của chính máy này). */
+/** id = "<bucket>/<workspaceUid>" (RemoteDbCopy.workspaceId) or the local workspace id (a copy of this very machine). */
 async function resolveCopy(id: string): Promise<ResolvedCopy> {
     let ref = parseCopyId(id);
     if (!ref) {
@@ -571,9 +571,9 @@ async function resolveCopy(id: string): Promise<ResolvedCopy> {
     return { bucket: ref.bucket, uid: ref.uid, manifest };
 }
 
-// ─── Xoá bản sao trên R2 ────────────────────────────────────────────────────
+// ─── Delete copies on R2 ────────────────────────────────────────────────────
 
-/** Mọi khoá dưới prefix (List phân trang — Class A, chỉ dùng cho thao tác người dùng bấm). */
+/** Every key under the prefix (paged List: Class A, only used for actions the user clicks). */
 async function listAllKeys(r2: R2Client, prefix: string): Promise<string[]> {
     const keys: string[] = [];
     let token: string | null = null;
@@ -587,12 +587,12 @@ async function listAllKeys(r2: R2Client, prefix: string): Promise<string[]> {
 }
 
 /**
- * Xoá nhiều object: DeleteObjects (≤ 1000 khoá/lần) nếu client R2 có — khoá báo lỗi riêng thì thử lại từng object;
- * client không có (bản giả / cũ) → từng object (6 song song).
+ * Delete many objects: DeleteObjects (≤ 1000 keys per call) if the R2 client has it; keys that report their own error are retried one object at a time;
+ * a client without it (fake / old) → one object at a time (6 in parallel).
  */
 async function deleteKeys(r2: R2Client, keys: string[]): Promise<void> {
     if (!keys.length) return;
-    // Hàm mũi tên thay cho bind (bind mất kiểu khi strictBindCallApply tắt ở tsconfig renderer).
+    // Arrow function instead of bind (bind loses its types when strictBindCallApply is off in the renderer tsconfig).
     const multi = typeof r2.deleteObjects === 'function' ? (chunk: string[]) => r2.deleteObjects!(chunk) : null;
     if (!multi) {
         await pool(keys, 6, key => withRetry(() => r2.deleteObject(key)));
@@ -607,7 +607,7 @@ async function deleteKeys(r2: R2Client, keys: string[]): Promise<void> {
     if (failed.length) await pool(failed, 6, key => withRetry(() => r2.deleteObject(key)));
 }
 
-/** Bỏ mục của bản sao khỏi db-index.json của bucket (xếp hàng chung với onBaseDone). Lỗi chỉ ghi log. */
+/** Remove the copy's entry from the bucket's db-index.json (queued together with onBaseDone). Errors are only logged. */
 function removeIndexEntry(bucket: string, uid: string): Promise<void> {
     const run = indexChain.then(async () => {
         const r2 = cloudflare.r2(bucket);
@@ -622,7 +622,7 @@ function removeIndexEntry(bucket: string, uid: string): Promise<void> {
     return settled;
 }
 
-/** Máy này đang đẩy bản sao (bucket, uid) không: đồng bộ bật + một workspace local có cùng mã workspace. */
+/** Is this machine pushing the copy (bucket, uid): sync is on + a local workspace has the same workspace id. */
 async function pushedFromHere(bucket: string, uid: string): Promise<boolean> {
     if (currentMode() === 'off' || bucket !== ownBucket()) return false;
     for (const e of engines.values()) if (e.workspaceUid === uid) return true;
@@ -633,7 +633,7 @@ async function pushedFromHere(bucket: string, uid: string): Promise<boolean> {
     return false;
 }
 
-// ─── Khôi phục ──────────────────────────────────────────────────────────────
+// ─── Restore ──────────────────────────────────────────────────────────────
 
 async function resolveTargetWorkspace(src: ResolvedCopy): Promise<{ ws: Workspace; created: boolean }> {
     const wm = WorkspaceManager.getInstance();
@@ -648,11 +648,11 @@ async function resolveTargetWorkspace(src: ResolvedCopy): Promise<{ ws: Workspac
             uid = uid || probe?.workspaceUid || null;
             isEmpty = !!probe?.empty;
         }
-        // Cùng mã workspace (khôi phục trên chính máy này / làm mới bản đã khôi phục) → thay tại chỗ.
+        // Same workspace id (restoring on this same machine / refreshing a restored copy) → replace in place.
         if (uid && uid === src.uid) return { ws: w.ws, created: false };
         if (isEmpty && (!empty || w.id === activeId)) empty = w.ws;
     }
-    // Máy mới: workspace còn trống (ưu tiên workspace đang mở) nhận dữ liệu khôi phục.
+    // New machine: an empty workspace (the open workspace first) receives the restored data.
     if (empty) return { ws: empty, created: false };
     const base = `${(src.manifest.workspaceName || 'Workspace').slice(0, 40)} (khôi phục)`;
     let name = base;
@@ -671,7 +671,7 @@ function broadcastWorkspaceReload(ws: Workspace): void {
         for (const win of BrowserWindow.getAllWindows()) {
             if (!win.isDestroyed()) win.webContents.send('workspace:switched', { workspace: { ...ws } });
         }
-    } catch { /* không có cửa sổ */ }
+    } catch { /* no window */ }
 }
 
 async function swapIntoWorkspace(ws: Workspace, dbPath: string, restoredPath: string): Promise<{ active: boolean; backupPath: string }> {
@@ -679,7 +679,7 @@ async function swapIntoWorkspace(ws: Workspace, dbPath: string, restoredPath: st
     return cloudDb.pauseFor('restore', async () => {
         const dbs = DatabaseService.getInstance();
         if (samePath(dbs.getDbPath(), dbPath)) {
-            // Workspace đang mở: đóng → thay → mở lại trong CÙNG một nhịp (không await xen giữa) — không lệnh DB nào chen vào.
+            // Open workspace: close → replace → reopen in the SAME tick (no await in between) → no DB command can slip in.
             dbs.close();
             let swapErr: any = null;
             try {
@@ -688,14 +688,14 @@ async function swapIntoWorkspace(ws: Workspace, dbPath: string, restoredPath: st
                 swapErr = err;
             }
             await dbs.reinitialize();
-            try { invalidateRestoreGate(); } catch { /* bỏ qua */ }
+            try { invalidateRestoreGate(); } catch { /* ignore */ }
             if (swapErr) {
                 throw new CloudError('RESTORE_SWAP_FAILED', `Không thay được file DB (${swapErr?.code || swapErr?.message || swapErr}) — dữ liệu hiện tại giữ nguyên.`);
             }
             broadcastWorkspaceReload(ws);
             return { active: true, backupPath };
         }
-        // Workspace khác: file có thể đang bị relay/nhân viên mở ngắn (DB phụ tự đóng sau 30 s) → thử lại ≤ 40 s.
+        // Another workspace: the file may be briefly opened by the relay/an employee (the secondary DB closes itself after 30 s) → retry for at most 40 s.
         const deadline = Date.now() + 40_000;
         for (;;) {
             try {
@@ -711,9 +711,9 @@ async function swapIntoWorkspace(ws: Workspace, dbPath: string, restoredPath: st
     });
 }
 
-// ─── Nhật ký ────────────────────────────────────────────────────────────────
+// ─── Log ────────────────────────────────────────────────────────────────
 
-/** Nhật ký của workspace đang mở đọc thẳng qua DB của app (khi chưa có engine, vd đồng bộ đang tắt). */
+/** The open workspace's log is read straight from the app's DB (when there is no engine yet, e.g. sync is turned off). */
 function readActiveLogDirect(workspaceId: string): SyncLogEntry[] {
     try {
         if (WorkspaceManager.getInstance().getActiveWorkspaceId() !== workspaceId) return [];
@@ -732,7 +732,7 @@ function mergeLogs(sources: SyncLogEntry[][], limit: number): SyncLogEntry[] {
     const out: SyncLogEntry[] = [];
     nonEmpty.forEach((list, i) => {
         for (const e of list) {
-            // Mỗi DB có dãy id riêng → gộp nhiều nguồn thì dời id để không trùng (UI dùng id làm khoá).
+            // Each DB has its own id sequence → when merging several sources, shift the ids so they do not clash (the UI uses the id as a key).
             out.push(multi ? { ...e, id: e.id < 0 ? e.id - i * 1e9 : e.id + i * 1e9 } : e);
         }
     });
@@ -769,9 +769,9 @@ export const cloudDb: CloudDbModule = {
             unsubscribe = cloudflare.onChanged(area => {
                 if (area !== 'connection') return;
                 bucketPromise = null;
-                // Kết nối Cloudflare / đăng nhập Google / đổi kho đều báo 'connection'
+                // Connecting to Cloudflare / signing in to Google / switching storage all report 'connection'
                 if (!cloudflare.storageReady().ready) return;
-                // Vừa kết nối lại → thử ngay thay vì chờ hết thời gian lùi do lỗi quyền.
+                // Just reconnected → try right away instead of waiting out the back-off caused by permission errors.
                 for (const e of engines.values()) e.recheck(true);
                 if (store.follow() && !follower.isActive()) follower.start();
             });
@@ -795,15 +795,15 @@ export const cloudDb: CloudDbModule = {
             for (const w of localWorkspaces()) {
                 const e = mode !== 'off' ? engines.get(w.id) : undefined;
                 const view = e ? e.view() : idleWorkspaceView(w, mode, scopeIn(s, w.id));
-                // Mã bản sao (bucket/uid) — giao diện so với RemoteDbCopy.workspaceId để nhận ra bản của chính máy này.
+                // Copy id (bucket/uid): the UI compares it with RemoteDbCopy.workspaceId to recognize this machine's own copy.
                 const uid = e?.workspaceUid ?? (store.hasWorkspace(w.id) ? store.workspace(w.id).workspaceUid : null);
                 const bucket = s?.db?.bucket ?? null;
                 view.copyId = bucket && uid ? copyIdOf(bucket, uid) : null;
                 workspaces.push(view);
             }
-        } catch { /* WorkspaceManager chưa sẵn sàng */ }
+        } catch { /* WorkspaceManager not ready yet */ }
         maybeRefreshFollowers();
-        // Phạm vi chung của trạng thái = phạm vi của workspace local đang mở (workspace nhân viên / không có → tất cả).
+        // The shared state's scope = the scope of the open local workspace (employee workspace / none → all).
         const active = activeLocalWorkspaceId();
         return {
             mode,
@@ -838,7 +838,7 @@ export const cloudDb: CloudDbModule = {
     },
 
     async setScope(scope: CloudScope): Promise<DbSyncStatus> {
-        // Tài khoản thuộc từng workspace (UI chọn tài khoản của workspace đang mở) → phạm vi lưu theo workspace.
+        // Accounts belong to each workspace (the UI picks the accounts of the open workspace) → the scope is saved per workspace.
         const wsId = activeLocalWorkspaceId();
         if (!wsId) {
             throw new CloudError('NO_LOCAL_WORKSPACE', 'Chỉ đặt được phạm vi đồng bộ cho workspace trên máy này — hãy mở workspace cần đặt.');
@@ -848,13 +848,13 @@ export const cloudDb: CloudDbModule = {
         if (sameScope(prev, next)) return cloudDb.status();
         cloudflare.settings.update(d => {
             const scopes = { ...(d.db.scopes || {}) };
-            if (isAllScope(next)) delete scopes[wsId]; // thiếu = tất cả
+            if (isAllScope(next)) delete scopes[wsId]; // missing = all
             else scopes[wsId] = next;
             d.db.scopes = scopes;
         });
         logLine('log', `[CloudDb] ${wsId}: phạm vi đồng bộ ${describeScope(prev)} → ${describeScope(next)}`);
-        // Chỉ engine của workspace này chụp gốc mới ngay (gốc + đoạn cũ dọn sau khi gốc mới lên, như mọi lần chụp gốc).
-        // Chưa có engine (đồng bộ tắt / workspace chưa có DB) → chu kỳ đầu tự thấy manifest khác phạm vi (rebaseReason).
+        // Only this workspace's engine takes a new base snapshot right away (the old base + segments are cleaned up after the new base is uploaded, as with every base snapshot).
+        // No engine yet (sync off / workspace has no DB yet) → the first cycle itself sees a manifest with a different scope (rebaseReason).
         engines.get(wsId)?.requestBase('scope');
         notify(true);
         return cloudDb.status();
@@ -866,7 +866,7 @@ export const cloudDb: CloudDbModule = {
         const prev = storedPassphrase();
         cloudflare.settings.setPassphrase(pass);
         if (prev && prev !== pass) {
-            // Chuỗi trên R2 mã hoá bằng mật khẩu cũ → chụp gốc mới bằng mật khẩu mới (gốc/đoạn cũ bị dọn sau đó).
+            // The chain on R2 is encrypted with the old password → take a new base snapshot with the new password (the old base/segments are cleaned up afterwards).
             for (const e of engines.values()) e.requestBase('passphrase');
             logLine('log', '[CloudDb] đổi mật khẩu sao lưu → chụp bản gốc mới');
         }
@@ -899,7 +899,7 @@ export const cloudDb: CloudDbModule = {
         } else {
             for (const e of engines.values()) sources.push(e.logs());
             if (!engines.size) {
-                try { sources.push(readActiveLogDirect(WorkspaceManager.getInstance().getActiveWorkspaceId())); } catch { /* bỏ qua */ }
+                try { sources.push(readActiveLogDirect(WorkspaceManager.getInstance().getActiveWorkspaceId())); } catch { /* ignore */ }
             }
             sources.push(follower.logs());
         }
@@ -940,7 +940,7 @@ export const cloudDb: CloudDbModule = {
                     baseAt: m.base.at,
                     bytes: (m.base.bytes || 0) + (m.segmentsBytes || 0),
                 };
-                // Manifest cũ không ghi phạm vi = tất cả (để trống — UI hiểu là toàn bộ).
+                // An old manifest without a scope = all (left empty; the UI reads that as everything).
                 if (m.scope) copy.scope = normalizeScope(m.scope);
                 if (m.accountNames) copy.accountNames = m.accountNames.map(a => ({ id: a.id, name: a.name, channel: a.channel }));
                 out.push(copy);
@@ -963,7 +963,7 @@ export const cloudDb: CloudDbModule = {
             }
             inUse = await pushedFromHere(ref.bucket, ref.uid);
         } finally {
-            terminateAuxIfIdle(); // dò mã workspace có thể đã bật worker phụ
+            terminateAuxIfIdle(); // probing the workspace id may already have started the secondary worker
         }
         const copyId = copyIdOf(ref.bucket, ref.uid);
         if (follower.followingCopyId() === copyId || settingsSafe()?.db?.following?.workspaceId === copyId) {
@@ -975,17 +975,17 @@ export const cloudDb: CloudDbModule = {
         const r2 = cloudflare.r2(ref.bucket);
         const prefix = dbPrefix(ref.uid);
         const mKey = manifestKey(ref.uid);
-        // Chỉ <uid>/db/ (gốc, đoạn, trang danh sách đoạn, nhịp tim máy dự phòng) — media <uid>/media/ không đụng tới.
+        // Only <uid>/db/ (base, segments, segment list pages, standby heartbeats); media <uid>/media/ is not touched.
         const keys = await listAllKeys(r2, prefix);
-        // Manifest xoá SAU CÙNG: lỗi giữa chừng → bản sao vẫn hiện trong danh sách để bấm xoá lại.
+        // The manifest is deleted LAST: if an error happens midway → the copy still shows in the list so it can be deleted again.
         await deleteKeys(r2, keys.filter(k => k !== mKey));
-        // Kiểm lại một lần (xoá nhiều object có thể sót một phần) rồi xoá nốt từng object.
+        // Check once more (a bulk delete may leave some behind), then delete the rest one object at a time.
         const left = (await listAllKeys(r2, prefix)).filter(k => k !== mKey);
         if (left.length) await pool(left, 6, key => withRetry(() => r2.deleteObject(key)));
         await withRetry(() => r2.deleteObject(mKey));
         await removeIndexEntry(ref.bucket, ref.uid);
-        // Workspace local từng đẩy bản này (đồng bộ đang tắt): bỏ manifest nhớ sẵn → lần bật sau chụp gốc mới, không nối đoạn
-        // vào chuỗi đã xoá.
+        // The local workspace once pushed this copy (sync is now off): drop the manifest kept in memory → the next time sync is turned on, take a new base snapshot, do not append segments
+        // to the deleted chain.
         if (ref.bucket === ownBucket()) {
             for (const wsId of store.workspaceIds()) {
                 const st = store.workspace(wsId);
@@ -1020,7 +1020,7 @@ export const cloudDb: CloudDbModule = {
                 throw new CloudError('BAD_PASSPHRASE', 'Sai mật khẩu sao lưu.');
             }
             const untilTs = req?.untilTs && req.untilTs > 0 ? req.untilTs : null;
-            // Máy dự phòng: chuyển sang máy này dùng bản sao theo dõi (không tải lại bản gốc).
+            // Standby machine: switching to this machine uses the followed copy (the base is not downloaded again).
             followerHeld = isFollowed && !untilTs;
             const followRef: FollowCopyRef | null = followerHeld ? await follower.prepareSwitchOver() : null;
             const target = await resolveTargetWorkspace(src);
@@ -1045,7 +1045,7 @@ export const cloudDb: CloudDbModule = {
             const swap = await swapIntoWorkspace(target.ws, dbPath, result.dbPath);
             createdWsId = null;
             if (followerHeld) {
-                // Đã chuyển sang máy này → thôi theo dõi máy nguồn.
+                // Switched to this machine → stop following the source machine.
                 followerHeld = false;
                 await stopFollowing(true);
             }
@@ -1061,7 +1061,7 @@ export const cloudDb: CloudDbModule = {
             return { restoredWorkspaceId: target.ws.id };
         } catch (err: any) {
             if (createdWsId) {
-                try { WorkspaceManager.getInstance().deleteWorkspace(createdWsId); } catch { /* bỏ qua */ }
+                try { WorkspaceManager.getInstance().deleteWorkspace(createdWsId); } catch { /* ignore */ }
             }
             const message = userMessage(err);
             logLine('warn', `[CloudDb] khôi phục lỗi: ${err?.message || err}`);
@@ -1070,7 +1070,7 @@ export const cloudDb: CloudDbModule = {
         } finally {
             if (workDir) await fs.promises.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
             restoring = false;
-            // Chuyển máy thất bại → máy dự phòng tiếp tục theo dõi như cũ.
+            // The switch failed → the standby machine keeps following as before.
             if (followerHeld && store.follow() && follower.isActive()) follower.start(10_000);
             terminateAuxIfIdle();
         }
@@ -1092,7 +1092,7 @@ export const cloudDb: CloudDbModule = {
         const pass = req.passphrase || (follower.followingCopyId() === copyId ? followPassphrase() : null) || stored;
         if (!pass) throw new CloudError('PASSPHRASE_REQUIRED', 'Cần nhập mật khẩu sao lưu của máy nguồn.');
         if ((await checkPassphrase(cloudflare.crypto, src.manifest, pass)) === false) throw new CloudError('BAD_PASSPHRASE', 'Sai mật khẩu sao lưu.');
-        // Mật khẩu theo dõi khác mật khẩu đồng bộ của máy này → cất riêng (safeStorage) để nhịp theo dõi tự chạy sau khi mở lại app.
+        // The follow password differs from this machine's sync password → store it separately (safeStorage) so the follow tick runs by itself after the app reopens.
         const passEnc: string | null = pass !== stored ? encryptLocal(pass) : null;
         const prev = store.follow();
         if (prev && prev.copyId !== copyId) await stopFollowing(true);
@@ -1104,7 +1104,7 @@ export const cloudDb: CloudDbModule = {
         } else {
             store.setFollow(newFollowState({ copyId, bucket: src.bucket, workspaceUid: src.uid, sourceMachine: src.manifest.machineName || src.bucket, passEnc }));
         }
-        // Không mã hoá được trên máy này → chỉ giữ trong RAM (mở lại app phải nhập lại).
+        // Cannot be encrypted on this machine → keep it in RAM only (the password must be entered again after reopening the app).
         memoryFollowPass = !passEnc && pass !== stored ? pass : null;
         cloudflare.settings.update(d => { d.db.following = { workspaceId: copyId, sourceMachine: src.manifest.machineName || src.bucket }; });
         follower.start();
@@ -1121,7 +1121,7 @@ export const cloudDb: CloudDbModule = {
             for (const e of list) e.pause();
             notify();
             const idle = await Promise.all(list.map(e => e.idle(PAUSE_WAIT_MS)));
-            // Nhả file DB: worker đóng connection (sau khi thao tác dở xong); quá hạn → dừng hẳn worker.
+            // Release the DB file: the worker closes the connection (after the operation in progress finishes); past the deadline → stop the worker completely.
             if (mainOps && mainOps.isActive()) {
                 const closed = await within(mainOps.call('closeAll'), idle.every(Boolean) ? PAUSE_WAIT_MS : 5_000);
                 if (!closed || !idle.every(Boolean)) await mainOps.terminate(0);
@@ -1151,12 +1151,12 @@ export const cloudDb: CloudDbModule = {
 
     async shutdown(): Promise<void> {
         shuttingDown = true;
-        try { unsubscribe?.(); } catch { /* bỏ qua */ }
+        try { unsubscribe?.(); } catch { /* ignore */ }
         unsubscribe = null;
         const list = [...engines.values()];
         for (const e of list) e.pause();
         const followerStop = follower.stop();
-        // main.ts cho tối đa ~3 s: không chờ bản gốc đang tải lên (lần mở sau chụp lại), chỉ đóng gọn connection.
+        // main.ts allows about 3 s at most: does not wait for the base snapshot that is uploading (it is taken again next time the app opens), only closes the connection cleanly.
         await within(Promise.all([...list.map(e => e.idle(1_500)), followerStop]), 1_500);
         store.flush();
         await Promise.all([

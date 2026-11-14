@@ -1,30 +1,30 @@
 /**
- * bossSessionAuth.ts — (máy nhân viên, main process) Boss URL → token phiên nhân viên, để tải file của Boss.
+ * bossSessionAuth.ts: (employee machine, main process) Boss URL → employee session token, for downloading Boss's files.
  *
- * Boss bắt buộc `Authorization: Bearer <token>` cho /api/media/* và /api/library/file|thumb/* (bossFileAccess.ts),
- * nhưng renderer nhét thẳng URL Boss vào <img>/<video> — thẻ đó không gửi header được. Nên:
- *   - HttpConnectionManager ghi workspace → (Boss URL, token) vào đây mỗi lần kết nối / đổi URL-token, xoá khi ngắt.
- *     Lúc mở app nạp sẵn từ cấu hình workspace (renderer hiện ảnh trước khi kết nối xong).
- *   - installBossFileAuthHook: session.webRequest.onBeforeSendHeaders gắn header CHỈ cho request tới Boss đã đăng ký,
- *     xuất phát từ khung chính (main frame) của cửa sổ chính — không cho iframe plugin, <webview>, trình duyệt nội bộ.
- *   - Code main tự tải file Boss (MediaCacheService, FileStorageService…) dùng bossAuthHeaders(url).
- * Khớp theo gốc URL đã chuẩn hoá (giao thức + host + cổng + sub-path), không chỉ host; http và https là hai gốc khác
- * nhau (không gửi token của Boss https qua http).
+ * Boss requires `Authorization: Bearer <token>` for /api/media/* and /api/library/file|thumb/* (bossFileAccess.ts),
+ * but the renderer puts the Boss URL straight into <img>/<video>, and that tag cannot send a header. So:
+ *   - HttpConnectionManager writes workspace → (Boss URL, token) here on every connect / URL-token change, and clears it on disconnect.
+ *     When the app opens it is preloaded from the workspace config (the renderer shows images before the connection finishes).
+ *   - installBossFileAuthHook: session.webRequest.onBeforeSendHeaders attaches the header ONLY to requests to a registered Boss,
+ *     originating from the main frame of the main window: not to plugin iframes, <webview>, or the in-app browser.
+ *   - Main-process code that downloads Boss files itself (MediaCacheService, FileStorageService…) uses bossAuthHeaders(url).
+ * Matching uses the normalized URL origin (protocol + host + port + sub-path), not just the host; http and https are two different
+ * origins (the token of an https Boss is not sent over http).
  */
 import type { Session } from 'electron';
 import { normalizeBossUrl } from '../../shared/employee/employeeConnection';
 
-/** Mẫu URL cho webRequest (Chromium match pattern; `*` host khớp mọi cổng). Lọc chính xác ở findBossSession. */
+/** URL pattern for webRequest (Chromium match pattern; `*` host matches any port). Exact filtering happens in findBossSession. */
 export const BOSS_FILE_URL_PATTERNS = ['*://*/*api/media/*', '*://*/*api/library/*'];
 
-/** Chỉ các route file — token không đi kèm request khác tới cùng host. */
+/** Only the file routes: the token is not sent with other requests to the same host. */
 const BOSS_FILE_PATH = /^\/api\/(?:media|library)\//;
 
 export interface BossSession {
   workspaceId: string;
-  /** `${protocol}//${host}` — host đã chữ thường, bỏ cổng mặc định (theo WHATWG URL). */
+  /** `${protocol}//${host}`: host in lowercase, default port removed (per the WHATWG URL spec). */
   origin: string;
-  /** Sub-path của Boss URL, không có '/' cuối ('' = gốc). */
+  /** The sub-path of the Boss URL, without a trailing '/' ('' = root). */
   basePath: string;
   token: string;
   updatedAt: number;
@@ -46,7 +46,7 @@ function parseBase(bossUrl: string): { origin: string; basePath: string } | null
   }
 }
 
-/** Ghi / cập nhật phiên của workspace (URL hoặc token rỗng → xoá). */
+/** Write / update a workspace's session (an empty URL or token → clear it). */
 export function setBossSession(workspaceId: string, bossUrl: string | null | undefined, token: string | null | undefined): void {
   const id = String(workspaceId || '');
   const base = parseBase(String(bossUrl ?? ''));
@@ -59,7 +59,7 @@ export function setBossSession(workspaceId: string, bossUrl: string | null | und
   sessions.set(id, { workspaceId: id, ...base, token: tok, updatedAt: ++clock });
 }
 
-/** Chỉ ghi khi workspace chưa có phiên (nạp từ cấu hình lúc mở app — không đè credentials đang dùng). */
+/** Write only if the workspace has no session yet (loaded from config when the app opens; does not overwrite the credentials in use). */
 export function seedBossSession(workspaceId: string, bossUrl: string | null | undefined, token: string | null | undefined): void {
   if (!sessions.has(String(workspaceId || ''))) setBossSession(workspaceId, bossUrl, token);
 }
@@ -72,14 +72,14 @@ export function clearBossSessions(): void {
   sessions.clear();
 }
 
-/** Workspace ưu tiên khi nhiều workspace cùng một Boss URL (mặc định: workspace đang active). */
+/** Preferred workspace when several workspaces share the same Boss URL (default: the active workspace). */
 export function setPreferredBossWorkspace(fn: () => string | undefined): void {
   preferredWorkspace = typeof fn === 'function' ? fn : () => undefined;
 }
 
 /**
- * Phiên Boss cho URL file: cùng origin, đường dẫn nằm dưới sub-path của Boss (theo ranh giới '/') và là route file.
- * Nhiều phiên khớp → sub-path dài nhất, rồi workspace ưu tiên, rồi phiên ghi gần nhất.
+ * Boss session for a file URL: same origin, the path is under the Boss sub-path (on a '/' boundary) and is a file route.
+ * Several sessions match → the longest sub-path, then the preferred workspace, then the most recently written session.
  */
 export function findBossSession(url: string, preferWorkspaceId?: string): BossSession | null {
   if (sessions.size === 0) return null;
@@ -110,13 +110,13 @@ function rank(session: BossSession, prefer: string | undefined): number {
   return (prefer && session.workspaceId === prefer ? 1e12 : 0) + session.updatedAt;
 }
 
-/** Header Authorization cho URL file của Boss đã đăng ký; `{}` với mọi URL khác (CDN Zalo, Facebook…). */
+/** Authorization header for a registered Boss file URL; `{}` for any other URL (Zalo CDN, Facebook…). */
 export function bossAuthHeaders(url: string, preferWorkspaceId?: string): Record<string, string> {
   const session = findBossSession(url, preferWorkspaceId);
   return session ? { Authorization: `Bearer ${session.token}` } : {};
 }
 
-// ─── Hook webRequest (cửa sổ chính) ─────────────────────────────────────────
+// ─── webRequest hook (main window) ─────────────────────────────────────────
 
 export interface RequestOrigin {
   webContentsId?: number;
@@ -124,8 +124,8 @@ export interface RequestOrigin {
 }
 
 /**
- * Request do khung chính của cửa sổ chính tạo ra. Có thông tin frame → phải là main frame (iframe plugin bị loại);
- * frame không còn (đã điều hướng / huỷ) hoặc đọc lỗi → chỉ dựa vào webContentsId.
+ * A request made by the main frame of the main window. If frame info is present, it must be the main frame (plugin iframes are excluded).
+ * If the frame no longer exists (navigated away / cancelled) or reading it fails, rely on the webContentsId only.
  */
 export function isMainWindowMainFrameRequest(details: RequestOrigin, mainWebContentsId: number | null | undefined): boolean {
   if (mainWebContentsId === null || mainWebContentsId === undefined) return false;
@@ -133,7 +133,7 @@ export function isMainWindowMainFrameRequest(details: RequestOrigin, mainWebCont
   try {
     const frame = details.frame;
     if (frame) return frame.parent === null || frame.parent === undefined;
-  } catch { /* frame đã dispose → dùng webContentsId */ }
+  } catch { /* frame disposed → use webContentsId */ }
   return true;
 }
 
@@ -143,10 +143,10 @@ function hasHeader(headers: Record<string, unknown>, name: string): boolean {
 }
 
 /**
- * Gắn `Authorization` cho <img>/<video>/fetch của renderer tới file Boss. Không ghi đè header renderer tự đặt
- * (RestQueryService gửi token riêng cho /api/library/items…).
- * ⚠️ Electron chỉ giữ MỘT listener cho mỗi sự kiện webRequest của một session (gọi lại = thay listener cũ):
- * đây phải là onBeforeSendHeaders DUY NHẤT của session cửa sổ chính — cần thêm xử lý thì gộp vào đây.
+ * Attaches `Authorization` to the renderer's <img>/<video>/fetch requests for Boss files. It does not overwrite a header the renderer set itself
+ * (RestQueryService sends its own token for /api/library/items…).
+ * ⚠️ Electron keeps only ONE listener per webRequest event per session (registering again replaces the old one):
+ * this must be the ONLY onBeforeSendHeaders of the main window's session; anything else needs to be merged into here.
  */
 export function installBossFileAuthHook(
   ses: Session,
@@ -162,7 +162,7 @@ export function installBossFileAuthHook(
           return;
         }
       }
-    } catch { /* không chặn request vì lỗi hook */ }
+    } catch { /* do not block the request because the hook failed */ }
     callback({ requestHeaders: details.requestHeaders });
   });
 }

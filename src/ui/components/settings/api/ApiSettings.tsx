@@ -1,6 +1,6 @@
 /**
- * Phần API của trang Công cụ → Ứng dụng, API & Webhook: server, truy cập từ xa, API key, nhật ký, cài đặt nâng cao.
- * (Trước nằm ở Cài đặt → API; webhook gửi sự kiện ra ngoài nay ở phần Webhook của trang.)
+ * The API section of the Tools → Apps, API & Webhook page: server, remote access, API keys, logs, advanced settings.
+ * (Previously under Settings → API; outgoing webhook events are now in the Webhook section of the page.)
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import ipc, { ApiStatusResult } from '@/lib/ipc';
@@ -11,14 +11,15 @@ import ApiOverviewPanel from './ApiOverviewPanel';
 import ApiKeysPanel from './ApiKeysPanel';
 import ApiLogsPanel from './ApiLogsPanel';
 import ApiAdvancedPanel from './ApiAdvancedPanel';
+import { tr } from '../../../../shared/i18n';
 
 export type ApiSubTab = 'overview' | 'keys' | 'logs' | 'advanced';
 
 const TABS: Array<{ id: ApiSubTab; label: string }> = [
-  { id: 'overview', label: 'Tổng quan' },
-  { id: 'keys', label: 'API key' },
-  { id: 'logs', label: 'Nhật ký' },
-  { id: 'advanced', label: 'Nâng cao' },
+  { id: 'overview', label: tr('Tổng quan') },
+  { id: 'keys', label: tr('API key') },
+  { id: 'logs', label: tr('Nhật ký') },
+  { id: 'advanced', label: tr('Nâng cao') },
 ];
 
 export default function ApiSettings() {
@@ -35,7 +36,7 @@ export default function ApiSettings() {
         setStatus(res);
         setError(null);
       } else {
-        setError(res?.error || 'Không đọc được trạng thái API');
+        setError(res?.error || tr('Không đọc được trạng thái API'));
       }
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -46,7 +47,7 @@ export default function ApiSettings() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Chỉ tab Tổng quan cần số liệu sống; IPC nhẹ, 5 giây/lần.
+  // Only the Overview tab needs live numbers; light IPC, every 5 seconds.
   useEffect(() => {
     if (sub !== 'overview') return;
     const timer = setInterval(refresh, 5000);
@@ -54,13 +55,13 @@ export default function ApiSettings() {
   }, [sub, refresh]);
 
   if (!ipc.api) {
-    return <ErrorBox message="Bản app này chưa có module API. Hãy cập nhật app." />;
+    return <ErrorBox message={tr('Bản app này chưa có module API. Hãy cập nhật app.')} />;
   }
 
   return (
     <div className="space-y-4">
       <Tabs value={sub} onValueChange={v => setSub(v as ApiSubTab)}>
-        <TabsList aria-label="Mục API">
+        <TabsList aria-label={tr('Mục API')}>
           {TABS.map(t => <TabsTrigger key={t.id} value={t.id}>{t.label}</TabsTrigger>)}
         </TabsList>
       </Tabs>

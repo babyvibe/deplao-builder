@@ -1,7 +1,7 @@
 /**
  * useChannelCapability.ts
- * Hook chuẩn hoá để lấy ChannelCapability từ contact đang active.
- * Tránh lặp pattern getCapability + tìm contact ở mỗi component.
+ * Hook that normalizes getting the ChannelCapability from the active contact.
+ * Avoids repeating the getCapability + find-contact pattern in every component.
  */
 
 import { useChatStore } from '@/store/chat/chatStore';
@@ -10,8 +10,8 @@ import { getCapability, type ChannelCapability } from '@/../configs/channels/cha
 import { resolveChannel } from '@/lib/channels/channelHelper';
 
 /**
- * Lấy ChannelCapability cho thread đang active.
- * Kênh theo resolveChannel: tài khoản Telegram / Facebook → kênh của tài khoản; Zalo → kênh của hội thoại.
+ * Gets the ChannelCapability for the active thread.
+ * Channel by resolveChannel: Telegram / Facebook account → the account's channel; Zalo → the conversation's channel.
  */
 export function useChannelCapability(): ChannelCapability {
   const activeThreadId = useChatStore(s => s.activeThreadId);
@@ -27,8 +27,8 @@ export function useChannelCapability(): ChannelCapability {
 }
 
 /**
- * Utility để lấy ChannelCapability từ contact/account object.
- * Dùng ngoài React components (store callbacks, event handlers).
+ * Utility to get the ChannelCapability from a contact/account object.
+ * Used outside React components (store callbacks, event handlers).
  */
 export function getChannelCapabilityForContact(
   contact?: { channel?: string },

@@ -1,7 +1,7 @@
 /**
- * Màn Cài đặt: cột menu chia nhóm (Chung · Tài khoản & nhóm · Dữ liệu & mạng · Hỗ trợ) + trang bên phải. Mỗi trang dùng
- * khung chung settingsUi (tiêu đề + 1 dòng mô tả, khối, dòng cài đặt). Mã tab giữ nguyên vì nhiều nơi mở thẳng một tab qua
- * sự kiện nav:settings { tab, subtab }.
+ * Settings screen: a menu column grouped into sections (General · Accounts & groups · Data & network · Support) + the page on the right. Each page uses the
+ * shared settingsUi frame (title + 1 description line, blocks, settings rows). Tab codes stay the same because many places open a tab directly through the
+ * nav:settings { tab, subtab } event.
  */
 import React, { useState, useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -34,9 +34,12 @@ import CloudMediaSummary from './cloud/CloudMediaSummary';
 import { toCloudSection } from './cloud/cloudUi';
 import { useCloudAlert } from './cloud/useCloudAlert';
 import { loadSeenTabs, markTabSeen, SETTINGS_WATCHLIST, hasUnseenChangelog, markChangelogSeen } from '@/lib/app/settingsSeenTabs';
-import { Button, Switch } from '@/components/ui';
+import { Button, Select, Switch } from '@/components/ui';
 import { DesignSystemPage } from '@/components/ui/DesignSystemPage';
 import { Notice, PathText, SettingsPage, SettingsRow, SettingsSection } from './settingsUi';
+import { tr } from '../../../shared/i18n';
+import { useUiLanguages } from '@/hooks/i18n/useUiLanguages';
+import { trx } from '@/lib/i18n/trx';
 
 type SettingsTab = 'notifications' | 'accounts' | 'storage' | 'cloud' | 'conversation' | 'employees' | 'workspace' | 'introduction' | 'changelog' | 'appearance' | 'proxy' | 'security' | 'logs';
 
@@ -44,36 +47,36 @@ interface NavItem { id: SettingsTab; icon: React.ReactNode; label: string; requi
 
 const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
-    label: 'Chung',
+    label: tr('Chung'),
     items: [
-      { id: 'conversation',  icon: <MessageIcon className="w-4 h-4" />, label: 'Hội thoại' },
-      { id: 'notifications', icon: <BellIcon className="w-4 h-4" />, label: 'Thông báo' },
-      { id: 'appearance',    icon: <PaletteIcon className="w-4 h-4" />, label: 'Giao diện' },
-      { id: 'security',      icon: <ShieldIcon className="w-4 h-4" />, label: 'Bảo mật' },
+      { id: 'conversation',  icon: <MessageIcon className="w-4 h-4" />, label: tr('Hội thoại') },
+      { id: 'notifications', icon: <BellIcon className="w-4 h-4" />, label: tr('Thông báo') },
+      { id: 'appearance',    icon: <PaletteIcon className="w-4 h-4" />, label: tr('Giao diện') },
+      { id: 'security',      icon: <ShieldIcon className="w-4 h-4" />, label: tr('Bảo mật') },
     ],
   },
   {
-    label: 'Tài khoản & nhóm',
+    label: tr('Tài khoản & nhóm'),
     items: [
-      { id: 'accounts',  icon: <UserIcon className="w-4 h-4" />, label: 'Tài khoản', requiredPerm: 'settings_accounts' },
-      { id: 'employees', icon: <UsersIcon className="w-4 h-4" />, label: 'Nhân viên', requiredPerm: 'settings_employees' },
-      { id: 'workspace', icon: <BriefcaseIcon className="w-4 h-4" />, label: 'Workspace' },
+      { id: 'accounts',  icon: <UserIcon className="w-4 h-4" />, label: tr('Tài khoản'), requiredPerm: 'settings_accounts' },
+      { id: 'employees', icon: <UsersIcon className="w-4 h-4" />, label: tr('Nhân viên'), requiredPerm: 'settings_employees' },
+      { id: 'workspace', icon: <BriefcaseIcon className="w-4 h-4" />, label: tr('Workspace') },
     ],
   },
   {
-    label: 'Dữ liệu & mạng',
+    label: tr('Dữ liệu & mạng'),
     items: [
-      { id: 'storage', icon: <HardDriveIcon className="w-4 h-4" />, label: 'Lưu trữ' },
-      { id: 'cloud',   icon: <CloudIcon className="w-4 h-4" />, label: 'Internet & Cloud' },
-      { id: 'proxy',   icon: <GlobeIcon className="w-4 h-4" />, label: 'Proxy' },
+      { id: 'storage', icon: <HardDriveIcon className="w-4 h-4" />, label: tr('Lưu trữ') },
+      { id: 'cloud',   icon: <CloudIcon className="w-4 h-4" />, label: tr('Internet & Cloud') },
+      { id: 'proxy',   icon: <GlobeIcon className="w-4 h-4" />, label: tr('Proxy') },
     ],
   },
   {
-    label: 'Hỗ trợ',
+    label: tr('Hỗ trợ'),
     items: [
-      { id: 'introduction', icon: <BookIcon className="w-4 h-4" />, label: 'Giới thiệu' },
-      { id: 'changelog',    icon: <ClipboardIcon className="w-4 h-4" />, label: 'Log phiên bản' },
-      { id: 'logs',         icon: <TerminalIcon className="w-4 h-4" />, label: 'Nhật ký' },
+      { id: 'introduction', icon: <BookIcon className="w-4 h-4" />, label: tr('Giới thiệu') },
+      { id: 'changelog',    icon: <ClipboardIcon className="w-4 h-4" />, label: tr('Log phiên bản') },
+      { id: 'logs',         icon: <TerminalIcon className="w-4 h-4" />, label: tr('Nhật ký') },
     ],
   },
 ];
@@ -81,7 +84,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('conversation');
   const [introSubtab, setIntroSubtab] = useState<string | null>(null);
-  // Internet & Cloud: phần mở sẵn theo nav:settings { tab: 'cloud', subtab: 'address' | 'sync' } ('media' / 'db' cũ → 'sync')
+  // Internet & Cloud: the section opened by nav:settings { tab: 'cloud', subtab: 'address' | 'sync' } ('media' / 'db' old ids → 'sync')
   const [cloudSubtab, setCloudSubtab] = useState<CloudSection | null>(null);
   const [seenTabs, setSeenTabs] = useState<Set<string>>(() => loadSeenTabs());
   const [unreadChangelog, setUnreadChangelog] = useState(() => hasUnseenChangelog());
@@ -94,7 +97,7 @@ export default function Settings() {
   const [changingStorage, setChangingStorage] = useState(false);
   // Pending folder with existing data - shown in choice modal
   const [pendingFolder, setPendingFolder] = useState<string | null>(null);
-  // Live progress khi đang copy media
+  // Live progress while copying media
   const [copyProgress, setCopyProgress] = useState<number>(0);
   const [copyTotal, setCopyTotal] = useState<number>(0);
   const showNotification = useAppStore(s => s.showNotification);
@@ -114,11 +117,11 @@ export default function Settings() {
     });
   }, []);
 
-  // Lắng nghe sự kiện điều hướng từ các màn hình khác (ví dụ: link điều khoản trong modal đăng nhập)
+  // Listen for navigation events from other screens (e.g. the terms link in the login modal)
   useEffect(() => {
     const handler = (e: Event) => {
       const { tab, subtab } = (e as CustomEvent).detail || {};
-      // Webhooks đã chuyển sang Công cụ → Ứng dụng, API & Webhook (link cũ vẫn tới đúng chỗ).
+      // Webhooks moved to Tools → Apps, API & Webhook (old links still open the right place).
       if (tab === 'webhooks') {
         const app = useAppStore.getState();
         app.setPluginHubSection('webhooks');
@@ -135,13 +138,13 @@ export default function Settings() {
     return () => window.removeEventListener('nav:settings', handler);
   }, []);
 
-  // Đánh dấu tab đã xem khi người dùng mở lần đầu
+  // Mark the tab as seen when the user opens it for the first time
   useEffect(() => {
     if ((SETTINGS_WATCHLIST as readonly string[]).includes(activeTab)) {
       markTabSeen(activeTab);
       setSeenTabs(loadSeenTabs());
     }
-    // Changelog: đánh dấu đã đọc log phiên bản hiện tại
+    // Changelog: mark the current version log as read
     if (activeTab === 'changelog') {
       markChangelogSeen();
       setUnreadChangelog(false);
@@ -156,35 +159,35 @@ export default function Settings() {
       const newFolder = folderRes.folder;
       if (!newFolder) return;
 
-      // Thư mục đích đã có dữ liệu cũ → hỏi người dùng muốn làm gì
+      // The target folder already has old data → ask the user what to do
       if (folderRes.hasExistingData) {
         setPendingFolder(newFolder);
-        return; // modal sẽ gọi applyStorageChange
+        return; // the modal will call applyStorageChange
       }
 
-      // Thư mục trống → xác nhận sao chép bình thường
+      // Empty folder → confirm the normal copy
       const ok = await showConfirm({
-        title: 'Đổi thư mục lưu trữ?',
-        message: `Thư mục mới:\n${newFolder}\n\nDữ liệu hiện tại sẽ được sao chép sang đây.`,
-        confirmText: 'Tiếp tục',
+        title: tr('Đổi thư mục lưu trữ?'),
+        message: tr('Thư mục mới:\n{{newFolder}}\n\nDữ liệu hiện tại sẽ được sao chép sang đây.', { newFolder }),
+        confirmText: tr('Tiếp tục'),
         variant: 'warning',
       });
       if (!ok) return;
       await applyStorageChange(newFolder, false);
     } catch (err: any) {
-      showNotification(extractApiError(err, 'Lỗi đổi thư mục'), 'error');
+      showNotification(extractApiError(err, tr('Lỗi đổi thư mục')), 'error');
     } finally {
       setChangingStorage(false);
     }
   };
 
-  /** Áp dụng đổi thư mục - useExisting=true: chỉ đổi con trỏ, không copy */
+  /** Apply the folder change - useExisting=true: only changes the pointer, no copy */
   const applyStorageChange = async (newFolder: string, useExisting: boolean) => {
     setChangingStorage(true);
     setCopyProgress(0);
     setCopyTotal(0);
 
-    // Lắng nghe progress event từ main process
+    // Listen for progress events from the main process
     const unsub = ipc.on?.('db:copyProgress', (data: { copied: number; total?: number; done?: boolean }) => {
       setCopyProgress(data.copied);
       if (data.total) setCopyTotal(data.total);
@@ -195,14 +198,14 @@ export default function Settings() {
       if (res?.success) {
         setStoragePath(newFolder);
         setActualDbPath(res.newPath || '');
-        const msg = res.message || 'Đã đổi thư mục lưu trữ thành công!';
+        const msg = res.message || tr('Đã đổi thư mục lưu trữ thành công!');
         const extra = res.mediaError ? ` (Media: ${res.mediaError})` : '';
         showNotification(msg + extra, res.mediaError ? 'warning' : 'success');
       } else {
-        showNotification(extractApiError(res, 'Không thể đổi thư mục'), 'error');
+        showNotification(extractApiError(res, tr('Không thể đổi thư mục')), 'error');
       }
     } catch (err: any) {
-      showNotification(extractApiError(err, 'Lỗi đổi thư mục'), 'error');
+      showNotification(extractApiError(err, tr('Lỗi đổi thư mục')), 'error');
     } finally {
       unsub?.();
       setChangingStorage(false);
@@ -214,9 +217,9 @@ export default function Settings() {
 
   const handleResetStoragePath = async () => {
     const ok = await showConfirm({
-      title: 'Đặt lại thư mục mặc định?',
-      message: 'Dữ liệu sẽ được sao chép về thư mục mặc định và áp dụng ngay.',
-      confirmText: 'Đặt lại',
+      title: tr('Đặt lại thư mục mặc định?'),
+      message: tr('Dữ liệu sẽ được sao chép về thư mục mặc định và áp dụng ngay.'),
+      confirmText: tr('Đặt lại'),
       variant: 'warning',
     });
     if (!ok) return;
@@ -229,17 +232,17 @@ export default function Settings() {
     if (!perm) return true; // no permission required
     return useEmployeeStore.getState().hasPermission(perm);
   };
-  // Internet & Cloud (Cloudflare) chỉ dành cho máy chủ — máy nhân viên không thấy.
+  // Internet & Cloud (Cloudflare) is for the server only: employee machines do not see it.
   const hideCloud = isEmployee || empMode === 'employee';
   const isVisible = (item: NavItem) => hasSettingsPerm(item.requiredPerm) && (item.id !== 'cloud' || !hideCloud);
   const visibleGroups = NAV_GROUPS
     .map(group => ({ ...group, items: group.items.filter(isVisible) }))
     .filter(group => group.items.length > 0);
   const visibleNavItems = visibleGroups.flatMap(group => group.items);
-  // Chấm đỏ khi phần Cloudflare cần xem (lỗi token / địa chỉ / media / đồng bộ DB, hoặc vừa khôi phục).
+  // Red dot when the Cloudflare section needs attention (token / address / media / DB sync error, or just restored).
   const cloudAlert = useCloudAlert(!hideCloud);
 
-  // Guard: nếu activeTab không còn trong visibleNavItems (do đổi workspace/quyền) → reset về tab đầu tiên
+  // Guard: if activeTab is no longer in visibleNavItems (after a workspace/permission change) → reset to the first tab
   useEffect(() => {
     const visible = visibleNavItems.some(item => item.id === activeTab);
     if (!visible && visibleNavItems.length > 0) {
@@ -248,8 +251,8 @@ export default function Settings() {
   }, [empMode, empPermissions, hideCloud]);
 
   const dotFor = (id: SettingsTab): string | null => {
-    if ((SETTINGS_WATCHLIST as readonly string[]).includes(id) && !seenTabs.has(id)) return 'Mới';
-    if (id === 'changelog' && unreadChangelog) return 'Có bản cập nhật mới';
+    if ((SETTINGS_WATCHLIST as readonly string[]).includes(id) && !seenTabs.has(id)) return tr('Mới');
+    if (id === 'changelog' && unreadChangelog) return tr('Có bản cập nhật mới');
     if (id === 'cloud' && cloudAlert.reasons.length > 0) return cloudAlert.reasons.join(' · ');
     return null;
   };
@@ -257,9 +260,9 @@ export default function Settings() {
   return (
     <>
     <div className="flex h-full overflow-hidden">
-      {/* ─── Menu trái ─── */}
-      <nav aria-label="Cài đặt" className="flex w-52 flex-shrink-0 flex-col overflow-y-auto border-r border-border bg-card pb-4 pt-4">
-        <p className="px-5 text-base font-semibold text-foreground">Cài đặt</p>
+      {/* ─── Left menu ─── */}
+      <nav aria-label={tr('Cài đặt')} className="flex w-52 flex-shrink-0 flex-col overflow-y-auto border-r border-border bg-card pb-4 pt-4">
+        <p className="px-5 text-base font-semibold text-foreground">{tr('Cài đặt')}</p>
         {visibleGroups.map(group => (
           <div key={group.label} className="pt-4">
             <p className="px-5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-subtle-foreground">{group.label}</p>
@@ -280,7 +283,7 @@ export default function Settings() {
                   {active && <span aria-hidden="true" className="absolute inset-y-1 left-0 w-[3px] rounded-r-full bg-primary" />}
                   <span className="flex-shrink-0">{item.icon}</span>
                   <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  {/* Chấm đỏ: tab mới chưa xem / log phiên bản chưa đọc / Internet & Cloud cần xem */}
+                  {/* Red dot: new tab not yet seen / version log not yet read / Internet & Cloud needs attention */}
                   {dot && <span className="h-2 w-2 flex-shrink-0 rounded-full bg-destructive" title={dot} aria-label={dot} />}
                 </button>
               );
@@ -315,14 +318,14 @@ export default function Settings() {
         {activeTab === 'proxy' && <ProxySettings />}
         {activeTab === 'employees' && <EmployeeSettings />}
         {activeTab === 'workspace' && <WorkspaceSettings />}
-        {/* Internet & Cloud (Cloudflare, chỉ máy chủ) */}
+        {/* Internet & Cloud (Cloudflare, server only) */}
         {activeTab === 'cloud' && !hideCloud && <CloudSettings initialSubtab={cloudSubtab} />}
         {activeTab === 'introduction' && <IntroductionSettings initialSubtab={introSubtab as any} />}
         {activeTab === 'changelog' && <ChangelogSettings />}
       </main>
     </div>
 
-    {/* ── Thư mục đích đã có dữ liệu: dùng dữ liệu đó hay ghi đè bằng dữ liệu hiện tại ── */}
+    {/* ── Target folder already has data: use that data, or overwrite it with the current data ── */}
     {pendingFolder && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
         onClick={() => !changingStorage && setPendingFolder(null)}>
@@ -331,10 +334,10 @@ export default function Settings() {
           onClick={e => e.stopPropagation()}>
           <div className="border-b border-border px-5 pb-3 pt-5">
             <h3 id="storage-existing-title" className="flex items-center gap-2 text-base font-semibold text-foreground">
-              <FolderIcon className="h-5 w-5 text-primary" /> Thư mục đã có dữ liệu
+              {trx('<0/> Thư mục đã có dữ liệu', { 0: <FolderIcon className="h-5 w-5 text-primary" /> })}
             </h3>
             <PathText value={pendingFolder} className="mt-2" />
-            <p className="mt-2 text-xs text-muted-foreground">Ở đây đã có file dữ liệu Deplao. Bạn muốn làm gì?</p>
+            <p className="mt-2 text-xs text-muted-foreground">{tr('Ở đây đã có file dữ liệu Deplao. Bạn muốn làm gì?')}</p>
           </div>
 
           <div className="space-y-2.5 p-4">
@@ -346,8 +349,8 @@ export default function Settings() {
             >
               <HardDriveIcon className="mt-0.5 h-5 w-5 flex-shrink-0 text-primary" />
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-foreground">Dùng dữ liệu có sẵn ở đây</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Dữ liệu hiện tại vẫn giữ ở chỗ cũ, không bị xoá.</p>
+                <p className="text-sm font-semibold text-foreground">{tr('Dùng dữ liệu có sẵn ở đây')}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{tr('Dữ liệu hiện tại vẫn giữ ở chỗ cũ, không bị xoá.')}</p>
               </div>
             </button>
 
@@ -356,9 +359,9 @@ export default function Settings() {
               disabled={changingStorage}
               onClick={async () => {
                 const ok = await showConfirm({
-                  title: 'Ghi đè dữ liệu cũ?',
-                  message: `Dữ liệu hiện tại sẽ được sao chép vào:\n${pendingFolder}\n\nFile deplao-tool.db cũ tại đó sẽ bị GHI ĐÈ. Thao tác không thể hoàn tác.`,
-                  confirmText: 'Ghi đè',
+                  title: tr('Ghi đè dữ liệu cũ?'),
+                  message: tr('Dữ liệu hiện tại sẽ được sao chép vào:\n{{pendingFolder}}\n\nFile deplao-tool.db cũ tại đó sẽ bị GHI ĐÈ. Thao tác không thể hoàn tác.', { pendingFolder }),
+                  confirmText: tr('Ghi đè'),
                   variant: 'danger',
                 });
                 if (!ok) return;
@@ -368,9 +371,9 @@ export default function Settings() {
             >
               <FolderIcon className="mt-0.5 h-5 w-5 flex-shrink-0 text-muted-foreground" />
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-foreground">Chép dữ liệu hiện tại sang đây</p>
+                <p className="text-sm font-semibold text-foreground">{tr('Chép dữ liệu hiện tại sang đây')}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Chép cả ảnh, video, file. <span className="text-destructive">Dữ liệu cũ ở đây sẽ bị ghi đè.</span>
+                  {trx('Chép cả ảnh, video, file. <0>Dữ liệu cũ ở đây sẽ bị ghi đè.</0>', { 0: <span className="text-destructive" /> })}
                 </p>
               </div>
             </button>
@@ -384,7 +387,7 @@ export default function Settings() {
                     <div className="mb-1.5 flex items-center justify-between text-xs">
                       <span className="flex items-center gap-1.5 font-medium text-primary">
                         <span className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                        Đang chép ảnh, file...
+                        {tr('Đang chép ảnh, file...')}
                       </span>
                       <span className="font-mono tabular-nums text-foreground/80">
                         {copyProgress.toLocaleString()}
@@ -399,20 +402,20 @@ export default function Settings() {
                     </div>
                     {copyTotal > 0 && (
                       <p className="mt-1 text-[11px] text-muted-foreground">
-                        {((copyProgress / copyTotal) * 100).toFixed(0)}% - đừng đóng ứng dụng
+                        {trx('{{v1}}% - đừng đóng ứng dụng', { v1: ((copyProgress / copyTotal) * 100).toFixed(0) })}
                       </p>
                     )}
                   </>
                 ) : (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                    Đang chuẩn bị...
+                    {tr('Đang chuẩn bị...')}
                   </div>
                 )}
               </div>
             )}
             <Button variant="ghost" className="w-full" disabled={changingStorage} onClick={() => setPendingFolder(null)}>
-              {changingStorage ? 'Đang xử lý...' : 'Huỷ'}
+              {changingStorage ? tr('Đang xử lý...') : tr('Huỷ')}
             </Button>
           </div>
         </div>
@@ -422,9 +425,9 @@ export default function Settings() {
   );
 }
 
-// ─── Giao diện ──────────────────────────────────────────────────────────────────────────
+// ─── Appearance ──────────────────────────────────────────────────────────────────────────
 
-/** Màu xem trước của từng chủ đề (cố định, để thẻ "Tối" vẫn tối khi app đang sáng và ngược lại). */
+/** Preview colors of each theme (fixed, so the "Tối" (Dark) card stays dark when the app is light, and vice versa). */
 const THEME_PREVIEW = {
   dark: { bg: '#131518', panel: '#1c1f25', line: '#373f49', primary: '#2f7bff' },
   light: { bg: '#eceef3', panel: '#ffffff', line: '#dde1e7', primary: '#1f6bf2' },
@@ -472,36 +475,59 @@ function AppearancePage() {
   const fontSizeScale = useAppStore(s => s.fontSizeScale);
   const setFontSizeScale = useAppStore(s => s.setFontSizeScale);
   const [showDesignSystem, setShowDesignSystem] = useState(false);
-  // Kéo thanh cỡ chữ: hiện số ngay, áp dụng khi thả (đổi cỡ chữ vẽ lại cả app)
+  // Drag the font size slider: shows the number right away, applies on release (changing the font size redraws the whole app)
   const [fontDraft, setFontDraft] = useState(fontSizeScale);
   useEffect(() => { setFontDraft(fontSizeScale); }, [fontSizeScale]);
   const commitFont = () => { if (fontDraft !== fontSizeScale) setFontSizeScale(fontDraft); };
   const px = (scale: number) => Math.round(16 * scale);
 
+  // UI language picker: same list and order as the TopBar flag menu (Vietnamese, English, Chinese…; partly translated
+  // ones in dev builds). The list comes from main, with coverage taken from resources/locales/index.json.
+  const { current: currentLanguage, options: languageOptions, change: changeLanguage } = useUiLanguages();
+
   return (
-    <SettingsPage title="Giao diện" description="Màu nền và cỡ chữ, áp dụng ngay.">
-      <SettingsSection title="Chủ đề" flush bodyClassName="p-4">
-        <div role="radiogroup" aria-label="Chủ đề" className="flex flex-wrap gap-3">
-          <ThemeCard label="Sáng" icon={<SunIcon className="h-4 w-4" />} preview={THEME_PREVIEW.light}
+    <SettingsPage title={tr('Giao diện')} description={tr('Màu nền và cỡ chữ, áp dụng ngay.')}>
+      {languageOptions.length > 1 && (
+        <SettingsSection title={tr('Ngôn ngữ')}>
+          <SettingsRow
+            title={tr('Ngôn ngữ giao diện')}
+            description={tr('Đổi xong, giao diện tải lại.')}
+            control={
+              <Select
+                aria-label={tr('Ngôn ngữ giao diện')}
+                value={currentLanguage}
+                onChange={e => void changeLanguage(e.target.value)}
+                wrapperClassName="w-56"
+              >
+                {languageOptions.map(o => <option key={o.code} value={o.code}>{o.label}</option>)}
+              </Select>
+            }
+          />
+        </SettingsSection>
+      )}
+
+      <SettingsSection title={tr('Chủ đề')} flush bodyClassName="p-4">
+        <div role="radiogroup" aria-label={tr('Chủ đề')} className="flex flex-wrap gap-3">
+          <ThemeCard label={tr('Sáng')} icon={<SunIcon className="h-4 w-4" />} preview={THEME_PREVIEW.light}
             active={theme === 'light'} onSelect={() => setTheme('light')} />
-          <ThemeCard label="Tối" icon={<MoonIcon className="h-4 w-4" />} preview={THEME_PREVIEW.dark}
+          <ThemeCard label={tr('Tối')} icon={<MoonIcon className="h-4 w-4" />} preview={THEME_PREVIEW.dark}
             active={theme === 'dark'} onSelect={() => setTheme('dark')} />
         </div>
       </SettingsSection>
 
-      <SettingsSection title="Cỡ chữ">
+      <SettingsSection title={tr('Cỡ chữ')}>
         <SettingsRow
           title={`${px(fontDraft)} px`}
-          description="Cỡ chữ của cả ứng dụng. Cũng chỉnh được ở thanh tiêu đề."
+          description={tr('Cỡ chữ của cả ứng dụng. Cũng chỉnh được ở thanh tiêu đề.')}
           control={px(fontDraft) !== 16 && (
-            <Button variant="ghost" size="sm" onClick={() => { setFontDraft(1); setFontSizeScale(1); }}>Mặc định</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setFontDraft(1); setFontSizeScale(1); }}>{tr('Mặc định')}</Button>
           )}
         >
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground">A</span>
             <input
               type="range"
-              aria-label="Cỡ chữ"
+              aria-label={tr('Cỡ chữ')}
               min={FONT_SCALE_MIN}
               max={FONT_SCALE_MAX}
               step={FONT_SCALE_STEP}
@@ -520,9 +546,9 @@ function AppearancePage() {
 
       <SettingsSection>
         <SettingsRow
-          title="Bộ giao diện"
-          description="Màu và các thành phần giao diện dùng chung (cho người phát triển)."
-          control={<Button variant="outline" size="sm" onClick={() => setShowDesignSystem(v => !v)}>{showDesignSystem ? 'Ẩn' : 'Xem'}</Button>}
+          title={tr('Bộ giao diện')}
+          description={tr('Màu và các thành phần giao diện dùng chung (cho người phát triển).')}
+          control={<Button variant="outline" size="sm" onClick={() => setShowDesignSystem(v => !v)}>{showDesignSystem ? tr('Ẩn') : tr('Xem')}</Button>}
         >
           {showDesignSystem ? <DesignSystemPage /> : undefined}
         </SettingsRow>
@@ -531,7 +557,7 @@ function AppearancePage() {
   );
 }
 
-// ─── Thông báo ──────────────────────────────────────────────────────────────────────────
+// ─── Notifications ──────────────────────────────────────────────────────────────────────────
 
 function NotificationsPage() {
   const accounts = useAccountStore(s => s.accounts);
@@ -554,19 +580,19 @@ function NotificationsPage() {
 
 
   return (
-    <SettingsPage title="Thông báo" description="Cách Deplao báo tin nhắn mới. Lưu riêng trên máy này.">
+    <SettingsPage title={tr('Thông báo')} description={tr('Cách Deplao báo tin nhắn mới. Lưu riêng trên máy này.')}>
       <SettingsSection
-        title="Popup và âm thanh"
-        footer="Hội thoại đã tắt thông báo sẽ không báo. Không thấy popup? Bật thông báo cho Deplao trong cài đặt Windows / macOS."
+        title={tr('Popup và âm thanh')}
+        footer={tr('Hội thoại đã tắt thông báo sẽ không báo. Không thấy popup? Bật thông báo cho Deplao trong cài đặt Windows / macOS.')}
         action={(
           <AccountSelect
-            aria-label="Áp dụng cho tài khoản"
+            aria-label={tr('Áp dụng cho tài khoản')}
             accounts={accounts}
             value={isGlobal ? null : selectedNotifAccount}
             onChange={id => setSelectedNotifAccount(id ?? '__global__')}
-            allLabel="Tất cả tài khoản (mặc định)"
-            allDetail="Cài đặt chung cho mọi tài khoản"
-            note={acc => (notifSettingsOverrides[acc.zalo_id] ? 'riêng' : null)}
+            allLabel={tr('Tất cả tài khoản (mặc định)')}
+            allDetail={tr('Cài đặt chung cho mọi tài khoản')}
+            note={acc => (notifSettingsOverrides[acc.zalo_id] ? tr('riêng') : null)}
             size="sm"
             align="end"
             triggerClassName="w-64"
@@ -577,26 +603,26 @@ function NotificationsPage() {
           <div className="flex flex-wrap items-center gap-2 py-2.5 text-xs text-muted-foreground">
             {hasOverride ? (
               <>
-                <span>Tài khoản này đang dùng cài đặt riêng.</span>
+                <span>{tr('Tài khoản này đang dùng cài đặt riêng.')}</span>
                 <Button variant="link" size="sm" className="text-xs" onClick={() => resetNotifSettingsForAccount(selectedNotifAccount)}>
-                  Dùng mặc định
+                  {tr('Dùng mặc định')}
                 </Button>
               </>
             ) : (
-              <span>Đang theo mặc định. Đổi bên dưới để đặt riêng cho tài khoản này.</span>
+              <span>{tr('Đang theo mặc định. Đổi bên dưới để đặt riêng cho tài khoản này.')}</span>
             )}
           </div>
         )}
         <SettingsRow
-          title="Popup trên màn hình"
-          description="Hiện ở góc màn hình khi có tin mới."
+          title={tr('Popup trên màn hình')}
+          description={tr('Hiện ở góc màn hình khi có tin mới.')}
           control={(
             <Switch
-              aria-label="Popup trên màn hình"
+              aria-label={tr('Popup trên màn hình')}
               checked={settings.desktopEnabled}
               onCheckedChange={(v) => {
                 if (v) requestNotificationPermission().then(granted => {
-                  if (!granted) { showNotification('Máy đang chặn thông báo của Deplao. Hãy cho phép trong cài đặt hệ thống.', 'warning'); return; }
+                  if (!granted) { showNotification(tr('Máy đang chặn thông báo của Deplao. Hãy cho phép trong cài đặt hệ thống.'), 'warning'); return; }
                   saveSettings({ desktopEnabled: true });
                 });
                 else saveSettings({ desktopEnabled: false });
@@ -605,14 +631,14 @@ function NotificationsPage() {
           )}
         />
         <SettingsRow
-          title="Âm thanh"
-          description="Phát tiếng khi có tin mới."
-          control={<Switch aria-label="Âm thanh thông báo" checked={settings.soundEnabled} onCheckedChange={(v) => saveSettings({ soundEnabled: v })} />}
+          title={tr('Âm thanh')}
+          description={tr('Phát tiếng khi có tin mới.')}
+          control={<Switch aria-label={tr('Âm thanh thông báo')} checked={settings.soundEnabled} onCheckedChange={(v) => saveSettings({ soundEnabled: v })} />}
         >
           {settings.soundEnabled ? (
             <div className="flex items-center gap-3">
-              <span className="text-xs text-muted-foreground">Âm lượng</span>
-              <input type="range" min="0" max="100" step="5" aria-label="Âm lượng"
+              <span className="text-xs text-muted-foreground">{tr('Âm lượng')}</span>
+              <input type="range" min="0" max="100" step="5" aria-label={tr('Âm lượng')}
                 value={Math.round(settings.volume * 100)}
                 onChange={e => saveSettings({ volume: parseInt(e.target.value) / 100 })}
                 className="w-56 accent-primary" />
@@ -621,38 +647,38 @@ function NotificationsPage() {
           ) : undefined}
         </SettingsRow>
         <SettingsRow
-          title="Thử thông báo"
+          title={tr('Thử thông báo')}
           control={(
             <>
               <Button variant="outline" size="sm"
-                onClick={() => { if (settings.soundEnabled) playNotificationSound(settings.volume); else showNotification('Hãy bật âm thanh trước', 'info'); }}>
-                Âm thanh
+                onClick={() => { if (settings.soundEnabled) playNotificationSound(settings.volume); else showNotification(tr('Hãy bật âm thanh trước'), 'info'); }}>
+                {tr('Âm thanh')}
               </Button>
               <Button variant="outline" size="sm"
                 onClick={() => {
                   requestNotificationPermission().then(granted => {
-                    if (!granted) { showNotification('Cần cấp quyền thông báo', 'warning'); return; }
-                    showDesktopNotification('Deplao', 'Đây là thông báo thử nghiệm 🎉');
+                    if (!granted) { showNotification(tr('Cần cấp quyền thông báo'), 'warning'); return; }
+                    showDesktopNotification('Deplao', tr('Đây là thông báo thử nghiệm 🎉'));
                   });
                 }}>
-                Popup
+                {tr('Popup')}
               </Button>
             </>
           )}
         />
       </SettingsSection>
 
-      <SettingsSection title="Thông báo trong app" description="Thẻ tin nhắn mới ở góc trên bên phải khi đang dùng app." flush bodyClassName="p-2">
+      <SettingsSection title={tr('Thông báo trong app')} description={tr('Thẻ tin nhắn mới ở góc trên bên phải khi đang dùng app.')} flush bodyClassName="p-2">
         <InAppNotifySettings />
       </SettingsSection>
 
-      {/* Tự mở cùng máy: khởi động lại máy xong không phải nhớ mở Deplao (lưu theo máy) */}
+      {/* Start with the computer: after a restart you do not need to open Deplao yourself (saved per machine) */}
       <AutoLaunchSettings />
     </SettingsPage>
   );
 }
 
-// ─── Lưu trữ ────────────────────────────────────────────────────────────────────────────
+// ─── Storage ────────────────────────────────────────────────────────────────────────────
 
 function formatBytes(bytes: number): string {
   return bytes > 1024 * 1024 * 1024
@@ -677,72 +703,72 @@ function StoragePage({
   onReset: () => void;
 }) {
   if (isEmployee) {
-    // Máy nhân viên: chỉ có bộ nhớ đệm, dữ liệu gốc do máy chủ quản lý
+    // Employee machine: cache only, the original data is managed by the server
     return (
-      <SettingsPage title="Lưu trữ" description="Máy nhân viên: dữ liệu gốc nằm trên máy chủ.">
-        <SettingsSection title="Bộ nhớ đệm trên máy này" description="Ảnh, video, file đã xem được giữ lại để lần sau mở nhanh. Tự dọn khi quá 2 GB.">
+      <SettingsPage title={tr('Lưu trữ')} description={tr('Máy nhân viên: dữ liệu gốc nằm trên máy chủ.')}>
+        <SettingsSection title={tr('Bộ nhớ đệm trên máy này')} description={tr('Ảnh, video, file đã xem được giữ lại để lần sau mở nhanh. Tự dọn khi quá 2 GB.')}>
           <SettingsRow
-            title="Thư mục"
+            title={tr('Thư mục')}
             control={mediaCachePath ? (
-              <Button variant="outline" size="sm" onClick={() => ipc.file?.openPath(mediaCachePath)} leftIcon={<FolderIcon className="h-4 w-4" />}>Mở</Button>
+              <Button variant="outline" size="sm" onClick={() => ipc.file?.openPath(mediaCachePath)} leftIcon={<FolderIcon className="h-4 w-4" />}>{tr('Mở')}</Button>
             ) : undefined}
           >
-            <PathText value={mediaCachePath || 'Đang tải...'} />
+            <PathText value={mediaCachePath || tr('Đang tải...')} />
           </SettingsRow>
           <SettingsRow
-            title="Dung lượng"
-            control={<span className="text-sm font-medium text-foreground">{mediaCacheSize > 0 ? formatBytes(mediaCacheSize) : 'Đang tính...'}</span>}
+            title={tr('Dung lượng')}
+            control={<span className="text-sm font-medium text-foreground">{mediaCacheSize > 0 ? formatBytes(mediaCacheSize) : tr('Đang tính...')}</span>}
           />
         </SettingsSection>
       </SettingsPage>
     );
   }
 
-  // Ổ C: của Windows: dễ đầy, mất khi cài lại Windows → gợi ý chuyển (đã ở ổ khác thì không nhắc)
+  // Drive C: (Windows): fills up easily, lost when Windows is reinstalled → suggest moving (no prompt if already on another drive)
   const onSystemDrive = /^c:[\\/]/i.test(storagePath);
   const mismatch = !!actualDbPath && !!storagePath && !actualDbPath.startsWith(storagePath);
   const progressText = copyProgress > 0
     ? `${copyProgress.toLocaleString()}${copyTotal > 0 ? ` / ${copyTotal.toLocaleString()}` : ''} file…`
-    : 'Đang xử lý...';
+    : tr('Đang xử lý...');
 
   return (
-    <SettingsPage title="Lưu trữ" description="Nơi lưu tin nhắn, danh bạ, ảnh và file trên máy này.">
+    <SettingsPage title={tr('Lưu trữ')} description={tr('Nơi lưu tin nhắn, danh bạ, ảnh và file trên máy này.')}>
       {onSystemDrive && (
-        <Notice tone="warning" title="Nên chuyển dữ liệu khỏi ổ C:">
-          <p>Ổ C: hay đầy và bị xoá khi cài lại Windows. Chuyển sang ổ D:, E: hoặc ổ ngoài, dữ liệu tự chép sang.</p>
+        <Notice tone="warning" title={tr('Nên chuyển dữ liệu khỏi ổ C:')}>
+          <p>{tr('Ổ C: hay đầy và bị xoá khi cài lại Windows. Chuyển sang ổ D:, E: hoặc ổ ngoài, dữ liệu tự chép sang.')}</p>
         </Notice>
       )}
       {mismatch && (
-        <Notice tone="destructive" title="Dữ liệu đang đọc ở thư mục khác">
-          <p>Thường do cập nhật app. Bấm "Chọn thư mục khác" và trỏ lại đúng thư mục chứa dữ liệu.</p>
+        <Notice tone="destructive" title={tr('Dữ liệu đang đọc ở thư mục khác')}>
+          <p>{tr('Thường do cập nhật app. Bấm "Chọn thư mục khác" và trỏ lại đúng thư mục chứa dữ liệu.')}</p>
         </Notice>
       )}
 
-      <SettingsSection title="Thư mục dữ liệu" description="Đổi thư mục thì dữ liệu tự chép sang và dùng ngay, không cần mở lại app.">
+      <SettingsSection title={tr('Thư mục dữ liệu')} description={tr('Đổi thư mục thì dữ liệu tự chép sang và dùng ngay, không cần mở lại app.')}>
         <SettingsRow
-          title="Thư mục"
+          title={tr('Thư mục')}
           control={(
             <>
               {storagePath && storagePath !== defaultStoragePath && (
-                <Button variant="ghost" size="sm" onClick={onReset} disabled={changing}>Đặt lại mặc định</Button>
+                <Button variant="ghost" size="sm" onClick={onReset} disabled={changing}>{tr('Đặt lại mặc định')}</Button>
               )}
               {storagePath && (
-                <Button variant="outline" size="sm" onClick={() => ipc.file?.openPath(storagePath)} leftIcon={<FolderIcon className="h-4 w-4" />}>Mở</Button>
+                <Button variant="outline" size="sm" onClick={() => ipc.file?.openPath(storagePath)} leftIcon={<FolderIcon className="h-4 w-4" />}>{tr('Mở')}</Button>
               )}
               <Button size="sm" onClick={onChangeFolder} disabled={changing}>
-                {changing ? progressText : 'Chọn thư mục khác'}
+                {changing ? progressText : tr('Chọn thư mục khác')}
               </Button>
             </>
           )}
         >
-          <PathText value={storagePath || 'Đang tải...'} />
+          <PathText value={storagePath || tr('Đang tải...')} />
           {actualDbPath && (
-            <p className="mt-1.5 truncate text-xs text-muted-foreground" title={actualDbPath}>File dữ liệu: {actualDbPath}</p>
+            <p className="mt-1.5 truncate text-xs text-muted-foreground" title={actualDbPath}>{trx('File dữ liệu: {{actualDbPath}}', { actualDbPath })}</p>
           )}
         </SettingsRow>
       </SettingsSection>
 
-      {/* Media trên đám mây (Cloudflare R2 / Google Drive), chỉ máy chủ, bản app có module Cloudflare */}
+      {/* Cloud media (Cloudflare R2 / Google Drive), server only, app builds with the Cloudflare module */}
       <CloudMediaSummary />
     </SettingsPage>
   );

@@ -13,10 +13,11 @@ import EventBroadcaster from '../../../src/services/event/EventBroadcaster';
 import Logger from '../../../src/utils/Logger';
 import { credentialsChanged, isWrongPasswordLogin, normalizeBossUrl } from '../../../src/shared/employee/employeeConnection';
 import { runInRuntimeScope } from '../../../src/services/database/dbScope';
+import { tr } from '../../../src/shared/i18n';
 
 /**
- * Tạm dừng đồng bộ DB lên Cloudflare quanh thao tác đổi / xoá file DB của workspace (dbsync nhả file trước, kiểm tra
- * lại DB sau). Không nạp được module (hoặc đồng bộ đang tắt) → chạy thẳng.
+ * Pauses DB sync to Cloudflare around operations that change / delete the workspace's DB file (dbsync releases the file first, then checks
+ * the DB again). If the module cannot be loaded (or sync is off) → run directly.
  */
 function withCloudDbPaused<T>(reason: string, fn: () => Promise<T>): Promise<T> {
     let cloudDb: { pauseFor<R>(reason: string, fn: () => Promise<R> | R): Promise<R> } | null = null;
@@ -28,7 +29,7 @@ function withCloudDbPaused<T>(reason: string, fn: () => Promise<T>): Promise<T> 
     return cloudDb ? cloudDb.pauseFor(reason, fn) : fn();
 }
 
-/** employee_id trong payload JWT (không verify — Boss đã verify khi cấp token). */
+/** employee_id from the JWT payload (not verified: Boss already verified it when issuing the token). */
 function employeeIdFromToken(token: string): string | null {
     try {
         const payload = JSON.parse(Buffer.from(String(token).split('.')[1] || '', 'base64').toString());
@@ -49,7 +50,7 @@ function httpPost(url: string, body: any, timeoutMs = 15000): Promise<any> {
         try {
             parsed = new URL(url);
         } catch {
-            reject(new Error('URL không hợp lệ'));
+            reject(new Error(tr('URL không hợp lệ')));
             return;
         }
         const data = JSON.stringify(body);
@@ -80,23 +81,23 @@ function httpPost(url: string, body: any, timeoutMs = 15000): Promise<any> {
                 } catch {
                     // HTML interstitial or non-JSON response
                     const preview = responseBody.slice(0, 200);
-                    reject(new Error(`Phản hồi không hợp lệ từ boss server: ${preview}`));
+                    reject(new Error(tr('Phản hồi không hợp lệ từ boss server: {{preview}}', { preview })));
                 }
             });
         });
 
         req.on('error', (err: any) => {
             if (err.code === 'ECONNREFUSED') {
-                reject(new Error('Không thể kết nối - kiểm tra lại IP và Port, đảm bảo boss đã bật Relay Server'));
+                reject(new Error(tr('Không thể kết nối - kiểm tra lại IP và Port, đảm bảo boss đã bật Relay Server')));
             } else if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
-                reject(new Error('Hết thời gian kết nối - kiểm tra lại mạng'));
+                reject(new Error(tr('Hết thời gian kết nối - kiểm tra lại mạng')));
             } else {
-                reject(new Error(`Lỗi kết nối: ${err.message}`));
+                reject(new Error(tr('Lỗi kết nối: {{message}}', { message: err.message })));
             }
         });
         req.on('timeout', () => {
             req.destroy();
-            reject(new Error(`Hết thời gian kết nối (${timeoutMs / 1000}s) - kiểm tra lại địa chỉ Boss`));
+            reject(new Error(tr('Hết thời gian kết nối ({{v1}}s) - kiểm tra lại địa chỉ Boss', { v1: timeoutMs / 1000 })));
         });
 
         req.write(data);
@@ -104,7 +105,7 @@ function httpPost(url: string, body: any, timeoutMs = 15000): Promise<any> {
     });
 }
 
-/** Đăng nhập nhân viên vào Boss (POST /api/auth/login) — dùng chung cho loginRemote và loginRemoteSaved. */
+/** Employee sign-in to Boss (POST /api/auth/login), shared by loginRemote and loginRemoteSaved. */
 async function loginToBoss(bossUrl: string, username: string, password: string): Promise<any> {
     try {
         // Normalize URL
@@ -124,13 +125,13 @@ async function loginToBoss(bossUrl: string, username: string, password: string):
     }
 }
 
-// ─── Mật khẩu nhân viên đã lưu (safeStorage) ────────────────────────
+// ─── Saved employee passwords (safeStorage) ────────────────────────
 
-/** Mã hoá được bằng khoá của hệ điều hành (Windows DPAPI / macOS Keychain / Linux keyring) — không thì không lưu. */
+/** Encrypted with the OS key (Windows DPAPI / macOS Keychain / Linux keyring); if that is not possible, nothing is saved. */
 function canEncryptPasswords(): boolean {
     try {
         if (!safeStorage.isEncryptionAvailable()) return false;
-        // Linux không có keyring → Electron dùng khoá cố định ('basic_text') — coi như không mã hoá được
+        // Linux has no keyring → Electron uses a fixed key ('basic_text'): treat it as not encryptable
         if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') return false;
         return true;
     } catch {
@@ -138,7 +139,7 @@ function canEncryptPasswords(): boolean {
     }
 }
 
-/** Boss lưu username chữ thường (EmployeeService) → so khớp không phân biệt hoa thường. */
+/** Boss stores usernames in lowercase (EmployeeService) → matching ignores case. */
 function normalizeUsername(value: unknown): string {
     return String(value ?? '').toLowerCase().trim();
 }
@@ -150,10 +151,10 @@ function sameDbFile(a: string, b: string): boolean {
 }
 
 /**
- * Đưa main process theo trạng thái workspace (dbScope.ts): CSDL chính + media = workspace local chạy nền
- * (getRuntimeWorkspace); giao diện mở workspace remote (nhân viên) → mở CSDL đệm của nó cho lệnh từ giao diện.
- * Đổi sang / rời workspace remote KHÔNG đổi CSDL chính: Zalo, Telegram, Facebook, workflow, API… của workspace local
- * chạy tiếp và ghi đúng chỗ. Trả về true khi workspace local chạy nền đổi (đổi giữa hai workspace local).
+ * Sets the main process to the workspace state (dbScope.ts): the main DB + media = the local workspace running in the background
+ * (getRuntimeWorkspace); when the UI opens a remote workspace (employee) → opens its cached DB for UI commands.
+ * Switching to / leaving a remote workspace does NOT change the main DB: Zalo, Telegram, Facebook, workflows, API… of the local workspace
+ * keep running and write to the right place. Returns true when the local workspace running in the background changes (switching between two local workspaces).
  */
 async function syncWorkspaceDatabases(): Promise<boolean> {
     const wsm = WorkspaceManager.getInstance();
@@ -166,7 +167,7 @@ async function syncWorkspaceDatabases(): Promise<boolean> {
     const runtimeChanged = !sameDbFile(runInRuntimeScope(() => db.getDbPath()), runtimeDbPath);
     if (runtimeChanged) {
         await db.switchToWorkspaceDb(runtimeDbPath);
-        // Media theo workspace local mới
+        // Media of the new local workspace
         FileStorageService.resetBaseDir();
     }
     if (uiWs?.type === 'remote') {
@@ -202,7 +203,7 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
 
     ipcMain.handle('workspace:getActive', async () => {
         try {
-            // Workspace đang mở trên giao diện (không phải workspace local chạy nền)
+            // Workspace open in the UI (not the local workspace running in the background)
             const workspace = wm().getUiActiveWorkspace();
             return { success: true, workspace };
         } catch (err: any) {
@@ -241,8 +242,8 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
             const before = wm().getWorkspaceById(id);
             const prevCreds = before ? { bossUrl: before.bossUrl, token: before.token } : null;
             const result = wm().updateWorkspace(id, updates);
-            // Đổi Boss URL / token của remote workspace → main báo renderer (employee:credentials)
-            // và kết nối lại bằng cấu hình mới nếu đang giữ kết nối — REST client không bao giờ lệch main.
+            // Boss URL / token of a remote workspace changed → main tells the renderer (employee:credentials)
+            // and reconnects with the new config if a connection is held: the REST client never drifts from main.
             if (result.success && before?.type === 'remote' && updates && ('bossUrl' in updates || 'token' in updates)) {
                 const after = wm().getWorkspaceById(id);
                 if (after && credentialsChanged(prevCreds, { bossUrl: after.bossUrl, token: after.token })) {
@@ -263,8 +264,8 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
             // Record whether this is the currently active workspace BEFORE deleting
             const wasActive = wm().getActiveWorkspaceId() === id;
             const wasRemote = wm().getWorkspaceById(id)?.type === 'remote';
-            // Workspace local đang chạy nền (CSDL chính): chuyển CSDL chính sang workspace local còn lại trước khi xoá thư mục
-            // (Windows khoá file CSDL đang mở)
+            // Local workspace running in the background (main DB): switch the main DB to the other local workspace before deleting the folder
+            // (Windows locks the DB file that is open)
             const wasRuntime = !wasRemote && wm().getRuntimeWorkspace()?.id === id;
             const db = DatabaseService.getInstance();
             if (wasActive && wasRemote) db.closeUiWorkspaceDb();
@@ -277,10 +278,10 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
             }
 
             const result = wm().deleteWorkspace(id);
-            // Không xoá được (vd workspace mặc định): mở lại CSDL theo trạng thái cũ
+            // Cannot delete (e.g. the default workspace): reopen the DB with its previous state
             if (!result.success && (wasRuntime || (wasActive && wasRemote))) await syncWorkspaceDatabases();
 
-            // Xoá remote workspace = ngắt hẳn kết nối tới Boss (heartbeat + Socket.IO + lịch thử lại)
+            // Deleting a remote workspace = fully disconnects from Boss (heartbeat + Socket.IO + retry schedule)
             if (result.success && wasRemote) {
                 try { HttpConnectionManager.getInstance().disconnect(id); } catch { /* ignore */ }
             }
@@ -318,8 +319,8 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
 
     // ─── Switch ──────────────────────────────────────────────────────
 
-    // Chạy ngoài phạm vi giao diện (runInRuntimeScope): lệnh này đổi chính phạm vi đó, phần còn lại (hook, plugin, đồng bộ
-    // cookie) thuộc workspace local chạy nền.
+    // Runs outside the UI scope (runInRuntimeScope): this command changes that scope itself, the rest (hooks, plugins, sync
+    // cookies) belongs to the local workspace running in the background.
     ipcMain.handle('workspace:switch', async (_e, { id }: { id: string }) => runInRuntimeScope(() => withCloudDbPaused('workspace-switch', async () => {
         const prevWorkspaceId = wm().getActiveWorkspaceId();
         try {
@@ -334,8 +335,8 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                 // Clear event hooks to prevent accumulation across switches
                 EventBroadcaster.clearBeforeSendHooks();
 
-                // CSDL / media: workspace local chạy nền giữ nguyên khi đổi sang / rời workspace nhân viên (remote);
-                // đổi giữa hai workspace local thì CSDL chính + media đổi theo
+                // DB / media: the local workspace running in the background stays the same when switching to / leaving an employee (remote) workspace;
+                // when switching between two local workspaces, the main DB + media switch with it
                 const prevMainDbPath = runInRuntimeScope(() => DatabaseService.getInstance().getDbPath());
                 const runtimeChanged = await syncWorkspaceDatabases();
 
@@ -347,22 +348,22 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                     }
                 } catch {}
 
-                // Public API v1: đăng ký lại hook sự kiện (clearBeforeSendHooks đã xoá)
+                // Public API v1: re-register the event hooks (clearBeforeSendHooks has been removed)
                 try {
                     require('../../../src/services/api/ApiPlatform').default.getInstance().rehookEvents();
                 } catch {}
 
-                // Workflow: đăng ký lại hook trigger (tin nhắn, thanh toán…) — thiếu bước này workflow ngừng chạy tới khi mở lại app
+                // Workflows: re-register the trigger hooks (messages, payments…). Without this step, workflows stop running until the app is reopened
                 try {
                     require('../../../src/services/workflow/WorkflowEngineService').default.getInstance().rehookEvents();
-                    // Workspace local chạy nền đổi → workflow + lịch của workspace mới
+                    // The local workspace running in the background changed → workflows + schedules of the new workspace
                     if (runtimeChanged) require('../../../src/services/workflow/WorkflowEngineService').default.getInstance().reloadAll();
                 } catch (err: any) {
                     Logger.error(`[workspaceIpc] Workflow rehookEvents failed: ${err?.message || err}`);
                 }
 
-                // Plugin: workspace local chạy nền đổi → dừng plugin của workspace cũ, chạy plugin đã bật của workspace mới
-                // (nền). Đổi sang / rời workspace nhân viên: plugin vẫn chạy, chỉ báo giao diện nạp lại.
+                // Plugins: the local workspace running in the background changed → stop the old workspace's plugins, run the enabled plugins of the new workspace
+                // (background). Switching to / leaving an employee workspace: plugins keep running, only the UI is told to reload.
                 try {
                     const plugins = require('../../../src/services/plugins/PluginsPlatform').default.getInstance();
                     if (runtimeChanged) void plugins.onWorkspaceChanged();
@@ -378,7 +379,7 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                             if (conn.auth) {
                                 const authObj = typeof conn.auth === 'string' ? JSON.parse(conn.auth) : conn.auth;
                                 if (authObj?.cookies) {
-                                    // Mã hoá như saveAccount (trước đây ghi cookie thô)
+                                    // Encrypted like saveAccount (previously wrote the raw cookie)
                                     db.updateAccountAuth(zaloId, authObj.cookies, authObj.imei || '', authObj.userAgent || '');
                                 }
                             }
@@ -390,8 +391,8 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
 
                 Logger.log(`[workspaceIpc] switch → workspace=${result.workspace.id} name="${result.workspace.name}" type=${result.workspace.type} mainDb=${runInRuntimeScope(() => DatabaseService.getInstance().getDbPath())} (before ${prevMainDbPath}) runtimeChanged=${runtimeChanged} cachedAssigned=${result.workspace.cachedAssignedAccounts?.length || 0} cachedAccountsData=${result.workspace.cachedAccountsData?.length || 0} cachedPermissions=${result.workspace.cachedPermissions?.length || 0}`);
 
-                // Bản sao để gửi renderer: KHÔNG gắn _connected/_snapshot vào object cấu hình
-                // (object đó được saveConfig() ghi xuống workspaces.json).
+                // Copy sent to the renderer: do NOT attach _connected/_snapshot to the config object
+                // (that object is written to workspaces.json by saveConfig()).
                 const switchedWorkspace: any = { ...result.workspace };
 
                 // ── Auto-reconnect for remote workspaces ─────────
@@ -400,7 +401,7 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                     if (!scm.isConnected(id)) {
                         Logger.log(`[workspaceIpc] Remote workspace "${result.workspace.name}" not connected - auto-reconnecting...`);
                         try {
-                            // Đang kết nối dở (auto-connect / thử lại) → dùng chung lần đó
+                            // Connection already in progress (auto-connect / retry) → share that attempt
                             await scm.connect(id, result.workspace.bossUrl, result.workspace.token);
                         } catch (err: any) {
                             Logger.warn(`[workspaceIpc] Auto-reconnect failed for "${result.workspace!.name}": ${err.message}`);
@@ -419,7 +420,7 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                     }
                 }
 
-                // Notify renderer to reload state (renderer init RestQueryService từ URL/token trong payload này)
+                // Notify the renderer to reload state (the renderer initializes RestQueryService from the URL/token in this payload)
                 if (mainWindow && !mainWindow.isDestroyed()) {
                     mainWindow.webContents.send('workspace:switched', {
                         workspace: switchedWorkspace,
@@ -462,25 +463,25 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
 
     // ─── Connect Remote Workspace ────────────────────────────────────
 
-    // Đường DUY NHẤT để (đăng nhập lại rồi) kết nối: lưu CẢ URL lẫn token vào cấu hình workspace
-    // (nguồn sự thật) rồi kết nối qua main → main phát employee:credentials → renderer init REST.
+    // The ONLY way to (sign in again and) connect: save BOTH the URL and the token in the workspace config
+    // (source of truth), then connect through main → main emits employee:credentials → renderer inits REST.
     ipcMain.handle('workspace:connectRemote', async (_e, {
         id, bossUrl, token,
     }: { id: string; bossUrl: string; token: string }) => {
         try {
             const ws = wm().getWorkspaceById(id);
-            if (!ws) return { success: false, error: 'Workspace không tồn tại' };
-            if (ws.type !== 'remote') return { success: false, error: 'Workspace này không phải remote' };
+            if (!ws) return { success: false, error: tr('Workspace không tồn tại') };
+            if (ws.type !== 'remote') return { success: false, error: tr('Workspace này không phải remote') };
 
             const url = normalizeBossUrl(bossUrl);
-            if (!url || !token) return { success: false, error: 'Thiếu địa chỉ Boss hoặc token' };
+            if (!url || !token) return { success: false, error: tr('Thiếu địa chỉ Boss hoặc token') };
 
             // Persist updated connection params
             const changed = credentialsChanged({ bossUrl: ws.bossUrl, token: ws.token }, { bossUrl: url, token });
             wm().updateWorkspace(id, { bossUrl: url, token });
 
             const scm = HttpConnectionManager.getInstance();
-            // REST client theo cấu hình mới ngay cả khi lần kết nối này lỗi (main sẽ tự thử lại bằng cấu hình mới)
+            // REST client uses the new config even if this connection attempt fails (main will retry with the new config by itself)
             if (changed) scm.emitCredentials(id, 'updated');
 
             const isActive = wm().getActiveWorkspaceId() === id;
@@ -495,7 +496,7 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
                 if (wm().getActiveWorkspaceId() === id) {
                     AppModeManager.getInstance().clearOverride();
                 }
-                // Trạng thái 'workspace:connectionStatus' do HttpConnectionManager phát (nguồn duy nhất)
+                // The 'workspace:connectionStatus' state emitted by HttpConnectionManager (the single source)
             }
             return { success: result.success, error: result.error, authExpired: !!result.authExpired };
         } catch (err: any) {
@@ -538,7 +539,7 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
         }
     });
 
-    // ─── Renderer báo mạng có lại (window 'online') → kiểm tra kết nối Boss ngay ──
+    // ─── Renderer reports the network is back (window 'online') → check the Boss connection right away ──
 
     ipcMain.handle('workspace:networkOnline', async () => {
         try {
@@ -550,11 +551,11 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
         }
     });
 
-    // ─── Làm mới snapshot nhân viên (quyền + tài khoản được giao) — 403 ACCOUNT_FORBIDDEN / resync ──
+    // ─── Refresh the employee snapshot (permissions + assigned accounts): 403 ACCOUNT_FORBIDDEN / resync ──
 
     ipcMain.handle('workspace:refreshSnapshot', async (_e, { id, reason }: { id: string; reason?: string }) => {
         try {
-            if (!id) return { success: false, error: 'Thiếu workspace id' };
+            if (!id) return { success: false, error: tr('Thiếu workspace id') };
             return await HttpConnectionManager.getInstance().refreshSnapshot(id, reason || 'renderer');
         } catch (err: any) {
             Logger.error(`[workspaceIpc] refreshSnapshot error: ${err.message}`);
@@ -570,23 +571,23 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
         return loginToBoss(bossUrl, username, password);
     });
 
-    // ─── Mật khẩu nhân viên đã lưu ("Kết nối lại" không phải gõ lại) ──
-    // Main giữ bản mã safeStorage trong workspaces.json, NGOÀI object Workspace (không theo workspace:list / getActive /
-    // switched… sang renderer). Renderer chỉ biết có / không; mật khẩu không bao giờ quay lại renderer.
+    // ─── Saved employee password ("Kết nối lại" (Reconnect) without retyping) ──
+    // Main keeps the safeStorage ciphertext in workspaces.json, OUTSIDE the Workspace object (so it does not leak through workspace:list / getActive /
+    // switched… to the renderer). The renderer only knows whether one exists; the password never goes back to the renderer.
 
     ipcMain.handle('workspace:rememberPassword', async (_e, { id, password }: { id: string; password: string }) => {
         try {
             const ws = wm().getWorkspaceById(id);
-            if (!ws || ws.type !== 'remote') return { success: false, error: 'Workspace không tồn tại' };
-            if (typeof password !== 'string' || !password) return { success: false, error: 'Thiếu mật khẩu' };
+            if (!ws || ws.type !== 'remote') return { success: false, error: tr('Workspace không tồn tại') };
+            if (typeof password !== 'string' || !password) return { success: false, error: tr('Thiếu mật khẩu') };
             if (!canEncryptPasswords()) {
-                // Không mã hoá được bằng khoá hệ điều hành → không lưu (bỏ cả bản cũ nếu có)
+                // Cannot be encrypted with the OS key → not saved (the old one is removed too, if present)
                 wm().clearSavedPassword(id);
                 Logger.warn('[workspaceIpc] safeStorage không khả dụng — không lưu mật khẩu nhân viên');
                 return { success: true, saved: false };
             }
             const enc = safeStorage.encryptString(password).toString('base64');
-            // Gắn với tên đăng nhập hiện tại của workspace (TopBar cập nhật employeeUsername trước khi gọi)
+            // Tied to the current login username of the workspace (TopBar updates employeeUsername before calling)
             wm().setSavedPassword(id, { enc, username: normalizeUsername(ws.employeeUsername), savedAt: Date.now() });
             return { success: true, saved: true };
         } catch (err: any) {
@@ -612,7 +613,7 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
         }
     });
 
-    // Đăng nhập bằng mật khẩu đã lưu: main giải mã rồi làm đúng như loginRemote (cùng dạng kết quả)
+    // Sign in with the saved password: main decrypts it and does exactly what loginRemote does (same result shape)
     ipcMain.handle('workspace:loginRemoteSaved', async (_e, {
         id, bossUrl, username,
     }: { id: string; bossUrl: string; username: string }) => {
@@ -621,26 +622,26 @@ export function registerWorkspaceIpc(mainWindow: BrowserWindow | null): void {
         });
         try {
             const ws = wm().getWorkspaceById(id);
-            if (!ws || ws.type !== 'remote') return { success: false, error: 'Workspace không tồn tại' };
+            if (!ws || ws.type !== 'remote') return { success: false, error: tr('Workspace không tồn tại') };
             const saved = wm().getSavedPassword(id);
-            if (!saved) return unusable('Chưa lưu mật khẩu — vui lòng nhập mật khẩu');
+            if (!saved) return unusable(tr('Chưa lưu mật khẩu — vui lòng nhập mật khẩu'));
             const user = normalizeUsername(username);
-            if (!user) return { success: false, error: 'Vui lòng nhập tên đăng nhập' };
+            if (!user) return { success: false, error: tr('Vui lòng nhập tên đăng nhập') };
             if (saved.username && saved.username !== user) {
-                return unusable('Mật khẩu đã lưu thuộc tài khoản khác — vui lòng nhập mật khẩu');
+                return unusable(tr('Mật khẩu đã lưu thuộc tài khoản khác — vui lòng nhập mật khẩu'));
             }
-            if (!canEncryptPasswords()) return unusable('Máy không giải mã được mật khẩu đã lưu — vui lòng nhập mật khẩu');
+            if (!canEncryptPasswords()) return unusable(tr('Máy không giải mã được mật khẩu đã lưu — vui lòng nhập mật khẩu'));
             let password = '';
             try {
                 password = safeStorage.decryptString(Buffer.from(saved.enc, 'base64'));
             } catch {
-                // Khoá hệ điều hành đã đổi (đổi tài khoản Windows, cài lại máy…) → bản mã vô dụng
+                // The OS key has changed (Windows account changed, machine reinstalled…) → the ciphertext is useless
                 wm().clearSavedPassword(id);
-                return unusable('Không đọc được mật khẩu đã lưu — vui lòng nhập lại', true);
+                return unusable(tr('Không đọc được mật khẩu đã lưu — vui lòng nhập lại'), true);
             }
             const result = await loginToBoss(bossUrl, username, password);
             if (isWrongPasswordLogin(result)) {
-                // Quản lý đã đổi mật khẩu → bỏ bản đã lưu, lần sau nhập mật khẩu mới
+                // The manager changed the password → drop the saved one, next time enter the new password
                 wm().clearSavedPassword(id);
                 return { ...result, savedPasswordCleared: true };
             }

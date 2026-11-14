@@ -1,30 +1,30 @@
 /**
- * zaloBusinessFlag.ts — cờ Zalo Business của chính tài khoản (accounts.is_business), đọc từ
+ * zaloBusinessFlag.ts: the account's own Zalo Business flag (accounts.is_business), read from
  * fetchAccountInfo().profile.bizPkg.pkgId (> 0 = Business).
  *
- * Một nơi cho mọi lần đọc hồ sơ của chính mình: đăng nhập QR / cookie, kết nối lại (mở app, nút kết nối, tự kết nối lại)
- * và làm mới avatar. Trước đây mỗi nơi tự tính, saveAccount không có cờ thì ghi 0 (đăng nhập QR lưu tài khoản trước khi
- * hỏi bizPkg), còn sau đăng nhập cờ chỉ được làm mới khi avatar đổi → tài khoản Business mất nhãn "Business" mãi.
+ * One place for every read of the account's own profile: QR / cookie login, reconnect (app open, connect button, auto-reconnect)
+ * and avatar refresh. Previously each place computed it itself: saveAccount without the flag wrote 0 (QR login saves the account before
+ * asking for bizPkg), and after login the flag was only refreshed when the avatar changed → a Business account kept losing its "Business" label.
  */
 import DatabaseService from '../../services/database/DatabaseService';
 import EventBroadcaster from '../../services/event/EventBroadcaster';
 import Logger from '../Logger';
 
-/** Kết nối lại chỉ hỏi Zalo khi lần đọc gần nhất của tài khoản đã quá 6 giờ (mỗi lần mở app luôn hỏi một lần). */
+/** Reconnecting only asks Zalo when the account's last read is more than 6 hours old (each app open always asks once). */
 export const ZALO_BUSINESS_REFRESH_MS = 6 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15_000;
 
-/** zaloId → thời điểm đọc bizPkg gần nhất (ms) trong phiên app này. */
+/** zaloId → time of the most recent bizPkg read (ms) in this app session. */
 const lastReadAt = new Map<string, number>();
 
-/** 1 / 0 theo gói Business; null = phản hồi không có pkgId → không đoán, giữ giá trị đang lưu. */
+/** 1 / 0 by Business package; null = the response has no pkgId → do not guess, keep the saved value. */
 export function zaloBusinessFlag(accountInfo: any): 0 | 1 | null {
   const pkgId = accountInfo?.profile?.bizPkg?.pkgId ?? accountInfo?.bizPkg?.pkgId;
   if (pkgId === undefined || pkgId === null || pkgId === '' || !Number.isFinite(Number(pkgId))) return null;
   return Number(pkgId) > 0 ? 1 : 0;
 }
 
-/** Ghi cờ đọc được vào DB; đổi thật thì báo giao diện (event:accountProfile — máy nhân viên nhận qua relay). */
+/** Save the read flag to the DB; if it actually changed, tell the UI (event:accountProfile; employee machines receive it through the relay). */
 export function applyZaloBusinessFlag(zaloId: string, accountInfo: any, now: number = Date.now()): 0 | 1 | null {
   const flag = zaloBusinessFlag(accountInfo);
   if (!zaloId || flag === null) return null;
@@ -37,8 +37,8 @@ export function applyZaloBusinessFlag(zaloId: string, accountInfo: any, now: num
 }
 
 /**
- * Sau khi kết nối lại (không phải đăng nhập mới — đăng nhập đã tự đọc hồ sơ): đọc lại bizPkg nếu chưa đọc trong 6 giờ.
- * Chạy nền, không ném lỗi; lỗi mạng hoặc quá 15 s thì lần kết nối sau hỏi lại.
+ * After a reconnect (not a new login, which already read the profile): read bizPkg again if it has not been read for 6 hours.
+ * Runs in the background and does not throw; on a network error or after 15 s, the next connection asks again.
  */
 export async function refreshZaloBusinessFlag(
   zaloId: string,
@@ -48,7 +48,7 @@ export async function refreshZaloBusinessFlag(
   if (!zaloId) return null;
   const last = lastReadAt.get(zaloId);
   if (last !== undefined && now - last < ZALO_BUSINESS_REFRESH_MS) return null;
-  lastReadAt.set(zaloId, now); // giữ chỗ: nhiều lần kết nối dồn dập không cùng hỏi Zalo
+  lastReadAt.set(zaloId, now); // placeholder: many connections in a row do not all ask Zalo at the same time
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const accountInfo = await Promise.race([
@@ -65,7 +65,7 @@ export async function refreshZaloBusinessFlag(
   }
 }
 
-/** Chỉ dùng trong test. */
+/** Test only. */
 export function resetZaloBusinessFlagCache(): void {
   lastReadAt.clear();
 }

@@ -1,7 +1,7 @@
 /**
- * Ảnh đại diện tài khoản chat dùng chung (Cài đặt, ô chọn tài khoản, Nhân viên, Proxy…): ảnh tài khoản, không có ảnh thì
- * chữ cái đầu trên nền trung tính (không gradient), góc dưới có huy hiệu kênh. Cỡ 20 (xếp chồng, nút ô chọn) không có
- * huy hiệu; `className` cho viền khi xếp chồng.
+ * Shared chat account avatar (Settings, account picker, Employees, Proxy…): the account picture; without a picture, the
+ * first letter on a neutral background (no gradient), with the channel badge in the bottom corner. Size 20 (stacked, picker button) has no
+ * badge; `className` sets the border when stacked.
  */
 import React from 'react';
 import { ChannelBadgeOverlay } from '@/components/common/avatars/ChannelBadge';

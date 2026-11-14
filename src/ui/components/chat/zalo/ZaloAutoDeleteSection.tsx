@@ -1,7 +1,7 @@
 /**
- * Mục "Tự xoá tin nhắn" của hội thoại Zalo (ZL-05): Tắt / 1 / 7 / 14 ngày như app Zalo. Zalo xoá tin trên các thiết bị
- * Zalo; Deplao luôn giữ tin đã lưu (dòng giải thích cố định). Mở mục → đọc lại từ Zalo (tối đa 1 lần / phút / tài khoản),
- * vì Zalo không báo khi đổi trên điện thoại.
+ * "Tự xoá tin nhắn" (Auto-delete messages) section of a Zalo conversation (ZL-05): Off / 1 / 7 / 14 days, like the Zalo app. Zalo deletes messages on the
+ * Zalo devices; Deplao always keeps the saved messages (a fixed explanation line). Opening the section → reads again from Zalo (at most once per minute per account),
+ * because Zalo does not report a change made on the phone.
  */
 import React from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
@@ -13,6 +13,8 @@ import { ClockIcon } from '@/components/common/icons';
 import {
   ZALO_AUTO_DELETE_NOTE, ZALO_AUTO_DELETE_OPTIONS, zaloAutoDeleteLabel,
 } from '../../../../shared/zalo/zaloAutoDelete';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const REFRESH_EVERY_MS = 60_000;
 const lastRefreshAt = new Map<string, number>();
@@ -26,7 +28,7 @@ export default function ZaloAutoDeleteSection({ accountId, threadId, isGroup, bo
   accountId: string;
   threadId: string;
   isGroup: boolean;
-  /** Viền trên ngăn với khối phía trên (tắt khi khối trên đã có viền dưới). */
+  /** Top border separating it from the block above (turned off when the block above already has a bottom border). */
   bordered?: boolean;
   className?: string;
 }) {
@@ -66,13 +68,13 @@ export default function ZaloAutoDeleteSection({ accountId, threadId, isGroup, bo
       const res = await ipc.zalo?.setAutoDeleteChat({ auth, threadId, type: isGroup ? 1 : 0, ttl: next });
       if (res?.success) {
         setLocal(next);
-        showNotification(next ? `Tin nhắn mới sẽ tự xoá sau ${zaloAutoDeleteLabel(next)} trên Zalo` : 'Đã tắt tự xoá tin nhắn', 'success');
+        showNotification(next ? tr('Tin nhắn mới sẽ tự xoá sau {{v1}} trên Zalo', { v1: zaloAutoDeleteLabel(next) }) : tr('Đã tắt tự xoá tin nhắn'), 'success');
       } else {
-        const reason = res?.error || 'Zalo từ chối thay đổi';
-        setError(isGroup ? `${reason}. Nhóm có thể chỉ cho trưởng / phó nhóm đổi.` : reason);
+        const reason = res?.error || tr('Zalo từ chối thay đổi');
+        setError(isGroup ? tr('{{reason}}. Nhóm có thể chỉ cho trưởng / phó nhóm đổi.', { reason }) : reason);
       }
     } catch (err: any) {
-      setError(err?.message || 'Không đổi được tự xoá tin nhắn');
+      setError(err?.message || tr('Không đổi được tự xoá tin nhắn'));
     } finally {
       setBusy(false);
     }
@@ -82,9 +84,9 @@ export default function ZaloAutoDeleteSection({ accountId, threadId, isGroup, bo
   return (
     <section className={`space-y-2 px-4 py-3 ${bordered ? 'border-t border-border' : ''} ${className}`}>
       <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-        <ClockIcon className="h-3.5 w-3.5" /> Tự xoá tin nhắn
+        {trx('<0/> Tự xoá tin nhắn', { 0: <ClockIcon className="h-3.5 w-3.5" /> })}
       </p>
-      <Select value={String(ttl)} disabled={busy} aria-label="Tự xoá tin nhắn" onChange={(e) => void change(Number(e.target.value))}>
+      <Select value={String(ttl)} disabled={busy} aria-label={tr('Tự xoá tin nhắn')} onChange={(e) => void change(Number(e.target.value))}>
         {!known && <option value={ttl}>{zaloAutoDeleteLabel(ttl)}</option>}
         {ZALO_AUTO_DELETE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </Select>

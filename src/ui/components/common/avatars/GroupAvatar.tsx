@@ -6,7 +6,7 @@ import { nameInitial, peerColorIndex } from '@/lib/chat/messages/peerStyle';
 
 type Member = { avatar: string; displayName: string; userId?: string };
 
-// ─── MemberCell: render 1 ô trong composite grid ─────────────────────────────
+// ─── MemberCell: renders 1 tile in the composite grid ─────────────────────────────
 function MemberCell({ member, onFallback, className }: { member: Member; onFallback?: () => void; className?: string }) {
   const [imgFailed, setImgFailed] = useState(false);
   const avatarUrl = member.avatar ? toLocalMediaUrl(member.avatar) : '';
@@ -26,10 +26,10 @@ function MemberCell({ member, onFallback, className }: { member: Member; onFallb
   );
 }
 
-// ─── CompositeGrid: Grid hiển thị 4 ô, pool 6 người dự phòng ────────────────
-// Khi 1 ô lỗi → tự động lấy người tiếp theo trong pool thay vào
+// ─── CompositeGrid: grid showing 4 tiles, pool of 6 backup people ────────────────
+// When 1 tile fails → automatically take the next person in the pool to replace it
 function CompositeGrid({ allMembers, sizeClass }: { allMembers: Member[]; sizeClass: string }) {
-  // active = 4 ô đang hiển thị, pool = hàng chờ thay thế
+  // active = the 4 tiles on show, pool = waiting list for replacements
   const [active, setActive] = useState<Member[]>(() => allMembers.slice(0, 4));
   const [pool, setPool] = useState<Member[]>(() => allMembers.slice(4, 10));
 
@@ -49,7 +49,7 @@ function CompositeGrid({ allMembers, sizeClass }: { allMembers: Member[]; sizeCl
   const count = active.length;
   if (count === 0) return null;
 
-  // Grid 4 ô
+  // Grid of 4 tiles
   if (count >= 4) {
     return (
       <div className={`${sizeClass} rounded-full overflow-hidden grid grid-cols-2 grid-rows-2 bg-muted flex-shrink-0`}>
@@ -96,57 +96,57 @@ const SIZE_MAP: Record<GroupAvatarSize, { sizeClass: string; fallbackText: strin
 };
 
 interface GroupAvatarProps {
-  /** URL ảnh avatar nhóm (nếu có) */
+  /** Group avatar image URL (if any) */
   avatarUrl?: string;
-  /** Cache info nhóm (chứa members để render composite) */
+  /** Group info cache (holds members to render the composite) */
   groupInfo?: CachedGroupInfo | null;
-  /** Tên nhóm - dùng cho fallback chữ cái đầu */
+  /** Group name, used for the letter fallback */
   name: string;
-  /** id nhóm — màu của ảnh chữ dự phòng (cùng màu ở mọi nơi); thiếu → màu theo tên */
+  /** Group id: the color of the fallback letter image (same color everywhere); missing → color by name */
   id?: string;
-  /** Kích thước: xs(32) sm(36) md(40) lg(64) */
+  /** Size: xs(32) sm(36) md(40) lg(64) */
   size?: GroupAvatarSize;
-  /** CSS class phụ (vd: hover:ring-2 ...) */
+  /** Extra CSS class (e.g. hover:ring-2 ...) */
   className?: string;
 }
 
 /**
- * GroupAvatar - hiển thị avatar nhóm Zalo giống gốc:
- * 1. Nếu có avatarUrl → hiển thị ảnh
- * 2. Nếu không → composite grid từ members (2/3/4 ô)
- * 3. Fallback → chữ cái đầu trên nền tím
+ * GroupAvatar - shows a Zalo group avatar as the original does:
+ * 1. If there is an avatarUrl → show the image
+ * 2. If not → composite grid from members (2/3/4 tiles)
+ * 3. Fallback → the first letter on a purple background
  */
 function GroupAvatar({ avatarUrl, groupInfo, name, id, size = 'md', className = '' }: GroupAvatarProps) {
-  // Nhớ URL bị lỗi (không phải cờ true/false) → avatar nhóm đổi sang URL mới thì thử hiển thị lại
+  // Remember the broken URL (not a true/false flag) → when the group avatar changes to a new URL, try to show it again
   const [failedAvatarUrl, setFailedAvatarUrl] = useState('');
   const { sizeClass, fallbackText } = SIZE_MAP[size];
   const cls = `${sizeClass} ${className}`.trim();
 
-  // 1. Avatar URL → hiển thị ảnh (convert local path → Boss REST URL nếu cần)
+  // 1. Avatar URL → show the image (convert local path → Boss REST URL if needed)
   const mainAvatarUrl = avatarUrl ? toLocalMediaUrl(avatarUrl) : '';
   if (mainAvatarUrl && mainAvatarUrl !== failedAvatarUrl) {
     return <img src={mainAvatarUrl} alt="" loading="lazy" decoding="async" className={`${cls} rounded-full object-cover flex-shrink-0`} onError={() => setFailedAvatarUrl(mainAvatarUrl)} />;
   }
 
-  // 2. Composite avatar từ cache — ưu tiên thành viên có ảnh (giống header hội thoại),
-  //    lấy 10 người, grid hiển thị 4, 6 còn lại là pool fallback
+  // 2. Composite avatar from the cache, preferring members who have a photo (same as the conversation header),
+  //    take 10 people, the grid shows 4, the other 6 are the fallback pool
   const validMembers = (groupInfo?.members || []).filter(m => m.userId && m.userId !== 'undefined');
   const picked = [...validMembers.filter(m => m.avatar), ...validMembers.filter(m => !m.avatar)].slice(0, 10);
 
   if (picked.length > 0) {
     const members = picked.map(m => ({ avatar: m.avatar || '', displayName: m.displayName || m.userId, userId: m.userId }));
-    // CompositeGrid chỉ đọc danh sách lúc mount → key theo thành viên để dựng lại khi cache đổi.
-    // Nhóm mới: cache lúc đầu chỉ có người gửi tin đầu tiên (chưa có ảnh), sau mới đủ thành viên + ảnh.
+    // CompositeGrid only reads the list at mount → key by members so it rebuilds when the cache changes.
+    // New group: at first the cache only has the first sender (no photo yet); the full members + photos arrive later.
     const gridKey = picked.map(m => `${m.userId}:${m.avatar || ''}:${m.displayName || ''}`).join('|');
     return <CompositeGrid key={gridKey} allMembers={members} sizeClass={cls} />;
   }
 
-  // 3. Fallback: chữ viết tắt kiểu Telegram, màu theo id nhóm
+  // 3. Fallback: Telegram-style initials, color by group id
   return <PeerInitials id={id} name={name} fallback="G" className={`${cls} ${fallbackText}`} />;
 }
 
 /**
- * Ghi nhớ theo props (ảnh, cache nhóm, tên): danh sách hội thoại / tìm kiếm dựng lại thì các ảnh nhóm không đổi không
- * dựng lại. Ảnh tải lười (`loading="lazy"`) — hàng ngoài vùng nhìn thấy chưa tải / giải mã ảnh.
+ * Memoized by props (photo, group cache, name): when the conversation list / search redraws, group photos that did not change are not
+ * redrawn. Photos load lazily (`loading="lazy"`): rows outside the visible area do not load / decode the photo yet.
  */
 export default React.memo(GroupAvatar);

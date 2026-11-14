@@ -1,10 +1,8 @@
 /**
- * Ranh giới link trong chữ của tin (dùng chung renderer + main): link bắt bằng regex "tới khoảng trắng" rồi bỏ phần cuối
- * không thuộc link — dấu câu cuối câu, ngoặc đóng thừa (như GitHub / Telegram). Ngoặc đủ cặp nằm trong link vẫn giữ:
- * link Shopee "…-Samsung-Galaxy-A56-5G-(8GB-128GB)-Hàng-Chính-Hãng…", Wikipedia "…_(định_hướng)".
+ * Link boundaries in the text of a message (shared by renderer + main): links are matched with a regex "up to whitespace", then the part that does not belong to the link is removed: punctuation at the end of the sentence, extra closing brackets (like GitHub / Telegram). Brackets that are balanced inside the link are kept. Examples: Shopee link "…-Samsung-Galaxy-A56-5G-(8GB-128GB)-Hàng-Chính-Hãng…", Wikipedia "…_(định_hướng)".
  */
 
-/** Dấu câu đứng cuối link là của câu, không phải của link ("xem https://a.vn/x." / "…/x, nhé" / 'https://a.vn'). */
+/** Punctuation at the end of a link belongs to the sentence, not the link ("xem https://a.vn/x." / "…/x, nhé" / 'https://a.vn'). */
 const URL_TRAILING_PUNCTUATION = '.,:;!?\'"*~…';
 const URL_CLOSING_BRACKETS: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
 
@@ -14,7 +12,7 @@ function countChar(text: string, ch: string): number {
   return n;
 }
 
-/** "(xem https://a.vn/x)." → "https://a.vn/x" (bỏ ")." ), "https://vi.wikipedia.org/wiki/A_(B)" giữ nguyên. */
+/** "(xem https://a.vn/x)." → "https://a.vn/x" (removes ")./"), "https://vi.wikipedia.org/wiki/A_(B)" stays as is. */
 export function trimUrlEnd(url: string): string {
   let end = url.length;
   while (end > 0) {
@@ -36,7 +34,7 @@ export function trimUrlEnd(url: string): string {
   return url.slice(0, end);
 }
 
-/** Còn là link sau khi cắt đuôi (không chỉ còn "https://" / "www."). */
+/** Still a link after the tail is trimmed (not just "https://" / "www." left). */
 export function isLinkableUrl(url: string): boolean {
   return !!url && !/^(?:https?:\/\/|www\.)$/i.test(url);
 }

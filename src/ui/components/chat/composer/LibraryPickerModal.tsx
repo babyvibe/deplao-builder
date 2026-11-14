@@ -1,21 +1,21 @@
 /**
- * LibraryPickerModal - Chọn file từ thư viện Media dùng chung.
+ * LibraryPickerModal - Pick a file from the shared Media library.
  *
  * Layout:
  * ┌─────────────────────────────────────────────────────┐
- * │  Header: 📁 Thư viện Media                    ✕     │
+ * │  Header: 📁 Media library                     ✕     │
  * ├──────────┬──────────────────────────────────────────┤
- * │          │  [🔍 Tìm kiếm...]                         │
- * │  Thư    │  Grid items (filtered by initialType)     │
- * │  mục    │                                           │
- * │  30%    │                                           │
+ * │          │  [🔍 Search...]                           │
+ * │  Folder  │  Grid items (filtered by initialType)     │
+ * │          │                                           │
+ * │  30%     │                                           │
  * ├──────────┴──────────────────────────────────────────┤
- * │  [📤 Upload] [💻 Máy tính]       [Gửi X file]      │
+ * │  [📤 Upload] [💻 This computer]  [Send X files]      │
  * └─────────────────────────────────────────────────────┘
  *
- * - initialType quyết định hiển thị (image/video/file/all)
- * - Không có tabs chuyển loại (tránh mixed selection khó xử lý)
- * - Folder sidebar bên trái, file name editing khi hover
+ * - initialType decides what is shown (image/video/file/all)
+ * - No type tabs (avoids awkward mixed selection handling)
+ * - Folder sidebar on the left, file name editing on hover
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -30,6 +30,8 @@ import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { isNonZalo, CHANNEL, isZalo, isTelegram, isFacebook } from '@/lib/channels/channelHelper';
 import ChannelBadge from '@/components/common/avatars/ChannelBadge';
 import { CloseIcon, EditIcon, FolderIcon, ImageIcon, MonitorIcon, RefreshIcon, SendIcon, StarIcon, TrashIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface LibraryItem {
   uuid: string;
@@ -43,9 +45,9 @@ interface LibraryItem {
   is_favorite: number;
   folder_id: number | null;
   created_at: number;
-  /** Local file path trên Boss (được inject bởi library IPC/handler, undefined ở employee mode) */
+  /** Local file path on Boss (injected by the library IPC/handler, undefined in employee mode) */
   _localPath?: string;
-  /** Local thumbnail path trên Boss (được inject bởi library IPC/handler, undefined ở employee mode) */
+  /** Local thumbnail path on Boss (injected by the library IPC/handler, undefined in employee mode) */
   _thumbLocalPath?: string;
 }
 
@@ -67,18 +69,18 @@ interface Props {
   initialType?: MediaType;
   onClose: () => void;
   /**
-   * Telegram: gửi vào chủ đề forum / chuỗi bình luận bài đăng kênh (tin gốc). Thiếu → tệp rơi ra dòng chính của nhóm.
+   * Telegram: send into the forum topic / channel post comment thread (the root message). Missing → the file lands in the group's main line.
    */
   topicRootMessageId?: string | null;
-  /** Telegram: trả lời tin này (ô soạn tin đang trả lời) */
+  /** Telegram: reply to this message (the composer is replying to it) */
   replyToMsgId?: string | null;
-  /** Đã gửi (để ô soạn tin bỏ trích dẫn) */
+  /** Sent (so the composer drops the quote) */
   onSent?: () => void;
 }
 
 const TYPE_LABELS: Record<MediaType, string> = {
-  all: 'Tất cả',
-  image: 'Ảnh',
+  all: tr('Tất cả'),
+  image: tr('Ảnh'),
   video: 'Video',
   file: 'File',
 };
@@ -86,7 +88,7 @@ const TYPE_LABELS: Record<MediaType, string> = {
 export default function LibraryPickerModal({
   zaloId, threadId, threadType, initialType = 'all', onClose, topicRootMessageId, replyToMsgId, onSent,
 }: Props) {
-  // Telegram: chủ đề forum / chuỗi bình luận + tin được trả lời, gắn vào mọi lần gửi qua adapter (không phải Zalo)
+  // Telegram: forum topic / comment thread + the replied message, attached to every send through the adapter (not Zalo)
   const sendTarget = {
     ...(topicRootMessageId ? { topicRootMessageId: String(topicRootMessageId) } : {}),
     ...(replyToMsgId && /^\d+$/.test(String(replyToMsgId)) ? { replyToMsgId: String(replyToMsgId) } : {}),
@@ -121,10 +123,10 @@ export default function LibraryPickerModal({
   // Folder creation / rename inline
   const [folderInput, setFolderInput] = useState<{ mode: 'create' | 'rename'; id?: number; ownerId?: string; value: string } | null>(null);
 
-  // Context menu (⋯) cho item actions — dùng fixed position để tránh overflow clipping
+  // Context menu (⋯) for item actions, using fixed position to avoid overflow clipping
   const [menuTarget, setMenuTarget] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-  // Folder picker dropdown (sub-view của menu)
+  // Folder picker dropdown (a sub-view of the menu)
   const [moveFolderTarget, setMoveFolderTarget] = useState<string | null>(null);
   const [folderPos, setFolderPos] = useState<{ top: number; left: number } | null>(null);
 
@@ -154,8 +156,8 @@ export default function LibraryPickerModal({
   const directInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
-  // `owner_zalo_id` là tên cột cũ nhưng dùng làm ID thư viện cho mọi kênh.
-  // Tất cả chỉ hợp nhất kết quả đọc; mỗi media/folder vẫn thuộc một account cụ thể.
+  // `owner_zalo_id` is an old column name, but it is used as the library ID for every channel.
+  // Everything only merges the read results; each media / folder still belongs to one specific account.
   const scopedOwnerIds = useMemo(() => (
     libraryScope === 'all'
       ? libraryAccounts.map(account => account.zalo_id)
@@ -164,7 +166,7 @@ export default function LibraryPickerModal({
   const uploadOwnerId = libraryScope === 'all' ? zaloId : libraryScope;
   const uploadOwnerLabel = libraryAccounts.find(account => account.zalo_id === uploadOwnerId)?.display_name
     || libraryAccounts.find(account => account.zalo_id === uploadOwnerId)?.full_name
-    || 'trang đang mở';
+    || tr('trang đang mở');
   const uploadFolderId = useMemo(() => {
     if (!activeFolderId || activeFolderId < 0) return null;
     return folders.find(folder => folder.id === activeFolderId && folder.owner_zalo_id === uploadOwnerId)
@@ -180,7 +182,7 @@ export default function LibraryPickerModal({
     try { window.localStorage.setItem('deplao:library-scope:v1', nextScope); } catch {}
   }, []);
 
-  // Lựa chọn cache có thể trỏ tới trang đã bị xoá / workspace khác.
+  // A cached selection may point to a page that was deleted / another workspace.
   useEffect(() => {
     if (!libraryAccounts.length || libraryScope === 'all') return;
     if (!libraryAccounts.some(account => account.zalo_id === libraryScope)) {
@@ -200,7 +202,7 @@ export default function LibraryPickerModal({
     return () => document.removeEventListener('mousedown', handler);
   }, [scopeDropdownOpen]);
 
-  // ── Load folders (lọc theo type) ───────────────────────────
+  // ── Load folders (filtered by type) ───────────────────────────
 
   const loadFolders = useCallback(async () => {
     try {
@@ -240,7 +242,7 @@ export default function LibraryPickerModal({
             hasLocalPath: !!(newItems[0] as any)._localPath,
           });
         }
-        // Nếu activeFolderId === -1 (Yêu thích), filter
+        // If activeFolderId === -1 (Favorites), filter
         const filtered = activeFolderId === -1
           ? newItems.filter((i: LibraryItem) => i.is_favorite)
           : newItems;
@@ -257,8 +259,8 @@ export default function LibraryPickerModal({
     loadItems(1);
   }, [search, activeFolderId, loadItems]);
 
-  // Thư viện đổi ở máy khác (Boss / nhân viên — relay library:*) hoặc kết nối BOSS phục hồi: useZaloEvents đã xoá
-  // cache → mục bị xoá biến mất ngay, trang đầu tải lại (đang ở trang sau thì không kéo người dùng về đầu)
+  // The library changed on another machine (Boss / employee, relay library:*) or the BOSS connection recovered: useZaloEvents already removed
+  // cache → the deleted items disappear at once, the first page reloads (if on a later page, do not pull the user back to the top)
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail || {};
@@ -364,8 +366,8 @@ export default function LibraryPickerModal({
   };
 
   const handleDeleteFolder = async (id: number) => {
-    // Dùng confirm dialog của Electron (window.confirm có sẵn)
-    const ok = window.confirm?.('Xoá thư mục này? File trong thư mục sẽ không bị xoá.') ?? true;
+    // Use Electron's confirm dialog (window.confirm is available)
+    const ok = window.confirm?.(tr('Xoá thư mục này? File trong thư mục sẽ không bị xoá.')) ?? true;
     if (!ok) return;
     try {
       await DataAccessor.deleteLibraryFolder(id);
@@ -399,7 +401,7 @@ export default function LibraryPickerModal({
     const res = await DataAccessor.updateLibraryItem(itemUuid, { folderId: newFolderId });
     if (res.success) {
       setItems(prev => {
-        // Nếu đang xem folder cụ thể và move ra ngoài → remove khỏi list ngay
+        // If a specific folder is being viewed and the item is moved out → remove it from the list right away
         if (activeFolderId !== undefined && activeFolderId !== null && activeFolderId > 0 && newFolderId !== activeFolderId) {
           return prev.filter(i => i.uuid !== itemUuid);
         }
@@ -412,9 +414,9 @@ export default function LibraryPickerModal({
 
   // ── Drag & drop upload ──────────────────────────────────────
 
-  /** Xoá item vĩnh viễn */
+  /** Permanently delete the item */
   const handleDeleteItem = async (uuid: string) => {
-    const ok = window.confirm?.('Xoá file này khỏi thư viện? Hành động này không thể hoàn tác.') ?? true;
+    const ok = window.confirm?.(tr('Xoá file này khỏi thư viện? Hành động này không thể hoàn tác.')) ?? true;
     if (!ok) return;
     const res = await DataAccessor.deleteLibraryItem(uuid);
     if (res.success) {
@@ -480,7 +482,7 @@ export default function LibraryPickerModal({
   const getTargetChannel = () => (getTargetAccount()?.channel || CHANNEL.ZALO) as
     'zalo' | 'facebook' | 'telegram_bot' | 'telegram_user';
 
-  /** Lấy auth object từ account hiện tại */
+  /** Get the auth object from the current account */
   const getAuthForZaloId = async (): Promise<any> => {
     try {
       const res = await ipc.login?.getAccounts();
@@ -489,11 +491,11 @@ export default function LibraryPickerModal({
         if (acc?.cookies) return { cookies: acc.cookies, imei: acc.imei || '', userAgent: acc.user_agent || '' };
       }
     } catch {}
-    // Fallback: thử qua employeeStore
+    // Fallback: try through employeeStore
     try {
       const { useEmployeeStore } = require('../../../store/employee/employeeStore');
       const mode = useEmployeeStore.getState().mode;
-      // employee mode: Boss tự gắn auth thật — nhưng phải biết tài khoản nào (auth rỗng → Boss dùng tài khoản đầu tiên)
+      // employee mode: Boss attaches the real auth itself, but it must know which account (empty auth → Boss uses the first account)
       if (mode === 'employee') return { accountId: zaloId };
     } catch {}
     return null;
@@ -529,7 +531,7 @@ export default function LibraryPickerModal({
       // Zalo: existing flow
       const auth = await getAuthForZaloId();
       if (item.type === "video") {
-        // Video: cần 3-step upload (uploadVideoThumb → uploadVideoFile → sendVideo)
+        // Video: needs a 3-step upload (uploadVideoThumb → uploadVideoFile → sendVideo)
         const metaRes: any = await ipc.file?.getVideoMeta?.({ filePath }).catch(() => ({})) || {};
         await channelIpc.sendVideo('zalo', {
           auth,
@@ -543,7 +545,7 @@ export default function LibraryPickerModal({
           height: metaRes.height || 0,
         });
       } else {
-        // Image hoặc File
+        // Image or File
         const opts: any = { auth: auth || {}, zaloId, threadId, threadType, filePath };
         if (item.type === "image") {
           await ipc.zalo.sendImage(opts);
@@ -590,15 +592,15 @@ export default function LibraryPickerModal({
             if (isNonZaloChannel) {
               let lastMsgId = '';
               for (const item of imageItems) {
-                // Máy nhân viên không có file thư viện (không có _localPath) → gửi uuid, Boss tự lấy file
-                // (trước đây ảnh bị bỏ qua im lặng mà vẫn báo gửi xong)
+                // The employee machine has no library file (no _localPath) → send the uuid, Boss fetches the file itself
+                // (previously images were silently skipped while it still reported the send as done)
                 const fp = item._localPath || '';
                 if (!fp && !item.uuid) continue;
                 const res: any = await channelIpc.sendAttachment(channel, {
                   accountId: zaloId, threadId, threadType, filePath: fp, body: '', fileType: 'image',
                   ...(fp ? {} : { libraryUuid: item.uuid }), ...sendTarget,
                 });
-                if (res && res.success === false) return { success: false, error: res.error || 'Gửi ảnh thất bại' };
+                if (res && res.success === false) return { success: false, error: res.error || tr('Gửi ảnh thất bại') };
                 if (res?.messageId) lastMsgId = res.messageId;
               }
               return { success: true, msgId: lastMsgId };
@@ -631,7 +633,7 @@ export default function LibraryPickerModal({
       });
     }
 
-    // ── Videos & Files (gửi lẻ qua queue) ──
+    // ── Videos & Files (sent one by one through the queue) ──
     for (const item of [...videoItems, ...fileItems]) {
       const tempId = generateTempId();
       const previewPath = item._localPath || item.fileUrl || '';
@@ -653,7 +655,7 @@ export default function LibraryPickerModal({
             if (itemIsNonZalo) {
               const fp = item._localPath || '';
               if (!fp && !item.uuid) return { success: false, error: 'No local file path' };
-              // Máy nhân viên: không có file thư viện → uuid, Boss đổi ra đường dẫn file
+              // Employee machine: no library file → uuid, Boss converts it to the file path
               const library = fp ? {} : { libraryUuid: item.uuid };
               if (item.type === 'video') {
                 const res = await channelIpc.sendVideo(itemChannel, { accountId: zaloId, threadId, threadType, filePath: fp, ...library, ...sendTarget });
@@ -692,7 +694,7 @@ export default function LibraryPickerModal({
       });
     }
 
-    // Scroll xuống cuối sau khi gửi
+    // Scroll to the bottom after sending
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('chat:scrollToBottom'));
     }, 100);
@@ -806,8 +808,8 @@ export default function LibraryPickerModal({
 
   // ── Build folder tree ───────────────────────────────────────
 
-  // Hiển thị tất cả folder, item_count cho biết số lượng item theo type hiện tại
-  // Folder trống (0 item) hiển thị ở mọi type, khi có item thì tự lọc theo type
+  // Show all folders; item_count gives the number of items for the current type
+  // Empty folders (0 items) show for every type; once they have items, they filter by type automatically
   const rootFolders = folders.filter(f => !f.parent_id);
   const childFolders = (parentId: number) => folders.filter(f => f.parent_id === parentId);
 
@@ -842,7 +844,7 @@ export default function LibraryPickerModal({
             <span className="text-[9px] text-subtle-foreground truncate max-w-20">
               {libraryAccounts.find(account => account.zalo_id === folder.owner_zalo_id)?.display_name
                 || libraryAccounts.find(account => account.zalo_id === folder.owner_zalo_id)?.full_name
-                || 'Trang'}
+                || tr('Trang')}
             </span>
           )}
           <span className="text-[10px] mb-2">{folder.item_count || 0}</span>
@@ -857,11 +859,11 @@ export default function LibraryPickerModal({
             <div className="absolute right-0 top-full mt-1 bg-muted border border-input rounded-xl shadow-2xl z-50 py-1 w-40"
               onClick={e => e.stopPropagation()}>
               <button onClick={() => handleAddChildFolder(folder.id)}
-                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent flex items-center gap-2"><FolderIcon className="w-4 h-4 inline" /> Thêm thư mục con</button>
+                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent flex items-center gap-2">{trx('<0/> Thêm thư mục con', { 0: <FolderIcon className="w-4 h-4 inline" /> })}</button>
               <button onClick={() => { handleRenameFolder(folder.id); }}
-                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent flex items-center gap-2"><EditIcon className="w-3.5 h-3.5" /> Đổi tên</button>
+                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-accent flex items-center gap-2">{trx('<0/> Đổi tên', { 0: <EditIcon className="w-3.5 h-3.5" /> })}</button>
               <button onClick={() => handleDeleteFolder(folder.id)}
-                className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-accent flex items-center gap-2"><TrashIcon className="w-4 h-4 inline" /> Xoá</button>
+                className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-accent flex items-center gap-2">{trx('<0/> Xoá', { 0: <TrashIcon className="w-4 h-4 inline" /> })}</button>
             </div>
           )}
         </div>
@@ -897,8 +899,8 @@ export default function LibraryPickerModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border/50">
           <h2 className="text-lg font-semibold text-foreground">{typeLabel}</h2>
-          <span className="text-xs text-muted-foreground">{total} file</span>
-          <button onClick={() => { refreshLibraryCache(); loadItems(1); loadFolders(); }} className="p-1.5 text-muted-foreground hover:text-foreground transition-colors" title="Làm mới"><RefreshIcon className="w-4 h-4" /></button>
+          <span className="text-xs text-muted-foreground">{trx('{{total}} file', { total })}</span>
+          <button onClick={() => { refreshLibraryCache(); loadItems(1); loadFolders(); }} className="p-1.5 text-muted-foreground hover:text-foreground transition-colors" title={tr('Làm mới')}><RefreshIcon className="w-4 h-4" /></button>
           <button onClick={onClose} className="p-1.5 text-muted-foreground hover:text-foreground transition-colors ml-auto">✕</button>
         </div>
 
@@ -906,10 +908,10 @@ export default function LibraryPickerModal({
           {/* ─── Left sidebar: folders (30%) ─── */}
           <div className="w-1/4 border-r border-border/50 flex flex-col">
             <div className="flex items-center justify-between px-4 py-2 border-b border-border/50">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Thư mục</span>
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{tr('Thư mục')}</span>
               <button onClick={() => handleCreateFolder()}
                 className="w-7 h-7 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-lg font-bold flex items-center justify-center transition-colors shadow-md"
-                title="Tạo thư mục mới"
+                title={tr('Tạo thư mục mới')}
               >＋</button>
             </div>
             <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
@@ -918,14 +920,14 @@ export default function LibraryPickerModal({
                   activeFolderId === undefined ? 'bg-blue-600/30 text-blue-300' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                 }`}>
                 <span>📂</span>
-                <span className="flex-1">Tất cả</span>
+                <span className="flex-1">{tr('Tất cả')}</span>
               </div>
               <div onClick={() => setActiveFolderId(-1)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer text-sm transition-all ${
                   activeFolderId === -1 ? 'bg-blue-600/30 text-blue-300' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                 }`}>
                 <StarIcon className="w-4 h-4 text-yellow-400" />
-                <span className="flex-1">Yêu thích</span>
+                <span className="flex-1">{tr('Yêu thích')}</span>
               </div>
               <div className="h-px bg-muted/50 my-2" />
               {folderInput?.mode === 'create' && (
@@ -935,14 +937,14 @@ export default function LibraryPickerModal({
                     onChange={e => setFolderInput({ ...folderInput, value: e.target.value })}
                     onKeyDown={e => { if (e.key === 'Enter') submitFolderInput(); if (e.key === 'Escape') setFolderInput(null); }}
                     onBlur={() => setTimeout(() => submitFolderInput(), 200)}
-                    placeholder="Tên thư mục..."
+                    placeholder={tr('Tên thư mục...')}
                     className="w-full px-2 py-1 text-xs bg-muted border border-border-strong rounded-lg text-foreground placeholder-subtle-foreground outline-none"
                   />
                 </div>
               )}
               {rootFolders.map(f => renderFolderItem(f))}
               {rootFolders.length === 0 && !folderInput && (
-                <p className="text-xs text-muted-foreground text-center py-4">Chưa có thư mục</p>
+                <p className="text-xs text-muted-foreground text-center py-4">{tr('Chưa có thư mục')}</p>
               )}
             </div>
           </div>
@@ -955,12 +957,12 @@ export default function LibraryPickerModal({
                 <button
                   onClick={() => setScopeDropdownOpen(p => !p)}
                   className="flex items-center gap-2 px-3 py-1.5 bg-muted border border-input rounded-lg text-sm text-left hover:border-border-strong transition-colors min-w-[160px] max-w-[200px]"
-                  title="Chọn phạm vi thư viện"
+                  title={tr('Chọn phạm vi thư viện')}
                 >
                   {libraryScope === 'all' ? (
                     <>
                       <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 text-white-important">★</span>
-                      <span className="text-foreground truncate">Tất cả trang</span>
+                      <span className="text-foreground truncate">{tr('Tất cả trang')}</span>
                     </>
                   ) : (() => {
                     const acc = libraryAccounts.find(a => a.zalo_id === libraryScope);
@@ -984,7 +986,7 @@ export default function LibraryPickerModal({
                         <span className="text-foreground truncate">{acc.display_name || acc.full_name || acc.zalo_id}</span>
                       </>
                     ) : (
-                      <span className="text-subtle-foreground">Chọn trang...</span>
+                      <span className="text-subtle-foreground">{tr('Chọn trang...')}</span>
                     );
                   })()}
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`ml-auto flex-shrink-0 text-muted-foreground transition-transform ${scopeDropdownOpen ? 'rotate-180' : ''}`}>
@@ -993,15 +995,15 @@ export default function LibraryPickerModal({
                 </button>
                 {scopeDropdownOpen && (
                   <div className="absolute left-0 top-full mt-1 bg-muted border border-input rounded-xl shadow-2xl z-50 overflow-hidden min-w-[200px] max-h-[280px] overflow-y-auto">
-                    {/* Tất cả trang */}
+                    {/* All pages */}
                     <button
                       onClick={() => { changeLibraryScope('all'); setScopeDropdownOpen(false); }}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors ${libraryScope === 'all' ? 'bg-blue-500/10' : 'hover:bg-accent'}`}
                     >
                       <span className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0 text-white-important">★</span>
                       <div className="flex-1 min-w-0 text-left">
-                        <span className="text-sm text-foreground block">Tất cả trang</span>
-                        <span className="text-[10px] text-muted-foreground block">{libraryAccounts.length} trang</span>
+                        <span className="text-sm text-foreground block">{tr('Tất cả trang')}</span>
+                        <span className="text-[10px] text-muted-foreground block">{trx('{{count}} trang', { count: libraryAccounts.length })}</span>
                       </div>
                       {libraryScope === 'all' && (
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" className="flex-shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
@@ -1045,12 +1047,12 @@ export default function LibraryPickerModal({
                 )}
               </div>
               <input value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Tìm trong thư viện..."
+                placeholder={tr('Tìm trong thư viện...')}
                 className="min-w-0 flex-1 px-3 py-1.5 bg-muted border border-input rounded-lg text-sm text-foreground placeholder-subtle-foreground"
               />
             </div>
 
-            {/* Grid (có drag & drop upload) */}
+            {/* Grid (with drag & drop upload) */}
             <div ref={gridRef} onScroll={handleScroll}
               onDragOver={handleDragOver}
               onDragEnter={handleDragEnter}
@@ -1060,8 +1062,8 @@ export default function LibraryPickerModal({
               {items.length === 0 && !loading && (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                   <span className="text-4xl mb-2">📂</span>
-                  <p className="text-sm">Thư viện trống</p>
-                  <p className="text-xs mt-1">Nhấn "Upload vào thư viện" để thêm file</p>
+                  <p className="text-sm">{tr('Thư viện trống')}</p>
+                  <p className="text-xs mt-1">{tr('Nhấn "Upload vào thư viện" để thêm file')}</p>
                 </div>
               )}
 
@@ -1075,7 +1077,7 @@ export default function LibraryPickerModal({
                         className={`relative aspect-square rounded-xl cursor-pointer border-2 transition-all ${
                           selected.has(item.uuid) ? 'border-blue-500 ring-2 ring-blue-500/40' : 'border-transparent hover:border-border-strong'
                         }`}>
-                        {/*** Chỉ clip riêng ảnh, không clip dropdown ***/}
+                        {/*** Clip only the images, not the dropdown ***/}
                         <div className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none">
                           <ImagePreview item={item} />
                         </div>
@@ -1084,13 +1086,13 @@ export default function LibraryPickerModal({
                         <div className={`absolute top-1 left-1 z-10 ${!item.is_favorite ? 'opacity-0 group-hover:opacity-100' : ''} transition-opacity`}>
                           <div className="bg-accent backdrop-blur-sm rounded-lg p-1 shadow-lg">
                             <button onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item.uuid, item.is_favorite); }}
-                              className="text-[11px] leading-none block" title={item.is_favorite ? 'Bỏ yêu thích' : 'Yêu thích'}>
+                              className="text-[11px] leading-none block" title={item.is_favorite ? tr('Bỏ yêu thích') : tr('Yêu thích')}>
                               {item.is_favorite ? <StarIcon className="w-4 h-4 text-yellow-400" /> : <StarIcon className="w-4 h-4 text-muted-foreground" />}
                             </button>
                           </div>
                         </div>
 
-                        {/*** ⋮ button (top-right, hover) — menu ở modal level fixed ***/}
+                        {/*** ⋮ button (top-right, on hover): the menu is fixed at modal level ***/}
                         <div className="absolute top-1 right-1 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button onClick={(e) => handleMenuClick(e, item.uuid)}
                             className="bg-accent backdrop-blur-sm rounded-lg p-2 shadow-lg text-foreground hover:text-foreground text-sm leading-none">⋮</button>
@@ -1136,7 +1138,7 @@ export default function LibraryPickerModal({
                         className={`relative aspect-video rounded-xl cursor-pointer border-2 transition-all ${
                           selected.has(item.uuid) ? 'border-blue-500' : 'border-transparent hover:border-border-strong'
                         }`}>
-                        {/*** Clip riêng video icon ***/}
+                        {/*** Clip the video icon separately ***/}
                         <div className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none">
                           <div className="w-full h-full bg-muted flex items-center justify-center text-3xl">🎬</div>
                         </div>
@@ -1145,7 +1147,7 @@ export default function LibraryPickerModal({
                         <div className={`absolute top-1 left-1 z-10 ${!item.is_favorite ? 'opacity-0 group-hover:opacity-100' : ''} transition-opacity`}>
                           <div className="bg-black/50 backdrop-blur-sm rounded-lg p-1 shadow-lg">
                             <button onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item.uuid, item.is_favorite); }}
-                              className="text-[11px] leading-none block" title={item.is_favorite ? 'Bỏ yêu thích' : 'Yêu thích'}>
+                              className="text-[11px] leading-none block" title={item.is_favorite ? tr('Bỏ yêu thích') : tr('Yêu thích')}>
                               {item.is_favorite ? <StarIcon className="w-4 h-4 text-yellow-400" /> : <StarIcon className="w-4 h-4 text-muted-foreground" />}
                             </button>
                           </div>
@@ -1225,9 +1227,9 @@ export default function LibraryPickerModal({
                 </div>
               )}
 
-              {loading && <div className="flex justify-center py-4"><span className="text-muted-foreground animate-pulse">⏳ Đang tải...</span></div>}
+              {loading && <div className="flex justify-center py-4"><span className="text-muted-foreground animate-pulse">{tr('⏳ Đang tải...')}</span></div>}
               {hasMore && !loading && (
-                <button onClick={handleLoadMore} className="w-full py-3 text-sm text-muted-foreground hover:text-foreground transition-colors">Tải thêm...</button>
+                <button onClick={handleLoadMore} className="w-full py-3 text-sm text-muted-foreground hover:text-foreground transition-colors">{tr('Tải thêm...')}</button>
               )}
             </div>
           </div>
@@ -1238,26 +1240,26 @@ export default function LibraryPickerModal({
           <input ref={fileInputRef} type="file" multiple accept={getAcceptType(initialType)} onChange={handleUploadAndSend} className="hidden" />
           <input ref={directInputRef} type="file" multiple accept={getAcceptType(initialType)} onChange={handleDirectFile} className="hidden" />
           <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
-            title={`Lưu vào thư viện của ${uploadOwnerLabel}`}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-700/80 hover:bg-indigo-600 text-white-important text-xs rounded-lg transition-colors disabled:opacity-50"><SendIcon className="w-4 h-4 inline" /> {uploading ? 'Đang tải...' : `Upload vào ${uploadOwnerLabel}`}
+            title={tr('Lưu vào thư viện của {{uploadOwnerLabel}}', { uploadOwnerLabel })}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-700/80 hover:bg-indigo-600 text-white-important text-xs rounded-lg transition-colors disabled:opacity-50"><SendIcon className="w-4 h-4 inline" /> {uploading ? tr('Đang tải...') : tr('Upload vào {{uploadOwnerLabel}}', { uploadOwnerLabel })}
           </button>
           <button onClick={() => directInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-accent text-foreground text-xs rounded-lg transition-colors"><MonitorIcon className="w-4 h-4 inline" /> Chọn từ Máy tính
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-accent text-foreground text-xs rounded-lg transition-colors">{trx('<0/> Chọn từ Máy tính', { 0: <MonitorIcon className="w-4 h-4 inline" /> })}
           </button>
           <div className="flex-1" />
-          <span className="text-xs text-muted-foreground">{selectedItems.length} file</span>
+          <span className="text-xs text-muted-foreground">{trx('{{count}} file', { count: selectedItems.length })}</span>
           <button onClick={handleSendSelected} disabled={selectedItems.length === 0}
             className={`px-5 py-1.5 text-sm rounded-lg transition-colors ${
               selectedItems.length > 0
                 ? 'bg-blue-600 hover:bg-blue-500 text-white'
                 : 'bg-muted text-muted-foreground cursor-not-allowed'
             }`}>
-            Gửi {selectedItems.length ? `${selectedItems.length} file` : ''}
+            {trx('Gửi {{v1}}', { v1: selectedItems.length ? `${selectedItems.length} file` : '' })}
           </button>
         </div>
       </div>
 
-      {/*** Dropdown menu — fixed positioning để không bị overflow clipping ***/}
+      {/*** Dropdown menu: fixed positioning to avoid overflow clipping ***/}
       {(() => {
         const item = menuTarget ? items.find(i => i.uuid === menuTarget) : null;
         if (!item || !menuPos) return null;
@@ -1268,27 +1270,27 @@ export default function LibraryPickerModal({
               style={{ top: menuPos.top, left: menuPos.left }} onClick={e => e.stopPropagation()}>
               <button onClick={() => { handleToggleFavorite(item.uuid, item.is_favorite); closeMenus(); }}
                 className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2">
-                {item.is_favorite ? <><StarIcon className="w-3.5 h-3.5 inline" /> Bỏ yêu thích</> : '☆ Yêu thích'}
+                {item.is_favorite ? <>{trx('<0/> Bỏ yêu thích', { 0: <StarIcon className="w-3.5 h-3.5 inline" /> })}</> : tr('☆ Yêu thích')}
               </button>
               <button onClick={() => { setMoveFolderTarget(item.uuid); setFolderPos(menuPos); setMenuTarget(null); setMenuPos(null); }}
-                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2"><FolderIcon className="w-4 h-4 inline" /> Chuyển đến thư mục →
+                className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2">{trx('<0/> Chuyển đến thư mục →', { 0: <FolderIcon className="w-4 h-4 inline" /> })}
               </button>
               <button onClick={() => { startRename(item.uuid, item.name); closeMenus(); }}
                 className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-muted flex items-center gap-2">
-                <EditIcon className="w-3.5 h-3.5 inline" /> Đổi tên
+                {trx('<0/> Đổi tên', { 0: <EditIcon className="w-3.5 h-3.5 inline" /> })}
               </button>
               {item.folder_id !== null && (
                 <>
                   <div className="h-px bg-accent mx-2" />
                   <button onClick={() => handleMoveToFolder(item.uuid, null)}
-                    className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted flex items-center gap-2"><TrashIcon className="w-4 h-4 inline" /> Bỏ khỏi thư mục
+                    className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted flex items-center gap-2">{trx('<0/> Bỏ khỏi thư mục', { 0: <TrashIcon className="w-4 h-4 inline" /> })}
                   </button>
                 </>
               )}
               <div className="h-px bg-accent mx-2" />
               <button onClick={() => handleDeleteItem(item.uuid)}
                 className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-muted flex items-center gap-2">
-                <CloseIcon className="w-4 h-4" /> Xoá
+                {trx('<0/> Xoá', { 0: <CloseIcon className="w-4 h-4" /> })}
               </button>
             </div>
           </>
@@ -1304,15 +1306,15 @@ export default function LibraryPickerModal({
             <div className="fixed inset-0 z-[99]" onClick={closeMenus} />
             <div className="fixed z-[100] bg-card border border-input rounded-xl shadow-2xl py-1 min-w-[180px] max-h-[260px] overflow-y-auto"
               style={{ top: folderPos.top, left: folderPos.left }} onClick={e => e.stopPropagation()}>
-              <div className="px-3 py-1.5 text-[10px] text-muted-foreground uppercase tracking-wider">Chuyển đến</div>
+              <div className="px-3 py-1.5 text-[10px] text-muted-foreground uppercase tracking-wider">{tr('Chuyển đến')}</div>
               {rootFolders.length === 0 && (
-                <p className="px-3 py-2 text-xs text-muted-foreground">Chưa có thư mục</p>
+                <p className="px-3 py-2 text-xs text-muted-foreground">{tr('Chưa có thư mục')}</p>
               )}
               {rootFolders.map(f => renderFolderPickerItem(f, item.uuid))}
               {item.folder_id !== null && (
                 <><div className="h-px bg-accent mx-2" />
                 <button onClick={() => handleMoveToFolder(item.uuid, null)}
-                  className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted flex items-center gap-2">✕ Bỏ khỏi thư mục</button></>
+                  className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted flex items-center gap-2">{tr('✕ Bỏ khỏi thư mục')}</button></>
               )}
             </div>
           </>
@@ -1324,20 +1326,20 @@ export default function LibraryPickerModal({
 
 // ── ImagePreview component ─────────────────────────────────────
 
-/** Hiển thị ảnh với fallback: _thumbLocalPath/_localPath (boss) → thumbUrl → fileUrl (employee) → placeholder */
+/** Show the image with fallbacks: _thumbLocalPath/_localPath (boss) → thumbUrl → fileUrl (employee) → placeholder */
 function ImagePreview({ item }: { item: any }) {
   const [src, setSrc] = useState<string | null>(null);
   const [err, setErr] = useState(false);
 
   useEffect(() => {
     let url: string | null = null;
-    // Boss: ưu tiên local path (file nằm trên máy Boss)
+    // Boss: prefer the local path (the file is on the Boss machine)
     if (item._thumbLocalPath) {
       url = toLocalMediaUrl(item._thumbLocalPath);
     } else if (item._localPath) {
       url = toLocalMediaUrl(item._localPath);
     }
-    // Employee: dùng HTTP URL (không có local path)
+    // Employee: use the HTTP URL (no local path)
     if (!url && item.thumbUrl) {
       url = item.thumbUrl;
     }

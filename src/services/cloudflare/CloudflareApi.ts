@@ -1,26 +1,27 @@
 /**
- * CloudflareApi — client REST v4 (https://api.cloudflare.com/client/v4) cho mọi module Cloudflare.
+ * CloudflareApi: REST v4 client (https://api.cloudflare.com/client/v4) for all Cloudflare modules.
  *
- *  - Token Bearer lấy qua getToken() mỗi lần gọi (cloudSettings giải mã safeStorage, nhớ trong RAM).
- *    KHÔNG bao giờ log token / header Authorization.
- *  - Ngân sách: tối đa 100 request trong MỌI cửa sổ 5 phút cho cả app (RequestBudget dùng chung). Hết ngân
- *    sách → chờ tới khi có (FIFO), không vượt. `unbudgeted` chỉ dành cho verify token lúc kết nối.
- *  - 5xx → thử lại tối đa 2 lần (chờ 1 s, 3 s); lỗi mạng chỉ thử lại với GET. 429 → CloudError('RATE_LIMITED',
- *    …, retryAfterMs theo Retry-After). 4xx khác → CloudApiError (code ngắn + câu tiếng Việt + mã lỗi Cloudflare).
- *  - Timeout bằng AbortController (mặc định 20 s).
+ *  - The Bearer token is obtained via getToken() on each call (cloudSettings decrypts it with safeStorage, kept in RAM).
+ *    NEVER log the token or the Authorization header.
+ *  - Budget: at most 100 requests in ANY 5-minute window for the whole app (shared RequestBudget). When the budget is used up
+ *    → wait until one is free (FIFO), never exceed it. `unbudgeted` is only for verifying the token when connecting.
+ *  - 5xx → retry at most 2 times (wait 1 s, 3 s); network errors are only retried for GET. 429 → CloudError('RATE_LIMITED',
+ *    …, retryAfterMs from Retry-After). Other 4xx → CloudApiError (short code + a Vietnamese message + the Cloudflare error code).
+ *  - Timeout via AbortController (default 20 s).
  */
 import { CloudError, CfRequestOptions, CloudflareApi } from './contracts';
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 export const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
 export const CF_BUDGET_MAX = 100;
 export const CF_BUDGET_WINDOW_MS = 5 * 60 * 1000;
 export const CF_DEFAULT_TIMEOUT_MS = 20_000;
 export const CF_RETRY_DELAYS_MS: ReadonlyArray<number> = [1000, 3000];
-/** Retry-After thiếu khi bị 429 → lùi 60 s. */
+/** Retry-After missing on a 429 → back off 60 s. */
 const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
 
-// ─── Kiểu fetch tối thiểu (dễ mock trong test, không phụ thuộc lib DOM/undici) ──────────────────
+// ─── Minimal fetch types (easy to mock in tests, no dependency on the DOM/undici lib) ──────────────────
 
 export interface FetchResponseLike {
     status: number;
@@ -49,7 +50,7 @@ export interface CfEnvelope<T = any> {
     result_info?: CfResultInfo;
 }
 
-/** Lỗi API Cloudflare, giữ mã lỗi gốc (errors[].code) để module phân biệt (vd 10042, 81057). */
+/** Cloudflare API error, keeps the original error code (errors[].code) so modules can tell them apart (e.g. 10042, 81057). */
 export class CloudApiError extends CloudError {
     constructor(
         code: string,
@@ -63,12 +64,12 @@ export class CloudApiError extends CloudError {
     }
 }
 
-/** Mã lỗi Cloudflare (errors[].code) của một lỗi bất kỳ ([] nếu không phải lỗi API). */
+/** Cloudflare error codes (errors[].code) of any error ([] if it is not an API error). */
 export function cfErrorCodes(err: unknown): number[] {
     return err instanceof CloudApiError ? err.cfErrors.map(e => Number(e.code)).filter(n => Number.isFinite(n)) : [];
 }
 
-/** Retry-After: số giây hoặc HTTP-date → ms (null nếu không đọc được). */
+/** Retry-After: seconds or HTTP-date → ms (null if it cannot be read). */
 export function parseRetryAfterMs(value: string | null | undefined, nowMs: number = Date.now()): number | null {
     if (!value) return null;
     const v = String(value).trim();
@@ -78,12 +79,12 @@ export function parseRetryAfterMs(value: string | null | undefined, nowMs: numbe
     return null;
 }
 
-// ─── Ngân sách request ───────────────────────────────────────────────────────
+// ─── Request budget ───────────────────────────────────────────────────────
 
 /**
- * Giới hạn `max` request trong mọi cửa sổ `windowMs` (cửa sổ trượt: ghi mốc thời gian từng request, mỗi request
- * mới chỉ đi khi số mốc trong windowMs gần nhất < max). Chặt hơn token bucket thuần (không có đợt 2× ở biên cửa sổ).
- * Người chờ được phục vụ theo thứ tự (FIFO).
+ * Limit to `max` requests in every `windowMs` window (sliding window: records the timestamp of each request, and each new request
+ * only goes ahead when the number of timestamps in the last windowMs is < max). Stricter than a plain token bucket (no 2× burst at the window edge).
+ * Waiting callers are served in order (FIFO).
  */
 export class RequestBudget {
     private readonly stamps: number[] = [];
@@ -101,7 +102,7 @@ export class RequestBudget {
         return Math.max(0, this.max - this.stamps.length);
     }
 
-    /** Số request đang chờ ngân sách. */
+    /** Number of requests waiting for budget. */
     waiting(): number {
         return this.waiters.length;
     }
@@ -144,26 +145,26 @@ export class RequestBudget {
     }
 }
 
-/** Ngân sách dùng chung cho cả app. */
+/** Budget shared by the whole app. */
 export const cloudflareBudget = new RequestBudget();
 
-// ─── Ánh xạ lỗi ──────────────────────────────────────────────────────────────
+// ─── Error mapping ──────────────────────────────────────────────────────────────
 
 const KNOWN_CF_CODES: Record<number, [string, string]> = {
-    1000: ['INVALID_TOKEN', 'Token Cloudflare không hợp lệ'],
-    6003: ['INVALID_TOKEN', 'Token Cloudflare sai định dạng'],
-    6111: ['INVALID_TOKEN', 'Token Cloudflare sai định dạng'],
-    9103: ['INVALID_TOKEN', 'Token Cloudflare không hợp lệ'],
-    9106: ['INVALID_TOKEN', 'Thiếu token Cloudflare'],
-    9109: ['INVALID_TOKEN', 'Token Cloudflare không hợp lệ hoặc đã bị thu hồi'],
-    10000: ['FORBIDDEN', 'Token không có quyền cho thao tác này'],
-    7000: ['NOT_FOUND', 'Đường dẫn API Cloudflare không tồn tại'],
-    7003: ['NOT_FOUND', 'Sai Account ID / Zone ID hoặc tài nguyên không còn trên Cloudflare'],
-    10042: ['R2_NOT_ENABLED', 'Tài khoản Cloudflare chưa bật R2'],
-    10006: ['R2_NO_BUCKET', 'Bucket R2 không tồn tại'],
-    81053: ['DNS_RECORD_EXISTS', 'Đã có bản ghi DNS trùng tên'],
-    81057: ['DNS_RECORD_EXISTS', 'Đã có bản ghi DNS trùng tên'],
-    81058: ['DNS_RECORD_EXISTS', 'Đã có bản ghi DNS giống hệt'],
+    1000: ['INVALID_TOKEN', tr('Token Cloudflare không hợp lệ')],
+    6003: ['INVALID_TOKEN', tr('Token Cloudflare sai định dạng')],
+    6111: ['INVALID_TOKEN', tr('Token Cloudflare sai định dạng')],
+    9103: ['INVALID_TOKEN', tr('Token Cloudflare không hợp lệ')],
+    9106: ['INVALID_TOKEN', tr('Thiếu token Cloudflare')],
+    9109: ['INVALID_TOKEN', tr('Token Cloudflare không hợp lệ hoặc đã bị thu hồi')],
+    10000: ['FORBIDDEN', tr('Token không có quyền cho thao tác này')],
+    7000: ['NOT_FOUND', tr('Đường dẫn API Cloudflare không tồn tại')],
+    7003: ['NOT_FOUND', tr('Sai Account ID / Zone ID hoặc tài nguyên không còn trên Cloudflare')],
+    10042: ['R2_NOT_ENABLED', tr('Tài khoản Cloudflare chưa bật R2')],
+    10006: ['R2_NO_BUCKET', tr('Bucket R2 không tồn tại')],
+    81053: ['DNS_RECORD_EXISTS', tr('Đã có bản ghi DNS trùng tên')],
+    81057: ['DNS_RECORD_EXISTS', tr('Đã có bản ghi DNS trùng tên')],
+    81058: ['DNS_RECORD_EXISTS', tr('Đã có bản ghi DNS giống hệt')],
 };
 
 function shortCfMessage(errors: CfApiErrorItem[]): string {
@@ -173,21 +174,21 @@ function shortCfMessage(errors: CfApiErrorItem[]): string {
     return msg;
 }
 
-/** HTTP 4xx (≠429) + errors[] → CloudApiError với câu tiếng Việt ngắn. */
+/** HTTP 4xx (not 429) + errors[] → CloudApiError with a short Vietnamese message. */
 export function mapCloudflareError(status: number, errors: CfApiErrorItem[]): CloudApiError {
     for (const e of errors) {
         const known = KNOWN_CF_CODES[Number(e.code)];
-        if (known) return new CloudApiError(known[0], `${known[1]} (mã ${e.code})`, status, errors);
+        if (known) return new CloudApiError(known[0], tr('{{v1}} (mã {{code}})', { v1: known[1], code: e.code }), status, errors);
     }
     const cfCode = errors[0]?.code;
     const cfMsg = shortCfMessage(errors);
-    const suffix = cfCode ? ` (mã ${cfCode}${cfMsg ? `: ${cfMsg}` : ''})` : (cfMsg ? ` (${cfMsg})` : '');
-    if (status === 401) return new CloudApiError('INVALID_TOKEN', `Token Cloudflare không hợp lệ hoặc đã hết hạn${suffix}`, status, errors);
-    if (status === 403) return new CloudApiError('FORBIDDEN', `Token thiếu quyền cho thao tác này${suffix}`, status, errors);
-    if (status === 404) return new CloudApiError('NOT_FOUND', `Không tìm thấy trên Cloudflare${suffix}`, status, errors);
-    if (status === 409) return new CloudApiError('CONFLICT', `Đã tồn tại trên Cloudflare${suffix}`, status, errors);
-    if (status === 400 || status === 422) return new CloudApiError('BAD_REQUEST', `Cloudflare từ chối yêu cầu${suffix}`, status, errors);
-    return new CloudApiError('CF_ERROR', `Cloudflare báo lỗi (HTTP ${status})${suffix}`, status, errors);
+    const suffix = cfCode ? tr(' (mã {{cfCode}}{{v1}})', { cfCode, v1: cfMsg ? `: ${cfMsg}` : '' }) : (cfMsg ? ` (${cfMsg})` : '');
+    if (status === 401) return new CloudApiError('INVALID_TOKEN', tr('Token Cloudflare không hợp lệ hoặc đã hết hạn{{suffix}}', { suffix }), status, errors);
+    if (status === 403) return new CloudApiError('FORBIDDEN', tr('Token thiếu quyền cho thao tác này{{suffix}}', { suffix }), status, errors);
+    if (status === 404) return new CloudApiError('NOT_FOUND', tr('Không tìm thấy trên Cloudflare{{suffix}}', { suffix }), status, errors);
+    if (status === 409) return new CloudApiError('CONFLICT', tr('Đã tồn tại trên Cloudflare{{suffix}}', { suffix }), status, errors);
+    if (status === 400 || status === 422) return new CloudApiError('BAD_REQUEST', tr('Cloudflare từ chối yêu cầu{{suffix}}', { suffix }), status, errors);
+    return new CloudApiError('CF_ERROR', tr('Cloudflare báo lỗi (HTTP {{status}}){{suffix}}', { status, suffix }), status, errors);
 }
 
 function parseErrors(env: any): CfApiErrorItem[] {
@@ -205,11 +206,11 @@ function safeJson(text: string): any {
 function networkReason(err: any): string {
     const code = err?.cause?.code || err?.code;
     if (typeof code === 'string' && code) return code;
-    const msg = String(err?.cause?.message || err?.message || 'lỗi mạng');
+    const msg = String(err?.cause?.message || err?.message || tr('lỗi mạng'));
     return msg.slice(0, 120);
 }
 
-/** Danh sách trong result: mảng, hoặc mảng đầu tiên trong object (vd R2 trả { buckets: [...] }). */
+/** List in the result: an array, or the first array inside an object (e.g. R2 returns { buckets: [...] }). */
 function extractItems(result: any): any[] {
     if (Array.isArray(result)) return result;
     if (result && typeof result === 'object') {
@@ -225,7 +226,7 @@ export interface CloudflareApiOptions {
     fetchImpl?: FetchLike;
     budget?: RequestBudget;
     baseUrl?: string;
-    /** Thay setTimeout khi chờ giữa các lần thử lại (test). */
+    /** Replaces setTimeout when waiting between retries (tests). */
     sleep?: (ms: number) => Promise<void>;
     retryDelaysMs?: ReadonlyArray<number>;
     now?: () => number;
@@ -294,18 +295,18 @@ export class CloudflareApiClient implements CloudflareApi {
         variables: Record<string, unknown> = {},
         opts: CfRequestOptions = {},
     ): Promise<{ data: T | null; errors: Array<{ message: string; [k: string]: unknown }> }> {
-        // Phản hồi GraphQL không có `success` → requestEnvelope trả nguyên { data, errors }
+        // A GraphQL response without `success` → requestEnvelope returns { data, errors } as is
         const env: any = await this.requestEnvelope<any>('POST', '/graphql', { query, variables }, opts);
         const errors = Array.isArray(env?.errors)
-            ? env.errors.map((e: any) => ({ ...(e && typeof e === 'object' ? e : {}), message: String(e?.message ?? e ?? 'Lỗi GraphQL') }))
+            ? env.errors.map((e: any) => ({ ...(e && typeof e === 'object' ? e : {}), message: String(e?.message ?? e ?? tr('Lỗi GraphQL')) }))
             : [];
         return { data: (env?.data ?? null) as T | null, errors };
     }
 
-    /** Như request() nhưng trả cả envelope (result_info…). */
+    /** Like request() but returns the whole envelope (result_info…). */
     async requestEnvelope<T = any>(method: string, path: string, body?: unknown, opts: CfRequestOptions = {}): Promise<CfEnvelope<T>> {
         const token = this.opts.getToken();
-        if (!token) throw new CloudError('NOT_CONNECTED', 'Chưa kết nối Cloudflare');
+        if (!token) throw new CloudError('NOT_CONNECTED', tr('Chưa kết nối Cloudflare'));
         const url = this.buildUrl(path, opts.query);
         const headers: Record<string, string> = {
             ...(opts.headers || {}),
@@ -315,7 +316,7 @@ export class CloudflareApiClient implements CloudflareApi {
         let payload: string | Buffer | undefined;
         if (body !== undefined && body !== null) {
             if (opts.contentType && (typeof body === 'string' || Buffer.isBuffer(body))) {
-                // Body dựng sẵn (multipart tải script Worker) — gửi nguyên, token vẫn chỉ nằm ở đây.
+                // Prebuilt body (multipart Worker script upload), sent as is; the token still only lives here.
                 headers['Content-Type'] = opts.contentType;
                 payload = body;
             } else {
@@ -352,11 +353,11 @@ export class CloudflareApiClient implements CloudflareApi {
                 }
                 if (timedOut) {
                     Logger.warn(`[CloudflareApi] ${method} ${logPath} timeout`);
-                    throw new CloudError('TIMEOUT', 'Cloudflare phản hồi quá lâu, thử lại sau');
+                    throw new CloudError('TIMEOUT', tr('Cloudflare phản hồi quá lâu, thử lại sau'));
                 }
                 const reason = networkReason(err);
                 Logger.warn(`[CloudflareApi] ${method} ${logPath} network error: ${reason}`);
-                throw new CloudError('NETWORK', `Không kết nối được Cloudflare (${reason})`);
+                throw new CloudError('NETWORK', tr('Không kết nối được Cloudflare ({{reason}})', { reason }));
             }
             clearTimeout(timer);
 
@@ -368,14 +369,14 @@ export class CloudflareApiClient implements CloudflareApi {
                     continue;
                 }
                 Logger.warn(`[CloudflareApi] ${method} ${logPath} → HTTP ${status} (hết lượt thử lại)`);
-                throw new CloudApiError('CF_UNAVAILABLE', `Cloudflare đang lỗi tạm thời (HTTP ${status}), thử lại sau`, status, parseErrors(env));
+                throw new CloudApiError('CF_UNAVAILABLE', tr('Cloudflare đang lỗi tạm thời (HTTP {{status}}), thử lại sau', { status }), status, parseErrors(env));
             }
             if (status === 429) {
                 const retryAfterMs = parseRetryAfterMs(retryAfter, this.now()) ?? DEFAULT_RATE_LIMIT_WAIT_MS;
                 Logger.warn(`[CloudflareApi] ${method} ${logPath} → 429, chờ ${retryAfterMs} ms`);
                 throw new CloudApiError(
                     'RATE_LIMITED',
-                    `Cloudflare đang giới hạn số yêu cầu, thử lại sau ${Math.max(1, Math.ceil(retryAfterMs / 1000))} giây`,
+                    tr('Cloudflare đang giới hạn số yêu cầu, thử lại sau {{v1}} giây', { v1: Math.max(1, Math.ceil(retryAfterMs / 1000)) }),
                     429,
                     parseErrors(env),
                     retryAfterMs,
@@ -385,7 +386,7 @@ export class CloudflareApiClient implements CloudflareApi {
                 return env as CfEnvelope<T>;
             }
             if (status >= 200 && status < 300 && !env) {
-                throw new CloudError('BAD_RESPONSE', 'Cloudflare trả về dữ liệu không đọc được', status);
+                throw new CloudError('BAD_RESPONSE', tr('Cloudflare trả về dữ liệu không đọc được'), status);
             }
             const errors = parseErrors(env);
             const mapped = mapCloudflareError(status, errors);

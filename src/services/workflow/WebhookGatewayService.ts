@@ -17,10 +17,11 @@
 import * as http from 'http';
 import Logger from '../../utils/Logger';
 import TunnelService from '../tunnel/TunnelService';
+import { tr } from '../../shared/i18n';
 
 /**
- * Cloudflare tự động (cloud-settings tunnel.mode = 'cloudflare_auto'): địa chỉ webhook workflow là dịch vụ 'workflow'
- * của tunnel cố định dùng chung; server cổng 9889 vẫn chạy như cũ. Nạp lười — chế độ khác / lỗi nạp → null = như cũ.
+ * Automatic Cloudflare (cloud-settings tunnel.mode = 'cloudflare_auto'): the workflow webhook address is the 'workflow' service
+ * of the shared fixed tunnel; the server on port 9889 keeps running as before. Lazy load: other mode / load error → null = unchanged.
  */
 type CloudTunnelApi = typeof import('../cloudflare/tunnel');
 
@@ -131,7 +132,7 @@ class WebhookGatewayService {
 
   public async startTunnel(): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
     if (!this.running) {
-      return { success: false, error: 'Gateway server chưa được bật' };
+      return { success: false, error: tr('Gateway server chưa được bật') };
     }
     const cloud = cloudTunnelIfAuto();
     if (cloud) return this.startCloudTunnel(cloud);
@@ -153,14 +154,14 @@ class WebhookGatewayService {
     }
   }
 
-  /** Cloudflare tự động: bật dịch vụ 'workflow' (đổi ingress của tunnel dùng chung, không chạy lại cloudflared). */
+  /** Automatic Cloudflare: enables the 'workflow' service (changes the ingress of the shared tunnel, does not restart cloudflared). */
   private async startCloudTunnel(cloud: CloudTunnelApi): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
     try {
       await cloud.cloudTunnel.setServiceEnabled('workflow', true);
       const address = cloud.cloudTunnel.addressOf('workflow');
       const url = address.state === 'active' ? address.url : null;
-      if (!url) return { success: false, error: address.error || 'Địa chỉ Cloudflare chưa kết nối xong — đang tự thử lại' };
-      // Đã có địa chỉ cố định → tunnel cũ của cổng này (Quick Tunnel…) không còn dùng
+      if (!url) return { success: false, error: address.error || tr('Địa chỉ Cloudflare chưa kết nối xong — đang tự thử lại') };
+      // A fixed address already exists → the old tunnel of this port (Quick Tunnel…) is no longer used
       if (this.tunnelActive || TunnelService.getState(this.port)) {
         void TunnelService.stop(this.port).catch(() => {});
         this.tunnelActive = false;
@@ -192,7 +193,7 @@ class WebhookGatewayService {
   public getStatus(): { running: boolean; port: number; tunnelActive: boolean; tunnelUrl: string | null } {
     const cloud = cloudTunnelIfAuto();
     if (cloud) {
-      // Địa chỉ gốc của dịch vụ 'workflow' (nơi dùng tự nối /api/workflow/webhook/<token>)
+      // Base address of the 'workflow' service (the caller appends /api/workflow/webhook/<token>)
       const address = cloud.cloudTunnel.addressOf('workflow');
       const url = address.state === 'active' ? address.url : null;
       return { running: this.running, port: this.port, tunnelActive: !!url, tunnelUrl: url };

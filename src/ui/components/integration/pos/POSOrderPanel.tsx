@@ -3,21 +3,35 @@ import ipc from '@/lib/ipc';
 import {
   getProvinces, getDistricts, getWards,
   getProvinceName, getDistrictName, getWardName,
+  getProvincesV2, getWardsV2, getProvinceNameV2, getWardNameV2,
   type Division,
 } from './vnDivisions';
-import { adaptOrderForPlatform, type GenericOrderData } from './platformOrderAdapters';
+import { adaptOrderForPlatform, type AddressModel, type GenericOrderData } from './platformOrderAdapters';
 import { IS_DEV_BUILD } from '../../../../configs/app/BuildConfig';
 import { Spinner } from '@/components/common/PageLoading';
 import { CheckIcon, CloseIcon, CreditCardIcon, DollarIcon, EditIcon, PackageIcon, SettingsIcon, ShoppingCartIcon, TagIcon, TruckIcon, UserIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 /**
- * POSOrderPanel - Giao diện tạo đơn hàng POS đầy đủ
- * Flow mới: 1 màn hình duy nhất
- * - Thông tin khách + địa chỉ là bắt buộc
- * - Chọn sản phẩm, chỉnh giỏ hàng, phí/ghi chú và submit ngay trên cùng màn hình
- * - Dữ liệu tỉnh/huyện/xã lấy từ hanhchinhVN qua `vnDivisions`
+ * POSOrderPanel - full POS order creation UI
+ * New flow: a single screen
+ * - Customer info + address are required
+ * - Pick products, edit the cart, fee / note and submit right on the same screen
+ * - Province / district / ward data comes from hanhchinhVN via `vnDivisions`: the new 2-level units (province → ward,
+ *   after 01/07/2025) by default, the old 3-level units (province → district → ward) on demand; the choice is kept per machine
  */
+
+const ADDRESS_MODEL_KEY = 'deplao.posOrder.addressModel';
+
+function readAddressModel(): AddressModel {
+  try {
+    return localStorage.getItem(ADDRESS_MODEL_KEY) === 'old' ? 'old' : 'new';
+  } catch {
+    return 'new';
+  }
+}
 
 export interface POSProduct {
   id: string;
@@ -54,7 +68,7 @@ function normalizePhoneDisplay(phone: string | undefined | null): string {
 }
 
 function formatVND(n: number): string {
-  return n.toLocaleString('vi-VN') + 'đ';
+  return tr('{{v1}}đ', { v1: (n.toLocaleString(appLocale())) });
 }
 
 function firstNonEmptyString(...values: any[]): string {
@@ -210,12 +224,20 @@ export default function POSOrderPanel({
   const [custPhone, setCustPhone] = useState(normalizePhoneDisplay(contextPhone) || '');
   const [custEmail, setCustEmail] = useState('');
   const [custAddress, setCustAddress] = useState('');
+  const [addressModel, setAddressModel] = useState<AddressModel>(readAddressModel);
   const [provinceId, setProvinceId] = useState('');
   const [districtId, setDistrictId] = useState('');
   const [wardId, setWardId] = useState('');
-  const [provinces, setProvinces] = useState<Division[]>(() => getProvinces());
+  const provinces = useMemo<Division[]>(() => (addressModel === 'new' ? getProvincesV2() : getProvinces()), [addressModel]);
   const [districts, setDistricts] = useState<Division[]>([]);
   const [wards, setWards] = useState<Division[]>([]);
+
+  const switchAddressModel = useCallback((model: AddressModel) => {
+    if (model === addressModel) return;
+    try { localStorage.setItem(ADDRESS_MODEL_KEY, model); } catch { /* storage unavailable: keep for this session only */ }
+    setAddressModel(model);
+    setProvinceId('');
+  }, [addressModel]);
 
   const [note, setNote] = useState('');
   const [orderDiscount, setOrderDiscount] = useState(0);
@@ -241,52 +263,51 @@ export default function POSOrderPanel({
           // keep silent - branch remains optional
         }
       }
-      if (active) setProvinces(getProvinces());
     };
 
     loadInitialData();
     return () => { active = false; };
   }, [integrationId]);
 
+  // Province (or address model) changed: reset the lower levels; a new address lists wards right under the province
   useEffect(() => {
-    let active = true;
     setDistrictId('');
     setWardId('');
-    setWards([]);
-
     if (!provinceId) {
       setDistricts([]);
-      return () => { active = false; };
-    }
-
-    if (active) setDistricts(getDistricts(provinceId));
-    return () => { active = false; };
-  }, [provinceId]);
-
-  useEffect(() => {
-    let active = true;
-    setWardId('');
-
-    if (!districtId) {
       setWards([]);
-      return () => { active = false; };
+      return;
     }
+    if (addressModel === 'new') {
+      setDistricts([]);
+      setWards(getWardsV2(provinceId));
+    } else {
+      setDistricts(getDistricts(provinceId));
+      setWards([]);
+    }
+  }, [provinceId, addressModel]);
 
-    if (active) setWards(getWards(provinceId, districtId));
-    return () => { active = false; };
-  }, [districtId, provinceId]);
+  // Old address: wards come from the district
+  useEffect(() => {
+    if (addressModel === 'new') return;
+    setWardId('');
+    setWards(districtId ? getWards(provinceId, districtId) : []);
+  }, [districtId, provinceId, addressModel]);
 
   const selectedProvinceName = useMemo(() => {
-    return provinces.find(p => p.id === provinceId)?.name || getProvinceName(provinceId);
-  }, [provinces, provinceId]);
+    return provinces.find(p => p.id === provinceId)?.name
+      || (addressModel === 'new' ? getProvinceNameV2(provinceId) : getProvinceName(provinceId));
+  }, [provinces, provinceId, addressModel]);
 
   const selectedDistrictName = useMemo(() => {
+    if (addressModel === 'new') return '';
     return districts.find(d => d.id === districtId)?.name || getDistrictName(provinceId, districtId);
-  }, [districts, districtId, provinceId]);
+  }, [districts, districtId, provinceId, addressModel]);
 
   const selectedWardName = useMemo(() => {
-    return wards.find(w => w.id === wardId)?.name || getWardName(provinceId, districtId, wardId);
-  }, [wards, wardId, provinceId, districtId]);
+    return wards.find(w => w.id === wardId)?.name
+      || (addressModel === 'new' ? getWardNameV2(wardId) : getWardName(provinceId, districtId, wardId));
+  }, [wards, wardId, provinceId, districtId, addressModel]);
 
   const trimmedSearchQuery = searchQuery.trim();
   const isBrowsingAllProducts = trimmedSearchQuery.length === 0;
@@ -353,7 +374,7 @@ export default function POSOrderPanel({
         setSearchMeta(null);
       }
     } catch (e: any) {
-      const msg = e?.message || 'Tra cứu sản phẩm thất bại';
+      const msg = e?.message || tr('Tra cứu sản phẩm thất bại');
       if (DEV_DEBUG) console.error('[POSOrderPanel] lookupProduct error:', e);
       setSearchError(msg);
       setSearchResults([]);
@@ -435,14 +456,14 @@ export default function POSOrderPanel({
 
   const missingRequiredFields = useMemo(() => {
     const missing: string[] = [];
-    if (!custName.trim()) missing.push('Tên khách hàng');
-    if (!custPhone.trim()) missing.push('Số điện thoại');
-    if (!provinceId) missing.push('Tỉnh/Thành phố');
-    if (!districtId) missing.push('Quận/Huyện');
-    if (!wardId) missing.push('Phường/Xã');
-    if (!custAddress.trim()) missing.push('Số nhà, tên đường');
+    if (!custName.trim()) missing.push(tr('Tên khách hàng'));
+    if (!custPhone.trim()) missing.push(tr('Số điện thoại'));
+    if (!provinceId) missing.push(tr('Tỉnh/Thành phố'));
+    if (addressModel === 'old' && !districtId) missing.push(tr('Quận/Huyện'));
+    if (!wardId) missing.push(tr('Phường/Xã'));
+    if (!custAddress.trim()) missing.push(tr('Số nhà, tên đường'));
     return missing;
-  }, [custName, custPhone, provinceId, districtId, wardId, custAddress]);
+  }, [custName, custPhone, provinceId, districtId, wardId, custAddress, addressModel]);
 
   const canSubmitOrder = missingRequiredFields.length === 0 && cart.length > 0;
 
@@ -450,9 +471,9 @@ export default function POSOrderPanel({
     setShowValidation(true);
     if (!canSubmitOrder) {
       if (cart.length === 0) {
-        setOrderError('Vui lòng chọn ít nhất 1 sản phẩm trước khi tạo đơn');
+        setOrderError(tr('Vui lòng chọn ít nhất 1 sản phẩm trước khi tạo đơn'));
       } else {
-        setOrderError(`Vui lòng nhập đầy đủ: ${missingRequiredFields.join(', ')}`);
+        setOrderError(tr('Vui lòng nhập đầy đủ: {{v1}}', { v1: missingRequiredFields.join(', ') }));
       }
       return;
     }
@@ -463,11 +484,12 @@ export default function POSOrderPanel({
     try {
       const generic: GenericOrderData = {
         customer: {
-          name: custName || 'Khách vãng lai',
+          name: custName || tr('Khách vãng lai'),
           phone: custPhone,
           email: custEmail,
+          addressModel,
           provinceId,
-          districtId,
+          districtId: addressModel === 'new' ? '' : districtId,
           wardId,
           provinceName: selectedProvinceName,
           districtName: selectedDistrictName,
@@ -507,13 +529,13 @@ export default function POSOrderPanel({
       if (res?.success) {
         setOrderResult(res.data || res);
       } else {
-        setOrderError(res?.error || 'Tạo đơn thất bại');
+        setOrderError(res?.error || tr('Tạo đơn thất bại'));
       }
     } catch (e: any) {
-      setOrderError(e?.message || 'Lỗi không xác định');
+      setOrderError(e?.message || tr('Lỗi không xác định'));
     }
     setSubmitting(false);
-  }, [canSubmitOrder, cart, custName, custPhone, custEmail, provinceId, districtId, wardId, selectedProvinceName, selectedDistrictName, selectedWardName, custAddress, defaultBranchId, orderDiscount, shippingFee, grandTotal, paymentMethod, note, integrationType, onSubmitOrder, DEV_DEBUG, missingRequiredFields]);
+  }, [canSubmitOrder, cart, custName, custPhone, custEmail, addressModel, provinceId, districtId, wardId, selectedProvinceName, selectedDistrictName, selectedWardName, custAddress, defaultBranchId, orderDiscount, shippingFee, grandTotal, paymentMethod, note, integrationType, onSubmitOrder, DEV_DEBUG, missingRequiredFields]);
 
   const inputCls = 'w-full bg-card border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors';
   const selectCls = inputCls + ' appearance-none';
@@ -523,24 +545,24 @@ export default function POSOrderPanel({
     return (
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <div className="flex items-center gap-2 px-4 pt-3 pb-2 flex-shrink-0 border-b border-border/60">
-          <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-card" title="Quay lại">
+          <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-card" title={tr('Quay lại')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
           <div className="min-w-0 flex-1">
-            <span className="text-sm font-semibold text-foreground"><EditIcon className="w-4 h-4 inline" /> Tạo đơn hàng</span>
+            <span className="text-sm font-semibold text-foreground">{trx('<0/> Tạo đơn hàng', { 0: <EditIcon className="w-4 h-4 inline" /> })}</span>
             <span className="text-[10px] text-muted-foreground ml-2">({integrationName})</span>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
             <div className="w-14 h-14 rounded-full bg-green-900/30 flex items-center justify-center text-2xl mb-3 border border-green-700/40"><CheckIcon className="w-6 h-6 text-green-300" /></div>
-            <h3 className="text-base font-semibold text-green-300 mb-1">Tạo đơn thành công!</h3>
-            <p className="text-sm text-muted-foreground mb-1">Mã đơn: <span className="text-foreground font-mono font-bold">{orderResult.order?.code || orderResult.order?.id || 'N/A'}</span></p>
-            <p className="text-[10px] text-muted-foreground mb-1">Nền tảng: {integrationName} ({integrationType})</p>
+            <h3 className="text-base font-semibold text-green-300 mb-1">{tr('Tạo đơn thành công!')}</h3>
+            <p className="text-sm text-muted-foreground mb-1">{trx('Mã đơn: <0>{{v1}}</0>', { 0: <span className="text-foreground font-mono font-bold" />, v1: orderResult.order?.code || orderResult.order?.id || 'N/A' })}</p>
+            <p className="text-[10px] text-muted-foreground mb-1">{trx('Nền tảng: {{integrationName}} ({{integrationType}})', { integrationName, integrationType })}</p>
             <p className="text-sm text-blue-300 font-semibold mb-4">{formatVND(grandTotal)}</p>
             <div className="flex gap-2">
-              <button onClick={clearAll} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-xl transition-colors"><EditIcon className="w-4 h-4 inline" /> Tạo đơn mới</button>
-              <button onClick={onBack} className="px-4 py-2 bg-muted hover:bg-accent text-foreground/80 text-sm font-medium rounded-xl transition-colors">← Quay lại</button>
+              <button onClick={clearAll} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-xl transition-colors">{trx('<0/> Tạo đơn mới', { 0: <EditIcon className="w-4 h-4 inline" /> })}</button>
+              <button onClick={onBack} className="px-4 py-2 bg-muted hover:bg-accent text-foreground/80 text-sm font-medium rounded-xl transition-colors">{tr('← Quay lại')}</button>
             </div>
           </div>
         </div>
@@ -551,11 +573,11 @@ export default function POSOrderPanel({
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
       <div className="flex items-center gap-2 px-4 pt-3 pb-2 flex-shrink-0 border-b border-border/60">
-        <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-card" title="Quay lại">
+        <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-card" title={tr('Quay lại')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
         </button>
         <div className="min-w-0 flex-1">
-          <span className="text-sm font-semibold text-foreground"><EditIcon className="w-4 h-4 inline" /> Tạo đơn hàng</span>
+          <span className="text-sm font-semibold text-foreground">{trx('<0/> Tạo đơn hàng', { 0: <EditIcon className="w-4 h-4 inline" /> })}</span>
           <span className="text-[10px] text-muted-foreground ml-2">({integrationName})</span>
         </div>
       </div>
@@ -564,61 +586,94 @@ export default function POSOrderPanel({
         <div className="bg-card rounded-xl border border-border/60 p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-foreground"><UserIcon className="w-4 h-4 inline" /> Thông tin khách hàng & địa chỉ</p>
-              <p className="text-[11px] text-muted-foreground mt-1">Tên, số điện thoại và địa chỉ giao hàng là bắt buộc.</p>
+              <p className="text-sm font-semibold text-foreground">{trx('<0/> Thông tin khách hàng & địa chỉ', { 0: <UserIcon className="w-4 h-4 inline" /> })}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">{tr('Tên, số điện thoại và địa chỉ giao hàng là bắt buộc.')}</p>
             </div>
           </div>
 
           {showValidation && missingRequiredFields.length > 0 && (
             <div className="bg-red-900/20 border border-red-700/40 rounded-lg px-3 py-2">
-              <p className="text-[11px] text-red-300"><CloseIcon className="w-4 h-4 inline" /> Thiếu thông tin: {missingRequiredFields.join(', ')}</p>
+              <p className="text-[11px] text-red-300">{trx('<0/> Thiếu thông tin: {{v1}}', { 0: <CloseIcon className="w-4 h-4 inline" />, v1: missingRequiredFields.join(', ') })}</p>
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className={labelCls}>Tên khách hàng <span className="text-red-400">*</span></label>
-              <input value={custName} onChange={e => setCustName(e.target.value)} placeholder="Nguyễn Văn A" className={inputCls} autoFocus />
+              <label className={labelCls}>{trx('Tên khách hàng <0>*</0>', { 0: <span className="text-red-400" /> })}</label>
+              <input value={custName} onChange={e => setCustName(e.target.value)} placeholder={tr('Nguyễn Văn A')} className={inputCls} autoFocus />
             </div>
             <div>
-              <label className={labelCls}>Số điện thoại <span className="text-red-400">*</span></label>
+              <label className={labelCls}>{trx('Số điện thoại <0>*</0>', { 0: <span className="text-red-400" /> })}</label>
               <input value={custPhone} onChange={e => setCustPhone(e.target.value)} placeholder="0901234567" className={inputCls} type="tel" />
             </div>
           </div>
 
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted-foreground font-medium">{tr('Kiểu địa chỉ')}</span>
+            <div role="radiogroup" aria-label={tr('Kiểu địa chỉ')} className="inline-flex rounded-lg border border-border p-0.5">
+              {(['new', 'old'] as const).map(model => (
+                <button
+                  key={model}
+                  type="button"
+                  role="radio"
+                  aria-checked={addressModel === model}
+                  onClick={() => switchAddressModel(model)}
+                  title={model === 'new'
+                    ? tr('34 tỉnh/thành, không còn quận/huyện (từ 01/07/2025)')
+                    : tr('63 tỉnh/thành, có quận/huyện: dùng khi phần mềm bán hàng hoặc hãng vận chuyển chưa nhận địa chỉ mới')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] transition-colors ${addressModel === model
+                    ? 'bg-primary/10 text-foreground font-medium'
+                    : 'text-muted-foreground hover:text-foreground'}`}
+                >
+                  {model === 'new' ? tr('Mới (2 cấp)') : tr('Cũ (3 cấp)')}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div>
-            <label className={labelCls}>Tỉnh/Thành phố <span className="text-red-400">*</span></label>
+            <label className={labelCls}>{trx('Tỉnh/Thành phố <0>*</0>', { 0: <span className="text-red-400" /> })}</label>
             <select value={provinceId} onChange={e => setProvinceId(e.target.value)} className={selectCls}>
-              <option value="">- Tỉnh/Thành -</option>
+              <option value="">{tr('- Tỉnh/Thành -')}</option>
               {provinces.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          {addressModel === 'new' ? (
             <div>
-              <label className={labelCls}>Quận/Huyện <span className="text-red-400">*</span></label>
-              <select value={districtId} onChange={e => setDistrictId(e.target.value)} className={selectCls} disabled={!provinceId}>
-                <option value="">- Quận/Huyện -</option>
-                {districts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>Phường/Xã <span className="text-red-400">*</span></label>
-              <select value={wardId} onChange={e => setWardId(e.target.value)} className={selectCls} disabled={!districtId}>
-                <option value="">- Phường/Xã -</option>
+              <label className={labelCls}>{trx('Phường/Xã <0>*</0>', { 0: <span className="text-red-400" /> })}</label>
+              <select value={wardId} onChange={e => setWardId(e.target.value)} className={selectCls} disabled={!provinceId}>
+                <option value="">{tr('- Phường/Xã -')}</option>
                 {wards.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className={labelCls}>{trx('Quận/Huyện <0>*</0>', { 0: <span className="text-red-400" /> })}</label>
+                <select value={districtId} onChange={e => setDistrictId(e.target.value)} className={selectCls} disabled={!provinceId}>
+                  <option value="">{tr('- Quận/Huyện -')}</option>
+                  {districts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>{trx('Phường/Xã <0>*</0>', { 0: <span className="text-red-400" /> })}</label>
+                <select value={wardId} onChange={e => setWardId(e.target.value)} className={selectCls} disabled={!districtId}>
+                  <option value="">{tr('- Phường/Xã -')}</option>
+                  {wards.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
 
           <div>
-            <label className={labelCls}>Số nhà, tên đường <span className="text-red-400">*</span></label>
-            <input value={custAddress} onChange={e => setCustAddress(e.target.value)} placeholder="123 Lê Lợi" className={inputCls} />
+            <label className={labelCls}>{trx('Số nhà, tên đường <0>*</0>', { 0: <span className="text-red-400" /> })}</label>
+            <input value={custAddress} onChange={e => setCustAddress(e.target.value)} placeholder={tr('123 Lê Lợi')} className={inputCls} />
           </div>
 
           {displayAddress && (
             <div className="bg-card rounded-lg px-3 py-2 border border-border/40">
-              <p className="text-[10px] text-muted-foreground mb-0.5">📍 Địa chỉ đầy đủ:</p>
+              <p className="text-[10px] text-muted-foreground mb-0.5">{tr('📍 Địa chỉ đầy đủ:')}</p>
               <p className="text-xs text-blue-300">{displayAddress}</p>
             </div>
           )}
@@ -627,17 +682,16 @@ export default function POSOrderPanel({
         <div className="bg-card rounded-xl border border-border/60 p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-foreground"><PackageIcon className="w-4 h-4 inline" /> Sản phẩm & giỏ hàng
-                <span className="text-[10px] px-2 py-1 ml-2 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20">{totalItems}</span>
+              <p className="text-sm font-semibold text-foreground">{trx('<0/> Sản phẩm & giỏ hàng<1>{{totalItems}}</1>', { 0: <PackageIcon className="w-4 h-4 inline" />, 1: <span className="text-[10px] px-2 py-1 ml-2 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20" />, totalItems })}
               </p>
-              <p className="text-[11px] text-muted-foreground mt-1">Toàn bộ thao tác chọn sản phẩm nằm trên cùng một màn hình.</p>
+              <p className="text-[11px] text-muted-foreground mt-1">{tr('Toàn bộ thao tác chọn sản phẩm nằm trên cùng một màn hình.')}</p>
             </div>
           </div>
 
           <div className="space-y-1.5">
             <div className="relative">
               <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Tìm sản phẩm theo tên hoặc mã..."
+                placeholder={tr('Tìm sản phẩm theo tên hoặc mã...')}
                 className="w-full bg-card border border-border rounded-xl pl-9 pr-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors" />
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
@@ -647,8 +701,8 @@ export default function POSOrderPanel({
             </div>
             <p className="text-[10px] text-muted-foreground">
               {isBrowsingAllProducts
-                ? 'Đang hiển thị danh sách toàn bộ sản phẩm. Dùng nút phân trang bên dưới để xem thêm.'
-                : `Đang lọc theo từ khoá: “${trimmedSearchQuery}”`}
+                ? tr('Đang hiển thị danh sách toàn bộ sản phẩm. Dùng nút phân trang bên dưới để xem thêm.')
+                : tr('Đang lọc theo từ khoá: “{{trimmedSearchQuery}}”', { trimmedSearchQuery })}
             </p>
           </div>
 
@@ -660,7 +714,7 @@ export default function POSOrderPanel({
 
           <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
             {filteredProducts.length === 0 ? (
-              <div className="text-center py-8"><p className="text-sm text-muted-foreground">Không tìm thấy sản phẩm</p></div>
+              <div className="text-center py-8"><p className="text-sm text-muted-foreground">{tr('Không tìm thấy sản phẩm')}</p></div>
             ) : filteredProducts.map(product => {
               const inCart = cart.find(i => i.product.id === product.id);
               return (
@@ -678,7 +732,7 @@ export default function POSOrderPanel({
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <span className="text-[10px] text-muted-foreground">{product.code}</span>
                       <span className="text-[10px] text-muted-foreground">·</span>
-                      <span className={`text-[10px] ${product.onHand > 0 ? 'text-green-500' : 'text-red-400'}`}>Kho: {product.onHand}</span>
+                      <span className={`text-[10px] ${product.onHand > 0 ? 'text-green-500' : 'text-red-400'}`}>{trx('Kho: {{onHand}}', { onHand: product.onHand })}</span>
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
@@ -697,18 +751,17 @@ export default function POSOrderPanel({
                 disabled={searchPage <= 1 || searching}
                 className="px-3 py-1.5 rounded-lg bg-card border border-border disabled:opacity-40 hover:border-blue-500/40"
               >
-                ← Trang trước
+                {tr('← Trang trước')}
               </button>
               <span>
-                Trang {searchMeta.page}
-                {typeof searchMeta.total === 'number' ? ` · Tổng ~ ${searchMeta.total}` : ''}
+                {trx('Trang {{page}}{{v1}}', { page: searchMeta.page, v1: typeof searchMeta.total === 'number' ? tr(' · Tổng ~ {{total}}', { total: searchMeta.total }) : '' })}
               </span>
               <button
                 onClick={() => setSearchPage(p => p + 1)}
                 disabled={!searchMeta.hasNext || searching}
                 className="px-3 py-1.5 rounded-lg bg-card border border-border disabled:opacity-40 hover:border-blue-500/40"
               >
-                Trang sau →
+                {tr('Trang sau →')}
               </button>
             </div>
           )}
@@ -716,7 +769,7 @@ export default function POSOrderPanel({
           {cart.length > 0 && (
             <div className="bg-card rounded-xl border border-border overflow-hidden">
               <div className="flex items-center justify-between px-3 py-2 border-b border-border/40">
-                <p className="text-xs font-semibold text-muted-foreground"><ShoppingCartIcon className="w-4 h-4 inline" /> Giỏ hàng ({totalItems})</p>
+                <p className="text-xs font-semibold text-muted-foreground">{trx('<0/> Giỏ hàng ({{totalItems}})', { 0: <ShoppingCartIcon className="w-4 h-4 inline" />, totalItems })}</p>
                 <span className="text-xs font-bold text-blue-300">{formatVND(subtotal)}</span>
               </div>
               <div className="max-h-56 overflow-y-auto divide-y divide-border/30">
@@ -753,57 +806,57 @@ export default function POSOrderPanel({
         </div>
 
         <div className="bg-card rounded-xl border border-border/60 p-4 space-y-3">
-          <p className="text-sm font-semibold text-foreground"><SettingsIcon className="w-4 h-4 inline" /> Thanh toán & ghi chú</p>
+          <p className="text-sm font-semibold text-foreground">{trx('<0/> Thanh toán & ghi chú', { 0: <SettingsIcon className="w-4 h-4 inline" /> })}</p>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className={labelCls}><TruckIcon className="w-4 h-4 inline" /> Phí vận chuyển</label>
+              <label className={labelCls}>{trx('<0/> Phí vận chuyển', { 0: <TruckIcon className="w-4 h-4 inline" /> })}</label>
               <div className="flex items-center gap-1">
                 <input type="number" value={shippingFee || ''} onChange={e => setShippingFee(Math.max(0, Number(e.target.value)))} placeholder="0" className={inputCls + ' text-right'} />
-                <span className="text-[10px] text-muted-foreground">đ</span>
+                <span className="text-[10px] text-muted-foreground">{tr('đ')}</span>
               </div>
             </div>
             <div>
-              <label className={labelCls}><TagIcon className="w-4 h-4 inline" /> Giảm giá đơn</label>
+              <label className={labelCls}>{trx('<0/> Giảm giá đơn', { 0: <TagIcon className="w-4 h-4 inline" /> })}</label>
               <div className="flex items-center gap-1">
                 <input type="number" value={orderDiscount || ''} onChange={e => setOrderDiscount(Math.max(0, Number(e.target.value)))} placeholder="0" className={inputCls + ' text-right text-orange-400'} />
-                <span className="text-[10px] text-muted-foreground">đ</span>
+                <span className="text-[10px] text-muted-foreground">{tr('đ')}</span>
               </div>
             </div>
           </div>
           <div>
-            <label className={labelCls}><CreditCardIcon className="w-4 h-4 inline" /> Phương thức thanh toán</label>
+            <label className={labelCls}>{trx('<0/> Phương thức thanh toán', { 0: <CreditCardIcon className="w-4 h-4 inline" /> })}</label>
             <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={selectCls}>
-              <option value="cod">COD – Thanh toán khi nhận hàng</option>
-              <option value="bank_transfer">Chuyển khoản ngân hàng</option>
-              <option value="cash">Tiền mặt tại cửa hàng</option>
-              <option value="card">Thẻ (VISA/Master)</option>
-              <option value="momo">Ví MoMo</option>
+              <option value="cod">{tr('COD – Thanh toán khi nhận hàng')}</option>
+              <option value="bank_transfer">{tr('Chuyển khoản ngân hàng')}</option>
+              <option value="cash">{tr('Tiền mặt tại cửa hàng')}</option>
+              <option value="card">{tr('Thẻ (VISA/Master)')}</option>
+              <option value="momo">{tr('Ví MoMo')}</option>
               <option value="zalopay">ZaloPay</option>
               <option value="vnpay">VNPay</option>
             </select>
           </div>
           <div>
-            <label className={labelCls}><EditIcon className="w-4 h-4 inline" /> Ghi chú</label>
-            <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Ghi chú cho đơn hàng..." rows={2} className={inputCls + ' resize-none'} />
+            <label className={labelCls}>{trx('<0/> Ghi chú', { 0: <EditIcon className="w-4 h-4 inline" /> })}</label>
+            <textarea value={note} onChange={e => setNote(e.target.value)} placeholder={tr('Ghi chú cho đơn hàng...')} rows={2} className={inputCls + ' resize-none'} />
           </div>
         </div>
 
         <div className="bg-card rounded-xl border border-border/60 px-4 py-4 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-foreground"><CheckIcon className="w-4 h-4 inline" /> Xác nhận đơn hàng</p>
+            <p className="text-sm font-semibold text-foreground">{trx('<0/> Xác nhận đơn hàng', { 0: <CheckIcon className="w-4 h-4 inline" /> })}</p>
             <span className="text-[10px] px-2 py-1 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20">{integrationName}</span>
           </div>
           <div className="text-xs text-muted-foreground space-y-1">
             <p><UserIcon className="w-4 h-4 inline" /> {custName || '-'} {custPhone ? `· ${custPhone}` : ''}</p>
-            <p>📍 {displayAddress || 'Chưa có địa chỉ đầy đủ'}</p>
-            <p><PackageIcon className="w-4 h-4 inline" /> {totalItems} sản phẩm trong giỏ</p>
+            <p>📍 {displayAddress || tr('Chưa có địa chỉ đầy đủ')}</p>
+            <p>{trx('<0/> {{totalItems}} sản phẩm trong giỏ', { 0: <PackageIcon className="w-4 h-4 inline" />, totalItems })}</p>
           </div>
           <div className="space-y-1 border-t border-border/40 pt-2">
-            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Tạm tính ({totalItems} SP):</span><span className="text-foreground/80">{formatVND(subtotal)}</span></div>
-            {shippingFee > 0 && <div className="flex justify-between text-xs"><span className="text-muted-foreground">Phí vận chuyển:</span><span className="text-foreground/80">+{formatVND(shippingFee)}</span></div>}
-            {orderDiscount > 0 && <div className="flex justify-between text-xs"><span className="text-orange-400">Giảm giá:</span><span className="text-orange-400">-{formatVND(orderDiscount)}</span></div>}
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">{trx('Tạm tính ({{totalItems}} SP):', { totalItems })}</span><span className="text-foreground/80">{formatVND(subtotal)}</span></div>
+            {shippingFee > 0 && <div className="flex justify-between text-xs"><span className="text-muted-foreground">{tr('Phí vận chuyển:')}</span><span className="text-foreground/80">+{formatVND(shippingFee)}</span></div>}
+            {orderDiscount > 0 && <div className="flex justify-between text-xs"><span className="text-orange-400">{tr('Giảm giá:')}</span><span className="text-orange-400">-{formatVND(orderDiscount)}</span></div>}
             <div className="flex justify-between text-sm font-semibold pt-1 border-t border-border/40">
-              <span className="text-foreground"><DollarIcon className="w-4 h-4 inline" /> Tổng thanh toán:</span><span className="text-blue-300">{formatVND(grandTotal)}</span>
+              <span className="text-foreground">{trx('<0/> Tổng thanh toán:', { 0: <DollarIcon className="w-4 h-4 inline" /> })}</span><span className="text-blue-300">{formatVND(grandTotal)}</span>
             </div>
           </div>
 
@@ -818,10 +871,9 @@ export default function POSOrderPanel({
               className="flex-1 py-3 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white text-sm font-bold rounded-xl transition-colors">
               {submitting ? (
                 <span className="flex items-center justify-center gap-2">
-                  <Spinner size={4} />
-                  Đang tạo đơn...
+                  {trx('<0/>Đang tạo đơn...', { 0: <Spinner size={4} /> })}
                 </span>
-              ) : <span className="flex items-center gap-2"><CheckIcon className="w-4 h-4" /> Tạo đơn hàng · {formatVND(grandTotal)}</span>}
+              ) : <span className="flex items-center gap-2">{trx('<0/> Tạo đơn hàng · {{v1}}', { 0: <CheckIcon className="w-4 h-4" />, v1: formatVND(grandTotal) })}</span>}
             </button>
           </div>
         </div>

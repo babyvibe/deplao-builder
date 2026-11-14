@@ -11,6 +11,8 @@ import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { CHANNEL, isZalo } from '@/lib/channels/channelHelper';
 import { getAdapter } from '@/lib/channels/adapters/registry';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // Cache TTL: 12 hour
 const FRIENDS_CACHE_TTL = 12 * 60 * 60 * 1000;
@@ -18,19 +20,19 @@ const FRIENDS_CACHE_TTL = 12 * 60 * 60 * 1000;
 // ─── Module-level session cache (survives modal open/close, resets on app restart) ───
 const _sessionFriendsCache = new Map<string, { friends: any[]; fetchedAt: number }>();
 
-/** Báo lỗi tải gọn ngay trong danh sách (chế độ nhân viên: mất kết nối BOSS) — không trông như "Không tìm thấy". */
+/** Show a compact load error inside the list (employee mode: Boss connection lost), not "Không tìm thấy" (Not found). */
 function LoadFailedRow({ text, onRetry }: { text: string; onRetry: () => void }) {
   return (
     <div role="status" className="flex items-center justify-center gap-2 px-4 py-6 text-xs text-muted-foreground">
       <span>{text}</span>
-      <Button variant="link" size="sm" className="text-xs" onClick={() => onRetry()}>Thử lại</Button>
+      <Button variant="link" size="sm" className="text-xs" onClick={() => onRetry()}>{tr('Thử lại')}</Button>
     </div>
   );
 }
 
-/** Shared hook: load friends from session cache → DB cache → API. `accountId`: tài khoản khác tài khoản đang mở. */
+/** Shared hook: load friends from the session cache → DB cache → API. `accountId`: an account other than the one open. */
 function useFriends(accountId?: string | null) {
-  // Chọn kèm accounts để vẫn cập nhật khi tài khoản đổi
+  // Select accounts too, so it still updates when the account changes
   const { accounts, storeActiveAccountId } = useAccountStore(useShallow(s => ({
     accounts: s.accounts, storeActiveAccountId: s.activeAccountId,
   })));
@@ -39,8 +41,8 @@ function useFriends(accountId?: string | null) {
   const [friends, setFriends] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  // Đọc danh sách bạn bè lỗi (chế độ nhân viên: mất kết nối BOSS) và API cũng không trả gì → "Không tải được — Thử lại"
-  // thay vì "Không có bạn bè nào"
+  // Reading the friend list failed (employee mode: Boss connection lost) and the API returned nothing → "Không tải được - Thử lại" (Failed to load, retry)
+  // instead of "Không có bạn bè nào" (No friends)
   const [loadFailed, setLoadFailed] = useState(false);
 
   const acc = getActiveAccount();
@@ -68,7 +70,7 @@ function useFriends(accountId?: string | null) {
     return false;
   };
 
-  // Lần tải mới nhất (mở modal, "Thử lại", kết nối lại); lần tải cũ hơn / sau khi đổi tài khoản bị bỏ
+  // Latest load (modal opened, "Thử lại", reconnect); older loads, or loads after the account changed, are dropped
   loadRef.current = async () => {
     if (!isZalo(acc?.channel)) {
       setFriends([]);
@@ -138,10 +140,10 @@ function useFriends(accountId?: string | null) {
 
   useEffect(() => {
     void loadRef.current();
-    return () => { loadSeqRef.current += 1; }; // đóng modal / đổi tài khoản: bỏ lần tải đang chạy
+    return () => { loadSeqRef.current += 1; }; // modal closed / account changed: drop the load in progress
   }, [activeAccountId]);
 
-  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại nếu lần trước lỗi / chưa có bạn bè nào
+  // Employee mode: Boss connection restored → reload if the last load failed / there are no friends yet
   useEmployeeResync(() => (loadFailed || friends.length === 0 ? loadRef.current() : undefined));
 
   const refresh = () => {
@@ -160,8 +162,8 @@ const NO_FILTER_LABELS: FilterLocalLabel[] = [];
 const NO_LABEL_THREADS: Map<number, string[]> = new Map();
 
 /**
- * Nhãn Local + hội thoại đã gắn của tài khoản (bộ lọc trong Tạo nhóm / Gửi danh thiếp). Lần đọc lỗi (chế độ nhân viên)
- * giữ nhãn / gán nhãn đang có của đúng tài khoản (không thay bằng rỗng), `failed` → hiện "Thử lại" trên bộ lọc.
+ * Local labels + the conversations labelled for the account (filter in Create group / Send contact card). A failed read (employee mode)
+ * keeps the labels / label assignments already there for that same account (not replaced with empty), `failed` → show "Thử lại" on the filter.
  */
 function useLocalLabelFilter(accountId: string | null) {
   const [state, setState] = useState<{
@@ -205,7 +207,7 @@ function useLocalLabelFilter(accountId: string | null) {
   }, [accountId]);
 
   useEffect(() => { void load(); }, [load]);
-  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại
+  // Employee mode: Boss connection restored → reload
   useEmployeeResync(load);
 
   const current = state.accountId === accountId;
@@ -217,7 +219,7 @@ function useLocalLabelFilter(accountId: string | null) {
   };
 }
 
-// ─── LabelTabsFilter - 2 tabs Local/Zalo, chọn nhiều ────────────────────────
+// ─── LabelTabsFilter - 2 tabs Local/Zalo, multi-select ────────────────────────
 function LabelTabsFilter({
   zaloLabels,
   localLabels,
@@ -230,7 +232,7 @@ function LabelTabsFilter({
   localLabels: { id: number; name: string; color: string; emoji: string }[];
   value: Set<string>;
   onChange: (keys: Set<string>) => void;
-  /** Lần tải Nhãn Local gần nhất lỗi (chế độ nhân viên) → tab Local hiện "Thử lại" thay vì "Không có nhãn". */
+  /** The latest Local label load failed (employee mode) → the Local tab shows "Thử lại" instead of "Không có nhãn" (No labels). */
   localFailed?: boolean;
   onRetryLocal?: () => void;
 }) {
@@ -247,7 +249,7 @@ function LabelTabsFilter({
 
   const clearAll = () => onChange(new Set());
 
-  // Đọc lỗi: vẫn hiện tab Local (kèm "Thử lại") dù chưa có nhãn nào
+  // Read failed: still show the Local tab (with "Thử lại") even when there are no labels
   const hasLocal = localLabels.length > 0 || localFailed;
   const hasZalo = zaloLabels.length > 0;
   const showLocalRetry = tab === 'local' && localFailed && !!onRetryLocal;
@@ -274,7 +276,7 @@ function LabelTabsFilter({
             <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-purple-400 flex-shrink-0">
               <circle cx="12" cy="12" r="10"/>
             </svg>
-            Nhãn Local
+            {tr('Nhãn Local')}
             {selectedLocalCount > 0 && (
               <span className="ml-1 bg-purple-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
                 {selectedLocalCount}
@@ -293,7 +295,7 @@ function LabelTabsFilter({
             <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className="text-blue-400 flex-shrink-0">
               <circle cx="12" cy="12" r="10"/>
             </svg>
-            Nhãn Zalo
+            {tr('Nhãn Zalo')}
             {selectedZaloCount > 0 && (
               <span className="ml-1 bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
                 {selectedZaloCount}
@@ -304,7 +306,7 @@ function LabelTabsFilter({
         )}
         {selectedCount > 0 && (
           <button onClick={clearAll} className="ml-auto text-[11px] text-muted-foreground hover:text-red-400 transition-colors py-2">
-            Xóa bộ lọc ({selectedCount})
+            {trx('Xóa bộ lọc ({{selectedCount}})', { selectedCount })}
           </button>
         )}
       </div>
@@ -312,7 +314,7 @@ function LabelTabsFilter({
       {/* Label chips */}
       <div className="flex gap-1.5 px-4 py-2.5 max-h-[80px] overflow-y-auto">
         {currentLabels.length === 0 ? (
-          showLocalRetry ? null : <span className="text-xs text-muted-foreground py-1">Không có nhãn</span>
+          showLocalRetry ? null : <span className="text-xs text-muted-foreground py-1">{tr('Không có nhãn')}</span>
         ) : currentLabels.map(({ key, label, color, emoji }) => {
           const active = value.has(key);
           return (
@@ -343,10 +345,10 @@ function LabelTabsFilter({
             type="button"
             onClick={() => onRetryLocal?.()}
             className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs whitespace-nowrap border border-input text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors"
-            title="Không tải được Nhãn Local — bấm để thử lại"
+            title={tr('Không tải được Nhãn Local — bấm để thử lại')}
           >
             <RefreshIcon className="w-3 h-3" />
-            {localLabels.length === 0 ? 'Không tải được nhãn · Thử lại' : 'Thử lại'}
+            {localLabels.length === 0 ? tr('Không tải được nhãn · Thử lại') : tr('Thử lại')}
           </button>
         )}
       </div>
@@ -359,10 +361,10 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
   onClose: () => void;
   onCreated?: (groupId: string, name: string) => void;
   preSelected?: string[];
-  /** Tạo bằng tài khoản Zalo này thay vì tài khoản đang mở (thao tác nhanh, chế độ gộp trang). */
+  /** Create with this Zalo account instead of the open one (quick action, merged inbox mode). */
   accountId?: string;
 }) {
-  // Selector: modal không render lại với mọi tin nhắn / đang gõ của các hội thoại khác
+  // Selector: the modal does not re-render on every message / typing event from other conversations
   const { accounts, storeActiveAccountId } = useAccountStore(useShallow(s => ({
     accounts: s.accounts, storeActiveAccountId: s.activeAccountId,
   })));
@@ -379,14 +381,14 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
 
   const [groupName, setGroupName] = useState('');
   const [search, setSearch] = useState('');
-  // selectedLabelKeys: Set of "z:ID" or "l:ID" - cho chọn nhiều
+  // selectedLabelKeys: Set of "z:ID" or "l:ID" - for multi-select
   const [selectedLabelKeys, setSelectedLabelKeys] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set(preSelected || []));
   const [creating, setCreating] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarPath, setAvatarPath] = useState<string>('');
 
-  // Local labels + their thread assignments (lỗi đọc giữ dữ liệu cũ, "Thử lại", tải lại khi kết nối BOSS phục hồi)
+  // Local labels + their thread assignments (a failed read keeps the old data, "Thử lại", reload when the Boss connection is restored)
   const { localLabelList, localLabelThreadMap, localLabelsFailed, reloadLocalLabels } = useLocalLabelFilter(activeAccountId);
 
   const groupNameRef = useRef<HTMLInputElement>(null);
@@ -400,9 +402,9 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
   const toggleSelect = (id: string) =>
     setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
-  // Electron mới bỏ File.path (ảnh chọn qua input bị bỏ qua khi tạo nhóm) → hộp chọn file của máy trả đường dẫn thật
+  // Newer Electron drops File.path (an image picked from the input is ignored when creating the group) → the machine's file dialog returns the real path
   const pickAvatar = async () => {
-    const res: any = await ipc.file?.openDialog({ filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
+    const res: any = await ipc.file?.openDialog({ filters: [{ name: tr('Ảnh'), extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
     const path = res?.filePaths?.[0];
     if (!path) return;
     setAvatarPath(path);
@@ -458,17 +460,17 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
         avatarPath: avatarPath || undefined,
       });
       if (res?.success) {
-        showNotification('Đã tạo nhóm!', 'success');
+        showNotification(tr('Đã tạo nhóm!'), 'success');
         onCreated?.(String(res.response?.groupId || ''), groupName.trim());
         onClose();
       } else {
-        showNotification('Lỗi tạo nhóm: ' + (res?.error || 'Không xác định'), 'error');
+        showNotification(tr('Lỗi tạo nhóm: {{v1}}', { v1: (res?.error || tr('Không xác định')) }), 'error');
       }
-    } catch (e: any) { showNotification('Lỗi: ' + e.message, 'error'); }
+    } catch (e: any) { showNotification(tr('Lỗi: {{message}}', { message: e.message }), 'error'); }
     finally { setCreating(false); }
   };
 
-  // Nhãn Local đọc lỗi vẫn hiện bộ lọc (tab Local kèm "Thử lại")
+  // A failed Local label read still shows the filter (Local tab with "Thử lại")
   const hasAnyLabels = zaloLabels.length > 0 || localLabelList.length > 0 || localLabelsFailed;
   const friendsLoadFailed = friendsFailed && friends.length === 0;
 
@@ -480,10 +482,10 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
           <div className="min-w-0">
-            <h2 className="text-foreground font-semibold text-base">Tạo nhóm</h2>
+            <h2 className="text-foreground font-semibold text-base">{tr('Tạo nhóm')}</h2>
             {showAccountName && (
               <p className="truncate text-xs text-muted-foreground">
-                Bằng tài khoản {getActiveAccount()?.full_name || getActiveAccount()?.display_name || activeAccountId}
+                {trx('Bằng tài khoản {{v1}}', { v1: getActiveAccount()?.full_name || getActiveAccount()?.display_name || activeAccountId })}
               </p>
             )}
           </div>
@@ -498,7 +500,7 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
             type="button"
             onClick={() => void pickAvatar()}
             className="w-11 h-11 rounded-full bg-muted flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-accent transition-colors overflow-hidden relative"
-            title="Thêm ảnh nhóm"
+            title={tr('Thêm ảnh nhóm')}
           >
             {avatarPreview ? (
               <img src={avatarPreview} alt="" className="w-full h-full object-cover" />
@@ -510,7 +512,7 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
           </button>
           <input ref={groupNameRef} value={groupName} onChange={e => setGroupName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleCreate()}
-            placeholder="Nhập tên nhóm..."
+            placeholder={tr('Nhập tên nhóm...')}
             className="flex-1 bg-transparent border-b border-input pb-1 text-foreground text-sm focus:outline-none focus:border-blue-500 placeholder-subtle-foreground" />
         </div>
 
@@ -519,12 +521,12 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
           <div className="relative">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Nhập tên, số điện thoại, hoặc danh sách số điện thoại"
+              placeholder={tr('Nhập tên, số điện thoại, hoặc danh sách số điện thoại')}
               className="w-full bg-muted border border-input rounded-full pl-9 pr-3 py-1.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
           </div>
         </div>
 
-        {/* Label filter - 2 tabs: Local (default) / Zalo, chọn nhiều */}
+        {/* Label filter - 2 tabs: Local (default) / Zalo, multi-select */}
         {hasAnyLabels && (
           <div className="border-b border-border flex-shrink-0">
             <LabelTabsFilter
@@ -541,24 +543,24 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
         {/* Contact list */}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {loading ? (
-            <p className="text-center text-muted-foreground text-sm py-10">Đang tải danh sách bạn bè...</p>
+            <p className="text-center text-muted-foreground text-sm py-10">{tr('Đang tải danh sách bạn bè...')}</p>
           ) : (
             <>
               {/* Refresh bar */}
               <div className="flex items-center justify-between px-4 pt-2 pb-1">
-                <span className="text-xs text-muted-foreground">{refreshing ? 'Đang cập nhật...' : friendsLoadFailed ? 'Chưa tải được bạn bè' : `${friends.length} bạn bè`}</span>
+                <span className="text-xs text-muted-foreground">{refreshing ? tr('Đang cập nhật...') : friendsLoadFailed ? tr('Chưa tải được bạn bè') : tr('{{count}} bạn bè', { count: friends.length })}</span>
                 <button onClick={refresh} disabled={refreshing}
                   className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 flex items-center gap-1">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
                     className={refreshing ? 'animate-spin' : ''}>
                     <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                   </svg>
-                  Làm mới
+                  {tr('Làm mới')}
                 </button>
               </div>
               {recentContacts.length > 0 && (
                 <div>
-                  <p className="px-4 py-2 text-xs text-muted-foreground font-medium uppercase tracking-wide">Trò chuyện gần đây</p>
+                  <p className="px-4 py-2 text-xs text-muted-foreground font-medium uppercase tracking-wide">{tr('Trò chuyện gần đây')}</p>
                   {recentContacts.map(c => (
                     <PersonRow key={c.contact_id} id={c.contact_id} name={c.alias || c.display_name || c.contact_id}
                       avatar={c.avatar_url} subtitle={c.phone || undefined}
@@ -577,10 +579,10 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
                   ))}
                 </div>
               ))}
-              {/* Danh sách bạn bè đọc lỗi (chế độ nhân viên) ≠ "Không tìm thấy" */}
-              {friendsLoadFailed && <LoadFailedRow text="Không tải được danh sách bạn bè" onRetry={retryFriends} />}
+              {/* Friend list read failed (employee mode) ≠ "Không tìm thấy" (Not found) */}
+              {friendsLoadFailed && <LoadFailedRow text={tr('Không tải được danh sách bạn bè')} onRetry={retryFriends} />}
               {!friendsLoadFailed && filteredFriends.length === 0 && recentContacts.length === 0 && (
-                <p className="text-center text-muted-foreground text-sm py-10">Không tìm thấy</p>
+                <p className="text-center text-muted-foreground text-sm py-10">{tr('Không tìm thấy')}</p>
               )}
             </>
           )}
@@ -589,16 +591,16 @@ export function CreateGroupModal({ onClose, onCreated, preSelected, accountId }:
         {/* Selected count */}
         {selected.size > 0 && (
           <div className="flex-shrink-0 px-5 py-2 border-t border-border text-xs text-muted-foreground">
-            Đã chọn <span className="text-blue-400 font-semibold">{selected.size}</span> thành viên
+            {trx('Đã chọn <0>{{count}}</0> thành viên', { 0: <span className="text-blue-400 font-semibold" />, count: selected.size })}
           </div>
         )}
 
         {/* Footer */}
         <div className="flex-shrink-0 flex gap-3 px-5 py-4 border-t border-border">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-input text-sm text-foreground/80 hover:bg-muted transition-colors">Hủy</button>
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-input text-sm text-foreground/80 hover:bg-muted transition-colors">{tr('Hủy')}</button>
           <button onClick={handleCreate} disabled={!groupName.trim() || selected.size < 1 || creating}
             className="flex-1 py-2.5 rounded-xl bg-blue-600 text-sm text-white font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            {creating ? 'Đang tạo...' : 'Tạo nhóm'}
+            {creating ? tr('Đang tạo...') : tr('Tạo nhóm')}
           </button>
         </div>
       </div>
@@ -656,8 +658,8 @@ export function InviteToGroupModal({ contactId, contactName, onClose }: {
       } catch { failed++; }
     }
     setInviting(false);
-    if (success > 0) showNotification(`Đã mời vào ${success} nhóm`, 'success');
-    if (failed > 0) showNotification(`Lỗi: ${failed} nhóm không thêm được`, 'error');
+    if (success > 0) showNotification(tr('Đã mời vào {{success}} nhóm', { success }), 'success');
+    if (failed > 0) showNotification(tr('Lỗi: {{failed}} nhóm không thêm được', { failed }), 'error');
     if (success > 0) onClose();
   };
 
@@ -666,7 +668,7 @@ export function InviteToGroupModal({ contactId, contactName, onClose }: {
       <div className="bg-card rounded-2xl shadow-2xl w-[480px] max-h-[88vh] flex flex-col border border-border overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <h2 className="text-foreground font-semibold text-base">Mời tham gia nhóm</h2>
+          <h2 className="text-foreground font-semibold text-base">{tr('Mời tham gia nhóm')}</h2>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -675,13 +677,13 @@ export function InviteToGroupModal({ contactId, contactName, onClose }: {
           <div className="relative">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Tìm nhóm theo tên"
+              placeholder={tr('Tìm nhóm theo tên')}
               className="w-full border border-input bg-muted rounded-full pl-9 pr-3 py-1.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
           </div>
         </div>
         {labels.length > 0 && (
           <div className="flex-shrink-0 flex gap-1.5 px-4 py-2 overflow-x-auto border-b border-border scrollbar-hide" style={{ minHeight: '3.375rem', maxHeight: '3.375rem' }}>
-            <LabelChip label="Tất cả" active={selectedLabel === null} onClick={() => setSelectedLabel(null)} />
+            <LabelChip label={tr('Tất cả')} active={selectedLabel === null} onClick={() => setSelectedLabel(null)} />
             {labels.map(l => (
               <LabelChip key={l.id} label={l.text} active={selectedLabel === l.id}
                 onClick={() => setSelectedLabel(p => p === l.id ? null : l.id)} color={l.color} emoji={l.emoji} />
@@ -689,9 +691,9 @@ export function InviteToGroupModal({ contactId, contactName, onClose }: {
           </div>
         )}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <p className="px-4 py-2 text-xs text-muted-foreground font-medium uppercase tracking-wide">Nhóm</p>
+          <p className="px-4 py-2 text-xs text-muted-foreground font-medium uppercase tracking-wide">{tr('Nhóm')}</p>
           {groups.length === 0 ? (
-            <p className="text-center text-muted-foreground text-sm py-10">{search ? 'Không tìm thấy nhóm' : 'Bạn chưa có nhóm nào'}</p>
+            <p className="text-center text-muted-foreground text-sm py-10">{search ? tr('Không tìm thấy nhóm') : tr('Bạn chưa có nhóm nào')}</p>
           ) : groups.map(g => (
             <PersonRow key={g.contact_id} id={g.contact_id} name={g.display_name || g.contact_id}
               avatar={g.avatar_url} selected={selectedGroups.has(g.contact_id)}
@@ -699,10 +701,10 @@ export function InviteToGroupModal({ contactId, contactName, onClose }: {
           ))}
         </div>
         <div className="flex gap-3 px-5 py-4 border-t border-border">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-input text-sm text-foreground/80 hover:bg-muted transition-colors">Hủy</button>
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-input text-sm text-foreground/80 hover:bg-muted transition-colors">{tr('Hủy')}</button>
           <button onClick={handleInvite} disabled={selectedGroups.size === 0 || inviting}
             className="flex-1 py-2.5 rounded-xl bg-blue-600 text-sm text-white font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            {inviting ? 'Đang mời...' : `Mời${selectedGroups.size > 0 ? ` (${selectedGroups.size})` : ''}`}
+            {inviting ? tr('Đang mời...') : tr('Mời{{v1}}', { v1: selectedGroups.size > 0 ? ` (${selectedGroups.size})` : '' })}
           </button>
         </div>
       </div>
@@ -716,7 +718,7 @@ export function SendCardModal({ threadId, threadType, onClose }: {
   threadType: number;
   onClose: () => void;
 }) {
-  // Selector: modal không render lại với mọi tin nhắn / đang gõ của các hội thoại khác
+  // Selector: the modal does not re-render on every message / typing event from other conversations
   const { getActiveAccount, activeAccountId } = useAccountStore(useShallow(s => ({
     getActiveAccount: s.getActiveAccount, activeAccountId: s.activeAccountId, accounts: s.accounts,
   })));
@@ -732,7 +734,7 @@ export function SendCardModal({ threadId, threadType, onClose }: {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
 
-  // Local labels (same pattern as CreateGroupModal): lỗi đọc giữ dữ liệu cũ, "Thử lại", tải lại khi kết nối phục hồi
+  // Local labels (same pattern as CreateGroupModal): a failed read keeps the old data, "Thử lại", reload when the connection is restored
   const { localLabelList, localLabelThreadMap, localLabelsFailed, reloadLocalLabels } = useLocalLabelFilter(activeAccountId);
 
   const { friends, loading, refreshing, refresh, loadFailed: friendsFailed, retry: retryFriends } = useFriends();
@@ -798,12 +800,12 @@ export function SendCardModal({ threadId, threadType, onClose }: {
       } catch { failed++; }
     }
     setSending(false);
-    if (success > 0) showNotification(`Đã gửi ${success} danh thiếp`, 'success');
-    if (failed > 0) showNotification(`Lỗi: ${failed} danh thiếp không gửi được`, 'error');
+    if (success > 0) showNotification(tr('Đã gửi {{success}} danh thiếp', { success }), 'success');
+    if (failed > 0) showNotification(tr('Lỗi: {{failed}} danh thiếp không gửi được', { failed }), 'error');
     if (success > 0) onClose();
   };
 
-  // Nhãn Local đọc lỗi vẫn hiện bộ lọc (tab Local kèm "Thử lại")
+  // A failed Local label read still shows the filter (Local tab with "Thử lại")
   const hasAnyLabels = labels.length > 0 || localLabelList.length > 0 || localLabelsFailed;
   const friendsLoadFailed = friendsFailed && friends.length === 0;
 
@@ -815,8 +817,8 @@ export function SendCardModal({ threadId, threadType, onClose }: {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
-            <h2 className="text-foreground font-semibold text-base">Gửi danh thiếp</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Chọn liên hệ để gửi danh thiếp</p>
+            <h2 className="text-foreground font-semibold text-base">{tr('Gửi danh thiếp')}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{tr('Chọn liên hệ để gửi danh thiếp')}</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -829,7 +831,7 @@ export function SendCardModal({ threadId, threadType, onClose }: {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input value={search} onChange={e => setSearch(e.target.value)}
               autoFocus
-              placeholder="Tìm danh thiếp theo tên"
+              placeholder={tr('Tìm danh thiếp theo tên')}
               className="w-full bg-muted border border-input rounded-full pl-9 pr-3 py-1.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
           </div>
         </div>
@@ -851,24 +853,24 @@ export function SendCardModal({ threadId, threadType, onClose }: {
         {/* Friends list */}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {loading ? (
-            <p className="text-center text-muted-foreground text-sm py-10">Đang tải danh sách bạn bè...</p>
+            <p className="text-center text-muted-foreground text-sm py-10">{tr('Đang tải danh sách bạn bè...')}</p>
           ) : (
             <>
               {/* Refresh bar */}
               <div className="flex items-center justify-between px-4 pt-2 pb-1">
-                <span className="text-xs text-muted-foreground">{refreshing ? 'Đang cập nhật...' : friendsLoadFailed ? 'Chưa tải được bạn bè' : `${friends.length} liên hệ`}</span>
+                <span className="text-xs text-muted-foreground">{refreshing ? tr('Đang cập nhật...') : friendsLoadFailed ? tr('Chưa tải được bạn bè') : tr('{{count}} liên hệ', { count: friends.length })}</span>
                 <button onClick={refresh} disabled={refreshing}
                   className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 flex items-center gap-1">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
                     className={refreshing ? 'animate-spin' : ''}>
                     <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                   </svg>
-                  Làm mới
+                  {tr('Làm mới')}
                 </button>
               </div>
               {recentContacts.length > 0 && (
                 <div>
-                  <p className="px-4 py-2 text-xs text-muted-foreground font-medium uppercase tracking-wide">Trò chuyện gần đây</p>
+                  <p className="px-4 py-2 text-xs text-muted-foreground font-medium uppercase tracking-wide">{tr('Trò chuyện gần đây')}</p>
                   {recentContacts.map(c => (
                     <PersonRow key={c.contact_id} id={c.contact_id}
                       name={c.alias || c.display_name || c.contact_id}
@@ -892,10 +894,10 @@ export function SendCardModal({ threadId, threadType, onClose }: {
                   ))}
                 </div>
               ))}
-              {/* Danh sách bạn bè đọc lỗi (chế độ nhân viên) ≠ "Không tìm thấy" */}
-              {friendsLoadFailed && <LoadFailedRow text="Không tải được danh sách bạn bè" onRetry={retryFriends} />}
+              {/* Friend list read failed (employee mode) ≠ "Không tìm thấy" (Not found) */}
+              {friendsLoadFailed && <LoadFailedRow text={tr('Không tải được danh sách bạn bè')} onRetry={retryFriends} />}
               {!friendsLoadFailed && filteredFriends.length === 0 && recentContacts.length === 0 && (
-                <p className="text-center text-muted-foreground text-sm py-10">Không tìm thấy</p>
+                <p className="text-center text-muted-foreground text-sm py-10">{tr('Không tìm thấy')}</p>
               )}
             </>
           )}
@@ -904,16 +906,16 @@ export function SendCardModal({ threadId, threadType, onClose }: {
         {/* Selected count */}
         {selected.size > 0 && (
           <div className="px-5 py-2 border-t border-border text-xs text-muted-foreground">
-            Đã chọn <span className="text-blue-400 font-semibold">{selected.size}</span> danh thiếp
+            {trx('Đã chọn <0>{{count}}</0> danh thiếp', { 0: <span className="text-blue-400 font-semibold" />, count: selected.size })}
           </div>
         )}
 
         {/* Footer */}
         <div className="flex gap-3 px-5 py-4 border-t border-border">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-input text-sm text-foreground/80 hover:bg-muted transition-colors">Hủy</button>
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-input text-sm text-foreground/80 hover:bg-muted transition-colors">{tr('Hủy')}</button>
           <button onClick={handleSend} disabled={selected.size === 0 || sending}
             className="flex-1 py-2.5 rounded-xl bg-blue-600 text-sm text-white font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            {sending ? 'Đang gửi...' : `Gửi danh thiếp${selected.size > 0 ? ` (${selected.size})` : ''}`}
+            {sending ? tr('Đang gửi...') : tr('Gửi danh thiếp{{v1}}', { v1: selected.size > 0 ? ` (${selected.size})` : '' })}
           </button>
         </div>
       </div>
@@ -930,7 +932,7 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
   onClose: () => void;
   onAdded?: () => void;
 }) {
-  // Selector: modal không render lại với mọi tin nhắn / đang gõ của các hội thoại khác
+  // Selector: the modal does not re-render on every message / typing event from other conversations
   const { getActiveAccount, activeAccountId } = useAccountStore(useShallow(s => ({
     getActiveAccount: s.getActiveAccount, activeAccountId: s.activeAccountId, accounts: s.accounts,
   })));
@@ -944,7 +946,7 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
   const acc = getActiveAccount();
   const auth = acc ? buildZaloAuth(acc) : null;
   const activeChannel = channel || acc?.channel || CHANNEL.ZALO;
-  // Zalo: ứng viên = bạn bè; đọc lỗi (chế độ nhân viên) và chưa có ai → "Không tải được — Thử lại"
+  // Zalo: candidates = friends; a failed read (employee mode) with nobody loaded → "Không tải được - Thử lại" (Failed to load, retry)
   const friendsLoadFailed = isZalo(activeChannel) && friendsFailed && friends.length === 0;
   const telegramCandidates = (activeAccountId ? (contacts[activeAccountId] || []) : [])
     .filter(contact => contact.contact_type !== 'group')
@@ -989,8 +991,8 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
       } catch { failed++; }
     }
     setAdding(false);
-    if (success > 0) showNotification(`Đã thêm ${success} thành viên vào nhóm`, 'success');
-    if (failed > 0) showNotification(`Lỗi: ${failed} người không thêm được`, 'error');
+    if (success > 0) showNotification(tr('Đã thêm {{success}} thành viên vào nhóm', { success }), 'success');
+    if (failed > 0) showNotification(tr('Lỗi: {{failed}} người không thêm được', { failed }), 'error');
     if (success > 0) { onAdded?.(); onClose(); }
   };
 
@@ -1002,7 +1004,7 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
-            <h2 className="text-foreground font-semibold text-base">Thêm thành viên</h2>
+            <h2 className="text-foreground font-semibold text-base">{tr('Thêm thành viên')}</h2>
             <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[320px]">{groupName}</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
@@ -1021,7 +1023,7 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
             </svg>
             <input value={search} onChange={e => setSearch(e.target.value)}
               autoFocus
-              placeholder="Tìm bạn bè để thêm vào nhóm..."
+              placeholder={tr('Tìm bạn bè để thêm vào nhóm...')}
               className="w-full bg-muted border border-input rounded-full pl-9 pr-3 py-1.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
           </div>
         </div>
@@ -1029,12 +1031,12 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
         {/* Friends list */}
         <div className="flex-1 overflow-y-auto">
           {loading ? (
-            <p className="text-center text-muted-foreground text-sm py-10">Đang tải danh sách bạn bè...</p>
+            <p className="text-center text-muted-foreground text-sm py-10">{tr('Đang tải danh sách bạn bè...')}</p>
           ) : (
             <>
               <div className="flex items-center justify-between px-4 pt-2 pb-1">
                 <span className="text-xs text-muted-foreground">
-                  {refreshing ? 'Đang cập nhật...' : friendsLoadFailed ? 'Chưa tải được bạn bè' : `${filteredFriends.length} bạn bè có thể thêm`}
+                  {refreshing ? tr('Đang cập nhật...') : friendsLoadFailed ? tr('Chưa tải được bạn bè') : tr('{{count}} bạn bè có thể thêm', { count: filteredFriends.length })}
                 </span>
                 <button onClick={refresh} disabled={refreshing}
                   className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40 flex items-center gap-1">
@@ -1042,7 +1044,7 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
                     className={refreshing ? 'animate-spin' : ''}>
                     <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                   </svg>
-                  Làm mới
+                  {tr('Làm mới')}
                 </button>
               </div>
               {Object.keys(byLetter).sort().map(letter => (
@@ -1058,11 +1060,11 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
                   ))}
                 </div>
               ))}
-              {/* Danh sách bạn bè đọc lỗi (chế độ nhân viên) ≠ "Không có bạn bè nào" */}
-              {friendsLoadFailed && <LoadFailedRow text="Không tải được danh sách bạn bè" onRetry={retryFriends} />}
+              {/* Friend list read failed (employee mode) ≠ "Không có bạn bè nào" (No friends) */}
+              {friendsLoadFailed && <LoadFailedRow text={tr('Không tải được danh sách bạn bè')} onRetry={retryFriends} />}
               {!friendsLoadFailed && filteredFriends.length === 0 && (
                 <p className="text-center text-muted-foreground text-sm py-10">
-                  {search ? 'Không tìm thấy bạn bè phù hợp' : existingMemberIds.length > 0 ? 'Tất cả bạn bè đã là thành viên nhóm' : 'Không có bạn bè nào'}
+                  {search ? tr('Không tìm thấy bạn bè phù hợp') : existingMemberIds.length > 0 ? tr('Tất cả bạn bè đã là thành viên nhóm') : tr('Không có bạn bè nào')}
                 </p>
               )}
             </>
@@ -1072,7 +1074,7 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
         {/* Selected count */}
         {selected.size > 0 && (
           <div className="px-5 py-2 border-t border-border text-xs text-muted-foreground">
-            Đã chọn <span className="text-blue-400 font-semibold">{selected.size}</span> người
+            {trx('Đã chọn <0>{{count}}</0> người', { 0: <span className="text-blue-400 font-semibold" />, count: selected.size })}
           </div>
         )}
 
@@ -1080,11 +1082,11 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
         <div className="flex gap-3 px-5 py-4 border-t border-border">
           <button onClick={onClose}
             className="flex-1 py-2.5 rounded-xl border border-input text-sm text-foreground/80 hover:bg-muted transition-colors">
-            Hủy
+            {tr('Hủy')}
           </button>
           <button onClick={handleAdd} disabled={selected.size === 0 || adding}
             className="flex-1 py-2.5 rounded-xl bg-blue-600 text-sm text-white font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            {adding ? 'Đang thêm...' : `Thêm${selected.size > 0 ? ` (${selected.size})` : ''}`}
+            {adding ? tr('Đang thêm...') : tr('Thêm{{v1}}', { v1: selected.size > 0 ? ` (${selected.size})` : '' })}
           </button>
         </div>
       </div>
@@ -1136,18 +1138,18 @@ function LabelSelectFilter({ zaloLabels, localLabels, value, onChange }: {
 
   // Resolve display for current value
   const getDisplay = (): { label: string; color?: string; emoji?: string } => {
-    if (!value) return { label: 'Tất cả nhãn' };
+    if (!value) return { label: tr('Tất cả nhãn') };
     if (value.startsWith('z:')) {
       const id = parseInt(value.slice(2));
       const lbl = zaloLabels.find(l => l.id === id);
-      return lbl ? { label: lbl.text, color: lbl.color, emoji: lbl.emoji } : { label: 'Nhãn Zalo' };
+      return lbl ? { label: lbl.text, color: lbl.color, emoji: lbl.emoji } : { label: tr('Nhãn Zalo') };
     }
     if (value.startsWith('l:')) {
       const id = parseInt(value.slice(2));
       const lbl = localLabels.find(l => l.id === id);
-      return lbl ? { label: lbl.name, color: lbl.color, emoji: lbl.emoji } : { label: 'Nhãn Local' };
+      return lbl ? { label: lbl.name, color: lbl.color, emoji: lbl.emoji } : { label: tr('Nhãn Local') };
     }
-    return { label: 'Tất cả nhãn' };
+    return { label: tr('Tất cả nhãn') };
   };
 
   const current = getDisplay();
@@ -1187,7 +1189,7 @@ function LabelSelectFilter({ zaloLabels, localLabels, value, onChange }: {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground flex-shrink-0">
               <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>
             </svg>
-            Tất cả nhãn
+            {tr('Tất cả nhãn')}
           </button>
 
           {/* Zalo labels group */}
@@ -1195,7 +1197,7 @@ function LabelSelectFilter({ zaloLabels, localLabels, value, onChange }: {
             <>
               <div className="px-3 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider border-t border-border/60 mt-0.5 flex items-center gap-1.5">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="text-blue-400"><circle cx="12" cy="12" r="10"/></svg>
-                Nhãn Zalo
+                {tr('Nhãn Zalo')}
               </div>
               {zaloLabels.map(l => {
                 const key = `z:${l.id}`;
@@ -1218,7 +1220,7 @@ function LabelSelectFilter({ zaloLabels, localLabels, value, onChange }: {
             <>
               <div className="px-3 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider border-t border-border/60 mt-0.5 flex items-center gap-1.5">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="text-purple-400"><circle cx="12" cy="12" r="10"/></svg>
-                Nhãn Local
+                {tr('Nhãn Local')}
               </div>
               {localLabels.map(l => {
                 const key = `l:${l.id}`;

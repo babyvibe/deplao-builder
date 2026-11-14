@@ -1,9 +1,9 @@
 /**
- * Thông báo tin nhắn trong app: cài đặt bật / tắt (lưu trên máy) + các thẻ đang hiện. Quy tắc: lib/chat/notifications/inAppNotify.
+ * In-app message notifications: on / off setting (saved on this machine) + the cards currently shown. Rules: lib/chat/notifications/inAppNotify.
  *
- * Tin tới dồn dập (nhóm đông, nhiều tài khoản) không làm giao diện vẽ lại theo từng tin: tin mới gom lại và đưa vào
- * danh sách tối đa mỗi IN_APP_TOAST_FLUSH_MS một lần; một bộ hẹn giờ chung cho mọi thẻ (hết giờ, mờ dần, rê chuột thì
- * dừng). Một tin chỉ thông báo một lần (sự kiện cập nhật lại cùng tin không bật thẻ mới).
+ * Messages arriving in bursts (large groups, many accounts) do not redraw the UI for each message: new messages are batched and added to the
+ * list at most once every IN_APP_TOAST_FLUSH_MS; one shared timer for all cards (expire, fade out, paused while the mouse hovers). A message
+ * notifies only once (an update event for the same message does not show a new card).
  */
 import { create } from 'zustand';
 import { useAccountStore } from '../accounts/accountStore';
@@ -15,7 +15,7 @@ import {
 
 const PREFS_KEY = 'app_inAppNotify';
 export const IN_APP_TOAST_FLUSH_MS = 60;
-/** Nhớ tin đã thông báo trong chừng này để sự kiện lặp của cùng tin không bật lại thẻ. */
+/** Remember notified messages for this long so that repeated events for the same message do not show the card again. */
 const RECENT_MS = 60_000;
 
 function loadPrefs(): InAppNotifyPrefs {
@@ -30,7 +30,7 @@ function savePrefs(prefs: InAppNotifyPrefs): void {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {}
 }
 
-/** Khoá cài đặt của tài khoản: Facebook gửi sự kiện theo facebook_id, cài đặt lưu theo zalo_id của tài khoản. */
+/** Account settings key: Facebook sends events by facebook_id, settings are saved by the account's zalo_id. */
 export function inAppNotifyAccountKey(accountId: string): string {
   const account = useAccountStore.getState().accounts.find((a) => a.zalo_id === accountId || a.facebook_id === accountId);
   return account?.zalo_id || accountId;
@@ -39,20 +39,20 @@ export function inAppNotifyAccountKey(accountId: string): string {
 interface InAppNotifyState {
   prefs: InAppNotifyPrefs;
   toasts: InAppToast[];
-  /** App đang khoá màn hình: không hiện, bỏ thẻ đang hiện. */
+  /** App is locked: nothing is shown, cards currently shown are removed. */
   suspended: boolean;
   setAllAccounts: (on: boolean) => void;
   setAccount: (accountId: string, on: boolean) => void;
   push: (input: InAppToastInput) => void;
-  /** Bấm ✕: mờ dần rồi bỏ. */
+  /** Click ✕: fade out, then remove. */
   dismiss: (key: string) => void;
-  /** Hội thoại vừa được mở: bỏ thẻ của nó ngay. */
+  /** Conversation just opened: remove its card right away. */
   dismissConversation: (accountId: string, threadId: string) => void;
   setHovering: (hovering: boolean) => void;
   setSuspended: (suspended: boolean) => void;
 }
 
-/** Rê chuột giữ thẻ lâu nhất chừng này (phòng sự kiện rời chuột bị mất). */
+/** Hovering keeps a card up at most this long (in case the mouse-leave event is lost). */
 const HOVER_MAX_MS = 15_000;
 
 let pending: InAppToastInput[] = [];
@@ -121,12 +121,12 @@ export const useInAppNotifyStore = create<InAppNotifyState>((set, get) => ({
 
   setHovering: (next) => {
     if (hoverGuard) { clearTimeout(hoverGuard); hoverGuard = null; }
-    // Phòng khi trình duyệt không báo rời chuột (thẻ dưới con trỏ bị bỏ): giữ lâu nhất HOVER_MAX_MS
+    // In case the browser does not report mouse-leave (the card under the cursor was dropped): keep it at most HOVER_MAX_MS
     if (next) hoverGuard = setTimeout(() => useInAppNotifyStore.getState().setHovering(false), HOVER_MAX_MS);
     if (hovering === next) return;
     hovering = next;
     if (!next) {
-      // Rời chuột: thẻ sắp hết giờ được thêm chút thời gian để không biến mất ngay dưới con trỏ vừa rời
+      // Mouse leave: a card about to expire gets a little extra time so it does not vanish right under the cursor that just left
       const floor = Date.now() + IN_APP_TOAST_RESUME_MS;
       set((state) => ({
         toasts: state.toasts.map((toast) => (toast.leavingAt === undefined && toast.expiresAt < floor
@@ -162,7 +162,7 @@ function flush(): void {
   scheduleTick();
 }
 
-/** Một bộ hẹn giờ cho mọi thẻ: hẹn tới mốc gần nhất (hết giờ hoặc mờ xong). Đang rê chuột thì không cho hết giờ. */
+/** One timer for all cards: schedules the nearest deadline (expire or fade-out done). While hovering, the card does not expire. */
 function scheduleTick(): void {
   if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; }
   const { toasts } = useInAppNotifyStore.getState();
@@ -197,9 +197,9 @@ function tick(): void {
 }
 
 /**
- * Có hiện thông báo trong app cho tin này không (cài đặt của tài khoản, cửa sổ đang hiện, app không khoá, tin còn mới,
- * không phải thông báo hệ thống). Người gọi truyền phần còn lại: tin của mình / tải lại, tắt thông báo, thư mục Khác,
- * hội thoại ẩn, đang mở trên màn hình.
+ * Whether an in-app notification should be shown for this message (account setting, window visible, app not locked, message is recent,
+ * not a system notification). The caller passes the rest: my own message / reloaded, notifications turned off, the "Khác" folder,
+ * hidden conversation, currently open on screen.
  */
 export function inAppToastAllowed(params: {
   accountId: string;
@@ -223,7 +223,7 @@ export function inAppToastAllowed(params: {
   });
 }
 
-/** Test: xoá trạng thái nội bộ của module. */
+/** Test: clear the module's internal state. */
 export function __resetInAppNotifyForTests(): void {
   pending = [];
   if (flushTimer) clearTimeout(flushTimer);

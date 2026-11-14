@@ -1,19 +1,19 @@
 /**
- * Đã trả lời / chưa trả lời của một hội thoại — dùng chung main (DatabaseService.getContactsFiltered → cột `is_replied`)
- * và renderer (cập nhật khi có tin mới, mở hội thoại, bộ lọc "Chưa trả lời").
+ * Replied / not replied state of a conversation, shared by main (DatabaseService.getContactsFiltered → the `is_replied` column)
+ * and the renderer (updated when a new message arrives, when the conversation opens, and by the "Chưa trả lời" (not replied) filter).
  *
- * Quy tắc: theo tin THẬT mới nhất của hội thoại — của mình (gửi từ app hay máy khác) = đã trả lời (1), của người kia =
- * chưa trả lời (0), chưa có tin thật = không rõ (null). Thông báo hệ thống, bản tin OA, tin mẫu của Trang, tin đã xoá
- * không tính. "Chưa trả lời" chỉ áp cho hội thoại 1:1: trong nhóm, tin cuối của người khác không phải câu hỏi chờ mình.
+ * Rule: based on the conversation's latest REAL message. If it is mine (sent from the app or another machine) = replied (1). If it is from the other person =
+ * not replied (0). No real message yet = unknown (null). System notices, OA broadcasts, Page template messages and deleted messages
+ * are not counted. "Chưa trả lời" (not replied) only applies to 1:1 conversations: in a group, the last message from someone else is not a question waiting for me.
  *
- * Đánh dấu đã trả lời (tay / hàng loạt, không cần gửi tin): contacts.reply_marked_at = thời điểm tin mới nhất lúc đánh
- * dấu — tin của người kia tới SAU mốc này thì hội thoại tự thành "chưa trả lời" lại.
+ * Manual replied mark (by hand / in bulk, no message needed): contacts.reply_marked_at = the time of the latest message when it was marked. A message from the other person
+ * that arrives AFTER this mark turns the conversation back into "not replied" by itself.
  *
- * Trước đây trạng thái chỉ nằm trong bộ nhớ (mở lại app là mất), tin cũ tải bù / tin hệ thống cũng đổi trạng thái, và
- * bộ lọc "Chưa trả lời" thực chất là "chưa đọc".
+ * Previously the state was only kept in memory (reopening the app lost it), older messages loaded later and system messages also changed the state, and
+ * the "Chưa trả lời" (not replied) filter was really a "chưa đọc" (unread) filter.
  */
 
-/** Loại tin không cho biết ai đang chờ ai. */
+/** A message type that does not show who is waiting for whom. */
 export const REPLY_STATE_IGNORED_MSG_TYPES: readonly string[] = [
   'system', 'chat.webcontent', 'chat.webcontent.v2', 'fb.template', 'deleted',
 ];
@@ -25,9 +25,8 @@ export function countsForReplyState(msgType: unknown): boolean {
 }
 
 /**
- * Cột SQL cho bảng contacts (tên `alias`): đã trả lời theo tin thật mới nhất của hội thoại — 1 / 0, NULL khi chưa có tin
- * thật. `withMarked`: bảng có cột reply_marked_at (đánh dấu đã trả lời tay) — tin cũ hơn / bằng mốc tính là đã trả lời.
- * Tra theo chỉ mục messages(owner_zalo_id, thread_id, timestamp): ~10 ms cho trang 200 hội thoại.
+ * SQL column for the contacts table (alias `alias`): replied according to the conversation's latest real message: 1 / 0, NULL when there is no real message yet. `withMarked`: the table has the reply_marked_at column (manual replied mark); messages older than or equal to the mark count as replied.
+ * Looked up through the index messages(owner_zalo_id, thread_id, timestamp): ~10 ms for a page of 200 conversations.
  */
 export function contactReplyStateSql(alias = 'contacts', withMarked = true): string {
   const types = REPLY_STATE_IGNORED_MSG_TYPES.map((type) => `'${type}'`).join(', ');
@@ -40,19 +39,19 @@ export function contactReplyStateSql(alias = 'contacts', withMarked = true): str
     ORDER BY m.timestamp DESC LIMIT 1)`;
 }
 
-/** Hội thoại 1:1 mà tin thật mới nhất là của người kia. */
+/** 1:1 conversation whose latest real message is from the other person. */
 export function isUnrepliedConversation(contact: { is_replied?: number | null; contact_type?: string | null } | null | undefined): boolean {
   return !!contact && contact.is_replied === 0 && contact.contact_type !== 'group';
 }
 
-/** Đang "đã trả lời" chỉ nhờ đánh dấu tay (tin cuối vẫn của người kia) → cho "Đánh dấu chưa trả lời". */
+/** Currently "đã trả lời" (replied) only because of a manual mark (the last message is still from the other person) → allows "Đánh dấu chưa trả lời" (mark as not replied). */
 export function isManuallyMarkedReplied(contact: { is_replied?: number | null; reply_marked_at?: number | null } | null | undefined): boolean {
   return !!contact && contact.is_replied === 1 && Number(contact.reply_marked_at) > 0;
 }
 
 /**
- * Trạng thái theo các tin đã tải (cũ → mới hay mới → cũ đều được): 1 / 0 / null khi chưa có tin thật. `markedAt`:
- * mốc đánh dấu đã trả lời tay (reply_marked_at) — tin của người kia không mới hơn mốc này tính là đã trả lời.
+ * State from the loaded messages (old → new or new → old both work): 1 / 0 / null when there is no real message yet. `markedAt`:
+ * the manual replied mark time (reply_marked_at). The other person's messages that are not newer than this mark count as replied.
  */
 export function replyStateFromMessages(
   messages: ReadonlyArray<{ msg_id?: string | number | null; msg_type?: string | null; is_sent?: number | boolean | null; timestamp?: number | string | null }> | null | undefined,
@@ -62,7 +61,7 @@ export function replyStateFromMessages(
   for (const message of messages || []) {
     if (!message) continue;
     const id = String(message.msg_id ?? '');
-    if (id.startsWith('temp_') || id.startsWith('retry_')) continue; // đang gửi: tính khi đã gửi xong
+    if (id.startsWith('temp_') || id.startsWith('retry_')) continue; // sending: counted once the send has finished
     if (!countsForReplyState(message.msg_type)) continue;
     const ts = Number(message.timestamp) || 0;
     if (!latest || ts >= latest.ts) latest = { ts, sent: message.is_sent === 1 || message.is_sent === true };
@@ -74,8 +73,8 @@ export function replyStateFromMessages(
 }
 
 /**
- * Tin vừa đến có đổi trạng thái không: chỉ tin thật, mới nhất của hội thoại (tin cũ tải bù / lịch sử không đổi trạng
- * thái — trước đây bù tin của người kia sau khi mình đã trả lời làm hội thoại thành "chưa trả lời").
+ * Does an incoming message change the state: only a real message that is the conversation's newest (old messages loaded later / history do not change
+ * the state. Before, catching up the other person's messages after I had replied turned the conversation into "chưa trả lời" (not replied)).
  */
 export function replyStateForIncoming(
   message: { msgType?: unknown; timestamp?: unknown; isSelf?: boolean; silent?: boolean },

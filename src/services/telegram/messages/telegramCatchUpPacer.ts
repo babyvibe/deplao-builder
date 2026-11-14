@@ -1,12 +1,12 @@
 /**
- * Nhịp bù tin Telegram sau khi offline (GetDifference, ChannelDifference, lịch sử kênh TooLong, đồng bộ lại hội thoại,
- * lượt dialog watch). Mỗi tin là vài lệnh SQLite đồng bộ + một event:message; `await handleNewMessage` chỉ nhường
- * microtask nên vài nghìn tin chạy thành MỘT khối trên luồng chính: IPC của giao diện (mở hội thoại, tải tin) phải chờ
- * hết khối. Bộ nhịp cho làm tối đa `sliceMs` rồi nghỉ `restMs` (setTimeout) để IPC, tin realtime, thao tác người dùng
- * chen vào: tốc độ bù tin còn khoảng 60 %, không khối nào dài hơn ~12 ms. Ít tin thì không chậm thêm gì.
+ * Telegram catch-up pacing after going offline (GetDifference, ChannelDifference, TooLong channel history, conversation resync,
+ * dialog watch pass). Each message is a few synchronous SQLite commands + one event:message; `await handleNewMessage` only yields a
+ * microtask, so thousands of messages run as ONE block on the main thread: the UI's IPC (opening a conversation, loading messages) must wait for the
+ * whole block. The pacer lets the work run for at most `sliceMs`, then rests `restMs` (setTimeout) so IPC, realtime messages and user actions
+ * can get in: catch-up speed drops to about 60 %, and no block is longer than ~12 ms. With few messages nothing gets slower.
  *
- * Một bộ nhịp dùng chung cho mọi tài khoản và mọi vòng bù tin: khi đang nghỉ, mọi vòng cùng chờ (nếu mỗi vòng một bộ
- * thì vòng này nghỉ, vòng kia vẫn làm, luồng chính không được nghỉ).
+ * One pacer is shared by all accounts and all catch-up passes: while it rests, every pass waits together (if each pass had its own pacer,
+ * one pass would rest while another kept working, and the main thread would never rest).
  */
 export const CATCH_UP_SLICE_MS = 12;
 export const CATCH_UP_REST_MS = 8;
@@ -32,7 +32,7 @@ export function createCatchUpPacer(options: PacerOptions = {}): CatchUpPacer {
   return async () => {
     if (resting) return resting;
     const at = now();
-    // Lần gọi đầu (hoặc đồng hồ lùi) mở lượt làm mới
+    // First call (or the clock went back) opens a refresh pass
     if (sliceStart === null || at < sliceStart) {
       sliceStart = at;
       return;
@@ -46,7 +46,7 @@ export function createCatchUpPacer(options: PacerOptions = {}): CatchUpPacer {
   };
 }
 
-/** Phần tử của hội thoại đang mở lên trước, giữ nguyên thứ tự trong từng nhóm (thứ tự tin trong một hội thoại không đổi). */
+/** Items of the open conversation go first, keeping the order within each group (the order of messages within a conversation does not change). */
 export function focusFirst<T>(items: T[], isFocused: (item: T) => boolean): T[] {
   const focused: T[] = [];
   const rest: T[] = [];

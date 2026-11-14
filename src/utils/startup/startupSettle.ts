@@ -1,11 +1,11 @@
 /**
- * Mốc "app đã ổn định" sau khi mở app (main process): giao diện đã tải xong danh sách hội thoại (renderer gửi
- * app:uiSettled) và luồng chính hết bận. Việc nền nặng — đồng bộ bù / tải lại tin nhắn cũ của Telegram, quét danh sách
- * hội thoại, khôi phục hàng đợi kênh… — chờ mốc này: chạy ngay lúc mở app tranh CPU / IPC với lúc giao diện đang dựng
- * nên app giật. Tin mới đến trực tiếp (socket) không phải chờ.
+ * The "app đã ổn định" (app settled) marker after the app opens (main process): the UI has finished loading the conversation list (the renderer sends
+ * app:uiSettled) and the main thread is no longer busy. Heavy background work (Telegram catch-up sync / reloading old messages, scanning the conversation list,
+ * restoring channel queues…) waits for this marker: running it right when the app opens competes for CPU / IPC while the UI is still being built, and the app stutters. New
+ * messages that arrive directly (socket) do not have to wait.
  *
- * Renderer không báo (lỗi, cửa sổ chưa tải…) → tự mở sau armStartupSettleFallback. Đã mở thì giữ mở cả phiên (kết nối lại
- * giữa chừng không phải chờ nữa).
+ * If the renderer does not report it (error, window not loaded…), it opens by itself after armStartupSettleFallback. Once open, it stays open for the whole session
+ * (a reconnect in the middle does not have to wait again).
  */
 import Logger from '../Logger';
 
@@ -20,7 +20,7 @@ export function isStartupSettled(): boolean {
   return settled;
 }
 
-/** Chạy `task` khi app đã ổn định (ngay lập tức nếu đã ổn định). */
+/** Run `task` once the app has settled (immediately if it already has). */
 export function whenStartupSettled(task: SettledTask): void {
   if (settled) {
     task();
@@ -48,7 +48,7 @@ export function markStartupSettled(reason: string): void {
   }
 }
 
-/** Lưới an toàn: renderer không báo giao diện đã tải xong trong `ms` → vẫn mở mốc. */
+/** Safety net: the renderer does not report the UI loaded within `ms` → the marker still opens. */
 export function armStartupSettleFallback(ms: number): void {
   if (settled || fallbackTimer) return;
   fallbackTimer = setTimeout(() => markStartupSettled('fallback'), ms);
@@ -60,8 +60,8 @@ const IDLE_MAX_LAG_MS = 40;
 const IDLE_CALM_SAMPLES = 4;
 
 /**
- * Giao diện đã tải xong: mở mốc khi luồng chính cũng rảnh (độ trễ hẹn giờ < 40ms trong 4 lần đo liên tiếp, sau tối
- * thiểu `minDelayMs`) — đăng nhập Zalo / Facebook lúc khởi động có thể vẫn đang chạy. Chờ tối đa `maxWaitMs`.
+ * The UI has loaded: open the marker when the main thread is also idle (timer delay < 40 ms in 4 consecutive measurements, after at least
+ * `minDelayMs`). A Zalo / Facebook login running at startup may still be going. Waits at most `maxWaitMs`.
  */
 export function settleWhenMainIdle(reason: string, opts: { minDelayMs?: number; maxWaitMs?: number } = {}): void {
   if (settled || idleWatchStarted) return;
@@ -88,7 +88,7 @@ export function settleWhenMainIdle(reason: string, opts: { minDelayMs?: number; 
   (timer as any).unref?.();
 }
 
-/** Chỉ cho test. */
+/** Test only. */
 export function __resetStartupSettleForTests(): void {
   settled = false;
   waiting = [];

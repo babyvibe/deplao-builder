@@ -5,13 +5,13 @@
  * uninitialized) account first enters the Chat view.
  *
  * Shows the init tasks with live progress:
- *   🤝 Danh sách bạn bè
- *   🏷️ Nhãn hội thoại
- *   ⚡ Tin nhắn nhanh
- *   👥 Nhóm Zalo  ← has a detailed progress bar from syncZaloGroups
+ *   🤝 Friends list
+ *   🏷️ Conversation labels
+ *   ⚡ Quick messages
+ *   👥 Zalo groups  ← has a detailed progress bar from syncZaloGroups
  *
- * Lịch sử tin nhắn không tải khi khởi tạo — Zalo hiện gợi ý bấm nút "Đồng bộ tin nhắn từ
- * điện thoại" trên topbar (nút ẩn với nhân viên nên gợi ý cũng ẩn).
+ * Message history is not loaded during setup. Zalo shows a hint to press the "Đồng bộ tin nhắn từ điện thoại" (Sync messages from phone) button
+ * on the topbar (the button is hidden for employees, so the hint is hidden too).
  *
  * The panel is non-blocking - the user can keep using the app.
  * It auto-dismisses 4 s after all tasks complete, or can be minimized/closed.
@@ -39,6 +39,8 @@ import {
   FBInitNeeds,
 } from '@/lib/facebook/fbInitUtils';
 import { CHANNEL, isFacebook, isTelegram } from '@/lib/channels/channelHelper';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ── Task metadata ─────────────────────────────────────────────────────────────
 
@@ -46,12 +48,12 @@ type AnyTaskStatus = InitTaskStatus | FBInitTaskStatus;
 type AnyTaskProgress = InitTaskProgress | FBInitTaskProgress;
 
 const TASK_META: Record<string, { label: string; icon: React.ReactNode }> = {
-  friends:          { label: 'Danh sách bạn bè',      icon: <UserCheckIcon className="w-4 h-4" /> },
-  labels:           { label: 'Nhãn hội thoại',        icon: <TagIcon className="w-4 h-4" /> },
-  quickMessages:    { label: 'Tin nhắn nhanh',        icon: <LightningIcon className="w-4 h-4" /> },
-  groups:           { label: 'Nhóm Zalo',              icon: <UsersIcon className="w-4 h-4" /> },
+  friends:          { label: tr('Danh sách bạn bè'),      icon: <UserCheckIcon className="w-4 h-4" /> },
+  labels:           { label: tr('Nhãn hội thoại'),        icon: <TagIcon className="w-4 h-4" /> },
+  quickMessages:    { label: tr('Tin nhắn nhanh'),        icon: <LightningIcon className="w-4 h-4" /> },
+  groups:           { label: tr('Nhóm Zalo'),              icon: <UsersIcon className="w-4 h-4" /> },
   // Facebook tasks
-  threads:          { label: 'Hội thoại Facebook',    icon: <ChatIcon className="w-4 h-4" /> },
+  threads:          { label: tr('Hội thoại Facebook'),    icon: <ChatIcon className="w-4 h-4" /> },
 };
 
 const ZALO_TASKS: InitTask[] = ['friends', 'labels', 'quickMessages', 'groups'];
@@ -106,7 +108,7 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
   const isFB = isFacebook(channel);
   const isTG = isTelegram(channel);
   const taskList = isFB ? FB_TASKS : isTG ? [] : ZALO_TASKS;
-  // Gợi ý đồng bộ lịch sử bằng nút trên topbar — nút đó ẩn với nhân viên
+  // Hint to sync history with the topbar button: that button is hidden for employees
   const isEmployee = useEmployeeStore(s => s.mode === 'employee');
   const showMobileSyncHint = !isFB && !isTG && !isEmployee;
 
@@ -171,8 +173,8 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
     return () => {
       abortRef.current.current = true;
       if (autoCloseRef.current) clearTimeout(autoCloseRef.current);
-      // Reset để accountId mới có thể chạy khi unmount thật sự
-      // Strict Mode cleanup → re-mount cùng accountId vẫn bị chặn vì check === accountId chạy trước reset
+      // Reset so a new accountId can run when it is really unmounted
+      // Strict Mode cleanup → re-mounting with the same accountId is still blocked, because the check === accountId runs before the reset
       runningAccountRef.current = null;
     };
   }, [accountId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -188,14 +190,14 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
       <button
         onClick={() => setMinimized(false)}
         className="fixed bottom-4 right-4 z-[150] flex items-center gap-2 bg-card border border-border rounded-full px-4 py-2 shadow-2xl hover:bg-muted transition-all"
-        title="Mở lại bảng tiến độ"
+        title={tr('Mở lại bảng tiến độ')}
       >
         {allDone
           ? <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
           : <svg className="animate-spin w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-6.219-8.56" stroke="currentColor" strokeWidth="2.5" /></svg>
         }
         <span className="text-xs text-foreground font-medium">
-          {allDone ? 'Khởi tạo xong' : `Đang khởi tạo... ${overallPct}%`}
+          {allDone ? tr('Khởi tạo xong') : tr('Đang khởi tạo... {{overallPct}}%', { overallPct })}
         </span>
         <span className="text-muted-foreground text-[10px]">▲</span>
       </button>
@@ -214,18 +216,18 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
             : <svg className="animate-spin w-4 h-4 text-blue-400 flex-shrink-0" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-6.219-8.56" stroke="currentColor" strokeWidth="2.5" /></svg>
           }
           <span className="text-sm font-semibold text-foreground truncate">
-            {allDone ? <><CheckIcon className="w-4 h-4 inline" /> Khởi tạo hoàn tất</> : 'Đang khởi tạo tài khoản'}
+            {allDone ? <>{trx('<0/> Khởi tạo hoàn tất', { 0: <CheckIcon className="w-4 h-4 inline" /> })}</> : tr('Đang khởi tạo tài khoản')}
           </span>
         </div>
         {/* Minimize */}
-        <button onClick={() => setMinimized(true)} title="Thu nhỏ"
+        <button onClick={() => setMinimized(true)} title={tr('Thu nhỏ')}
           className="p-1 rounded text-muted-foreground hover:text-foreground/80 hover:bg-muted transition-colors flex-shrink-0">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
         </button>
         {/* Stop groups + close */}
-        <button onClick={() => { abortRef.current.current = true; onClose(); }} title="Dừng và đóng"
+        <button onClick={() => { abortRef.current.current = true; onClose(); }} title={tr('Dừng và đóng')}
           className="p-1 rounded text-muted-foreground hover:text-foreground/80 hover:bg-muted transition-colors flex-shrink-0">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -237,7 +239,7 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
       {!allDone && tasksNeeded.length > 0 && (
         <div className="px-4 pt-3 pb-1">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] text-muted-foreground">Tiến độ tổng</span>
+            <span className="text-[11px] text-muted-foreground">{tr('Tiến độ tổng')}</span>
             <span className="text-[11px] text-blue-400 font-semibold">{overallPct}%</span>
           </div>
           <div className="h-1.5 bg-muted rounded-full overflow-hidden">
@@ -293,12 +295,12 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
                     <div className="flex items-center justify-between mt-0.5">
                       <span className="text-[10px] text-muted-foreground">
                         {p.groupProgress.phase === 'members'
-                          ? `Thành viên: ${p.groupProgress.current}/${p.groupProgress.total}`
-                          : `Nhóm: ${p.groupProgress.current}/${p.groupProgress.total}`}
+                          ? tr('Thành viên: {{current}}/{{total}}', { current: p.groupProgress.current, total: p.groupProgress.total })
+                          : tr('Nhóm: {{current}}/{{total}}', { current: p.groupProgress.current, total: p.groupProgress.total })}
                       </span>
                       {p.groupProgress.phase === 'members' && (p.groupProgress.groupTotal ?? 0) > 0 && (
                         <span className="text-[10px] text-muted-foreground tabular-nums">
-                          Nhóm {p.groupProgress.groupCurrent}/{p.groupProgress.groupTotal}
+                          {trx('Nhóm {{groupCurrent}}/{{groupTotal}}', { groupCurrent: p.groupProgress.groupCurrent, groupTotal: p.groupProgress.groupTotal })}
                         </span>
                       )}
                     </div>
@@ -310,14 +312,12 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
         })}
       </div>
 
-      {/* ── Gợi ý đồng bộ tin nhắn cũ (Zalo) ── */}
+      {/* ── Hint to sync old messages (Zalo) ── */}
       {showMobileSyncHint && (
         <div className="mx-4 mb-3 flex items-start gap-2.5 rounded-xl bg-blue-500/10 border border-blue-500/25 px-3 py-2.5">
           <SmartphoneIcon className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
           <p className="text-[11px] text-foreground/80 leading-relaxed">
-            Muốn có tin nhắn cũ? Bấm nút <SmartphoneIcon className="w-3 h-3 inline -mt-0.5 text-blue-400" />{' '}
-            <span className="font-semibold text-foreground">Đồng bộ tin nhắn từ điện thoại</span> trên thanh trên cùng,
-            rồi chọn <span className="font-semibold text-foreground">Đồng ý</span> trên Zalo điện thoại.
+            {trx('Muốn có tin nhắn cũ? Bấm nút <0/> <1>Đồng bộ tin nhắn từ điện thoại</1> trên thanh trên cùng, rồi chọn <2>Đồng ý</2> trên Zalo điện thoại.', { 0: <SmartphoneIcon className="w-3 h-3 inline -mt-0.5 text-blue-400" />, 1: <span className="font-semibold text-foreground" />, 2: <span className="font-semibold text-foreground" /> })}
           </p>
         </div>
       )}
@@ -326,8 +326,8 @@ export default function AccountInitPanel({ accountId, onClose }: Props) {
       <div className="px-4 pb-3">
         <p className="text-[10px] text-muted-foreground leading-relaxed">
           {allDone
-            ? 'Hoàn tất - panel tự đóng sau vài giây.'
-            : 'Bạn có thể tiếp tục dùng ứng dụng trong khi khởi tạo.'}
+            ? tr('Hoàn tất - panel tự đóng sau vài giây.')
+            : tr('Bạn có thể tiếp tục dùng ứng dụng trong khi khởi tạo.')}
         </p>
       </div>
     </div>

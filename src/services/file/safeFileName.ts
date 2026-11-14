@@ -1,8 +1,8 @@
 /**
- * safeFileName.ts — tên file từ bên ngoài (header X-Filename của nhân viên, tên do nơi khác truyền vào) → tên an toàn
- * để path.join vào thư mục lưu. Trước đây upload media của nhân viên ghép thẳng X-Filename vào đường dẫn:
- * "..\..\Start Menu\Programs\Startup\x.bat" ghi được file ra ngoài thư mục media của Boss.
- * (API công khai có biến thể riêng: sanitizeFileName trong services/api/UploadStore.ts.)
+ * safeFileName.ts: turns a file name from outside (the employee's X-Filename header, a name passed in from elsewhere) into a safe name
+ * for path.join into the save folder. Previously the employee media upload joined X-Filename straight into the path:
+ * "..\..\Start Menu\Programs\Startup\x.bat" could write a file outside the Boss media folder.
+ * (The public API has its own variant: sanitizeFileName in services/api/UploadStore.ts.)
  */
 import * as path from 'path';
 
@@ -10,19 +10,19 @@ const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 export const MAX_SAFE_FILENAME_LENGTH = 150;
 
 export interface SafeFileNameOptions {
-  /** Giải mã %xx trước (client mã hoá X-Filename bằng encodeURIComponent). Mặc định true. */
+  /** Decode %xx first (the client encodes X-Filename with encodeURIComponent). Default true. */
   decodeUri?: boolean;
 }
 
 /**
- * Chỉ lấy phần tên (bỏ mọi thư mục, cả `/` lẫn `\`), bỏ ký tự cấm / điều khiển, bỏ dấu chấm / khoảng trắng ở đầu-cuối
- * (Windows không cho "file."), tránh tên thiết bị Windows (CON, NUL…), giới hạn độ dài (giữ đuôi file).
- * Tên hợp lệ sẵn (img_123.jpg, "Ảnh căn hộ.jpg") giữ nguyên.
+ * Keep only the file-name part (drop every folder, both `/` and `\`), drop forbidden / control characters, drop dots / spaces at the start and end
+ * (Windows does not allow "file."), avoid Windows device names (CON, NUL…), limit the length (keep the file extension).
+ * A name that is already valid (img_123.jpg, "Ảnh căn hộ.jpg") is kept as is.
  */
 export function toSafeFileName(raw: unknown, fallback = 'file', options: SafeFileNameOptions = {}): string {
   let name = String(raw ?? '');
   if (options.decodeUri !== false && /%[0-9a-f]{2}/i.test(name)) {
-    try { name = decodeURIComponent(name); } catch { /* giữ nguyên */ }
+    try { name = decodeURIComponent(name); } catch { /* keep as is */ }
   }
   name = name.split(/[\\/]+/).pop() || '';
   name = name.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, '_').replace(/^[. ]+|[. ]+$/g, '').trim();

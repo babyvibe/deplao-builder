@@ -1,6 +1,6 @@
 /**
- * Trình xem ảnh (bộ sưu tập phân trang theo cursor, MediaGalleryViewer) và trình phát video của khung chat; đang xem
- * video toàn màn hình thì dừng video tự phát trong khung.
+ * Photo viewer (a gallery paged by cursor, MediaGalleryViewer) and the video player of the chat window. While a video is
+ * watched full screen, the auto-playing video inside the chat window is stopped.
  */
 import React, { useEffect, useState } from 'react';
 import type { MediaViewerImage } from '../../media/MediaViewer';
@@ -24,7 +24,7 @@ export function useMediaViewers(msgsRef: React.MutableRefObject<any[]>, activeTh
     msgId?: string;
     threadId?: string;
   } | null>(null);
-  // Đang xem video toàn màn hình (có tiếng) → dừng video tự phát trong khung chat
+  // Watching a video full screen (with sound) → stop the auto-playing video in the chat window
   useEffect(() => {
     setInlineAutoplaySuspended(!!videoPlayerState);
     return () => setInlineAutoplaySuspended(false);
@@ -43,7 +43,7 @@ export function useMediaViewers(msgsRef: React.MutableRefObject<any[]>, activeTh
         ? JSON.parse(msg.local_paths || '{}')
         : (msg.local_paths || {});
       const lf = lp.main || lp.hd || lp.thumb || (Object.values(lp)[0] as string) || '';
-      // File JPEG XL (tải trước khi đổi sang bản JPG) không hiển thị được → bỏ qua
+      // JPEG XL files (downloaded before switching to the JPG copy) cannot be displayed → skip them
       if (lf && !/\.jxl$/i.test(lf)) {
         localPath = lf;
         localUrl = toLocalMediaUrl(lf);
@@ -61,7 +61,7 @@ export function useMediaViewers(msgsRef: React.MutableRefObject<any[]>, activeTh
     return {
       src: remoteUrl || localUrl,
       displaySrc: localUrl || remoteUrl,
-      fallbackSrc: remoteUrl || undefined,  // Zalo CDN làm fallback
+      fallbackSrc: remoteUrl || undefined,  // Zalo CDN as the fallback
       localPath,
       defaultName,
       msgId: msg?.msg_id ? String(msg.msg_id) : undefined,
@@ -71,20 +71,20 @@ export function useMediaViewers(msgsRef: React.MutableRefObject<any[]>, activeTh
   }, []);
 
   /**
-   * Bộ sưu tập của trình xem ảnh, phân trang như tin nhắn (kiểu Telegram/Zalo): mở ngay với ảnh đang có trong
-   * hội thoại, tải ảnh quanh ảnh được bấm theo cursor (timestamp, msg_id), thêm trang khi cuộn gần đầu/cuối dải
-   * hoặc ←/→ quá ảnh đầu/cuối đã tải. State nằm trong MediaGalleryViewer → tải trang không render lại ChatWindow.
+   * Photo viewer gallery, paged like messages (Telegram / Zalo style): opens at once with the photos already in the
+   * conversation, loads the photos around the one clicked by cursor (timestamp, msg_id), adds pages when scrolling near the start or end of the strip,
+   * or when pressing ←/→ past the first / last loaded photo. State lives in MediaGalleryViewer → loading a page does not re-render ChatWindow.
    */
   const mediaGalleryRef = React.useRef<MediaGalleryViewerHandle>(null);
   const openViewer = React.useCallback((clickedUrl: string) => {
     mediaGalleryRef.current?.openFromMessages(msgsRef.current, clickedUrl);
   }, []);
-  /** Ảnh trong tin định dạng phong phú Telegram: trình xem với các ảnh của tin đó */
+  /** Photos in a Telegram rich-format message: the viewer with that message's photos */
   const openImageList = React.useCallback((items: MediaViewerImage[], index: number) => {
     mediaGalleryRef.current?.open(items, index);
   }, []);
 
-  /** Mở video player inline từ 1 tin nhắn video */
+  /** Open the inline video player from a video message */
   const openVideoPlayer = React.useCallback((msg: any) => {
     let localPath = '';
     let remoteUrl = '';

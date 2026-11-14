@@ -1,16 +1,18 @@
 /**
- * posLookupGuard.ts — node workflow tra cứu khách hàng / đơn hàng trên POS (KiotViet, Haravan, Sapo, Nhanh.vn, Pancake).
+ * posLookupGuard.ts: workflow node that looks up customers / orders on a POS (KiotViet, Haravan, Sapo, Nhanh.vn, Pancake).
  *
- * Ô SĐT / mã đơn của các node này thường là biến ({{ $trigger.fromPhone }}, nội dung tin…) nên có thể render ra rỗng:
- * khách chưa lưu SĐT, trigger không có số (thanh toán, lịch hẹn…). Gọi API với điều kiện rỗng thì vài nền tảng trả danh
- * sách KHÔNG lọc — Pancake / Nhanh.vn: đơn mới nhất của cả shop; KiotViet / Nhanh.vn / Pancake: khách hàng bất kỳ — và
- * workflow trả lời khách bằng đơn / thông tin của người khác. Thiếu điều kiện → không gọi API, trả "không tìm thấy"
- * kèm lý do (nhánh "không tìm thấy" của workflow vẫn chạy được).
+ * The phone / order code fields of these nodes are often variables ({{ $trigger.fromPhone }}, message content…), so they can render empty:
+ * the customer has no saved phone, or the trigger has no number (payment, appointment…). Calling the API with an empty condition makes some platforms return an
+ * UNFILTERED list: Pancake / Nhanh.vn return the newest orders of the whole shop; KiotViet / Nhanh.vn / Pancake return any customer → and the
+ * workflow answers the customer with someone else's order / information. With a missing condition → the API is not called and "không tìm thấy" (not found)
+ * is returned with the reason (the workflow's "not found" branch still runs).
  */
+
+import { tr } from '../../shared/i18n';
 
 export type PosLookupKind = 'customer' | 'order';
 
-/** 'pancake.lookupOrder' → { platform: 'pancake', kind: 'order' }; node khác → null. */
+/** 'pancake.lookupOrder' → { platform: 'pancake', kind: 'order' }; other nodes → null. */
 export function posLookupNode(type: string): { platform: string; kind: PosLookupKind } | null {
   const m = /^(kiotviet|haravan|sapo|nhanh|pancake)\.lookup(Customer|Order)$/.exec(String(type || ''));
   if (!m) return null;
@@ -22,7 +24,7 @@ function text(value: unknown): string {
   return String(value).trim();
 }
 
-/** Điều kiện tra cứu sau khi render: SĐT, và mã đơn với tra cứu đơn hàng. Không có điều kiện nào → null. */
+/** Lookup condition after rendering: phone number, and the order code for order lookups. No condition → null. */
 export function posLookupQuery(kind: PosLookupKind, cfg: Record<string, any>): { phone: string; orderId: string } | null {
   const phone = text(cfg?.phone);
   const orderId = kind === 'order' ? text(cfg?.orderId) : '';
@@ -30,13 +32,13 @@ export function posLookupQuery(kind: PosLookupKind, cfg: Record<string, any>): {
 }
 
 export const EMPTY_POS_LOOKUP_REASON: Record<PosLookupKind, string> = {
-  customer: 'Không tra cứu: số điện thoại trống (khách chưa lưu SĐT hoặc biến không có giá trị). Tra cứu không điều kiện sẽ trả về khách hàng khác.',
-  order: 'Không tra cứu: số điện thoại và mã đơn đều trống (khách chưa lưu SĐT hoặc biến không có giá trị). Tra cứu không điều kiện sẽ trả về đơn của khách khác.',
+  customer: tr('Không tra cứu: số điện thoại trống (khách chưa lưu SĐT hoặc biến không có giá trị). Tra cứu không điều kiện sẽ trả về khách hàng khác.'),
+  order: tr('Không tra cứu: số điện thoại và mã đơn đều trống (khách chưa lưu SĐT hoặc biến không có giá trị). Tra cứu không điều kiện sẽ trả về đơn của khách khác.'),
 };
 
 /**
- * SĐT người gửi ở dạng phần mềm bán hàng Việt Nam hay lưu: bỏ khoảng trắng / dấu chấm / gạch, "+84…" / "84…" (Telegram
- * lưu số không có dấu +) → "0…". Số nước ngoài giữ nguyên chữ số; rỗng → ''.
+ * Sender's phone number in the format Vietnamese sales software usually stores: remove spaces / dots / dashes, "+84…" / "84…" (Telegram
+ * stores numbers without the + sign) → "0…". Foreign numbers keep their digits; empty → ''.
  */
 export function vietnamLocalPhone(raw: unknown): string {
   const cleaned = String(raw ?? '').trim().replace(/[\s().-]/g, '');
@@ -46,7 +48,7 @@ export function vietnamLocalPhone(raw: unknown): string {
   return cleaned;
 }
 
-/** Kết quả "không tìm thấy" cùng dạng với kết quả thật của node (found = false). */
+/** "không tìm thấy" (not found) result, in the same shape as the node's real result (found = false). */
 export function refusedPosLookup(kind: PosLookupKind): Record<string, any> {
   return kind === 'order'
     ? { orders: [], order: null, found: false, skipped: true, reason: EMPTY_POS_LOOKUP_REASON.order }

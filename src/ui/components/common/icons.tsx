@@ -1,7 +1,7 @@
 // ─── SVG Icon Library ────────────────────────────────────────────────────────
 // Standard 24×24 viewBox, stroke-based design (Feather-style).
-// Tất cả icon components đều nhận className để tuỳ chỉnh kích thước/màu.
-// Cách dùng: import { ChatIcon } from '@/components/common/icons';
+// All icon components accept className to customize the size / color.
+// Usage: import { ChatIcon } from '@/components/common/icons';
 
 import React from 'react';
 
@@ -601,7 +601,7 @@ export const ClipboardListIcon = ({ className, size }: IconProps) => (
   </svg>
 );
 
-/** Task (Quản lý công việc): ô vuông có dấu tick, như tab Task. */
+/** Task (Task management): a square with a check mark, like the Task tab. */
 export const CheckSquareIcon = ({ className, size }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={toSize(className, size)}>
     <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />

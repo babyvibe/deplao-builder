@@ -1,12 +1,12 @@
 /**
- * Danh sách @nhắc đến trong ô soạn tin nhóm — như Telegram:
- *  - đọc ngay từ DB theo trang (page_group_member — cùng nguồn panel "Thành viên", có @username), tìm không dấu theo
- *    tên / @username / id; cuộn hoặc ↓ tới cuối để tải trang sau
- *  - Telegram: lần đầu (hoặc sau 24 giờ) lấy ~200 thành viên gần đây qua API — main lưu DB kèm @username; gõ tên trong
- *    nhóm lớn → tìm thêm trên Telegram, lưu DB, nhớ lượt đã tìm (lib/chat/members/mentionMembers)
- *  - DB không có ai khớp → lọc cache nhóm trong bộ nhớ như trước (nhóm chưa lưu thành viên vào DB)
- * Kết quả trả về muộn chỉ bị bỏ khi đã có lượt đọc mới hơn (seq) — KHÔNG dùng cờ "đã mount": StrictMode (bản dev) chạy
- * effect lúc mount 2 lần, cờ bị dọn về false nên mọi kết quả bị bỏ (chỉ còn @all, "Đang tải…" quay mãi).
+ * @mention list in the group composer, like Telegram:
+ *  - reads straight from the DB by page (page_group_member, the same source as the "Thành viên" (Members) panel, includes @username), accent-insensitive search by
+ *    name / @username / id; scroll or ↓ to the end to load the next page
+ *  - Telegram: the first time (or after 24 hours) it fetches ~200 recent members via the API, main saves them to the DB with @username; typing a name in a
+ *    large group → searches more on Telegram, saves to the DB, remembers the search (lib/chat/members/mentionMembers)
+ *  - if no one in the DB matches → filter the in-memory group cache as before (the group has not saved its members to the DB yet)
+ * A late result is only dropped when a newer read has started (seq). DO NOT use an "already mounted" flag: StrictMode (dev build) runs the
+ * mount effect twice, the flag is reset to false so every result is dropped (only @all stays, "Đang tải…" (Loading…) spins forever).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
@@ -20,14 +20,14 @@ import {
 } from '@/lib/chat/members/mentionMembers';
 import { groupOwnerRole } from '../../../shared/chat/groupMemberRoles';
 
-/** Vòng "Đang tải thành viên…" / "Đang tìm…" tắt sau chừng này dù Telegram chưa trả (RPC treo); kết quả về sau vẫn hiện. */
+/** The spinner for "Đang tải thành viên…" (Loading members…) / "Đang tìm…" (Searching…) stops after this long even if Telegram has not replied (RPC hung); late results still show. */
 export const MENTION_SYNC_SPINNER_MAX_MS = 20_000;
 export const MENTION_SEARCH_SPINNER_MAX_MS = 12_000;
 
-/** Nhóm đang lấy thành viên gần đây qua API (mở / đóng ô @ nhanh, StrictMode không gọi trùng). */
+/** Group currently fetching recent members via the API (open / close the quick @ box; StrictMode does not call it twice). */
 const syncInFlight = new Set<string>();
 
-/** Chờ `promise` tối đa `ms` (hết hạn → undefined); lỗi → undefined. */
+/** Waits for `promise` for at most `ms` (timeout → undefined); error → undefined. */
 function settleWithin<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(undefined), ms);
@@ -40,9 +40,9 @@ function settleWithin<T>(promise: Promise<T>, ms: number): Promise<T | undefined
 
 export interface MentionMembersState {
   members: GroupMember[];
-  /** Đang lấy thành viên gần đây qua API (lần đầu / sau 24 giờ). */
+  /** Currently fetching recent members via the API (first time / after 24 hours). */
   syncing: boolean;
-  /** Đang tìm trên Telegram theo chữ đã gõ. */
+  /** Currently searching Telegram for the typed text. */
   searching: boolean;
   hasMore: boolean;
   loadMore: () => void;
@@ -53,17 +53,17 @@ export function useMentionMembers({ open, accountId, groupId, channel, peerType,
   accountId?: string | null;
   groupId?: string | null;
   channel?: string | null;
-  /** contacts.telegram_peer_type — kênh (broadcast) không lấy / tìm thành viên. */
+  /** contacts.telegram_peer_type: channels (broadcast) do not fetch / search members. */
   peerType?: string | null;
-  /** Số thành viên thật của nhóm Telegram — DB đã có đủ thì không tìm thêm trên Telegram. */
+  /** Real member count of the Telegram group: if the DB already has enough, do not search Telegram again. */
   memberCount?: number;
   query: string;
-  /** Cache nhóm trong bộ nhớ: tên / ảnh vừa lấy được mà DB chưa có; dự phòng khi DB không có ai khớp. */
+  /** In-memory group cache: name / photo just fetched that the DB does not have yet; fallback when the DB has no match. */
   cachedMembers?: GroupMember[];
 }): MentionMembersState {
   const [rows, setRows] = useState<GroupMember[]>([]);
   const [total, setTotal] = useState<number | null>(null);
-  /** Số người (có tên) của nhóm trong DB — lần đọc gần nhất không có chữ tìm. */
+  /** Number of people (with a name) in the group in the DB: the last read had no search text. */
   const [allTotal, setAllTotal] = useState<number | null>(null);
   const [syncingKey, setSyncingKey] = useState('');
   const [searchingKey, setSearchingKey] = useState('');
@@ -71,7 +71,7 @@ export function useMentionMembers({ open, accountId, groupId, channel, peerType,
   const seqRef = useRef(0);
   const rowsRef = useRef<GroupMember[]>([]);
   rowsRef.current = rows;
-  /** Chữ tìm của danh sách đang hiện (null = chưa đọc). */
+  /** Search text of the list currently shown (null = not read yet). */
   const readQueryRef = useRef<string | null>(null);
   const loadingMoreRef = useRef(false);
   const searchSeqRef = useRef(0);
@@ -86,7 +86,7 @@ export function useMentionMembers({ open, accountId, groupId, channel, peerType,
   }).catch((err: any) => ({ success: false as const, error: err?.message || String(err), members: [] as any[], total: 0 })),
   [accountId, groupId, trimmedQuery, ownerRole]);
 
-  // Đổi nhóm → bỏ danh sách của nhóm cũ ngay
+  // Switching group → drop the old group's list immediately
   useEffect(() => {
     setRows([]);
     setTotal(null);
@@ -94,7 +94,7 @@ export function useMentionMembers({ open, accountId, groupId, channel, peerType,
     readQueryRef.current = null;
   }, [groupKey]);
 
-  // Đóng ô @ → lần mở sau đọc lại từ đầu (không hiện kết quả của chữ cũ)
+  // Closing the @ box → the next open reads again from the start (does not show the old search's results)
   useEffect(() => {
     if (open) return;
     seqRef.current += 1;
@@ -103,7 +103,7 @@ export function useMentionMembers({ open, accountId, groupId, channel, peerType,
     readQueryRef.current = null;
   }, [open]);
 
-  // Trang đầu: mở ô @, đổi chữ tìm, hoặc DB vừa có thêm người (lấy / tìm trên Telegram xong — giữ số người đang hiện)
+  // First page: opening the @ box, changing the search text, or the DB just got more people (after a Telegram fetch / search finishes: keep the member count shown)
   useEffect(() => {
     if (!open || !groupKey) return;
     const seq = ++seqRef.current;
@@ -121,7 +121,7 @@ export function useMentionMembers({ open, accountId, groupId, channel, peerType,
 
   const loadMore = useCallback(() => {
     if (!open || loadingMoreRef.current || total === null || rowsRef.current.length >= total) return;
-    if (readQueryRef.current !== trimmedQuery) return; // trang đầu của chữ mới chưa về
+    if (readQueryRef.current !== trimmedQuery) return; // first page of the new text has not arrived yet
     loadingMoreRef.current = true;
     const seq = seqRef.current;
     void fetchPage(rowsRef.current.length, MENTION_PAGE_SIZE).then((res: any) => {
@@ -132,8 +132,8 @@ export function useMentionMembers({ open, accountId, groupId, channel, peerType,
     });
   }, [open, total, trimmedQuery, fetchPage]);
 
-  // Telegram: lần đầu (cả panel Thành viên chưa từng lấy) hoặc sau 24 giờ → ~200 thành viên gần đây qua API, main lưu DB.
-  // Danh sách trong DB vẫn hiện ngay trong lúc chờ; xong thì đọc lại.
+  // Telegram: the first time (the Members panel has never fetched) or after 24 hours → ~200 recent members via the API, main saves them to the DB.
+  // The DB list is still shown during the wait; when done, read it again.
   useEffect(() => {
     if (!open || !groupKey || !telegramGroup || !accountId || !groupId) return;
     const lastSyncedAt = Math.max(mentionMembersSyncedAt(accountId, groupId), groupMembersApiSyncedAt(accountId, groupId));
@@ -152,7 +152,7 @@ export function useMentionMembers({ open, accountId, groupId, channel, peerType,
       .then(() => setSyncingKey((key) => (key === groupKey ? '' : key)));
   }, [open, groupKey, telegramGroup, accountId, groupId]);
 
-  // Telegram, nhóm lớn: gõ tên → tìm trên Telegram (ngừng gõ 350 ms), lưu DB rồi đọc lại; nhớ lượt đã tìm
+  // Telegram, large group: typing a name → searches Telegram (after 350 ms of no typing), saves to the DB, then reads again; remembers the search
   const knownAll = mentionMembersComplete(allTotal, memberCount);
   useEffect(() => {
     if (!open || !groupKey || !telegramGroup || !accountId || !groupId || !trimmedQuery || knownAll) return;
@@ -164,7 +164,7 @@ export function useMentionMembers({ open, accountId, groupId, channel, peerType,
       const call = Promise.resolve(ipc.telegramUser?.searchGroupMembers({ accountId, chatId: groupId, query: trimmedQuery, limit: MENTION_PAGE_SIZE }));
       void call.then(
         (res) => {
-          // Lỗi (mất mạng, nhóm ẩn thành viên…) cũng nhớ — không hỏi lại cùng chữ liên tục
+          // Errors (no network, members hidden in the group…) are also remembered: do not ask again for the same text over and over
           rememberMentionRemoteSearch(groupKey, trimmedQuery, !!res?.success && !!res.complete);
           if (res?.success && Number(res.found) > 0) setRefreshTick((tick) => tick + 1);
         },

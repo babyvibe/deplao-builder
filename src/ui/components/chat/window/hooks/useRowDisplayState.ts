@@ -1,6 +1,6 @@
 /**
- * Trạng thái hiển thị của các hàng tin: ảnh đại diện người gửi lỗi (+ đã thử lấy lại), tin thu hồi đang mở nội dung gốc,
- * tin đã sửa đang xem lịch sử sửa.
+ * Display state of the message rows: the sender avatar failed (+ fetching it again was tried), a recalled message whose original content is open,
+ * an edited message whose edit history is being viewed.
  */
 import { useRef, useState } from 'react';
 

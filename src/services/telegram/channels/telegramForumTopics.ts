@@ -2,12 +2,12 @@ import { getTelegramMessagePreview } from '../messages/TelegramMessagePreview';
 import type { ForumTopicRow } from '../../../shared/telegram/forumTopics';
 
 /**
- * Danh sách chủ đề forum như Telegram, từ kết quả messages.getForumTopics:
- * - dòng tin mới nhất của chủ đề: người gửi + nội dung + giờ của TIN đó (`topics[].topMessage` → `messages`).
- *   ForumTopic.date là ngày TẠO chủ đề — trước đây dùng nhầm nên giờ và thứ tự trong danh sách sai;
- * - `order` = thứ tự Telegram trả (chủ đề ghim theo thứ tự ghim, còn lại tin mới trước);
- * - biểu tượng: emoji tuỳ chỉnh (Document lấy qua getCustomEmojiDocuments) hoặc màu iconColor;
- * - tắt thông báo riêng của chủ đề (`muteUntil`, null = theo cài đặt của nhóm).
+ * Forum topic list like Telegram, from the messages.getForumTopics result:
+ * - the topic's latest message line: the sender + content + time of THAT message (`topics[].topMessage` → `messages`).
+ *   ForumTopic.date is the topic's CREATION date; previously it was used by mistake, so the times and order in the list were wrong;
+ * - `order` = Telegram's order (pinned topics in pin order, the rest newest message first);
+ * - icon: a custom emoji (Document fetched via getCustomEmojiDocuments) or the iconColor;
+ * - the topic's own mute setting (`muteUntil`, null = follows the group's setting).
  */
 
 type Normalize = (message: any) => { content: string; msgType: string };
@@ -20,7 +20,7 @@ function peerRef(peer: any): { kind: 'user' | 'chat'; id: string } | null {
   return null;
 }
 
-/** Tên ngắn như dòng xem trước của Telegram: tên (first name) của người, tiêu đề của nhóm / kênh. */
+/** Short name as in Telegram's preview line: the person's first name, or the group / channel title. */
 function peerShortName(peer: any, users: Map<string, any>, chats: Map<string, any>): string {
   const ref = peerRef(peer);
   if (!ref) return '';
@@ -31,7 +31,7 @@ function peerShortName(peer: any, users: Map<string, any>, chats: Map<string, an
   return String(chats.get(ref.id)?.title || '').trim();
 }
 
-/** Tin mới nhất của chủ đề → dòng xem trước. Tin hệ thống (tạo / ghim / đổi tên…) đã có tên người làm → không thêm "Tên:". */
+/** The topic's latest message → preview line. System messages (created / pinned / renamed…) already have the actor's name, so no "Tên:" (Name:) prefix is added. */
 export function forumTopicLastMessage(
   message: any,
   users: Map<string, any>,
@@ -43,7 +43,7 @@ export function forumTopicLastMessage(
   const text = getTelegramMessagePreview(msgType, content).replace(/\s+/g, ' ').trim();
   const isService = message.className === 'MessageService' || msgType === 'system';
   const isOut = !!message.out && !isService;
-  // Không có người gửi (quản trị viên ẩn danh, nhóm tự gửi) → tên nhóm, như Telegram
+  // No sender (anonymous admin, group posting as itself) → the group name, as in Telegram
   const senderName = isOut || isService
     ? ''
     : peerShortName(message.fromId, users, chats) || peerShortName(message.peerId, users, chats);
@@ -57,7 +57,7 @@ export function mapForumTopics(result: any, normalize: Normalize, iconEmoji: Map
   return (result?.topics || [])
     .filter((topic: any) => topic && topic.className !== 'ForumTopicDeleted')
     .map((topic: any, order: number): ForumTopicRow => {
-      // ForumTopic.id = gốc chủ đề (không đổi); topMessage = tin mới nhất hiện có trong chủ đề
+      // ForumTopic.id = the topic's root (does not change); topMessage = the latest message in the topic
       const id = String(topic.id || '');
       const emojiId = topic.iconEmojiId ? String(topic.iconEmojiId) : '';
       const last = forumTopicLastMessage(messages.get(String(topic.topMessage || '')), users, chats, normalize);

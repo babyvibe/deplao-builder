@@ -1,17 +1,19 @@
 /**
- * DataAccessor - Lớp trung gian giữa UI components và data source.
+ * DataAccessor: the middle layer between UI components and the data source.
  *
- * - standalone/boss mode: gọi window.electronAPI (IPC) như cũ
- * - employee mode: gọi RestQueryService (REST API qua fetch → Boss)
+ * - standalone / boss mode: calls window.electronAPI (IPC) as before
+ * - employee mode: calls RestQueryService (REST API via fetch → Boss)
  *
- * UI components không cần sửa, chỉ cần gọi DataAccessor thay vì ipc.db.xxx trực tiếp.
- * Sống trong renderer process, dùng Zustand store để check mode.
+ * UI components need no changes; they only call DataAccessor instead of ipc.db.xxx directly.
+ * It lives in the renderer process and uses the Zustand store to check the mode.
  */
 
 import { useEmployeeStore } from '../../store/employee/employeeStore';
 import RestQueryService from '../../../services/http/RestQueryService';
 import type { ErpZaloNotifySettings, ErpZaloNotifyStatus } from '../../../shared/erp/erpZaloNotify';
 import type { CampaignEngagementResponse } from '../../../shared/analytics/messageEngagement';
+import type { CampaignCloneParams, CampaignCloneResponse } from '../../../shared/crm/campaignCopy';
+import { tr } from '../../../shared/i18n';
 
 // ── Helper ──────────────────────────────────────────────────────────
 
@@ -23,7 +25,7 @@ function isEmployee(): boolean {
   }
 }
 
-// ── Cache cho library items (30 phút) ──────────────────────────────
+// ── Cache for library items (30 minutes) ──────────────────────────────
 const CACHE_TTL_LIBRARY = 30 * 60 * 1000;
 const libraryCache = new Map<string, { data: any; ts: number }>();
 
@@ -33,7 +35,7 @@ function getCachedLibrary(key: string): any | null {
   libraryCache.delete(key);
   return null;
 }
-/** Chỉ cache kết quả thành công — lỗi mạng không được thành "thư viện trống" suốt 30 phút. */
+/** Only successful results are cached: a network error must not turn into an "thư viện trống" (empty library) for 30 minutes. */
 function setCachedLibrary(key: string, data: any): void {
   if (!data || data.success === false) return;
   libraryCache.set(key, { data, ts: Date.now() });
@@ -44,11 +46,11 @@ function setCachedLibrary(key: string, data: any): void {
     }
   }
 }
-/** Xoá cache library để force reload (gọi sau upload/delete) */
+/** Clears the library cache to force a reload (called after upload/delete) */
 function invalidateLibraryCache(): void {
   libraryCache.clear();
 }
-/** Xoá cache library để UI gọi refresh thủ công */
+/** Clears the library cache so the UI can refresh manually */
 export function refreshLibraryCache(): void {
   libraryCache.clear();
 }
@@ -65,22 +67,21 @@ function restReport(res: { success?: boolean; data?: any; error?: string } | nul
   return { success: !!res && res.success !== false, data: res?.data ?? fallback, error: res?.error };
 }
 
-// ── Hợp đồng lỗi của lệnh đọc (employee mode) ─────────────────────────
+// ── Error contract of read commands (employee mode) ─────────────────────────
 //
-// Mọi lệnh đọc REST lỗi trả `{ success: false, error, code, ...phần rỗng }`: phần rỗng giữ ĐÚNG hình dạng như
-// khi thành công (mảng rỗng, `null`…) để người gọi chỉ đọc mảng không crash, nhưng KHÔNG BAO GIỜ báo
-// `success: true` khi lỗi. Người gọi phải giữ dữ liệu cũ khi `isReadFailure(res)` (không thay bằng rỗng,
-// không cache, không đóng dấu "đã tải"). Tin nhắn (getMessages/getMessagesAround/getFileMessages) vẫn trả
-// `messages`/`items` là mảng như cũ, thêm `success`/`error` cùng hình dạng với nhánh IPC
-// (`{ success, messages }`). Nhánh IPC (chủ/standalone) giữ nguyên.
+// Every failed REST read returns `{ success: false, error, code, ...empty parts }`: the empty parts keep EXACTLY the shape they have
+// on success (empty arrays, `null`...) so callers that only read the arrays do not crash, but it NEVER reports
+// `success: true` on an error. Callers must keep the old data when `isReadFailure(res)` is true (not replace it with empty,
+// no caching, no "đã tải" (loaded) stamp). Messages (getMessages/getMessagesAround/getFileMessages) still return
+// `messages`/`items` are arrays as before, plus `success`/`error` with the same shape as the IPC branch
+// (`{ success, messages }`). The IPC branch (owner / standalone) stays as it is.
 
 type RestRes = { success?: boolean; data?: any; error?: string; code?: string; pagination?: any } | null | undefined;
 
-const READ_FAILED_MESSAGE = 'Không tải được dữ liệu từ BOSS';
+const READ_FAILED_MESSAGE = tr('Không tải được dữ liệu từ BOSS');
 
 /**
- * Danh sách trong phản hồi REST: `data` là mảng hoặc `data.items` — luôn trả mảng. Kiểu `any` như
- * `res.data?.items` trước đây: hợp với kiểu nhánh IPC, người gọi không đổi kiểu suy ra.
+ * The list in a REST response: `data` is an array or `data.items`, always returns an array. The `any` type, as `res.data?.items` was before: matches the IPC branch type, so the caller's inferred type does not change.
  */
 function restItems(res: RestRes): any {
   const data = res?.data;
@@ -88,18 +89,18 @@ function restItems(res: RestRes): any {
   return Array.isArray(data?.items) ? data.items : [];
 }
 
-/** Phần chung của kết quả đọc lỗi — trải vào object kèm phần rỗng cùng hình dạng. */
+/** The common part of a failed read result: spread into an object together with the empty parts of the same shape. */
 function restFail(res: RestRes): { success: false; error: string; code?: string } {
   return { success: false, error: res?.error || READ_FAILED_MESSAGE, code: res?.code };
 }
 
-const WRITE_FAILED_MESSAGE = 'Không ghi được dữ liệu lên BOSS';
+const WRITE_FAILED_MESSAGE = tr('Không ghi được dữ liệu lên BOSS');
 
 /**
- * Kết quả lệnh ghi REST (employee) → cùng hình dạng nhánh IPC: `{ success, error?, code?, …trường kết quả }`.
- * Boss trả `{ success, id }` / `{ success, count }` (handler IPC) hoặc `{ success, data: { id } }`; RestQueryService gói
- * vào `res.data`, nên trước đây `res.id` / `res.count` của người gọi (giống nhánh IPC) luôn undefined. Giữ cả `data`
- * cho người gọi cũ đọc `res.data?.id`. Lỗi (mạng, Boss từ chối) → `success: false` + thông báo, không bao giờ "thành công".
+ * Result of a REST write command (employee) → the same shape as the IPC branch: `{ success, error?, code?, …result fields }`.
+ * Boss returns `{ success, id }` / `{ success, count }` (IPC handler) or `{ success, data: { id } }`; RestQueryService wraps it
+ * in `res.data`, so before, the caller's `res.id` / `res.count` (as in the IPC branch) was always undefined. `data` is kept too,
+ * so old callers can still read `res.data?.id`. An error (network, Boss refused) → `success: false` + a message, never "thành công" (success).
  */
 export function restWriteResult(res: RestRes): any {
   if (!res || !res.success) return { success: false, error: res?.error || WRITE_FAILED_MESSAGE, code: res?.code };
@@ -109,14 +110,14 @@ export function restWriteResult(res: RestRes): any {
 }
 
 /**
- * Lần đọc báo lỗi (`success === false`) → người gọi giữ dữ liệu đang có, không thay bằng rỗng.
- * Chế độ nhân viên: lỗi REST/mất kết nối. Chủ/standalone: IPC chỉ trả `false` khi DB lỗi.
+ * A read that reports an error (`success === false`) → the caller keeps the data it has, it is not replaced with empty.
+ * Employee mode: REST error / connection lost. Owner / standalone: IPC only returns `false` when the DB fails.
  */
 export function isReadFailure(res: unknown): boolean {
   return !!res && typeof res === 'object' && (res as { success?: unknown }).success === false;
 }
 
-/** Thông báo lỗi của một kết quả đọc (rỗng khi không lỗi). */
+/** Error message of a read result (empty when there is no error). */
 export function readFailureMessage(res: unknown): string {
   if (!isReadFailure(res)) return '';
   const error = (res as { error?: unknown }).error;
@@ -124,8 +125,8 @@ export function readFailureMessage(res: unknown): string {
 }
 
 /**
- * Map theo tài khoản (ghim, Nhãn Local…): chỉ ghi `zaloId` khi đọc thành công; lỗi → trả nguyên object cũ
- * (giữ dữ liệu cũ của đúng tài khoản đó, React bỏ qua render).
+ * Map keyed by account (pins, "Nhãn Local" (Local labels)...): only writes `zaloId` when the read succeeded; on error it returns the old object unchanged
+ * (keeps that account's old data, React skips the render).
  */
 export function mergeAccountOnSuccess<T>(
   prev: Record<string, T>, zaloId: string, res: unknown, value: () => T,
@@ -133,12 +134,12 @@ export function mergeAccountOnSuccess<T>(
   return isReadFailure(res) ? prev : { ...prev, [zaloId]: value() };
 }
 
-/** Trang đầu (offset 0) hay trang tiếp theo (cuộn vô hạn) của danh sách hội thoại. */
+/** First page (offset 0) or the next page (infinite scroll) of the conversation list. */
 export type ConversationPage = 'first' | 'more';
 
 /**
- * Phân trang danh sách hội thoại. `failures` = số lần tải lỗi liên tiếp, `failedPage` = lần lỗi là trang nào
- * (để "Thử lại" gọi lại đúng yêu cầu đó).
+ * Paging of the conversation list. `failures` = number of consecutive failed loads, `failedPage` = which page the last failure was on
+ * (so "Thử lại" (Retry) repeats exactly that request).
  */
 export interface ConversationPaging {
   nextOffset: number;
@@ -149,9 +150,9 @@ export interface ConversationPaging {
 }
 
 /**
- * Trạng thái phân trang sau một lần tải trang. Thành công → offset tiến (trang đầu: đặt lại từ 0), `hasMore`
- * theo server, xoá lỗi. Lỗi (hoặc không có kết quả) → GIỮ offset + `hasMore` (vẫn thử lại được), chỉ tăng số
- * lần lỗi — danh sách chỉ dừng hẳn khi server nói hết (`hasMore: false`).
+ * Paging state after one page load. Success → the offset moves on (first page: reset from 0), `hasMore` follows
+ * the server, the error is cleared. Error (or no result) → KEEPS the offset + `hasMore` (can still retry), only the
+ * error count goes up: the list only stops for good when the server says there is nothing more (`hasMore: false`).
  */
 export function nextConversationPaging(
   prev: ConversationPaging,
@@ -171,8 +172,8 @@ export function nextConversationPaging(
 }
 
 /**
- * Thời gian chờ trước lần tự thử lại thứ `failures` (1, 2, …): 2 s, 4 s, 8 s, 16 s, 30 s; sau `maxAuto` lần thì
- * `null` = thôi tự thử (vẫn thử khi cuộn / bấm "Thử lại" / kết nối lại).
+ * Wait time before automatic retry number `failures` (1, 2, …): 2 s, 4 s, 8 s, 16 s, 30 s; after `maxAuto` tries
+ * `null` = stop retrying automatically (still retried on scroll / when "Thử lại" (Retry) is pressed / when reconnected).
  */
 export function retryDelayMs(failures: number, opts: { baseMs?: number; maxMs?: number; maxAuto?: number } = {}): number | null {
   const { baseMs = 2000, maxMs = 30_000, maxAuto = 5 } = opts;
@@ -209,8 +210,8 @@ export class DataAccessor {
         const items = Array.isArray(res.data) ? res.data : (res.data.items || []);
         return { success: true, messages: items, items, pagination: res.pagination || { hasMore: false } };
       }
-      // Lỗi: vẫn là mảng rỗng (người gọi cũ không crash) nhưng `success: false` — "tải tin cũ" phải hiện
-      // "Thử lại" thay vì kết luận đã hết tin.
+      // Error: still an empty array (old callers do not crash) but `success: false`: "tải tin cũ" (load older messages) must show
+      // "Thử lại" (Retry) instead of concluding there are no more messages.
       if (!res.success) return { ...restFail(res), messages: [] as any[], items: [] as any[], pagination: { hasMore: false } };
       return { success: true, messages: [] as any[], items: [] as any[], pagination: { hasMore: false } };
     }
@@ -273,12 +274,12 @@ export class DataAccessor {
   }
 
   /**
-   * Ảnh/video của hội thoại, mới → cũ.
-   * - `limit`/`offset`: trang theo offset (panel Ảnh/Video).
-   * - `beforeTs`+`beforeMsgId` / `afterTs`+`afterMsgId`: trang keyset theo (timestamp, msg_id) cho bộ sưu tập của
-   *   trình xem ảnh (kết quả vẫn mới → cũ, bỏ qua offset).
-   * Employee mode: Boss bản cũ bỏ qua cursor và trả trang mới nhất → trả `cursorUnsupported: true`, không có dòng nào
-   * (tránh tạo lỗ hổng trong bộ sưu tập); người gọi tự quay về trang offset.
+   * Photos / videos of the conversation, new → old.
+   * - `limit`/`offset`: page by offset (the Photos / Videos panel).
+   * - `beforeTs`+`beforeMsgId` / `afterTs`+`afterMsgId`: keyset page by (timestamp, msg_id) for the image viewer's gallery
+   *   (the result is still new → old, offset is ignored).
+   * Employee mode: an old Boss ignores the cursor and returns the newest page → returns `cursorUnsupported: true`, with no rows
+   * (to avoid holes in the gallery); the caller falls back to the offset page itself.
    */
   static async getMediaMessages(params: {
     zaloId: string;
@@ -308,11 +309,11 @@ export class DataAccessor {
 
   static async searchMessages(params: { zaloId: string; query: string }) {
     if (isEmployee()) {
-      // `query` = tên tham số IPC (Boss mới đọc); `q` cho Boss bản cũ (trước đây chỉ đọc `q` → tìm tin luôn lỗi)
+      // `query` = the IPC parameter name (new Boss reads it); `q` for an old Boss (it used to read only `q` → message search always failed)
       const res = await rest().get('/api/search/messages', { ...params, q: params.query });
       if (!res.success) return { ...restFail(res), messages: [] as any[], results: [] as any[] };
       const items = restItems(res);
-      // `results` = khoá của nhánh IPC mà người gọi đọc (trước đây chỉ có `messages` → tìm tin luôn rỗng)
+      // `results` = the key of the IPC branch that callers read (before, only `messages` existed → message search was always empty)
       return { success: true, messages: items, results: items };
     }
     return window.electronAPI.db.searchMessages({
@@ -330,7 +331,7 @@ export class DataAccessor {
     return window.electronAPI.db.getMessageById(params);
   }
 
-  /** Batch lookup: lấy nhiều messages theo IDs trong 1 IPC call */
+  /** Batch lookup: gets many messages by IDs in 1 IPC call */
   static async getMessagesByIds(params: { zaloId: string; msgIds: string[] }) {
     if (isEmployee()) {
       // Employee mode: fallback to individual lookups (no batch REST endpoint)
@@ -341,7 +342,7 @@ export class DataAccessor {
         if (isReadFailure(res)) failed = res;
         else if (res?.message) results.push(res.message);
       }
-      // Có lần tra lỗi → báo lỗi nhưng vẫn trả những tin đã tìm được
+      // If a lookup fails → reports the error but still returns the messages that were found
       if (failed) return { success: false, error: readFailureMessage(failed), code: failed.code as string | undefined, messages: results };
       return { success: true, messages: results };
     }
@@ -353,8 +354,8 @@ export class DataAccessor {
   // ═════════════════════════════════════════════════════════════════
 
   /**
-   * Hội thoại theo danh sách id (≤ 200) — hội thoại ghim nằm ở trang sau của danh sách phân trang theo thời gian.
-   * Lỗi đọc trả `success: false` (không phải "không có").
+   * Conversations by a list of ids (≤ 200): pinned conversations sit on a later page of the time-paged list.
+   * A read error returns `success: false` (not "không có" (none)).
    */
   static async getConversationsByIds(zaloId: string, ids: string[]) {
     const unique = [...new Set(ids.map(String).filter(Boolean))].slice(0, 200);
@@ -366,14 +367,14 @@ export class DataAccessor {
       return { success: true, items };
     }
     const ipcRes = await window.electronAPI.db.getContactsFiltered({ zaloId, contactIds: unique, limit: unique.length });
-    if (ipcRes?.success === false) return { success: false, error: (ipcRes as any).error || 'Không đọc được hội thoại', items: [] as any[] };
+    if (ipcRes?.success === false) return { success: false, error: (ipcRes as any).error || tr('Không đọc được hội thoại'), items: [] as any[] };
     return { success: true, items: ipcRes?.contacts ?? [] };
   }
 
   /**
-   * Hội thoại đã lọc của danh sách hội thoại (kênh / tìm / Chưa đọc / Khác / Chưa trả lời / khoảng ngày) — như IPC
-   * db:getContactsFiltered (`{ success, contacts }`). Nhân viên: Boss lọc trên DB của Boss — trước đây danh sách gọi thẳng
-   * IPC, DB máy nhân viên trả rỗng nên mọi bộ lọc ra danh sách trống. Lỗi đọc trả `success: false` (không phải "không có").
+   * Filtered conversations of the conversation list (channel / search / "Chưa đọc" (Unread) / "Khác" (Other) / "Chưa trả lời" (Not replied) / date range), the same as the IPC
+   * db:getContactsFiltered (`{ success, contacts }`). Employee: Boss filters on Boss's DB. Before, the list called the IPC directly,
+   * and the employee machine's DB returned empty, so every filter gave an empty list. A read error returns `success: false` (not "không có" (none)).
    */
   static async getContactsFiltered(params: {
     zaloId: string; channel?: string; search?: string; unreadOnly?: boolean; othersOnly?: boolean; excludeOthers?: boolean;
@@ -385,7 +386,7 @@ export class DataAccessor {
       return { success: true, contacts: restItems(res) };
     }
     const ipcRes: any = await window.electronAPI.db.getContactsFiltered(params);
-    if (ipcRes?.success === false) return { success: false, error: ipcRes.error || 'Không đọc được hội thoại', contacts: [] as any[] };
+    if (ipcRes?.success === false) return { success: false, error: ipcRes.error || tr('Không đọc được hội thoại'), contacts: [] as any[] };
     return { success: true, contacts: Array.isArray(ipcRes?.contacts) ? ipcRes.contacts : [] };
   }
 
@@ -401,7 +402,7 @@ export class DataAccessor {
           hasMore: res.pagination?.hasMore || false,
         };
       }
-      // Lỗi ≠ "hết hội thoại": người gọi giữ danh sách + `hasMore` và thử lại (xem nextConversationPaging)
+      // An error is not "hết hội thoại" (no more conversations): the caller keeps the list + `hasMore` and retries (see nextConversationPaging)
       if (!res.success) return { ...restFail(res), items: [] as any[], total: 0, hasMore: false };
       return { success: true, items: [] as any[], total: 0, hasMore: false };
     }
@@ -442,7 +443,7 @@ export class DataAccessor {
   static async getConversationById(zaloId: string, contactId: string) {
     if (isEmployee()) {
       const res = await rest().get(`/api/query/conversations/${contactId}`, { zaloId });
-      return res.success ? (res.data ?? null) : null; // như IPC: dòng hội thoại hoặc null
+      return res.success ? (res.data ?? null) : null; // same as IPC: a conversation row or null
     }
     const allRes = await window.electronAPI.db.getContacts(zaloId); const all = allRes?.contacts ?? allRes ?? [];
     return (all || []).find((c: any) => c.contact_id === contactId) || null;
@@ -480,10 +481,10 @@ export class DataAccessor {
   static async getFriends(params: { zaloId: string }) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/friends', params);
-      // Lỗi: không đóng dấu `lastFetched` — danh sách rỗng do lỗi không được coi là "vừa tải xong"
+      // Error: does not stamp `lastFetched`: an empty list caused by an error is not treated as "vừa tải xong" (just loaded)
       if (!res.success) return { ...restFail(res), friends: [] as any[], lastFetched: undefined as number | undefined };
-      // lastFetched = lúc Boss tải danh sách từ Zalo (như IPC; 0 = chưa từng) — trước đây Date.now() → danh sách cũ
-      // không bao giờ được làm mới nền (GroupModals)
+      // lastFetched = when Boss loaded the list from Zalo (as IPC; 0 = never); before, it was Date.now() → the old list
+      // was never refreshed in the background (GroupModals)
       return { success: true, friends: restItems(res), lastFetched: Number(res.data?.lastFetched) || 0 };
     }
     return window.electronAPI.db.getFriends(params);
@@ -543,7 +544,7 @@ export class DataAccessor {
     return window.electronAPI.db.getGroupMembers(params);
   }
 
-  /** Một trang thành viên nhóm + tổng (panel "Thành viên"): tìm theo tên / @username / id trong DB, không phân biệt dấu. */
+  /** A page of group members + the total (the "Thành viên" (Members) panel): searches by name / @username / id in the DB, ignoring diacritics. */
   static async getGroupMembersPage(params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number; namedOnly?: boolean }) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/groups/members/page', params);
@@ -576,7 +577,7 @@ export class DataAccessor {
   static async saveCRMNote(params: { zaloId: string; note: any }) {
     if (isEmployee()) {
       const res = await rest().post('/api/command/crm/notes', params);
-      // Trước đây luôn báo thành công → ghi chú mất mà người dùng không biết
+      // Before, it always reported success → the note was lost without the user knowing
       if (!res.success) return { ...restFail(res), id: undefined as number | undefined };
       return { success: true, id: res.data?.id };
     }
@@ -605,8 +606,8 @@ export class DataAccessor {
 
   static async saveCRMCampaign(params: { zaloId: string; campaign: any }) {
     if (isEmployee()) {
-      // Ảnh trong mẫu tin là file trên máy nhân viên → upload lên Boss trước (hàng đợi gửi chạy trên Boss). Trước đây
-      // REST lưu nguyên đường dẫn máy nhân viên → Boss gửi chiến dịch không tìm thấy ảnh.
+      // Photos in the message template are files on the employee's machine → uploaded to Boss first (the send queue runs on Boss). Before,
+      // REST saved the employee machine's path as is → Boss could not find the photo when sending the campaign.
       const prepared = await DataAccessor.uploadCampaignImages(params.campaign, params.zaloId);
       if (prepared.success === false) return { success: false, error: prepared.error, id: undefined as number | undefined };
       const res = restWriteResult(await rest().post('/api/command/crm/campaigns', { ...params, campaign: prepared.campaign }));
@@ -616,8 +617,8 @@ export class DataAccessor {
   }
 
   /**
-   * Nhân viên: ảnh của mẫu tin chiến dịch (template_message.blocks[].images) → đường dẫn Boss. Ảnh không đọc được trên
-   * máy này (đã là đường dẫn Boss khi sửa chiến dịch cũ) giữ nguyên; ảnh đọc được mà upload lỗi → báo lỗi.
+   * Employee: the photos of the campaign message template (template_message.blocks[].images) → Boss paths. A photo that cannot be read on
+   * this machine (already a Boss path when an old campaign was edited) is kept as it is; a photo that can be read but fails to upload → reports an error.
    */
   private static async uploadCampaignImages(campaign: any, zaloId: string): Promise<{ success: true; campaign: any } | { success: false; error: string }> {
     const raw = campaign?.template_message;
@@ -635,9 +636,9 @@ export class DataAccessor {
           next.push(up.bossPath);
           changed = true;
         } else if (up.code === 'LOCAL_FILE_UNREADABLE') {
-          next.push(imagePath); // không có trên máy này → đã là file Boss
+          next.push(imagePath); // not on this machine → already a Boss file
         } else {
-          return { success: false, error: `Không tải được ảnh chiến dịch lên Boss: ${up.error || imagePath}` };
+          return { success: false, error: tr('Không tải được ảnh chiến dịch lên Boss: {{v1}}', { v1: up.error || imagePath }) };
         }
       }
       block.images = next;
@@ -696,7 +697,7 @@ export class DataAccessor {
     return window.electronAPI.db.assignLocalLabelToThread(params as any);
   }
 
-  /** Gán nhiều label cho nhiều thread trong 1 lần — dùng transaction, nhanh hơn gọi lẻ hàng nghìn lần */
+  /** Assigns many labels to many threads in one go: uses a transaction, much faster than thousands of single calls */
   static async bulkAssignLocalLabelToThread(params: { zaloId: string; labelIds: number[]; threadIds: string[] }) {
     if (isEmployee()) {
       return restWriteResult(await rest().post('/api/command/label-threads/bulk', params));
@@ -774,7 +775,7 @@ export class DataAccessor {
       const res = await rest().get(`/api/query/settings/${key}`);
       return res.data?.value || null;
     }
-    // Boss/standalone: dùng IPC
+    // Boss / standalone: uses IPC
     try {
       return await (window.electronAPI as any).db?.getSetting?.(key);
     } catch {
@@ -805,7 +806,7 @@ export class DataAccessor {
   static async getLocalPinnedConversations(params: { zaloId: string }) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/pinned-conversations', params);
-      // Lỗi → người gọi giữ tập ghim đang có (trước đây bị thay bằng tập rỗng)
+      // Error → the caller keeps the current pin set (before, it was replaced with an empty set)
       if (!res.success) return { ...restFail(res), threadIds: [] as string[] };
       return { success: true, threadIds: restItems(res) };
     }
@@ -820,7 +821,7 @@ export class DataAccessor {
   }
 
   // ═════════════════════════════════════════════════════════════════
-  // TỰ ĐỘNG ĐÁNH DẤU ĐÃ ĐỌC
+  // AUTO MARK AS READ
   // ═════════════════════════════════════════════════════════════════
 
   static async getUnreadConversations(params: { zaloId: string; from?: number; to?: number; includeOthers?: boolean; channel?: string }): Promise<{ success: boolean; conversations: any[]; error?: string; code?: string }> {
@@ -875,11 +876,11 @@ export class DataAccessor {
   }
 
   // ═════════════════════════════════════════════════════════════════
-  // PINNED MESSAGES · BANK CARDS · TÌM LIÊN HỆ
-  // (IPC đọc ở chế độ nhân viên chỉ trả stub rỗng → các màn này trống với nhân viên; đọc qua Boss)
+  // PINNED MESSAGES · BANK CARDS · CONTACT SEARCH
+  // (IPC reads in employee mode only return an empty stub → these screens are empty for employees; read through Boss)
   // ═════════════════════════════════════════════════════════════════
 
-  /** Tin ghim + ghi chú nhóm của hội thoại: `{ success, pins }` như IPC db:getPinnedMessages. */
+  /** Pinned messages + the group note of the conversation: `{ success, pins }`, as IPC db:getPinnedMessages. */
   static async getPinnedMessages(params: { zaloId: string; threadId: string }) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/pinned-messages', params);
@@ -889,7 +890,7 @@ export class DataAccessor {
     return window.electronAPI.db.getPinnedMessages(params);
   }
 
-  /** Thẻ ngân hàng của tài khoản: `{ success, cards }` như IPC db:getBankCards. */
+  /** Bank cards of the account: `{ success, cards }`, as IPC db:getBankCards. */
   static async getBankCards(params: { zaloId: string }) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/bank-cards', params);
@@ -899,7 +900,7 @@ export class DataAccessor {
     return window.electronAPI.db.getBankCards(params);
   }
 
-  /** Ô chọn liên hệ (workflow): tìm không dấu + lọc loại + phân trang — `{ success, items, total, counts }` như IPC. */
+  /** Contact picker (workflow): search ignoring diacritics + type filter + paging: `{ success, items, total, counts }`, as IPC. */
   static async searchContactsForPicker(params: {
     zaloId: string; search?: string; type?: 'user' | 'group' | 'all'; limit?: number; offset?: number; ids?: string[];
   }): Promise<{
@@ -917,7 +918,7 @@ export class DataAccessor {
     return window.electronAPI.db.searchContactsForPicker(params);
   }
 
-  /** Liên hệ theo số điện thoại (gợi ý danh thiếp): `{ success, contact }` — null = không có. */
+  /** Contact by phone number (contact card suggestion): `{ success, contact }`, null = none. */
   static async searchContactByPhone(params: { zaloId: string; phone: string }) {
     if (isEmployee()) {
       const res = await rest().get('/api/search/contact-by-phone', params);
@@ -927,7 +928,7 @@ export class DataAccessor {
     return window.electronAPI.db.searchContactByPhone(params);
   }
 
-  // Cài đặt thông báo theo tài khoản: lưu trên từng máy (lib/notifications/notifSettingsOverrides), không qua DB / REST.
+  // Per-account notification settings: saved on each machine (lib/notifications/notifSettingsOverrides), not through the DB / REST.
 
   // ═════════════════════════════════════════════════════════════════
   // DASHBOARD / ANALYTICS (11 methods + 2 multi-account variants)
@@ -966,7 +967,7 @@ export class DataAccessor {
     return window.electronAPI.analytics.contactSegmentation({ zaloId });
   }
 
-  /** Tin gửi đi 1:1 trong khoảng: người nhận → đã nhận / đã xem / đã phản hồi (shared/analytics/messageEngagement). */
+  /** Sent 1:1 messages in the range: recipient → received / seen / replied (shared/analytics/messageEngagement). */
   static async getOutreachStats(params: { zaloId: string; sinceTs: number; untilTs: number; granularity?: 'hour' | 'day' }) {
     if (isEmployee()) {
       return restReport(await rest().get('/api/query/analytics/outreach', params));
@@ -1072,7 +1073,7 @@ export class DataAccessor {
   static async getContactsWithFlags(zaloId: string) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/conversations/flags', { zaloId });
-      // Lỗi → loadFlags giữ cờ cũ (trước đây cờ rỗng: "Khác" trống, hội thoại đang tắt tiếng bật lại)
+      // Error → loadFlags keeps the old flags (before, the flags were emptied: the "Khác" (Other) folder was empty and muted conversations were unmuted)
       if (!res.success) return { ...restFail(res), rows: [] as any[] };
       return { success: true, rows: restItems(res) };
     }
@@ -1158,9 +1159,9 @@ export class DataAccessor {
   static async getKeywordStickers(keyword: string) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/stickers/keyword', { keyword });
-      // Lỗi ≠ "đã tìm, không có kết quả" ([]): `null` như nhánh IPC khi lỗi → người gọi tìm lại
+      // Error ≠ "đã tìm, không có kết quả" (searched, no results) ([]): `null` like the IPC branch on error → the caller searches again
       if (!res.success) return { ...restFail(res), stickerIds: null as number[] | null };
-      // null = từ khoá chưa có trong cache Boss (người gọi hỏi API), [] = đã tìm, không có — như IPC
+      // null = the keyword is not in Boss's cache yet (the caller asks the API), [] = searched, nothing found, as IPC
       const ids = res.data?.stickerIds;
       return { success: true, stickerIds: (Array.isArray(ids) ? ids : null) as number[] | null };
     }
@@ -1183,7 +1184,7 @@ export class DataAccessor {
   static async getUnreadCount(zaloId: string) {
     if (isEmployee()) {
       const res = await rest().get('/api/query/messages/unread', { zaloId });
-      // Cùng hình dạng IPC `{ success, total }` (trước đây trả `res.data` trần)
+      // Same shape as IPC `{ success, total }` (before, it returned the bare `res.data`)
       if (!res.success) return { ...restFail(res), total: 0 };
       return { success: true, total: Number(res.data?.total) || 0 };
     }
@@ -1191,8 +1192,8 @@ export class DataAccessor {
   }
 
   /**
-   * Đánh dấu đã trả lời / bỏ đánh dấu (không gửi tin) — hàng loạt hoặc một hội thoại; trả trạng thái mới (is_replied,
-   * reply_marked_at) từng hội thoại. Nhân viên: lệnh REST tới Boss (Boss phát db:replyStateChanged cho các máy).
+   * Marks as replied / unmarks (no message is sent): in bulk or for one conversation; returns the new state (is_replied,
+   * reply_marked_at) of each conversation. Employee: a REST command to Boss (Boss emits db:replyStateChanged to the machines).
    */
   static async markConversationsReplied(params: { zaloId: string; contactIds: string[]; replied?: boolean }): Promise<{
     success: boolean; items: Array<{ contact_id: string; is_replied: number | null; reply_marked_at: number }>; error?: string;
@@ -1216,7 +1217,7 @@ export class DataAccessor {
     return window.electronAPI.db.markAsRead(params);
   }
 
-  /** threadId (tuỳ chọn): Boss phát event:undo kèm hội thoại → UI Boss / nhân viên khác cập nhật đúng dòng. */
+  /** threadId (optional): Boss emits event:undo with the conversation → the Boss UI / other employees update the right row. */
   static async markMessageRecalled(params: { zaloId: string; msgId: string; threadId?: string }) {
     if (isEmployee()) {
       return restWriteResult(await rest().post('/api/command/messages/mark-recalled', params));
@@ -1224,7 +1225,7 @@ export class DataAccessor {
     return window.electronAPI.db.markMessageRecalled(params);
   }
 
-  /** threadId: msg_id Telegram chỉ duy nhất trong 1 hội thoại — thiếu thì Boss không xoá tin Telegram. */
+  /** threadId: a Telegram msg_id is only unique within 1 conversation; if it is missing, Boss does not delete the Telegram message. */
   static async deleteMessages(params: { zaloId: string; msgIds: string[]; threadId?: string }) {
     if (isEmployee()) {
       return restWriteResult(await rest().post('/api/command/messages/delete', params));
@@ -1247,7 +1248,7 @@ export class DataAccessor {
 
   static async getCRMContacts(params: { zaloId: string; opts?: any }) {
     if (isEmployee()) {
-      // Lọc theo nhãn Zalo gửi kèm danh sách hội thoại của nhãn — có thể dài quá giới hạn URL → gửi trong body (POST)
+      // Filter by Zalo label: the list of the label's conversations is sent along and may exceed the URL length limit → sent in the body (POST)
       const res = params.opts?.filters?.zaloLabelConversations?.length
         ? await rest().post('/api/query/crm/contacts', params)
         : await rest().get('/api/query/crm/contacts', params);
@@ -1261,21 +1262,22 @@ export class DataAccessor {
     if (isEmployee()) {
       const res = await rest().get('/api/query/crm/contacts/stats', params);
       if (!res.success) return restFail(res);
-      // Cùng hình dạng nhánh IPC `{ success: true, ...stats }` (trước đây trả `res.data` không có `success` →
-      // CRMDashboard không bao giờ hiện số liệu ở chế độ nhân viên)
+      // Same shape as the IPC branch `{ success: true, ...stats }` (before, it returned `res.data` without `success` →
+      // CRMDashboard never showed the figures in employee mode)
       return { success: true, ...res.data };
     }
     return window.electronAPI.crm.getContactStats(params);
   }
 
-  static async cloneCampaign(params: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string; contactIds?: string[] }) {
+  /** targetZaloIds: accounts that get a copy (missing = the owner); employees: each one must be assigned to them (Boss checks). */
+  static async cloneCampaign(params: CampaignCloneParams): Promise<CampaignCloneResponse> {
     if (isEmployee()) {
       return restWriteResult(await rest().post('/api/command/crm/campaigns/clone', params));
     }
     return window.electronAPI.crm.cloneCampaign(params);
   }
 
-  static async updateCampaignStatus(params: { campaignId: number; status: string }) {
+  static async updateCampaignStatus(params: { campaignId: number; status: string }): Promise<{ success: boolean; error?: string }> {
     if (isEmployee()) {
       return restWriteResult(await rest().patch('/api/command/crm/campaigns/status', params));
     }
@@ -1299,7 +1301,7 @@ export class DataAccessor {
     return window.electronAPI.crm.getCampaignContacts(params);
   }
 
-  /** Hiệu quả chiến dịch: liên hệ đã gửi → đã nhận / đã xem / đã phản hồi. Cùng hình dạng IPC `{ success, ...báo cáo }`. */
+  /** Campaign effect: contacts sent to → received / seen / replied. Same shape as IPC `{ success, ...report }`. */
   static async getCampaignEngagement(params: { campaignId: number }): Promise<CampaignEngagementResponse> {
     if (isEmployee()) {
       const res = await rest().get('/api/query/crm/campaigns/engagement', params);
@@ -1354,7 +1356,7 @@ export class DataAccessor {
     if (isEmployee()) {
       const res = await rest().get('/api/query/crm/activity-stats', params);
       if (!res.success) return restFail(res);
-      return { success: true, ...res.data }; // cùng hình dạng nhánh IPC `{ success: true, ...stats }`
+      return { success: true, ...res.data }; // same shape as the IPC branch `{ success: true, ...stats }`
     }
     return window.electronAPI.crm.getActivityStats(params);
   }
@@ -1526,7 +1528,7 @@ export class DataAccessor {
     return window.electronAPI.db.updateAccountPhone(params);
   }
 
-  /** threadId: chỉ sửa tin của đúng hội thoại (msg_id có thể trùng giữa các hội thoại) */
+  /** threadId: only edits the message of that exact conversation (msg_id can repeat across conversations) */
   static async updateReaction(params: { zaloId: string; msgId: string; userId: string; emoji: string; threadId?: string }) {
     if (isEmployee()) {
       return restWriteResult(await rest().post('/api/command/messages/reaction', params));
@@ -1555,7 +1557,7 @@ export class DataAccessor {
       const cached = getCachedLibrary(cacheKey);
       if (cached) return cached;
       const res = await rest().get('/api/library/items', params);
-      // Không cache lỗi (trước đây lỗi = "thư viện trống" suốt 30 phút): lần mở sau hỏi lại BOSS
+      // Errors are not cached (before, an error meant an "thư viện trống" (empty library) for 30 minutes): the next open asks BOSS again
       if (!res.success) return { ...restFail(res), items: [] as any[], total: 0 };
       const result = { success: true, items: restItems(res), total: res.pagination?.total || 0 };
       setCachedLibrary(cacheKey, result);
@@ -1614,7 +1616,7 @@ export class DataAccessor {
       // Read file as base64 via IPC
       const readResult = await (window as any).electronAPI?.file?.readImageAsBase64?.({ localPath: filePath });
       if (!readResult?.success || !readResult?.base64) {
-        // code riêng: người gọi phân biệt "không có trên máy này" (vd đã là đường dẫn Boss) với lỗi upload
+        // its own code: the caller tells apart "not on this machine" (e.g. already a Boss path) from an upload error
         return { success: false, error: 'Cannot read file', code: 'LOCAL_FILE_UNREADABLE' };
       }
 
@@ -1641,8 +1643,8 @@ export class DataAccessor {
     }
   }
 
-  // Ghi thư mục / item: xoá cache thư viện (30 phút) như upload / xoá item — trước đây đổi tên, thêm / xoá thư mục,
-  // đánh dấu yêu thích xong mở lại vẫn thấy dữ liệu cũ tới khi bấm "Làm mới".
+  // Folder / item writes: clear the library cache (30 minutes) like upload / delete item: before, renaming, adding / deleting folders,
+  // or marking favourites, reopening still showed old data until "Làm mới" (Refresh) was pressed.
   static async createLibraryFolder(params: {
     zaloId: string; name: string; parentId?: number | null; color?: string; type?: string;
   }) {
@@ -1689,18 +1691,18 @@ export class DataAccessor {
     return window.electronAPI.workflow.list();
   }
 
-  /** Một workflow để mở trình sửa: `{ success, workflow }` như IPC workflow:get (nhân viên: IPC trả "Không khả dụng"). */
+  /** One workflow to open in the editor: `{ success, workflow }`, as IPC workflow:get (employee: the IPC returns "Không khả dụng" (Not available)). */
   static async getWorkflow(id: string): Promise<{ success: boolean; workflow?: any; error?: string; code?: string }> {
     if (isEmployee()) {
       const res = await rest().get(`/api/query/workflows/${id}`);
       if (!res.success) return { ...restFail(res), workflow: null };
-      if (!res.data) return { success: false, error: 'Không tìm thấy workflow', workflow: null };
+      if (!res.data) return { success: false, error: tr('Không tìm thấy workflow'), workflow: null };
       return { success: true, workflow: res.data };
     }
     return window.electronAPI.workflow.get(id);
   }
 
-  /** Lịch sử chạy của một workflow: `{ success, logs }` như IPC workflow:getLogs (nhân viên: IPC đọc DB cục bộ → trống). */
+  /** Run history of a workflow: `{ success, logs }`, as IPC workflow:getLogs (employee: the IPC reads the local DB → empty). */
   static async getWorkflowRunLogs(id: string, limit = 30) {
     if (isEmployee()) {
       const res = await rest().get(`/api/query/workflows/${id}/run-logs`, { limit });
@@ -1805,7 +1807,7 @@ export class DataAccessor {
   static async saveAssistant(assistant: any) {
     if (isEmployee()) {
       const res = await rest().post('/api/command/ai/assistants', { assistant });
-      if (!res?.success) return { success: false, error: res?.error || 'Lưu thất bại' };
+      if (!res?.success) return { success: false, error: res?.error || tr('Lưu thất bại') };
       return { success: true, id: (res as any).data?.id || (res as any).data?.data?.id };
     }
     return window.electronAPI.ai?.saveAssistant(assistant);
@@ -1846,16 +1848,16 @@ export class DataAccessor {
   }
 
   // ═════════════════════════════════════════════════════════════════
-  // ERP — dự án, công việc, lịch, ghi chú, nhân sự (phòng ban, chức vụ, hồ sơ, chấm công, nghỉ phép), thông báo
+  // ERP: projects, tasks, calendar, notes, HR (departments, positions, profiles, attendance, leave), notifications
   // ═════════════════════════════════════════════════════════════════
   //
-  // Nhân viên: REST → Boss chạy ĐÚNG handler IPC erp:* với danh tính ERP của nhân viên (ErpRestRoutes) — dữ liệu ERP
-  // nằm trên DB Boss (IPC erp:* trên máy nhân viên đọc / ghi DB cục bộ: Boss và nhân viên khác không thấy, không có
-  // realtime). Người làm do Boss lấy từ token — không gửi id nhân viên để "làm thay". Kết quả cùng hình dạng nhánh IPC
-  // (`{ success, projects }`, `{ success, task }`…): đọc lỗi → `success: false` + phần rỗng (người gọi giữ dữ liệu cũ,
-  // isReadFailure); ghi lỗi → `success: false` + error / code (`permission_denied` = Boss từ chối quyền ERP).
+  // Employee: REST → Boss runs the EXACT erp:* IPC handler with the employee's ERP identity (ErpRestRoutes): the ERP data
+  // lives in Boss's DB (the erp:* IPC on the employee machine reads / writes the local DB: Boss and other employees cannot see it, there is no
+  // realtime). The actor is taken by Boss from the token: the employee id is not sent, so nobody can act "on behalf of" someone. Results have the same shape as the IPC branch
+  // (`{ success, projects }`, `{ success, task }`...): a read error → `success: false` + empty parts (the caller keeps the old data,
+  // isReadFailure); a write error → `success: false` + error / code (`permission_denied` = Boss refused the ERP permission).
 
-  // ── Dự án / công việc ──
+  // ── Projects / tasks ──
 
   static async erpProjects(params?: { archived?: boolean }) {
     if (isEmployee()) {
@@ -1873,7 +1875,7 @@ export class DataAccessor {
 
   static async erpTasks(filter?: Record<string, any>) {
     if (isEmployee()) {
-      // Query không gửi được null: parentTaskId null (chỉ task gốc) → "null" (Boss đổi lại thành null)
+      // A query cannot send null: parentTaskId null (root tasks only) → "null" (Boss converts it back to null)
       const query = filter && filter.parentTaskId === null ? { ...filter, parentTaskId: 'null' } : filter;
       return erpRead(await rest().get('/api/query/erp/tasks', query), { tasks: [] as any[] });
     }
@@ -1913,9 +1915,9 @@ export class DataAccessor {
   }
 
   /**
-   * Nhân viên: tệp đính kèm task vừa chọn trên máy này (đường dẫn tuyệt đối) → upload lên media của Boss trước rồi gửi
-   * đường dẫn Boss — Boss chỉ nhận file đã có trên task hoặc nằm trong media của Boss. Tệp đã lưu (đường dẫn tương đối
-   * của Boss) giữ nguyên; file không đọc được trên máy này (đã là file Boss) giữ nguyên để Boss kiểm tra.
+   * Employee: the task attachments just picked on this machine (absolute paths) → uploaded to Boss's media first, then the
+   * Boss path is sent. Boss only accepts files that are already on the task or inside Boss's media. Saved files (relative paths
+   * on Boss) are kept as they are; a file that cannot be read on this machine (already a Boss file) is kept as it is so Boss can check it.
    */
   private static async uploadErpTaskAttachments(holder: any): Promise<{ success: true; value: any } | { success: false; error: string }> {
     const attachments = holder && typeof holder === 'object' && Array.isArray(holder.attachments) ? holder.attachments : null;
@@ -1932,7 +1934,7 @@ export class DataAccessor {
       } else if (up.code === 'LOCAL_FILE_UNREADABLE') {
         next.push(item);
       } else {
-        return { success: false, error: `Không tải được tệp đính kèm lên Boss: ${up.error || item?.file_name || localPath}` };
+        return { success: false, error: tr('Không tải được tệp đính kèm lên Boss: {{v1}}', { v1: up.error || item?.file_name || localPath }) };
       }
     }
     return { success: true, value: changed ? { ...holder, attachments: next } : holder };
@@ -1987,11 +1989,11 @@ export class DataAccessor {
     return window.electronAPI.erp?.taskToggleChecklist?.({ id, done });
   }
 
-  // ── Lịch (Boss chỉ trả sự kiện nhân viên tổ chức / được mời) ──
+  // ── Calendar (Boss only returns the events the employee organises / is invited to) ──
 
   static async erpCalendarEvents(params: { from: number; to: number; organizerId?: string }) {
     if (isEmployee()) {
-      // Người xem = nhân viên đăng nhập (Boss lấy từ token) — organizerId không gửi (trước đây Boss tin tham số này)
+      // The viewer is the logged-in employee (Boss takes it from the token); organizerId is not sent (before, Boss trusted this parameter)
       return erpRead(await rest().get('/api/query/erp/calendar/events', { from: params.from, to: params.to }), { events: [] as any[] });
     }
     return window.electronAPI.erp?.calendarListEvents(params);
@@ -2018,7 +2020,7 @@ export class DataAccessor {
     return window.electronAPI.erp?.calendarDelete({ id });
   }
 
-  // ── Ghi chú (Boss lọc theo tác giả / chia sẻ / phạm vi workspace) ──
+  // ── Notes (Boss filters by author / sharing / workspace scope) ──
 
   static async erpNoteFolders() {
     if (isEmployee()) {
@@ -2111,7 +2113,7 @@ export class DataAccessor {
     return window.electronAPI.erp?.noteShare({ noteId, scope, shares });
   }
 
-  // ── Nhân sự: phòng ban / chức vụ / hồ sơ ──
+  // ── HR: departments / positions / profiles ──
 
   static async erpDepartments() {
     if (isEmployee()) {
@@ -2171,7 +2173,7 @@ export class DataAccessor {
 
   static async erpProfiles(departmentId?: number | null) {
     if (isEmployee()) {
-      // undefined = mọi hồ sơ; null = chưa có phòng ban (query không gửi được null → "null")
+      // undefined = all profiles; null = no department yet (a query cannot send null → "null")
       const query = departmentId === undefined ? undefined : { departmentId: departmentId === null ? 'null' : departmentId };
       return erpRead(await rest().get('/api/query/erp/profiles', query), { profiles: [] as any[] });
     }
@@ -2206,7 +2208,7 @@ export class DataAccessor {
     return window.electronAPI.erp?.licenseSeatStatus?.();
   }
 
-  // ── Chấm công (check-in / check-out luôn của chính nhân viên đăng nhập) ──
+  // ── Attendance (check-in / check-out always belong to the logged-in employee) ──
 
   static async erpAttendanceToday() {
     if (isEmployee()) {
@@ -2236,7 +2238,7 @@ export class DataAccessor {
     return window.electronAPI.erp?.attendanceCheckOut?.({ note });
   }
 
-  // ── Nghỉ phép (duyệt: quản lý trực tiếp của người xin nghỉ) ──
+  // ── Leave (approval: the direct manager of the person asking for leave) ──
 
   static async erpMyLeaves() {
     if (isEmployee()) {
@@ -2273,7 +2275,7 @@ export class DataAccessor {
     return window.electronAPI.erp?.leaveCancel?.({ id });
   }
 
-  // ── Thông báo (Boss chỉ trả / sửa thông báo của chính nhân viên đăng nhập) ──
+  // ── Notifications (Boss only returns / edits the notifications of the logged-in employee) ──
 
   static async erpNotifications(opts?: { unreadOnly?: boolean; limit?: number; offset?: number }) {
     if (isEmployee()) {
@@ -2317,7 +2319,7 @@ export class DataAccessor {
     return window.electronAPI.erp?.notifyDeleteAll({});
   }
 
-  // ── Thông báo qua Zalo (Cài đặt của Quản lý công việc, owner / admin) ──
+  // ── Notifications via Zalo (settings of Task management, owner / admin) ──
 
   static async erpZaloNotifyStatus() {
     if (isEmployee()) {
@@ -2326,7 +2328,7 @@ export class DataAccessor {
     return window.electronAPI.erp?.notifyZaloStatus?.({});
   }
 
-  /** Chỉ trường có gửi. Nhân viên: tài khoản gửi đi `zaloId` (Boss kiểm tra tài khoản được giao). */
+  /** Only the fields that are sent. Employee: the sending account `zaloId` (Boss checks the account assigned to them). */
   static async erpSetZaloNotifySettings(patch: Partial<ErpZaloNotifySettings>) {
     if (isEmployee()) {
       const { accountId, ...others } = patch;
@@ -2338,7 +2340,7 @@ export class DataAccessor {
     return window.electronAPI.erp?.notifySetZaloSettings?.({ settings: patch });
   }
 
-  /** Gửi thử: chờ tới lượt trong hàng gửi của tài khoản + tìm SĐT + gửi (có thể tới ~1 phút). */
+  /** Test send: waits for its turn in the account's send queue + looks up the phone number + sends (can take up to about 1 minute). */
   static async erpTestZaloNotify(employeeId: string) {
     if (isEmployee()) {
       return restWriteResult(await rest().post('/api/command/erp/notifications/zalo/test', { employeeId }, 100_000));
@@ -2348,12 +2350,12 @@ export class DataAccessor {
 
 }
 
-// ── ERP (nhân viên) ───────────────────────────────────────────────────
+// ── ERP (employee) ───────────────────────────────────────────────────
 
 /**
- * Đọc ERP qua REST: Boss trả phong bì IPC `{ success, ...trường }` (RestQueryService gói vào `data`; Boss bản cũ trả
- * `{ data: { ...trường } }` — cả hai như nhau) → đúng hình dạng nhánh IPC. Lỗi (mạng, 403, Boss lỗi) → `success: false`
- * + error / code + phần rỗng `empty` cùng hình dạng (người gọi giữ dữ liệu đang có, không thay bằng rỗng).
+ * ERP read over REST: Boss returns the IPC envelope `{ success, ...fields }` (RestQueryService wraps it in `data`; an old Boss returns
+ * `{ data: { ...fields } }`, both work the same) → the exact IPC branch shape. An error (network, 403, Boss error) → `success: false`
+ * + error / code + the empty `empty` parts with the same shape (the caller keeps the data it has, not replaced with empty).
  */
 function erpRead<T extends Record<string, unknown>>(res: RestRes, empty: T): T & { success: boolean; error?: string; code?: string } {
   if (!res || !res.success) return { ...empty, ...restFail(res) };
@@ -2361,7 +2363,7 @@ function erpRead<T extends Record<string, unknown>>(res: RestRes, empty: T): T &
   return { ...empty, ...data, success: true };
 }
 
-/** Đường dẫn tuyệt đối trên máy này (Windows `C:\…` / UNC, macOS / Linux `/…`) — file người dùng vừa chọn. */
+/** Absolute path on this machine (Windows `C:\\…` / UNC, macOS / Linux `/…`): the file the user just picked. */
 function isAbsoluteLocalPath(p: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\') || p.startsWith('/');
 }

@@ -8,6 +8,7 @@ import type {
 } from '../../models/erp';
 import ErpNotificationService from './ErpNotificationService';
 import { erpPersonName } from './erpPeople';
+import { tr } from '../../shared/i18n';
 
 export default class ErpNoteService {
   private static instance: ErpNoteService;
@@ -44,7 +45,7 @@ export default class ErpNoteService {
 
   renameFolderForEmployee(id: number, name: string, employeeId: string): void {
     const folder = this.db().queryOne<ErpNoteFolder>(`SELECT * FROM erp_note_folders WHERE id = ?`, [id]);
-    if (!folder || folder.owner_id !== employeeId) throw new Error('Bạn không có quyền sửa thư mục này');
+    if (!folder || folder.owner_id !== employeeId) throw new Error(tr('Bạn không có quyền sửa thư mục này'));
     this.renameFolder(id, name);
   }
 
@@ -56,7 +57,7 @@ export default class ErpNoteService {
 
   deleteFolderForEmployee(id: number, employeeId: string): void {
     const folder = this.db().queryOne<ErpNoteFolder>(`SELECT * FROM erp_note_folders WHERE id = ?`, [id]);
-    if (!folder || folder.owner_id !== employeeId) throw new Error('Bạn không có quyền xóa thư mục này');
+    if (!folder || folder.owner_id !== employeeId) throw new Error(tr('Bạn không có quyền xóa thư mục này'));
     this.deleteFolder(id);
   }
 
@@ -168,8 +169,8 @@ export default class ErpNoteService {
     const note = this.getNote(id)!;
     EventBroadcaster.emit('erp:event:noteUpdated', { noteId: id, note, editorId, visibleEmployeeIds: this.getVisibleEmployeeIdsForNote(note) });
     if (patch.share_scope !== undefined && patch.share_scope !== existing.share_scope) {
-      // Đổi phạm vi: người MẤT quyền xem (vd workspace → riêng tư) không nhận noteUpdated (có nội dung) — báo
-      // noteShared (không nội dung) cho cả người xem cũ lẫn mới để mỗi máy tải lại danh sách theo quyền
+      // Scope changed: people who LOSE the view right (e.g. workspace → private) do not receive noteUpdated (which has the content); they get
+      // noteShared (no content), which both the old and new viewers receive, so each machine reloads the list by permission
       this.emitNoteAudienceChanged(existing, note.share_scope, this.listShares(id), editorId, this.getVisibleEmployeeIdsForNote(existing));
     }
     return note;
@@ -178,12 +179,12 @@ export default class ErpNoteService {
   updateNoteForEmployee(id: string, patch: UpdateNoteInput, editorId: string): ErpNote {
     const permission = this.getNotePermission(id, editorId);
     if (!permission || (permission !== 'owner' && permission !== 'edit')) {
-      throw new Error('Bạn không có quyền sửa note này');
+      throw new Error(tr('Bạn không có quyền sửa note này'));
     }
     if (patch.share_scope !== undefined) {
-      // Phạm vi chia sẻ chỉ tác giả đổi được (như shareNote) — trước đây người được chia sẻ quyền sửa mở note ra cả workspace được
-      if (permission !== 'owner') throw new Error('Chỉ người tạo mới có thể đổi phạm vi chia sẻ note');
-      if (!['private', 'workspace', 'custom'].includes(String(patch.share_scope))) throw new Error('share_scope: không hợp lệ');
+      // Only the author can change the sharing scope (as with shareNote): before, someone with edit rights on a shared note could open it to the whole workspace
+      if (permission !== 'owner') throw new Error(tr('Chỉ người tạo mới có thể đổi phạm vi chia sẻ note'));
+      if (!['private', 'workspace', 'custom'].includes(String(patch.share_scope))) throw new Error(tr('share_scope: không hợp lệ'));
     }
     return this.updateNote(id, patch, editorId);
   }
@@ -201,8 +202,8 @@ export default class ErpNoteService {
       this.db().run(`DELETE FROM erp_note_shares WHERE note_id = ?`, [id]);
       this.db().run(`DELETE FROM erp_notes WHERE id = ?`, [id]);
     });
-    // scope: note phạm vi workspace (visibleEmployeeIds rỗng = mọi người) → relay gửi mọi nhân viên; trước đây payload
-    // không có phạm vi → chỉ Boss nhận, nhân viên vẫn thấy note đã xoá
+    // scope: a workspace-scope note (empty visibleEmployeeIds = everyone) → the relay sends it to every employee; before, the payload
+    // with no scope → only the Boss receives it; employees still see the deleted note
     EventBroadcaster.emit('erp:event:noteDeleted', {
       noteId: id,
       visibleEmployeeIds,
@@ -212,7 +213,7 @@ export default class ErpNoteService {
 
   deleteNoteForEmployee(id: string, actorId: string): void {
     const permission = this.getNotePermission(id, actorId);
-    if (permission !== 'owner') throw new Error('Bạn không có quyền xóa note này');
+    if (permission !== 'owner') throw new Error(tr('Bạn không có quyền xóa note này'));
     this.deleteNote(id);
   }
 
@@ -236,10 +237,10 @@ export default class ErpNoteService {
   ): void {
     const now = Date.now();
     const note = this.db().queryOne<ErpNote>(`SELECT * FROM erp_notes WHERE id = ?`, [noteId]);
-    if (!note) throw new Error('Không tìm thấy ghi chú');
-    if (note.author_id !== actorId) throw new Error('Chỉ người tạo mới có thể chia sẻ note');
-    // Chuẩn hoá: quyền chỉ 'read' / 'edit' (trước đây lưu nguyên chuỗi gửi lên — 'owner' cho người được chia sẻ quyền
-    // xoá note), bỏ trùng, bỏ chính tác giả
+    if (!note) throw new Error(tr('Không tìm thấy ghi chú'));
+    if (note.author_id !== actorId) throw new Error(tr('Chỉ người tạo mới có thể chia sẻ note'));
+    // Normalise: the permission is only 'read' / 'edit' (before, the string sent was stored as is: 'owner' for someone given sharing rights
+    // could delete the note), deduplicate, drop the author themselves
     const nextShares = new Map<string, NoteSharePermission>();
     for (const s of Array.isArray(shares) ? shares : []) {
       const employeeId = typeof s?.employeeId === 'string' ? s.employeeId.trim() : '';
@@ -263,14 +264,14 @@ export default class ErpNoteService {
         [scope, now, noteId]
       );
     });
-    // Báo người nhận MỚI (hoặc đổi quyền) — lưu lại cài đặt chia sẻ không gửi lại cho người đã được chia sẻ
+    // Notify NEW recipients (or a permission change); saving the sharing setting does not resend to people who were already shared with
     for (const s of cleanShares) {
       if (s.employeeId === actorId || previousPermission.get(s.employeeId) === s.permission) continue;
       try {
         ErpNotificationService.getInstance().notify(
           s.employeeId, 'note_shared',
-          `Ghi chú được chia sẻ: ${note.title}`,
-          `Bởi ${erpPersonName(actorId)} · ${s.permission === 'edit' ? 'Được sửa' : 'Chỉ xem'}`,
+          tr('Ghi chú được chia sẻ: {{title}}', { title: note.title }),
+          tr('Bởi {{v1}} · {{v2}}', { v1: erpPersonName(actorId), v2: s.permission === 'edit' ? tr('Được sửa') : tr('Chỉ xem') }),
           `erp://note/${noteId}`,
           { noteId, permission: s.permission, channels: ['toast'] }
         );
@@ -282,9 +283,9 @@ export default class ErpNoteService {
   }
 
   /**
-   * erp:event:noteShared (không mang nội dung note): người xem CŨ lẫn MỚI đều nhận để tải lại danh sách theo quyền —
-   * người vừa bị bỏ chia sẻ / phạm vi thu hẹp bỏ note khỏi danh sách. `previousScope` = 'workspace' → relay gửi mọi
-   * nhân viên (relayAudience). Trước đây chỉ người xem mới nhận → người mất quyền vẫn thấy note tới khi tải lại.
+   * erp:event:noteShared (carries no note content): both OLD and NEW viewers receive it to reload the list by permission,
+   * people who were just un-shared / a narrowed scope drop the note from their list. `previousScope` = 'workspace' → the relay sends it to every
+   * employee (relayAudience). Before, only the current viewers received it → people who lost the permission still saw the note until they reloaded.
    */
   private emitNoteAudienceChanged(
     before: ErpNote,
@@ -336,7 +337,7 @@ export default class ErpNoteService {
     this.db().run(`DELETE FROM erp_note_tag_map WHERE note_id = ? AND tag_id = ?`, [noteId, tagId]);
   }
 
-  /** Gắn / gỡ tag cần quyền sửa note (tác giả / được chia sẻ quyền sửa) — trước đây theo id note bất kỳ. */
+  /** Adding / removing tags needs the edit right on the note (author / shared with edit rights); before, it was checked against any note id. */
   addTagToNoteForEmployee(noteId: string, tagId: number, employeeId: string): void {
     this.requireNoteEdit(noteId, employeeId);
     this.addTagToNote(noteId, tagId);
@@ -349,7 +350,7 @@ export default class ErpNoteService {
 
   private requireNoteEdit(noteId: string, employeeId: string): void {
     const permission = this.getNotePermission(noteId, employeeId);
-    if (permission !== 'owner' && permission !== 'edit') throw new Error('Bạn không có quyền sửa note này');
+    if (permission !== 'owner' && permission !== 'edit') throw new Error(tr('Bạn không có quyền sửa note này'));
   }
 
   // ─── Versions ─────────────────────────────────────────────────────────────
@@ -377,7 +378,7 @@ export default class ErpNoteService {
     if (!version) throw new Error('Version not found');
     const permission = this.getNotePermission(version.note_id, editorId);
     if (!permission || (permission !== 'owner' && permission !== 'edit')) {
-      throw new Error('Bạn không có quyền khôi phục phiên bản của note này');
+      throw new Error(tr('Bạn không có quyền khôi phục phiên bản của note này'));
     }
     return this.restoreVersion(versionId, editorId);
   }

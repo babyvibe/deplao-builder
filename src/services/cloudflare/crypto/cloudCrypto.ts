@@ -1,26 +1,27 @@
 /**
- * cloudCrypto — mã hoá phía máy cho bản sao lưu DB lên R2, định dạng "DPLC1".
+ * cloudCrypto: on-machine encryption for the DB backup uploaded to R2, format "DPLC1".
  *
- * Header 64 byte:
+ * 64-byte header:
  *   0  5  magic 'DPLC1'            25 1  scrypt r (8)
  *   5  1  version (1)              26 1  scrypt p (1)
- *   6  1  độ dài header (64)       27 1  (dự phòng, 0)
- *   7  1  cờ (0)                   28 4  chunkSize (uint32 BE, 1 MiB)
- *   8  16 salt                     32 8  nonce prefix (ngẫu nhiên, dùng cho mọi khối của file)
+ *   6  1  header length (64)       27 1  (reserved, 0)
+ *   7  1  flags (0)                28 4  chunkSize (uint32 BE, 1 MiB)
+ *   8  16 salt                     32 8  nonce prefix (random, used for every block of the file)
  *   24 1  log2(N) scrypt (15)      40 16 key-check = HMAC-SHA256(key, 'DPLC1/key-check')[0..16]
- *                                  56 8  (dự phòng, 0)
- * Sau header là các khối AES-256-GCM: nonce 12B (= nonce prefix 8B + số thứ tự khối 4B BE) ‖ ciphertext ‖ tag 16B.
- * Mọi khối trừ khối cuối chứa đúng chunkSize byte rõ; khối cuối 0..chunkSize byte (file rỗng = một khối rỗng).
- * AAD của khối = header 64B ‖ số thứ tự (uint32 BE) ‖ cờ final (1 byte) → sửa header, đảo/bỏ khối hay cắt cụt
- * ở ranh giới khối đều bị phát hiện (khối cuối thật được mã hoá với final=1).
- * Khoá = scrypt(passphrase NFC, salt, N=2^15, r=8, p=1, 32 byte). key-check cho biết sai mật khẩu ngay từ header.
+ *                                  56 8  (reserved, 0)
+ * After the header come the AES-256-GCM blocks: nonce 12B (= 8B nonce prefix + 4B block number BE) ‖ ciphertext ‖ tag 16B.
+ * Every block except the last holds exactly chunkSize plain bytes; the last block holds 0..chunkSize bytes (an empty file = one empty block).
+ * AAD of a block = the 64B header ‖ block number (uint32 BE) ‖ final flag (1 byte) → editing the header, swapping or dropping blocks, or truncating
+ * at a block boundary is detected (the real last block is encrypted with final=1).
+ * Key = scrypt(passphrase NFC, salt, N=2^15, r=8, p=1, 32 bytes). key-check tells you right away from the header if the password is wrong.
  *
- * Tệp được xử lý theo dòng (2 khối trong RAM), ghi file tạm rồi rename — không để lại file dở hay plaintext chưa xác thực.
+ * The file is processed as a stream (2 blocks in RAM), written to a temp file then renamed → never leaves a half-written file or unverified plaintext.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from 'crypto';
 import { CloudCrypto, CloudError } from '../contracts';
+import { tr } from '../../../shared/i18n';
 
 export const DPLC1_MAGIC = Buffer.from('DPLC1', 'ascii');
 export const DPLC1_VERSION = 1;
@@ -28,7 +29,7 @@ export const DPLC1_HEADER_BYTES = 64;
 export const DPLC1_CHUNK_SIZE = 1024 * 1024;
 export const DPLC1_NONCE_BYTES = 12;
 export const DPLC1_TAG_BYTES = 16;
-/** Số byte đầu file đủ cho mọi kiểm tra đầu file (header + khối đầu). verifyPassphrase chỉ cần 64 byte header. */
+/** The first bytes of the file are enough for all the checks at the start of the file (header + first block). verifyPassphrase only needs the 64-byte header. */
 export const DPLC1_HEAD_BYTES = DPLC1_HEADER_BYTES + DPLC1_NONCE_BYTES + DPLC1_CHUNK_SIZE + DPLC1_TAG_BYTES;
 
 const KEY_CHECK_LABEL = 'DPLC1/key-check';
@@ -37,13 +38,13 @@ const DEFAULT_R = 8;
 const DEFAULT_P = 1;
 
 export interface CloudCryptoOptions {
-    /** Tham số scrypt khi MÃ HOÁ (giải mã luôn đọc từ header). Mặc định 15 / 8 / 1. */
+    /** scrypt parameters used when ENCRYPTING (decryption always reads them from the header). Default 15 / 8 / 1. */
     log2N?: number;
     r?: number;
     p?: number;
-    /** Kích thước khối khi mã hoá (mặc định 1 MiB). */
+    /** Block size when encrypting (default 1 MiB). */
     chunkSize?: number;
-    /** Số khoá nhớ trong RAM (mặc định 16). */
+    /** Number of keys cached in RAM (default 16). */
     maxCachedKeys?: number;
 }
 
@@ -57,21 +58,21 @@ interface ParsedHeader extends KdfParams {
     keyCheck: Buffer;
 }
 
-function formatError(msg = 'Không phải file sao lưu Deplao (DPLC1) hoặc file đã hỏng'): CloudError {
+function formatError(msg = tr('Không phải file sao lưu Deplao (DPLC1) hoặc file đã hỏng')): CloudError {
     return new CloudError('CRYPTO_FORMAT', msg);
 }
 
-function corruptError(msg = 'Dữ liệu sao lưu bị hỏng, bị sửa hoặc bị cắt cụt'): CloudError {
+function corruptError(msg = tr('Dữ liệu sao lưu bị hỏng, bị sửa hoặc bị cắt cụt')): CloudError {
     return new CloudError('CRYPTO_CORRUPT', msg);
 }
 
 function badPassphrase(): CloudError {
-    return new CloudError('BAD_PASSPHRASE', 'Sai mật khẩu sao lưu');
+    return new CloudError('BAD_PASSPHRASE', tr('Sai mật khẩu sao lưu'));
 }
 
 function normalizePassphrase(passphrase: string): string {
-    if (typeof passphrase !== 'string' || passphrase.length === 0) throw new CloudError('BAD_PASSPHRASE', 'Chưa nhập mật khẩu sao lưu');
-    // Tiếng Việt: bộ gõ có thể sinh dạng dựng sẵn hoặc tổ hợp — chuẩn hoá NFC để máy nào cũng ra cùng khoá.
+    if (typeof passphrase !== 'string' || passphrase.length === 0) throw new CloudError('BAD_PASSPHRASE', tr('Chưa nhập mật khẩu sao lưu'));
+    // Vietnamese: the input method may produce precomposed or combined forms → normalize to NFC so every machine derives the same key.
     return passphrase.normalize('NFC');
 }
 
@@ -98,13 +99,13 @@ function buildHeader(salt: Buffer, params: KdfParams, chunkSize: number, noncePr
 export function parseDplc1Header(buf: Buffer): ParsedHeader {
     if (!Buffer.isBuffer(buf) || buf.length < DPLC1_HEADER_BYTES) throw formatError();
     if (!buf.subarray(0, 5).equals(DPLC1_MAGIC)) throw formatError();
-    if (buf[5] !== DPLC1_VERSION) throw formatError(`File sao lưu dùng định dạng DPLC1 phiên bản ${buf[5]} — hãy cập nhật Deplao`);
+    if (buf[5] !== DPLC1_VERSION) throw formatError(tr('File sao lưu dùng định dạng DPLC1 phiên bản {{v1}} — hãy cập nhật Deplao', { v1: buf[5] }));
     if (buf[6] !== DPLC1_HEADER_BYTES) throw formatError();
     const log2N = buf[24];
     const r = buf[25];
     const p = buf[26];
     const chunkSize = buf.readUInt32BE(28);
-    // Giới hạn tham số: file lạ không được bắt máy cấp phát quá nhiều RAM.
+    // Parameter limits: an unknown file must not make the machine allocate too much RAM.
     if (log2N < 10 || log2N > 20 || r < 1 || r > 32 || p < 1 || p > 16 || 128 * 2 ** log2N * r * p > 256 * 1024 * 1024) throw formatError();
     if (chunkSize < 1024 || chunkSize > 64 * 1024 * 1024) throw formatError();
     const raw = Buffer.from(buf.subarray(0, DPLC1_HEADER_BYTES));
@@ -128,7 +129,7 @@ function aad(header: Buffer, index: number, final: boolean): Buffer {
 }
 
 function sealBlock(key: Buffer, header: Buffer, noncePrefix: Buffer, index: number, plain: Buffer, final: boolean): Buffer {
-    if (index > 0xffffffff) throw new CloudError('CRYPTO_TOO_LARGE', 'File quá lớn để mã hoá');
+    if (index > 0xffffffff) throw new CloudError('CRYPTO_TOO_LARGE', tr('File quá lớn để mã hoá'));
     const nonce = Buffer.alloc(DPLC1_NONCE_BYTES);
     noncePrefix.copy(nonce, 0);
     nonce.writeUInt32BE(index >>> 0, 8);
@@ -139,7 +140,7 @@ function sealBlock(key: Buffer, header: Buffer, noncePrefix: Buffer, index: numb
 }
 
 function openBlock(key: Buffer, h: ParsedHeader, index: number, block: Buffer, final: boolean): Buffer {
-    if (block.length < DPLC1_NONCE_BYTES + DPLC1_TAG_BYTES) throw corruptError('Dữ liệu sao lưu bị cắt cụt');
+    if (block.length < DPLC1_NONCE_BYTES + DPLC1_TAG_BYTES) throw corruptError(tr('Dữ liệu sao lưu bị cắt cụt'));
     if (block.length > DPLC1_NONCE_BYTES + h.chunkSize + DPLC1_TAG_BYTES) throw corruptError();
     const nonce = block.subarray(0, DPLC1_NONCE_BYTES);
     if (!nonce.subarray(0, 8).equals(h.noncePrefix) || nonce.readUInt32BE(8) !== (index >>> 0)) throw corruptError();
@@ -155,7 +156,7 @@ function openBlock(key: Buffer, h: ParsedHeader, index: number, block: Buffer, f
     }
 }
 
-/** Đọc tới khi đủ `size` byte hoặc hết file. */
+/** Read until `size` bytes are collected or the file ends. */
 async function readFull(fh: fs.promises.FileHandle, size: number): Promise<Buffer> {
     const buf = Buffer.allocUnsafe(size);
     let off = 0;
@@ -196,17 +197,17 @@ export class CloudCryptoImpl implements CloudCrypto {
     private readonly encParams: KdfParams;
     private readonly chunkSize: number;
     private readonly maxCachedKeys: number;
-    /** Khoá đã sinh: khoá theo sha256(salt ‖ tham số ‖ mật khẩu) — chỉ trong RAM. */
+    /** Derived keys, cached under sha256(salt ‖ parameters ‖ password), kept in RAM only. */
     private readonly keyCache = new Map<string, Buffer>();
     private readonly pending = new Map<string, Promise<Buffer>>();
-    /** Salt dùng khi mã hoá, một salt cho mỗi mật khẩu trong vòng đời tiến trình (tránh chạy scrypt cho mỗi file). */
+    /** Salt used when encrypting: one salt per password for the lifetime of the process (avoids running scrypt for every file). */
     private readonly encSalts = new Map<string, Buffer>();
 
     constructor(opts: CloudCryptoOptions = {}) {
         this.encParams = { log2N: opts.log2N ?? DEFAULT_LOG2N, r: opts.r ?? DEFAULT_R, p: opts.p ?? DEFAULT_P };
         this.chunkSize = opts.chunkSize ?? DPLC1_CHUNK_SIZE;
         this.maxCachedKeys = opts.maxCachedKeys ?? 16;
-        if (this.chunkSize < 1024 || this.chunkSize > 64 * 1024 * 1024) throw new Error('cloudCrypto: chunkSize ngoài khoảng 1 KiB – 64 MiB');
+        if (this.chunkSize < 1024 || this.chunkSize > 64 * 1024 * 1024) throw new Error(tr('cloudCrypto: chunkSize ngoài khoảng 1 KiB – 64 MiB'));
     }
 
     async deriveKey(passphrase: string, salt: Buffer): Promise<Buffer> {
@@ -229,7 +230,7 @@ export class CloudCryptoImpl implements CloudCrypto {
         const h = parseDplc1Header(cipher);
         const key = await this.keyFor(h, passphrase);
         const blockSize = DPLC1_NONCE_BYTES + h.chunkSize + DPLC1_TAG_BYTES;
-        if (cipher.length - DPLC1_HEADER_BYTES < DPLC1_NONCE_BYTES + DPLC1_TAG_BYTES) throw corruptError('Dữ liệu sao lưu bị cắt cụt');
+        if (cipher.length - DPLC1_HEADER_BYTES < DPLC1_NONCE_BYTES + DPLC1_TAG_BYTES) throw corruptError(tr('Dữ liệu sao lưu bị cắt cụt'));
         const out: Buffer[] = [];
         let off = DPLC1_HEADER_BYTES;
         for (let index = 0; off < cipher.length; index++) {
@@ -241,7 +242,7 @@ export class CloudCryptoImpl implements CloudCrypto {
         return Buffer.concat(out);
     }
 
-    /** bytes = số byte đã ghi ra dstPath (bản mã). */
+    /** bytes = number of bytes written to dstPath (ciphertext). */
     async encryptFile(srcPath: string, dstPath: string, passphrase: string): Promise<{ bytes: number }> {
         const { header, key, noncePrefix } = await this.newHeader(passphrase);
         await fs.promises.mkdir(path.dirname(dstPath), { recursive: true });
@@ -281,7 +282,7 @@ export class CloudCryptoImpl implements CloudCrypto {
         }
     }
 
-    /** bytes = số byte rõ đã ghi ra dstPath. Chỉ thay dstPath khi TOÀN BỘ file xác thực xong. */
+    /** bytes = number of plain bytes written to dstPath. dstPath is only replaced once the WHOLE file has been verified. */
     async decryptFile(srcPath: string, dstPath: string, passphrase: string): Promise<{ bytes: number }> {
         const input = await fs.promises.open(srcPath, 'r');
         let output: fs.promises.FileHandle | null = null;
@@ -295,7 +296,7 @@ export class CloudCryptoImpl implements CloudCrypto {
             tmp = tmpPathFor(dstPath);
             output = await fs.promises.open(tmp, 'w');
             let cur = await readFull(input, blockSize);
-            if (cur.length < DPLC1_NONCE_BYTES + DPLC1_TAG_BYTES) throw corruptError('Dữ liệu sao lưu bị cắt cụt');
+            if (cur.length < DPLC1_NONCE_BYTES + DPLC1_TAG_BYTES) throw corruptError(tr('Dữ liệu sao lưu bị cắt cụt'));
             for (let index = 0; ; index++) {
                 let next: Buffer | null = null;
                 if (cur.length === blockSize) {
@@ -323,7 +324,7 @@ export class CloudCryptoImpl implements CloudCrypto {
         }
     }
 
-    /** Đúng mật khẩu? Chỉ cần ≥ 64 byte đầu (header có key-check). Không phải DPLC1 → false. */
+    /** Is the password correct? Only the first 64+ bytes are needed (the header has the key-check). Not a DPLC1 file → false. */
     async verifyPassphrase(cipherHead: Buffer, passphrase: string): Promise<boolean> {
         let h: ParsedHeader;
         try {
@@ -336,7 +337,7 @@ export class CloudCryptoImpl implements CloudCrypto {
         return timingSafeEqual(keyCheckOf(key), h.keyCheck);
     }
 
-    // ── nội bộ ──
+    // ── internal ──
 
     private async keyFor(h: ParsedHeader, passphrase: string): Promise<Buffer> {
         const key = await this.derive(passphrase, h.salt, h);
@@ -360,7 +361,7 @@ export class CloudCryptoImpl implements CloudCrypto {
 
     private derive(passphrase: string, salt: Buffer, params: KdfParams): Promise<Buffer> {
         const norm = normalizePassphrase(passphrase);
-        if (!Buffer.isBuffer(salt) || salt.length < 8) return Promise.reject(formatError('Salt không hợp lệ'));
+        if (!Buffer.isBuffer(salt) || salt.length < 8) return Promise.reject(formatError(tr('Salt không hợp lệ')));
         const cacheId = createHash('sha256')
             .update(salt)
             .update(Buffer.from([params.log2N, params.r, params.p]))
@@ -375,11 +376,11 @@ export class CloudCryptoImpl implements CloudCrypto {
         const inflight = this.pending.get(cacheId);
         if (inflight) return inflight;
         const N = 2 ** params.log2N;
-        // OpenSSL cần ~128·N·r + 128·r·p byte; mặc định maxmem 32 MiB của Node không đủ cho N=2^15, r=8.
+        // OpenSSL needs ~128·N·r + 128·r·p bytes; Node's default maxmem of 32 MiB is not enough for N=2^15, r=8.
         const maxmem = 128 * N * params.r * (params.p + 1) + 16 * 1024 * 1024;
         const promise = new Promise<Buffer>((resolve, reject) => {
             scrypt(norm, salt, 32, { N, r: params.r, p: params.p, maxmem }, (err, key) => {
-                if (err) reject(new CloudError('CRYPTO_KDF', `Không sinh được khoá từ mật khẩu: ${err.message}`));
+                if (err) reject(new CloudError('CRYPTO_KDF', tr('Không sinh được khoá từ mật khẩu: {{message}}', { message: err.message })));
                 else resolve(key);
             });
         }).then(key => {

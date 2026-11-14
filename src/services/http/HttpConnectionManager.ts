@@ -14,6 +14,7 @@ import {
     type EmployeeResyncReason,
     type WorkspaceConnectionStatusEvent,
 } from '../../shared/employee/employeeConnection';
+import { tr } from '../../shared/i18n';
 
 interface WorkspaceClient {
     workspaceId: string;
@@ -38,10 +39,10 @@ interface ConnectOptions {
     onSyncProgress?: (phase: string, percent: number) => void;
 }
 
-/** Workspace kết nối thất bại đang chờ thử lại (backoff WORKSPACE_RETRY_BACKOFF_MS). */
+/** Workspace connection that failed and is waiting to retry (backoff WORKSPACE_RETRY_BACKOFF_MS). */
 interface RetryEntry {
     attempt: number;
-    /** Bắt đầu mất kết nối (để đo khoảng mất khi resync). */
+    /** Start of the connection loss (used to measure the gap when resyncing). */
     since: number;
     nextAt: number;
     timer: ReturnType<typeof setTimeout> | null;
@@ -57,21 +58,21 @@ export interface WorkspaceConnectionInfo {
     connecting: boolean;
 }
 
-/** resume thường kèm unlock-screen / online ngay sau → gộp các sự kiện "đánh thức" trong cửa sổ này. */
+/** resume usually comes with unlock-screen / online right after, so the "đánh thức" (wake) events inside this window are merged. */
 const WAKE_DEBOUNCE_MS = 3_000;
 
 /**
  * HttpConnectionManager - manages one HttpClientService instance per workspace.
  * Replaces SocketConnectionManager - uses HTTP instead of Socket.IO.
  *
- * Vòng đời (main process là nguồn sự thật duy nhất cho Boss URL + token = cấu hình workspace):
- * - connect() lỗi (Boss tắt / mạng hỏng) → GIỮ workspace trong danh sách thử lại (15 s → 60 s), không xoá.
- * - Boss từ chối token → authExpired: dừng thử lại tới khi có token mới (đăng nhập lại).
- * - Người dùng bấm Ngắt kết nối / bị kick → không tự kết nối lại.
- * - Máy ngủ dậy / mở khoá / mạng có lại → kiểm tra kết nối ngay (handleSystemEvent).
- * - Phát 'employee:credentials' mỗi khi kết nối được / đổi URL-token → renderer init RestQueryService; đồng thời ghi
- *   bossSessionAuth (token gắn vào request file /api/media, /api/library) — xoá khi ngắt / bị kick.
- * - Phát 'employee:resync' khi kết nối hồi phục sau khoảng mất > 10 s hoặc sau khi máy ngủ dậy.
+ * Lifecycle (the main process is the single source of truth for the Boss URL + token = workspace config):
+ * - connect() fails (Boss off / network broken) → KEEP the workspace in the retry list (15 s → 60 s), do not remove it.
+ * - Boss rejects the token → authExpired: stop retrying until a new token arrives (log in again).
+ * - The user clicks Disconnect / is kicked → no automatic reconnect.
+ * - The machine wakes from sleep / is unlocked / the network comes back → check the connection right away (handleSystemEvent).
+ * - Emits 'employee:credentials' every time a connection succeeds / the URL-token changes → the renderer inits RestQueryService; also writes
+ *   bossSessionAuth (the token attached to requests for /api/media, /api/library files), cleared on disconnect / kick.
+ * - Emits 'employee:resync' when the connection recovers after a gap of more than 10 s or after the machine wakes from sleep.
  */
 class HttpConnectionManager {
     private static instance: HttpConnectionManager;
@@ -80,15 +81,15 @@ class HttpConnectionManager {
     private mainWindow: BrowserWindow | null = null;
     private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
 
-    /** Lần kết nối đang chạy: cùng URL+token → dùng chung promise; khác → xếp hàng sau lần đang chạy. */
+    /** Running connect attempt: the same URL+token shares its promise; a different one queues up after the running attempt. */
     private inFlight: Map<string, { key: string; promise: Promise<ConnectResult> }> = new Map();
     private retries: Map<string, RetryEntry> = new Map();
     private authExpired: Set<string> = new Set();
-    /** Người dùng ngắt / bị kick → không tự kết nối lại cho tới khi connect() tường minh. */
+    /** The user disconnected / was kicked → no automatic reconnect until an explicit connect() call. */
     private userDisconnected: Set<string> = new Set();
-    /** Đã từng kết nối được trong phiên này → lần kết nối sau là "kết nối lại" (cần resync). */
+    /** Has connected successfully in this session → the next connection is a "reconnect" (needs a resync). */
     private everConnected: Set<string> = new Set();
-    /** Tăng mỗi lần disconnect() → huỷ các lần connect đang xếp hàng. */
+    /** Incremented on every disconnect() → cancels the queued connect attempts. */
     private disconnectEpoch: Map<string, number> = new Map();
     private lastResyncAt: Map<string, number> = new Map();
     private snapshotRefreshes: Map<string, Promise<{ success: boolean; error?: string }>> = new Map();
@@ -104,13 +105,13 @@ class HttpConnectionManager {
 
     public setMainWindow(win: BrowserWindow): void {
         this.mainWindow = win;
-        // Gọi sau app 'ready' (createWindow) → gắn powerMonitor ngay, không phụ thuộc startupAllWorkspaces
+        // Called after the app 'ready' event (createWindow) → attach powerMonitor right away, independent of startupAllWorkspaces
         this.installSystemHooks();
     }
 
     /**
-     * Kết nối tường minh (người dùng bấm kết nối, chuyển workspace, auto-connect lúc mở app).
-     * Huỷ trạng thái "người dùng đã ngắt" và lịch thử lại đang chờ.
+     * Explicit connect (the user clicks connect, switches workspace, or auto-connect when the app opens).
+     * Clears the "user disconnected" state and any pending retry schedule.
      */
     public connect(
         workspaceId: string,
@@ -160,7 +161,7 @@ class HttpConnectionManager {
         options?: ConnectOptions
     ): Promise<ConnectResult> {
         if ((this.disconnectEpoch.get(workspaceId) || 0) !== epoch) {
-            return { success: false, error: 'Đã ngắt kết nối', cancelled: true };
+            return { success: false, error: tr('Đã ngắt kết nối'), cancelled: true };
         }
 
         const existing = this.clients.get(workspaceId);
@@ -179,7 +180,7 @@ class HttpConnectionManager {
         service.setOnStatusChange((connected: boolean, latency: number, info?: ServiceStatusInfo) => {
             if (!isCurrent()) return;
             if (connected && !credentialsSent) {
-                // Phát credentials TRƯỚC status/initialState để REST client dùng đúng URL/token khi tải dữ liệu
+                // Emit credentials BEFORE status/initialState so the REST client uses the right URL/token when it loads data
                 credentialsSent = true;
                 this.authExpired.delete(workspaceId);
                 this.emitCredentials(workspaceId, 'connected', { bossUrl, token });
@@ -193,7 +194,7 @@ class HttpConnectionManager {
                 this.clients.delete(workspaceId);
                 this.clearRetry(workspaceId);
                 this.userDisconnected.add(workspaceId);
-                removeBossSession(workspaceId); // token bị thu hồi → không gắn vào request file nữa
+                removeBossSession(workspaceId); // token revoked → no longer attached to file requests
                 Logger.warn(`[HttpConnectionManager] "${workspaceId}": bị Boss ngắt kết nối (${info.reason || 'kicked'})`);
             }
             this.sendStatus(workspaceId, connected, latency, info);
@@ -241,7 +242,7 @@ class HttpConnectionManager {
             options?.onAccountAccessUpdate?.(data);
         });
 
-        // relay:permissionUpdate (Boss đổi quyền / ERP) — renderer đã có handler, trước đây không ai chuyển tiếp
+        // relay:permissionUpdate (Boss changed permissions / ERP): the renderer already has a handler, but nobody forwarded it before
         service.setOnPermissionUpdate((data: any) => {
             if (!isCurrent()) return;
             this.sendToRenderer('workspace:permissionUpdate', { workspaceId, ...data });
@@ -251,16 +252,16 @@ class HttpConnectionManager {
             if (isCurrent()) this.emitResync(workspaceId, reason, gapMs);
         });
 
-        // Socket.IO tự reconnect + catch-up (EventBuffer); khoảng mất dài → employee:resync. Catch-up không phát lại
-        // được (Boss khởi động lại / buffer không đủ / Boss bản cũ) cũng đi qua onResync: 'boss-restart' /
-        // 'catchup-gap' / 'catchup-unverified' — cùng cửa sổ gộp RESYNC_COALESCE_MS.
+        // Socket.IO reconnects and catches up by itself (EventBuffer); a long gap → employee:resync. Catch-up does not replay
+        // events that were missed (Boss restarted / buffer too small / old Boss version); these also go through onResync: 'boss-restart' /
+        // 'catchup-gap' / 'catchup-unverified', all merged within the RESYNC_COALESCE_MS window.
 
         const result = await service.connect(bossUrl, token);
 
         if (!isCurrent()) {
-            // disconnect() / connect() khác đã thay service này trong lúc đang kết nối
+            // disconnect() / another connect() has already replaced this service while it was connecting
             if (result.success) service.disconnect();
-            return result.success ? { success: false, error: 'Đã huỷ kết nối', cancelled: true } : result;
+            return result.success ? { success: false, error: tr('Đã huỷ kết nối'), cancelled: true } : result;
         }
 
         if (result.success) {
@@ -273,7 +274,7 @@ class HttpConnectionManager {
             return result;
         }
 
-        // Thất bại: bỏ service chết nhưng GIỮ workspace trong danh sách thử lại (trừ khi token bị từ chối)
+        // Failed: drop the dead service but KEEP the workspace in the retry list (unless the token was rejected)
         this.clients.delete(workspaceId);
         service.disconnect();
         if (result.authExpired) {
@@ -314,11 +315,11 @@ class HttpConnectionManager {
         this.retries.delete(workspaceId);
     }
 
-    /** Thử lại ngay một workspace trong danh sách chờ — luôn đọc URL/token MỚI NHẤT từ cấu hình workspace. */
+    /** Retry a waiting workspace right away: always reads the LATEST URL/token from the workspace config. */
     private async retryNow(workspaceId: string, reason: string): Promise<void> {
         const entry = this.retries.get(workspaceId);
         if (!entry) return;
-        if (this.inFlight.has(workspaceId)) return; // đang kết nối
+        if (this.inFlight.has(workspaceId)) return; // already connecting
         const ws = WorkspaceManager.getInstance().getWorkspaceById(workspaceId);
         if (!ws || ws.type !== 'remote' || !ws.bossUrl || !ws.token) {
             Logger.log(`[HttpConnectionManager] "${workspaceId}": bỏ khỏi danh sách thử lại (workspace không còn / thiếu URL-token)`);
@@ -340,8 +341,8 @@ class HttpConnectionManager {
     // ─── Credentials / resync / status events → renderer ─────────────
 
     /**
-     * 'employee:credentials' — URL/token mà main đang dùng cho workspace (mặc định: cấu hình workspace).
-     * Renderer (App) init RestQueryService từ đây → REST luôn khớp main.
+     * 'employee:credentials': the URL/token that main is using for the workspace (default: the workspace config).
+     * The renderer (App) inits RestQueryService from this → REST always matches main.
      */
     public emitCredentials(
         workspaceId: string,
@@ -353,7 +354,7 @@ class HttpConnectionManager {
         const bossUrl = normalizeBossUrl(creds?.bossUrl ?? ws?.bossUrl);
         const token = String(creds?.token ?? ws?.token ?? '');
         if (!bossUrl || !token) return;
-        // File Boss (/api/media, /api/library) cần token: <img>/<video> được gắn header qua session.webRequest
+        // Boss files (/api/media, /api/library) need a token: <img>/<video> get the header through session.webRequest
         setBossSession(workspaceId, bossUrl, token);
         let active = false;
         try { active = wm.getActiveWorkspaceId() === workspaceId; } catch { /* ignore */ }
@@ -363,8 +364,8 @@ class HttpConnectionManager {
     }
 
     /**
-     * Nạp sẵn Boss URL + token của các workspace remote (lúc mở app, trước khi kết nối xong): renderer đã hiện ảnh
-     * /api/media của Boss từ DB nhân viên — thiếu token thì <img> nhận 401 và không tự tải lại. Không đè phiên đang có.
+     * Preload the Boss URL + token of the remote workspaces (when the app opens, before the connection finishes): the renderer already shows
+     * the Boss /api/media images from the employee DB; without a token <img> gets a 401 and does not reload by itself. Does not overwrite an existing session.
      */
     public seedBossSessions(): void {
         try {
@@ -377,9 +378,9 @@ class HttpConnectionManager {
     }
 
     /**
-     * Cấu hình URL/token của workspace vừa đổi (workspace:update). Báo renderer và — nếu workspace
-     * đang được giữ kết nối / chờ thử lại / hết hạn phiên — kết nối lại bằng cấu hình mới.
-     * Workspace người dùng đã ngắt thì giữ nguyên (cấu hình mới dùng ở lần kết nối sau).
+     * The URL/token config of a workspace that just changed (workspace:update). Notifies the renderer and, if the workspace
+     * is kept connected / waiting to retry / session expired, reconnects with the new config.
+     * A workspace the user disconnected keeps its state (the new config is used at the next connect).
      */
     public onCredentialsChanged(workspaceId: string): void {
         const ws = WorkspaceManager.getInstance().getWorkspaceById(workspaceId);
@@ -398,7 +399,7 @@ class HttpConnectionManager {
         }
     }
 
-    /** 'employee:resync' — gộp các lần hồi phục của CÙNG một lần mất mạng (socket + heartbeat) trong RESYNC_COALESCE_MS. */
+    /** 'employee:resync': merges the recoveries of the SAME network loss (socket + heartbeat) within RESYNC_COALESCE_MS. */
     private emitResync(workspaceId: string, reason: EmployeeResyncReason, gapMs: number): void {
         const now = Date.now();
         const last = this.lastResyncAt.get(workspaceId) || 0;
@@ -427,7 +428,7 @@ class HttpConnectionManager {
 
     // ─── Disconnect ──────────────────────────────────────────────────
 
-    /** Người dùng ngắt kết nối: dừng heartbeat + Socket.IO, bỏ khỏi danh sách thử lại. */
+    /** The user disconnected: stop the heartbeat + Socket.IO, remove from the retry list. */
     public disconnect(workspaceId: string): void {
         this.disconnectEpoch.set(workspaceId, (this.disconnectEpoch.get(workspaceId) || 0) + 1);
         this.userDisconnected.add(workspaceId);
@@ -449,7 +450,7 @@ class HttpConnectionManager {
 
     // ─── Status ──────────────────────────────────────────────────────
 
-    /** Đã kết nối thật (heartbeat OK). Đang kết nối → false; gọi connect() sẽ dùng chung lần đang chạy. */
+    /** Actually connected (heartbeat OK). While connecting → false; calling connect() will share the running attempt. */
     public isConnected(workspaceId: string): boolean {
         return this.clients.get(workspaceId)?.service.isConnected() ?? false;
     }
@@ -503,15 +504,15 @@ class HttpConnectionManager {
     }
 
     /**
-     * Lấy lại snapshot nhân viên (quyền + tài khoản được giao) qua /api/sync/snapshot và đẩy
-     * 'workspace:initialState' { forced: true } — renderer áp dụng ngay (403 ACCOUNT_FORBIDDEN, resync).
+     * Re-fetch the employee snapshot (permissions + assigned accounts) via /api/sync/snapshot and push
+     * 'workspace:initialState' { forced: true }: the renderer applies it right away (403 ACCOUNT_FORBIDDEN, resync).
      */
     public refreshSnapshot(workspaceId: string, reason = 'manual'): Promise<{ success: boolean; error?: string }> {
         const running = this.snapshotRefreshes.get(workspaceId);
         if (running) return running;
         const client = this.clients.get(workspaceId);
         if (!client || !client.service.isConnected()) {
-            return Promise.resolve({ success: false, error: 'Workspace chưa kết nối tới BOSS' });
+            return Promise.resolve({ success: false, error: tr('Workspace chưa kết nối tới BOSS') });
         }
         Logger.log(`[HttpConnectionManager] Làm mới snapshot "${workspaceId}" (${reason})`);
         const promise = client.service.requestSnapshot({ forced: true, reason })
@@ -522,16 +523,16 @@ class HttpConnectionManager {
         return promise;
     }
 
-    /** `timeoutMs`: chờ Boss trả lời (mặc định 30 s; gửi file / đồng bộ Facebook / Telegram lâu hơn — employeeChannelRoutes). */
+    /** `timeoutMs`: wait for Boss to reply (default 30 s; sending files / Facebook / Telegram sync take longer: employeeChannelRoutes). */
     public async proxyAction(workspaceId: string, channel: string, params: any, timeoutMs?: number): Promise<any> {
         const client = this.clients.get(workspaceId);
-        if (!client) throw new Error(`Workspace "${workspaceId}" chưa kết nối tới BOSS`);
+        if (!client) throw new Error(tr('Workspace "{{workspaceId}}" chưa kết nối tới BOSS', { workspaceId }));
         return client.service.proxyAction(channel, params, timeoutMs);
     }
 
     public async proxyActiveWorkspace(channel: string, params: any): Promise<any> {
         const ws = WorkspaceManager.getInstance().getActiveWorkspace();
-        if (!ws || ws.type !== 'remote') throw new Error('Workspace đang active không phải remote workspace');
+        if (!ws || ws.type !== 'remote') throw new Error(tr('Workspace đang active không phải remote workspace'));
         return this.proxyAction(ws.id, channel, params);
     }
 
@@ -566,9 +567,9 @@ class HttpConnectionManager {
     }
 
     /**
-     * Máy ngủ dậy / mở khoá / mạng có lại → kiểm tra kết nối ngay thay vì chờ backoff:
-     * - workspace đang chờ thử lại: thử ngay, backoff tính lại từ 15 s
-     * - kết nối đang chạy: heartbeat ngay (+ mở lại Socket.IO; resume thì resync khi Boss trả lời)
+     * The machine wakes from sleep / is unlocked / the network comes back → check the connection right away instead of waiting for the backoff:
+     * - workspace waiting to retry: retry now, the backoff is recalculated from 15 s
+     * - connection running: heartbeat now (+ reopen Socket.IO; on resume, resync when Boss replies)
      */
     public handleSystemEvent(kind: WakeKind): void {
         const now = Date.now();
@@ -586,10 +587,10 @@ class HttpConnectionManager {
     }
 
     /**
-     * Start periodic health check (lưới an toàn) — gọi 1 lần lúc mở app sau connectAutoWorkspaces.
-     * Kết nối đang chạy tự hồi phục qua heartbeat 15 s; workspace lỗi nằm trong danh sách thử lại với
-     * timer riêng — health check chỉ chạy bù lần thử bị trễ (máy ngủ) và mở lại Socket.IO đã bỏ cuộc.
-     * Đồng thời gắn powerMonitor (resume / unlock-screen).
+     * Start the periodic health check (safety net), called once when the app opens after connectAutoWorkspaces.
+     * A running connection recovers by itself through the 15 s heartbeat; a failed workspace sits in the retry list with
+     * its own timer. The health check only makes up for retries that were late (machine asleep) and reopens Socket.IO that gave up.
+     * It also attaches powerMonitor (resume / unlock-screen).
      */
     public startHealthCheck(intervalMs = 60_000): void {
         this.installSystemHooks();

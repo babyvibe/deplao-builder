@@ -1,7 +1,7 @@
 /**
- * Quản lý công việc → Cài đặt → "Thông báo qua Zalo": bật / tắt, chọn tài khoản Zalo gửi, loại thông báo, người nhận
- * (SĐT trong hồ sơ Nhân sự, sửa tại chỗ, gửi thử) và tin gửi gần đây. Mọi thay đổi lưu ngay.
- * Main: ErpNotificationService (getZaloStatus / setZaloSettings / sendZaloTest); nhân viên đi REST tới Boss.
+ * Task management → Settings → "Thông báo qua Zalo" (Zalo notifications): on / off, choose the Zalo account that sends, notification types, recipients
+ * (phone numbers from HR profiles, edited in place, send test) and recent messages sent. All changes are saved immediately.
+ * Main: ErpNotificationService (getZaloStatus / setZaloSettings / sendZaloTest); employees go over REST to the owner.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, Checkbox, Input, Select, Switch, type BadgeVariant } from '@/components/ui';
@@ -18,6 +18,8 @@ import {
   type ErpZaloNotifySettings, type ErpZaloNotifyStatus, type ErpZaloRecipient, type ErpZaloRecipientState,
 } from '../../../../shared/erp/erpZaloNotify';
 import type { ErpNotificationType } from '../../../../models/erp';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const STATE_VARIANT: Record<ErpZaloRecipientState, BadgeVariant> = {
   ok: 'success',
@@ -27,9 +29,9 @@ const STATE_VARIANT: Record<ErpZaloRecipientState, BadgeVariant> = {
 };
 
 function accountBadge(account: NonNullable<ErpZaloNotifyStatus['account']>): { variant: BadgeVariant; text: string } {
-  if (account.missing) return { variant: 'destructive', text: 'Không còn trong app' };
-  if (account.notZalo) return { variant: 'destructive', text: 'Không phải Zalo' };
-  return account.ready ? { variant: 'success', text: 'Đã kết nối' } : { variant: 'warning', text: 'Chưa kết nối' };
+  if (account.missing) return { variant: 'destructive', text: tr('Không còn trong app') };
+  if (account.notZalo) return { variant: 'destructive', text: tr('Không phải Zalo') };
+  return account.ready ? { variant: 'success', text: tr('Đã kết nối') } : { variant: 'warning', text: tr('Chưa kết nối') };
 }
 
 export default function ErpZaloNotifySettings() {
@@ -49,12 +51,12 @@ export default function ErpZaloNotifySettings() {
       return;
     }
     withErpDeniedNotice(res);
-    setLoadError(res?.error || 'Không tải được cài đặt');
+    setLoadError(res?.error || tr('Không tải được cài đặt'));
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  // Còn tin chờ tới lượt gửi → làm mới mỗi 5 giây tới khi gửi xong
+  // Messages still waiting for their turn to send → refresh every 5 seconds until sent
   const pending = status?.pending ?? 0;
   useEffect(() => {
     if (!pending) return undefined;
@@ -65,10 +67,10 @@ export default function ErpZaloNotifySettings() {
   const save = async (patch: Partial<ErpZaloNotifySettings>) => {
     if (!status) return;
     setSaving(true);
-    setStatus({ ...status, settings: { ...status.settings, ...patch } }); // hiện ngay, lỗi thì tải lại bên dưới
+    setStatus({ ...status, settings: { ...status.settings, ...patch } }); // show immediately; on error, reload below
     const res: any = withErpDeniedNotice(await DataAccessor.erpSetZaloNotifySettings(patch));
     setSaving(false);
-    if (!res?.success && res?.code !== 'permission_denied') showNotification(res?.error || 'Không lưu được', 'error');
+    if (!res?.success && res?.code !== 'permission_denied') showNotification(res?.error || tr('Không lưu được'), 'error');
     await load();
   };
 
@@ -76,8 +78,8 @@ export default function ErpZaloNotifySettings() {
     setTestingId(recipient.employeeId);
     const res: any = withErpDeniedNotice(await DataAccessor.erpTestZaloNotify(recipient.employeeId));
     setTestingId(null);
-    if (res?.success) showNotification(`Đã gửi tin thử cho ${recipient.name}`, 'success');
-    else if (res?.code !== 'permission_denied') showNotification(res?.error || 'Gửi thử không được', 'error');
+    if (res?.success) showNotification(tr('Đã gửi tin thử cho {{name}}', { name: recipient.name }), 'success');
+    else if (res?.code !== 'permission_denied') showNotification(res?.error || tr('Gửi thử không được'), 'error');
     await load();
   };
 
@@ -94,10 +96,10 @@ export default function ErpZaloNotifySettings() {
         {loadError ? (
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-destructive">{loadError}</p>
-            <Button size="sm" variant="outline" onClick={() => { void load(); }}>Thử lại</Button>
+            <Button size="sm" variant="outline" onClick={() => { void load(); }}>{tr('Thử lại')}</Button>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">Đang tải...</p>
+          <p className="text-sm text-muted-foreground">{tr('Đang tải...')}</p>
         )}
       </Card>
     );
@@ -105,13 +107,13 @@ export default function ErpZaloNotifySettings() {
 
   const { settings, account, recipients, recent, gapSeconds, dailyCap } = status;
   const zaloAccounts = accounts.filter(item => resolveAccountChannel(item) === 'zalo');
-  // Tài khoản đang chọn không có trong danh sách (đã xoá, hoặc nhân viên không được giao) → vẫn hiện tên
+  // The selected account is not in the list (deleted, or not assigned to this employee) → still show its name
   const currentMissing = !!settings.accountId && !zaloAccounts.some(item => item.zalo_id === settings.accountId);
   const badge = account ? accountBadge(account) : null;
 
   const pickAccount = (accountId: string) => {
     if (!accountId || accountId === settings.accountId) return;
-    // Chọn tài khoản lần đầu = muốn dùng: bật luôn
+    // Choosing an account the first time means you want to use it: turn it on right away
     void save(settings.accountId ? { accountId } : { accountId, enabled: true });
   };
 
@@ -127,29 +129,29 @@ export default function ErpZaloNotifySettings() {
           <MessageCircleIcon className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-foreground">Thông báo qua Zalo</p>
-          <p className="text-xs text-muted-foreground">Gửi kèm thông báo công việc vào Zalo nhân viên.</p>
+          <p className="text-sm font-semibold text-foreground">{tr('Thông báo qua Zalo')}</p>
+          <p className="text-xs text-muted-foreground">{tr('Gửi kèm thông báo công việc vào Zalo nhân viên.')}</p>
         </div>
         <Switch
           checked={settings.enabled}
           disabled={saving || !settings.accountId}
           onCheckedChange={(enabled) => { void save({ enabled }); }}
-          aria-label="Bật thông báo qua Zalo"
-          title={settings.accountId ? undefined : 'Chọn tài khoản gửi trước'}
+          aria-label={tr('Bật thông báo qua Zalo')}
+          title={settings.accountId ? undefined : tr('Chọn tài khoản gửi trước')}
         />
       </div>
 
       <div className="space-y-1.5">
-        <p className="text-xs font-medium text-foreground">Tài khoản gửi</p>
+        <p className="text-xs font-medium text-foreground">{tr('Tài khoản gửi')}</p>
         <div className="flex flex-wrap items-center gap-2">
           <Select
             value={settings.accountId}
             onChange={(event) => pickAccount(event.target.value)}
             disabled={saving}
             wrapperClassName="w-72 max-w-full"
-            aria-label="Tài khoản Zalo gửi"
+            aria-label={tr('Tài khoản Zalo gửi')}
           >
-            <option value="" disabled>Chọn tài khoản Zalo</option>
+            <option value="" disabled>{tr('Chọn tài khoản Zalo')}</option>
             {currentMissing && <option value={settings.accountId} disabled>{account?.name || settings.accountId}</option>}
             {zaloAccounts.map(item => (
               <option key={item.zalo_id} value={item.zalo_id}>
@@ -159,16 +161,16 @@ export default function ErpZaloNotifySettings() {
           </Select>
           {badge && <Badge variant={badge.variant} size="sm" dot>{badge.text}</Badge>}
         </div>
-        {!zaloAccounts.length && <p className="text-[11px] text-warning">Chưa có tài khoản Zalo nào trong app.</p>}
-        {!settings.accountId && zaloAccounts.length > 0 && <p className="text-[11px] text-primary">Chọn tài khoản để bật.</p>}
+        {!zaloAccounts.length && <p className="text-[11px] text-warning">{tr('Chưa có tài khoản Zalo nào trong app.')}</p>}
+        {!settings.accountId && zaloAccounts.length > 0 && <p className="text-[11px] text-primary">{tr('Chọn tài khoản để bật.')}</p>}
         <p className="text-[11px] text-muted-foreground">
-          Gửi lần lượt, cách nhau {gapSeconds.min} - {gapSeconds.max} giây. Mỗi người tối đa {dailyCap} tin/ngày.
+          {trx('Gửi lần lượt, cách nhau {{min}} - {{max}} giây. Mỗi người tối đa {{dailyCap}} tin/ngày.', { min: gapSeconds.min, max: gapSeconds.max, dailyCap })}
         </p>
       </div>
 
       <div className="space-y-2">
-        <p className="text-xs font-medium text-foreground">Gửi khi có</p>
-        {/* Theo cột: task bên trái, lịch / nghỉ phép / ghi chú bên phải */}
+        <p className="text-xs font-medium text-foreground">{tr('Gửi khi có')}</p>
+        {/* By column: tasks on the left, calendar / leave / notes on the right */}
         <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-flow-col sm:grid-cols-2 sm:grid-rows-4">
           {ERP_ZALO_NOTIFY_TYPES.map(option => (
             <Checkbox
@@ -186,10 +188,10 @@ export default function ErpZaloNotifySettings() {
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-medium text-foreground">
-            Người nhận <span className="font-normal text-muted-foreground">(SĐT trong Nhân sự)</span>
+            {trx('Người nhận <0>(SĐT trong Nhân sự)</0>', { 0: <span className="font-normal text-muted-foreground" /> })}
           </p>
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" leftIcon={<RefreshIcon className="h-3.5 w-3.5" />} onClick={() => { void load(); }}>
-            Làm mới
+            {tr('Làm mới')}
           </Button>
         </div>
         {recipients.length ? (
@@ -206,16 +208,16 @@ export default function ErpZaloNotifySettings() {
             ))}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">Chưa có nhân viên.</p>
+          <p className="text-xs text-muted-foreground">{tr('Chưa có nhân viên.')}</p>
         )}
-        <p className="text-[11px] text-muted-foreground">Nên kết bạn Zalo giữa nhân viên và tài khoản gửi để tin không bị chặn.</p>
+        <p className="text-[11px] text-muted-foreground">{tr('Nên kết bạn Zalo giữa nhân viên và tài khoản gửi để tin không bị chặn.')}</p>
       </div>
 
       {(recent.length > 0 || pending > 0) && (
         <div className="space-y-1.5">
           <p className="text-xs font-medium text-foreground">
-            Gửi gần đây
-            {pending > 0 && <span className="font-normal text-muted-foreground"> · {pending} tin đang chờ</span>}
+            {tr('Gửi gần đây')}
+            {pending > 0 && <span className="font-normal text-muted-foreground"> {trx('· {{pending}} tin đang chờ', { pending })}</span>}
           </p>
           {recent.length > 0 && (
             <div className="max-h-64 divide-y divide-border/60 overflow-auto rounded-lg border border-border/60">
@@ -228,7 +230,7 @@ export default function ErpZaloNotifySettings() {
                     {entry.error && <span className={`block ${entry.skipped ? 'text-muted-foreground' : 'text-destructive'}`}>{entry.error}</span>}
                   </span>
                   <Badge size="sm" variant={entry.ok ? 'success' : entry.skipped ? 'default' : 'destructive'}>
-                    {entry.ok ? (entry.test ? 'Đã gửi thử' : 'Đã gửi') : entry.skipped ? 'Bỏ qua' : 'Lỗi'}
+                    {entry.ok ? (entry.test ? tr('Đã gửi thử') : tr('Đã gửi')) : entry.skipped ? tr('Bỏ qua') : tr('Lỗi')}
                   </Badge>
                 </div>
               ))}
@@ -244,7 +246,7 @@ function Card({ children }: { children: React.ReactNode }) {
   return <div className="space-y-4 rounded-xl border border-border/60 bg-card p-4">{children}</div>;
 }
 
-/** Một người nhận: tên, SĐT (thêm / sửa tại chỗ), trạng thái tìm Zalo, lần gửi gần nhất, "Gửi thử". */
+/** One recipient: name, phone number (add / edit in place), Zalo lookup status, last send time, "Gửi thử" (Send test). */
 function RecipientRow({ recipient, canTest, testing, onTest, onSavePhone }: {
   recipient: ErpZaloRecipient;
   canTest: boolean;
@@ -279,25 +281,25 @@ function RecipientRow({ recipient, canTest, testing, onTest, onSavePhone }: {
                 if (event.key === 'Enter') void submit();
                 if (event.key === 'Escape') setEditing(false);
               }}
-              placeholder="Số điện thoại"
+              placeholder={tr('Số điện thoại')}
               inputMode="tel"
               autoFocus
               className="h-7 w-40 px-2 text-xs"
             />
-            <Button size="sm" className="h-7 px-2 text-xs" loading={savingPhone} onClick={() => { void submit(); }}>Lưu</Button>
-            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setEditing(false)}>Huỷ</Button>
+            <Button size="sm" className="h-7 px-2 text-xs" loading={savingPhone} onClick={() => { void submit(); }}>{tr('Lưu')}</Button>
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setEditing(false)}>{tr('Huỷ')}</Button>
           </div>
         ) : (
           <p className="text-[11px] text-muted-foreground">
-            {recipient.phone || 'Chưa có SĐT'}
+            {recipient.phone || tr('Chưa có SĐT')}
             {' · '}
             <button type="button" className="text-primary hover:underline" onClick={startEdit}>
-              {recipient.phone ? 'Sửa' : 'Thêm SĐT'}
+              {recipient.phone ? tr('Sửa') : tr('Thêm SĐT')}
             </button>
             {recipient.last && (
               recipient.last.ok
-                ? <> · Gửi lúc {erpWhenText(recipient.last.at, false, Date.now())}</>
-                : <span className="text-destructive"> · {recipient.last.error || 'Gửi lỗi'}</span>
+                ? <> {trx('· Gửi lúc {{v1}}', { v1: erpWhenText(recipient.last.at, false, Date.now()) })}</>
+                : <span className="text-destructive"> · {recipient.last.error || tr('Gửi lỗi')}</span>
             )}
           </p>
         )}
@@ -311,9 +313,9 @@ function RecipientRow({ recipient, canTest, testing, onTest, onSavePhone }: {
         disabled={!hasPhone || !canTest}
         loading={testing}
         onClick={onTest}
-        title={hasPhone ? undefined : 'Thêm SĐT trước'}
+        title={hasPhone ? undefined : tr('Thêm SĐT trước')}
       >
-        Gửi thử
+        {tr('Gửi thử')}
       </Button>
     </div>
   );

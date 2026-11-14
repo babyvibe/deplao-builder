@@ -1,8 +1,8 @@
 /**
- * Thông tin trình bày Telegram lưu chung trong messages.attachments nhưng KHÔNG phải ảnh / video / file: bài đăng kênh,
- * album, emoji tuỳ chỉnh, @nhắc tên, nguồn chuyển tiếp. Mọi chỗ tìm "tệp media đầu tiên" hoặc quyết định có tải media
- * không phải bỏ qua các loại này. Trước đây mỗi nơi tự liệt kê (thiếu telegram_mention → ảnh có chú thích @tên lấy nhầm
- * thẻ nhắc tên làm media, tin chữ có @tên vẫn thử tải media).
+ * Telegram presentation info stored together in messages.attachments but NOT photos / videos / files: channel posts,
+ * albums, custom emoji, @mentions, forward sources. Every place that looks for the "first media file" or decides whether to download media
+ * must skip these types. Previously each place listed them on its own (missing telegram_mention → a photo with an @name caption picked the
+ * mention card as its media, and a text message with @name still tried to download media).
  */
 export const TELEGRAM_META_ATTACHMENT_TYPES: ReadonlySet<string> = new Set([
   'telegram_post',

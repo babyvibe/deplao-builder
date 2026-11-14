@@ -1,6 +1,6 @@
 /**
- * Quản trị viên + chức vụ tự đặt của nhóm Telegram — nhãn ở góc phải dòng tên người gửi (như Telegram). Bộ nhớ đệm theo
- * nhóm trong phiên (30 phút); main trả bản lưu DB (< 6 giờ) nên mở lại hội thoại không gọi Telegram.
+ * Administrators + custom titles of a Telegram group: the label at the right of the sender's name line (as in Telegram). Cache per
+ * group for the session (30 minutes); main returns the copy saved in the DB (< 6 hours), so reopening the conversation does not call Telegram.
  */
 import { useEffect, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -19,7 +19,7 @@ function loadGroupAdmins(accountId: string, chatId: string): Promise<void> {
   if (pending) return pending;
   const request = (async () => {
     const res = await ipc.telegramUser?.getGroupAdmins?.({ accountId, chatId });
-    if (!res?.success) return; // lần mở sau thử lại; giữ nhãn đang có
+    if (!res?.success) return; // try again the next time it opens; keep the current label
     const admins = new Map<string, TelegramGroupAdmin>();
     for (const admin of res.admins || []) {
       const memberId = String(admin?.memberId || '');
@@ -31,7 +31,7 @@ function loadGroupAdmins(accountId: string, chatId: string): Promise<void> {
   return request;
 }
 
-/** Quản trị viên của nhóm đang mở (memberId → vai trò + chức vụ); `enabled` = hội thoại nhóm Telegram. */
+/** Administrators of the open group (memberId → role + title); `enabled` = a Telegram group conversation. */
 export function useTelegramGroupAdmins(
   accountId: string | null | undefined,
   chatId: string | null | undefined,

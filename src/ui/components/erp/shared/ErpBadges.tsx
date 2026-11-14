@@ -3,16 +3,17 @@ import DOMPurify from 'dompurify';
 import ipc from '@/lib/ipc';
 import { useErpEmployeeStore } from '@/store/erp/erpEmployeeStore';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
+import { tr } from '../../../../shared/i18n';
 
 // ─── PriorityBadge ────────────────────────────────────────────────────────────
 export type ErpPriority = 'low' | 'medium' | 'high' | 'urgent' | string;
 
 const PRIORITY_STYLE: Record<string, { label: string; cls: string }> = {
-  low:    { label: 'Thấp',    cls: 'bg-accent/20 text-foreground/80 border-border-strong/40' },
-  normal: { label: 'Bình thường', cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
-  medium: { label: 'Trung',   cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
-  high:   { label: 'Cao',     cls: 'bg-orange-500/20 text-orange-300 border-orange-500/40' },
-  urgent: { label: 'Khẩn',    cls: 'bg-red-500/20 text-red-300 border-red-500/40' },
+  low:    { label: tr('Thấp'),    cls: 'bg-accent/20 text-foreground/80 border-border-strong/40' },
+  normal: { label: tr('Bình thường'), cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
+  medium: { label: tr('Trung'),   cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
+  high:   { label: tr('Cao'),     cls: 'bg-orange-500/20 text-orange-300 border-orange-500/40' },
+  urgent: { label: tr('Khẩn'),    cls: 'bg-red-500/20 text-red-300 border-red-500/40' },
 };
 
 export function PriorityBadge({ value, compact }: { value?: ErpPriority; compact?: boolean }) {
@@ -29,11 +30,11 @@ export function PriorityBadge({ value, compact }: { value?: ErpPriority; compact
 export type ErpStatus = 'todo' | 'doing' | 'review' | 'done' | 'cancelled' | string;
 
 const STATUS_STYLE: Record<string, { label: string; cls: string }> = {
-  todo:      { label: 'Cần làm',  cls: 'bg-accent/20 text-foreground/80' },
-  doing:     { label: 'Đang làm', cls: 'bg-blue-500/20 text-blue-300' },
-  review:    { label: 'Xem xét',  cls: 'bg-purple-500/20 text-purple-300' },
-  done:      { label: 'Hoàn thành', cls: 'bg-green-500/20 text-green-300' },
-  cancelled: { label: 'Huỷ',      cls: 'bg-red-500/20 text-red-300 line-through' },
+  todo:      { label: tr('Cần làm'),  cls: 'bg-accent/20 text-foreground/80' },
+  doing:     { label: tr('Đang làm'), cls: 'bg-blue-500/20 text-blue-300' },
+  review:    { label: tr('Xem xét'),  cls: 'bg-purple-500/20 text-purple-300' },
+  done:      { label: tr('Hoàn thành'), cls: 'bg-green-500/20 text-green-300' },
+  cancelled: { label: tr('Huỷ'),      cls: 'bg-red-500/20 text-red-300 line-through' },
 };
 
 export function StatusBadge({ value, compact }: { value?: ErpStatus; compact?: boolean }) {
@@ -252,7 +253,7 @@ export function RichContentPreview({
   compact?: boolean;
 }) {
   if (!source?.trim()) {
-    return <p className={`text-xs text-muted-foreground italic ${className ?? ''}`}>Chưa có nội dung chi tiết</p>;
+    return <p className={`text-xs text-muted-foreground italic ${className ?? ''}`}>{tr('Chưa có nội dung chi tiết')}</p>;
   }
 
   return (

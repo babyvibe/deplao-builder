@@ -1,30 +1,30 @@
 /**
- * Nâng API layer của GramJS (thư viện Telegram MTProto).
+ * Upgrades the API layer of GramJS (the Telegram MTProto library).
  *
- * GramJS 2.26.22 — bản mới nhất trên npm — nói chuyện với Telegram bằng layer 198 (đầu 2025). Tin dùng tính năng mới hơn
- * thì server gửi cho layer cũ thành `messageMediaUnsupported` và để TRỐNG phần chữ: từ 30/08/2026 hàng chục nghìn tin chỉ
- * còn "Loại tin nhắn Telegram chưa được hỗ trợ" (chủ yếu tin định dạng phong phú — `message.rich_message`, layer 23x),
- * trong khi Telegram Desktop (layer 232) hiện đủ.
+ * GramJS 2.26.22 (the newest on npm) talks to Telegram with layer 198 (early 2025). When a message uses a newer feature, the server sends the old
+ * layer a `messageMediaUnsupported` with the TEXT left EMPTY: since 30/08/2026 tens of thousands of messages show only
+ * "Loại tin nhắn Telegram chưa được hỗ trợ" (Telegram message type not supported yet), mostly rich-format messages (`message.rich_message`, layer 23x),
+ * while Telegram Desktop (layer 232) shows them in full.
  *
- * GramJS dựng toàn bộ lớp `Api.*` lúc nạp module, từ chuỗi schema trong `telegram/tl/apiTl.js`, và gửi
- * `invokeWithLayer(AllTLObjects.LAYER, …)` khi kết nối. Deplao đặt schema mới (telegramApiSchema.ts) vào bộ nhớ đệm
- * module của Node TRƯỚC khi GramJS được nạp lần đầu và đổi LAYER — không sửa node_modules, dùng được cả khi đóng gói.
- * Phải gọi trước mọi `require('telegram')`: electron/bootstrap.ts gọi ngay sau `app.setName`.
+ * GramJS builds the whole `Api.*` class set when its module loads, from the schema string in `telegram/tl/apiTl.js`, and sends
+ * `invokeWithLayer(AllTLObjects.LAYER, …)` on connect. Deplao puts the new schema (telegramApiSchema.ts) into the Node module cache
+ * BEFORE GramJS is first loaded, and changes LAYER: node_modules is not edited, and it works in the packaged app too.
+ * It must be called before any `require('telegram')`: electron/bootstrap.ts calls it right after `app.setName`.
  *
- * Chạy lại bằng layer cũ (chẩn đoán): biến môi trường DEPLAO_TELEGRAM_LAYER=198.
+ * To run with the old layer again (diagnosis): environment variable DEPLAO_TELEGRAM_LAYER=198.
  */
 import Module = require('module');
 import { TELEGRAM_API_LAYER, TELEGRAM_API_SCHEMA } from './telegramApiSchema';
 
-/** Layer của schema đi kèm GramJS 2.26.22. */
+/** Layer of the schema that ships with GramJS 2.26.22. */
 export const GRAMJS_BUNDLED_LAYER = 198;
 
 export interface TelegramApiLayerState {
-  /** Layer GramJS sẽ dùng khi kết nối. */
+  /** The layer GramJS will use when connecting. */
   layer: number;
-  /** Đã thay schema của GramJS. */
+  /** GramJS's schema has been replaced. */
   installed: boolean;
-  /** Lý do không thay (env / GramJS đã nạp trước / lỗi). */
+  /** Reason it was not replaced (env / GramJS already loaded / error). */
   reason?: string;
 }
 
@@ -38,7 +38,7 @@ function loadedLayer(): number {
   }
 }
 
-/** Thay schema của GramJS bằng layer mới. Gọi nhiều lần không sao (chỉ lần đầu có tác dụng). */
+/** Replace GramJS's schema with the new layer. Calling it several times is harmless (only the first call has an effect). */
 export function installTelegramApiLayer(env: NodeJS.ProcessEnv = process.env): TelegramApiLayerState {
   if (state) return state;
   if (String(env.DEPLAO_TELEGRAM_LAYER || '') === String(GRAMJS_BUNDLED_LAYER)) {
@@ -48,7 +48,7 @@ export function installTelegramApiLayer(env: NodeJS.ProcessEnv = process.env): T
   try {
     const apiPath = require.resolve('telegram/tl/api.js');
     if (require.cache[apiPath]) {
-      // Api.* đã dựng từ schema cũ — đổi LAYER lúc này sẽ gửi layer mới với bộ mã hoá cũ
+      // The Api.* classes were already built from the old schema: changing LAYER now would send the new layer with the old encoder
       state = { layer: loadedLayer(), installed: false, reason: 'GramJS đã được nạp trước' };
       return state;
     }
@@ -67,7 +67,7 @@ export function installTelegramApiLayer(env: NodeJS.ProcessEnv = process.env): T
   return state;
 }
 
-/** Trạng thái lần cài gần nhất (null = chưa gọi). */
+/** State of the most recent install (null = not called yet). */
 export function telegramApiLayerState(): TelegramApiLayerState | null {
   return state;
 }

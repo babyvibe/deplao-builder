@@ -1,15 +1,15 @@
 /**
- * postRestore — an toàn sau khi khôi phục (chạy trên FILE đã khôi phục, trước khi thay vào chỗ DB thật).
+ * postRestore: safety after a restore (runs on the RESTORED FILE, before it replaces the real DB).
  *
- * Bản khôi phục có thể chạy trên máy khác trong khi máy cũ vẫn sống → không được để hai máy cùng đăng nhập kênh,
- * cùng chạy chiến dịch, cùng ký token nhân viên:
- *  - gỡ trigger/bảng theo dõi (_cloud_*) — máy này tự cài lại và chụp gốc mới nếu bật đồng bộ;
- *  - xoá phiên đăng nhập kênh: accounts.cookies (Zalo, phiên Telegram, token bot…), cột cookie/phiên của fb_accounts,
+ * The restored copy may run on another machine while the old machine is still alive → two machines must not stay signed in to the channels,
+ * run the same campaigns, or sign the employee tokens:
+ *  - remove the tracking triggers/tables (_cloud_*): this machine reinstalls them and takes a new base snapshot if sync is on;
+ *  - delete the channel login sessions: accounts.cookies (Zalo, Telegram sessions, bot tokens…), the cookie/session columns of fb_accounts,
  *    app_settings 'fb_cookie_*', 'facebook:e2ee-device-state:*';
- *  - giá trị 'enc:…' (mã hoá safeStorage — chỉ máy cũ giải mã được) → xoá;
- *  - đổi khoá ký token nhân viên (employee_jwt_secret) → token cũ của nhân viên hết hiệu lực;
- *  - bật cờ 'cloud_restore_pending_relogin' và 'cloud_restore_paused_automations' = '1' (restoreGate đọc);
- *  - giữ nguyên 'cloud_workspace_uid' / 'cloud_media_bucket' (media của DB khôi phục vẫn tìm được trên R2).
+ *  - 'enc:…' values (safeStorage encryption, only the old machine can decrypt them) → delete;
+ *  - change the employee token signing key (employee_jwt_secret) → the employees' old tokens stop working;
+ *  - set the flags 'cloud_restore_pending_relogin' and 'cloud_restore_paused_automations' = '1' (read by restoreGate);
+ *  - keep 'cloud_workspace_uid' / 'cloud_media_bucket' as they are (the media of the restored DB can still be found on R2).
  */
 import { randomBytes } from 'crypto';
 import { dropTracking } from './DirtyTracker';
@@ -23,11 +23,11 @@ export const RESTORE_SOURCE_KEY = 'cloud_restore_source';
 export const JWT_SECRET_KEY = 'employee_jwt_secret';
 export const JWT_SECRET_VERSION_KEY = 'employee_jwt_secret_version';
 
-/** Tiền tố khoá app_settings chứa phiên đăng nhập kênh — xoá cả dòng. */
+/** Key prefix in app_settings that holds channel login sessions: delete the whole row. */
 export const CREDENTIAL_SETTING_PREFIXES: readonly string[] = ['fb_cookie_', 'facebook:e2ee-device-state:'];
-/** Tiền tố giá trị mã hoá safeStorage (SecureSettingsService, secretBox, AIAssistantService). */
+/** Prefix of safeStorage-encrypted values (SecureSettingsService, secretBox, AIAssistantService). */
 export const ENC_PREFIX = 'enc:';
-/** Cột (ngoài app_settings) có thể chứa giá trị 'enc:…' → đặt rỗng (giữ dòng cấu hình, người dùng nhập lại khoá). */
+/** Columns (outside app_settings) that may hold 'enc:…' values → set to empty (keeps the config row, the user enters the keys again). */
 export const ENCRYPTED_COLUMNS: ReadonlyArray<{ table: string; column: string }> = [
     { table: 'ai_assistants', column: 'api_key_encrypted' },
     { table: 'webhook_subscriptions', column: 'secret' },
@@ -44,7 +44,7 @@ export interface PostRestoreInfo {
         appliedSegments: number;
     };
     restoredAt: number;
-    /** Dòng 'restore' ghi vào cloud_sync_log của bản khôi phục (nhật ký cũ của máy nguồn được xoá). */
+    /** The 'restore' row written to the restored copy's cloud_sync_log (the source machine's old log is deleted). */
     logEntry?: LogInput | null;
 }
 
@@ -79,7 +79,7 @@ export function applyPostRestoreSafety(conn: SqlConn, info: PostRestoreInfo): Po
     };
     conn.exec('BEGIN IMMEDIATE');
     try {
-        // Phiên đăng nhập mọi kênh (Zalo cookies, phiên GramJS, token bot Telegram…). Cột NOT NULL → chuỗi rỗng.
+        // Login sessions of every channel (Zalo cookies, GramJS sessions, Telegram bot tokens…). NOT NULL column → empty string.
         if (hasColumn(conn, 'accounts', 'cookies')) {
             report.accountsCleared = toNumber(conn.prepare("UPDATE accounts SET cookies = '' WHERE cookies IS NOT NULL AND cookies <> ''").run().changes);
         }
@@ -94,7 +94,7 @@ export function applyPostRestoreSafety(conn: SqlConn, info: PostRestoreInfo): Po
             const conds = CREDENTIAL_SETTING_PREFIXES.map(p => `substr(key, 1, ${p.length}) = '${p.replace(/'/g, "''")}'`);
             conds.push(`substr(value, 1, ${ENC_PREFIX.length}) = '${ENC_PREFIX}'`);
             report.settingsDeleted = toNumber(conn.prepare(`DELETE FROM app_settings WHERE ${conds.join(' OR ')}`).run().changes);
-            // Khoá ký token nhân viên mới (48 byte base64url như employeeTokenPolicy.generateJwtSecret)
+            // New employee token signing key (48 bytes base64url, like employeeTokenPolicy.generateJwtSecret)
             upsertSetting(conn, JWT_SECRET_KEY, randomBytes(48).toString('base64url'));
             upsertSetting(conn, JWT_SECRET_VERSION_KEY, '2');
             upsertSetting(conn, RESTORE_RELOGIN_KEY, '1');
@@ -112,7 +112,7 @@ export function applyPostRestoreSafety(conn: SqlConn, info: PostRestoreInfo): Po
         if (info.logEntry) appendLog(conn, info.logEntry);
         conn.exec('COMMIT');
     } catch (err) {
-        try { conn.exec('ROLLBACK'); } catch { /* đã huỷ */ }
+        try { conn.exec('ROLLBACK'); } catch { /* cancelled */ }
         throw err;
     }
     return report;

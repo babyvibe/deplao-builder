@@ -1,15 +1,16 @@
 /**
- * Video đang tải về máy (như Telegram): vòng tiến độ ở giữa + "2.1 / 5.0 MB" ở góc trên trái; chưa có số liệu (đang chờ
- * lượt tải) → vòng xoay. Đặt trong khung video `relative` chưa có file (Telegram / Zalo / Facebook) — trong lúc này bấm
- * vào không mở trình phát.
+ * Video being downloaded (as in Telegram): progress ring in the middle + "2.1 / 5.0 MB" at the top left; no figures yet (waiting for
+ * a download slot) → spinner. Placed inside a `relative` video frame that has no file yet (Telegram / Zalo / Facebook); clicking
+ * it while downloading does not open the player.
  */
 import React from 'react';
 import { formatTransferProgress, transferFraction, type MediaProgress } from '@/lib/media/mediaProgress';
+import { tr } from '../../../../shared/i18n';
 
 const RING_RADIUS = 20;
 const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
 
-/** Vòng tiến độ: `fraction` 0..1, null = vòng xoay (chưa biết tiến độ). */
+/** Progress ring: `fraction` 0..1, null = spinner (progress unknown). */
 export function DownloadProgressRing({fraction}: { fraction: number | null }) {
     const arc = fraction === null ? RING_LENGTH * 0.25 : RING_LENGTH * Math.max(0.03, fraction);
     return (
@@ -28,7 +29,7 @@ export function DownloadProgressRing({fraction}: { fraction: number | null }) {
     );
 }
 
-/** Lớp phủ "đang tải" cho khung video: nền tối nhẹ + vòng tiến độ + số byte. `fallbackTotal`: dung lượng biết từ tin. */
+/** "Downloading" overlay for the video frame: light dark background + progress ring + byte count. `fallbackTotal`: size known from the message. */
 export function VideoDownloadOverlay({progress, fallbackTotal = 0}: { progress: MediaProgress; fallbackTotal?: number }) {
     const total = progress.total || fallbackTotal;
     const label = formatTransferProgress(progress.received, total);
@@ -39,7 +40,7 @@ export function VideoDownloadOverlay({progress, fallbackTotal = 0}: { progress: 
                 <DownloadProgressRing fraction={transferFraction(progress, fallbackTotal)}/>
             </div>
             <span className="absolute left-2 top-2 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white-important"
-                  title="Đang tải video — xem được khi tải xong">
+                  title={tr('Đang tải video — xem được khi tải xong')}>
                 {label}
             </span>
         </>

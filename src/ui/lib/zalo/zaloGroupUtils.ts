@@ -22,6 +22,7 @@
 import ipc from '@/lib/ipc'
 import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
 import { extractUserProfile } from '../../../utils/zalo/profileUtils';
+import { tr } from '../../../shared/i18n';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -87,8 +88,8 @@ export interface SyncGroupsOptions {
   /** Paired with memberIds above. */
   placeholders?: MemberPlaceholder[];
   /**
-   * (Single-group mode only) Lấy lại tên / ảnh của MỌI thành viên, kể cả người đã có tên (làm mới thủ công).
-   * Placeholders vẫn mang tên đang có → bước lưu đầu tiên không xoá trắng tên trong DB trong lúc chờ.
+   * (Single-group mode only) Fetch the name / photo of ALL members again, including people who already have a name (manual refresh).
+   * Placeholders still keep the current name, so the first save step does not blank the names in the DB while it waits.
    */
   forceEnrich?: boolean;
 }
@@ -106,7 +107,7 @@ interface _EnrichOpts {
   stopRef?: { current: boolean };
   /** true = skip getGroupMembersInfo, known to fail for this group */
   skipGetGroupMembersInfo?: boolean;
-  /** true = coi mọi thành viên là chưa có tên (lấy lại hết) */
+  /** true = treat every member as having no name yet (fetch them all again) */
   forceEnrich?: boolean;
 }
 
@@ -318,11 +319,11 @@ async function _syncAllGroups(opts: SyncGroupsOptions): Promise<void> {
 
   // Load ALL existing members in one shot (no extra DB queries per group later)
   const existingMembersRes = await DataAccessor.getAllGroupMembers(activeAccountId);
-  // Không đọc được bảng thành viên hiện có (mất kết nối Boss / DB lỗi) → DỪNG: chạy tiếp sẽ coi mọi nhóm là mới,
-  // ghi đè tên thành viên bằng bản rỗng và tải lại toàn bộ từ Zalo.
+  // Cannot read the existing member table (lost connection to the owner's machine / DB error) → STOP: continuing would treat every group as new,
+  // overwrite member names with empty values and reload everything from Zalo.
   if (isReadFailure(existingMembersRes)) {
     console.warn('[zaloGroupUtils] abort full group sync — cannot read existing members:', readFailureMessage(existingMembersRes));
-    throw new Error('Không đọc được danh sách thành viên hiện có — đã dừng đồng bộ để không ghi đè dữ liệu. Thử lại sau.');
+    throw new Error(tr('Không đọc được danh sách thành viên hiện có — đã dừng đồng bộ để không ghi đè dữ liệu. Thử lại sau.'));
   }
   const existingMemberRows: any[] = existingMembersRes?.rows ?? [];
   const existingCountMap: Record<string, number> = {};

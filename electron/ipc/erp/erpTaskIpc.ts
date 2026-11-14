@@ -3,11 +3,12 @@ import ErpTaskService from '../../../src/services/erp/ErpTaskService';
 import type { ErpAuthCtx } from '../../../src/services/erp/ErpAuthContext';
 import { assignmentAction, taskDeleteAction } from '../../../src/services/erp/erpAccessRules';
 import { withErpAuth, erpValidate, erpAllowed, requireErpPermission } from './erpIpcMiddleware';
+import { tr } from '../../../src/shared/i18n';
 
 const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
 const STATUSES   = ['todo', 'doing', 'review', 'done', 'cancelled'] as const;
 
-/** Quyền giao việc theo THAY ĐỔI người thực hiện so với hiện tại (erpAccessRules.assignmentAction). */
+/** Task assignment permission based on a CHANGE of the assignee compared with the current one (erpAccessRules.assignmentAction). */
 function ensureAssignmentPermission(nextIds: string[], currentIds: string[], ctx: ErpAuthCtx) {
   const action = assignmentAction(nextIds, currentIds, ctx.employeeId);
   if (action) requireErpPermission(action, ctx);
@@ -52,7 +53,7 @@ export function registerErpTaskIpc(): void {
   ipcMain.handle('erp:task:get', withErpAuth('erp.access', async (input: any) => {
     erpValidate.string(input?.id, 'id');
     const task = svc().getTaskDetail(input.id);
-    if (!task) throw new Error('Không tìm thấy task');
+    if (!task) throw new Error(tr('Không tìm thấy task'));
     return { task };
   }));
 
@@ -86,18 +87,18 @@ export function registerErpTaskIpc(): void {
   ipcMain.handle('erp:task:assign', withErpAuth(null, async (input: any, ctx) => {
     erpValidate.string(input?.id, 'id');
     const employeeIds: string[] = Array.isArray(input?.employeeIds) ? input.employeeIds.filter(Boolean) : [];
-    // Tự nhận việc (assign_self) khác giao cho người khác (assign_others) — xét theo thay đổi so với hiện tại
+    // Self-assign (assign_self) is different from assigning to others (assign_others): checked by the change compared with the current value
     ensureAssignmentPermission(employeeIds, svc().getTaskAssignees(input.id), ctx);
     svc().assignTask(input.id, employeeIds, ctx.employeeId);
     return {};
   }));
 
-  // Người tạo task xoá được task của mình (cần quyền sửa task); task của người khác cần task.delete
-  // (cùng quy tắc REST nhân viên trước đây — giờ một chỗ cho UI Boss, nhân viên và API).
+  // The task creator can delete their own task (needs task edit permission); other people's tasks need task.delete
+  // (the same rules as the employee REST before, now in one place for the Boss UI, employees and the API).
   ipcMain.handle('erp:task:delete', withErpAuth(null, async (input: any, ctx) => {
     erpValidate.string(input?.id, 'id');
     const reporterId = svc().getTaskReporterId(input.id);
-    if (reporterId === undefined) throw new Error('Không tìm thấy task');
+    if (reporterId === undefined) throw new Error(tr('Không tìm thấy task'));
     const action = taskDeleteAction(reporterId, ctx.employeeId, erpAllowed('task.update', ctx));
     if (action) requireErpPermission(action, ctx);
     svc().deleteTask(input.id);
@@ -121,11 +122,11 @@ export function registerErpTaskIpc(): void {
     return { comment: svc().addComment(input.taskId, ctx.employeeId, input.content, input.mentions ?? []) };
   }));
 
-  // Sửa / xoá bình luận: người viết, hoặc người có quyền sửa mọi task (trước đây ai có task.comment cũng sửa / xoá được
-  // bình luận của người khác theo id)
+  // Edit / delete a comment: its author, or someone who can edit every task (before, anyone with task.comment could edit / delete
+  // other people's comments by id)
   const ensureCommentAuthor = (commentId: number, ctx: ErpAuthCtx) => {
     const authorId = svc().getCommentAuthorId(commentId);
-    if (authorId === undefined) throw new Error('Không tìm thấy bình luận');
+    if (authorId === undefined) throw new Error(tr('Không tìm thấy bình luận'));
     if (authorId !== ctx.employeeId) requireErpPermission('task.edit_any', ctx);
   };
 
@@ -144,7 +145,7 @@ export function registerErpTaskIpc(): void {
   }));
 
   ipcMain.handle('erp:task:listMyInbox', withErpAuth('erp.access', async (input: any, ctx) => {
-    const viewAll = erpAllowed('task.edit_any', ctx); // owner, admin, manager (+ quyền riêng)
+    const viewAll = erpAllowed('task.edit_any', ctx); // owner, admin, manager (+ own permissions)
     return { tasks: svc().getMyInbox(ctx.employeeId, input?.filter || 'week', viewAll) };
   }));
 

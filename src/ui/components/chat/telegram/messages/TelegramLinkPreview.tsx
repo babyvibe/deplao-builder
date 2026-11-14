@@ -3,8 +3,8 @@ import { openChatLink } from '@/lib/chat/links/chatLinks';
 import { requestTelegramPreviewRefresh } from '@/lib/chat/telegram/telegramPreviewRefresh';
 
 /**
- * Hiện ra → nếu bản ghi cũ còn thiếu thông tin thẻ (chỉ có tên trang, hoặc video link chưa có thẻ) thì xin Telegram bù,
- * gom theo lô — xem lib/chat/telegram/telegramPreviewRefresh. Không vẽ gì.
+ * When shown: if the stored record is still missing card info (only the site name, or a video link without a card), ask Telegram to fill it in,
+ * batched; see lib/chat/telegram/telegramPreviewRefresh. Draws nothing.
  */
 export function TelegramPreviewRefresh({ msg }: { msg: any }) {
   const attachments = typeof msg?.attachments === 'string' ? msg.attachments : JSON.stringify(msg?.attachments || []);
@@ -16,9 +16,9 @@ export function TelegramPreviewRefresh({ msg }: { msg: any }) {
 }
 
 /**
- * Thẻ xem trước link Telegram (MessageMediaWebPage) như app Telegram: thanh màu bên trái, tên trang, tiêu đề, mô tả,
- * ảnh / video của trang nằm trong thẻ. Dữ liệu ở attachment media có `source: 'webpage'` (tin link có ảnh / video) hoặc
- * attachment `webpage` (tin link chỉ có chữ) — xem telegramMediaMeta.ts ở main.
+ * Telegram link preview card (MessageMediaWebPage), like the Telegram app: colored bar on the left, site name, title, description,
+ * the site's image / video inside the card. Data is in the media attachment with `source: 'webpage'` (link message with image / video) or an
+ * attachment `webpage` (link-only message), see telegramMediaMeta.ts in main.
  */
 export interface TelegramWebpageMeta {
   url: string;
@@ -49,7 +49,7 @@ export function getTelegramWebpageMeta(msg: any): TelegramWebpageMeta | null {
 
 export function TelegramLinkPreviewCard({ meta, hideTitle = false, children, className = '' }: {
   meta: TelegramWebpageMeta;
-  /** Tin chỉ có link mà nội dung lưu chính là tiêu đề trang → không lặp tiêu đề trong thẻ. */
+  /** Link-only message whose stored content is the page title → do not repeat the title in the card. */
   hideTitle?: boolean;
   children?: React.ReactNode;
   className?: string;

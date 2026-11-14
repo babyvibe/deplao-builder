@@ -1,7 +1,7 @@
 /**
  * AIAssistantDetailPage.tsx
- * Trang chi tiết trợ lý AI - tạo mới / chỉnh sửa.
- * Layout: cấu hình bên trái, chat preview bên phải.
+ * AI assistant detail page - create / edit.
+ * Layout: settings on the left, chat preview on the right.
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
@@ -13,6 +13,8 @@ import PromptWizardModal from './PromptWizardModal';
 import { parseStructuredResponse } from '../../../../shared/ai/aiUtils';
 import { AI_MODEL_OPTIONS, DEFAULT_AI_MODELS, normalizeAIModel } from '../../../../shared/ai/aiModelCatalog';
 import { AlertIcon, BookIcon, BotIcon, ChartIcon, ChatIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClipboardListIcon, EditIcon, FileTextIcon, GlobeIcon, HardDriveIcon, KeyIcon, LightningIcon, LinkIcon, PackageIcon, PaperclipIcon, PinIcon, RefreshIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, ShuffleIcon, SparklesIcon, SunIcon, TargetIcon, TrashIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -29,82 +31,82 @@ const PLATFORMS = [
 
 const MODELS_BY_PLATFORM: Record<string, { value: string; label: string }[]> = {
   openai: [
-    { value: 'gpt-5.4',       label: 'GPT-5.4 (flagship mới nhất)' },
-    { value: 'gpt-5.4-pro',   label: 'GPT-5.4 Pro (thông minh, chính xác nhất)' },
-    { value: 'gpt-5.4-mini',  label: 'GPT-5.4 Mini (code, subagent - khuyên dùng)' },
-    { value: 'gpt-5.4-nano',  label: 'GPT-5.4 Nano (siêu rẻ, đơn giản)' },
-    { value: 'gpt-5-mini',    label: 'GPT-5 Mini (cân bằng, giá tốt)' },
-    { value: 'gpt-5-nano',    label: 'GPT-5 Nano (nhanh, rẻ nhất)' },
-    { value: 'gpt-5',         label: 'GPT-5 (lý luận mạnh)' },
-    { value: 'o4-mini',       label: 'o4-mini (lý luận nhanh)' },
-    { value: 'o3',            label: 'o3 (lý luận mạnh)' },
-    { value: 'o3-mini',       label: 'o3-mini (lý luận)' },
-    { value: 'gpt-4.1',       label: 'GPT-4.1 (legacy, non-reasoning thông minh)' },
+    { value: 'gpt-5.4',       label: tr('GPT-5.4 (flagship mới nhất)') },
+    { value: 'gpt-5.4-pro',   label: tr('GPT-5.4 Pro (thông minh, chính xác nhất)') },
+    { value: 'gpt-5.4-mini',  label: tr('GPT-5.4 Mini (code, subagent - khuyên dùng)') },
+    { value: 'gpt-5.4-nano',  label: tr('GPT-5.4 Nano (siêu rẻ, đơn giản)') },
+    { value: 'gpt-5-mini',    label: tr('GPT-5 Mini (cân bằng, giá tốt)') },
+    { value: 'gpt-5-nano',    label: tr('GPT-5 Nano (nhanh, rẻ nhất)') },
+    { value: 'gpt-5',         label: tr('GPT-5 (lý luận mạnh)') },
+    { value: 'o4-mini',       label: tr('o4-mini (lý luận nhanh)') },
+    { value: 'o3',            label: tr('o3 (lý luận mạnh)') },
+    { value: 'o3-mini',       label: tr('o3-mini (lý luận)') },
+    { value: 'gpt-4.1',       label: tr('GPT-4.1 (legacy, non-reasoning thông minh)') },
   ],
   gemini: [
-    { value: 'gemini-3.5-flash',        label: 'Gemini 3.5 Flash (mới nhất - nhanh, cân bằng - khuyên dùng)' },
-    { value: 'gemini-3.1-pro-preview',  label: 'Gemini 3.1 Pro Preview (mạnh nhất)' },
-    { value: 'gemini-3-flash-preview',  label: 'Gemini 3 Flash Preview (nhanh, ổn định)' },
-    { value: 'gemini-2.5-pro',          label: 'Gemini 2.5 Pro (legacy, ổn định)' },
-    { value: 'gemini-2.5-flash',        label: 'Gemini 2.5 Flash (legacy)' },
+    { value: 'gemini-3.5-flash',        label: tr('Gemini 3.5 Flash (mới nhất - nhanh, cân bằng - khuyên dùng)') },
+    { value: 'gemini-3.1-pro-preview',  label: tr('Gemini 3.1 Pro Preview (mạnh nhất)') },
+    { value: 'gemini-3-flash-preview',  label: tr('Gemini 3 Flash Preview (nhanh, ổn định)') },
+    { value: 'gemini-2.5-pro',          label: tr('Gemini 2.5 Pro (legacy, ổn định)') },
+    { value: 'gemini-2.5-flash',        label: tr('Gemini 2.5 Flash (legacy)') },
   ],
   claude: [
-    { value: 'claude-4.6-sonnet-20260301',  label: 'Claude 4.6 Sonnet (mới nhất - khuyên dùng)' },
-    { value: 'claude-4.5-sonnet-20260115',  label: 'Claude 4.5 Sonnet (cân bằng)' },
-    { value: 'claude-4.0-haiku-20260101',   label: 'Claude 4.0 Haiku (nhanh, rẻ)' },
-    { value: 'claude-4.0-opus-20260101',    label: 'Claude 4.0 Opus (mạnh nhất gen 4)' },
-    { value: 'claude-sonnet-4-20250514',    label: 'Claude Sonnet 4 (legacy, ổn định)' },
-    { value: 'claude-3-5-haiku-20241022',   label: 'Claude 3.5 Haiku (legacy)' },
+    { value: 'claude-4.6-sonnet-20260301',  label: tr('Claude 4.6 Sonnet (mới nhất - khuyên dùng)') },
+    { value: 'claude-4.5-sonnet-20260115',  label: tr('Claude 4.5 Sonnet (cân bằng)') },
+    { value: 'claude-4.0-haiku-20260101',   label: tr('Claude 4.0 Haiku (nhanh, rẻ)') },
+    { value: 'claude-4.0-opus-20260101',    label: tr('Claude 4.0 Opus (mạnh nhất gen 4)') },
+    { value: 'claude-sonnet-4-20250514',    label: tr('Claude Sonnet 4 (legacy, ổn định)') },
+    { value: 'claude-3-5-haiku-20241022',   label: tr('Claude 3.5 Haiku (legacy)') },
   ],
   deepseek: [
-    { value: 'deepseek-flash',      label: 'DeepSeek Flash (mới nhất - khuyên dùng)' },
-    { value: 'deepseek-v4-pro',     label: 'DeepSeek V4 Pro (thinking, mạnh nhất)' },
-    { value: 'deepseek-chat',       label: 'DeepSeek V3 (deprecated 2026/07/24)' },
-    { value: 'deepseek-reasoner',   label: 'DeepSeek R1 (deprecated 2026/07/24)' },
+    { value: 'deepseek-flash',      label: tr('DeepSeek Flash (mới nhất - khuyên dùng)') },
+    { value: 'deepseek-v4-pro',     label: tr('DeepSeek V4 Pro (thinking, mạnh nhất)') },
+    { value: 'deepseek-chat',       label: tr('DeepSeek V3 (deprecated 2026/07/24)') },
+    { value: 'deepseek-reasoner',   label: tr('DeepSeek R1 (deprecated 2026/07/24)') },
   ],
   grok: [
-    { value: 'grok-4',           label: 'Grok 4 (flagship mạnh nhất)' },
-    { value: 'grok-4-fast',      label: 'Grok 4 Fast (nhanh - khuyên dùng)' },
-    { value: 'grok-4-mini',      label: 'Grok 4 Mini (lý luận, rẻ)' },
-    { value: 'grok-4-mini-fast', label: 'Grok 4 Mini Fast (siêu nhanh, rẻ)' },
-    { value: 'grok-3',           label: 'Grok 3 (legacy, ổn định)' },
+    { value: 'grok-4',           label: tr('Grok 4 (flagship mạnh nhất)') },
+    { value: 'grok-4-fast',      label: tr('Grok 4 Fast (nhanh - khuyên dùng)') },
+    { value: 'grok-4-mini',      label: tr('Grok 4 Mini (lý luận, rẻ)') },
+    { value: 'grok-4-mini-fast', label: tr('Grok 4 Mini Fast (siêu nhanh, rẻ)') },
+    { value: 'grok-3',           label: tr('Grok 3 (legacy, ổn định)') },
   ],
   mistral: [
-    { value: 'mistral-large-2-latest',  label: 'Mistral Large 2 (mạnh nhất - khuyên dùng)' },
-    { value: 'codestral-2-latest',      label: 'Codestral 2 (code chuyên dụng)' },
-    { value: 'mistral-small-3-latest',  label: 'Mistral Small 3 (nhanh, rẻ)' },
-    { value: 'mistral-medium-latest',   label: 'Mistral Medium (cân bằng)' },
-    { value: 'open-mistral-nemo-2',     label: 'Mistral Nemo 2 (mở, nhẹ)' },
-    { value: 'mistral-large-latest',    label: 'Mistral Large (legacy)' },
+    { value: 'mistral-large-2-latest',  label: tr('Mistral Large 2 (mạnh nhất - khuyên dùng)') },
+    { value: 'codestral-2-latest',      label: tr('Codestral 2 (code chuyên dụng)') },
+    { value: 'mistral-small-3-latest',  label: tr('Mistral Small 3 (nhanh, rẻ)') },
+    { value: 'mistral-medium-latest',   label: tr('Mistral Medium (cân bằng)') },
+    { value: 'open-mistral-nemo-2',     label: tr('Mistral Nemo 2 (mở, nhẹ)') },
+    { value: 'mistral-large-latest',    label: tr('Mistral Large (legacy)') },
   ],
   '9router': [
-    { value: 'kr/claude-sonnet-4.5',       label: 'Kiro: Claude 4.5 Sonnet (free)' },
-    { value: 'kr/claude-opus-4.6',         label: 'Kiro: Claude Opus 4.6 (free)' },
-    { value: 'kr/glm-5',                   label: 'Kiro: GLM-5 (free)' },
-    { value: 'kr/minimax',                 label: 'Kiro: MiniMax (free)' },
-    { value: 'oc/deepseek-v4-flash-free',       label: 'OpenCode: DeepSeek V4 Flash (free)' },
-    { value: 'oc/mimo-v2.5-free',               label: 'OpenCode: Mimo 2.5 (free)' },
-    { value: 'oc/big-pickle',               label: 'OpenCode: Big Pickle (free)' },
-    { value: 'oc/nemotron-3-ultra-free',    label: 'OpenCode: Nemotron 3 Ultra (free)' },
-    { value: 'oc/north-mini-code-free',     label: 'OpenCode: North Mini Code (free)' },
+    { value: 'kr/claude-sonnet-4.5',       label: tr('Kiro: Claude 4.5 Sonnet (free)') },
+    { value: 'kr/claude-opus-4.6',         label: tr('Kiro: Claude Opus 4.6 (free)') },
+    { value: 'kr/glm-5',                   label: tr('Kiro: GLM-5 (free)') },
+    { value: 'kr/minimax',                 label: tr('Kiro: MiniMax (free)') },
+    { value: 'oc/deepseek-v4-flash-free',       label: tr('OpenCode: DeepSeek V4 Flash (free)') },
+    { value: 'oc/mimo-v2.5-free',               label: tr('OpenCode: Mimo 2.5 (free)') },
+    { value: 'oc/big-pickle',               label: tr('OpenCode: Big Pickle (free)') },
+    { value: 'oc/nemotron-3-ultra-free',    label: tr('OpenCode: Nemotron 3 Ultra (free)') },
+    { value: 'oc/north-mini-code-free',     label: tr('OpenCode: North Mini Code (free)') },
     { value: 'glm/glm-4.7',                label: 'GLM-4.7 ($0.6/1M)' },
     { value: 'minimax/minimax',            label: 'MiniMax ($0.2/1M)' },
-    { value: 'kimi/kimi-k2-thinking',      label: 'Kimi K2 Thinking (free)' },
-    { value: 'vertex/claude-sonnet-4-5',        label: 'Vertex: Claude Sonnet 4.5 (free)' },
-    { value: 'vertex/gemini-3-flash',           label: 'Vertex: Gemini 3 Flash (free)' },
-    { value: 'cc/claude-opus-4-6',         label: 'Claude Code subscription' },
-    { value: '__custom__',                  label: 'Custom model - tự nhập...' },
+    { value: 'kimi/kimi-k2-thinking',      label: tr('Kimi K2 Thinking (free)') },
+    { value: 'vertex/claude-sonnet-4-5',        label: tr('Vertex: Claude Sonnet 4.5 (free)') },
+    { value: 'vertex/gemini-3-flash',           label: tr('Vertex: Gemini 3 Flash (free)') },
+    { value: 'cc/claude-opus-4-6',         label: tr('Claude Code subscription') },
+    { value: '__custom__',                  label: tr('Custom model - tự nhập...') },
   ],
   openrouter: [
-    { value: 'openrouter/auto',             label: 'Auto Router (tự chọn model tốt nhất - khuyên dùng)' },
-    { value: 'openai/gpt-5.4-mini',         label: 'GPT-5.4 Mini (OpenAI qua OpenRouter)' },
-    { value: 'anthropic/claude-4.6-sonnet', label: 'Claude 4.6 Sonnet (Anthropic qua OpenRouter)' },
-    { value: 'google/gemini-3.5-flash',     label: 'Gemini 3.5 Flash (Google qua OpenRouter)' },
-    { value: 'deepseek/deepseek-v4-flash',  label: 'DeepSeek V4 Flash (rẻ, nhanh)' },
-    { value: 'meta-llama/llama-4-maverick', label: 'Llama 4 Maverick (Meta, open-source)' },
+    { value: 'openrouter/auto',             label: tr('Auto Router (tự chọn model tốt nhất - khuyên dùng)') },
+    { value: 'openai/gpt-5.4-mini',         label: tr('GPT-5.4 Mini (OpenAI qua OpenRouter)') },
+    { value: 'anthropic/claude-4.6-sonnet', label: tr('Claude 4.6 Sonnet (Anthropic qua OpenRouter)') },
+    { value: 'google/gemini-3.5-flash',     label: tr('Gemini 3.5 Flash (Google qua OpenRouter)') },
+    { value: 'deepseek/deepseek-v4-flash',  label: tr('DeepSeek V4 Flash (rẻ, nhanh)') },
+    { value: 'meta-llama/llama-4-maverick', label: tr('Llama 4 Maverick (Meta, open-source)') },
     { value: 'qwen/qwen3-max',              label: 'Qwen3 Max (Alibaba)' },
     { value: 'mistralai/mistral-large-2',   label: 'Mistral Large 2' },
-    { value: '__custom__',                  label: 'Custom model - tự nhập...' },
+    { value: '__custom__',                  label: tr('Custom model - tự nhập...') },
   ],
 };
 
@@ -117,7 +119,7 @@ Object.assign(MODELS_BY_PLATFORM, {
   deepseek: AI_MODEL_OPTIONS.deepseek,
   grok: AI_MODEL_OPTIONS.grok,
   mistral: AI_MODEL_OPTIONS.mistral,
-  openrouter: [...AI_MODEL_OPTIONS.openrouter, { value: '__custom__', label: 'Custom model - tự nhập...' }],
+  openrouter: [...AI_MODEL_OPTIONS.openrouter, { value: '__custom__', label: tr('Custom model - tự nhập...') }],
 });
 
 interface AIFile {
@@ -182,7 +184,7 @@ function normalizeForAI(raw: any, platform: string) {
   const nested = raw.product_info || raw.product || raw.item || {};
   const primaryId = raw.variation_id || raw.id || raw.productId || raw.product_id
     || raw.item_id || raw.sku || raw.code;
-  // Tạo _id unique: nếu có ID thật thì dùng, không thì tự sinh (tránh product_id/share ID gây trùng)
+  // Create a unique _id: use the real ID if there is one, otherwise generate one (avoids duplicates from product_id / share ID)
   const id = primaryId
     ? String(primaryId)
     : `_auto_${(raw.name || '').slice(0, 6)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -345,10 +347,10 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
   // ─── Handlers ────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
-    if (!name.trim()) { showNotification('Vui lòng nhập tên trợ lý', 'error'); return; }
-    if (!apiKey && !savedId) { showNotification('Vui lòng nhập API Key', 'error'); return; }
+    if (!name.trim()) { showNotification(tr('Vui lòng nhập tên trợ lý'), 'error'); return; }
+    if (!apiKey && !savedId) { showNotification(tr('Vui lòng nhập API Key'), 'error'); return; }
     const resolvedModel = model === '__custom__' ? customModelInput.trim() : model;
-    if (!resolvedModel) { showNotification('Vui lòng nhập model name', 'error'); return; }
+    if (!resolvedModel) { showNotification(tr('Vui lòng nhập model name'), 'error'); return; }
 
     setSaving(true);
     setTestResult(null);
@@ -379,23 +381,23 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
       const res = await DataAccessor.saveAssistant(payload);
       if (res?.success && res.id) {
         setSavedId(res.id);
-        showNotification('✅ Đã lưu trợ lý AI!', 'success');
+        showNotification(tr('✅ Đã lưu trợ lý AI!'), 'success');
       } else {
-        showNotification('❌ Lưu thất bại: ' + ((res as any)?.error || ''), 'error');
+        showNotification(tr('❌ Lưu thất bại: {{v1}}', { v1: ((res as any)?.error || '') }), 'error');
       }
     } catch (e: any) {
-      showNotification('❌ Lỗi: ' + e.message, 'error');
+      showNotification(tr('❌ Lỗi: {{message}}', { message: e.message }), 'error');
     }
     setSaving(false);
   };
 
   const handleTest = async () => {
-    if (!savedId) { showNotification('Lưu trước khi test', 'warning'); return; }
+    if (!savedId) { showNotification(tr('Lưu trước khi test'), 'warning'); return; }
     setTesting(true);
     setTestResult(null);
     try {
       const res = await ipc.ai?.testAssistant(savedId);
-      setTestResult({ success: !!res?.success, message: res?.message || 'Không có phản hồi' });
+      setTestResult({ success: !!res?.success, message: res?.message || tr('Không có phản hồi') });
     } catch (e: any) {
       setTestResult({ success: false, message: e.message });
     }
@@ -405,9 +407,9 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
   const handleDelete = async () => {
     if (!savedId) { onBack(); return; }
     const ok = await showConfirm({
-      title: 'Xóa trợ lý AI',
-      message: 'Xóa trợ lý AI này? Dữ liệu sẽ mất hoàn toàn.. Thao tác không thể hoàn tác.',
-      confirmText: 'Xoá',
+      title: tr('Xóa trợ lý AI'),
+      message: tr('Xóa trợ lý AI này? Dữ liệu sẽ mất hoàn toàn.. Thao tác không thể hoàn tác.'),
+      confirmText: tr('Xoá'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -416,41 +418,41 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
       await DataAccessor.deleteAssistant(savedId);
       onBack();
     } catch (e: any) {
-      showNotification('Lỗi xóa: ' + e.message, 'error');
+      showNotification(tr('Lỗi xóa: {{message}}', { message: e.message }), 'error');
     }
     setDeleting(false);
   };
 
   const handleUploadFile = async () => {
-    if (!savedId) { showNotification('Lưu trợ lý trước khi upload file', 'warning'); return; }
+    if (!savedId) { showNotification(tr('Lưu trợ lý trước khi upload file'), 'warning'); return; }
     try {
       const res = await ipc.file?.openDialog({
-        title: 'Chọn file kiến thức',
+        title: tr('Chọn file kiến thức'),
         filters: [
-          { name: 'Văn bản', extensions: ['txt', 'md', 'csv', 'json', 'html', 'xml', 'yml', 'yaml', 'log'] },
-          { name: 'Tất cả', extensions: ['*'] },
+          { name: tr('Văn bản'), extensions: ['txt', 'md', 'csv', 'json', 'html', 'xml', 'yml', 'yaml', 'log'] },
+          { name: tr('Tất cả'), extensions: ['*'] },
         ],
         properties: ['openFile', 'multiSelections'],
       });
       if (!res?.filePaths?.length) return;
 
       setUploadingFile(true);
-      // Từng file trả kết quả thật (nhân viên: upload lên Boss rồi Boss đọc nội dung) — trước đây luôn báo thành công
+      // Each file reports its real result (employee: upload to the owner, then the owner reads the content); previously it always reported success
       const failed: string[] = [];
       for (const fp of res.filePaths) {
         const up: any = await ipc.ai?.uploadFile(savedId, fp);
-        if (!up?.success) failed.push(`${fp.replace(/^.*[/\\]/, '')}: ${up?.error || 'không tải lên được'}`);
+        if (!up?.success) failed.push(`${fp.replace(/^.*[/\\]/, '')}: ${up?.error || tr('không tải lên được')}`);
       }
       const filesRes = await DataAccessor.getAssistantFiles(savedId);
       if (filesRes?.success) setFiles(filesRes.files || []);
       if (failed.length === 0) {
-        showNotification('✅ Đã tải file lên', 'success');
+        showNotification(tr('✅ Đã tải file lên'), 'success');
       } else {
         const okCount = res.filePaths.length - failed.length;
-        showNotification(`❌ ${okCount > 0 ? `Tải lên ${okCount}/${res.filePaths.length} file. ` : ''}Lỗi: ${failed.join('; ')}`, 'error');
+        showNotification(tr('❌ {{v1}}Lỗi: {{v2}}', { v1: okCount > 0 ? tr('Tải lên {{okCount}}/{{count}} file. ', { okCount, count: res.filePaths.length }) : '', v2: failed.join('; ') }), 'error');
       }
     } catch (e: any) {
-      showNotification('❌ Lỗi upload: ' + e.message, 'error');
+      showNotification(tr('❌ Lỗi upload: {{message}}', { message: e.message }), 'error');
     }
     setUploadingFile(false);
   };
@@ -459,7 +461,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
     try {
       const res: any = await ipc.ai?.removeFile(fileId);
       if (res?.success === false) {
-        showNotification('❌ Không xoá được file: ' + (res.error || ''), 'error');
+        showNotification(tr('❌ Không xoá được file: {{v1}}', { v1: (res.error || '') }), 'error');
         return;
       }
       setFiles(prev => prev.filter(f => f.id !== fileId));
@@ -493,11 +495,11 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
         const tot = rawData?.total;
         setPosTotal(tot != null && tot !== '' ? Number(tot) : undefined);
       } else {
-        showNotification('❌ ' + (res?.error || 'Không tải được sản phẩm'), 'error');
+        showNotification('❌ ' + (res?.error || tr('Không tải được sản phẩm')), 'error');
         setPosProducts([]);
       }
     } catch (e: any) {
-      showNotification('❌ Lỗi: ' + e.message, 'error');
+      showNotification(tr('❌ Lỗi: {{message}}', { message: e.message }), 'error');
       setPosProducts([]);
     }
     setPosProductsLoading(false);
@@ -515,7 +517,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
     let addedCount = 0;
     setPinnedProducts(prev => {
       const existIds = new Set(prev.map((x: any) => x.id));
-      // Dedup cả với prev lẫn trong cùng batch (tránh duplicate id → React key lỗi)
+      // Dedup against both prev and the same batch (avoids duplicate ids → broken React keys)
       const batchIds = new Set<string>();
       const toAdd = newPinned.filter(x => {
         if (existIds.has(x.id) || batchIds.has(x.id)) return false;
@@ -525,7 +527,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
       addedCount = toAdd.length;
       return [...prev, ...toAdd];
     });
-    showNotification(`✅ Đã ghim ${addedCount} sản phẩm cho AI`, 'success');
+    showNotification(tr('✅ Đã ghim {{addedCount}} sản phẩm cho AI', { addedCount }), 'success');
   };
 
   const handleUnpinProduct = (productId: string) => {
@@ -534,7 +536,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
   const handleUnpinAll = () => {
     setPinnedProducts([]);
-    showNotification('Đã xóa tất cả sản phẩm đã ghim', 'info');
+    showNotification(tr('Đã xóa tất cả sản phẩm đã ghim'), 'info');
   };
 
   // ─── Chat preview handlers ──────────────────────────────────────────────
@@ -562,7 +564,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
           totalTokens: (res as any).totalTokens || 0,
         }]);
       } else {
-        setChatMessages(prev => [...prev, { role: 'assistant', content: `Error: ${res?.error || 'Không có phản hồi'}` }]);
+        setChatMessages(prev => [...prev, { role: 'assistant', content: `Error: ${res?.error || tr('Không có phản hồi')}` }]);
       }
     } catch (e: any) {
       setChatMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
@@ -619,12 +621,12 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
         </div>
         <div className="flex-1 min-w-0">
           <h1 className="text-base font-semibold text-foreground truncate">
-            {savedId ? name || 'Chỉnh sửa trợ lý' : 'Tạo trợ lý AI mới'}
+            {savedId ? name || tr('Chỉnh sửa trợ lý') : tr('Tạo trợ lý AI mới')}
           </h1>
-          <p className="text-xs text-muted-foreground">{currentPlatform.label} - {model === '__custom__' ? (customModelInput || 'tự nhập...') : model}</p>
+          <p className="text-xs text-muted-foreground">{currentPlatform.label} - {model === '__custom__' ? (customModelInput || tr('tự nhập...')) : model}</p>
         </div>
         <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
-          <span className="text-xs text-muted-foreground">Kích hoạt</span>
+          <span className="text-xs text-muted-foreground">{tr('Kích hoạt')}</span>
           <div className={`relative w-10 h-5 rounded-full transition-colors ${enabled ? 'bg-blue-600' : 'bg-accent'}`}
             onClick={() => setEnabled(!enabled)}>
             <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-5' : ''}`}/>
@@ -637,8 +639,8 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
               ? 'bg-blue-600/20 text-blue-400 border-blue-600/40'
               : 'text-muted-foreground hover:text-foreground border-input hover:border-border-strong'
           }`}
-          title={showChatPanel ? 'Ẩn chat thử' : 'Hiện chat thử'}
-        ><ChatIcon className="w-4 h-4 inline" /> Chat thử
+          title={showChatPanel ? tr('Ẩn chat thử') : tr('Hiện chat thử')}
+        >{trx('<0/> Chat thử', { 0: <ChatIcon className="w-4 h-4 inline" /> })}
         </button>
         {savedId && (
           <button
@@ -648,8 +650,8 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                 ? 'bg-purple-600/20 text-purple-400 border-purple-600/40'
                 : 'text-muted-foreground hover:text-foreground border-input hover:border-border-strong'
             }`}
-            title="Báo cáo sử dụng"
-          ><ChartIcon className="w-4 h-4 inline" /> Báo cáo
+            title={tr('Báo cáo sử dụng')}
+          >{trx('<0/> Báo cáo', { 0: <ChartIcon className="w-4 h-4 inline" /> })}
           </button>
         )}
       </div>
@@ -661,17 +663,17 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
           {/* Basic info */}
           <div>
-            <h2 className="text-sm font-semibold text-foreground/80 mb-2"><EditIcon className="w-4 h-4 inline" /> Thông tin cơ bản</h2>
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2">{trx('<0/> Thông tin cơ bản', { 0: <EditIcon className="w-4 h-4 inline" /> })}</h2>
             <div className="space-y-3 bg-card rounded-xl p-4">
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Tên trợ lý *</label>
+                <label className="block text-xs text-muted-foreground mb-1">{tr('Tên trợ lý *')}</label>
                 <input type="text" value={name} onChange={e => setName(e.target.value)}
-                  placeholder="VD: Trợ lý bán hàng..."
+                  placeholder={tr('VD: Trợ lý bán hàng...')}
                   className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-muted-foreground mb-1">Nền tảng AI</label>
+                  <label className="block text-xs text-muted-foreground mb-1">{tr('Nền tảng AI')}</label>
                   <select value={platform} onChange={e => setPlatform(e.target.value)}
                     className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500">
                     {PLATFORMS.map(p => (
@@ -680,7 +682,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-muted-foreground mb-1">Model</label>
+                  <label className="block text-xs text-muted-foreground mb-1">{tr('Model')}</label>
                   {(platform === '9router' || platform === 'openrouter') ? (
                     <div className="space-y-1.5">
                       <select value={isCustomModel && model !== '__custom__' ? '__custom__' : model}
@@ -700,7 +702,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                       {isCustomModel && (
                         <input type="text" value={customModelInput}
                           onChange={e => { setCustomModelInput(e.target.value); setModel(e.target.value); }}
-                          placeholder="Nhập model name bất kỳ, VD: oc/llama-4, vertex/gemini-3-flash..."
+                          placeholder={tr('Nhập model name bất kỳ, VD: oc/llama-4, vertex/gemini-3-flash...')}
                           className="w-full bg-muted border border-blue-600/50 rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                       )}
                     </div>
@@ -719,12 +721,12 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
           {/* API Key */}
           <div>
-            <h2 className="text-sm font-semibold text-foreground/80 mb-2"><KeyIcon className="w-4 h-4 inline" /> API Key</h2>
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2">{trx('<0/> API Key', { 0: <KeyIcon className="w-4 h-4 inline" /> })}</h2>
             <div className="bg-card rounded-xl p-4">
               <div className="relative">
                 <input type={showApiKey ? 'text' : 'password'}
                   value={apiKey} onChange={e => setApiKey(e.target.value)}
-                  placeholder={savedId ? '••••••••  (để trống = giữ cũ)' : 'Nhập API Key...'}
+                  placeholder={savedId ? tr('••••••••  (để trống = giữ cũ)') : tr('Nhập API Key...')}
                   className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 pr-10"/>
                 <button type="button"
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-sm"
@@ -733,14 +735,14 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                 </button>
               </div>
               <p className="text-[10px] text-muted-foreground mt-1.5">
-                {platform === 'openai' && 'Lấy tại: platform.openai.com/api-keys'}
-                {platform === 'gemini' && 'Lấy tại: aistudio.google.com/apikey'}
-                {platform === 'claude' && 'Lấy tại: console.anthropic.com/settings/keys'}
-                {platform === 'deepseek' && 'Lấy tại: platform.deepseek.com/api-keys'}
-                {platform === 'grok' && 'Lấy tại: console.x.ai'}
-                {platform === 'mistral' && 'Lấy tại: console.mistral.ai/api-keys'}
-                {platform === '9router' && 'Lấy từ Dashboard -> API Keys 9router tại http://localhost:20128/dashboard'}
-                {platform === 'openrouter' && 'Lấy tại: openrouter.ai/settings/keys'}
+                {platform === 'openai' && tr('Lấy tại: platform.openai.com/api-keys')}
+                {platform === 'gemini' && tr('Lấy tại: aistudio.google.com/apikey')}
+                {platform === 'claude' && tr('Lấy tại: console.anthropic.com/settings/keys')}
+                {platform === 'deepseek' && tr('Lấy tại: platform.deepseek.com/api-keys')}
+                {platform === 'grok' && tr('Lấy tại: console.x.ai')}
+                {platform === 'mistral' && tr('Lấy tại: console.mistral.ai/api-keys')}
+                {platform === '9router' && tr('Lấy từ Dashboard -> API Keys 9router tại http://localhost:20128/dashboard')}
+                {platform === 'openrouter' && tr('Lấy tại: openrouter.ai/settings/keys')}
               </p>
               {platform === '9router' && (
                 <div className="mt-2 flex items-center gap-2">
@@ -753,13 +755,13 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                       })), 80);
                     }}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-cyan-600/20 text-cyan-400 hover:bg-cyan-600/30 border border-cyan-600/40 transition-colors"
-                  ><BookIcon className="w-4 h-4 inline" /> Hướng dẫn tích hợp 9Router
+                  >{trx('<0/> Hướng dẫn tích hợp 9Router', { 0: <BookIcon className="w-4 h-4 inline" /> })}
                   </button>
                   <button
                     type="button"
                     onClick={() => ipc.shell?.openExternal('http://localhost:20128')}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-muted hover:bg-accent text-foreground/80 transition-colors"
-                  ><LinkIcon className="w-4 h-4 inline" /> Mở Dashboard 9Router
+                  >{trx('<0/> Mở Dashboard 9Router', { 0: <LinkIcon className="w-4 h-4 inline" /> })}
                   </button>
                 </div>
               )}
@@ -769,31 +771,31 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
           {/* System prompt */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold text-foreground/80"><ChatIcon className="w-4 h-4 inline" /> System Prompt</h2>
+              <h2 className="text-sm font-semibold text-foreground/80">{trx('<0/> System Prompt', { 0: <ChatIcon className="w-4 h-4 inline" /> })}</h2>
               <div className="flex items-center gap-1.5">
                 {systemPrompt.trim().length > 20 && (
                   <button onClick={() => setShowPromptWizard(true)}
                     className="px-2.5 py-1 text-[10px] rounded-lg bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 border border-purple-600/30 transition-colors">
-                    <SparklesIcon className="w-3.5 h-3.5 inline" /> Cải thiện prompt
+                    {trx('<0/> Cải thiện prompt', { 0: <SparklesIcon className="w-3.5 h-3.5 inline" /> })}
                   </button>
                 )}
                 <button onClick={() => setShowPromptWizard(true)}
                   className="px-2.5 py-1 text-[10px] rounded-lg bg-gradient-to-r from-blue-600/20 to-purple-600/20 text-blue-400 hover:from-blue-600/30 hover:to-purple-600/30 border border-blue-600/30 transition-colors font-medium">
-                  <SparklesIcon className="w-3.5 h-3.5 inline" /> Gợi ý bằng AI
+                  {trx('<0/> Gợi ý bằng AI', { 0: <SparklesIcon className="w-3.5 h-3.5 inline" /> })}
                 </button>
               </div>
             </div>
             <div className="bg-card rounded-xl p-4">
               <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
                 rows={10}
-                placeholder="VD: Bạn là trợ lý bán hàng chuyên nghiệp..."
+                placeholder={tr('VD: Bạn là trợ lý bán hàng chuyên nghiệp...')}
                 className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[80px]"/>
             </div>
           </div>
 
           {/* POS Integration */}
           <div>
-            <h2 className="text-sm font-semibold text-foreground/80 mb-2"><ShoppingCartIcon className="w-4 h-4 inline" /> Liên kết POS</h2>
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2">{trx('<0/> Liên kết POS', { 0: <ShoppingCartIcon className="w-4 h-4 inline" /> })}</h2>
             <div className="bg-card rounded-xl p-4 space-y-3">
               <select value={posIntegrationId} onChange={e => {
                 setPosIntegrationId(e.target.value);
@@ -802,7 +804,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                 setPosSearchQuery('');
                 setSelectedPosIds(new Set());
               }} className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500">
-                <option value="">- Bạn chưa liên kết POS -</option>
+                <option value="">{tr('- Bạn chưa liên kết POS -')}</option>
                 {posIntegrations.map(p => (
                   <option key={p.id} value={p.id}>{p.name} ({p.type})</option>
                 ))}
@@ -817,14 +819,14 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                       value={posSearchQuery}
                       onChange={e => setPosSearchQuery(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') { setPosPage(1); handleSearchPosProducts(posSearchQuery, 1); } }}
-                      placeholder="Tìm theo tên, mã sản phẩm..."
+                      placeholder={tr('Tìm theo tên, mã sản phẩm...')}
                       className="flex-1 bg-muted border border-input rounded-lg px-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
                     />
                     <button
                       onClick={() => { setPosPage(1); handleSearchPosProducts(posSearchQuery, 1); }}
                       disabled={posProductsLoading}
                       className="px-3 py-1.5 text-xs bg-muted hover:bg-accent text-foreground rounded-lg transition-colors disabled:opacity-50 flex-shrink-0">
-                      {posProductsLoading ? <Spinner size={3} /> : <><SearchIcon className="w-3.5 h-3.5 inline" /> Tải</>}
+                      {posProductsLoading ? <Spinner size={3} /> : <>{trx('<0/> Tải', { 0: <SearchIcon className="w-3.5 h-3.5 inline" /> })}</>}
                     </button>
                   </div>
 
@@ -842,11 +844,11 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                             }
                           }}
                           className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors">
-                          {selectedPosIds.size === posProducts.length ? '☑ Bỏ chọn tất cả' : '☐ Chọn tất cả trang này'}
+                          {selectedPosIds.size === posProducts.length ? tr('☑ Bỏ chọn tất cả') : tr('☐ Chọn tất cả trang này')}
                         </button>
                         <span className="text-[10px] text-muted-foreground">
-                          {selectedPosIds.size > 0 ? `${selectedPosIds.size} đã chọn · ` : ''}
-                          {posTotal != null ? `~${posTotal} SP` : `${posProducts.length} SP`}
+                          {selectedPosIds.size > 0 ? tr('{{count}} đã chọn · ', { count: selectedPosIds.size }) : ''}
+                          {posTotal != null ? tr('~{{posTotal}} SP', { posTotal }) : tr('{{count}} SP', { count: posProducts.length })}
                         </span>
                       </div>
 
@@ -885,7 +887,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                                 <p className="text-[10px] text-muted-foreground truncate">{p._code}</p>
                               </div>
                               <span className="text-[11px] text-green-400 flex-shrink-0 font-medium">
-                                {p._price ? p._price.toLocaleString('vi-VN') + 'đ' : ''}
+                                {p._price ? tr('{{v1}}đ', { v1: (p._price.toLocaleString(appLocale())) }) : ''}
                               </span>
                             </div>
                           );
@@ -899,14 +901,14 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                             onClick={() => { const p = Math.max(1, posPage - 1); setPosPage(p); handleSearchPosProducts(posSearchQuery, p); }}
                             disabled={posPage <= 1 || posProductsLoading}
                             className="px-2.5 py-1 rounded bg-muted border border-input disabled:opacity-40 hover:border-blue-500/40">
-                            ← Trang trước
+                            {tr('← Trang trước')}
                           </button>
-                          <span>Trang {posPage}</span>
+                          <span>{trx('Trang {{posPage}}', { posPage })}</span>
                           <button
                             onClick={() => { const p = posPage + 1; setPosPage(p); handleSearchPosProducts(posSearchQuery, p); }}
                             disabled={!posHasNext || posProductsLoading}
                             className="px-2.5 py-1 rounded bg-muted border border-input disabled:opacity-40 hover:border-blue-500/40">
-                            Trang sau →
+                            {tr('Trang sau →')}
                           </button>
                         </div>
                       )}
@@ -919,7 +921,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                             : posProducts;
                           handlePinProducts(toAdd);
                         }}
-                        className="w-full py-2 text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-colors border border-blue-600/30 font-medium"><PinIcon className="w-4 h-4 inline" /> Ghim {selectedPosIds.size > 0 ? `${selectedPosIds.size} SP đã chọn` : `${posProducts.length} SP trang này`} cho AI
+                        className="w-full py-2 text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-colors border border-blue-600/30 font-medium">{trx('<0/> Ghim', { 0: <PinIcon className="w-4 h-4 inline" /> })} {selectedPosIds.size > 0 ? tr('{{count}} SP đã chọn', { count: selectedPosIds.size }) : tr('{{count}} SP trang này', { count: posProducts.length })} {tr('cho AI')}
                       </button>
                     </>
                   )}
@@ -928,8 +930,8 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                   {pinnedProducts.length > 0 && (
                     <div className="bg-card rounded-xl border border-green-700/30 p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-green-400"><PinIcon className="w-4 h-4 inline" /> Sản phẩm đã ghim cho AI ({pinnedProducts.length})</p>
-                        <button onClick={handleUnpinAll} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors">Xóa tất cả</button>
+                        <p className="text-xs font-semibold text-green-400">{trx('<0/> Sản phẩm đã ghim cho AI ({{count}})', { 0: <PinIcon className="w-4 h-4 inline" />, count: pinnedProducts.length })}</p>
+                        <button onClick={handleUnpinAll} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors">{tr('Xóa tất cả')}</button>
                       </div>
                       <div className="space-y-1 max-h-48 overflow-y-auto pr-0.5">
                         {pinnedProducts.map((p: any) => (
@@ -943,18 +945,18 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                               <p className="text-[11px] text-foreground truncate">{p.name || '-'}</p>
                               <p className="text-[10px] text-muted-foreground">{p.code}</p>
                             </div>
-                            <span className="text-[10px] text-green-400 flex-shrink-0">{p.price ? Number(p.price).toLocaleString('vi-VN') + 'đ' : ''}</span>
+                            <span className="text-[10px] text-green-400 flex-shrink-0">{p.price ? tr('{{v1}}đ', { v1: (Number(p.price).toLocaleString(appLocale())) }) : ''}</span>
                             <button onClick={() => handleUnpinProduct(p.id)}
                               className="text-muted-foreground hover:text-red-400 transition-colors flex-shrink-0 text-xs opacity-0 group-hover:opacity-100">✕</button>
                           </div>
                         ))}
                       </div>
-                      <p className="text-[10px] text-muted-foreground"><SunIcon className="w-4 h-4 inline" /> AI sẽ dùng danh sách này khi tư vấn. Nhớ bấm <strong className="text-muted-foreground">Lưu</strong> để áp dụng.</p>
+                      <p className="text-[10px] text-muted-foreground">{trx('<0/> AI sẽ dùng danh sách này khi tư vấn. Nhớ bấm <1>Lưu</1> để áp dụng.', { 0: <SunIcon className="w-4 h-4 inline" />, 1: <strong className="text-muted-foreground" /> })}</p>
                     </div>
                   )}
 
                   <p className="text-[10px] text-muted-foreground">
-                    Tìm & ghim sản phẩm để AI biết thông tin khi tư vấn. Bấm ✕ để hủy sản phẩm đã ghim.
+                    {tr('Tìm & ghim sản phẩm để AI biết thông tin khi tư vấn. Bấm ✕ để hủy sản phẩm đã ghim.')}
                   </p>
                 </div>
               )}
@@ -963,10 +965,10 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
           {/* Knowledge base files */}
           <div>
-            <h2 className="text-sm font-semibold text-foreground/80 mb-2">📚 File kiến thức</h2>
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2">{tr('📚 File kiến thức')}</h2>
             <div className="bg-card rounded-xl p-4 space-y-2">
               <p className="text-[10px] text-muted-foreground leading-relaxed">
-                ℹ️ File được <strong className="text-muted-foreground">trích xuất nội dung text</strong> và lưu tại máy. Khi AI trả lời, nội dung text sẽ được nạp vào system prompt - <strong className="text-muted-foreground">không gửi file gốc lên AI</strong>. Hỗ trợ: TXT, MD, CSV, JSON, HTML, XML, YAML, LOG (tối đa ~100KB text/file).
+                {trx('ℹ️ File được <0>trích xuất nội dung text</0> và lưu tại máy. Khi AI trả lời, nội dung text sẽ được nạp vào system prompt - <1>không gửi file gốc lên AI</1>. Hỗ trợ: TXT, MD, CSV, JSON, HTML, XML, YAML, LOG (tối đa ~100KB text/file).', { 0: <strong className="text-muted-foreground" />, 1: <strong className="text-muted-foreground" /> })}
               </p>
               {files.length > 0 && (
                 <div className="space-y-1.5">
@@ -988,32 +990,32 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
               )}
               <button onClick={handleUploadFile} disabled={uploadingFile || !savedId}
                 className="w-full py-2 border-2 border-dashed border-input hover:border-blue-500 rounded-lg text-xs text-muted-foreground hover:text-blue-400 transition-colors disabled:opacity-50">
-                {uploadingFile ? <><Spinner size={3} /> Đang tải...</> : savedId ? <><PaperclipIcon className="w-3.5 h-3.5 inline" /> Chọn file để tải lên</> : 'Lưu trợ lý trước'}
+                {uploadingFile ? <>{trx('<0/> Đang tải...', { 0: <Spinner size={3} /> })}</> : savedId ? <>{trx('<0/> Chọn file để tải lên', { 0: <PaperclipIcon className="w-3.5 h-3.5 inline" /> })}</> : tr('Lưu trợ lý trước')}
               </button>
             </div>
           </div>
 
           {/* Advanced settings */}
           <div>
-            <h2 className="text-sm font-semibold text-foreground/80 mb-2"><SettingsIcon className="w-4 h-4 inline" /> Cài đặt nâng cao</h2>
+            <h2 className="text-sm font-semibold text-foreground/80 mb-2">{trx('<0/> Cài đặt nâng cao', { 0: <SettingsIcon className="w-4 h-4 inline" /> })}</h2>
             <div className="bg-card rounded-xl p-4 space-y-4">
               {/* Temperature */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs text-muted-foreground">Temperature</label>
+                  <label className="text-xs text-muted-foreground">{tr('Temperature')}</label>
                   <span className="text-xs text-foreground font-mono">{temperature.toFixed(1)}</span>
                 </div>
                 <input type="range" min="0" max="2" step="0.1" value={temperature}
                   onChange={e => setTemperature(parseFloat(e.target.value))}
                   className="w-full accent-blue-500"/>
                 <div className="flex justify-between text-[10px] text-muted-foreground">
-                  <span>Chính xác (0)</span><span>Sáng tạo (2)</span>
+                  <span>{tr('Chính xác (0)')}</span><span>{tr('Sáng tạo (2)')}</span>
                 </div>
               </div>
 
               {/* Max tokens */}
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Max tokens</label>
+                <label className="block text-xs text-muted-foreground mb-1">{tr('Max tokens')}</label>
                 <input type="number" min={50} max={8000} step={50} value={maxTokens}
                   onChange={e => setMaxTokens(Math.max(50, parseInt(e.target.value) || 1000))}
                   className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"/>
@@ -1021,23 +1023,23 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
               {/* Context message count */}
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Số tin nhắn lịch sử (ngữ cảnh)</label>
+                <label className="block text-xs text-muted-foreground mb-1">{tr('Số tin nhắn lịch sử (ngữ cảnh)')}</label>
                 <input type="number" min={1} max={100} step={1} value={contextMessageCount}
                   onChange={e => setContextMessageCount(Math.max(1, Math.min(100, parseInt(e.target.value) || 30)))}
                   className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"/>
                 <p className="text-[10px] text-muted-foreground mt-1">
-                  Số tin nhắn gần nhất được nạp làm ngữ cảnh cho AI khi gợi ý và trả lời. Mặc định 30.
+                  {tr('Số tin nhắn gần nhất được nạp làm ngữ cảnh cho AI khi gợi ý và trả lời. Mặc định 30.')}
                 </p>
               </div>
 
               {/* Base URL override */}
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Base URL (tuỳ chọn)</label>
+                <label className="block text-xs text-muted-foreground mb-1">{tr('Base URL (tuỳ chọn)')}</label>
                 <input type="text" value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
                   placeholder={platform === '9router' ? 'http://localhost:20128' : platform === 'openrouter' ? 'https://openrouter.ai/api' : 'https://api.custom-proxy.com'}
                   className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                 <p className="text-[10px] text-muted-foreground mt-1">
-                  Ghi đè endpoint API. Để trống để dùng URL mặc định. Hữu ích khi dùng proxy như 9Router, OpenRouter, hoặc các API gateway khác.
+                  {tr('Ghi đè endpoint API. Để trống để dùng URL mặc định. Hữu ích khi dùng proxy như 9Router, OpenRouter, hoặc các API gateway khác.')}
                 </p>
               </div>
 
@@ -1048,8 +1050,8 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                   <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${isDefault ? 'translate-x-5' : ''}`}/>
                 </div>
                 <div>
-                  <span className="text-sm text-foreground">Đặt làm trợ lý mặc định</span>
-                  <p className="text-[10px] text-muted-foreground">Dùng khi tài khoản chưa được gán trợ lý riêng</p>
+                  <span className="text-sm text-foreground">{tr('Đặt làm trợ lý mặc định')}</span>
+                  <p className="text-[10px] text-muted-foreground">{tr('Dùng khi tài khoản chưa được gán trợ lý riêng')}</p>
                 </div>
               </label>
             </div>
@@ -1071,15 +1073,15 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
           {/* Chat header */}
           <div className="px-4 py-3 border-b border-border flex-shrink-0">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground"><ChatIcon className="w-4 h-4 inline" /> Chat thử</h3>
+              <h3 className="text-sm font-semibold text-foreground">{trx('<0/> Chat thử', { 0: <ChatIcon className="w-4 h-4 inline" /> })}</h3>
               {chatMessages.length > 0 && (
                 <button onClick={() => setChatMessages([])}
-                  className="text-[10px] text-muted-foreground hover:text-foreground/80 transition-colors"><TrashIcon className="w-4 h-4 inline" /> Xóa
+                  className="text-[10px] text-muted-foreground hover:text-foreground/80 transition-colors">{trx('<0/> Xóa', { 0: <TrashIcon className="w-4 h-4 inline" /> })}
                 </button>
               )}
             </div>
             <p className="text-[10px] text-muted-foreground mt-0.5">
-              {savedId ? 'Trò chuyện trực tiếp để kiểm tra trợ lý' : 'Lưu trợ lý trước để chat thử'}
+              {savedId ? tr('Trò chuyện trực tiếp để kiểm tra trợ lý') : tr('Lưu trợ lý trước để chat thử')}
             </p>
           </div>
 
@@ -1088,13 +1090,13 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
             {chatMessages.length === 0 && savedId && (
               <div className="text-center py-10">
                 <div className="text-3xl mb-2">{currentPlatform.icon}</div>
-                <p className="text-xs text-muted-foreground">Gửi tin nhắn để test trợ lý AI</p>
+                <p className="text-xs text-muted-foreground">{tr('Gửi tin nhắn để test trợ lý AI')}</p>
               </div>
             )}
             {!savedId && (
               <div className="text-center py-10">
                 <div className="text-3xl mb-2"><HardDriveIcon className="w-4 h-4" /></div>
-                <p className="text-xs text-muted-foreground">Lưu trợ lý trước để có thể chat thử</p>
+                <p className="text-xs text-muted-foreground">{tr('Lưu trợ lý trước để có thể chat thử')}</p>
               </div>
             )}
             {chatMessages.map((msg, i) => (
@@ -1128,9 +1130,9 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                       {/* Token details */}
                       {(msg.totalTokens || 0) > 0 && (
                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] font-mono">
-                          <span className="text-blue-400">Prompt: {msg.promptTokens?.toLocaleString()} tk</span>
-                          <span className="text-green-400">Response: {msg.completionTokens?.toLocaleString()} tk</span>
-                          <span className="text-muted-foreground">Tổng: {msg.totalTokens?.toLocaleString()} tk</span>
+                          <span className="text-blue-400">{trx('Prompt: {{v1}} tk', { v1: msg.promptTokens?.toLocaleString() })}</span>
+                          <span className="text-green-400">{trx('Response: {{v1}} tk', { v1: msg.completionTokens?.toLocaleString() })}</span>
+                          <span className="text-muted-foreground">{trx('Tổng: {{v1}} tk', { v1: msg.totalTokens?.toLocaleString() })}</span>
                         </div>
                       )}
                       <div className="flex items-center gap-1.5">
@@ -1140,16 +1142,16 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                             : msg.content;
                           navigator.clipboard.writeText(textToCopy);
                         }}
-                          className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
+                          className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors">{trx('<0/> Copy', { 0: <ClipboardListIcon className="w-4 h-4 inline" /> })}
                         </button>
                         <button onClick={() => setExpandedMsgIdx(expandedMsgIdx === i ? null : i)}
                           className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors">
-                          {expandedMsgIdx === i ? <><ChevronUpIcon className="w-3 h-3 inline" /> Ẩn chi tiết</> : <><ChevronDownIcon className="w-3 h-3 inline" /> Chi tiết</>}
+                          {expandedMsgIdx === i ? <>{trx('<0/> Ẩn chi tiết', { 0: <ChevronUpIcon className="w-3 h-3 inline" /> })}</> : <>{trx('<0/> Chi tiết', { 0: <ChevronDownIcon className="w-3 h-3 inline" /> })}</>}
                         </button>
                       </div>
                       {expandedMsgIdx === i && (
                         <div className="mt-1 p-2 rounded bg-card border border-border text-[10px] space-y-1 max-h-40 overflow-y-auto">
-                          <p className="text-muted-foreground font-semibold">Prompt đã gửi:</p>
+                          <p className="text-muted-foreground font-semibold">{tr('Prompt đã gửi:')}</p>
                           <pre className="text-muted-foreground whitespace-pre-wrap break-word text-[9px]">
                             {chatMessages.slice(0, i).map(m => `[${m.role}] ${m.content}`).join('\n')}
                           </pre>
@@ -1181,7 +1183,7 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
                   onKeyDown={handleChatKeyDown}
-                  placeholder="Nhập tin nhắn thử..."
+                  placeholder={tr('Nhập tin nhắn thử...')}
                   rows={1}
                   className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground resize-none outline-none max-h-20 overflow-y-auto"
                   style={{ minHeight: '1.5rem' }}
@@ -1203,11 +1205,11 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
         <div className="w-[420px] flex-shrink-0 border-l border-border flex flex-col bg-card">
           <div className="px-4 py-3 border-b border-border flex-shrink-0">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground"><ChartIcon className="w-4 h-4 inline" /> Báo cáo sử dụng</h3>
-              <button onClick={() => loadReport()} className="text-[10px] text-muted-foreground hover:text-foreground/80 transition-colors"><RefreshIcon className="w-4 h-4 inline" /> Tải lại
+              <h3 className="text-sm font-semibold text-foreground">{trx('<0/> Báo cáo sử dụng', { 0: <ChartIcon className="w-4 h-4 inline" /> })}</h3>
+              <button onClick={() => loadReport()} className="text-[10px] text-muted-foreground hover:text-foreground/80 transition-colors">{trx('<0/> Tải lại', { 0: <RefreshIcon className="w-4 h-4 inline" /> })}
               </button>
             </div>
-            <p className="text-[10px] text-muted-foreground mt-0.5">Token sử dụng theo ngày (30 ngày gần nhất)</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{tr('Token sử dụng theo ngày (30 ngày gần nhất)')}</p>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
@@ -1222,24 +1224,24 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                   <div className="grid grid-cols-3 gap-2">
                     <div className="bg-card rounded-lg p-2.5 text-center">
                       <p className="text-lg font-bold text-foreground">{usageStats.reduce((s, r) => s + r.request_count, 0).toLocaleString()}</p>
-                      <p className="text-[10px] text-muted-foreground">Tổng requests</p>
+                      <p className="text-[10px] text-muted-foreground">{tr('Tổng requests')}</p>
                     </div>
                     <div className="bg-card rounded-lg p-2.5 text-center">
                       <p className="text-lg font-bold text-blue-400">{usageStats.reduce((s, r) => s + r.total_prompt_tokens, 0).toLocaleString()}</p>
-                      <p className="text-[10px] text-muted-foreground">Prompt tokens</p>
+                      <p className="text-[10px] text-muted-foreground">{tr('Prompt tokens')}</p>
                     </div>
                     <div className="bg-card rounded-lg p-2.5 text-center">
                       <p className="text-lg font-bold text-green-400">{usageStats.reduce((s, r) => s + r.total_completion_tokens, 0).toLocaleString()}</p>
-                      <p className="text-[10px] text-muted-foreground">Response tokens</p>
+                      <p className="text-[10px] text-muted-foreground">{tr('Response tokens')}</p>
                     </div>
                   </div>
                 )}
 
                 {/* Daily breakdown */}
                 <div>
-                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">Theo ngày</h4>
+                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">{tr('Theo ngày')}</h4>
                   {usageStats.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center py-4">Chưa có dữ liệu sử dụng</p>
+                    <p className="text-xs text-muted-foreground text-center py-4">{tr('Chưa có dữ liệu sử dụng')}</p>
                   ) : (
                     <div className="space-y-1">
                       {usageStats.map((s, i) => (
@@ -1247,10 +1249,10 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                           <span className="text-[11px] text-muted-foreground font-mono w-20 flex-shrink-0">{s.day}</span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 text-[10px]">
-                              <span className="text-foreground font-medium">{s.request_count} req</span>
-                              <span className="text-blue-400">{s.total_prompt_tokens.toLocaleString()} in</span>
-                              <span className="text-green-400">{s.total_completion_tokens.toLocaleString()} out</span>
-                              <span className="text-muted-foreground">= {s.total_tokens.toLocaleString()} tk</span>
+                              <span className="text-foreground font-medium">{trx('{{request_count}} req', { request_count: s.request_count })}</span>
+                              <span className="text-blue-400">{trx('{{v1}} in', { v1: s.total_prompt_tokens.toLocaleString() })}</span>
+                              <span className="text-green-400">{trx('{{v1}} out', { v1: s.total_completion_tokens.toLocaleString() })}</span>
+                              <span className="text-muted-foreground">{trx('= {{v1}} tk', { v1: s.total_tokens.toLocaleString() })}</span>
                             </div>
                           </div>
                         </div>
@@ -1261,16 +1263,16 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
 
                 {/* Recent logs */}
                 <div>
-                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">Lịch sử gần nhất</h4>
+                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">{tr('Lịch sử gần nhất')}</h4>
                   {usageLogs.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center py-4">Chưa có lịch sử</p>
+                    <p className="text-xs text-muted-foreground text-center py-4">{tr('Chưa có lịch sử')}</p>
                   ) : (
                     <div className="space-y-1.5">
                       {usageLogs.map((log: any, i: number) => (
                         <details key={i} className="bg-card rounded-lg overflow-hidden group">
                           <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-card transition-colors">
                             <span className="text-[10px] text-muted-foreground font-mono flex-shrink-0">
-                              {new Date(log.created_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
+                              {new Date(log.created_at).toLocaleString(appLocale(), { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
                             </span>
                             <span className="text-[10px] text-muted-foreground flex-1 truncate">{log.model}</span>
                             <span className="text-[10px] text-blue-400 flex-shrink-0">{log.prompt_tokens}→</span>
@@ -1278,11 +1280,11 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
                           </summary>
                           <div className="px-3 pb-2 space-y-1.5">
                             <div>
-                              <p className="text-[9px] text-muted-foreground font-semibold">Prompt:</p>
+                              <p className="text-[9px] text-muted-foreground font-semibold">{tr('Prompt:')}</p>
                               <pre className="text-[9px] text-muted-foreground whitespace-pre-wrap break-word bg-card rounded p-1.5 max-h-24 overflow-y-auto">{log.prompt_text?.substring(0, 500)}</pre>
                             </div>
                             <div>
-                              <p className="text-[9px] text-muted-foreground font-semibold">Response:</p>
+                              <p className="text-[9px] text-muted-foreground font-semibold">{tr('Response:')}</p>
                               <pre className="text-[9px] text-foreground/80 whitespace-pre-wrap break-word bg-card rounded p-1.5 max-h-24 overflow-y-auto">{log.response_text?.substring(0, 500)}</pre>
                             </div>
                           </div>
@@ -1303,19 +1305,19 @@ export default function AIAssistantDetailPage({ assistantId, onBack }: Props) {
         {savedId && (
           <button onClick={handleDelete} disabled={deleting}
             className="px-3 py-2 text-sm rounded-lg text-red-400 hover:bg-red-900/30 border border-red-800/40 transition-colors">
-            {deleting ? 'Đang xóa...' : <><TrashIcon className="w-4 h-4 inline" /> Xóa</>}
+            {deleting ? tr('Đang xóa...') : <>{trx('<0/> Xóa', { 0: <TrashIcon className="w-4 h-4 inline" /> })}</>}
           </button>
         )}
         <div className="flex-1"/>
         {savedId && (
           <button onClick={handleTest} disabled={testing}
             className="px-4 py-2 text-sm rounded-lg bg-muted hover:bg-accent text-foreground transition-colors flex">
-            {testing ? <><Spinner size={3} className="mr-1" /> Đang test...</> : <><SearchIcon className="w-4 h-4 inline mr-1" /> Test kết nối</>}
+            {testing ? <>{trx('<0/> Đang test...', { 0: <Spinner size={3} className="mr-1" /> })}</> : <>{trx('<0/> Test kết nối', { 0: <SearchIcon className="w-4 h-4 inline mr-1" /> })}</>}
           </button>
         )}
         <button onClick={handleSave} disabled={saving}
           className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors">
-          {saving ? 'Đang lưu...' : savedId ? 'Cập nhật' : 'Tạo trợ lý'}
+          {saving ? tr('Đang lưu...') : savedId ? tr('Cập nhật') : tr('Tạo trợ lý')}
         </button>
       </div>
 

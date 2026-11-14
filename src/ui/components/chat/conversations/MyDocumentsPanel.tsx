@@ -1,7 +1,7 @@
 /**
- * MyDocumentsPanel.tsx - Hộp thư gộp: My Documents của từng tài khoản đang gộp (Zalo My Documents, Telegram Tin nhắn đã
- * lưu), trình bày như danh sách chủ đề của nhóm forum: ảnh + tên tài khoản, giờ và tin mới nhất, số chưa đọc. Bấm một
- * tài khoản → mở My Documents của tài khoản đó; danh sách vẫn mở để đổi tài khoản.
+ * MyDocumentsPanel.tsx - Merged inbox: the My Documents of each merged account (Zalo My Documents, Telegram Saved Messages),
+ * shown as a forum topic list: avatar + account name, time and latest message, unread count. Click an account → open
+ * that account's My Documents; the list stays open so you can switch accounts.
  */
 
 import React from 'react';
@@ -11,6 +11,8 @@ import type { Channel } from '@/../configs/channels/channelConfig';
 import { MY_DOCUMENTS_NAME } from '@/lib/chat/zalo/myDocuments';
 import { ChannelBadgeOverlay } from '../../common/avatars/ChannelBadge';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export interface MyDocumentsPanelEntry {
   accountId: string;
@@ -18,7 +20,7 @@ export interface MyDocumentsPanelEntry {
   accountAvatar: string;
   channel: Channel;
   threadId: string;
-  /** Tin mới nhất đã định dạng ('' = chưa có tin). */
+  /** Latest message, formatted ('' = no message yet). */
   preview: string;
   timeLabel: string;
   unread: number;
@@ -26,7 +28,7 @@ export interface MyDocumentsPanelEntry {
 
 interface MyDocumentsPanelProps {
   entries: MyDocumentsPanelEntry[];
-  /** `${accountId}:${threadId}` đang mở trong khung chat. */
+  /** `${accountId}:${threadId}` currently open in the chat frame. */
   activeKey: string | null;
   onSelect: (entry: MyDocumentsPanelEntry) => void;
   onBack: () => void;
@@ -38,18 +40,18 @@ export default function MyDocumentsPanel({ entries, activeKey, onSelect, onBack 
   return (
     <div className="flex flex-col h-full bg-background">
       <div className="flex items-center gap-2 px-2 py-2 border-b border-border bg-card/50">
-        <button onClick={onBack} title="Quay lại" className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+        <button onClick={onBack} title={tr('Quay lại')} className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
         </button>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-foreground truncate">{MY_DOCUMENTS_NAME}</h3>
-          <p className="text-xs text-muted-foreground truncate">{entries.length} tài khoản</p>
+          <p className="text-xs text-muted-foreground truncate">{trx('{{count}} tài khoản', { count: entries.length })}</p>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {entries.length === 0 ? (
-          <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">Không có tài khoản nào</div>
+          <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">{tr('Không có tài khoản nào')}</div>
         ) : entries.map((entry) => {
           const key = myDocumentsEntryKey(entry);
           const selected = key === activeKey;
@@ -80,7 +82,7 @@ export default function MyDocumentsPanel({ entries, activeKey, onSelect, onBack 
                   )}
                 </div>
                 <div className="flex items-center gap-1 mt-0.5">
-                  <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">{entry.preview || 'Chưa có tin nhắn'}</span>
+                  <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">{entry.preview || tr('Chưa có tin nhắn')}</span>
                   {hasUnread && (
                     <span className="flex-shrink-0 bg-primary text-primary-foreground text-[11px] font-medium leading-none tabular-nums rounded-full h-[18px] min-w-[18px] px-1.5 inline-flex items-center justify-center">
                       {entry.unread > 99 ? '99+' : entry.unread}

@@ -1,12 +1,11 @@
 /**
- * Ghi file media (ảnh, video, file, sticker, avatar tải về) bất đồng bộ, không chặn luồng chính.
+ * Writes media files (images, videos, files, stickers, downloaded avatars) asynchronously, without blocking the main thread.
  *
- * Trước đây dùng fs.writeFileSync: khi ổ đĩa bận (máy thiếu RAM phải ghi trang ra pagefile, app khác đọc ghi nhiều),
- * ghi một video vài chục MB chặn main process cả giây, mọi IPC (mở hội thoại, gửi tin…) và ảnh khác phải chờ.
+ * Previously it used fs.writeFileSync: when the disk was busy (the machine was short on RAM and paging to the pagefile, other apps reading and writing a lot),
+ * writing a video of several tens of MB blocked the main process for a second, and every IPC (opening a conversation, sending a message…) and other image had to wait.
  *
- * Ghi ra file tạm `.part` rồi đổi tên: local-media không bao giờ phục vụ file đang ghi dở (ghi bất đồng bộ thì
- * protocol handler chạy xen giữa được), MediaScanner bỏ qua đuôi `.part`. Đổi tên lỗi (Windows: file đích đang bị
- * chương trình khác giữ) thì ghi thẳng vào file đích như trước.
+ * Writes to a temporary `.part` file and then renames it: local-media never serves a file that is still being written (async writes can interleave with the protocol handler),
+ * and MediaScanner skips the `.part` extension. If the rename fails (Windows: the target file is held open by another program), it writes directly to the target file as before.
  */
 import * as fs from 'fs';
 

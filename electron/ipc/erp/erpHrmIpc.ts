@@ -9,8 +9,8 @@ const LEAVE_STATUS = ['approved', 'rejected'] as const;
 const LEAVE_TYPE = ['annual', 'sick', 'unpaid', 'other'] as const;
 
 /**
- * Phần nhạy cảm của bản sửa hồ sơ ERP (erpAccessRules.profilePatchActions — chỉ xét trường THẬT SỰ đổi): đổi vai trò /
- * quyền riêng → settings.erp; tự đổi trường tổ chức của chính mình → employee.edit_others.
+ * The sensitive part of an ERP profile edit (erpAccessRules.profilePatchActions - only fields that REALLY changed are checked): changing a role /
+ * custom permissions → settings.erp; changing one's own organization fields → employee.edit_others.
  */
 function ensureProfilePatchAllowed(patch: Record<string, any>, current: Record<string, any> | undefined, isSelf: boolean, ctx: ErpAuthCtx) {
   if (patch.erp_role !== undefined) erpValidate.enum(patch.erp_role, 'erp_role', ERP_ROLE_NAMES);
@@ -63,7 +63,7 @@ export function registerErpHrmIpc(): void {
   }));
 
   // ─── Profiles ────────────────────────────────────────────────────────────
-  // Hồ sơ người khác (SĐT, email, địa chỉ, ngày sinh) cần employee.view_others — như danh sách hồ sơ theo phòng ban
+  // Other people's profiles (phone, email, address, date of birth) need employee.view_others, like the profile list by department
   ipcMain.handle('erp:employee:getProfile', withErpAuth('erp.access', async (input: any, ctx) => {
     const eid = input?.employeeId || ctx.employeeId;
     erpValidate.string(eid, 'employeeId');
@@ -88,7 +88,7 @@ export function registerErpHrmIpc(): void {
 
   ipcMain.handle('erp:employee:deleteProfile', withErpAuth('employee.edit_others', async (input: any, ctx) => {
     erpValidate.string(input?.employeeId, 'employeeId');
-    // Xoá hồ sơ của người có vai trò trên member = hạ vai trò của họ → cần quyền cấu hình ERP như khi đổi vai trò
+    // Deleting the profile of someone with a role above member = demoting them → needs the ERP configuration permission, same as changing a role
     const action = profileDeleteAction(svc().getProfile(input.employeeId)?.erp_role);
     if (action) requireErpPermission(action, ctx);
     svc().deleteProfile(input.employeeId);
@@ -136,7 +136,7 @@ export function registerErpHrmIpc(): void {
     leaves: svc().listPendingForManager(ctx.employeeId),
   })));
 
-  // Chỉ quản lý trực tiếp của người xin nghỉ (hoặc Boss) — cùng phạm vi với listPending
+  // Only the direct manager of the person requesting leave (or Boss), same scope as listPending
   ipcMain.handle('erp:leave:decide', withErpAuth('leave.approve', async (input: any, ctx) => {
     erpValidate.int(input?.id, 'id');
     erpValidate.enum(input?.status, 'status', LEAVE_STATUS);

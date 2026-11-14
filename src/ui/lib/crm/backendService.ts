@@ -1,32 +1,33 @@
 /**
- * Backend Service: app gọi máy chủ deplaoapp.com cho CRM nhóm Zalo (quét thành viên nhóm ẩn, kho nhóm chung).
+ * Backend Service: the app calls the deplaoapp.com server for the Zalo group CRM (hidden group member scan, the shared group library).
  *
  * API:
- *   POST https://deplaoapp.com/api/scan/group            → quét thành viên nhóm (GỬI COOKIE ZALO, xem dưới)
- *   POST https://deplaoapp.com/api/shared-groups/submit   → chia sẻ nhóm vào kho chung (công khai cho người dùng khác)
- *   GET  https://deplaoapp.com/api/shared-groups/list     → danh sách kho nhóm chung
+ *   POST https://deplaoapp.com/api/scan/group            → scans group members (SENDS THE ZALO COOKIE, see below)
+ *   POST https://deplaoapp.com/api/shared-groups/submit   → shares a group into the shared library (public to other users)
+ *   GET  https://deplaoapp.com/api/shared-groups/list     → the shared group library list
  *
- * ─── Quét nhóm ẩn: dữ liệu rời khỏi máy (đọc kỹ trước khi sửa / khi rà soát bảo mật) ────────────────────────────────
- * - GỬI GÌ: phiên đăng nhập Zalo (cookie + IMEI) của tài khoản đang quét + groupId + page_id (= zalo_id). Cookie cho
- *   phép dùng tài khoản Zalo, nên đây là dữ liệu nhạy cảm nhất app từng gửi ra ngoài.
- * - VÌ SAO QUA MÁY CHỦ: cách quét nhóm ẩn thành viên chạy ở máy chủ để giữ kín (app là mã nguồn mở). Máy chủ dùng
- *   cookie gọi Zalo (getLoginInfo → danh sách ID → thông tin thành viên) rồi trả danh sách về; không lưu cookie, không
- *   ghi cookie vào log. Nhật ký máy chủ: endpoint, IP, user agent, page_id, group_id, thời gian, mã kết quả
+ * ─── Hidden group scan: data leaves the machine (read carefully before changing it / when reviewing security) ────────────────────────────────
+ * - WHAT IS SENT: the Zalo login session (cookie + IMEI) of the account being scanned + groupId + page_id (= zalo_id). The cookie lets
+ *   anyone use the Zalo account, so this is the most sensitive data the app has ever sent out.
+ * - WHY VIA THE SERVER: the hidden member scan runs on the server to keep it private (the app is open source). The server uses the
+ *   cookie to call Zalo (getLoginInfo → list of IDs → member info), then returns the list; it does not store the cookie, and does not
+ *   write the cookie to the log. Server log: endpoint, IP, user agent, page_id, group_id, time, result code
  *   (repo dep-lao-backend-payment: controllers/scan.controller.ts, services/scan.service.ts, middleware/publicApiLogger.ts).
- * - CHỈ GỬI KHI NGƯỜI DÙNG ĐỒNG Ý (từ 26.11.0, mặc định TẮT): mọi chỗ gọi `scanGroupViaBackend` phải hỏi trước bằng
- *   `ensureHiddenScanConsent()` (components/crm/groups/HiddenScanConsentDialog.tsx); hộp thoại nói rõ gửi gì, vì sao,
- *   rủi ro và quyền không đồng ý. Đồng ý được nhớ theo máy (lib/crm/hiddenScanConsent.ts), tắt ở CRM → Nhóm → Quét
- *   thành viên. `scanGroupViaBackend` tự kiểm tra lại: chưa đồng ý → trả lỗi CONSENT_REQUIRED, KHÔNG gọi mạng.
- * - Chỗ gọi hiện có: CRM → Nhóm → Quét thành viên (handleScanTab), CRM → Thành viên nhóm "Tải thông tin thành viên" và
- *   panel thành viên nhóm trong hội thoại (hooks/chat/useGroupMemberSync.ts), nhập nhóm hàng loạt
- *   (BulkImportGroupsModal, đếm thành viên). Thêm chỗ gọi mới thì phải đi qua ensureHiddenScanConsent.
- * - MÃ HOÁ: body được "mã hoá" AES-128-CBC bằng SECRET_KEY bên dưới, nhưng khoá này nằm trong mã nguồn công khai và
- *   cũng được gửi làm x-api-key → chỉ là làm rối, KHÔNG phải lớp bảo mật; renderer không có module crypto của Node thì
- *   encryptBody rơi về base64 thuần. Bảo vệ thật trên đường truyền là HTTPS.
- * - KHÔNG log cookie / body / danh sách thành viên ở client (console chỉ ghi endpoint, groupId, số lượng).
+ * - SENT ONLY WITH THE USER'S CONSENT (from 26.11.0, OFF by default): every call to `scanGroupViaBackend` must ask first with
+ *   `ensureHiddenScanConsent()` (components/crm/groups/HiddenScanConsentDialog.tsx); the dialog states clearly what is sent, why,
+ *   the risks, and the right to refuse. Consent is remembered per machine (lib/crm/hiddenScanConsent.ts) and is turned off at CRM → "Nhóm" → "Quét thành viên".
+ *   `scanGroupViaBackend` checks again itself: no consent → returns a CONSENT_REQUIRED error and makes NO network call.
+ * - Current call sites: CRM → "Nhóm" → "Quét thành viên" (handleScanTab), CRM → "Thành viên nhóm" → "Tải thông tin thành viên" and the
+ *   group member panel in the conversation (hooks/chat/useGroupMemberSync.ts), bulk group import
+ *   (BulkImportGroupsModal, counts members). A new call site must go through ensureHiddenScanConsent.
+ * - ENCRYPTION: the body is "encrypted" with AES-128-CBC using the SECRET_KEY below, but that key is in the public source code and
+ *   is also sent as x-api-key → it is only obfuscation, NOT a security layer; if the renderer has no Node crypto module,
+ *   encryptBody falls back to plain base64. The real protection on the wire is HTTPS.
+ * - Do NOT log the cookie / body / member list on the client (the console only writes the endpoint, groupId, and counts).
  */
 
 import { hasHiddenScanConsent } from './hiddenScanConsent';
+import { tr } from '../../../shared/i18n';
 
 const BACKEND_URL = 'https://deplaoapp.com';
 const SECRET_KEY = 'fb7457b7a39bdc9e742f08b657a8059a5e6a8fda6e32bfe0bfecf37eadf519eb';
@@ -34,7 +35,7 @@ const SECRET_KEY = 'fb7457b7a39bdc9e742f08b657a8059a5e6a8fda6e32bfe0bfecf37eadf5
 interface ScanGroupResult {
   success: boolean;
   groupId: string;
-  /** CONSENT_REQUIRED: người dùng chưa đồng ý gửi phiên đăng nhập Zalo lên máy chủ → không gửi gì. */
+  /** CONSENT_REQUIRED: the user has not agreed to send the Zalo login session to the server → nothing is sent. */
   code?: 'CONSENT_REQUIRED' | 'NO_SESSION';
   totalMembers: number;
   members: Array<{
@@ -52,15 +53,15 @@ interface ScanGroupResult {
 }
 
 /**
- * "Mã hoá" body bằng AES-128-CBC trước khi gửi lên backend (khoá công khai, xem đầu file: chỉ làm rối, HTTPS mới là
- * lớp bảo vệ). Dùng crypto module của Node.js (có sẵn trong Electron main/preload).
+ * "Mã hoá" (Encrypts) the body with AES-128-CBC before sending it to the backend (public key, see the top of the file: it is only obfuscation, HTTPS is
+ * the protection layer). Uses the Node.js crypto module (available in the Electron main / preload).
  */
 async function encryptBody(body: object): Promise<string> {
   try {
-    // Trong Electron renderer, crypto có thể không khả dụng qua dynamic import
-    // Fallback: gửi plain text (backend sẽ xử lý cả 2 format khi dev)
+    // In the Electron renderer, crypto may not be available through a dynamic import
+    // Fallback: send plain text (the backend handles both formats during development)
     const crypto = window.require ? window.require('crypto') : await import('crypto');
-    // SECRET_KEY là hex string → chuyển sang Buffer (16 bytes cho AES-128)
+    // SECRET_KEY is a hex string → converted to a Buffer (16 bytes for AES-128)
     const key = Buffer.from(SECRET_KEY, 'hex').slice(0, 16);
     const iv = Buffer.alloc(16, 0);
     const cipher = crypto.createCipheriv('aes-128-cbc', key, iv);
@@ -69,17 +70,17 @@ async function encryptBody(body: object): Promise<string> {
     return encrypted;
   } catch (err) {
     console.warn('[backendService] encryptBody failed, sending plain text:', err);
-    // Fallback: gửi plain text base64
+    // Fallback: send plain base64 text
     return btoa(JSON.stringify(body));
   }
 }
 
 /**
- * Gọi API backend.
+ * Calls the backend API.
  */
 async function callBackend<T>(endpoint: string, body: object): Promise<T> {
   const url = `${BACKEND_URL}${endpoint}`;
-  // Không log body: có cookie Zalo
+  // Do not log the body: it contains the Zalo cookie
   console.log(`[backendService] calling ${url}`);
 
   let encryptedBody: string;
@@ -105,7 +106,7 @@ async function callBackend<T>(endpoint: string, body: object): Promise<T> {
   });
 
   const data = await res.json();
-  // Không log dữ liệu trả về: danh sách thành viên là dữ liệu cá nhân
+  // Do not log the returned data: the member list is personal data
   console.log(`[backendService] ${endpoint} → HTTP ${res.status}`);
   return data as T;
 }
@@ -113,9 +114,9 @@ async function callBackend<T>(endpoint: string, body: object): Promise<T> {
 // ─── API Methods ────────────────────────────────────────────────────────────
 
 /**
- * Quét thành viên nhóm qua backend: GỬI COOKIE + IMEI ZALO lên deplaoapp.com (xem đầu file).
- * Chỉ chạy khi người dùng đã đồng ý (`hasHiddenScanConsent()`); chỗ gọi phải hỏi trước bằng `ensureHiddenScanConsent()`.
- * Không kiểm tra gói hoặc ngày hết hạn (máy chủ mở miễn phí cho mọi tài khoản).
+ * Scans group members through the backend: SENDS THE ZALO COOKIE + IMEI to deplaoapp.com (see the top of the file).
+ * Only runs when the user has agreed (`hasHiddenScanConsent()`); the caller must ask first with `ensureHiddenScanConsent()`.
+ * Does not check the plan or the expiry date (the server is free for every account).
  */
 export async function scanGroupViaBackend(params: {
   pageId: string;
@@ -123,17 +124,17 @@ export async function scanGroupViaBackend(params: {
   imei: string;
   groupId: string;
 }): Promise<ScanGroupResult> {
-  // Lớp chặn cuối: chưa đồng ý thì không gửi cookie, kể cả khi chỗ gọi quên hỏi
+  // Last line of defence: without consent the cookie is not sent, even if the caller forgot to ask
   if (!hasHiddenScanConsent()) {
     return {
       success: false, code: 'CONSENT_REQUIRED', groupId: params.groupId, totalMembers: 0, members: [],
-      error: 'Chưa đồng ý quét qua máy chủ Deplao (CRM → Nhóm → Quét thành viên)',
+      error: tr('Chưa đồng ý quét qua máy chủ Deplao (CRM → Nhóm → Quét thành viên)'),
     };
   }
   if (!params.cookie || !params.imei) {
     return {
       success: false, code: 'NO_SESSION', groupId: params.groupId, totalMembers: 0, members: [],
-      error: 'Máy này không có phiên đăng nhập Zalo của tài khoản (máy nhân viên không quét được nhóm ẩn)',
+      error: tr('Máy này không có phiên đăng nhập Zalo của tài khoản (máy nhân viên không quét được nhóm ẩn)'),
     };
   }
   console.log(`[backendService] scan group ${params.groupId} (người dùng đã đồng ý gửi phiên đăng nhập)`);
@@ -147,7 +148,7 @@ export async function scanGroupViaBackend(params: {
     return res;
   } catch (err: any) {
     console.error('[backendService] scanGroupViaBackend error:', err?.message || err);
-    return { success: false, groupId: params.groupId, totalMembers: 0, members: [], error: err.message || 'Lỗi kết nối backend' };
+    return { success: false, groupId: params.groupId, totalMembers: 0, members: [], error: err.message || tr('Lỗi kết nối backend') };
   }
 }
 
@@ -162,23 +163,23 @@ export interface SharedGroupCategory {
 
 export const DEFAULT_CATEGORIES: SharedGroupCategory[] = [
   { id: 1, name: 'Kinh doanh', icon: '💼' },
-  { id: 2, name: 'Bất động sản', icon: '🏠' },
-  { id: 3, name: 'Giáo dục', icon: '📚' },
-  { id: 4, name: 'Công nghệ', icon: '💻' },
-  { id: 5, name: 'Sức khỏe', icon: '🏥' },
-  { id: 6, name: 'Du lịch', icon: '✈️' },
-  { id: 7, name: 'Ẩm thực', icon: '🍜' },
-  { id: 8, name: 'Thời trang', icon: '👗' },
-  { id: 9, name: 'Mỹ phẩm', icon: '💄' },
-  { id: 10, name: 'Thực phẩm chức năng', icon: '💊' },
-  { id: 11, name: 'Mẹ và bé', icon: '👶' },
-  { id: 12, name: 'Nội thất', icon: '🛋️' },
-  { id: 13, name: 'Ô tô - Xe máy', icon: '🚗' },
-  { id: 14, name: 'Điện tử', icon: '📱' },
-  { id: 15, name: 'Thể thao', icon: '⚽' },
-  { id: 16, name: 'Thú cưng', icon: '🐾' },
-  { id: 17, name: 'Nhà hàng - Khách sạn', icon: '🏨' },
-  { id: 99, name: 'Khác', icon: '📁' },
+  { id: 2, name: tr('Bất động sản'), icon: '🏠' },
+  { id: 3, name: tr('Giáo dục'), icon: '📚' },
+  { id: 4, name: tr('Công nghệ'), icon: '💻' },
+  { id: 5, name: tr('Sức khỏe'), icon: '🏥' },
+  { id: 6, name: tr('Du lịch'), icon: '✈️' },
+  { id: 7, name: tr('Ẩm thực'), icon: '🍜' },
+  { id: 8, name: tr('Thời trang'), icon: '👗' },
+  { id: 9, name: tr('Mỹ phẩm'), icon: '💄' },
+  { id: 10, name: tr('Thực phẩm chức năng'), icon: '💊' },
+  { id: 11, name: tr('Mẹ và bé'), icon: '👶' },
+  { id: 12, name: tr('Nội thất'), icon: '🛋️' },
+  { id: 13, name: tr('Ô tô - Xe máy'), icon: '🚗' },
+  { id: 14, name: tr('Điện tử'), icon: '📱' },
+  { id: 15, name: tr('Thể thao'), icon: '⚽' },
+  { id: 16, name: tr('Thú cưng'), icon: '🐾' },
+  { id: 17, name: tr('Nhà hàng - Khách sạn'), icon: '🏨' },
+  { id: 99, name: tr('Khác'), icon: '📁' },
 ];
 
 export interface SharedGroupItem {
@@ -186,13 +187,13 @@ export interface SharedGroupItem {
   groupId: string;
   groupName: string;
   groupAvatar: string;
-  groupLink: string;           // Link nhóm Zalo (https://zalo.me/g/...)
+  groupLink: string;           // Zalo group link (https://zalo.me/g/...)
   memberCount: number;
   category: SharedGroupCategory;
-  note?: string;               // Ghi chú khi chia sẻ
-  submittedBy: string;         // Tên hiển thị
+  note?: string;               // Note when sharing
+  submittedBy: string;         // Display name
   submittedByUid?: string;     // UID Zalo
-  submittedByAvatar?: string;  // Ảnh đại diện
+  submittedByAvatar?: string;  // Avatar
   approvedAt?: string;
   status: 'pending' | 'approved' | 'rejected';
 }
@@ -207,7 +208,7 @@ export interface SharedGroupsListResponse {
 // ─── Shared Groups API ──────────────────────────────────────────────────────
 
 /**
- * Chia sẻ nhóm lên hệ thống (chờ admin duyệt).
+ * Shares a group to the system (waits for admin approval).
  */
 export async function submitSharedGroup(params: {
   pageId: string;
@@ -247,7 +248,7 @@ export async function submitSharedGroup(params: {
 }
 
 /**
- * Lấy danh sách nhóm chung (đã được admin duyệt).
+ * Gets the shared group list (already approved by an admin).
  */
 export async function getSharedGroups(params: {
   pageId: string;

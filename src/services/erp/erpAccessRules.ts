@@ -1,10 +1,10 @@
 /**
- * erpAccessRules — quy tắc quyền ERP phụ thuộc tham số / dữ liệu hiện có (phần thuần, có test: erpRestRoutes.test.ts).
+ * erpAccessRules: ERP permission rules that depend on the parameters / existing data (pure logic, has tests: erpRestRoutes.test.ts).
  *
- * Handler IPC erp:* (dùng chung cho UI Boss, nhân viên qua REST và API v1) gọi các hàm này rồi
- * `requireErpPermission(action, ctx)` cho từng quyền trả về — tính cả quyền riêng (allow / deny) của hồ sơ ERP.
- * Trước khi có REST nhân viên các kiểm tra này chỉ chạy trên DB cục bộ của từng máy nên lỗ hổng không lộ ra; giờ một
- * nhân viên gọi thẳng Boss nên mỗi quy tắc phải đúng ở đây.
+ * The erp:* IPC handlers (shared by the Boss UI, employees through REST and API v1) call these functions, then
+ * `requireErpPermission(action, ctx)` for each permission returned, including the personal permissions (allow / deny) of the ERP profile.
+ * Before the employee REST API existed, these checks only ran on each machine's local DB, so the hole was not exposed; now an
+ * employee calls the Boss directly, so every rule has to be correct here.
  */
 import { parseErpPermissionOverridesFromExtraJson } from './permissions';
 
@@ -15,9 +15,9 @@ function idSet(ids: readonly unknown[] | null | undefined): Set<string> {
 }
 
 /**
- * Quyền giao việc theo THAY ĐỔI người thực hiện so với hiện tại: không đổi → null (không cần quyền); chỉ thêm / bỏ
- * chính mình → task.assign_self; có thêm / bỏ người khác → task.assign_others. (Trước đây xét cả danh sách gửi lên:
- * form sửa task luôn gửi kèm người thực hiện → thành viên sửa tiêu đề task đang giao cho người khác bị từ chối.)
+ * Assign permission based on the CHANGE to the assignees compared with now: no change → null (no permission needed); only adding / removing
+ * yourself → task.assign_self; adding / removing other people → task.assign_others. (Before, the whole list sent up was checked:
+ * the task edit form always sends the assignees too → a member editing a task's title, for a task assigned to someone else, was refused.)
  */
 export function assignmentAction(nextIds: readonly unknown[], currentIds: readonly unknown[], actorId: string): AssignmentAction | null {
   const next = idSet(nextIds);
@@ -28,14 +28,14 @@ export function assignmentAction(nextIds: readonly unknown[], currentIds: readon
 }
 
 /**
- * Xoá task: người tạo xoá được task của mình nếu có quyền sửa task (cùng quy tắc REST nhân viên trước đây); task của
- * người khác cần task.delete. null = không cần thêm quyền.
+ * Deleting a task: the creator can delete their own task if they have the edit right (same rule as the employee REST API before); a task of
+ * someone else needs task.delete. null = no extra permission needed.
  */
 export function taskDeleteAction(reporterId: string | null | undefined, actorId: string, canUpdateTask: boolean): 'task.delete' | null {
   return reporterId && reporterId === actorId && canUpdateTask ? null : 'task.delete';
 }
 
-/** Trường tổ chức của hồ sơ: phòng ban, chức vụ, quản lý trực tiếp (= tuyến duyệt nghỉ phép), ngày vào làm. */
+/** Organisation fields of the profile: department, job title, direct manager (= the leave approval line), start date. */
 export const PROFILE_ORG_FIELDS = ['department_id', 'position_id', 'manager_employee_id', 'joined_at'] as const;
 
 export const ERP_ROLE_NAMES = ['owner', 'admin', 'manager', 'member', 'guest'] as const;
@@ -45,7 +45,7 @@ function sameValue(a: unknown, b: unknown): boolean {
   return norm(a) === norm(b);
 }
 
-/** Cùng bộ quyền riêng (extra_json.action_permissions), không phụ thuộc thứ tự khoá / định dạng chuỗi. */
+/** The same set of per-person permissions (extra_json.action_permissions), regardless of key order / string format. */
 export function sameErpOverrides(a: unknown, b: unknown): boolean {
   const key = (raw: unknown) => {
     const text = typeof raw === 'string' ? raw : raw === undefined || raw === null ? '' : JSON.stringify(raw);
@@ -55,11 +55,11 @@ export function sameErpOverrides(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Quyền phải có THÊM cho một bản sửa hồ sơ ERP (ngoài employee.edit_self / edit_others) — chỉ xét trường thật sự đổi
- * (form luôn gửi lại cả hồ sơ):
- *  - đổi vai trò ERP / quyền riêng → settings.erp (owner / admin). Trước đây ai có employee.edit_self tự nâng mình lên
- *    owner được — qua REST nhân viên là leo thang quyền trên Boss;
- *  - tự đổi trường tổ chức của chính mình (vd tự chọn người duyệt nghỉ phép) → employee.edit_others (quản lý).
+ * Extra permission needed for an edit to an ERP profile (on top of employee.edit_self / edit_others): only the fields that really change are checked
+ * (the form always sends the whole profile back):
+ *  - changing the ERP role / personal permissions → settings.erp (owner / admin). Before, anyone with employee.edit_self could promote themselves to
+ *    owner; through the employee REST API that was privilege escalation on the Boss;
+ *  - changing your own organisation fields (e.g. choosing your own leave approver) → employee.edit_others (manager).
  */
 export function profilePatchActions(
   patch: Record<string, unknown> | null | undefined,
@@ -77,21 +77,21 @@ export function profilePatchActions(
   return actions;
 }
 
-/** Xoá hồ sơ của người có vai trò trên member = hạ vai trò của họ → cần quyền cấu hình ERP như khi đổi vai trò. */
+/** Deleting the profile of someone with a role on member = demoting them → needs the ERP configuration right, as when changing a role. */
 export function profileDeleteAction(role: unknown): 'settings.erp' | null {
   const r = String(role || 'member');
   return r === 'member' || r === 'guest' ? null : 'settings.erp';
 }
 
 /**
- * Sự kiện lịch mời người khác (attendees khác chính mình) = cuộc họp → calendar.create_meeting (owner / admin / manager).
- * Trước đây quyền tạo lịch cá nhân là đủ để mời — và gửi thông báo "Mời tham dự" — cho bất kỳ ai.
+ * A calendar event that invites other people (attendees other than yourself) = a meeting → calendar.create_meeting (owner / admin / manager).
+ * Before, the right to create personal events was enough to invite anyone, and to send them the "Mời tham dự" (Invitation) notification.
  */
 export function eventInviteAction(attendees: readonly unknown[] | null | undefined, actorId: string): 'calendar.create_meeting' | null {
   return [...idSet(attendees)].some((id) => id !== actorId) ? 'calendar.create_meeting' : null;
 }
 
-/** Người duyệt đơn nghỉ: quản lý trực tiếp của người xin nghỉ (manager_employee_id) hoặc Boss — như listPendingForManager. */
+/** Leave approver: the direct manager of the person asking for leave (manager_employee_id) or the Boss, as in listPendingForManager. */
 export function canDecideLeave(approverId: string, managerId: string | null | undefined): boolean {
   if (approverId === 'boss') return true;
   return !!managerId && managerId === approverId;

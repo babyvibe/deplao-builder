@@ -14,37 +14,38 @@ import {
   urlHost,
   type BossProbeVerdict,
 } from '../../../../shared/cloud/tunnelAddress';
+import { tr } from '../../../../shared/i18n';
 
-/** Địa chỉ Boss (tunnel tạm) có vẻ đã chết — TopBar mời nhập địa chỉ mới. */
+/** The owner's address (temporary tunnel) seems dead: TopBar invites the user to enter a new address. */
 export interface DeadBossAddress {
   url: string;
   host: string;
-  /** trycloudflare.com / ngrok miễn phí / loca.lt */
+  /** trycloudflare.com / free ngrok / loca.lt */
   providerLabel: string;
   verdict: BossProbeVerdict;
-  /** Lý do tiếng Việt (describeBossProbe). */
+  /** Reason text in Vietnamese (describeBossProbe). */
   reason: string;
   offlineSince: number;
   detectedAt: number;
 }
 
-/** Boss vừa báo địa chỉ WAN mới qua kênh realtime (employee:bossUrlChanged). */
+/** The owner just reported a new WAN address over the realtime channel (employee:bossUrlChanged). */
 export interface AnnouncedBossAddress {
   workspaceId: string;
   previousUrl: string;
   newUrl: string;
-  /** true = main đã lưu địa chỉ mới và đang kết nối lại; false = workspace đang dùng địa chỉ khác (LAN…). */
+  /** true = main saved the new address and is reconnecting; false = the workspace is using another address (LAN…). */
   applied: boolean;
   at: number;
 }
 
 /**
- * Phía nhân viên (TopBar, popup "Kết nối lại"):
- * - Địa chỉ Boss đã lưu là tunnel tạm (trycloudflare.com / ngrok free / loca.lt) mà mất kết nối liên tục
- *   >= 30 s (không phải do người dùng bấm Ngắt) → thăm dò qua main (relay:probeBossAddress: DNS + /api/health,
- *   không gửi token) mỗi 30 s; địa chỉ chết (tên miền không còn / tunnel offline / từ chối kết nối) → deadAddress.
- * - Boss báo địa chỉ mới (employee:bossUrlChanged): main đã tự lưu + kết nối lại nếu đang dùng địa chỉ cũ;
- *   ở đây chỉ đồng bộ bản sao workspace ở renderer, báo người dùng và giữ gợi ý cho ô nhập.
+ * Employee side (TopBar, "Kết nối lại" (Reconnect) popup):
+ * - The saved owner address is a temporary tunnel (trycloudflare.com / free ngrok / loca.lt) and the connection keeps dropping
+ *   for >= 30 s (not because the user clicked Disconnect) → probe through main (relay:probeBossAddress: DNS + /api/health,
+ *   no token sent) every 30 s; a dead address (domain gone / tunnel offline / connection refused) → deadAddress.
+ * - The owner reports a new address (employee:bossUrlChanged): main already saved it + reconnects if it was using the old address;
+ *   here it only syncs the workspace copy in the renderer, tells the user, and keeps the hint for the input field.
  */
 export function useBossAddressWatch(): { deadAddress: DeadBossAddress | null; announced: AnnouncedBossAddress | null } {
   const { mode, badge, bossUrl } = useEmployeeStore(useShallow(s => ({
@@ -62,7 +63,7 @@ export function useBossAddressWatch(): { deadAddress: DeadBossAddress | null; an
   const info = useMemo(() => classifyBossUrl(bossUrl), [bossUrl]);
   const watching = mode === 'employee' && badge === 'offline' && !userStopped && info.kind === 'temporary';
 
-  // Người dùng bấm Ngắt / bị Boss kick → main không tự thử lại → không nhắc địa chỉ đổi
+  // The user clicked Disconnect / was kicked by the owner → main does not retry on its own → do not prompt about an address change
   useEffect(() => {
     const off = ipc.on?.('workspace:connectionStatus', (data) => {
       if (!data?.workspaceId || data.workspaceId !== useWorkspaceStore.getState().activeWorkspaceId) return;
@@ -77,7 +78,7 @@ export function useBossAddressWatch(): { deadAddress: DeadBossAddress | null; an
     setAnnounced(null);
   }, [activeWorkspaceId]);
 
-  // Địa chỉ / workspace đổi → tính lại từ đầu (khai báo TRƯỚC effect offlineSince để thứ tự cập nhật đúng)
+  // Address / workspace changed → recompute from scratch (declared BEFORE the offlineSince effect so updates run in the right order)
   useEffect(() => {
     setDeadAddress(null);
     setOfflineSince(null);
@@ -96,7 +97,7 @@ export function useBossAddressWatch(): { deadAddress: DeadBossAddress | null; an
     }
   }, [badge]);
 
-  // Thăm dò: lần đầu khi mất kết nối đủ 30 s, sau đó mỗi 30 s cho tới khi có lại kết nối / đổi địa chỉ
+  // Probe: first time once the connection has been lost for 30 s, then every 30 s until it comes back / the address changes
   useEffect(() => {
     if (!watching || !offlineSince || !info.url) return;
     let cancelled = false;
@@ -115,7 +116,7 @@ export function useBossAddressWatch(): { deadAddress: DeadBossAddress | null; an
       try {
         const res = await ipc.relay?.probeBossAddress?.({ url: info.url });
         if (res?.success && res.verdict) verdict = res.verdict;
-      } catch { /* main chưa có handler */ }
+      } catch { /* main has no handler yet */ }
       if (cancelled) return;
       const now = Date.now();
       if (verdict && shouldSuggestNewBossAddress({ info, offlineSince, now, verdict })) {
@@ -136,7 +137,7 @@ export function useBossAddressWatch(): { deadAddress: DeadBossAddress | null; an
             detectedAt: prev?.url === info.url ? prev.detectedAt : now,
           }));
       } else if (verdict === 'reachable') {
-        // Địa chỉ vẫn đúng — main sẽ tự nối lại
+        // The address is still correct → main will reconnect by itself
         setDeadAddress(null);
       }
       schedule();
@@ -149,13 +150,13 @@ export function useBossAddressWatch(): { deadAddress: DeadBossAddress | null; an
     };
   }, [watching, offlineSince, info]);
 
-  // Boss báo địa chỉ mới (main đã xử lý: tự chuyển nếu đang dùng địa chỉ cũ)
+  // The owner reports a new address (main already handled it: switches automatically if the old address is in use)
   useEffect(() => {
     const off = ipc.on?.('employee:bossUrlChanged', (data) => {
       if (!data?.workspaceId || !data.newUrl) return;
       const wsState = useWorkspaceStore.getState();
       if (data.applied) {
-        // Bản sao cấu hình ở renderer (main là nguồn sự thật, đã lưu)
+        // Config copy in the renderer (main is the source of truth, already saved)
         wsState.setWorkspaces(wsState.workspaces.map(ws => (ws.id === data.workspaceId ? { ...ws, bossUrl: data.newUrl } : ws)));
       }
       if (data.workspaceId !== wsState.activeWorkspaceId) return;
@@ -169,7 +170,7 @@ export function useBossAddressWatch(): { deadAddress: DeadBossAddress | null; an
       Logger.notice(`[TopBar] BOSS báo địa chỉ mới ${data.newUrl} (${data.applied ? 'đã tự chuyển' : 'đang dùng địa chỉ khác — giữ nguyên'})`);
       if (data.applied) {
         setDeadAddress(null);
-        useAppStore.getState().showNotification(`BOSS đã đổi địa chỉ — đã tự chuyển sang ${urlHost(data.newUrl) || data.newUrl}`, 'info');
+        useAppStore.getState().showNotification(tr('BOSS đã đổi địa chỉ — đã tự chuyển sang {{v1}}', { v1: urlHost(data.newUrl) || data.newUrl }), 'info');
       }
     });
     return () => off?.();

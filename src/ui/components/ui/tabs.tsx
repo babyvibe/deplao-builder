@@ -1,11 +1,11 @@
 /**
- * Tabs — controlled tab set with `underline` (default) or `pills` styling.
+ * Tabs: controlled tab set with `underline` (default) or `pills` styling.
  *
  * ```tsx
  * <Tabs value={tab} onValueChange={setTab}>
  *   <TabsList>
- *     <TabsTrigger value="all" count={12}>Tất cả</TabsTrigger>
- *     <TabsTrigger value="unread" icon={<MessageIcon />}>Chưa đọc</TabsTrigger>
+ *     <TabsTrigger value="all" count={12}>All</TabsTrigger>
+ *     <TabsTrigger value="unread" icon={<MessageIcon />}>Unread</TabsTrigger>
  *   </TabsList>
  *   <TabsContent value="all">…</TabsContent>
  *   <TabsContent value="unread">…</TabsContent>
@@ -17,6 +17,7 @@
  */
 import React, { createContext, forwardRef, useContext, useId, useMemo } from 'react';
 import { cn } from '@/lib/cn';
+import { tr } from '../../../shared/i18n';
 
 export type TabsVariant = 'underline' | 'pills';
 
@@ -31,7 +32,7 @@ const TabsContext = createContext<TabsContextValue | null>(null);
 
 function useTabsContext(component: string): TabsContextValue {
   const context = useContext(TabsContext);
-  if (!context) throw new Error(`<${component}> phải được đặt bên trong <Tabs>`);
+  if (!context) throw new Error(tr('<{{component}}> phải được đặt bên trong <Tabs>', { component }));
   return context;
 }
 

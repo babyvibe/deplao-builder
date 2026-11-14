@@ -10,6 +10,8 @@ import { COMBINE_FALLBACK_LABEL, planBlockSend, type CampaignSendOptions } from 
 import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../../../shared/crm/campaignDelay';
 import { CAMPAIGN_STOP_AFTER_FAILURES_CHOICES, campaignFlag, normalizeStopAfterFailures } from '../../../../shared/crm/campaignAutoStop';
 import { CampaignSendOptionsControl } from './CampaignParts';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,7 +21,7 @@ type SendMode     = 'random' | 'all';
 
 export interface MixedConfig   { actions: MixedAction[]; group_ids?: string[]; }
 export interface ContentBlock  { id: string; text: string; images: string[]; tagAll?: boolean; tagAllText?: string; }
-/** `order` / `combine`: ảnh kèm chữ (thứ tự, gộp 1 tin) — xem shared/crm/campaignSendPlan. */
+/** `order` / `combine`: photos with text (order, merge into 1 message); see shared/crm/campaignSendPlan. */
 export interface ContentConfig { mode: SendMode; blocks: ContentBlock[]; order?: CampaignSendOptions['order']; combine?: boolean; }
 
 interface CampaignFormData {
@@ -35,9 +37,9 @@ interface CampaignFormData {
   per_contact_delay_max_seconds?: number;
   daily_send_limit: number;
   daily_start_time: string;
-  /** Tự dừng khi N liên hệ lỗi liên tiếp; 0 = không dừng */
+  /** Stops automatically after N contacts fail in a row; 0 = never stop */
   stop_after_failures?: number;
-  /** Tự dừng: chỉ tính người lạ (Zalo) / mai gửi tiếp — 0 / 1 */
+  /** Auto-stop: only counts strangers (Zalo) / send tomorrow: 0 / 1 */
   stop_strangers_only?: number;
   stop_resume_next_day?: number;
 }
@@ -54,7 +56,7 @@ interface CampaignCreateModalProps {
 // Preview substitution - replaces variables with dummy values
 function substitutePreview(text: string): string {
   return (text || '')
-    .replace(/\{name\}/g, 'Nguyễn Văn A')
+    .replace(/\{name\}/g, tr('Nguyễn Văn A'))
     .replace(/\{userId\}/g, '0987654321');
 }
 
@@ -95,7 +97,7 @@ function fmtDelayRange(min: number, max: number): string {
   return `${fmt(min)}-${fmt(max)}`;
 }
 
-/** Preset delay ranges giữa các liên hệ */
+/** Preset delay ranges between contacts */
 const DELAY_PRESETS = [
   { label: '2-3m',   min: 120, max: 180 },
   { label: '3-5m',   min: 180, max: 300 },
@@ -103,9 +105,9 @@ const DELAY_PRESETS = [
   { label: '10-15m', min: 600, max: 900 },
 ];
 
-/** Preset delay ranges giữa các tin nhắn */
+/** Preset delay ranges between messages */
 const PC_DELAY_PRESETS = [
-  { label: 'Không',   min: 0,   max: 0   },
+  { label: tr('Không'),   min: 0,   max: 0   },
   { label: '5-15s',   min: 5,   max: 15  },
   { label: '15-30s',  min: 15,  max: 30  },
   { label: '30-60s',  min: 30,  max: 60  },
@@ -113,16 +115,16 @@ const PC_DELAY_PRESETS = [
 ];
 
 const TYPE_OPTIONS: { value: CampaignType; icon: React.ReactNode; label: string }[] = [
-  { value: 'message',         icon: <ChatIcon className="w-4 h-4" />, label: 'Tin nhắn'   },
-  { value: 'friend_request',  icon: <UserCheckIcon className="w-4 h-4" />, label: 'Kết bạn'    },
-  { value: 'invite_to_group', icon: <UsersIcon className="w-4 h-4" />, label: 'Mời nhóm'   },
-  { value: 'mixed',           icon: <ShuffleIcon className="w-4 h-4" />, label: 'Hỗn hợp'    },
+  { value: 'message',         icon: <ChatIcon className="w-4 h-4" />, label: tr('Tin nhắn')   },
+  { value: 'friend_request',  icon: <UserCheckIcon className="w-4 h-4" />, label: tr('Kết bạn')    },
+  { value: 'invite_to_group', icon: <UsersIcon className="w-4 h-4" />, label: tr('Mời nhóm')   },
+  { value: 'mixed',           icon: <ShuffleIcon className="w-4 h-4" />, label: tr('Hỗn hợp')    },
 ];
 
 const INVITE_ERROR_LABELS: Record<number, string> = {
-  269: 'Chưa là bạn bè', 178: 'Đã là thành viên', 263: 'Đã gửi lời mời',
-  262: 'Đã có lời mời',  177: 'Nhóm đầy',          166: 'Không có quyền',
-  245: 'Người lạ',       122: 'Bị chặn',            247: 'Bị bỏ qua nhóm',
+  269: tr('Chưa là bạn bè'), 178: tr('Đã là thành viên'), 263: tr('Đã gửi lời mời'),
+  262: tr('Đã có lời mời'),  177: tr('Nhóm đầy'),          166: tr('Không có quyền'),
+  245: tr('Người lạ'),       122: tr('Bị chặn'),            247: tr('Bị bỏ qua nhóm'),
 };
 
 // ── Live Preview Component ─────────────────────────────────────────────────────
@@ -149,7 +151,7 @@ function LivePreview({
 
   const hasImages = (block?.images?.length ?? 0) > 0;
   const isFR      = type === 'friend_request';
-  // Cùng quyết định với hàng đợi: chữ trước / ảnh trước / ảnh + chữ trong 1 tin.
+  // Same decision as the queue: text first / photos first / photos + text in 1 message.
   const captionPreview = supportsFormatting ? parseMarkup(previewText).text : previewText;
   const plan = !isFR && block
     ? planBlockSend({ text: captionPreview, images: block.images, channel, options: sendOptions })
@@ -179,10 +181,10 @@ function LivePreview({
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Xem trước</span>
+        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{tr('Xem trước')}</span>
         {!isFR && blocks.length > 1 && (
           <span className="text-[10px] text-muted-foreground">
-            {mode === 'random' ? '🎲 Random' : '📨 Tất cả'}
+            {mode === 'random' ? tr('🎲 Random') : tr('📨 Tất cả')}
           </span>
         )}
       </div>
@@ -197,7 +199,7 @@ function LivePreview({
                   ? 'bg-blue-600 text-white border-blue-500'
                   : 'border-input text-muted-foreground hover:text-foreground hover:border-border-strong'
               }`}>
-              Nội dung {i + 1}
+              {trx('Nội dung {{v1}}', { v1: i + 1 })}
             </button>
           ))}
         </div>
@@ -209,7 +211,7 @@ function LivePreview({
         <div className="flex items-center gap-2 px-3 py-2 bg-muted border-b border-input flex-shrink-0">
           <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">{supportsFormatting ? 'Z' : 'T'}</div>
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] font-semibold text-foreground truncate">Nguyễn Văn A</p>
+            <p className="text-[11px] font-semibold text-foreground truncate">{tr('Nguyễn Văn A')}</p>
             <p className="text-[9px] text-muted-foreground">{supportsFormatting ? 'Zalo' : 'Telegram'}</p>
           </div>
         </div>
@@ -218,7 +220,7 @@ function LivePreview({
         <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-card">
           {/* Timestamp */}
           <div className="flex justify-center">
-            <span className="text-[9px] text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Hôm nay 12:00</span>
+            <span className="text-[9px] text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{tr('Hôm nay 12:00')}</span>
           </div>
 
           {(previewText || hasImages) ? (
@@ -229,7 +231,7 @@ function LivePreview({
                     {step.kind === 'text' && textBubble}
                     {step.kind === 'images' && imageGrid(step.images)}
                     {step.kind === 'captioned' && (
-                      // Ảnh + chữ = 1 tin: chữ là chú thích (Zalo không giữ định dạng)
+                      // Photo + text = 1 message: the text is the caption (Zalo does not keep formatting)
                       <div className="bg-blue-600 rounded-2xl rounded-br-sm overflow-hidden" style={{ maxWidth: '11.25rem' }}>
                         {imageGrid(step.images, true)}
                         <div className="px-3 py-2 text-xs leading-relaxed break-words whitespace-pre-wrap text-white">{captionPreview}</div>
@@ -241,13 +243,13 @@ function LivePreview({
                   <span className="text-[9px] text-warning text-right" style={{ maxWidth: '11.25rem' }}>{COMBINE_FALLBACK_LABEL[plan.fallback]}</span>
                 )}
                 {/* Status tick */}
-                <span className="text-[9px] text-muted-foreground">✓✓ Đã gửi</span>
+                <span className="text-[9px] text-muted-foreground">{tr('✓✓ Đã gửi')}</span>
               </div>
             </div>
           ) : (
             <div className="flex justify-center py-4">
               <p className="text-[11px] text-muted-foreground italic">
-                {isFR ? 'Soạn lời nhắn kết bạn...' : 'Soạn nội dung tin nhắn...'}
+                {isFR ? tr('Soạn lời nhắn kết bạn...') : tr('Soạn nội dung tin nhắn...')}
               </p>
             </div>
           )}
@@ -255,7 +257,7 @@ function LivePreview({
           {/* Friend request chip */}
           {isFR && previewText && (
             <div className="flex justify-center">
-              <div className="border border-blue-500/40 rounded-xl px-3 py-2 text-[11px] text-blue-400 text-center max-w-[90%]"><UserCheckIcon className="w-4 h-4 inline" /> Lời mời kết bạn gửi kèm nội dung trên
+              <div className="border border-blue-500/40 rounded-xl px-3 py-2 text-[11px] text-blue-400 text-center max-w-[90%]">{trx('<0/> Lời mời kết bạn gửi kèm nội dung trên', { 0: <UserCheckIcon className="w-4 h-4 inline" /> })}
               </div>
             </div>
           )}
@@ -266,8 +268,8 @@ function LivePreview({
       {!isFR && blocks.length > 1 && (
         <div className="mt-2 px-2 text-[10px] text-muted-foreground flex-shrink-0">
           {mode === 'random'
-            ? `🎲 Mỗi người nhận ngẫu nhiên 1 trong ${blocks.length} nội dung`
-            : `📨 Mỗi người nhận cả ${blocks.length} nội dung lần lượt`}
+            ? tr('🎲 Mỗi người nhận ngẫu nhiên 1 trong {{count}} nội dung', { count: blocks.length })
+            : tr('📨 Mỗi người nhận cả {{count}} nội dung lần lượt', { count: blocks.length })}
         </div>
       )}
     </div>
@@ -305,14 +307,14 @@ function GroupPicker({
   return (
     <div className="flex flex-col h-full min-h-0">
       <p className="text-[11px] text-yellow-500 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-2.5 py-1.5 mb-2 flex-shrink-0">
-        <AlertIcon className="w-4 h-4 inline" /> Chỉ mời được bạn bè - Không mời được người lạ
+        {trx('<0/> Chỉ mời được bạn bè - Không mời được người lạ', { 0: <AlertIcon className="w-4 h-4 inline" /> })}
       </p>
       {!zaloId ? (
-        <p className="text-xs text-muted-foreground py-4 text-center">Mở modal từ tab Chiến dịch để xem danh sách nhóm</p>
+        <p className="text-xs text-muted-foreground py-4 text-center">{tr('Mở modal từ tab Chiến dịch để xem danh sách nhóm')}</p>
       ) : !loaded ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-3">
           <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-6.219-8.56" stroke="currentColor" strokeWidth="2.5"/></svg>
-          Đang tải nhóm...
+          {tr('Đang tải nhóm...')}
         </div>
       ) : (
         <>
@@ -322,7 +324,7 @@ function GroupPicker({
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Tìm nhóm..." className="flex-1 text-xs text-foreground bg-transparent focus:outline-none placeholder-subtle-foreground" />
+              placeholder={tr('Tìm nhóm...')} className="flex-1 text-xs text-foreground bg-transparent focus:outline-none placeholder-subtle-foreground" />
             {(() => {
               const allSel = visible.length > 0 && visible.every(g => inviteGroupIds.includes(g.contact_id));
               return visible.length > 1 ? (
@@ -330,14 +332,14 @@ function GroupPicker({
                   if (allSel ? inviteGroupIds.includes(g.contact_id) : !inviteGroupIds.includes(g.contact_id))
                     onToggle(g.contact_id);
                 })} className="text-[10px] text-blue-400 hover:text-blue-300 flex-shrink-0">
-                  {allSel ? 'Bỏ tất cả' : 'Chọn tất cả'}
+                  {allSel ? tr('Bỏ tất cả') : tr('Chọn tất cả')}
                 </button>
               ) : null;
             })()}
           </div>
 
           {inviteGroupIds.length > 0 && (
-            <p className="text-[11px] text-blue-400 mb-1.5 flex-shrink-0">✓ {inviteGroupIds.length} nhóm đã chọn</p>
+            <p className="text-[11px] text-blue-400 mb-1.5 flex-shrink-0">{trx('✓ {{count}} nhóm đã chọn', { count: inviteGroupIds.length })}</p>
           )}
 
           <div className="flex-1 min-h-0 overflow-y-auto border border-input rounded-lg divide-y divide-border/50">
@@ -361,12 +363,12 @@ function GroupPicker({
               );
             })}
             {visible.length === 0 && (
-              <p className="text-xs text-muted-foreground text-center py-4">{groups.length === 0 ? 'Chưa có nhóm nào. Đồng bộ nhóm trước.' : 'Không tìm thấy'}</p>
+              <p className="text-xs text-muted-foreground text-center py-4">{groups.length === 0 ? tr('Chưa có nhóm nào. Đồng bộ nhóm trước.') : tr('Không tìm thấy')}</p>
             )}
           </div>
 
           <details className="mt-2 flex-shrink-0">
-            <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-muted-foreground select-none"><ClipboardListIcon className="w-4 h-4 inline" /> Mã lỗi thường gặp</summary>
+            <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-muted-foreground select-none">{trx('<0/> Mã lỗi thường gặp', { 0: <ClipboardListIcon className="w-4 h-4 inline" /> })}</summary>
             <div className="mt-1 flex flex-wrap gap-1">
               {Object.entries(INVITE_ERROR_LABELS).map(([c, l]) => (
                 <span key={c} className="text-[9px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{c}: {l}</span>
@@ -381,7 +383,7 @@ function GroupPicker({
 
 // ── Markup Preview ────────────────────────────────────────────────────────────
 
-// Render text có markup thành các <span> có style, khớp với cách zca-js hiển thị.
+// Render text with markup as styled <span>s, matching how zca-js displays it.
 const STYLE_CSS: Record<string, React.CSSProperties> = {
   b: { fontWeight: 700 },
   i: { fontStyle: 'italic' },
@@ -398,7 +400,7 @@ const STYLE_CSS: Record<string, React.CSSProperties> = {
 function MarkupPreview({ text, className = 'text-foreground/80' }: { text: string; className?: string }) {
   const { text: clean, styles } = parseMarkup(text);
   if (!styles.length) return <span className={className}>{clean}</span>;
-  // Gộp style theo từng ký tự rồi cắt thành đoạn liên tiếp cùng style.
+  // Merge the style per character, then cut into consecutive runs with the same style.
   const css: React.CSSProperties[] = Array.from({ length: clean.length }, () => ({}));
   for (const s of styles) {
     const props = STYLE_CSS[s.st] || {};
@@ -439,8 +441,8 @@ function BlockEditor({
     setTimeout(() => { ta.focus(); ta.setSelectionRange(s + v.length, s + v.length); }, 0);
   };
 
-  // Bọc đoạn đang bôi đen bằng cặp thẻ markup ([b]…[/b], [red]…[/red]…).
-  // Không bôi đen thì chèn cặp thẻ rỗng và đặt con trỏ vào giữa.
+  // Wrap the selected text in a pair of markup tags ([b]…[/b], [red]…[/red]…).
+  // With no selection, insert an empty pair of tags and put the cursor in the middle.
   const wrapSelection = (tag: string) => {
     const ta = taRef.current;
     const open = `[${tag}]`, close = `[/${tag}]`;
@@ -455,7 +457,7 @@ function BlockEditor({
 
   const pickImages = async () => {
     const r = await ipc.file?.openDialog({
-      filters: [{ name: 'Hình ảnh', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] }],
+      filters: [{ name: tr('Hình ảnh'), extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] }],
       properties: ['openFile', 'multiSelections'],
     });
     if (r?.filePaths?.length) onUpdate({ images: [...block.images, ...r.filePaths] });
@@ -465,7 +467,7 @@ function BlockEditor({
     <div className="flex flex-col gap-2 h-full min-h-0">
       {/* Variable chips */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <span className="text-[10px] text-muted-foreground">Chèn biến:</span>
+        <span className="text-[10px] text-muted-foreground">{tr('Chèn biến:')}</span>
         {TEMPLATE_VARS.map(v => (
           <button key={v} type="button" onClick={() => insertVar(v)}
             className="text-[11px] px-2 py-0.5 rounded-full border border-blue-500/30 text-blue-400 hover:bg-blue-500/15 font-mono transition-colors">
@@ -474,25 +476,25 @@ function BlockEditor({
         ))}
       </div>
 
-      {/* Toolbar định dạng */}
+      {/* Formatting toolbar */}
       {supportsFormatting && <div className="flex items-center gap-1 flex-wrap flex-shrink-0">
-        <button type="button" onClick={() => wrapSelection('b')} title="In đậm"
+        <button type="button" onClick={() => wrapSelection('b')} title={tr('In đậm')}
           className="text-[12px] font-bold w-6 h-6 rounded border border-input text-foreground/80 hover:bg-muted transition-colors">B</button>
-        <button type="button" onClick={() => wrapSelection('i')} title="In nghiêng"
+        <button type="button" onClick={() => wrapSelection('i')} title={tr('In nghiêng')}
           className="text-[12px] italic w-6 h-6 rounded border border-input text-foreground/80 hover:bg-muted transition-colors">I</button>
-        <button type="button" onClick={() => wrapSelection('u')} title="Gạch chân"
+        <button type="button" onClick={() => wrapSelection('u')} title={tr('Gạch chân')}
           className="text-[12px] underline w-6 h-6 rounded border border-input text-foreground/80 hover:bg-muted transition-colors">U</button>
-        <button type="button" onClick={() => wrapSelection('s')} title="Gạch ngang"
+        <button type="button" onClick={() => wrapSelection('s')} title={tr('Gạch ngang')}
           className="text-[12px] line-through w-6 h-6 rounded border border-input text-foreground/80 hover:bg-muted transition-colors">S</button>
         <span className="w-px h-4 bg-accent mx-0.5" />
         {([['red','#db342e'],['orange','#f27806'],['yellow','#f7b503'],['green','#15a85f']] as const).map(([tag, hex]) => (
-          <button key={tag} type="button" onClick={() => wrapSelection(tag)} title={`Màu ${tag}`}
+          <button key={tag} type="button" onClick={() => wrapSelection(tag)} title={tr('Màu {{tag}}', { tag })}
             className="w-5 h-5 rounded-full border border-border-strong hover:scale-110 transition-transform" style={{ background: hex }} />
         ))}
         <span className="w-px h-4 bg-accent mx-0.5" />
-        <button type="button" onClick={() => wrapSelection('big')} title="Cỡ lớn"
+        <button type="button" onClick={() => wrapSelection('big')} title={tr('Cỡ lớn')}
           className="text-[13px] font-semibold px-1.5 h-6 rounded border border-input text-foreground/80 hover:bg-muted transition-colors">A+</button>
-        <button type="button" onClick={() => wrapSelection('small')} title="Cỡ nhỏ"
+        <button type="button" onClick={() => wrapSelection('small')} title={tr('Cỡ nhỏ')}
           className="text-[10px] px-1.5 h-6 rounded border border-input text-foreground/80 hover:bg-muted transition-colors">A-</button>
       </div>}
 
@@ -501,25 +503,25 @@ function BlockEditor({
         ref={taRef}
         value={block.text}
         onChange={e => onUpdate({ text: e.target.value })}
-        placeholder={'Soạn nội dung tin nhắn...\nDùng {name} để chèn tên người nhận'}
+        placeholder={tr('Soạn nội dung tin nhắn...\nDùng {name} để chèn tên người nhận')}
         className="flex-1 min-h-0 w-full bg-card border border-input rounded-xl px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-none transition-colors"
       />
 
-      {/* Tag @all khi gửi nhóm */}
+      {/* @all tag when sending to a group */}
       {supportsTagAll && <label className="flex items-center gap-2 flex-shrink-0 cursor-pointer text-xs text-muted-foreground select-none flex-wrap">
         <input type="checkbox" checked={!!block.tagAll} onChange={e => onUpdate({ tagAll: e.target.checked })}
           className="accent-blue-500 w-3.5 h-3.5" />
-        Tag toàn nhóm khi gửi vào nhóm
+        {tr('Tag toàn nhóm khi gửi vào nhóm')}
         {block.tagAll && (
           <span className="flex items-center gap-1" onClick={e => e.preventDefault()}>
             <span className="font-mono text-blue-400">@</span>
             <input type="text" value={block.tagAllText ?? 'all'}
               onChange={e => onUpdate({ tagAllText: e.target.value })}
-              placeholder="all"
+              placeholder={tr('all')}
               className="w-28 bg-card border border-border rounded px-1.5 py-0.5 font-mono text-blue-400 text-xs focus:outline-none focus:border-blue-500" />
           </span>
         )}
-        <span className="text-subtle-foreground">(bỏ qua với chat cá nhân)</span>
+        <span className="text-subtle-foreground">{tr('(bỏ qua với chat cá nhân)')}</span>
       </label>}
 
       {/* Images */}
@@ -547,7 +549,7 @@ function BlockEditor({
             <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
             <polyline points="21 15 16 10 5 21"/>
           </svg>
-          {block.images.length > 0 ? `${block.images.length} ảnh · thêm tiếp` : 'Đính kèm ảnh (tuỳ chọn)'}
+          {block.images.length > 0 ? tr('{{count}} ảnh · thêm tiếp', { count: block.images.length }) : tr('Đính kèm ảnh (tuỳ chọn)')}
         </button>
       </div>
     </div>
@@ -568,25 +570,25 @@ export default function CampaignCreateModal({
   const [activeBlock,   setActiveBlock]  = useState(0);
   const [dailyLimit,    setDailyLimit]   = useState(initialData?.daily_send_limit ?? 0);
   const [dailyStartTime, setDailyStartTime] = useState(initialData?.daily_start_time ?? '08:00');
-  // Mặc định không tự dừng; giá trị ngoài các mốc (lưu qua API) vẫn hiện để không mất khi lưu lại
+  // Does not auto-stop by default; values outside these steps (saved via the API) are still shown so they are not lost when saving again
   const [stopAfterFailures, setStopAfterFailures] = useState(() => normalizeStopAfterFailures(initialData?.stop_after_failures));
   const stopChoices = CAMPAIGN_STOP_AFTER_FAILURES_CHOICES.includes(stopAfterFailures)
     ? CAMPAIGN_STOP_AFTER_FAILURES_CHOICES
     : [...CAMPAIGN_STOP_AFTER_FAILURES_CHOICES, stopAfterFailures].sort((a, b) => a - b);
-  // Zalo chặn spam theo tin cho người lạ (nhắn bạn bè / nhóm vẫn được) và thường mở lại hôm sau. Kênh khác không có
-  // danh sách bạn bè → không có "Chỉ tính người lạ".
+  // Zalo limits spam per message to strangers (messaging friends / groups is still allowed) and usually reopens the next day. Other channels do not have it
+  // friends list → there is no "Chỉ tính người lạ" (Count strangers only) option.
   const strangersOption = channel === 'zalo';
   const [stopStrangersOnly, setStopStrangersOnly] = useState(() => campaignFlag(initialData?.stop_strangers_only) === 1);
   const [stopResumeNextDay, setStopResumeNextDay] = useState(() => campaignFlag(initialData?.stop_resume_next_day) === 1);
   const countStrangersOnly = strangersOption && stopStrangersOnly;
 
-  // ── Delay range (min/max thay thế fixed + jitter) ────────────────────────
+  // ── Delay range (min/max replaces fixed + jitter) ────────────────────────
   const getInitMinMax = (): [number, number] => {
     const d = initialData;
     if (!d) return [110, 130];
     const dm = (d as any).delay_min_seconds;
     const dx = (d as any).delay_max_seconds;
-    // Khoảng đã lưu dưới mức tối thiểu (bản cũ cho chọn từ 5 giây) → hiện đúng khoảng queue thực sự dùng
+    // A saved range below the minimum (old versions allowed picking from 5 seconds) → show the range the queue actually uses
     if (dm != null && dx != null) return effectiveContactDelayRange(dm, dx);
     const fallback = d.delay_seconds || 120;
     return effectiveContactDelayRange(fallback - 10, fallback + 10);
@@ -596,7 +598,7 @@ export default function CampaignCreateModal({
   const [delayMax, setDelayMax] = useState(initRange[1]);
   const [customDelayMode, setCustomDelayMode] = useState(false);
 
-  // ── Per-contact delay range (delay giữa các tin trong 1 liên hệ) ────────
+  // ── Per-contact delay range (delay between messages to 1 contact) ────────
   const getInitPc = (): [number, number] => {
     const d = initialData;
     if (!d) return [0, 0];
@@ -683,7 +685,7 @@ export default function CampaignCreateModal({
   const handleSave = async () => {
     if (!isValid()) return;
     setSaving(true);
-    // Ô tuỳ chỉnh chỉ kẹp khi rời ô → kẹp lại lần nữa phòng khi bấm Lưu lúc đang gõ
+    // The custom input is only clamped when leaving the field → clamp again in case Save is pressed while still typing
     const [saveDelayMin, saveDelayMax] = effectiveContactDelayRange(delayMin, delayMax);
     const finalDelaySec = Math.round((saveDelayMin + saveDelayMax) / 2);
     await onSave({
@@ -736,9 +738,9 @@ export default function CampaignCreateModal({
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border flex-shrink-0">
           <div>
             <h3 className="font-bold text-foreground text-[15px]">
-              {editMode ? <><EditIcon className="w-4 h-4 inline" /> Chỉnh sửa chiến dịch</> : <><RocketIcon className="w-4 h-4 inline" /> Tạo chiến dịch mới</>}
+              {editMode ? <>{trx('<0/> Chỉnh sửa chiến dịch', { 0: <EditIcon className="w-4 h-4 inline" /> })}</> : <>{trx('<0/> Tạo chiến dịch mới', { 0: <RocketIcon className="w-4 h-4 inline" /> })}</>}
             </h3>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Cấu hình nội dung và phương thức gửi</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">{tr('Cấu hình nội dung và phương thức gửi')}</p>
           </div>
           <button onClick={onClose}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
@@ -755,15 +757,15 @@ export default function CampaignCreateModal({
           <div className="w-52 flex-shrink-0 border-r border-border flex flex-col overflow-y-auto p-4 gap-5">
             {/* Campaign name */}
             <div>
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">Tên chiến dịch *</label>
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">{tr('Tên chiến dịch *')}</label>
               <input value={name} onChange={e => setName(e.target.value)}
-                placeholder="Nhập tên..."
+                placeholder={tr('Nhập tên...')}
                 className="w-full bg-card border border-input rounded-lg px-2.5 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors" />
             </div>
 
             {/* Type */}
             <div>
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">Loại *</label>
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">{tr('Loại *')}</label>
               <div className="space-y-1">
                 {availableTypes.map(opt => (
                   <button key={opt.value} type="button" onClick={() => setType(opt.value)}
@@ -785,12 +787,12 @@ export default function CampaignCreateModal({
             {/* Mixed actions */}
             {type === 'mixed' && (
               <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">Hành động</label>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">{tr('Hành động')}</label>
                 <div className="space-y-1">
                   {([
-                    { action: 'message' as MixedAction,         icon: <ChatIcon className="w-4 h-4" />, label: 'Tin nhắn' },
-                    { action: 'friend_request' as MixedAction,  icon: <UserCheckIcon className="w-4 h-4" />, label: 'Kết bạn' },
-                    { action: 'invite_to_groups' as MixedAction, icon: <UsersIcon className="w-4 h-4" />, label: 'Mời nhóm' },
+                    { action: 'message' as MixedAction,         icon: <ChatIcon className="w-4 h-4" />, label: tr('Tin nhắn') },
+                    { action: 'friend_request' as MixedAction,  icon: <UserCheckIcon className="w-4 h-4" />, label: tr('Kết bạn') },
+                    { action: 'invite_to_groups' as MixedAction, icon: <UsersIcon className="w-4 h-4" />, label: tr('Mời nhóm') },
                   ]).map(({ action, icon, label }) => {
                     const checked = mixedActions.includes(action);
                     return (
@@ -807,14 +809,14 @@ export default function CampaignCreateModal({
                       </label>
                     );
                   })}
-                  {!mixedActions.length && <p className="text-[10px] text-red-400 px-1">Chọn ít nhất 1 hành động</p>}
+                  {!mixedActions.length && <p className="text-[10px] text-red-400 px-1">{tr('Chọn ít nhất 1 hành động')}</p>}
                 </div>
               </div>
             )}
 
-            {/* ⏱ Delay giữa các liên hệ */}
+            {/* ⏱ Delay between contacts */}
             <div>
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">⏱ Delay giữa các liên hệ</label>
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">{tr('⏱ Delay giữa các liên hệ')}</label>
               <div className="grid grid-cols-2 gap-1">
                 {DELAY_PRESETS.map(p => {
                   const active = !customDelayMode && delayMin === p.min && delayMax === p.max;
@@ -834,11 +836,11 @@ export default function CampaignCreateModal({
                   customDelayMode ? 'border-blue-500 bg-blue-500/10 text-blue-300'
                     : 'border-input text-muted-foreground hover:text-foreground/80 hover:border-border-strong'
                 }`}>
-                <span>{customDelayMode ? '▾' : '▸'}</span> Tùy chỉnh khoảng
+                {trx('<0>{{v1}}</0> Tùy chỉnh khoảng', { 0: <span />, v1: customDelayMode ? '▾' : '▸' })}
               </button>
               {customDelayMode && (
                 <div className="flex items-center gap-1.5 mt-1.5">
-                  {/* Kẹp khi rời ô (kẹp từng phím làm "45" thành "305"); queue không gửi nhanh hơn 30 giây / liên hệ */}
+                  {/* Clamped when leaving the field (clamping each key would turn "45" into "305"); the queue never sends faster than 30 seconds / contact */}
                   <input type="number" min={CAMPAIGN_MIN_CONTACT_DELAY_SECONDS} value={delayMin || ''}
                     onChange={e => setDelayMin(parseInt(e.target.value) || 0)}
                     onBlur={() => {
@@ -846,26 +848,26 @@ export default function CampaignCreateModal({
                       setDelayMin(min); setDelayMax(max);
                     }}
                     className="w-full bg-card border border-input rounded-lg px-2 py-1.5 text-[11px] text-foreground focus:outline-none focus:border-blue-500"
-                    placeholder={`Tối thiểu (≥ ${CAMPAIGN_MIN_CONTACT_DELAY_SECONDS}s)`} />
+                    placeholder={tr('Tối thiểu (≥ {{CAMPAIGN_MIN_CONTACT_DELAY_SECONDS}}s)', { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS })} />
                   <span className="text-muted-foreground text-xs">→</span>
                   <input type="number" min={Math.max(CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, delayMin)} value={delayMax || ''}
                     onChange={e => setDelayMax(parseInt(e.target.value) || 0)}
                     onBlur={() => setDelayMax(effectiveContactDelayRange(delayMin, delayMax)[1])}
                     className="w-full bg-card border border-input rounded-lg px-2 py-1.5 text-[11px] text-foreground focus:outline-none focus:border-blue-500"
-                    placeholder="Tối đa (s)" />
-                  <span className="text-muted-foreground text-[10px] flex-shrink-0">giây</span>
+                    placeholder={tr('Tối đa (s)')} />
+                  <span className="text-muted-foreground text-[10px] flex-shrink-0">{tr('giây')}</span>
                 </div>
               )}
               <p className="text-[10px] text-muted-foreground mt-1">
-                ⏱ Ngẫu nhiên <span className="text-muted-foreground font-medium">{fmtDelayRange(...effectiveContactDelayRange(delayMin, delayMax))}</span> giữa các liên hệ
-                {customDelayMode && <> · tối thiểu {CAMPAIGN_MIN_CONTACT_DELAY_SECONDS} giây</>}
+                {trx('⏱ Ngẫu nhiên <0>{{v1}}</0> giữa các liên hệ', { 0: <span className="text-muted-foreground font-medium" />, v1: fmtDelayRange(...effectiveContactDelayRange(delayMin, delayMax)) })}
+                {customDelayMode && <> {trx('· tối thiểu {{CAMPAIGN_MIN_CONTACT_DELAY_SECONDS}} giây', { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS })}</>}
               </p>
             </div>
 
-            {/* ⏱ Delay giữa các tin nhắn (chỉ khi gửi nhiều tin/liên hệ) */}
+            {/* ⏱ Delay between messages (only when sending several messages / contact) */}
             {hasMultiSend && (
               <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">⏱ Delay giữa các tin nhắn</label>
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">{tr('⏱ Delay giữa các tin nhắn')}</label>
                 <div className="grid grid-cols-2 gap-1">
                   {PC_DELAY_PRESETS.map(p => {
                     const active = !customPcDelayMode && pcDelayMin === p.min && pcDelayMax === p.max;
@@ -885,33 +887,33 @@ export default function CampaignCreateModal({
                     customPcDelayMode ? 'border-blue-500 bg-blue-500/10 text-blue-300'
                       : 'border-input text-muted-foreground hover:text-foreground/80 hover:border-border-strong'
                   }`}>
-                  <span>{customPcDelayMode ? '▾' : '▸'}</span> Tùy chỉnh
+                  {trx('<0>{{v1}}</0> Tùy chỉnh', { 0: <span />, v1: customPcDelayMode ? '▾' : '▸' })}
                 </button>
                 {customPcDelayMode && (
                   <div className="flex items-center gap-1.5 mt-1.5">
                     <input type="number" min={0} value={pcDelayMin ?? ''}
                       onChange={e => setPcDelayMin(Math.max(0, parseInt(e.target.value) || 0))}
                       className="w-full bg-card border border-input rounded-lg px-2 py-1.5 text-[11px] text-foreground focus:outline-none focus:border-blue-500"
-                      placeholder="Min (s)" />
+                      placeholder={tr('Min (s)')} />
                     <span className="text-muted-foreground text-xs">→</span>
                     <input type="number" min={pcDelayMin} value={pcDelayMax ?? ''}
                       onChange={e => setPcDelayMax(Math.max(pcDelayMin || 0, parseInt(e.target.value) || 0))}
                       className="w-full bg-card border border-input rounded-lg px-2 py-1.5 text-[11px] text-foreground focus:outline-none focus:border-blue-500"
-                      placeholder="Max (s)" />
-                    <span className="text-muted-foreground text-[10px] flex-shrink-0">giây</span>
+                      placeholder={tr('Max (s)')} />
+                    <span className="text-muted-foreground text-[10px] flex-shrink-0">{tr('giây')}</span>
                   </div>
                 )}
                 <p className="text-[10px] text-muted-foreground mt-1">
                   {pcDelayMin > 0 || pcDelayMax > 0
-                    ? `⏱ Ngẫu nhiên ${fmtDelayRange(pcDelayMin, pcDelayMax)} giữa các tin nhắn`
-                    : '⏱ Gửi liên tiếp (mặc định ~1s)'}
+                    ? tr('⏱ Ngẫu nhiên {{v1}} giữa các tin nhắn', { v1: fmtDelayRange(pcDelayMin, pcDelayMax) })
+                    : tr('⏱ Gửi liên tiếp (mặc định ~1s)')}
                 </p>
               </div>
             )}
 
             {/* Daily Send Limit */}
             <div>
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5"><ChartIcon className="w-4 h-4 inline" /> Giới hạn/ngày</label>
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">{trx('<0/> Giới hạn/ngày', { 0: <ChartIcon className="w-4 h-4 inline" /> })}</label>
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <input
@@ -920,41 +922,41 @@ export default function CampaignCreateModal({
                     step={10}
                     value={dailyLimit || ''}
                     onChange={e => setDailyLimit(Math.max(0, parseInt(e.target.value) || 0))}
-                    placeholder="Không giới hạn"
+                    placeholder={tr('Không giới hạn')}
                     className="w-full bg-card border border-input rounded-lg px-2.5 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors"
                   />
-                  <span className="text-[10px] text-muted-foreground flex-shrink-0">liên hệ</span>
+                  <span className="text-[10px] text-muted-foreground flex-shrink-0">{tr('liên hệ')}</span>
                 </div>
                 <div>
-                  <label className="text-[10px] text-muted-foreground block mb-1">Giờ bắt đầu chạy</label>
+                  <label className="text-[10px] text-muted-foreground block mb-1">{tr('Giờ bắt đầu chạy')}</label>
                   <input
                     type="time"
                     value={dailyStartTime}
                     onChange={e => setDailyStartTime(e.target.value || '08:00')}
                     className="w-full bg-card border border-input rounded-lg px-2.5 py-2 text-xs text-foreground focus:outline-none focus:border-blue-500 transition-colors"
                   />
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Nếu giờ này đã qua hôm nay, chiến dịch chạy ngay</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{tr('Nếu giờ này đã qua hôm nay, chiến dịch chạy ngay')}</p>
                 </div>
               </div>
               <p className="text-[10px] text-muted-foreground mt-1">
                 {dailyLimit > 0
-                  ? `Gửi tối đa ${dailyLimit}/ngày từ ${dailyStartTime}`
-                  : `Không giới hạn/ngày · chạy từ ${dailyStartTime}, hạn mức 60 lượt/giờ mỗi tài khoản`}
+                  ? tr('Gửi tối đa {{dailyLimit}}/ngày từ {{dailyStartTime}}', { dailyLimit, dailyStartTime })
+                  : tr('Không giới hạn/ngày · chạy từ {{dailyStartTime}}, hạn mức 60 lượt/giờ mỗi tài khoản', { dailyStartTime })}
               </p>
             </div>
 
-            {/* Tự dừng khi lỗi liên tiếp: tài khoản bị chặn / giới hạn thì không gửi mãi (shared/crm/campaignAutoStop) */}
+            {/* Auto-stops after consecutive errors: a blocked / limited account does not keep sending forever (shared/crm/campaignAutoStop) */}
             <div>
-              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5"><PauseIcon className="w-4 h-4 inline" /> Tự dừng khi lỗi</label>
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1.5">{trx('<0/> Tự dừng khi lỗi', { 0: <PauseIcon className="w-4 h-4 inline" /> })}</label>
               <div className="grid grid-cols-5 gap-1">
                 {stopChoices.map(n => (
                   <button key={n} type="button" onClick={() => setStopAfterFailures(n)}
-                    title={n > 0 ? `Dừng khi ${n} liên hệ lỗi liên tiếp` : 'Không tự dừng'}
+                    title={n > 0 ? tr('Dừng khi {{n}} liên hệ lỗi liên tiếp', { n }) : tr('Không tự dừng')}
                     className={`py-1.5 rounded-lg border text-[11px] font-medium tabular-nums transition-colors ${
                       stopAfterFailures === n ? 'border-blue-500 bg-blue-500/15 text-blue-300'
                         : 'border-input text-muted-foreground hover:border-border-strong hover:text-foreground/80'
                     }`}>
-                    {n > 0 ? n : 'Tắt'}
+                    {n > 0 ? n : tr('Tắt')}
                   </button>
                 ))}
               </div>
@@ -962,32 +964,32 @@ export default function CampaignCreateModal({
                 <div className="mt-1.5 space-y-1">
                   {strangersOption && (
                     <label className="flex items-center gap-2 cursor-pointer text-[11px] text-muted-foreground select-none"
-                      title="Zalo chặn spam theo tin nhắn cho người lạ: bạn bè, nhóm gửi được hay lỗi đều không tính">
+                      title={tr('Zalo chặn spam theo tin nhắn cho người lạ: bạn bè, nhóm gửi được hay lỗi đều không tính')}>
                       <input type="checkbox" checked={stopStrangersOnly} onChange={e => setStopStrangersOnly(e.target.checked)}
                         className="accent-blue-500 w-3.5 h-3.5" />
-                      Chỉ tính người lạ
+                      {tr('Chỉ tính người lạ')}
                     </label>
                   )}
                   <label className="flex items-center gap-2 cursor-pointer text-[11px] text-muted-foreground select-none"
-                    title={`Dừng tới ${dailyStartTime} hôm sau rồi tự gửi tiếp (bị chặn spam thường mở lại sau một ngày)`}>
+                    title={tr('Dừng tới {{dailyStartTime}} hôm sau rồi tự gửi tiếp (bị chặn spam thường mở lại sau một ngày)', { dailyStartTime })}>
                     <input type="checkbox" checked={stopResumeNextDay} onChange={e => setStopResumeNextDay(e.target.checked)}
                       className="accent-blue-500 w-3.5 h-3.5" />
-                    Mai gửi tiếp
+                    {tr('Mai gửi tiếp')}
                   </label>
                 </div>
               )}
               <p className="text-[10px] text-muted-foreground mt-1">
                 {stopAfterFailures > 0
-                  ? `Dừng khi ${stopAfterFailures} ${countStrangersOnly ? 'người lạ' : 'liên hệ'} lỗi liên tiếp${stopResumeNextDay ? `, ${dailyStartTime} hôm sau gửi tiếp` : ''}`
-                  : 'Gửi hết danh sách dù lỗi'}
+                  ? tr('Dừng khi {{stopAfterFailures}} {{v1}} lỗi liên tiếp{{v2}}', { stopAfterFailures, v1: countStrangersOnly ? tr('người lạ') : tr('liên hệ'), v2: stopResumeNextDay ? tr(', {{dailyStartTime}} hôm sau gửi tiếp', { dailyStartTime }) : '' })
+                  : tr('Gửi hết danh sách dù lỗi')}
               </p>
             </div>
 
             {/* Warning */}
             <div className="border border-yellow-500/20 rounded-lg p-2.5 mt-auto">
-              <p className="text-[10px] text-yellow-400 font-semibold mb-1"><AlertIcon className="w-3.5 h-3.5 inline" /> Cảnh báo</p>
+              <p className="text-[10px] text-yellow-400 font-semibold mb-1">{trx('<0/> Cảnh báo', { 0: <AlertIcon className="w-3.5 h-3.5 inline" /> })}</p>
               <p className="text-[9px] text-yellow-300/60 leading-relaxed">
-                Hành động càng nhiều, nội dung càng dài, và delay càng ngắn sẽ làm tăng nguy cơ bị đánh spam. Hãy cân nhắc kỹ lưỡng khi cấu hình chiến dịch, và luôn tuân thủ nguyên tắc cộng đồng của nền tảng.
+                {tr('Hành động càng nhiều, nội dung càng dài, và delay càng ngắn sẽ làm tăng nguy cơ bị đánh spam. Hãy cân nhắc kỹ lưỡng khi cấu hình chiến dịch, và luôn tuân thủ nguyên tắc cộng đồng của nền tảng.')}
               </p>
             </div>
           </div>
@@ -1008,10 +1010,7 @@ export default function CampaignCreateModal({
                             ? 'bg-blue-600 border-blue-500 text-white'
                             : 'border-input text-muted-foreground hover:text-foreground hover:border-border-strong'
                         }`}>
-                        <span className="w-4 h-4 rounded-full bg-current/20 flex items-center justify-center text-[9px] font-bold leading-none">
-                          {i + 1}
-                        </span>
-                        Nội dung {i + 1}
+                        {trx('<0>{{v1}}</0>Nội dung {{v1}}', { 0: <span className="w-4 h-4 rounded-full bg-current/20 flex items-center justify-center text-[9px] font-bold leading-none" />, v1: i + 1 })}
                         {contentConfig.blocks.length > 1 && (
                           <span
                             onClick={e => { e.stopPropagation(); removeBlock(b.id); }}
@@ -1020,7 +1019,7 @@ export default function CampaignCreateModal({
                       </button>
                     ))}
                     <button type="button" onClick={addBlock}
-                      title="Thêm biến thể nội dung"
+                      title={tr('Thêm biến thể nội dung')}
                       className="flex-shrink-0 w-7 h-7 rounded-lg border border-dashed border-input text-muted-foreground hover:text-blue-400 hover:border-blue-500/50 flex items-center justify-center transition-colors text-lg leading-none">
                       +
                     </button>
@@ -1029,8 +1028,8 @@ export default function CampaignCreateModal({
                   {contentConfig.blocks.length > 1 && (
                     <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                       {([
-                        { value: 'random' as SendMode, icon: <ShuffleIcon className="w-4 h-4" />, label: 'Random' },
-                        { value: 'all' as SendMode,    icon: <SendIcon className="w-4 h-4" />, label: 'Tất cả' },
+                        { value: 'random' as SendMode, icon: <ShuffleIcon className="w-4 h-4" />, label: tr('Random') },
+                        { value: 'all' as SendMode,    icon: <SendIcon className="w-4 h-4" />, label: tr('Tất cả') },
                       ]).map(opt => (
                         <button key={opt.value} type="button"
                           onClick={() => setContentConfig(prev => ({ ...prev, mode: opt.value }))}
@@ -1047,7 +1046,7 @@ export default function CampaignCreateModal({
                 </>
               ) : hasFR && !hasMsg ? (
                 <>
-                  <span className="text-xs font-medium text-foreground/80"><UserCheckIcon className="w-4 h-4 inline" /> Lời nhắn kết bạn</span>
+                  <span className="text-xs font-medium text-foreground/80">{trx('<0/> Lời nhắn kết bạn', { 0: <UserCheckIcon className="w-4 h-4 inline" /> })}</span>
                   <div className="flex gap-1">
                     {TEMPLATE_VARS.map(v => (
                       <button key={v} type="button" onClick={() => insertFRVar(v)}
@@ -1058,9 +1057,9 @@ export default function CampaignCreateModal({
                   </div>
                 </>
               ) : hasInvite && !hasMsg ? (
-                <span className="text-xs font-medium text-foreground/80"><UsersIcon className="w-4 h-4 inline" /> Chọn nhóm để mời</span>
+                <span className="text-xs font-medium text-foreground/80">{trx('<0/> Chọn nhóm để mời', { 0: <UsersIcon className="w-4 h-4 inline" /> })}</span>
               ) : (
-                <span className="text-xs text-muted-foreground">Editor</span>
+                <span className="text-xs text-muted-foreground">{tr('Editor')}</span>
               )}
             </div>
 
@@ -1078,10 +1077,10 @@ export default function CampaignCreateModal({
                 </div>
               )}
 
-              {/* Ảnh kèm chữ: thứ tự + gộp 1 tin (áp dụng cho mọi nội dung có cả chữ lẫn ảnh) */}
+              {/* Photo with text: order + merged into 1 message (applies to any content with both text and photos) */}
               {hasMsg && contentConfig.blocks.some(b => b.images.length > 0) && (
                 <div className="flex-shrink-0 rounded-xl border border-border bg-muted/30 px-3 py-2.5">
-                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Ảnh kèm chữ</p>
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{tr('Ảnh kèm chữ')}</p>
                   <CampaignSendOptionsControl
                     value={{ order: contentConfig.order ?? 'text_first', combine: !!contentConfig.combine }}
                     channel={channel}
@@ -1094,7 +1093,7 @@ export default function CampaignCreateModal({
               {hasFR && hasMsg && (
                 <div className="flex-shrink-0 border-t border-border pt-3">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[11px] font-medium text-muted-foreground"><UserCheckIcon className="w-4 h-4 inline" /> Lời nhắn kết bạn</span>
+                    <span className="text-[11px] font-medium text-muted-foreground">{trx('<0/> Lời nhắn kết bạn', { 0: <UserCheckIcon className="w-4 h-4 inline" /> })}</span>
                     <div className="flex gap-1">
                       {TEMPLATE_VARS.map(v => (
                         <button key={v} type="button" onClick={() => insertFRVar(v)}
@@ -1105,7 +1104,7 @@ export default function CampaignCreateModal({
                     </div>
                   </div>
                   <textarea ref={friendReqRef} value={friendReqMsg} onChange={e => setFriendReqMsg(e.target.value)}
-                    rows={2} placeholder="Xin chào {name}, tôi muốn kết nối với bạn!"
+                    rows={2} placeholder={tr('Xin chào {name}, tôi muốn kết nối với bạn!')}
                     className="w-full bg-card border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-none transition-colors" />
                 </div>
               )}
@@ -1114,9 +1113,9 @@ export default function CampaignCreateModal({
               {hasFR && !hasMsg && (
                 <div className="flex-1 min-h-0 flex flex-col gap-2">
                   <textarea ref={friendReqRef} value={friendReqMsg} onChange={e => setFriendReqMsg(e.target.value)}
-                    placeholder="Xin chào {name}, tôi muốn kết nối với bạn!"
+                    placeholder={tr('Xin chào {name}, tôi muốn kết nối với bạn!')}
                     className="flex-1 min-h-0 w-full bg-card border border-input rounded-xl px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-none transition-colors" />
-                  <p className="text-[10px] text-muted-foreground text-right flex-shrink-0">{friendReqMsg.length}/200 ký tự</p>
+                  <p className="text-[10px] text-muted-foreground text-right flex-shrink-0">{trx('{{count}}/200 ký tự', { count: friendReqMsg.length })}</p>
                 </div>
               )}
 
@@ -1130,7 +1129,7 @@ export default function CampaignCreateModal({
               {/* Mixed: invite groups at bottom */}
               {hasInvite && hasMsg && (
                 <div className="flex-shrink-0 border-t border-border pt-3">
-                  <p className="text-[11px] font-medium text-muted-foreground mb-2"><UsersIcon className="w-4 h-4 inline" /> Nhóm mời</p>
+                  <p className="text-[11px] font-medium text-muted-foreground mb-2">{trx('<0/> Nhóm mời', { 0: <UsersIcon className="w-4 h-4 inline" /> })}</p>
                   <GroupPicker zaloId={zaloId} inviteGroupIds={inviteGroupIds} onToggle={toggleGroupId} />
                 </div>
               )}
@@ -1157,17 +1156,17 @@ export default function CampaignCreateModal({
         <div className="flex items-center gap-3 px-5 py-3 border-t border-border flex-shrink-0">
           <div className="flex-1 text-[11px] text-muted-foreground">
             {hasMsg && contentConfig.blocks.length > 1 && (
-              <span>{contentConfig.blocks.length} biến thể · {contentConfig.mode === 'random' ? '🎲 random' : '📨 gửi tất cả'}</span>
+              <span>{trx('{{count}} biến thể · {{v1}}', { count: contentConfig.blocks.length, v1: contentConfig.mode === 'random' ? '🎲 random' : tr('📨 gửi tất cả') })}</span>
             )}
           </div>
           <button onClick={onClose}
             className="px-4 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors font-medium">
-            Hủy
+            {tr('Hủy')}
           </button>
           <button onClick={handleSave} disabled={saving || !isValid()}
             className="px-6 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-semibold flex items-center gap-2">
             {saving && <Spinner size={3} />}
-            {saving ? (editMode ? 'Đang lưu...' : 'Đang tạo...') : (editMode ? 'Lưu thay đổi' : 'Tạo chiến dịch')}
+            {saving ? (editMode ? tr('Đang lưu...') : tr('Đang tạo...')) : (editMode ? tr('Lưu thay đổi') : tr('Tạo chiến dịch'))}
           </button>
         </div>
       </div>

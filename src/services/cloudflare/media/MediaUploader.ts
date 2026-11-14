@@ -1,16 +1,15 @@
 /**
- * MediaUploader — hàng đợi tải media lên R2 (đọc từ chỉ mục cloud_media).
+ * MediaUploader: upload queue for media to R2 (reads from the cloud_media index).
  *
- *  - Song song theo tuỳ chọn (mặc định 3, tối đa 16; có giới hạn băng thông hoặc đang tải bản gốc DB → 1),
- *    chỉ 22:00–07:00 nếu bật "chỉ ban đêm".
- *  - Chỉ file đã sửa xong ≥ 10 s; sha256 tính theo luồng; putFile (+ onProgress) → uploaded (tin 2xx + ETag của R2,
- *    không HEAD lại — trước khi xoá bản trên máy, MediaEvictor vẫn HEAD kiểm). File đổi trong lúc tải → để lượt sau.
- *    Nội dung không đổi (chỉ khác mtime) và R2 còn đúng bản → ghi nhận, không tải lại.
- *  - 429 (R2 giới hạn tốc độ) → cả hàng đợi lùi: max(retryAfterMs, 10 s × 2^(n-1)), tối đa 2 phút.
- *    Mất mạng / hết thời gian / 5xx → chỉ file đó thử lại sau vài giây; ≥ 6 lỗi liên tiếp không xen lần thành công nào
- *    mới lùi cả hàng đợi (mạng có vấn đề thật). Token sai / thiếu quyền / mất bucket → dừng, báo lỗi qua onFatal.
- *  - Lỗi riêng một file → thử lại file đó sau (lùi dần), quá 5 lần → "failed" (thử lại hằng ngày / khi bấm Tiếp tục).
- *  - Chốt chặn cuối của phạm vi lưu: dòng chờ tải nay ngoài phạm vi (đổi phạm vi khi đang tải, dòng cũ…) → excluded.
+ *  - Parallel by option (default 3, max 16; with a bandwidth limit, or while a DB base snapshot is uploading → 1), and only from 22:00 to 07:00 when "chỉ ban đêm" (night only) is on.
+ *  - Only files last modified ≥ 10 s ago; sha256 computed as a stream; putFile (+ onProgress) → uploaded (2xx from R2 + the ETag of R2,
+ *    no HEAD again: before the copy on the machine is deleted, MediaEvictor still checks with HEAD). A file that changes during the upload → left for the next run.
+ *    Content unchanged (only the mtime differs) and R2 still has the right copy → record it, do not upload again.
+ *  - 429 (R2 rate limit) → the whole queue backs off: max(retryAfterMs, 10 s × 2^(n-1)), up to 2 minutes.
+ *    Network loss / timeout / 5xx → only that file retries after a few seconds; ≥ 6 errors in a row with no success in between
+ *    back off the whole queue (the network really has a problem). Wrong token / missing permission / bucket gone → stop, report the error via onFatal.
+ *  - An error for a single file → retry that file later (backing off gradually); more than 5 times → "failed" (retried daily / when the user clicks Continue).
+ *  - Last check of the storage scope: a waiting row that is now outside the scope (scope changed during the upload, an old row…) → excluded.
  */
 import * as fs from 'fs';
 import type { MediaSyncOptions } from '../../../shared/cloud/cloudContracts';
@@ -23,13 +22,14 @@ import {
     ByteRateLimiter, classifyR2Error, errorText, LogFn, MINUTE, msUntilNightWindow, noLog, SECOND, sha256File, storeLabelNow,
     Waiter, yieldToLoop,
 } from './util';
+import { tr } from '../../../shared/i18n';
 
 export const MIN_FILE_AGE_MS = 10 * SECOND;
 export const BACKOFF_MIN_MS = 10 * SECOND;
 export const BACKOFF_MAX_MS = 2 * MINUTE;
-/** Lỗi tạm thời (mạng / 5xx) liên tiếp không xen lần thành công nào → mới tạm dừng cả hàng đợi. */
+/** Temporary errors (network / 5xx) in a row with no success in between → only then pause the whole queue. */
 export const GLOBAL_PAUSE_AFTER_FAILURES = 6;
-/** Lỗi tạm thời của một file: thử lại file đó sau 5 s × số lần lỗi liên tiếp (tối đa 1 phút), không chặn file khác. */
+/** Temporary error for one file: retry that file after 5 s × the number of errors in a row (max 1 minute), without blocking other files. */
 export const FILE_RETRY_BASE_MS = 5 * SECOND;
 export const MAX_CONCURRENCY = 16;
 
@@ -39,14 +39,14 @@ export interface UploaderDeps {
     options(): MediaSyncOptions;
     waiter: Waiter;
     isPaused(): boolean;
-    /** Đang dừng vì lỗi chặn (token/quyền/bucket/mất kết nối) — chờ người dùng / kết nối lại. */
+    /** Stopped by a blocking error (token / permission / bucket / lost connection): waiting for the user / reconnect. */
     isBlocked(): boolean;
     onFatal(kind: 'auth' | 'bucket', message: string): void;
-    /** Trạng thái đổi (module tự gom thông báo cho renderer). */
+    /** State changed (the module batches the notifications for the renderer itself). */
     onChange(): void;
-    /** Một file vừa lên R2 (bytes = 0 nếu chỉ ghi nhận lại bản đã có). */
+    /** A file just uploaded to R2 (bytes = 0 if it only records a copy that already exists). */
     onUploaded(bytes: number): void;
-    /** Phạm vi lưu đang áp; null / không có = mọi file. */
+    /** Storage scope in effect; null / missing = every file. */
     scope?(ctx: MediaContext): MediaScopeFilter | null;
     now?(): number;
     fs?: { stat(p: string): Promise<fs.Stats> };
@@ -68,30 +68,30 @@ export function authErrorMessage(err: unknown): string {
     const store = storeLabelNow();
     if (code === 'NOT_CONNECTED') {
         return store === 'R2'
-            ? 'Chưa kết nối Cloudflare — kết nối lại rồi bấm Tiếp tục để lưu media lên R2.'
-            : `${(message || 'Chưa đăng nhập Google Drive').replace(/[.\s]+$/, '')} — đăng nhập lại rồi bấm Tiếp tục.`;
+            ? tr('Chưa kết nối Cloudflare — kết nối lại rồi bấm Tiếp tục để lưu media lên R2.')
+            : tr('{{v1}} — đăng nhập lại rồi bấm Tiếp tục.', { v1: (message || 'Chưa đăng nhập Google Drive').replace(/[.\s]+$/, '') });
     }
-    // CloudError của client R2 / Google Drive đã có câu tiếng Việt (thiếu quyền, chưa bật R2, lệch giờ máy, Drive đầy…)
-    if (message && (/^R2_/.test(code) || code === 'STORAGE_FULL')) return `${message} — sửa xong bấm Tiếp tục.`;
+    // CloudErrors from the R2 / Google Drive clients already carry a Vietnamese message (missing permission, R2 not enabled, machine clock skew, Drive full…)
+    if (message && (/^R2_/.test(code) || code === 'STORAGE_FULL')) return tr('{{message}} — sửa xong bấm Tiếp tục.', { message });
     return store === 'R2'
-        ? 'Cloudflare từ chối ghi vào R2 — kiểm tra token (cần quyền R2: Edit) rồi bấm Tiếp tục.'
-        : `${store} từ chối ghi — đăng nhập lại rồi bấm Tiếp tục.`;
+        ? tr('Cloudflare từ chối ghi vào R2 — kiểm tra token (cần quyền R2: Edit) rồi bấm Tiếp tục.')
+        : tr('{{store}} từ chối ghi — đăng nhập lại rồi bấm Tiếp tục.', { store });
 }
 
 export function bucketErrorMessage(bucket: string): string {
     const store = storeLabelNow();
     return store === 'R2'
-        ? `Không tìm thấy bucket R2 "${bucket}" — tắt rồi bật lại lưu media lên R2 để tạo lại.`
-        : `Không tìm thấy thư mục "${bucket}" trên ${store} — tắt rồi bật lại đồng bộ ảnh, file để tạo lại.`;
+        ? tr('Không tìm thấy bucket R2 "{{bucket}}" — tắt rồi bật lại lưu media lên R2 để tạo lại.', { bucket })
+        : tr('Không tìm thấy thư mục "{{bucket}}" trên {{store}} — tắt rồi bật lại đồng bộ ảnh, file để tạo lại.', { bucket, store });
 }
 
 export class MediaUploader {
-    /** Đang lùi tới thời điểm này (0 = không). Dùng chung cho tải về khi R2 bận. */
+    /** Backing off until this time (0 = not backing off). Shared with downloads when R2 is busy. */
     backoffUntil = 0;
-    /** Lỗi tạm thời gần nhất (mất mạng) — xoá khi tải thành công. */
+    /** Most recent temporary error (lost network), cleared on a successful upload. */
     transientError: string | null = null;
     private busyStreak = 0;
-    /** Lỗi tạm thời liên tiếp (mọi file) kể từ lần tải thành công gần nhất. */
+    /** Temporary errors in a row (all files) since the last successful upload. */
     private transientStreak = 0;
     private inflight = 0;
     private readonly limiter: ByteRateLimiter;
@@ -133,7 +133,7 @@ export class MediaUploader {
         this.transientError = null;
     }
 
-    /** R2 bận khi tải về (resolveMissing…) → cả hàng đợi lùi chung. */
+    /** R2 busy while downloading (resolveMissing…) → the whole queue backs off. */
     noteBusy(retryAfterMs?: number): void {
         this.enterBackoff(retryAfterMs, null);
     }
@@ -141,7 +141,7 @@ export class MediaUploader {
     private enterBackoff(retryAfterMs: number | undefined, message: string | null): void {
         const now = this.now();
         if (message) this.transientError = message;
-        // Đang lùi rồi: các lượt đang chạy dở cùng lỗi không làm tăng mũ thêm
+        // Already backing off: runs still in progress that hit the same error do not raise the exponent again
         if (this.backoffUntil > now) return;
         this.busyStreak++;
         const exp = BACKOFF_MIN_MS * Math.pow(2, this.busyStreak - 1);
@@ -160,9 +160,9 @@ export class MediaUploader {
         this.deps.onChange();
     }
 
-    /** ms phải chờ trước khi được nhận việc mới (0 = được chạy). */
+    /** ms to wait before taking new work (0 = may run now). */
     private gateDelay(): number {
-        if (this.deps.isPaused() || this.deps.isBlocked()) return MINUTE; // chờ Tiếp tục / kết nối lại (được đánh thức)
+        if (this.deps.isPaused() || this.deps.isBlocked()) return MINUTE; // waiting for Resume / reconnect (woken up)
         const now = this.now();
         if (this.backoffUntil > now) return this.backoffUntil - now;
         if (this.deps.options().nightOnly) {
@@ -179,7 +179,7 @@ export class MediaUploader {
                 if (gate > 0) { await this.deps.waiter.wait(Math.min(gate, MINUTE)); continue; }
                 const opts = this.deps.options();
                 this.limiter.setKbps(opts.bandwidthKbps);
-                // Giới hạn băng thông, hoặc đang tải bản gốc DB (file lớn cần lên trọn) → 1 file một lúc để nhường đường truyền.
+                // Bandwidth limit, or a DB base snapshot is uploading (a large file that must go up in full) → 1 file at a time to leave the link free.
                 const maxConcurrent = opts.bandwidthKbps > 0 || dbBaseUploadActive()
                     ? 1
                     : Math.min(MAX_CONCURRENCY, Math.max(1, Math.floor(Number(opts.concurrency) || 3)));
@@ -196,7 +196,7 @@ export class MediaUploader {
                 if (filter) {
                     const out = picked.filter((r) => !relInScope(r.rel_path, Number(r.mtime_ms) || 0, filter));
                     if (out.length) {
-                        // Ngoài phạm vi lưu: không tải, không tính là chờ; lấy lượt khác ngay
+                        // Outside the storage scope: do not upload, do not count as waiting; take the next item right away
                         ctx.index.markExcluded(out.map((r) => r.rel_path));
                         picked = picked.filter((r) => !out.includes(r));
                         if (!picked.length) { this.deps.onChange(); await yieldToLoop(); continue; }
@@ -223,13 +223,13 @@ export class MediaUploader {
 
     private async uploadOne(ctx: MediaContext, row: MediaRow, isCurrent: () => boolean): Promise<void> {
         const rel = row.rel_path;
-        // Ghi DB chỉ khi vẫn đúng workspace và module còn chạy (tắt / đổi workspace → dòng 'uploading' được trả lại lần sau)
+        // Write to the DB only if the workspace is still the same and the module is still running (turned off / workspace changed → the 'uploading' row is returned next time)
         const canWrite = () => isCurrent() && this.deps.ctx.isValid(ctx);
         let key: string;
         try {
             key = objectKeyFor(ctx.workspaceUid, rel);
         } catch {
-            if (canWrite()) ctx.index.markMissing(rel, 'Đường dẫn file không hợp lệ');
+            if (canWrite()) ctx.index.markMissing(rel, tr('Đường dẫn file không hợp lệ'));
             return;
         }
         const abs = absPathFor(ctx.realRoot, rel);
@@ -240,18 +240,18 @@ export class MediaUploader {
         } catch (err) {
             if (!canWrite()) return;
             const code = String((err as { code?: unknown })?.code || '');
-            if (code === 'ENOENT' || code === 'ENOTDIR') ctx.index.markMissing(rel, 'File không còn trên máy');
+            if (code === 'ENOENT' || code === 'ENOTDIR') ctx.index.markMissing(rel, tr('File không còn trên máy'));
             else ctx.index.markFailed(rel, errorText(err), this.now(), row.attempts);
             return;
         }
         if (!st.isFile() || st.size <= 0) {
-            if (canWrite()) ctx.index.markMissing(rel, 'Không phải file hoặc file rỗng');
+            if (canWrite()) ctx.index.markMissing(rel, tr('Không phải file hoặc file rỗng'));
             return;
         }
         const size = st.size;
         const mtimeMs = Math.floor(st.mtimeMs);
         if (this.now() - st.mtimeMs < MIN_FILE_AGE_MS) {
-            // Đang / vừa ghi → đợi đủ 10 s
+            // Still being written / just written → wait a full 10 s
             if (canWrite()) ctx.index.release(rel, { size, mtimeMs, nextTryAt: mtimeMs + MIN_FILE_AGE_MS + SECOND });
             return;
         }
@@ -261,7 +261,7 @@ export class MediaUploader {
             const sha256 = await this.hash(abs);
             if (!canWrite()) return;
 
-            // Chỉ đổi mtime, nội dung như bản đã tải → kiểm R2 rồi ghi nhận, không tải lại
+            // Only the mtime changed, content the same as the uploaded copy → check R2, then record it, no re-upload
             if (row.sha256 && row.sha256 === sha256 && Number(row.size) === size && row.etag) {
                 const head = await r2.headObject(key);
                 if (head && Number(head.size) === size && normEtag(head.etag) === normEtag(row.etag)) {
@@ -285,18 +285,18 @@ export class MediaUploader {
                 },
             });
             if (sent < size) this.limiter.consume(size - sent);
-            if (!res?.etag) throw new VerifyError(`${storeLabelNow()} không trả về mã kiểm tra (ETag) của bản vừa tải lên`);
+            if (!res?.etag) throw new VerifyError(tr('{{v1}} không trả về mã kiểm tra (ETag) của bản vừa tải lên', { v1: storeLabelNow() }));
             if (Number(res.size) !== size) {
-                throw new VerifyError(`Kích thước đã gửi không khớp (${res.size} ≠ ${size})`);
+                throw new VerifyError(tr('Kích thước đã gửi không khớp ({{count}} ≠ {{size}})', { count: res.size, size }));
             }
             const after = await this.fs.stat(abs).catch((): null => null);
             if (!canWrite()) return;
             if (!after || after.size !== size || Math.floor(after.mtimeMs) !== mtimeMs) {
-                // File đổi / bị xoá trong lúc tải → lượt sau tải bản mới (hoặc đánh dấu missing)
+                // File changed / deleted during the upload → the next run uploads the new version (or marks it missing)
                 ctx.index.release(rel, after ? { size: after.size, mtimeMs: Math.floor(after.mtimeMs) } : {});
                 return;
             }
-            // ETag của PUT / CompleteMultipartUpload cùng giá trị với HEAD (normEtag so sánh khi dọn file khỏi máy)
+            // The ETag of PUT / CompleteMultipartUpload has the same value as HEAD (normEtag is compared when cleaning a file off the machine)
             ctx.index.markUploaded(rel, { size, mtimeMs, sha256, etag: res.etag, uploadedAt: this.now() });
             this.onSuccess(size);
         } catch (err) {
@@ -308,23 +308,23 @@ export class MediaUploader {
         const rel = row.rel_path;
         const kind = err instanceof VerifyError ? 'other' : classifyR2Error(err);
         const e = (err || {}) as { status?: unknown; code?: unknown; retryAfterMs?: number };
-        // Google Drive báo giới hạn tốc độ bằng 403 (client trả R2_BUSY kèm status 403) — cũng là giới hạn thật
+        // Google Drive signals rate limiting with a 403 (the client returns R2_BUSY with status 403): this is a real limit too
         if (kind === 'busy' && (Number(e.status) === 429 || e.code === 'RATE_LIMITED' || (e.code === 'R2_BUSY' && Number(e.status) === 403))) {
-            // Kho giới hạn tốc độ thật: cả hàng đợi chờ đúng thời gian kho yêu cầu (tối thiểu 10 s).
-            this.enterBackoff(e.retryAfterMs, storeLabelNow() === 'R2' ? 'Cloudflare R2 đang giới hạn tốc độ tải lên.' : 'Google Drive đang giới hạn tốc độ tải lên.');
+            // The store's real rate limit: the whole queue waits exactly as long as the store asks (at least 10 s).
+            this.enterBackoff(e.retryAfterMs, storeLabelNow() === 'R2' ? tr('Cloudflare R2 đang giới hạn tốc độ tải lên.') : tr('Google Drive đang giới hạn tốc độ tải lên.'));
             if (canWrite()) ctx.index.release(rel);
             return;
         }
         if (kind === 'busy' || kind === 'network') {
-            // Lỗi tạm thời (mạng chậm / hết thời gian / R2 5xx): chỉ file này thử lại sau vài giây, file khác chạy tiếp.
-            // Không tính vào 5 lần lỗi của file (không phải lỗi của file). Nhiều lỗi liên tiếp → mạng có vấn đề thật → lùi chung.
+            // Temporary error (slow network / timeout / R2 5xx): only this file retries after a few seconds, other files keep running.
+            // Not counted toward the file's 5 errors (it is not the file's fault). Many errors in a row → the network really has a problem → back off as a whole.
             this.transientStreak++;
             const wait = Math.min(MINUTE, FILE_RETRY_BASE_MS * Math.min(12, this.transientStreak));
             if (canWrite()) ctx.index.release(rel, { nextTryAt: this.now() + wait });
             if (this.transientStreak >= GLOBAL_PAUSE_AFTER_FAILURES) {
                 this.enterBackoff(e.retryAfterMs, kind === 'network'
-                    ? `Mạng chậm hoặc mất kết nối tới ${storeLabelNow()}.`
-                    : `${storeLabelNow()} trả lỗi tạm thời liên tục.`);
+                    ? tr('Mạng chậm hoặc mất kết nối tới {{v1}}.', { v1: storeLabelNow() })
+                    : tr('{{v1}} trả lỗi tạm thời liên tục.', { v1: storeLabelNow() }));
             }
             return;
         }

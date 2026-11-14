@@ -1,9 +1,9 @@
 import { localDayKey } from '../../../../shared/analytics/localTimeBuckets';
 
 /**
- * Tin HIỂN THỊ đầu tiên của mỗi ngày lịch (máy) → nơi đặt mốc ngày "Hôm nay / Hôm qua / 15/10" (1 lần / ngày, như
- * Telegram). `isSkipped`: tin không có hàng riêng (ảnh / sticker / poll đã gộp vào tin đầu nhóm) — bỏ qua, nếu không
- * album vắt qua nửa đêm làm mất mốc của ngày mới.
+ * The first DISPLAYED message of each calendar day (on this machine) → where the day marker "Hôm nay / Hôm qua / 15/10" goes (once per day, as in
+ * Telegram). `isSkipped`: a message with no row of its own (photo / sticker / poll already merged into the group's first message) is skipped, otherwise an
+ * album crossing midnight would lose the marker of the new day.
  */
 export function getDayStartIds(
   messages: ReadonlyArray<{ msg_id: string; timestamp: number | string }>,

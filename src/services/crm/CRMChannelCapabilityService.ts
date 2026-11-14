@@ -1,5 +1,6 @@
 import DatabaseService from '../database/DatabaseService';
 import { getCapability, normalizeChannel, type Channel } from '../../configs/channels/channelConfig';
+import { tr } from '../../shared/i18n';
 
 /** CRM actions are checked here by both IPC and CRM queue.  UI uses the same
  * ChannelCapability config, while this service prevents bypassing it. */
@@ -26,7 +27,7 @@ export function getCRMChannelDecision(accountId: string, action: CRMChannelActio
 
   return allowed
     ? { allowed: true, channel }
-    : { allowed: false, channel, reason: `${capability.label} không hỗ trợ tính năng CRM này` };
+    : { allowed: false, channel, reason: tr('{{label}} không hỗ trợ tính năng CRM này', { label: capability.label }) };
 }
 
 /** Telegram deliberately supports message campaigns only.  Do not silently
@@ -36,7 +37,7 @@ export function validateCampaignForChannel(accountId: string, campaign: any): CR
   if (!decision.allowed) return decision;
   if ((decision.channel === 'telegram_user' || decision.channel === 'telegram_bot')
     && (campaign?.campaign_type || 'message') !== 'message') {
-    return { allowed: false, channel: decision.channel, reason: 'Telegram chỉ hỗ trợ chiến dịch gửi tin nhắn trong CRM' };
+    return { allowed: false, channel: decision.channel, reason: tr('Telegram chỉ hỗ trợ chiến dịch gửi tin nhắn trong CRM') };
   }
   return decision;
 }

@@ -1,8 +1,8 @@
 /**
- * Zalo mở rộng (SRS Deplao, ZL-01 → ZL-05): trạng thái truy cập, tự xoá tin nhắn, cài đặt quyền riêng tư, danh mục sản
- * phẩm zBusiness. Mirror UI: chat/zalo/presence/ZaloPresenceLine.tsx, ZaloAutoDeleteSection.tsx, settings/accounts/ZaloPrivacySettings.tsx,
- * chat/zalo/catalog/ZaloCatalogPicker.tsx. Mọi route gọi đúng IPC handler zalo:* của giao diện.
- * Hội thoại ẩn bằng PIN (ZL-03) chỉ là lớp hiển thị của app — API giữ nguyên hành vi (quyết định Q2), không có route riêng.
+ * Extended Zalo (Deplao SRS, ZL-01 → ZL-05): access status, auto-delete messages, privacy settings, zBusiness product catalog.
+ * Mirrors the UI: chat/zalo/presence/ZaloPresenceLine.tsx, ZaloAutoDeleteSection.tsx, settings/accounts/ZaloPrivacySettings.tsx,
+ * chat/zalo/catalog/ZaloCatalogPicker.tsx. Every route calls the exact zalo:* IPC handler the UI uses.
+ * Conversations hidden with a PIN (ZL-03) are only a display layer in the app: the API keeps the behavior as is (decision Q2), no separate route.
  */
 import { s } from '../schema';
 import { AccountInfo, ApiContext, ApiError, route, RouteDef } from '../types';
@@ -14,30 +14,30 @@ import {
     ZALO_PRIVACY_SETTINGS, isValidZaloSettingValue, readZaloSettingValue, zaloTwoFactorEnabled,
 } from '../../../shared/zalo/zaloPrivacySettings';
 import { ZALO_PRODUCT_MAX_PHOTOS, validateZaloProduct } from '../../../shared/zalo/zaloCatalog';
+import { tr } from '../../../shared/i18n';
 
-const catalogParams = s.object({ accountId: s.id(), catalogId: s.id().describe('ID danh mục') });
-const productParams = s.object({ accountId: s.id(), catalogId: s.id(), productId: s.id().describe('ID sản phẩm') });
+const catalogParams = s.object({ accountId: s.id(), catalogId: s.id().describe(tr('ID danh mục')) });
+const productParams = s.object({ accountId: s.id(), catalogId: s.id(), productId: s.id().describe(tr('ID sản phẩm')) });
 const photoFileInput = s.object({
-    upload_id: s.string().optional().describe('ID từ POST /media/uploads'),
-    library_uuid: s.string().optional().describe('UUID ảnh trong thư viện media'),
-    url: s.string().format('uri').optional().describe('Link ảnh http/https công khai, server tự tải về'),
+    upload_id: s.string().optional().describe(tr('ID từ POST /media/uploads')),
+    library_uuid: s.string().optional().describe(tr('UUID ảnh trong thư viện media')),
+    url: s.string().format('uri').optional().describe(tr('Link ảnh http/https công khai, server tự tải về')),
 });
 const productBody = {
     name: s.string().min(1).max(200),
-    price: s.string().min(1).max(30).describe('Giá, chỉ số (VNĐ), vd "150000"'),
+    price: s.string().min(1).max(30).describe(tr('Giá, chỉ số (VNĐ), vd "150000"')),
     description: s.string().max(2000).optional(),
     photos: s.array(s.string().max(1000)).max(ZALO_PRODUCT_MAX_PHOTOS).optional()
-        .describe('URL ảnh đã có trên Zalo (vd ảnh của sản phẩm khác), giữ đúng thứ tự'),
+        .describe(tr('URL ảnh đã có trên Zalo (vd ảnh của sản phẩm khác), giữ đúng thứ tự')),
     photo_files: s.array(photoFileInput).max(ZALO_PRODUCT_MAX_PHOTOS).optional()
-        .describe('Ảnh mới: mỗi mục đúng một trong upload_id, library_uuid, url. Deplao tải lên Zalo trước rồi xếp sau photos. '
-            + 'Tổng photos + photo_files tối đa 5'),
+        .describe(tr('Ảnh mới: mỗi mục đúng một trong upload_id, library_uuid, url. Deplao tải lên Zalo trước rồi xếp sau photos. Tổng photos + photo_files tối đa 5', {  })),
 };
 
 function confirmIrreversible(ok: unknown, what: string): void {
-    if (!ok) throw new ApiError(400, 'VALIDATION_ERROR', `Thao tác ${what} không thể hoàn tác — gửi kèm confirm=true`);
+    if (!ok) throw new ApiError(400, 'VALIDATION_ERROR', tr('Thao tác {{what}} không thể hoàn tác — gửi kèm confirm=true', { what }));
 }
 
-/** Kiểm cả ảnh sẽ tải lên (đếm chung giới hạn 5 ảnh) trước khi gọi Zalo. */
+/** Also check the images about to be uploaded (they count toward the shared limit of 5 images) before calling Zalo. */
 function productInput(body: any) {
     const pending = (body.photo_files || []).map(() => 'pending');
     const problem = validateZaloProduct({ ...body, photos: [...(body.photos || []), ...pending] });
@@ -45,26 +45,25 @@ function productInput(body: any) {
     return { name: body.name, price: body.price, description: body.description || '', photos: body.photos || [] };
 }
 
-/** photo_files → tải lên Zalo (như nút thêm ảnh của app: zalo:uploadProductPhoto) → link, xếp sau photos. */
+/** photo_files → uploaded to Zalo (like the app's add-photo button: zalo:uploadProductPhoto) → link, placed after photos. */
 async function withUploadedPhotos(ctx: ApiContext, deps: ChatRouteDeps, acc: AccountInfo, input: ReturnType<typeof productInput>, files: any[] = []) {
     const photos = [...input.photos];
     if (files.length > 0) {
         if (acc.channel !== CHANNELS.ZALO) unsupported(acc, 'danh mục sản phẩm');
-        requireOnline(acc); // trước khi tải ảnh từ url về máy
+        requireOnline(acc); // before downloading the image from the URL to the machine
     }
     for (const file of files) {
         const local = await resolveAttachment(ctx, deps, { upload_id: file.upload_id, library_uuid: file.library_uuid, url: file.url });
-        if (local.kind !== 'image') throw new ApiError(400, 'VALIDATION_ERROR', `${local.name} không phải ảnh`);
+        if (local.kind !== 'image') throw new ApiError(400, 'VALIDATION_ERROR', tr('{{name}} không phải ảnh', { name: local.name }));
         const uploaded = await zaloCall(ctx, acc, 'danh mục sản phẩm', 'zalo:uploadProductPhoto', { photoPath: local.path }, 60_000);
         photos.push(String(uploaded?.url || ''));
     }
     return { ...input, photos: photos.filter(Boolean) };
 }
 
-const userParams = s.object({ accountId: s.id(), userId: s.id().describe('ID người dùng Zalo') });
+const userParams = s.object({ accountId: s.id(), userId: s.id().describe(tr('ID người dùng Zalo')) });
 
-const TTL_HELP = `ttl_ms (ms): ${ZALO_AUTO_DELETE_OPTIONS.map((o) => `${o.value} = ${o.label}`).join(', ')}. `
-    + 'Zalo xoá tin trên các thiết bị Zalo; Deplao vẫn giữ tin đã lưu.';
+const TTL_HELP = tr('ttl_ms (ms): {{v1}}. Zalo xoá tin trên các thiết bị Zalo; Deplao vẫn giữ tin đã lưu.', { v1: ZALO_AUTO_DELETE_OPTIONS.map((o) => `${o.value} = ${o.label}`).join(', ') });
 
 async function zaloCall(ctx: ApiContext, acc: AccountInfo, action: string, channel: string, payload: Record<string, any>, timeoutMs?: number) {
     if (acc.channel !== CHANNELS.ZALO) unsupported(acc, action);
@@ -79,12 +78,11 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
     const atags = ['Tài khoản'];
     const ptags = ['Danh mục sản phẩm'];
     return [
-        // ── ZL-02: cài đặt quyền riêng tư ──────────────────────────────────
+        // ── ZL-02: privacy settings ──────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/zalo/settings', scope: 'accounts:read', tags: atags, operationId: 'getZaloPrivacySettings',
-            summary: 'Cài đặt quyền riêng tư của tài khoản Zalo',
-            description: 'Đọc trực tiếp từ Zalo (như Cài đặt → Tài khoản → Quyền riêng tư Zalo). Mỗi mục: key (dùng khi đổi), '
-                + 'value hiện tại (null = Zalo không trả), các lựa chọn hợp lệ. two_factor_enabled chỉ đọc.',
+            summary: tr('Cài đặt quyền riêng tư của tài khoản Zalo'),
+            description: tr('Đọc trực tiếp từ Zalo (như Cài đặt → Tài khoản → Quyền riêng tư Zalo). Mỗi mục: key (dùng khi đổi), value hiện tại (null = Zalo không trả), các lựa chọn hợp lệ. two_factor_enabled chỉ đọc.', {  }),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -95,7 +93,7 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
                         label: def.label,
                         group: def.group,
                         value: readZaloSettingValue(def, raw),
-                        options: def.kind === 'toggle' ? [{ value: 0, label: 'Tắt' }, { value: 1, label: 'Bật' }] : def.options,
+                        options: def.kind === 'toggle' ? [{ value: 0, label: tr('Tắt') }, { value: 1, label: tr('Bật') }] : def.options,
                     })),
                     two_factor_enabled: zaloTwoFactorEnabled(raw),
                 };
@@ -103,9 +101,8 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/zalo/settings', scope: 'accounts:manage', tags: atags, operationId: 'updateZaloPrivacySetting',
-            summary: 'Đổi một cài đặt quyền riêng tư Zalo',
-            description: 'Mỗi lần một mục, như app Zalo. key theo danh sách của GET; value thuộc lựa chọn của mục đó. '
-                + 'Chú ý: receive_message = 2 hoặc accept_stranger_call = 2 (chỉ bạn bè) chặn khách chưa kết bạn nhắn / gọi.',
+            summary: tr('Đổi một cài đặt quyền riêng tư Zalo'),
+            description: tr('Mỗi lần một mục, như app Zalo. key theo danh sách của GET; value thuộc lựa chọn của mục đó. Chú ý: receive_message = 2 hoặc accept_stranger_call = 2 (chỉ bạn bè) chặn khách chưa kết bạn nhắn / gọi.', {  }),
             params: accountParams,
             body: s.object({ key: s.string().min(1).max(64), value: s.int() }),
             handler: async ctx => {
@@ -119,14 +116,13 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
             },
         }),
 
-        // ── ZL-01: trạng thái truy cập ──────────────────────────────────────
+        // ── ZL-01: access status ──────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/users/:userId/presence', scope: 'contacts:read', tags: ctags, operationId: 'getUserPresence',
-            summary: 'Trạng thái truy cập của một người (Zalo)',
-            description: 'status: online | offline (kèm last_seen_at, ms) | hidden (người đó ẩn trạng thái truy cập) | unknown. '
-                + 'Kết quả đệm 60 giây cho mỗi người; refresh=true hỏi lại Zalo ngay.',
+            summary: tr('Trạng thái truy cập của một người (Zalo)'),
+            description: tr('status: online | offline (kèm last_seen_at, ms) | hidden (người đó ẩn trạng thái truy cập) | unknown. Kết quả đệm 60 giây cho mỗi người; refresh=true hỏi lại Zalo ngay.', {  }),
             params: userParams,
-            query: s.object({ refresh: s.boolean().optional().describe('Bỏ qua đệm 60 giây') }),
+            query: s.object({ refresh: s.boolean().optional().describe(tr('Bỏ qua đệm 60 giây')) }),
             response: s.object({
                 status: s.enum(['online', 'offline', 'hidden', 'unknown'] as const),
                 last_seen_at: s.int().nullable(),
@@ -143,11 +139,11 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
             },
         }),
 
-        // ── ZL-04: danh mục sản phẩm Zalo Business ─────────────────────────
+        // ── ZL-04: Zalo Business product catalog ─────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/zalo/catalogs', scope: 'chat:read', tags: ptags, operationId: 'listZaloCatalogs',
-            summary: 'Danh mục sản phẩm của tài khoản Zalo Business',
-            description: 'Đọc từ Zalo theo trang. url = link catalog.zalo.me để gửi vào hội thoại (route gửi link).',
+            summary: tr('Danh mục sản phẩm của tài khoản Zalo Business'),
+            description: tr('Đọc từ Zalo theo trang. url = link catalog.zalo.me để gửi vào hội thoại (route gửi link).'),
             params: accountParams,
             query: s.object({ page: s.int().min(0).default(0), limit: s.int().min(1).max(50).default(20) }),
             handler: async ctx => {
@@ -158,8 +154,8 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/zalo/catalogs/:catalogId/products', scope: 'chat:read', tags: ptags, operationId: 'listZaloCatalogProducts',
-            summary: 'Sản phẩm trong một danh mục Zalo Business',
-            description: 'Đọc từ Zalo theo trang. Mỗi sản phẩm có url (catalog.zalo.me) để gửi vào hội thoại.',
+            summary: tr('Sản phẩm trong một danh mục Zalo Business'),
+            description: tr('Đọc từ Zalo theo trang. Mỗi sản phẩm có url (catalog.zalo.me) để gửi vào hội thoại.'),
             params: catalogParams,
             query: s.object({ page: s.int().min(0).default(0), limit: s.int().min(1).max(100).default(100) }),
             handler: async ctx => {
@@ -172,7 +168,7 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/zalo/catalogs', scope: 'crm:write', tags: ptags, operationId: 'createZaloCatalog',
-            summary: 'Tạo danh mục sản phẩm Zalo Business',
+            summary: tr('Tạo danh mục sản phẩm Zalo Business'),
             params: accountParams,
             body: s.object({ name: s.string().min(1).max(200) }),
             handler: async ctx => {
@@ -182,7 +178,7 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/zalo/catalogs/:catalogId', scope: 'crm:write', tags: ptags, operationId: 'updateZaloCatalog',
-            summary: 'Đổi tên danh mục sản phẩm Zalo Business',
+            summary: tr('Đổi tên danh mục sản phẩm Zalo Business'),
             params: catalogParams,
             body: s.object({ name: s.string().min(1).max(200) }),
             handler: async ctx => {
@@ -192,10 +188,10 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/zalo/catalogs/:catalogId', scope: 'crm:write', tags: ptags, operationId: 'deleteZaloCatalog',
-            summary: 'Xoá danh mục sản phẩm Zalo Business',
-            description: 'Xoá cả sản phẩm trong danh mục trên Zalo, không hoàn tác — gửi confirm=true.',
+            summary: tr('Xoá danh mục sản phẩm Zalo Business'),
+            description: tr('Xoá cả sản phẩm trong danh mục trên Zalo, không hoàn tác — gửi confirm=true.'),
             params: catalogParams,
-            query: s.object({ confirm: s.boolean().default(false).describe('Phải là true') }),
+            query: s.object({ confirm: s.boolean().default(false).describe(tr('Phải là true')) }),
             handler: async ctx => {
                 confirmIrreversible(ctx.query.confirm, 'xoá danh mục');
                 const acc = await ctx.account(ctx.params.accountId);
@@ -204,8 +200,8 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/zalo/catalogs/:catalogId/products', scope: 'crm:write', tags: ptags, operationId: 'createZaloCatalogProduct',
-            summary: 'Thêm sản phẩm vào danh mục Zalo Business',
-            description: 'Ảnh: photos (link đã có trên Zalo) và / hoặc photo_files (ảnh mới, Deplao tải lên Zalo trước).',
+            summary: tr('Thêm sản phẩm vào danh mục Zalo Business'),
+            description: tr('Ảnh: photos (link đã có trên Zalo) và / hoặc photo_files (ảnh mới, Deplao tải lên Zalo trước).'),
             params: catalogParams,
             body: s.object(productBody),
             handler: async ctx => {
@@ -219,11 +215,10 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/zalo/catalogs/:catalogId/products/:productId', scope: 'crm:write', tags: ptags, operationId: 'updateZaloCatalogProduct',
-            summary: 'Sửa sản phẩm trong danh mục Zalo Business',
-            description: 'Gửi đủ tên, giá, mô tả, ảnh (như form sửa của app) và created_at của sản phẩm (từ danh sách sản phẩm). '
-                + 'Ảnh giữ lại: photos; ảnh mới: photo_files.',
+            summary: tr('Sửa sản phẩm trong danh mục Zalo Business'),
+            description: tr('Gửi đủ tên, giá, mô tả, ảnh (như form sửa của app) và created_at của sản phẩm (từ danh sách sản phẩm). Ảnh giữ lại: photos; ảnh mới: photo_files.', {  }),
             params: productParams,
-            body: s.object({ ...productBody, created_at: s.int().min(0).describe('created_at của sản phẩm (ms)') }),
+            body: s.object({ ...productBody, created_at: s.int().min(0).describe(tr('created_at của sản phẩm (ms)')) }),
             handler: async ctx => {
                 const input = productInput(ctx.body);
                 const acc = await ctx.account(ctx.params.accountId);
@@ -235,8 +230,8 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/zalo/catalogs/:catalogId/products', scope: 'crm:write', tags: ptags, operationId: 'deleteZaloCatalogProducts',
-            summary: 'Xoá sản phẩm khỏi danh mục Zalo Business',
-            description: 'Xoá trên Zalo, không hoàn tác — gửi confirm=true.',
+            summary: tr('Xoá sản phẩm khỏi danh mục Zalo Business'),
+            description: tr('Xoá trên Zalo, không hoàn tác — gửi confirm=true.'),
             params: catalogParams,
             body: s.object({ product_ids: s.array(s.id()).min(1).max(100), confirm: s.boolean().default(false) }),
             handler: async ctx => {
@@ -248,11 +243,11 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
             },
         }),
 
-        // ── ZL-05: tự xoá tin nhắn ─────────────────────────────────────────
+        // ── ZL-05: auto-delete messages ─────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/auto-delete', scope: 'chat:read', tags, operationId: 'getConversationAutoDelete',
-            summary: 'Tự xoá tin nhắn của hội thoại trên Zalo',
-            description: `Đọc lại từ Zalo (Zalo không báo khi đổi trên điện thoại). ${TTL_HELP}`,
+            summary: tr('Tự xoá tin nhắn của hội thoại trên Zalo'),
+            description: tr('Đọc lại từ Zalo (Zalo không báo khi đổi trên điện thoại). {{TTL_HELP}}', { TTL_HELP }),
             params: threadParams,
             response: s.object({ thread_id: s.string(), ttl_ms: s.int(), enabled: s.boolean() }),
             handler: async ctx => {
@@ -265,11 +260,11 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PUT', path: '/accounts/:accountId/conversations/:threadId/auto-delete', scope: 'chat:manage', tags, operationId: 'setConversationAutoDelete',
-            summary: 'Bật / tắt tự xoá tin nhắn trên Zalo',
-            description: `Như mục "Tự xoá tin nhắn" trong chi tiết hội thoại. ${TTL_HELP} Nhóm có thể chỉ cho trưởng / phó nhóm đổi.`,
+            summary: tr('Bật / tắt tự xoá tin nhắn trên Zalo'),
+            description: tr('Như mục "Tự xoá tin nhắn" trong chi tiết hội thoại. {{TTL_HELP}} Nhóm có thể chỉ cho trưởng / phó nhóm đổi.', { TTL_HELP }),
             params: threadParams,
             body: s.object({
-                ttl_ms: s.int().min(0).describe('0 = tắt; 86400000 = 1 ngày; 604800000 = 7 ngày; 1209600000 = 14 ngày'),
+                ttl_ms: s.int().min(0).describe(tr('0 = tắt; 86400000 = 1 ngày; 604800000 = 7 ngày; 1209600000 = 14 ngày')),
                 thread_type: threadTypeSchema.default('user'),
             }),
             response: s.object({ thread_id: s.string(), ttl_ms: s.int(), enabled: s.boolean() }),
@@ -277,7 +272,7 @@ export function zaloFeatureRoutes(deps: ChatRouteDeps): RouteDef[] {
                 const acc = await ctx.account(ctx.params.accountId);
                 const ttl = Number(ctx.body.ttl_ms);
                 if (!isZaloAutoDeleteTtl(ttl)) {
-                    throw new ApiError(400, 'VALIDATION_ERROR', `ttl_ms chỉ nhận ${ZALO_AUTO_DELETE_OPTIONS.map((o) => o.value).join(', ')}`);
+                    throw new ApiError(400, 'VALIDATION_ERROR', tr('ttl_ms chỉ nhận {{v1}}', { v1: ZALO_AUTO_DELETE_OPTIONS.map((o) => o.value).join(', ') }));
                 }
                 await zaloCall(ctx, acc, 'tự xoá tin nhắn', 'zalo:setAutoDeleteChat', {
                     threadId: ctx.params.threadId, type: threadTypeNum(ctx.body.thread_type), ttl,

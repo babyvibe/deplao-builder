@@ -1,25 +1,27 @@
 /**
- * Kết nối lại websocket Zalo như Zalo Web: zca-js `listener.start({ retryOnClose: true })` (zca-js#386). Zalo PC đăng
- * nhập / đăng xuất làm Zalo đóng kết nối của Zalo Web và zca-js; Zalo Web tự nối lại ngay trên cùng phiên, Deplao trước
- * đây đợi 5 s rồi đăng nhập lại cả phiên bằng cookie (tối đa 5 lần rồi bỏ).
+ * Reconnect the Zalo websocket like Zalo Web: zca-js `listener.start({ retryOnClose: true })` (zca-js#386). When Zalo PC
+ * logs in / logs out, it closes the connection of Zalo Web and zca-js. Zalo Web reconnects right away on the same session, whereas Deplao used to wait
+ * 5 s and then log the whole session in again with cookies (up to 5 times, then gave up).
  *
- * zca-js tự thử lại theo cấu hình Zalo gửi về (`settings.features.socket.close_and_retry_codes` + `retries`): đóng kết
- * nối → "disconnected" → (mã được thử lại) hẹn giờ `start()` lại; hết lượt / mã không thử lại → "closed". Không sửa
- * zca-js, chỉ gắn vào đúng đối tượng listener:
- * - `canRetry`: chỉ cho thử lại khi Deplao còn dùng listener này (chưa ngắt tay, tài khoản chưa xoá, kết nối chưa bị
- *   phiên đăng nhập mới thay). Không thì zca-js phát "closed" như cũ.
- * - `start`: lần thử lại đã hẹn trước khi ngắt / thay kết nối thì bỏ, không để listener cũ nối lại (tin về hai lần).
- * - Kết nối lại được thì trả lại lượt thử (zca-js không bao giờ đếm lại, phiên chạy lâu sẽ hết lượt).
+ * zca-js retries by itself according to the config Zalo sends (`settings.features.socket.close_and_retry_codes` + `retries`): the connection
+ * closes → "disconnected" → (for a code that is retried) schedules `start()` again; when the attempts run out or the code is not retried → "closed". It does not change
+ * zca-js; it only attaches to the listener object itself:
+ * - `canRetry`: only allows a retry while Deplao still uses this listener (not disconnected manually, account not deleted, connection not replaced by
+ *   a new login). Otherwise zca-js emits "closed" as before.
+ * - `start`: a retry already scheduled is dropped when the connection is disconnected / replaced, so the old listener does not reconnect (messages would arrive twice).
+ * - When it reconnects successfully, the retry attempts are restored (zca-js never counts them again, so a long session would run out of attempts).
  */
+import { tr } from '../../shared/i18n';
+
 export interface ZaloListenerRetryGuard {
-  /** Đã kết nối lại: trả lại lượt thử của mọi mã đóng. */
+  /** Reconnected: restore the retry attempts for every close code. */
   resetRetryBudget(): void;
 }
 
 export function installZaloListenerRetryGuard(listener: any, options: {
-  /** Deplao còn dùng listener này không */
+  /** Whether Deplao still uses this listener */
   allowRetry: () => boolean;
-  /** Lần thử lại bị chặn (listener cũ) */
+  /** Retry blocked (old listener) */
   onBlocked?: () => void;
 }): ZaloListenerRetryGuard {
   const originalCanRetry = listener?.canRetry;
@@ -33,7 +35,7 @@ export function installZaloListenerRetryGuard(listener: any, options: {
   if (typeof originalStart === 'function') {
     let started = false;
     listener.start = function guardedStart(this: any, ...args: any[]) {
-      // Lần đầu do Deplao gọi; các lần sau là zca-js tự thử lại
+      // The first attempt is made by Deplao; later attempts are retried by zca-js itself
       if (started && !options.allowRetry()) {
         options.onBlocked?.();
         return undefined;
@@ -53,11 +55,11 @@ export function installZaloListenerRetryGuard(listener: any, options: {
   };
 }
 
-/** Mã đóng, lượt thử, thời gian chờ Zalo cấu hình cho phiên này (ghi nhật ký để biết mã nào được tự nối lại). */
+/** Close code, retry attempts, and the wait time Zalo configured for this session (logged, so you can see which codes reconnect by themselves). */
 export function describeZaloSocketRetry(api: any): string {
   try {
     const socket = api?.getContext?.()?.settings?.features?.socket;
-    if (!socket) return 'không có cấu hình socket';
+    if (!socket) return tr('không có cấu hình socket');
     const codes = Array.isArray(socket.close_and_retry_codes) ? socket.close_and_retry_codes.join(',') : '-';
     const retries = socket.retries && typeof socket.retries === 'object'
       ? Object.entries(socket.retries).map(([code, value]: [string, any]) => {
@@ -67,6 +69,6 @@ export function describeZaloSocketRetry(api: any): string {
       : '-';
     return `close_and_retry_codes=[${codes}] retries=${retries}`;
   } catch {
-    return 'không đọc được cấu hình socket';
+    return tr('không đọc được cấu hình socket');
   }
 }

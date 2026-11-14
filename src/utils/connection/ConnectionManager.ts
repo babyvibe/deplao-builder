@@ -19,10 +19,10 @@ class ConnectionManager {
     private static connectionLocks: Map<string, boolean> = new Map();
 
     /**
-     * Lấy hoặc tạo connection - Single Source of Truth
+     * Get or create the connection - Single Source of Truth
      * @param auth
      * @param startListener
-     * @param api Optional existing API instance (từ loginQR/loginCookies)
+     * @param api Optional existing API instance (from loginQR/loginCookies)
      * @param isReconnection
      */
     public static async getOrCreateConnection(
@@ -82,17 +82,17 @@ class ConnectionManager {
         let apiInstance: API;
 
         if (existingApi) {
-            // Dùng API instance đã có (từ loginQR/loginCookies)
+            // Use the existing API instance (from loginQR/loginCookies)
             apiInstance = existingApi;
             Logger.log(`[ConnectionManager] Using provided API instance`);
         } else {
-            // Tạo mới qua loginZalo
+            // Create a new one via loginZalo
             const loginHelper = new ZaloLoginHelper();
             apiInstance = await loginHelper.loginZalo(auth);
         }
 
         const zaloId = apiInstance.getOwnId();
-        // Hội thoại bật tự xoá → mọi tin gửi qua api này mang ttl của hội thoại (SRS ZL-05, FR-ZL05.7)
+        // Conversation with auto-delete on → every message sent through this api carries the conversation's ttl (SRS ZL-05, FR-ZL05.7)
         installZaloSendTtl(apiInstance, zaloTtlLookupFor(zaloId));
         Logger.log(`[ConnectionManager] ✅ Connection ready for ${zaloId}`);
 
@@ -188,11 +188,11 @@ class ConnectionManager {
     }
 
     /**
-     * Kiểm tra sức khỏe WebSocket listener trực tiếp qua readyState.
-     * KHÔNG dựa vào flags nội bộ - đọc thẳng từ ws object của zca-js.
+     * Check the health of the WebSocket listener directly through readyState.
+     * Does NOT rely on internal flags - reads straight from the ws object of zca-js.
      *
      * readyState: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
-     * Trả về { zaloId, healthy, readyState, reason? }
+     * Returns { zaloId, healthy, readyState, reason? }
      */
     public static checkListenerHealth(
         zaloIdOrIds: string | string[]
@@ -213,13 +213,13 @@ class ConnectionManager {
                 continue;
             }
 
-            // Lấy ws object từ listener của zca-js
-            // zca-js listener có thể expose ws qua listener.ws hoặc listener._ws hoặc listener.socket
+            // Get the ws object from the zca-js listener
+            // The zca-js listener may expose ws as listener.ws, listener._ws or listener.socket
             const listener = conn.listener;
             const ws = listener?.ws || listener?._ws || listener?.socket || listener?._socket || null;
 
             if (!ws) {
-                // Không lấy được ws - dựa vào connected flag
+                // Could not get ws - relies on the connected flag
                 const healthy = conn.connected && conn.listenerStarted;
                 results.push({
                     zaloId,

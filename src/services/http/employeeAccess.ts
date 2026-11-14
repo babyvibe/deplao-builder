@@ -1,37 +1,39 @@
 /**
- * employeeAccess.ts — phân quyền cho REST API nhân viên (Boss phục vụ).
+ * employeeAccess.ts: permissions for the employee REST API (served by Boss).
  *
- * Trước đây các endpoint /api/query/* (đọc), /api/search/* và /api/command/* (ghi) nhận `zaloId` tuỳ ý:
- * nhân viên đã đăng nhập có thể đọc / sửa dữ liệu của tài khoản KHÔNG được giao chỉ bằng cách đổi tham số.
- * Chỉ đường proxy (/api/proxy) là có kiểm tra. Module này gom quy tắc về một chỗ để HttpRelayService gọi
- * trước khi điều phối:
- *   1. Mọi id tài khoản có trong tham số phải thuộc `assigned_accounts` của nhân viên.
- *   2. Nhóm endpoint gắn với một module (vd /api/query/analytics/* → 'analytics') cần quyền module đó.
- * Không có tham số tài khoản → handler tự dùng tài khoản được giao đầu tiên (như cũ).
+ * Previously the /api/query/* (read), /api/search/* and /api/command/* (write) endpoints accepted an arbitrary `zaloId`:
+ * a logged-in employee could read / change the data of an account that was NOT assigned to them, just by changing the parameter.
+ * Only the proxy path (/api/proxy) had a check. This module puts the rules in one place, which HttpRelayService calls
+ * before dispatching:
+ *   1. Every account id in the parameters must be in the employee's `assigned_accounts`.
+ *   2. Endpoint groups tied to a module (e.g. /api/query/analytics/* → 'analytics') need that module's permission.
+ * With no account parameter → the handler uses the first assigned account by itself (as before).
  */
 
 /**
- * Cài đặt của Boss mà nhân viên được đọc / ghi qua REST (allowlist). Mọi khoá khác — bí mật ký token nhân viên
- * (`employee_jwt_secret`), token tunnel, cấu hình relay… — chỉ Boss truy cập. Cài đặt thông báo theo tài khoản
- * đi route riêng (`settings/notif`, khoá `notifSettings_<zaloId>`).
+ * Boss settings that employees may read / write through REST (allowlist). Every other key (the employee JWT signing secret
+ * (`employee_jwt_secret`), tunnel tokens, relay config…) is Boss-only. Per-account notification settings
+ * use their own route (`settings/notif`, key `notifSettings_<zaloId>`).
  */
+import { tr } from '../../shared/i18n';
+
 export const EMPLOYEE_SETTING_KEYS: ReadonlySet<string> = new Set(['sidebar_width']);
 
 export function isEmployeeSettingKey(key: string): boolean {
   return EMPLOYEE_SETTING_KEYS.has(String(key || ''));
 }
 
-/** Tên tham số mang id tài khoản (Zalo / Facebook / Telegram đều nằm ở accounts.zalo_id). */
+/** The parameter name that carries an account id (Zalo / Facebook / Telegram all live in accounts.zalo_id). */
 export const ACCOUNT_PARAM_KEYS = ['zaloId', 'zalo_id', 'zaloIds', 'zalo_ids', 'ownerZaloId', 'owner_zalo_id'] as const;
 
-/** Các họ endpoint được kiểm tra (thư viện có kiểm tra riêng trong LibraryHandler). */
+/** The endpoint families that are checked (the library has its own check in LibraryHandler). */
 const CHECKED_PREFIXES = ['/api/query/', '/api/search/', '/api/command/'];
 
 export interface AccessEmployee {
   assigned_accounts?: string[];
 }
 
-/** Id tài khoản trong tham số: chuỗi, "a,b", mảng hoặc mảng JSON đã parse. */
+/** Account ids in the parameters: a string, "a,b", an array, or a parsed JSON array. */
 export function requestedAccountIds(params: Record<string, unknown> | null | undefined): string[] {
   const ids = new Set<string>();
   if (!params) return [];
@@ -47,10 +49,10 @@ export function requestedAccountIds(params: Record<string, unknown> | null | und
   return [...ids];
 }
 
-/** Module quyền cần cho một đường dẫn (undefined = không yêu cầu module riêng). */
+/** The module permission needed for a path (undefined = no separate module is required). */
 export function requiredModuleFor(pathname: string): string | undefined {
   if (pathname.startsWith('/api/query/analytics/')) return 'analytics';
-  // ERP (dự án, công việc, lịch, ghi chú, nhân sự, thông báo) — quyền ERP chi tiết kiểm tra thêm ở executeErpRest
+  // ERP (projects, tasks, calendar, notes, HR, notifications): the detailed ERP permissions are checked further in executeErpRest
   if (pathname.startsWith('/api/query/erp/')) return 'erp';
   return undefined;
 }
@@ -62,8 +64,8 @@ export interface AccessDenied {
 }
 
 /**
- * null = được phép. Trả lỗi 403 khi tham số chứa tài khoản không được giao, hoặc thiếu quyền module.
- * `hasPermission(module)` do Boss cung cấp (EmployeeService.hasPermission).
+ * null = allowed. Returns a 403 error when the parameters contain an account that is not assigned, or the module permission is missing.
+ * `hasPermission(module)` is provided by Boss (EmployeeService.hasPermission).
  */
 export function checkEmployeeAccess(
   employee: AccessEmployee,
@@ -74,11 +76,11 @@ export function checkEmployeeAccess(
   if (!CHECKED_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return null;
   const assigned = new Set((employee.assigned_accounts || []).map(String));
   if (requestedAccountIds(params).some((id) => !assigned.has(id))) {
-    return { status: 403, error: 'Không có quyền truy cập tài khoản này', code: 'ACCOUNT_FORBIDDEN' };
+    return { status: 403, error: tr('Không có quyền truy cập tài khoản này'), code: 'ACCOUNT_FORBIDDEN' };
   }
   const module = requiredModuleFor(pathname);
   if (module && !hasPermission(module)) {
-    return { status: 403, error: `Không có quyền truy cập module: ${module}`, code: 'MODULE_FORBIDDEN' };
+    return { status: 403, error: tr('Không có quyền truy cập module: {{module}}', { module }), code: 'MODULE_FORBIDDEN' };
   }
   return null;
 }

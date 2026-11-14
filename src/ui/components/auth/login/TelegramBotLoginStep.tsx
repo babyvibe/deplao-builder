@@ -1,6 +1,6 @@
 /**
- * TelegramBotLoginStep.ts - Component đăng nhập Telegram Bot
- * Nhập botToken → validate getMe → tạo account + start polling
+ * TelegramBotLoginStep.ts - Telegram Bot login component
+ * Enter botToken → validate getMe → create account + start polling
  */
 
 import React, { useState } from 'react';
@@ -10,6 +10,8 @@ import { useAppStore } from '@/store/app/appStore';
 import { createDefaultLabels } from '@/lib/labels/defaultLabels';
 import { Spinner } from '@/components/common/PageLoading';
 import { CheckIcon, AlertIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface Props {
   onSuccess: () => void;
@@ -27,7 +29,7 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
 
   const handleValidate = async () => {
     if (!botToken.trim()) {
-      setError('Vui lòng nhập Bot Token');
+      setError(tr('Vui lòng nhập Bot Token'));
       return;
     }
     setValidating(true);
@@ -39,10 +41,10 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
       if (res?.success && res.bot) {
         setBotInfo(res.bot);
       } else {
-        setError(res?.error || 'Token không hợp lệ');
+        setError(res?.error || tr('Token không hợp lệ'));
       }
     } catch (err: any) {
-      setError(err.message || 'Lỗi kết nối');
+      setError(err.message || tr('Lỗi kết nối'));
     } finally {
       setValidating(false);
     }
@@ -105,10 +107,10 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
       // Create default labels for new Telegram bot account
       await createDefaultLabels(accountId);
 
-      showNotification(`Đã kết nối Bot @${botInfo.username || botInfo.first_name}!`, 'success');
+      showNotification(tr('Đã kết nối Bot @{{v1}}!', { v1: botInfo.username || botInfo.first_name }), 'success');
       onSuccess();
     } catch (err: any) {
-      showNotification('Lỗi: ' + (err.message || 'Không thể lưu'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (err.message || tr('Không thể lưu')) }), 'error');
     } finally {
       setSaving(false);
     }
@@ -118,18 +120,18 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
     <div className="p-6 space-y-4">
       {/* Instructions */}
       <div className="bg-blue-900/20 border border-blue-700/30 rounded-xl p-4">
-        <p className="text-blue-300 text-xs font-semibold mb-2">🤖 Tạo Bot Telegram</p>
+        <p className="text-blue-300 text-xs font-semibold mb-2">{tr('🤖 Tạo Bot Telegram')}</p>
         <ol className="text-blue-400 text-[11px] space-y-1.5 list-decimal list-inside leading-relaxed">
-          <li>Mở Telegram, tìm <strong>@BotFather</strong></li>
-          <li>Gửi lệnh <strong>/newbot</strong> và làm theo hướng dẫn</li>
-          <li>Copy <strong>Bot Token</strong> (dạng: <code className="bg-card px-1 rounded">123456:ABC-DEF...</code>)</li>
-          <li>Dán vào bên dưới và nhấn "Kiểm tra"</li>
+          <li>{trx('Mở Telegram, tìm <0>@BotFather</0>', { 0: <strong /> })}</li>
+          <li>{trx('Gửi lệnh <0>/newbot</0> và làm theo hướng dẫn', { 0: <strong /> })}</li>
+          <li>{trx('Copy <0>Bot Token</0> (dạng: <1>123456:ABC-DEF...</1>)', { 0: <strong />, 1: <code className="bg-card px-1 rounded" /> })}</li>
+          <li>{tr('Dán vào bên dưới và nhấn "Kiểm tra"')}</li>
         </ol>
       </div>
 
       {/* Token input */}
       <div>
-        <label className="text-foreground/80 text-xs font-medium mb-1.5 block">Bot Token</label>
+        <label className="text-foreground/80 text-xs font-medium mb-1.5 block">{tr('Bot Token')}</label>
         <input
           type="text"
           value={botToken}
@@ -157,13 +159,13 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
             </div>
             <div>
               <p className="text-sm font-semibold">
-                @{botInfo.username || 'unknown'}
+                @{botInfo.username || tr('unknown')}
               </p>
               <p className="text-xs">{botInfo.first_name}</p>
             </div>
           </div>
           <p className="text-green-800 text-[14px] mt-3">
-            ✅ Bot hợp lệ! Nhấn "Kết nối" để thêm vào app.
+            {tr('✅ Bot hợp lệ! Nhấn "Kết nối" để thêm vào app.')}
           </p>
         </div>
       )}
@@ -171,8 +173,7 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
       {/* Warning */}
       <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-3">
         <p className="text-yellow-300 text-[11px] leading-relaxed">
-          ⚠️ <strong>Lưu ý:</strong> Bot chỉ thấy tin nhắn từ lúc khách bấm "Start" trở đi, không có lịch sử cũ. 
-          Nếu dùng trong nhóm, cần tắt Privacy Mode ở BotFather để bot thấy hết tin nhắn.
+          {trx('⚠️ <0>Lưu ý:</0> Bot chỉ thấy tin nhắn từ lúc khách bấm "Start" trở đi, không có lịch sử cũ. Nếu dùng trong nhóm, cần tắt Privacy Mode ở BotFather để bot thấy hết tin nhắn.', { 0: <strong /> })}
         </p>
       </div>
 
@@ -182,7 +183,7 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
           onClick={onBack}
           className="flex-1 px-4 py-2.5 bg-muted hover:bg-accent text-foreground/80 text-sm rounded-lg transition-colors"
         >
-          Quay lại
+          {tr('Quay lại')}
         </button>
         {!botInfo ? (
           <button
@@ -190,7 +191,7 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
             disabled={!botToken.trim() || validating}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
           >
-            {validating ? <><Spinner size={4} /> Đang kiểm tra...</> : 'Kiểm tra Token'}
+            {validating ? <>{trx('<0/> Đang kiểm tra...', { 0: <Spinner size={4} /> })}</> : tr('Kiểm tra Token')}
           </button>
         ) : (
           <button
@@ -198,7 +199,7 @@ export default function TelegramBotLoginStep({ onSuccess, onBack }: Props) {
             disabled={saving}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
           >
-            {saving ? <><Spinner size={4} /> Đang lưu...</> : 'Kết nối Bot'}
+            {saving ? <>{trx('<0/> Đang lưu...', { 0: <Spinner size={4} /> })}</> : tr('Kết nối Bot')}
           </button>
         )}
       </div>

@@ -1,12 +1,12 @@
 /**
- * Link và điều hướng của cửa sổ chính. Preload gắn electronAPI cho mọi trang cửa sổ chính hiển thị, nên cửa sổ chính chỉ
- * được ở giao diện Deplao:
- *  - will-navigate: chỉ cho về giao diện của app (bản cài: đúng file dist/index.html; bản dev: Vite). Link web mở bằng
- *    trình duyệt của máy (giữ phiên đăng nhập của người dùng), còn lại chặn.
- *  - window.open / target="_blank" / bấm chuột giữa: không mở cửa sổ Electron; link web mở bằng trình duyệt của máy.
- *  - shell.openExternal chỉ nhận http, https, mailto: link lạ (file:, ms-msdt:, ...) có thể chạy chương trình trên máy.
- *  - Link Telegram / nhóm Zalo (window.open, target="_blank" trong Mini App…): gửi về giao diện mở trong app
- *    (app:openChatLink → lib/chat/links/chatLinks), như bấm link trong tin.
+ * Links and navigation of the main window. Preload attaches electronAPI to every page the main window shows, so the main window can
+ * only stay in the Deplao UI:
+ *  - will-navigate: only allows navigation to the app UI (installed build: exactly dist/index.html; dev build: Vite). Web links open in
+ *    the machine's browser (keeps the user's login session); everything else is blocked.
+ *  - window.open / target="_blank" / middle-click: does not open an Electron window; web links open in the machine's browser.
+ *  - shell.openExternal only accepts http, https, mailto: unknown links (file:, ms-msdt:, ...) can run programs on the machine.
+ *  - Telegram / Zalo group links (window.open, target="_blank" inside a Mini App…): sent to the UI, which opens them inside the app
+ *    (app:openChatLink → lib/chat/links/chatLinks), like clicking a link in a message.
  */
 import { pathToFileURL } from 'url';
 import { parseGroupLink } from '../../src/shared/crm/groupLinks';
@@ -14,7 +14,7 @@ import { parseTelegramLink } from '../../src/shared/telegram/telegramLinks';
 
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 
-/** Link được mở bằng ứng dụng mặc định của máy (trình duyệt, ứng dụng thư). */
+/** Link opened with the machine's default app (browser, mail app). */
 export function isExternalUrl(raw: unknown): raw is string {
   if (typeof raw !== 'string' || !raw || raw.length > 8192) return false;
   let url: URL;
@@ -23,7 +23,7 @@ export function isExternalUrl(raw: unknown): raw is string {
   return url.protocol === 'mailto:' || !!url.hostname;
 }
 
-/** Link app tự mở được (Telegram, nhóm Zalo): giao diện xử lý thay vì trình duyệt. */
+/** Links the app can open itself (Telegram, Zalo groups): the UI handles them instead of the browser. */
 export function isInAppChatLink(raw: unknown): raw is string {
   if (typeof raw !== 'string' || !raw || raw.length > 8192) return false;
   if (!/^(https?:\/\/|tg:)/i.test(raw)) return false;
@@ -32,14 +32,14 @@ export function isInAppChatLink(raw: unknown): raw is string {
 
 export interface AppUrlOptions {
   isDev: boolean;
-  /** Vite của bản dev, vd http://localhost:27799 */
+  /** Vite of the dev build, e.g. http://localhost:27799 */
   devOrigin: string;
-  /** File giao diện của bản cài (dist/index.html) */
+  /** UI file of the installed build (dist/index.html) */
   entryFile: string;
   platform?: NodeJS.Platform;
 }
 
-/** Điều hướng vẫn ở giao diện Deplao (đổi hash / query, tải lại). Bản cài: đúng file giao diện, không phải file khác trên máy. */
+/** Navigation stays in the Deplao UI (hash / query change, reload). Installed build: only the UI file itself, not any other file on the machine. */
 export function isAppUrl(raw: string, opts: AppUrlOptions): boolean {
   let url: URL;
   try { url = new URL(raw); } catch { return false; }
@@ -60,11 +60,11 @@ export function isAppUrl(raw: string, opts: AppUrlOptions): boolean {
 
 export interface MainFrameNavigation {
   allow: boolean;
-  /** Bị chặn nhưng là link web / thư: mở bằng ứng dụng của máy. */
+  /** Blocked, but it is a web / mail link: open it with the machine's app. */
   openExternal: string | null;
 }
 
-/** will-navigate của khung chính: ở lại giao diện thì cho; link web / thư thì mở ngoài; còn lại chặn. */
+/** will-navigate of the main frame: staying in the UI is allowed; web / mail links open externally; everything else is blocked. */
 export function mainFrameNavigation(raw: string, opts: AppUrlOptions): MainFrameNavigation {
   if (isAppUrl(raw, opts)) return { allow: true, openExternal: null };
   return { allow: false, openExternal: isExternalUrl(raw) ? raw : null };

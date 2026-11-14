@@ -1,10 +1,11 @@
 /**
- * Ảnh đại diện người gửi cạnh tin (chỉ tin cuối của lượt): bấm mở hồ sơ; ảnh lỗi → ảnh chữ + thử lấy lại ảnh mới
- * (1 lần / người gửi / phiên).
+ * Sender's avatar next to a message (only the last message of a run): click to open the profile; a broken image → a letter avatar + try fetching a new image
+ * (once per sender / session).
  */
 import { CHANNEL } from '@/lib/channels/channelHelper';
 import { handleAvatarError } from '@/lib/contacts/avatarRetry';
 import type { MessageRowContext, RowLocals } from './rowContext';
+import { tr } from '../../../../../shared/i18n';
 
 type SenderAvatarProps = { ctx: MessageRowContext } & Pick<RowLocals, 'msg' | 'isLastInRun' | 'displayName' | 'avatarUrl' | 'senderAvatarFallback'>;
 
@@ -15,7 +16,7 @@ export function SenderAvatar({ ctx, msg, isLastInRun, displayName, avatarUrl, se
       {isLastInRun ? (
         <button
           className="w-7 h-7 rounded-full overflow-hidden focus:outline-none hover:ring-2 hover:ring-blue-400 transition-all"
-          title={`Xem thông tin: ${displayName}`}
+          title={tr('Xem thông tin: {{displayName}}', { displayName })}
           onClick={(e) => {
             e.stopPropagation();
             setUserProfilePopup({ userId: msg.sender_id, x: e.clientX, y: e.clientY });

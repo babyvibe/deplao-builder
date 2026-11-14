@@ -1,9 +1,9 @@
 /**
- * PluginsPlatform — nối module plugin vào app:
- *   PluginManager (vòng đời) ↔ PluginApiBridge (deplao.*) ↔ ApiPlatform (router v1, sự kiện)
- *   ↔ PluginNodeRegistry (workflow) ↔ PluginScheduler (cron) ↔ renderer (contribution, sự kiện UI).
+ * PluginsPlatform: connects the plugin module to the app:
+ *   PluginManager (lifecycle) ↔ PluginApiBridge (deplao.*) ↔ ApiPlatform (v1 router, events)
+ *   ↔ PluginNodeRegistry (workflow) ↔ PluginScheduler (cron) ↔ renderer (contributions, UI events).
  *
- * Không làm gì cho tới khi init(); start() chỉ khởi động plugin đã bật, không tạo bảng nếu chưa dùng.
+ * Does nothing until init(); start() only starts enabled plugins, and does not create tables if plugins were never used.
  */
 import ApiPlatform from '../api/ApiPlatform';
 import { unwrapIpcResult } from '../api/IpcInvoker';
@@ -19,6 +19,7 @@ import { pluginRoutes } from './PluginRoutes';
 import { ForkFn, PluginSandbox, TIMEOUTS } from './PluginSandbox';
 import { RemotePluginClient } from './RemotePluginClient';
 import { PLUGIN_SCHEME } from './PluginProtocol';
+import { tr } from '../../shared/i18n';
 
 export interface UiContribution {
     pluginId: string;
@@ -30,7 +31,7 @@ export interface UiContribution {
     origin: string;
     width?: number;
     target?: 'ui' | 'backend';
-    /** Quyền đã duyệt (renderer kiểm tra deplao.ui.*). */
+    /** Approved permissions (the renderer checks deplao.ui.*). */
     permissions: string[];
 }
 
@@ -40,7 +41,7 @@ export interface UiContributions {
     composerButtons: UiContribution[];
 }
 
-/** URL iframe + origin dùng để kiểm tra postMessage. */
+/** Iframe URL + origin used to check postMessage. */
 export function uiUrl(rec: PluginRecord, hashPath = '/'): { url: string; origin: string } {
     const entry = rec.manifest.ui?.entry || '';
     const hash = `#${hashPath.startsWith('/') ? hashPath : `/${hashPath}`}`;
@@ -87,7 +88,7 @@ class PluginsPlatform {
             operations: () => this.operations(),
             hub: () => platform().getHub(),
             invokeIpc: async (channel, payload, principal) => unwrapIpcResult(await platform().getInvoker().invoke(channel, [payload], principal, { requestId: 'plugin' })),
-            // cloudflare:workers:* — cùng IpcInvoker (hàng đợi, timeout, ngữ cảnh API) + giấy uỷ quyền; kết quả trả nguyên.
+            // cloudflare:workers:* uses the same IpcInvoker (queue, timeout, API context) + the delegation grant; the result is returned unchanged.
             invokeDelegated: (channel, payload, principal, grant, timeoutMs) =>
                 platform().getInvoker().invoke(channel, [payload], principal, { requestId: 'plugin', timeoutMs, pluginGrant: grant }),
             uploads: () => platform().uploads,
@@ -137,7 +138,7 @@ class PluginsPlatform {
 
         PluginNodeRegistry.getInstance().setExecutor(async (pluginId, type, cfg, run) => {
             const runtime = this.manager.runtimeFor(pluginId);
-            if (!runtime) throw new Error(`[PLUGIN_NODE_MISSING] Ứng dụng ${pluginId} đang tắt`);
+            if (!runtime) throw new Error(tr('[PLUGIN_NODE_MISSING] Ứng dụng {{pluginId}} đang tắt', { pluginId }));
             return runtime.call('node.execute', { type, cfg, run }, NODE_TIMEOUT_MS);
         });
 
@@ -146,7 +147,7 @@ class PluginsPlatform {
         api.addPrincipalResolver(owner => (owner.startsWith('plugin:') ? this.manager.principalFor(owner.slice(7)) : undefined));
     }
 
-    /** Có nên chạy plugin trên máy này/workspace này không. */
+    /** Whether the plugin should run on this machine / in this workspace. */
     private canRun(): boolean {
         if (!isWorkspaceAvailable()) return false;
         if (appMode() === 'employee') return false;
@@ -169,7 +170,7 @@ class PluginsPlatform {
         this.uiSubs.clear();
     }
 
-    /** Workspace local chạy nền đổi: dừng plugin của workspace cũ, khởi động plugin của workspace mới. */
+    /** The local workspace running in the background changes: stop the old workspace's plugins, start the new workspace's plugins. */
     async onWorkspaceChanged(): Promise<void> {
         await this.stop();
         await this.start();
@@ -177,8 +178,8 @@ class PluginsPlatform {
     }
 
     /**
-     * Giao diện đổi sang / rời workspace nhân viên: plugin của workspace local vẫn chạy, chỉ báo giao diện nạp lại danh
-     * sách trang / node (giao diện nhân viên không hiện plugin).
+     * The UI switches to / leaves an employee workspace: the local workspace's plugins keep running, it only tells the UI to reload the
+     * page / node lists (the employee UI does not show plugins).
      */
     notifyUiChanged(): void {
         this.notify?.('plugins:changed', { at: Date.now() });
@@ -210,15 +211,15 @@ class PluginsPlatform {
         return out;
     }
 
-    /** UI plugin (iframe) đăng ký sự kiện realtime; `send` đẩy về renderer. */
+    /** Plugin UI (iframe) subscribes to realtime events; `send` pushes them to the renderer. */
     subscribeUi(senderKey: string, pluginId: string, types: string[] | null, send: (ev: ApiEvent) => void): void {
         const key = `${senderKey}|${pluginId}`;
         this.uiSubs.get(key)?.();
         this.uiSubs.delete(key);
         if (!types || !types.length) return;
         const principal: Principal | null = this.manager.principalFor(pluginId);
-        if (!principal) throw Object.assign(new Error(`Plugin ${pluginId} chưa bật`), { code: 'CONFLICT' });
-        if (!principal.scopes.has('events:subscribe')) throw Object.assign(new Error('Plugin cần scope events:subscribe'), { code: 'FORBIDDEN_SCOPE' });
+        if (!principal) throw Object.assign(new Error(tr('Plugin {{pluginId}} chưa bật', { pluginId })), { code: 'CONFLICT' });
+        if (!principal.scopes.has('events:subscribe')) throw Object.assign(new Error(tr('Plugin cần scope events:subscribe')), { code: 'FORBIDDEN_SCOPE' });
         const off = ApiPlatform.getInstance().getHub().subscribe({
             principal,
             types: types.slice(0, 50),
@@ -247,15 +248,15 @@ class PluginsPlatform {
         }
     }
 
-    /** Nút trong ô soạn tin (target backend). */
+    /** Button in the message composer (backend target). */
     async composerCommand(pluginId: string, buttonId: string, context: any): Promise<any> {
         const rec = this.activeRecord(pluginId);
         const btn = rec?.manifest.contributes?.composerButtons?.find(b => b.id === buttonId);
         if (!rec || !btn || btn.target !== 'backend' || !rec.granted_permissions.includes('ui:composer')) {
-            throw Object.assign(new Error('Nút không tồn tại hoặc ứng dụng đang tắt'), { code: 'NOT_FOUND' });
+            throw Object.assign(new Error(tr('Nút không tồn tại hoặc ứng dụng đang tắt')), { code: 'NOT_FOUND' });
         }
         const runtime = this.manager.runtimeFor(pluginId);
-        if (!runtime) throw Object.assign(new Error('Ứng dụng không có phần chạy nền'), { code: 'CONFLICT' });
+        if (!runtime) throw Object.assign(new Error(tr('Ứng dụng không có phần chạy nền')), { code: 'CONFLICT' });
         return runtime.call('composer.command', { id: buttonId, context }, TIMEOUTS.command);
     }
 }

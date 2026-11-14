@@ -1,16 +1,17 @@
 /**
- * Bản ghi DNS cho "Cloudflare tự động": mỗi tên một CNAME `<tunnelId>.cfargotunnel.com`, proxied, ttl auto,
- * comment `deplao:<tunnelId>` (đánh dấu bản ghi do Deplao tạo — chỉ bản ghi có dấu này mới được sửa / xoá).
+ * DNS records for "Cloudflare tự động" (automatic Cloudflare): each name is one CNAME `<tunnelId>.cfargotunnel.com`, proxied, ttl auto,
+ * comment `deplao:<tunnelId>` (marks a record created by Deplao: only records with this mark may be edited / deleted).
  *
- * Quyết định theo bản ghi đang có của tên (GET /zones/{z}/dns_records?name.exact=<fqdn>):
- *   không có                                         → tạo mới
- *   CNAME trỏ đúng tunnel này                         → dùng lại (thiếu proxied / comment thì sửa cho đúng)
- *   CNAME trỏ *.cfargotunnel.com khác, comment deplao: → sửa trỏ về tunnel này (đổi máy)
- *   còn lại (A/AAAA, CNAME khác, tunnel không phải Deplao…) → CloudError('DNS_CONFLICT') — không ghi gì cả
- * Kiểm tra hết mọi tên trước rồi mới ghi; ghi lỗi giữa chừng → xoá các bản ghi vừa tạo trong lần này.
+ * Decided by the record that currently exists for the name (GET /zones/{z}/dns_records?name.exact=<fqdn>):
+ *   none                                              → create it
+ *   CNAME pointing at this exact tunnel               → reuse it (fix a missing proxied / comment)
+ *   CNAME pointing at another *.cfargotunnel.com with a deplao: comment → repoint it to this tunnel (machine changed)
+ *   anything else (A/AAAA, another CNAME, a tunnel that is not Deplao's…) → CloudError('DNS_CONFLICT'): nothing is written
+ * Check all the names first, then write; a failure midway → delete the records created in this run.
  */
 import { CloudError, type CloudflareApi } from '../contracts';
 import { normalizeHostname } from './ingress';
+import { tr } from '../../../shared/i18n';
 
 export interface DnsRecord {
     id: string;
@@ -51,7 +52,7 @@ function contentOf(record: DnsRecord): string {
     return normalizeHostname(record?.content);
 }
 
-/** Bản ghi thuộc tunnel này: mang comment của Deplao cho tunnel này, hoặc CNAME trỏ đúng tunnel này. */
+/** Records that belong to this tunnel: carry Deplao's comment for this tunnel, or a CNAME pointing at this exact tunnel. */
 export function isRecordOfTunnel(record: DnsRecord, tunnelId: string): boolean {
     if (!record) return false;
     if (String(record.comment || '') === dnsComment(tunnelId)) return true;
@@ -68,7 +69,7 @@ export function planRecord(hostname: string, records: DnsRecord[] | null | undef
     const name = normalizeHostname(hostname);
     const target = tunnelCnameTarget(tunnelId).toLowerCase();
     const tag = dnsComment(tunnelId);
-    // name.exact lọc ở phía Cloudflare; lọc lại phòng khi bộ lọc bị bỏ qua
+    // name.exact is filtered on the Cloudflare side; filter again in case the filter is ignored
     const list = (Array.isArray(records) ? records : []).filter((r) => r && normalizeHostname(r.name) === name);
     if (!list.length) return { action: 'create', hostname: name };
     const mine = list.find((r) => isCname(r) && contentOf(r) === target);
@@ -87,7 +88,7 @@ export function planRecord(hostname: string, records: DnsRecord[] | null | undef
 }
 
 export function dnsConflictError(hostname: string): CloudError {
-    return new CloudError('DNS_CONFLICT', `Tên ${hostname} đã được dùng cho bản ghi khác, hãy chọn tên khác`);
+    return new CloudError('DNS_CONFLICT', tr('Tên {{hostname}} đã được dùng cho bản ghi khác, hãy chọn tên khác', { hostname }));
 }
 
 export async function listRecordsByName(api: CloudflareApi, zoneId: string, hostname: string): Promise<DnsRecord[]> {
@@ -98,13 +99,13 @@ export async function listRecordsByName(api: CloudflareApi, zoneId: string, host
 }
 
 export interface EnsureRecordsResult {
-    /** fqdn → id bản ghi. */
+    /** fqdn → record id. */
     recordIds: Record<string, string>;
     created: string[];
     patched: string[];
 }
 
-/** Đảm bảo mỗi tên có CNAME tới tunnel này. Xung đột → CloudError('DNS_CONFLICT') trước khi ghi bất cứ gì. */
+/** Makes sure every name has a CNAME to this tunnel. Conflict → CloudError('DNS_CONFLICT') before anything is written. */
 export async function ensureRecords(api: CloudflareApi, zoneId: string, hostnames: string[], tunnelId: string): Promise<EnsureRecordsResult> {
     const names = Array.from(new Set(hostnames.map(normalizeHostname).filter(Boolean)));
     const plans: DnsPlan[] = [];
@@ -128,7 +129,7 @@ export async function ensureRecords(api: CloudflareApi, zoneId: string, hostname
             }
         }
     } catch (err) {
-        // Không để lại bản ghi dở: xoá bản ghi vừa tạo trong lần này (bản ghi đã sửa thì đã trỏ về máy này — giữ)
+        // Do not leave a half-done record: delete the records created in this run (a record that was edited already points at this machine: keep it)
         for (const hostname of result.created) {
             const id = result.recordIds[hostname];
             if (id) await api.request('DELETE', `/zones/${zoneId}/dns_records/${id}`).catch(() => undefined);
@@ -143,11 +144,11 @@ function isNotFound(err: unknown): boolean {
 }
 
 /**
- * Xoá bản ghi DNS của tunnel này (comment `deplao:<id>` hoặc CNAME trỏ đúng tunnel). Bản ghi đã được máy khác sửa
- * trỏ sang tunnel của nó (comment khác) KHÔNG bị xoá.
- *  - sweep (mặc định true): một GET lọc theo comment cho cả zone.
- *  - hostnames: tên cần kiểm tra riêng (khi sweep tắt / lỗi / không thấy tên đó).
- * Trả về các tên đã xoá.
+ * Deletes the DNS records of this tunnel (comment `deplao:<id>` or a CNAME pointing at this exact tunnel). A record that another machine
+ * has repointed to its own tunnel (a different comment) is NOT deleted.
+ *  - sweep (default true): one GET filtered by comment for the whole zone.
+ *  - hostnames: names to check separately (when the sweep is off / failed / did not find that name).
+ * Returns the names that were deleted.
  */
 export async function removeRecords(
     api: CloudflareApi,
@@ -165,7 +166,7 @@ export async function removeRecords(
                 if (record?.id && isRecordOfTunnel(record, tunnelId)) found.set(record.id, record);
             }
         } catch {
-            /* bộ lọc comment không dùng được → dò theo từng tên bên dưới */
+            /* comment filter not usable → probe name by name below */
         }
     }
     const seenNames = new Set(Array.from(found.values(), (r) => normalizeHostname(r.name)));
@@ -189,7 +190,7 @@ export async function removeRecords(
 
 export type RecordOwnership = 'ours' | 'missing' | 'elsewhere';
 
-/** Tên đang trỏ về tunnel này, chưa có bản ghi, hay đã trỏ sang nơi khác (máy khác đã "chuyển về máy này"). */
+/** Whether the name points at this tunnel, has no record yet, or points elsewhere (another machine has "chuyển về máy này" (moved it here)). */
 export async function inspectOwnership(api: CloudflareApi, zoneId: string, hostnames: string[], tunnelId: string): Promise<Record<string, RecordOwnership>> {
     const result: Record<string, RecordOwnership> = {};
     const target = tunnelCnameTarget(tunnelId).toLowerCase();

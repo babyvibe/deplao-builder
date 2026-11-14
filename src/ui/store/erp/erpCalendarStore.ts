@@ -4,12 +4,13 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
 import type { CreateCalendarEventInput, ErpCalendarEvent } from '../../../models/erp';
 import { withErpDeniedNotice } from './erpStoreHelpers';
+import { tr } from '../../../shared/i18n';
 
 function isEmployee(): boolean {
   try { return useEmployeeStore.getState().mode === 'employee'; } catch { return false; }
 }
 
-/** Sự kiện trong phản hồi: IPC `{ success, event }`, REST (nhân viên) `{ success, data: { event } }`. */
+/** The event in the response: IPC `{ success, event }`, REST (employee) `{ success, data: { event } }`. */
 function eventOf(res: any): ErpCalendarEvent | null {
   return res?.event ?? res?.data?.event ?? null;
 }
@@ -35,8 +36,8 @@ export const useErpCalendarStore = create<ErpCalendarState>((set, get) => ({
   error: null,
   currentRange: null,
 
-  // Nhân viên: lịch nằm trên DB Boss (REST qua DataAccessor) — IPC ở máy nhân viên đọc / ghi DB cục bộ (trống, không
-  // tới Boss, không phát erp:event cho người khác). Lỗi đọc → giữ lịch đang hiện.
+  // Employee: the calendar lives in the owner's machine DB (REST via DataAccessor); IPC on the employee machine reads / writes the local DB (empty, does not
+  // reach the owner's machine, does not emit erp:event to others). Read error → keep the calendar currently shown.
   loadEvents: async (from, to, organizerId) => {
     set({ loading: true, currentRange: { from, to } });
     const res: any = isEmployee()
@@ -44,10 +45,10 @@ export const useErpCalendarStore = create<ErpCalendarState>((set, get) => ({
       : await ipc.erp?.calendarListEvents({ from, to, organizerId });
     const events = res?.events ?? res?.data?.events;
     if (res?.success && Array.isArray(events)) set({ events, loading: false, error: null });
-    else set({ error: res?.error || 'Không tải được lịch', loading: false });
+    else set({ error: res?.error || tr('Không tải được lịch'), loading: false });
   },
 
-  // Lệnh ghi bị từ chối quyền (Boss kiểm tra quyền ERP của nhân viên) → hộp thoại quyền ERP như ipc.erp
+  // Write command denied for lack of permission (the owner's machine checks the employee's ERP permission) → ERP permission dialog, same as ipc.erp
   createEvent: async (input) => {
     const res: any = withErpDeniedNotice(isEmployee()
       ? await DataAccessor.erpCalendarCreate(input)
@@ -74,7 +75,7 @@ export const useErpCalendarStore = create<ErpCalendarState>((set, get) => ({
     const res: any = withErpDeniedNotice(isEmployee()
       ? await DataAccessor.erpCalendarDelete(id)
       : await ipc.erp?.calendarDelete({ id }));
-    if (res && res.success === false) return; // Boss từ chối / mất kết nối: giữ sự kiện
+    if (res && res.success === false) return; // Owner's machine refused / connection lost: keep the event
     set(s => ({ events: s.events.filter(e => e.id !== id) }));
   },
 

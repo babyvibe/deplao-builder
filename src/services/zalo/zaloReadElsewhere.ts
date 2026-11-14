@@ -1,33 +1,33 @@
 /**
- * Đã đọc ở máy khác (Zalo trên điện thoại / Zalo PC, cùng tài khoản) → Deplao bỏ số chưa đọc của hội thoại.
+ * Read on another device (Zalo on the phone / Zalo PC, same account) → Deplao removes the unread count of the conversation.
  *
- * Zalo đẩy cmd 504 (chat riêng) / 524 (nhóm), subCmd 0, khoảng 1 giây sau khi hội thoại được đọc ở thiết bị khác:
- * `{ data: { clearUnreads: [{ idTo, isGroup, lastMsgId, ts, type }], msgs: [], groupMsgs: [] } }`. zca-js 2.2.0 bỏ qua
- * frame này (đề xuất sự kiện `unread_cleared`: RFS-ADRENO/zca-js#380, chưa gộp) nên Deplao đọc thẳng từ websocket như
- * control "syncmsgmb" (mobileSync/zcaMobileSync.ts). Chỉ `type: 0` là hội thoại thật (`type: 2` đi với idTo "-1").
+ * Zalo pushes cmd 504 (1-1 chat) / 524 (group), subCmd 0, about 1 second after the conversation is read on another device:
+ * `{ data: { clearUnreads: [{ idTo, isGroup, lastMsgId, ts, type }], msgs: [], groupMsgs: [] } }`. zca-js 2.2.0 ignores this
+ * frame (a proposed `unread_cleared` event: RFS-ADRENO/zca-js#380, not merged yet), so Deplao reads it directly from the websocket, like the
+ * "syncmsgmb" control (mobileSync/zcaMobileSync.ts). Only `type: 0` is a real conversation (`type: 2` goes with idTo "-1").
  *
- * Frame này cũng tới sau khi chính Deplao gửi "đã xem" (liveReadSync): hội thoại đã đọc rồi → không đổi gì, không phát
- * event. Đánh dấu đã đọc ở đây KHÔNG gửi "đã xem" ngược lên Zalo (không vòng lặp).
+ * This frame also arrives after Deplao itself sends "đã xem" (read) (liveReadSync): the conversation is already read, so nothing changes and no
+ * event is emitted. Marking as read here does NOT send "đã xem" back to Zalo (no loop).
  */
 import Logger from '../../utils/Logger';
 import { decodeWsEventData } from './mobileSync/zcaMobileSync';
 
 export const CMD_CLEAR_UNREAD_USER = 504;
 export const CMD_CLEAR_UNREAD_GROUP = 524;
-/** Số tin mới nhất của hội thoại được xét khi đếm tin còn chưa đọc (như DatabaseService.markAsRead). */
+/** The newest message of the conversation considered when counting unread messages (same as DatabaseService.markAsRead). */
 export const ZALO_READ_SCOPE = 200;
-/** Log chẩn đoán: tối đa chừng này dòng mỗi lần chạy app. */
+/** Diagnostic log: at most this many lines per app run. */
 const READ_LOG_LIMIT = 40;
 let readLogs = 0;
 
 export interface ZaloClearUnread {
   threadId: string;
   isGroup: boolean;
-  /** Tin cuối đã đọc (msgId Zalo, có khi là cliMsgId); rỗng = đã đọc hết */
+  /** Last read message (Zalo msgId, sometimes the cliMsgId); empty = everything has been read */
   lastMsgId: string;
 }
 
-/** Hội thoại đã đọc ở máy khác trong 1 frame websocket; frame khác → []. */
+/** Conversations read on another device in one websocket frame; other frames → []. */
 export function extractClearUnreads(frame: Buffer, cipherKey: string | null | undefined): ZaloClearUnread[] {
   if (!Buffer.isBuffer(frame) || frame.length < 5 || frame[0] !== 1 || frame[3] !== 0) return [];
   const cmd = frame.readUInt16LE(1);
@@ -39,7 +39,7 @@ export function extractClearUnreads(frame: Buffer, cipherKey: string | null | un
   if (!Array.isArray(list)) return [];
   const items: ZaloClearUnread[] = [];
   for (const raw of list) {
-    if (Number(raw?.type) !== 0) continue; // type 2: idTo "-1", chưa rõ nghĩa
+    if (Number(raw?.type) !== 0) continue; // type 2: idTo "-1", meaning not yet clear
     const threadId = String(raw?.idTo ?? '').trim();
     if (!/^\d+$/.test(threadId) || /^0+$/.test(threadId)) continue;
     items.push({
@@ -52,8 +52,8 @@ export function extractClearUnreads(frame: Buffer, cipherKey: string | null | un
 }
 
 /**
- * Gắn listener phụ vào websocket hiện tại của `api.listener` (gắn lại sau mỗi lần `connected`), chỉ giải mã frame
- * cmd 504 / 524. Trả về hàm huỷ đăng ký.
+ * Attach an extra listener to the current websocket of `api.listener` (re-attached after every `connected`), decoding only
+ * cmd 504 / 524 frames. Returns the unsubscribe function.
  */
 export function attachClearUnreadListener(api: any, onItems: (items: ZaloClearUnread[]) => void): () => void {
   const listener = api?.listener;
@@ -90,7 +90,7 @@ export function attachClearUnreadListener(api: any, onItems: (items: ZaloClearUn
 
 const detachers = new Map<string, () => void>();
 
-/** Mỗi instance zca-js mới của tài khoản (đăng nhập / kết nối lại): gỡ listener cũ, gắn listener mới. */
+/** For each new zca-js instance of the account (login / reconnect): remove the old listener, then attach a new one. */
 export function attachZaloReadElsewhere(zaloId: string, api: any, onItems: (items: ZaloClearUnread[]) => void): void {
   detachers.get(zaloId)?.();
   detachers.delete(zaloId);
@@ -107,13 +107,13 @@ export interface ZaloReadDb {
 }
 
 export interface ZaloReadResult {
-  /** Số chưa đọc mới: chỉ có khi khác giá trị đang lưu. */
+  /** New unread count: only when it differs from the stored value. */
   unread?: number;
-  /** Đã đọc hết nên tắt cờ @ của hội thoại. */
+  /** All read, so the @ flag of the conversation is turned off. */
   mentionCleared: boolean;
 }
 
-/** Thời điểm tin đã đọc cuối (msg_id rồi cli_msg_id, chỉ mục riêng; channel = 'zalo' để dùng chỉ mục duy nhất). 0 = không thấy. */
+/** Time of the last read message (msg_id, then cli_msg_id, separate indexes; channel = 'zalo' to use the unique index). 0 = not found. */
 function lastReadTimestamp(db: ZaloReadDb, ownerId: string, threadId: string, msgId: string): number {
   const byId = db.queryOne<{ timestamp: number | null }>(
     `SELECT timestamp FROM messages
@@ -130,9 +130,9 @@ function lastReadTimestamp(db: ZaloReadDb, ownerId: string, threadId: string, ms
 }
 
 /**
- * Ghi "đã đọc ở máy khác" vào DB: số chưa đọc = tin NHẬN mới hơn tin đã đọc cuối (tin tới trong lúc / sau khi đọc), không
- * bao giờ tăng; không thấy tin đã đọc trong máy = đã đọc hết. Đọc hết → tin nhận gần nhất thành 'read', tắt cờ @.
- * Không đổi gì (hội thoại đã đọc rồi, vd frame dội lại sau "đã xem" của chính Deplao) → không ghi, người gọi không phát event.
+ * Writes "read on another device" to the DB: the unread count = RECEIVED messages newer than the last read message (messages that arrived during / after reading). It
+ * never increases. If the last read message is not found on the machine, everything is read. When everything is read → the latest received message becomes 'read', and the @ flag is turned off.
+ * Nothing changes (the conversation is already read, e.g. an echo of Deplao's own "đã xem" (read)) → nothing is written, and the caller emits no event.
  */
 export function applyZaloClearUnread(db: ZaloReadDb, ownerId: string, item: ZaloClearUnread): ZaloReadResult {
   const result: ZaloReadResult = { mentionCleared: false };

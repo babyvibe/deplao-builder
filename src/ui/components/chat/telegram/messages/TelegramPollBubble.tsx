@@ -1,4 +1,6 @@
 import React from 'react';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type TelegramPollOption = {
   text: string;
@@ -33,7 +35,7 @@ function readPoll(msg: any): {
     })).filter((answer: TelegramPollOption) => answer.text);
 
     return {
-      question: String(poll.question || msg?.content || 'Bình chọn'),
+      question: String(poll.question || msg?.content || tr('Bình chọn')),
       options,
       totalVoters: Number(poll.total_voters ?? poll.total_voter_count ?? 0),
       closed: !!(poll.closed ?? poll.is_closed),
@@ -54,8 +56,8 @@ export default function TelegramPollBubble({ msg, isSent }: { msg: any; isSent: 
 
   const answerCount = poll.options.length;
   const total = poll.totalVoters || Math.max(...poll.options.map(option => option.voters), 0);
-  // ChatWindow đã bọc tin bình chọn trong bong bóng (nền trắng / xanh nhạt + giờ) → không vẽ khung nền
-  // đặc bên trong; hàng lựa chọn là ô bên trong bong bóng → bg-foreground/5 (hợp cả gửi lẫn nhận).
+  // ChatWindow already wraps the poll message in a bubble (white / light blue background + time) → do not draw a background frame
+  // solid inside; the choice rows are the cells inside the bubble → bg-foreground/5 (works on both sent and received).
   const panelClass = 'text-foreground';
   const optionClass = 'bg-foreground/5';
   const mutedClass = 'text-muted-foreground';
@@ -65,7 +67,7 @@ export default function TelegramPollBubble({ msg, isSent }: { msg: any; isSent: 
       <div className="mb-3 flex items-start gap-2">
         <span className="mt-0.5 text-base" aria-hidden="true">📊</span>
         <div className="min-w-0">
-          <p className={`text-[11px] font-bold uppercase tracking-wider ${mutedClass}`}>Bình chọn</p>
+          <p className={`text-[11px] font-bold uppercase tracking-wider ${mutedClass}`}>{tr('Bình chọn')}</p>
           <p className="mt-0.5 break-words text-sm font-semibold leading-snug">{poll.question}</p>
         </div>
       </div>
@@ -96,12 +98,12 @@ export default function TelegramPollBubble({ msg, isSent }: { msg: any; isSent: 
       </div>
 
       <div className={`mt-3 flex flex-wrap gap-x-2 gap-y-1 text-xs ${mutedClass}`}>
-        <span>{total} lượt bình chọn</span>
-        {poll.multipleChoice && <span>Chọn nhiều</span>}
-        {poll.quiz && <span>Đố vui</span>}
-        {poll.openAnswers && <span>Có thể thêm lựa chọn</span>}
-        {poll.closed && <span>Đã đóng</span>}
-        {answerCount === 0 && <span>Chưa có lựa chọn</span>}
+        <span>{trx('{{total}} lượt bình chọn', { total })}</span>
+        {poll.multipleChoice && <span>{tr('Chọn nhiều')}</span>}
+        {poll.quiz && <span>{tr('Đố vui')}</span>}
+        {poll.openAnswers && <span>{tr('Có thể thêm lựa chọn')}</span>}
+        {poll.closed && <span>{tr('Đã đóng')}</span>}
+        {answerCount === 0 && <span>{tr('Chưa có lựa chọn')}</span>}
       </div>
     </div>
   );

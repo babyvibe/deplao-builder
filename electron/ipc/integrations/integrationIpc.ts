@@ -5,6 +5,7 @@ import TunnelService from '../../../src/services/tunnel/TunnelService';
 import WorkspaceManager from '../../../src/utils/app/WorkspaceManager';
 import Logger from '../../../src/utils/Logger';
 import { proxyToBossWithResult } from '../network/proxyHelper';
+import { tr } from '../../../src/shared/i18n';
 
 function isEmployeeMode(): boolean {
     try {
@@ -17,7 +18,7 @@ function isEmployeeMode(): boolean {
 export function registerIntegrationIpc(): void {
     const extractActionError = (data: any): string | null => {
         if (!data || typeof data !== 'object') return null;
-        if (data.success === false) return data.error || data.message || 'Thao tác thất bại';
+        if (data.success === false) return data.error || data.message || tr('Thao tác thất bại');
         if (typeof data.error === 'string' && data.error.trim()) return data.error;
         return null;
     };
@@ -38,7 +39,7 @@ export function registerIntegrationIpc(): void {
     // ─── Get single (masked credentials) ─────────────────────────────────────
     ipcMain.handle('integration:get', async (_e, { id }: { id: string }) => {
         try {
-            if (isEmployeeMode()) return { success: false, error: 'Không khả dụng ở chế độ nhân viên' };
+            if (isEmployeeMode()) return { success: false, error: tr('Không khả dụng ở chế độ nhân viên') };
             const item = IntegrationRegistry.getConfig(id);
             if (!item) return { success: false, error: 'Không tìm thấy' };
             return { success: true, integration: item };
@@ -47,8 +48,8 @@ export function registerIntegrationIpc(): void {
         }
     });
 
-    // Nhân viên: tích hợp nằm trên Boss — proxy chờ kết quả (id mới, lỗi thiếu quyền module integration…) thay vì
-    // trả { success: true } ngay rồi lỗi im lặng.
+    // Employee: integrations live on Boss → proxy and wait for the result (new id, missing integration module permission errors…) instead of
+    // returning { success: true } at once and failing silently.
     // ─── Save (create or update) ──────────────────────────────────────────────
     ipcMain.handle('integration:save', async (_e, { integration }: { integration: any }) => {
         try {
@@ -83,9 +84,9 @@ export function registerIntegrationIpc(): void {
         }
     });
 
-    // Nhân viên: tích hợp (credential, adapter) chỉ có trên Boss — test / chạy thao tác (Tích hợp nhanh, đồng bộ sản phẩm
-    // của Trợ lý AI) phải chạy trên Boss, cần quyền module integration (proxyActionPolicy). Lệnh Boss chạy hộ nhân viên
-    // (_fromRelay) luôn chạy tại chỗ. Thao tác POS có thể quét nhiều trang → chờ tới 2 phút như Public API.
+    // Employee: integrations (credentials, adapters) exist only on Boss → test / run actions (Quick integration, product sync
+    // of the AI Assistant) must run on Boss and need the integration module permission (proxyActionPolicy). Boss commands run on behalf of an employee
+    // (_fromRelay) always run locally. POS actions can scan many pages → wait up to 2 minutes, like Public API.
     const runsOnBoss = (args: any): boolean => isEmployeeMode() && !args?._fromRelay;
     const BOSS_ACTION_TIMEOUT_MS = 120_000;
 
@@ -93,8 +94,8 @@ export function registerIntegrationIpc(): void {
     ipcMain.handle('integration:test', async (_e, args: { id: string; _fromRelay?: boolean }) => {
         if (runsOnBoss(args)) {
             const res = await proxyToBossWithResult('integration:test', { id: args?.id }, { timeoutMs: BOSS_ACTION_TIMEOUT_MS });
-            // Lỗi chuyển tiếp ({ success:false, error }) → trang tích hợp đọc `message`
-            return res?.success === false && !res.message ? { ...res, message: res.error || 'Không kiểm tra được kết nối trên Boss' } : res;
+            // Forwarded errors ({ success:false, error }) → the integration page reads `message`
+            return res?.success === false && !res.message ? { ...res, message: res.error || tr('Không kiểm tra được kết nối trên Boss') } : res;
         }
         const { id } = args || ({} as any);
         try {
@@ -147,8 +148,8 @@ export function registerIntegrationIpc(): void {
         }
     });
 
-    // ─── Đăng ký webhook tự động (KiotViet / Sapo) ─────────────────────────────
-    // Chạy trên Boss: credential + địa chỉ nhận webhook (dịch vụ 'payments') nằm ở Boss; nhân viên cần quyền module integration.
+    // ─── Automatic webhook registration (KiotViet / Sapo) ─────────────────────────────
+    // Runs on Boss: the credentials + webhook receiving address (the 'payments' service) live on Boss; employees need the integration module permission.
     ipcMain.handle('integration:listWebhooks', async (_e, args: { id: string; _fromRelay?: boolean }) => {
         if (runsOnBoss(args)) {
             return proxyToBossWithResult('integration:listWebhooks', { id: args?.id }, { timeoutMs: BOSS_ACTION_TIMEOUT_MS });
@@ -191,9 +192,9 @@ export function registerIntegrationIpc(): void {
         return { success: true, port: IntegrationRegistry.getWebhookPort() };
     });
 
-    // ─── Tunnel (cổng nhận webhook thanh toán) ────────────────────────────────
-    // Logic ở src/services/integrations/PaymentsTunnel.ts (dùng chung với Cài đặt → Internet & Cloud → Địa chỉ Internet):
-    // Cloudflare tự động → dịch vụ 'payments' của tunnel dùng chung; chế độ khác → Quick Tunnel riêng của cổng.
+    // ─── Tunnel (port for receiving payment webhooks) ────────────────────────────────
+    // Logic lives in src/services/integrations/PaymentsTunnel.ts (shared with Settings → Internet & Cloud → Internet address):
+    // Cloudflare automatic → the 'payments' service of the shared tunnel; other modes → a separate Quick Tunnel for the port.
     ipcMain.handle('tunnel:start', () => startPaymentsTunnel());
 
     ipcMain.handle('tunnel:stop', () => stopPaymentsTunnel());

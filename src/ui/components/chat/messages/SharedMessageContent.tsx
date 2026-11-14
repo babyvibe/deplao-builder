@@ -3,7 +3,7 @@ import { MessageBubble } from './MessageBubbles';
 
 type InlineButton = { text: string; type: 'url' | 'url_auth' | 'webview' | 'callback'; url?: string; buttonId?: number };
 
-/** Nút inline dưới tin bot (Telegram); nút đang chờ bot trả lời (callback) hiện vòng chờ, không bấm lại được. */
+/** Inline button under a bot message (Telegram); a button waiting for the bot to answer (callback) shows a spinner and cannot be pressed again. */
 function InlineButtonRows({ rows, onClick }: {
   rows: InlineButton[][];
   onClick?: (button: InlineButton, row: number, col: number) => void | Promise<unknown>;
@@ -59,10 +59,10 @@ interface SharedMessageContentProps {
   isRtf?: boolean;
   isBankCard?: boolean;
   isLocation?: boolean;
-  /** Tin mẫu của Page Facebook (thẻ + nút) */
+  /** Facebook Page template message (card + button) */
   isFbTemplate?: boolean;
   renderFbTemplate?: () => React.ReactNode;
-  /** Tin zinstant của Zalo Official Account (chat.webcontent / .v2): bản tin, thông báo, khuyến mãi */
+  /** Zalo Official Account zinstant message (chat.webcontent / .v2): news, notices, promotions */
   isZinstant?: boolean;
   renderZinstant?: () => React.ReactNode;
   renderPoll?: () => React.ReactNode;
@@ -78,7 +78,7 @@ interface SharedMessageContentProps {
   renderBankCard?: () => React.ReactNode;
   renderText?: () => React.ReactNode;
   inlineButtons?: Array<Array<InlineButton>>;
-  /** Bấm nút inline (hàng / cột của nút). Trả Promise khi phải chờ Telegram: nút hiện vòng chờ tới khi xong. */
+  /** Press an inline button (row / column of buttons). Returns a Promise when waiting for Telegram: the button shows a spinner until done. */
   onInlineButtonClick?: (button: InlineButton, row: number, col: number) => void | Promise<unknown>;
 }
 

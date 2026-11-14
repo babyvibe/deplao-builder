@@ -1,24 +1,24 @@
 /**
- * relayAudience.ts — ai được nhận một event realtime Boss → nhân viên (phần thuần, test được).
+ * relayAudience.ts: who may receive a realtime event from Boss → employee (pure part, testable).
  *
- * Dùng chung cho phát trực tiếp (SocketIOService.publish) và phát lại khi kết nối lại (catch-up): cùng một quy tắc,
- * cùng nguồn "tài khoản được giao" với kiểm tra quyền REST (RegisteredEmployee.assigned_accounts ở HttpRelayService,
- * giữ đồng bộ bởi updateEmployeeRooms). Trước đây catch-up gửi cả buffer (mọi tài khoản, mọi nhân viên) cho client.
+ * Shared by direct sending (SocketIOService.publish) and replay on reconnect (catch-up): the same rule,
+ * the same "assigned accounts" source as the REST permission checks (RegisteredEmployee.assigned_accounts in HttpRelayService,
+ * kept in sync by updateEmployeeRooms). Previously catch-up sent the whole buffer (every account, every employee) to the client.
  *
  * classifyRelayEvent → RelayAudience:
- *  - accounts  — event mang id tài khoản (zaloId / ownerZaloId / accountId…): chỉ nhân viên được giao tài khoản đó.
- *                Nhân viên chưa được giao tài khoản nào → không nhận (giống REST: mọi tài khoản đều 403).
- *  - employees — event gửi đích danh: ERP lịch + nhắc lịch (người tổ chức / người tham gia), ghi chú (tác giả / người
- *                được chia sẻ), thông báo ERP (recipient_id). Danh sách rỗng → chỉ Boss ('boss' — không phải nhân viên).
- *  - global    — dữ liệu chung của workspace, an toàn cho mọi nhân viên: GLOBAL_RELAY_CHANNELS, ghi chú ERP phạm vi
- *                workspace, và event KHÔNG mang id tài khoản ở các kênh cấu hình (vd db:localQuickMessageChanged
- *                active/reorder, relay:*…).
- *  - nobody    — kênh chat / CRM / Facebook (ACCOUNT_REQUIRED_PREFIXES) hoặc dữ liệu hội thoại theo tài khoản
- *                (ACCOUNT_REQUIRED_CHANNELS) nhưng thiếu id tài khoản → không gửi ai (không lộ sang tài khoản khác).
- * Danh sách kênh được relay: relayChannels.ts.
+ *  - accounts  - the event carries an account id (zaloId / ownerZaloId / accountId...): only employees assigned that account.
+ *                An employee with no assigned account receives nothing (like REST: every account is 403).
+ *  - employees - addressed to specific people: ERP calendar + reminders (organizer / participants), notes (author / people
+ *                it is shared with), ERP notifications (recipient_id). An empty list → only Boss ('boss', not an employee).
+ *  - global    - the workspace's shared data, safe for every employee: GLOBAL_RELAY_CHANNELS, ERP notes at workspace scope,
+ *                and events WITHOUT an account id on config channels (e.g. db:localQuickMessageChanged
+ *                active/reorder, relay:*...).
+ *  - nobody    - chat / CRM / Facebook channels (ACCOUNT_REQUIRED_PREFIXES) or per-account conversation data
+ *                (ACCOUNT_REQUIRED_CHANNELS) but missing the account id → nobody is sent it (it does not leak to other accounts).
+ * The list of relayed channels: relayChannels.ts.
  */
 
-/** Id "người dùng" của Boss trong ERP (ErpAuthContext) — không bao giờ là employee_id của nhân viên. */
+/** Boss's user id in ERP (ErpAuthContext), which is never an employee's employee_id. */
 export const BOSS_ACTOR_ID = 'boss';
 
 export type RelayAudience =
@@ -31,15 +31,15 @@ const GLOBAL: RelayAudience = { kind: 'global' };
 const NOBODY: RelayAudience = { kind: 'nobody' };
 
 /**
- * Kênh dữ liệu chung của workspace — mọi nhân viên đang kết nối đều nhận (kể cả khi payload có id tài khoản).
- * ERP: dự án / công việc / bình luận / nghỉ phép / chấm công / phòng ban / hồ sơ nhân sự là dữ liệu cấp workspace
- * của module ERP (như trước, không lọc theo tài khoản).
+ * Workspace-wide data channels: every connected employee receives them (even when the payload carries an account id).
+ * ERP: projects / tasks / comments / leave / attendance / departments / HR records are workspace-level data
+ * of the ERP module (as before, not filtered by account).
  */
 export const GLOBAL_RELAY_CHANNELS: ReadonlySet<string> = new Set([
-  'db:localLabelChanged', // định nghĩa nhãn dùng chung (bảng local_labels không theo tài khoản)
-  'workflow:executed', // trạng thái chạy / lưu workflow
-  'workflow:changed', // danh sách workflow đổi (chỉ id + hành động) — mỗi máy tự tải lại danh sách đã lọc theo quyền
-  // integration:payment / integration:webhook: không còn relay (chỉ trigger workflow trên Boss) — relayChannels.ts
+  'db:localLabelChanged', // shared label definitions (the local_labels table is not per account)
+  'workflow:executed', // workflow run / save state
+  'workflow:changed', // the workflow list changed (only id + action): each machine reloads its own list, filtered by permission
+  // integration:payment / integration:webhook: no longer relayed (they only trigger workflows on Boss): relayChannels.ts
   'erp:event:projectCreated',
   'erp:event:projectUpdated',
   'erp:event:projectDeleted',
@@ -55,14 +55,14 @@ export const GLOBAL_RELAY_CHANNELS: ReadonlySet<string> = new Set([
   'erp:event:employeeProfileDeleted',
 ]);
 
-/** Kênh chat / CRM / Facebook luôn thuộc MỘT tài khoản — thiếu id tài khoản thì không gửi ai (an toàn hơn gửi tất cả). */
+/** Chat / CRM / Facebook channels always belong to ONE account: without an account id nobody is sent the event (safer than sending it to everyone). */
 export const ACCOUNT_REQUIRED_PREFIXES: readonly string[] = ['event:', 'crm:', 'fb:'];
 
 /**
- * Kênh cấu hình (db:*, library:*) nhưng dữ liệu là của MỘT hội thoại / tài khoản: nơi phát quên id tài khoản thì không
- * gửi ai (trước đây rơi vào "global" → mọi nhân viên nhận ghim / cờ / bí danh / xoá hội thoại của tài khoản khác).
- * Không gồm db:localQuickMessageChanged (active/reorder chỉ có id), db:localLabelChanged (dùng chung).
- * library:itemUpdated: LibraryService.updateItem gửi zaloId = trang sở hữu item (trước đây không có → mọi nhân viên).
+ * Config channels (db:*, library:*) whose data belongs to ONE conversation / account: if the sender forgets the account id, nobody
+ * is sent it (previously it fell into "global" → every employee received the pins / flags / aliases / conversation deletes of other accounts).
+ * Excludes db:localQuickMessageChanged (active/reorder only carry an id) and db:localLabelChanged (shared).
+ * library:itemUpdated: LibraryService.updateItem sends zaloId = the page that owns the item (previously absent → every employee).
  */
 export const ACCOUNT_REQUIRED_CHANNELS: ReadonlySet<string> = new Set([
   'db:localLabelThreadChanged',
@@ -80,16 +80,16 @@ export const ACCOUNT_REQUIRED_CHANNELS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Kênh chỉ có ý nghĩa tức thời — phát trực tiếp nhưng KHÔNG buffer / phát lại: "đang soạn tin" phát lại sau khi kết nối
- * lại chỉ hiện chỉ báo sai, và đây là event dày nhất (đẩy event thật ra khỏi buffer).
+ * Channels that only matter in the moment: sent live but NOT buffered / replayed: a "đang soạn tin" (typing) indicator replayed after a reconnect
+ * would only show a wrong indicator, and it is the most frequent event (it pushes real events out of the buffer).
  */
 export const EPHEMERAL_RELAY_CHANNELS: ReadonlySet<string> = new Set([
   'event:typing',
   'fb:onTyping',
-  // Online / lần cuối truy cập (Telegram): giá trị cũ phát lại sau khi kết nối lại chỉ gây sai lệch
+  // Online / last seen (Telegram): an old value replayed after a reconnect only causes a wrong display
   'event:userPresence',
-  // Thông điệp điều khiển gửi riêng một nhân viên: chỉ phát trực tiếp. Phát lại sau khi kết nối lại là sai
-  // ("kicked" sẽ đá nhân viên vừa đăng nhập lại) hoặc thừa (client tự làm mới snapshot khi resync).
+  // Control messages sent to one employee only: live only. Replaying them after a reconnect is wrong
+  // ("kicked" would kick the employee who has just logged in again), or redundant (the client refreshes its snapshot itself on resync).
   'relay:kicked',
   'relay:accountAccessUpdate',
   'relay:initialState',
@@ -101,8 +101,8 @@ export function isEphemeralRelayChannel(channel: string): boolean {
 }
 
 /**
- * Tên field mang id tài khoản trong payload event (Zalo / Facebook / Telegram đều lưu ở accounts.zalo_id).
- * fbAccountId: event fb:* (FacebookService.getFacebookId() = accounts.zalo_id của tài khoản Facebook).
+ * Field names that carry the account id in an event payload (Zalo / Facebook / Telegram all store it in accounts.zalo_id).
+ * fbAccountId: fb:* events (FacebookService.getFacebookId() = the accounts.zalo_id of the Facebook account).
  */
 export const RELAY_ACCOUNT_FIELDS = ['zaloId', 'zalo_id', 'ownerZaloId', 'owner_zalo_id', 'accountId', 'account_id', 'fbAccountId'] as const;
 
@@ -111,7 +111,7 @@ function nonEmpty(value: unknown): string {
   return String(value).trim();
 }
 
-/** Id tài khoản của event ('' nếu không có). event:message bản cũ chỉ có message.zaloId. */
+/** The event's account id ('' if none). Old event:message builds only have message.zaloId. */
 export function relayEventAccountId(data: unknown): string {
   if (!data || typeof data !== 'object') return '';
   const record = data as Record<string, unknown>;
@@ -136,7 +136,7 @@ function uniqueIds(values: unknown[]): string[] {
   return [...ids];
 }
 
-/** Đích danh các nhân viên; không ai → chỉ Boss (giữ nguyên quy tắc cũ `allowed.size === 0 ? id === 'boss'`). */
+/** The specific employees; nobody → only Boss (keeps the old rule `allowed.size === 0 ? id === 'boss'`). */
 function employeesAudience(ids: unknown[]): RelayAudience {
   const employeeIds = uniqueIds(ids);
   return { kind: 'employees', employeeIds: employeeIds.length ? employeeIds : [BOSS_ACTOR_ID] };
@@ -146,31 +146,31 @@ function arrayOf(value: unknown): any[] {
   return Array.isArray(value) ? value : [];
 }
 
-/** Người tổ chức + người tham gia của một sự kiện lịch ERP (= ErpCalendarService.getVisibleEmployeeIdsForEvent). */
+/** Organizer + participants of one ERP calendar event (= ErpCalendarService.getVisibleEmployeeIdsForEvent). */
 function calendarParticipants(event: any): unknown[] {
   if (!event || typeof event !== 'object') return [];
   return [event.organizer_id, ...arrayOf(event.attendees).map((attendee: any) => attendee?.employee_id)];
 }
 
-/** Gửi một event tới đúng một nhân viên (SocketIOService.emitToEmployee). */
+/** Sends one event to exactly one employee (SocketIOService.emitToEmployee). */
 export function addressedAudience(employeeId: string): RelayAudience {
   return employeesAudience([employeeId]);
 }
 
-/** Phân loại người nhận của một event relay — xem đầu file. */
+/** Classifies the recipients of a relay event: see the top of the file. */
 export function classifyRelayEvent(channel: string, data: any): RelayAudience {
   const name = String(channel || '');
 
-  // ── ERP: lịch / nhắc lịch — chỉ người tổ chức + người tham gia (quy tắc cũ của HttpRelayService) ──
+  // ── ERP: calendar / reminders: only the organizer + participants (the old HttpRelayService rule) ──
   if (name.startsWith('erp:event:calendarEvent') || name === 'erp:event:reminder') {
     return employeesAudience([...arrayOf(data?.visibleEmployeeIds), ...calendarParticipants(data?.event)]);
   }
 
-  // ── ERP: ghi chú — phạm vi workspace thì ai cũng nhận; còn lại tác giả + người được xem / chia sẻ ──
+  // ── ERP: notes: workspace scope → everyone receives it; otherwise the author + people who can view / were shared with ──
   if (name.startsWith('erp:event:note')) {
     const note = data?.note;
     if (note?.share_scope === 'workspace' || data?.scope === 'workspace') return GLOBAL;
-    // noteShared (không mang nội dung): phạm vi CŨ là workspace → mọi người từng xem đều nhận để bỏ note khỏi danh sách
+    // noteShared (carries no content): the OLD scope was the workspace → everyone who had viewed it receives it to remove the note from their list
     if (name === 'erp:event:noteShared' && data?.previousScope === 'workspace') return GLOBAL;
     return employeesAudience([
       note?.author_id,
@@ -180,7 +180,7 @@ export function classifyRelayEvent(channel: string, data: any): RelayAudience {
     ]);
   }
 
-  // ── ERP: thông báo — gửi đúng người nhận (trước đây mọi nhân viên đều thêm vào hộp thư của mình) ──
+  // ── ERP: notifications: sent to the right recipient only (previously every employee added it to their own inbox) ──
   if (name === 'erp:event:notification') {
     return employeesAudience([data?.notification?.recipient_id ?? data?.notification?.recipientId]);
   }
@@ -192,14 +192,14 @@ export function classifyRelayEvent(channel: string, data: any): RelayAudience {
 
   if (ACCOUNT_REQUIRED_PREFIXES.some((prefix) => name.startsWith(prefix))) return NOBODY;
   if (ACCOUNT_REQUIRED_CHANNELS.has(name)) return NOBODY;
-  // Kênh cấu hình không mang id tài khoản (vd db:localQuickMessageChanged active/reorder):
-  // chỉ có id + cờ / trường vừa sửa → giữ như trước, gửi mọi nhân viên.
+  // Config channel without an account id (e.g. db:localQuickMessageChanged active/reorder):
+  // only carries the id + the flag / field just edited → kept as before, sent to every employee.
   return GLOBAL;
 }
 
 /**
- * Nhân viên `employeeId` (được giao `assignedAccounts`) có được nhận event với audience này không.
- * `assignedAccounts` phải là danh sách hiện hành — cùng nguồn với kiểm tra quyền REST.
+ * Whether employee `employeeId` (assigned `assignedAccounts`) may receive an event with this audience.
+ * `assignedAccounts` must be the current list: the same source as the REST permission checks.
  */
 export function canReceiveRelayEvent(
   audience: RelayAudience | null | undefined,
@@ -221,7 +221,7 @@ export function canReceiveRelayEvent(
   }
 }
 
-/** Chuẩn hoá danh sách tài khoản được giao (bỏ rỗng / trùng, ép chuỗi). */
+/** Normalizes the assigned account list (drops empty / duplicate entries, forces strings). */
 export function normalizeAccountList(value: unknown): string[] {
   return uniqueIds(arrayOf(value));
 }

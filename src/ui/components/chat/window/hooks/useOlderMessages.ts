@@ -1,7 +1,7 @@
 /**
- * Tin cũ hơn: tự tải khi cuộn gần đỉnh (theo vị trí cuộn, không IntersectionObserver), một trang từ DB theo mốc thời
- * gian; DB hết thì hỏi server của kênh (channels/: Telegram getMessages, Facebook fetchOlderMessages) rồi đọc lại DB.
- * Trích dẫn của trang mới ghép từ chính trang / bổ sung sau bằng 1 truy vấn gộp. Giữ vị trí đang xem khi chèn lên trên.
+ * Older messages: load automatically when scrolled near the top (based on scroll position, not IntersectionObserver), one page from the DB by timestamp.
+ * When the DB runs out, ask the channel's server (channels/: Telegram getMessages, Facebook fetchOlderMessages), then read the DB again.
+ * Quotes in the new page are built from the page itself, or filled in later by one batched query. Keeps the current view position when inserting above.
  */
 import { useCallback, useEffect } from 'react';
 import { flushSync } from 'react-dom';
@@ -33,15 +33,15 @@ export function useOlderMessages(list: MessageListState, deps: {
     if (Date.now() < suppressLoadOlderUntilRef.current) return;
     if (el.scrollTop <= LOAD_OLDER_PREFETCH_PX) loadMoreFnRef.current();
   }, []);
-  // Hội thoại ngắn (chưa cuộn được) hoặc đáy vẫn nằm trong vùng tải trước ngay sau khi mở
+  // Short conversation (cannot scroll yet), or the bottom is still inside the prefetch zone right after opening
   useEffect(() => {
     if (!initialScrollDone) return;
     const raf = requestAnimationFrame(maybeLoadOlder);
     return () => cancelAnimationFrame(raf);
   }, [initialScrollDone, activeThreadId, maybeLoadOlder]);
 
-  // Chụp vị trí cuộn NGAY trước khi chèn tin cũ lên đầu — không chụp trước lúc query DB: trong lúc chờ,
-  // người dùng vẫn cuộn / có tin mới nên vị trí khôi phục sẽ sai.
+  // Capture the scroll position RIGHT before inserting older messages at the top, not before the DB query: while waiting,
+  // the user may still scroll or new messages may arrive, so the restored position would be wrong.
   const snapshotScrollForPrepend = () => {
     const el = messagesContainerRef.current;
     savedScrollHeightRef.current = el?.scrollHeight || 0;
@@ -49,9 +49,9 @@ export function useOlderMessages(list: MessageListState, deps: {
     shouldRestoreScrollRef.current = true;
   };
 
-  // Một trang tin cũ hơn `before` từ DB (chủ: IPC, nhân viên: REST), mới → cũ. DB trả `timestamp <= before`
-  // nên các tin cùng mốc đã hiển thị quay lại — xin thêm đúng số đó + 1 dòng: dòng dư cho biết còn tin cũ hơn,
-  // khỏi truy vấn dò lần nữa.
+  // One page of messages older than `before` from the DB (owner: IPC, employee: REST), new → old. The DB returns `timestamp <= before`
+  // so messages with the same timestamp that are already shown come back: ask for exactly that many + 1 row. The extra row tells whether older messages remain,
+  // no need for another query.
   const fetchOlderPage = async (accountId: string, threadId: string, topicId: string | null, before: number, loaded: any[]) => {
     const loadedIds = new Set(loaded.map(m => String(m.msg_id)));
     const sameTs = loaded.filter(m => m.timestamp === before).length;
@@ -62,14 +62,14 @@ export function useOlderMessages(list: MessageListState, deps: {
       before,
       topicId: topicId || undefined,
     });
-    // Lỗi đọc (employee: mất kết nối BOSS) ≠ "hết tin cũ": để handleLoadMore hiện "Lỗi - Thử lại", giữ hasMore
+    // A read error (employee: lost connection to BOSS) ≠ "hết tin cũ" (no older messages left): handleLoadMore shows "Lỗi - Thử lại" (Error - Retry) and keeps hasMore
     if (isReadFailure(res)) throw new Error(readFailureMessage(res));
     const rows: any[] = res?.messages || res?.items || [];
     const fresh = rows.filter(m => !loadedIds.has(String(m.msg_id)));
     return { page: fresh.slice(0, MESSAGE_LOAD_MORE_LIMIT), more: fresh.length > MESSAGE_LOAD_MORE_LIMIT };
   };
 
-  // reply_to_id → quote_data từ chính trang vừa tải (Facebook…); tin gốc nằm ngoài trang thì bổ sung sau
+  // reply_to_id → quote_data from the page just loaded (Facebook…); the original message outside the page is filled in later
   const mapReplyQuotes = (rows: any[]) => {
     const lookup = new Map<string, { content: string; type: string }>();
     for (const m of rows) lookup.set(m.msg_id, { content: m.content || '', type: m.msg_type || 'text' });
@@ -86,8 +86,8 @@ export function useOlderMessages(list: MessageListState, deps: {
     return { mapped, missing };
   };
 
-  // Tin gốc của trích dẫn nằm ngoài trang: 1 truy vấn gộp + 1 lần cập nhật store. Trước đây mỗi tin 1 truy vấn
-  // + 1 lần setMessages → cả danh sách re-render nhiều lần ngay sau mỗi trang.
+  // The original message of a quote is outside the page: 1 batched query + 1 store update. It used to be 1 query per message
+  // + 1 setMessages → the whole list re-rendered several times right after each page.
   const fixupMissingQuotes = async (
     accountId: string,
     threadId: string,
@@ -99,7 +99,7 @@ export function useOlderMessages(list: MessageListState, deps: {
       const found = new Map<string, any>();
       const batch: any = await DataAccessor.getMessagesByIds({ zaloId: accountId, msgIds: replyIds });
       for (const m of batch?.messages || []) found.set(String(m.msg_id), m);
-      // getMessagesByIds chỉ khớp msg_id; getMessageById còn khớp cli_msg_id (trích dẫn Zalo có msgId "0")
+      // getMessagesByIds only matches msg_id; getMessageById also matches cli_msg_id (Zalo quotes have msgId "0")
       for (const id of replyIds) {
         if (found.has(id)) continue;
         const one: any = await DataAccessor.getMessageById({ zaloId: accountId, threadId, msgId: id });
@@ -125,24 +125,24 @@ export function useOlderMessages(list: MessageListState, deps: {
     } catch {}
   };
 
-  // Tải thêm tin nhắn cũ dùng timestamp cursor (tránh lỗi offset khi có tin real-time)
+  // Loading more older messages uses a timestamp cursor (avoids offset errors when real-time messages arrive)
   const handleLoadMore = async () => {
     // Double-guard: check refs to prevent race conditions
     if (!activeAccountId || !activeThreadId || loadingMoreRef.current || !hasMoreRef.current) return;
     const accountId = activeAccountId;
     const threadId = activeThreadId;
     const topicId = activeTopicId;
-    // Re-read msgs from store to get the freshest oldest message (MIN timestamp, mảng có thể chưa sắp xếp)
+    // Re-read msgs from the store to get the freshest oldest message (MIN timestamp, the array may not be sorted)
     const loaded = (useChatStore.getState().messages[getMessageCacheKey(accountId, threadId, topicId)] || [])
       .filter(m => !m.msg_id.startsWith('temp_'));
-    // Store chưa có tin (lần tải đầu đang chạy) → để lần tải đầu xử lý, không kết luận là hết tin
+    // The store has no messages yet (the first load is still running) → leave it to the first load, do not conclude there are no more messages
     if (loaded.length === 0) return;
     let oldest: any = null;
     for (const m of loaded) {
       if ((m.timestamp || 0) > 0 && (!oldest || m.timestamp < oldest.timestamp)) oldest = m;
     }
     if (!oldest) {
-      // Không có timestamp hợp lệ → không có mốc để tải tiếp
+      // No valid timestamp → no marker to load further from
       hasMoreRef.current = false;
       setHasMore(false);
       return;
@@ -152,8 +152,8 @@ export function useOlderMessages(list: MessageListState, deps: {
     const seq = ++loadSeqRef.current;
     loadingMoreRef.current = true;
     if (loadError) setLoadError(false);
-    // Spinner chỉ hiện khi tải lâu: trang từ DB thường xong trong vài chục ms; bật state ngay thì cả danh sách
-    // re-render thêm một lần mỗi trang (giật khi đang cuộn).
+    // The spinner only shows when loading is slow: a page from the DB usually finishes in a few dozen ms, so turning the state on at once would make the whole list
+    // re-render one more time per page (stutters while scrolling).
     const spinnerTimer = setTimeout(() => {
       if (loadSeqRef.current === seq) setLoadingMore(true);
     }, 250);
@@ -168,29 +168,29 @@ export function useOlderMessages(list: MessageListState, deps: {
     }, LOAD_MORE_TIMEOUT_MS);
 
     try {
-      // `confirmed`: DB trả dư dòng → chắc chắn còn tin cũ (mới hiện nút). `maybe`: có thể còn (tiếp tục tự tải).
+      // `confirmed`: the DB returned an extra row → there are certainly older messages (the button is shown). `maybe`: there may be more (keep auto-loading).
       let { page, more: confirmed } = await fetchOlderPage(accountId, threadId, topicId, before, loaded);
       let maybe = confirmed;
 
-      // Kênh tải được lịch sử từ server (channels/: Telegram, Facebook)
+      // The channel can load history from the server (channels/: Telegram, Facebook)
       const fetchOlderFromServer = chatWindowChannel(getActiveAccount()?.channel).fetchOlderFromServer;
       if (fetchOlderFromServer) {
         if (page.length === 0) {
-          // DB đã hết → xin server một trang cũ hơn (server lưu vào DB) rồi đọc lại DB. Lỗi tạm thời ném ra →
-          // "Lỗi - Thử lại", giữ hasMore để còn thử lại
+          // DB has run out → ask the server for one older page (the server saves it to the DB), then read the DB again. A temporary error is thrown →
+          // "Lỗi - Thử lại" (Error - Retry), keep hasMore so it can retry
           const fromServer = await fetchOlderFromServer({ accountId, threadId, topicId, oldest, before });
           if (fromServer.stored > 0) ({ page, more: confirmed } = await fetchOlderPage(accountId, threadId, topicId, before, loaded));
           maybe = confirmed || fromServer.hasMore;
         } else {
-          // DB còn ít hơn một trang không có nghĩa server đã hết tin: lần sau hỏi server
+          // The DB having fewer than one page does not mean the server has run out: ask the server next time
           maybe = true;
         }
       }
-      if (loadSeqRef.current !== seq) return; // đã đổi hội thoại / lần tải này đã bị bỏ
+      if (loadSeqRef.current !== seq) return; // the conversation changed, or this load was dropped
 
       const { mapped, missing } = mapReplyQuotes(page);
       const nextHasMore = mapped.length > 0 && maybe;
-      // Một lần render cho cả trang mới lẫn trạng thái (trước đây 2–3 lần re-render toàn bộ danh sách / trang)
+      // One render for both the new page and the state (it used to take 2-3 full re-renders of the list per page)
       flushSync(() => {
         if (mapped.length > 0) {
           snapshotScrollForPrepend();
@@ -201,17 +201,17 @@ export function useOlderMessages(list: MessageListState, deps: {
         setOlderKnown(mapped.length > 0 && confirmed);
         setLoadingMore(false);
       });
-      // Trùng hết (store đã có) → không có render nào dùng mốc chụp: bỏ, kẻo lần đổi số tin sau khôi phục sai
+      // All duplicates (the store already has them) → no render uses the captured marker, so drop it, otherwise a later change in the message count would restore the wrong position
       shouldRestoreScrollRef.current = false;
       if (mapped.length > 0) {
         if (missing.length > 0) void fixupMissingQuotes(accountId, threadId, topicId, missing);
-        // Trang vừa tải chưa đẩy đỉnh ra khỏi vùng tải trước (trang ngắn / không cuộn) → tải tiếp
+        // The loaded page did not push the top out of the prefetch zone (short page / not scrollable) → keep loading
         requestAnimationFrame(maybeLoadOlder);
       }
     } catch {
       if (loadSeqRef.current === seq) {
         setLoadError(true);
-        // Không tự thử lại ở mỗi lần cuộn (Telegram FLOOD_WAIT…) — nút "Thử lại" vẫn bấm được ngay
+        // Does not retry automatically on every scroll (Telegram FLOOD_WAIT…): the "Thử lại" (Retry) button can still be clicked right away
         suppressLoadOlderUntilRef.current = Date.now() + 15_000;
       }
     } finally {

@@ -1,11 +1,13 @@
 /**
- * Bài đăng kênh Telegram (như Telegram): số liệu bài (lượt xem / chia sẻ / bình luận) làm mới bằng
- * messages.getMessagesViews, và bình luận — nằm trong NHÓM THẢO LUẬN gắn với kênh, không phải trong kênh.
+ * Telegram channel posts (like Telegram): post stats (views / shares / comments) refreshed with
+ * messages.getMessagesViews, and comments, which live in the DISCUSSION GROUP attached to the channel, not in the channel.
  *
- * Trước đây bình luận lấy bằng messages.getReplies rồi lưu như tin của KÊNH (topic_id = id bài): id bình luận (dãy id của
- * nhóm) trùng id bài kênh → INSERT bị bỏ (thiếu bình luận), UPDATE ghi đè topic / trả lời của bài kênh trùng id (770 bài
- * bị hỏng), bình luận chuẩn hoá theo kiểu kênh nên hiện thành thẻ "BÀI ĐĂNG KÊNH", thứ tự ngược, người gửi là nhóm thì "U".
+ * Previously comments were fetched with messages.getReplies and saved as messages of the CHANNEL (topic_id = post id): the comment ids (the group's id range)
+ * collided with channel post ids → the INSERT was skipped (comments missing), the UPDATE overwrote the topic / reply of the channel post with the same id (770 posts
+ * damaged), comments were normalized as channel messages so they showed as a "BÀI ĐĂNG KÊNH" (CHANNEL POST) card, in reversed order, and a sender that was the group showed as "U".
  */
+
+import { tr } from '../../../shared/i18n';
 
 export interface TelegramPostStats {
   views?: number | null;
@@ -14,7 +16,7 @@ export interface TelegramPostStats {
     replies?: number | null;
     recentRepliers?: unknown[] | null;
     channelId?: unknown;
-    /** Bình luận mới nhất / đã đọc tới (chấm "chưa đọc" trên thanh bình luận, như Telegram) */
+    /** Latest comment / last one read (the "chưa đọc" (unread) dot on the comment bar, like Telegram) */
     maxId?: number | null;
     readMaxId?: number | null;
   } | null;
@@ -23,8 +25,8 @@ export interface TelegramPostStats {
 const POST_STAT_KEYS = ['views', 'forwards', 'comments', 'discussion_channel_id', 'comments_max_id', 'comments_read_max_id'];
 
 /**
- * Gộp số liệu mới vào attachment `telegram_post` (JSON của cột attachments). Trả về JSON mới, hoặc null khi không có
- * attachment bài đăng hay không có gì đổi. `peerId` chuyển Peer của người bình luận gần đây thành id chuẩn.
+ * Merges new stats into the `telegram_post` attachment (the JSON of the attachments column). Returns the new JSON, or null when there is no
+ * post attachment or nothing changed. `peerId` turns the Peer of the most recent commenter into the standard id.
  */
 export function mergeTelegramPostStats(
   attachmentsJson: string | null | undefined,
@@ -53,7 +55,7 @@ export function mergeTelegramPostStats(
       next.discussion_channel_id = String(stats.replies.channelId);
     }
     if (stats.replies.maxId != null) next.comments_max_id = Math.max(0, Number(stats.replies.maxId) || 0);
-    // Telegram chỉ gửi read_max_id khi mình đã từng đọc chuỗi bình luận → không có thì giữ mốc đang lưu
+    // Telegram only sends read_max_id once I have read the comment thread → without it, keep the stored mark
     if (stats.replies.readMaxId != null) {
       next.comments_read_max_id = Math.max(Number(current.comments_read_max_id) || 0, Number(stats.replies.readMaxId) || 0);
     }
@@ -66,8 +68,8 @@ export function mergeTelegramPostStats(
 }
 
 /**
- * Đã đọc bình luận tới `readMaxId` (messages.readDiscussion) → attachments mới của bài kênh (null = không có thẻ bài /
- * không đổi). Mốc chỉ tăng — lượt báo cũ về muộn không làm chấm "chưa đọc" hiện lại.
+ * Read comments up to `readMaxId` (messages.readDiscussion) → new attachments of the channel post (null = no post card / no change).
+ * The mark only moves forward: a late report that arrives old does not make the "chưa đọc" (unread) dot come back.
  */
 export function withCommentsRead(attachmentsJson: string | null | undefined, readMaxId: number): string | null {
   let attachments: any[];
@@ -87,20 +89,20 @@ export function withCommentsRead(attachmentsJson: string | null | undefined, rea
 export type DiscussionAnchor = 'top' | 'unread' | 'bottom';
 
 export interface DiscussionWindow {
-  /** messages.getReplies offset_id (0 = mới nhất) */
+  /** messages.getReplies offset_id (0 = newest) */
   offsetId: number;
-  /** messages.getReplies add_offset (âm = lấy cả bình luận mới hơn offset_id) */
+  /** messages.getReplies add_offset (negative = also fetch comments newer than offset_id) */
   addOffset: number;
-  /** Mở ở đâu: đầu chuỗi (bài gốc), bình luận chưa đọc đầu tiên, hay cuối (mới nhất). */
+  /** Where to open: the start of the thread (root post), the first unread comment, or the end (newest). */
   anchor: DiscussionAnchor;
 }
 
 /**
- * Trang mở đầu của phần bình luận, như Telegram Desktop (RepliesList::loadAround quanh mốc chưa đọc):
- *  - chưa đọc bình luận nào (read_inbox_max_id ≤ tin gốc) → từ bình luận ĐẦU TIÊN, bài gốc ở trên cùng;
- *  - còn bình luận chưa đọc → quanh bình luận chưa đọc đầu tiên (nửa trang đã đọc ở trên, nửa chưa đọc ở dưới);
- *  - đã đọc hết → các bình luận mới nhất.
- * Id bình luận (trong nhóm thảo luận) luôn lớn hơn id tin gốc.
+ * The opening page of the comments section, like Telegram Desktop (RepliesList::loadAround around the unread mark):
+ *  - no comment read yet (read_inbox_max_id ≤ root message) → from the FIRST comment, root post at the top;
+ *  - unread comments remain → around the first unread comment (half read above, half unread below);
+ *  - everything read → the newest comments.
+ * Comment ids (in the discussion group) are always larger than the root message id.
  */
 export function discussionOpenWindow(rootId: number, readInboxMaxId: number, maxId: number, limit: number): DiscussionWindow {
   const root = Math.max(0, Math.floor(Number(rootId) || 0));
@@ -113,8 +115,8 @@ export function discussionOpenWindow(rootId: number, readInboxMaxId: number, max
 }
 
 /**
- * Còn bình luận cũ hơn / mới hơn ngoài trang vừa tải? `ids` = id các tin messages.getReplies trả về cho (offsetId,
- * addOffset, limit). null = trang này không xét phía đó (vd tải thêm phía cũ thì không biết gì thêm về phía mới).
+ * Are there older / newer comments beyond the page just loaded? `ids` = the ids of the messages messages.getReplies returned for (offsetId,
+ * addOffset, limit). null = this page does not check that side (e.g. loading more on the older side tells nothing about the newer side).
  */
 export function discussionPageFlags(
   ids: number[],
@@ -138,27 +140,27 @@ export type DiscussionJoinMode = 'none' | 'join' | 'request';
 
 export interface DiscussionAccess {
   isMember: boolean;
-  /** Gửi bình luận được ngay (thành viên, hoặc nhóm cho bình luận không cần tham gia). */
+  /** Can send a comment right away (member, or a group that allows commenting without joining). */
   canWrite: boolean;
-  /** Chưa là thành viên: tham gia thẳng / phải gửi yêu cầu cho quản trị viên duyệt. */
+  /** Not a member: join directly / must send a request for an admin to approve. */
   joinMode: DiscussionJoinMode;
-  /** Câu hiện thay ô soạn tin khi không gửi được. */
+  /** Text shown in place of the compose box when a message cannot be sent. */
   reason: string;
 }
 
 /**
- * Ai được bình luận trong nhóm thảo luận (Channel megagroup trong `chats` của messages.getDiscussionMessage):
- * `left` = chưa tham gia, `join_to_send` = phải tham gia mới gửi được, `join_request` = tham gia cần duyệt,
- * quyền mặc định / bị cấm gửi tin.
+ * Who can comment in the discussion group (a Channel megagroup in `chats` of messages.getDiscussionMessage):
+ * `left` = not joined, `join_to_send` = must join before sending, `join_request` = joining needs approval,
+ * default permissions / sending banned.
  */
 export function discussionAccess(chat: any): DiscussionAccess {
   if (!chat || chat.className === 'ChannelForbidden' || chat.className === 'ChatForbidden') {
-    return { isMember: false, canWrite: false, joinMode: 'none', reason: 'Nhóm thảo luận không còn khả dụng với tài khoản này' };
+    return { isMember: false, canWrite: false, joinMode: 'none', reason: tr('Nhóm thảo luận không còn khả dụng với tài khoản này') };
   }
   const isMember = !chat.left;
   const sendBanned = !!(chat.bannedRights?.sendMessages || chat.defaultBannedRights?.sendMessages);
   if (sendBanned && !chat.creator && !chat.adminRights) {
-    return { isMember, canWrite: false, joinMode: 'none', reason: 'Bạn không được gửi bình luận trong nhóm này' };
+    return { isMember, canWrite: false, joinMode: 'none', reason: tr('Bạn không được gửi bình luận trong nhóm này') };
   }
   if (isMember) return { isMember, canWrite: true, joinMode: 'none', reason: '' };
   const joinMode: DiscussionJoinMode = chat.joinRequest ? 'request' : 'join';
@@ -168,14 +170,14 @@ export function discussionAccess(chat: any): DiscussionAccess {
     canWrite: false,
     joinMode,
     reason: joinMode === 'request'
-      ? 'Cần được quản trị viên duyệt vào nhóm thảo luận để bình luận'
-      : 'Tham gia nhóm thảo luận để bình luận',
+      ? tr('Cần được quản trị viên duyệt vào nhóm thảo luận để bình luận')
+      : tr('Tham gia nhóm thảo luận để bình luận'),
   };
 }
 
 /**
- * Tin gốc của chuỗi bình luận trong nhóm thảo luận: messages.getDiscussionMessage trả các tin mở đầu (album = nhiều tin)
- * theo id giảm dần → gốc = tin có id nhỏ nhất.
+ * The root message of the comment thread in the discussion group: messages.getDiscussionMessage returns the opening messages (album = several messages)
+ * in decreasing id order → the root = the message with the smallest id.
  */
 export function discussionRoot<T extends { id?: unknown }>(messages: T[] | null | undefined): T | null {
   let root: T | null = null;

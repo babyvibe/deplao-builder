@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { tr } from '../../../../shared/i18n';
 
 export interface LocalLabelItem {
   id: number;
@@ -29,9 +30,9 @@ export default function LocalLabelSelector({
   labels,
   selectedIds,
   onChange,
-  placeholder = 'Chọn nhãn...',
+  placeholder = tr('Chọn nhãn...'),
   togglingId = null,
-  emptyText = 'Chưa có nhãn nào',
+  emptyText = tr('Chưa có nhãn nào'),
 }: LocalLabelSelectorProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);

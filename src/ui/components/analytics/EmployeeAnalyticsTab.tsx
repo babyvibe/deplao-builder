@@ -9,6 +9,16 @@ import PageLoading, { Spinner } from '@/components/common/PageLoading';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { addLocalDays } from '../../../shared/analytics/localTimeBuckets';
 import { ActivityIcon, ChartIcon, ChatIcon, ClipboardListIcon, ClockIcon, FolderIcon, InboxIcon, InfoIcon, PieChartIcon, RefreshIcon, TrendingUpIcon, UsersIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../shared/i18n';
+
+// Radar metric ids stay Vietnamese (compared in radarData); the axis shows the name in the UI language
+const RADAR_METRIC_LABEL: Record<string, string> = {
+  'Tin gửi': tr('Tin gửi'),
+  'Hội thoại': tr('Hội thoại'),
+  'Online (h)': 'Online (h)',
+  'Tốc độ PH': tr('Tốc độ PH'),
+};
+import { trx } from '@/lib/i18n/trx';
 
 
 
@@ -39,7 +49,7 @@ interface Props {
   periodDays: number;
   /** Reports account filter: only activity on these accounts; undefined = every account. */
   zaloIds?: string[];
-  /** Bumped by the page's "Làm mới" (closed ranges keep the same sinceTs / untilTs). */
+  /** Bumped by the page's "Làm mới" (Refresh) (closed ranges keep the same sinceTs / untilTs). */
   refreshKey?: number;
 }
 
@@ -63,7 +73,7 @@ function KPICard({ icon, label, value, sub, color = 'blue' }: {
         <span className="text-lg">{icon}</span>
         <span className="text-xs text-muted-foreground font-medium">{label}</span>
       </div>
-      <span className="text-2xl font-bold text-foreground">{typeof value === 'number' ? value.toLocaleString('vi-VN') : value}</span>
+      <span className="text-2xl font-bold text-foreground">{typeof value === 'number' ? value.toLocaleString(appLocale()) : value}</span>
       {sub && <span className="text-[11px] text-muted-foreground">{sub}</span>}
     </div>
   );
@@ -318,12 +328,12 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
 
   // ── Export CSV ─────────────────────────────────────────────────
   const handleExportCSV = () => {
-    const headers = ['Nhân viên', 'Vai trò', 'Tin gửi', 'TB phản hồi', 'Hội thoại', 'Online (giờ)'];
+    const headers = [tr('Nhân viên'), tr('Vai trò'), tr('Tin gửi'), tr('TB phản hồi'), tr('Hội thoại'), tr('Online (giờ)')];
     const rows = filteredComparison.map(s => [
       s.display_name, s.role, s.messages_sent,
       formatResponseTime(s.avg_response_time_ms), s.conversations_handled, s.total_online_hours,
     ]);
-    rows.push(['TỔNG', '', totals.messages_sent, '-', totals.conversations, totals.online_hours]);
+    rows.push([tr('TỔNG'), '', totals.messages_sent, '-', totals.conversations, totals.online_hours]);
     const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -334,20 +344,20 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
     URL.revokeObjectURL(url);
   };
 
-  if (loading) return <PageLoading variant="skeleton" skeletonVariant="cards" text="Đang tải thống kê nhân viên..." />;
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="cards" text={tr('Đang tải thống kê nhân viên...')} />;
 
   if (comparison.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
         <span className="text-4xl mb-3"><UsersIcon className="w-4 h-4" /></span>
-        <p className="text-sm">Chưa có nhân viên nào. Vào <span className="text-blue-400">Cài đặt → Nhân viên</span> để thêm.</p>
+        <p className="text-sm">{trx('Chưa có nhân viên nào. Vào <0>Cài đặt → Nhân viên</0> để thêm.', { 0: <span className="text-blue-400" /> })}</p>
       </div>
     );
   }
 
   const filterLabel = isAll
-    ? 'Tất cả nhân viên'
-    : `${selectedIds.size} nhân viên`;
+    ? tr('Tất cả nhân viên')
+    : tr('{{count}} nhân viên', { count: selectedIds.size });
 
   return (
     <div className="space-y-5">
@@ -359,7 +369,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
             onClick={() => setFilterOpen(o => !o)}
             className="flex items-center gap-2 bg-muted/60 border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground hover:border-blue-500 transition-colors focus:outline-none"
           >
-            <span className="text-muted-foreground">Nhân viên:</span>
+            <span className="text-muted-foreground">{tr('Nhân viên:')}</span>
             {/* Stacked avatars */}
             <div className="flex -space-x-1.5">
               {(isAll ? comparison : comparison.filter(e => selectedIds.has(e.employee_id))).slice(0, 4).map((emp) => (
@@ -381,10 +391,10 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
           {filterOpen && (
             <div className="absolute left-0 top-full mt-1.5 w-64 bg-card border border-input rounded-xl shadow-2xl z-50 overflow-hidden">
               <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-                <span className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wide">Lọc nhân viên</span>
+                <span className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wide">{tr('Lọc nhân viên')}</span>
                 <button onClick={() => setSelectedIds(new Set())}
                   className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors">
-                  Tất cả
+                  {tr('Tất cả')}
                 </button>
               </div>
               <div className="max-h-56 overflow-y-auto py-1">
@@ -414,7 +424,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
                       {/* Name + role */}
                       <div className="flex-1 text-left min-w-0">
                         <p className="text-xs text-foreground font-medium truncate">{emp.display_name}</p>
-                        <p className="text-[9px] text-muted-foreground">{emp.role === 'boss' ? 'Boss' : 'Nhân viên'}{!emp.is_active ? ' · Tắt' : ''}</p>
+                        <p className="text-[9px] text-muted-foreground">{emp.role === 'boss' ? 'Boss' : tr('Nhân viên')}{!emp.is_active ? tr(' · Tắt') : ''}</p>
                       </div>
                       {/* Color dot */}
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: empColorMap[emp.employee_id] }} />
@@ -430,13 +440,13 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
         <button
           onClick={handleExportCSV}
           className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground px-2.5 py-1.5 rounded-lg hover:bg-muted border border-border transition-colors"
-        ><InboxIcon className="w-4 h-4 inline" /> Xuất CSV
+        >{trx('<0/> Xuất CSV', { 0: <InboxIcon className="w-4 h-4 inline" /> })}
         </button>
         <button
           onClick={loadData}
           disabled={loading}
           className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1.5 rounded-lg hover:bg-muted transition-colors"
-          title="Làm mới"
+          title={tr('Làm mới')}
         >
           {loading ? <Spinner size={3} /> : <RefreshIcon className="w-4 h-4" />}
         </button>
@@ -446,32 +456,31 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
         <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
           <InfoIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
           <span>
-            Tin gửi, hội thoại, thời gian phản hồi và hoạt động theo giờ chỉ tính trên {zaloIds.length} tài khoản đã chọn.
-            Giờ online tính theo phiên đăng nhập của nhân viên, không tách theo tài khoản.
+            {trx('Tin gửi, hội thoại, thời gian phản hồi và hoạt động theo giờ chỉ tính trên {{count}} tài khoản đã chọn. Giờ online tính theo phiên đăng nhập của nhân viên, không tách theo tài khoản.', { count: zaloIds.length })}
           </span>
         </p>
       )}
 
       {/* ── KPI Summary ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <KPICard icon={<UsersIcon className="w-4 h-4" />} label="Nhân viên" value={filteredComparison.length}
-          sub={`${filteredComparison.filter(e => e.is_active).length} hoạt động`} color="blue" />
-        <KPICard icon={<ChatIcon className="w-4 h-4" />} label="Tổng tin gửi" value={totals.messages_sent}
-          sub={`${periodDays} ngày`} color="green" />
-        <KPICard icon={<FolderIcon className="w-4 h-4" />} label="Hội thoại xử lý" value={totals.conversations}
-          sub="tổng cộng" color="purple" />
-        <KPICard icon={<ClockIcon className="w-4 h-4" />} label="TB phản hồi" value={formatResponseTime(avgResponseTime)}
-          sub="trung bình team" color="cyan" />
-        <KPICard icon={<ClockIcon className="w-4 h-4" />} label="Tổng giờ online" value={`${totals.online_hours}h`}
+        <KPICard icon={<UsersIcon className="w-4 h-4" />} label={tr('Nhân viên')} value={filteredComparison.length}
+          sub={tr('{{count}} hoạt động', { count: filteredComparison.filter(e => e.is_active).length })} color="blue" />
+        <KPICard icon={<ChatIcon className="w-4 h-4" />} label={tr('Tổng tin gửi')} value={totals.messages_sent}
+          sub={tr('{{periodDays}} ngày', { periodDays })} color="green" />
+        <KPICard icon={<FolderIcon className="w-4 h-4" />} label={tr('Hội thoại xử lý')} value={totals.conversations}
+          sub={tr('tổng cộng')} color="purple" />
+        <KPICard icon={<ClockIcon className="w-4 h-4" />} label={tr('TB phản hồi')} value={formatResponseTime(avgResponseTime)}
+          sub={tr('trung bình team')} color="cyan" />
+        <KPICard icon={<ClockIcon className="w-4 h-4" />} label={tr('Tổng giờ online')} value={`${totals.online_hours}h`}
           sub={`TB ${filteredComparison.length > 0 ? (totals.online_hours / filteredComparison.length).toFixed(1) : 0}h/NV`} color="amber" />
       </div>
 
       {/* ── Row 1: Comparison bars + Pie charts ──────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {/* Bar: Messages per employee */}
-        <Section title={<><ChartIcon className="w-4 h-4" />  So sánh tin nhắn & hội thoại</>}>
+        <Section title={<>{trx('<0/>  So sánh tin nhắn & hội thoại', { 0: <ChartIcon className="w-4 h-4" /> })}</>}>
           {barCompData.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -485,14 +494,14 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
                     return (
                       <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                         <p className="text-foreground font-medium mb-1">{d.name}</p>
-                        <p className="text-blue-400"><ChatIcon className="w-4 h-4 inline" /> {d.messages} tin gửi</p>
-                        <p className="text-green-400"><FolderIcon className="w-4 h-4 inline" /> {d.conversations} hội thoại</p>
-                        <p className="text-amber-400"><ClockIcon className="w-4 h-4 inline" /> {d.online}h online</p>
+                        <p className="text-blue-400">{trx('<0/> {{messages}} tin gửi', { 0: <ChatIcon className="w-4 h-4 inline" />, messages: d.messages })}</p>
+                        <p className="text-green-400">{trx('<0/> {{conversations}} hội thoại', { 0: <FolderIcon className="w-4 h-4 inline" />, conversations: d.conversations })}</p>
+                        <p className="text-amber-400">{trx('<0/> {{online}}h online', { 0: <ClockIcon className="w-4 h-4 inline" />, online: d.online })}</p>
                       </div>
                     );
                   }} />
-                  <Bar dataKey="messages" name="Tin gửi" fill="#3b82f6" radius={[0, 4, 4, 0]} maxBarSize={16} />
-                  <Bar dataKey="conversations" name="Hội thoại" fill="#10b981" radius={[0, 4, 4, 0]} maxBarSize={16} />
+                  <Bar dataKey="messages" name={tr('Tin gửi')} fill="#3b82f6" radius={[0, 4, 4, 0]} maxBarSize={16} />
+                  <Bar dataKey="conversations" name={tr('Hội thoại')} fill="#10b981" radius={[0, 4, 4, 0]} maxBarSize={16} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -501,9 +510,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
 
         {/* Pie: Message share + Online share */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Section title={<><PieChartIcon className="w-4 h-4" />  Phân bổ tin nhắn</>}>
+          <Section title={<>{trx('<0/>  Phân bổ tin nhắn', { 0: <PieChartIcon className="w-4 h-4" /> })}</>}>
             {msgPieData.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+              <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
             ) : (
               <div className="h-48">
                 <ResponsiveContainer width="100%" height="100%">
@@ -520,7 +529,7 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
                       return (
                         <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                           <p className="text-foreground font-medium">{d.name}</p>
-                          <p className="text-blue-400 font-bold">{d.value} tin ({pct}%)</p>
+                          <p className="text-blue-400 font-bold">{trx('{{value}} tin ({{pct}}%)', { value: d.value, pct })}</p>
                         </div>
                       );
                     }} />
@@ -531,9 +540,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
             )}
           </Section>
 
-          <Section title={<><ClockIcon className="w-4 h-4" />  Phân bổ giờ online</>}>
+          <Section title={<>{trx('<0/>  Phân bổ giờ online', { 0: <ClockIcon className="w-4 h-4" /> })}</>}>
             {onlinePieData.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+              <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
             ) : (
               <div className="h-48">
                 <ResponsiveContainer width="100%" height="100%">
@@ -565,9 +574,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
 
       {/* ── Row 2: Message timeline + Online timeline ────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <Section title={<><TrendingUpIcon className="w-4 h-4" />  Tin nhắn theo ngày (so sánh nhân viên)</>}>
+        <Section title={<>{trx('<0/>  Tin nhắn theo ngày (so sánh nhân viên)', { 0: <TrendingUpIcon className="w-4 h-4" /> })}</>}>
           {msgTimelineChart.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -601,9 +610,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
           )}
         </Section>
 
-        <Section title={<><ClockIcon className="w-4 h-4" />  Giờ online theo ngày (so sánh nhân viên)</>}>
+        <Section title={<>{trx('<0/>  Giờ online theo ngày (so sánh nhân viên)', { 0: <ClockIcon className="w-4 h-4" /> })}</>}>
           {onlineTimelineChart.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -640,9 +649,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
 
       {/* ── Row 3: Response time comparison + Radar ───────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <Section title={<><ClockIcon className="w-4 h-4" />  Xếp hạng tốc độ phản hồi</>}>
+        <Section title={<>{trx('<0/>  Xếp hạng tốc độ phản hồi', { 0: <ClockIcon className="w-4 h-4" /> })}</>}>
           {responseBarData.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu phản hồi</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu phản hồi')}</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -658,12 +667,12 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
                       <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                         <p className="text-foreground font-medium">{d.name}</p>
                         <p className={`font-bold ${d.avg_ms < 300000 ? 'text-green-400' : d.avg_ms < 900000 ? 'text-amber-400' : 'text-red-400'}`}>
-                          ⏱️ TB: {d.display}
+                          {trx('⏱️ TB: {{display}}', { display: d.display })}
                         </p>
                       </div>
                     );
                   }} />
-                  <Bar dataKey="avg_ms" name="TB phản hồi" radius={[0, 4, 4, 0]} maxBarSize={16}>
+                  <Bar dataKey="avg_ms" name={tr('TB phản hồi')} radius={[0, 4, 4, 0]} maxBarSize={16}>
                     {responseBarData.map((d, i) => (
                       <Cell key={i} fill={d.avg_ms < 300000 ? '#10b981' : d.avg_ms < 900000 ? '#f59e0b' : '#ef4444'} />
                     ))}
@@ -674,15 +683,15 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
           )}
         </Section>
 
-        <Section title={<><ActivityIcon className="w-4 h-4" />  So sánh đa chiều nhân viên</>}>
+        <Section title={<>{trx('<0/>  So sánh đa chiều nhân viên', { 0: <ActivityIcon className="w-4 h-4" /> })}</>}>
           {radarData.length === 0 || filteredComparison.length < 2 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Cần ít nhất 2 nhân viên có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Cần ít nhất 2 nhân viên có dữ liệu')}</p>
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
                 <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
                   <PolarGrid stroke="#374151" />
-                  <PolarAngleAxis dataKey="metric" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+                  <PolarAngleAxis dataKey="metric" tickFormatter={(metric: string) => RADAR_METRIC_LABEL[metric] ?? metric} tick={{ fill: '#9ca3af', fontSize: 10 }} />
                   <PolarRadiusAxis angle={30} domain={[0, 100]} tick={false} />
                   {filteredComparison.slice(0, 6).map(emp => (
                     <Radar key={emp.employee_id} name={emp.display_name}
@@ -716,9 +725,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
 
       {/* ── Row 4: Response distribution + Hourly activity ────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <Section title={<><ChartIcon className="w-4 h-4" /> Phân bổ thời gian phản hồi{!isAll ? ` - ${filterLabel}` : ''}</>}>
+        <Section title={<>{trx('<0/> Phân bổ thời gian phản hồi{{v1}}', { 0: <ChartIcon className="w-4 h-4" />, v1: !isAll ? ` - ${filterLabel}` : '' })}</>}>
           {responseDistChart.every(r => r.count === 0) ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -731,11 +740,11 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
                     return (
                       <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                         <p className="text-muted-foreground mb-1">{label}</p>
-                        <p className="text-foreground font-bold">{payload[0].value} lượt</p>
+                        <p className="text-foreground font-bold">{trx('{{value}} lượt', { value: payload[0].value })}</p>
                       </div>
                     );
                   }} />
-                  <Bar dataKey="count" name="Số lượt" radius={[4, 4, 0, 0]} maxBarSize={28}>
+                  <Bar dataKey="count" name={tr('Số lượt')} radius={[4, 4, 0, 0]} maxBarSize={28}>
                     {responseDistChart.map((_, i) => {
                       const colors = ['#10b981', '#10b981', '#3b82f6', '#f59e0b', '#f59e0b', '#ef4444', '#ef4444', '#991b1b'];
                       return <Cell key={i} fill={colors[i]} />;
@@ -747,9 +756,9 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
           )}
         </Section>
 
-        <Section title={<><ClockIcon className="w-4 h-4" /> Hoạt động theo giờ{!isAll ? ` - ${filterLabel}` : ''}</>}>
+        <Section title={<>{trx('<0/> Hoạt động theo giờ{{v1}}', { 0: <ClockIcon className="w-4 h-4" />, v1: !isAll ? ` - ${filterLabel}` : '' })}</>}>
           {hourlyChart.every(r => r.count === 0) ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -762,11 +771,11 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
                     return (
                       <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                         <p className="text-muted-foreground mb-1">{label}</p>
-                        <p className="text-foreground font-bold">{payload[0].value} tin nhắn</p>
+                        <p className="text-foreground font-bold">{trx('{{value}} tin nhắn', { value: payload[0].value })}</p>
                       </div>
                     );
                   }} />
-                  <Bar dataKey="count" name="Tin nhắn" fill="#8b5cf6" radius={[3, 3, 0, 0]} maxBarSize={18} />
+                  <Bar dataKey="count" name={tr('Tin nhắn')} fill="#8b5cf6" radius={[3, 3, 0, 0]} maxBarSize={18} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -775,19 +784,19 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
       </div>
 
       {/* ── Row 5: Detailed table ────────────────────────────────── */}
-      <Section title={<><ClipboardListIcon className="w-4 h-4" /> Bảng chi tiết nhân viên</>}>
+      <Section title={<>{trx('<0/> Bảng chi tiết nhân viên', { 0: <ClipboardListIcon className="w-4 h-4" /> })}</>}>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="text-muted-foreground border-b border-border">
                 <th className="text-left py-2.5 px-3 font-medium">#</th>
-                <th className="text-left py-2.5 px-3 font-medium">Nhân viên</th>
-                <th className="text-left py-2.5 px-3 font-medium">Vai trò</th>
-                <th className="text-right py-2.5 px-3 font-medium">Tin gửi</th>
-                <th className="text-right py-2.5 px-3 font-medium">Hội thoại</th>
-                <th className="text-right py-2.5 px-3 font-medium">TB phản hồi</th>
-                <th className="text-right py-2.5 px-3 font-medium">Online</th>
-                <th className="text-right py-2.5 px-3 font-medium">Hiệu suất</th>
+                <th className="text-left py-2.5 px-3 font-medium">{tr('Nhân viên')}</th>
+                <th className="text-left py-2.5 px-3 font-medium">{tr('Vai trò')}</th>
+                <th className="text-right py-2.5 px-3 font-medium">{tr('Tin gửi')}</th>
+                <th className="text-right py-2.5 px-3 font-medium">{tr('Hội thoại')}</th>
+                <th className="text-right py-2.5 px-3 font-medium">{tr('TB phản hồi')}</th>
+                <th className="text-right py-2.5 px-3 font-medium">{tr('Online')}</th>
+                <th className="text-right py-2.5 px-3 font-medium">{tr('Hiệu suất')}</th>
               </tr>
             </thead>
             <tbody>
@@ -810,16 +819,16 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
                         </div>
                         <div>
                           <span className="text-foreground font-medium">{emp.display_name}</span>
-                          {!emp.is_active && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-red-600/25 text-red-400">Tắt</span>}
+                          {!emp.is_active && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-red-600/25 text-red-400">{tr('Tắt')}</span>}
                         </div>
                       </div>
                     </td>
                     <td className="py-2.5 px-3">
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${emp.role === 'boss' ? 'bg-amber-600/25 text-amber-400' : 'bg-accent/40 text-muted-foreground'}`}>
-                        {emp.role === 'boss' ? 'Boss' : 'NV'}
+                        {emp.role === 'boss' ? 'Boss' : tr('NV')}
                       </span>
                     </td>
-                    <td className="text-right py-2.5 px-3 text-foreground/80 font-mono font-medium">{emp.messages_sent.toLocaleString('vi-VN')}</td>
+                    <td className="text-right py-2.5 px-3 text-foreground/80 font-mono font-medium">{emp.messages_sent.toLocaleString(appLocale())}</td>
                     <td className="text-right py-2.5 px-3 text-foreground/80 font-mono">{emp.conversations_handled}</td>
                     <td className="text-right py-2.5 px-3">
                       <span className={`font-medium ${emp.avg_response_time_ms > 300_000 ? 'text-red-400' : emp.avg_response_time_ms > 120_000 ? 'text-amber-400' : emp.avg_response_time_ms > 0 ? 'text-green-400' : 'text-muted-foreground'}`}>
@@ -842,10 +851,10 @@ export default function EmployeeAnalyticsTab({ sinceTs, untilTs, periodDays, zal
               {/* Totals */}
               <tr className="border-t border-input font-semibold bg-muted/20">
                 <td className="py-2.5 px-3" colSpan={2}>
-                  <span className="text-foreground/80">Tổng ({filteredComparison.length} NV)</span>
+                  <span className="text-foreground/80">{trx('Tổng ({{count}} NV)', { count: filteredComparison.length })}</span>
                 </td>
                 <td className="py-2.5 px-3" />
-                <td className="text-right py-2.5 px-3 text-blue-400 font-mono">{totals.messages_sent.toLocaleString('vi-VN')}</td>
+                <td className="text-right py-2.5 px-3 text-blue-400 font-mono">{totals.messages_sent.toLocaleString(appLocale())}</td>
                 <td className="text-right py-2.5 px-3 text-green-400 font-mono">{totals.conversations}</td>
                 <td className="text-right py-2.5 px-3 text-cyan-400">{formatResponseTime(avgResponseTime)}</td>
                 <td className="text-right py-2.5 px-3 text-amber-400">{totals.online_hours}h</td>

@@ -1,10 +1,11 @@
 import Logger from '../Logger';
+import { tr } from '../../shared/i18n';
 
 export interface RetryOptions {
-    maxRetries?: number; // Số lần retry tối đa (mặc định: 3)
-    currentRetry?: number; // Lần retry hiện tại (bắt đầu từ 0)
-    zaloId?: string; // Zalo ID để lấy connection và proxy
-    operationName?: string; // Tên operation để log
+    maxRetries?: number; // Max number of retries (default: 3)
+    currentRetry?: number; // Current retry (starts at 0)
+    zaloId?: string; // Zalo ID used to get the connection and proxy
+    operationName?: string; // Operation name for logs
 }
 
 export interface ApiCallResult<T> {
@@ -18,7 +19,7 @@ export interface ApiCallResult<T> {
 
 /**
  * Check if error is retryable (502 or TLS connection errors)
- * Kiểm tra xem lỗi có thể retry được không (502 hoặc lỗi kết nối TLS)
+ * Check whether the error can be retried (502 or TLS connection errors)
  */
 function isRetryableError(error: any): boolean {
     const errorMessage = error?.message || error?.toString() || '';
@@ -45,15 +46,15 @@ function getUserFriendlyErrorMessage(error: any, retryCount: number): string {
     const errorMessage = error?.message || error?.toString() || '';
 
     if (errorMessage.includes('ECONNREFUSED') && retryCount >= 3) {
-        return 'Kết nối Zalo cá nhân bị gián đoạn [ECONNREFUSED]. Vui lòng thao tác lại!';
+        return tr('Kết nối Zalo cá nhân bị gián đoạn [ECONNREFUSED]. Vui lòng thao tác lại!');
     }
 
     if (errorMessage.includes('Request failed with status code 502') && retryCount >= 3) {
-        return 'Lỗi kết nối proxy [502 Bad Gateway]. Vui lòng thao tác lại!';
+        return tr('Lỗi kết nối proxy [502 Bad Gateway]. Vui lòng thao tác lại!');
     }
 
     if (errorMessage.includes('Client network socket disconnected') && retryCount >= 3) {
-        return 'Lỗi kết nối TLS. Vui lòng thao tác lại!';
+        return tr('Lỗi kết nối TLS. Vui lòng thao tác lại!');
     }
 
     return errorMessage;
@@ -61,7 +62,7 @@ function getUserFriendlyErrorMessage(error: any, retryCount: number): string {
 
 /**
  * Execute API call with automatic retry
- * Thực thi API call với retry tự động
+ * Run the API call with automatic retry
  *
  * @param apiCall Function that performs the API call
  * @param options Retry options

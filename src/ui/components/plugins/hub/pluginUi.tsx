@@ -1,6 +1,6 @@
 /**
- * Phần giao diện quản lý ứng dụng (plugin) dùng chung cho trang Ứng dụng: màn duyệt quyền khi cài, form cài đặt,
- * nhật ký, dòng trạng thái phần chạy, thao tác gỡ.
+ * App (plugin) management UI shared by the Apps page: the permission review screen at install, the settings form,
+ * logs, the running-part status line, and the uninstall action.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import ipc, { PluginInfo, PluginInstallPreview, PluginSettingsSchema } from '@/lib/ipc';
@@ -10,65 +10,66 @@ import { Spinner } from '@/components/common/PageLoading';
 import { AlertIcon, PluginIcon } from '@/components/common/icons';
 import { AccountPicker, Badge, btn, ErrorBox, Field, fmtTime, inputCls, Section, Toggle } from '@/components/settings/api/apiUi';
 import { useAccountOptions } from '@/components/settings/api/ApiKeysPanel';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export const STATUS: Record<PluginInfo['status'], { label: string; tone: 'green' | 'gray' | 'red' | 'yellow'; hint: string }> = {
-  enabled: { label: 'Đang bật', tone: 'green', hint: 'Ứng dụng đang chạy và hiện trong Deplao.' },
-  disabled: { label: 'Đang tắt', tone: 'gray', hint: 'Ứng dụng không chạy, không hiện trong Deplao. Dữ liệu vẫn giữ.' },
-  invalid: { label: 'Lỗi gói', tone: 'red', hint: 'Gói ứng dụng hỏng hoặc không hợp lệ với bản Deplao này.' },
-  disabled_crash: { label: 'Tắt do lỗi', tone: 'red', hint: 'Ứng dụng lỗi nhiều lần liên tiếp nên Deplao đã tự tắt nó.' },
+  enabled: { label: tr('Đang bật'), tone: 'green', hint: tr('Ứng dụng đang chạy và hiện trong Deplao.') },
+  disabled: { label: tr('Đang tắt'), tone: 'gray', hint: tr('Ứng dụng không chạy, không hiện trong Deplao. Dữ liệu vẫn giữ.') },
+  invalid: { label: tr('Lỗi gói'), tone: 'red', hint: tr('Gói ứng dụng hỏng hoặc không hợp lệ với bản Deplao này.') },
+  disabled_crash: { label: tr('Tắt do lỗi'), tone: 'red', hint: tr('Ứng dụng lỗi nhiều lần liên tiếp nên Deplao đã tự tắt nó.') },
 };
 
 export const RUNTIME: Record<PluginInfo['runtime'], { label: string; hint: string }> = {
-  web: { label: 'Chỉ giao diện', hint: 'Chỉ có giao diện chạy trong Deplao, không chạy code nền.' },
-  local: { label: 'Chạy trên máy', hint: 'Có phần chạy nền trên máy này, trong tiến trình riêng tách khỏi Deplao.' },
-  remote: { label: 'Dịch vụ ngoài', hint: 'Phần xử lý chạy trên server của nhà cung cấp; Deplao gọi tới qua HTTPS có chữ ký.' },
+  web: { label: tr('Chỉ giao diện'), hint: tr('Chỉ có giao diện chạy trong Deplao, không chạy code nền.') },
+  local: { label: tr('Chạy trên máy'), hint: tr('Có phần chạy nền trên máy này, trong tiến trình riêng tách khỏi Deplao.') },
+  remote: { label: tr('Dịch vụ ngoài'), hint: tr('Phần xử lý chạy trên server của nhà cung cấp; Deplao gọi tới qua HTTPS có chữ ký.') },
 };
 
-/** Gỡ ứng dụng: hỏi xác nhận rồi hỏi có xoá dữ liệu không (như thao tác cũ ở Cài đặt). Trả true nếu đã gỡ. */
+/** Uninstall an app: asks for confirmation, then asks whether to delete its data (like the old action in Settings). Returns true if uninstalled. */
 export async function uninstallPlugin(p: PluginInfo, notify: (msg: string, kind: 'success' | 'error') => void): Promise<boolean> {
   const ok = await showConfirm({
-    title: `Gỡ ứng dụng "${p.name}"?`,
+    title: tr('Gỡ ứng dụng "{{name}}"?', { name: p.name }),
     message: p.source_type === 'dev'
-      ? 'Ứng dụng sẽ bị gỡ khỏi Deplao. Thư mục dev của bạn KHÔNG bị xoá.'
-      : 'Mã của ứng dụng sẽ bị xoá khỏi máy. Dữ liệu riêng của ứng dụng (lưu trữ, file, nhật ký) được giữ lại để cài lại sau.',
-    confirmText: 'Gỡ',
+      ? tr('Ứng dụng sẽ bị gỡ khỏi Deplao. Thư mục dev của bạn KHÔNG bị xoá.')
+      : tr('Mã của ứng dụng sẽ bị xoá khỏi máy. Dữ liệu riêng của ứng dụng (lưu trữ, file, nhật ký) được giữ lại để cài lại sau.'),
+    confirmText: tr('Gỡ'),
     variant: 'danger',
   });
   if (!ok) return false;
   const wipe = await showConfirm({
-    title: 'Xoá luôn dữ liệu của ứng dụng?',
-    message: 'Chọn "Xoá dữ liệu" để xoá lưu trữ, file và nhật ký của ứng dụng. Không thể hoàn tác.',
-    confirmText: 'Xoá dữ liệu',
-    cancelText: 'Giữ dữ liệu',
+    title: tr('Xoá luôn dữ liệu của ứng dụng?'),
+    message: tr('Chọn "Xoá dữ liệu" để xoá lưu trữ, file và nhật ký của ứng dụng. Không thể hoàn tác.'),
+    confirmText: tr('Xoá dữ liệu'),
+    cancelText: tr('Giữ dữ liệu'),
     variant: 'warning',
   });
   const res = await ipc.plugins!.uninstall(p.id, wipe);
-  if (!res.success) { notify(res.error || 'Gỡ ứng dụng thất bại', 'error'); return false; }
-  notify(`Đã gỡ ${p.name}`, 'success');
+  if (!res.success) { notify(res.error || tr('Gỡ ứng dụng thất bại'), 'error'); return false; }
+  notify(tr('Đã gỡ {{name}}', { name: p.name }), 'success');
   return true;
 }
 
-/** Dòng trạng thái phần chạy: tiến trình trên máy (PID, RAM) hoặc server remote (kết nối). */
+/** Running-part status line: local process (PID, RAM) or remote server (connection). */
 export function RuntimeLine({ stats }: { stats: NonNullable<PluginInfo['stats']> }) {
   const r = stats.remote;
   if (r) {
     return (
       <p className="text-[11px] text-subtle-foreground break-all">
-        Server <span className="font-mono text-muted-foreground">{r.baseUrl || '—'}</span>
-        {' · '}
-        {r.connected === true && <span className="text-success">kết nối tốt</span>}
-        {r.connected === false && <span className="text-destructive">không kết nối được{stats.lastError ? ` (${stats.lastError})` : ''}</span>}
-        {r.connected === null && <span>chưa gọi lần nào</span>}
-        {r.lastOkAt ? ` · lần cuối OK ${fmtTime(r.lastOkAt)}` : ''}
+        {trx('Server <0>{{v1}}</0> · ', { 0: <span className="font-mono text-muted-foreground" />, v1: r.baseUrl || '—' })}
+        {r.connected === true && <span className="text-success">{tr('kết nối tốt')}</span>}
+        {r.connected === false && <span className="text-destructive">{trx('không kết nối được{{v1}}', { v1: stats.lastError ? ` (${stats.lastError})` : '' })}</span>}
+        {r.connected === null && <span>{tr('chưa gọi lần nào')}</span>}
+        {r.lastOkAt ? tr(' · lần cuối OK {{v1}}', { v1: fmtTime(r.lastOkAt) }) : ''}
       </p>
     );
   }
   return (
     <p className="text-[11px] text-subtle-foreground">
-      {stats.running ? (stats.pid ? `Đang chạy (PID ${stats.pid})` : 'Đang chạy') : 'Không chạy'}
+      {stats.running ? (stats.pid ? tr('Đang chạy (PID {{pid}})', { pid: stats.pid }) : tr('Đang chạy')) : tr('Không chạy')}
       {stats.memoryMb ? ` · ${stats.memoryMb} MB RAM` : ''}
-      {stats.restarts ? ` · khởi động lại ${stats.restarts} lần` : ''}
-      {stats.lastError ? ` · lỗi gần nhất: ${stats.lastError}` : ''}
+      {stats.restarts ? tr(' · khởi động lại {{restarts}} lần', { restarts: stats.restarts }) : ''}
+      {stats.lastError ? tr(' · lỗi gần nhất: {{lastError}}', { lastError: stats.lastError }) : ''}
     </p>
   );
 }
@@ -86,12 +87,12 @@ export function InstallDialog({ preview, onCancel, onDone }: {
   const isUpdate = !!preview.existing;
 
   const confirm = async () => {
-    if (accountIds !== null && accountIds.length === 0) { setError('Chọn ít nhất một tài khoản hoặc để "Tất cả tài khoản".'); return; }
+    if (accountIds !== null && accountIds.length === 0) { setError(tr('Chọn ít nhất một tài khoản hoặc để "Tất cả tài khoản".')); return; }
     setSaving(true);
     setError(null);
     try {
       const res = await ipc.plugins!.confirmInstall(preview.token, accountIds);
-      if (!res.success) { setError(res.error || 'Cài thất bại'); return; }
+      if (!res.success) { setError(res.error || tr('Cài thất bại')); return; }
       onDone(m.name, res.remoteCredentials || null);
     } finally {
       setSaving(false);
@@ -99,45 +100,45 @@ export function InstallDialog({ preview, onCancel, onDone }: {
   };
 
   return (
-    <Section title={isUpdate ? `Cập nhật ${m.name}: ${preview.existing!.version} → ${m.version}` : `Cài ${m.name} ${m.version}`} icon={<PluginIcon className="w-4 h-4" />}>
+    <Section title={isUpdate ? tr('Cập nhật {{name}}: {{version}} → {{version1}}', { name: m.name, version: preview.existing!.version, version1: m.version }) : tr('Cài {{name}} {{version}}', { name: m.name, version: m.version })} icon={<PluginIcon className="w-4 h-4" />}>
       <div className="flex flex-wrap gap-1">
         <Badge tone="blue">{RUNTIME[m.runtime].label}</Badge>
-        {preview.source === 'dev' && <Badge tone="yellow">Thư mục dev (chạy tại chỗ)</Badge>}
+        {preview.source === 'dev' && <Badge tone="yellow">{tr('Thư mục dev (chạy tại chỗ)')}</Badge>}
         {m.author && <Badge>{m.author}</Badge>}
       </div>
       {m.description && <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>}
       {m.runtime === 'remote' && m.remote?.baseUrl && (
-        <p className="text-[11px] text-muted-foreground">Server của ứng dụng: <span className="font-mono text-foreground/80">{m.remote.baseUrl}</span></p>
+        <p className="text-[11px] text-muted-foreground">{trx('Server của ứng dụng: <0>{{baseUrl}}</0>', { 0: <span className="font-mono text-foreground/80" />, baseUrl: m.remote.baseUrl })}</p>
       )}
       {preview.hasBackend && (
         <div className="bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
-          <p className="text-xs text-destructive"><AlertIcon className="w-4 h-4 inline" /> Ứng dụng này chạy code trên máy bạn. Chỉ cài từ nguồn bạn tin cậy.</p>
+          <p className="text-xs text-destructive">{trx('<0/> Ứng dụng này chạy code trên máy bạn. Chỉ cài từ nguồn bạn tin cậy.', { 0: <AlertIcon className="w-4 h-4 inline" /> })}</p>
         </div>
       )}
       <div className="space-y-1">
-        <p className="text-xs font-medium text-foreground/80">Ứng dụng xin các quyền:</p>
+        <p className="text-xs font-medium text-foreground/80">{tr('Ứng dụng xin các quyền:')}</p>
         <ul className="space-y-0.5">
           {preview.permissions.map(perm => (
             <li key={perm.id} className={`text-xs ${perm.risky ? 'text-destructive' : 'text-foreground/80'}`}>
               • {perm.label} <span className="text-[10px] text-subtle-foreground font-mono">{perm.id}</span>
-              {isUpdate && preview.newPermissions.includes(perm.id) && <Badge tone="yellow">mới</Badge>}
+              {isUpdate && preview.newPermissions.includes(perm.id) && <Badge tone="yellow">{tr('mới')}</Badge>}
             </li>
           ))}
         </ul>
       </div>
-      <Field label="Tài khoản ứng dụng được dùng">
+      <Field label={tr('Tài khoản ứng dụng được dùng')}>
         <AccountPicker accounts={accounts} value={accountIds} onChange={setAccountIds} />
       </Field>
       {preview.readme && (
         <details className="bg-card rounded-lg px-3 py-2">
-          <summary className="text-xs text-foreground/80 cursor-pointer">README của ứng dụng</summary>
+          <summary className="text-xs text-foreground/80 cursor-pointer">{tr('README của ứng dụng')}</summary>
           <pre className="mt-2 text-[11px] text-muted-foreground whitespace-pre-wrap max-h-60 overflow-y-auto font-sans">{preview.readme}</pre>
         </details>
       )}
       <ErrorBox message={error} />
       <div className="flex justify-end gap-2">
-        <button type="button" className={btn.secondary} disabled={saving} onClick={onCancel}>Huỷ</button>
-        <button type="button" className={btn.primary} disabled={saving} onClick={confirm}>{saving ? <Spinner size={3} /> : isUpdate ? 'Cập nhật' : 'Cài và bật'}</button>
+        <button type="button" className={btn.secondary} disabled={saving} onClick={onCancel}>{tr('Huỷ')}</button>
+        <button type="button" className={btn.primary} disabled={saving} onClick={confirm}>{saving ? <Spinner size={3} /> : isUpdate ? tr('Cập nhật') : tr('Cài và bật')}</button>
       </div>
     </Section>
   );
@@ -155,7 +156,7 @@ export function PluginSettingsForm({ pluginId }: { pluginId: string }) {
     (async () => {
       const res = await ipc.plugins!.getSettings(pluginId);
       if (res.success) { setSchema(res.schema || null); setValues(res.values || {}); }
-      else setError(res.error || 'Không đọc được cài đặt');
+      else setError(res.error || tr('Không đọc được cài đặt'));
       setLoading(false);
     })();
   }, [pluginId]);
@@ -165,9 +166,9 @@ export function PluginSettingsForm({ pluginId }: { pluginId: string }) {
     setError(null);
     try {
       const res = await ipc.plugins!.setSettings(pluginId, values);
-      if (!res.success) { setError(res.error || 'Lưu thất bại'); return; }
+      if (!res.success) { setError(res.error || tr('Lưu thất bại')); return; }
       setValues(res.values || values);
-      showNotification('Đã lưu cài đặt ứng dụng', 'success');
+      showNotification(tr('Đã lưu cài đặt ứng dụng'), 'success');
       window.dispatchEvent(new CustomEvent('plugins:settingsChanged', { detail: { pluginId, values: res.values } }));
     } finally {
       setSaving(false);
@@ -175,14 +176,14 @@ export function PluginSettingsForm({ pluginId }: { pluginId: string }) {
   };
 
   if (loading) return <div className="flex justify-center py-3"><Spinner size={4} /></div>;
-  if (!schema) return <p className="text-xs text-subtle-foreground">Ứng dụng không có cài đặt.</p>;
+  if (!schema) return <p className="text-xs text-subtle-foreground">{tr('Ứng dụng không có cài đặt.')}</p>;
 
   return (
     <div className="space-y-3">
       <SettingsFields schema={schema} values={values} onChange={setValues} />
       <ErrorBox message={error} />
       <div className="flex justify-end">
-        <button type="button" className={btn.primary} disabled={saving} onClick={save}>{saving ? <Spinner size={3} /> : 'Lưu cài đặt'}</button>
+        <button type="button" className={btn.primary} disabled={saving} onClick={save}>{saving ? <Spinner size={3} /> : tr('Lưu cài đặt')}</button>
       </div>
     </div>
   );
@@ -223,7 +224,7 @@ export function SettingsFields({ schema, values, onChange }: { schema: PluginSet
                 type={f['x-secret'] ? 'password' : 'text'}
                 maxLength={f.maxLength}
                 value={v ?? ''}
-                placeholder={f['x-secret'] ? 'Để trống nếu không đổi' : ''}
+                placeholder={f['x-secret'] ? tr('Để trống nếu không đổi') : ''}
                 onChange={e => set(key, e.target.value)}
               />
             )}
@@ -245,13 +246,13 @@ export function PluginLogs({ pluginId }: { pluginId: string }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <p className="text-[11px] text-subtle-foreground">300 dòng gần nhất (console.log của ứng dụng, lỗi, cảnh báo của Deplao).</p>
-        <button type="button" className={btn.link} onClick={load}>Tải lại</button>
+        <p className="text-[11px] text-subtle-foreground">{tr('300 dòng gần nhất (console.log của ứng dụng, lỗi, cảnh báo của Deplao).')}</p>
+        <button type="button" className={btn.link} onClick={load}>{tr('Tải lại')}</button>
       </div>
       {rows === null ? (
         <div className="flex justify-center py-3"><Spinner size={4} /></div>
       ) : rows.length === 0 ? (
-        <p className="text-xs text-subtle-foreground py-4 text-center">Chưa có nhật ký.</p>
+        <p className="text-xs text-subtle-foreground py-4 text-center">{tr('Chưa có nhật ký.')}</p>
       ) : (
         <div className="bg-card border border-border rounded-lg p-2 max-h-[52vh] overflow-y-auto font-mono text-[11px] space-y-0.5">
           {rows.map(r => (

@@ -1,8 +1,8 @@
 /**
- * zaloOnlineStore — bạn bè Zalo đang online của từng tài khoản (SRS ZL-01 giai đoạn 2, FR-ZL01.6): chấm xanh trong danh
- * sách hội thoại và dòng "Trực tuyến" dưới tên trên header. Chỉ giữ trong bộ nhớ (NFR-06: không lưu lịch sử online của
- * người khác); quá 5 phút không làm mới (cửa sổ không focus thì không hỏi Zalo) → bỏ danh sách của tài khoản đó.
- * Làm mới: hooks/zalo/useZaloFriendOnlines.
+ * zaloOnlineStore: the Zalo friends currently online for each account (SRS ZL-01 phase 2, FR-ZL01.6): a green dot in the
+ * conversation list and a "Trực tuyến" (Online) line under the name in the header. Kept in memory only (NFR-06: the online history of
+ * other people is not saved). After 5 minutes without a refresh (while the window is not focused, Zalo is not asked) → the list of that account is dropped.
+ * Refreshed by: hooks/zalo/useZaloFriendOnlines.
  */
 import { create } from 'zustand';
 import { ZALO_ONLINE_WINDOW_MS } from '../../../shared/zalo/zaloPresence';
@@ -42,7 +42,7 @@ export const useZaloOnlineStore = create<ZaloOnlineState>((set) => ({
   },
 }));
 
-/** Dùng làm selector: `useZaloOnlineStore((s) => isZaloFriendOnline(s, accountId, userId))` → chỉ hàng đổi mới vẽ lại. */
+/** Use as a selector: `useZaloOnlineStore((s) => isZaloFriendOnline(s, accountId, userId))` → only the row that changed is redrawn. */
 export function isZaloFriendOnline(state: Pick<ZaloOnlineState, 'byAccount'>, accountId: string | null | undefined, userId: string | null | undefined): boolean {
   if (!accountId || !userId) return false;
   return !!state.byAccount[accountId]?.ids.has(String(userId));

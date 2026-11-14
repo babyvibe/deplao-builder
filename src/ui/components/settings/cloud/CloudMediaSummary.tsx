@@ -1,8 +1,8 @@
 /**
- * CloudMediaSummary — một dòng "Media trên đám mây" ở Cài đặt → Lưu trữ (máy chủ): đã lên kho (R2 / Google Drive) bao
- * nhiêu, đã giải phóng bao nhiêu file trên máy, link sang Internet & Cloud → Đồng bộ dữ liệu. Chưa bật thì gợi ý thiết lập.
- * Đọc media.status() + storage.status() khi mở + khi main báo đổi (không chu kỳ). Bản app cũ không có module → không
- * hiện gì; chưa có chọn kho → coi là R2 như trước.
+ * CloudMediaSummary - one "Media trên đám mây" (Cloud media) line in Settings → Storage (server): how much has been uploaded to storage (R2 / Google Drive), how many
+ * files were freed on the machine, and a link to Internet & Cloud → Data sync. If not turned on yet, it suggests setting it up.
+ * Reads media.status() + storage.status() on open + when main reports a change (no polling). Old app builds without the module show
+ * nothing; if no storage has been chosen yet → treated as R2 as before.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { CloudIcon } from '@/components/common/icons';
@@ -20,6 +20,8 @@ import {
   useCloudChanged,
   useStorage,
 } from './cloudUi';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export default function CloudMediaSummary({ className }: { className?: string }) {
   const [status, setStatus] = useState<MediaSyncStatus | null>(null);
@@ -33,12 +35,12 @@ export default function CloudMediaSummary({ className }: { className?: string })
     if (!api?.media?.status) { setLoaded(true); return; }
     api.media.status()
       .then(res => { if (res?.success && res.status) setStatus(res.status); })
-      .catch(() => { /* bản cũ / máy nhân viên: ẩn */ })
+      .catch(() => { /* old build / employee machine: hidden */ })
       .finally(() => setLoaded(true));
     if (typeof api.storage?.status === 'function') {
       api.storage.status()
         .then(res => { if (res?.success && res.storage) setOwnProvider(res.storage.provider); })
-        .catch(() => { /* bản cũ: coi như R2 */ });
+        .catch(() => { /* old build: treat as R2 */ });
     }
   }, []);
 
@@ -55,12 +57,12 @@ export default function CloudMediaSummary({ className }: { className?: string })
       <div className={cn('flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3', className)}>
         <CloudIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-foreground">Media trên đám mây</p>
+          <p className="text-sm font-medium text-foreground">{tr('Media trên đám mây')}</p>
           <p className="text-xs text-muted-foreground">
-            {`Chưa bật. Bật Đồng bộ dữ liệu kèm ảnh, video, file để có bản sao trên ${provider === 'gdrive' ? 'Google Drive' : 'Cloudflare R2'} của bạn (tuỳ chọn giải phóng ổ máy).`}
+            {tr('Chưa bật. Bật Đồng bộ dữ liệu kèm ảnh, video, file để có bản sao trên {{v1}} của bạn (tuỳ chọn giải phóng ổ máy).', { v1: provider === 'gdrive' ? 'Google Drive' : 'Cloudflare R2' })}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={open}>Thiết lập →</Button>
+        <Button variant="outline" size="sm" onClick={open}>{tr('Thiết lập →')}</Button>
       </div>
     );
   }
@@ -72,13 +74,12 @@ export default function CloudMediaSummary({ className }: { className?: string })
       <div className="flex flex-wrap items-center gap-3">
         <CloudIcon className="h-4 w-4 flex-shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-foreground">Media trên đám mây</p>
+          <p className="text-sm font-medium text-foreground">{tr('Media trên đám mây')}</p>
           <p className="text-xs text-muted-foreground">
-            Đã lên {storageLabel(provider)} {fmtNum(t.uploaded)} / {fmtNum(t.files)} file · {fmtBytes(t.bytesUploaded)}
-            {t.evicted > 0 ? ` · đã giải phóng ${fmtNum(t.evicted)} file trên máy` : ''}
+            {trx('Đã lên {{v1}} {{v2}} / {{v3}} file · {{v4}}{{v5}}', { v1: storageLabel(provider), v2: fmtNum(t.uploaded), v3: fmtNum(t.files), v4: fmtBytes(t.bytesUploaded), v5: t.evicted > 0 ? tr(' · đã giải phóng {{v1}} file trên máy', { v1: fmtNum(t.evicted) }) : '' })}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={open}>Quản lý →</Button>
+        <Button variant="outline" size="sm" onClick={open}>{tr('Quản lý →')}</Button>
       </div>
       {t.files > 0 && percent < 100 && <ProgressBar value={percent} />}
       <p className={cn('text-xs', detail.tone === 'destructive' ? 'text-destructive' : detail.tone === 'warning' ? 'text-warning' : 'text-subtle-foreground')}>

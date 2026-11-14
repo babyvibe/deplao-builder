@@ -1,20 +1,21 @@
 import type { ScanType } from '../../../../services/facebook/scan/FacebookScanTypes';import { ChatIcon, EditIcon, SearchIcon, UsersIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
 
 
-/** Bộ lọc cho từng loại scan */
+/** Filters for each scan type */
 export interface ScanFilters {
   // Chung
-  maxResults: number;         // Số lượng kết quả tối đa (mặc định 100)
+  maxResults: number;         // Maximum number of results (default 100)
 
   // Keyword scans (group_keyword, fanpage_keyword, post_keyword)
-  recent?: boolean;           // Chỉ lấy kết quả gần đây
-  year?: string;              // Lọc theo năm (2026, 2025...)
-  public?: boolean;           // Chỉ nhóm/page công khai
+  recent?: boolean;           // Only fetch recent results
+  year?: string;              // Filter by year (2026, 2025...)
+  public?: boolean;           // Public groups/pages only
 
   // Post comments
-  commentSort?: 'chronological' | 'relevant';  // Sắp xếp bình luận
-  commentKeyword?: string;    // Lọc bình luận theo từ khóa
-  detectPhone?: boolean;      // Chỉ lấy bình luận có chứa SĐT Việt Nam
+  commentSort?: 'chronological' | 'relevant';  // Sort comments
+  commentKeyword?: string;    // Filter comments by keyword
+  detectPhone?: boolean;      // Only fetch comments that contain a Vietnamese phone number
 }
 
 export const DEFAULT_FILTERS: ScanFilters = {
@@ -28,39 +29,39 @@ export const DEFAULT_FILTERS: ScanFilters = {
 };
 
 export const YEAR_OPTIONS = [
-  { value: '', label: 'Tất cả' },
+  { value: '', label: tr('Tất cả') },
   ...Array.from({ length: 10 }, (_, i) => {
     const year = 2026 - i;
-    return { value: String(year), label: `Năm ${year}` };
+    return { value: String(year), label: tr('Năm {{year}}', { year }) };
   }),
 ];
 
 export const REACTION_TYPE_OPTIONS = [
-  { value: 'ALL', label: 'Tất cả', icon: '👍' },
-  { value: 'LIKE', label: 'Like', icon: '👍' },
-  { value: 'LOVE', label: 'Love', icon: '❤️' },
-  { value: 'HAHA', label: 'Haha', icon: '😄' },
-  { value: 'WOW', label: 'Wow', icon: '😮' },
-  { value: 'SAD', label: 'Sad', icon: '😢' },
-  { value: 'ANGRY', label: 'Angry', icon: '😡' },
+  { value: 'ALL', label: tr('Tất cả'), icon: '👍' },
+  { value: 'LIKE', label: tr('Like'), icon: '👍' },
+  { value: 'LOVE', label: tr('Love'), icon: '❤️' },
+  { value: 'HAHA', label: tr('Haha'), icon: '😄' },
+  { value: 'WOW', label: tr('Wow'), icon: '😮' },
+  { value: 'SAD', label: tr('Sad'), icon: '😢' },
+  { value: 'ANGRY', label: tr('Angry'), icon: '😡' },
 ];
 
 export const COMMENT_SORT_OPTIONS = [
-  { value: 'chronological', label: 'Cũ nhất trước' },
-  { value: 'relevant', label: 'Liên quan nhất' },
+  { value: 'chronological', label: tr('Cũ nhất trước') },
+  { value: 'relevant', label: tr('Liên quan nhất') },
 ];
 
-/** Kết quả item kèm nguồn batch */
+/** Item result with its batch source */
 export interface ScanResultItem extends Record<string, any> {
-  // Trường mặc định
+  // Default fields
   uid?: string;
   name?: string;
   // Batch tracking
-  _batchSource?: string;   // ID gốc từ batch input (group/post/page ID)
+  _batchSource?: string;   // Original ID from the batch input (group/post/page ID)
   _batchIndex?: number;    // Index trong batch
 }
 
-/** Một tab quét (scan session) */
+/** One scan tab (scan session) */
 export interface ScanTabData {
   id: string;
   label: string;
@@ -75,19 +76,19 @@ export interface ScanTabData {
   error: string;
   progress: string;
   // Batch mode
-  batchMode: boolean;       // Bật chế độ nhập nhiều dòng
-  batchInput: string;       // Danh sách ID (mỗi dòng 1 ID)
-  threadCount: number;      // Số luồng đồng thời (1/5/10/20)
-  batchProgress: { done: number; total: number; current: string }; // Tiến độ batch
-  // Pagination params cho search (giống original - bsid/tsid từ chaining_params)
+  batchMode: boolean;       // Enable multi-line input mode
+  batchInput: string;       // ID list (one ID per line)
+  threadCount: number;      // Concurrent threads (1/5/10/20)
+  batchProgress: { done: number; total: number; current: string }; // Batch progress
+  // Pagination params for search (same as the original - bsid/tsid from chaining_params)
   _nextBsid?: string;
   _nextTsid?: string;
   // Debug / history
-  _lastPayload?: string;     // Request payload cuối (JSON)
-  _lastResponse?: string;    // Response preview cuối
-  _lastDocId?: string;       // DocId cuối dùng
-  _lastRequestHeaders?: string;  // Request headers cuối (JSON)
-  _lastResponseHeaders?: string; // Response headers cuối (JSON)
+  _lastPayload?: string;     // Last request payload (JSON)
+  _lastResponse?: string;    // Last response preview
+  _lastDocId?: string;       // Last DocId used
+  _lastRequestHeaders?: string;  // Last request headers (JSON)
+  _lastResponseHeaders?: string; // Last response headers (JSON)
 }
 
 export function createScanTab(scanType: ScanType): ScanTabData {
@@ -114,19 +115,19 @@ export function createScanTab(scanType: ScanType): ScanTabData {
   };
 }
 
-/** Tự động đặt tên cho tab */
+/** Automatically names the tab */
 export const SCAN_TAB_LABELS: Record<ScanType, { label: string; icon: React.ReactNode }> = {
-  group_members: { label: 'Thành viên nhóm', icon: <UsersIcon className="w-4 h-4" /> },
-  group_keyword: { label: 'Nhóm theo từ khóa', icon: <SearchIcon className="w-4 h-4" /> },
-  fanpage_keyword: { label: 'Fanpage theo từ khóa', icon: '🔎' },
-  post_comments: { label: 'Bình luận bài viết', icon: <ChatIcon className="w-4 h-4" /> },
-  post_keyword: { label: 'Bài viết theo từ khóa', icon: <EditIcon className="w-4 h-4" /> },
+  group_members: { label: tr('Thành viên nhóm'), icon: <UsersIcon className="w-4 h-4" /> },
+  group_keyword: { label: tr('Nhóm theo từ khóa'), icon: <SearchIcon className="w-4 h-4" /> },
+  fanpage_keyword: { label: tr('Fanpage theo từ khóa'), icon: '🔎' },
+  post_comments: { label: tr('Bình luận bài viết'), icon: <ChatIcon className="w-4 h-4" /> },
+  post_keyword: { label: tr('Bài viết theo từ khóa'), icon: <EditIcon className="w-4 h-4" /> },
 };
 
-/** Kiểu input cho từng loại scan */
+/** Input type for each scan type */
 export type InputMode = 'single_url' | 'single_keyword' | 'batch_url' | 'batch_keyword';
 
-/** Cấu hình input mode cho từng scan type */
+/** Input mode config for each scan type */
 export const SCAN_INPUT_CONFIG: Record<ScanType, { modes: InputMode[]; defaultMode: InputMode }> = {
   group_members: {
     modes: ['single_url', 'batch_url'],

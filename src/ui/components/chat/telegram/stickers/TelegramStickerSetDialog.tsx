@@ -1,7 +1,7 @@
 /**
- * Popup bộ sticker Telegram (bấm sticker trong chat, "⋯" ở bảng sticker, kết quả tìm bộ) — như Telegram: xem cả bộ,
- * "Thêm N sticker" vào tài khoản (hiện ở bảng sticker mọi app Telegram) hoặc gỡ; bấm 1 sticker = gửi vào hội thoại
- * đang mở. `TelegramStickerSetHost` đặt 1 lần trong khung chat, mở bằng openTelegramStickerSet().
+ * Telegram sticker set popup (click a sticker in the chat, "⋯" on the sticker panel, or a set search result), like Telegram: view the whole set,
+ * "Thêm N sticker" (Add N stickers) to the account (shown in the sticker panel of every Telegram app) or remove it; click 1 sticker = send it to the open
+ * conversation. `TelegramStickerSetHost` is mounted once in the chat window and opened with openTelegramStickerSet().
  */
 import React from 'react';
 import { Button, Dialog, DialogBody, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui';
@@ -23,6 +23,8 @@ import {
 import { InViewRootContext } from '@/lib/media/inView';
 import { TelegramStickerTile } from './TelegramStickerTile';
 import { PanelMessage } from './TelegramStickerPanel';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export function TelegramStickerSetHost() {
   const request = useTelegramStickerSetModal();
@@ -36,7 +38,7 @@ function TelegramStickerSetDialog({ request, onClose }: { request: StickerSetMod
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [sending, setSending] = React.useState('');
-  // Khung cuộn của lưới: ô sticker đo "đang hiện" theo khung này (bộ 120 sticker chỉ tải phần đang thấy)
+  // Scroll container of the grid: sticker tiles measure "đang hiện" (visible) against this container (a 120-sticker set only loads the part being seen)
   const [bodyEl, setBodyEl] = React.useState<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
@@ -46,12 +48,12 @@ function TelegramStickerSetDialog({ request, onClose }: { request: StickerSetMod
     (async () => {
       let result: LoadedStickerSet | { error: string } | null = null;
       if (request.ref) result = await loadStickerSet(request.accountId, request.ref);
-      // Tin cũ / thông tin bộ hết hạn → hỏi lại Telegram theo tin
+      // Old message / expired set info → ask Telegram again, by message
       if ((!result || 'error' in result) && request.message) {
         result = await loadStickerSetOfMessage(request.accountId, request.message.chatId, request.message.messageId);
       }
       if (cancelled) return;
-      if (!result) setError('Không có thông tin bộ sticker');
+      if (!result) setError(tr('Không có thông tin bộ sticker'));
       else if ('error' in result) setError(result.error);
       else setSetId(result.set.id);
     })();
@@ -68,10 +70,10 @@ function TelegramStickerSetDialog({ request, onClose }: { request: StickerSetMod
     const res = await setStickerSetInstalled(request.accountId, set, !set.installed);
     setBusy(false);
     if (!res.success) {
-      useAppStore.getState().showNotification(`${set.installed ? 'Không gỡ được' : 'Không thêm được'} bộ sticker: ${res.error}`, 'error');
+      useAppStore.getState().showNotification(tr('{{v1}} bộ sticker: {{error}}', { v1: set.installed ? tr('Không gỡ được') : tr('Không thêm được'), error: res.error }), 'error');
       return;
     }
-    useAppStore.getState().showNotification(set.installed ? `Đã gỡ bộ "${set.title}"` : `Đã thêm ${count} sticker "${set.title}"`, 'success');
+    useAppStore.getState().showNotification(set.installed ? tr('Đã gỡ bộ "{{title}}"', { title: set.title }) : tr('Đã thêm {{count}} sticker "{{title}}"', { count, title: set.title }), 'success');
   };
 
   const send = async (item: TelegramStickerItem) => {
@@ -86,9 +88,9 @@ function TelegramStickerSetDialog({ request, onClose }: { request: StickerSetMod
     if (!set?.shortName) return;
     try {
       await navigator.clipboard.writeText(`https://t.me/addstickers/${set.shortName}`);
-      useAppStore.getState().showNotification('Đã sao chép link bộ sticker', 'success');
+      useAppStore.getState().showNotification(tr('Đã sao chép link bộ sticker'), 'success');
     } catch {
-      useAppStore.getState().showNotification('Không sao chép được link', 'error');
+      useAppStore.getState().showNotification(tr('Không sao chép được link'), 'error');
     }
   };
 
@@ -96,9 +98,9 @@ function TelegramStickerSetDialog({ request, onClose }: { request: StickerSetMod
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }} size="sm" className="max-w-[400px]">
       <DialogHeader className="pb-2">
         <div className="min-w-0">
-          <DialogTitle className="truncate">{set?.title || 'Bộ sticker'}</DialogTitle>
+          <DialogTitle className="truncate">{set?.title || tr('Bộ sticker')}</DialogTitle>
           <DialogDescription className="mt-0.5 text-xs">
-            {set ? `${count} sticker${request.target ? ' · bấm để gửi' : ''}` : error ? 'Không mở được bộ sticker' : 'Đang tải…'}
+            {set ? tr('{{count}} sticker{{v1}}', { count, v1: request.target ? tr(' · bấm để gửi') : '' }) : error ? tr('Không mở được bộ sticker') : tr('Đang tải…')}
           </DialogDescription>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
@@ -106,8 +108,8 @@ function TelegramStickerSetDialog({ request, onClose }: { request: StickerSetMod
             <button
               type="button"
               onClick={() => void copyLink()}
-              title="Sao chép link bộ sticker"
-              aria-label="Sao chép link bộ sticker"
+              title={tr('Sao chép link bộ sticker')}
+              aria-label={tr('Sao chép link bộ sticker')}
               className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <LinkIcon className="h-4 w-4" />
@@ -127,7 +129,7 @@ function TelegramStickerSetDialog({ request, onClose }: { request: StickerSetMod
                   item={item}
                   size={64}
                   onClick={request.target ? (picked) => void send(picked) : undefined}
-                  title={request.target ? `Gửi ${item.emoji || 'sticker'}` : item.emoji}
+                  title={request.target ? tr('Gửi {{v1}}', { v1: item.emoji || 'sticker' }) : item.emoji}
                   className={sending === item.id ? 'opacity-50' : undefined}
                 />
               ))}
@@ -136,22 +138,22 @@ function TelegramStickerSetDialog({ request, onClose }: { request: StickerSetMod
         ) : error ? (
           <PanelMessage>{error}</PanelMessage>
         ) : (
-          <PanelMessage loading>Đang tải bộ sticker…</PanelMessage>
+          <PanelMessage loading>{tr('Đang tải bộ sticker…')}</PanelMessage>
         )}
       </DialogBody>
       <DialogFooter className="pt-2">
         {set && (
           set.installed ? (
             <Button variant="outline" className="w-full text-destructive hover:text-destructive" loading={busy} onClick={() => void toggleInstalled()}>
-              Gỡ {count} sticker
+              {trx('Gỡ {{count}} sticker', { count })}
             </Button>
           ) : (
             <Button className="w-full" loading={busy} onClick={() => void toggleInstalled()}>
-              Thêm {count} sticker
+              {trx('Thêm {{count}} sticker', { count })}
             </Button>
           )
         )}
-        {!set && <Button variant="outline" className="w-full" onClick={onClose}>Đóng</Button>}
+        {!set && <Button variant="outline" className="w-full" onClick={onClose}>{tr('Đóng')}</Button>}
       </DialogFooter>
     </Dialog>
   );

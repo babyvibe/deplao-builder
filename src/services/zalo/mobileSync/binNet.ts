@@ -1,12 +1,12 @@
 /**
- * Parser cột `ChatContent.BinNet` trong file đồng bộ tin nhắn từ Zalo mobile.
+ * Parser for the `ChatContent.BinNet` column in the message sync file from Zalo mobile.
  *
- * BinNet là một `tlv::TlvBox` (thư viện Jhuster/TLV, bản Zalo chỉnh thành multimap):
- *   lặp [u32 BE type][u32 BE length][value]
- * - Cho phép 1 type xuất hiện nhiều lần (mảng attachs / mentions).
- * - Int = 4 byte BE, Int64 = 8 byte BE, chuỗi = nguyên byte UTF-8 (không cần NUL).
+ * BinNet is a `tlv::TlvBox` (Jhuster/TLV library, a Zalo build changed into a multimap):
+ *   repeat [u32 BE type][u32 BE length][value]
+ * - One type may appear several times (arrays of attachs / mentions).
+ * - Int = 4 bytes BE, Int64 = 8 bytes BE, string = raw UTF-8 bytes (no NUL needed).
  *
- * Bảng key lấy từ `db-cross-v4-native.node` của Zalo PC 26.9.10 (parse_bin_net / ParseAttachChatMsg).
+ * The key table is taken from `db-cross-v4-native.node` of Zalo PC 26.9.10 (parse_bin_net / ParseAttachChatMsg).
  */
 
 export interface BinNetProperty {
@@ -75,7 +75,7 @@ const KEY_REFERENCE = 0x0b;
 
 type TlvMap = Map<number, Buffer[]>;
 
-/** Tách TLV box. Trả null nếu buffer không đúng định dạng. */
+/** Split a TLV box. Returns null if the buffer is not in the right format. */
 export function parseTlvBox(buf: Buffer): TlvMap | null {
     const map: TlvMap = new Map();
     let off = 0;
@@ -108,7 +108,7 @@ function readInt(map: TlvMap, key: number): number | undefined {
     return x;
 }
 
-/** Int64 → chuỗi thập phân (msgId/cliMsgId có thể vượt Number.MAX_SAFE_INTEGER). */
+/** Int64 → decimal string (msgId/cliMsgId can exceed Number.MAX_SAFE_INTEGER). */
 function readInt64String(map: TlvMap, key: number): string | undefined {
     const v = first(map, key);
     if (!v || v.length === 0) return undefined;
@@ -208,8 +208,8 @@ function parseReference(buf: Buffer): BinNetReference | undefined {
 }
 
 /**
- * Parse BinNet. BinNet rỗng/NULL (tin text thường) → `{}`.
- * Trả null khi blob hỏng — giống Zalo PC: bỏ qua tin đó.
+ * Parse BinNet. Empty / NULL BinNet (plain text message) → `{}`.
+ * Returns null when the blob is broken, same as Zalo PC: the message is skipped.
  */
 export function parseBinNet(input: Buffer | Uint8Array | string | null | undefined): BinNetData | null {
     if (!input || input.length === 0) return {};
@@ -238,7 +238,7 @@ export function parseBinNet(input: Buffer | Uint8Array | string | null | undefin
     return compact(data) || {};
 }
 
-// ─── Encoder (dùng cho test tự sinh dữ liệu mẫu) ────────────────────────────
+// ─── Encoder (used by tests that generate sample data) ────────────────────────────
 
 export function encodeTlv(entries: Array<[number, Buffer]>): Buffer {
     const parts: Buffer[] = [];

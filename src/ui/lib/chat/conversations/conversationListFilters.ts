@@ -1,9 +1,9 @@
 /**
- * Bộ lọc danh sách hội thoại: tab Tất cả / Chưa đọc / Nhãn + menu ⋮ (Khác (lưu trữ), Chưa trả lời, khoảng ngày, kênh).
+ * Conversation list filters: the All / Unread / Labels tabs + the ⋮ menu (Other (archived), Not replied, date range, channel).
  *
- * "Tất cả" = danh sách đầy đủ: chỉ sáng khi không có bộ lọc nào, bấm vào thì bỏ hết. Trước đây tab chỉ đổi `filter`:
- * lọc khoảng ngày / kênh vẫn giữ trong khi tab "Tất cả" vẫn sáng — bấm "Tất cả" như không có tác dụng. Mọi bộ lọc của
- * menu ⋮ đang bật đều hiện thành nhãn có ✕ dưới thanh tab (lọc kênh trước đây không hiện gì).
+ * "Tất cả" (All) = the full list: lit only when no filter is on, clicking it clears them all. Previously the tab only changed `filter`:
+ * the date / channel filters stayed while the "Tất cả" tab still looked lit, so clicking "Tất cả" seemed to do nothing. Every filter of the
+ * ⋮ menu that is on now shows as a label with ✕ under the tab bar (the channel filter used to show nothing).
  */
 
 export type ConversationListTab = 'all' | 'unread' | 'unreplied' | 'others' | 'label';
@@ -11,20 +11,20 @@ export type ConversationListTab = 'all' | 'unread' | 'unreplied' | 'others' | 'l
 export interface ConversationListFilterState {
   filter: ConversationListTab;
   dateRange: { fromTs: number; toTs: number } | null;
-  /** 'all' = mọi kênh. */
+  /** 'all' = every channel. */
   channel: string;
-  /** Đang xem hội thoại ẩn (đã gõ đúng mã PIN). */
+  /** Viewing a hidden conversation (the correct PIN was typed). */
   hiddenView: boolean;
 }
 
 export type ConversationMenuFilter = 'others' | 'unreplied' | 'dateRange' | 'channel';
 
-/** Danh sách đang bị lọc → tab "Tất cả" không sáng. */
+/** The list is filtered → the "Tất cả" (All) tab is not lit. */
 export function isConversationListFiltered(state: ConversationListFilterState): boolean {
   return state.filter !== 'all' || !!state.dateRange || (state.channel || 'all') !== 'all' || state.hiddenView;
 }
 
-/** Bộ lọc của menu ⋮ đang bật, theo thứ tự trong menu — mỗi cái một nhãn có ✕. */
+/** The ⋮ menu filters that are on, in menu order: each one a label with ✕. */
 export function activeMenuFilters(state: ConversationListFilterState): ConversationMenuFilter[] {
   const active: ConversationMenuFilter[] = [];
   if (state.filter === 'others') active.push('others');
@@ -34,14 +34,14 @@ export function activeMenuFilters(state: ConversationListFilterState): Conversat
   return active;
 }
 
-/** Bấm một mục bật / tắt của menu ⋮ (Khác, Chưa trả lời): bấm lại khi đang bật = về danh sách chính. */
+/** Clicking an on / off item of the ⋮ menu (Other, Not replied): clicking it again while on = back to the main list. */
 export function toggleMenuFilter(current: ConversationListTab, item: 'others' | 'unreplied'): ConversationListTab {
   return current === item ? 'all' : item;
 }
 
 /**
- * Số hội thoại trong "Khác (lưu trữ)" theo cờ trong DB (cả các trang chưa tải), trừ hội thoại ẩn đang khoá — khớp số
- * hiện ở nhãn khi mở thư mục. Trước đây chỉ đếm hội thoại đã tải (menu 172, nhãn 183).
+ * Number of conversations in "Khác (lưu trữ)" (Other, archived) by the DB flag (including pages not loaded yet), minus the locked hidden conversations: matches the number
+ * shown on the label when the folder is opened. Previously it only counted the conversations already loaded (menu 172, label 183).
  */
 export function othersFolderCount(
   accountIds: readonly string[],

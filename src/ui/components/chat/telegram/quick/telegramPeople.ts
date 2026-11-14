@@ -1,6 +1,6 @@
 /**
- * Người để chọn khi tạo nhóm / kênh Telegram: danh bạ Telegram (contacts.GetContacts qua IPC, nhớ trong phiên) +
- * hội thoại 1-1 gần đây của tài khoản (có thể chưa lưu danh bạ). Dùng chung cho Nhóm mới, Kênh mới, Danh bạ.
+ * People to pick when creating a Telegram group / channel: Telegram contacts (contacts.GetContacts via IPC, remembered for the session) +
+ * recent 1-1 conversations of the account (may not be saved as contacts). Shared by New group, New channel and Contacts.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -9,12 +9,13 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import {
   describeTelegramPresence, telegramPresenceRank, type TelegramContactItem, type TelegramPresence,
 } from '../../../../../shared/telegram/telegramQuickModel';
+import { tr } from '../../../../../shared/i18n';
 
 const CONTACTS_TTL_MS = 5 * 60_000;
 const contactsCache = new Map<string, { at: number; contacts: TelegramContactItem[] }>();
 const NO_CONTACTS: any[] = [];
 
-/** Màu ảnh đại diện chữ cái như Telegram (theo id, ổn định). Màu inline: theme sáng đổi màu chữ của lớp Tailwind. */
+/** Letter avatar color like Telegram (by id, stable). Inline color: the light theme changes the text color of the Tailwind class. */
 const PEER_COLORS = ['#e17076', '#faa774', '#a695e7', '#7bc862', '#6ec9cb', '#65aadd', '#ee7aae'];
 
 export function telegramPeerColor(id: string): string {
@@ -50,16 +51,16 @@ export function useTelegramContacts(accountId: string) {
         contactsCache.set(accountId, { at: Date.now(), contacts: res.contacts });
         setState({ contacts: res.contacts, loading: false, error: '' });
       } else {
-        setState(prev => ({ ...prev, loading: false, error: res?.error || 'Không tải được danh bạ Telegram' }));
+        setState(prev => ({ ...prev, loading: false, error: res?.error || tr('Không tải được danh bạ Telegram') }));
       }
     } catch (err: any) {
-      setState(prev => ({ ...prev, loading: false, error: err?.message || 'Không tải được danh bạ Telegram' }));
+      setState(prev => ({ ...prev, loading: false, error: err?.message || tr('Không tải được danh bạ Telegram') }));
     }
   }, [accountId]);
 
   useEffect(() => { void load(); }, [load]);
 
-  /** Bỏ khỏi danh sách đang hiện (sau khi xoá khỏi danh bạ) mà không tải lại. */
+  /** Remove from the list on screen (after deleting from contacts) without reloading. */
   const removeLocal = useCallback((ids: string[]) => {
     const drop = new Set(ids);
     setState(prev => {
@@ -73,7 +74,7 @@ export function useTelegramContacts(accountId: string) {
   return { ...state, reload: () => load(true), removeLocal };
 }
 
-/** Xoá danh bạ đã nhớ (vd. vừa thêm liên hệ mới) để lần mở sau tải lại. */
+/** Clear the remembered contacts (e.g. right after adding a new contact) so they reload the next time it opens. */
 export function invalidateTelegramContacts(accountId: string): void {
   contactsCache.delete(accountId);
 }
@@ -85,7 +86,7 @@ export interface RecentTelegramPerson {
   time: number;
 }
 
-/** Hội thoại 1-1 gần đây (người thật, không bot, không chính mình) — từ store, tài khoản khác thì đọc DB. */
+/** Recent 1-1 conversations (real people, not bots, not yourself): from the store; other accounts are read from the DB. */
 export function useRecentTelegramPeople(accountId: string): { people: RecentTelegramPerson[]; loading: boolean } {
   const storeContacts = useChatStore(s => s.contacts[accountId] || NO_CONTACTS);
   const [loaded, setLoaded] = useState<any[] | null>(null);
@@ -114,12 +115,12 @@ export function useRecentTelegramPeople(accountId: string): { people: RecentTele
   return { people, loading: storeContacts.length === 0 && loaded === null };
 }
 
-/** Một người trong danh sách chọn (gộp danh bạ + hội thoại gần đây). */
+/** One person in the picker list (contacts + recent conversations merged). */
 export interface PickerPerson {
   id: string;
   name: string;
   avatar: string;
-  /** Dòng phụ: trạng thái truy cập, @tên, số điện thoại. */
+  /** Secondary line: online status, @username, phone number. */
   sub: string;
   online: boolean;
   rank: number;
@@ -135,7 +136,7 @@ export function presenceLine(presence: TelegramPresence | undefined, now: number
   return { text, online: text === 'trực tuyến' };
 }
 
-/** Gộp danh bạ + hội thoại gần đây theo id (danh bạ có trạng thái truy cập, hội thoại có ảnh / tên đã đặt). */
+/** Merge contacts + recent conversations by id (contacts have online status, conversations have the photo / name that was set). */
 export function mergeTelegramPeople(contacts: TelegramContactItem[], recent: RecentTelegramPerson[], now: number = Date.now()): PickerPerson[] {
   const byId = new Map<string, PickerPerson>();
   for (const contact of contacts) {
@@ -156,12 +157,12 @@ export function mergeTelegramPeople(contacts: TelegramContactItem[], recent: Rec
   for (const person of recent) {
     const existing = byId.get(person.id);
     if (existing) {
-      // Giữ tên đã lưu trong danh bạ Telegram; hội thoại chỉ bổ sung ảnh + thời gian nhắn gần nhất
+      // Keep the name saved in Telegram contacts; the conversation only adds the photo + last message time
       existing.recentTime = person.time;
       if (!existing.avatar && person.avatar) existing.avatar = person.avatar;
     } else {
       byId.set(person.id, {
-        id: person.id, name: person.name, avatar: person.avatar, sub: 'đã nhắn tin', online: false, rank: 0,
+        id: person.id, name: person.name, avatar: person.avatar, sub: tr('đã nhắn tin'), online: false, rank: 0,
         isContact: false, recentTime: person.time,
       });
     }

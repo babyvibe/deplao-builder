@@ -98,7 +98,7 @@ const LEGACY_MODEL_ALIASES: Record<string, string> = {
   'mistral-small-3-latest': 'mistral-large-latest', 'codestral-2-latest': 'mistral-large-latest',
 };
 
-/** Tên dễ đọc của model theo danh mục (vd "Claude Haiku 4.5"); model tự nhập (OpenRouter / 9router) giữ nguyên id. */
+/** Human-readable model name from the catalog (e.g. "Claude Haiku 4.5"); models the user types in (OpenRouter / 9router) keep their id. */
 export function aiModelLabel(platform: string | null | undefined, model: string | null | undefined): string {
   const id = String(model || '').trim();
   if (!id) return '';

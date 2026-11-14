@@ -1,22 +1,24 @@
 /**
- * Đăng nhập Zalo bằng mã QR (zca-js loginQR): phân loại cách lượt QR kết thúc + câu báo cho người dùng.
+ * Zalo login with a QR code (zca-js loginQR): classifies how the QR attempt ended + the message shown to the user.
  *
- * "Operation aborted" (ZaloApiLoginQRAborted) không phải lỗi Zalo trả về: zca-js chỉ ném khi chính app gọi
- * actions.abort() — Deplao gọi khi đóng cửa sổ Thêm tài khoản, chuyển tab, quay lại hoặc bấm Làm mới QR.
+ * "Operation aborted" (ZaloApiLoginQRAborted) is not an error that Zalo returns: zca-js only throws when the app itself calls
+ * actions.abort(). Deplao calls it when the Add account window closes, the tab changes, the user goes back, or they click Refresh QR.
  */
 
-/** Lượt QR bị app huỷ (đóng cửa sổ / Làm mới). */
+/** QR attempt cancelled by the app (window closed / Refresh). */
+import { tr } from '../i18n';
+
 export function isQrLoginCancelled(err: unknown): boolean {
   return (err as { name?: unknown } | null)?.name === 'ZaloApiLoginQRAborted';
 }
 
-/** Câu báo khi đăng nhập QR lỗi; lỗi gốc (tiếng Anh, có thể kèm JSON của Zalo) ghi ở Nhật ký. */
+/** Message shown when QR login fails; the original error (in English, may include Zalo's JSON) is written to the Log. */
 export function qrLoginErrorText(err: unknown): string {
   const msg = String((err as { message?: unknown } | null)?.message ?? err ?? '');
-  if (/generate QRCode|login version/i.test(msg)) return 'Không tạo được mã QR. Kiểm tra mạng hoặc proxy.';
+  if (/generate QRCode|login version/i.test(msg)) return tr('Không tạo được mã QR. Kiểm tra mạng hoặc proxy.');
   if (/scan result|confirm result|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket|network|fetch failed|proxy/i.test(msg)) {
-    return 'Mất kết nối tới Zalo. Kiểm tra mạng hoặc proxy.';
+    return tr('Mất kết nối tới Zalo. Kiểm tra mạng hoặc proxy.');
   }
-  if (/session|account info|Can't login/i.test(msg)) return 'Zalo đã xác nhận nhưng chưa lấy được phiên. Thử lại.';
-  return 'Đăng nhập không thành công. Thử lại.';
+  if (/session|account info|Can't login/i.test(msg)) return tr('Zalo đã xác nhận nhưng chưa lấy được phiên. Thử lại.');
+  return tr('Đăng nhập không thành công. Thử lại.');
 }

@@ -1,8 +1,8 @@
 /**
- * PluginPagesHost — view 'plugin'.
- *  - Chưa chọn trang → PluginHub (lưới ứng dụng, nút Mở).
- *  - Đã chọn → thanh trên (quay lại danh sách, biểu tượng, tab các trang của plugin, tải lại) + iframe.
- * Giữ tối đa 5 iframe đã mở (ẩn bằng CSS khi chuyển view) để plugin không mất trạng thái; trang cũ nhất bị gỡ trước.
+ * PluginPagesHost - view 'plugin'.
+ *  - No page selected → PluginHub (app grid, Open button).
+ *  - Page selected → top bar (back to the list, icon, the plugin's page tabs, reload) + iframe.
+ * Keeps up to 5 opened iframes (hidden with CSS when the view changes) so plugins keep their state; the oldest page is removed first.
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/store/app/appStore';
@@ -11,6 +11,7 @@ import { ArrowLeftIcon, PluginIcon, RefreshIcon } from '@/components/common/icon
 import PluginFrame from './PluginFrame';
 import PluginHub from '../hub/PluginHub';
 import PluginAvatar from '../hub/PluginAvatar';
+import { tr } from '../../../../shared/i18n';
 
 const MAX_ALIVE = 5;
 
@@ -51,11 +52,11 @@ export default function PluginPagesHost() {
             <button
               type="button"
               onClick={openPluginHub}
-              title="Về danh sách ứng dụng"
+              title={tr('Về danh sách ứng dụng')}
               className="flex items-center gap-1.5 h-8 px-2 rounded-lg text-xs text-foreground/80 hover:bg-muted hover:text-foreground"
             >
               <ArrowLeftIcon className="w-4 h-4" />
-              <span>Tất cả ứng dụng</span>
+              <span>{tr('Tất cả ứng dụng')}</span>
             </button>
             {current && (
               <>
@@ -81,7 +82,7 @@ export default function PluginPagesHost() {
                 )}
                 <button
                   type="button"
-                  title="Tải lại trang ứng dụng"
+                  title={tr('Tải lại trang ứng dụng')}
                   onClick={() => setNonce(n => ({ ...n, [activeKey]: (n[activeKey] || 0) + 1 }))}
                   className="ml-auto w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
@@ -94,8 +95,8 @@ export default function PluginPagesHost() {
         {showFrames && !current && (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
             <PluginIcon className="w-8 h-8 text-subtle-foreground" />
-            <p className="text-sm text-muted-foreground">Trang của ứng dụng không còn khả dụng (ứng dụng đã tắt hoặc bị gỡ).</p>
-            <button type="button" className="text-xs text-primary hover:text-primary-hover" onClick={openPluginHub}>Về danh sách ứng dụng</button>
+            <p className="text-sm text-muted-foreground">{tr('Trang của ứng dụng không còn khả dụng (ứng dụng đã tắt hoặc bị gỡ).')}</p>
+            <button type="button" className="text-xs text-primary hover:text-primary-hover" onClick={openPluginHub}>{tr('Về danh sách ứng dụng')}</button>
           </div>
         )}
         <div className={showFrames && current ? 'flex-1 relative' : 'hidden'}>

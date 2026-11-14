@@ -3,6 +3,8 @@ import ipc from '@/lib/ipc';
 import { SCAN_TAB_LABELS } from './ScanSessionTypes';
 import { Spinner } from '@/components/common/PageLoading';
 import { ClipboardListIcon, FolderIcon, InboxIcon, SearchIcon, SendIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 interface Props {
@@ -60,7 +62,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
 
   const formatDate = (ts: number) => {
     const d = new Date(ts);
-    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
   const truncate = (str: string, len: number) => str?.length > len ? str.slice(0, len) + '...' : str;
@@ -87,11 +89,11 @@ export default function ScanHistoryTab({ accountId }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-card flex-shrink-0">
         <div className="flex items-center gap-3">
-          <h3 className="text-sm font-semibold text-foreground"><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử quét</h3>
-          <span className="text-[11px] text-muted-foreground">({total} bản ghi)</span>
+          <h3 className="text-sm font-semibold text-foreground">{trx('<0/> Lịch sử quét', { 0: <ClipboardListIcon className="w-4 h-4 inline" /> })}</h3>
+          <span className="text-[11px] text-muted-foreground">{trx('({{total}} bản ghi)', { total })}</span>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={loadLogs} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground" title="Làm mới">
+          <button onClick={loadLogs} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground" title={tr('Làm mới')}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 2v6h-6M3 12a9 9 0 0115.36-6.36L21 8M3 22v-6h6M21 12a9 9 0 01-15.36 6.36L3 16"/>
             </svg>
@@ -101,7 +103,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
 
       {/* Filter bar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50 bg-card flex-shrink-0">
-        <label className="text-[11px] text-muted-foreground whitespace-nowrap"><SearchIcon className="w-4 h-4 inline" /> Lọc theo tab:</label>
+        <label className="text-[11px] text-muted-foreground whitespace-nowrap">{trx('<0/> Lọc theo tab:', { 0: <SearchIcon className="w-4 h-4 inline" /> })}</label>
         <select
           value={selectedTabId}
           onChange={(e) => setSelectedTabId(e.target.value)}
@@ -117,7 +119,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
             onClick={() => setSelectedTabId('')}
             className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted"
           >
-            ✕ Bỏ lọc
+            {tr('✕ Bỏ lọc')}
           </button>
         )}
       </div>
@@ -130,7 +132,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
           </div>
         ) : logs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            {selectedTabId ? 'Tab này chưa có lịch sử quét' : 'Chưa có lịch sử quét'}
+            {selectedTabId ? tr('Tab này chưa có lịch sử quét') : tr('Chưa có lịch sử quét')}
           </div>
         ) : (
           <div className="divide-y divide-border">
@@ -147,7 +149,7 @@ export default function ScanHistoryTab({ accountId }: Props) {
                   <span className="text-xs font-semibold text-foreground/80">{getScanTypeLabel(log.scanType)}</span>
                   <span className="text-[10px] text-muted-foreground">{formatDate(log.createdAt)}</span>
                   {log.itemsCount > 0 && (
-                    <span className="text-[10px] text-blue-400 ml-auto font-mono">{log.itemsCount} items</span>
+                    <span className="text-[10px] text-blue-400 ml-auto font-mono">{trx('{{itemsCount}} items', { itemsCount: log.itemsCount })}</span>
                   )}
                 </div>
 
@@ -176,18 +178,18 @@ export default function ScanHistoryTab({ accountId }: Props) {
                     {/* Info grid */}
                     <div className="grid grid-cols-3 gap-2 text-[10px] text-muted-foreground bg-card rounded-lg p-2">
                       <div><span className="text-muted-foreground">DocId:</span> <span className="text-foreground/80 font-mono">{log.docId || '-'}</span></div>
-                      <div><span className="text-muted-foreground">Threads:</span> <span className="text-foreground/80">{log.threadCount}</span></div>
-                      <div><span className="text-muted-foreground">Items:</span> <span className="text-blue-400 font-mono">{log.itemsCount}</span></div>
+                      <div><span className="text-muted-foreground">{tr('Threads:')}</span> <span className="text-foreground/80">{log.threadCount}</span></div>
+                      <div><span className="text-muted-foreground">{tr('Items:')}</span> <span className="text-blue-400 font-mono">{log.itemsCount}</span></div>
                     </div>
                     {log.requestHeaders && (
                       <div>
                         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-1">
-                          <span><SendIcon className="w-4 h-4 inline" /> Request headers</span>
+                          <span>{trx('<0/> Request headers', { 0: <SendIcon className="w-4 h-4 inline" /> })}</span>
                           <button
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(log.requestHeaders || ''); }}
                             className="text-blue-500 hover:text-blue-400"
                           >
-                            [Copy]
+                            {tr('[Copy]')}
                           </button>
                         </div>
                         <pre className="text-[10px] text-muted-foreground bg-card rounded p-2 overflow-x-auto max-h-[120px] overflow-y-auto whitespace-pre-wrap break-word border border-border/30">
@@ -199,12 +201,12 @@ export default function ScanHistoryTab({ accountId }: Props) {
                     {log.responseHeaders && (
                       <div>
                         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-1">
-                          <span><InboxIcon className="w-4 h-4 inline" /> Response headers</span>
+                          <span>{trx('<0/> Response headers', { 0: <InboxIcon className="w-4 h-4 inline" /> })}</span>
                           <button
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(log.responseHeaders || ''); }}
                             className="text-blue-500 hover:text-blue-400"
                           >
-                            [Copy]
+                            {tr('[Copy]')}
                           </button>
                         </div>
                         <pre className="text-[10px] text-muted-foreground bg-card rounded p-2 overflow-x-auto max-h-[120px] overflow-y-auto whitespace-pre-wrap break-word border border-border/30">
@@ -216,12 +218,12 @@ export default function ScanHistoryTab({ accountId }: Props) {
                     {formatPayload(log.requestPayload) && (
                       <div>
                         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-1">
-                          <span><SendIcon className="w-4 h-4 inline" /> Request payload</span>
+                          <span>{trx('<0/> Request payload', { 0: <SendIcon className="w-4 h-4 inline" /> })}</span>
                           <button
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(formatPayload(log.requestPayload) || ''); }}
                             className="text-blue-500 hover:text-blue-400"
                           >
-                            [Copy]
+                            {tr('[Copy]')}
                           </button>
                         </div>
                         <pre className="text-[10px] text-muted-foreground bg-card rounded p-2 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap break-word border border-border/30">
@@ -234,12 +236,12 @@ export default function ScanHistoryTab({ accountId }: Props) {
                     {log.responsePreview && (
                       <div>
                         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-1">
-                          <span><InboxIcon className="w-4 h-4 inline" /> Response preview</span>
+                          <span>{trx('<0/> Response preview', { 0: <InboxIcon className="w-4 h-4 inline" /> })}</span>
                           <button
                             onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(log.responsePreview); }}
                             className="text-blue-500 hover:text-blue-400"
                           >
-                            [Copy]
+                            {tr('[Copy]')}
                           </button>
                         </div>
                         <pre className="text-[10px] text-muted-foreground bg-card rounded p-2 overflow-x-auto max-h-[150px] overflow-y-auto whitespace-pre-wrap break-word border border-border/30">

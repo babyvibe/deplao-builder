@@ -1,7 +1,7 @@
 /**
- * Tin mới của nhóm forum Telegram → dòng chủ đề trong danh sách đã tải (chatStore.forumTopics) đổi ngay: tin mới nhất,
- * giờ, số chưa đọc — như Telegram, không gọi lại API. Nhóm chưa mở danh sách chủ đề thì không làm gì. Không ghi
- * localStorage mỗi tin: lần tải danh sách sau (mở lại panel) ghi bản của Telegram.
+ * A new message in a Telegram forum group → the topic row in the loaded list (chatStore.forumTopics) updates at once: latest message,
+ * time, unread count, as in Telegram, without calling the API again. A group whose topic list is not open does nothing. It does not write
+ * to localStorage for every message: the next topic-list load (reopening the panel) writes Telegram's copy.
  */
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { useChatStore } from '@/store/chat/chatStore';

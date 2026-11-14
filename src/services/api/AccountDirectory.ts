@@ -1,10 +1,10 @@
 /**
- * AccountDirectory — danh bạ tài khoản (Zalo, Facebook, Telegram) cho lớp API.
+ * AccountDirectory: the account directory (Zalo, Facebook, Telegram) for the API layer.
  *
- * Lấy từ kênh IPC `login:getAccounts` (cùng nguồn UI dùng), cache 3 giây.
- * - `get/list` trả AccountInfo KHÔNG có cookies/imei/user_agent.
- * - `zaloAuthFor` dựng auth y hệt buildZaloAuth của UI (src/ui/lib/ipc.ts) để truyền
- *   vào handler zalo:* — chỉ dùng trong process, không bao giờ trả ra ngoài.
+ * Loaded from the IPC channel `login:getAccounts` (the same source the UI uses), cached for 3 seconds.
+ * - `get/list` return AccountInfo WITHOUT cookies/imei/user_agent.
+ * - `zaloAuthFor` builds auth exactly like the UI's buildZaloAuth (src/ui/lib/ipc.ts) to pass
+ *   into the zalo:* handlers: used only inside the process, never returned outside.
  */
 import type { AccountInfo } from './types';
 
@@ -77,7 +77,7 @@ export class AccountDirectory {
         return (await this.list()).find(a => a.id === id) || null;
     }
 
-    /** Auth cho handler zalo:* — giống buildZaloAuth(acc, accountId) của UI. */
+    /** Auth for the zalo:* handlers, same as the UI's buildZaloAuth(acc, accountId). */
     async zaloAuthFor(accountId: string): Promise<Record<string, string>> {
         const id = String(accountId);
         const row = (await this.snapshot()).raw.get(id);

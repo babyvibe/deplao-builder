@@ -1,7 +1,7 @@
 /**
  * FacebookService.ts
  * Orchestrator singleton per account
- * Tương tự ZaloService - quản lý lifecycle session + listener + API calls
+ * Similar to ZaloService - manages the session lifecycle + listener + API calls
  */
 
 import {
@@ -48,6 +48,7 @@ import { createProxyAgent } from '../../utils/connection/ProxyHelper';
 import { secureGet } from '../secure/SecureSettingsService';
 import path from 'path';
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 // ─── Cookie key helper ─────────────────────────────────────────────────
 
@@ -70,12 +71,12 @@ function isSameFacebookAvatar(left?: string, right?: string): boolean {
   }
 }
 
-/** Trang GraphQL khi hội thoại chưa có tin Messenger nào trong máy làm mốc cho FetchMessagesTask (~1 trang Messenger web). */
+/** GraphQL page when the conversation has no Messenger message yet in the machine to use as the mark for FetchMessagesTask (~1 Messenger web page). */
 const HISTORY_GRAPHQL_PAGE = 20;
-/** Tin mới nhất trong máy cũ hơn hoạt động mới nhất của hội thoại quá mức này → máy còn thiếu tin ở đầu hội thoại. */
+/** If the newest message on the machine is older than the conversation's latest activity by more than this, the machine is missing messages at the start of the conversation. */
 const HISTORY_TOP_GAP_MS = 60_000;
-const HISTORY_RISK_TEXT = 'Facebook có dấu hiệu hạn chế / yêu cầu xác minh — đã tạm dừng tải lịch sử 30 phút để bảo vệ tài khoản';
-/** Trang lịch sử đến từ đâu: LightSpeed FetchMessagesTask (bridge) hay GraphQL (khi chưa có tin làm mốc). */
+const HISTORY_RISK_TEXT = tr('Facebook có dấu hiệu hạn chế / yêu cầu xác minh — đã tạm dừng tải lịch sử 30 phút để bảo vệ tài khoản');
+/** Where a history page comes from: the LightSpeed FetchMessagesTask (bridge) or GraphQL (when there is no message to use as the mark yet). */
 type FbHistorySource = 'lightspeed' | 'graphql';
 type FbHistoryPageResult =
   | { success: true; saved: number; received: number; stored: number; count: number; hasMoreBefore: boolean; minTimestampMs: number; minMessageId?: string; source: FbHistorySource }
@@ -97,12 +98,12 @@ export class FacebookService {
   private statusChangeCallback?: (status: FBAccountStatus) => void;
   /** Cached real Facebook UID - resolved once from DB, used for broadcasts */
   private _facebookId: string | null = null;
-  /** Last known good MQTT seqId - dùng làm fallback khi getLastSeqId thất bại,
-   *  tránh connect với seqId=0 → ERROR_QUEUE_OVERFLOW */
+  /** Last known good MQTT seqId - used as the fallback when getLastSeqId fails,
+   *  to avoid connecting with seqId=0 → ERROR_QUEUE_OVERFLOW */
   private _lastGoodSeqId: string = '0';
-  /** Đếm số lần MQTT listener bị ERROR_QUEUE_OVERFLOW persistent.
-   *  Khi > 0, ensureConnected() sẽ không tạo mới MQTT listener nữa,
-   *  chỉ dùng bridge status để quyết định có thể gửi tin hay không. */
+  /** Counts how many times the MQTT listener hit a persistent ERROR_QUEUE_OVERFLOW.
+   *  When > 0, ensureConnected() no longer creates a new MQTT listener,
+   *  it only uses the bridge status to decide whether a message can be sent. */
   private _mqttOverflowCount: number = 0;
 
   // ─── E2EE Bridge ──────────────────────────────────────────────────────────
@@ -111,30 +112,30 @@ export class FacebookService {
   private e2eeStatus: FBE2EEStatus = 'disconnected';
   /** Serialize on-demand restarts so repeated sends cannot race bridge generations. */
   private e2eeRetryPromise: Promise<void> | null = null;
-  private e2eeEnabled: boolean = true; // Có thể disable nếu không tìm thấy binary
+  private e2eeEnabled: boolean = true; // Can be disabled if the binary is not found
   /** Track thread IDs known to be E2EE-encrypted (auto-populated on error) */
   private e2eeThreads: Set<string> = new Set();
-  /** Nhịp tải lịch sử "giống người dùng thật" — chung cho đồng bộ nền và tải khi cuộn của tài khoản này. */
+  /** The history loading pace "giống người dùng thật" (like a real user), shared by the background sync and the load on scroll of this account. */
   private readonly historyPacer = new FacebookHumanPacer();
-  /** Track thread IDs known to be NON-E2EE (gửi qua bridge sendMessage/MQTT thành công) */
+  /** Track thread IDs known to be NON-E2EE (sent through the bridge sendMessage / MQTT successfully) */
   private _nonE2EEThreads: Set<string> = new Set();
-  /** Debounce avatar refresh - chỉ 1 lần mỗi user/session */
+  /** Debounce avatar refresh - only once per user / session */
   private avatarRefreshDebounce = new Set<string>();
-  /** Bridge instance ID - tăng mỗi lần startE2EEBridge, dùng để detect stale reconnect timers (BUG #6 fix) */
+  /** Bridge instance ID - incremented each time startE2EEBridge runs, used to detect stale reconnect timers (BUG #6 fix) */
   private e2eeBridgeGen: number = 0;
-  /** Heartbeat timer kiểm tra bridge còn responsive không (BUG #8 fix) */
+  /** Heartbeat timer that checks the bridge is still responsive (BUG #8 fix) */
   private _e2eeHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
   /** Debounced recovery after the E2EE socket disconnects while the process lives. */
   private _e2eeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** Consecutive automatic reconnects; prevents a failed handshake from churning every 5s. */
   private _e2eeReconnectAttempts: number = 0;
-  /** Đếm số lần heartbeat fail liên tiếp - sau 2 lần → kill + respawn */
+  /** Counts consecutive heartbeat failures - after 2 → kill + respawn */
   private _e2eeHeartbeatFailCount: number = 0;
   /** Track message IDs sent locally via this service instance.
-   *  Dùng để ngăn self-echo duplicate khi bridge/MQTT echo ngược tin nhắn vừa gửi.
-   *  Mỗi entry tự xoá sau 60s để tránh memory leak. */
+   *  Used to prevent a self-echo duplicate when the bridge / MQTT echoes back a message that was just sent.
+   *  Each entry is deleted by itself after 60 s to avoid a memory leak. */
   private _recentlySentMessageIds: Set<string> = new Set();
-  /** Cảm xúc / thu hồi MQTT và bridge cùng báo: bản lặp không ghi / phát lại (FacebookEventRepeats). */
+  /** Reaction / unsend reported by both MQTT and the bridge: a repeat is not written / replayed (FacebookEventRepeats). */
   private _eventRepeats: RepeatFilter | null = null;
   /** E2EE device state store — persists E2EE state across app restarts */
   private e2eeStateStore: FacebookE2EEStateStore | null = null;
@@ -149,7 +150,7 @@ export class FacebookService {
     this.eventPipeline = new FacebookEventPipeline(accountId);
   }
 
-  /** Tạo proxy agent từ proxyId */
+  /** Create a proxy agent from proxyId */
   private resolveProxyAgent(): any {
     if (!this.proxyId) return undefined;
     try {
@@ -159,7 +160,7 @@ export class FacebookService {
     return undefined;
   }
 
-  /** Cập nhật proxy (gọi khi user đổi proxy cho account) */
+  /** Update the proxy (called when the user changes the proxy for the account) */
   public setProxy(proxyId: number | null): void {
     this.proxyId = proxyId;
     this.httpsAgent = this.resolveProxyAgent();
@@ -177,17 +178,17 @@ export class FacebookService {
   }
 
   /**
-   * Lấy hoặc tạo instance, đồng thời đảm bảo đã connect
+   * Gets or creates the instance, and makes sure it is connected
    */
   /**
-   * Resolve raw account ID về internal UUID để làm key trong instances map.
-   * Tránh trùng lặp instance khi caller truyền numeric FB UID thay vì UUID.
+   * Resolves a raw account ID to the internal UUID to use as the key in the instances map.
+   * Avoids duplicate instances when the caller passes a numeric FB UID instead of a UUID.
    */
   private static resolveInstanceKey(rawId: string): string {
     if (!rawId) return rawId;
-    // Nếu đã là UUID (có dấu gạch ngang) → trả về nguyên
+    // If it is already a UUID (has hyphens) → return it as is
     if (rawId.includes('-')) return rawId;
-    // Nếu là Facebook UID (all digits) → tìm UUID từ DB
+    // If it is a Facebook UID (all digits) → look up the UUID in the DB
     if (/^\d+$/.test(rawId)) {
       try {
         const fbAcc = DatabaseService.getInstance().getFBAccountByFacebookId(rawId);
@@ -198,7 +199,7 @@ export class FacebookService {
   }
 
   public static async getInstance(accountId: string, cookie?: string, proxyId?: number | null): Promise<FacebookService> {
-    // Luôn resolve về internal UUID để tránh duplicate instance
+    // Always resolve to the internal UUID to avoid duplicate instances
     const instanceKey = FacebookService.resolveInstanceKey(accountId);
 
     const existing = FacebookService.instances.get(instanceKey);
@@ -212,12 +213,12 @@ export class FacebookService {
 
     const task = (async (): Promise<FacebookService> => {
       let instanceCookie = cookie;
-      // Nếu không có cookie, thử lấy từ secure storage
+      // If there is no cookie, try to get it from secure storage
       if (!instanceCookie) {
         try {
-          // Sử dụng instanceKey (đã resolve) để lookup cookie
+          // Use instanceKey (already resolved) to look up the cookie
           instanceCookie = secureGet(fbCookieKey(instanceKey)) || undefined;
-          // Fallback: lấy từ DB (cookie_encrypted)
+          // Fallback: get it from the DB (cookie_encrypted)
           if (!instanceCookie) {
             const acc = DatabaseService.getInstance().getFBAccount(instanceKey);
             if (acc?.cookie_encrypted) instanceCookie = acc.cookie_encrypted;
@@ -227,7 +228,7 @@ export class FacebookService {
       if (!instanceCookie) throw new Error(`[FacebookService] Cookie required for new instance: ${accountId}`);
       const service = new FacebookService(instanceKey, instanceCookie, proxyId);
       try {
-        // Tự động kết nối. Only publish the instance once connect() has
+        // Auto-connect. Only publish the instance once connect() has
         // finished; a thrown connect leaves nothing behind to poison the map.
         await service.connect();
       } catch (err) {
@@ -274,15 +275,15 @@ export class FacebookService {
     this.statusChangeCallback?.(status);
 
     // ── Sync DB marking with connection state ───────────────────────────
-    // Đảm bảo listener_active + fb_accounts.status luôn đồng bộ,
-    // tránh tình trạng UI hiển thị sai hoặc auto-reconnect bỏ qua account
-    // do DB marking cũ từ vòng lặp overflow trước đó.
+    // Make sure listener_active + fb_accounts.status always stay in sync,
+    // avoids the UI showing the wrong state or auto-reconnect skipping the account
+    // because of old DB marking from the earlier overflow loop.
     try {
       const db = DatabaseService.getInstance();
       const fbId = this.getFacebookId();
 
       if (status === 'connected') {
-        // MQTT connected → đánh dấu listener active + fb_accounts connected
+        // MQTT connected → mark the listener active + fb_accounts connected
         db.setListenerActive(fbId, true);
         db.updateFBAccountStatus(this.accountId, 'connected');
         Logger.log(`[FacebookService:${this.accountId}] DB marking: listener_active=1, status=connected`);
@@ -297,10 +298,10 @@ export class FacebookService {
   }
 
   /**
-   * Kết nối: init session + start MQTT listener
+   * Connect: init the session + start the MQTT listener
    */
   public async connect(): Promise<void> {
-    // Nếu đang kết nối, trả về promise đang chạy
+    // If already connecting, return the running promise
     if (this._connectPromise) return this._connectPromise;
     if (this.status === 'connected') return;
 
@@ -321,7 +322,7 @@ export class FacebookService {
     this.setStatus('connecting');
     Logger.log(`[FacebookService:${this.accountId}] Connecting...`);
 
-    // Cleanup old listener trước khi tạo mới - tránh memory leak + timer chồng chéo
+    // Clean up the old listener before creating a new one - avoids a memory leak + overlapping timers
     if (this.listener) {
       try {
         this.listener.disconnect();
@@ -331,8 +332,8 @@ export class FacebookService {
 
     try {
       // 1. Init session (with proxy support)
-      // initSession() now validates REQUIRED_SESSION_FIELDS + FacebookID là số
-      // và throw error nếu thiếu - không cần check thủ công
+      // initSession() now validates REQUIRED_SESSION_FIELDS + that FacebookID is a number
+      // and throws an error if one is missing - no need to check by hand
       this.dataFB = await initSession(this.cookie, this.httpsAgent);
 
       // 2. Fetch latest seqId via GraphQL to avoid ERROR_QUEUE_OVERFLOW
@@ -380,7 +381,7 @@ export class FacebookService {
       });
 
       this.listener.on('readReceipt', (data: any) => {
-        // Người kia đã đọc tới mốc → dấu ✓✓ (đã xem) cạnh giờ tin mình gửi
+        // The other person has read up to the mark → ✓✓ (seen) mark next to the time of the message I sent
         if (!data?.threadId || !data?.actorFbId || String(data.actorFbId) === this.getFacebookId()) return;
         recordPeerReceipt(this.getFacebookId(), String(data.threadId), { readTs: Number(data.watermarkTimestampMs) || 0 });
       });
@@ -430,7 +431,7 @@ export class FacebookService {
             this.setStatus('connected');
             break;
           case 'disconnected':
-            // Khi MQTT close → chuyển về disconnected để UI không hiển thị "đã kết nối"
+            // When MQTT closes → switch to disconnected so the UI does not show "đã kết nối" (connected)
             this.setStatus('disconnected');
             break;
           case 'cookie_expired':
@@ -465,37 +466,37 @@ export class FacebookService {
         Logger.warn(`[FacebookService:${this.accountId}] Listener error: ${err.message}`);
       });
 
-      // Cache seqId để dùng làm fallback cho lần connect sau (tránh overflow cycle)
+      // Cache the seqId to use as the fallback for the next connect (avoids an overflow cycle)
       this.listener.on('seqId', (newSeqId: string) => {
         if (newSeqId && newSeqId !== '0') {
           this._lastGoodSeqId = newSeqId;
         }
       });
 
-      // Track ERROR_QUEUE_OVERFLOW - nếu overflow persist + bridge alive,
-      // dừng hẳn MQTT listener vì bridge có MQTT riêng xử lý mọi traffic
+      // Track ERROR_QUEUE_OVERFLOW - if the overflow persists and the bridge is alive,
+      // stop the MQTT listener completely, since the bridge has its own MQTT that handles all traffic
       this.listener.on('overflow', (_seqId: string) => {
         this._mqttOverflowCount++;
         Logger.warn(`[FacebookService:${this.accountId}] MQTT overflow #${this._mqttOverflowCount} - will skip MQTT reconnect if persistent`);
-        // Khi overflow > 2 lần và bridge đã connected → dừng MQTT listener hẳn
-        // Bridge có MQTT nội bộ riêng, không cần TypeScript MQTT listener nữa
+        // When overflow > 2 times and the bridge is already connected → stop the MQTT listener completely
+        // The bridge has its own internal MQTT, so the TypeScript MQTT listener is no longer needed
         if (this._mqttOverflowCount > 2 && this.e2eeBridge?.isAlive()) {
           Logger.warn(`[FacebookService:${this.accountId}] Persistent MQTT overflow + bridge alive → disabling MQTT listener, relying on bridge`);
           if (this.listener) {
             this.listener.disconnect();
-            // Giữ listener = null để ensureConnected không thử tạo lại
+            // Keep listener = null so ensureConnected does not try to create it again
           }
         }
       });
 
-      // Gắn health check callback - listener sẽ gọi định kỳ khi đang Phase 2 retry
-      // để phát hiện cookie hết hạn và dừng retry đúng lúc
+      // Attach the health check callback - the listener will call it periodically while in Phase 2 retry
+      // to detect an expired cookie and stop retrying at the right time
       const fbService = this;
       this.listener.setHealthCheckFn(async () => {
         try {
           return await fbService.checkCookieHealth();
         } catch {
-          return true; // Không chắc chắn → cứ retry tiếp
+          return true; // Not sure → keep retrying
         }
       });
 
@@ -522,7 +523,7 @@ export class FacebookService {
   }
 
   /**
-   * Ngắt kết nối
+   * Disconnects
    */
   public async disconnect(): Promise<void> {
     // Disconnect E2EE bridge first
@@ -538,7 +539,7 @@ export class FacebookService {
   }
 
   /**
-   * Health check: kiểm tra cookie + listener
+   * Health check: checks the cookie + the listener
    */
   public async checkHealth(): Promise<{ alive: boolean; listenerConnected: boolean; reason?: string }> {
     try {
@@ -555,8 +556,8 @@ export class FacebookService {
   }
 
   /**
-   * Kiểm tra riêng cookie health (không check listener).
-   * Dùng cho health check callback trong FacebookMQTTListener. Network failure
+   * Checks the cookie health on its own (does not check the listener).
+   * Used by the health check callback in FacebookMQTTListener. A network failure
    * is deliberately *not* treated as an expired cookie: during an offline
    * period that would permanently stop the listener's own reconnect loop.
    */
@@ -584,7 +585,7 @@ export class FacebookService {
   }
 
   /**
-   * Cập nhật cookie (sau khi user re-login)
+   * Updates the cookie (after the user logs in again)
    */
   public async updateCookie(newCookie: string): Promise<void> {
     this.cookie = newCookie;
@@ -612,10 +613,10 @@ export class FacebookService {
     }
 
     // ── Self-echo dedup: skip messages we already saved+broadcast locally ──
-    // Khi gửi tin qua bridge (E2EE hoặc MQTT), bridge echo ngược lại message
-    // qua event stream. Send path đã save DB + emit fb:onMessage rồi →
-    // không cần làm lại. Dùng recently-sent set để phân biệt echo vs
-    // message từ thiết bị khác (phone gửi → không có trong set → process).
+    // When a message is sent through the bridge (E2EE or MQTT), the bridge echoes the message back
+    // through the event stream. The send path has already saved to the DB + emitted fb:onMessage, so
+    // there is no need to redo it. The recently-sent set is used to tell an echo apart from
+    // a message from another device (the phone sent it → not in the set → process it).
     if (isSelf && msg.messageID && this._recentlySentMessageIds.has(msg.messageID)) {
       this._recentlySentMessageIds.delete(msg.messageID);
       Logger.log(`[FacebookService:${this.accountId}] Self-echo dedup: skipped msgId=${msg.messageID} (already saved+broadcast locally)`);
@@ -654,27 +655,27 @@ export class FacebookService {
     }
 
     // ── Fallback body for link-type attachments ──────────────────────────────
-    // Khi bridge gửi link message (đặc biệt là group), data.text có thể rỗng
-    // và URL chỉ nằm trong attachment. Đảm bảo body luôn có nội dung để UI hiển thị.
+    // When the bridge sends a link message (especially in a group), data.text can be empty
+    // and the URL is only in the attachment. Make sure the body always has content for the UI to show.
     if (!msg.body && msg.attachments?.attachmentType === 'link' && msg.attachments?.url) {
       msg.body = msg.attachments.url;
       Logger.log(`[FacebookService:${this.accountId}] [LINK] body was empty, using attachment URL: ${msg.body.slice(0, 100)}`);
     }
-    // ── Tin mẫu của Page (thẻ + nút): nội dung = chữ của thẻ ──────────────────
-    // Danh sách hội thoại, tìm kiếm, thông báo, workflow đọc `body`; thẻ đầy đủ nằm trong attachments.
+    // ── Page sample message (card + buttons): content = the card's text ──────────────────
+    // The conversation list, search, notifications and workflows read `body`; the full card is in attachments.
     const primaryTemplate = msg.attachments?.attachmentType === 'template' ? msg.attachments.template : undefined;
     if (!msg.body && primaryTemplate) {
       msg.body = fbTemplateText(primaryTemplate) || null;
     }
-    // Bridge không hiển thị được nội dung (E2EE xem một lần, thanh toán…) → chữ thay thế, không lưu bong bóng rỗng
+    // The bridge cannot show the content (E2EE view-once, payment…) → replacement text, do not save an empty bubble
     if (!msg.body && !msg.attachments?.attachmentType && msg.unsupported) {
       msg.body = fbUnsupportedText(msg.unsupported);
     }
     // ──────────────────────────────────────────────────────────────────────────
 
     // ── Pre-fetch contact info for unknown users ──────────────────────────────
-    // Trước khi save message, đảm bảo sender đã có display_name trong DB.
-    // Tránh hiển thị UID thay vì tên người dùng trên client.
+    // Before saving the message, make sure the sender already has a display_name in the DB.
+    // Avoids showing a UID instead of the user's name on the client.
     if (msg.userID && /^\d+$/.test(String(msg.userID)) && !isSelf) {
       try {
         const db = DatabaseService.getInstance();
@@ -683,7 +684,7 @@ export class FacebookService {
           [this.getFacebookId(), String(msg.userID)]
         ) as { display_name?: string } | undefined;
         if (!existingSender?.display_name) {
-          // Chưa có tên → fetch trước khi save để broadcast có thông tin đầy đủ
+          // No name yet → fetch first, so the broadcast has complete info
           await this.checkAndFetchUserInfo(String(msg.userID));
         }
       } catch {}
@@ -691,9 +692,9 @@ export class FacebookService {
     // ────────────────────────────────────────────────────────────────────────────
 
     // Persist to DB
-    // MQTT và bridge (LightSpeed) cùng nhận mỗi tin thường, cách nhau vài chục ms. Bản tới sau không đổi gì trong DB → bỏ
-    // qua, không phát lại (trước đây mỗi tin cộng chưa đọc / báo / chạy workflow / sự kiện API 2 lần); sửa được hàng rỗng
-    // hoặc thẻ "File đính kèm không hiển thị" → phát lại kèm `repeat` (renderer chỉ vá tin, không báo lần nữa).
+    // MQTT and the bridge (LightSpeed) both receive each ordinary message, a few tens of ms apart. The later copy changes nothing in the DB → dropped
+    // without being replayed (before, each message was added to unread / reports / workflow runs / API events twice); an empty row can be fixed
+    // or the "File đính kèm không hiển thị" (Attachment not shown) card → replayed with `repeat` (the renderer only patches the message, it does not report it again).
     let saveOutcome: FbSaveOutcome = 'new';
     if (threadId && msg.messageID) {
       try {
@@ -710,7 +711,7 @@ export class FacebookService {
         } else {
           rawType = msg.attachments.attachmentType || 'image';
         }
-        // Tin mẫu của Page → `fb.template` (renderer vẽ thẻ + nút từ attachments)
+        // Page sample message → `fb.template` (the renderer draws the card + buttons from the attachments)
         const msgType = rawType === 'template' ? FB_TEMPLATE_MSG_TYPE : rawType;
 
         // Build attachment payload - support multiple attachments (batch image send)
@@ -856,8 +857,8 @@ export class FacebookService {
     }
 
     // ── Resolve contact name + avatar for broadcast ─────────────────────────
-    // Đảm bảo FE có display_name + avatar_url ngay khi nhận fb:onMessage,
-    // tránh hiển thị UID và avatar trống cho contact mới.
+    // Make sure the FE has display_name + avatar_url as soon as fb:onMessage arrives,
+    // to avoid showing a UID and an empty avatar for a new contact.
     let broadcastContactName: string | undefined;
     let broadcastContactAvatar: string | undefined;
     if (threadId) {
@@ -870,7 +871,7 @@ export class FacebookService {
         if (fbThread?.name) {
           broadcastContactName = fbThread.name;
         }
-        // Lấy avatar từ fb_threads.metadata (JSON: { avatar_url: "..." })
+        // Get the avatar from fb_threads.metadata (JSON: { avatar_url: "..." })
         if (fbThread?.metadata) {
           try {
             const meta = JSON.parse(fbThread.metadata);
@@ -991,7 +992,7 @@ export class FacebookService {
     // Skip self-receipts (when our own messages are delivered)
     if (data.actorFbId === this.getFacebookId()) return;
 
-    // Người kia đã nhận tới mốc → dấu ✓✓ (đã nhận) cạnh giờ tin mình gửi
+    // The other person has received up to the mark → ✓✓ (received) mark next to the time of the message I sent
     recordPeerReceipt(this.getFacebookId(), String(data.threadId), { deliveredTs: Number(data.timestampMs) || 0 });
 
     EventBroadcaster.emit('fb:onSeen', {
@@ -1013,9 +1014,9 @@ export class FacebookService {
   }
 
   /**
-   * Đánh dấu message ID đã được gửi local (đã save DB + broadcast).
-   * Dùng để ngăn self-echo từ bridge/MQTT tạo duplicate trong handleIncomingMessage.
-   * Tự động expire sau 60s.
+   * Marks a message ID as sent locally (already saved to the DB + broadcast).
+   * Used to stop a self-echo from the bridge / MQTT creating a duplicate in handleIncomingMessage.
+   * Expires automatically after 60 s.
    */
   public markMessageLocallySent(messageId: string): void {
     if (!messageId) return;
@@ -1027,8 +1028,8 @@ export class FacebookService {
   }
 
   /**
-   * Khởi động E2EE bridge cho 1:1 encrypted messages.
-   * NON-FATAL: nếu binary không tồn tại → groups vẫn hoạt động bình thường.
+   * Starts the E2EE bridge for 1:1 encrypted messages.
+   * NON-FATAL: if the binary does not exist → groups still work normally.
    */
   private async startE2EEBridge(fbId: string): Promise<void> {
     if (!this.e2eeEnabled) {
@@ -1133,8 +1134,8 @@ export class FacebookService {
         }
         const eventId = bridgeEventKey(evt);
         const priority = this.getEventPriority(evt?.type || '');
-        // Bản trùng (đã / đang xử lý) bị bỏ là bình thường: chỉ khởi động lại bridge khi sự kiện quan trọng bị bỏ vì hàng
-        // đợi đầy
+        // A duplicate (already / being handled) being dropped is normal: restart the bridge only when an important event is dropped because the queue is
+        // full
         const duplicate = this.eventPipeline.isDuplicate(eventId);
         const accepted = this.eventPipeline.enqueue(eventId, priority, bridgeGen, () => this.handleBridgeEvent(evt));
         if (!accepted && !duplicate && priority === EventPriority.HIGH) {
@@ -1143,7 +1144,7 @@ export class FacebookService {
         }
       });
 
-      // Timeout ngắn để không block group messaging nếu bridge không respond
+      // Short timeout so group messaging is not blocked if the bridge does not respond
       Logger.log(`[FacebookService:${this.accountId}] E2EE startup: connect`);
       const info = await this.e2eeBridge.connect(30000);
       Logger.log(`[FacebookService:${this.accountId}] E2EE bridge connected: user=${JSON.stringify((info as any)?.user?.id ?? '?')}`);
@@ -1177,12 +1178,12 @@ export class FacebookService {
       // 5. Create sender (reuses bridge)
       this.e2eeSender = new FacebookE2EESender({ mode: 'reuse', bridge: this.e2eeBridge });
 
-      // BUG #6 fix: dùng bridgeGen để detect stale timer
+      // BUG #6 fix: use bridgeGen to detect a stale timer
       this.e2eeBridge.on('closed', (code: number | null) => {
         if (this.e2eeBridge !== bridgeInstance || this.e2eeBridgeGen !== bridgeGen) return;
         Logger.warn(`[FacebookService:${this.accountId}] E2EE bridge closed (code=${code}, gen=${bridgeGen})`);
         this._clearE2EEHeartbeat();
-        // Chỉ clear nếu bridge hiện tại vẫn là instance này
+        // Only clear if the current bridge is still this instance
         if (this.e2eeBridge === bridgeInstance) {
           this.e2eeBridge = null;
         }
@@ -1231,18 +1232,18 @@ export class FacebookService {
     this.setE2EEStatus('disconnected');
   }
 
-  /** Heartbeat: định kỳ kiểm tra bridge còn responsive không (BUG #8 fix) */
+  /** Heartbeat: periodically checks whether the bridge is still responsive (BUG #8 fix) */
   private _startE2EEHeartbeat(bridgeInstance: FacebookE2EEBridge, bridgeGen: number, fbId: string): void {
     this._clearE2EEHeartbeat();
     this._e2eeHeartbeatFailCount = 0;
     this._e2eeHeartbeatTimer = setInterval(async () => {
-      // Chỉ check nếu bridge instance không thay đổi (tránh stale timer)
+      // Only check if the bridge instance has not changed (avoids a stale timer)
       if (this.e2eeBridge !== bridgeInstance || this.e2eeBridgeGen !== bridgeGen) {
         this._clearE2EEHeartbeat();
         return;
       }
       try {
-        // Gọi isConnected với timeout 5s - nếu bridge treo, call() sẽ timeout
+        // Call isConnected with a 5 s timeout - if the bridge hangs, call() will time out
         const probe = await Promise.race([
           bridgeInstance.call('isConnected', {}, 5000),
           new Promise((_, reject) => setTimeout(() => reject(new Error('heartbeat_timeout')), 6000)),
@@ -1270,7 +1271,7 @@ export class FacebookService {
           this._scheduleE2EEReconnect('heartbeat failed', 1_000);
         }
       }
-    }, 30000); // Check mỗi 30s
+    }, 30000); // Check every 30 s
   }
 
   private _clearE2EEHeartbeat(): void {
@@ -1332,9 +1333,9 @@ export class FacebookService {
   }
 
   /**
-   * Lưu tin lịch sử từ bridge (trang hộp thư / trang lịch sử một hội thoại) như lịch sử: không phát fb:onMessage, không
-   * tăng chưa đọc. `range` (nếu có) bỏ tin ngoài khoảng thời gian. Trả: stored = số tin đã ghi, fresh = tin mới (chưa có
-   * trong máy), received = tin trong khoảng.
+   * Saves history messages from the bridge (the inbox pages / a conversation's history pages) as history: does not emit fb:onMessage, does not
+   * increase unread. `range` (if given) drops messages outside the time range. Returns: stored = number of messages written, fresh = new messages (not yet
+   * on the machine), received = messages in the range.
    */
   private persistBridgeMessages(
     messages: NonNullable<BridgeInitialData['messages']>,
@@ -1358,7 +1359,7 @@ export class FacebookService {
           `SELECT 1 AS found FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook' LIMIT 1`,
           [id, ownFacebookId],
         );
-      } catch { /* chỉ để đếm tin mới */ }
+      } catch { /* only to count new messages */ }
       const senderId = String(message.senderId ?? '');
       const { attachments, type, body } = this.bridgeHistoryContent(message);
       db.saveFBMessage({
@@ -1382,15 +1383,15 @@ export class FacebookService {
   }
 
   /**
-   * Nội dung một tin lịch sử từ bridge, cùng quy tắc với tin realtime (handleIncomingMessage): thẻ tin mẫu lưu dạng
-   * chuẩn (nút đã phân loại), body = chữ của thẻ / URL của link / chữ thay thế; tin hệ thống → `system`.
+   * The content of one history message from the bridge, with the same rules as a realtime message (handleIncomingMessage): template cards are stored
+   * in the standard form (buttons classified), body = the card's text / the link's URL / the replacement text; system messages → `system`.
    */
   private bridgeHistoryContent(message: NonNullable<BridgeInitialData['messages']>[number]): {
     attachments: any[]; type: string; body: string | null;
   } {
     const attachments = (Array.isArray(message.attachments) ? message.attachments : []).flatMap((a: any) => {
       if (a?.type !== 'template') return a ? [a] : [];
-      // Tin "chữ + nút": chữ là nội dung tin, thẻ chỉ có nút → ghép chữ vào thẻ
+      // A "chữ + nút" (text + buttons) message: the text is the message content, the card only has buttons → merge the text into the card
       const template = withTemplateText(templateFromBridgeAttachment(a), message.text);
       return template ? [template] : [];
     });
@@ -1407,9 +1408,9 @@ export class FacebookService {
   }
 
   /**
-   * Lưu một trang tin GraphQL (fetchThreadMessages) như lịch sử — dùng chung cho fb:fetchThreadMessages và trang đầu của
-   * tải lịch sử khi hội thoại chưa có tin làm mốc: loại tin theo đính kèm đầu tiên, tin mẫu → fb.template; hàng đã có thì
-   * sửa lại người gửi / chiều tin (bản cũ có thể lưu sai). `range` (nếu có) bỏ tin ngoài khoảng. Trả như persistBridgeMessages.
+   * Saves a page of GraphQL messages (fetchThreadMessages) as history: shared by fb:fetchThreadMessages and the first page of the history
+   * load when the conversation has no message to use as the mark yet: the message type is taken from the first attachment, template messages → fb.template;
+   * a row that already exists gets its sender / direction fixed (an old copy may have been saved wrongly). `range` (if given) drops messages outside it. Returns like persistBridgeMessages.
    */
   public persistGraphQLHistory(threadId: string, messages: any[], range?: FbHistorySyncRange): { stored: number; fresh: number; received: number } {
     const db = DatabaseService.getInstance();
@@ -1427,10 +1428,10 @@ export class FacebookService {
           `SELECT 1 AS found FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook' LIMIT 1`,
           [String(msg.id), ownFacebookId],
         );
-      } catch { /* chỉ để đếm tin mới */ }
+      } catch { /* only to count new messages */ }
       const senderId = String(msg.senderId || '').replace(/@.*$/, '');
       const isSelf = senderId !== '' && senderId === ownFacebookId ? 1 : 0;
-      // Loại tin theo đính kèm đầu tiên (trước đây mọi đính kèm thành `file`); tin mẫu → fb.template
+      // Type taken from the first attachment (before, every attachment became `file`); template messages → fb.template
       const primary = msg.attachments?.[0];
       const msgType = msg.isAdmin ? 'system'
         : primary?.type === 'template' ? FB_TEMPLATE_MSG_TYPE
@@ -1521,8 +1522,8 @@ export class FacebookService {
   }
 
   /**
-   * Xử lý tất cả events từ Go bridge.
-   * e2eeMessage → normalize → same handleIncomingMessage() as MQTT
+   * Handles all events from the Go bridge.
+   * e2eeMessage → normalise → the same handleIncomingMessage() as MQTT
    */
   private async handleBridgeEvent(evt: any): Promise<void> {
     const type = evt?.type;
@@ -1670,8 +1671,8 @@ export class FacebookService {
       }
 
       case 'e2eeReceipt': {
-        // Tin mã hoá đầu cuối (whatsmeow Receipt): type '' = đã nhận, 'read' / 'played' = đã xem, theo id tin.
-        // 'read-self' / 'sender' (máy khác của chính mình) bỏ qua.
+        // End-to-end encrypted message (whatsmeow Receipt): type '' = received, 'read' / 'played' = seen, by message id.
+        // 'read-self' / 'sender' (another device of my own) are skipped.
         const userOf = (jid: unknown) => String(jid || '').replace(/@.*$/, '').replace(/[.:].*$/, '');
         const threadId = String(data?.chat || '').replace(/@.*$/, '');
         const receiptType = String(data?.type ?? '');
@@ -1686,7 +1687,7 @@ export class FacebookService {
       }
 
       case 'readReceipt': {
-        // Bridge (LightSpeed, tin thường): người đọc + mốc thời điểm đã đọc. Chính mình đọc (máy khác) bỏ qua.
+        // Bridge (LightSpeed, ordinary messages): the reader + the time they read up to. Reads by myself (another device) are skipped.
         const readerId = String(data?.readerId ?? '');
         const threadId = String(data?.threadId ?? '');
         const watermark = Number(data?.readWatermarkTimestampMs) || 0;
@@ -1772,10 +1773,10 @@ export class FacebookService {
   }
 
   /**
-   * Normalize E2EE message từ bridge → FBMQTTMessage → handleIncomingMessage()
-   * Shape tương thích với MQTT message để UI xử lý thống nhất.
+   * Normalises an E2EE message from the bridge → FBMQTTMessage → handleIncomingMessage()
+   * The shape is compatible with an MQTT message so the UI handles both the same way.
    */
-  // @ts-ignore - gọi từ handleBridgeEvent
+  // @ts-ignore - called from handleBridgeEvent
   private async handleE2EEMessage(data: FBE2EEMessageRaw): Promise<void> {
     if (!data) {
       Logger.log(`[FacebookService:${this.accountId}] handleE2EEMessage: data is null/undefined`);
@@ -1806,7 +1807,7 @@ export class FacebookService {
       userID: data.senderId != null ? String(data.senderId) : '',
       messageID: data.id || '',
       replyToID: threadId,
-      type: 'user', // E2EE luôn là 1:1
+      type: 'user', // E2EE is always 1:1
       mentions: data.mentions || [],
       attachments: {
         id: 0,
@@ -1815,23 +1816,23 @@ export class FacebookService {
       isE2EE: true,
       chatJid: data.chatJid,
       senderJid: data.senderJid,
-      // Extract replyTo info from bridge data - tin nhắn trả lời tin nhắn khác
+      // Extract replyTo info from the bridge data - a message replying to another message
       replyToMessageId: data.replyTo?.messageId,
       replyToSenderId: data.replyTo?.senderId != null ? String(data.replyTo.senderId) : undefined,
       ...(data.unsupported ? { unsupported: String(data.unsupported) } : {}),
     };
 
-    // Parse attachments nếu có
+    // Parse attachments if there are any
     // Go bridge Attachment struct sends: type (lowercase), url, fileName, mimeType,
     // fileSize, width, height, stickerId, mediaKey, mediaSha256, directPath, ...
-    // KHÔNG có trường "id" hay "attachmentType" - cần map đúng tên
-    // E2EE media (image/video/audio/file) không có URL mà có directPath + mediaKey
-    // để download qua bridge - cần preserve để lưu DB và download sau này
+    // There is NO "id" or "attachmentType" field - the names need mapping correctly
+    // E2EE media (image/video/audio/file) has no URL, but has directPath + mediaKey
+    // to download through the bridge - keep them to store in the DB and download later
     if (data.attachments?.length) {
       const raw = data.attachments as any[];
       const mapped = raw.map((a: any, idx: number) => ({
-        id: a.stickerId || idx + 1,                    // Go: không có id, dùng index
-        url: a.url || null,                             // Go: url (null với E2EE image)
+        id: a.stickerId || idx + 1,                    // Go: no id, use the index
+        url: a.url || null,                             // Go: url (null for an E2EE image)
         attachmentType: a.type || a.attachmentType,     // Go: "type" (lowercase) - image/video/file/audio
         name: a.fileName || a.name,                     // Go: "fileName" (not "name")
         fileSize: a.fileSize,
@@ -1855,18 +1856,18 @@ export class FacebookService {
     }
 
     Logger.log(`[FacebookService:${this.accountId}] [DEBUG] E2EE normalized msg: type=${msg.attachments?.attachmentType||'text'} hasAttachment=${!!(msg.attachments?.attachmentType)} calling handleIncomingMessage`);
-    // ⚠️ PHẢI await handleIncomingMessage trước khi download E2EE media,
-    // để fb:onMessage broadcast đến UI trước event:localPath.
-    // Nếu không → race: event:localPath fired trước khi message có trong store
-    // → local_paths bị mất → video không bao giờ play được.
+    // ⚠️ MUST await handleIncomingMessage before downloading E2EE media,
+    // so fb:onMessage is broadcast to the UI before event:localPath.
+    // Otherwise there is a race: event:localPath fires before the message is in the store
+    // → local_paths gets lost → the video can never play.
     await this.handleIncomingMessage(msg);
 
     // Auto-download E2EE media (image/video/audio/file) sau khi save message
     const e2eeAttachments = data.attachments as any[] | undefined;
     if (e2eeAttachments?.length && msg.messageID) {
-      // ⚠️ PHẢI await để catch lỗi download, đặc biệt video.
-      // Không fire-and-forget - nếu bridge không support download video,
-      // cần log để debug.
+      // ⚠️ MUST await to catch download errors, especially for video.
+      // Not fire-and-forget - if the bridge does not support video download,
+      // it has to be logged to debug.
       try {
         await this.downloadE2EEAttachments(e2eeAttachments, msg.messageID, threadId);
       } catch (err: any) {
@@ -1908,14 +1909,14 @@ export class FacebookService {
 
     // Parse attachments tu bridge data (non-E2EE group messages)
     // Bridge gui attachments array: [{ type, url, fileName, mimeType, fileSize, ... }]
-    // Thẻ tin mẫu ("template": tiêu đề, mô tả, ảnh, nút, carousel) giữ trong `template`.
+    // Template card ("template": title, description, image, buttons, carousel) is kept in `template`.
     if (data.attachments?.length) {
       const raw = data.attachments as any[];
       const mapped = raw.flatMap((a: any, idx: number) => {
-        // Tin "chữ + nút" của Trang: chữ là nội dung tin, thẻ chỉ có nút → ghép chữ vào thẻ (vẽ đủ chữ + nút)
+        // "chữ + nút" (text + buttons) message of the Page: the text is the message content, the card only has buttons → merge the text into the card (draw the text + the buttons)
         const template = a?.type === 'template' ? withTemplateText(templateFromBridgeAttachment(a), data.text) : null;
         if (isFbUnavailableTemplate(template)) {
-          // LightSpeed cũng chỉ có thẻ thay thế "File đính kèm không hiển thị" → chẩn đoán (loại XMA, không ghi nội dung)
+          // LightSpeed also only has the replacement card "File đính kèm không hiển thị" (Attachment not shown) → diagnosis (XMA type, no content written)
           Logger.log(`[FacebookService:${this.accountId}] bridge template placeholder: msgId=${data.id} xmaType=${a?.xmaType || '-'}`);
         }
         if (a?.type === 'template' && !template) return [];
@@ -1993,8 +1994,8 @@ export class FacebookService {
   }
 
   /**
-   * Tải xuống và giải mã E2EE media attachments (image/video/audio/file) từ Go bridge.
-   * Lưu file đã giải mã vào local storage và cập nhật DB.
+   * Downloads and decrypts E2EE media attachments (image/video/audio/file) from the Go bridge.
+   * Saves the decrypted file to local storage and updates the DB.
    */
   private async downloadE2EEAttachments(attachments: any[], messageId: string, threadId: string): Promise<void> {
     if (!this.e2eeBridge?.isAlive()) {
@@ -2063,13 +2064,13 @@ export class FacebookService {
   }
 
   /**
-   * Kiểm tra contact đã có tên chưa, nếu chưa thì fetch qua endpoint UID-keyed.
-   * Fire-and-forget - gọi khi nhận message đầu tiên, update DB sau đó.
-   * Chỉ áp dụng cho user 1-1 (group không support).
+   * Checks whether the contact already has a name; if not, fetches it through the UID-keyed endpoint.
+   * Fire-and-forget - called when the first message arrives, the DB is updated afterwards.
+   * Only applies to 1-1 users (groups are not supported).
    */
   private async checkAndFetchUserInfo(fbUserId: string): Promise<void> {
     try {
-      // Check DB trước: nếu đã có tên và avatar thì skip
+      // Check the DB first: if there is already a name and an avatar, skip
       const db = DatabaseService.getInstance();
       const fbId = this.getFacebookId();
       const existing = db.queryOne?.(
@@ -2102,7 +2103,7 @@ export class FacebookService {
           [info.avatarUrl, fbId, fbUserId]
         );
       }
-      // Broadcast để UI cập nhật ngay
+      // Broadcast so the UI updates at once
       EventBroadcaster.emit('fb:onContactUpdate', {
         fbAccountId: this.getFacebookId(),
         contactId: fbUserId,
@@ -2123,7 +2124,7 @@ export class FacebookService {
     const cookies = this.dataFB?.cookieFacebook;
     const localPaths: Record<string, string> = {};
     const attachments = msg.allAttachments?.length ? msg.allAttachments : [msg.attachments];
-    // Video đang tải: bong bóng hiện vòng tiến độ + "x / y MB", báo xong SAU khi đã gửi event:localPath
+    // Video downloading: the bubble shows a progress ring + "x / y MB", report done AFTER the event:localPath has been sent
     const videoProgress = mediaProgressReporter(fbId, threadId, msg.messageID);
     let videoDownloading = false;
 
@@ -2148,15 +2149,15 @@ export class FacebookService {
         const filename = `fb_${msg.messageID.slice(-8)}_${Date.now()}${ext}`;
         Logger.log(`[FacebookService:${this.accountId}] [DEBUG_DOWNLOAD] att[${i}]: url=${url.slice(0,100)}... ext=${ext} filename=${filename}`);
 
-        // Dùng đúng method theo loại file - audio/file không thể dùng downloadImage
+        // Use the right method for the file type - audio / file cannot use downloadImage
         const attType = att.attachmentType || '';
         let localPath: string;
         if (attType === 'image' || attType === 'sticker') {
           Logger.log(`[FacebookService:${this.accountId}] [DEBUG_DOWNLOAD] att[${i}]: calling downloadImage`);
           localPath = await FileStorageService.downloadImage(fbId, url, filename, cookies, undefined, 'https://www.facebook.com/');
         } else if (attType === 'video') {
-          // MQTT video URL thường là thumbnail (.jpg), không phải video thật
-          // Nếu URL kết thúc bằng đuôi ảnh → skip download (ko có video để tải)
+          // The MQTT video URL is usually a thumbnail (.jpg), not the real video
+          // If the URL ends with an image extension → skip the download (there is no video to download)
           const videoExt = ext.toLowerCase();
           if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(videoExt)) {
             Logger.log(`[FacebookService:${this.accountId}] [DEBUG_DOWNLOAD] att[${i}]: SKIP - URL is image thumbnail (${ext}), not actual video`);
@@ -2167,7 +2168,7 @@ export class FacebookService {
           videoDownloading = true;
           localPath = await FileStorageService.downloadVideo(fbId, url, filename, cookies, undefined, videoProgress.progress);
         } else {
-          // audio, file, unknown → dùng downloadFile
+          // audio, file, unknown → use downloadFile
           Logger.log(`[FacebookService:${this.accountId}] [DEBUG_DOWNLOAD] att[${i}]: calling downloadFile (type=${attType})`);
           localPath = await FileStorageService.downloadFile(fbId, url, filename, cookies, undefined);
         }
@@ -2198,7 +2199,7 @@ export class FacebookService {
     }
   }
 
-  /** Lấy extension file từ MIME type */
+  /** Gets the file extension from the MIME type */
   private getExtFromMime(mime: string): string {
     const map: Record<string, string> = {
       'image/jpeg': '.jpg',
@@ -2224,9 +2225,9 @@ export class FacebookService {
   }
 
   /**
-   * Retry E2EE bridge connection on-demand (e.g., when user tries to send 1:1 message).
-   * Resets state and re-attempts bridge startup.
-   * @throws Error nếu bridge không thể khởi động - caller nên kiểm tra isE2EEConnected()
+   * Retries the E2EE bridge connection on demand (e.g., when the user tries to send a 1:1 message).
+   * Resets the state and retries the bridge startup.
+   * @throws Error if the bridge cannot start - the caller should check isE2EEConnected()
    */
   public async retryE2EE(): Promise<void> {
     // A stalled send can otherwise start several stop/spawn sequences at the
@@ -2299,7 +2300,7 @@ export class FacebookService {
           timer = setTimeout(() => reject(new Error('E2EE reconnect timed out after 80s')), 80_000);
         }),
       ]);
-      return this.isE2EEConnected() ? null : 'E2EE bridge chưa sẵn sàng sau khi kết nối lại.';
+      return this.isE2EEConnected() ? null : tr('E2EE bridge chưa sẵn sàng sau khi kết nối lại.');
     } catch (err: any) {
       return String(err?.message || err || 'E2EE reconnect failed');
     } finally {
@@ -2331,7 +2332,7 @@ export class FacebookService {
     }
   }
 
-  /** Gửi tin nhắn E2EE 1:1 */
+  /** Sends a 1:1 E2EE message */
   public async sendE2EEMessage(
     chatJid: string,
     text: string,
@@ -2356,7 +2357,7 @@ export class FacebookService {
       Logger.warn(`[FacebookService:${this.accountId}] E2EE pre-flight disconnect; reconnecting before one safe resend`);
       const recoveryError = await this.recoverE2EEForSend();
       if (recoveryError) {
-        return { success: false, error: `E2EE đang kết nối lại: ${recoveryError}` };
+        return { success: false, error: tr('E2EE đang kết nối lại: {{recoveryError}}', { recoveryError }) };
       }
 
       try {
@@ -2367,7 +2368,7 @@ export class FacebookService {
     }
   }
 
-  /** Kiểm tra E2EE có đang kết nối */
+  /** Checks whether E2EE is connected */
   public isE2EEConnected(): boolean {
     return this.e2eeStatus === 'connected' && this.e2eeBridge?.isAlive() === true;
   }
@@ -2379,12 +2380,12 @@ export class FacebookService {
     return this._nonE2EEThreads.has(threadId);
   }
 
-  /** Lấy trạng thái E2EE hiện tại */
+  /** Gets the current E2EE state */
   public getE2EEStatus(): FBE2EEStatus {
     return this.e2eeStatus;
   }
 
-  /** Lấy sender instance (for external use) */
+  /** Gets the sender instance (for external use) */
   public getE2EESender(): FacebookE2EESender | null {
     return this.e2eeSender;
   }
@@ -2402,7 +2403,7 @@ export class FacebookService {
 
     Logger.warn(`[FacebookService:${this.accountId}] E2EE media pre-flight disconnect; reconnecting before one safe resend`);
     const recoveryError = await this.recoverE2EEForSend();
-    if (recoveryError) return { success: false, error: `E2EE đang kết nối lại: ${recoveryError}` };
+    if (recoveryError) return { success: false, error: tr('E2EE đang kết nối lại: {{recoveryError}}', { recoveryError }) };
 
     result = await sendOnce();
     if (!result.success && this.isSafeE2EEReconnectError(result.error)) {
@@ -2411,7 +2412,7 @@ export class FacebookService {
     return result;
   }
 
-  /** Gửi ảnh qua E2EE 1:1 */
+  /** Sends an image over 1:1 E2EE */
   public async sendE2EEImage(
     chatJid: string,
     imagePath: string,
@@ -2425,7 +2426,7 @@ export class FacebookService {
     return result;
   }
 
-  /** Gửi video qua E2EE 1:1 */
+  /** Sends a video over 1:1 E2EE */
   public async sendE2EEVideo(
     chatJid: string,
     videoPath: string,
@@ -2439,7 +2440,7 @@ export class FacebookService {
     return result;
   }
 
-  /** Gửi audio qua E2EE 1:1 */
+  /** Sends audio over 1:1 E2EE */
   public async sendE2EEAudio(
     chatJid: string,
     audioPath: string,
@@ -2453,7 +2454,7 @@ export class FacebookService {
     return result;
   }
 
-  /** Gửi file qua E2EE 1:1 */
+  /** Sends a file over 1:1 E2EE */
   public async sendE2EEFile(
     chatJid: string,
     filePath: string,
@@ -2467,7 +2468,7 @@ export class FacebookService {
     return result;
   }
 
-  /** Gửi reaction cho tin nhắn E2EE 1:1 */
+  /** Sends a reaction to a 1:1 E2EE message */
   public async sendE2EEReaction(
     chatJid: string,
     messageId: string,
@@ -2478,7 +2479,7 @@ export class FacebookService {
     return this.e2eeSender.sendReaction(chatJid, messageId, senderJid, emoji);
   }
 
-  /** Gửi sticker qua E2EE 1:1 (C4) */
+  /** Sends a sticker over 1:1 E2EE (C4) */
   public async sendE2EESticker(
     chatJid: string,
     stickerId: string,
@@ -2487,7 +2488,7 @@ export class FacebookService {
     return this.e2eeSender.sendSticker(chatJid, stickerId);
   }
 
-  /** Gửi typing indicator qua bridge */
+  /** Sends a typing indicator through the bridge */
   public async sendTyping(
     threadId: string,
     isTyping: boolean,
@@ -2519,11 +2520,11 @@ export class FacebookService {
     }
   }
 
-  /** Đánh dấu thread đã đọc trên Facebook server */
+  /** Marks the thread as read on the Facebook server */
   public async markReadOnServer(threadId: string): Promise<{ success: boolean; error?: string }> {
     const route = await resolveThreadKind(threadId, undefined, this.accountId);
     if (route.kind === 'unknown') return { success: false, error: route.error };
-    if (!this.e2eeBridge?.isAlive()) return { success: false, error: 'Facebook bridge chưa sẵn sàng.' };
+    if (!this.e2eeBridge?.isAlive()) return { success: false, error: tr('Facebook bridge chưa sẵn sàng.') };
     try {
       // Prefer the newest message timestamp. Date.now() can incorrectly mark
       // newer server messages as read after a delayed local event.
@@ -2542,32 +2543,32 @@ export class FacebookService {
   }
 
   /**
-   * Tạo nhóm Messenger (thao tác nhanh "Tạo nhóm") qua bridge. Nhóm Messenger cần ít nhất 2 người
-   * ngoài tài khoản. Hội thoại được ghi ngay là `group` — định tuyến gửi tin (resolveThreadKind)
-   * đọc loại hội thoại từ DB.
+   * Creates a Messenger group (the quick action "Tạo nhóm" (Create group)) through the bridge. A Messenger group needs at least 2 people
+   * besides the account. The conversation is recorded as `group` right away: message routing (resolveThreadKind)
+   * reads the conversation type from the DB.
    */
   public async createGroup(
     participants: string[],
     name: string,
   ): Promise<{ success: boolean; threadId?: string; renameError?: string; error?: string }> {
     const ids = Array.from(new Set((participants || []).map(String).filter(id => /^\d+$/.test(id))));
-    if (ids.length < 2) return { success: false, error: 'Chọn ít nhất 2 người — nhóm Messenger cần từ 3 người trở lên' };
+    if (ids.length < 2) return { success: false, error: tr('Chọn ít nhất 2 người — nhóm Messenger cần từ 3 người trở lên') };
     if (!this.e2eeBridge?.isAlive()) {
-      return { success: false, error: 'Bridge Messenger chưa kết nối — kết nối lại tài khoản Facebook rồi thử lại' };
+      return { success: false, error: tr('Bridge Messenger chưa kết nối — kết nối lại tài khoản Facebook rồi thử lại') };
     }
     if (!this.e2eeBridge.supportsCapability('createGroup')) {
-      return { success: false, error: 'Bản bridge Messenger hiện tại chưa hỗ trợ tạo nhóm — hãy cập nhật ứng dụng' };
+      return { success: false, error: tr('Bản bridge Messenger hiện tại chưa hỗ trợ tạo nhóm — hãy cập nhật ứng dụng') };
     }
     try {
       const result = await this.e2eeBridge.createGroup({ participants: ids, name: String(name || '').trim() });
       const threadId = String(result?.threadId || '');
       if (!/^\d+$/.test(threadId) || threadId === '0') {
-        return { success: false, error: 'Facebook không trả về nhóm vừa tạo' };
+        return { success: false, error: tr('Facebook không trả về nhóm vừa tạo') };
       }
       const fbId = this.getFacebookId();
       const db = DatabaseService.getInstance();
       if (fbId && db) {
-        const title = String(name || '').trim() || 'Nhóm mới';
+        const title = String(name || '').trim() || tr('Nhóm mới');
         db.run?.(
           `INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count, last_message, last_message_time, channel)
            VALUES (?, ?, ?, '', 0, 'group', 0, ?, ?, 'facebook')
@@ -2575,7 +2576,7 @@ export class FacebookService {
              contact_type = 'group',
              display_name = CASE WHEN COALESCE(contacts.display_name, '') = '' THEN excluded.display_name ELSE contacts.display_name END,
              last_message_time = MAX(COALESCE(contacts.last_message_time, 0), excluded.last_message_time)`,
-          [fbId, threadId, title, 'Bạn đã tạo nhóm', Date.now()],
+          [fbId, threadId, title, tr('Bạn đã tạo nhóm'), Date.now()],
         );
         EventBroadcaster.emit('db:unreadChanged', { zaloId: fbId, source: 'facebook_create_group' });
       }
@@ -2587,7 +2588,7 @@ export class FacebookService {
     }
   }
 
-  /** Gửi tin nhắn vào group qua bridge (non-E2EE) */
+  /** Sends a message to a group through the bridge (non-E2EE) */
   public async sendBridgeMessage(
     threadId: string,
     text: string,
@@ -2603,7 +2604,7 @@ export class FacebookService {
     }
   }
 
-  /** Gửi ảnh vào group qua bridge (non-E2EE) */
+  /** Sends an image to a group through the bridge (non-E2EE) */
   public async sendBridgeImage(
     threadId: string,
     imagePath: string,
@@ -2620,7 +2621,7 @@ export class FacebookService {
     }
   }
 
-  /** Gửi file vào group qua bridge (non-E2EE) */
+  /** Sends a file to a group through the bridge (non-E2EE) */
   public async sendBridgeFile(
     threadId: string,
     filePath: string,
@@ -2637,7 +2638,7 @@ export class FacebookService {
     }
   }
 
-  /** Gửi reaction vào group qua bridge (non-E2EE) */
+  /** Sends a reaction to a group through the bridge (non-E2EE) */
   public async sendBridgeReaction(
     threadId: string,
     messageId: string,
@@ -2667,15 +2668,15 @@ export class FacebookService {
   }
 
   /**
-   * Gửi tin nhắn với E2EE auto-detect.
+   * Sends a message with E2EE auto-detect.
    *
    * Routing strategy:
-   *   1. Xác định 1:1 vs group: opts.typeChat → nếu không có → query fb_threads.type
-   *   2. 1:1 → E2EE trước (bridge sendE2EEMessage). Nếu bridge E2EE chưa connect → retry trước.
-   *   3. 1:1 E2EE success → đánh dấu thread là E2EE. E2EE fail → REST API fallback.
-   *   4. GROUP → REST API. Nếu REST fail → bridge sendMessage fallback.
+   *   1. Work out 1:1 vs group: opts.typeChat → if missing, query fb_threads.type
+   *   2. 1:1 → E2EE first (bridge sendE2EEMessage). If the E2EE bridge is not connected yet → retry first.
+   *   3. 1:1 E2EE success → mark the thread as E2EE. E2EE fails → REST API fallback.
+   *   4. GROUP → REST API. If REST fails → bridge sendMessage fallback.
    *
-   * TẤT CẢ các path thành công đều gọi markMessageLocallySent() để ngăn self-echo duplicate.
+   * EVERY successful path calls markMessageLocallySent() to stop a self-echo duplicate.
    */
   public async sendMessage(threadId: string, body: string, opts?: FBSendOptions): Promise<FBSendResult> {
     const agent = this.httpsAgent;
@@ -2692,7 +2693,7 @@ export class FacebookService {
     // ── Ensure connection is alive before sending ─────────────────────────
     const ready = await this.ensureConnected();
     if (!ready) {
-      return { success: false, error: 'Mất kết nối Facebook. Vui lòng kết nối lại tài khoản.' };
+      return { success: false, error: tr('Mất kết nối Facebook. Vui lòng kết nối lại tài khoản.') };
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -2746,7 +2747,7 @@ export class FacebookService {
             // DEPLAO_ADAPTER: A thread that has already succeeded with E2EE
             // must NEVER be downgraded to REST merely because a send failed.
             if (this.e2eeThreads.has(threadId)) {
-              return { success: false, error: `Không thể gửi tin nhắn E2EE: ${err.message}` };
+              return { success: false, error: tr('Không thể gửi tin nhắn E2EE: {{message}}', { message: err.message }) };
             }
             // DEPLAO_ADAPTER: If E2EE timed out, the message may have been
             // sent but response lost. Do NOT fallback to REST to avoid duplicate.
@@ -2776,8 +2777,8 @@ export class FacebookService {
           return {
             success: false,
             error: e2eeRecoveryError
-              ? `E2EE đang kết nối lại: ${e2eeRecoveryError}`
-              : 'E2EE đang kết nối lại. Vui lòng thử lại sau vài giây.',
+              ? tr('E2EE đang kết nối lại: {{e2eeRecoveryError}}', { e2eeRecoveryError })
+              : tr('E2EE đang kết nối lại. Vui lòng thử lại sau vài giây.'),
           };
         }
 
@@ -2788,7 +2789,7 @@ export class FacebookService {
         if (e2eeRecoveryError) {
           return {
             success: false,
-            error: `E2EE đang kết nối lại: ${e2eeRecoveryError}`,
+            error: tr('E2EE đang kết nối lại: {{e2eeRecoveryError}}', { e2eeRecoveryError }),
           };
         }
       }
@@ -2827,7 +2828,7 @@ export class FacebookService {
   }
 
   /**
-   * Kiểm tra error message có phải do E2EE conversation không
+   * Checks whether the error message is caused by an E2EE conversation
    */
   private isE2EEDisabledError(error: string): boolean {
     const disabledPatterns = ['disabled', 'vô hiệu hoá', 'encrypted', 'e2ee'];
@@ -2836,7 +2837,7 @@ export class FacebookService {
   }
 
   /**
-   * Gửi tin nhắn qua E2EE bridge, tự động retry bridge nếu cần
+   * Sends a message through the E2EE bridge, automatically retrying the bridge if needed
    */
   private async sendE2EEWithFallback(threadId: string, body: string, opts?: FBSendOptions): Promise<FBSendResult> {
     if (!this.isE2EEConnected()) {
@@ -2847,7 +2848,7 @@ export class FacebookService {
         Logger.warn(`[FacebookService:${this.accountId}] E2EE retry failed: ${err.message}`);
         return {
           success: false,
-          error: 'Hội thoại này đã được mã hoá 1-1 (E2EE) nhưng bridge chưa kết nối. Vui lòng build fbchat-bridge-e2ee.',
+          error: tr('Hội thoại này đã được mã hoá 1-1 (E2EE) nhưng bridge chưa kết nối. Vui lòng build fbchat-bridge-e2ee.'),
         };
       }
     }
@@ -2861,7 +2862,7 @@ export class FacebookService {
     }
     return {
       success: false,
-      error: 'Hội thoại này đã được mã hoá 1-1 (E2EE) nhưng bridge chưa kết nối. Vui lòng build fbchat-bridge-e2ee.',
+      error: tr('Hội thoại này đã được mã hoá 1-1 (E2EE) nhưng bridge chưa kết nối. Vui lòng build fbchat-bridge-e2ee.'),
     };
   }
 
@@ -2870,7 +2871,7 @@ export class FacebookService {
       'SELECT thread_id, sender_id FROM fb_messages WHERE id = ? AND account_id = ?',
       [messageId, this.accountId],
     ) as { thread_id?: string; sender_id?: string } | undefined;
-    if (!message?.thread_id) return { kind: 'unknown', error: 'Không tìm thấy hội thoại của tin nhắn.' };
+    if (!message?.thread_id) return { kind: 'unknown', error: tr('Không tìm thấy hội thoại của tin nhắn.') };
     const resolved = await resolveThreadKind(message.thread_id, undefined, this.accountId);
     return { threadId: message.thread_id, senderId: message.sender_id, ...resolved };
   }
@@ -2879,7 +2880,7 @@ export class FacebookService {
     const route = await this.resolveMessageThreadKind(messageId);
     if (route.kind === 'unknown' || !route.threadId) return { success: false, error: route.error };
     if (route.kind === 'user') {
-      if (!this.isE2EEConnected()) return { success: false, error: 'E2EE bridge chưa sẵn sàng.' };
+      if (!this.isE2EEConnected()) return { success: false, error: tr('E2EE bridge chưa sẵn sàng.') };
       try {
         await this.e2eeBridge!.unsendE2EEMessage({ chatJid: normalizeChatJid(route.threadId), messageId });
         return { success: true };
@@ -2894,10 +2895,10 @@ export class FacebookService {
     const route = await this.resolveMessageThreadKind(messageId);
     if (route.kind === 'unknown' || !route.threadId) return { success: false, error: route.error };
     if (route.kind === 'user') {
-      if (!this.isE2EEConnected()) return { success: false, error: 'E2EE bridge chưa sẵn sàng.' };
+      if (!this.isE2EEConnected()) return { success: false, error: tr('E2EE bridge chưa sẵn sàng.') };
       // The encrypted message key is tied to the original sender JID. An
       // internal Deplao account UUID is not a valid JID.
-      if (!route.senderId) return { success: false, error: 'Thiếu người gửi của tin nhắn E2EE.' };
+      if (!route.senderId) return { success: false, error: tr('Thiếu người gửi của tin nhắn E2EE.') };
       return this.sendE2EEReaction(
         normalizeChatJid(route.threadId),
         messageId,
@@ -2912,7 +2913,7 @@ export class FacebookService {
     const route = await this.resolveMessageThreadKind(messageId);
     if (route.kind === 'unknown' || !route.threadId) return { success: false, error: route.error };
     if (route.kind === 'user') {
-      if (!this.isE2EEConnected()) return { success: false, error: 'E2EE bridge chưa sẵn sàng.' };
+      if (!this.isE2EEConnected()) return { success: false, error: tr('E2EE bridge chưa sẵn sàng.') };
       try {
         await this.e2eeBridge!.editE2EEMessage({ chatJid: normalizeChatJid(route.threadId), messageId, newText });
         return { success: true };
@@ -2936,34 +2937,34 @@ export class FacebookService {
       // The GraphQL forward mutation is not valid for encrypted 1:1. Callers
       // must resend content through FacebookSendService, where media/text are
       // routed to the E2EE bridge safely.
-      return { success: false, error: 'Không thể chuyển tiếp native vào chat 1:1. Hãy gửi lại nội dung qua luồng E2EE.' };
+      return { success: false, error: tr('Không thể chuyển tiếp native vào chat 1:1. Hãy gửi lại nội dung qua luồng E2EE.') };
     }
     return forwardMessage(this.requireSession(), messageId, targetThreadId, true, this.httpsAgent);
   }
 
   private async requireGroupOperation(threadId: string, operation: string): Promise<{ success: true } | { success: false; error: string }> {
     const route = await resolveThreadKind(threadId, undefined, this.accountId);
-    if (route.kind === 'unknown') return { success: false, error: route.error || 'Không xác định được hội thoại.' };
+    if (route.kind === 'unknown') return { success: false, error: route.error || tr('Không xác định được hội thoại.') };
     if (route.kind === 'user') {
-      return { success: false, error: `${operation} chưa hỗ trợ trong chat 1:1 E2EE.` };
+      return { success: false, error: tr('{{operation}} chưa hỗ trợ trong chat 1:1 E2EE.', { operation }) };
     }
     return { success: true };
   }
 
   public async pinMessage(messageId: string, threadId: string): Promise<{ success: boolean; error?: string }> {
-    const allowed = await this.requireGroupOperation(threadId, 'Ghim tin nhắn');
+    const allowed = await this.requireGroupOperation(threadId, tr('Ghim tin nhắn'));
     if (!allowed.success) return allowed;
     return pinMessage(this.requireSession(), messageId, threadId, this.httpsAgent);
   }
 
   public async unpinMessage(messageId: string, threadId: string): Promise<{ success: boolean; error?: string }> {
-    const allowed = await this.requireGroupOperation(threadId, 'Bỏ ghim tin nhắn');
+    const allowed = await this.requireGroupOperation(threadId, tr('Bỏ ghim tin nhắn'));
     if (!allowed.success) return allowed;
     return unpinMessage(this.requireSession(), messageId, threadId, this.httpsAgent);
   }
 
   public async createPoll(threadId: string, question: string, options: string[]): Promise<{ success: boolean; pollId?: string; error?: string }> {
-    const allowed = await this.requireGroupOperation(threadId, 'Tạo khảo sát');
+    const allowed = await this.requireGroupOperation(threadId, tr('Tạo khảo sát'));
     if (!allowed.success) return allowed;
     return createPoll(this.requireSession(), threadId, question, options, this.httpsAgent);
   }
@@ -3049,7 +3050,7 @@ export class FacebookService {
   }
 
   /** Reload the bridge inbox page, including conversations absent from web GraphQL. */
-  /** Hội thoại mã hoá đầu cuối (Facebook không cho thiết bị mới đọc tin cũ). */
+  /** End-to-end encrypted conversation (Facebook does not let a new device read old messages). */
   public isE2EEThread(threadId: string): boolean {
     const id = String(threadId || '').replace(/@.*$/, '');
     if (this.e2eeThreads.has(id)) return true;
@@ -3059,10 +3060,10 @@ export class FacebookService {
         `SELECT is_e2ee FROM fb_threads WHERE id = ? AND account_id = ?`, [id, this.accountId],
       ) as { is_e2ee?: number } | undefined;
       if (Number(row?.is_e2ee) === 1) return true;
-      // Chat 1:1 mã hoá đầu cuối thường không có hàng fb_threads (markFBThreadE2EE chỉ UPDATE) → cờ mất sau khi khởi động
-      // lại. Nhận ra từ tin trong máy: tin E2EE mang mã số của bridge, tin Messenger thường luôn có mã "mid.$…". Có tin mà
-      // không tin nào "mid.$" = toàn E2EE, không có lịch sử thường để tải — trước đây rơi xuống GraphQL, Facebook trả lỗi →
-      // khung chat hiện "Lỗi - Thử lại" mỗi lần mở. Hội thoại có cả tin thường (đã chuyển sang E2EE) vẫn tải phần cũ.
+      // A 1:1 end-to-end encrypted chat usually has no fb_threads row (markFBThreadE2EE only UPDATEs) → the flag is lost after a restart
+      // again. It is recognised from the messages on the machine: E2EE messages carry the bridge's numeric id, while ordinary Messenger messages always have a "mid.$…" id. If there are messages but
+      // none of them has "mid.$" = all E2EE, with no ordinary history to load: before, it fell through to GraphQL, Facebook returned an error →
+      // the chat frame showed "Lỗi - Thử lại" (Error - Retry) on every open. A conversation that also has ordinary messages (already switched to E2EE) still loads the older part.
       const owner = String(this.getFacebookId() || '');
       const kinds = db.queryOne?.(
         `SELECT EXISTS(SELECT 1 FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook') AS any_msg,
@@ -3076,15 +3077,15 @@ export class FacebookService {
     }
   }
 
-  /** Một trang danh sách hội thoại (để đồng bộ theo khoảng thời gian quá 50 hội thoại mới nhất). */
+  /** One page of the conversation list (for syncing over a time range beyond the 50 newest conversations). */
   public async getThreadListPage(before: number | null) {
     const session = this.requireSession();
     return getThreadListPage(session, this.accountId, before, 50, this.httpsAgent);
   }
 
   /**
-   * Socket LightSpeed (Messenger thường) của bridge đã đồng bộ xong — cần cho tải lịch sử. Khác socket E2EE: E2EE có thể
-   * chạy trong khi LightSpeed kẹt ở bước đồng bộ ban đầu (messagix tự kết nối lại).
+   * The bridge's LightSpeed socket (ordinary Messenger) has finished syncing - needed for loading history. Different from the E2EE socket: E2EE can
+   * run while LightSpeed is stuck at the initial sync step (messagix reconnects by itself).
    */
   public async isBridgeLightSpeedReady(): Promise<boolean> {
     const bridge = this.e2eeBridge;
@@ -3097,16 +3098,16 @@ export class FacebookService {
     }
   }
 
-  /** Bộ điều tốc tải lịch sử của tài khoản (đồng bộ nền dùng để nghỉ khi chuyển hội thoại / trang danh sách). */
+  /** The account's history-loading pacer (background sync uses it to rest when switching conversations / the list pages). */
   public historyPacing(): FacebookHumanPacer {
     return this.historyPacer;
   }
 
   /**
-   * Mốc cho FetchMessagesTask: mã tin Messenger (`mid.$…`) của người gọi; không có (đầu đồng bộ, mở hội thoại, tin cũ
-   * nhất đang hiện là tin E2EE) → tin Messenger mới nhất trong máy ≤ mốc thời gian. null = không có mốc dùng được → GraphQL.
-   * `latestKnownMs`: hoạt động mới nhất của hội thoại — tin mới nhất trong máy cũ hơn hẳn thì máy thiếu tin ở đầu, lùi từ
-   * mốc đó sẽ bỏ sót chúng → cũng trả null.
+   * Anchor for FetchMessagesTask: the Messenger message id (`mid.$…`) from the caller; if there is none (start of the sync, opening a conversation, the oldest
+   * visible message is an E2EE message) → the newest Messenger message on the machine ≤ the time mark. null = no usable anchor → GraphQL.
+   * `latestKnownMs`: the newest activity of the conversation - if the newest message on the machine is clearly older, the machine is missing messages at the start;
+   * going back from that mark would skip them → also returns null.
    */
   private resolveHistoryAnchor(
     threadId: string,
@@ -3135,8 +3136,8 @@ export class FacebookService {
   }
 
   /**
-   * Trang mới nhất của hội thoại qua GraphQL — khi máy chưa có tin Messenger nào làm mốc cho FetchMessagesTask. Các trang
-   * sau neo vào tin cũ nhất của trang này (mã `mid.$…` dùng chung GraphQL / LightSpeed). Gọi sau khi bộ điều tốc đã cho đi.
+   * The newest page of the conversation through GraphQL - used when the machine has no Messenger message yet to anchor FetchMessagesTask. The later pages
+   * anchor on the oldest message of this page (the `mid.$…` id is shared by GraphQL / LightSpeed). Called after the pacer has let it through.
    */
   private async fetchGraphQLHistoryPage(threadId: string, range?: FbHistorySyncRange): Promise<FbHistoryPageResult> {
     this.historyPacer.recordRequest();
@@ -3148,7 +3149,7 @@ export class FacebookService {
       res = { success: false, error: err?.message || String(err) };
     }
     if (!res.success) {
-      const message = res.error || 'Facebook không trả lời';
+      const message = res.error || tr('Facebook không trả lời');
       if (this.historyPacer.recordResult(false, Date.now() - startedAt, message) === 'risk') {
         Logger.warn(`[FacebookService:${this.accountId}] history paused 30 min after a risk signal: ${message}`);
         return { success: false, code: 'RISK', error: HISTORY_RISK_TEXT, source: 'graphql' };
@@ -3170,7 +3171,7 @@ export class FacebookService {
       received,
       stored,
       count: messages.length,
-      // Trang chưa đầy = hội thoại chỉ có bấy nhiêu tin; đầy → đi tiếp bằng FetchMessagesTask từ tin cũ nhất
+      // A page that is not full = the conversation has only that many messages; full → continue with FetchMessagesTask from the oldest message
       hasMoreBefore: !!oldest && (messages.length >= HISTORY_GRAPHQL_PAGE || !!res.cursor?.hasMore),
       minTimestampMs: oldest?.ts || 0,
       minMessageId: oldest?.id,
@@ -3179,14 +3180,14 @@ export class FacebookService {
   }
 
   /**
-   * Một trang tin cũ hơn `anchor` của một hội thoại — lưu ngay như lịch sử. anchor.timestampMs = 0 → trang mới nhất.
-   * Đi qua bridge (LightSpeed FetchMessagesTask, như Messenger web), neo vào một tin có thật: Messenger web / mautrix-meta
-   * luôn gửi mã + thời điểm của tin cũ nhất đang có (mautrix-meta không tải lịch sử hội thoại chưa có tin nào); neo rỗng
-   * ("tin trước thời điểm X" không kèm mã) Facebook trả về trống — trước đây đồng bộ / mở hội thoại ra 0 tin. Chưa có tin
-   * nào làm mốc → trang mới nhất qua GraphQL (resolveHistoryAnchor / fetchGraphQLHistoryPage).
-   * Mọi yêu cầu đi qua bộ điều tốc của tài khoản: `background` (đồng bộ nền) nghỉ như người đọc + nghỉ giải lao;
-   * `interactive` (cuộn / mở hội thoại) chỉ giãn vài giây, hết ngân sách thì báo BUSY. Lỗi có mã: BRIDGE_DOWN /
-   * BRIDGE_OLD / E2EE / FETCH / RISK (dấu hiệu bị chặn → tạm dừng 30 phút) / COOLDOWN / BUSY / CANCELLED.
+   * One page of messages older than `anchor` in a conversation - saved right away as history. anchor.timestampMs = 0 → the newest page.
+   * Goes through the bridge (LightSpeed FetchMessagesTask, like Messenger web), anchored on a real message: Messenger web / mautrix-meta
+   * always send the id + time of the oldest message available (mautrix-meta does not load a conversation that has no message yet); an empty anchor
+   * ("messages before time X" without an id) makes Facebook return nothing - before, sync / opening a conversation gave 0 messages. If no message
+   * is available as the mark yet → the newest page through GraphQL (resolveHistoryAnchor / fetchGraphQLHistoryPage).
+   * Every request goes through the account's pacer: `background` (background sync) rests like a reader + takes breaks;
+   * `interactive` (scrolling / opening a conversation) only waits a few seconds, and when the budget runs out it reports BUSY. Coded errors: BRIDGE_DOWN /
+   * BRIDGE_OLD / E2EE / FETCH / RISK (a sign of being blocked → paused for 30 minutes) / COOLDOWN / BUSY / CANCELLED.
    */
   public async fetchHistoryPage(
     threadId: string,
@@ -3196,7 +3197,7 @@ export class FacebookService {
       mode?: 'background' | 'interactive';
       shouldStop?: () => boolean;
       onWait?: (wait: PacerWait) => void;
-      /** Hoạt động mới nhất đã biết của hội thoại (trang đầu của đồng bộ) — phát hiện máy thiếu tin ở đầu hội thoại. */
+      /** The newest known activity of the conversation (the first page of the sync) - used to detect that the machine is missing messages at the start of the conversation. */
       latestKnownMs?: number;
     } = {},
   ): Promise<FbHistoryPageResult> {
@@ -3205,43 +3206,43 @@ export class FacebookService {
       return {
         success: false,
         code: 'COOLDOWN',
-        error: `Đang tạm dừng tải lịch sử Facebook để bảo vệ tài khoản (còn ${Math.ceil(cooldown / 60_000)} phút)`,
+        error: tr('Đang tạm dừng tải lịch sử Facebook để bảo vệ tài khoản (còn {{v1}} phút)', { v1: Math.ceil(cooldown / 60_000) }),
       };
     }
     const id = String(threadId || '').replace(/@.*$/, '');
-    if (!/^\d+$/.test(id)) return { success: false, code: 'FETCH', error: 'Mã hội thoại không hợp lệ' };
+    if (!/^\d+$/.test(id)) return { success: false, code: 'FETCH', error: tr('Mã hội thoại không hợp lệ') };
     if (this.isE2EEThread(id)) {
-      return { success: false, code: 'E2EE', error: 'Hội thoại mã hoá đầu cuối: Facebook không cho thiết bị mới tải tin cũ' };
+      return { success: false, code: 'E2EE', error: tr('Hội thoại mã hoá đầu cuối: Facebook không cho thiết bị mới tải tin cũ') };
     }
     const ref = this.resolveHistoryAnchor(id, anchor, opts.latestKnownMs);
     if (ref) {
       const bridge = this.e2eeBridge;
       if (!bridge?.isAlive()) {
-        return { success: false, code: 'BRIDGE_DOWN', error: 'Bridge Facebook chưa chạy (đang kết nối lại) — thử lại sau ít phút' };
+        return { success: false, code: 'BRIDGE_DOWN', error: tr('Bridge Facebook chưa chạy (đang kết nối lại) — thử lại sau ít phút') };
       }
       if (!bridge.supportsCapability('fetchMessages')) {
-        return { success: false, code: 'BRIDGE_OLD', error: 'Bridge Facebook bản cũ chưa hỗ trợ tải lịch sử — khởi động lại Deplao sau khi cập nhật' };
+        return { success: false, code: 'BRIDGE_OLD', error: tr('Bridge Facebook bản cũ chưa hỗ trợ tải lịch sử — khởi động lại Deplao sau khi cập nhật') };
       }
     }
-    // Nhịp người dùng thật trước khi hỏi Facebook
+    // A real user's pace before asking Facebook
     if (opts.mode === 'interactive') {
       const plan = this.historyPacer.planInteractivePage();
-      if ('busy' in plan) return { success: false, code: 'BUSY', error: 'Đang tải nhiều tin cũ — thử lại sau ít phút' };
+      if ('busy' in plan) return { success: false, code: 'BUSY', error: tr('Đang tải nhiều tin cũ — thử lại sau ít phút') };
       if (plan.ms > 0 && !(await sleepUnlessStopped(plan.ms, opts.shouldStop))) {
-        return { success: false, code: 'CANCELLED', error: 'Đã huỷ' };
+        return { success: false, code: 'CANCELLED', error: tr('Đã huỷ') };
       }
     } else {
       const plan = this.historyPacer.planBackgroundPage();
       if (plan.ms > 0) {
         opts.onWait?.(plan);
-        if (!(await sleepUnlessStopped(plan.ms, opts.shouldStop))) return { success: false, code: 'CANCELLED', error: 'Đã huỷ' };
+        if (!(await sleepUnlessStopped(plan.ms, opts.shouldStop))) return { success: false, code: 'CANCELLED', error: tr('Đã huỷ') };
       }
     }
     if (!ref) return this.fetchGraphQLHistoryPage(id, range);
-    // Bridge có thể đã được dựng lại trong lúc nghỉ → dùng bản đang chạy
+    // The bridge may have been rebuilt during the rest → use the one currently running
     const liveBridge = this.e2eeBridge;
     if (!liveBridge?.isAlive()) {
-      return { success: false, code: 'BRIDGE_DOWN', error: 'Bridge Facebook chưa chạy (đang kết nối lại) — thử lại sau ít phút' };
+      return { success: false, code: 'BRIDGE_DOWN', error: tr('Bridge Facebook chưa chạy (đang kết nối lại) — thử lại sau ít phút') };
     }
     this.historyPacer.recordRequest();
     const startedAt = Date.now();
@@ -3258,9 +3259,9 @@ export class FacebookService {
         Logger.warn(`[FacebookService:${this.accountId}] history paused 30 min after a risk signal: ${message}`);
         return { success: false, code: 'RISK', error: HISTORY_RISK_TEXT, source: 'lightspeed' };
       }
-      // Socket LightSpeed của bridge chưa nối (có thể xảy ra khi socket mã hoá vẫn chạy): không hội thoại nào tải được
+      // The bridge's LightSpeed socket is not connected (can happen while the encrypted socket still runs): no conversation can be loaded
       if (/LightSpeed socket is not connected|client not initiali[sz]ed|Messenger client is not initiali[sz]ed/i.test(message)) {
-        return { success: false, code: 'BRIDGE_DOWN', error: 'Kết nối Messenger thường của bridge (dùng để tải lịch sử, khác kết nối E2EE) chưa sẵn sàng — Facebook chưa trả lời bước đồng bộ ban đầu. Tin nhắn và E2EE vẫn hoạt động; thử lại sau ít phút', source: 'lightspeed' };
+        return { success: false, code: 'BRIDGE_DOWN', error: tr('Kết nối Messenger thường của bridge (dùng để tải lịch sử, khác kết nối E2EE) chưa sẵn sàng — Facebook chưa trả lời bước đồng bộ ban đầu. Tin nhắn và E2EE vẫn hoạt động; thử lại sau ít phút'), source: 'lightspeed' };
       }
       return { success: false, code: 'FETCH', error: message, source: 'lightspeed' };
     }
@@ -3281,8 +3282,8 @@ export class FacebookService {
   }
 
   /**
-   * Lịch sử một hội thoại trong khoảng thời gian: tải lùi từng trang (lưu ngay) tới khi Facebook báo hết hoặc tin cũ
-   * nhất đã trước đầu khoảng — không giới hạn số tin. `shouldStop` cho phép huỷ giữa chừng.
+   * The history of a conversation over a time range: loads page by page going back (saved right away) until Facebook reports the end or the oldest
+   * message is before the start of the range, with no limit on the number of messages. `shouldStop` allows cancelling midway.
    */
   public async syncThreadHistory(
     threadId: string,
@@ -3291,7 +3292,7 @@ export class FacebookService {
       shouldStop?: () => boolean;
       onPage?: (page: { saved: number; received: number }) => void;
       onWait?: (wait: PacerWait) => void;
-      /** Hoạt động mới nhất đã biết của hội thoại (danh sách hội thoại) — trang đầu phát hiện máy thiếu tin ở đầu. */
+      /** The newest known activity of the conversation (conversation list) - the first page detects that the machine is missing messages at the start. */
       latestKnownMs?: number;
     } = {},
   ): Promise<{ saved: number; received: number; pages: number; complete: boolean; error?: string; code?: string }> {
@@ -3306,13 +3307,13 @@ export class FacebookService {
         mode: 'background',
         shouldStop: opts.shouldStop,
         onWait: opts.onWait,
-        // Khoảng tới hiện tại: so tin mới nhất trong máy với hoạt động mới nhất (khoảng kết thúc trong quá khứ thì không)
+        // Range up to now: compare the newest message on the machine with the newest activity (an end in the past does not need this)
         latestKnownMs: pages === 0 && range.toTs == null ? opts.latestKnownMs : undefined,
       });
-      // tsconfig strict:false không thu hẹp union theo `success` → dùng 'error' in res
+      // tsconfig strict:false does not narrow the union by `success` → use 'error' in res
       if ('error' in res) {
         if (res.code === 'CANCELLED') return { saved, received, pages, complete: false };
-        // Facebook chậm trả lời một lần: thử lại một lần (bộ điều tốc đã giãn thêm sau lỗi)
+        // Facebook is slow to reply once: retry once (the pacer already waited longer after the error)
         if (res.code === 'FETCH' && !retried) {
           retried = true;
           continue;
@@ -3345,16 +3346,16 @@ export class FacebookService {
   }
 
   /**
-   * Refresh avatar cho 1 contact Facebook (user 1-1).
-   * Chiến lược 3 lớp, đảm bảo luôn lấy được avatar:
-   *   1. Endpoint profile được khóa theo UID → URL CDN fresh
-   *   2. Download ảnh về local với Facebook cookie → local path không bh hết hn
-   *   3. Fallback: re-fetch thread list GraphQL → URL CDN fresh
+   * Refreshes the avatar of 1 Facebook contact (1-1 user).
+   * A 3-layer strategy that always gets an avatar:
+   *   1. The profile endpoint keyed by UID → a fresh CDN URL
+   *   2. Download the image locally with the Facebook cookie → the local path does not expire any more
+   *   3. Fallback: re-fetch the GraphQL thread list → a fresh CDN URL
    *
-   * Dùng khi avatar CDN c (403) - URL oe ã ht hn.
+   * Used when the avatar CDN returns 403 - the URL has expired.
    */
   public async refreshContactAvatar(fbUserId: string): Promise<string | null> {
-    // Server-side debounce: chỉ refresh 1 lần mỗi user/session
+    // Server-side debounce: only refresh once per user / session
     if (this.avatarRefreshDebounce.has(fbUserId)) {
       Logger.log(`[FacebookService:${this.accountId}] refreshContactAvatar: skipped (debounced) for ${fbUserId}`);
       return null;
@@ -3441,8 +3442,8 @@ export class FacebookService {
   }
 
   /**
-   * Lấy thông tin user Facebook (tên + avatar) qua endpoint được khóa theo UID.
-   * Tên method cũ được giữ để không phá IPC/renderer đã phát hành.
+   * Gets a Facebook user's info (name + avatar) through the endpoint keyed by UID.
+   * The old method name is kept so the released IPC / renderer keeps working.
    */
   public async getUserInfoFacebook(fbUserId: string): Promise<{ name: string; avatarUrl: string } | null> {
     try {
@@ -3521,64 +3522,64 @@ export class FacebookService {
 
   // ─── Phase 3 Operations ─────────────────────────────────────────────────────
 
-  /** Chặn người dùng (N4) */
+  /** Blocks a user (N4) */
   public async blockUser(userId: string): Promise<{ success: boolean; error?: string }> {
     return blockUser(this.requireSession(), userId, this.httpsAgent);
   }
 
-  /** Bỏ chặn người dùng (N4) */
+  /** Unblocks a user (N4) */
   public async unblockUser(userId: string): Promise<{ success: boolean; error?: string }> {
     return unblockUser(this.requireSession(), userId, this.httpsAgent);
   }
 
-  /** Đổi theme hội thoại (N1) */
+  /** Changes the conversation theme (N1) */
   public async changeThreadTheme(threadId: string, theme: string): Promise<{ success: boolean; error?: string }> {
     return changeThreadTheme(this.requireSession(), threadId, theme, this.httpsAgent);
   }
 
-  /** Tạo Messenger Note (N2); privacy mặc định FRIENDS như fbchat-v2. */
+  /** Creates a Messenger Note (N2); default privacy FRIENDS, as in fbchat-v2. */
   public async createNote(text: string, privacy?: string): Promise<{ success: boolean; noteId?: string; error?: string }> {
     return createNote(this.requireSession(), text, privacy, this.httpsAgent);
   }
 
-  /** Thêm admin nhóm (N3) */
+  /** Adds a group admin (N3) */
   public async addGroupAdmin(threadId: string, userId: string): Promise<{ success: boolean; error?: string }> {
-    const allowed = await this.requireGroupOperation(threadId, 'Thêm quản trị viên');
+    const allowed = await this.requireGroupOperation(threadId, tr('Thêm quản trị viên'));
     if (!allowed.success) return allowed;
     return addGroupAdmin(this.requireSession(), threadId, userId);
   }
 
-  /** Xóa admin nhóm (N3) */
+  /** Removes a group admin (N3) */
   public async removeGroupAdmin(threadId: string, userId: string): Promise<{ success: boolean; error?: string }> {
-    const allowed = await this.requireGroupOperation(threadId, 'Xóa quản trị viên');
+    const allowed = await this.requireGroupOperation(threadId, tr('Xóa quản trị viên'));
     if (!allowed.success) return allowed;
     return removeGroupAdmin(this.requireSession(), threadId, userId);
   }
 
-  /** Bật/tắt duyệt thành viên (N3) */
+  /** Turns member approval on / off (N3) */
   public async changeApprovalMode(threadId: string, approved: boolean): Promise<{ success: boolean; error?: string }> {
-    const allowed = await this.requireGroupOperation(threadId, 'Đổi chế độ duyệt thành viên');
+    const allowed = await this.requireGroupOperation(threadId, tr('Đổi chế độ duyệt thành viên'));
     if (!allowed.success) return allowed;
     return changeApprovalMode(this.requireSession(), threadId, approved, this.httpsAgent);
   }
 
-  /** Duyệt/từ chối thành viên (N3) */
+  /** Approves / rejects a member (N3) */
   public async approvePendingMember(threadId: string, userId: string, approve: boolean): Promise<{ success: boolean; error?: string }> {
-    const allowed = await this.requireGroupOperation(threadId, approve ? 'Duyệt thành viên' : 'Từ chối thành viên');
+    const allowed = await this.requireGroupOperation(threadId, approve ? tr('Duyệt thành viên') : tr('Từ chối thành viên'));
     if (!allowed.success) return allowed;
     return approvePendingMember(this.requireSession(), threadId, userId, approve, this.httpsAgent);
   }
 
-  /** Lấy link mời nhóm (N3) */
+  /** Gets the group invite link (N3) */
   public async getGroupLink(threadId: string): Promise<{ success: boolean; link?: string; error?: string }> {
-    const allowed = await this.requireGroupOperation(threadId, 'Lấy link mời nhóm');
+    const allowed = await this.requireGroupOperation(threadId, tr('Lấy link mời nhóm'));
     if (!allowed.success) return allowed;
     return getGroupLink(this.requireSession(), threadId, this.httpsAgent);
   }
 
-  /** Bật/tắt link mời nhóm (N3) */
+  /** Turns the group invite link on / off (N3) */
   public async setGroupLink(threadId: string, enable: boolean): Promise<{ success: boolean; error?: string }> {
-    const allowed = await this.requireGroupOperation(threadId, 'Đổi link mời nhóm');
+    const allowed = await this.requireGroupOperation(threadId, tr('Đổi link mời nhóm'));
     if (!allowed.success) return allowed;
     return setGroupLink(this.requireSession(), threadId, enable, this.httpsAgent);
   }
@@ -3589,7 +3590,7 @@ export class FacebookService {
    * Persist a reaction update to fb_messages DB.
    * Reads current reactions, merges the new one (userId → emoji), saves back.
    */
-  /** false = sự kiện (cảm xúc / thu hồi) vừa được nguồn kia (MQTT / bridge) báo y hệt → bỏ qua, không ghi và phát lại. */
+  /** false = the event (reaction / unsend) was just reported in exactly the same way by the other source (MQTT / bridge) → skipped, not written and not replayed. */
   private acceptRepeatable(event: { key: string; value: string }): boolean {
     if (!this._eventRepeats) this._eventRepeats = createRepeatFilter();
     return this._eventRepeats.accept(event.key, event.value);
@@ -3652,9 +3653,9 @@ export class FacebookService {
   public isConnected(): boolean { return this.status === 'connected'; }
 
   /**
-   * Kiểm tra MQTT listener thực sự còn kết nối không (BUG #3 fix).
-   * Khác với isConnected() chỉ check status flag - method này check actual socket.
-   * Dùng trước khi gửi tin nhắn để đảm bảo kết nối thực sự alive.
+   * Checks whether the MQTT listener is really still connected (BUG #3 fix).
+   * Unlike isConnected(), which only checks the status flag, this method checks the actual socket.
+   * Used before sending a message to make sure the connection is really alive.
    */
   public isListenerActuallyConnected(): boolean {
     if (!this.listener) return false;
@@ -3662,9 +3663,9 @@ export class FacebookService {
   }
 
   /**
-   * Kiểm tra kết nối và tự động reconnect nếu listener đã chết (BUG #3 fix).
-   * Gọi trước mỗi lần send message để đảm bảo connection thực sự alive.
-   * Trả về true nếu sẵn sàng gửi, false nếu không thể gửi.
+   * Checks the connection and automatically reconnects if the listener has died (BUG #3 fix).
+   * Called before every message send to make sure the connection is really alive.
+   * Returns true if ready to send, false if it cannot send.
    */
   public async ensureConnected(): Promise<boolean> {
     // A live child process is not proof that Facebook is reachable: its
@@ -3672,9 +3673,9 @@ export class FacebookService {
     // back online.  Continue with the listener/session health checks below so
     // a stale bridge never masks a necessary account reconnect.
 
-    // ── OVERFLOW PATH: MQTT queue persistently overflow → không tạo listener mới ──
-    // Nếu _mqttOverflowCount > 2, việc tạo listener mới chỉ gây thêm overflow.
-    // Bridge không alive → refresh session để dùng REST API.
+    // ── OVERFLOW PATH: MQTT queue persistently overflowing → do not create a new listener ──
+    // If _mqttOverflowCount > 2, creating a new listener only causes more overflow.
+    // Bridge is not alive → refresh the session to use the REST API.
     if (this._mqttOverflowCount > 2) {
       Logger.warn(`[FacebookService:${this.accountId}] MQTT overflow persistent (${this._mqttOverflowCount}x) - using REST only`);
       try {
@@ -3688,15 +3689,15 @@ export class FacebookService {
       }
     }
 
-    // Service says connected → verify listener thực sự alive
+    // Service says connected → verify the listener is really alive
     if (this.status === 'connected' && this.isListenerActuallyConnected()) {
       return true;
     }
 
-    // ── Safety net: nếu listener thực sự alive (đang nhận MQTT) dù status sai ──
-    // Có thể bị set sai khi _doConnect() catch block setStatus('error') trong khi
-    // MQTT đã connect thành công, hoặc MQTT reconnect thành công nhưng có 1 event
-    // 'disconnected' cũ từ listener cũ đến sau. Tránh reconnect không cần thiết.
+    // ── Safety net: if the listener is really alive (receiving MQTT) even though the status is wrong ──
+    // The status may have been set wrongly by the catch block of _doConnect() calling setStatus('error') while
+    // MQTT had connected successfully, or MQTT reconnected successfully but one event
+    // 'disconnected' from the old listener arrived late. This avoids an unnecessary reconnect.
     if (this.isListenerActuallyConnected()) {
       Logger.warn(`[FacebookService:${this.accountId}] Listener alive but status=${this.status} - correcting to 'connected'`);
       this.setStatus('connected');
@@ -3708,7 +3709,7 @@ export class FacebookService {
     if (this.status === 'connected' && !this.isListenerActuallyConnected()) {
       Logger.warn(`[FacebookService:${this.accountId}] Status is 'connected' but listener is dead - forcing reconnect`);
       try {
-        // Ngắt listener cũ và tạo lại
+        // Tear down the old listener and create it again
         if (this.listener) {
           this.listener.disconnect();
           this.listener = null;
@@ -3717,8 +3718,8 @@ export class FacebookService {
         // that stale status before asking it to build a fresh session/listener.
         this._connectPromise = null;
         this.setStatus('disconnected');
-        await this.connect(); // ← dùng connect() có guard, không gọi _doConnect() trực tiếp
-        // Đợi listener thực sự connected + ổn định
+        await this.connect(); // ← uses connect() with a guard, does not call _doConnect() directly
+        // Wait until the listener is really connected + stable
         return await this.waitForStableConnection(30000);
       } catch (err: any) {
         Logger.error(`[FacebookService:${this.accountId}] ensureConnected reconnect failed: ${err.message}`);
@@ -3731,7 +3732,7 @@ export class FacebookService {
       Logger.log(`[FacebookService:${this.accountId}] Not connected - attempting connect`);
       try {
         await this.connect();
-        // Đợi listener thực sự connected + ổn định, vì connect() → _doConnect() start MQTT async
+        // Wait until the listener is really connected + stable, because connect() → _doConnect() starts MQTT async
         return await this.waitForStableConnection(30000);
       } catch (err: any) {
         Logger.error(`[FacebookService:${this.accountId}] ensureConnected failed: ${err.message}`);
@@ -3748,8 +3749,8 @@ export class FacebookService {
           await Promise.race([waitPromise, new Promise(r => setTimeout(r, 15000))]);
         } catch {}
       }
-      // Đợi thêm listener thực sự connected + ổn định (phòng trường hợp _connectPromise resolve
-      // nhưng MQTT chưa kịp handshake và lập tức bị overflow)
+      // Wait for the listener to really connect + stabilise (in case _connectPromise resolves
+      // but MQTT has not finished the handshake and immediately overflows)
       return await this.waitForStableConnection(15000);
     }
 
@@ -3757,12 +3758,12 @@ export class FacebookService {
   }
 
   /**
-   * Đợi MQTT listener thực sự connected với timeout.
-   * _doConnect() start MQTT listener async (this.listener.connect()) và không đợi
-   * WebSocket handshake hoàn tất. Hàm này poll isListenerActuallyConnected() định kỳ
-   * để tránh false-positive khi MQTT chưa kịp connect.
-   * KHÔNG check this.status vì listener có thể connected dù status bị sai
-   * (do catch block setStatus('error') trong _doConnect()).
+   * Waits for the MQTT listener to really connect, with a timeout.
+   * _doConnect() starts the MQTT listener async (this.listener.connect()) and does not wait
+   * for the WebSocket handshake to finish. This function polls isListenerActuallyConnected() periodically
+   * to avoid a false positive when MQTT has not connected yet.
+   * Does NOT check this.status, because the listener can be connected even though the status was set wrongly
+   * (by the catch block calling setStatus('error') in _doConnect()).
    */
   private async waitForListenerReady(timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
@@ -3780,13 +3781,13 @@ export class FacebookService {
   }
 
   /**
-   * Đợi MQTT listener connected + verify stability.
-   * Gọi waitForListenerReady trước, sau đó đợi thêm 1s và kiểm tra listener
-   * còn connected không. Tránh race condition khi MQTT vừa connect xong
-   * nhưng lập tức bị ERROR_QUEUE_OVERFLOW → disconnect → reconnect timer.
+   * Waits for the MQTT listener to connect + verifies stability.
+   * Calls waitForListenerReady first, then waits 1 more s and checks whether the listener
+   * is still connected. Avoids a race when MQTT has just connected
+   * but immediately hits ERROR_QUEUE_OVERFLOW → disconnect → reconnect timer.
    *
-   * Nếu listener connected ổn định (vẫn alive sau 1s) → return true.
-   * Nếu listener chết sau connected → retry waitForListenerReady (tối đa 2 lần).
+   * If the listener is connected and stable (still alive after 1 s) → return true.
+   * If the listener dies after connecting → retry waitForListenerReady (at most 2 times).
    */
   private async waitForStableConnection(timeoutMs: number): Promise<boolean> {
     const MAX_ATTEMPTS = 3;
@@ -3794,7 +3795,7 @@ export class FacebookService {
       const ready = await this.waitForListenerReady(timeoutMs);
       if (!ready) return false;
 
-      // Stability window: đợi 1s để verify connection không bị overflow ngay
+      // Stability window: wait 1 s to verify the connection is not overflowed straight away
       await new Promise(r => setTimeout(r, 1000));
 
       if (this.isListenerActuallyConnected()) {
@@ -3811,7 +3812,7 @@ export class FacebookService {
     return false;
   }
 
-  /** Reset retry count của MQTT listener (gọi khi user manual reconnect từ dashboard) */
+  /** Resets the MQTT listener's retry count (called when the user reconnects manually from the dashboard) */
   public resetListenerRetryCount(): void {
     if (this.listener) {
       this.listener.resetRetryCount();

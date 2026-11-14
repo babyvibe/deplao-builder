@@ -1,52 +1,54 @@
 /**
  * PromptWizardModal.tsx
- * Wizard popup sinh prompt AI cho hệ thống trợ lý - step-by-step hoặc nhanh.
- * Trigger: nút "✨ Gợi ý bằng AI" trong phần System Prompt.
+ * Wizard popup that generates AI prompts for the assistant system - step by step or quick.
+ * Trigger: the "✨ Gợi ý bằng AI" (Suggest with AI) button in the System Prompt section.
  */
 import React, { useState, useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/app/appStore';
 import { Spinner } from '@/components/common/PageLoading';
 import { AlertIcon, BookIcon, BotIcon, BrainIcon, CalendarIcon, CampaignIcon, ChatIcon, CheckIcon, ClipboardListIcon, CloseIcon, CoffeeIcon, DollarIcon, EditIcon, FileTextIcon, HeadphonesIcon, HeartIcon, HomeIcon, LightningIcon, MapPinIcon, MonitorIcon, PackageIcon, PaletteIcon, RefreshIcon, RocketIcon, SearchIcon, ShieldIcon, ShoppingCartIcon, SmileIcon, SparklesIcon, StarIcon, SunIcon, TargetIcon, TruckIcon, UserIcon, UsersIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 // ─── Data: Industries ──────────────────────────────────────────────────────────
 
 const INDUSTRIES = [
-  { key: 'fashion',       icon: <PaletteIcon className="w-4 h-4" />, label: 'Thời trang',       desc: 'Quần áo, giày dép, phụ kiện' },
-  { key: 'cosmetics',     icon: <StarIcon className="w-4 h-4" />, label: 'Mỹ phẩm',         desc: 'Skincare, makeup, chăm sóc da' },
-  { key: 'fnb',           icon: <CoffeeIcon className="w-4 h-4" />, label: 'F&B',             desc: 'Nhà hàng, quán cafe, đồ uống' },
-  { key: 'education',     icon: <BookIcon className="w-4 h-4" />, label: 'Giáo dục',        desc: 'Khóa học, đào tạo, trung tâm' },
-  { key: 'realestate',    icon: <HomeIcon className="w-4 h-4" />, label: 'Bất động sản',    desc: 'Mua bán, cho thuê, dự án' },
-  { key: 'spa',           icon: <SmileIcon className="w-4 h-4" />, label: 'Spa / Thẩm mỹ',  desc: 'Chăm sóc sắc đẹp, thẩm mỹ viện' },
-  { key: 'health',        icon: <HeartIcon className="w-4 h-4" />, label: 'Sức khỏe',        desc: 'Phòng khám, TPCN, thiết bị y tế' },
-  { key: 'tech',          icon: <MonitorIcon className="w-4 h-4" />, label: 'Công nghệ',       desc: 'Phần mềm, SaaS, điện thoại' },
-  { key: 'ecommerce',     icon: <ShoppingCartIcon className="w-4 h-4" />, label: 'E-commerce',      desc: 'Bán hàng online đa ngành' },
-  { key: 'insurance',     icon: <ShieldIcon className="w-4 h-4" />, label: 'Bảo hiểm',       desc: 'Bảo hiểm nhân thọ, phi nhân thọ' },
-  { key: 'automotive',    icon: <TruckIcon className="w-4 h-4" />, label: 'Ô tô / Xe máy',  desc: 'Mua bán, sửa chữa, phụ tùng' },
-  { key: 'travel',        icon: <MapPinIcon className="w-4 h-4" />, label: 'Du lịch',         desc: 'Tour, khách sạn, visa' },
+  { key: 'fashion',       icon: <PaletteIcon className="w-4 h-4" />, label: tr('Thời trang'),       desc: tr('Quần áo, giày dép, phụ kiện') },
+  { key: 'cosmetics',     icon: <StarIcon className="w-4 h-4" />, label: tr('Mỹ phẩm'),         desc: tr('Skincare, makeup, chăm sóc da') },
+  { key: 'fnb',           icon: <CoffeeIcon className="w-4 h-4" />, label: 'F&B',             desc: tr('Nhà hàng, quán cafe, đồ uống') },
+  { key: 'education',     icon: <BookIcon className="w-4 h-4" />, label: tr('Giáo dục'),        desc: tr('Khóa học, đào tạo, trung tâm') },
+  { key: 'realestate',    icon: <HomeIcon className="w-4 h-4" />, label: tr('Bất động sản'),    desc: tr('Mua bán, cho thuê, dự án') },
+  { key: 'spa',           icon: <SmileIcon className="w-4 h-4" />, label: tr('Spa / Thẩm mỹ'),  desc: tr('Chăm sóc sắc đẹp, thẩm mỹ viện') },
+  { key: 'health',        icon: <HeartIcon className="w-4 h-4" />, label: tr('Sức khỏe'),        desc: tr('Phòng khám, TPCN, thiết bị y tế') },
+  { key: 'tech',          icon: <MonitorIcon className="w-4 h-4" />, label: tr('Công nghệ'),       desc: tr('Phần mềm, SaaS, điện thoại') },
+  { key: 'ecommerce',     icon: <ShoppingCartIcon className="w-4 h-4" />, label: tr('E-commerce'),      desc: tr('Bán hàng online đa ngành') },
+  { key: 'insurance',     icon: <ShieldIcon className="w-4 h-4" />, label: tr('Bảo hiểm'),       desc: tr('Bảo hiểm nhân thọ, phi nhân thọ') },
+  { key: 'automotive',    icon: <TruckIcon className="w-4 h-4" />, label: tr('Ô tô / Xe máy'),  desc: tr('Mua bán, sửa chữa, phụ tùng') },
+  { key: 'travel',        icon: <MapPinIcon className="w-4 h-4" />, label: tr('Du lịch'),         desc: tr('Tour, khách sạn, visa') },
 ] as const;
 
 // ─── Data: Goals ───────────────────────────────────────────────────────────────
 
 const GOALS = [
-  { key: 'sales',        icon: <DollarIcon className="w-4 h-4" />, label: 'Bán hàng (chốt đơn)',          desc: 'Tư vấn → chốt đơn → upsell' },
-  { key: 'consult',      icon: <SunIcon className="w-4 h-4" />, label: 'Tư vấn sản phẩm',              desc: 'Giải đáp thắc mắc, so sánh SP' },
-  { key: 'support',      icon: <HeadphonesIcon className="w-4 h-4" />, label: 'Chăm sóc khách hàng',         desc: 'Hỗ trợ sau bán, xử lý khiếu nại' },
-  { key: 'marketing',    icon: <CampaignIcon className="w-4 h-4" />, label: 'Seeding / Marketing',          desc: 'Gieo mầm, tạo nhu cầu, remarketing' },
-  { key: 'internal',     icon: <HomeIcon className="w-4 h-4" />, label: 'Hỗ trợ nội bộ',               desc: 'Trả lời nhân viên, FAQ nội bộ' },
-  { key: 'booking',      icon: <CalendarIcon className="w-4 h-4" />, label: 'Đặt lịch hẹn',                desc: 'Booking, nhắc lịch, confirm' },
+  { key: 'sales',        icon: <DollarIcon className="w-4 h-4" />, label: tr('Bán hàng (chốt đơn)'),          desc: tr('Tư vấn → chốt đơn → upsell') },
+  { key: 'consult',      icon: <SunIcon className="w-4 h-4" />, label: tr('Tư vấn sản phẩm'),              desc: tr('Giải đáp thắc mắc, so sánh SP') },
+  { key: 'support',      icon: <HeadphonesIcon className="w-4 h-4" />, label: tr('Chăm sóc khách hàng'),         desc: tr('Hỗ trợ sau bán, xử lý khiếu nại') },
+  { key: 'marketing',    icon: <CampaignIcon className="w-4 h-4" />, label: tr('Seeding / Marketing'),          desc: tr('Gieo mầm, tạo nhu cầu, remarketing') },
+  { key: 'internal',     icon: <HomeIcon className="w-4 h-4" />, label: tr('Hỗ trợ nội bộ'),               desc: tr('Trả lời nhân viên, FAQ nội bộ') },
+  { key: 'booking',      icon: <CalendarIcon className="w-4 h-4" />, label: tr('Đặt lịch hẹn'),                desc: tr('Booking, nhắc lịch, confirm') },
 ] as const;
 
 // ─── Data: Tones ───────────────────────────────────────────────────────────────
 
 const TONES = [
-  { key: 'friendly',      icon: <SmileIcon className="w-4 h-4" />, label: 'Thân thiện',      desc: 'Gần gũi, dễ thương' },
-  { key: 'professional',  icon: <UserIcon className="w-4 h-4" />, label: 'Chuyên nghiệp',   desc: 'Lịch sự, nghiêm túc' },
-  { key: 'humorous',      icon: <SmileIcon className="w-4 h-4" />, label: 'Hài hước',        desc: 'Vui vẻ, dí dỏm' },
-  { key: 'concise',       icon: <LightningIcon className="w-4 h-4" />, label: 'Ngắn gọn',        desc: 'Đi thẳng vào vấn đề' },
-  { key: 'detailed',      icon: <ClipboardListIcon className="w-4 h-4" />, label: 'Chi tiết',        desc: 'Giải thích kỹ, từng bước' },
-  { key: 'personalized',  icon: <HeartIcon className="w-4 h-4" />, label: 'Cá nhân hoá',     desc: 'Gọi tên, nhớ sở thích' },
+  { key: 'friendly',      icon: <SmileIcon className="w-4 h-4" />, label: tr('Thân thiện'),      desc: tr('Gần gũi, dễ thương') },
+  { key: 'professional',  icon: <UserIcon className="w-4 h-4" />, label: tr('Chuyên nghiệp'),   desc: tr('Lịch sự, nghiêm túc') },
+  { key: 'humorous',      icon: <SmileIcon className="w-4 h-4" />, label: tr('Hài hước'),        desc: tr('Vui vẻ, dí dỏm') },
+  { key: 'concise',       icon: <LightningIcon className="w-4 h-4" />, label: tr('Ngắn gọn'),        desc: tr('Đi thẳng vào vấn đề') },
+  { key: 'detailed',      icon: <ClipboardListIcon className="w-4 h-4" />, label: tr('Chi tiết'),        desc: tr('Giải thích kỹ, từng bước') },
+  { key: 'personalized',  icon: <HeartIcon className="w-4 h-4" />, label: tr('Cá nhân hoá'),     desc: tr('Gọi tên, nhớ sở thích') },
 ] as const;
 
 // ─── Data: Prompt Templates Library ────────────────────────────────────────────
@@ -55,8 +57,8 @@ const PROMPT_TEMPLATES = [
   {
     id: 'cosmetics-sales',
     icon: <StarIcon className="w-4 h-4" />,
-    label: 'Chatbot chốt đơn mỹ phẩm',
-    desc: 'Tư vấn skincare, chốt đơn, upsell combo',
+    label: tr('Chatbot chốt đơn mỹ phẩm'),
+    desc: tr('Tư vấn skincare, chốt đơn, upsell combo'),
     industry: 'cosmetics',
     prompt: `Bạn là chuyên gia tư vấn mỹ phẩm & skincare.
 
@@ -82,8 +84,8 @@ const PROMPT_TEMPLATES = [
   {
     id: 'course-consult',
     icon: <BookIcon className="w-4 h-4" />,
-    label: 'Chatbot tư vấn khóa học',
-    desc: 'Tư vấn chương trình, học phí, đăng ký',
+    label: tr('Chatbot tư vấn khóa học'),
+    desc: tr('Tư vấn chương trình, học phí, đăng ký'),
     industry: 'education',
     prompt: `Bạn là tư vấn viên giáo dục chuyên nghiệp.
 
@@ -108,8 +110,8 @@ const PROMPT_TEMPLATES = [
   {
     id: 'ecom-support',
     icon: <ShoppingCartIcon className="w-4 h-4" />,
-    label: 'Chatbot CSKH e-commerce',
-    desc: 'Hỗ trợ đơn hàng, đổi trả, khiếu nại',
+    label: tr('Chatbot CSKH e-commerce'),
+    desc: tr('Hỗ trợ đơn hàng, đổi trả, khiếu nại'),
     industry: 'ecommerce',
     prompt: `Bạn là nhân viên chăm sóc khách hàng chuyên nghiệp.
 
@@ -134,8 +136,8 @@ const PROMPT_TEMPLATES = [
   {
     id: 'realestate-sales',
     icon: <HomeIcon className="w-4 h-4" />,
-    label: 'Chatbot bán bất động sản',
-    desc: 'Tư vấn dự án, giá, tiến độ, booking',
+    label: tr('Chatbot bán bất động sản'),
+    desc: tr('Tư vấn dự án, giá, tiến độ, booking'),
     industry: 'realestate',
     prompt: `Bạn là chuyên viên tư vấn bất động sản chuyên nghiệp.
 
@@ -160,8 +162,8 @@ const PROMPT_TEMPLATES = [
   {
     id: 'upsell-general',
     icon: <RocketIcon className="w-4 h-4" />,
-    label: 'Chatbot upsell / cross-sell',
-    desc: 'Tăng giá trị đơn hàng, gợi ý sản phẩm liên quan',
+    label: tr('Chatbot upsell / cross-sell'),
+    desc: tr('Tăng giá trị đơn hàng, gợi ý sản phẩm liên quan'),
     industry: 'ecommerce',
     prompt: `Bạn là trợ lý bán hàng thông minh chuyên upsell/cross-sell.
 
@@ -186,8 +188,8 @@ const PROMPT_TEMPLATES = [
   {
     id: 'spa-booking',
     icon: <SmileIcon className="w-4 h-4" />,
-    label: 'Chatbot đặt lịch Spa',
-    desc: 'Tư vấn dịch vụ, giá, đặt lịch hẹn',
+    label: tr('Chatbot đặt lịch Spa'),
+    desc: tr('Tư vấn dịch vụ, giá, đặt lịch hẹn'),
     industry: 'spa',
     prompt: `Bạn là lễ tân spa chuyên nghiệp.
 
@@ -214,14 +216,14 @@ const PROMPT_TEMPLATES = [
 // ─── Data: Improve options ─────────────────────────────────────────────────────
 
 const IMPROVE_OPTIONS = [
-  { key: 'close-deal',    icon: <DollarIcon className="w-4 h-4" />, label: 'Tăng tỉ lệ chốt đơn' },
-  { key: 'natural',       icon: <ChatIcon className="w-4 h-4" />, label: 'Trả lời tự nhiên hơn' },
-  { key: 'shorter',       icon: <LightningIcon className="w-4 h-4" />, label: 'Ngắn gọn hơn' },
-  { key: 'detailed',      icon: <ClipboardListIcon className="w-4 h-4" />, label: 'Chi tiết hơn' },
-  { key: 'friendly',      icon: <SmileIcon className="w-4 h-4" />, label: 'Thân thiện hơn' },
-  { key: 'professional',  icon: <UserIcon className="w-4 h-4" />, label: 'Chuyên nghiệp hơn' },
-  { key: 'add-upsell',    icon: <RocketIcon className="w-4 h-4" />, label: 'Thêm kỹ năng upsell' },
-  { key: 'add-objection', icon: <ShieldIcon className="w-4 h-4" />, label: 'Xử lý từ chối tốt hơn' },
+  { key: 'close-deal',    icon: <DollarIcon className="w-4 h-4" />, label: tr('Tăng tỉ lệ chốt đơn') },
+  { key: 'natural',       icon: <ChatIcon className="w-4 h-4" />, label: tr('Trả lời tự nhiên hơn') },
+  { key: 'shorter',       icon: <LightningIcon className="w-4 h-4" />, label: tr('Ngắn gọn hơn') },
+  { key: 'detailed',      icon: <ClipboardListIcon className="w-4 h-4" />, label: tr('Chi tiết hơn') },
+  { key: 'friendly',      icon: <SmileIcon className="w-4 h-4" />, label: tr('Thân thiện hơn') },
+  { key: 'professional',  icon: <UserIcon className="w-4 h-4" />, label: tr('Chuyên nghiệp hơn') },
+  { key: 'add-upsell',    icon: <RocketIcon className="w-4 h-4" />, label: tr('Thêm kỹ năng upsell') },
+  { key: 'add-objection', icon: <ShieldIcon className="w-4 h-4" />, label: tr('Xử lý từ chối tốt hơn') },
 ] as const;
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -242,9 +244,9 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onApply: (prompt: string) => void;
-  /** ID trợ lý đã lưu - cần để gọi ipc.ai.chat */
+  /** Saved assistant ID - needed to call ipc.ai.chat */
   assistantId: string | null;
-  /** Prompt hiện tại (nếu có) → dùng cho "Cải thiện" */
+  /** Current prompt (if any) → used for "Cải thiện" (Improve) */
   currentPrompt?: string;
 }
 
@@ -308,14 +310,14 @@ export default function PromptWizardModal({ open, onClose, onApply, assistantId,
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
   const getIndustryLabel = () => {
-    if (selectedIndustry === 'custom') return customIndustry || 'Ngành khác';
+    if (selectedIndustry === 'custom') return customIndustry || tr('Ngành khác');
     return INDUSTRIES.find(i => i.key === selectedIndustry)?.label || selectedIndustry;
   };
 
   const callAI = useCallback(async (messages: { role: string; content: string }[]): Promise<string> => {
-    if (!assistantId) throw new Error('Chưa lưu trợ lý - hãy lưu trước để dùng tính năng này');
+    if (!assistantId) throw new Error(tr('Chưa lưu trợ lý - hãy lưu trước để dùng tính năng này'));
     const res = await ipc.ai?.chat(assistantId, messages);
-    if (!res?.success || !res.result) throw new Error(res?.error || 'Không có phản hồi từ AI');
+    if (!res?.success || !res.result) throw new Error(res?.error || tr('Không có phản hồi từ AI'));
     return res.result;
   }, [assistantId]);
 
@@ -384,13 +386,13 @@ Prompt phải:
       setEditablePrompt(parsed.full);
       setStep(5);
     } catch (e: any) {
-      showNotification('Loi: ' + e.message, 'error');
+      showNotification(tr('Lỗi: {{message}}', { message: e.message }), 'error');
     }
     setGenerating(false);
   };
 
   const handleQuickGenerate = async () => {
-    if (!quickIndustry.trim()) { showNotification('Nhập ngành nghề', 'warning'); return; }
+    if (!quickIndustry.trim()) { showNotification(tr('Nhập ngành nghề'), 'warning'); return; }
     setGenerating(true);
     setResult(null);
     try {
@@ -409,7 +411,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
       setTab('create');
       setStep(5);
     } catch (e: any) {
-      showNotification('Loi: ' + e.message, 'error');
+      showNotification(tr('Lỗi: {{message}}', { message: e.message }), 'error');
     }
     setGenerating(false);
   };
@@ -427,7 +429,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
       setResult(parsed);
       setEditablePrompt(parsed.full);
     } catch (e: any) {
-      showNotification('Loi: ' + e.message, 'error');
+      showNotification(tr('Lỗi: {{message}}', { message: e.message }), 'error');
     }
     setGenerating(false);
   };
@@ -444,9 +446,9 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
       setResult(parsed);
       setEditablePrompt(parsed.full);
       setShowImprove(false);
-      showNotification('Da cai thien prompt!', 'success');
+      showNotification(tr('Đã cải thiện prompt!'), 'success');
     } catch (e: any) {
-      showNotification('Loi: ' + e.message, 'error');
+      showNotification(tr('Lỗi: {{message}}', { message: e.message }), 'error');
     }
     setImproveLoading(false);
   };
@@ -476,7 +478,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
         setEditablePrompt(parsed.full);
       }
     } catch (e: any) {
-      setChatRefineHistory(prev => [...prev, { role: 'assistant', content: `Loi: ${e.message}` }]);
+      setChatRefineHistory(prev => [...prev, { role: 'assistant', content: tr('Lỗi: {{message}}', { message: e.message }) }]);
     }
     setChatRefineLoading(false);
   };
@@ -509,26 +511,26 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               { name: '', price: '', note: '' },
             ]);
           }
-          showNotification('AI da goi y thong tin!', 'success');
+          showNotification(tr('AI đã gợi ý thông tin!'), 'success');
         }
       } catch {
-        showNotification('Khong parse duoc goi y, hay nhap thu cong', 'warning');
+        showNotification(tr('Không đọc được gợi ý, hãy nhập thủ công'), 'warning');
       }
     } catch (e: any) {
-      showNotification('Loi: ' + e.message, 'error');
+      showNotification(tr('Lỗi: {{message}}', { message: e.message }), 'error');
     }
     setGenerating(false);
   };
 
   const handleApply = () => {
     onApply(editablePrompt);
-    showNotification('Da ap dung prompt!', 'success');
+    showNotification(tr('Đã áp dụng prompt!'), 'success');
     onClose();
   };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(editablePrompt);
-    showNotification('Da copy prompt!', 'success');
+    showNotification(tr('Đã copy prompt!'), 'success');
   };
 
   const resetWizard = () => {
@@ -584,17 +586,17 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
         <div className="px-5 py-3 border-b border-border flex items-center gap-3 flex-shrink-0">
           <SparklesIcon className="w-5 h-5 text-yellow-400" />
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-bold text-foreground">Gợi ý Prompt bằng AI</h2>
-            <p className="text-[10px] text-muted-foreground">Tạo prompt chuyên nghiệp trong vài phút - không cần biết viết prompt</p>
+            <h2 className="text-sm font-bold text-foreground">{tr('Gợi ý Prompt bằng AI')}</h2>
+            <p className="text-[10px] text-muted-foreground">{tr('Tạo prompt chuyên nghiệp trong vài phút - không cần biết viết prompt')}</p>
           </div>
           {/* Tab switcher */}
           <div className="flex items-center bg-card rounded-lg p-0.5 gap-0.5 flex-shrink-0">
             <button onClick={() => { setTab('create'); if (step === 5 && !result) setStep(1); }}
-              className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'create' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}><PaletteIcon className="w-4 h-4 inline" /> Tạo mới
+              className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'create' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>{trx('<0/> Tạo mới', { 0: <PaletteIcon className="w-4 h-4 inline" /> })}
             </button>
             <button onClick={() => setTab('library')}
               className={`px-3 py-1 rounded-md text-xs transition-colors ${tab === 'library' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>
-              <BookIcon className="w-4 h-4 inline" /> Thu vien
+              {trx('<0/> Thư viện', { 0: <BookIcon className="w-4 h-4 inline" /> })}
             </button>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-card"><CloseIcon className="w-4 h-4" /></button>
@@ -608,29 +610,29 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               <div className="mb-4 p-3 bg-card rounded-xl border border-border/50">
                 <div className="flex items-center gap-2 mb-2">
                   <LightningIcon className="w-4 h-4" />
-                  <span className="text-xs font-medium text-foreground/80">Chế độ nhanh - 1 click ra prompt</span>
+                  <span className="text-xs font-medium text-foreground/80">{tr('Chế độ nhanh - 1 click ra prompt')}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <input type="text" value={quickIndustry} onChange={e => setQuickIndustry(e.target.value)}
-                    placeholder="VD: Bán mỹ phẩm, spa, bất động sản..."
+                    placeholder={tr('VD: Bán mỹ phẩm, spa, bất động sản...')}
                     className="flex-1 bg-muted border border-input rounded-lg px-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                   <input type="text" value={quickGoal} onChange={e => setQuickGoal(e.target.value)}
-                    placeholder="Mục tiêu (tuỳ chọn)"
+                    placeholder={tr('Mục tiêu (tuỳ chọn)')}
                     className="w-40 bg-muted border border-input rounded-lg px-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                   <button onClick={handleQuickGenerate} disabled={generating || !assistantId}
                     className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-xs font-medium rounded-lg transition-all disabled:opacity-50 flex-shrink-0 whitespace-nowrap">
-                    {generating ? <Spinner size={4} /> : <LightningIcon className="w-4 h-4" />} Tạo nhanh
+                    {generating ? <Spinner size={4} /> : <LightningIcon className="w-4 h-4" />} {tr('Tạo nhanh')}
                   </button>
                 </div>
                 {!assistantId && (
-                  <p className="text-[10px] text-amber-400 mt-1.5"><AlertIcon className="w-3 h-3 inline" /> Luu tro ly AI truoc de su dung tinh nang goi y (can API Key hoat dong)</p>
+                  <p className="text-[10px] text-amber-400 mt-1.5">{trx('<0/> Lưu trợ lý AI trước để sử dụng tính năng gợi ý (cần API Key hoạt động)', { 0: <AlertIcon className="w-3 h-3 inline" /> })}</p>
                 )}
               </div>
 
               {/* Divider */}
               <div className="flex items-center gap-3 mb-4">
                 <div className="flex-1 border-t border-border"/>
-                <span className="text-[10px] text-muted-foreground">hoặc wizard chi tiết</span>
+                <span className="text-[10px] text-muted-foreground">{tr('hoặc wizard chi tiết')}</span>
                 <div className="flex-1 border-t border-border"/>
               </div>
 
@@ -650,10 +652,10 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* ─── Step 1: Industry ─── */}
               {step === 1 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-1">🧱 Bước 1: Chọn ngành nghề</h3>
-                  <p className="text-[10px] text-muted-foreground mb-3">Chọn ngành để AI tạo prompt phù hợp nhất</p>
+                  <h3 className="text-sm font-semibold text-foreground mb-1">{tr('🧱 Bước 1: Chọn ngành nghề')}</h3>
+                  <p className="text-[10px] text-muted-foreground mb-3">{tr('Chọn ngành để AI tạo prompt phù hợp nhất')}</p>
                   <input type="text" value={industrySearch} onChange={e => setIndustrySearch(e.target.value)}
-                    placeholder="Tim ngangh..."
+                    placeholder={tr('Tìm ngành...')}
                     className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 mb-3"/>
                   <div className="grid grid-cols-3 gap-2 max-h-[260px] overflow-y-auto pr-1">
                     {filteredIndustries.map(ind => (
@@ -676,13 +678,13 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                           : 'bg-card/60 border-border hover:border-input hover:bg-card'
                       }`}>
                       <EditIcon className="w-5 h-5" />
-                      <p className="text-xs font-medium text-foreground mt-1">Khac</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Tự nhập ngành</p>
+                      <p className="text-xs font-medium text-foreground mt-1">{tr('Khac')}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{tr('Tự nhập ngành')}</p>
                     </button>
                   </div>
                   {selectedIndustry === 'custom' && (
                     <input type="text" value={customIndustry} onChange={e => setCustomIndustry(e.target.value)}
-                      placeholder="Nhập tên ngành nghề..."
+                      placeholder={tr('Nhập tên ngành nghề...')}
                       autoFocus
                       className="w-full mt-3 bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                   )}
@@ -692,8 +694,8 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* ─── Step 2: Goals ─── */}
               {step === 2 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-1"><TargetIcon className="w-4 h-4 inline" /> Bước 2: Mục tiêu sử dụng AI</h3>
-                  <p className="text-[10px] text-muted-foreground mb-3">Có thể chọn nhiều mục tiêu</p>
+                  <h3 className="text-sm font-semibold text-foreground mb-1">{trx('<0/> Bước 2: Mục tiêu sử dụng AI', { 0: <TargetIcon className="w-4 h-4 inline" /> })}</h3>
+                  <p className="text-[10px] text-muted-foreground mb-3">{tr('Có thể chọn nhiều mục tiêu')}</p>
                   <div className="grid grid-cols-2 gap-2">
                     {GOALS.map(g => (
                       <button key={g.key} onClick={() => setSelectedGoals(toggleMulti(selectedGoals, g.key))}
@@ -717,8 +719,8 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* ─── Step 3: Tone ─── */}
               {step === 3 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-1"><UsersIcon className="w-4 h-4 inline" /> Bước 3: Phong cách trả lời</h3>
-                  <p className="text-[10px] text-muted-foreground mb-3">Chọn nhiều để phối hợp phong cách → tạo tone prompt</p>
+                  <h3 className="text-sm font-semibold text-foreground mb-1">{trx('<0/> Bước 3: Phong cách trả lời', { 0: <UsersIcon className="w-4 h-4 inline" /> })}</h3>
+                  <p className="text-[10px] text-muted-foreground mb-3">{tr('Chọn nhiều để phối hợp phong cách → tạo tone prompt')}</p>
                   <div className="grid grid-cols-3 gap-2">
                     {TONES.map(t => (
                       <button key={t.key} onClick={() => setSelectedTones(toggleMulti(selectedTones, t.key))}
@@ -741,38 +743,37 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {step === 4 && (
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <h3 className="text-sm font-semibold text-foreground"><EditIcon className="w-4 h-4 inline" /> Bước 4: Thông tin bổ sung</h3>
+                    <h3 className="text-sm font-semibold text-foreground">{trx('<0/> Bước 4: Thông tin bổ sung', { 0: <EditIcon className="w-4 h-4 inline" /> })}</h3>
                     <button onClick={handleAutoFillExtra} disabled={generating || !assistantId}
                       className="text-[10px] px-2.5 py-1 rounded-lg bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 border border-purple-600/30 transition-colors disabled:opacity-50">
-                      {generating ? <><Spinner size={3} /> Dang goi y...</> : <><BotIcon className="w-4 h-4 inline" /> Toi chua co → AI tu de xuat</>}
+                      {generating ? <>{trx('<0/> Đang gợi ý...', { 0: <Spinner size={3} /> })}</> : <>{trx('<0/> Tôi chưa có → AI tự đề xuất', { 0: <BotIcon className="w-4 h-4 inline" /> })}</>}
                     </button>
                   </div>
-                  <p className="text-[10px] text-muted-foreground mb-3">Tuỳ chọn - thêm thông tin để prompt chính xác hơn. Không cần POS hay file, nhập trực tiếp tại đây.</p>
+                  <p className="text-[10px] text-muted-foreground mb-3">{tr('Tuỳ chọn - thêm thông tin để prompt chính xác hơn. Không cần POS hay file, nhập trực tiếp tại đây.')}</p>
                   <div className="space-y-4">
 
                     {/* Product overview */}
                     <div>
-                      <label className="block text-[10px] text-muted-foreground mb-1">Mô tả chung về sản phẩm/dịch vụ</label>
+                      <label className="block text-[10px] text-muted-foreground mb-1">{tr('Mô tả chung về sản phẩm/dịch vụ')}</label>
                       <textarea value={extraInfo.products} onChange={e => setExtraInfo({ ...extraInfo, products: e.target.value })}
                         rows={2}
-                        placeholder="VD: Shop chuyên skincare Hàn Quốc, chủ yếu kem dưỡng, serum, tẩy trang cho da dầu mụn..."
+                        placeholder={tr('VD: Shop chuyên skincare Hàn Quốc, chủ yếu kem dưỡng, serum, tẩy trang cho da dầu mụn...')}
                         className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[48px]"/>
                     </div>
 
                     {/* Structured product lines */}
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-[10px] text-muted-foreground flex items-center gap-1"><PackageIcon className="w-4 h-4 inline" /> Danh sách sản phẩm chi tiết
-                          <span className="text-[9px] text-muted-foreground">(sẽ đính kèm vào prompt)</span>
+                        <label className="text-[10px] text-muted-foreground flex items-center gap-1">{trx('<0/> Danh sách sản phẩm chi tiết<1>(sẽ đính kèm vào prompt)</1>', { 0: <PackageIcon className="w-4 h-4 inline" />, 1: <span className="text-[9px] text-muted-foreground" /> })}
                         </label>
-                        <span className="text-[9px] text-muted-foreground">{productLines.filter(p => p.name.trim()).length} sản phẩm</span>
+                        <span className="text-[9px] text-muted-foreground">{productLines.filter(p => p.name.trim()).length} {tr('sản phẩm')}</span>
                       </div>
                       <div className="bg-card rounded-xl border border-border/50 overflow-hidden">
                         {/* Table header */}
                         <div className="grid grid-cols-[1fr_140px_1fr_32px] gap-1.5 px-3 py-1.5 bg-card border-b border-border/50">
-                          <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wide">Tên sản phẩm</span>
-                          <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wide">Giá</span>
-                          <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wide">Ghi chú (mô tả, SKU...)</span>
+                          <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wide">{tr('Tên sản phẩm')}</span>
+                          <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wide">{tr('Giá')}</span>
+                          <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wide">{tr('Ghi chú (mô tả, SKU...)')}</span>
                           <span/>
                         </div>
                         {/* Product rows */}
@@ -789,56 +790,56 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                                 className="bg-transparent border-0 text-xs text-green-400 placeholder-subtle-foreground focus:outline-none py-1 font-mono"/>
                               <input type="text" value={line.note}
                                 onChange={e => { const arr = [...productLines]; arr[idx] = { ...arr[idx], note: e.target.value }; setProductLines(arr); }}
-                                placeholder="VD: Chiết xuất tự nhiên, best seller..."
+                                placeholder={tr('VD: Chiết xuất tự nhiên, best seller...')}
                                 className="bg-transparent border-0 text-xs text-muted-foreground placeholder-subtle-foreground focus:outline-none py-1"/>
                               <button onClick={() => { if (productLines.length > 1) setProductLines(productLines.filter((_, i) => i !== idx)); }}
                                 className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-red-400 hover:bg-red-900/20 transition-colors text-[10px]"
-                                title="Xóa dòng">✕</button>
+                                title={tr('Xóa dòng')}>✕</button>
                             </div>
                           ))}
                         </div>
                         {/* Add row button */}
                         <button onClick={() => setProductLines([...productLines, { name: '', price: '', note: '' }])}
                           className="w-full px-3 py-1.5 text-[10px] text-muted-foreground hover:text-blue-400 hover:bg-muted/30 transition-colors border-t border-border/30 flex items-center justify-center gap-1">
-                          + Thêm sản phẩm
+                          {tr('+ Thêm sản phẩm')}
                         </button>
                       </div>
-                      <p className="text-[9px] text-muted-foreground mt-1"><SunIcon className="w-4 h-4 inline" /> Nhập tên + giá → AI sẽ biết chính xác sản phẩm để tư vấn. Không cần file hay POS.</p>
+                      <p className="text-[9px] text-muted-foreground mt-1">{trx('<0/> Nhập tên + giá → AI sẽ biết chính xác sản phẩm để tư vấn. Không cần file hay POS.', { 0: <SunIcon className="w-4 h-4 inline" /> })}</p>
                     </div>
 
                     {/* Price + USP row */}
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[10px] text-muted-foreground mb-1">Mức giá chung</label>
+                        <label className="block text-[10px] text-muted-foreground mb-1">{tr('Mức giá chung')}</label>
                         <textarea value={extraInfo.price} onChange={e => setExtraInfo({ ...extraInfo, price: e.target.value })}
                           rows={2}
-                          placeholder="VD: Skincare: 199k-599k&#10;Combo tiết kiệm: 399k (2 sản phẩm)&#10;Freeship đơn từ 500k"
+                          placeholder={tr('VD: Skincare: 199k-599k\nCombo tiết kiệm: 399k (2 sản phẩm)\nFreeship đơn từ 500k')}
                           className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[56px]"/>
                       </div>
                       <div>
-                        <label className="block text-[10px] text-muted-foreground mb-1">Điểm khác biệt (USP)</label>
+                        <label className="block text-[10px] text-muted-foreground mb-1">{tr('Điểm khác biệt (USP)')}</label>
                         <textarea value={extraInfo.usp} onChange={e => setExtraInfo({ ...extraInfo, usp: e.target.value })}
                           rows={2}
-                          placeholder="VD: Chiết xuất tự nhiên 100%&#10;Cam kết hoàn tiền nếu không hiệu quả&#10;Nhập khẩu chính hãng Hàn Quốc"
+                          placeholder={tr('VD: Chiết xuất tự nhiên 100%\nCam kết hoàn tiền nếu không hiệu quả\nNhập khẩu chính hãng Hàn Quốc')}
                           className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[56px]"/>
                       </div>
                     </div>
 
                     {/* Policy */}
                     <div>
-                      <label className="block text-[10px] text-muted-foreground mb-1">Chính sách (ship, đổi trả, bảo hành...)</label>
+                      <label className="block text-[10px] text-muted-foreground mb-1">{tr('Chính sách (ship, đổi trả, bảo hành...)')}</label>
                       <textarea value={extraInfo.policy} onChange={e => setExtraInfo({ ...extraInfo, policy: e.target.value })}
                         rows={2}
-                        placeholder="VD: Freeship đơn 500k, đổi trả 7 ngày&#10;Bảo hành 12 tháng&#10;COD toàn quốc"
+                        placeholder={tr('VD: Freeship đơn 500k, đổi trả 7 ngày\nBảo hành 12 tháng\nCOD toàn quốc')}
                         className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[56px]"/>
                     </div>
 
                     {/* Customer insight */}
                     <div>
-                      <label className="block text-[10px] text-muted-foreground mb-1">Insight khách hàng</label>
+                      <label className="block text-[10px] text-muted-foreground mb-1">{tr('Insight khách hàng')}</label>
                       <textarea value={extraInfo.insight} onChange={e => setExtraInfo({ ...extraInfo, insight: e.target.value })}
                         rows={3}
-                        placeholder="VD: Khách thường so sánh giá với hàng Trung Quốc, cần chứng minh chất lượng&#10;Phần lớn là nữ 25-35 tuổi, quan tâm thành phần&#10;Hay hỏi 'dùng bao lâu có kết quả?'"
+                        placeholder={tr('VD: Khách thường so sánh giá với hàng Trung Quốc, cần chứng minh chất lượng\nPhần lớn là nữ 25-35 tuổi, quan tâm thành phần\nHay hỏi \'dùng bao lâu có kết quả?\'')}
                         className="w-full bg-card border border-border rounded-lg px-3 py-2 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y min-h-[72px]"/>
                     </div>
                   </div>
@@ -853,8 +854,8 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* Prompt preview - editable */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-foreground"><FileTextIcon className="w-4 h-4 inline" /> Prompt đã tạo</h3>
-                  <span className="text-[10px] text-muted-foreground">{editablePrompt.length} ký tự</span>
+                  <h3 className="text-sm font-semibold text-foreground">{trx('<0/> Prompt đã tạo', { 0: <FileTextIcon className="w-4 h-4 inline" /> })}</h3>
+                  <span className="text-[10px] text-muted-foreground">{trx('{{count}} ký tự', { count: editablePrompt.length })}</span>
                 </div>
                 <textarea value={editablePrompt} onChange={e => setEditablePrompt(e.target.value)}
                   rows={10}
@@ -864,29 +865,29 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* Breakdown sections */}
               {(result.role || result.context || result.tone || result.rules || result.constraints) && (
                 <div>
-                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">Phân tích chi tiết</h4>
+                  <h4 className="text-xs font-semibold text-muted-foreground mb-2">{tr('Phân tích chi tiết')}</h4>
                   <div className="grid grid-cols-2 gap-2">
                     {result.role && (
                       <div className="bg-card rounded-lg p-3 border border-border/50">
-                        <p className="text-[10px] font-semibold text-blue-400 mb-1"><TargetIcon className="w-4 h-4 inline" /> Vai trò AI</p>
+                        <p className="text-[10px] font-semibold text-blue-400 mb-1">{trx('<0/> Vai trò AI', { 0: <TargetIcon className="w-4 h-4 inline" /> })}</p>
                         <p className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{result.role.replace(/^🎯\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                     {result.context && (
                       <div className="bg-card rounded-lg p-3 border border-border/50">
-                        <p className="text-[10px] font-semibold text-green-400 mb-1"><BrainIcon className="w-4 h-4 inline" /> Context</p>
+                        <p className="text-[10px] font-semibold text-green-400 mb-1">{trx('<0/> Context', { 0: <BrainIcon className="w-4 h-4 inline" /> })}</p>
                         <p className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{result.context.replace(/^🧠\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                     {result.tone && (
                       <div className="bg-card rounded-lg p-3 border border-border/50">
-                        <p className="text-[10px] font-semibold text-purple-400 mb-1"><UsersIcon className="w-4 h-4 inline" /> Tone</p>
+                        <p className="text-[10px] font-semibold text-purple-400 mb-1">{trx('<0/> Tone', { 0: <UsersIcon className="w-4 h-4 inline" /> })}</p>
                         <p className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{result.tone.replace(/^🗣️\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
                     {result.constraints && (
                       <div className="bg-card rounded-lg p-3 border border-border/50">
-                        <p className="text-[10px] font-semibold text-red-400 mb-1">Rang buoc</p>
+                        <p className="text-[10px] font-semibold text-red-400 mb-1">{tr('Ràng buộc')}</p>
                         <p className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{result.constraints.replace(/^❌\s*/, '').substring(0, 200)}</p>
                       </div>
                     )}
@@ -897,8 +898,8 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {/* Improve panel */}
               {showImprove && (
                 <div className="bg-card rounded-xl p-4 border border-purple-600/30">
-                  <h4 className="text-xs font-semibold text-purple-400 mb-2"><SparklesIcon className="w-4 h-4 inline" /> Cai thien prompt</h4>
-                  <p className="text-[10px] text-muted-foreground mb-3">Chọn hướng cải thiện - AI sẽ viết lại prompt</p>
+                  <h4 className="text-xs font-semibold text-purple-400 mb-2">{trx('<0/> Cải thiện prompt', { 0: <SparklesIcon className="w-4 h-4 inline" /> })}</h4>
+                  <p className="text-[10px] text-muted-foreground mb-3">{tr('Chọn hướng cải thiện - AI sẽ viết lại prompt')}</p>
                   <div className="grid grid-cols-2 gap-2">
                     {IMPROVE_OPTIONS.map(opt => (
                       <button key={opt.key} onClick={() => handleImprove(opt.key)} disabled={improveLoading}
@@ -910,8 +911,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                   </div>
                   {improveLoading && (
                     <div className="flex items-center gap-2 mt-3 text-[10px] text-purple-400">
-                      <Spinner size={3} />
-                      Đang cải thiện prompt...
+                      {trx('<0/>Đang cải thiện prompt...', { 0: <Spinner size={3} /> })}
                     </div>
                   )}
                 </div>
@@ -921,12 +921,12 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {showChatRefine && (
                 <div className="bg-card rounded-xl border border-blue-600/30 overflow-hidden">
                   <div className="px-4 py-2 border-b border-border/50">
-                    <h4 className="text-xs font-semibold text-blue-400"><ChatIcon className="w-4 h-4 inline" /> Chỉnh sửa bằng hội thoại</h4>
-                    <p className="text-[10px] text-muted-foreground">Chat với AI để tinh chỉnh prompt</p>
+                    <h4 className="text-xs font-semibold text-blue-400">{trx('<0/> Chỉnh sửa bằng hội thoại', { 0: <ChatIcon className="w-4 h-4 inline" /> })}</h4>
+                    <p className="text-[10px] text-muted-foreground">{tr('Chat với AI để tinh chỉnh prompt')}</p>
                   </div>
                   <div className="max-h-40 overflow-y-auto p-3 space-y-2">
                     {chatRefineHistory.length === 0 && (
-                      <p className="text-[10px] text-muted-foreground text-center py-2">VD: "Prompt này hơi cứng", "Thêm phần xử lý từ chối"</p>
+                      <p className="text-[10px] text-muted-foreground text-center py-2">{tr('VD: "Prompt này hơi cứng", "Thêm phần xử lý từ chối"')}</p>
                     )}
                     {chatRefineHistory.map((msg, i) => (
                       <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -950,7 +950,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                   <div className="px-3 pb-3 flex items-center gap-2">
                     <input type="text" value={chatRefineInput} onChange={e => setChatRefineInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatRefineSend(); } }}
-                      placeholder="Nhập yêu cầu chỉnh sửa..."
+                      placeholder={tr('Nhập yêu cầu chỉnh sửa...')}
                       className="flex-1 bg-muted border border-input rounded-lg px-3 py-1.5 text-[10px] text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"/>
                     <button onClick={handleChatRefineSend} disabled={chatRefineLoading || !chatRefineInput.trim()}
                       className="w-7 h-7 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 flex items-center justify-center text-white transition-colors flex-shrink-0">
@@ -965,7 +965,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
           {/* ─── Library tab ─── */}
           {tab === 'library' && !previewTemplate && (
             <div className="p-5">
-              <p className="text-[10px] text-muted-foreground mb-3">Chọn template có sẵn - preview → áp dụng ngay</p>
+              <p className="text-[10px] text-muted-foreground mb-3">{tr('Chọn template có sẵn - preview → áp dụng ngay')}</p>
               <div className="grid grid-cols-2 gap-2">
                 {PROMPT_TEMPLATES.map(tpl => (
                   <button key={tpl.id} onClick={() => setPreviewTemplate(tpl)}
@@ -985,7 +985,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
           {tab === 'library' && previewTemplate && (
             <div className="p-5 space-y-3">
               <button onClick={() => setPreviewTemplate(null)} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                ← Quay lại thư viện
+                {tr('← Quay lại thư viện')}
               </button>
               <div className="flex items-center gap-2">
                 <span className="text-xl">{previewTemplate.icon}</span>
@@ -998,12 +998,12 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                 <pre className="text-[11px] text-foreground/80 leading-relaxed whitespace-pre-wrap font-sans">{previewTemplate.prompt}</pre>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => { onApply(previewTemplate.prompt); showNotification('Da ap dung template!', 'success'); onClose(); }}
+                <button onClick={() => { onApply(previewTemplate.prompt); showNotification(tr('Đã áp dụng template!'), 'success'); onClose(); }}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors">
-                  <CheckIcon className="w-4 h-4 inline" /> Ap dung
+                  {trx('<0/> Áp dụng', { 0: <CheckIcon className="w-4 h-4 inline" /> })}
                 </button>
-                <button onClick={() => { navigator.clipboard.writeText(previewTemplate.prompt); showNotification('Da copy!', 'success'); }}
-                  className="px-4 py-2 bg-muted hover:bg-accent text-foreground text-xs rounded-lg transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
+                <button onClick={() => { navigator.clipboard.writeText(previewTemplate.prompt); showNotification(tr('Đã copy!'), 'success'); }}
+                  className="px-4 py-2 bg-muted hover:bg-accent text-foreground text-xs rounded-lg transition-colors">{trx('<0/> Copy', { 0: <ClipboardListIcon className="w-4 h-4 inline" /> })}
                 </button>
                 <button onClick={() => {
                   setEditablePrompt(previewTemplate.prompt);
@@ -1012,7 +1012,7 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
                   setStep(5);
                 }}
                   className="px-4 py-2 bg-muted hover:bg-accent text-foreground text-xs rounded-lg transition-colors">
-                  <EditIcon className="w-4 h-4 inline" /> Chinh sua
+                  {trx('<0/> Chỉnh sửa', { 0: <EditIcon className="w-4 h-4 inline" /> })}
                 </button>
               </div>
             </div>
@@ -1026,22 +1026,22 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
               {step > 1 && (
                 <button onClick={() => setStep((step - 1) as WizardStep)}
                   className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-                  ← Quay lại
+                  {tr('← Quay lại')}
                 </button>
               )}
               <div className="flex-1"/>
-              <span className="text-[10px] text-muted-foreground">Bước {step}/4</span>
+              <span className="text-[10px] text-muted-foreground">{trx('Bước {{step}}/4', { step })}</span>
               {step < 4 && (
                 <button onClick={() => setStep((step + 1) as WizardStep)}
                   disabled={step === 1 && !selectedIndustry}
                   className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50">
-                  Tiếp theo →
+                  {tr('Tiếp theo →')}
                 </button>
               )}
               {step === 4 && (
                 <button onClick={handleGenerate} disabled={generating || !assistantId}
                   className="px-4 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-xs font-medium rounded-lg transition-all disabled:opacity-50">
-                  {generating ? <><Spinner size={3} /> Dang tao...</> : <><SparklesIcon className="w-4 h-4 inline" /> Tao prompt</>}
+                  {generating ? <>{trx('<0/> Đang tạo...', { 0: <Spinner size={3} /> })}</> : <>{trx('<0/> Tạo prompt', { 0: <SparklesIcon className="w-4 h-4 inline" /> })}</>}
                 </button>
               )}
             </>
@@ -1049,31 +1049,31 @@ Viết tự nhiên, cụ thể, dùng emoji, có thể copy dùng ngay. Không d
 
           {tab === 'create' && step === 5 && result && (
             <>
-              <button onClick={resetWizard} className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"><RefreshIcon className="w-4 h-4 inline" /> Làm lại từ đầu
+              <button onClick={resetWizard} className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">{trx('<0/> Làm lại từ đầu', { 0: <RefreshIcon className="w-4 h-4 inline" /> })}
               </button>
               <div className="flex-1"/>
               <button onClick={() => setShowChatRefine(!showChatRefine)}
-                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showChatRefine ? 'bg-blue-600/20 text-blue-400 border-blue-600/40' : 'text-muted-foreground hover:text-foreground border-input'}`}><ChatIcon className="w-4 h-4 inline" /> Chat chỉnh sửa
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showChatRefine ? 'bg-blue-600/20 text-blue-400 border-blue-600/40' : 'text-muted-foreground hover:text-foreground border-input'}`}>{trx('<0/> Chat chỉnh sửa', { 0: <ChatIcon className="w-4 h-4 inline" /> })}
               </button>
               <button onClick={() => setShowImprove(!showImprove)}
                 className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${showImprove ? 'bg-purple-600/20 text-purple-400 border-purple-600/40' : 'text-muted-foreground hover:text-foreground border-input'}`}>
-                <SparklesIcon className="w-4 h-4 inline" /> Cai thien
+                {trx('<0/> Cải thiện', { 0: <SparklesIcon className="w-4 h-4 inline" /> })}
               </button>
               <button onClick={handleRegenerate} disabled={generating}
                 className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-input rounded-lg transition-colors disabled:opacity-50">
-                {generating ? <Spinner size={3} /> : <RefreshIcon className="w-4 h-4 inline" />} Tao lai
+                {generating ? <Spinner size={3} /> : <RefreshIcon className="w-4 h-4 inline" />} {tr('Tạo lại')}
               </button>
-              <button onClick={handleCopy} className="px-3 py-1.5 text-xs bg-muted hover:bg-accent text-foreground rounded-lg transition-colors"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
+              <button onClick={handleCopy} className="px-3 py-1.5 text-xs bg-muted hover:bg-accent text-foreground rounded-lg transition-colors">{trx('<0/> Copy', { 0: <ClipboardListIcon className="w-4 h-4 inline" /> })}
               </button>
               <button onClick={handleApply}
                 className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors">
-                <CheckIcon className="w-4 h-4 inline" /> Ap dung
+                {trx('<0/> Áp dụng', { 0: <CheckIcon className="w-4 h-4 inline" /> })}
               </button>
             </>
           )}
 
           {tab === 'library' && !previewTemplate && (
-            <div className="flex-1 text-center text-[10px] text-muted-foreground">{PROMPT_TEMPLATES.length} templates có sẵn</div>
+            <div className="flex-1 text-center text-[10px] text-muted-foreground">{trx('{{count}} templates có sẵn', { count: PROMPT_TEMPLATES.length })}</div>
           )}
         </div>
       </div>

@@ -1,26 +1,26 @@
 /**
- * Mini App và nút đăng nhập của bot Telegram phía renderer: trạng thái mở (TelegramMiniAppHost đặt 1 lần ở App).
- * Bấm nút / link mở chúng ở lib/chat/links/chatLinks (như client Telegram: Mini App mở trong app, Mini App tự biết
- * người dùng qua initData; nút đăng nhập hỏi rồi mở link đã đăng nhập bằng trình duyệt của máy).
+ * Mini Apps and the login buttons of Telegram bots on the renderer side: open state (TelegramMiniAppHost is set once in App).
+ * Tapping a button / link opens them through lib/chat/links/chatLinks (as the Telegram client does: the Mini App opens in the app, the Mini App knows
+ * the user through initData; the login button asks first, then opens the logged-in link in the machine's browser).
  */
 import React from 'react';
 
-/** inline: nút trong tin · menu: nút menu bot · main: app chính · app: Mini App theo tên (t.me/<bot>/<app>). */
+/** inline: a button in a message · menu: the bot's menu button · main: the main app · app: a Mini App by name (t.me/<bot>/<app>). */
 export type MiniAppKind = 'inline' | 'menu' | 'main' | 'app';
 
 export interface MiniAppRequest {
   key: number;
   accountId: string;
   botId: string;
-  /** Hội thoại nơi mở (tin của bot trong nhóm → nhóm); mặc định chat với bot. */
+  /** Conversation where it opens (a bot's message in a group → the group); by default the chat with the bot. */
   peerId: string;
   kind: MiniAppKind;
-  /** Link của nút / menu (inline, menu); app chính không cần. */
+  /** Link of the button / menu (inline, menu); the main app does not need one. */
   url?: string;
-  /** Tên ngắn của Mini App (kind app). */
+  /** Short name of the Mini App (kind app). */
   appName?: string;
   startParam?: string;
-  /** Tên bot: đầu khung Mini App và lời hỏi quyền. */
+  /** Bot name: the top of the Mini App frame and the permission prompt. */
   botName?: string;
 }
 
@@ -30,7 +30,7 @@ export interface UrlAuthRequest {
   peerId: string;
   msgId: number;
   buttonId: number;
-  /** Link gốc của nút: mở khi không đăng nhập. */
+  /** Original link of the button: opened when not logged in. */
   url: string;
 }
 

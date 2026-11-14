@@ -10,12 +10,13 @@ import { summarizeMixedOutcome, type MixedActionOutcome } from '../../shared/crm
 import { campaignAutoResumeAt, campaignAutoStopReason, campaignFlag, shouldAutoStopCampaign } from '../../shared/crm/campaignAutoStop';
 import type { CRMCampaign } from '../../models';
 import { automationsPausedAfterRestore } from '../cloudflare/restoreGate';
+import { tr } from '../../shared/i18n';
 
 /**
- * CRMQueueService - chạy trong main process
- * Token bucket per account: max 60 tin/giờ, refill 1 token mỗi 60s
- * Dispatcher loop: kiểm tra mỗi 5s, nếu đủ delay → gửi 1 tin rồi đợi
- * Tự dừng khi N liên hệ lỗi liên tiếp (cài ở từng chiến dịch, mặc định không dừng): trackFailureStreak; "Mai gửi tiếp":
+ * CRMQueueService - runs in the main process
+ * Token bucket per account: max 60 messages/hour, refill 1 token every 60s
+ * Dispatcher loop: checks every 5s; if the delay has passed → send 1 message, then wait
+ * Auto-stops after N contacts fail in a row (set per campaign, default: never stop): trackFailureStreak; "Mai gửi tiếp" (Resume tomorrow):
  * scheduleAutoResume
  */
 class CRMQueueService {
@@ -23,26 +24,26 @@ class CRMQueueService {
     private timers: Map<string, ReturnType<typeof setInterval>> = new Map();
     private lastSentAt: Map<string, number> = new Map();
     private isProcessing: Map<string, boolean> = new Map();
-    // Token bucket: max 60/giờ - refill 1 token mỗi 60s
+    // Token bucket: max 60/hour - refill 1 token every 60s
     private tokens: Map<string, number> = new Map();
     private lastRefillAt: Map<string, number> = new Map();
     // Daily limit tracking: campaignId → paused due to daily limit
     private dailyPausedCampaigns: Map<number, boolean> = new Map();
-    // Tự dừng "Mai gửi tiếp": một hẹn giờ cho chiến dịch cần chạy lại sớm nhất (mọi tài khoản)
+    // Auto-stop "Mai gửi tiếp" (Resume tomorrow): one timer for the campaign that needs to run again soonest (all accounts)
     private autoResumeTimer: ReturnType<typeof setTimeout> | null = null;
 
     public readonly MAX_TOKENS = 60;
-    private readonly REFILL_INTERVAL_MS = 60 * 1000;  // 1 phút / token → 60/giờ
-    private readonly CHECK_INTERVAL_MS = 5000;          // kiểm tra mỗi 5s
-    private readonly PHONE_RESOLVE_TIMEOUT_MS = 15_000; // timeout resolve phone → tránh treo vô hạn
-    private readonly AUTO_RESUME_RECHECK_MS = 60 * 60 * 1000; // máy ngủ / đổi giờ: hẹn giờ chạy lại xét lại ít nhất mỗi giờ
+    private readonly REFILL_INTERVAL_MS = 60 * 1000;  // 1 minute / token → 60/hour
+    private readonly CHECK_INTERVAL_MS = 5000;          // check every 5s
+    private readonly PHONE_RESOLVE_TIMEOUT_MS = 15_000; // timeout for resolving the phone → avoid hanging forever
+    private readonly AUTO_RESUME_RECHECK_MS = 60 * 60 * 1000; // machine asleep / clock changed: the wake-up timer re-checks at least once an hour
 
     public static getInstance(): CRMQueueService {
         if (!CRMQueueService.instance) CRMQueueService.instance = new CRMQueueService();
         return CRMQueueService.instance;
     }
 
-    /** Bắt đầu dispatcher cho account */
+    /** Start the dispatcher for the account */
     public startForAccount(zaloId: string): void {
         if (this.timers.has(zaloId)) return;
         Logger.log(`[CRMQueue] ▶ Starting queue for ${zaloId}`);
@@ -50,14 +51,14 @@ class CRMQueueService {
             this.tokens.set(zaloId, this.MAX_TOKENS);
             this.lastRefillAt.set(zaloId, Date.now());
         } else {
-            // Queue đã từng chạy trước đó → refill ngay dựa trên thời gian đã qua
+            // The queue ran before → refill now based on the time elapsed
             this.refillTokens(zaloId);
         }
         const timer = setInterval(() => this.process(zaloId), this.CHECK_INTERVAL_MS);
         this.timers.set(zaloId, timer);
     }
 
-    /** Dừng dispatcher cho account */
+    /** Stop the dispatcher for the account */
     public stopForAccount(zaloId: string): void {
         const timer = this.timers.get(zaloId);
         if (timer) { clearInterval(timer); this.timers.delete(zaloId); }
@@ -78,7 +79,7 @@ class CRMQueueService {
         });
     }
 
-    /** Dừng nếu không còn campaign active */
+    /** Stop if no campaign is active any more */
     public checkAndStopIfIdle(zaloId: string): void {
         const hasActive = DatabaseService.getInstance().hasActiveCampaigns(zaloId);
         if (!hasActive) this.stopForAccount(zaloId);
@@ -95,15 +96,15 @@ class CRMQueueService {
         };
     }
 
-    /** Khởi động lại tất cả campaigns đang active (sau khi app restart) */
+    /** Restart all active campaigns (after the app restarts) */
     public resumeActiveCampaigns(): void {
-        // Vừa khôi phục DB từ Cloudflare: chờ người dùng xác nhận máy cũ đã tắt rồi mới chạy tiếp (tránh gửi hai lần).
+        // Just restored the DB from Cloudflare: wait for the user to confirm the old machine is off before running again (avoid sending twice).
         if (automationsPausedAfterRestore()) {
             Logger.warn('[CRMQueue] resumeActiveCampaigns skipped: automations paused after restore');
             return;
         }
         try {
-            // "Mai gửi tiếp": chiến dịch tự dừng đã tới giờ chạy lại trong lúc app tắt → chạy luôn; còn lại hẹn giờ
+            // "Mai gửi tiếp" (Resume tomorrow): an auto-stopped campaign whose re-run time passed while the app was off → run now; otherwise schedule a timer
             this.resumeDueCampaigns();
             const owners = DatabaseService.getInstance().getActiveCampaignOwners();
             for (const zaloId of owners) {
@@ -115,7 +116,7 @@ class CRMQueueService {
         }
     }
 
-    /** Hẹn giờ chạy lại chiến dịch tự dừng "Mai gửi tiếp" sớm nhất (gọi sau khi tự dừng + lúc mở app). */
+    /** Schedule the earliest re-run of the auto-stopped "Mai gửi tiếp" (Resume tomorrow) campaign (called after an auto-stop and when the app opens). */
     private scheduleAutoResume(): void {
         if (this.autoResumeTimer) { clearTimeout(this.autoResumeTimer); this.autoResumeTimer = null; }
         let next = 0;
@@ -123,13 +124,13 @@ class CRMQueueService {
         if (!next) return;
         const wait = Math.min(Math.max(next - Date.now(), 1000), this.AUTO_RESUME_RECHECK_MS);
         this.autoResumeTimer = setTimeout(() => { this.autoResumeTimer = null; this.resumeDueCampaigns(); }, wait);
-        // Không giữ app sống lúc thoát (như các hẹn giờ hàng đợi được dọn khi tắt app)
+        // Do not keep the app alive on exit (like the queue timers, which are cleaned up when the app closes)
         (this.autoResumeTimer as any)?.unref?.();
     }
 
-    /** Chạy lại chiến dịch tự dừng "Mai gửi tiếp" đã tới giờ, rồi hẹn lần sau. */
+    /** Re-run the auto-stopped "Mai gửi tiếp" (Resume tomorrow) campaign that is due, then schedule the next one. */
     private resumeDueCampaigns(): void {
-        // Vừa khôi phục DB: chờ người dùng xác nhận (resumeAutomationsAfterRestore gọi lại resumeActiveCampaigns)
+        // Just restored the DB: wait for the user to confirm (resumeAutomationsAfterRestore calls resumeActiveCampaigns again)
         if (automationsPausedAfterRestore()) return;
         try {
             const db = DatabaseService.getInstance();
@@ -182,9 +183,9 @@ class CRMQueueService {
         // ── Daily send limit check ──────────────────────────────────────
         const campaignData = db.getCRMCampaign(item.campaign_id);
 
-        // ── Daily start time (tách riêng, không phụ thuộc daily_send_limit) ──
-        // Nếu daily_start_time đã qua hôm nay → chạy luôn
-        // Nếu chưa đến → đợi
+        // ── Daily start time (separate, does not depend on daily_send_limit) ──
+        // If daily_start_time has already passed today → run now
+        // If not yet → wait
         if (campaignData && campaignData.daily_start_time) {
             const now = new Date();
             const [hh, mm] = campaignData.daily_start_time.split(':').map(Number);
@@ -198,7 +199,7 @@ class CRMQueueService {
             }
         }
 
-        // ── Daily limit (chỉ áp dụng nếu có giới hạn) ───────────────────
+        // ── Daily limit (applies only if a limit is set) ───────────────────
         if (campaignData && campaignData.daily_send_limit && campaignData.daily_send_limit > 0) {
             const dailyCount = db.getDailySentCountForCampaign(item.campaign_id);
             if (dailyCount >= campaignData.daily_send_limit) {
@@ -210,7 +211,7 @@ class CRMQueueService {
             this.dailyPausedCampaigns.delete(item.campaign_id);
         }
 
-        // Check delay: random between delay_min_seconds and delay_max_seconds (range-based), tối thiểu 30 giây
+        // Check delay: random between delay_min_seconds and delay_max_seconds (range-based), minimum 30 seconds
         const itemAny = item as any;
         const rawMin = itemAny.delay_min_seconds ?? Math.max(CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, (item.delay_seconds || 60) - 10);
         const rawMax = itemAny.delay_max_seconds ?? Math.max(rawMin, (item.delay_seconds || 60) + 10);
@@ -230,19 +231,19 @@ class CRMQueueService {
             return;
         }
 
-        // Tự dừng khi lỗi, "Chỉ tính người lạ" (Zalo): Zalo chặn spam theo tin cho người lạ, nhắn bạn bè / nhóm vẫn được
-        // → bạn bè và nhóm không đổi chuỗi lỗi liên tiếp. Kênh khác không có danh sách bạn bè → tính mọi liên hệ.
+        // Auto-stop on errors. "Chỉ tính người lạ" (Count strangers only) (Zalo): Zalo blocks spam by message to strangers, but messaging friends / groups is still allowed
+        // → friends and groups do not change the consecutive error streak. Other channels have no friend list → every contact counts.
         const strangersOnly = channel === 'zalo' && campaignFlag(campaignData?.stop_strangers_only) === 1;
         let strangerTarget = (item as any).contact_type !== 'group' && Number((item as any).is_friend) !== 1;
         const outcome = (failed: boolean, error?: string): StreakOutcome => ({
             failed, error, strangersOnly, counted: !strangersOnly || strangerTarget,
         });
 
-        // ── Bắt đầu processing ──────────────────────────────────────────────
-        // Đặt isProcessing bên ngoài try, nhưng sẽ reset trong finally
+        // ── Start processing ──────────────────────────────────────────────
+        // Set isProcessing outside the try, but reset it in finally
         this.isProcessing.set(zaloId, true);
 
-        // Khai báo tất cả vars ở đây để catch block có thể truy cập
+        // Declare all vars here so the catch block can access them
         let effectiveContactId = item.contact_id;
         let effectiveDisplayName = item.display_name || '';
         let campaignType: string = 'message';
@@ -256,18 +257,18 @@ class CRMQueueService {
         let logBase: any = {};
         let describeBlock: (b: any) => string = () => '';
         let substitute: (tpl: string) => string = (t) => t;
-        // Trạng thái thật của liên hệ sau lượt gửi — báo cho màn chiến dịch (trước đây luôn báo 'sent' kể cả khi
-        // nhánh nhóm / tin nhắn vừa ghi 'failed' → màn hiện "Đã gửi" tới khi tải lại)
+        // The real state of the contact after the send round: reported to the campaign screen (it used to always report 'sent', even when
+        // the group / message branch had just written 'failed' → the screen shows "Đã gửi" (Sent) until it reloads).
         let outcomeStatus: 'sent' | 'failed' = 'sent';
         let outcomeError: string | undefined;
 
         try {
             db.updateCampaignContactStatus(item.id!, 'sending');
 
-            // ── Chỉ Zalo đổi SĐT → tài khoản lúc gửi (findUser). Kênh khác: người nhận "phone:…" (thêm từ bản cũ, giờ
-            //    TargetSelector ẩn "Theo SĐT") không gửi được → báo lỗi rõ ngay, không tốn lượt gửi
+            // ── Only Zalo maps the phone number to an account at send time (findUser). Other channels: a recipient "phone:…" (added in an older version, now
+            //    TargetSelector hides "Theo SĐT" (By phone)) cannot be sent → report a clear error at once, without using a send slot
             if (channel !== 'zalo' && item.contact_id.startsWith('phone:')) {
-                const phoneError = 'Kênh này không tra được SĐT ra tài khoản — hãy thêm người nhận từ danh bạ';
+                const phoneError = tr('Kênh này không tra được SĐT ra tài khoản — hãy thêm người nhận từ danh bạ');
                 db.updateCampaignContactStatus(item.id!, 'failed', phoneError);
                 db.save();
                 this.broadcastProgress(zaloId, item.campaign_id, item.contact_id, 'failed', phoneError);
@@ -283,17 +284,17 @@ class CRMQueueService {
                 const resolved = await this.resolvePhoneContact(phone, conn.api);
                 if (!resolved) {
                     Logger.warn(`[CRMQueue] Phone ${phone} not found on Zalo, marking failed`);
-                    db.updateCampaignContactStatus(item.id!, 'failed', 'Không tìm thấy SĐT trên Zalo');
+                    db.updateCampaignContactStatus(item.id!, 'failed', tr('Không tìm thấy SĐT trên Zalo'));
                     db.save();
-                    this.broadcastProgress(zaloId, item.campaign_id, item.contact_id, 'failed', 'Không tìm thấy SĐT trên Zalo');
-                    // Tài khoản bị giới hạn tra SĐT cũng trả "không tìm thấy" → tính vào chuỗi lỗi liên tiếp (SĐT lạ = người lạ)
-                    this.finishContact(zaloId, item.campaign_id, campaignData, outcome(true, 'Không tìm thấy SĐT trên Zalo'));
+                    this.broadcastProgress(zaloId, item.campaign_id, item.contact_id, 'failed', tr('Không tìm thấy SĐT trên Zalo'));
+                    // An account that is limited on phone lookups also returns "không tìm thấy" (not found) → counts toward the consecutive error streak (an unknown phone = a stranger)
+                    this.finishContact(zaloId, item.campaign_id, campaignData, outcome(true, tr('Không tìm thấy SĐT trên Zalo')));
                     this.isProcessing.set(zaloId, false);
                     return;
                 }
                 effectiveContactId = resolved.uid;
                 effectiveDisplayName = resolved.name;
-                try { strangerTarget = !db.checkIsFriend(zaloId, resolved.uid); } catch { /* giữ: SĐT lạ = người lạ */ }
+                try { strangerTarget = !db.checkIsFriend(zaloId, resolved.uid); } catch { /* keep: an unknown phone = a stranger */ }
                 try { db.updateCampaignContactId(item.id!, resolved.uid, resolved.name); } catch { /* non-critical */ }
                 Logger.log(`[CRMQueue] Phone ${phone} → UID ${resolved.uid} (${resolved.name})`);
             }
@@ -323,7 +324,7 @@ class CRMQueueService {
 
             campaignType = (item as any).campaign_type || 'message';
             isGroup = (item as any).contact_type === 'group';
-            friendMsg = substitute((item as any).friend_request_message || '') || substitute(item.template_message || '') || 'Xin chào!';
+            friendMsg = substitute((item as any).friend_request_message || '') || substitute(item.template_message || '') || tr('Xin chào!');
 
             let mixedConfig: { actions?: string[]; group_ids?: string[] } = {};
             try { mixedConfig = JSON.parse((item as any).mixed_config || '{}'); } catch {}
@@ -352,7 +353,7 @@ class CRMQueueService {
                 blocksToSend = allBlocks;
             }
 
-            // Helper: send one block (text + images) — order / "gộp ảnh + chữ" from the template options
+            // Helper: send one block (text + images): order / "gộp ảnh + chữ" (merge images + text) from the template options
             const sendBlock = (block: ContentBlock, threadId: string, threadType: number): Promise<any[]> =>
                 sendCampaignBlock(block, substitute(block.text || ''), {
                     channel,
@@ -372,19 +373,19 @@ class CRMQueueService {
             const firstBlockText = firstBlock ? displayText(firstBlock.text || '') : '';
             const firstBlockImgCount = firstBlock?.images?.filter(Boolean).length || 0;
             message = firstBlockText.trim()
-              ? firstBlockText + (firstBlockImgCount > 0 ? ` + ${firstBlockImgCount} ảnh` : '')
+              ? firstBlockText + (firstBlockImgCount > 0 ? tr(' + {{firstBlockImgCount}} ảnh', { firstBlockImgCount }) : '')
               : firstBlockImgCount > 0
-                ? `[${firstBlockImgCount} ảnh]`
-                : '(trống)';
+                ? tr('[{{firstBlockImgCount}} ảnh]', { firstBlockImgCount })
+                : tr('(trống)');
 
-            // Helper: describe block content for log (dùng trong catch)
+            // Helper: describe the block content for the log (used in catch)
             describeBlock = (block: ContentBlock): string => {
                 const txt = displayText(block.text || '').trim();
                 const imgCount = (block.images || []).filter(Boolean).length;
-                if (txt && imgCount > 0) return `${txt} + ${imgCount} ảnh`;
+                if (txt && imgCount > 0) return tr('{{txt}} + {{imgCount}} ảnh', { txt, imgCount });
                 if (txt) return txt;
-                if (imgCount > 0) return `[${imgCount} ảnh]`;
-                return '(trống)';
+                if (imgCount > 0) return tr('[{{imgCount}} ảnh]', { imgCount });
+                return tr('(trống)');
             };
 
             // Common log base fields
@@ -432,12 +433,12 @@ class CRMQueueService {
 
             // ── Actual send logic ──────────────────────────────────────────
             if (isGroup) {
-                // ── Gửi vào nhóm ─────────────────────────────────────────────────
+                // ── Send to a group ─────────────────────────────────────────────────
                 const threadType = 1;
                 const result = await sendBlocks(blocksToSend, effectiveContactId, threadType);
                 const logMsg = sendMode === 'all'
-                    ? `[Nhóm] ${result.sent}/${blocksToSend.length} nội dung: ${blocksToSend.map(describeBlock).join(' | ')}`
-                    : `[Nhóm] ${message}`;
+                    ? tr('[Nhóm] {{sent}}/{{count}} nội dung: {{v1}}', { sent: result.sent, count: blocksToSend.length, v1: blocksToSend.map(describeBlock).join(' | ') })
+                    : tr('[Nhóm] {{message}}', { message });
                 outcomeStatus = result.errors.length > 0 ? 'failed' : 'sent';
                 outcomeError = result.errors.join('; ') || undefined;
                 db.updateCampaignContactStatus(item.id!, outcomeStatus, outcomeError);
@@ -447,7 +448,7 @@ class CRMQueueService {
                     data_response: result.responses.length > 0 ? JSON.stringify(result.responses.length === 1 ? result.responses[0] : result.responses) : '' });
 
             } else if (campaignType === 'mixed' && mixedActions.length > 0) {
-                // ── Hỗn hợp (mới) ────────────────────────────────────────────────
+                // ── Mixed (new) ────────────────────────────────────────────────
                 const outcomes: MixedActionOutcome[] = [];
                 for (const action of mixedActions) {
                     try {
@@ -455,8 +456,8 @@ class CRMQueueService {
                             const threadType = 0;
                             const result = await sendBlocks(blocksToSend, effectiveContactId, threadType);
                             const logMsg = sendMode === 'all'
-                                ? `[Hỗn hợp/Tin nhắn] ${result.sent}/${blocksToSend.length} nội dung: ${blocksToSend.map(describeBlock).join(' | ')}`
-                                : `[Hỗn hợp/Tin nhắn] ${message}`;
+                                ? tr('[Hỗn hợp/Tin nhắn] {{sent}}/{{count}} nội dung: {{v1}}', { sent: result.sent, count: blocksToSend.length, v1: blocksToSend.map(describeBlock).join(' | ') })
+                                : tr('[Hỗn hợp/Tin nhắn] {{message}}', { message });
                             db.saveSendLog({ ...logBase, message: logMsg, status: result.errors.length > 0 ? 'failed' : 'sent',
                                 error: result.errors.join('; ') || '', send_type: 'message',
                                 data_request: JSON.stringify({ type: 'sendMessage', threadId: effectiveContactId, threadType, blocks: blocksToSend.length, sent: result.sent }),
@@ -467,7 +468,7 @@ class CRMQueueService {
                         } else if (action === 'friend_request') {
                             const req = { type: 'sendFriendRequest', msg: friendMsg, userId: effectiveContactId };
                             const resp = await (conn.api as any).sendFriendRequest(friendMsg, effectiveContactId);
-                            db.saveSendLog({ ...logBase, message: `[Hỗn hợp/Kết bạn] ${friendMsg}`, status: 'sent', send_type: 'friend_request',
+                            db.saveSendLog({ ...logBase, message: tr('[Hỗn hợp/Kết bạn] {{friendMsg}}', { friendMsg }), status: 'sent', send_type: 'friend_request',
                                 data_request: JSON.stringify(req), data_response: JSON.stringify(resp) });
                             outcomes.push({ action, ok: true });
                             Logger.log(`[CRMQueue] Mixed/friend_request ✅ → ${effectiveContactId}`);
@@ -476,7 +477,7 @@ class CRMQueueService {
                             const req = { type: 'inviteUserToGroups', userId: effectiveContactId, groupIds: mixedGroupIds };
                             const resp = await (conn.api as any).inviteUserToGroups(effectiveContactId, mixedGroupIds);
                             db.saveSendLog({ ...logBase,
-                                message: `[Hỗn hợp/Mời nhóm] Mời vào ${mixedGroupIds.length} nhóm: ${mixedGroupIds.join(', ')}`,
+                                message: tr('[Hỗn hợp/Mời nhóm] Mời vào {{count}} nhóm: {{v1}}', { count: mixedGroupIds.length, v1: mixedGroupIds.join(', ') }),
                                 status: 'sent', send_type: 'invite_to_group',
                                 data_request: JSON.stringify(req), data_response: JSON.stringify(resp) });
                             outcomes.push({ action, ok: true });
@@ -491,21 +492,21 @@ class CRMQueueService {
                             errorCode: errCode !== -1 ? errCode : undefined,
                         };
                         db.saveSendLog({ ...logBase,
-                            message: `[Hỗn hợp/${action}] Lỗi: ${actionErr.message}`,
+                            message: tr('[Hỗn hợp/{{action}}] Lỗi: {{message}}', { action, message: actionErr.message }),
                             status: 'failed', error: actionErr.message,
                             data_request: JSON.stringify(req), data_response: JSON.stringify(errResponse) });
                         Logger.warn(`[CRMQueue] Mixed/${action} ❌ → ${effectiveContactId}: ${actionErr.message}`);
                         outcomes.push({ action, ok: false, error: actionErr.message });
                     }
                 }
-                // Tất cả hành động lỗi → "Lỗi"; một phần → "Đã gửi" kèm lỗi các hành động hỏng (shared/crm/campaignOutcome)
+                // All action errors → "Lỗi" (Error); partly → "Đã gửi" (Sent) with the errors of the failed actions (shared/crm/campaignOutcome)
                 const summary = summarizeMixedOutcome(outcomes);
                 outcomeStatus = summary.status;
                 outcomeError = summary.error;
                 db.updateCampaignContactStatus(item.id!, outcomeStatus, outcomeError);
 
             } else if (campaignType === 'mixed') {
-                // ── Hỗn hợp (cũ / fallback) ──────────────────────────────────────
+                // ── Mixed (old / fallback) ──────────────────────────────────────
                 let actionLabel = 'message';
                 let mixedResp: any[] = [];
                 try {
@@ -520,39 +521,39 @@ class CRMQueueService {
                 }
                 db.updateCampaignContactStatus(item.id!, 'sent');
                 db.saveSendLog({ ...logBase,
-                    message: actionLabel === 'message' ? message : `[Kết bạn dự phòng] ${friendMsg}`,
+                    message: actionLabel === 'message' ? message : tr('[Kết bạn dự phòng] {{friendMsg}}', { friendMsg }),
                     status: 'sent',
                     send_type: actionLabel === 'message' ? 'message' : 'friend_request',
                     data_request: JSON.stringify({ type: actionLabel, contact_id: effectiveContactId }),
                     data_response: mixedResp.length > 0 ? JSON.stringify(mixedResp.length === 1 ? mixedResp[0] : mixedResp) : '' });
 
             } else if (campaignType === 'friend_request') {
-                // ── Kết bạn only ─────────────────────────────────────────────────
+                // ── Friend request only ─────────────────────────────────────────────────
                 const req = { type: 'sendFriendRequest', msg: friendMsg, userId: effectiveContactId };
                 const resp = await (conn.api as any).sendFriendRequest(friendMsg, effectiveContactId);
                 db.updateCampaignContactStatus(item.id!, 'sent');
-                db.saveSendLog({ ...logBase, message: `[Kết bạn] ${friendMsg}`, status: 'sent',
+                db.saveSendLog({ ...logBase, message: tr('[Kết bạn] {{friendMsg}}', { friendMsg }), status: 'sent',
                     data_request: JSON.stringify(req), data_response: JSON.stringify(resp) });
 
             } else if (campaignType === 'invite_to_group') {
-                // ── Mời vào nhóm (standalone) ─────────────────────────────────────
+                // ── Invite to group (standalone) ─────────────────────────────────────
                 const groupIds = mixedGroupIds;
-                if (groupIds.length === 0) throw new Error('Không có nhóm nào được chỉ định trong chiến dịch');
+                if (groupIds.length === 0) throw new Error(tr('Không có nhóm nào được chỉ định trong chiến dịch'));
                 const req = { type: 'inviteUserToGroups', userId: effectiveContactId, groupIds };
                 const resp = await (conn.api as any).inviteUserToGroups(effectiveContactId, groupIds);
                 db.updateCampaignContactStatus(item.id!, 'sent');
                 db.saveSendLog({ ...logBase,
-                    message: `[Mời nhóm] Mời vào ${groupIds.length} nhóm: ${groupIds.join(', ')}`,
+                    message: tr('[Mời nhóm] Mời vào {{count}} nhóm: {{v1}}', { count: groupIds.length, v1: groupIds.join(', ') }),
                     status: 'sent', send_type: 'invite_to_group',
                     data_request: JSON.stringify(req), data_response: JSON.stringify(resp) });
                 Logger.log(`[CRMQueue] Invite ✅ → ${effectiveContactId} into ${groupIds.length} groups`);
 
             } else {
-                // ── Tin nhắn only (default) ───────────────────────────────────────
+                // ── Message only (default) ───────────────────────────────────────
                 const threadType = 0;
                 const result = await sendBlocks(blocksToSend, effectiveContactId, threadType);
                 const logMsg = sendMode === 'all'
-                    ? `[${result.sent}/${blocksToSend.length} nội dung] ${blocksToSend.map(describeBlock).join(' | ')}`
+                    ? tr('[{{sent}}/{{count}} nội dung] {{v1}}', { sent: result.sent, count: blocksToSend.length, v1: blocksToSend.map(describeBlock).join(' | ') })
                     : message;
                 outcomeStatus = result.errors.length > 0 ? 'failed' : 'sent';
                 outcomeError = result.errors.join('; ') || undefined;
@@ -563,14 +564,14 @@ class CRMQueueService {
                     data_response: result.responses.length > 0 ? JSON.stringify(result.responses.length === 1 ? result.responses[0] : result.responses) : '' });
             }
 
-            // Tiêu thụ 1 token
+            // Consume 1 token
             this.tokens.set(zaloId, Math.max(0, (this.tokens.get(zaloId) ?? 1) - 1));
             this.lastSentAt.set(zaloId, Date.now());
             db.save();
 
             Logger.log(`[CRMQueue] ${outcomeStatus === 'failed' ? '❌ Failed' : outcomeError ? '⚠️ Partly sent' : '✅ Sent'} to ${effectiveContactId} (campaign ${item.campaign_id})`);
             this.broadcastProgress(zaloId, item.campaign_id, effectiveContactId, outcomeStatus, outcomeError);
-            // Lỗi một phần (hỗn hợp: một hành động được) = tài khoản vẫn gửi được → không tính lỗi liên tiếp
+            // A partial error (mixed: one action succeeded) = the account can still send → does not count toward the consecutive errors
             this.finishContact(zaloId, item.campaign_id, campaignData, outcome(outcomeStatus === 'failed', outcomeError));
 
         } catch (err: any) {
@@ -589,7 +590,7 @@ class CRMQueueService {
                     errorCode: err?.errorCode ?? err?.code ?? err?.error_code ?? undefined,
                 };
                 db.saveSendLog({ ...logBase,
-                    message: `[Lỗi] ${errMsg} - ${fallbackLogMsg}`,
+                    message: tr('[Lỗi] {{errMsg}} - {{fallbackLogMsg}}', { errMsg, fallbackLogMsg }),
                     status: 'failed', error: errMsg,
                     send_type: campaignType === 'friend_request' ? 'friend_request' : campaignType === 'mixed' ? 'mixed' : 'message',
                     data_request: JSON.stringify({ type: campaignType, contact_id: effectiveContactId }),
@@ -598,8 +599,8 @@ class CRMQueueService {
             } catch (logErr: any) {
                 Logger.error(`[CRMQueue] ❌ Failed to save error log: ${logErr.message}`);
             }
-            // Lượt lỗi (kết bạn / mời nhóm bị từ chối…) vẫn tính giãn cách + hạn mức 60/giờ như lượt gửi được: trước đây
-            // liên hệ kế tiếp chạy ngay sau 5 giây → tài khoản đang bị giới hạn bị gọi API dồn dập tới hết danh sách
+            // An error round (friend request / group invite refused…) still counts the spacing + the 60/hour quota, like a sent message: before this
+            // next contact ran 5 seconds later → a throttled account got a burst of API calls until the end of the list
             this.tokens.set(zaloId, Math.max(0, (this.tokens.get(zaloId) ?? 1) - 1));
             this.lastSentAt.set(zaloId, Date.now());
             this.broadcastProgress(zaloId, item.campaign_id, effectiveContactId, 'failed', errMsg);
@@ -609,7 +610,7 @@ class CRMQueueService {
         }
     }
 
-    /** true = chiến dịch vừa xong (không còn liên hệ chờ gửi). */
+    /** true = the campaign has just finished (no contacts left to send). */
     private checkCampaignCompletion(campaignId: number, zaloId: string): boolean {
         try {
             const db = DatabaseService.getInstance();
@@ -630,8 +631,8 @@ class CRMQueueService {
     }
 
     /**
-     * Sau mỗi liên hệ đã gửi / tra SĐT: hết người nhận → Hoàn thành (không tự dừng chiến dịch đã xong); còn → ghi chuỗi
-     * lỗi liên tiếp, đủ ngưỡng thì tự dừng.
+     * After each contact sent / phone lookup: no recipients left → Completed (a finished campaign is not auto-stopped); otherwise record the consecutive
+     * error streak; at the threshold, auto-stop.
      */
     private finishContact(zaloId: string, campaignId: number, campaign: CRMCampaign | null, outcome: StreakOutcome): void {
         if (this.checkCampaignCompletion(campaignId, zaloId)) return;
@@ -639,20 +640,20 @@ class CRMQueueService {
     }
 
     /**
-     * Chuỗi liên hệ gửi lỗi liên tiếp (shared/crm/campaignAutoStop): lỗi +1, gửi được về 0. Đủ ngưỡng cài ở chiến dịch
-     * (tài khoản bị chặn / giới hạn / mất phiên thì liên hệ nào cũng lỗi) → Tạm dừng chiến dịch, ghi lý do + lỗi cuối,
-     * báo mọi màn (crm:campaignAutoStopped). Giới hạn ngày không phải lỗi: chiến dịch chờ sang hôm sau như cũ.
-     * "Mai gửi tiếp" → hẹn chạy lại lúc Giờ bắt đầu chạy hôm sau (scheduleAutoResume).
+     * Consecutive send-error streak of contacts (shared/crm/campaignAutoStop): error +1, a successful send resets it to 0. Reaching the threshold set on the campaign
+     * (account blocked / limited / session lost → every contact fails) → Pause the campaign, record the reason + the last error,
+     * notify every screen (crm:campaignAutoStopped). A daily limit is not an error: the campaign waits until the next day as before.
+     * "Mai gửi tiếp" (Resume tomorrow) → schedule a re-run at the Daily start time the next day (scheduleAutoResume).
      */
     private trackFailureStreak(zaloId: string, campaignId: number, campaign: CRMCampaign | null, outcome: StreakOutcome): void {
-        if (!outcome.counted) return; // "Chỉ tính người lạ": bạn bè / nhóm không đổi chuỗi
+        if (!outcome.counted) return; // "Chỉ tính người lạ" (Count strangers only): friends / groups do not change the streak
         try {
             const db = DatabaseService.getInstance();
             const failures = db.recordCampaignOutcome(campaignId, outcome.failed);
             if (!outcome.failed || !shouldAutoStopCampaign(failures, campaign?.stop_after_failures)) return;
             const reason = campaignAutoStopReason(failures, outcome.error, { strangersOnly: outcome.strangersOnly });
             const resumeAt = campaignFlag(campaign?.stop_resume_next_day) ? campaignAutoResumeAt(Date.now(), campaign?.daily_start_time) : 0;
-            // Chỉ dừng chiến dịch còn đang chạy (vừa bị tạm dừng tay / xoá trong lúc gửi → giữ nguyên)
+            // Only stop a campaign that is still running (paused by hand / deleted while sending → leave it as is)
             if (!db.autoStopCRMCampaign(campaignId, reason, resumeAt)) return;
             db.save();
             Logger.warn(`[CRMQueue] ⏸ Campaign ${campaignId} auto-stopped: ${reason}${resumeAt ? ` (resumes ${new Date(resumeAt).toISOString()})` : ''}`);
@@ -696,8 +697,8 @@ class CRMQueueService {
      * Returns { uid, name } or null if not found.
      */
     private async resolvePhoneContact(phone: string, api: any): Promise<{ uid: string; name: string } | null> {
-        // Timeout để tránh API treo vô hạn → queue tê liệt
-        /** Helper tạo promise với timeout */
+        // Timeout to avoid an API hanging forever → the queue would freeze
+        /** Helper that creates a promise with a timeout */
         const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
             Promise.race([
                 promise,
@@ -722,14 +723,14 @@ class CRMQueueService {
     }
 }
 
-/** Kết quả một liên hệ cho chuỗi lỗi liên tiếp. `counted` = false: không đổi chuỗi ("Chỉ tính người lạ" mà đây là bạn bè / nhóm). */
+/** Result of one contact for the consecutive error streak. `counted` = false: the streak is not changed ("Chỉ tính người lạ" (Count strangers only), and this is a friend / group). */
 type StreakOutcome = { failed: boolean; error?: string; counted: boolean; strangersOnly: boolean };
 
 export default CRMQueueService;
 
 /**
- * Kiểm tra lỗi gửi tin nhắn có phải do người dùng chặn người lạ không.
- * Nếu đúng → chế độ hỗn hợp sẽ fallback sang gửi lời mời kết bạn.
+ * Check whether a message send error is because the user blocks strangers.
+ * If so → the mixed mode falls back to sending a friend request.
  */
 function isMixedFallbackError(err: any): boolean {
     const code = Number(err?.errorCode ?? err?.code ?? err?.error_code ?? -1);

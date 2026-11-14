@@ -1,56 +1,56 @@
 /**
- * telegramLinks.ts: link Telegram (t.me, telegram.me, <tên>.t.me, tg://) → việc cần làm trong app, theo
- * https://core.telegram.org/api/links. Phần thuần: bấm link trong tin, thẻ link, nút bot, Mini App (web_app_open_tg_link)
- * đều đi qua đây (lib/chat/links/chatLinks).
+ * telegramLinks.ts: Telegram links (t.me, telegram.me, <name>.t.me, tg://) → the action to take in the app, following
+ * https://core.telegram.org/api/links. Pure part: tapping a link in a message, link cards, bot buttons and Mini Apps (web_app_open_tg_link)
+ * all go through here (lib/chat/links/chatLinks).
  *
- * Hỗ trợ: tên công khai (người, bot, nhóm, kênh; kèm ?start, ?startapp, ?text), link tin (t.me/<tên>/<id>,
- * t.me/c/<kênh>/<id>), link mời (t.me/+…, joinchat), số điện thoại (t.me/+84…), Mini App theo tên (t.me/<bot>/<app>),
- * bộ sticker / emoji, chia sẻ (t.me/share/url?url=…&text=…: chọn hội thoại rồi điền sẵn ô soạn tin). Link khác (proxy,
- * boost, hoá đơn…) → null: mở trang web như trước.
+ * Supports: public names (users, bots, groups, channels; with ?start, ?startapp, ?text), message links (t.me/<name>/<id>,
+ * t.me/c/<channel>/<id>), invite links (t.me/+…, joinchat), phone numbers (t.me/+84…), Mini Apps by name (t.me/<bot>/<app>),
+ * sticker / emoji packs, share (t.me/share/url?url=…&text=…: choose a conversation, then prefill the composer). Other links (proxy,
+ * boost, invoices…) → null: open the web page as before.
  */
 
 export type TelegramLink =
   | {
     kind: 'username';
     username: string;
-    /** Link tin: t.me/<tên>/<id> hoặc t.me/<tên>/<chủ đề>/<id> */
+    /** Message link: t.me/<name>/<id> or t.me/<name>/<topic>/<id> */
     post?: number;
     thread?: number;
-    /** Bình luận của bài kênh: id tin trong nhóm thảo luận */
+    /** Comment on a channel post: message id in the discussion group */
     comment?: number;
-    /** Link bot: ?start=<tham số> (rỗng = chỉ ?start) */
+    /** Bot link: ?start=<parameter> (empty = just ?start) */
     start?: string;
-    /** Mini App: ?startapp[=<tham số>]; có appName = Mini App theo tên của bot */
+    /** Mini App: ?startapp[=<parameter>]; with appName = Mini App by the bot's name */
     startApp?: string;
     appName?: string;
-    /** ?text=… chữ điền sẵn */
+    /** ?text=… prefilled text */
     text?: string;
   }
   | { kind: 'invite'; hash: string }
   | { kind: 'private_post'; channelId: string; post: number; thread?: number }
   | { kind: 'phone'; phone: string; text?: string }
   | { kind: 'stickers'; slug: string; emoji: boolean }
-  /** Chia sẻ: chọn hội thoại, điền URL (dòng đầu) + chữ vào ô soạn tin. */
+  /** Share: choose a conversation, fill the URL (first line) + text into the composer. */
   | { kind: 'share'; url: string; text?: string };
 
-/** Tên Telegram: 5-32 ký tự, chữ / số / gạch dưới, bắt đầu bằng chữ. */
+/** Telegram name: 5-32 characters, letters / digits / underscores, starts with a letter. */
 const USERNAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{3,31}$/;
-/** Tên ngắn Mini App của bot (inputBotAppShortName). */
+/** Bot's Mini App short name (inputBotAppShortName). */
 const APP_NAME_RE = /^[a-zA-Z0-9_]{3,64}$/;
-/** start: tối đa 64 ký tự base64url; startapp tối đa 512. */
+/** start: up to 64 base64url characters; startapp up to 512. */
 const START_RE = /^[A-Za-z0-9_-]{0,64}$/;
 const START_APP_RE = /^[A-Za-z0-9_-]{0,512}$/;
 const SET_SLUG_RE = /^[A-Za-z0-9_]{1,64}$/;
 const POSITIVE_INT_RE = /^\d{1,10}$/;
 
 const TELEGRAM_HOSTS = new Set(['t.me', 'telegram.me', 'telegram.dog']);
-/** Đường dẫn t.me không phải tên (đã xử lý riêng hoặc mở trang web). */
+/** t.me path that is not a name (handled separately, or opens the web page). */
 const RESERVED = new Set([
   'joinchat', 'addstickers', 'addemoji', 'share', 'proxy', 'socks', 'login', 'iv', 'setlanguage', 'c', 'boost',
   'addlist', 'm', 'invoice', 'bg', 'addtheme', 'confirmphone', 'giftcode', 'contact', 'nft', 'stars', 'premium',
 ]);
 
-/** ?url=&text= của link chia sẻ; thiếu url → null. */
+/** ?url=&text= of a share link; missing url → null. */
 function shareLink(params: URLSearchParams): TelegramLink | null {
   const url = (params.get('url') || '').trim().slice(0, 2048);
   if (!url) return null;
@@ -73,7 +73,7 @@ function positiveInt(value: string | null | undefined): number | undefined {
   return n > 0 && n <= 0x7fffffff ? n : undefined;
 }
 
-/** ?start=x → 'x'; ?start (không giá trị) → ''; sai định dạng / không có → undefined. */
+/** ?start=x → 'x'; ?start (no value) → ''; wrong format / missing → undefined. */
 function param(params: URLSearchParams, name: string, re: RegExp): string | undefined {
   if (!params.has(name)) return undefined;
   const value = params.get(name) || '';
@@ -87,7 +87,7 @@ function usernameLink(
 ): TelegramLink | null {
   if (!USERNAME_RE.test(username)) return null;
   const link: Extract<TelegramLink, { kind: 'username' }> = { kind: 'username', username };
-  // /<tên>/<id> · /<tên>/<chủ đề>/<id> · /<bot>/<tên app>
+  // /<name>/<id> · /<name>/<topic>/<id> · /<bot>/<app name>
   if (extra.length >= 2 && positiveInt(extra[0]) && positiveInt(extra[1])) {
     link.thread = positiveInt(extra[0]);
     link.post = positiveInt(extra[1]);
@@ -113,7 +113,7 @@ function usernameLink(
   return link;
 }
 
-/** Link có phải của Telegram (để không mở nhầm trang web khi app xử lý được). */
+/** Whether the link is a Telegram link (so it is not opened in the web browser by mistake when the app can handle it). */
 export function isTelegramUrl(raw: string): boolean {
   try {
     const url = new URL(withScheme(String(raw || '').trim()));
@@ -163,7 +163,7 @@ export function parseTelegramLink(input: string): TelegramLink | null {
     try { return decodeURIComponent(part); } catch { return part; }
   });
   if (host.endsWith('.t.me') && !TELEGRAM_HOSTS.has(host)) {
-    // <tên>.t.me/… = t.me/<tên>/…
+    // <name>.t.me/… = t.me/<name>/…
     parts = [host.slice(0, -'.t.me'.length), ...parts];
   } else if (!TELEGRAM_HOSTS.has(host)) {
     return null;

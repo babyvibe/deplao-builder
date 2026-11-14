@@ -1,7 +1,7 @@
 /**
- * Tiến độ tải media theo từng tin (event:mediaProgress của main — services/media/mediaProgress.ts): video đang tải hiện
- * vòng tiến độ + "2.1 / 5.0 MB" như Telegram, chưa tải xong thì không mở trình phát (file chưa đủ → trình phát báo lỗi).
- * Store riêng ngoài zustand: mỗi nhịp tiến độ chỉ vẽ lại đúng bong bóng của tin đó (useSyncExternalStore theo khoá).
+ * Media download progress per message (event:mediaProgress from main, services/media/mediaProgress.ts): a downloading video shows a
+ * progress ring + "2.1 / 5.0 MB" like Telegram; until the download finishes the player does not open (the file is incomplete → the player would show an error).
+ * A separate store outside zustand: each progress tick only redraws the bubble of that message (useSyncExternalStore keyed by the message key).
  */
 import { useCallback, useSyncExternalStore } from 'react';
 import ipc from '@/lib/ipc';
@@ -11,7 +11,7 @@ export type MediaProgressState = 'queued' | 'downloading' | 'failed';
 export interface MediaProgress {
   state: MediaProgressState;
   received: number;
-  /** Tổng dung lượng (byte); 0 = máy chủ không báo. */
+  /** Total size (bytes); 0 = the server did not report it. */
   total: number;
 }
 
@@ -23,7 +23,7 @@ export function mediaProgressKey(zaloId: unknown, threadId: unknown, msgId: unkn
   return `${String(zaloId ?? '')}|${String(threadId ?? '')}|${String(msgId ?? '')}`;
 }
 
-/** Nhận một sự kiện tiến độ: `done` → bỏ (bong bóng đã có file qua event:localPath), còn lại → lưu và báo bong bóng. */
+/** Receive one progress event: `done` → dropped (the bubble already has the file via event:localPath), otherwise → save and notify the bubble. */
 export function applyMediaProgress(event: any): void {
   if (!event?.zaloId || !event?.msgId) return;
   const key = mediaProgressKey(event.zaloId, event.threadId, event.msgId);
@@ -39,17 +39,17 @@ export function applyMediaProgress(event: any): void {
   listeners.get(key)?.forEach((listener) => listener());
 }
 
-/** Tiến độ hiện tại của một tin (ngoài React). */
+/** Current progress of one message (outside React). */
 export function getMediaProgress(zaloId: unknown, threadId: unknown, msgId: unknown): MediaProgress | null {
   return entries.get(mediaProgressKey(zaloId, threadId, msgId)) ?? null;
 }
 
-/** Đang chờ / đang tải (chưa có file để phát). */
+/** Waiting / downloading (no file to play yet). */
 export function isTransferring(progress: MediaProgress | null | undefined): progress is MediaProgress {
   return !!progress && (progress.state === 'queued' || progress.state === 'downloading');
 }
 
-/** Phần đã tải (0..1) hoặc null khi chưa biết tổng / chưa bắt đầu (vòng xoay). */
+/** Downloaded part (0..1), or null when the total is unknown / not started yet (spinner). */
 export function transferFraction(progress: MediaProgress | null | undefined, fallbackTotal = 0): number | null {
   if (!progress || progress.state !== 'downloading') return null;
   const total = progress.total || fallbackTotal;
@@ -61,7 +61,7 @@ function formatAmount(bytes: number, unit: number, decimals: number): string {
   return (bytes / unit).toFixed(decimals);
 }
 
-/** "2.1 / 5.0 MB" (như Telegram); chưa biết tổng → "2.1 MB"; file nhỏ tính KB. */
+/** "2.1 / 5.0 MB" (like Telegram); total unknown → "2.1 MB"; small files are shown in KB. */
 export function formatTransferProgress(received: number, total: number): string {
   const r = Math.max(0, Number(received) || 0);
   const t = Math.max(0, Number(total) || 0);
@@ -86,7 +86,7 @@ function ensureSubscribed(): void {
   }
 }
 
-/** Tiến độ tải của một tin (null = không có lượt tải nào đang chạy / đã xong). */
+/** Download progress of one message (null = no download is running / finished). */
 export function useMediaProgress(zaloId: unknown, threadId: unknown, msgId: unknown): MediaProgress | null {
   ensureSubscribed();
   const key = zaloId && msgId ? mediaProgressKey(zaloId, threadId, msgId) : '';
@@ -107,7 +107,7 @@ export function useMediaProgress(zaloId: unknown, threadId: unknown, msgId: unkn
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/** Tiện cho bong bóng: tiến độ của tin `msg` (owner_zalo_id / thread_id / msg_id). */
+/** Helper for the bubble: progress of message `msg` (owner_zalo_id / thread_id / msg_id). */
 export function useMessageMediaProgress(msg: any): MediaProgress | null {
   return useMediaProgress(
     msg?.owner_zalo_id || msg?.zaloId,

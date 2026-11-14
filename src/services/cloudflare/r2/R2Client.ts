@@ -1,14 +1,14 @@
 /**
- * R2Client — client S3 cho MỘT bucket R2 (ký SigV4 tự viết trong ./sigv4, fetch toàn cục, không AWS SDK).
+ * R2Client: S3 client for ONE R2 bucket (SigV4 signing written in ./sigv4, global fetch, no AWS SDK).
  *
  *  - Endpoint https://<accountId>.r2.cloudflarestorage.com, region 'auto', path-style /<bucket>/<key>
- *    (mỗi đoạn của key được URI-encode một lần theo SigV4, giữ '/').
- *  - Khoá S3 suy ra từ API token (tài liệu R2): accessKeyId = id của token (tokens/verify),
- *    secretAccessKey = sha256(token) dạng hex. Không log token / khoá.
- *  - putFile: ≤ 64 MiB → một PUT stream (UNSIGNED-PAYLOAD, có Content-Length); > 64 MiB → multipart
- *    (phần 16 MiB bằng nhau, phần cuối nhỏ hơn; mỗi phần thử lại 3 lần; lỗi → AbortMultipartUpload).
- *  - Lỗi: 429/5xx → CloudError('R2_BUSY', …, retryAfterMs) để hàng đợi phía trên lùi chung; lỗi mạng →
- *    'R2_NETWORK' (cũng có retryAfterMs); 403 NotEntitled/10042 → 'R2_NOT_ENABLED'; 412 (If-None-Match) → 'R2_EXISTS'.
+ *    (each segment of the key is URI-encoded once per SigV4, keeping '/').
+ *  - The S3 key is derived from the API token (R2 docs): accessKeyId = the token id (tokens/verify),
+ *    secretAccessKey = sha256(token) in hex. Never logs the token / key.
+ *  - putFile: ≤ 64 MiB → one streamed PUT (UNSIGNED-PAYLOAD, with Content-Length); > 64 MiB → multipart
+ *    (equal 16 MiB parts, the last part smaller; each part retried 3 times; on error → AbortMultipartUpload).
+ *  - Errors: 429/5xx → CloudError('R2_BUSY', …, retryAfterMs) so the queue above backs off as a whole; network error →
+ *    'R2_NETWORK' (also with retryAfterMs); 403 NotEntitled/10042 → 'R2_NOT_ENABLED'; 412 (If-None-Match) → 'R2_EXISTS'.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -20,6 +20,7 @@ import { parseRetryAfterMs } from '../CloudflareApi';
 import {
     EMPTY_SHA256, SigV4Credentials, UNSIGNED_PAYLOAD, presignUrl, sha256Hex, signRequest, uriEncode, uriEncodePath,
 } from './sigv4';
+import { tr } from '../../../shared/i18n';
 
 export const R2_REGION = 'auto';
 export const R2_SINGLE_PUT_MAX = 64 * 1024 * 1024;
@@ -34,12 +35,12 @@ const NETWORK_WAIT_MS = 15_000;
 const PART_BACKOFF_MS = [1000, 3000, 9000];
 const MAX_METADATA_BYTES = 8 * 1024;
 
-/** Khoá S3 của R2 suy ra từ API token. */
+/** The R2 S3 key is derived from the API token. */
 export function r2CredentialsFromToken(tokenId: string, token: string): SigV4Credentials {
     return { accessKeyId: tokenId, secretAccessKey: createHash('sha256').update(token, 'utf8').digest('hex') };
 }
 
-// ─── Kiểu fetch tối thiểu ────────────────────────────────────────────────────
+// ─── Minimal fetch types ────────────────────────────────────────────────────
 
 export interface R2FetchResponse {
     status: number;
@@ -55,25 +56,25 @@ export interface R2ClientOptions {
     getAccountId: () => string | null;
     getCredentials: () => SigV4Credentials | null;
     fetchImpl?: R2Fetch;
-    /** Đổi endpoint (test). Mặc định `${accountId}.r2.cloudflarestorage.com`. */
+    /** Overrides the endpoint (for tests). Default `${accountId}.r2.cloudflarestorage.com`. */
     endpointHost?: (accountId: string) => string;
     now?: () => Date;
     sleep?: (ms: number) => Promise<void>;
-    /** Request nhỏ (HEAD/DELETE/List/PUT buffer): tổng thời gian tối đa. Mặc định 30 s. */
+    /** Small requests (HEAD / DELETE / List / buffered PUT): maximum total time. Default 30 s. */
     timeoutMs?: number;
-    /** Truyền file: huỷ khi không có byte nào trong N ms. Mặc định 60 s. */
+    /** File transfer: abort when no bytes arrive within N ms. Default 60 s. */
     idleTimeoutMs?: number;
     singlePutMax?: number;
     partSize?: number;
-    /** Số lần thử lại mỗi phần multipart (mặc định 3). */
+    /** Retries per multipart part (default 3). */
     partRetries?: number;
-    /** Số phần multipart gửi cùng lúc (mặc định 3, tối đa 8). */
+    /** Multipart parts sent at the same time (default 3, max 8). */
     partConcurrency?: number;
-    /** Đếm thao tác theo bảng giá R2 (Class A / B / miễn phí) + byte — gọi sau mỗi request tới được R2. Không ném. */
+    /** Counts operations per the R2 price list (Class A / B / free) + bytes; called after every request that reaches R2. Does not throw. */
     onOp?: (op: R2OpClass, bytes: { up?: number; down?: number }) => void;
 }
 
-// ─── XML tối giản ────────────────────────────────────────────────────────────
+// ─── Minimal XML ────────────────────────────────────────────────────────────
 
 export function xmlUnescape(s: string): string {
     return s.replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (_m, ent: string) => {
@@ -104,7 +105,7 @@ export function xmlBlocks(xml: string, tag: string): string[] {
     return out;
 }
 
-/** Phân tích ListObjectsV2 (ListBucketResult). */
+/** Parses ListObjectsV2 (ListBucketResult). */
 export function parseListObjectsXml(xml: string): { objects: R2ObjectInfo[]; nextToken: string | null } {
     const objects: R2ObjectInfo[] = xmlBlocks(xml, 'Contents').map(block => ({
         key: xmlTag(block, 'Key') || '',
@@ -121,10 +122,10 @@ function cleanEtag(v: string | null | undefined): string {
     return String(v || '').trim().replace(/^W\//, '').replace(/^"+|"+$/g, '');
 }
 
-/** Số khoá tối đa mỗi request DeleteObjects (giới hạn của S3 / R2). */
+/** Maximum keys per DeleteObjects request (the S3 / R2 limit). */
 export const R2_DELETE_MAX_KEYS = 1000;
 
-/** Thân request DeleteObjects, chế độ Quiet (chỉ trả về khoá lỗi). */
+/** DeleteObjects request body, Quiet mode (only the failed keys are returned). */
 export function deleteObjectsXml(keys: string[]): string {
     return '<?xml version="1.0" encoding="UTF-8"?>'
         + '<Delete xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Quiet>true</Quiet>'
@@ -133,8 +134,8 @@ export function deleteObjectsXml(keys: string[]): string {
 }
 
 /**
- * Phân tích kết quả DeleteObjects: lỗi từng khoá (NoSuchKey = coi như đã xoá). 200 mà thân là <Error> không thuộc
- * <DeleteResult> = lỗi cả request → ném (không coi là đã xoá).
+ * Parses the DeleteObjects result: per-key errors (NoSuchKey = treated as deleted). A 200 whose body is an <Error> instead of a
+ * <DeleteResult> = an error for the whole request → throw (not treated as deleted).
  */
 export function parseDeleteObjectsXml(xml: string): Array<{ key: string; code: string; message: string }> {
     const text = String(xml || '');
@@ -146,49 +147,49 @@ export function parseDeleteObjectsXml(xml: string): Array<{ key: string; code: s
         .filter(e => e.key && e.code !== 'NoSuchKey');
 }
 
-// ─── Lỗi ─────────────────────────────────────────────────────────────────────
+// ─── Errors ─────────────────────────────────────────────────────────────────
 
-/** HTTP status + mã lỗi S3 (<Code>) → CloudError. */
+/** HTTP status + S3 error code (<Code>) → CloudError. */
 export function mapR2Error(status: number, code: string, message: string, retryAfter: string | null, nowMs: number = Date.now()): CloudError {
     if (status === 429 || status >= 500) {
         const retryAfterMs = parseRetryAfterMs(retryAfter, nowMs) ?? (status === 429 ? BUSY_WAIT_429_MS : BUSY_WAIT_5XX_MS);
         return new CloudError(
             'R2_BUSY',
-            status === 429 ? 'R2 đang giới hạn tốc độ, sẽ thử lại sau' : `R2 đang lỗi tạm thời (HTTP ${status}), sẽ thử lại sau`,
+            status === 429 ? tr('R2 đang giới hạn tốc độ, sẽ thử lại sau') : tr('R2 đang lỗi tạm thời (HTTP {{status}}), sẽ thử lại sau', { status }),
             status,
             retryAfterMs,
         );
     }
     if (code === 'NotEntitled' || code === '10042' || /\b10042\b|enable R2/i.test(message)) {
-        return new CloudError('R2_NOT_ENABLED', 'Tài khoản Cloudflare chưa bật R2', status);
+        return new CloudError('R2_NOT_ENABLED', tr('Tài khoản Cloudflare chưa bật R2'), status);
     }
     if (code === 'RequestTimeTooSkewed') {
-        return new CloudError('R2_CLOCK_SKEW', 'Đồng hồ máy lệch nhiều so với giờ chuẩn — hãy chỉnh lại giờ hệ thống', status);
+        return new CloudError('R2_CLOCK_SKEW', tr('Đồng hồ máy lệch nhiều so với giờ chuẩn — hãy chỉnh lại giờ hệ thống'), status);
     }
     if (status === 401 || status === 403) {
-        return new CloudError('R2_FORBIDDEN', 'Token không có quyền R2 (cần quyền "Account · Workers R2 Storage · Edit")', status);
+        return new CloudError('R2_FORBIDDEN', tr('Token không có quyền R2 (cần quyền "Account · Workers R2 Storage · Edit")'), status);
     }
-    if (status === 404 && code === 'NoSuchBucket') return new CloudError('R2_NO_BUCKET', 'Bucket R2 không tồn tại', status);
-    if (status === 404 && code === 'NoSuchUpload') return new CloudError('R2_NO_UPLOAD', 'Phiên tải lên nhiều phần đã hết hạn', status);
-    if (status === 404) return new CloudError('R2_NOT_FOUND', 'Không có dữ liệu này trên R2', status);
-    if (status === 412) return new CloudError('R2_EXISTS', 'Dữ liệu đã có trên R2', status);
-    return new CloudError('R2_ERROR', `R2 báo lỗi${code ? ` ${code}` : ''} (HTTP ${status})`, status);
+    if (status === 404 && code === 'NoSuchBucket') return new CloudError('R2_NO_BUCKET', tr('Bucket R2 không tồn tại'), status);
+    if (status === 404 && code === 'NoSuchUpload') return new CloudError('R2_NO_UPLOAD', tr('Phiên tải lên nhiều phần đã hết hạn'), status);
+    if (status === 404) return new CloudError('R2_NOT_FOUND', tr('Không có dữ liệu này trên R2'), status);
+    if (status === 412) return new CloudError('R2_EXISTS', tr('Dữ liệu đã có trên R2'), status);
+    return new CloudError('R2_ERROR', tr('R2 báo lỗi{{v1}} (HTTP {{status}})', { v1: code ? ` ${code}` : '', status }), status);
 }
 
 function networkError(err: any, timedOut: boolean): CloudError {
     if (err instanceof CloudError) return err;
-    if (timedOut) return new CloudError('R2_TIMEOUT', 'R2 phản hồi quá lâu, sẽ thử lại sau', undefined, NETWORK_WAIT_MS);
-    const reason = String(err?.cause?.code || err?.code || err?.cause?.message || err?.message || 'lỗi mạng').slice(0, 120);
-    return new CloudError('R2_NETWORK', `Không kết nối được R2 (${reason})`, undefined, NETWORK_WAIT_MS);
+    if (timedOut) return new CloudError('R2_TIMEOUT', tr('R2 phản hồi quá lâu, sẽ thử lại sau'), undefined, NETWORK_WAIT_MS);
+    const reason = String(err?.cause?.code || err?.code || err?.cause?.message || err?.message || tr('lỗi mạng')).slice(0, 120);
+    return new CloudError('R2_NETWORK', tr('Không kết nối được R2 ({{reason}})', { reason }), undefined, NETWORK_WAIT_MS);
 }
 
 function isRetryable(err: unknown): boolean {
     return err instanceof CloudError && (err.code === 'R2_BUSY' || err.code === 'R2_NETWORK' || err.code === 'R2_TIMEOUT');
 }
 
-// ─── Hẹn giờ huỷ ─────────────────────────────────────────────────────────────
+// ─── Abort timer ─────────────────────────────────────────────────────────────
 
-/** AbortController + hẹn giờ; touch() gia hạn (dùng làm idle-timeout khi truyền file). */
+/** AbortController + timer; touch() extends it (used as the idle timeout while a file is transferred). */
 class Watchdog {
     readonly controller = new AbortController();
     timedOut = false;
@@ -213,7 +214,7 @@ class Watchdog {
 }
 
 async function drainBody(res: R2FetchResponse): Promise<void> {
-    try { await res.text(); } catch { /* bỏ qua */ }
+    try { await res.text(); } catch { /* ignore */ }
 }
 
 async function renameWithRetry(from: string, to: string): Promise<void> {
@@ -229,9 +230,9 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
 }
 
 /**
- * Loại thao tác theo bảng giá R2 (developers.cloudflare.com/r2/pricing): Class A = PutObject, UploadPart,
- * Create/CompleteMultipartUpload, ListObjects; Class B = GetObject, HeadObject; miễn phí = DeleteObject,
- * AbortMultipartUpload. DeleteObjects (POST ?delete) không có trong bảng → tính Class A cho chắc (ước tính không thấp).
+ * Operation class per the R2 price list (developers.cloudflare.com/r2/pricing): Class A = PutObject, UploadPart,
+ * Create/CompleteMultipartUpload, ListObjects; Class B = GetObject, HeadObject; free = DeleteObject,
+ * AbortMultipartUpload. DeleteObjects (POST ?delete) is not in the table → counted as Class A to be safe (the estimate is not low).
  */
 export function classifyR2Request(req: { method: string; key: string | null; query?: Record<string, unknown> }): R2OpClass {
     const q = req.query || {};
@@ -249,17 +250,17 @@ export function classifyR2Request(req: { method: string; key: string | null; que
 
 interface R2Request {
     method: 'GET' | 'PUT' | 'POST' | 'DELETE' | 'HEAD';
-    /** null = cấp bucket. */
+    /** null = bucket level. */
     key: string | null;
     query?: Record<string, string | number | undefined>;
     headers?: Record<string, string | undefined>;
     body?: Buffer | AsyncIterable<Buffer> | null;
     payloadHash?: string;
-    /** Bắt buộc khi body là stream. */
+    /** Required when the body is a stream. */
     contentLength?: number;
 }
 
-/** Tuỳ chọn putFile: tiến độ (byte đã gửi) + báo thử lại từng phần (multipart). */
+/** putFile options: progress (bytes sent) + a notice when each part is retried (multipart). */
 type PutFileOptions = R2PutOptions & {
     onProgress?: (sentBytes: number, totalBytes: number) => void;
     onRetry?: (info: { part: number | null; attempt: number; maxAttempts: number; error: string }) => void;
@@ -286,7 +287,7 @@ export class R2BucketClient implements R2Client {
         this.partConcurrency = Math.max(1, Math.min(8, Math.floor(Number(opts.partConcurrency) || 3)));
     }
 
-    // ── API công khai ──
+    // ── Public API ──
 
     async putObject(key: string, body: Buffer | string, opts: R2PutOptions = {}): Promise<{ etag: string }> {
         const buf = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
@@ -301,7 +302,7 @@ export class R2BucketClient implements R2Client {
     ): Promise<{ etag: string; size: number }> {
         this.checkKey(key);
         const st = await fs.promises.stat(filePath);
-        if (!st.isFile()) throw new CloudError('R2_BAD_FILE', `Không phải file: ${path.basename(filePath)}`);
+        if (!st.isFile()) throw new CloudError('R2_BAD_FILE', tr('Không phải file: {{v1}}', { v1: path.basename(filePath) }));
         const size = st.size;
         if (size <= this.singlePutMax) {
             const etag = await this.putFileSingle(key, filePath, size, opts);
@@ -339,7 +340,7 @@ export class R2BucketClient implements R2Client {
                 return null;
             }
             if (res.status < 200 || res.status >= 300) throw await this.errorFrom(res, 'GET');
-            if (!res.body) throw new CloudError('R2_ERROR', 'R2 trả về nội dung rỗng');
+            if (!res.body) throw new CloudError('R2_ERROR', tr('R2 trả về nội dung rỗng'));
 
             await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
             const tmp = `${filePath}.r2tmp-${randomBytes(4).toString('hex')}`;
@@ -356,7 +357,7 @@ export class R2BucketClient implements R2Client {
                 await pipeline(source, counter, fs.createWriteStream(tmp));
                 const expected = Number(res.headers.get('content-length'));
                 if (!res.headers.get('content-encoding') && Number.isFinite(expected) && expected > 0 && expected !== size) {
-                    throw new CloudError('R2_NETWORK', 'Tải từ R2 bị đứt giữa chừng', undefined, NETWORK_WAIT_MS);
+                    throw new CloudError('R2_NETWORK', tr('Tải từ R2 bị đứt giữa chừng'), undefined, NETWORK_WAIT_MS);
                 }
                 await renameWithRetry(tmp, filePath);
             } catch (err) {
@@ -403,13 +404,13 @@ export class R2BucketClient implements R2Client {
     }
 
     /**
-     * DeleteObjects (POST /<bucket>?delete): ≤ 1000 khoá một request, Quiet, kèm Content-MD5 (S3 bắt buộc).
-     * deleted = các khoá không có trong danh sách lỗi; lỗi cả request ném CloudError (R2_BUSY khi 429/5xx…).
+     * DeleteObjects (POST /<bucket>?delete): ≤ 1000 keys per request, Quiet, with Content-MD5 (required by S3).
+     * deleted = the keys that are not in the error list; an error for the whole request throws CloudError (R2_BUSY on 429/5xx…).
      */
     async deleteObjects(keys: string[]): Promise<{ deleted: string[]; errors: Array<{ key: string; code: string; message: string }> }> {
         const list = Array.from(new Set((keys || []).map(k => this.checkKey(k))));
         if (!list.length) return { deleted: [], errors: [] };
-        if (list.length > R2_DELETE_MAX_KEYS) throw new CloudError('R2_BAD_REQUEST', `Xoá tối đa ${R2_DELETE_MAX_KEYS} object mỗi lần`);
+        if (list.length > R2_DELETE_MAX_KEYS) throw new CloudError('R2_BAD_REQUEST', tr('Xoá tối đa {{R2_DELETE_MAX_KEYS}} object mỗi lần', { R2_DELETE_MAX_KEYS }));
         const body = Buffer.from(deleteObjectsXml(list), 'utf8');
         const res = await this.call({
             method: 'POST',
@@ -457,7 +458,7 @@ export class R2BucketClient implements R2Client {
         }, creds);
     }
 
-    // ── Tải lên ──
+    // ── Upload ──
 
     private async putFileSingle(key: string, filePath: string, size: number, opts: R2PutOptions & { onProgress?: (s: number, t: number) => void }): Promise<string> {
         const wd = new Watchdog(this.idleTimeoutMs);
@@ -482,8 +483,8 @@ export class R2BucketClient implements R2Client {
 
     private async putFileMultipart(key: string, filePath: string, size: number, opts: PutFileOptions): Promise<string> {
         if (opts.ifNoneMatch === '*') {
-            // Không tải 64+ MiB vô ích: kiểm tra trước (HEAD rẻ), CompleteMultipartUpload vẫn gửi If-None-Match.
-            if (await this.headObject(key)) throw new CloudError('R2_EXISTS', 'Dữ liệu đã có trên R2', 412);
+            // Do not upload 64+ MiB for nothing: check first (a cheap HEAD); CompleteMultipartUpload still sends If-None-Match.
+            if (await this.headObject(key)) throw new CloudError('R2_EXISTS', tr('Dữ liệu đã có trên R2'), 412);
         }
         let partSize = this.partSize;
         while (Math.ceil(size / partSize) > R2_MAX_PARTS) partSize *= 2;
@@ -491,14 +492,14 @@ export class R2BucketClient implements R2Client {
 
         const uploadId = await this.createMultipart(key, opts);
         const parts: Array<{ partNumber: number; etag: string }> = [];
-        // Gửi tối đa partConcurrency phần cùng lúc (đường truyền có độ trễ cao lên nhanh hơn hẳn gửi tuần tự).
-        // Tiến độ = tổng byte đã gửi của mọi phần (phần gửi lại thì đếm lại từ 0).
+        // Sends up to partConcurrency parts at once (a high-latency link uploads much faster than sending in sequence).
+        // Progress = total bytes sent across all parts (a resent part is counted again from 0).
         const sentByPart = new Map<number, number>();
         const report = () => {
             if (!opts.onProgress) return;
             let sent = 0;
             for (const v of sentByPart.values()) sent += v;
-            try { opts.onProgress(Math.min(sent, size), size); } catch { /* callback lỗi không làm hỏng tải lên */ }
+            try { opts.onProgress(Math.min(sent, size), size); } catch { /* a failing callback does not break the upload */ }
         };
         try {
             let next = 1;
@@ -536,7 +537,7 @@ export class R2BucketClient implements R2Client {
         const res = await this.call({ method: 'POST', key, query: { uploads: '' }, headers }, this.timeoutMs, true);
         const xml = await res.text();
         const uploadId = xmlTag(xml, 'UploadId');
-        if (!uploadId) throw new CloudError('R2_ERROR', 'R2 không trả về mã phiên tải lên nhiều phần');
+        if (!uploadId) throw new CloudError('R2_ERROR', tr('R2 không trả về mã phiên tải lên nhiều phần'));
         return uploadId;
     }
 
@@ -559,7 +560,7 @@ export class R2BucketClient implements R2Client {
                         maxAttempts: this.partRetries,
                         error: String((err as Error)?.message || err),
                     });
-                } catch { /* callback lỗi không làm hỏng tải lên */ }
+                } catch { /* a failing callback does not break the upload */ }
                 const hinted = err instanceof CloudError && err.retryAfterMs ? Math.min(err.retryAfterMs, 30_000) : 0;
                 await this.sleep(Math.max(hinted, PART_BACKOFF_MS[Math.min(attempt, PART_BACKOFF_MS.length - 1)]));
             }
@@ -584,7 +585,7 @@ export class R2BucketClient implements R2Client {
             if (res.status < 200 || res.status >= 300) throw await this.errorFrom(res, 'UploadPart');
             await drainBody(res);
             const etag = res.headers.get('etag');
-            if (!etag) throw new CloudError('R2_ERROR', 'R2 không trả về ETag của phần tải lên');
+            if (!etag) throw new CloudError('R2_ERROR', tr('R2 không trả về ETag của phần tải lên'));
             return cleanEtag(etag);
         } finally {
             wd.done();
@@ -609,7 +610,7 @@ export class R2BucketClient implements R2Client {
             },
         }, Math.max(this.timeoutMs, 120_000), true);
         const xml = await res.text();
-        // S3 có thể trả 200 kèm <Error> cho CompleteMultipartUpload.
+        // S3 can return 200 with an <Error> for CompleteMultipartUpload.
         if (/<Error[\s>]/.test(xml)) {
             throw mapR2Error(500, xmlTag(xml, 'Code') || '', xmlTag(xml, 'Message') || '', null);
         }
@@ -626,7 +627,7 @@ export class R2BucketClient implements R2Client {
         }
     }
 
-    /** Đọc [start, end) của file theo khối 256 KiB; mỗi khối gia hạn watchdog và báo tiến độ. */
+    /** Reads [start, end) of the file in 256 KiB blocks; each block extends the watchdog and reports progress. */
     private fileSlice(filePath: string, start: number, end: number, wd: Watchdog, onSent?: (sent: number) => void): AsyncIterable<Buffer> {
         return {
             [Symbol.asyncIterator]: async function* () {
@@ -639,7 +640,7 @@ export class R2BucketClient implements R2Client {
                         sent += buf.length;
                         wd.touch();
                         yield buf;
-                        try { onSent?.(sent); } catch { /* callback lỗi không làm hỏng tải lên */ }
+                        try { onSent?.(sent); } catch { /* a failing callback does not break the upload */ }
                     }
                 } finally {
                     stream.destroy();
@@ -648,9 +649,9 @@ export class R2BucketClient implements R2Client {
         };
     }
 
-    // ── Gửi request ──
+    // ── Send request ──
 
-    /** send + kiểm tra 2xx (lỗi → CloudError). keepBody=false thì đọc bỏ body. */
+    /** send + check for 2xx (error → CloudError). keepBody=false: read and discard the body. */
     private async call(req: R2Request, timeoutMs: number, keepBody = false): Promise<R2FetchResponse> {
         const wd = new Watchdog(timeoutMs);
         try {
@@ -660,7 +661,7 @@ export class R2BucketClient implements R2Client {
                 await drainBody(res);
                 return res;
             }
-            // Đọc body ngay trong thời hạn (text() một lần) rồi trả về bản đã đọc.
+            // Read the body within the deadline (text() once), then return the copy that was read.
             let text: string;
             try {
                 text = await res.text();
@@ -712,7 +713,7 @@ export class R2BucketClient implements R2Client {
         if (body) {
             init.body = body;
             if (!isBuffer) {
-                if (req.contentLength === undefined) throw new CloudError('R2_ERROR', 'Thiếu độ dài nội dung khi tải lên R2');
+                if (req.contentLength === undefined) throw new CloudError('R2_ERROR', tr('Thiếu độ dài nội dung khi tải lên R2'));
                 headers['content-length'] = String(req.contentLength);
                 init.duplex = 'half';
             }
@@ -728,7 +729,7 @@ export class R2BucketClient implements R2Client {
         return res;
     }
 
-    /** Báo thao tác cho bộ đếm mức sử dụng (request đã tới R2, kể cả trả lỗi). */
+    /** Reports the operation to the usage meter (the request reached R2, including error responses). */
     private recordOp(req: R2Request, res: R2FetchResponse, sentBytes: number): void {
         if (!this.opts.onOp) return;
         try {
@@ -736,22 +737,22 @@ export class R2BucketClient implements R2Client {
             const ok = res.status >= 200 && res.status < 300;
             const down = req.method === 'GET' && req.key !== null && ok ? Number(res.headers.get('content-length')) || 0 : 0;
             this.opts.onOp(op, { up: sentBytes || undefined, down: down || undefined });
-        } catch { /* bộ đếm lỗi không làm hỏng request */ }
+        } catch { /* a failing counter does not break the request */ }
     }
 
     private async errorFrom(res: R2FetchResponse, op: string): Promise<CloudError> {
         let text = '';
         if (op !== 'HEAD') {
-            try { text = await res.text(); } catch { /* bỏ qua */ }
+            try { text = await res.text(); } catch { /* ignore */ }
         }
         const err = mapR2Error(res.status, xmlTag(text, 'Code') || '', xmlTag(text, 'Message') || '', res.headers.get('retry-after'), this.now().getTime());
         return err;
     }
 
-    /** 404 của GET: NoSuchBucket là lỗi thật, NoSuchKey = không có object. */
+    /** 404 on GET: NoSuchBucket is a real error, NoSuchKey = no such object. */
     private async throwIfNotObject404(res: R2FetchResponse): Promise<void> {
         let text = '';
-        try { text = await res.text(); } catch { /* bỏ qua */ }
+        try { text = await res.text(); } catch { /* ignore */ }
         if (xmlTag(text, 'Code') === 'NoSuchBucket') throw mapR2Error(404, 'NoSuchBucket', '', null);
     }
 
@@ -759,7 +760,7 @@ export class R2BucketClient implements R2Client {
         const accountId = this.opts.getAccountId();
         const creds = this.opts.getCredentials();
         if (!accountId || !creds || !creds.accessKeyId || !creds.secretAccessKey) {
-            throw new CloudError('NOT_CONNECTED', 'Chưa kết nối Cloudflare (thiếu token cho R2)');
+            throw new CloudError('NOT_CONNECTED', tr('Chưa kết nối Cloudflare (thiếu token cho R2)'));
         }
         return { accountId, creds };
     }
@@ -775,7 +776,7 @@ export class R2BucketClient implements R2Client {
 
     private checkKey(key: string): string {
         const k = String(key ?? '');
-        if (!k || Buffer.byteLength(k, 'utf8') > 1024) throw new CloudError('R2_BAD_KEY', 'Tên object R2 không hợp lệ');
+        if (!k || Buffer.byteLength(k, 'utf8') > 1024) throw new CloudError('R2_BAD_KEY', tr('Tên object R2 không hợp lệ'));
         return k;
     }
 
@@ -786,14 +787,14 @@ export class R2BucketClient implements R2Client {
         let metaBytes = 0;
         for (const [rawName, rawValue] of Object.entries(opts.metadata || {})) {
             const name = rawName.toLowerCase();
-            if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) throw new CloudError('R2_BAD_METADATA', `Tên metadata không hợp lệ: ${rawName}`);
+            if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) throw new CloudError('R2_BAD_METADATA', tr('Tên metadata không hợp lệ: {{rawName}}', { rawName }));
             const value = String(rawValue ?? '');
-            // Header HTTP chỉ nhận ASCII in được: giá trị khác ASCII được mã hoá kiểu URL.
+            // HTTP headers accept only printable ASCII: non-ASCII values are URL-encoded.
             const safe = /^[\x20-\x7e]*$/.test(value) ? value : encodeURIComponent(value);
             metaBytes += name.length + safe.length;
             headers[`x-amz-meta-${name}`] = safe;
         }
-        if (metaBytes > MAX_METADATA_BYTES) throw new CloudError('R2_BAD_METADATA', 'Metadata R2 vượt 8 KB');
+        if (metaBytes > MAX_METADATA_BYTES) throw new CloudError('R2_BAD_METADATA', tr('Metadata R2 vượt 8 KB'));
         return headers;
     }
 

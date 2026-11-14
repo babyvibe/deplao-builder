@@ -11,7 +11,7 @@ export interface ExtractedProfile {
   displayName: string;
   avatar: string;
   phone: string;
-  gender: number | null;    // 0 = Nam, 1 = Nữ, null = không xác định
+  gender: number | null;    // 0 = Male, 1 = Female, null = unknown
   birthday: string | null;  // DD/MM/YYYY format
   alias: string;            // friendAlias / nickname
 }
@@ -42,7 +42,7 @@ export function extractUserProfile(profile: any): ExtractedProfile {
   const phone: string = profile.phoneNumber || profile.msisdn || profile.phone || '';
   const alias: string = profile.friendAlias || profile.alias || profile.nickName || '';
 
-  // Gender: 0 = Nam, 1 = Nữ
+  // Gender: 0 = Male, 1 = Female
   const gender: number | null =
     (profile.gender === 0 || profile.gender === 1) ? profile.gender : null;
 

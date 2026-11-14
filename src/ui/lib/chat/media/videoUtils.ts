@@ -1,14 +1,14 @@
 /**
  * videoUtils.ts - Video thumbnail extraction utility
- * Dùng chung cho MessageInput và các component khác.
+ * Shared by MessageInput and other components.
  */
 
 /**
- * Dùng HTMLVideoElement + Canvas để capture frame video làm thumbnail.
- * Trả về base64 JPEG data URL, hoặc '' nếu thất bại.
+ * Uses HTMLVideoElement + Canvas to capture a video frame as the thumbnail.
+ * Returns a base64 JPEG data URL, or '' if it fails.
  */
 export async function extractVideoThumbViaCanvas(videoPath: string, seekSec = 1): Promise<string> {
-  // Helper: capture frame từ video element tại currentTime
+  // Helper: captures the frame of the video element at currentTime
   const captureFrame = (vid: HTMLVideoElement): string => {
     const canvas = document.createElement('canvas');
     const maxW = 480;
@@ -20,7 +20,7 @@ export async function extractVideoThumbViaCanvas(videoPath: string, seekSec = 1)
     const ctx = canvas.getContext('2d');
     if (!ctx) return '';
     ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-    // Kiểm tra frame có phải toàn đen không (sample 20x20 pixel ở giữa)
+    // Checks whether the frame is entirely black (samples a 20x20 pixel area in the middle)
     try {
       const cx = Math.floor(canvas.width / 2) - 10;
       const cy = Math.floor(canvas.height / 2) - 10;
@@ -54,9 +54,9 @@ export async function extractVideoThumbViaCanvas(videoPath: string, seekSec = 1)
     ? videoPath
     : `file:///${videoPath.replace(/\\/g, '/')}`;
 
-  // Thử seek tại seekSec trước
+  // Try seeking to seekSec first
   let result = await loadAndSeek(fileUrl, seekSec);
-  // Nếu frame đen và seekSec > 0, thử lại tại 0s
+  // If the frame is black and seekSec > 0, retry at 0s
   if ((result === '__BLACK__' || result === '') && seekSec > 0) {
     result = await loadAndSeek(fileUrl, 0);
   }

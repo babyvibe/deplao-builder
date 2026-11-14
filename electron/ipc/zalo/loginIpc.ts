@@ -11,6 +11,7 @@ import * as TelegramUserListener from '../../../src/services/telegram/TelegramUs
 import * as TelegramBotChannelService from '../../../src/services/telegram/bot/TelegramBotChannelService';
 import { applyZaloBusinessFlag } from '../../../src/utils/zalo/zaloBusinessFlag';
 import { signOutFacebookAccount } from '../facebook/facebookIpc';
+import { tr } from '../../../src/shared/i18n';
 function postLoginSetup(_zaloId: string, _mainWindow: BrowserWindow | null, _name?: string, _phone?: string) {
     // No-op in open-source build.
 }
@@ -18,13 +19,13 @@ function postLoginSetup(_zaloId: string, _mainWindow: BrowserWindow | null, _nam
 export function registerLoginIpc(mainWindow: BrowserWindow | null) {
     const loginService = new LoginService();
 
-    // Giữ callback để không thay đổi contract nội bộ của helper, nhưng không làm gì thêm.
+    // Keep the callback so the helper's internal contract does not change, but do nothing more.
     ZaloLoginHelper.setQRSuccessCallback((zaloId, _isNewAccount) => {
         postLoginSetup(zaloId, mainWindow);
     });
 
 
-    // ─── Đăng nhập QR ─────────────────────────────────────────────────────
+    // ─── QR login ─────────────────────────────────────────────────────────
     ipcMain.handle('login:qr', async (_event, { tempId, proxyId }) => {
         try {
             console.log(`[loginIpc] Starting QR login for tempId: ${tempId}`);
@@ -37,7 +38,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Abort QR (khi user muốn refresh thủ công) ────────────────────────
+    // ─── Abort QR (when the user wants to refresh manually) ────────────────────────
     ipcMain.handle('login:qr:abort', async (_event, { tempId }) => {
         try {
             const ZaloLoginHelper = require('../../../src/utils/zalo/ZaloLoginHelper').default;
@@ -48,26 +49,26 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Đăng nhập bằng JSON auth (1 ô paste) ────────────────────────────
+    // ─── Sign in with JSON auth (1 paste box) ────────────────────────────
     // Format: { "imei": "...", "cookies": "...", "userAgent": "..." }
     ipcMain.handle('login:auth', async (_event, { authJson, proxyId }) => {
         try {
-            if (!authJson) return { success: false, error: 'Thiếu auth JSON' };
+            if (!authJson) return { success: false, error: tr('Thiếu auth JSON') };
             let parsed: any;
             try {
                 parsed = typeof authJson === 'string' ? JSON.parse(authJson) : authJson;
             } catch {
-                return { success: false, error: 'Auth JSON không hợp lệ' };
+                return { success: false, error: tr('Auth JSON không hợp lệ') };
             }
             const { imei, cookies, userAgent } = parsed;
             if (!imei || !cookies || !userAgent) {
-                return { success: false, error: 'Auth JSON thiếu trường: imei, cookies, hoặc userAgent' };
+                return { success: false, error: tr('Auth JSON thiếu trường: imei, cookies, hoặc userAgent') };
             }
 
             Logger.log(`[loginIpc] Starting auth JSON login...`);
             const accountInfo = await loginService.loginCookies(imei, cookies, userAgent, proxyId ?? null);
 
-            // Tìm zaloId từ ConnectionManager
+            // Find the zaloId from ConnectionManager
             let zaloId = '';
             const cookiesB64 = Buffer.from(cookies).toString('base64');
             for (const [id, conn] of ConnectionManager.getAllConnections()) {
@@ -88,11 +89,11 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                     is_active: 1,
                     created_at: new Date().toISOString(),
                 });
-                // Gắn proxy nếu có
+                // Attach the proxy if there is one
                 if (proxyId) {
                     DatabaseService.getInstance().setAccountProxy(zaloId, proxyId);
                 }
-                // Cờ Zalo Business đọc từ hồ sơ vừa lấy (không đọc được thì giữ giá trị đang lưu)
+                // The Zalo Business flag is read from the profile just fetched (if it cannot be read, keep the saved value)
                 applyZaloBusinessFlag(zaloId, accountInfo);
                 DatabaseService.getInstance().setListenerActive(zaloId, true);
                 postLoginSetup(zaloId, mainWindow, fullName, phoneNum);
@@ -105,11 +106,11 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Đăng nhập Cookies/IMEI (legacy - 3 ô) ───────────────────────────
+    // ─── Sign in with Cookies/IMEI (legacy - 3 boxes) ───────────────────────────
     ipcMain.handle('login:cookies', async (_event, { imei, cookies, userAgent }) => {
         try {
             if (!imei || !cookies || !userAgent) {
-                return { success: false, error: 'Thiếu thông tin đăng nhập (imei, cookies, userAgent)' };
+                return { success: false, error: tr('Thiếu thông tin đăng nhập (imei, cookies, userAgent)') };
             }
 
             Logger.log(`[loginIpc] Starting cookies login...`);
@@ -139,7 +140,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                     is_active: 1,
                     created_at: new Date().toISOString(),
                 });
-                // Cờ Zalo Business đọc từ hồ sơ vừa lấy (không đọc được thì giữ giá trị đang lưu)
+                // The Zalo Business flag is read from the profile just fetched (if it cannot be read, keep the saved value)
                 applyZaloBusinessFlag(zaloId, accountInfo);
                 DatabaseService.getInstance().setListenerActive(zaloId, true);
                 postLoginSetup(zaloId, mainWindow, fullName2, phoneNum2);
@@ -152,16 +153,16 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Kết nối lại tài khoản (reconnect) ───────────────────────────────
+    // ─── Reconnect an account (reconnect) ───────────────────────────────
     ipcMain.handle('login:connect', async (_event, { auth }) => {
-        // Tìm zaloId từ cookies để có thể mark listener_active khi thất bại
+        // Find the zaloId from the cookies so listener_active can be marked when it fails
         let zaloId = '';
         try {
             const cookiesB64 = Buffer.from(auth?.cookies || '').toString('base64');
             for (const [id, conn] of ConnectionManager.getAllConnections()) {
                 if (conn.authKey === cookiesB64) { zaloId = id; break; }
             }
-            // Nếu chưa có trong ConnectionManager, thử lấy từ DB
+            // If it is not in ConnectionManager yet, try the DB
             if (!zaloId && auth?.cookies) {
                 const accounts = DatabaseService.getInstance().getAccounts();
                 const match = accounts.find((a: any) => a.cookies === auth.cookies);
@@ -187,7 +188,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Ngắt kết nối tài khoản ───────────────────────────────────────────
+    // ─── Disconnect account ───────────────────────────────────────────────
     ipcMain.handle('login:disconnect', async (_event, { zaloId }) => {
         try {
             const account = DatabaseService.getInstance().getAccounts().find((item: any) => item.zalo_id === zaloId);
@@ -203,7 +204,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Ngắt kết nối tất cả ─────────────────────────────────────────────
+    // ─── Disconnect all ─────────────────────────────────────────────
     ipcMain.handle('login:disconnectAll', async () => {
         try {
             const connections = ConnectionManager.getAllConnections();
@@ -217,7 +218,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Lấy danh sách tài khoản đã lưu ──────────────────────────────────
+    // ─── Get the list of saved accounts ──────────────────────────────────
     ipcMain.handle('login:getAccounts', async () => {
         try {
             const accounts = DatabaseService.getInstance().getAccounts();
@@ -229,7 +230,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                     if (fb.facebook_id && fb.id) fbIdToUuid[fb.facebook_id] = fb.id;
                 }
             } catch {}
-            // Thêm trạng thái online/offline
+            // Add the online/offline status
             const accountsWithStatus = accounts.map((acc) => {
                 const isFB = (acc as any).channel === 'facebook';
                 const isTelegramUser = (acc as any).channel === 'telegram_user';
@@ -267,10 +268,10 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Xoá tài khoản (có tuỳ chọn xoá hết dữ liệu) ─────────────────────────
+    // ─── Delete account (optionally delete all data) ─────────────────────────
     ipcMain.handle('login:removeAccount', async (_event, { zaloId, deleteData }) => {
         try {
-            // Check nếu là Facebook account → cleanup qua FacebookConnectionManager
+            // Check if it is a Facebook account → clean up through FacebookConnectionManager
             const accounts = DatabaseService.getInstance().getAccounts();
             const account = accounts.find((a: any) => a.zalo_id === zaloId);
             const isFB = account?.channel === 'facebook';
@@ -278,8 +279,8 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             const isTelegramBot = account?.channel === 'telegram_bot';
 
             if (isFB) {
-                // Facebook: tìm fb_account UUID → đăng xuất (ngắt kết nối, xoá cookie + phiên trong fb_accounts — còn cookie
-                // thô thì lần mở app sau tài khoản đã gỡ tự kết nối lại). Bảng FB do deleteAccountData xử lý khi xoá hết dữ liệu.
+                // Facebook: find the fb_account UUID → sign out (disconnect, delete the cookie + session in fb_accounts; a raw cookie still
+                // left behind would reconnect the removed account by itself the next time the app opens). The FB table is handled by deleteAccountData when all data is deleted.
                 const fbAcc = DatabaseService.getInstance().getFBAccountByFacebookId(zaloId);
                 if (fbAcc?.id) await signOutFacebookAccount(fbAcc.id);
             } else if (isTelegramUser) {
@@ -287,8 +288,8 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                 // live GramJS client before removing its local session.
                 TelegramUserListener.stopListener(zaloId);
             } else if (isTelegramBot) {
-                // Bot API cũng không thuộc ConnectionManager: dừng nhận tin của bot trước khi gỡ. Trước đây bot rơi vào
-                // nhánh Zalo nên vẫn kéo tin cho tài khoản đã xoá tới lần mở app sau.
+                // The Bot API is not in ConnectionManager either: stop receiving messages for the bot before removing it. Before, the bot fell into
+                // the Zalo branch, so messages kept being pulled for the deleted account until the next app launch.
                 TelegramBotChannelService.stopBot(zaloId);
             } else {
                 // Zalo cleanup
@@ -300,12 +301,12 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             }
 
             if (deleteData) {
-                // Xoá toàn bộ dữ liệu DB + media
+                // Delete all DB + media data
                 DatabaseService.getInstance().deleteAccountData(zaloId);
                 const FileStorageService = require('../../../src/services/file/FileStorageService').default;
                 FileStorageService.deleteAccountMedia(zaloId);
             } else {
-                // Legacy: chỉ mark inactive
+                // Legacy: only mark inactive
                 DatabaseService.getInstance().deleteAccount(zaloId);
             }
             return { success: true };
@@ -314,7 +315,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Lấy cấu hình auto-delete media cho tài khoản ──────────────────────
+    // ─── Get the auto-delete media config for the account ──────────────────────
     ipcMain.handle('login:getMediaAutoDelete', async (_event, { zaloId }) => {
         try {
             const config = DatabaseService.getInstance().getMediaAutoDeleteConfig(zaloId);
@@ -324,23 +325,23 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Lưu cấu hình auto-delete media + chạy cleanup ngay ───────────────
+    // ─── Save the auto-delete media config + run cleanup now ───────────────
     ipcMain.handle('login:setMediaAutoDelete', async (_event, { zaloId, enabled, days }) => {
         try {
             const config = { enabled, days: Math.max(1, days) };
             DatabaseService.getInstance().setMediaAutoDeleteConfig(zaloId, config);
 
-            // Nếu enabled, chạy cleanup ngay lập tức
+            // If enabled, run the cleanup immediately
             if (enabled) {
                 const FileStorageService = require('../../../src/services/file/FileStorageService').default;
                 const deleted = FileStorageService.cleanupOldMedia(zaloId, days);
-                // R2 nhận việc (đang lưu media lên R2 + bật giải phóng ổ đĩa + tài khoản trong phạm vi): dọn chạy nền và chỉ
-                // xoá bản trên máy của file đã có trên R2. Còn lại (kể cả R2 bật nhưng giữ file trên máy) dọn như trước.
+                // R2 takes over (media is being saved to R2 + freeing disk space is on + the account is in scope): cleanup runs in the background and only
+                // deletes the on-machine copy of files that already exist on R2. Otherwise (including R2 on but keeping files on the machine), clean up as before.
                 let viaR2 = false;
                 try { viaR2 = !!require('../../../src/services/cloudflare/media').handlesAccountMediaCleanup(zaloId); } catch { viaR2 = false; }
                 const message = viaR2
-                    ? 'Đã lưu cấu hình. Media đang được lưu lên Cloudflare R2: chỉ xoá bản trên máy của file đã có trên R2, chạy nền hằng ngày.'
-                    : `Đã xoá ${deleted} thư mục media cũ. Cấu hình sẽ tự động chạy hàng ngày.`;
+                    ? tr('Đã lưu cấu hình. Media đang được lưu lên Cloudflare R2: chỉ xoá bản trên máy của file đã có trên R2, chạy nền hằng ngày.')
+                    : tr('Đã xoá {{deleted}} thư mục media cũ. Cấu hình sẽ tự động chạy hàng ngày.', { deleted });
                 return { success: true, config, cleanedDirs: deleted, message };
             }
 
@@ -350,7 +351,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Chạy cleanup media cho tất cả tài khoản (gọi từ scheduler) ────────
+    // ─── Run media cleanup for all accounts (called from the scheduler) ────────
     ipcMain.handle('login:runAllMediaCleanup', async () => {
         try {
             const DatabaseService = require('../../../src/services/database/DatabaseService').default;
@@ -375,9 +376,9 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Kiểm tra sức khỏe listener (WebSocket readyState) ──────────────
-    // Gọi từ client mỗi 1 phút (heartbeat) hoặc sau khi reconnect mạng
-    // Hỗ trợ batch: zaloIds có thể là string hoặc string[]
+    // ─── Listener health check (WebSocket readyState) ──────────────
+    // Called from the client every 1 minute (heartbeat) or after a network reconnect
+    // Batch support: zaloIds can be a string or string[]
     ipcMain.handle('login:checkHealth', async (_event, { zaloIds }) => {
         try {
             const ids: string[] = Array.isArray(zaloIds) ? zaloIds : [zaloIds];
@@ -389,7 +390,7 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Khởi động lại tất cả tài khoản đã lưu ───────────────────────────
+    // ─── Restart all saved accounts ───────────────────────────────────────
     ipcMain.handle('login:reconnectAll', async () => {
         try {
             const accounts = DatabaseService.getInstance().getAccounts();
@@ -419,9 +420,9 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
         }
     });
 
-    // ─── Check + refresh avatar cho tài khoản Zalo ───────────────────────
-    // Kiểm tra avatar URL còn hạn không (HTTP HEAD). Nếu lỗi (403/etc) thì
-    // gọi Zalo API fetchAccountInfo() để lấy URL mới + cập nhật DB.
+    // ─── Check + refresh the avatar for Zalo accounts ───────────────────────
+    // Check whether the avatar URL is still valid (HTTP HEAD). If it fails (403/etc) then
+    // call the Zalo API fetchAccountInfo() to get the new URL + update the DB.
     ipcMain.handle('login:checkAndRefreshAvatar', async (_event, { zaloId }) => {
         try {
             if (!zaloId) return { success: false, refreshed: false, error: 'Missing zaloId' };
@@ -431,14 +432,14 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                 return { success: false, refreshed: false, reason: 'not_connected' };
             }
 
-            // Đọc account từ DB để lấy avatar_url hiện tại
+            // Read the account from the DB to get the current avatar_url
             const accounts = DatabaseService.getInstance().getAccounts();
             const account = accounts.find((a: any) => a.zalo_id === zaloId);
             if (!account) return { success: false, refreshed: false, error: 'Account not found' };
 
             const currentAvatarUrl: string = account.avatar_url || '';
 
-            // Kiểm tra URL hiện tại nếu có
+            // Check the current URL if there is one
             if (currentAvatarUrl) {
                 try {
                     const headResp = await axios.head(currentAvatarUrl, {
@@ -458,15 +459,15 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
                 Logger.log(`[AvatarCheck] ${zaloId}: no avatar URL on file, fetching...`);
             }
 
-            // URL expired hoặc không có → gọi Zalo API để refresh
+            // URL expired or missing → call the Zalo API to refresh
             const accountInfo = await conn.api.fetchAccountInfo();
-            // Cờ Zalo Business cập nhật mỗi lần đọc được hồ sơ, không phụ thuộc avatar có đổi hay không
+            // The Zalo Business flag is updated every time the profile is read, whether or not the avatar changed
             applyZaloBusinessFlag(zaloId, accountInfo);
             const newAvatar = accountInfo?.profile?.avatar || (accountInfo as any)?.avatar || '';
             const newName = accountInfo?.profile?.displayName || (accountInfo as any)?.displayName || '';
 
             if (newAvatar && newAvatar !== currentAvatarUrl) {
-                // Update DB với avatar + name mới
+                // Update the DB with the new avatar + name
                 const phone = accountInfo?.profile?.phoneNumber || (accountInfo as any)?.phoneNumber || '';
                 DatabaseService.getInstance().updateAccountInfo(zaloId, phone, null, newAvatar, newName || undefined);
 
@@ -475,12 +476,12 @@ export function registerLoginIpc(mainWindow: BrowserWindow | null) {
             }
 
             if (newAvatar && newAvatar === currentAvatarUrl) {
-                // URL giống nhau nhưng bây giờ vẫn valid → chỉ update timestamp
+                // Same URL but still valid now → only update the timestamp
                 Logger.log(`[AvatarCheck] ${zaloId}: avatar unchanged, still valid`);
                 return { success: true, refreshed: false };
             }
 
-            // fetchAccountInfo trả về avatar rỗng
+            // fetchAccountInfo returned an empty avatar
             Logger.warn(`[AvatarCheck] ${zaloId}: fetchAccountInfo returned empty avatar`);
             return { success: true, refreshed: false, reason: 'empty_avatar_response' };
         } catch (error: any) {

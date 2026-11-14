@@ -1,9 +1,9 @@
 /**
- * zaloAutoDeleteSync.ts — tự xoá tin nhắn trên Zalo (ZL-05) ở main process: ghi thời gian tự xoá của từng hội thoại vào
- * contacts.zalo_auto_delete_ttl để giao diện hiện đồng hồ, báo giao diện qua db:contactFlagsChanged (relay cho nhân viên).
+ * zaloAutoDeleteSync.ts: auto-deletes messages on Zalo (ZL-05) in the main process: writes the auto-delete time of each conversation to
+ * contacts.zalo_auto_delete_ttl so the UI can show the countdown, and notifies the UI through db:contactFlagsChanged (relayed to employees).
  *
- * Listener zca-js không báo khi bật / tắt tự xoá trên điện thoại → đọc lại getAutoDeleteChat khi tài khoản kết nối (tối
- * đa 6 giờ một lần) và khi người dùng mở mục "Tự xoá tin nhắn". Deplao không xoá tin theo TTL.
+ * The zca-js listener does not report turning auto-delete on / off on the phone, so getAutoDeleteChat is read again when the account connects (at most
+ * once every 6 hours) and when the user opens the "Tự xoá tin nhắn" (Auto-delete messages) section. Deplao does not delete messages by TTL.
  */
 import EventBroadcaster from '../event/EventBroadcaster';
 import Logger from '../../utils/Logger';
@@ -12,14 +12,14 @@ import { zaloAutoDeleteMap } from '../../shared/zalo/zaloAutoDelete';
 export const ZALO_AUTO_DELETE_REFRESH_MS = 6 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15_000;
 
-/** zaloId → lần đọc danh sách gần nhất (ms) trong phiên app này. */
+/** zaloId → time of the last list read (ms) in this app session. */
 const lastSyncAt = new Map<string, number>();
 
 function emitTtl(zaloId: string, contactId: string, ttl: number): void {
   EventBroadcaster.emit('db:contactFlagsChanged', { ownerZaloId: zaloId, contactId, flags: { zalo_auto_delete_ttl: ttl } });
 }
 
-/** Ghi danh sách hội thoại đang bật (thay cả tập của tài khoản); báo giao diện các hội thoại có giá trị đổi. */
+/** Writes the list of conversations with auto-delete on (replaces the whole set of the account); notifies the UI of the conversations whose value changed. */
 export function applyZaloAutoDeleteList(zaloId: string, res: any, now: number = Date.now()): Map<string, number> {
   const ttls = zaloAutoDeleteMap(res);
   if (!zaloId) return ttls;
@@ -29,13 +29,13 @@ export function applyZaloAutoDeleteList(zaloId: string, res: any, now: number = 
   return ttls;
 }
 
-/** Một hội thoại vừa được đổi trên Zalo từ Deplao: ghi DB + báo giao diện. */
+/** One conversation was changed on Zalo from Deplao: write the DB + notify the UI. */
 export function applyZaloAutoDeleteOne(zaloId: string, threadId: string, ttl: number): void {
   if (!zaloId || !threadId) return;
   if (EventBroadcaster.withBossDb((db) => db.setContactAutoDeleteTtl(zaloId, threadId, ttl))) emitTtl(zaloId, threadId, ttl);
 }
 
-/** Sau khi kết nối: đọc danh sách nếu phiên này chưa đọc trong 6 giờ. Chạy nền, không ném lỗi. */
+/** After connecting: read the list if this session has not read it within 6 hours. Runs in the background, does not throw. */
 export async function refreshZaloAutoDelete(
   zaloId: string,
   api: { getAutoDeleteChat: () => Promise<any> },
@@ -44,7 +44,7 @@ export async function refreshZaloAutoDelete(
   if (!zaloId) return null;
   const last = lastSyncAt.get(zaloId);
   if (last !== undefined && now - last < ZALO_AUTO_DELETE_REFRESH_MS) return null;
-  lastSyncAt.set(zaloId, now); // giữ chỗ: nhiều lần kết nối dồn dập không cùng hỏi Zalo
+  lastSyncAt.set(zaloId, now); // reserve the slot: many rapid connections must not all ask Zalo at the same time
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const res = await Promise.race([
@@ -61,7 +61,7 @@ export async function refreshZaloAutoDelete(
   }
 }
 
-/** Chỉ dùng trong test. */
+/** Only used in tests. */
 export function resetZaloAutoDeleteSync(): void {
   lastSyncAt.clear();
 }

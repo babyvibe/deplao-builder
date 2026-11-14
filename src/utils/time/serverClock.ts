@@ -1,20 +1,20 @@
 /**
- * Giờ server ước lượng (main process). Máy tính hay chạy lệch vài giây so với giờ chuẩn — máy của chủ dự án nhanh 6,4 s
- * (đo bằng w32tm ngày 22/10/2026). Tin nhận mang giờ server, còn tin gửi từ Deplao trước đây đóng dấu bằng giờ máy, nên
- * khách trả lời ngay trong vài giây bị xếp TRƯỚC tin mình vừa gửi (Telegram Desktop tự bù độ lệch nên vẫn đúng thứ tự).
+ * Estimated server time (main process). Computer clocks often drift a few seconds from the standard time (the project owner's machine was 6.4 s fast
+ * (measured with w32tm on 22/10/2026)). Received messages carry the server time, but messages sent from Deplao used to be stamped with the machine time, so
+ * a customer who replied within a few seconds was sorted BEFORE the message just sent (Telegram Desktop compensates for the drift itself, so its order stays correct).
  *
- * Tin gửi đi luôn dùng giờ server nền tảng trả về (Telegram `date`, Facebook `timestamp`); module này là dự phòng khi
- * nền tảng không trả + ghi Nhật ký khi đồng hồ máy lệch. Độ lệch (giờ server − giờ máy) chỉ học từ tin MÌNH gửi có giờ
- * server: lúc gửi ≤ giờ server ≤ lúc có kết quả → một khoảng [cận dưới, cận trên]; lấy giao các khoảng trong 15 phút gần
- * nhất. Không học từ tin nhận: tin tải bù / kết nối lại đến trễ hàng phút làm ước lượng sai mà không phát hiện được.
+ * Sent messages always use the server time the platform returns (Telegram `date`, Facebook `timestamp`); this module is the fallback when
+ * the platform does not return one, and it writes to Logs when the machine clock drifts. The drift (server time − machine time) is learned only from MY sent messages that carry
+ * a server time: sent at ≤ server time ≤ result received → an interval [lower bound, upper bound]; the intersection of the intervals from the last 15 minutes
+ * is used. It is not learned from received messages: catch-up / reconnect messages arrive minutes late and would make the estimate wrong without any way to detect it.
  */
 import Logger from '../Logger';
 
-/** Lệch quá mức này coi là dữ liệu sai đơn vị (giây ↔ mili-giây) — bỏ qua. */
+/** A drift larger than this is treated as bad unit data (seconds ↔ milliseconds) and ignored. */
 const MAX_ABS_OFFSET_MS = 60 * 60_000;
 const WINDOW_MS = 15 * 60_000;
 const MAX_SAMPLES = 128;
-/** Lệch từ mức này ghi Nhật ký (tối đa 1 lần / 6 giờ). */
+/** A drift above this level is written to Logs (at most once every 6 hours). */
 export const CLOCK_SKEW_WARN_MS = 2_000;
 const WARN_INTERVAL_MS = 6 * 60 * 60_000;
 
@@ -22,13 +22,13 @@ interface Sample { at: number; lower: number; upper: number }
 
 export interface ServerClock {
   /**
-   * Tin mình gửi có giờ server trả về: bắt đầu gửi lúc `sentAt`, có kết quả lúc `ackAt` (giờ máy); giờ server làm tròn
-   * xuống `precisionMs` (Telegram chỉ có giây → 1000).
+   * A message I sent that has a server time returned: sending started at `sentAt`, the result came back at `ackAt` (machine time); the server time, rounded
+   * down to `precisionMs` (Telegram only has seconds → 1000).
    */
   noteSent(serverMs: number, sentAt: number, ackAt: number, precisionMs?: number): void;
-  /** Độ lệch giờ server − giờ máy (ms); null khi chưa có mốc. */
+  /** Drift of server time − machine time (ms); null when there is no sample yet. */
   offsetMs(): number | null;
-  /** Giờ server ước lượng (ms) — chưa có mốc thì là giờ máy. */
+  /** Estimated server time (ms); without a sample it is the machine time. */
   now(): number;
 }
 
@@ -38,7 +38,7 @@ export function createServerClock(clock: () => number = () => Date.now()): Serve
 
   const valid = (value: number) => Number.isFinite(value) && value > 0;
 
-  /** Giao các khoảng còn trong cửa sổ; khoảng mới mâu thuẫn với phần giao cũ (đồng hồ máy vừa chỉnh) → bỏ mốc cũ. */
+  /** Intersect the intervals still in the window; a new interval that contradicts the old intersection (the machine clock was just changed) → drop the old samples. */
   const bounds = (now: number): { lower: number; upper: number } | null => {
     samples = samples.filter(sample => now - sample.at <= WINDOW_MS);
     let lower = -Infinity;
@@ -73,7 +73,7 @@ export function createServerClock(clock: () => number = () => Date.now()): Serve
       const range = bounds(ackAt);
       if (!range) return;
       const offset = Math.round((range.lower + range.upper) / 2);
-      // Chỉ báo khi chắc: cả khoảng đều lệch quá ngưỡng (không phải do khoảng còn rộng)
+      // Only report when sure: the whole interval is off by more than the threshold (not just because the interval is still wide)
       const sure = Math.min(Math.abs(range.lower), Math.abs(range.upper)) >= CLOCK_SKEW_WARN_MS
         && Math.sign(range.lower) === Math.sign(range.upper);
       if (!sure || ackAt - lastWarnAt < WARN_INTERVAL_MS) return;
@@ -95,18 +95,18 @@ export function createServerClock(clock: () => number = () => Date.now()): Serve
   };
 }
 
-/** Đồng hồ chung của main process. */
+/** The shared clock of the main process. */
 export const serverClock = createServerClock();
 
-/** Giây (Telegram / Bot API `date`) → ms; không hợp lệ → null. */
+/** Seconds (Telegram / Bot API `date`) → ms; invalid → null. */
 export function secondsToMs(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) && n > 1e9 && n < 1e11 ? Math.floor(n) * 1000 : null;
 }
 
 /**
- * Giờ server (ms) của tin Telegram vừa gửi từ kết quả GramJS: Api.Message.date, UpdateShortSentMessage.date hoặc tin
- * trong Updates (`updates[].message.date`). Không có → null.
+ * Server time (ms) of a Telegram message just sent, from the GramJS result: Api.Message.date, UpdateShortSentMessage.date, or the message
+ * inside Updates (`updates[].message.date`). None → null.
  */
 export function telegramSentDateMs(result: unknown): number | null {
   const value: any = result;
@@ -128,9 +128,9 @@ export function telegramSentDateMs(result: unknown): number | null {
 }
 
 /**
- * Mốc thời gian lưu cho tin Telegram (user / bot) vừa gửi: giờ server trong kết quả (đồng thời ghi nhận độ lệch đồng hồ
- * khi biết lúc bắt đầu gửi), không có thì giờ server ước lượng. Không dùng giờ máy: máy nhanh vài giây thì khách trả
- * lời ngay bị xếp trước tin này.
+ * Stored timestamp for a Telegram message (user / bot) just sent: the server time in the result (also records the clock drift
+ * when the send start time is known), or the estimated server time if there is none. The machine time is not used: if the machine is a few seconds fast,
+ * a customer who replies right away would be sorted before this message.
  */
 export function telegramSentTimestamp(result: unknown, sentAt?: number, ackAt: number = Date.now()): number {
   const serverMs = telegramSentDateMs(result);

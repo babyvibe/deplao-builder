@@ -1,7 +1,7 @@
 /**
- * Cài đặt "Thông báo tin nhắn trong app" (store/chat/inAppNotifyStore): công tắc "Tất cả tài khoản" (áp cả tài khoản thêm
- * sau) và từng tài khoản. Dùng ở chuông thông báo trên thanh tiêu đề (bấm ⚙) và Cài đặt → Thông báo; Cài đặt → Tài khoản
- * có dòng riêng dưới mỗi tài khoản (InAppNotifyAccountLine).
+ * Setting "Thông báo tin nhắn trong app" (in-app message notifications, store/chat/inAppNotifyStore): the "Tất cả tài khoản" toggle (also applies to accounts added
+ * later) and one toggle per account. Used by the notification bell in the title bar (click ⚙) and Settings → Notifications; Settings → Accounts
+ * has its own line under each account (InAppNotifyAccountLine).
  */
 import React from 'react';
 import { Switch } from '@/components/ui';
@@ -13,17 +13,19 @@ import {
   IN_APP_TOAST_MAX, IN_APP_TOAST_MS, isInAppNotifyEnabled, summarizeInAppNotify, type InAppNotifyPrefs,
 } from '@/lib/chat/notifications/inAppNotify';
 import { getChannelLabel, resolveAccountChannel } from '../../../../configs/channels/channelConfig';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
-/** Dòng mô tả dưới "Tất cả tài khoản". */
+/** Description line under "Tất cả tài khoản". */
 export function inAppNotifySummaryText(prefs: InAppNotifyPrefs, accountIds: readonly string[]): string {
   const summary = summarizeInAppNotify(prefs, accountIds);
-  const later = prefs.all ? 'bật' : 'tắt';
-  if (summary.allOn) return 'Đang bật cho mọi tài khoản, cả tài khoản thêm sau';
-  if (summary.allOff) return 'Đang tắt cho mọi tài khoản, cả tài khoản thêm sau';
-  return `Đang bật ${summary.enabled}/${summary.total} tài khoản · tài khoản thêm sau: ${later}`;
+  const later = prefs.all ? tr('bật') : tr('tắt');
+  if (summary.allOn) return tr('Đang bật cho mọi tài khoản, cả tài khoản thêm sau');
+  if (summary.allOff) return tr('Đang tắt cho mọi tài khoản, cả tài khoản thêm sau');
+  return tr('Đang bật {{enabled}}/{{total}} tài khoản · tài khoản thêm sau: {{later}}', { enabled: summary.enabled, total: summary.total, later });
 }
 
-/** Ảnh tài khoản + huy hiệu kênh: dùng chung ở common/accounts/AccountAvatar (giữ tên cũ cho các nơi đang import). */
+/** Account avatar + channel badge: shared from common/accounts/AccountAvatar (old name kept for the places that still import it). */
 export { MiniAccountAvatar };
 
 export default function InAppNotifySettings({ showHint = true }: { showHint?: boolean }) {
@@ -40,11 +42,11 @@ export default function InAppNotifySettings({ showHint = true }: { showHint?: bo
           <BellIcon className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-[13px] font-medium text-foreground">Tất cả tài khoản</span>
+          <span className="block text-[13px] font-medium text-foreground">{tr('Tất cả tài khoản')}</span>
           <span className="block text-[11px] leading-4 text-muted-foreground">{inAppNotifySummaryText(prefs, ids)}</span>
         </span>
         <Switch size="sm" checked={summary.allOn} onCheckedChange={setAllAccounts}
-          aria-label="Thông báo tin nhắn trong app cho tất cả tài khoản" />
+          aria-label={tr('Thông báo tin nhắn trong app cho tất cả tài khoản')} />
       </div>
 
       {accounts.length > 0 && <div className="mx-2 border-t border-border/60" />}
@@ -60,34 +62,33 @@ export default function InAppNotifySettings({ showHint = true }: { showHint?: bo
             </span>
             <Switch size="sm" checked={isInAppNotifyEnabled(prefs, account.zalo_id)}
               onCheckedChange={(on) => setAccount(account.zalo_id, on)}
-              aria-label={`Thông báo tin nhắn trong app: ${name}`} />
+              aria-label={tr('Thông báo tin nhắn trong app: {{name}}', { name })} />
           </div>
         );
       })}
 
       {showHint && (
         <p className="px-2 pt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-          Hiện {IN_APP_TOAST_MS / 1000} giây, tối đa {IN_APP_TOAST_MAX} thẻ. Không hiện với hội thoại đang mở, đã tắt thông báo
-          hoặc ở thư mục Khác. Đang dùng app thì thay cho popup của Windows / macOS.
+          {trx('Hiện {{v1}} giây, tối đa {{IN_APP_TOAST_MAX}} thẻ. Không hiện với hội thoại đang mở, đã tắt thông báo hoặc ở thư mục Khác. Đang dùng app thì thay cho popup của Windows / macOS.', { v1: IN_APP_TOAST_MS / 1000, IN_APP_TOAST_MAX })}
         </p>
       )}
     </div>
   );
 }
 
-/** Dòng dưới mỗi tài khoản ở Cài đặt → Tài khoản. */
+/** Line under each account in Settings → Accounts. */
 export function InAppNotifyAccountLine({ accountId }: { accountId: string }) {
   const on = useInAppNotifyStore((s) => isInAppNotifyEnabled(s.prefs, accountId));
   const setAccount = useInAppNotifyStore((s) => s.setAccount);
   return (
     <div className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5">
       <span className="flex-shrink-0 text-muted-foreground"><BellIcon className="h-4 w-4" /></span>
-      <span className="flex-shrink-0 text-[13px] text-foreground">Thông báo trong app</span>
+      <span className="flex-shrink-0 text-[13px] text-foreground">{tr('Thông báo trong app')}</span>
       <span className="ml-auto min-w-0 truncate text-right text-xs text-muted-foreground">
-        {on ? 'Hiện tin nhắn mới ở góc trên' : 'Tắt'}
+        {on ? tr('Hiện tin nhắn mới ở góc trên') : tr('Tắt')}
       </span>
       <Switch size="sm" checked={on} onCheckedChange={(next) => setAccount(accountId, next)}
-        aria-label="Thông báo tin nhắn trong app" />
+        aria-label={tr('Thông báo tin nhắn trong app')} />
     </div>
   );
 }

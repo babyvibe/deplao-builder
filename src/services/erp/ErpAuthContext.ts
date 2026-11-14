@@ -37,8 +37,8 @@ export class ErpPermissionError extends Error {
 }
 
 /**
- * Danh tính ERP do Public API / plugin đặt cho một lời gọi IPC (ApiPlatform → IpcInvoker).
- * Không có override → hành vi cũ (AppMode) giữ nguyên.
+ * ERP identity set by the Public API / a plugin for one IPC call (ApiPlatform → IpcInvoker).
+ * No override → the old behaviour (AppMode) is kept.
  */
 const actorOverride = new AsyncLocalStorage<ErpAuthCtx>();
 
@@ -76,12 +76,12 @@ export default class ErpAuthContext {
     return null;
   }
 
-  /** Chạy `fn` (kể cả phần async bên trong) với danh tính ERP cố định — dùng cho API/plugin. */
+  /** Run `fn` (including the async parts inside) with a fixed ERP identity, used for the API / plugins. */
   public static runAs<T>(ctx: ErpAuthCtx, fn: () => T): T {
     return actorOverride.run(ctx, fn);
   }
 
-  /** Danh tính ERP của một nhân viên theo hồ sơ ERP (role + override), dùng khi nhân viên gọi API v1. */
+  /** The ERP identity of an employee from their ERP profile (role + override), used when an employee calls API v1. */
   public static forEmployee(employeeId: string): ErpAuthCtx {
     const access = this._lookupAccess(employeeId);
     return {

@@ -1,15 +1,15 @@
 /**
- * telegramUserIpc.ts - IPC handlers cho Telegram cá nhân (MTProto)
+ * telegramUserIpc.ts - IPC handlers for personal Telegram (MTProto)
  *
  * Channels:
- * - telegramUser:sendCode      — Gửi mã OTP đến SĐT
- * - telegramUser:signIn         — Xác nhận mã OTP
- * - telegramUser:signIn2FA      — Xác nhận 2FA password
- * - telegramUser:startListener  — Start MTProto listener
- * - telegramUser:stopListener   — Stop listener
- * - telegramUser:sendMessage    — Gửi tin nhắn
- * - telegramUser:isConnected    — Check connection status
- * - telegramUser:getActive      — Get danh sách listeners active
+ * - telegramUser:sendCode      - Send the OTP code to the phone number
+ * - telegramUser:signIn         - Confirm the OTP code
+ * - telegramUser:signIn2FA      - Confirm the 2FA password
+ * - telegramUser:startListener  - Start MTProto listener
+ * - telegramUser:stopListener   - Stop listener
+ * - telegramUser:sendMessage    - Send a message
+ * - telegramUser:isConnected    - Check connection status
+ * - telegramUser:getActive      - Get the list of active listeners
  */
 
 import { ipcMain as electronIpcMain } from 'electron';
@@ -17,22 +17,23 @@ import * as TelegramUser from '../../../src/services/telegram/TelegramUserListen
 import Logger from '../../../src/utils/Logger';
 import type { TelegramChatContext, TelegramForumTopicContext } from '../../../src/models/telegram/telegram';
 import { employeeRoutedIpcMain } from '../network/proxyHelper';
+import { tr } from '../../../src/shared/i18n';
 
 /**
- * Chế độ nhân viên: `ipcMain.handle` ở file này đăng ký handler đã bọc theo bảng employeeChannelRoutes
- * (src/services/http/employeeChannelRoutes.ts) — máy nhân viên chạy thao tác chat (gửi tin / file / sticker, cảm xúc, xoá,
- * sửa, đã đọc, nhóm, forum…) trên Boss qua /api/proxy/action và trả kết quả thật; đăng nhập / kết nối / trạng thái phiên
- * báo lỗi "chỉ Boss". Máy Boss / standalone: handler chạy y như cũ. Handler mới phải được phân loại trong bảng.
+ * Employee mode: `ipcMain.handle` in this file registers handlers wrapped by the employeeChannelRoutes table
+ * (src/services/http/employeeChannelRoutes.ts): an employee machine runs chat actions (send messages / files / stickers, reactions, delete,
+ * edit, read status, groups, forums…) on Boss via /api/proxy/action and returns the real result; signing in / connecting / session status
+ * report the error "chỉ Boss" (Boss only). Boss / standalone machines: the handler runs exactly as before. A new handler must be classified in the table.
  */
 const ipcMain = employeeRoutedIpcMain(electronIpcMain);
 
-/** Id Telegram dạng số (người, nhóm `-…`, kênh `-100…`); khác thì bỏ. */
+/** Numeric Telegram id (user, group `-…`, channel `-100…`); anything else is dropped. */
 function optionalId(value: unknown): string | undefined {
   const id = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
   return /^-?\d{1,20}$/.test(id) ? id : undefined;
 }
 
-/** Nút đăng nhập: hội thoại + id tin + button_id (số nguyên dương 32 bit). */
+/** Login button: conversation + message id + button_id (positive 32-bit integer). */
 function urlAuthIds(params: { peerId?: unknown; msgId?: unknown; buttonId?: unknown }): { peerId: string; msgId: number; buttonId: number } | null {
   const peerId = optionalId(params?.peerId);
   const msgId = Number(params?.msgId);
@@ -49,7 +50,7 @@ type LegacyTelegramForumTopicContext = TelegramChatContext & {
 
 function getTopicRootMessageId(params: LegacyTelegramForumTopicContext): string {
   const topicRootMessageId = params.topicRootMessageId || params.topicId;
-  if (!topicRootMessageId) throw new Error('Thiếu topicRootMessageId cho Telegram forum');
+  if (!topicRootMessageId) throw new Error(tr('Thiếu topicRootMessageId cho Telegram forum'));
   return topicRootMessageId;
 }
 
@@ -197,8 +198,8 @@ export function registerTelegramUserIpc(): void {
     }
   });
 
-  // ── Telegram WebView (Mini App) + nút đăng nhập của bot ─────────────────
-  // peerId = hội thoại nơi bấm nút (tin của bot trong nhóm → nhóm); themeParams = màu theo theme Deplao (main lọc lại).
+  // ── Telegram WebView (Mini App) + bot login button ─────────────────
+  // peerId = the conversation where the button is clicked (a bot message in a group → the group); themeParams = colors from the Deplao theme (main filters them again).
   ipcMain.handle('telegramUser:requestWebView', async (_event, params: { accountId: string; botId: string; url: string; fromBotMenu?: boolean; peerId?: string; themeParams?: unknown }) => {
     try {
       return await TelegramUser.requestWebView(params.accountId, params.botId, params.url, params.fromBotMenu,
@@ -231,20 +232,20 @@ export function registerTelegramUserIpc(): void {
   });
   ipcMain.handle('telegramUser:requestUrlAuth', async (_event, params: { accountId: string; peerId: string; msgId: number; buttonId: number }) => {
     const ids = urlAuthIds(params);
-    if (!ids) return { success: false, error: 'Thiếu thông tin nút đăng nhập' };
+    if (!ids) return { success: false, error: tr('Thiếu thông tin nút đăng nhập') };
     try { return await TelegramUser.requestUrlAuth(params.accountId, ids.peerId, ids.msgId, ids.buttonId); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
   ipcMain.handle('telegramUser:acceptUrlAuth', async (_event, params: { accountId: string; peerId: string; msgId: number; buttonId: number; writeAllowed?: boolean; sharePhone?: boolean }) => {
     const ids = urlAuthIds(params);
-    if (!ids) return { success: false, error: 'Thiếu thông tin nút đăng nhập' };
+    if (!ids) return { success: false, error: tr('Thiếu thông tin nút đăng nhập') };
     try {
       return await TelegramUser.acceptUrlAuth(params.accountId, ids.peerId, ids.msgId, ids.buttonId,
         { writeAllowed: params.writeAllowed === true, sharePhone: params.sharePhone === true });
     }
     catch (err: any) { return { success: false, error: err.message }; }
   });
-  // ── Link Telegram mở trong app (lib/chat/links/chatLinks): số điện thoại, Mini App theo tên, link bot ?start ──
+  // ── Telegram links opened in the app (lib/chat/links/chatLinks): phone numbers, Mini App by name, bot ?start links ──
   ipcMain.handle('telegramUser:resolvePhone', async (_event, params: { accountId: string; phone: string }) => {
     try { return await TelegramUser.resolvePhone(params.accountId, String(params.phone || '')); }
     catch (err: any) { return { success: false, error: err.message }; }
@@ -272,14 +273,14 @@ export function registerTelegramUserIpc(): void {
     const col = Number(params.col);
     const index = (n: number) => Number.isInteger(n) && n >= 0 && n < 100;
     if (!chatId || !Number.isInteger(msgId) || msgId <= 0 || msgId > 0x7fffffff || !index(row) || !index(col)) {
-      return { success: false, error: 'Thiếu thông tin nút' };
+      return { success: false, error: tr('Thiếu thông tin nút') };
     }
     try { return await TelegramUser.pressInlineButton(params.accountId, chatId, msgId, row, col); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
   ipcMain.handle('telegramUser:startBot', async (_event, params: { accountId: string; botId: string; startParam: string }) => {
     const botId = optionalId(params.botId);
-    if (!botId) return { success: false, error: 'Thiếu bot' };
+    if (!botId) return { success: false, error: tr('Thiếu bot') };
     try { return await TelegramUser.startBot(params.accountId, botId, String(params.startParam ?? '')); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
@@ -321,7 +322,7 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Tệp vào chủ đề forum / chuỗi bình luận bài đăng kênh; replyToMsgId = trả lời một tin cụ thể trong đó
+  // Enter a forum topic / channel post comment thread; replyToMsgId = reply to a specific message in it
   ipcMain.handle('telegramUser:sendTopicFile', async (_event, params: TelegramForumTopicContext & { filePath: string; caption?: string; fileType?: string; replyToMsgId?: string }) => {
     try { return await TelegramUser.sendTopicFile(params.accountId, params.chatId, params.topicRootMessageId, params.filePath, params.caption, params.fileType, params.replyToMsgId); }
     catch (err: any) { return { success: false, error: err.message }; }
@@ -337,13 +338,13 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Reaction dùng được trong hội thoại (danh sách chuẩn / giới hạn của nhóm, kênh / hay dùng trước)
+  // Reactions available in the conversation (the standard list / the group's restricted list; channels / frequently used first)
   ipcMain.handle('telegramUser:getAvailableReactions', async (_event, params: { accountId: string; chatId: string }) => {
     try { return await TelegramUser.getAvailableReactions(params.accountId, params.chatId); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Lấy lại reaction chính thức của các tin (sửa số đếm bị cộng dồn sai trước đây)
+  // Re-fetch the official reactions of the messages (fixes counts that were wrongly added up before)
   ipcMain.handle('telegramUser:refreshReactions', async (_event, params: { accountId: string; chatId: string; messageIds: string[] }) => {
     try { return await TelegramUser.refreshMessageReactions(params.accountId, params.chatId, params.messageIds || []); }
     catch (err: any) { return { success: false, error: err.message }; }
@@ -361,13 +362,13 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Quản trị viên + chức vụ tự đặt của nhóm (nhãn góc phải tên người gửi); bản lưu < 6 giờ thì không gọi mạng
+  // Admins + the group's custom titles (label at the top right of the sender's name); a cache under 6 hours does not call the network
   ipcMain.handle('telegramUser:getGroupAdmins', async (_event, params: { accountId: string; chatId: string; refresh?: boolean }) => {
     try { return await TelegramUser.getGroupAdminsCached(params.accountId, params.chatId, !!params.refresh); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Ô @nhắc đến: tìm thành viên nhóm lớn trên Telegram theo tên / @username, lưu DB (lần sau tìm trong DB)
+  // @mention box: search large group members on Telegram by name / @username, save to the DB (next time search the DB)
   ipcMain.handle('telegramUser:searchGroupMembers', async (_event, params: { accountId: string; chatId: string; query: string; limit?: number }) => {
     try { return await TelegramUser.searchGroupMembers(params.accountId, params.chatId, params.query, params.limit); }
     catch (err: any) { return { success: false, error: err.message }; }
@@ -438,7 +439,7 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Thao tác nhanh (nút cạnh ô tìm kiếm): tạo nhóm, tham gia bằng link, thêm liên hệ
+  // Quick actions (buttons next to the search box): create a group, join by link, add a contact
   ipcMain.handle('telegramUser:createGroup', async (_event, params: { accountId: string; title: string; userIds?: string[]; photoPath?: string; ttlPeriod?: number }) => {
     try { return await TelegramUser.createGroup(params.accountId, params.title, params.userIds || [], { photoPath: params.photoPath, ttlPeriod: params.ttlPeriod }); }
     catch (err: any) { return { success: false, error: err.message }; }
@@ -463,7 +464,7 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // ── Nhóm mới / kênh mới / quản lý nhóm, kênh / danh bạ / cuộc gọi (thao tác nhanh) ──
+  // ── New group / new channel / group & channel management / contacts / calls (quick actions) ──
   ipcMain.handle('telegramUser:createChannel', async (_event, params: { accountId: string; title: string; about?: string; photoPath?: string; username?: string; userIds?: string[] }) => {
     try {
       return await TelegramUser.createChannel(params.accountId, {
@@ -573,13 +574,13 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // "Đã xem": ai đã xem tin mình gửi (nhóm) / lúc nào người kia xem (chat riêng)
+  // "Đã xem" (Seen): who viewed the messages I sent (group) / when the other person viewed (1:1 chat)
   ipcMain.handle('telegramUser:getMessageReadParticipants', async (_event, params: { accountId: string; chatId: string; messageId: string }) => {
     try { return await TelegramUser.getMessageReadParticipants(params.accountId, params.chatId, params.messageId); }
     catch (err: any) { return { success: false, reason: 'error', error: err.message }; }
   });
 
-  // urgent = người dùng bấm tải / thử lại → hàng tải đưa lên đầu
+  // urgent = the user clicked download / retry → the download queue moves it to the front
   ipcMain.handle('telegramUser:repairMessageMedia', async (_event, params: { accountId: string; chatId: string; messageId: string; urgent?: boolean }) => {
     try { return await TelegramUser.repairMessageMedia(params.accountId, params.chatId, params.messageId, { urgent: !!params.urgent }); }
     catch (err: any) {
@@ -588,43 +589,43 @@ export function registerTelegramUserIpc(): void {
     }
   });
 
-  // Bình luận bài đăng kênh: nằm ở nhóm thảo luận (không phải kênh) — tin gốc, quyền bình luận, bình luận cũ → mới
+  // Channel post comments live in the discussion group (not the channel): root message, comment permission, old → new comments
   ipcMain.handle('telegramUser:getPostDiscussion', async (_event, params: { accountId: string; channelId: string; postId: string; mode?: 'initial' | 'older' | 'newer' | 'latest'; offsetId?: number; limit?: number }) => {
     try { return await TelegramUser.getPostDiscussion(params.accountId, params.channelId, params.postId, { mode: params.mode, offsetId: params.offsetId, limit: params.limit }); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Đã đọc bình luận tới readMaxId (messages.readDiscussion) — lần mở sau bắt đầu ở bình luận chưa đọc kế tiếp
+  // Marks comments as read up to readMaxId (messages.readDiscussion): the next open starts at the next unread comment
   ipcMain.handle('telegramUser:readPostDiscussion', async (_event, params: { accountId: string; chatId: string; rootId: string; readMaxId: number; channelId?: string; postId?: string }) => {
     try { return await TelegramUser.readPostDiscussion(params.accountId, params.chatId, params.rootId, params.readMaxId, { channelId: params.channelId, postId: params.postId }); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Kết quả các bình chọn đang hiện (messages.getPollResults)
+  // Results of the polls currently shown (messages.getPollResults)
   ipcMain.handle('telegramUser:refreshPollResults', async (_event, params: { accountId: string; chatId: string; messageIds: string[] }) => {
     try { return await TelegramUser.refreshPollResults(params.accountId, params.chatId, params.messageIds); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Lượt xem / chia sẻ / bình luận của các bài đang hiện (messages.getMessagesViews)
+  // Views / shares / comments of the posts currently shown (messages.getMessagesViews)
   ipcMain.handle('telegramUser:refreshPostStats', async (_event, params: { accountId: string; chatId: string; messageIds: string[]; increment?: boolean }) => {
     try { return await TelegramUser.refreshPostStats(params.accountId, params.chatId, params.messageIds, !!params.increment); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Ảnh / video trong tin định dạng phong phú (mediaId trống = mọi ảnh)
+  // Images / videos in rich-format messages (empty mediaId = all images)
   ipcMain.handle('telegramUser:downloadRichMedia', async (_event, params: { accountId: string; chatId: string; messageId: string; mediaId?: string }) => {
     try { return await TelegramUser.downloadRichMedia(params.accountId, params.chatId, params.messageId, params.mediaId); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Hội thoại Telegram đang mở (null = không mở hội thoại Telegram nào) → hàng tải file của tài khoản đó ưu tiên hội thoại này
+  // The open Telegram conversation (null = no Telegram conversation is open) → that account's file download queue prioritizes this conversation
   ipcMain.handle('telegramUser:setDownloadFocus', async (_event, params: { accountId?: string | null; threadId?: string | null } | null) => {
     TelegramUser.setTelegramDownloadFocus(params?.accountId, params?.threadId);
     return { success: true };
   });
 
-  // Thẻ link của bản ghi cũ: lấy lại attachments theo lô (không tải media)
+  // Link cards of old records: fetch the attachments in batches (no media download)
   ipcMain.handle('telegramUser:refreshMessageAttachments', async (_event, params: { accountId: string; chatId: string; messageIds: string[] }) => {
     try { return await TelegramUser.refreshMessageAttachments(params.accountId, params.chatId, params.messageIds || []); }
     catch (err: any) { return { success: false, error: err.message }; }
@@ -770,7 +771,7 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
-  // Bảng sticker / GIF đồng bộ tài khoản (bộ đã cài + gần đây + yêu thích, GIF đã lưu), popup bộ sticker, thêm / gỡ bộ
+  // Sticker / GIF table synced to the account (installed sets + recent + favorites, saved GIFs), sticker set popup, add / remove sets
   ipcMain.handle('telegramUser:getStickerPanel', async (_event, params: { accountId: string }) => {
     try { return await TelegramUser.getStickerPanel(params.accountId); }
     catch (err: any) { return { success: false, error: err.message }; }

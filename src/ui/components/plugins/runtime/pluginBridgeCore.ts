@@ -1,12 +1,13 @@
 /**
- * Xử lý JSON-RPC từ iframe plugin (phía renderer). deplao.ui.* chạy ngay trong app;
- * events.subscribe gom qua pluginEvents; mọi hàm khác chuyển sang main (plugins:invoke)
- * — nơi kiểm tra scope/quyền và gọi IPC chung.
+ * Handles JSON-RPC from the plugin iframe (renderer side). deplao.ui.* runs right inside the app;
+ * events.subscribe is grouped through pluginEvents; every other function is passed to main (plugins:invoke)
+ * - where the scope/permission is checked and the shared IPC is called.
  */
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/app/appStore';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { useChatStore } from '@/store/chat/chatStore';
+import { tr } from '../../../../shared/i18n';
 
 export class BridgeError extends Error {
   constructor(public readonly code: string, message: string, public readonly status = 400, public readonly details?: any) {
@@ -33,11 +34,11 @@ export interface UiBridgeEnv {
 }
 
 function need(env: UiBridgeEnv, perm: string): void {
-  if (!env.permissions.includes(perm)) throw new BridgeError('FORBIDDEN_SCOPE', `Plugin cần quyền "${perm}"`, 403);
+  if (!env.permissions.includes(perm)) throw new BridgeError('FORBIDDEN_SCOPE', tr('Plugin cần quyền "{{perm}}"', { perm }), 403);
 }
 
 function str(v: any, max: number, name: string): string {
-  if (typeof v !== 'string' || !v || v.length > max) throw new BridgeError('VALIDATION_ERROR', `${name} phải là chuỗi 1–${max} ký tự`);
+  if (typeof v !== 'string' || !v || v.length > max) throw new BridgeError('VALIDATION_ERROR', tr('{{name}} phải là chuỗi 1–{{max}} ký tự', { name, max }));
   return v;
 }
 
@@ -46,7 +47,7 @@ export async function handleUiRequest(env: UiBridgeEnv, method: string, params: 
   switch (method) {
     case 'ui.ready': {
       let settings: any = {};
-      try { settings = await env.invokeMain('settings.get', {}); } catch { /* plugin chưa có cài đặt */ }
+      try { settings = await env.invokeMain('settings.get', {}); } catch { /* plugin has no settings yet */ }
       return { pluginId: env.pluginId, kind: env.kind, context: env.getContext() ?? null, theme: env.getTheme(), settings };
     }
     case 'ui.openConversation':
@@ -64,13 +65,13 @@ export async function handleUiRequest(env: UiBridgeEnv, method: string, params: 
     }
     case 'ui.navigate': {
       const pageId = str(p.pageId, 40, 'pageId');
-      if (!env.pageIds.includes(pageId)) throw new BridgeError('NOT_FOUND', `Plugin không có trang "${pageId}"`, 404);
+      if (!env.pageIds.includes(pageId)) throw new BridgeError('NOT_FOUND', tr('Plugin không có trang "{{pageId}}"', { pageId }), 404);
       env.actions.navigate(pageId);
       return { ok: true };
     }
     case 'ui.openExternal': {
       const url = str(p.url, 2000, 'url');
-      if (!/^https?:\/\//i.test(url)) throw new BridgeError('VALIDATION_ERROR', 'Chỉ mở được liên kết http/https');
+      if (!/^https?:\/\//i.test(url)) throw new BridgeError('VALIDATION_ERROR', tr('Chỉ mở được liên kết http/https'));
       env.actions.openExternal(url);
       return { ok: true };
     }
@@ -80,27 +81,27 @@ export async function handleUiRequest(env: UiBridgeEnv, method: string, params: 
       return { ok: true };
     }
     default:
-      if (method.startsWith('ui.')) throw new BridgeError('NOT_FOUND', `Không có hàm "${method}"`, 404);
+      if (method.startsWith('ui.')) throw new BridgeError('NOT_FOUND', tr('Không có hàm "{{method}}"', { method }), 404);
       return env.invokeMain(method, p);
   }
 }
 
-/** Gọi main; lỗi → BridgeError giữ mã lỗi API. */
+/** Calls main; on error → BridgeError keeps the API error code. */
 export function mainInvoker(pluginId: string) {
   return async (method: string, params: any): Promise<any> => {
     const res = await ipc.plugins?.invoke(pluginId, method, params);
-    if (!res) throw new BridgeError('NOT_IMPLEMENTED', 'Bản app chưa hỗ trợ plugin', 501);
-    if (!res.success) throw new BridgeError(res.code || 'ERROR', res.error || 'Lỗi', res.status || 400, res.details);
+    if (!res) throw new BridgeError('NOT_IMPLEMENTED', tr('Bản app chưa hỗ trợ plugin'), 501);
+    if (!res.success) throw new BridgeError(res.code || 'ERROR', res.error || tr('Lỗi'), res.status || 400, res.details);
     return res.result;
   };
 }
 
-/** Hành động UI thật của app. */
+/** The app's real UI actions. */
 export function appActions(pluginId: string): UiBridgeEnv['actions'] {
   return {
     openConversation: (accountId, threadId) => {
       const accounts = useAccountStore.getState();
-      if (!accounts.accounts.some(a => a.zalo_id === accountId)) throw new BridgeError('NOT_FOUND', 'Không có tài khoản này trên máy', 404);
+      if (!accounts.accounts.some(a => a.zalo_id === accountId)) throw new BridgeError('NOT_FOUND', tr('Không có tài khoản này trên máy'), 404);
       if (accounts.activeAccountId !== accountId) accounts.setActiveAccount(accountId);
       const contact = (useChatStore.getState().contacts[accountId] || []).find(c => c.contact_id === threadId);
       useAppStore.getState().setView('chat');

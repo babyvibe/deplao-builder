@@ -1,20 +1,21 @@
 /**
- * Nhóm Nhãn, tin nhắn nhanh, sticker.
- * Kênh IPC: db:getLocalLabels, db:upsertLocalLabel, db:deleteLocalLabel, db:getThreadLocalLabels,
- * db:assignLocalLabelToThread (phát workflow trigger.labelAssigned như UI), db:removeLocalLabelFromThread,
+ * Labels group, quick messages, stickers.
+ * IPC channels: db:getLocalLabels, db:upsertLocalLabel, db:deleteLocalLabel, db:getThreadLocalLabels,
+ * db:assignLocalLabelToThread (emits the workflow trigger.labelAssigned, same as the UI), db:removeLocalLabelFromThread,
  * zalo:getLabels, db:getLocalQuickMessages, db:upsertLocalQuickMessage, db:deleteLocalQuickMessage,
  * db:getRecentStickers, db:getStickerPacks, db:getStickersByPackId, db:getKeywordStickers.
  */
 import { s } from '../schema';
 import { ApiContext, route, RouteDef } from '../types';
 import { accountParams, notFound, threadParams } from './common';
+import { tr } from '../../../shared/i18n';
 
 const labelBody = s.object({
     name: s.string().min(1).max(100),
     color: s.string().max(20).default('#3B82F6'),
     text_color: s.string().max(20).default('#FFFFFF'),
     emoji: s.string().max(16).default('🏷️'),
-    account_ids: s.array(s.string()).max(200).optional().describe('Chỉ hiện ở các tài khoản này; bỏ trống = mọi tài khoản'),
+    account_ids: s.array(s.string()).max(200).optional().describe(tr('Chỉ hiện ở các tài khoản này; bỏ trống = mọi tài khoản')),
     shortcut: s.string().max(20).optional(),
 });
 
@@ -47,7 +48,7 @@ export function labelRoutes(): RouteDef[] {
     return [
         route({
             method: 'GET', path: '/accounts/:accountId/labels', scope: 'chat:read', tags, operationId: 'listLabels',
-            summary: 'Nhãn (local) dùng được ở tài khoản',
+            summary: tr('Nhãn (local) dùng được ở tài khoản'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -57,7 +58,7 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/labels', scope: 'chat:manage', tags, operationId: 'createLabel',
-            summary: 'Tạo nhãn',
+            summary: tr('Tạo nhãn'),
             body: labelBody,
             handler: async ctx => {
                 const b = ctx.body;
@@ -73,7 +74,7 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/labels/:labelId', scope: 'chat:manage', tags, operationId: 'updateLabel',
-            summary: 'Sửa nhãn',
+            summary: tr('Sửa nhãn'),
             params: s.object({ labelId: s.int().min(1) }),
             body: labelBody.partial(),
             handler: async ctx => {
@@ -100,7 +101,7 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/labels/:labelId', scope: 'chat:manage', tags, operationId: 'deleteLabel',
-            summary: 'Xoá nhãn (gỡ khỏi mọi hội thoại)',
+            summary: tr('Xoá nhãn (gỡ khỏi mọi hội thoại)'),
             params: s.object({ labelId: s.int().min(1) }),
             handler: async ctx => {
                 await ctx.call('db:deleteLocalLabel', { id: ctx.params.labelId });
@@ -109,7 +110,7 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/labels', scope: 'chat:read', tags, operationId: 'listConversationLabels',
-            summary: 'Nhãn đang gán cho hội thoại',
+            summary: tr('Nhãn đang gán cho hội thoại'),
             params: threadParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -119,8 +120,8 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'PUT', path: '/accounts/:accountId/conversations/:threadId/labels', scope: 'chat:manage', tags, operationId: 'setConversationLabels',
-            summary: 'Đặt đúng tập nhãn cho hội thoại (gán thiếu, gỡ thừa)',
-            description: 'Mỗi lần gán/gỡ đi qua cùng handler UI dùng nên workflow "Khi gán hoặc gỡ nhãn" vẫn chạy.',
+            summary: tr('Đặt đúng tập nhãn cho hội thoại (gán thiếu, gỡ thừa)'),
+            description: tr('Mỗi lần gán/gỡ đi qua cùng handler UI dùng nên workflow "Khi gán hoặc gỡ nhãn" vẫn chạy.'),
             params: threadParams,
             body: s.object({ label_ids: s.array(s.int().min(1)).max(100) }),
             handler: async ctx => {
@@ -158,7 +159,7 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/labels/:labelId', scope: 'chat:manage', tags, operationId: 'addConversationLabel',
-            summary: 'Gán một nhãn cho hội thoại',
+            summary: tr('Gán một nhãn cho hội thoại'),
             params: s.object({ accountId: s.id(), threadId: s.id(), labelId: s.int().min(1) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -174,7 +175,7 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId/labels/:labelId', scope: 'chat:manage', tags, operationId: 'removeConversationLabel',
-            summary: 'Gỡ một nhãn khỏi hội thoại',
+            summary: tr('Gỡ một nhãn khỏi hội thoại'),
             params: s.object({ accountId: s.id(), threadId: s.id(), labelId: s.int().min(1) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -190,7 +191,7 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/zalo-labels', scope: 'chat:read', tags, operationId: 'listZaloLabels',
-            summary: 'Nhãn trên server Zalo của tài khoản (chỉ Zalo, cần online)',
+            summary: tr('Nhãn trên server Zalo của tài khoản (chỉ Zalo, cần online)'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -200,10 +201,10 @@ export function labelRoutes(): RouteDef[] {
             },
         }),
 
-        // ── Tin nhắn nhanh ────────────────────────────────────────────────
+        // ── Quick messages ────────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/quick-messages', scope: 'chat:read', tags, operationId: 'listQuickMessages',
-            summary: 'Tin nhắn nhanh (/keyword) của tài khoản',
+            summary: tr('Tin nhắn nhanh (/keyword) của tài khoản'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -213,12 +214,12 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/quick-messages', scope: 'chat:manage', tags, operationId: 'upsertQuickMessage',
-            summary: 'Tạo hoặc cập nhật tin nhắn nhanh (theo keyword)',
+            summary: tr('Tạo hoặc cập nhật tin nhắn nhanh (theo keyword)'),
             params: accountParams,
             body: s.object({
                 keyword: s.string().min(1).max(50),
                 title: s.string().max(5000),
-                media: s.any().optional().describe('Giữ nguyên định dạng media của app (tuỳ chọn)'),
+                media: s.any().optional().describe(tr('Giữ nguyên định dạng media của app (tuỳ chọn)')),
             }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -228,7 +229,7 @@ export function labelRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/quick-messages/:id', scope: 'chat:manage', tags, operationId: 'deleteQuickMessage',
-            summary: 'Xoá tin nhắn nhanh',
+            summary: tr('Xoá tin nhắn nhanh'),
             params: s.object({ accountId: s.id(), id: s.int().min(1) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -240,24 +241,24 @@ export function labelRoutes(): RouteDef[] {
         // ── Sticker ───────────────────────────────────────────────────────
         route({
             method: 'GET', path: '/stickers/recent', scope: 'chat:read', tags, operationId: 'listRecentStickers',
-            summary: 'Sticker dùng gần đây',
+            summary: tr('Sticker dùng gần đây'),
             query: s.object({ limit: s.int().min(1).max(100).default(30) }),
             handler: async ctx => (await ctx.call('db:getRecentStickers', { limit: ctx.query.limit }))?.stickers || [],
         }),
         route({
             method: 'GET', path: '/sticker-packs', scope: 'chat:read', tags, operationId: 'listStickerPacks',
-            summary: 'Bộ sticker đã lưu',
+            summary: tr('Bộ sticker đã lưu'),
             handler: async ctx => (await ctx.call('db:getStickerPacks'))?.packs || [],
         }),
         route({
             method: 'GET', path: '/sticker-packs/:catId/stickers', scope: 'chat:read', tags, operationId: 'listStickersInPack',
-            summary: 'Sticker trong một bộ',
+            summary: tr('Sticker trong một bộ'),
             params: s.object({ catId: s.int() }),
             handler: async ctx => (await ctx.call('db:getStickersByPackId', { catId: ctx.params.catId }))?.stickers || [],
         }),
         route({
             method: 'GET', path: '/stickers/search', scope: 'chat:read', tags, operationId: 'searchStickers',
-            summary: 'ID sticker theo từ khoá (đã cache)',
+            summary: tr('ID sticker theo từ khoá (đã cache)'),
             query: s.object({ keyword: s.string().min(1).max(50) }),
             handler: async ctx => ({ sticker_ids: (await ctx.call('db:getKeywordStickers', { keyword: ctx.query.keyword }))?.stickerIds || [] }),
         }),

@@ -6,6 +6,7 @@ import DatabaseService from '../../../src/services/database/DatabaseService';
 import WorkspaceManager from '../../../src/utils/app/WorkspaceManager';
 import { proxyToBossWithResult, uploadEmployeeMedia } from '../network/proxyHelper';
 import Logger from '../../../src/utils/Logger';
+import { tr } from '../../../src/shared/i18n';
 
 
 function isEmployeeMode(): boolean {
@@ -16,12 +17,12 @@ function isEmployeeMode(): boolean {
     return false;
 }
 
-/** File kiến thức nhân viên tải lên Boss tối đa (chỉ nội dung văn bản ≤ 100k ký tự được dùng; file lớn chỉ tốn băng thông). */
+/** Max size of a knowledge file an employee uploads to Boss (only text up to 100k characters is used; a large file only wastes bandwidth). */
 const AI_FILE_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
-// Nhân viên: mọi lệnh ai:* chạy trên Boss qua proxyToBossWithResult (proxyHelper) và trả KẾT QUẢ THẬT của Boss.
-// Lệnh ghi trước đây gửi kiểu fire-and-forget rồi trả { success: true } ngay → UI báo thành công cả khi Boss từ chối
-// (thiếu quyền module ai_assistant, file không hợp lệ…), không có id trợ lý mới.
+// Employee: every ai:* command runs on Boss via proxyToBossWithResult (proxyHelper) and returns Boss's REAL result.
+// Write commands used to be sent fire-and-forget and return { success: true } at once → the UI reported success even when Boss refused
+// (missing ai_assistant module permission, invalid file…), with no new assistant id.
 
 export function registerAIAssistantIpc(): void {
 
@@ -46,7 +47,7 @@ export function registerAIAssistantIpc(): void {
             if (isEmployeeMode()) return await proxyToBossWithResult('ai:getAssistant', { id });
 
       const assistant = AIAssistantService.getInstance().getAssistant(id);
-      if (!assistant) return { success: false, error: 'Không tìm thấy trợ lý AI' };
+      if (!assistant) return { success: false, error: tr('Không tìm thấy trợ lý AI') };
       return { success: true, assistant: { ...assistant, apiKey: assistant.apiKey ? '***' : '' } };
     } catch (e: any) {
       return { success: false, error: e.message };
@@ -115,39 +116,39 @@ export function registerAIAssistantIpc(): void {
   });
 
   // ─── Upload file (read text content) ──────────────────────────────────────
-  // Nhân viên: file nằm trên máy nhân viên → upload lên thư mục media của Boss trước (uploadEmployeeMedia — đường dẫn
-  // Boss hợp lệ với chính sách file proxy), rồi Boss chạy chính handler này với đường dẫn Boss (đọc nội dung văn bản,
-  // lưu bản ghi) và trả kết quả thật. Trước đây require sai đường dẫn ('../services/…' không tồn tại) → luôn rơi xuống
-  // proxy với đường dẫn máy nhân viên (Boss từ chối PATH_FORBIDDEN) trong khi UI báo "Đã tải file lên".
-  // Bản sao trên Boss (media/<tài khoản>/…) giữ lại: là file_path của bản ghi, như bản ghi tạo trên Boss trỏ tới file gốc;
-  // không tự xoá vì cùng thư mục với media chat.
+  // Employee: the file is on the employee's machine → upload it to Boss's media folder first (uploadEmployeeMedia: path
+  // valid under the proxy file policy), then Boss runs this same handler with the Boss path (reads the text content,
+  // saves the record) and returns the real result. Before, it required a wrong path ('../services/…' does not exist) → it always fell through to
+  // the proxy with the employee machine's path (Boss rejected it with PATH_FORBIDDEN) while the UI showed "Đã tải file lên" (file uploaded).
+  // The copy on Boss (media/<account>/…) is kept: it is the record's file_path, just as a record created on Boss points to the original file;
+  // it is not deleted automatically because it is in the same folder as the chat media.
   ipcMain.handle('ai:uploadFile', async (_e, { assistantId, filePath: fp, fileName: requestedName }: { assistantId: string; filePath: string; fileName?: string }) => {
     try {
-      if (!fp || !fs.existsSync(fp)) return { success: false, error: 'File không tồn tại' };
+      if (!fp || !fs.existsSync(fp)) return { success: false, error: tr('File không tồn tại') };
       const stat = fs.statSync(fp);
 
       if (isEmployeeMode()) {
         if (stat.size > AI_FILE_MAX_UPLOAD_BYTES) {
-          return { success: false, error: `File kiến thức tối đa ${Math.round(AI_FILE_MAX_UPLOAD_BYTES / 1024 / 1024)} MB` };
+          return { success: false, error: tr('File kiến thức tối đa {{v1}} MB', { v1: Math.round(AI_FILE_MAX_UPLOAD_BYTES / 1024 / 1024) }) };
         }
         let bossPath = '';
         try {
           [bossPath] = await uploadEmployeeMedia([fp]);
         } catch (err: any) {
-          return { success: false, error: err?.message || 'Không tải được file lên Boss' };
+          return { success: false, error: err?.message || tr('Không tải được file lên Boss') };
         }
-        if (!bossPath || bossPath === fp) return { success: false, error: 'Không tải được file lên Boss' };
+        if (!bossPath || bossPath === fp) return { success: false, error: tr('Không tải được file lên Boss') };
         return await proxyToBossWithResult('ai:uploadFile', { assistantId, filePath: bossPath, fileName: path.basename(fp) });
       }
 
       if (!assistantId || !AIAssistantService.getInstance().getAssistant(assistantId)) {
-        return { success: false, error: 'Không tìm thấy trợ lý AI' };
+        return { success: false, error: tr('Không tìm thấy trợ lý AI') };
       }
-      // Tên hiển thị: tên gốc trên máy nhân viên (bản upload trên Boss có thể thành "tên (1).txt")
+      // Display name: the original name on the employee's machine (the upload on Boss may become "tên (1).txt")
       const fileName = (typeof requestedName === 'string' && path.basename(requestedName).trim()) || path.basename(fp);
       const ext = path.extname(fp).toLowerCase();
 
-      // Boss: đọc file local (đường dẫn của Boss — file chọn trên Boss hoặc file nhân viên vừa upload)
+      // Boss: read the local file (Boss's path: a file picked on Boss or the file an employee just uploaded)
       let contentText = '';
       const textExts = ['.txt', '.md', '.csv', '.json', '.html', '.xml', '.log', '.yml', '.yaml'];
       if (textExts.includes(ext)) {
@@ -174,10 +175,10 @@ export function registerAIAssistantIpc(): void {
   });
 
   // ─── Get suggestions (for chat input) ─────────────────────────────────────
-  // count: số câu (1..5) — ô soạn tin theo cài đặt "Số câu gợi ý"; thiếu = 5 (API, nhân viên bản cũ)
+  // count: number of sentences (1..5), matches the compose box setting "Số câu gợi ý" (suggested sentence count); missing = 5 (API, old employee builds)
   ipcMain.handle('ai:suggest', async (_e, { assistantId, chatHistory, count }: { assistantId: string; chatHistory: any[]; count?: number }) => {
     try {
-      // Employee mode: proxy qua Boss REST API để Boss gọi AI
+      // Employee mode: proxy through the Boss REST API so that Boss calls the AI
       if (isEmployeeMode()) {
         try {
           const { default: WorkspaceManager } = require('../../../src/utils/app/WorkspaceManager');
@@ -192,10 +193,10 @@ export function registerAIAssistantIpc(): void {
             });
             const json: any = await res.json();
             if (json?.success) return { success: true, suggestions: json.suggestions || [] };
-            return { success: false, error: json?.error || 'AI suggest thất bại', suggestions: [] };
+            return { success: false, error: json?.error || tr('AI suggest thất bại'), suggestions: [] };
           }
         } catch {}
-        return { success: false, error: 'Không kết nối tới Boss', suggestions: [] };
+        return { success: false, error: tr('Không kết nối tới Boss'), suggestions: [] };
       }
 
       const suggestions = await AIAssistantService.getInstance().getSuggestions(assistantId, chatHistory, count);
@@ -211,7 +212,7 @@ export function registerAIAssistantIpc(): void {
   // ─── Direct chat ──────────────────────────────────────────────────────────
   ipcMain.handle('ai:chat', async (_e, { assistantId, messages, structured, maxTokens, rawSystem, temperature }: { assistantId: string; messages: any[]; structured?: boolean; maxTokens?: number; rawSystem?: boolean; temperature?: number }) => {
     try {
-      // Employee mode: proxy qua Boss REST API để Boss gọi AI
+      // Employee mode: proxy through the Boss REST API so that Boss calls the AI
       if (isEmployeeMode()) {
         try {
           const { default: WorkspaceManager } = require('../../../src/utils/app/WorkspaceManager');
@@ -226,10 +227,10 @@ export function registerAIAssistantIpc(): void {
             });
             const json: any = await res.json();
             if (json?.success) return { success: true, result: json.result, totalTokens: json.totalTokens, promptTokens: json.promptTokens, completionTokens: json.completionTokens };
-            return { success: false, error: json?.error || 'AI chat thất bại' };
+            return { success: false, error: json?.error || tr('AI chat thất bại') };
           }
         } catch {}
-        return { success: false, error: 'Không kết nối tới Boss' };
+        return { success: false, error: tr('Không kết nối tới Boss') };
       }
 
       Logger.info(`[AIAssistantIpc] chat: assistantId=${assistantId}, messagesCount=${messages?.length}, structured=${!!structured}, maxTokens=${maxTokens ?? 'default'}, rawSystem=${!!rawSystem}`);

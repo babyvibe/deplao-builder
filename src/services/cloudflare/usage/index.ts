@@ -1,16 +1,16 @@
 /**
- * Mức sử dụng & chi phí của kho đang chọn (Cài đặt → Đồng bộ dữ liệu) — `core.usage`.
+ * Usage & cost of the selected storage (Settings → Data sync): `core.usage`.
  *
- *  - Đếm thao tác của Deplao trên máy này (UsageMeter): R2Client gọi recordR2 sau mỗi request tới R2, client Google Drive
- *    gọi recordGoogle. Đường nóng: O(1), không ném.
- *  - R2 (kỳ = tháng dương lịch UTC): số liệu toàn tài khoản qua GraphQL Analytics (r2Analytics) khi đã kết nối Cloudflare —
- *    nhớ 10 phút, refresh đọc lại nếu lần đọc trước đã ≥ 60 s. Token thiếu quyền "Account Analytics: Read" / lỗi → dùng
- *    số đếm trên máy + ghi chú cho người dùng.
- *  - Google Drive (kỳ = ngày giờ Thái Bình Dương): dung lượng tài khoản (core().google) + số đếm trên máy. Dưới ngưỡng
- *    Google không tính phí → tiền luôn 0.
- *  - report() không bao giờ ném: lỗi gì cũng trả số liệu trên máy.
+ *  - Counts Deplao operations on this machine (UsageMeter): R2Client calls recordR2 after every request to R2, and the Google Drive client
+ *    calls recordGoogle. Hot path: O(1), never throws.
+ *  - R2 (period = UTC calendar month): account-wide figures via GraphQL Analytics (r2Analytics) once Cloudflare is connected:
+ *    cached for 10 minutes; a refresh re-reads if the last read is ≥ 60 s old. Token missing the "Account Analytics: Read" permission / error → use
+ *    the on-machine counts + a note for the user.
+ *  - Google Drive (period = Pacific time day): account storage (core().google) + on-machine counts. Below the
+ *    Google threshold nothing is charged → the cost is always 0.
+ *  - report() never throws: any error still returns the on-machine figures.
  *
- * createCloudUsage không làm gì lúc tạo (không đọc file, không gọi electron / mạng, không gọi core()).
+ * createCloudUsage does nothing when created (no file read, no electron / network call, no core() call).
  */
 import * as path from 'path';
 import type {
@@ -25,50 +25,50 @@ import {
     BILLING_PERIOD_DAYS, BYTES_PER_GB, MonthPeriod, elapsedFraction, elapsedMonthDays, linearProjection,
     pacificDayPeriod, r2OpsCostUsd, r2StorageCostUsd, r2StorageStats, roundUsd, utcMonthPeriod,
 } from './costModel';
+import { tr } from '../../../shared/i18n';
 
 export * from './costModel';
 export * from './UsageMeter';
 export * from './r2Analytics';
 
 export const CLOUD_USAGE_FILE = 'cloud-usage.json';
-/** Số liệu toàn tài khoản (R2) dùng lại trong 10 phút. */
+/** Account-wide figures (R2), reused for 10 minutes. */
 export const ACCOUNT_CACHE_MS = 10 * 60_000;
-/** refresh chỉ đọc lại khi lần đọc trước đã ≥ 60 s. */
+/** A refresh re-reads only when the last read is ≥ 60 s old. */
 export const ACCOUNT_REFRESH_MIN_MS = 60_000;
-/** Dung lượng Google cũ hơn 10 phút → refresh đọc lại. */
+/** Google storage figure older than 10 minutes → re-read on refresh. */
 export const GOOGLE_QUOTA_MAX_AGE_MS = 10 * 60_000;
-/** report() chờ số liệu Cloudflare tối đa bấy nhiêu; quá → dùng số trên máy (truy vấn vẫn chạy, lần sau có). */
+/** report() waits at most this long for the Cloudflare figures; if exceeded → use the on-machine counts (the query keeps running, the figures come next time). */
 const ACCOUNT_WAIT_MS = 25_000;
 const GOOGLE_REFRESH_WAIT_MS = 20_000;
-/** Ngân sách request Cloudflare còn ít hơn → không đọc analytics (nhường tunnel / R2), dùng bản nhớ / số trên máy. */
+/** If the remaining Cloudflare request budget is below this, do not read analytics (leave room for the tunnel / R2); use the cached figures / on-machine counts. */
 const MIN_API_BUDGET = 5;
 
-export const R2_NOTE_NO_PERMISSION = 'Token Cloudflare chưa có quyền "Account Analytics: Read" — thêm quyền này vào token '
-    + '(Quản lý → Đổi token) để xem số liệu toàn tài khoản. Hiện chỉ đếm thao tác của Deplao trên máy này.';
-export const R2_NOTE_NOT_CONNECTED = 'Chưa kết nối Cloudflare — chỉ có số đếm của Deplao trên máy này.';
-export const GOOGLE_NOTE = 'Google không cho đọc mức dùng hạn mức của project — số lượt và dung lượng tải là của Deplao trên máy này.';
-export const GOOGLE_NOTE_NOT_CONNECTED = 'Chưa đăng nhập Google Drive — chỉ có số đếm của Deplao trên máy này.';
+export const R2_NOTE_NO_PERMISSION = tr('Token Cloudflare chưa có quyền "Account Analytics: Read" — thêm quyền này vào token (Quản lý → Đổi token) để xem số liệu toàn tài khoản. Hiện chỉ đếm thao tác của Deplao trên máy này.', {  });
+export const R2_NOTE_NOT_CONNECTED = tr('Chưa kết nối Cloudflare — chỉ có số đếm của Deplao trên máy này.');
+export const GOOGLE_NOTE = tr('Google không cho đọc mức dùng hạn mức của project — số lượt và dung lượng tải là của Deplao trên máy này.');
+export const GOOGLE_NOTE_NOT_CONNECTED = tr('Chưa đăng nhập Google Drive — chỉ có số đếm của Deplao trên máy này.');
 
 export function r2NoteFailed(reason: string): string {
-    return `Chưa đọc được số liệu từ Cloudflare (${reason}) — tạm dùng số đếm của Deplao trên máy này.`;
+    return tr('Chưa đọc được số liệu từ Cloudflare ({{reason}}) — tạm dùng số đếm của Deplao trên máy này.', { reason });
 }
 
 export interface CloudUsageDeps {
-    /** Lõi Cloudflare — getter gọi muộn (không bao giờ gọi trong createCloudUsage). */
+    /** Cloudflare core: lazy getter (never called inside createCloudUsage). */
     core: () => CloudflareCore;
-    /** Byte Deplao đã đẩy lên kho (media đã lên + bản sao DB) — dùng khi không có số liệu toàn tài khoản. */
+    /** Bytes Deplao has pushed to the storage (uploaded media + DB copies), used when there are no account-wide figures. */
     localStoredBytes?: () => number;
-    /** Mặc định userData/cloud-usage.json (require('electron') muộn). */
+    /** Default userData/cloud-usage.json (late require('electron')). */
     filePath?: () => string;
     now?: () => number;
-    /** Mặc định Logger. */
+    /** Default Logger. */
     log?: (level: 'log' | 'warn', msg: string) => void;
 }
 
 interface AccountEntry {
-    /** accountId|tokenId|tháng — đổi tài khoản / token / sang tháng mới thì đọc lại. */
+    /** accountId|tokenId|month: a change of account / token / a new month re-reads. */
     key: string;
-    /** Lúc đọc xong (ms). */
+    /** Time the read finished (ms). */
     at: number;
     data: R2AnalyticsData | null;
     note: string | null;
@@ -90,7 +90,7 @@ function finiteNonNegative(n: unknown): number {
     return Number.isFinite(v) && v > 0 ? v : 0;
 }
 
-/** Chờ promise tối đa ms; quá hạn / lỗi → null (promise vẫn chạy tiếp). */
+/** Wait for the promise for at most ms; timeout / error → null (the promise keeps running). */
 function settleWithin<T>(promise: Promise<T>, ms: number): Promise<T | null> {
     return new Promise<T | null>(resolve => {
         const timer = setTimeout(() => resolve(null), ms);
@@ -134,19 +134,19 @@ class CloudUsage implements CloudUsageModule {
     recordR2(op: R2OpClass, bytes?: { up?: number; down?: number }): void {
         try {
             this.meter.recordR2(op, bytes?.up, bytes?.down);
-        } catch { /* bộ đếm lỗi không làm hỏng request */ }
+        } catch { /* a counter error must not break the request */ }
     }
 
     recordGoogle(units: number, bytes?: { up?: number; down?: number }): void {
         try {
             this.meter.recordGoogle(units, bytes?.up, bytes?.down);
-        } catch { /* bộ đếm lỗi không làm hỏng request */ }
+        } catch { /* a counter error must not break the request */ }
     }
 
     flush(): void {
         try {
             this.meter.flush();
-        } catch { /* bỏ qua */ }
+        } catch { /* ignore */ }
     }
 
     async report(opts?: { refresh?: boolean }): Promise<CloudUsageReport> {
@@ -155,7 +155,7 @@ class CloudUsage implements CloudUsageModule {
         let provider: CloudStorageProvider = 'r2';
         try {
             if (this.deps.core().storageProvider() === 'gdrive') provider = 'gdrive';
-        } catch { /* chưa có lõi → R2 */ }
+        } catch { /* no core yet → R2 */ }
         try {
             return provider === 'gdrive' ? await this.googleReport(now, refresh) : await this.r2Report(now, refresh);
         } catch (err) {
@@ -185,7 +185,7 @@ class CloudUsage implements CloudUsageModule {
             classA = account.data.classA;
             classB = account.data.classB;
         } else {
-            // Không có số liệu tài khoản: dung lượng Deplao đã đẩy lên, coi như không đổi từ đầu tháng.
+            // No account-wide figures: the storage Deplao has pushed is treated as unchanged since the start of the month.
             storedBytes = this.localStoredBytes();
             gbMonthSoFar = (storedBytes / BYTES_PER_GB) * elapsedDays / BILLING_PERIOD_DAYS;
             classA = local.classA;
@@ -199,8 +199,8 @@ class CloudUsage implements CloudUsageModule {
 
         const meters: CloudUsageMeter[] = [
             {
-                // GB-tháng (đơn vị tính tiền): used = dung lượng đang lưu (GB, như giữ cả tháng) so với 10 GB-tháng miễn phí,
-                // projected = GB-tháng dự kiến của cả tháng; GB = 10⁹ byte (costModel.BYTES_PER_GB)
+                // GB-months (billing unit): used = storage currently kept (GB, as if held all month) vs. 10 free GB-months,
+                // projected = projected GB-months for the whole month; GB = 10⁹ bytes (costModel.BYTES_PER_GB)
                 id: 'r2Storage',
                 unit: 'gbMonth',
                 used: currentGb,
@@ -230,7 +230,7 @@ class CloudUsage implements CloudUsageModule {
                 costProjected: r2OpsCostUsd(projectedB, 'B'),
                 source,
             },
-            // Tải xuống từ R2 miễn phí — chỉ để biết, số của Deplao trên máy này.
+            // Downloads from R2 are free; for information only, Deplao's count on this machine.
             { id: 'r2Egress', unit: 'bytes', used: local.bytesDown, limit: null, projected: null, costSoFar: 0, costProjected: 0, source: 'local' },
         ];
         return {
@@ -244,7 +244,7 @@ class CloudUsage implements CloudUsageModule {
         };
     }
 
-    /** Số liệu toàn tài khoản (nhớ 10 phút; refresh ≥ 60 s). Không ném. */
+    /** Account-wide figures (cached 10 minutes; refresh ≥ 60 s). Never throws. */
     private async r2Account(now: number, period: MonthPeriod, refresh: boolean): Promise<AccountView> {
         let core: CloudflareCore;
         let accountId: string | null = null;
@@ -280,29 +280,29 @@ class CloudUsage implements CloudUsageModule {
             let budget = Infinity;
             try {
                 if (typeof api.budgetRemaining === 'function') budget = Number(api.budgetRemaining());
-            } catch { /* không đọc được → coi như còn */ }
+            } catch { /* cannot read → treat as still available */ }
             if (Number.isFinite(budget) && budget < MIN_API_BUDGET) {
-                return cached ?? { data: null, note: r2NoteFailed('Deplao đang dùng hết lượt gọi Cloudflare, thử lại sau ít phút') };
+                return cached ?? { data: null, note: r2NoteFailed(tr('Deplao đang dùng hết lượt gọi Cloudflare, thử lại sau ít phút')) };
             }
             promise = this.queryAccount(api, accountId, key, period, now);
         }
         const entry = await settleWithin(promise, ACCOUNT_WAIT_MS);
         if (entry) return entry;
-        return cached ?? { data: null, note: r2NoteFailed('Cloudflare phản hồi quá lâu') };
+        return cached ?? { data: null, note: r2NoteFailed(tr('Cloudflare phản hồi quá lâu')) };
     }
 
     private queryAccount(api: CloudflareApi, accountId: string, key: string, period: MonthPeriod, now: number): Promise<AccountEntry> {
         const range = { startTs: period.startTs, endTs: Math.min(now, period.endTs - 1000) };
         const promise: Promise<AccountEntry> = fetchR2Analytics(api, accountId, range)
             .then((res): AccountEntry => {
-                // tsconfig strict:false không thu hẹp union theo `ok` (boolean) → thu hẹp bằng 'data' in res
+                // tsconfig strict:false does not narrow the union by `ok` (boolean) → narrow with 'data' in res
                 if ('data' in res) return { key, at: this.now(), data: res.data, note: null };
                 this.log('warn', `[CloudUsage] không đọc được số liệu R2 từ Cloudflare${res.permission ? ' (thiếu quyền)' : ''}: ${res.reason}`);
                 return { key, at: this.now(), data: null, note: res.permission ? R2_NOTE_NO_PERMISSION : r2NoteFailed(res.reason) };
             })
             .catch((err): AccountEntry => ({ key, at: this.now(), data: null, note: r2NoteFailed(errText(err)) }))
             .then(entry => {
-                // Đã có truy vấn mới hơn (đổi tài khoản / token / tháng) thì giữ kết quả của truy vấn đó.
+                // A newer query exists (account / token / month changed) → keep that query's result.
                 if (!this.inflight || this.inflight.promise === promise) this.account = entry;
                 return entry;
             })
@@ -320,7 +320,7 @@ class CloudUsage implements CloudUsageModule {
         const day = this.meter.googleDay(now);
         let gs = this.googleStatus();
         const quotaStale = !gs?.quota || !gs.checkedAt || now - gs.checkedAt >= GOOGLE_QUOTA_MAX_AGE_MS || now < gs.checkedAt;
-        // Chưa có dung lượng lần nào (vừa mở app) → đọc một lần dù không bấm Cập nhật (about.get rẻ: 5 đơn vị)
+        // No storage figure yet (app just opened) → read once even without clicking Refresh (about.get is cheap: 5 units)
         if (gs?.connected && (refresh ? quotaStale : !gs.quota)) {
             try {
                 await settleWithin(Promise.resolve(this.deps.core().google.refresh()), GOOGLE_REFRESH_WAIT_MS);
@@ -338,7 +338,7 @@ class CloudUsage implements CloudUsageModule {
                 projected: null, costSoFar: 0, costProjected: 0, source: 'account',
             });
         }
-        // Đầu ngày không nhân quá 24 lần.
+        // The start of the day does not multiply more than 24 times.
         const fraction = elapsedFraction(now, period, 1 / 24);
         meters.push(
             {
@@ -361,7 +361,7 @@ class CloudUsage implements CloudUsageModule {
             accountData: !!quota,
             accountNote: !quota && gs && !gs.connected ? GOOGLE_NOTE_NOT_CONNECTED : GOOGLE_NOTE,
             meters,
-            // Dưới ngưỡng ngày Google không tính phí (giá vượt ngưỡng chưa công bố) → chỉ hiện % ngưỡng.
+            // Below the daily threshold where Google charges nothing (the price above the threshold is not published) → only show the % of the threshold.
             cost: { soFar: 0, projected: 0 },
             sharedProject: !gs?.customClient,
         };
@@ -377,18 +377,18 @@ class CloudUsage implements CloudUsageModule {
 
     // ── chung ──
 
-    /** Báo cáo rỗng khi lập báo cáo lỗi bất ngờ (report() không ném). */
+    /** Empty report used when building the report hits an unexpected error (report() never throws). */
     private emptyReport(provider: CloudStorageProvider, now: number, reason: string): CloudUsageReport {
         let period: { startTs: number; endTs: number } = { startTs: now, endTs: now };
         try {
             period = provider === 'gdrive' ? pacificDayPeriod(now) : utcMonthPeriod(now);
-        } catch { /* giữ mặc định */ }
+        } catch { /* keep the default */ }
         return {
             provider,
             generatedAt: now,
             period: { kind: provider === 'gdrive' ? 'day' : 'month', startTs: period.startTs, endTs: period.endTs },
             accountData: false,
-            accountNote: `Chưa tính được mức sử dụng (${reason}).`,
+            accountNote: tr('Chưa tính được mức sử dụng ({{reason}}).', { reason }),
             meters: [],
             cost: { soFar: 0, projected: 0 },
             ...(provider === 'gdrive' ? { sharedProject: true } : {}),
@@ -400,7 +400,7 @@ class CloudUsage implements CloudUsageModule {
             const s: any = core.settings;
             if (typeof s?.peek === 'function') return s.peek();
             if (typeof s?.get === 'function') return s.get();
-        } catch { /* bỏ qua */ }
+        } catch { /* ignore */ }
         return null;
     }
 
@@ -426,11 +426,11 @@ class CloudUsage implements CloudUsageModule {
             if (this.deps.log) this.deps.log(level, msg);
             else if (level === 'warn') Logger.warn(msg);
             else Logger.log(msg);
-        } catch { /* bỏ qua */ }
+        } catch { /* ignore */ }
     }
 }
 
-/** Bộ đếm + báo cáo mức sử dụng. Không có tác dụng phụ lúc tạo. */
+/** Usage counter + report. No side effects when created. */
 export function createCloudUsage(deps: CloudUsageDeps): CloudUsageModule {
     return new CloudUsage(deps);
 }

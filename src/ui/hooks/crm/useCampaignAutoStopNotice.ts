@@ -7,9 +7,9 @@ import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { campaignAutoStopNotice } from '../../../shared/crm/campaignAutoStop';
 
 /**
- * Chiến dịch CRM tự dừng vì lỗi liên tiếp (CRMQueueService → crm:campaignAutoStopped; nhân viên được giao tài khoản nhận
- * qua relay): báo ở mọi màn chứ không chỉ trang CRM, vì chiến dịch chạy nền hàng giờ. Đang dùng app → thông báo nổi; cửa
- * sổ ở nền → popup hệ điều hành + nháy taskbar. Màn chiến dịch giữ nhãn "Tự dừng" + lý do tới khi bấm Tiếp tục.
+ * The CRM campaign stops by itself after consecutive errors (CRMQueueService → crm:campaignAutoStopped; an employee assigned the account receives it
+ * via relay): reported on every screen, not only the CRM page, because the campaign runs in the background for hours. App in use → in-app notification; window
+ * in the background → OS popup + taskbar flash. The campaign screen keeps the "Tự dừng" (auto-stopped) label and the reason until Resume is clicked.
  */
 export function useCampaignAutoStopNotice(isWindowFocusedRef: MutableRefObject<boolean>): void {
   useEffect(() => {

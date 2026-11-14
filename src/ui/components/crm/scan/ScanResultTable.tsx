@@ -3,6 +3,8 @@ import { SCAN_EXCEL_COLUMNS, type ScanType, type ExcelColumn } from '../../../..
 import ipc from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
 import { LinkIcon, SearchIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 interface Props {
@@ -95,7 +97,7 @@ export default function ScanResultTable({
             type="text"
             value={searchText}
             onChange={handleSearchChange}
-            placeholder="🔍 Lọc kết quả..."
+            placeholder={tr('🔍 Lọc kết quả...')}
             className="w-full bg-muted/60 text-foreground text-xs rounded-lg pl-8 pr-3 py-1.5 border border-input/50 focus:outline-none focus:border-blue-500 placeholder-subtle-foreground"
           />
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -104,9 +106,9 @@ export default function ScanResultTable({
         </div>
         <span className="text-xs text-muted-foreground">
           {totalItems !== undefined && totalItems !== items.length ? (
-            <>{processed.length} / {items.length} (lọc từ {totalItems})</>
+            <>{trx('{{count}} / {{count1}} (lọc từ {{totalItems}})', { count: processed.length, count1: items.length, totalItems })}</>
           ) : (
-            <>{processed.length} / {items.length} kết quả</>
+            <>{trx('{{count}} / {{count1}} kết quả', { count: processed.length, count1: items.length })}</>
           )}
         </span>
         {/* Copy all UIDs */}
@@ -114,12 +116,12 @@ export default function ScanResultTable({
           <button
             onClick={() => copyAllUids(items)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-700/40 text-blue-300 hover:bg-blue-700/60 transition-colors"
-            title="Copy tất cả UID/ID"
+            title={tr('Copy tất cả UID/ID')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
             </svg>
-            Copy UID
+            {tr('Copy UID')}
           </button>
         )}
         <button
@@ -130,7 +132,7 @@ export default function ScanResultTable({
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
           </svg>
-          Xuất Excel
+          {tr('Xuất Excel')}
         </button>
       </div>
 
@@ -140,12 +142,12 @@ export default function ScanResultTable({
           <div className="flex items-center justify-center h-full">
             <div className="flex flex-col items-center gap-3">
               <Spinner size={8} />
-              <p className="text-sm text-muted-foreground">Đang quét dữ liệu...</p>
+              <p className="text-sm text-muted-foreground">{tr('Đang quét dữ liệu...')}</p>
             </div>
           </div>
         ) : items.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground">
-            <p className="text-sm">Chưa có dữ liệu. Nhập thông tin và nhấn "Bắt đầu quét".</p>
+            <p className="text-sm">{tr('Chưa có dữ liệu. Nhập thông tin và nhấn "Bắt đầu quét".')}</p>
           </div>
         ) : (
           <table className="w-full text-xs">
@@ -174,7 +176,7 @@ export default function ScanResultTable({
                 ))}
                 {/* Batch source column (if any item has _batchSource) */}
                 {items.some((i: any) => i._batchSource) && (
-                  <th className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">Nguồn</th>
+                  <th className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">{tr('Nguồn')}</th>
                 )}
               </tr>
             </thead>
@@ -190,7 +192,7 @@ export default function ScanResultTable({
                         <button
                           onClick={(e) => { e.stopPropagation(); copyUid(uid); }}
                           className="p-1 rounded hover:bg-blue-700/40 text-muted-foreground hover:text-blue-300 transition-colors"
-                          title={`Copy ${uid}`}
+                          title={tr('Copy {{uid}}', { uid })}
                         >
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
@@ -217,7 +219,7 @@ export default function ScanResultTable({
                               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
                               </svg>
-                              Mở
+                              {tr('Mở')}
                             </button>
                           )
                           : col.key === 'postId' && item[col.key] ? (
@@ -248,7 +250,7 @@ export default function ScanResultTable({
             disabled={page === 0}
             className="px-2.5 py-1 rounded text-xs bg-muted text-foreground/80 hover:bg-accent disabled:opacity-30"
           >
-            ◀ Trước
+            {tr('◀ Trước')}
           </button>
           <span className="text-xs text-muted-foreground">
             {page + 1} / {totalPages}
@@ -258,7 +260,7 @@ export default function ScanResultTable({
             disabled={page >= totalPages - 1}
             className="px-2.5 py-1 rounded text-xs bg-muted text-foreground/80 hover:bg-accent disabled:opacity-30"
           >
-            Sau ▶
+            {tr('Sau ▶')}
           </button>
         </div>
         <div className="flex items-center gap-2">
@@ -268,7 +270,7 @@ export default function ScanResultTable({
               disabled={loading}
               className="px-3 py-1 rounded text-xs bg-blue-700/40 text-blue-300 hover:bg-blue-700/60 transition-colors disabled:opacity-40"
             >
-              {loading ? 'Đang tải...' : 'Tải thêm'}
+              {loading ? tr('Đang tải...') : tr('Tải thêm')}
             </button>
           )}
         </div>
@@ -281,13 +283,13 @@ function formatTimestamp(ts: number | string | undefined): string {
   if (!ts) return '';
   const d = new Date(Number(ts) * 1000);
   if (isNaN(d.getTime())) return String(ts);
-  return d.toLocaleDateString('vi-VN', {
+  return d.toLocaleDateString(appLocale(), {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
 }
 
-/** Copy 1 UID vào clipboard */
+/** Copy 1 UID to the clipboard */
 function copyUid(uid: string) {
   navigator.clipboard.writeText(uid).catch(() => {
     // Fallback
@@ -300,7 +302,7 @@ function copyUid(uid: string) {
   });
 }
 
-/** Copy tất cả UID/ID từ kết quả vào clipboard (mỗi dòng 1 ID) */
+/** Copy all UIDs/IDs from the results to the clipboard (one ID per line) */
 function copyAllUids(items: any[]) {
   const ids = items
     .map(item => item.uid || item.commentId || item.postId || item.authorId || item.reactorId || '')

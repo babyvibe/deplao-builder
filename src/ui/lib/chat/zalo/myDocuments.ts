@@ -1,7 +1,7 @@
 /**
- * myDocuments.ts - Zalo "My Documents" (Cloud của tôi): a conversation that EXISTS on every Zalo account and syncs with
- * Zalo (phone / Zalo PC). Its thread id is the session's `loginInfo.send2me_id` — NOT the account's own uid (that is a
- * separate self chat) — and Zalo's profile for it has the folder avatar `zds_cic_my_documents_*`. Deplao never makes
+ * myDocuments.ts - Zalo "My Documents" ("Cloud của tôi"): a conversation that EXISTS on every Zalo account and syncs with
+ * Zalo (phone / Zalo PC). Its thread id is the session's `loginInfo.send2me_id`, NOT the account's own uid (that is a
+ * separate self chat), and Zalo's profile for it has the folder avatar `zds_cic_my_documents_*`. Deplao never makes
  * one up: it only pins the real conversation (synced row) at the top like Zalo does; it usually sits beyond the loaded
  * pages (rarely gets new messages), so the list fetches it by id.
  *

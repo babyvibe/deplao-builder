@@ -9,28 +9,29 @@ import type {
   TelegramStickerSetInfo,
   TelegramStickerSetRef,
 } from '../../../shared/telegram/telegramStickers';
+import { tr } from '../../../shared/i18n';
 
 export type { TelegramCoveredStickerSet, TelegramStickerFormat, TelegramStickerItem, TelegramStickerSetInfo, TelegramStickerSetRef };
 
 /**
- * Sticker & GIF Telegram (tài khoản cá nhân) — dữ liệu ĐỒNG BỘ với tài khoản: bộ sticker đã cài, sticker gần đây /
- * yêu thích, GIF đã lưu (thêm / gỡ ở đây thì app Telegram khác cũng thấy).
+ * Telegram stickers & GIFs (personal account): data SYNCED with the account: installed sticker sets, recent / favourite stickers,
+ * saved GIFs (adding / removing here also shows in the other Telegram apps).
  *
- * - Mọi Document lấy về được giữ trong bộ đệm theo tài khoản KÈM NGUỒN (bộ / gần đây / yêu thích / GIF / tìm GIF / tin
- *   nhắn): gửi và tải cần fileReference còn hạn — hết hạn (FILE_REFERENCE_*) thì lấy lại từ nguồn rồi thử lại 1 lần.
- * - Danh sách dùng `hash` của Telegram (NotModified → dùng lại bản đã có, không tải lại).
- * - Ảnh cho lưới: thumbnail tĩnh (webp / jpg) nếu có, không thì cả file (tgs nhỏ); tải song song tối đa 3, có hạn giờ,
- *   lưu đĩa `<media>/<tài khoản>/stickers/` — KHÔNG đi qua hàng đợi tải media tuần tự của khung chat.
- * - Tìm GIF = inline bot @gif (như app Telegram). `messages.getGifs / searchGifs` không có trong API.
+ * - Every Document fetched is kept in the per-account cache WITH its source (set / recent / favourite / GIF / GIF search / message):
+ *   sending and downloading need a fileReference that is still valid; when it expires (FILE_REFERENCE_*), fetch it again from the source and retry once.
+ * - Lists use Telegram's `hash` (NotModified → reuse the copy already held, no download again).
+ * - Grid images: the static thumbnail (webp / jpg) if there is one, otherwise the whole file (a small tgs); at most 3 downloads in parallel, with a timeout,
+ *   saved to disk in `<media>/<account>/stickers/`. Does NOT go through the chat's sequential media download queue.
+ * - GIF search = inline bot @gif (like the Telegram app). `messages.getGifs / searchGifs` is not in the API.
  */
 
 export interface StickerClientDeps {
   client: any;
   Api: any;
   resolvePeer: (chatId: string) => Promise<any>;
-  /** Lưu + hiện tin vừa gửi (cùng đường với tin của mình gửi từ thiết bị khác). */
+  /** Save and show the message just sent (same path as messages I send from another device). */
   persistSent: (message: any) => Promise<void>;
-  /** Thư mục media (FileStorageService.getBaseDir()). */
+  /** Media folder (FileStorageService.getBaseDir()). */
   baseDir: string;
 }
 
@@ -45,10 +46,10 @@ type StickerSource =
 
 type Result<T> = ({ success: true } & T) | { success: false; error: string };
 
-/** id / access hash 64 bit (BigInteger của GramJS): String() = toString() đủ chữ số — valueOf() ra Number, mất chính xác. */
+/** 64-bit id / access hash (GramJS BigInteger): String() = toString() keeps every digit; valueOf() returns a Number and loses precision. */
 const toId = (value: any): string => (value == null ? '' : String(value));
 
-// ── Hàm thuần ───────────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Pure functions ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export function stickerFormatOf(doc: any): TelegramStickerFormat {
   const mime = String(doc?.mimeType || '').toLowerCase();
@@ -71,7 +72,7 @@ export function stickerSetRefOf(inputSet: any): TelegramStickerSetRef | null {
 export function toStickerItem(doc: any): TelegramStickerItem | null {
   if (!doc || doc.className === 'DocumentEmpty' || doc.id == null) return null;
   const attributes: any[] = doc.attributes || [];
-  // Emoji tuỳ chỉnh (biểu tượng chủ đề forum…) mang emoji gốc + bộ trong DocumentAttributeCustomEmoji
+  // Custom emoji (forum topic icons…) carry the base emoji + the set in DocumentAttributeCustomEmoji
   const sticker = attributes.find((a) => a?.className === 'DocumentAttributeSticker' || a?.className === 'DocumentAttributeCustomEmoji');
   const size = attributes.find((a) => a?.className === 'DocumentAttributeImageSize' || a?.className === 'DocumentAttributeVideo');
   const ref = stickerSetRefOf(sticker?.stickerset);
@@ -98,12 +99,12 @@ export function toStickerSetInfo(set: any): TelegramStickerSetInfo {
   };
 }
 
-/** Bộ sticker thật (không phải bộ emoji tuỳ chỉnh / mặt nạ). */
+/** A real sticker set (not a custom emoji set / mask set). */
 export function isRegularStickerSet(set: any): boolean {
   return !!set && !set.emojis && !set.masks;
 }
 
-/** Thumbnail tĩnh để vẽ lưới: ảnh cỡ 'm' (≈ 128–320 px) nếu có, không thì ảnh lớn nhất ≤ 512 px. */
+/** Static thumbnail for the grid: 'm' size image (≈ 128–320 px) if there is one, otherwise the largest image ≤ 512 px. */
 export function pickStickerThumb(doc: any): any | null {
   const thumbs: any[] = (doc?.thumbs || []).filter((t: any) => t?.className === 'PhotoSize' || t?.className === 'PhotoCachedSize');
   if (thumbs.length === 0) return null;
@@ -138,7 +139,7 @@ export function isFileReferenceError(err: any): boolean {
   return /FILE_REFERENCE_/i.test(String(err?.errorMessage || err?.message || err || ''));
 }
 
-// ── Bộ đệm ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Cache ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 const MAX_DOCS_PER_ACCOUNT = 5000;
 const docsByAccount = new Map<string, Map<string, { doc: any; source: StickerSource }>>();
@@ -166,7 +167,7 @@ interface HashedList<T> { hash: any; value: T }
 const listCache = new Map<string, HashedList<any>>();
 const setCache = new Map<string, { hash: number; set: TelegramStickerSetInfo; stickers: TelegramStickerItem[] }>();
 
-/** Chỉ dùng trong test. */
+/** Test only. */
 export function __resetTelegramStickerCaches(): void {
   docsByAccount.clear();
   listCache.clear();
@@ -177,16 +178,16 @@ export function __resetTelegramStickerCaches(): void {
 function inputStickerSet(Api: any, ref: TelegramStickerSetRef): any {
   if (ref.id && ref.accessHash) return new Api.InputStickerSetID({ id: BigInt(ref.id), accessHash: BigInt(ref.accessHash) });
   if (ref.shortName) return new Api.InputStickerSetShortName({ shortName: ref.shortName });
-  throw new Error('Thiếu thông tin bộ sticker');
+  throw new Error(tr('Thiếu thông tin bộ sticker'));
 }
 
 function setKey(accountId: string, ref: TelegramStickerSetRef): string {
   return `${accountId}:${ref.id || `name:${ref.shortName || ''}`}`;
 }
 
-// ── Gọi Telegram ───────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Telegram calls ───────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** Bộ sticker đã cài (thứ tự của tài khoản) + sticker gần đây + yêu thích. */
+/** Installed sticker sets (the account's order) + recent stickers + favourites. */
 export async function getStickerPanel(accountId: string, deps: StickerClientDeps): Promise<Result<{
   sets: TelegramStickerSetInfo[]; recent: TelegramStickerItem[]; faved: TelegramStickerItem[];
 }>> {
@@ -223,7 +224,7 @@ export async function getStickerPanel(accountId: string, deps: StickerClientDeps
   }
 }
 
-/** Nội dung 1 bộ sticker + đã cài chưa (xem trước khi thêm, như popup "Add stickers" của Telegram). */
+/** Contents of 1 sticker set + whether it is installed (preview before adding, like Telegram's "Add stickers" popup). */
 export async function getStickerSet(accountId: string, ref: TelegramStickerSetRef, deps: StickerClientDeps, force = false): Promise<Result<{
   set: TelegramStickerSetInfo; stickers: TelegramStickerItem[];
 }>> {
@@ -243,11 +244,11 @@ export async function getStickerSet(accountId: string, ref: TelegramStickerSetRe
     return { success: true, set, stickers };
   } catch (err: any) {
     const message = String(err?.errorMessage || err?.message || err);
-    return { success: false, error: /STICKERSET_INVALID/i.test(message) ? 'Bộ sticker không còn tồn tại' : message };
+    return { success: false, error: /STICKERSET_INVALID/i.test(message) ? tr('Bộ sticker không còn tồn tại') : message };
   }
 }
 
-/** Bộ sticker của 1 tin sticker trong chat (bấm vào sticker → popup bộ). */
+/** Sticker set of 1 sticker message in the chat (click a sticker → set popup). */
 export async function getStickerSetOfMessage(accountId: string, chatId: string, messageId: string, deps: StickerClientDeps): Promise<Result<{
   set: TelegramStickerSetInfo; stickers: TelegramStickerItem[];
 }>> {
@@ -255,18 +256,18 @@ export async function getStickerSetOfMessage(accountId: string, chatId: string, 
     const peer = await deps.resolvePeer(chatId);
     const fetched: any[] = await deps.client.getMessages(peer, { ids: [Number(messageId)] });
     const doc = fetched?.find((m: any) => String(m?.id) === String(messageId))?.media?.document;
-    if (!doc) return { success: false, error: 'Tin nhắn không còn sticker' };
+    if (!doc) return { success: false, error: tr('Tin nhắn không còn sticker') };
     rememberDocs(accountId, [doc], { kind: 'message', chatId, messageId });
     const attribute = (doc.attributes || []).find((a: any) => a?.className === 'DocumentAttributeSticker');
     const ref = stickerSetRefOf(attribute?.stickerset);
-    if (!ref) return { success: false, error: 'Sticker này không thuộc bộ nào' };
+    if (!ref) return { success: false, error: tr('Sticker này không thuộc bộ nào') };
     return getStickerSet(accountId, ref, deps);
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) };
   }
 }
 
-/** Thêm / gỡ bộ sticker khỏi tài khoản (đồng bộ mọi thiết bị). */
+/** Add / remove a sticker set from the account (synced across all devices). */
 export async function setStickerSetInstalled(accountId: string, ref: TelegramStickerSetRef, install: boolean, deps: StickerClientDeps): Promise<Result<{ installed: boolean }>> {
   const { client, Api } = deps;
   try {
@@ -299,7 +300,7 @@ function toCoveredSets(accountId: string, coveredSets: any[]): TelegramCoveredSt
   return sets;
 }
 
-/** Tìm bộ sticker theo tên / từ khoá (như ô tìm của bảng sticker Telegram). */
+/** Search sticker sets by name / keyword (like the search box of Telegram's sticker panel). */
 export async function searchStickerSets(accountId: string, query: string, deps: StickerClientDeps): Promise<Result<{ sets: TelegramCoveredStickerSet[] }>> {
   const { client, Api } = deps;
   try {
@@ -310,7 +311,7 @@ export async function searchStickerSets(accountId: string, query: string, deps: 
   }
 }
 
-/** Bộ sticker thịnh hành (Telegram gợi ý). */
+/** Trending sticker sets (suggested by Telegram). */
 export async function getFeaturedStickerSets(accountId: string, deps: StickerClientDeps): Promise<Result<{ sets: TelegramCoveredStickerSet[] }>> {
   const { client, Api } = deps;
   try {
@@ -325,7 +326,7 @@ export async function getFeaturedStickerSets(accountId: string, deps: StickerCli
   }
 }
 
-/** GIF đã lưu của tài khoản. */
+/** The account's saved GIFs. */
 export async function getSavedGifs(accountId: string, deps: StickerClientDeps): Promise<Result<{ gifs: TelegramStickerItem[] }>> {
   const { client, Api } = deps;
   try {
@@ -340,7 +341,7 @@ export async function getSavedGifs(accountId: string, deps: StickerClientDeps): 
   }
 }
 
-/** Tìm GIF qua inline bot @gif (như app Telegram); `nextOffset` để tải tiếp. */
+/** Search GIFs through the @gif inline bot like the Telegram app (empty keyword = trending GIFs); `nextOffset` to load more. */
 export async function searchGifs(accountId: string, query: string, offset: string, deps: StickerClientDeps): Promise<Result<{
   gifs: TelegramStickerItem[]; nextOffset: string;
 }>> {
@@ -359,9 +360,9 @@ export async function searchGifs(accountId: string, query: string, offset: strin
 }
 
 /**
- * Emoji tuỳ chỉnh theo id (biểu tượng chủ đề forum): Document nhớ vào bộ đệm như sticker để tải file (getStickerFile) và
- * lấy lại khi fileReference hết hạn. Id đã có trong bộ đệm thì không gọi Telegram; id không còn tồn tại thì không có
- * trong kết quả.
+ * Custom emoji by id (forum topic icons): the Document is remembered in the cache like a sticker so the file can be downloaded (getStickerFile) and
+ * fetched again when its fileReference expires. An id already in the cache does not call Telegram; an id that no longer exists is left out of the
+ * result.
  */
 export async function getCustomEmojiItems(
   accountId: string,
@@ -383,7 +384,7 @@ export async function getCustomEmojiItems(
   return items;
 }
 
-/** Lấy lại Document từ nguồn của nó (fileReference hết hạn). */
+/** Fetch a Document again from its source (fileReference expired). */
 async function refreshDoc(accountId: string, docId: string, deps: StickerClientDeps): Promise<any | null> {
   const entry = cachedDoc(accountId, docId);
   if (!entry) return null;
@@ -409,7 +410,7 @@ async function refreshDoc(accountId: string, docId: string, deps: StickerClientD
   return fresh && fresh.doc !== entry.doc ? fresh.doc : null;
 }
 
-// ── Tải ảnh cho lưới ───────────────────────────────────────────────────────────────────────────────────────────────
+// ── Load images for the grid ─────────────────────────────────────────────────────────────────────────────────────────────
 
 const DOWNLOAD_CONCURRENCY = 3;
 const DOWNLOAD_DEADLINE_MS = 30_000;
@@ -436,8 +437,8 @@ function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * File đã tải trước đây, khi Document chưa có trong bộ đệm của phiên này (vừa mở app, chưa kết nối): `thumb` nhận ảnh
- * tĩnh `_t` hoặc cả file (Document không có ảnh tĩnh), `full` chỉ nhận cả file.
+ * A file downloaded earlier, when the Document is not in this session's cache (the app just opened, not connected yet): `thumb` takes the
+ * static image `_t` or the whole file (a Document has no static image), `full` takes only the whole file.
  */
 export function stickerFileOnDisk(baseDir: string, accountId: string, docId: string, variant: 'thumb' | 'full'): {
   localPath: string; kind: StickerFileKind;
@@ -455,8 +456,8 @@ export function stickerFileOnDisk(baseDir: string, accountId: string, docId: str
 }
 
 /**
- * File để vẽ sticker / GIF: `thumb` = ảnh tĩnh nhỏ cho lưới (không có thì cả file — tgs vài chục KB); `full` = cả file
- * (GIF / sticker video phát khi rê chuột). Có trên đĩa rồi thì trả ngay.
+ * File to draw a sticker / GIF: `thumb` = small static image for the grid (if none, the whole file: tgs, a few tens of KB); `full` = the whole file
+ * (GIF / video sticker played on hover). If it is already on disk, return it at once.
  */
 export function getStickerFile(accountId: string, docId: string, variant: 'thumb' | 'full', deps: StickerClientDeps): Promise<Result<{
   localPath: string; kind: StickerFileKind;
@@ -490,7 +491,7 @@ export function getStickerFile(accountId: string, docId: string, variant: 'thumb
       if (!fresh) throw err;
       data = await download(fresh);
     }
-    if (!data || (typeof data !== 'string' && data.length === 0)) return { success: false, error: 'Không tải được sticker' };
+    if (!data || (typeof data !== 'string' && data.length === 0)) return { success: false, error: tr('Không tải được sticker') };
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const ext = detectFileExt(buffer, thumb ? '.webp' : FULL_EXT[stickerFormatOf(entry.doc)]);
     await fs.promises.mkdir(dir, { recursive: true });
@@ -503,11 +504,11 @@ export function getStickerFile(accountId: string, docId: string, variant: 'thumb
   return task;
 }
 
-// ── Gửi ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Send ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Gửi sticker / GIF đã có trong bộ đệm (lấy từ bảng / bộ / tìm kiếm). Tin gửi đi lưu + hiện qua `persistSent`. Như app
- * Telegram: sticker vừa gửi vào "gần đây", GIF vừa gửi vào "GIF đã lưu".
+ * Send a sticker / GIF already in the cache (taken from the panel / a set / a search). The sent message is saved and shown via `persistSent`. Like the
+ * Telegram app: a sticker just sent goes to "gần đây" (recent), a GIF just sent goes to "GIF đã lưu" (saved GIFs).
  */
 export async function sendStickerDocument(
   accountId: string,
@@ -523,7 +524,7 @@ export async function sendStickerDocument(
     const numeric = (value?: string) => (value && /^\d+$/.test(value) ? Number(value) : undefined);
     const replyToMsgId = numeric(options.replyToMsgId);
     const topicRootId = numeric(options.topicRootId);
-    // Chủ đề forum: tin "trả lời" gốc chủ đề; trả lời 1 tin trong chủ đề thì kèm topMsgId
+    // Forum topic: "trả lời" (reply) to the topic's root message; replying to a message inside the topic includes topMsgId
     const replyOptions = replyToMsgId
       ? { replyTo: replyToMsgId, ...(topicRootId && topicRootId !== replyToMsgId ? { topMsgId: topicRootId } : {}) }
       : topicRootId ? { replyTo: topicRootId } : {};
@@ -540,7 +541,7 @@ export async function sendStickerDocument(
       message = await send(doc);
     }
     if (message) await deps.persistSent(message).catch(() => {});
-    // Vào "gần đây" / "GIF đã lưu" của tài khoản — chạy nền, tin đã gửi xong
+    // Goes into the account's "gần đây" (recent) / "GIF đã lưu" (saved GIFs) lists: runs in the background, after the message is sent
     const { Api } = deps;
     const inputDocument = new Api.InputDocument({ id: doc.id, accessHash: doc.accessHash, fileReference: doc.fileReference });
     const isGif = stickerFormatOf(doc) === 'gif';
@@ -559,8 +560,8 @@ export async function sendStickerDocument(
 const MAX_SETS_SCAN = 60;
 
 /**
- * Tìm Document theo id cho nơi gọi chỉ có id (workflow `tg.sendSticker`, API): bộ đệm → gần đây / yêu thích → GIF đã
- * lưu → các bộ đã cài (mỗi bộ 1 lần / phiên nhờ hash).
+ * Find a Document by id for callers that only have the id (workflow `tg.sendSticker`, API): cache → recent / favourites → saved GIFs → the
+ * installed sets (each set once per session, thanks to the hash).
  */
 export async function ensureStickerCached(accountId: string, docId: string, deps: StickerClientDeps): Promise<boolean> {
   const id = String(docId || '');
@@ -578,7 +579,7 @@ export async function ensureStickerCached(accountId: string, docId: string, deps
   return false;
 }
 
-/** Lưu / bỏ lưu GIF (đồng bộ tài khoản). */
+/** Save / unsave a GIF (synced to the account). */
 export async function setGifSaved(accountId: string, docId: string, saved: boolean, deps: StickerClientDeps): Promise<Result<{ saved: boolean }>> {
   const entry = cachedDoc(accountId, docId);
   if (!entry) return { success: false, error: 'STICKER_NOT_CACHED' };

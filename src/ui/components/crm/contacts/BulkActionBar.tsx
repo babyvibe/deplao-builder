@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { getCapability, type Channel } from '../../../../configs/channels/channelConfig';
 import { CHANNEL } from '@/lib/channels/channelHelper';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface BulkActionBarProps {
   channel: string;
@@ -41,35 +43,35 @@ export default function BulkActionBar({
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-card border border-input rounded-2xl px-5 py-2.5 shadow-2xl">
       {/* Count */}
-      <span className="text-sm font-semibold text-blue-400 whitespace-nowrap">{selectedCount} đã chọn</span>
+      <span className="text-sm font-semibold text-blue-400 whitespace-nowrap">{trx('{{selectedCount}} đã chọn', { selectedCount })}</span>
       <div className="w-px h-5 bg-accent flex-shrink-0" />
 
-      {/* Thêm vào chiến dịch */}
+      {/* Add to campaign */}
       {channelCap.supportsCampaigns && (
         <button onClick={onAddToCampaign}
           className="flex items-center gap-1.5 text-xs text-foreground/80 hover:text-foreground px-2 py-1.5 rounded-lg hover:bg-muted transition-colors whitespace-nowrap">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
           </svg>
-          Thêm vào chiến dịch
+          {tr('Thêm vào chiến dịch')}
         </button>
       )}
 
-      {/* Nhãn Local */}
+      {/* Local label */}
       <button onClick={onBulkTagLocal}
         className="flex items-center gap-1.5 text-xs text-foreground/80 hover:text-foreground px-2 py-1.5 rounded-lg hover:bg-muted transition-colors whitespace-nowrap">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
           <line x1="7" y1="7" x2="7.01" y2="7"/>
         </svg>
-        Nhãn Local
+        {tr('Nhãn Local')}
       </button>
 
       {/* ⋯ More actions dropdown */}
       <div ref={moreRef} className="relative flex-shrink-0">
         <button
           onClick={() => setShowMore(v => !v)}
-          title="Thêm hành động"
+          title={tr('Thêm hành động')}
           className={`flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
             showMore
               ? 'bg-accent border-border-strong text-foreground'
@@ -78,7 +80,7 @@ export default function BulkActionBar({
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="19" cy="12" r="1.5" fill="currentColor"/>
           </svg>
-          <span>Khác</span>
+          <span>{tr('Khác')}</span>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={`transition-transform ${showMore ? 'rotate-180' : ''}`}>
             <polyline points="6 9 12 15 18 9"/>
           </svg>
@@ -86,7 +88,7 @@ export default function BulkActionBar({
 
         {showMore && (
           <div className="absolute bottom-full mb-2 right-0 bg-card border border-input rounded-xl shadow-2xl py-1 w-48 z-50">
-            {/* Nhãn Zalo */}
+            {/* Zalo label */}
             {channelCap.supportsLabel && (
               <button
                 onClick={() => { setShowMore(false); onBulkTagZalo(); }}
@@ -95,11 +97,11 @@ export default function BulkActionBar({
                   <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
                   <line x1="7" y1="7" x2="7.01" y2="7"/>
                 </svg>
-                Nhãn Zalo
+                {tr('Nhãn Zalo')}
               </button>
             )}
 
-            {/* Rời nhóm - chỉ hiện khi có nhóm được chọn */}
+            {/* Leave group: only shown when groups are selected */}
             {hasGroupSelected && onBulkLeaveGroup && channelCap.supportsLeaveGroup && (
               <>
                 <div className="my-1 h-px bg-muted mx-3" />
@@ -111,7 +113,7 @@ export default function BulkActionBar({
                     <polyline points="16 17 21 12 16 7"/>
                     <line x1="21" y1="12" x2="9" y2="12"/>
                   </svg>
-                  Rời nhóm đã chọn
+                  {tr('Rời nhóm đã chọn')}
                 </button>
               </>
             )}
@@ -120,7 +122,7 @@ export default function BulkActionBar({
       </div>
 
       <div className="w-px h-5 bg-accent flex-shrink-0" />
-      <button onClick={onClearSelection} className="text-muted-foreground hover:text-foreground text-xs px-1 transition-colors" title="Bỏ chọn">✕</button>
+      <button onClick={onClearSelection} className="text-muted-foreground hover:text-foreground text-xs px-1 transition-colors" title={tr('Bỏ chọn')}>✕</button>
     </div>
   );
 }

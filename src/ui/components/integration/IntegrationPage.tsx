@@ -10,7 +10,11 @@ import { navigateSettings } from '@/components/settings/cloud/cloudUi';
 import IntegrationDetailPage, { type IntegrationWebhookInfo } from './IntegrationDetailPage';
 import AIAssistantPage from './ai/AIAssistantPage';
 import type { CredentialAlternative } from './credentialRules';
-import { AlertIcon, BotIcon, ChatIcon, CheckCircleIcon, CreditCardIcon, DollarIcon, GlobeIcon, LightningIcon, MenuIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, RocketIcon, ShoppingCartIcon, ShuffleIcon, SparklesIcon, StoreIcon, TargetIcon, TruckIcon } from '@/components/common/icons';
+import { AlertIcon, BotIcon, ChatIcon, CheckCircleIcon, CreditCardIcon, DollarIcon, GlobeIcon, LightningIcon, MenuIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, RocketIcon, ShoppingCartIcon, StoreIcon, TruckIcon } from '@/components/common/icons';
+import { AI_PLATFORM_META, getAIPlatformMeta } from './ai/aiPlatformMeta';
+import { AI_MODEL_OPTIONS, type AIModelPlatform } from '../../../shared/ai/aiModelCatalog';
+import { tr } from '../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── Catalog definition ───────────────────────────────────────────────────────
 
@@ -22,7 +26,7 @@ interface CatalogItem {
   color: string;
   priority: 'p0' | 'p1' | 'p2';
   credentialFields: { key: string; label: string; secret?: boolean; placeholder?: string; optional?: boolean }[];
-  /** Nhiều cách đăng nhập: phải điền đủ ít nhất một nhóm (credentialRules.ts). */
+  /** Several login methods: at least one group must be fully filled in (credentialRules.ts). */
   credentialAlternatives?: CredentialAlternative[];
   settingFields?: { key: string; label: string; type?: string; options?: { value: string; label: string }[] }[];
 }
@@ -30,107 +34,104 @@ interface CatalogItem {
 type TabKey = 'all' | 'pos' | 'payment' | 'shipping' | 'ai' | 'messaging';
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  { key: 'all',       label: 'Tất cả',            icon: <PinIcon className="w-4 h-4" /> },
-  { key: 'pos',       label: 'POS / Bán hàng',    icon: <ShoppingCartIcon className="w-4 h-4" /> },
-  { key: 'payment',   label: 'Thanh toán',        icon: <CreditCardIcon className="w-4 h-4" /> },
-  { key: 'shipping',  label: 'Vận chuyển',        icon: <PackageIcon className="w-4 h-4" /> },
-  { key: 'messaging', label: 'Tin nhắn',          icon: <ChatIcon className="w-4 h-4" /> },
-  { key: 'ai',        label: 'Trợ lý AI',         icon: <BotIcon className="w-4 h-4" /> },
+  { key: 'all',       label: tr('Tất cả'),            icon: <PinIcon className="w-4 h-4" /> },
+  { key: 'pos',       label: tr('POS / Bán hàng'),    icon: <ShoppingCartIcon className="w-4 h-4" /> },
+  { key: 'payment',   label: tr('Thanh toán'),        icon: <CreditCardIcon className="w-4 h-4" /> },
+  { key: 'shipping',  label: tr('Vận chuyển'),        icon: <PackageIcon className="w-4 h-4" /> },
+  { key: 'messaging', label: tr('Tin nhắn'),          icon: <ChatIcon className="w-4 h-4" /> },
+  { key: 'ai',        label: tr('Trợ lý AI'),         icon: <BotIcon className="w-4 h-4" /> },
 ];
 
 const SECTION_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  ai:        { label: 'Trợ lý AI',      icon: <BotIcon className="w-4 h-4" />, color: 'bg-amber-600' },
-  pos:       { label: 'POS / Bán hàng', icon: <ShoppingCartIcon className="w-4 h-4" />, color: 'bg-orange-500' },
-  payment:   { label: 'Thanh toán',     icon: <CreditCardIcon className="w-4 h-4" />, color: 'bg-green-600' },
-  shipping:  { label: 'Vận chuyển',     icon: <PackageIcon className="w-4 h-4" />, color: 'bg-red-500' },
-  messaging: { label: 'Tin nhắn',       icon: <ChatIcon className="w-4 h-4" />, color: 'bg-blue-500' },
+  ai:        { label: tr('Trợ lý AI'),      icon: <BotIcon className="w-4 h-4" />, color: 'bg-amber-600' },
+  pos:       { label: tr('POS / Bán hàng'), icon: <ShoppingCartIcon className="w-4 h-4" />, color: 'bg-orange-500' },
+  payment:   { label: tr('Thanh toán'),     icon: <CreditCardIcon className="w-4 h-4" />, color: 'bg-green-600' },
+  shipping:  { label: tr('Vận chuyển'),     icon: <PackageIcon className="w-4 h-4" />, color: 'bg-red-500' },
+  messaging: { label: tr('Tin nhắn'),       icon: <ChatIcon className="w-4 h-4" />, color: 'bg-blue-500' },
 };
+
+// Platform cards in the All tab when there is no assistant yet. Model names come from the catalog shared with the assistant form (aiModelCatalog), so they do not go stale;
+// labels, colors and icons come from aiPlatformMeta (8 platforms, same order as the AI platforms list in the form).
+const modelNames = (platform: AIModelPlatform, n = 4) => AI_MODEL_OPTIONS[platform].slice(0, n).map(o => o.label).join(', ');
 
 const AI_PLATFORMS: { key: string; label: string; icon: React.ReactNode; color: string; desc: string }[] = [
-  { key: 'openai',   label: 'OpenAI',   icon: <BotIcon className="w-4 h-4" />, color: 'bg-green-600',   desc: 'GPT-4o, GPT-4.1, o3, o4-mini' },
-  { key: 'gemini',   label: 'Gemini',   icon: <SparklesIcon className="w-4 h-4" />, color: 'bg-blue-600',    desc: 'Gemini 2.0 Flash, 2.5 Pro' },
-  { key: 'claude',   label: 'Claude',   icon: <AlertIcon className="w-4 h-4" />, color: 'bg-amber-600',   desc: 'Sonnet 4.6, Opus 4.8, Haiku 4.5' },
-  { key: 'deepseek', label: 'DeepSeek', icon: <TargetIcon className="w-4 h-4" />, color: 'bg-purple-600',  desc: 'DeepSeek V3, R1' },
-  { key: 'grok',     label: 'Grok',     icon: <LightningIcon className="w-4 h-4" />, color: 'bg-orange-600',  desc: 'Grok 3, Grok 3 Mini' },
-  { key: 'openrouter', label: 'OpenRouter', icon: <ShuffleIcon className="w-4 h-4" />, color: 'bg-indigo-600', desc: 'Gateway nhiều model qua một API key' },
+  { key: 'openai',     ...AI_PLATFORM_META.openai,     desc: modelNames('openai') },
+  { key: 'gemini',     ...AI_PLATFORM_META.gemini,     desc: modelNames('gemini') },
+  { key: 'claude',     ...AI_PLATFORM_META.claude,     desc: modelNames('claude') },
+  { key: 'deepseek',   ...AI_PLATFORM_META.deepseek,   desc: modelNames('deepseek') },
+  { key: 'grok',       ...AI_PLATFORM_META.grok,       desc: modelNames('grok') },
+  { key: 'mistral',    ...AI_PLATFORM_META.mistral,    desc: modelNames('mistral') },
+  { key: '9router',    ...AI_PLATFORM_META['9router'], desc: tr('Chạy trên máy bạn, có model miễn phí') },
+  { key: 'openrouter', ...AI_PLATFORM_META.openrouter, desc: tr('Gateway nhiều model qua một API key') },
 ];
-
-const AI_PLATFORM_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  openai:   { label: 'OpenAI',   color: 'bg-green-600',   icon: <BotIcon className="w-4 h-4" /> },
-  gemini:   { label: 'Gemini',   color: 'bg-blue-600',    icon: <SparklesIcon className="w-4 h-4" /> },
-  claude:   { label: 'Claude',   color: 'bg-amber-600',   icon: <AlertIcon className="w-4 h-4" /> },
-  deepseek: { label: 'DeepSeek', color: 'bg-purple-600',  icon: <TargetIcon className="w-4 h-4" /> },
-  grok:     { label: 'Grok',     color: 'bg-orange-600',  icon: <LightningIcon className="w-4 h-4" /> },
-  openrouter: { label: 'OpenRouter', color: 'bg-indigo-600', icon: <ShuffleIcon className="w-4 h-4" /> },
-};
 
 const CATALOG: Record<string, CatalogItem[]> = {
   pos: [
     {
       type: 'kiotviet', name: 'KiotViet', priority: 'p0',
       icon: <ShoppingCartIcon className="w-4 h-4" />, color: 'bg-orange-500',
-      desc: 'Tra cứu đơn hàng, khách hàng ngay trong chat. Tạo đơn hàng từ workflow.',
+      desc: tr('Tra cứu đơn hàng, khách hàng ngay trong chat. Tạo đơn hàng từ workflow.'),
       credentialFields: [
-        { key: 'clientId',     label: 'Client ID',     placeholder: 'KiotViet client_id' },
-        { key: 'clientSecret', label: 'Client Secret', secret: true, placeholder: 'KiotViet client_secret' },
-        { key: 'retailerName', label: 'Tên gian hàng (Retailer)', placeholder: 'vd: myshop' },
-        // Khoá xác thực webhook (posWebhook.ts) — chỉ cần khi nhận webhook; trống = webhook bị từ chối
-        { key: 'webhookSecret', label: 'Webhook Secret (không bắt buộc)', secret: true, optional: true, placeholder: 'Secret (chuỗi Base64) đã dùng khi đăng ký webhook KiotViet — cần khi nhận webhook' },
+        { key: 'clientId',     label: tr('Client ID'),     placeholder: 'KiotViet client_id' },
+        { key: 'clientSecret', label: tr('Client Secret'), secret: true, placeholder: 'KiotViet client_secret' },
+        { key: 'retailerName', label: tr('Tên gian hàng (Retailer)'), placeholder: tr('vd: myshop') },
+        // Webhook auth key (posWebhook.ts): only needed to receive webhooks; empty = webhooks are rejected
+        { key: 'webhookSecret', label: tr('Webhook Secret (không bắt buộc)'), secret: true, optional: true, placeholder: tr('Secret (chuỗi Base64) đã dùng khi đăng ký webhook KiotViet — cần khi nhận webhook') },
       ],
       settingFields: [
-        { key: 'defaultBranchId', label: 'Branch ID mặc định (tùy chọn)' },
+        { key: 'defaultBranchId', label: tr('Branch ID mặc định (tùy chọn)') },
       ],
     },
     {
       type: 'haravan', name: 'Haravan', priority: 'p0',
       icon: <StoreIcon className="w-4 h-4" />, color: 'bg-indigo-500',
-      desc: 'Nền tảng TMĐT Việt Nam. Tra cứu đơn hàng, khách hàng Haravan trong chat.',
-      // Đăng nhập bằng Access Token (Custom App) HOẶC API Key + Password (ứng dụng riêng) — HaravanAdapter.getHeaders
+      desc: tr('Nền tảng TMĐT Việt Nam. Tra cứu đơn hàng, khách hàng Haravan trong chat.'),
+      // Log in with a Private Token (apis.haravan.com) OR the old API Key + Password (Basic auth on {shop}.myharavan.com): HaravanAdapter.endpoint
       credentialFields: [
-        { key: 'accessToken',   label: 'Access Token (khuyên dùng)', secret: true, placeholder: 'Access Token từ Custom App — bỏ trống nếu dùng API Key + Password', optional: true },
-        { key: 'apiKey',        label: 'API Key (ứng dụng riêng)', placeholder: 'Bỏ trống nếu dùng Access Token', optional: true },
-        { key: 'password',      label: 'Password (ứng dụng riêng)', secret: true, placeholder: 'Bỏ trống nếu dùng Access Token', optional: true },
-        { key: 'retailerDomain', label: 'Tên shop (subdomain)', placeholder: 'vd: myshop hoặc myshop.myharavan.com' },
-        { key: 'webhookSecret', label: 'Mã xác thực webhook (không bắt buộc)', secret: true, optional: true, placeholder: 'Mã xác thực ở Cài đặt → Thông báo → Webhook (app: Client Secret) — cần khi nhận webhook' },
+        { key: 'accessToken',   label: tr('Private Token (khuyên dùng)'), secret: true, placeholder: tr('Haravan → Ứng dụng → Ứng dụng riêng → Token. Bỏ trống nếu dùng API Key + Password'), optional: true },
+        { key: 'apiKey',        label: tr('API Key (cách cũ)'), placeholder: tr('Bỏ trống nếu dùng Private Token'), optional: true },
+        { key: 'password',      label: tr('Password (cách cũ)'), secret: true, placeholder: tr('Bỏ trống nếu dùng Private Token'), optional: true },
+        { key: 'retailerDomain', label: tr('Tên shop (chỉ cần với API Key + Password)'), placeholder: tr('vd: myshop hoặc myshop.myharavan.com'), optional: true },
+        { key: 'webhookSecret', label: tr('Mã xác thực webhook (không bắt buộc)'), secret: true, optional: true, placeholder: tr('Mã xác thực ở Cài đặt → Thông báo → Webhook (app: Client Secret) — cần khi nhận webhook') },
       ],
       credentialAlternatives: [
-        { label: 'Access Token', keys: ['accessToken'] },
-        { label: 'API Key + Password', keys: ['apiKey', 'password'] },
+        { label: tr('Private Token'), keys: ['accessToken'] },
+        { label: tr('API Key + Password'), keys: ['apiKey', 'password'] },
       ],
     },
     {
       type: 'sapo', name: 'Sapo', priority: 'p0',
       icon: <CheckCircleIcon className="w-4 h-4" />, color: 'bg-emerald-500',
-      desc: 'Quản lý bán hàng đa kênh Sapo. Tra cứu đơn, khách hàng theo SĐT.',
+      desc: tr('Quản lý bán hàng đa kênh Sapo. Tra cứu đơn, khách hàng theo SĐT.'),
       credentialFields: [
-        // Ứng dụng riêng (Private App): API Key + API Secret, xác thực Basic — không cần domain / Redirect URL.
-        // Access Token chỉ có khi đi luồng OAuth của ứng dụng Partner (support.sapo.vn/oauth).
-        { key: 'storeDomain', label: 'Tên cửa hàng', placeholder: 'vd: myshop hoặc myshop.mysapo.net' },
-        { key: 'apiKey',      label: 'API Key', placeholder: 'Sapo Web → Ứng dụng → Ứng dụng riêng → Tạo ứng dụng riêng' },
-        { key: 'apiSecret',   label: 'API Secret', secret: true, placeholder: 'Mật khẩu đi kèm API Key của ứng dụng riêng' },
-        { key: 'accessToken', label: 'Access Token OAuth (không bắt buộc)', secret: true, placeholder: 'Bỏ trống nếu dùng API Key + API Secret', optional: true },
-        { key: 'webhookSecret', label: 'Khoá xác thực webhook (không bắt buộc)', secret: true, optional: true, placeholder: 'Bỏ trống = dùng API Secret (Sapo ký webhook bằng API Secret của ứng dụng riêng)' },
+        // Private App: API Key + API Secret, Basic auth; no domain / Redirect URL needed.
+        // The Access Token is only available through the OAuth flow of a Partner app (support.sapo.vn/oauth).
+        { key: 'storeDomain', label: tr('Tên cửa hàng'), placeholder: tr('vd: myshop hoặc myshop.mysapo.net') },
+        { key: 'apiKey',      label: tr('API Key'), placeholder: tr('Sapo Web → Ứng dụng → Ứng dụng riêng → Tạo ứng dụng riêng') },
+        { key: 'apiSecret',   label: tr('API Secret'), secret: true, placeholder: tr('Mật khẩu đi kèm API Key của ứng dụng riêng') },
+        { key: 'accessToken', label: tr('Access Token OAuth (không bắt buộc)'), secret: true, placeholder: tr('Bỏ trống nếu dùng API Key + API Secret'), optional: true },
+        { key: 'webhookSecret', label: tr('Khoá xác thực webhook (không bắt buộc)'), secret: true, optional: true, placeholder: tr('Bỏ trống = dùng API Secret (Sapo ký webhook bằng API Secret của ứng dụng riêng)') },
       ],
     },
     {
       type: 'nhanh', name: 'Nhanh.vn', priority: 'p0',
       icon: <LightningIcon className="w-4 h-4" />, color: 'bg-yellow-600',
-      desc: 'Phần mềm bán hàng đa kênh Nhanh.vn. Quản lý đơn hàng, kho, khách hàng.',
+      desc: tr('Phần mềm bán hàng đa kênh Nhanh.vn. Quản lý đơn hàng, kho, khách hàng.'),
       credentialFields: [
-        { key: 'appId',       label: 'App ID',       placeholder: 'Nhanh.vn Open API App ID' },
-        { key: 'businessId',  label: 'Business ID',  placeholder: 'Nhanh.vn Business ID' },
-        { key: 'accessToken', label: 'Access Token v3', secret: true, placeholder: 'Lấy từ open.nhanh.vn → Ứng dụng của tôi' },
-        { key: 'webhookSecret', label: 'Webhooks verify token (không bắt buộc)', secret: true, optional: true, placeholder: 'Token tự đặt trong phần Webhooks của ứng dụng Nhanh.vn — cần khi nhận webhook' },
+        { key: 'appId',       label: tr('App ID'),       placeholder: tr('Nhanh.vn Open API App ID') },
+        { key: 'businessId',  label: tr('Business ID'),  placeholder: tr('Nhanh.vn Business ID') },
+        { key: 'accessToken', label: tr('Access Token v3'), secret: true, placeholder: tr('Lấy từ open.nhanh.vn → Ứng dụng của tôi') },
+        { key: 'webhookSecret', label: tr('Webhooks verify token (không bắt buộc)'), secret: true, optional: true, placeholder: tr('Token tự đặt trong phần Webhooks của ứng dụng Nhanh.vn — cần khi nhận webhook') },
       ],
     },
     {
       type: 'pancake', name: 'Pancake POS', priority: 'p0',
       icon: <MenuIcon className="w-4 h-4" />, color: 'bg-amber-500',
-      desc: 'Pancake POS/OMS. Tra cứu khách hàng, đơn hàng, sản phẩm và tạo đơn ngay trong chat.',
+      desc: tr('Pancake POS/OMS. Tra cứu khách hàng, đơn hàng, sản phẩm và tạo đơn ngay trong chat.'),
       credentialFields: [
-        { key: 'accessToken', label: 'API Key (api_key)', secret: true, placeholder: 'Pancake Open API key' },
-        { key: 'shopId', label: 'Shop ID', placeholder: 'Mã shop Pancake' },
-        { key: 'webhookSecret', label: 'Khoá webhook X-API-KEY (không bắt buộc)', secret: true, optional: true, placeholder: 'Chuỗi bí mật tự đặt, khai báo làm header X-API-KEY khi cấu hình webhook Pancake' },
+        { key: 'accessToken', label: tr('API Key (api_key)'), secret: true, placeholder: tr('Pancake Open API key') },
+        { key: 'shopId', label: tr('Shop ID'), placeholder: tr('Mã shop Pancake') },
+        { key: 'webhookSecret', label: tr('Khoá webhook X-API-KEY (không bắt buộc)'), secret: true, optional: true, placeholder: tr('Chuỗi bí mật tự đặt, khai báo làm header X-API-KEY khi cấu hình webhook Pancake') },
       ],
     },
   ],
@@ -138,21 +139,21 @@ const CATALOG: Record<string, CatalogItem[]> = {
     {
       type: 'casso', name: 'Casso', priority: 'p0',
       icon: <CreditCardIcon className="w-4 h-4" />, color: 'bg-green-600',
-      desc: 'Nhận webhook khi có giao dịch chuyển khoản VietQR. Tự động xác nhận đơn.',
+      desc: tr('Nhận webhook khi có giao dịch chuyển khoản VietQR. Tự động xác nhận đơn.'),
       credentialFields: [
-        { key: 'apiKey',    label: 'API Key', secret: true, placeholder: 'Casso API Key' },
-        // Có khoá → Deplao chỉ nhận webhook có chữ ký hợp lệ (X-Casso-Signature / secure-token)
-        { key: 'secretKey', label: 'Secret Key (webhook)', secret: true, optional: true, placeholder: 'Key bảo mật của tích hợp Webhook V2 trong Casso (khuyên dùng)' },
+        { key: 'apiKey',    label: tr('API Key'), secret: true, placeholder: tr('Casso API Key') },
+        // Key set → Deplao only accepts webhooks with a valid signature (X-Casso-Signature / secure-token)
+        { key: 'secretKey', label: tr('Secret Key (webhook)'), secret: true, optional: true, placeholder: tr('Key bảo mật của tích hợp Webhook V2 trong Casso (khuyên dùng)') },
       ],
     },
     {
       type: 'sepay', name: 'SePay', priority: 'p0',
       icon: <DollarIcon className="w-4 h-4" />, color: 'bg-teal-600',
-      desc: 'Nhận webhook giao dịch từ SePay. Kích hoạt workflow tự động khi nhận tiền.',
+      desc: tr('Nhận webhook giao dịch từ SePay. Kích hoạt workflow tự động khi nhận tiền.'),
       credentialFields: [
-        { key: 'apiKey',          label: 'API Key', secret: true, placeholder: 'SePay API Key' },
-        // Có khoá → Deplao chỉ nhận webhook có chữ ký hợp lệ (X-SePay-Signature / Authorization: Apikey)
-        { key: 'webhookSecretKey', label: 'Webhook Secret', secret: true, optional: true, placeholder: 'Secret Key (HMAC-SHA256, khuyên dùng) hoặc API Key ở bước Bảo mật của webhook SePay' },
+        { key: 'apiKey',          label: tr('API Key'), secret: true, placeholder: tr('SePay API Key') },
+        // Key set → Deplao only accepts webhooks with a valid signature (X-SePay-Signature / Authorization: Apikey)
+        { key: 'webhookSecretKey', label: tr('Webhook Secret'), secret: true, optional: true, placeholder: tr('Secret Key (HMAC-SHA256, khuyên dùng) hoặc API Key ở bước Bảo mật của webhook SePay') },
       ],
     },
   ],
@@ -160,24 +161,26 @@ const CATALOG: Record<string, CatalogItem[]> = {
     {
       type: 'ghn', name: 'GHN Express', priority: 'p0',
       icon: <PackageIcon className="w-4 h-4" />, color: 'bg-red-500',
-      desc: 'Tạo đơn, tra cứu vận đơn GHN. Khách hỏi tracking → tự động reply.',
+      desc: tr('Tạo đơn, tra cứu vận đơn GHN. Khách hỏi tracking → tự động reply.'),
       credentialFields: [
-        { key: 'token',  label: 'Token GHN', secret: true, placeholder: 'GHN Token' },
-        { key: 'shopId', label: 'Shop ID',   placeholder: 'GHN Shop ID' },
+        { key: 'token',  label: tr('Token GHN'), secret: true, placeholder: tr('GHN Token') },
+        { key: 'shopId', label: tr('Shop ID'),   placeholder: tr('GHN Shop ID') },
       ],
       settingFields: [
-        { key: 'environment', label: 'Môi trường', type: 'select', options: [
-          { value: 'production', label: 'Production' },
-          { value: 'sandbox',    label: 'Sandbox (test)' },
+        { key: 'environment', label: tr('Môi trường'), type: 'select', options: [
+          { value: 'production', label: tr('Production') },
+          { value: 'sandbox',    label: tr('Sandbox (test)') },
         ]},
       ],
     },
     {
       type: 'ghtk', name: 'GHTK', priority: 'p0',
       icon: <TruckIcon className="w-4 h-4" />, color: 'bg-blue-500',
-      desc: 'Tạo đơn, tra cứu vận đơn GHTK. Tự động gửi cập nhật trạng thái đơn.',
+      desc: tr('Tạo đơn, tra cứu vận đơn GHTK. Khách hỏi mã vận đơn → workflow trả lời trạng thái.'),
       credentialFields: [
-        { key: 'token', label: 'Token GHTK', secret: true, placeholder: 'GHTK API Token' },
+        { key: 'token', label: tr('Token GHTK'), secret: true, placeholder: tr('GHTK API Token') },
+        // Sent as X-Client-Source (GHTKAdapter.getHeaders)
+        { key: 'partnerCode', label: tr('Mã shop (X-Client-Source)'), optional: true, placeholder: tr('Mã shop GHTK, vd S308157 (không bắt buộc)') },
       ],
     },
   ],
@@ -185,12 +188,12 @@ const CATALOG: Record<string, CatalogItem[]> = {
     {
       type: 'telegram_bot', name: 'Telegram Bot', priority: 'p0',
       icon: <ChatIcon className="w-4 h-4" />, color: 'bg-blue-500',
-      desc: 'Kết nối Bot Telegram để gửi thông báo từ Workflow và nhận lệnh từ khách hàng. Tạo bot miễn phí qua @BotFather trên Telegram.',
+      desc: tr('Kết nối Bot Telegram để gửi thông báo từ Workflow và nhận lệnh từ khách hàng. Tạo bot miễn phí qua @BotFather trên Telegram.'),
       credentialFields: [
-        { key: 'botToken', label: 'Bot Token', secret: true, placeholder: '7123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw' },
+        { key: 'botToken', label: tr('Bot Token'), secret: true, placeholder: '7123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw' },
       ],
       settingFields: [
-        { key: 'defaultChatId', label: 'Chat ID mặc định (tùy chọn)' },
+        { key: 'defaultChatId', label: tr('Chat ID mặc định (tùy chọn)') },
       ],
     },
   ],
@@ -206,7 +209,7 @@ interface SavedIntegration {
   connectedAt?: number;
   createdAt: number;
   updatedAt: number;
-  /** Casso / SePay / phần mềm bán hàng: đã đặt khoá bảo mật webhook chưa + lần nhận / từ chối gần nhất (IntegrationRegistry.listConfigs) */
+  /** Casso / SePay / point-of-sale software: whether a webhook security key is set + last received / rejected (IntegrationRegistry.listConfigs) */
   webhook?: IntegrationWebhookInfo;
 }
 
@@ -242,14 +245,14 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
           <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center text-lg flex-shrink-0 border border-blue-500/30"><RocketIcon className="w-4 h-4 inline" /> </div>
           <div className="flex-1 min-w-0">
             <p className="text-foreground/80 text-xs font-semibold mb-1.5">
-              Cài đặt <strong className="text-foreground">9Router</strong> để dùng AI <strong className="text-green-400">FREE</strong> cho:
+              {trx('Cài đặt <0>9Router</0> để dùng AI <1>FREE</1> cho:', { 0: <strong className="text-foreground" />, 1: <strong className="text-green-400" /> })}
             </p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
               {[
-                'Gợi ý trả lời trong hội thoại',
-                'Hỏi đáp với AI trong hội thoại',
-                'Dùng AI tạo workflow bằng câu lệnh',
-                'Node AI trả lời - tạo chatbot 24/7',
+                tr('Gợi ý trả lời trong hội thoại'),
+                tr('Hỏi đáp với AI trong hội thoại'),
+                tr('Dùng AI tạo workflow bằng câu lệnh'),
+                tr('Node AI trả lời - tạo chatbot 24/7'),
               ].map((text, i) => (
                 <p key={i} className="text-foreground/80 text-[11px] flex items-center gap-1.5">
                   <span className="text-blue-500/70">▸</span>
@@ -267,7 +270,7 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
             }}
             className="flex-shrink-0 px-3 py-1.5 text-[11px] rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/40 hover:border-blue-500/60 transition-colors font-medium"
           >
-            Hướng dẫn →
+            {tr('Hướng dẫn →')}
           </button>
         </div>
       </div>
@@ -277,30 +280,30 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
         <div className="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center text-base text-white-important"><BotIcon className="w-4 h-4 inline" /> </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-foreground">Trợ lý AI</h2>
+            <h2 className="text-sm font-semibold text-foreground">{tr('Trợ lý AI')}</h2>
             {hasAssistants && (
-              <span className="text-[10px] text-muted-foreground ml-1">({assistants.length} trợ lý)</span>
+              <span className="text-[10px] text-muted-foreground ml-1">{trx('({{count}} trợ lý)', { count: assistants.length })}</span>
             )}
           </div>
           <p className="text-[10px] text-muted-foreground">
-            Nhiều nền tảng AI · Tự động gợi ý trả lời, chat với AI, knowledge base
+            {tr('Nhiều nền tảng AI · Tự động gợi ý trả lời, chat với AI, knowledge base')}
           </p>
         </div>
         <button
           onClick={onNavigateAi}
           className="flex-shrink-0 px-3 py-1.5 text-[11px] rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/30 hover:border-blue-500/50 transition-colors font-medium"
         >
-          Quản lý →
+          {tr('Quản lý →')}
         </button>
       </div>
 
       {loadingAi ? (
-        <PageLoading variant="inline" text="Đang tải trợ lý AI..." size="sm" />
+        <PageLoading variant="inline" text={tr('Đang tải trợ lý AI...')} size="sm" />
       ) : hasAssistants ? (
         /* ── Show actual assistant cards ── */
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-6">
           {assistants.map(a => {
-            const meta = AI_PLATFORM_META[a.platform] || AI_PLATFORM_META.openai;
+            const meta = getAIPlatformMeta(a.platform);
             return (
               <button
                 key={a.id}
@@ -315,7 +318,7 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-medium text-foreground text-sm truncate">{a.name}</span>
                       {a.isDefault && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-400 font-bold flex-shrink-0">MẶC ĐỊNH</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-400 font-bold flex-shrink-0">{tr('MẶC ĐỊNH')}</span>
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground">{meta.label} - {a.model}</p>
@@ -324,9 +327,9 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
                 <div className="mt-3 flex items-center justify-between">
                   <span className={`text-xs flex items-center gap-1 ${a.enabled ? 'text-green-400' : 'text-muted-foreground'}`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-green-400' : 'bg-accent'}`}/>
-                    {a.enabled ? 'Đang bật' : 'Đã tắt'}
+                    {a.enabled ? tr('Đang bật') : tr('Đã tắt')}
                   </span>
-                  <span className="text-xs text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">Cấu hình →</span>
+                  <span className="text-xs text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">{tr('Cấu hình →')}</span>
                 </div>
               </button>
             );
@@ -359,28 +362,28 @@ function AISection({ onNavigateAi }: { onNavigateAi: () => void }) {
 }
 
 /**
- * Địa chỉ nhận webhook thanh toán / tích hợp (cổng 9888) — CHỈ XEM. Bật / tắt / đổi địa chỉ ở
- * Cài đặt → Internet & Cloud → Địa chỉ Internet.
+ * Webhook receiving address for payments / integrations (port 9888): VIEW ONLY. Turn it on / off / change it in
+ * Settings → Internet & Cloud → Internet address.
  */
 function WebhookAddressCard({ webhookPort, tunnelUrl, savedList }: {
   webhookPort: number;
-  /** Địa chỉ đang nhận (tunnel:status) — dùng khi bản app không có module Cloudflare. */
+  /** Address currently receiving (tunnel:status): used when the app build has no Cloudflare module. */
   tunnelUrl: string | null;
   savedList: SavedIntegration[];
 }) {
   const pub = usePublicAddresses();
   const payments = pub.get('payments');
-  // Đã bật (kể cả đang khởi động / lỗi — thẻ địa chỉ tự báo); bản app không có module Cloudflare thì theo tunnel:status
+  // Enabled (including while starting / on error: the address card reports it itself); without the Cloudflare module in the app build, follow tunnel:status
   const enabled = payments ? payments.enabled : !!tunnelUrl;
   const isPaymentType = (type: string) => type === 'casso' || type === 'sepay';
-  // Cần địa chỉ nhận: thanh toán đã kết nối, phần mềm bán hàng đã đặt khoá webhook (muốn nhận webhook)
+  // Needs a receiving address: payments connected, point-of-sale software has its webhook key set (wants to receive webhooks)
   const receivers = savedList
     .filter(s => (isPaymentType(s.type) && s.connectedAt) || (!isPaymentType(s.type) && s.enabled && s.webhook?.secretConfigured))
     .map(s => s.name);
   const paymentIntegrations = savedList.filter(s => isPaymentType(s.type) && s.enabled && s.webhook);
-  // Chưa đặt khoá → ai biết địa chỉ cũng gửi được giao dịch giả (phần mềm bán hàng chưa đặt khoá thì webhook bị từ chối)
+  // No key set → anyone who knows the address can send fake transactions (point-of-sale software without a key rejects webhooks)
   const unsecured = paymentIntegrations.filter(s => !s.webhook!.secretConfigured).map(s => s.name);
-  // Đang từ chối (chưa đặt khoá / thiếu / sai chữ ký) → workflow thanh toán / webhook bán hàng không chạy
+  // Currently rejecting (no key set / missing / wrong signature) → payment / point-of-sale webhook workflows do not run
   const rejecting = savedList.filter(s => s.enabled && s.webhook).filter(s => {
     const { lastAccepted, lastRejected } = s.webhook!;
     return !!lastRejected && lastRejected.reason !== 'disabled' && (!lastAccepted || lastRejected.at >= lastAccepted.at);
@@ -390,33 +393,29 @@ function WebhookAddressCard({ webhookPort, tunnelUrl, savedList }: {
     <div className="space-y-3 rounded-2xl border border-border bg-card p-5">
       <div>
         <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <GlobeIcon className="h-4 w-4" /> Địa chỉ nhận webhook
+          {trx('<0/> Địa chỉ nhận webhook', { 0: <GlobeIcon className="h-4 w-4" /> })}
         </h3>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          Casso và SePay gửi giao dịch chuyển khoản vào Deplao qua địa chỉ Internet này để chạy workflow
-          “Khi nhận thanh toán”; KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS gửi đơn hàng / khách hàng để chạy workflow
-          “Khi phần mềm bán hàng gửi webhook” (cần đặt khoá xác thực webhook trong trang tích hợp). Đơn vị vận chuyển không gửi
-          dữ liệu vào đây — Deplao tự hỏi khi bạn tra cứu. Chỉ chạy khi Deplao đang mở.
+          {tr('Casso và SePay gửi giao dịch chuyển khoản vào Deplao qua địa chỉ Internet này để chạy workflow “Khi nhận thanh toán”; KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS gửi đơn hàng / khách hàng để chạy workflow “Khi phần mềm bán hàng gửi webhook” (cần đặt khoá xác thực webhook trong trang tích hợp). Đơn vị vận chuyển không gửi dữ liệu vào đây — Deplao tự hỏi khi bạn tra cứu. Chỉ chạy khi Deplao đang mở.')}
           {!pub.serverManaged && (
-            <> Bật, tắt hoặc đổi địa chỉ ở <strong className="text-foreground">Cài đặt → Internet &amp; Cloud → Địa chỉ Internet</strong>.</>
+            <> {trx('Bật, tắt hoặc đổi địa chỉ ở <0>Cài đặt → Internet & Cloud → Địa chỉ Internet</0>.', { 0: <strong className="text-foreground" /> })}</>
           )}
         </p>
       </div>
 
-      <PublicAddressCard service="payments" title="Thanh toán, tích hợp" pathSuffix="/webhook/<loại>" anyMode compact />
+      <PublicAddressCard service="payments" title={tr('Thanh toán, tích hợp')} pathSuffix={tr('/webhook/<loại>')} anyMode compact />
 
       <p className="text-[11px] leading-relaxed text-subtle-foreground">
-        Trên máy này (chỉ dùng nội bộ): <code className="font-mono">http://127.0.0.1:{webhookPort}/webhook/&lt;loại&gt;</code>.
-        Đường dẫn đầy đủ để dán vào từng nền tảng nằm trong trang tích hợp của nền tảng đó.
+        {trx('Trên máy này (chỉ dùng nội bộ): <0>http://127.0.0.1:{{webhookPort}}/webhook/<loại></0>. Đường dẫn đầy đủ để dán vào từng nền tảng nằm trong trang tích hợp của nền tảng đó.', { 0: <code className="font-mono" />, webhookPort })}
       </p>
 
       {!enabled && receivers.length > 0 && !pub.serverManaged && (
         <div role="alert" className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3">
           <p className="text-xs font-medium text-foreground">
-            <AlertIcon className="inline h-4 w-4 text-warning" /> Đã kết nối {receivers.join(', ')} nhưng chưa bật địa chỉ nhận
+            {trx('<0/> Đã kết nối {{v1}} nhưng chưa bật địa chỉ nhận', { 0: <AlertIcon className="inline h-4 w-4 text-warning" />, v1: receivers.join(', ') })}
           </p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Webhook chưa vào được Deplao (thanh toán tự động, workflow theo webhook chưa chạy). Bật ở Cài đặt → Internet &amp; Cloud → Địa chỉ Internet.
+            {tr('Webhook chưa vào được Deplao (thanh toán tự động, workflow theo webhook chưa chạy). Bật ở Cài đặt → Internet & Cloud → Địa chỉ Internet.')}
           </p>
         </div>
       )}
@@ -425,14 +424,12 @@ function WebhookAddressCard({ webhookPort, tunnelUrl, savedList }: {
         <div role="alert" className="space-y-0.5 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3">
           {unsecured.length > 0 && (
             <p className="text-[11px] text-foreground">
-              <AlertIcon className="inline h-4 w-4 text-warning" /> {unsecured.join(', ')} chưa đặt khoá bảo mật webhook — ai biết địa chỉ
-              cũng gửi được giao dịch giả. Mở trang tích hợp để đặt khoá.
+              {trx('<0/> {{v1}} chưa đặt khoá bảo mật webhook — ai biết địa chỉ cũng gửi được giao dịch giả. Mở trang tích hợp để đặt khoá.', { 0: <AlertIcon className="inline h-4 w-4 text-warning" />, v1: unsecured.join(', ') })}
             </p>
           )}
           {rejecting.length > 0 && (
             <p className="text-[11px] text-foreground">
-              <AlertIcon className="inline h-4 w-4 text-warning" /> {rejecting.join(', ')} đang từ chối webhook (chưa đặt khoá hoặc thiếu / sai
-              chữ ký) — xem mục Bảo mật webhook trong trang tích hợp.
+              {trx('<0/> {{v1}} đang từ chối webhook (chưa đặt khoá hoặc thiếu / sai chữ ký) — xem mục Bảo mật webhook trong trang tích hợp.', { 0: <AlertIcon className="inline h-4 w-4 text-warning" />, v1: rejecting.join(', ') })}
             </p>
           )}
         </div>
@@ -464,8 +461,8 @@ function IntegrationSection({ sectionKey, catalog, savedList, onSelect }: {
         <div>
           <h2 className="text-sm font-semibold text-foreground">{meta.label}</h2>
           <p className="text-[10px] text-muted-foreground">
-            {catalog.length} nền tảng
-            {connectedCount > 0 && <span className="text-green-500"> · {connectedCount} đã kết nối</span>}
+            {trx('{{count}} nền tảng', { count: catalog.length })}
+            {connectedCount > 0 && <span className="text-green-500"> {trx('· {{connectedCount}} đã kết nối', { connectedCount })}</span>}
           </p>
         </div>
       </div>
@@ -495,10 +492,10 @@ function IntegrationSection({ sectionKey, catalog, savedList, onSelect }: {
               <div className="mt-3 flex items-center justify-between">
                 <span className={`text-xs flex items-center gap-1 ${connected ? 'text-green-400' : 'text-muted-foreground'}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-400' : 'bg-accent'}`}/>
-                  {connected ? 'Đã kết nối' : saved ? 'Chưa xác nhận' : 'Chưa kết nối'}
+                  {connected ? tr('Đã kết nối') : saved ? tr('Chưa xác nhận') : tr('Chưa kết nối')}
                 </span>
                 <span className="text-xs text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                  {saved ? 'Cấu hình →' : 'Kết nối →'}
+                  {saved ? tr('Cấu hình →') : tr('Kết nối →')}
                 </span>
               </div>
             </button>
@@ -520,7 +517,7 @@ export default function IntegrationPage() {
   const [selectedDetail, setSelectedDetail] = useState<{ catalogItem: CatalogItem; saved?: SavedIntegration } | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('all');
   const [webhookPort, setWebhookPort] = useState<number>(9888);
-  // Địa chỉ nhận webhook đang chạy (chỉ đọc) — bật / tắt ở Cài đặt → Internet & Cloud → Địa chỉ Internet
+  // Webhook receiving address currently running (read only): turn it on / off in Settings → Internet & Cloud → Internet address
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -539,7 +536,7 @@ export default function IntegrationPage() {
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      // Employee mode: integration list trả về empty từ IPC guard
+      // Employee mode: the integration list comes back empty from the IPC guard
       const res = await DataAccessor.getIntegrations();
       if (res?.success) {
         setSavedList(res.integrations || []);
@@ -551,7 +548,7 @@ export default function IntegrationPage() {
       setTunnelUrl(ts?.active ? ts.url ?? null : null);
     } catch {}
     setLoading(false);
-  }, [workspaceId]); // ← reload khi chuyển workspace
+  }, [workspaceId]); // ← reload when switching workspace
 
   useEffect(() => { loadList(); }, [loadList]);
 
@@ -617,13 +614,13 @@ export default function IntegrationPage() {
                 <rect x="2" y="2" width="20" height="20" rx="3" />
                 <path d="M9 12h6M12 9v6" />
               </svg>
-              <p className="text-muted-foreground font-semibold mb-1">Không có dữ liệu</p>
-              <p className="text-muted-foreground text-sm">Mất kết nối tới Boss. Dữ liệu tích hợp không khả dụng.</p>
+              <p className="text-muted-foreground font-semibold mb-1">{tr('Không có dữ liệu')}</p>
+              <p className="text-muted-foreground text-sm">{tr('Mất kết nối tới Boss. Dữ liệu tích hợp không khả dụng.')}</p>
             </div>
           ) : loading ? (
-            <PageLoading variant="inline" text="Đang tải tích hợp..." />
+            <PageLoading variant="inline" text={tr('Đang tải tích hợp...')} />
           ) : activeTab === 'all' ? (
-            /* ── "Tất cả" - AI first, then sections ── */
+            /* ── "Tất cả" (All) - AI first, then sections ── */
             <>
               <AISection onNavigateAi={handleNavigateAi} />
 
@@ -669,21 +666,21 @@ export default function IntegrationPage() {
 // ─── Top Navigation Bar ───────────────────────────────────────────────────────
 
 /**
- * Trạng thái địa chỉ nhận webhook (một dòng, chỉ xem). Bấm → Cài đặt → Internet & Cloud → Địa chỉ Internet;
- * máy nhân viên không hiện, bản app không có module Cloudflare thì chỉ hiện chữ.
+ * Webhook receiving address status (one line, view only). Click → Settings → Internet & Cloud → Internet address;
+ * hidden on employee machines; without the Cloudflare module in the app build, only text is shown.
  */
 function WebhookStatusPill({ tunnelUrl }: { tunnelUrl: string | null }) {
   const pub = usePublicAddresses();
   if (pub.serverManaged) return null;
   const payments = pub.get('payments');
-  // Bản app không có module Cloudflare: theo tunnel:status (chỉ có địa chỉ khi đang chạy)
+  // App build without the Cloudflare module: follows tunnel:status (an address only when running)
   const url = payments ? (payments.enabled && payments.state === 'active' ? payments.url : null) : tunnelUrl;
   const pending = !url && !!payments?.enabled;
   const className = 'flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-[11px] font-medium text-muted-foreground';
   const content = (
     <>
       <span className={cn('h-2 w-2 rounded-full', url ? 'bg-success' : pending ? 'bg-warning' : 'bg-accent')} aria-hidden="true" />
-      <span>{url ? 'Đang nhận webhook' : pending ? 'Webhook chưa sẵn sàng' : 'Webhook chưa bật'}</span>
+      <span>{url ? tr('Đang nhận webhook') : pending ? tr('Webhook chưa sẵn sàng') : tr('Webhook chưa bật')}</span>
     </>
   );
   if (!pub.canConfigure) return <span className={className} title={url || undefined}>{content}</span>;
@@ -692,7 +689,7 @@ function WebhookStatusPill({ tunnelUrl }: { tunnelUrl: string | null }) {
       type="button"
       onClick={() => navigateSettings('cloud', 'address')}
       className={cn(className, 'transition-colors hover:bg-muted hover:text-foreground')}
-      title={url ? `${url} — đổi ở Cài đặt → Internet & Cloud` : 'Bật ở Cài đặt → Internet & Cloud → Địa chỉ Internet'}
+      title={url ? tr('{{url}} — đổi ở Cài đặt → Internet & Cloud', { url }) : tr('Bật ở Cài đặt → Internet & Cloud → Địa chỉ Internet')}
     >
       {content}
     </button>
@@ -710,10 +707,10 @@ function TopBar({ activeTab, onTabChange, tunnelUrl }: {
         {/* Title row */}
         <div className="flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
-            <h1 className="text-base font-semibold text-foreground"><PluginIcon className="w-4 h-4 inline" /> Tích hợp</h1>
-            <p className="text-[11px] text-muted-foreground">Kết nối nền tảng bên ngoài</p>
+            <h1 className="text-base font-semibold text-foreground">{trx('<0/> Tích hợp', { 0: <PluginIcon className="w-4 h-4 inline" /> })}</h1>
+            <p className="text-[11px] text-muted-foreground">{tr('Kết nối nền tảng bên ngoài')}</p>
           </div>
-          {/* Địa chỉ nhận webhook — chỉ xem, bật / tắt ở Cài đặt → Internet & Cloud */}
+          {/* Webhook receiving address: view only, turn it on / off in Settings → Internet & Cloud */}
           <WebhookStatusPill tunnelUrl={tunnelUrl} />
         </div>
 

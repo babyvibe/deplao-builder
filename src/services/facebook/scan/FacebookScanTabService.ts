@@ -1,7 +1,7 @@
 /**
  * FacebookScanTabService.ts
- * Quản lý tab scan + data + request logs trong DB.
- * Mỗi tab = 1 phiên quét (có cài đặt, dữ liệu, lịch sử request).
+ * Manages scan tabs + data + request logs in the DB.
+ * Each tab = one scan session (with settings, data, and request history).
  */
 
 import DatabaseService from '../../database/DatabaseService';
@@ -36,7 +36,7 @@ export interface ScanTabRequestRecord {
   id: number;
   tabId: string;
   requestPayload: string;   // JSON: params, variables, docId, friendlyName
-  responsePreview: string;  // 500 ký tự đầu response
+  responsePreview: string;  // First 500 characters of the response
   status: 'success' | 'error';
   error: string;
   itemsCount: number;
@@ -52,7 +52,7 @@ export class FacebookScanTabService {
     if (this.initialized) return;
     try {
       const db = DatabaseService.getInstance();
-      // ⚠️ BẮT BUỘC: SQLite mặc định tắt foreign keys → CASCADE không hoạt động!
+      // ⚠️ REQUIRED: SQLite disables foreign keys by default → CASCADE does not work!
       db.run('PRAGMA foreign_keys = ON');
       db.exec(`
         CREATE TABLE IF NOT EXISTS fb_scan_tabs (
@@ -107,14 +107,14 @@ export class FacebookScanTabService {
       const db = DatabaseService.getInstance();
       const existing = db.queryOne<any>('SELECT id FROM fb_scan_tabs WHERE id = ?', [tab.id]);
       if (existing) {
-        // Tab đã tồn tại → UPDATE, không chạm updated_at (tránh xáo trộn thứ tự)
+        // Tab already exists → UPDATE, do not touch updated_at (avoids reshuffling the order)
         db.run(`
           UPDATE fb_scan_tabs SET account_id = ?, name = ?, scan_type = ?, config = ?,
             status = ?, items_count = ?
           WHERE id = ?
         `, [tab.accountId, tab.name, tab.scanType, tab.config, tab.status, tab.itemsCount, tab.id]);
       } else {
-        // Tab mới → INSERT với created_at và updated_at
+        // New tab → INSERT with created_at and updated_at
         db.run(`
           INSERT INTO fb_scan_tabs (id, account_id, name, scan_type, config, status, items_count, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -180,7 +180,7 @@ export class FacebookScanTabService {
     }
   }
 
-  // Cập nhật updated_at khi người dùng kích hoạt tab (để đẩy lên đầu danh sách)
+  // Update updated_at when the user activates the tab (to move it to the top of the list)
   static touchTab(id: string): boolean {
     try {
       this.init();
@@ -197,15 +197,15 @@ export class FacebookScanTabService {
     try {
       this.init();
       const db = DatabaseService.getInstance();
-      // Explicit delete từ child tables (safety net nếu foreign_keys chưa bật)
+      // Explicit delete from the child tables (safety net if foreign_keys is not enabled)
       db.run('DELETE FROM fb_scan_tab_requests WHERE tab_id = ?', [id]);
       db.run('DELETE FROM fb_scan_tab_data WHERE tab_id = ?', [id]);
-      // Xóa cả lịch sử scan liên quan đến tab này
+      // Delete all scan history related to this tab
       try {
         const { default: FacebookScanLogService } = require('./FacebookScanLogService');
         FacebookScanLogService.deleteByTabId(id);
       } catch {}
-      // Xóa tab (CASCADE sẽ xóa nốt nếu foreign_keys đã bật)
+      // Delete the tab (CASCADE will remove the rest if foreign_keys is enabled)
       db.run('DELETE FROM fb_scan_tabs WHERE id = ?', [id]);
       return true;
     } catch (err: any) {
@@ -220,14 +220,14 @@ export class FacebookScanTabService {
     try {
       this.init();
       const db = DatabaseService.getInstance();
-      // Xóa data cũ của tab trước khi lưu mới (chỉ giữ bản snapshot mới nhất)
+      // Delete the old data of the tab before saving new data (keep only the latest snapshot)
       db.run('DELETE FROM fb_scan_tab_data WHERE tab_id = ?', [tabId]);
       db.run(`
         INSERT INTO fb_scan_tab_data (tab_id, items, total_count, page_info, created_at)
         VALUES (?, ?, ?, ?, ?)
       `, [tabId, JSON.stringify(items), items.length, JSON.stringify(pageInfo), Date.now()]);
       const row = db.queryOne<any>('SELECT last_insert_rowid() as id');
-      // Cập nhật items_count trong tab = số items hiện tại
+      // Update items_count in the tab = the current number of items
       db.run('UPDATE fb_scan_tabs SET items_count = ?, updated_at = ? WHERE id = ?', [items.length, Date.now(), tabId]);
       return row?.id ?? null;
     } catch (err: any) {
@@ -299,14 +299,14 @@ export class FacebookScanTabService {
       this.init();
       const db = DatabaseService.getInstance();
       const totalTabs = db.queryOne<any>('SELECT COUNT(*) as total FROM fb_scan_tabs WHERE account_id = ?', [accountId])?.total || 0;
-      // Lấy tổng items từ fb_scan_tab_data (dữ liệu thật) thay vì items_count có thể sai
+      // Get the total items from fb_scan_tab_data (real data) instead of items_count, which may be wrong
       const totalItems = db.queryOne<any>(`
         SELECT COALESCE(SUM(td.total_count), 0) as total
         FROM fb_scan_tab_data td
         JOIN fb_scan_tabs t ON t.id = td.tab_id
         WHERE t.account_id = ? AND t.status != 'deleted'
       `, [accountId])?.total || 0;
-      // Request counts từ fb_scan_tab_requests
+      // Request counts from fb_scan_tab_requests
       const successCount = db.queryOne<any>(`
         SELECT COUNT(*) as total FROM fb_scan_tab_requests r
         JOIN fb_scan_tabs t ON r.tab_id = t.id
@@ -320,7 +320,7 @@ export class FacebookScanTabService {
       const byTypeRows = db.query<any>('SELECT scan_type, COUNT(*) as cnt FROM fb_scan_tabs WHERE account_id = ? AND status != \'deleted\' GROUP BY scan_type', [accountId]);
       const byType: Record<string, number> = {};
       for (const r of byTypeRows || []) byType[r.scan_type] = r.cnt;
-      // Top tabs theo total_count thật từ fb_scan_tab_data
+      // Top tabs by the real total_count from fb_scan_tab_data
       const topTabs = db.query<any>(`
         SELECT t.id, t.name, COALESCE(td.total_count, 0) as items_count
         FROM fb_scan_tabs t

@@ -1,37 +1,38 @@
 /**
- * proxyActionPolicy.ts — nhân viên gọi POST /api/proxy/action: kênh nào được gọi, đường dẫn file nào được dùng.
+ * proxyActionPolicy.ts: which channels an employee may call via POST /api/proxy/action, and which file paths may be used.
  *
- * Trước đây executeProxyAction gọi BẤT KỲ handler ipcMain nào theo tên kênh (fallback `_invokeHandlers`, event=null)
- * với tham số do nhân viên gửi: nhân viên đã đăng nhập gọi được employee:update / relay:* / settings / plugin / API key…
- * và các handler gửi file (zalo:sendFile…) nhận `filePath` tuỳ ý → gửi được file bất kỳ trên máy Boss (kể cả DB chứa
- * cookie mọi tài khoản) vào một cuộc trò chuyện. Module này gom quy tắc (thuần, có test):
- *   1. Kênh: handler trong registry Zalo (ipcHandlerRegistry — thao tác theo tài khoản, đã kiểm tra zaloId + quyền chat),
- *      `login:connect` (Boss tự lấy auth), hoặc nằm trong danh sách đóng EMPLOYEE_PROXY_IPC_CHANNELS.
- *   2. Đường dẫn file trong tham số phải nằm trong thư mục media của Boss (file nhân viên vừa upload, media / thư viện
- *      có sẵn) và không thuộc tài khoản không được giao.
+ * Previously executeProxyAction called ANY ipcMain handler by channel name (fallback `_invokeHandlers`, event=null)
+ * with parameters sent by the employee: a logged-in employee could call employee:update / relay:* / settings / plugin / API keys...
+ * and the file-sending handlers (zalo:sendFile...) accepted any `filePath` → any file on the Boss machine (including the DB holding
+ * the cookies of every account) could be sent into a conversation. This module gathers the rules (pure, has tests):
+ *   1. Channel: a handler in the Zalo registry (ipcHandlerRegistry: per-account actions, zaloId and chat permission already checked),
+ *      `login:connect` (Boss gets the auth itself), or a channel in the closed list EMPLOYEE_PROXY_IPC_CHANNELS.
+ *   2. File paths in the parameters must be inside the Boss media folder (files the employee just uploaded, existing media / library)
+ *      and must not belong to an account that is not assigned.
  */
 import * as nodePath from 'path';
 import { isPathInside } from './bossFileAccess';
 import { ACCOUNT_CHANNEL_PROXY_NAMES, employeeChannelSpec } from './employeeChannelRoutes';
+import { tr } from '../../shared/i18n';
 
 /**
- * Kênh ngoài registry Zalo mà app nhân viên gửi lên Boss (proxyToBoss / proxyToBossWithResult — electron/ipc/*).
- * Danh sách ĐÓNG: thêm kênh proxy mới thì phải thêm vào đây (Boss từ chối CHANNEL_FORBIDDEN).
- * Không dùng tiền tố (`db:`, `crm:`…): cùng tiền tố có handler chỉ Boss được gọi.
- * Facebook / Telegram cá nhân: đúng các kênh nhóm "proxy" của employeeChannelRoutes.ts (gửi tin, cảm xúc, thu hồi, nhóm…);
- * kênh chỉ Boss (thêm / đăng nhập / kết nối tài khoản, cookie, E2EE) KHÔNG có ở đây.
+ * Channels outside the Zalo registry that the employee app sends to Boss (proxyToBoss / proxyToBossWithResult, electron/ipc/*).
+ * CLOSED list: a new proxy channel must be added here (Boss rejects it with CHANNEL_FORBIDDEN).
+ * No prefixes (`db:`, `crm:`...): the same prefix may have handlers that only Boss may call.
+ * Personal Facebook / Telegram: exactly the "proxy" group channels of employeeChannelRoutes.ts (send messages, reactions, unsend, groups...);
+ * Boss-only channels (add / log in / connect account, cookies, E2EE) are NOT here.
  */
 export const EMPLOYEE_PROXY_IPC_CHANNELS: ReadonlySet<string> = new Set([
-  // Facebook / Telegram cá nhân (module chat; quét dữ liệu Facebook: crm) — tài khoản = params.accountId
+  // Personal Facebook / Telegram (chat module; Facebook data scan: crm): account = params.accountId
   ...ACCOUNT_CHANNEL_PROXY_NAMES,
-  // Trợ lý AI (module ai_assistant)
+  // AI assistant (ai_assistant module)
   'ai:listAssistants', 'ai:getAssistant', 'ai:getDefault', 'ai:saveAssistant', 'ai:deleteAssistant', 'ai:testAssistant',
   'ai:getFiles', 'ai:uploadFile', 'ai:removeFile', 'ai:getAccountAssistant', 'ai:setAccountAssistant',
   'ai:getAccountAssistants', 'ai:getUsageLogs', 'ai:getUsageStats',
   // CRM (module crm)
   'crm:saveNote', 'crm:deleteNote', 'crm:saveCampaign', 'crm:deleteCampaign', 'crm:cloneCampaign',
   'crm:updateCampaignStatus', 'crm:addCampaignContacts', 'crm:deleteCampaignContacts', 'crm:deleteAllCampaignContacts',
-  // Dữ liệu hội thoại / nhãn / tin nhắn nhanh (ghi lên DB Boss)
+  // Conversation / label / quick message data (written to the Boss DB)
   'db:addFriend', 'db:removeFriend', 'db:saveFriends', 'db:upsertFriendRequest', 'db:removeFriendRequest',
   'db:assignLocalLabelToThread', 'db:bulkAssignLocalLabelToThread', 'db:removeLocalLabelFromThread',
   'db:upsertLocalLabel', 'db:deleteLocalLabel', 'db:setLocalLabelActive', 'db:setLocalLabelOrder', 'db:cloneLocalLabels',
@@ -42,22 +43,22 @@ export const EMPLOYEE_PROXY_IPC_CHANNELS: ReadonlySet<string> = new Set([
   'db:saveGroupMembers', 'db:saveLink', 'db:setContactAlias', 'db:setContactFlags', 'db:updateAccountPhone',
   'db:updateContactProfile', 'db:updateReaction',
   'db:upsertGroupMember', 'db:removeGroupMember', 'db:saveFriendRequests',
-  // Cache sticker dùng chung (không theo tài khoản)
+  // Shared sticker cache (not per account)
   'db:saveStickers', 'db:saveStickerPacks', 'db:saveKeywordStickers', 'db:addRecentSticker', 'db:markStickerUnsupported',
-  // Thẻ ngân hàng theo tài khoản: đọc + ghi đều trên DB Boss (id do Boss cấp)
+  // Bank cards per account: both read and write on the Boss DB (ids issued by Boss)
   'db:getBankCards', 'db:upsertBankCard', 'db:deleteBankCard',
-  // Tích hợp (module integration): cấu hình + Test kết nối + chạy thao tác (Tích hợp nhanh, đồng bộ sản phẩm Trợ lý AI)
+  // Integrations (integration module): config + Test connection + run actions (Quick integration, product sync for the AI assistant)
   'integration:save', 'integration:delete', 'integration:toggle',
   'integration:test', 'integration:execute', 'integration:executeByType',
-  // Đăng ký webhook tự động trên KiotViet / Sapo (trang tích hợp)
+  // Automatic webhook registration on KiotViet / Sapo (integration page)
   'integration:listWebhooks', 'integration:registerWebhooks', 'integration:removeWebhook',
-  // Workflow (module workflow; Boss kiểm tra mọi trang của workflow thuộc tài khoản được giao)
+  // Workflow (workflow module; Boss checks that every page of the workflow belongs to the assigned account)
   'workflow:save', 'workflow:delete', 'workflow:toggle', 'workflow:clone', 'workflow:cloneAll',
-  // Ảnh tin Zalo Boss chưa lưu → Boss tải bằng phiên tài khoản (module chat; chỉ id tin, link lấy trong DB Boss)
+  // Zalo message images Boss has not saved yet → Boss downloads them with the account session (chat module; only the message id, the link is read from the Boss DB)
   'file:ensureMessageImage',
 ]);
 
-/** Kênh xử lý riêng trong executeProxyAction (Boss tự lấy auth của tài khoản được giao). */
+/** Channel with its own handling in executeProxyAction (Boss gets the auth of the assigned account itself). */
 export const SPECIAL_PROXY_CHANNELS: ReadonlySet<string> = new Set(['login:connect']);
 
 export type ProxyChannelDecision =
@@ -69,15 +70,15 @@ export function checkProxyChannel(channel: string, isZaloRegistryChannel: (chann
   if (name && (isZaloRegistryChannel(name) || SPECIAL_PROXY_CHANNELS.has(name) || EMPLOYEE_PROXY_IPC_CHANNELS.has(name))) {
     return { allowed: true };
   }
-  return { allowed: false, code: 'CHANNEL_FORBIDDEN', error: `Nhân viên không được gọi thao tác này: ${name || '(trống)'}` };
+  return { allowed: false, code: 'CHANNEL_FORBIDDEN', error: tr('Nhân viên không được gọi thao tác này: {{v1}}', { v1: name || tr('(trống)') }) };
 }
 
-// ─── Quyền module ────────────────────────────────────────────────────────────
+// ─── Module permissions ────────────────────────────────────────────────────────
 
 /**
- * Kết bạn / danh bạ Zalo: gọi từ trang Bạn bè (module friends) VÀ từ khung chat / CRM (thanh lời mời, hồ sơ, xoá bạn,
- * bí danh, tìm theo số) → cần MỘT trong hai quyền. Chỉ 'friends' thì nhân viên có quyền Chat mà không có "Bạn bè" mất các
- * nút kết bạn trong khung chat; chỉ 'chat' (trước đây) thì nhân viên chỉ có "Bạn bè" không thao tác được trên trang Bạn bè.
+ * Zalo friends / contacts: called from the Friends page (friends module) AND from the chat window / CRM (friend request bar, profile, unfriend,
+ * alias, search by number) → needs ONE of the two permissions. With only 'friends', an employee who has Chat but not "Bạn bè" loses the
+ * add-friend buttons in the chat window; with only 'chat' (the old setup), an employee who has "Bạn bè" cannot act on the Friends page.
  */
 export const FRIEND_PROXY_CHANNELS: ReadonlySet<string> = new Set([
   'zalo:getFriends', 'zalo:findUser', 'zalo:sendFriendRequest', 'zalo:acceptFriendRequest', 'zalo:rejectFriendRequest',
@@ -87,22 +88,22 @@ export const FRIEND_PROXY_CHANNELS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Cài đặt của chính tài khoản Zalo (quyền riêng tư — SRS ZL-02; đổi / đặt lại PIN hội thoại ẩn — ZL-03): chỉ người có
- * quyền quản lý tài khoản (settings_accounts), không theo quyền Chat như các zalo:* khác.
+ * Settings of the Zalo account itself (privacy: SRS ZL-02; change / reset the PIN of hidden conversations: ZL-03): only people with
+ * the account management permission (settings_accounts), not the Chat permission like the other zalo:* channels.
  */
 export const ACCOUNT_SETTINGS_PROXY_CHANNELS: ReadonlySet<string> = new Set([
   'zalo:getAccountSettings', 'zalo:updateAccountSetting', 'zalo:hiddenSetPin', 'zalo:hiddenResetPin',
 ]);
 
-/** Ghi danh mục sản phẩm Zalo Business (SRS ZL-04): nhân viên cần quyền CRM (quyết định Q7); đọc / gửi theo quyền Chat. */
+/** Writes the Zalo Business product catalog (SRS ZL-04): employees need the CRM permission (decision Q7); reading / sending follows the Chat permission. */
 export const CATALOG_WRITE_PROXY_CHANNELS: ReadonlySet<string> = new Set([
   'zalo:createCatalog', 'zalo:updateCatalog', 'zalo:deleteCatalog',
   'zalo:createCatalogProduct', 'zalo:updateCatalogProduct', 'zalo:deleteCatalogProducts', 'zalo:uploadProductPhoto',
 ]);
 
 /**
- * Module quyền cho một kênh proxy: nhân viên cần MỘT trong các module trả về; [] = không yêu cầu module riêng (db:, login:…).
- * Facebook / Telegram theo bảng employeeChannelRoutes (chat; quét dữ liệu Facebook: crm; chặn / thêm liên hệ: friends|chat).
+ * Permission modules for a proxy channel: the employee needs ONE of the returned modules; [] = no separate module required (db:, login:...).
+ * Facebook / Telegram follow the employeeChannelRoutes table (chat; Facebook data scan: crm; block / add contact: friends|chat).
  */
 export function proxyChannelModules(channel: string): string[] {
   const name = String(channel || '');
@@ -120,14 +121,14 @@ export function proxyChannelModules(channel: string): string[] {
   return [];
 }
 
-// ─── Tài khoản thực hiện ─────────────────────────────────────────────────────
+// ─── Acting account ─────────────────────────────────────────────────────────
 //
-// Trước đây thiếu `zaloId` ở cấp params thì Boss dùng tài khoản được giao ĐẦU TIÊN rồi thay auth bằng auth của tài khoản
-// đó: nhân viên giữ 2 tài khoản gửi tin / thả cảm xúc / đánh dấu đã đọc từ tài khoản B thì Boss làm bằng tài khoản A.
-// Máy nhân viên không có cookie (snapshot không gửi) nên Boss không suy ra được tài khoản từ auth như ở máy Boss —
-// UI phải gửi id tài khoản (buildZaloAuth → auth.accountId, hoặc zaloId), Boss chỉ đoán khi không mơ hồ.
+// Previously, when `zaloId` was missing at the params level, Boss used the FIRST assigned account and then replaced the auth with the auth of that account
+// so an employee with 2 accounts who sent a message / reacted / marked as read from account B had Boss act with account A.
+// The employee machine has no cookies (the snapshot does not send them), so Boss cannot infer the account from the auth the way the Boss machine does:
+// the UI must send the account id (buildZaloAuth → auth.accountId, or zaloId); Boss only guesses when there is no ambiguity.
 
-/** Trường id tài khoản ở cấp params (như trước) và trong `auth` (buildZaloAuth: accountId; markConversationRead: zaloId). */
+/** Account id field at the params level (as before) and inside `auth` (buildZaloAuth: accountId; markConversationRead: zaloId). */
 const PROXY_PARAM_ACCOUNT_KEYS = ['zaloId', 'zalo_id'] as const;
 const PROXY_AUTH_ACCOUNT_KEYS = ['zaloId', 'zalo_id', 'accountId'] as const;
 
@@ -148,7 +149,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return null;
 }
 
-/** Mọi id tài khoản nhân viên ghi rõ trong tham số (không trùng). Nhiều id khác nhau = yêu cầu không hợp lệ. */
+/** Every account id the employee states explicitly in the parameters (no duplicates). Several different ids = invalid request. */
 export function proxyAccountIds(params: unknown): string[] {
   const ids = new Set<string>();
   const record = asObject(params);
@@ -167,7 +168,7 @@ export function proxyAccountIds(params: unknown): string[] {
   return [...ids];
 }
 
-/** Id hội thoại / nhóm trong tham số (threadId, groupId, message JSON của thu hồi / cảm xúc, messages[].idTo…). */
+/** Conversation / group ids in the parameters (threadId, groupId, the message JSON of unsend / reactions, messages[].idTo...). */
 export function proxyThreadIds(params: unknown): string[] {
   const ids = new Set<string>();
   const record = asObject(params);
@@ -193,19 +194,19 @@ export type ProxyAccountDecision =
   | { allowed: false; code: 'ACCOUNT_FORBIDDEN' | 'ACCOUNT_REQUIRED'; error: string };
 
 export interface ProxyAccountOptions {
-  /** Thao tác chạy bằng phiên của MỘT tài khoản (registry Zalo, login:connect) → bắt buộc biết tài khoản nào. */
+  /** Actions run with the session of ONE account (Zalo registry, login:connect) → must know which account. */
   required: boolean;
-  /** Trong `candidates` (tài khoản được giao), tài khoản nào có hội thoại / nhóm `threadIds` — Boss tra bảng contacts. */
+  /** Among `candidates` (assigned accounts), which account has the conversations / groups `threadIds`: Boss looks it up in the contacts table. */
   ownersOfThreads?: (threadIds: string[], candidates: string[]) => string[];
 }
 
 /**
- * Tài khoản thực hiện một lệnh proxy:
- *  1. id ghi rõ (params / auth) — phải được giao, và chỉ một id;
- *  2. kênh không cần tài khoản → không đoán (handler tự đọc tham số của nó);
- *  3. nhân viên chỉ được giao một tài khoản → tài khoản đó;
- *  4. hội thoại trong tham số thuộc đúng một tài khoản được giao → tài khoản đó;
- *  5. còn lại → từ chối (ACCOUNT_REQUIRED), KHÔNG lấy tài khoản đầu tiên.
+ * The account that performs a proxy command:
+ *  1. an explicit id (params / auth): must be assigned, and only one id;
+ *  2. a channel that needs no account → nothing is guessed (the handler reads its own parameters);
+ *  3. the employee has only one assigned account → that account;
+ *  4. the conversation in the parameters belongs to exactly one assigned account → that account;
+ *  5. otherwise → reject (ACCOUNT_REQUIRED), NEVER take the first account.
  */
 export function resolveProxyAccount(
   params: unknown,
@@ -215,11 +216,11 @@ export function resolveProxyAccount(
   const assigned = [...new Set((assignedAccounts || []).map((id) => idOf(id)).filter(Boolean))];
   const explicit = proxyAccountIds(params);
   if (explicit.length > 1) {
-    return { allowed: false, code: 'ACCOUNT_FORBIDDEN', error: 'Tham số chứa nhiều tài khoản khác nhau' };
+    return { allowed: false, code: 'ACCOUNT_FORBIDDEN', error: tr('Tham số chứa nhiều tài khoản khác nhau') };
   }
   if (explicit.length === 1) {
     if (!assigned.includes(explicit[0])) {
-      return { allowed: false, code: 'ACCOUNT_FORBIDDEN', error: 'Không có quyền truy cập tài khoản này' };
+      return { allowed: false, code: 'ACCOUNT_FORBIDDEN', error: tr('Không có quyền truy cập tài khoản này') };
     }
     return { allowed: true, accountId: explicit[0], source: 'explicit' };
   }
@@ -235,16 +236,16 @@ export function resolveProxyAccount(
   return {
     allowed: false,
     code: 'ACCOUNT_REQUIRED',
-    error: 'Không xác định được tài khoản thực hiện thao tác (nhân viên được giao nhiều tài khoản) — hãy chọn lại hội thoại rồi thử lại',
+    error: tr('Không xác định được tài khoản thực hiện thao tác (nhân viên được giao nhiều tài khoản) — hãy chọn lại hội thoại rồi thử lại'),
   };
 }
 
 /**
- * Tài khoản thực hiện lệnh proxy Facebook / Telegram cá nhân (employeeChannelRoutes, nhóm "proxy"): handler nhận
- * `params.accountId` → BẮT BUỘC có và phải được giao, không đoán. Trước đây resolveProxyAccount bỏ qua `accountId` ở cấp
- * params (kênh không cần tài khoản) → không kiểm tra gì cả.
- * Facebook nhận cả id nội bộ (fb_accounts.id, UUID) lẫn id Facebook thật (= accounts.zalo_id, danh sách được giao) —
- * `canonical` (Boss tra fb_accounts) đổi về accounts.zalo_id trước khi so. Id khác trong tham số (zaloId, auth.*) phải trùng.
+ * The account that performs a personal Facebook / Telegram proxy command (employeeChannelRoutes, "proxy" group): the handler receives
+ * `params.accountId` → it is REQUIRED and must be assigned, nothing is guessed. Previously resolveProxyAccount ignored `accountId` at the
+ * params level (channels that need no account) → nothing was checked at all.
+ * Facebook accepts both the internal id (fb_accounts.id, UUID) and the real Facebook id (= accounts.zalo_id, the assigned list) →
+ * `canonical` (Boss looks up fb_accounts) maps it back to accounts.zalo_id before comparing. Other ids in the parameters (zaloId, auth.*) must match.
  */
 export function resolveAccountChannelProxy(
   params: unknown,
@@ -254,42 +255,42 @@ export function resolveAccountChannelProxy(
   const record = asObject(params);
   const raw = idOf(record?.accountId);
   if (!raw) {
-    return { allowed: false, code: 'ACCOUNT_REQUIRED', error: 'Thiếu tài khoản thực hiện thao tác — hãy chọn lại hội thoại rồi thử lại' };
+    return { allowed: false, code: 'ACCOUNT_REQUIRED', error: tr('Thiếu tài khoản thực hiện thao tác — hãy chọn lại hội thoại rồi thử lại') };
   }
   let accountId = raw;
   try { accountId = idOf(canonical(raw)) || raw; } catch { accountId = raw; }
   if (proxyAccountIds(params).some((id) => id !== accountId && id !== raw)) {
-    return { allowed: false, code: 'ACCOUNT_FORBIDDEN', error: 'Tham số chứa nhiều tài khoản khác nhau' };
+    return { allowed: false, code: 'ACCOUNT_FORBIDDEN', error: tr('Tham số chứa nhiều tài khoản khác nhau') };
   }
   const assigned = new Set((assignedAccounts || []).map((id) => idOf(id)).filter(Boolean));
   if (!assigned.has(accountId)) {
-    return { allowed: false, code: 'ACCOUNT_FORBIDDEN', error: 'Không có quyền truy cập tài khoản này' };
+    return { allowed: false, code: 'ACCOUNT_FORBIDDEN', error: tr('Không có quyền truy cập tài khoản này') };
   }
   return { allowed: true, accountId, source: 'explicit' };
 }
 
-// ─── "Nhân viên nào đã gửi" ──────────────────────────────────────────────────
+// ─── "Which employee sent it" ──────────────────────────────────────────────────
 
 export interface EmployeeSendInfo {
-  /** Id tin vừa gửi ('' = handler không trả id — Boss gắn theo tin gửi gần nhất của hội thoại). */
+  /** Id of the message just sent ('' = the handler returns no id; Boss attaches it to the latest sent message of the conversation). */
   msgId: string;
   threadId: string;
-  /** 0 = 1-1, 1 = nhóm (Nhật ký nhân viên). */
+  /** 0 = 1-1, 1 = group (employee log). */
   threadType: number;
 }
 
-/** Kênh Zalo gửi tin (quy tắc cũ): tên có "send", trừ đã xem / đang gõ. */
+/** Zalo channel that sends messages (old rule): the name contains "send", except seen / typing. */
 function isLegacySendChannel(channel: string): boolean {
   return (channel.includes('send') || channel.includes('Send'))
     && !channel.includes('Seen') && !channel.includes('seen') && !channel.includes('Typing') && !channel.includes('typing');
 }
 
 /**
- * Lệnh proxy vừa chạy là một tin nhân viên gửi → id tin / hội thoại để Boss ghi Nhật ký nhân viên + phát
- * relay:messageSentByEmployee; null = không phải gửi tin, hoặc handler báo lỗi (tin chưa gửi — trước đây vẫn bị ghi "đã gửi").
- *  - Facebook / Telegram: đúng các kênh `send` của employeeChannelRoutes (fb:unsendMessage / fb:sendTyping / fb:sendSeen
- *    có chữ "send" nhưng không phải gửi tin); kết quả `{ success, messageId }`; hội thoại = threadId / chatId / chatJid.
- *  - Zalo (registry): như cũ — kết quả `{ success, response: { msgId | message.msgId | message.data.msgId } }`.
+ * When the proxy command just run is a message sent by an employee → the message / conversation id so Boss can write the employee log and emit
+ * relay:messageSentByEmployee; null = not a message send, or the handler reported an error (the message was not sent: previously it was still logged as "sent").
+ *  - Facebook / Telegram: exactly the `send` channels of employeeChannelRoutes (fb:unsendMessage / fb:sendTyping / fb:sendSeen
+ *    contain "send" but are not message sends); result `{ success, messageId }`; conversation = threadId / chatId / chatJid.
+ *  - Zalo (registry): unchanged, result `{ success, response: { msgId | message.msgId | message.data.msgId } }`.
  */
 export function employeeSendInfo(channel: string, params: unknown, result: any): EmployeeSendInfo | null {
   const name = String(channel || '');
@@ -301,11 +302,11 @@ export function employeeSendInfo(channel: string, params: unknown, result: any):
     const threadId = (idOf(record.threadId) || idOf(record.chatId) || idOf(record.chatJid)).replace(/@.*$/, '');
     let threadType = 0;
     if (name.startsWith('telegramUser:')) {
-      threadType = threadId.startsWith('-') ? 1 : 0; // nhóm / kênh Telegram có id âm
+      threadType = threadId.startsWith('-') ? 1 : 0; // Telegram groups / channels have negative ids
     } else {
       const options = asObject(record.options);
       const typeChat = options && Object.prototype.hasOwnProperty.call(options, 'typeChat') ? options.typeChat : record.typeChat;
-      threadType = typeChat === null ? 1 : 0; // Facebook: null = nhóm, 'user' = 1-1
+      threadType = typeChat === null ? 1 : 0; // Facebook: null = group, 'user' = 1-1
     }
     return { msgId: idOf(result?.messageId ?? result?.msgId), threadId, threadType };
   }
@@ -321,28 +322,28 @@ export function employeeSendInfo(channel: string, params: unknown, result: any):
   };
 }
 
-// ─── Đường dẫn file ──────────────────────────────────────────────────────────
+// ─── File paths ─────────────────────────────────────────────────────────────
 
 /**
- * Trường chứa MỘT đường dẫn file — app nhân viên upload đúng các trường này trước khi proxy (proxyHelper
- * .prepareLocalFilesForProxy dùng chính danh sách này), Boss kiểm tra đúng các trường này. Handler proxy nhận đường dẫn ở
- * trường khác thì Boss KHÔNG kiểm tra → phải thêm vào đây (photoPath: telegramUser:editChatPhoto; stickerPath: bot Telegram).
+ * Fields that hold ONE file path: the employee app uploads exactly these fields before the proxy call (proxyHelper
+ * .prepareLocalFilesForProxy uses this same list), and Boss checks exactly these fields. If a proxy handler takes a path in
+ * another field, Boss does NOT check it → it must be added here (photoPath: telegramUser:editChatPhoto; stickerPath: Telegram bot).
  */
 export const PROXY_FILE_PATH_FIELDS = ['filePath', 'videoPath', 'thumbPath', 'voicePath', 'avatarPath', 'mediaPath', 'photoPath', 'stickerPath'] as const;
-/** Trường chứa danh sách đường dẫn. */
+/** Field that holds a list of paths. */
 export const PROXY_FILE_PATH_LIST_FIELDS = ['filePaths'] as const;
 
 export interface ProxyPathContext {
-  /** Thư mục media của Boss (tuyệt đối, đã realpath nếu có). */
+  /** Boss media folder (absolute, realpath applied when available). */
   roots: readonly string[];
-  /** Đường dẫn nhân viên gửi → tuyệt đối (FileStorageService.resolveAbsolutePath + realpath nếu file tồn tại). */
+  /** Path sent by the employee → absolute (FileStorageService.resolveAbsolutePath + realpath if the file exists). */
   resolve: (value: string) => string;
   /**
-   * Quyền theo thư mục, nhận đường dẫn tương đối so với root — dùng CÙNG quy tắc với tải file /api/media
-   * (bossFileAccess: classifyMediaPath + checkMediaAccess). null = được dùng.
+   * Per-folder permission, takes a path relative to the root: uses the SAME rule as file download /api/media
+   * (bossFileAccess: classifyMediaPath + checkMediaAccess). null = allowed.
    */
   checkAccess: (relPathFromRoot: string) => { error: string } | null;
-  /** So sánh đường dẫn kiểu Windows (mặc định theo máy đang chạy). */
+  /** Compare paths the Windows way (default follows the running machine). */
   windows?: boolean;
 }
 
@@ -351,8 +352,8 @@ export type ProxyPathDecision =
   | { allowed: false; code: 'PATH_FORBIDDEN' | 'ACCOUNT_FORBIDDEN'; error: string; path: string };
 
 /**
- * Kiểm tra mọi đường dẫn file trong tham số proxy. Hợp lệ → trả params với đường dẫn đã chuẩn hoá thành tuyệt đối
- * (handler dùng đúng đường dẫn vừa kiểm tra, không tự resolve lại khác đi). Trường rỗng / không có thì bỏ qua.
+ * Checks every file path in the proxy parameters. If valid → returns the params with the paths normalized to absolute
+ * (the handler uses exactly the path that was checked, it does not resolve it again differently). Empty or missing fields are skipped.
  */
 export function checkProxyFilePaths(params: any, ctx: ProxyPathContext): ProxyPathDecision {
   if (!params || typeof params !== 'object') return { allowed: true, params };
@@ -362,13 +363,13 @@ export function checkProxyFilePaths(params: any, ctx: ProxyPathContext): ProxyPa
 
   const checkOne = (raw: unknown): { ok: true; value: string } | Extract<ProxyPathDecision, { allowed: false }> => {
     if (typeof raw !== 'string') {
-      return { allowed: false, code: 'PATH_FORBIDDEN', error: 'Đường dẫn file không hợp lệ', path: String(raw) };
+      return { allowed: false, code: 'PATH_FORBIDDEN', error: tr('Đường dẫn file không hợp lệ'), path: String(raw) };
     }
     let resolved = '';
     try { resolved = ctx.resolve(raw); } catch { resolved = ''; }
     const root = resolved ? ctx.roots.find((r) => isPathInside(r, resolved, { windows })) : undefined;
     if (!root) {
-      return { allowed: false, code: 'PATH_FORBIDDEN', error: 'Chỉ gửi được file đã tải lên Boss hoặc media có sẵn của Boss', path: raw };
+      return { allowed: false, code: 'PATH_FORBIDDEN', error: tr('Chỉ gửi được file đã tải lên Boss hoặc media có sẵn của Boss'), path: raw };
     }
     const denied = ctx.checkAccess(pathImpl.relative(root, resolved));
     if (denied) return { allowed: false, code: 'ACCOUNT_FORBIDDEN', error: denied.error, path: raw };
@@ -398,19 +399,19 @@ export function checkProxyFilePaths(params: any, ctx: ProxyPathContext): ProxyPa
   return { allowed: true, params: next };
 }
 
-// ─── Gộp lệnh poll reaction Telegram ────────────────────────────────────────
+// ─── Merging Telegram reaction poll commands ────────────────────────────────
 
-/** Kênh poll định kỳ: nhiều nhân viên mở cùng nhóm → Boss chỉ hỏi Telegram một lần trong cửa sổ này. */
+/** Periodic poll channel: several employees open the same group → Boss asks Telegram only once within this window. */
 export const COALESCED_POLL_CHANNELS: ReadonlySet<string> = new Set(['telegramUser:refreshReactions', 'telegramUser:refreshPollResults']);
 export const POLL_COALESCE_WINDOW_MS = 15_000;
 
 export interface RecentPoll { at: number; ids: ReadonlySet<string> }
 
 /**
- * ChatWindow poll reaction nhóm Telegram mỗi 20 s (Telegram chỉ đẩy reaction cho tác giả tin). Qua Boss, mỗi nhân
- * viên mở nhóm = thêm một lệnh GetMessagesReactions trên CÙNG phiên Telegram → dễ dính FLOOD_WAIT. Boss đã ghi DB và
- * phát sự kiện cho mọi người khi reaction đổi, nên lệnh trùng (cùng tài khoản + nhóm, các tin đã được hỏi trong
- * cửa sổ) bỏ qua được. Trả true = bỏ qua lệnh này.
+ * The ChatWindow polls Telegram group reactions every 20 s (Telegram only pushes reactions to the message author). Through Boss, each
+ * employee who opens the group adds one more GetMessagesReactions call on the SAME Telegram session → easily hits FLOOD_WAIT. Boss has already written
+ * the DB and emitted the event to everyone when a reaction changed, so a duplicate command (same account + group, messages already asked about in the
+ * window) can be skipped. Returns true = skip this command.
  */
 export function shouldSkipCoalescedPoll(recent: RecentPoll | undefined, messageIds: readonly string[], now: number,
   windowMs: number = POLL_COALESCE_WINDOW_MS): boolean {

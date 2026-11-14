@@ -1,35 +1,34 @@
 /**
- * bossFileAccess.ts — quyền tải file Boss phục vụ cho nhân viên (pure, test ở src/__tests__/employee/bossFileAccess.test.ts).
+ * bossFileAccess.ts: file download permissions on Boss for employees (pure logic, tested in src/__tests__/employee/bossFileAccess.test.ts).
  *
- * Trước đây GET /api/media/* (media chat) và /api/library/file|thumb/* (thư viện) trả file KHÔNG cần đăng nhập:
- * ai biết URL Boss / tunnel là tải được ảnh, video, tài liệu của khách. Nay HttpRelayService bắt buộc phiên nhân viên
- * (Authorization: Bearer — máy nhân viên tự gắn, xem bossSessionAuth.ts) rồi áp các quy tắc ở đây:
- *   - Media: thư mục cấp 1 (sau `thumb/` | `avatar/` tuỳ chọn) là id tài khoản — Zalo / Facebook / Telegram đều nằm ở
- *     accounts.zalo_id, FileStorageService lưu `media/<id>/...` → id phải thuộc assigned_accounts (403 ACCOUNT_FORBIDDEN).
- *     Thư mục chỉ gồm chữ số cũng coi là thư mục tài khoản (tài khoản đã xoá / đọc DB lỗi → chặn thay vì mở).
- *     `media/library/<chủ>/...` theo quy tắc thư viện. Thư mục khác (_avatars, erp, _uploads, đường dẫn cũ…) → mọi
- *     nhân viên đã đăng nhập.
- *   - Thư viện: chủ item phải xem được — giống resolveAccessibleOwners (LibraryHandler): nhân viên chưa được giao tài
- *     khoản nào xem được mọi thư viện.
- * Phân loại chạy trên đường dẫn THẬT của file (sau realpath, tương đối so với thư mục media) để `..`, `%2e`, `\`, chữ
- * hoa/thường, tên 8.3 hay dấu chấm cuối của Windows không lách được kiểm tra tài khoản.
+ * Previously GET /api/media/* (chat media) and /api/library/file|thumb/* (library) served files WITHOUT login:
+ * anyone who knew the Boss / tunnel URL could download customers' images, videos and documents. Now HttpRelayService requires an employee session
+ * (Authorization: Bearer; the employee machine attaches it, see bossSessionAuth.ts) and then applies the rules here:
+ *   - Media: the first-level folder (after an optional `thumb/` or `avatar/`) is an account id. Zalo / Facebook / Telegram all live under
+ *     accounts.zalo_id, and FileStorageService saves to `media/<id>/...`, so the id must be in assigned_accounts (403 ACCOUNT_FORBIDDEN).
+ *     A folder containing digits only is also treated as an account folder (a deleted account or a DB read error → blocked instead of opened).
+ *     `media/library/<owner>/...` follows the library rules. Other folders (_avatars, erp, _uploads, old paths…) → any logged-in employee.
+ *   - Library: the item's owner must be visible, the same as resolveAccessibleOwners (LibraryHandler): an employee with no assigned accounts can see every library.
+ * The classification runs on the REAL file path (after realpath, relative to the media folder), so `..`, `%2e`, `\`, upper/lower case, Windows 8.3 names or trailing dots cannot get past the account check.
  */
+
+import { tr } from '../../shared/i18n';
 
 const MEDIA_PREFIX = '/api/media/';
 
-/** Thư mục cấp 1 chỉ gồm chữ số = thư mục tài khoản (uid Zalo, id Facebook / Telegram). Ngày lưu dạng YYYY-MM-DD. */
+/** A first-level folder with digits only = an account folder (Zalo uid, Facebook / Telegram id). Dates are stored as YYYY-MM-DD. */
 const NUMERIC_ACCOUNT_DIR = /^\d{5,}$/;
 
 const isWindowsDefault = (): boolean => typeof process !== 'undefined' && process.platform === 'win32';
 
 export interface PathOptions {
-  /** Quy tắc tên file Windows (mặc định: theo máy đang chạy). */
+  /** Windows file-name rules (default: for the machine that is running). */
   windows?: boolean;
 }
 
-// ─── Đường dẫn trong URL ───────────────────────────────────────────────────
+// ─── Paths in the URL ───────────────────────────────────────────────────────
 
-/** Giải mã các cụm %XX hợp lệ (UTF-8), giữ nguyên '%' lẻ — tên file "100% sale.jpg" vẫn mở được. */
+/** Decode valid %XX sequences (UTF-8), keep a lone '%' as is: a file named "100% sale.jpg" can still be opened. */
 export function decodeUrlPath(raw: string): string {
   return String(raw || '').replace(/(?:%[0-9a-fA-F]{2})+/g, (run) => {
     try { return decodeURIComponent(run); } catch { return run; }
@@ -37,9 +36,9 @@ export function decodeUrlPath(raw: string): string {
 }
 
 /**
- * Phần sau /api/media/ của URL request → đường dẫn tương đối (phân cách '/') hoặc null nếu không hợp lệ.
- * Bỏ ?query/#hash, giải mã %XX đúng MỘT lần, '\' coi như '/', chặn NUL, `..`, đường dẫn rỗng; trên Windows chặn thêm
- * ':' (ổ đĩa / alternate data stream) và đoạn chỉ gồm dấu chấm / khoảng trắng.
+ * The part after /api/media/ in the request URL → a relative path (separated by '/') or null if invalid.
+ * Strips ?query / #hash, decodes %XX exactly ONCE, treats '\' as '/', rejects NUL, `..`, and an empty path. On Windows it also rejects
+ * ':' (drive / alternate data stream) and segments made only of dots / spaces.
  */
 export function parseMediaRelPath(url: string, opts: PathOptions = {}): string | null {
   const windows = opts.windows ?? isWindowsDefault();
@@ -60,8 +59,8 @@ export function parseMediaRelPath(url: string, opts: PathOptions = {}): string |
 }
 
 /**
- * `target` nằm trong (hoặc chính là) thư mục `base`. Thay cho `startsWith(base)` trần — base "C:\x\media" không còn
- * khớp "C:\x\media2\...". Windows so không phân biệt hoa/thường.
+ * `target` is inside (or is exactly) the `base` folder. Replaces a bare `startsWith(base)`: base "C:\x\media" no longer
+ * matches "C:\x\media2\...". Windows compares case-insensitively.
  */
 export function isPathInside(base: string, target: string, opts: PathOptions = {}): boolean {
   const windows = opts.windows ?? isWindowsDefault();
@@ -77,18 +76,18 @@ export function isPathInside(base: string, target: string, opts: PathOptions = {
   return t.startsWith(b.endsWith(sep) ? b : b + sep);
 }
 
-// ─── Phân loại file media ──────────────────────────────────────────────────
+// ─── Media file classification ──────────────────────────────────────────
 
 export type MediaScope =
   | { kind: 'account'; accountId: string }
   | { kind: 'library'; ownerId: string }
   | { kind: 'shared' }
-  /** Tên thư mục không phải dạng chuẩn (alias 8.3 '~', ':' của Windows) ở vị trí tài khoản → từ chối. */
+  /** A folder name that is not in standard form (8.3 alias '~', Windows ':') at the account position → rejected. */
   | { kind: 'invalid' };
 
 /**
- * Phân loại đường dẫn tương đối so với thư mục media (dùng đường dẫn THẬT sau realpath).
- * `lookupAccount(segment)` → id tài khoản chuẩn (accounts.zalo_id) nếu segment là tài khoản, ngược lại null.
+ * Classifies a relative path against the media folder (uses the REAL path after realpath).
+ * `lookupAccount(segment)` → the canonical account id (accounts.zalo_id) if the segment is an account, otherwise null.
  */
 export function classifyMediaPath(
   relPath: string,
@@ -97,8 +96,8 @@ export function classifyMediaPath(
 ): MediaScope {
   const windows = opts.windows ?? isWindowsDefault();
   const segments = String(relPath || '').split(/[\\/]+/).filter(Boolean);
-  // Windows bỏ dấu chấm / khoảng trắng cuối tên. Từ khoá thư mục so không phân biệt hoa/thường ở mọi OS (ổ đĩa
-  // Windows / macOS mặc định không phân biệt: "LIBRARY/…" vẫn là thư mục library).
+  // Windows drops trailing dots / spaces from names. Folder keywords are case-insensitive on every OS (the drive
+  // Windows / macOS are case-insensitive by default: "LIBRARY/…" is still the library folder).
   const clean = (s: string) => (windows ? s.replace(/[. ]+$/, '') : s);
   const key = (s: string) => clean(s).toLowerCase();
   const suspicious = (s: string) => windows && /[~:]/.test(s);
@@ -119,11 +118,11 @@ export function classifyMediaPath(
   return accountId ? { kind: 'account', accountId } : { kind: 'shared' };
 }
 
-// ─── Quyết định ────────────────────────────────────────────────────────────
+// ─── Decision ────────────────────────────────────────────────────────────
 
 export interface FileAccessEmployee {
   assigned_accounts?: string[] | null;
-  /** Chỉ dùng cho log. */
+  /** For logging only. */
   employee_id?: string;
 }
 
@@ -133,26 +132,26 @@ export interface FileAccessDenied {
   code: 'ACCOUNT_FORBIDDEN';
 }
 
-const ACCOUNT_DENIED: FileAccessDenied = { status: 403, error: 'Không có quyền truy cập tài khoản này', code: 'ACCOUNT_FORBIDDEN' };
-const LIBRARY_DENIED: FileAccessDenied = { status: 403, error: 'Không có quyền xem thư viện của trang này', code: 'ACCOUNT_FORBIDDEN' };
-const INVALID_DENIED: FileAccessDenied = { status: 403, error: 'Đường dẫn không hợp lệ', code: 'ACCOUNT_FORBIDDEN' };
+const ACCOUNT_DENIED: FileAccessDenied = { status: 403, error: tr('Không có quyền truy cập tài khoản này'), code: 'ACCOUNT_FORBIDDEN' };
+const LIBRARY_DENIED: FileAccessDenied = { status: 403, error: tr('Không có quyền xem thư viện của trang này'), code: 'ACCOUNT_FORBIDDEN' };
+const INVALID_DENIED: FileAccessDenied = { status: 403, error: tr('Đường dẫn không hợp lệ'), code: 'ACCOUNT_FORBIDDEN' };
 
 function assignedSet(employee: FileAccessEmployee | null | undefined): Set<string> {
   return new Set((employee?.assigned_accounts || []).map(String));
 }
 
-/** Media của tài khoản: phải được giao (chưa giao tài khoản nào → không xem được — giống employeeAccess). */
+/** Account media: must be assigned (no assigned account → cannot view, same as employeeAccess). */
 export function canAccessAccount(employee: FileAccessEmployee | null | undefined, accountId: string): boolean {
   return !!accountId && assignedSet(employee).has(String(accountId));
 }
 
-/** Thư viện: giống resolveAccessibleOwners — chưa giao tài khoản nào = xem mọi thư viện. */
+/** Library: same as resolveAccessibleOwners; no assigned account = can view every library. */
 export function canAccessLibraryOwner(employee: FileAccessEmployee | null | undefined, ownerId: string): boolean {
   const assigned = assignedSet(employee);
   return assigned.size === 0 || assigned.has(String(ownerId || ''));
 }
 
-/** null = được tải. */
+/** null = allowed to download. */
 export function checkMediaAccess(employee: FileAccessEmployee | null | undefined, scope: MediaScope): FileAccessDenied | null {
   switch (scope.kind) {
     case 'account': return canAccessAccount(employee, scope.accountId) ? null : ACCOUNT_DENIED;
@@ -162,7 +161,7 @@ export function checkMediaAccess(employee: FileAccessEmployee | null | undefined
   }
 }
 
-/** Item thư viện (/api/library/file|thumb/:uuid) — null = được tải. */
+/** Library item (/api/library/file|thumb/:uuid): null = allowed to download. */
 export function checkLibraryAccess(employee: FileAccessEmployee | null | undefined, ownerId: string): FileAccessDenied | null {
   return canAccessLibraryOwner(employee, ownerId) ? null : LIBRARY_DENIED;
 }
@@ -175,9 +174,9 @@ export type ByteRange =
   | { kind: 'unsatisfiable' };
 
 /**
- * Header Range → đoạn cần gửi. Không có / đơn vị khác bytes / nhiều đoạn → cả file (RFC cho phép bỏ qua Range).
- * `bytes=a-b` (b vượt cuối file thì cắt về cuối), `bytes=a-`, `bytes=-n` (n byte cuối). Số hỏng, a > b, a >= size,
- * file rỗng → 416 (xem unsatisfiableRangeHeader).
+ * Range header → the part to send. Missing / a unit other than bytes / multiple ranges → the whole file (RFC allows ignoring Range).
+ * `bytes=a-b` (if b is past the end of the file it is cut to the end), `bytes=a-`, `bytes=-n` (the last n bytes). Broken numbers, a > b, a >= size,
+ * or an empty file → 416 (see unsatisfiableRangeHeader).
  */
 export function parseByteRange(header: string | string[] | undefined, size: number): ByteRange {
   const raw = Array.isArray(header) ? header[0] : header;
@@ -202,14 +201,14 @@ export function parseByteRange(header: string | string[] | undefined, size: numb
   return { kind: 'partial', start, end: Math.min(end, total - 1) };
 }
 
-/** Content-Range của phản hồi 416. */
+/** Content-Range of a 416 response. */
 export function unsatisfiableRangeHeader(size: number): string {
   return `bytes */${Math.max(0, Math.floor(Number(size) || 0))}`;
 }
 
 /**
- * Header cache cho file đã xác thực: `private` để Cloudflare / proxy không lưu ở edge rồi phát cho người khác,
- * `Vary: Authorization` để cache trình duyệt không dùng lại cho phiên khác.
+ * Cache headers for an authenticated file: `private` so Cloudflare / proxies do not store it at the edge and serve it to others,
+ * `Vary: Authorization` so the browser cache does not reuse it for another session.
  */
 export function privateCacheHeaders(maxAgeSeconds: number): Record<string, string> {
   return {

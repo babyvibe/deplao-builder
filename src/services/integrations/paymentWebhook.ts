@@ -1,31 +1,32 @@
 /**
- * paymentWebhook — xác thực + chuẩn hoá webhook thanh toán Casso / SePay. Thuần (không Electron) để test được.
+ * paymentWebhook: verifies + normalizes Casso / SePay payment webhooks. Pure (no Electron), so it can be tested.
  *
- * Casso (developer.casso.vn → Thiết lập Webhook thủ công; mẫu chính thức github.com/CassoHQ/casso-webhook-v2-verify-signature):
- *   - Webhook V2: header `X-Casso-Signature: t=<ms>,v1=<hex>`, v1 = HMAC-SHA512(Key bảo mật, `${t}.${JSON body sắp khoá A→Z}`).
- *     Casso ký trên JSON đã sắp xếp lại chứ không phải bytes gốc (curl mẫu của Casso gửi body thụt lề mà chữ ký vẫn khớp bản
- *     gọn) → dựng lại đúng chuỗi đó; thử thêm dạng thoát ký tự ngoài ASCII như mẫu PHP / Python của Casso.
- *   - Webhook (cũ): header `secure-token` = Key bảo mật.
- *   - Body: V2 `data` là một object, bản cũ `data` là mảng; amount âm = tiền ra.
- * SePay (developer.sepay.vn → Xác thực webhook):
- *   - HMAC-SHA256: `X-SePay-Signature: sha256=<hex>` + `X-SePay-Timestamp: <giây>`, ký `${timestamp}.${body}` trên bytes gốc
- *     của body; lệch giờ tối đa 5 phút.
- *   - API Key: `Authorization: Apikey <key>`. OAuth 2.0 không hỗ trợ (Deplao không có token endpoint).
- *   - Body: một giao dịch; transferType 'in' | 'out', transferAmount luôn dương.
- * Đã đặt khoá trong Deplao → bắt buộc chữ ký / khoá hợp lệ. Chưa đặt → vẫn nhận (method 'none'), UI cảnh báo nên đặt khoá.
+ * Casso (developer.casso.vn → manual Webhook setup; official sample github.com/CassoHQ/casso-webhook-v2-verify-signature):
+ *   - Webhook V2: header `X-Casso-Signature: t=<ms>,v1=<hex>`, v1 = HMAC-SHA512(Security key, `${t}.${JSON body with keys sorted A→Z}`).
+ *     Casso signs the re-sorted JSON, not the original bytes (Casso's curl sample sends an indented body but the signature still matches the
+ *     compact form) → rebuild exactly that string; also try the non-ASCII escaped form, as in Casso's PHP / Python samples.
+ *   - Webhook (old): header `secure-token` = Security key.
+ *   - Body: V2 `data` is an object, the old version's `data` is an array; a negative amount = money out.
+ * SePay (developer.sepay.vn → Webhook authentication):
+ *   - HMAC-SHA256: `X-SePay-Signature: sha256=<hex>` + `X-SePay-Timestamp: <seconds>`, signed over `${timestamp}.${body}` using the raw bytes
+ *     of the body; clock skew up to 5 minutes.
+ *   - API Key: `Authorization: Apikey <key>`. OAuth 2.0 is not supported (Deplao has no token endpoint).
+ *   - Body: one transaction; transferType 'in' | 'out', transferAmount is always positive.
+ * Once a key is set in Deplao → a valid signature / key is required. Not set → still accepted (method 'none'), the UI warns to set a key.
  */
 import * as crypto from 'crypto';
+import { tr } from '../../shared/i18n';
 
 export type WebhookHeaders = Record<string, string | string[] | undefined>;
 
 export interface WebhookRequest {
-  /** Header của request (Node đã đổi tên header về chữ thường; vẫn so khớp không phân biệt hoa thường). */
+  /** Request headers (Node has lowercased the header names; matching is still case-insensitive). */
   headers: WebhookHeaders;
-  /** Body đúng từng byte nhận được — chữ ký SePay tính trên bytes này. */
+  /** Body exactly as received, byte for byte: the SePay signature is computed over these bytes. */
   rawBody: Buffer;
-  /** Body đã đọc (JSON hoặc form), {} khi rỗng. */
+  /** Body that was read (JSON or form), {} when empty. */
   body: any;
-  /** Thời điểm nhận (ms) — test truyền vào. */
+  /** Time of receipt (ms), passed in by tests. */
   now?: number;
 }
 
@@ -36,18 +37,18 @@ export type WebhookAuthResult =
   | { ok: true; method: WebhookAuthMethod }
   | { ok: false; reason: WebhookRejectReason; message: string };
 
-/** Giao dịch đã chuẩn hoá — cùng dạng cho Casso và SePay (event 'integration:payment' → `payment`). */
+/** Normalized transaction: the same shape for Casso and SePay (event 'integration:payment' → `payment`). */
 export interface PaymentTransaction {
-  /** id của Casso / SePay — không đổi qua các lần gửi lại, dùng chống trùng. */
+  /** Casso / SePay id: unchanged across resends, used for de-duplication. */
   transactionId: string;
-  /** Mã giao dịch phía ngân hàng. */
+  /** Transaction code on the bank side. */
   reference: string;
-  /** Số tiền (VNĐ), luôn dương — chiều nằm ở `direction`. */
+  /** Amount (VND), always positive: the direction is in `direction`. */
   amount: number;
   direction: 'in' | 'out';
-  /** Nội dung chuyển khoản. */
+  /** Transfer description. */
   description: string;
-  /** SePay: mô tả đầy đủ từ ngân hàng (có thể rỗng); Casso: ''. */
+  /** SePay: full description from the bank (may be empty); Casso: ''. */
   bankDescription: string;
   bankName: string;
   accountNumber: string;
@@ -56,19 +57,19 @@ export interface PaymentTransaction {
   counterAccountNumber: string;
   counterBankName: string;
   transactionDate: string;
-  /** SePay: mã thanh toán SePay nhận diện được ('' nếu không có). */
+  /** SePay: the SePay payment code it recognized ('' if none). */
   code: string;
 }
 
 export interface ParsedPayment {
   tx: PaymentTransaction;
-  /** Object giao dịch gốc của nhà cung cấp. */
+  /** The provider's original transaction object. */
   raw: any;
 }
 
-/** Adapter nhận webhook có xác thực (Casso, SePay). */
+/** Adapter that receives authenticated webhooks (Casso, SePay). */
 export interface WebhookCapableAdapter {
-  /** Đã đặt khoá bảo mật webhook trong Deplao chưa (chưa → nhận không xác thực, UI cảnh báo). */
+  /** Whether a webhook security key is set in Deplao (not set → accepted without verification, the UI warns). */
   hasWebhookSecret(): boolean;
   verifyWebhook(req: WebhookRequest): WebhookAuthResult;
   parseWebhook(body: any): ParsedPayment[];
@@ -82,13 +83,13 @@ export function isWebhookCapable(adapter: unknown): adapter is WebhookCapableAda
     && typeof a.parseWebhook === 'function';
 }
 
-/** Ô credential chứa khoá bảo mật webhook của từng loại tích hợp. */
+/** Credential field holding the webhook security key of each integration type. */
 export const WEBHOOK_SECRET_CREDENTIAL: Readonly<Record<string, string>> = { casso: 'secretKey', sepay: 'webhookSecretKey' };
 
-/** Webhook thanh toán chỉ vài trăm byte — giới hạn để không ai đẩy body khổng lồ vào RAM qua địa chỉ Internet. */
+/** Payment webhooks are only a few hundred bytes: the limit stops anyone from pushing a huge body into RAM through the Internet address. */
 export const MAX_WEBHOOK_BODY_BYTES = 256 * 1024;
 
-/** SePay khuyến nghị từ chối chữ ký lệch quá 5 phút (chống phát lại). */
+/** SePay recommends rejecting signatures more than 5 minutes off (anti-replay). */
 export const SEPAY_MAX_SKEW_MS = 5 * 60_000;
 
 export function headerValue(headers: WebhookHeaders, name: string): string {
@@ -100,7 +101,7 @@ export function headerValue(headers: WebhookHeaders, name: string): string {
   return '';
 }
 
-/** So sánh không lộ thời gian; băm trước nên độ dài khác nhau cũng không thoát sớm. */
+/** Constant-time comparison; hashed first, so different lengths do not exit early. */
 export function safeEqual(a: string, b: string): boolean {
   const digest = (value: string) => crypto.createHash('sha256').update(value, 'utf8').digest();
   return crypto.timingSafeEqual(digest(a), digest(b));
@@ -124,7 +125,7 @@ function sortKeysDeep(value: any): any {
   return value;
 }
 
-/** json_encode (PHP) / json.dumps (Python) mặc định thoát ký tự ngoài ASCII thành mã 4 chữ số hex thường. */
+/** json_encode (PHP) / json.dumps (Python) escape non-ASCII characters by default as lowercase 4-digit hex codes. */
 function escapeNonAscii(json: string): string {
   let out = '';
   for (let i = 0; i < json.length; i++) {
@@ -145,9 +146,9 @@ function parseCassoSignature(header: string): { t: string; v1: string } | null {
     if (name === 't') t = value;
     else if (name === 'v1') v1 = value.toLowerCase();
   }
-  // v1 = HMAC-SHA512 dạng hex = 128 ký tự
+  // v1 = HMAC-SHA512 in hex = 128 characters
   if (!/^[0-9]{1,16}$/.test(t) || !/^[0-9a-f]{128}$/.test(v1)) return null;
-  // Mẫu của Casso parseInt(t) trước khi ghép chuỗi ký
+  // Casso's sample calls parseInt(t) before building the signed string
   return { t: String(parseInt(t, 10)), v1 };
 }
 
@@ -158,43 +159,43 @@ export function verifyCassoWebhook(req: WebhookRequest, secret: unknown): Webhoo
   const signature = headerValue(req.headers, 'x-casso-signature');
   if (signature) {
     const parsed = parseCassoSignature(signature);
-    if (!parsed) return rejected('invalid_signature', 'X-Casso-Signature sai định dạng (cần t=…,v1=…)');
-    if (!req.body || typeof req.body !== 'object') return rejected('invalid_signature', 'Body webhook Casso không phải JSON');
+    if (!parsed) return rejected('invalid_signature', tr('X-Casso-Signature sai định dạng (cần t=…,v1=…)'));
+    if (!req.body || typeof req.body !== 'object') return rejected('invalid_signature', tr('Body webhook Casso không phải JSON'));
     const json = JSON.stringify(sortKeysDeep(req.body));
     for (const candidate of new Set([json, escapeNonAscii(json)])) {
       const mac = crypto.createHmac('sha512', key).update(`${parsed.t}.${candidate}`, 'utf8').digest('hex');
       if (safeEqual(mac, parsed.v1)) return { ok: true, method: 'casso-signature' };
     }
-    return rejected('invalid_signature', 'Chữ ký X-Casso-Signature không khớp Key bảo mật');
+    return rejected('invalid_signature', tr('Chữ ký X-Casso-Signature không khớp Key bảo mật'));
   }
 
   const token = headerValue(req.headers, 'secure-token');
   if (token) {
     return safeEqual(token, key)
       ? { ok: true, method: 'casso-token' }
-      : rejected('invalid_signature', 'secure-token không khớp Key bảo mật');
+      : rejected('invalid_signature', tr('secure-token không khớp Key bảo mật'));
   }
-  return rejected('missing_signature', 'Thiếu chữ ký (X-Casso-Signature của Webhook V2 hoặc secure-token của Webhook cũ)');
+  return rejected('missing_signature', tr('Thiếu chữ ký (X-Casso-Signature của Webhook V2 hoặc secure-token của Webhook cũ)'));
 }
 
 export function verifySePayWebhook(req: WebhookRequest, secret: unknown): WebhookAuthResult {
-  // Người dùng có thể dán cả giá trị header "Apikey xxx"
+  // The user may paste the whole header value "Apikey xxx"
   const key = cleanSecret(secret).replace(/^apikey\s+/i, '');
   if (!key) return { ok: true, method: 'none' };
 
   const signature = headerValue(req.headers, 'x-sepay-signature');
   if (signature) {
     const timestamp = headerValue(req.headers, 'x-sepay-timestamp');
-    if (!/^[0-9]{1,12}$/.test(timestamp)) return rejected('invalid_signature', 'Thiếu X-SePay-Timestamp');
+    if (!/^[0-9]{1,12}$/.test(timestamp)) return rejected('invalid_signature', tr('Thiếu X-SePay-Timestamp'));
     const now = req.now ?? Date.now();
     if (Math.abs(now - Number(timestamp) * 1000) > SEPAY_MAX_SKEW_MS) {
-      return rejected('stale_timestamp', 'X-SePay-Timestamp lệch quá 5 phút — kiểm tra đồng hồ máy');
+      return rejected('stale_timestamp', tr('X-SePay-Timestamp lệch quá 5 phút — kiểm tra đồng hồ máy'));
     }
     const mac = crypto.createHmac('sha256', key).update(`${timestamp}.`, 'utf8').update(req.rawBody).digest('hex');
     const given = signature.replace(/^sha256=/i, '').trim().toLowerCase();
     return safeEqual(mac, given)
       ? { ok: true, method: 'sepay-signature' }
-      : rejected('invalid_signature', 'Chữ ký X-SePay-Signature không khớp Secret Key');
+      : rejected('invalid_signature', tr('Chữ ký X-SePay-Signature không khớp Secret Key'));
   }
 
   const authorization = headerValue(req.headers, 'authorization');
@@ -202,12 +203,12 @@ export function verifySePayWebhook(req: WebhookRequest, secret: unknown): Webhoo
   if (apiKey) {
     return safeEqual(apiKey[1].trim(), key)
       ? { ok: true, method: 'sepay-apikey' }
-      : rejected('invalid_signature', 'API Key trong header Authorization không khớp');
+      : rejected('invalid_signature', tr('API Key trong header Authorization không khớp'));
   }
   if (/^bearer\s/i.test(authorization)) {
-    return rejected('unsupported_auth', 'Webhook SePay đang dùng OAuth 2.0 — hãy chọn HMAC-SHA256 hoặc API Key');
+    return rejected('unsupported_auth', tr('Webhook SePay đang dùng OAuth 2.0 — hãy chọn HMAC-SHA256 hoặc API Key'));
   }
-  return rejected('missing_signature', 'Thiếu chữ ký (X-SePay-Signature hoặc Authorization: Apikey)');
+  return rejected('missing_signature', tr('Thiếu chữ ký (X-SePay-Signature hoặc Authorization: Apikey)'));
 }
 
 const str = (value: unknown): string => (value === null || value === undefined ? '' : String(value));
@@ -239,7 +240,7 @@ function cassoTransaction(item: any): PaymentTransaction | null {
   };
 }
 
-/** Casso: V2 `data` = một giao dịch, Webhook cũ `data` = mảng; `error` khác 0 = không có giao dịch. */
+/** Casso: V2 `data` = one transaction, old Webhook `data` = array; `error` non-zero = no transaction. */
 export function parseCassoPayload(body: any): ParsedPayment[] {
   if (!body || typeof body !== 'object') return [];
   if (body.error !== undefined && body.error !== null && Number(body.error) !== 0) return [];
@@ -252,7 +253,7 @@ export function parseCassoPayload(body: any): ParsedPayment[] {
   return out;
 }
 
-/** SePay: body là một giao dịch. */
+/** SePay: the body is one transaction. */
 export function parseSePayPayload(body: any): ParsedPayment[] {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return [];
   const amount = Number(body.transferAmount ?? body.amount);
@@ -275,8 +276,8 @@ export function parseSePayPayload(body: any): ParsedPayment[] {
 }
 
 /**
- * Giao dịch trong event 'integration:payment': bản đã chuẩn hoá (`payment`) hoặc — event cũ / nơi khác phát —
- * đọc từ `transaction` (SePay: transferAmount/transferType; còn lại: amount âm = tiền ra).
+ * Transaction in the 'integration:payment' event: the normalized version (`payment`), or, for old events / other emitters,
+ * read from `transaction` (SePay: transferAmount/transferType; otherwise: a negative amount = money out).
  */
 export function paymentFromEvent(data: any): PaymentTransaction {
   const payment = data?.payment;
@@ -300,7 +301,7 @@ export function paymentFromEvent(data: any): PaymentTransaction {
   };
 }
 
-/** Đọc body: JSON (mặc định) hoặc form-urlencoded (SePay cho chọn). Body hỏng → ném lỗi. */
+/** Reads the body: JSON (default) or form-urlencoded (SePay lets you choose). A broken body → throws. */
 export function parseWebhookBody(rawBody: Buffer, contentType = ''): any {
   const text = rawBody.toString('utf8').trim();
   if (!text) return {};
@@ -308,7 +309,7 @@ export function parseWebhookBody(rawBody: Buffer, contentType = ''): any {
   return JSON.parse(text);
 }
 
-/** Gom body request, dừng khi vượt `maxBytes` (lỗi code 'BODY_TOO_LARGE'). */
+/** Collects the request body, stops when `maxBytes` is exceeded (error code 'BODY_TOO_LARGE'). */
 export function readRequestBody(stream: NodeJS.ReadableStream, maxBytes: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -340,13 +341,13 @@ export function readRequestBody(stream: NodeJS.ReadableStream, maxBytes: number)
   });
 }
 
-/** Khoá đã gặp gần đây (TTL + giới hạn số lượng) — chống xử lý một giao dịch hai lần khi bị gửi lại / phát lại. */
+/** Keys seen recently (TTL + a size limit): prevents processing one transaction twice when it is resent / replayed. */
 export class RecentKeys {
   private readonly expiresAt = new Map<string, number>();
 
   constructor(private readonly ttlMs = 48 * 3_600_000, private readonly maxEntries = 5_000) {}
 
-  /** true = đã gặp trong TTL (bỏ qua); false = lần đầu (đã ghi nhớ). */
+  /** true = already seen within the TTL (skip); false = first time (now remembered). */
   seen(key: string, now = Date.now()): boolean {
     const expires = this.expiresAt.get(key);
     if (expires !== undefined && expires > now) return true;

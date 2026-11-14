@@ -1,20 +1,20 @@
 import Logger from '../../utils/Logger';
 
 /**
- * AccountSendQueue - hàng đợi gửi tin tuần tự theo từng tài khoản (zaloId).
+ * AccountSendQueue - per-account FIFO queue for sending messages (zaloId).
  *
- * Bài toán: khi nhiều khách nhắn cùng lúc vào cùng 1 tài khoản Zalo, workflow auto-reply
- * chạy song song và bắn hàng loạt api.sendMessage() gần như đồng thời → Zalo nghi spam → khóa.
+ * Problem: when many customers message the same Zalo account at the same time, the workflow auto-reply
+ * runs in parallel and fires many api.sendMessage() calls almost at once → Zalo suspects spam → locks the account.
  *
- * Giải pháp: mọi lời gọi gửi tin đi qua queue này. Các task CÙNG account nối đuôi nhau
- * (promise-chain), giữa 2 task chờ delay ngẫu nhiên min..max. Account khác nhau chạy song song.
+ * Solution: every send goes through this queue. Tasks for the SAME account are chained one after another
+ * (promise-chain), with a random min..max delay between 2 tasks. Different accounts run in parallel.
  *
- * Chọn promise-chain thay vì token-bucket (như CRMQueueService) vì auto-reply là on-demand:
- * task đã nằm sẵn trong RAM, không cần dispatcher loop dò DB → ít code, không tốn CPU nền.
+ * A promise-chain is used instead of a token bucket (like CRMQueueService) because auto-reply is on-demand:
+ * the task is already in RAM, so no dispatcher loop has to poll the DB → less code, no background CPU cost.
  */
 class AccountSendQueue {
   private static instance: AccountSendQueue;
-  /** Đuôi hàng đợi của mỗi account. Task mới nối vào sau promise này. */
+  /** Tail of each account's queue. New tasks are chained after this promise. */
   private tails: Map<string, Promise<unknown>> = new Map();
 
   public static getInstance(): AccountSendQueue {
@@ -23,23 +23,23 @@ class AccountSendQueue {
   }
 
   /**
-   * Xếp task vào hàng đợi của account. Trả về promise kết quả của task để caller await.
-   * @param minMs/maxMs khoảng chờ NGẪU NHIÊN áp dụng SAU khi task xong, TRƯỚC khi nhả task kế.
-   *                    <=0 cả hai → không chờ (backward compatible).
+   * Queue a task on the account's queue. Returns the task's result promise so the caller can await it.
+   * @param minMs/maxMs random wait range applied AFTER the task finishes, BEFORE the next task is released.
+   *                    <=0 for both → no wait (backward compatible).
    */
   public enqueue<T>(accountId: string, task: () => Promise<T>, minMs = 0, maxMs = 0): Promise<T> {
     const key = accountId || '__default__';
     const prev = this.tails.get(key) ?? Promise.resolve();
 
-    // Chờ lượt trước xong (nuốt lỗi lượt trước để 1 task fail không đứt cả hàng), rồi chạy task này.
+    // Wait for the previous turn to finish (swallow its error so one failed task does not break the whole queue), then run this task.
     const result = prev.then(() => task(), () => task());
 
-    // Đuôi mới: sau khi task này xong (dù thành/bại) thì chờ delay để giãn cách với task kế.
+    // New tail: after this task finishes (success or failure), wait the delay to space it out from the next task.
     const tail = result
-      .catch(() => { /* lỗi task đã trả cho caller qua `result`; ở đây chỉ giữ chain sống */ })
+      .catch(() => { /* the task error is already returned to the caller via `result`; here we only keep the chain alive */ })
       .then(() => this.wait(minMs, maxMs))
       .finally(() => {
-        // Nếu không còn task nào nối thêm → dọn entry tránh Map phình vô hạn.
+        // If no more tasks are chained → remove the entry so the Map does not grow without bound.
         if (this.tails.get(key) === tail) this.tails.delete(key);
       });
 
@@ -48,8 +48,8 @@ class AccountSendQueue {
   }
 
   /**
-   * Resolve khi các lượt ĐANG xếp của account chạy xong, kể cả khoảng chờ sau lượt cuối (không bao giờ reject).
-   * Gửi hàng loạt chờ cái này trước khi xếp người nhận kế tiếp → tin trả lời tự động xếp vào trong lúc chờ được đi trước.
+   * Resolves when the account's turns that are CURRENTLY queued finish, including the wait after the last turn (never rejects).
+   * A bulk send waits on this before queuing the next recipient → auto-reply messages queued during that wait go first.
    */
   public whenIdle(accountId: string): Promise<void> {
     const tail = this.tails.get(accountId || '__default__');

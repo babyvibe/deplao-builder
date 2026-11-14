@@ -11,6 +11,7 @@ import ErpNotificationService from './ErpNotificationService';
 import { canDecideLeave } from './erpAccessRules';
 import { erpPersonName } from './erpPeople';
 import { erpClipText, erpLeaveSummaryText } from '../../shared/erp/erpNotifyText';
+import { tr } from '../../shared/i18n';
 
 /**
  * ErpEmployeeService - Phase 2 HRM.
@@ -67,7 +68,7 @@ export default class ErpEmployeeService {
     const count = this.db().queryOne<any>(
       `SELECT COUNT(*) AS c FROM erp_employee_profiles WHERE department_id = ?`, [id]
     )?.c ?? 0;
-    if (count > 0) throw new Error(`Không thể xoá: phòng ban còn ${count} nhân sự`);
+    if (count > 0) throw new Error(tr('Không thể xoá: phòng ban còn {{count}} nhân sự', { count }));
     this.db().transaction(() => {
       this.db().run(`UPDATE erp_departments SET parent_id = NULL WHERE parent_id = ?`, [id]);
       this.db().run(`DELETE FROM erp_departments WHERE id = ?`, [id]);
@@ -193,14 +194,14 @@ export default class ErpEmployeeService {
 
   private _assertNoManagerCycle(employeeId: string, managerId: string): void {
     if (!managerId || managerId === employeeId) {
-      if (managerId === employeeId) throw new Error('Không thể tự quản lý chính mình');
+      if (managerId === employeeId) throw new Error(tr('Không thể tự quản lý chính mình'));
       return;
     }
     const visited = new Set<string>([employeeId]);
     let cur: string | undefined = managerId;
     let depth = 0;
     while (cur && depth < 50) {
-      if (visited.has(cur)) throw new Error('Phát hiện vòng lặp quản lý');
+      if (visited.has(cur)) throw new Error(tr('Phát hiện vòng lặp quản lý'));
       visited.add(cur);
       const row = this.db().queryOne<{ manager_employee_id: string }>(
         `SELECT manager_employee_id FROM erp_employee_profiles WHERE employee_id = ?`, [cur]
@@ -241,7 +242,7 @@ export default class ErpEmployeeService {
     const existing = this.db().queryOne<ErpAttendance>(
       `SELECT * FROM erp_attendance WHERE employee_id = ? AND date = ?`, [employeeId, date]
     );
-    if (!existing) throw new Error('Chưa check-in hôm nay');
+    if (!existing) throw new Error(tr('Chưa check-in hôm nay'));
     this.db().run(
       `UPDATE erp_attendance SET check_out_at = ?, note = CASE WHEN ? <> '' THEN ? ELSE note END, updated_at = ?
        WHERE employee_id = ? AND date = ?`,
@@ -288,13 +289,13 @@ export default class ErpEmployeeService {
     const managerId = profile?.manager_employee_id;
     if (managerId) {
       try {
-        // "Lan xin nghỉ ốm 2 ngày (30/10 - 31/10) · Lý do: …"
+        // "Lan xin nghỉ ốm 2 ngày (30/10 - 31/10) · Lý do: …" (Lan asks for 2 days of sick leave (30/10 - 31/10) · Reason: …)
         ErpNotificationService.getInstance().notify(
           managerId, 'leave_request_new',
-          `Yêu cầu nghỉ phép mới`,
+          tr('Yêu cầu nghỉ phép mới'),
           [
             `${erpPersonName(requesterId)} xin ${erpLeaveSummaryText(leave)}`,
-            input.reason ? `Lý do: ${erpClipText(input.reason)}` : '',
+            input.reason ? tr('Lý do: {{v1}}', { v1: erpClipText(input.reason) }) : '',
           ].filter(Boolean).join(' · '),
           `erp://leave/${id}`,
           { leaveId: id, channels: ['toast', 'zalo'] }
@@ -330,7 +331,7 @@ export default class ErpEmployeeService {
   }
 
   decideLeave(id: number, status: ErpLeaveStatus, approverId: string, note?: string): ErpLeaveRequest {
-    if (!['approved', 'rejected'].includes(status)) throw new Error('Trạng thái không hợp lệ');
+    if (!['approved', 'rejected'].includes(status)) throw new Error(tr('Trạng thái không hợp lệ'));
     const now = Date.now();
     this.db().run(
       `UPDATE erp_leave_requests SET status = ?, approver_id = ?, decided_at = ?, decision_note = ?, updated_at = ?
@@ -338,14 +339,14 @@ export default class ErpEmployeeService {
       [status, approverId, now, note ?? '', now, id]
     );
     const leave = this.db().queryOne<ErpLeaveRequest>(`SELECT * FROM erp_leave_requests WHERE id = ?`, [id]);
-    if (!leave) throw new Error('Không tìm thấy yêu cầu nghỉ');
+    if (!leave) throw new Error(tr('Không tìm thấy yêu cầu nghỉ'));
     try {
-      // "Nghỉ phép năm 2 ngày (30/10 - 31/10) · Ghi chú: …"
+      // "Nghỉ phép năm 2 ngày (30/10 - 31/10) · Ghi chú: …" (2 days of annual leave (30/10 - 31/10) · Note: …)
       const summary = erpLeaveSummaryText(leave);
       ErpNotificationService.getInstance().notify(
         leave.requester_id, 'leave_request_decided',
-        `Yêu cầu nghỉ đã được ${status === 'approved' ? 'duyệt' : 'từ chối'}`,
-        [summary.charAt(0).toUpperCase() + summary.slice(1), note ? `Ghi chú: ${erpClipText(note)}` : ''].filter(Boolean).join(' · '),
+        tr('Yêu cầu nghỉ đã được {{v1}}', { v1: status === 'approved' ? tr('duyệt') : tr('từ chối') }),
+        [summary.charAt(0).toUpperCase() + summary.slice(1), note ? tr('Ghi chú: {{v1}}', { v1: erpClipText(note) }) : ''].filter(Boolean).join(' · '),
         `erp://leave/${id}`,
         { leaveId: id, status, channels: ['toast', 'zalo'] }
       );
@@ -355,9 +356,9 @@ export default class ErpEmployeeService {
   }
 
   /**
-   * Duyệt / từ chối đơn của người duyệt `approverId`: chỉ quản lý trực tiếp của người xin nghỉ (manager_employee_id)
-   * hoặc Boss — cùng phạm vi với listPendingForManager; đơn đã xử lý thì không duyệt lại (không báo lại người xin nghỉ).
-   * Trước đây ai có leave.approve cũng duyệt được đơn bất kỳ theo id (kể cả đơn của chính mình).
+   * Approve / reject a request as the approver `approverId`: only the direct manager of the employee asking for leave (manager_employee_id)
+   * or the Boss, the same scope as listPendingForManager; a request already handled cannot be approved again (the employee asking is not notified again).
+   * Before, anyone with leave.approve could approve any request by id (including their own request).
    */
   decideLeaveForEmployee(id: number, status: ErpLeaveStatus, approverId: string, note?: string): ErpLeaveRequest {
     const row = this.db().queryOne<ErpLeaveRequest & { manager_employee_id?: string | null }>(
@@ -365,19 +366,19 @@ export default class ErpEmployeeService {
        LEFT JOIN erp_employee_profiles p ON p.employee_id = l.requester_id
        WHERE l.id = ?`, [id]
     );
-    if (!row) throw new Error('Không tìm thấy yêu cầu nghỉ');
+    if (!row) throw new Error(tr('Không tìm thấy yêu cầu nghỉ'));
     if (!canDecideLeave(approverId, row.manager_employee_id)) {
-      throw new Error('Chỉ quản lý trực tiếp của người xin nghỉ mới duyệt được đơn này');
+      throw new Error(tr('Chỉ quản lý trực tiếp của người xin nghỉ mới duyệt được đơn này'));
     }
-    if (row.status !== 'pending') throw new Error('Đơn đã được xử lý');
+    if (row.status !== 'pending') throw new Error(tr('Đơn đã được xử lý'));
     return this.decideLeave(id, status, approverId, note);
   }
 
   cancelLeave(id: number, requesterId: string): void {
     const row = this.db().queryOne<ErpLeaveRequest>(`SELECT * FROM erp_leave_requests WHERE id = ?`, [id]);
-    if (!row) throw new Error('Không tìm thấy');
-    if (row.requester_id !== requesterId) throw new Error('Không có quyền huỷ đơn này');
-    if (row.status !== 'pending') throw new Error('Đơn đã được xử lý, không thể huỷ');
+    if (!row) throw new Error(tr('Không tìm thấy'));
+    if (row.requester_id !== requesterId) throw new Error(tr('Không có quyền huỷ đơn này'));
+    if (row.status !== 'pending') throw new Error(tr('Đơn đã được xử lý, không thể huỷ'));
     const now = Date.now();
     this.db().run(`UPDATE erp_leave_requests SET status='cancelled', updated_at=? WHERE id=?`, [now, id]);
     EventBroadcaster.emit('erp:event:leaveDecided', {

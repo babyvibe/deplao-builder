@@ -1,14 +1,14 @@
 /**
- * EmployeeCache - In-memory cache cho employee mode.
+ * EmployeeCache - In-memory cache for employee mode.
  *
- * Lưu conversation list, recent messages, labels trong memory.
- * Khi user mở app, cache giúp hiển thị ngay lập tức (từ memory)
- * mà không cần chờ REST response.
+ * Keeps the conversation list, recent messages and labels in memory.
+ * When the user opens the app, the cache shows content immediately (from memory)
+ * without waiting for the REST response.
  *
- * Khi SSE push event mới → cache tự động update.
- * Khi user refresh page → cache mất, load lại từ REST.
+ * When SSE pushes a new event → the cache updates automatically.
+ * When the user refreshes the page → the cache is lost and reloads from REST.
  *
- * Chỉ active khi mode=employee.
+ * Only active when mode=employee.
  */
 
 import Logger from '../../utils/Logger';
@@ -39,11 +39,11 @@ interface QuickMessagesCache {
 }
 
 const CACHE_TTL = {
-  CONVERSATIONS: 60_000,   // 1 phút
-  MESSAGES: 120_000,       // 2 phút
-  LABELS: 300_000,         // 5 phút
-  QUICK_MSGS: 300_000,     // 5 phút
-  DRAFTS: 60_000,          // 1 phút
+  CONVERSATIONS: 60_000,   // 1 minute
+  MESSAGES: 120_000,       // 2 minutes
+  LABELS: 300_000,         // 5 minutes
+  QUICK_MSGS: 300_000,     // 5 minutes
+  DRAFTS: 60_000,          // 1 minute
 };
 
 class EmployeeCache {
@@ -86,8 +86,8 @@ class EmployeeCache {
   }
 
   /**
-   * Update 1 conversation trong cache (khi có SSE push update).
-   * Dùng để refresh unread_count, last_message mà ko cần re-fetch.
+   * Update 1 conversation in the cache (when an SSE push update arrives).
+   * Used to refresh unread_count and last_message without re-fetching.
    */
   public updateConversation(zaloId: string, contactId: string, updates: Partial<any>): void {
     const cached = this.conversations.get(zaloId);
@@ -149,7 +149,7 @@ class EmployeeCache {
     const key = `${zaloId}:${threadId}`;
     const cached = this.messages.get(key);
     if (cached) {
-      // Tránh duplicate
+      // Avoid duplicates
       const exists = cached.items.some((m: any) =>
         m.msg_id === message.msg_id || m.cli_msg_id === message.cli_msg_id
       );

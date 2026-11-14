@@ -1,11 +1,11 @@
 /**
- * Phiên đăng nhập lưu trong accounts.cookies (cookie Zalo, phiên GramJS, token bot Telegram) được mã hoá bằng Electron
- * safeStorage — DatabaseService.saveAccount / encryptStoredCredentials. Đọc qua getAccounts() là đã giải mã; giá trị vẫn
- * còn dạng mã hoá nghĩa là máy / tài khoản Windows này không giải mã được (thư mục dữ liệu chép từ máy khác, mất file
- * "Local State" của userData…) → cần đăng nhập lại, đừng kết nối bằng chuỗi đó (Telegram sẽ thử lại mãi).
+ * Login session stored in accounts.cookies (Zalo cookies, GramJS session, Telegram bot token) is encrypted with Electron
+ * safeStorage (DatabaseService.saveAccount / encryptStoredCredentials). Reading through getAccounts() decrypts it. A value that is still
+ * encrypted means this machine / Windows account cannot decrypt it (the data folder was copied from another machine, or the "Local State" file of userData was lost…), so
+ * the user must log in again. Do not connect with that string (Telegram would retry forever).
  */
 
-/** safeStorage (Chromium os_crypt) ghi tiền tố "v10" / "v11" → base64 "djEw" / "djEx"; "U2Fsd" = blob CryptoJS ("Salted__") cũ. */
+/** safeStorage (Chromium os_crypt) writes the prefix "v10" / "v11" → base64 "djEw" / "djEx"; "U2Fsd" = an old CryptoJS blob ("Salted__"). */
 const UNDECRYPTED_PREFIXES = ['djEw', 'djEx', 'U2Fsd'];
 
 export function isUndecryptedCredential(value: string | null | undefined): boolean {
@@ -13,7 +13,7 @@ export function isUndecryptedCredential(value: string | null | undefined): boole
   return UNDECRYPTED_PREFIXES.some(prefix => text.startsWith(prefix));
 }
 
-/** Token bot Telegram dạng "<id bot>:<khoá>" (BotFather). */
+/** Telegram bot token in the form "<bot id>:<key>" (BotFather). */
 export function isTelegramBotToken(value: string | null | undefined): boolean {
   return /^\d+:[A-Za-z0-9_-]+$/.test(String(value || '').trim());
 }

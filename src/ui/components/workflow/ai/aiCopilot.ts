@@ -18,6 +18,7 @@
 import { NODE_GROUPS, DEFAULT_CONFIGS, getNodeLabel } from '../nodes/workflowConfig';
 import { NODE_OUTPUTS, getTriggerVars, isTriggerType, isVarAvailable, upstreamNodeIds } from '../editor/templateVars';
 import { AUTO_LAYOUT_SPACING, computeAutoLayout } from '../editor/autoLayout';
+import { tr } from '../../../../shared/i18n';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,7 +110,7 @@ export interface ValidationResult {
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
 
-/** Lowercase, no Vietnamese accents (đ → d). */
+/** Lowercase, no Vietnamese diacritics ("đ" → "d"). */
 export function foldAscii(value: unknown): string {
   return String(value ?? '')
     .normalize('NFD')
@@ -154,7 +155,7 @@ const CORE_BY_CHANNEL: Record<string, string[]> = {
   zalo: ['trigger.message', 'trigger.friendRequest', 'trigger.groupEvent', 'zalo.sendMessage', 'zalo.sendTyping', 'zalo.sendImage', 'zalo.assignLabel', 'zalo.acceptFriendRequest', 'logic.forEachContact'],
   facebook: ['fb.trigger.message', 'fb.action.sendMessage', 'fb.action.sendImage', 'fb.action.sendTyping'],
   telegram_user: ['tg.trigger.message', 'tg.trigger.groupEvent', 'tg.sendMessage', 'tg.sendPhoto', 'tg.sendTyping'],
-  telegram_bot: ['tgbot.trigger.message', 'tgbot.trigger.command', 'tgbot.trigger.callback', 'tgbot.action.sendMessage', 'tgbot.action.sendPhoto', 'tgbot.action.answerCallback'],
+  telegram_bot: ['tgbot.trigger.message', 'tgbot.trigger.command', 'tgbot.trigger.callback', 'tgbot.trigger.memberUpdate', 'tgbot.trigger.joinRequest', 'tgbot.action.sendMessage', 'tgbot.action.sendPhoto', 'tgbot.action.sendChatAction', 'tgbot.action.approveJoinRequest'],
 };
 const CORE_GENERIC = [
   'trigger.schedule', 'trigger.manual', 'logic.if', 'logic.switch', 'logic.wait', 'logic.setVariable', 'logic.stopIf',
@@ -183,13 +184,17 @@ const NODE_NOTES: Record<string, string> = {
   'trigger.message': KEYWORD_NOTE + DEBOUNCE_NOTE,
   'fb.trigger.message': KEYWORD_NOTE + DEBOUNCE_NOTE,
   'tg.trigger.message': KEYWORD_NOTE + DEBOUNCE_NOTE,
-  'tgbot.trigger.message': KEYWORD_NOTE,
+  'tgbot.trigger.message': KEYWORD_NOTE + ' Tin bắt đầu bằng "/" (lệnh) KHÔNG kích hoạt trigger này (ignoreCommands mặc định true) → lệnh dùng tgbot.trigger.command; keyword bắt đầu bằng "/" thì vẫn nhận lệnh đó.',
+  'tgbot.trigger.command': 'Ghi chú: command = tên lệnh không cần "/" (VD "start", "donhang"). {{ $trigger.command }} = tên lệnh, {{ $trigger.args }} = phần khách gõ sau lệnh (VD "/donhang 0901234567" → args = "0901234567").',
+  'tgbot.trigger.joinRequest': 'Ghi chú: Bot phải là admin có quyền mời. Nối tgbot.action.approveJoinRequest (decision "approve" | "decline", userId "{{ $trigger.fromId }}") để duyệt; trước khi duyệt Bot nhắn riêng được cho người xin vào: tgbot.action.sendMessage chatId "{{ $trigger.fromId }}".',
+  'tgbot.trigger.memberUpdate': 'Ghi chú: chỉ chạy khi Bot là admin của nhóm. eventType "joined" | "left" | "removed" | "all". Chào thành viên mới: tgbot.action.sendMessage chatId "{{ $trigger.chatId }}", nội dung dùng {{ $trigger.memberName }}.',
+  'trigger.groupEvent': 'Ghi chú: {{ $trigger.threadId }} = ID nhóm (threadType 1) → node gửi tin trả lời ngay trong nhóm; {{ $trigger.memberNames }} = tên thành viên vừa vào / rời.',
   'trigger.schedule': 'Ghi chú: cron 5 trường "phút giờ ngày tháng thứ" theo giờ Việt Nam, VD "0 8 * * *" = 8:00 mỗi ngày, "30 17 * * 1-5" = 17:30 thứ 2-6. Không có dữ liệu $trigger → node gửi tin PHẢI chỉ định người nhận.',
   'trigger.posWebhook': 'Ghi chú: chỉ chạy với webhook đã xác thực khoá (người dùng đặt "Khoá xác thực webhook" ở trang Tích hợp). Mỗi đơn / khách / sản phẩm chạy một lần: {{ $trigger.code }}, {{ $trigger.status }}, {{ $trigger.customerName }}, {{ $trigger.customerPhone }}, {{ $trigger.total }}, trường gốc {{ $trigger.data.<trường> }}. Không có hội thoại → node gửi tin PHẢI chỉ định người nhận (VD zalo.findUser theo {{ $trigger.customerPhone }} rồi gửi tới {{ $node.<id>.userId }}).',
   'ai.generateText': 'Ghi chú: giữ aiConfigMode "assistant", để trống assistantId (hệ thống tự điền trợ lý mặc định). prompt = lời dặn cho AI, thường chứa {{ $trigger.content }}; câu trả lời của AI = {{ $node.<id>.result }}.',
-  'ai.classify': 'Ghi chú: giữ aiConfigMode "assistant", để trống assistantId. categories = các nhóm ngắn gọn cách nhau dấu phẩy; {{ $node.<id>.category }} = ĐÚNG NGUYÊN VĂN 1 tên nhóm → logic.switch phải dùng match trùng y hệt tên nhóm.',
-  'logic.if': 'Ghi chú: so sánh phân biệt hoa/thường. Lọc tin nhắn theo từ khoá thì dùng keyword của trigger thay vì logic.if.',
-  'logic.switch': 'Ghi chú: so khớp CHÍNH XÁC từng ký tự (phân biệt hoa/thường và dấu).',
+  'ai.classify': 'Ghi chú: giữ aiConfigMode "assistant", để trống assistantId. categories = các nhóm ngắn gọn cách nhau dấu phẩy; {{ $node.<id>.category }} = 1 tên nhóm (engine tự đưa câu AI về đúng tên nhóm; {{ $node.<id>.matched }} = false nếu AI trả ngoài danh sách) → logic.switch dùng match = tên nhóm, thêm nhánh mặc định.',
+  'logic.if': 'Ghi chú: so sánh phân biệt hoa/thường (trừ contains_any, in_list). Lọc tin nhắn theo từ khoá thì dùng keyword của trigger thay vì logic.if. Kiểm tra một ID có trong danh sách (VD Telegram ID nhân viên) thì dùng in_list với danh sách cách nhau dấu phẩy, không dùng contains.',
+  'logic.switch': 'Ghi chú: ưu tiên khớp chính xác; không có thì khớp bỏ qua hoa/thường, khoảng trắng và dấu câu ở hai đầu (vẫn phân biệt dấu tiếng Việt).',
   'logic.forEachContact': 'Ghi chú: {{ $node.<id>.result }} = danh sách ID người nhận → đặt vào threadIdsExpr của node gửi tin để gửi hàng loạt; node gửi tự giãn cách từng người nhận (tối thiểu 5 giây, mặc định 5-10 giây; sendDelayMinSeconds / sendDelayMaxSeconds lớn hơn thì chậm hơn).',
   'logic.forEach': 'Ghi chú: array = ĐÚNG MỘT biến danh sách, VD "{{ $node.<id>.products }}". Các node nối từ cổng "default" chạy lại cho từng phần tử với {{ $var.item }} / {{ $var.item.<trường> }} / {{ $var.itemIndex }} (từ 1); node nối từ cổng "done" chạy một lần sau khi lặp xong. Muốn gửi MỘT tin liệt kê: trong vòng lặp dùng logic.setVariable value "{{ $var.<tên> }}\\n• {{ $var.item.name }}", rồi ở nhánh "done" gửi {{ $var.<tên> }}. Tối đa maxItems (≤ 100) phần tử.',
   'logic.wait': 'Ghi chú: tối đa 300 giây.',
@@ -224,6 +229,9 @@ function fieldTypeDoc(field: SchemaField): string {
       return field.contactMode === 'multi'
         ? 'chuỗi mảng JSON ID, VD "[\\"123\\",\\"456\\"]"; để trống = hội thoại kích hoạt; tra ID bằng search_contacts'
         : 'ID hội thoại / người dùng / nhóm hoặc {{ biến }}; tra ID bằng search_contacts';
+    case 'thread-scope':
+      // AI prompt text (not UI): includeThreadIds = allow-list, excludeThreadIds = deny-list, same format
+      return 'chuỗi mảng JSON ID chat / nhóm, VD "[\\"123\\"]"; rỗng = mọi chat, có ID = chỉ các chat đó kích hoạt; khoá excludeThreadIds cùng định dạng = trừ các chat đó (ID có ở cả hai bị loại trừ); tra ID bằng search_contacts';
     case 'account-picker': return 'ID tài khoản; để trống = tài khoản đang chạy workflow';
     case 'label-picker': return 'mảng ID nhãn "local:<id>" (tra bằng list_labels)';
     case 'file-picker': return 'đường dẫn file trên máy - để trống, người dùng tự chọn';
@@ -682,9 +690,9 @@ export function parseCopilotReply(raw: string): ParsedReply {
       const call = normalizeToolCall(lenientJsonParse(toolBlock.body));
       return call
         ? { text: without(toolBlock.full), toolCall: call }
-        : { text: without(toolBlock.full), parseError: 'Khối deplao-tool thiếu "tool".' };
+        : { text: without(toolBlock.full), parseError: tr('Khối deplao-tool thiếu "tool".') };
     } catch (err: any) {
-      return { text: without(toolBlock.full), parseError: `Khối deplao-tool không phải JSON hợp lệ (${err?.message || err}).` };
+      return { text: without(toolBlock.full), parseError: tr('Khối deplao-tool không phải JSON hợp lệ ({{v1}}).', { v1: err?.message || err }) };
     }
   }
 
@@ -697,9 +705,9 @@ export function parseCopilotReply(raw: string): ParsedReply {
       if (proposal) return { text: without(workflowBlock.full), proposal };
       const call = normalizeToolCall(parsed);
       if (call) return { text: without(workflowBlock.full), toolCall: call };
-      return { text: without(workflowBlock.full), parseError: 'Khối deplao-workflow thiếu mảng "nodes".' };
+      return { text: without(workflowBlock.full), parseError: tr('Khối deplao-workflow thiếu mảng "nodes".') };
     } catch (err: any) {
-      return { text: without(workflowBlock.full), parseError: `Khối deplao-workflow không phải JSON hợp lệ (${err?.message || err}).` };
+      return { text: without(workflowBlock.full), parseError: tr('Khối deplao-workflow không phải JSON hợp lệ ({{v1}}).', { v1: err?.message || err }) };
     }
   }
 
@@ -708,7 +716,7 @@ export function parseCopilotReply(raw: string): ParsedReply {
   if (open) {
     return {
       text: text.slice(0, open.index).trim(),
-      parseError: `Khối deplao-${open[1]} bị cắt ngang (thiếu \`\`\` đóng) - câu trả lời quá dài.`,
+      parseError: tr('Khối deplao-{{v1}} bị cắt ngang (thiếu ``` đóng) - câu trả lời quá dài.', { v1: open[1] }),
     };
   }
 
@@ -747,7 +755,7 @@ interface FinalGraph {
   removedIds: string[];
 }
 
-/** "true"/"false" for IF, whatever the model wrote (Đúng / yes / true…). */
+/** "true"/"false" for IF, whatever the model wrote ("Đúng" / yes / true…). */
 function canonicalHandle(sourceType: string | undefined, handle: string | null | undefined): string {
   const value = String(handle ?? '').trim() || 'default';
   if (sourceType === 'logic.if') {
@@ -887,30 +895,30 @@ export function validateProposal(proposal: AIProposal, ctx: CopilotContext, mode
   };
 
   if (!proposal.nodes.length && !proposal.update.length && !proposal.remove.length && !proposal.removeEdges.length) {
-    errors.push('Đề xuất không có thay đổi nào (nodes / update / remove trống).');
+    errors.push(tr('Đề xuất không có thay đổi nào (nodes / update / remove trống).'));
   }
   if (mode === 'replace' && (proposal.update.length || proposal.remove.length || proposal.removeEdges.length)) {
-    warnings.push('"replace" bỏ qua update / remove / removeEdges - đề xuất phải chứa toàn bộ workflow.');
+    warnings.push(tr('"replace" bỏ qua update / remove / removeEdges - đề xuất phải chứa toàn bộ workflow.'));
   }
 
   // Ids of new nodes
   const seen = new Set<string>();
   for (const node of proposal.nodes) {
-    if (seen.has(node.id)) errors.push(`Id "${node.id}" bị trùng - mỗi node một id riêng.`);
-    else if (mode === 'append' && currentIds.has(node.id)) errors.push(`Id "${node.id}" trùng node đang có trên sơ đồ - node mới dùng id khác (n1, n2…); muốn sửa node cũ thì dùng "update".`);
+    if (seen.has(node.id)) errors.push(tr('Id "{{id}}" bị trùng - mỗi node một id riêng.', { id: node.id }));
+    else if (mode === 'append' && currentIds.has(node.id)) errors.push(tr('Id "{{id}}" trùng node đang có trên sơ đồ - node mới dùng id khác (n1, n2…); muốn sửa node cũ thì dùng "update".', { id: node.id }));
     seen.add(node.id);
   }
 
   // update / remove targets
   if (mode === 'append') {
     for (const item of proposal.update) {
-      if (!currentIds.has(item.id)) errors.push(`"update" trỏ tới node "${item.id}" không có trên sơ đồ.`);
-      if (proposal.remove.includes(item.id)) errors.push(`Node "${item.id}" vừa "update" vừa "remove".`);
+      if (!currentIds.has(item.id)) errors.push(tr('"update" trỏ tới node "{{id}}" không có trên sơ đồ.', { id: item.id }));
+      if (proposal.remove.includes(item.id)) errors.push(tr('Node "{{id}}" vừa "update" vừa "remove".', { id: item.id }));
     }
-    for (const id of proposal.remove) if (!currentIds.has(id)) warnings.push(`"remove" trỏ tới node "${id}" không có trên sơ đồ (bỏ qua).`);
+    for (const id of proposal.remove) if (!currentIds.has(id)) warnings.push(tr('"remove" trỏ tới node "{{id}}" không có trên sơ đồ (bỏ qua).', { id }));
     for (const rm of proposal.removeEdges) {
       if (!ctx.currentEdges.some(edge => edge.source === rm.source && edge.target === rm.target)) {
-        warnings.push(`"removeEdges" ${rm.source} → ${rm.target}: không có cạnh này trên sơ đồ (bỏ qua).`);
+        warnings.push(tr('"removeEdges" {{source}} → {{target}}: không có cạnh này trên sơ đồ (bỏ qua).', { source: rm.source, target: rm.target }));
       }
     }
   }
@@ -920,9 +928,9 @@ export function validateProposal(proposal: AIProposal, ctx: CopilotContext, mode
     if (node.origin === 'existing') continue;
     const label = name(node.id);
     if (node.origin === 'new') {
-      if (!node.type) { errors.push(`${label}: thiếu "type".`); continue; }
-      if (!ITEM_BY_TYPE.has(node.type)) { errors.push(`${label}: type "${node.type}" không tồn tại - chỉ dùng type trong danh mục (gọi get_node_details nếu chưa chắc).`); continue; }
-      if (!allowed.has(node.type)) { errors.push(`${label}: node này không thuộc kênh ${ctx.channelLabel}.`); continue; }
+      if (!node.type) { errors.push(tr('{{label}}: thiếu "type".', { label })); continue; }
+      if (!ITEM_BY_TYPE.has(node.type)) { errors.push(tr('{{label}}: type "{{type}}" không tồn tại - chỉ dùng type trong danh mục (gọi get_node_details nếu chưa chắc).', { label, type: node.type })); continue; }
+      if (!allowed.has(node.type)) { errors.push(tr('{{label}}: node này không thuộc kênh {{channelLabel}}.', { label, channelLabel: ctx.channelLabel })); continue; }
     }
     const proposed = node.proposedConfig || {};
     const fields = (ctx.schema[node.type] || []).filter(field => field.type !== 'info');
@@ -930,71 +938,71 @@ export function validateProposal(proposal: AIProposal, ctx: CopilotContext, mode
       const keys = new Set(fields.map(field => field.key));
       const defaults = DEFAULT_CONFIGS[node.type] || {};
       const unknown = Object.keys(proposed).filter(key => !keys.has(key) && !(key in defaults));
-      if (unknown.length) warnings.push(`${label}: trường không có trong cấu hình: ${unknown.join(', ')} (sẽ bị bỏ qua). Trường hợp lệ: ${[...keys].join(', ')}.`);
+      if (unknown.length) warnings.push(tr('{{label}}: trường không có trong cấu hình: {{v1}} (sẽ bị bỏ qua). Trường hợp lệ: {{v2}}.', { label, v1: unknown.join(', '), v2: [...keys].join(', ') }));
       for (const field of fields) {
         const value = proposed[field.key];
         if (value === undefined || value === null || value === '') continue;
         if ((field.type === 'select' || field.type === 'choice') && field.options?.length) {
           const text = String(value);
           if (!text.includes('{{') && !field.options.some(opt => opt.value === text)) {
-            errors.push(`${label}: "${field.key}" = ${JSON.stringify(value)} không hợp lệ. Giá trị hợp lệ: ${field.options.slice(0, 20).map(opt => JSON.stringify(opt.value)).join(', ')}.`);
+            errors.push(tr('{{label}}: "{{key}}" = {{v1}} không hợp lệ. Giá trị hợp lệ: {{v2}}.', { label, key: field.key, v1: JSON.stringify(value), v2: field.options.slice(0, 20).map(opt => JSON.stringify(opt.value)).join(', ') }));
           }
         }
         if (field.type === 'number' && typeof value !== 'number' && !(typeof value === 'string' && (/^-?\d+(\.\d+)?$/.test(value.trim()) || value.includes('{{')))) {
-          errors.push(`${label}: "${field.key}" phải là số.`);
+          errors.push(tr('{{label}}: "{{key}}" phải là số.', { label, key: field.key }));
         }
         if (field.type === 'boolean' && typeof value !== 'boolean' && value !== 'true' && value !== 'false') {
-          errors.push(`${label}: "${field.key}" phải là true hoặc false.`);
+          errors.push(tr('{{label}}: "{{key}}" phải là true hoặc false.', { label, key: field.key }));
         }
-        if (field.type === 'chips' && !Array.isArray(value)) errors.push(`${label}: "${field.key}" phải là mảng.`);
+        if (field.type === 'chips' && !Array.isArray(value)) errors.push(tr('{{label}}: "{{key}}" phải là mảng.', { label, key: field.key }));
         if (field.type === 'cron' && String(value).trim().split(/\s+/).length !== 5) {
-          errors.push(`${label}: "${field.key}" phải là cron 5 trường, VD "0 8 * * *".`);
+          errors.push(tr('{{label}}: "{{key}}" phải là cron 5 trường, VD "0 8 * * *".', { label, key: field.key }));
         }
       }
     }
     if (node.type === 'logic.switch' && !(Array.isArray(node.config.cases) && node.config.cases.length)) {
-      errors.push(`${label}: cần "cases" dạng [{"match":"…","label":"…"}].`);
+      errors.push(tr('{{label}}: cần "cases" dạng [{"match":"…","label":"…"}].', { label }));
     }
     if (node.type === 'logic.forEachContact') {
       const source = node.config.source || 'friends';
-      if (source === 'group_members' && !asId(node.config.groupId)) warnings.push(`${label}: nguồn "group_members" cần "groupId" (tra bằng search_contacts type "group").`);
-      if (source === 'labels' && !(Array.isArray(node.config.labelIds) && node.config.labelIds.length)) warnings.push(`${label}: nguồn "labels" cần "labelIds" (tra bằng list_labels).`);
+      if (source === 'group_members' && !asId(node.config.groupId)) warnings.push(tr('{{label}}: nguồn "group_members" cần "groupId" (tra bằng search_contacts type "group").', { label }));
+      if (source === 'labels' && !(Array.isArray(node.config.labelIds) && node.config.labelIds.length)) warnings.push(tr('{{label}}: nguồn "labels" cần "labelIds" (tra bằng list_labels).', { label }));
     }
   }
 
   // Triggers
   const triggers = graph.nodes.filter(node => isTriggerType(node.type));
-  if (triggers.length === 0) errors.push('Workflow chưa có node kích hoạt (trigger).');
+  if (triggers.length === 0) errors.push(tr('Workflow chưa có node kích hoạt (trigger).'));
   if (triggers.length > 1) {
     const old = triggers.filter(node => node.origin !== 'new').map(node => node.id);
     errors.push(mode === 'append' && old.length
-      ? `Sơ đồ đã có trigger (${old.join(', ')}) - "append" không được thêm trigger mới; nối node mới vào sau node đang có (hoặc "remove" trigger cũ).`
-      : `Có ${triggers.length} trigger - chỉ được 1.`);
+      ? tr('Sơ đồ đã có trigger ({{v1}}) - "append" không được thêm trigger mới; nối node mới vào sau node đang có (hoặc "remove" trigger cũ).', { v1: old.join(', ') })
+      : tr('Có {{count}} trigger - chỉ được 1.', { count: triggers.length }));
   }
 
   // New edges
   const normalEdges = graph.edges.filter(edge => !edge.data?.telegramInline);
   const edgeKeys = new Set<string>();
   for (const edge of graph.edges.filter(item => item.origin === 'new')) {
-    const label = `Cạnh ${edge.source} → ${edge.target}`;
+    const label = tr('Cạnh {{source}} → {{target}}', { source: edge.source, target: edge.target });
     const source = byId.get(edge.source);
     const target = byId.get(edge.target);
-    if (!source) { errors.push(`${label}: không có node "${edge.source}"${graph.removedIds.includes(edge.source) ? ' (đã bị xoá)' : ''}.`); continue; }
-    if (!target) { errors.push(`${label}: không có node "${edge.target}"${graph.removedIds.includes(edge.target) ? ' (đã bị xoá)' : ''}.`); continue; }
-    if (edge.source === edge.target) { errors.push(`${label}: node không được nối vào chính nó.`); continue; }
-    if (isTriggerType(target.type)) errors.push(`${label}: không được nối vào trigger.`);
+    if (!source) { errors.push(tr('{{label}}: không có node "{{source}}"{{v1}}.', { label, source: edge.source, v1: graph.removedIds.includes(edge.source) ? tr(' (đã bị xoá)') : '' })); continue; }
+    if (!target) { errors.push(tr('{{label}}: không có node "{{target}}"{{v1}}.', { label, target: edge.target, v1: graph.removedIds.includes(edge.target) ? tr(' (đã bị xoá)') : '' })); continue; }
+    if (edge.source === edge.target) { errors.push(tr('{{label}}: node không được nối vào chính nó.', { label })); continue; }
+    if (isTriggerType(target.type)) errors.push(tr('{{label}}: không được nối vào trigger.', { label }));
     const handles = validHandles(source);
-    if (handles === null && edge.sourceHandle !== 'default') errors.push(`${label}: ${source.type} chỉ có sourceHandle "default".`);
-    if (handles && handles.length === 0) errors.push(`${label}: ${source.type} là node cuối, không nối tiếp được.`);
+    if (handles === null && edge.sourceHandle !== 'default') errors.push(tr('{{label}}: {{type}} chỉ có sourceHandle "default".', { label, type: source.type }));
+    if (handles && handles.length === 0) errors.push(tr('{{label}}: {{type}} là node cuối, không nối tiếp được.', { label, type: source.type }));
     if (handles && handles.length && !handles.includes(edge.sourceHandle)) {
-      errors.push(`${label}: sourceHandle "${edge.sourceHandle}" không hợp lệ cho ${source.type}. Dùng: ${handles.map(h => `"${h}"`).join(', ')}.`);
+      errors.push(tr('{{label}}: sourceHandle "{{sourceHandle}}" không hợp lệ cho {{type}}. Dùng: {{v1}}.', { label, sourceHandle: edge.sourceHandle, type: source.type, v1: handles.map(h => `"${h}"`).join(', ') }));
     }
     const key = `${edge.source}|${edge.sourceHandle}|${edge.target}`;
-    if (edgeKeys.has(key)) warnings.push(`${label}: cạnh bị lặp (bỏ bớt).`);
+    if (edgeKeys.has(key)) warnings.push(tr('{{label}}: cạnh bị lặp (bỏ bớt).', { label }));
     edgeKeys.add(key);
   }
   const validEdges = normalEdges.filter(edge => byId.has(edge.source) && byId.has(edge.target) && edge.source !== edge.target);
-  if (hasCycle(graph.nodes.map(node => node.id), validEdges)) errors.push('Có vòng lặp giữa các node - engine không hỗ trợ.');
+  if (hasCycle(graph.nodes.map(node => node.id), validEdges)) errors.push(tr('Có vòng lặp giữa các node - engine không hỗ trợ.'));
 
   // Telegram Bot inline buttons
   const inlineTargets = new Set<string>();
@@ -1006,13 +1014,13 @@ export function validateProposal(proposal: AIProposal, ctx: CopilotContext, mode
     const keyboard = node.config?.keyboard;
     if (node.type === 'tgbot.action.sendMessage' && isPlainObject(keyboard) && keyboard.type === 'reply' && Array.isArray(keyboard.rows)
       && keyboard.rows.flat().some((button: any) => isPlainObject(button) && (button.action === 'node' || button.targetNodeId))) {
-      warnings.push(`${name(node.id)}: nút chạy node ("action":"node") chỉ hoạt động với keyboard "inline".`);
+      warnings.push(tr('{{v1}}: nút chạy node ("action":"node") chỉ hoạt động với keyboard "inline".', { v1: name(node.id) }));
     }
     for (const route of inlineRoutes(node)) {
-      if (!byId.has(route.targetNodeId)) { errors.push(`${name(node.id)}: nút "${route.buttonText}" trỏ tới node "${route.targetNodeId}" không có.`); continue; }
+      if (!byId.has(route.targetNodeId)) { errors.push(tr('{{v1}}: nút "{{buttonText}}" trỏ tới node "{{targetNodeId}}" không có.', { v1: name(node.id), buttonText: route.buttonText, targetNodeId: route.targetNodeId })); continue; }
       inlineTargets.add(route.targetNodeId);
       if (normalEdges.some(edge => edge.source === node.id && edge.target === route.targetNodeId)) {
-        warnings.push(`${name(node.id)}: đã có cạnh thường tới "${route.targetNodeId}" - node đó sẽ chạy ngay, không chờ khách bấm nút "${route.buttonText}".`);
+        warnings.push(tr('{{v1}}: đã có cạnh thường tới "{{targetNodeId}}" - node đó sẽ chạy ngay, không chờ khách bấm nút "{{buttonText}}".', { v1: name(node.id), targetNodeId: route.targetNodeId, buttonText: route.buttonText }));
       }
     }
   }
@@ -1021,9 +1029,9 @@ export function validateProposal(proposal: AIProposal, ctx: CopilotContext, mode
   const incoming = new Set([...validEdges.map(edge => edge.target), ...inlineTargets]);
   for (const node of graph.nodes) {
     if (isTriggerType(node.type) || incoming.has(node.id)) continue;
-    if (node.origin === 'new') errors.push(`${name(node.id)} chưa có cạnh đi vào - nối từ trigger hoặc node trước.`);
+    if (node.origin === 'new') errors.push(tr('{{v1}} chưa có cạnh đi vào - nối từ trigger hoặc node trước.', { v1: name(node.id) }));
     else if (ctx.currentEdges.some(edge => edge.target === node.id && !edge.data?.telegramInline)) {
-      warnings.push(`${name(node.id)} không còn cạnh đi vào sau thay đổi - node này sẽ không chạy.`);
+      warnings.push(tr('{{v1}} không còn cạnh đi vào sau thay đổi - node này sẽ không chạy.', { v1: name(node.id) }));
     }
   }
 
@@ -1040,29 +1048,29 @@ export function validateProposal(proposal: AIProposal, ctx: CopilotContext, mode
       while ((m = TEMPLATE_RE.exec(text))) {
         const expr = m[1].trim();
         if (!expr) continue;
-        if (/^\$(prev|vars|input|json|item)\b/.test(expr)) { errors.push(`${where}: {{ ${expr} }} không tồn tại (dùng $node.<id>.… hoặc $var.<tên>).`); continue; }
-        if (/^(trigger|node|var|date|pageId)\b/.test(expr)) { errors.push(`${where}: {{ ${expr} }} thiếu dấu $ ở đầu.`); continue; }
-        if (/\|\||\?\?|[|()]|\s[+*/-]\s/.test(expr)) { errors.push(`${where}: {{ ${expr} }} - trong {{ }} chỉ được 1 biến, không có phép tính / bộ lọc.`); continue; }
+        if (/^\$(prev|vars|input|json|item)\b/.test(expr)) { errors.push(tr('{{where}}: {{ {{expr}} }} không tồn tại (dùng $node.<id>.… hoặc $var.<tên>).', { where, expr })); continue; }
+        if (/^(trigger|node|var|date|pageId)\b/.test(expr)) { errors.push(tr('{{where}}: {{ {{expr}} }} thiếu dấu $ ở đầu.', { where, expr })); continue; }
+        if (/\|\||\?\?|[|()]|\s[+*/-]\s/.test(expr)) { errors.push(tr('{{where}}: {{ {{expr}} }} - trong {{ }} chỉ được 1 biến, không có phép tính / bộ lọc.', { where, expr })); continue; }
         if (expr.startsWith('$trigger.')) {
           if (triggerTypes.length && !isVarAvailable(expr, triggerTypes)) {
             const available = triggerTypes.flatMap(triggerFieldNames).join(', ');
-            errors.push(`${where}: trigger ${triggerTypes.join(', ')} không có {{ ${expr} }}. Có: ${available || 'không có biến $trigger'}.`);
+            errors.push(tr('{{where}}: trigger {{v1}} không có {{ {{expr}} }}. Có: {{v2}}.', { where, v1: triggerTypes.join(', '), expr, v2: available || tr('không có biến $trigger') }));
           }
         } else if (expr.startsWith('$node.')) {
           const rest = expr.slice(6);
           const dot = rest.indexOf('.');
           const ref = dot === -1 ? rest : rest.slice(0, dot);
-          if (dot === -1 || !rest.slice(dot + 1).trim()) { errors.push(`${where}: {{ ${expr} }} thiếu tên trường (VD {{ $node.${ref}.result }}).`); continue; }
+          if (dot === -1 || !rest.slice(dot + 1).trim()) { errors.push(tr('{{where}}: {{ {{expr}} }} thiếu tên trường (VD {{ $node.{{ref}}.result }}).', { where, expr, ref })); continue; }
           const refId = byId.has(ref) ? ref : labelToId.get(ref);
-          if (!refId) { errors.push(`${where}: {{ ${expr} }} trỏ tới node "${ref}" không có trong workflow.`); continue; }
-          if (refId === node.id) { errors.push(`${where}: {{ ${expr} }} trỏ tới chính node này.`); continue; }
-          // Node phía trước; sau cổng "Xong" của Lặp qua danh sách thì gồm cả thân vòng lặp
+          if (!refId) { errors.push(tr('{{where}}: {{ {{expr}} }} trỏ tới node "{{ref}}" không có trong workflow.', { where, expr, ref })); continue; }
+          if (refId === node.id) { errors.push(tr('{{where}}: {{ {{expr}} }} trỏ tới chính node này.', { where, expr })); continue; }
+          // Preceding node; past the "Xong" (done) gate of "Lặp qua danh sách" (loop over list), the loop body is included too
           ancestors = ancestors || upstreamNodeIds(node.id, validEdges, id => byId.get(id)?.type);
           if (!ancestors.has(refId) && !inlineTargets.has(node.id)) {
-            errors.push(`${where}: {{ ${expr} }} - node "${ref}" không chạy TRƯỚC node này (không nằm trên đường đi tới nó).`);
+            errors.push(tr('{{where}}: {{ {{expr}} }} - node "{{ref}}" không chạy TRƯỚC node này (không nằm trên đường đi tới nó).', { where, expr, ref }));
           }
         } else if (!/^\$(var\.\S|date\.(now|today)$|pageId$)/.test(expr)) {
-          errors.push(`${where}: biến {{ ${expr} }} không tồn tại.`);
+          errors.push(tr('{{where}}: biến {{ {{expr}} }} không tồn tại.', { where, expr }));
         }
       }
     }
@@ -1105,6 +1113,7 @@ function coerceConfig(type: string, config: Record<string, any>, schema: Copilot
     if (field?.type === 'boolean' && (value === 'true' || value === 'false')) out[key] = value === 'true';
     else if (field?.type === 'number' && typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value.trim())) out[key] = Number(value);
     else if (field?.type === 'contact-picker' && field.contactMode === 'multi' && Array.isArray(value)) out[key] = value.length ? JSON.stringify(value.map(String)) : '';
+    else if ((key === 'includeThreadIds' || key === 'excludeThreadIds') && Array.isArray(value)) out[key] = value.length ? JSON.stringify(value.map(String)) : '';
     else if (field?.type === 'chips' && typeof value === 'string') out[key] = value.split(',').map(item => item.trim()).filter(Boolean);
     else out[key] = value;
   }
@@ -1135,7 +1144,7 @@ function fixKeyboard(config: Record<string, any>, idMap: Record<string, string>,
     let id = asId(button.id);
     if (!BUTTON_ID_RE.test(id) || used.has(id)) id = `btn_${newId().replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}`;
     used.add(id);
-    const next: Record<string, any> = { ...button, id, text: String(button.text || 'Nút'), action: button.action || 'node' };
+    const next: Record<string, any> = { ...button, id, text: String(button.text || tr('Nút')), action: button.action || 'node' };
     if (next.targetNodeId) next.targetNodeId = idMap[asId(next.targetNodeId)] || asId(next.targetNodeId);
     return next;
   }));

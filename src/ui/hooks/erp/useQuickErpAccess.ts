@@ -1,7 +1,6 @@
 /**
- * Được tạo lịch hẹn / ghi chú / task nhanh của Quản lý công việc không: giống điều kiện hiện mục "Quản lý công việc" ở
- * Sidebar + quyền tương ứng. Dùng cho nút "+" cạnh ô tìm kiếm (QuickActionsButton), "Tạo task" / "Thêm vào lịch" / "Lưu
- * vào ghi chú" từ tin nhắn (ChatWindow) và tab "Lịch sắp tới" trong chuông thông báo (`calendar` = được xem lịch).
+ * Can the user create a quick appointment / note / task from Task management: same condition as the "Quản lý công việc" (Task management) item in the
+ * Sidebar + the matching permission. Used for the "+" button next to the search box (QuickActionsButton), "Tạo task" (Create task) / "Thêm vào lịch" (Add to calendar) / "Lưu vào ghi chú" (Save to note) from messages (ChatWindow), and the "Lịch sắp tới" (Upcoming) tab in the bell (`calendar` = can view the calendar).
  */
 import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { useFeatureVisibilityStore } from '@/store/app/featureVisibilityStore';

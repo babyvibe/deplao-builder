@@ -43,8 +43,8 @@ export function hasUnseenSettingsTabs(): boolean {
 }
 
 // ── Changelog version tracking ───────────────────────────────────────────────
-// Khi app cập nhật lên phiên bản mới, changelog_last_seen_version sẽ khác với
-// phiên bản hiện tại → hiện chấm đỏ trên nút Settings và tab Log phiên bản.
+// When the app updates to a new version, changelog_last_seen_version will differ from
+// the current version → show the red dot on the Settings button and the Version log tab.
 
 const CURRENT_APP_VERSION: string =
   typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?';
@@ -68,7 +68,7 @@ export function markChangelogSeen(): void {
 }
 
 // ── Affiliate intro tracking ────────────────────────────────────────────────
-// Hiện chấm đỏ trên nút "Kiếm tiền" cho đến khi khách click vào.
+// Show a red dot on the "Kiếm tiền" (Earn money) button until the user clicks it.
 
 /** Returns true if the user hasn't seen the affiliate intro yet */
 export function hasUnseenAffiliate(): boolean {
@@ -88,10 +88,10 @@ export function markAffiliateSeen(): void {
   } catch {}
 }
 
-// ── Tính năng mới ngoài Cài đặt ─────────────────────────────────────────────
-// Chấm đỏ trên nút của một tính năng mới cho tới khi người dùng mở nó lần đầu.
-// Thêm tính năng: thêm key vào FeatureKey, hiện chấm khi !useFeatureSeen(key),
-// gọi markFeatureSeen(key) ở chỗ tính năng được mở.
+// ── New features outside Settings ─────────────────────────────────────────────
+// Red dot on the button of a new feature until the user opens it for the first time.
+// To add a feature: add a key to FeatureKey, show the dot while !useFeatureSeen(key),
+// call markFeatureSeen(key) where the feature is opened.
 
 const LS_FEATURES_KEY = 'features_seen';
 
@@ -99,8 +99,8 @@ const LS_FEATURES_KEY = 'features_seen';
 export const FEATURE_SEEN_EVENT = 'feature:seen';
 
 /**
- * mobileSync: nút đồng bộ từ điện thoại · plugins: trang Ứng dụng, API & Webhook · api: phần API của trang đó ·
- * webhooks: phần Webhook (chuyển từ Cài đặt → Webhooks; chấm đỏ để khách tìm thấy chỗ mới).
+ * mobileSync: the sync-from-phone button · plugins: the Apps, API & Webhook page · api: the API section of that page ·
+ * webhooks: the Webhook section (moved from Settings → Webhooks; red dot so users find the new place).
  */
 export type FeatureKey = 'mobileSync' | 'plugins' | 'api' | 'webhooks';
 

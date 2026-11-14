@@ -1,15 +1,15 @@
 /**
- * Bấm link trong app (tin nhắn, thẻ link, nút bot, Mini App), như Zalo / Telegram:
- *  - Link nhóm Zalo (zalo.me/g/…): đã ở trong nhóm → mở hội thoại; chưa → xem trước rồi "Tham gia".
- *  - Link Telegram (shared/telegram/telegramLinks, https://core.telegram.org/api/links): người / bot → mở chat (link bot
- *    ?start → hỏi "Bắt đầu"), nhóm / kênh đã tham gia → mở (link tin → nhảy tới tin; nhóm forum → đúng chủ đề), chưa →
- *    xem trước + "Tham gia"; link mời, số điện thoại, Mini App (?startapp, t.me/<bot>/<app>) mở trong app, bộ sticker mở
- *    popup sticker; ?text= điền sẵn ô soạn tin; link chia sẻ (t.me/share) → chọn hội thoại rồi điền sẵn ô soạn tin.
- *  - Nút bot: Mini App, đăng nhập, link như trên; callback / trò chơi / sao chép / mở hồ sơ → main đọc lại nút từ tin
- *    (pressInlineButton) rồi làm như Telegram (câu trả lời của bot hiện thành thông báo hoặc hộp, link mở như trên).
- *  - Còn lại (và khi không có tài khoản cùng kênh): trình duyệt của máy.
- * Tài khoản: tài khoản của hội thoại / Mini App đang dùng nếu cùng kênh, rồi tài khoản đang mở, rồi tài khoản đầu tiên
- * (chỉ tài khoản được thấy, chế độ nhân viên chỉ tài khoản được giao).
+ * Opens links inside the app (messages, link cards, bot buttons, Mini Apps), like Zalo / Telegram:
+ *  - Zalo group link (zalo.me/g/…): already in the group → open the conversation; not yet → preview, then "Tham gia" (Join).
+ *  - Telegram link (shared/telegram/telegramLinks, https://core.telegram.org/api/links): user / bot → open the chat (bot link
+ *    ?start → asks "Bắt đầu" (Start)), joined group / channel → open (message link → jumps to the message; forum group → the right topic), not yet →
+ *    preview + "Tham gia" (Join); invite links, phone numbers, Mini Apps (?startapp, t.me/<bot>/<app>) open in the app, a sticker set opens the
+ *    sticker popup; ?text= pre-fills the composer; share links (t.me/share) → pick a conversation, then pre-fill the composer.
+ *  - Bot buttons: Mini Apps, login, links as above; callback / game / copy / open profile → main re-reads the button from the message
+ *    (pressInlineButton), then acts like Telegram (the bot's answer shows as a notification or a box, links open as above).
+ *  - Everything else (and when no account on the same channel exists): the machine's browser.
+ * Account: the account of the conversation / Mini App in use if it is the same channel, then the account currently open, then the first account
+ * (only accounts the user can see; employee mode: only the accounts assigned to them).
  */
 import React from 'react';
 import ipc, { buildZaloAuth } from '../../ipc';
@@ -25,13 +25,14 @@ import { parseGroupLink } from '../../../../shared/crm/groupLinks';
 import { parseTelegramLink, type TelegramLink } from '../../../../shared/telegram/telegramLinks';
 import { FORUM_GENERAL_TOPIC_ID, forumTopicHasId, type ForumTopicRow } from '../../../../shared/telegram/forumTopics';
 import { setChatLinkOpener } from '../messages/messageParser';
+import { tr } from '../../../../shared/i18n';
 
 export interface ChatLinkContext {
-  /** Tài khoản của hội thoại / Mini App nơi bấm link. */
+  /** Account of the conversation / Mini App where the link was tapped. */
   accountId?: string;
 }
 
-// ── Hộp mở từ link (ChatLinkHost ở App): tham gia nhóm, "Bắt đầu" bot, chia sẻ tới hội thoại, hộp của bot ──
+// ── Boxes opened from a link (ChatLinkHost in App): join a group, bot "Bắt đầu" (Start), share to a conversation, the bot's box ──
 
 export interface GroupJoinRequest {
   key: number;
@@ -49,9 +50,9 @@ export interface BotStartRequest {
 
 export interface ShareRequest {
   key: number;
-  /** Chữ điền vào ô soạn tin của hội thoại được chọn (URL dòng đầu, rồi lời nhắn). */
+  /** Text pre-filled into the composer of the chosen conversation (the URL on the first line, then the message). */
   text: string;
-  /** Tài khoản nơi bấm link: chọn sẵn trong hộp. */
+  /** Account where the link was tapped: preselected in the box. */
   accountId?: string;
 }
 
@@ -130,13 +131,13 @@ export function useBotAlertRequest(): BotAlertRequest | null {
   return React.useSyncExternalStore(subscribe, () => state.botAlert, () => state.botAlert);
 }
 
-// ── Chọn tài khoản, mở hội thoại, điền sẵn ô soạn tin ──
+// ── Pick an account, open the conversation, pre-fill the composer ──
 
 function notify(message: string, type: 'error' | 'warning' | 'info' | 'success' = 'error'): void {
   useAppStore.getState().showNotification(message, type);
 }
 
-/** Tài khoản mở link: tài khoản nơi bấm (cùng kênh) → tài khoản đang mở → tài khoản đang kết nối đầu tiên. */
+/** Account used to open the link: the account where it was tapped (same channel) → the account currently open → the first connected account. */
 export function pickLinkAccount(channel: 'zalo' | 'telegram_user', preferredId?: string): AccountInfo | null {
   const sameChannel = visibleAccountsNow().filter((account) => (account.channel || 'zalo') === channel);
   const connected = sameChannel.filter((account) => account.isConnected !== false);
@@ -147,7 +148,7 @@ export function pickLinkAccount(channel: 'zalo' | 'telegram_user', preferredId?:
   return connected[0] || sameChannel[0] || null;
 }
 
-/** Hội thoại đã có trong máy (đang hiện trong danh sách hoặc trong DB); null nếu chưa có. */
+/** Conversation already on this machine (shown in the list or in the DB); null if not there yet. */
 async function localConversation(accountId: string, threadId: string): Promise<{ is_forum?: number | null } | null> {
   const known = (useChatStore.getState().contacts[accountId] || []).find((contact) => contact.contact_id === threadId);
   if (known) return known as { is_forum?: number | null };
@@ -163,19 +164,19 @@ function openThread(accountId: string, threadId: string, threadType: 0 | 1, info
   openConversation({ accountId, threadId, threadType, ...(info ? { info } : {}) });
 }
 
-/** Mở hội thoại rồi nhảy tới tin (ChatWindow chờ hội thoại tải xong mới nhảy). */
+/** Opens the conversation, then jumps to the message (ChatWindow waits for the conversation to load before jumping). */
 function jumpToMessage(accountId: string, threadId: string, messageId: number): void {
   window.dispatchEvent(new CustomEvent('chat:jumpToMessage', { detail: { accountId, threadId, messageId: String(messageId) } }));
 }
 
 /**
- * Điền sẵn ô soạn tin (link ?text=, link chia sẻ), như Telegram: chỉ điền, không gửi. Hội thoại đang mở → chèn vào ô
- * soạn tin; chưa mở → lưu làm tin nháp (nối sau nháp đang có), mở hội thoại là thấy. Gọi TRƯỚC khi mở hội thoại.
+ * Pre-fills the composer (?text= links, share links), like Telegram: it only fills the box, never sends. If the conversation is open → insert into the
+ * composer; if not → save it as a draft (appended after any existing draft), visible once the conversation opens. Call this BEFORE opening the conversation.
  */
 export function prefillComposer(accountId: string, threadId: string, text: string): void {
   let value = String(text || '').slice(0, 4096);
   if (!value.trim() || !accountId || !threadId) return;
-  // Bắt đầu bằng @ → thêm khoảng trắng để không gọi bot inline (https://core.telegram.org/api/links)
+  // Starts with @ → add a space so an inline bot is not triggered (https://core.telegram.org/api/links)
   if (value.startsWith('@')) value = ` ${value}`;
   const chat = useChatStore.getState();
   if (useAccountStore.getState().activeAccountId === accountId && chat.activeThreadId === threadId) {
@@ -202,13 +203,13 @@ async function openZaloGroupLink(link: string, raw: string, ctx: ChatLinkContext
       openThread(account.zalo_id, groupId, 1, { display_name: data.name, avatar_url: data.fullAvt || data.avt, channel: 'zalo' });
       return;
     }
-  } catch { /* xem trước lỗi: hộp tham gia báo lỗi cụ thể */ }
+  } catch { /* preview failed: the join box shows the specific error */ }
   openGroupJoinDialog({ link, accountId: account.zalo_id });
 }
 
 // ── Telegram ──
 
-/** Nhóm / kênh qua link mời hoặc tên: đã tham gia → mở; chưa → hộp xem trước + "Tham gia". */
+/** Group / channel via an invite link or name: already joined → open; not yet → preview box + "Tham gia" (Join). */
 async function openTelegramGroupLink(link: string, accountId: string): Promise<void> {
   try {
     const res = await ipc.telegramUser?.previewJoinLink({ accountId, link });
@@ -216,13 +217,13 @@ async function openTelegramGroupLink(link: string, accountId: string): Promise<v
       openThread(accountId, String(res.chatId), 1, { display_name: res.title, channel: 'telegram_user' });
       return;
     }
-  } catch { /* hộp tham gia báo lỗi cụ thể */ }
+  } catch { /* the join box shows the specific error */ }
   openGroupJoinDialog({ link, accountId });
 }
 
 /**
- * Link tin trong nhóm forum: mở đúng chủ đề (link có chủ đề; link tới tin tạo chủ đề; tin 1 = General) rồi nhảy tới tin
- * (https://core.telegram.org/api/links#message-links). Không biết chủ đề → mở nhóm và nhảy tới tin.
+ * Message link in a forum group: opens the right topic (the link has a topic; a link to the message that created a topic; message 1 = General), then jumps to the message
+ * (https://core.telegram.org/api/links#message-links). If the topic is unknown → open the group and jump to the message.
  */
 async function openForumPost(accountId: string, chatId: string, post: number | undefined, thread: number | undefined,
   info: OpenConversationRequest['info']): Promise<void> {
@@ -232,7 +233,7 @@ async function openForumPost(accountId: string, chatId: string, post: number | u
     try {
       const res = await ipc.telegramUser?.getForumTopics({ accountId, chatId });
       topics = res?.success ? (res.topics || []) as ForumTopicRow[] : [];
-    } catch { /* không có danh sách chủ đề: vẫn mở theo id trong link */ }
+    } catch { /* no topic list: still open by the id in the link */ }
   }
   const topicId = thread
     ? String(thread)
@@ -244,7 +245,7 @@ async function openForumPost(accountId: string, chatId: string, post: number | u
     return;
   }
   const topic = topics.find((item) => forumTopicHasId(item, topicId));
-  // Sau khi danh sách hội thoại mở nhóm xong (nó đặt lại chủ đề lúc mở)
+  // After the conversation list has opened the group (it resets the topic when opening)
   setTimeout(() => {
     useChatStore.getState().setMessages(accountId, chatId, [], topicId);
     useChatStore.setState({
@@ -252,7 +253,7 @@ async function openForumPost(accountId: string, chatId: string, post: number | u
       activeThreadType: 1,
       activeTopicId: topicId,
       activeForumTopicId: topic?.forumTopicId || topicId,
-      activeTopicTitle: topic?.title || (topicId === FORUM_GENERAL_TOPIC_ID ? 'General' : 'Chủ đề'),
+      activeTopicTitle: topic?.title || (topicId === FORUM_GENERAL_TOPIC_ID ? 'General' : tr('Chủ đề')),
       messagesLoading: true,
     });
     if (post && String(post) !== topicId) jumpToMessage(accountId, chatId, post);
@@ -265,7 +266,7 @@ async function openTelegramPeer(link: Extract<TelegramLink, { kind: 'username' |
     : await ipc.telegramUser?.resolvePhone?.({ accountId, phone: link.phone });
   const peer = res?.success ? res.peer : null;
   if (!peer?.peerId) {
-    notify(res?.error || (link.kind === 'username' ? `Không tìm thấy @${link.username}` : 'Không tìm thấy số này trên Telegram'));
+    notify(res?.error || (link.kind === 'username' ? tr('Không tìm thấy @{{username}}', { username: link.username }) : tr('Không tìm thấy số này trên Telegram')));
     return;
   }
   const peerId = String(peer.peerId);
@@ -274,7 +275,7 @@ async function openTelegramPeer(link: Extract<TelegramLink, { kind: 'username' |
   const view = link.kind === 'username' ? link : null;
 
   if (peer.peerType === 'user') {
-    // Mini App: t.me/<bot>/<app> · t.me/<bot>?startapp (bot có app chính)
+    // Mini App: t.me/<bot>/<app> · t.me/<bot>?startapp (bot with a main app)
     if (peer.isBot && view?.appName) {
       openTelegramMiniApp({
         accountId, botId: peerId, peerId, kind: 'app', appName: view.appName, ...(name ? { botName: name } : {}),
@@ -291,14 +292,14 @@ async function openTelegramPeer(link: Extract<TelegramLink, { kind: 'username' |
     }
     if (link.text) prefillComposer(accountId, peerId, link.text);
     openThread(accountId, peerId, 0, info);
-    // Link bot ?start: hỏi "Bắt đầu" rồi mới gửi messages.startBot (như Telegram)
+    // Bot ?start link: asks "Bắt đầu" (Start) first, then sends messages.startBot (as Telegram does)
     if (peer.isBot && view?.start !== undefined) {
       requestBotStart({ accountId, botId: peerId, startParam: view.start, ...(name ? { botName: name } : {}) });
     }
     return;
   }
 
-  // Nhóm / kênh công khai
+  // Public group / channel
   if (!peer.isMember) {
     openGroupJoinDialog({ link: `https://t.me/${view ? view.username : ''}`, accountId });
     return;
@@ -313,14 +314,14 @@ async function openTelegramPeer(link: Extract<TelegramLink, { kind: 'username' |
 }
 
 async function openTelegramLink(link: TelegramLink, raw: string, ctx: ChatLinkContext): Promise<void> {
-  // Chia sẻ: chọn hội thoại (mọi tài khoản), không cần tài khoản Telegram
+  // Share: pick a conversation (any account), no Telegram account needed
   if (link.kind === 'share') {
     openShareDialog({ text: link.text ? `${link.url}\n${link.text}` : link.url, ...(ctx.accountId ? { accountId: ctx.accountId } : {}) });
     return;
   }
   const account = pickLinkAccount('telegram_user', ctx.accountId);
   if (!account) {
-    if (/^tg:/i.test(raw)) notify('Chưa có tài khoản Telegram để mở link này', 'warning');
+    if (/^tg:/i.test(raw)) notify(tr('Chưa có tài khoản Telegram để mở link này'), 'warning');
     else openExternalLink(raw);
     return;
   }
@@ -334,7 +335,7 @@ async function openTelegramLink(link: TelegramLink, raw: string, ctx: ChatLinkCo
         const threadId = `-100${link.channelId}`;
         const known = await localConversation(accountId, threadId);
         if (!known) {
-          notify('Bạn chưa tham gia nhóm / kênh của tin này', 'warning');
+          notify(tr('Bạn chưa tham gia nhóm / kênh của tin này'), 'warning');
           return;
         }
         if (link.thread || Number(known.is_forum) === 1) {
@@ -352,12 +353,12 @@ async function openTelegramLink(link: TelegramLink, raw: string, ctx: ChatLinkCo
         await openTelegramPeer(link, accountId);
     }
   } catch (err: any) {
-    notify(`Không mở được link Telegram: ${err?.message || err}`);
+    notify(tr('Không mở được link Telegram: {{v1}}', { v1: err?.message || err }));
   }
 }
 
 /**
- * Bấm link trong app. true = Deplao tự mở (hội thoại, hộp tham gia, Mini App…), false = mở trình duyệt / bỏ qua.
+ * Tapping a link inside the app. true = Deplao opens it itself (conversation, join box, Mini App...), false = open in the browser / ignore.
  */
 export function openChatLink(url: string, ctx: ChatLinkContext = {}): boolean {
   const raw = String(url || '').trim();
@@ -376,7 +377,7 @@ export function openChatLink(url: string, ctx: ChatLinkContext = {}): boolean {
   return false;
 }
 
-// ── Nút inline của tin bot Telegram ──
+// ── Inline buttons of a Telegram bot message ──
 
 export interface TelegramInlineButton {
   text: string;
@@ -386,9 +387,9 @@ export interface TelegramInlineButton {
 }
 
 /**
- * Nút không phải link (callback, trò chơi, sao chép, mở hồ sơ…): main đọc lại nút ở [hàng][cột] từ tin trên Telegram rồi
- * trả việc cần làm (https://core.telegram.org/api/bots/buttons). Câu trả lời của bot: alert → hộp, không thì thông báo
- * nhỏ; có link (trò chơi…) → mở như link trong tin.
+ * A button that is not a link (callback, game, copy, open profile...): main re-reads the button at [row][column] from the message on Telegram, then
+ * returns what to do (https://core.telegram.org/api/bots/buttons). The bot's answer: alert → box, otherwise a small
+ * notification; has a link (game...) → open it like a link in the message.
  */
 async function pressTelegramInlineButton(
   accountId: string, chatId: string, msgId: number, row: number, col: number, botName?: string,
@@ -397,13 +398,13 @@ async function pressTelegramInlineButton(
     const res = await ipc.telegramUser?.pressInlineButton?.({ accountId, chatId, msgId, row, col });
     const action = res?.success ? res.action : undefined;
     if (!action) {
-      notify(res?.error || 'Bấm nút không được');
+      notify(res?.error || tr('Bấm nút không được'));
       return;
     }
     switch (action.kind) {
       case 'answer':
         if (action.message) {
-          if (action.alert) showBotAlert({ title: botName || 'Bot', message: action.message });
+          if (action.alert) showBotAlert({ title: botName || tr('Bot'), message: action.message });
           else notify(action.message, 'info');
         }
         if (action.url) openChatLink(action.url, { accountId });
@@ -411,27 +412,27 @@ async function pressTelegramInlineButton(
       case 'copy':
         try {
           await navigator.clipboard.writeText(action.text);
-          notify('Đã sao chép', 'success');
+          notify(tr('Đã sao chép'), 'success');
         } catch {
-          notify('Không sao chép được');
+          notify(tr('Không sao chép được'));
         }
         return;
       case 'profile':
         if (action.userId) openThread(accountId, action.userId, 0, { channel: 'telegram_user' });
         return;
       default:
-        notify(action.reason || 'Loại nút này chưa hỗ trợ trong Deplao', 'warning');
+        notify(action.reason || tr('Loại nút này chưa hỗ trợ trong Deplao'), 'warning');
     }
   } catch (err: any) {
-    notify(`Bấm nút không được: ${err?.message || err}`);
+    notify(tr('Bấm nút không được: {{v1}}', { v1: err?.message || err }));
   }
 }
 
 /**
- * Bấm nút inline trong tin của bot Telegram (msg: tin chứa nút; botName: tên bot cho khung Mini App / hộp của bot;
- * position: hàng / cột của nút, cần cho nút callback):
- * Mini App → mở trong app; đăng nhập → hộp hỏi; link → openChatLink; callback / sao chép / hồ sơ → pressInlineButton.
- * Trả Promise khi phải chờ Telegram (nút hiện đang chờ).
+ * Taps an inline button in a Telegram bot message (msg: the message containing the button; botName: the bot's name for the Mini App frame / the bot's box;
+ * position: the button's row / column, needed for callback buttons):
+ * Mini App → open in the app; login → ask in a box; link → openChatLink; callback / copy / profile → pressInlineButton.
+ * Returns a Promise when it has to wait for Telegram (the button is waiting).
  */
 export function handleTelegramInlineButton(
   msg: { msg_id?: unknown; thread_id?: unknown; sender_id?: unknown },
@@ -464,5 +465,5 @@ export function handleTelegramInlineButton(
   }
 }
 
-// Link trong chữ của tin (linkifyText) đi qua đây khi màn chat đã nạp module này
+// Links in the text of a message (linkifyText) go through here once the chat screen has loaded this module
 setChatLinkOpener((url) => { openChatLink(url); });

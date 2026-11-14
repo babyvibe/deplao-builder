@@ -1,8 +1,8 @@
 /**
- * ForumTopicsPanel.tsx - Danh sách chủ đề (topic) của nhóm forum Telegram, trình bày như Telegram: biểu tượng chủ đề,
- * tên + giờ tin mới nhất, "người gửi: nội dung", số chưa đọc (xám khi tắt thông báo), ghim / đã đóng. Chủ đề ghim theo
- * thứ tự ghim, còn lại tin mới trước. Danh sách nằm ở chatStore.forumTopics (lưu localStorage) — tin mới tới thì
- * forumTopicsLive cập nhật ngay dòng của chủ đề đó.
+ * ForumTopicsPanel.tsx - List of topics in a Telegram forum group, laid out like Telegram: topic icon,
+ * name + time of the latest message, "sender: content", unread count (grey when notifications are muted), pinned / closed. Pinned topics follow
+ * their pin order, the rest newest first. The list lives in chatStore.forumTopics (saved to localStorage): when a new message arrives,
+ * forumTopicsLive updates that topic's row right away.
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -21,6 +21,8 @@ import {
   sortForumTopics,
   type ForumTopicRow,
 } from '../../../../../shared/telegram/forumTopics';
+import { tr, appLocale } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface ForumTopicsPanelProps {
   accountId: string;
@@ -45,7 +47,7 @@ const topicKeyOf = (topic: { rootMessageId?: string; id?: string }): string =>
 
 const EMPTY_TOPICS: ForumTopicRow[] = [];
 
-/** Ghim (đinh ghim) — như Telegram, hiện bên phải khi chủ đề ghim không có tin chưa đọc. */
+/** Pinned (pin icon): as in Telegram, shown on the right when the pinned topic has no unread messages. */
 function PinGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
@@ -61,13 +63,13 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
   const showNotification = useAppStore(s => s.showNotification);
   const cachedCanManageTopics = useAppStore(s => s.groupInfoCache?.[accountId]?.[chatId]?.canManageTopics === true);
   const memberCount = useAppStore(s => Number(s.groupInfoCache?.[accountId]?.[chatId]?.memberCount || 0));
-  // Badge xám như Telegram: nhóm đang tắt thông báo (chủ đề không đặt riêng)
+  // Grey badge as in Telegram: the group has notifications muted (the topic has no own setting)
   const groupMuted = useAppStore(s => {
     const until = s.mutedThreads[accountId]?.[chatId];
     return until !== undefined && (until === 0 || Date.now() < until);
   });
 
-  // Danh sách vừa bị xoá khỏi bộ đệm (sự kiện chủ đề đổi) → vẫn hiện bản cũ trong lúc tải lại, không nháy trống
+  // The list was just removed from the cache (topic change event) → still shows the old copy while reloading, no blank flash
   const lastListRef = useRef<{ key: string; list: ForumTopicRow[] } | null>(null);
   if (stored) lastListRef.current = { key: cacheKey, list: stored };
   const source = stored ?? (lastListRef.current?.key === cacheKey ? lastListRef.current.list : undefined);
@@ -77,7 +79,7 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
   const [error, setError] = useState('');
   const [canManageTopics, setCanManageTopics] = useState(cachedCanManageTopics);
   const mountedRef = useRef(true);
-  // Nhóm đang tải (panel giữ nguyên khi đổi nhóm: lượt tải của nhóm cũ không chặn / không đổi trạng thái của nhóm mới)
+  // Group loading (the panel stays put when the group changes: an old group's load does not block or change the new group's state)
   const loadingKeyRef = useRef<string | null>(null);
   const currentKeyRef = useRef(cacheKey);
   currentKeyRef.current = cacheKey;
@@ -99,27 +101,27 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
           const readTop = readTopicTops.get(`${cacheKey}:${topicKeyOf(topic)}`);
           return readTop !== undefined && readTop === String(topic.topMessageId || '') ? { ...topic, unreadCount: 0 } : topic;
         });
-        // Lưu kể cả khi đã rời nhóm: lần mở sau hiện ngay bản mới
+        // Saved even after leaving the group: the next opening shows the new copy right away
         setForumTopics(cacheKey, normalised);
       } else if (isCurrent()) {
-        setError(res?.error || 'Không thể tải danh sách chủ đề');
+        setError(res?.error || tr('Không thể tải danh sách chủ đề'));
       }
     } catch (err: any) {
-      if (isCurrent()) setError(err?.message || 'Lỗi kết nối');
+      if (isCurrent()) setError(err?.message || tr('Lỗi kết nối'));
     } finally {
       if (loadingKeyRef.current === cacheKey) loadingKeyRef.current = null;
       if (isCurrent()) setLoading(false);
     }
   }, [accountId, chatId, cacheKey, setForumTopics]);
 
-  // Mở panel: hiện ngay bản đã lưu, đồng thời lấy bản mới từ Telegram
+  // Panel opened: show the saved copy right away, and fetch the latest from Telegram at the same time
   useEffect(() => {
     mountedRef.current = true;
     void loadTopics();
     return () => { mountedRef.current = false; };
   }, [loadTopics]);
 
-  // Chủ đề được tạo / sửa / đóng ở nơi khác (event:forumTopicsChanged xoá bộ đệm) → tải lại
+  // A topic was created / edited / closed somewhere else (event:forumTopicsChanged clears the cache) → reload
   const hadStoredRef = useRef(!!stored);
   useEffect(() => {
     if (stored) { hadStoredRef.current = true; return; }
@@ -140,13 +142,13 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
   }, [accountId, chatId, cachedCanManageTopics]);
 
   const handleCreateTopic = async () => {
-    const title = prompt('Tên chủ đề mới:');
+    const title = prompt(tr('Tên chủ đề mới:'));
     if (!title?.trim()) return;
     try {
       const adapter = getAdapter('telegram_user');
       const res = await (adapter as any).createForumTopic({ accountId, threadId: chatId, title: title.trim() });
-      if (res?.success) { showNotification('Đã tạo chủ đề mới', 'success'); void loadTopics(); }
-      else showNotification(res?.error || 'Tạo chủ đề thất bại', 'error');
+      if (res?.success) { showNotification(tr('Đã tạo chủ đề mới'), 'success'); void loadTopics(); }
+      else showNotification(res?.error || tr('Tạo chủ đề thất bại'), 'error');
     } catch (err: any) { showNotification(err.message, 'error'); }
   };
 
@@ -175,26 +177,26 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
   };
 
   const subtitle = [
-    memberCount > 0 ? `${memberCount.toLocaleString('vi-VN')} thành viên` : '',
-    topics.length > 0 ? `${topics.length} chủ đề` : '',
+    memberCount > 0 ? tr('{{v1}} thành viên', { v1: memberCount.toLocaleString(appLocale()) }) : '',
+    topics.length > 0 ? tr('{{count}} chủ đề', { count: topics.length }) : '',
   ].filter(Boolean).join(' · ');
 
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Header */}
       <div className="flex items-center gap-2 px-2 py-2 border-b border-border bg-card/50">
-        <button onClick={onBack} title="Quay lại" className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+        <button onClick={onBack} title={tr('Quay lại')} className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
         </button>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-foreground truncate">{chatName}</h3>
           <p className="text-xs text-muted-foreground truncate">
             {subtitle}
-            {loading && source && <span>{subtitle ? ' · ' : ''}Đang cập nhật...</span>}
+            {loading && source && <span>{trx('{{v1}}Đang cập nhật...', { v1: subtitle ? ' · ' : '' })}</span>}
           </p>
         </div>
         {canManageTopics && (
-          <button onClick={handleCreateTopic} className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground" title="Tạo chủ đề mới">
+          <button onClick={handleCreateTopic} className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground" title={tr('Tạo chủ đề mới')}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
           </button>
         )}
@@ -207,12 +209,12 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
         ) : error && topics.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 gap-2">
             <p className="text-red-400 text-xs">{error}</p>
-            <button onClick={() => void loadTopics()} className="text-primary text-xs hover:underline">Thử lại</button>
+            <button onClick={() => void loadTopics()} className="text-primary text-xs hover:underline">{tr('Thử lại')}</button>
           </div>
         ) : topics.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 gap-2">
-            <p className="text-muted-foreground text-sm">Chưa có chủ đề nào</p>
-            {canManageTopics && <button onClick={handleCreateTopic} className="text-primary text-xs hover:underline">Tạo chủ đề đầu tiên</button>}
+            <p className="text-muted-foreground text-sm">{tr('Chưa có chủ đề nào')}</p>
+            {canManageTopics && <button onClick={handleCreateTopic} className="text-primary text-xs hover:underline">{tr('Tạo chủ đề đầu tiên')}</button>}
           </div>
         ) : (
           topics.map((topic) => {
@@ -226,7 +228,7 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
             const hasUnread = topic.unreadCount > 0 && !alreadyRead;
             const hasMention = (topic.unreadMentionsCount || 0) > 0 && !alreadyRead;
             const muted = isForumTopicMuted(topic, groupMuted);
-            const sender = topic.lastIsOut ? 'Bạn' : topic.lastSenderName || '';
+            const sender = topic.lastIsOut ? tr('Bạn') : topic.lastSenderName || '';
             return (
               <button
                 key={topic.id}
@@ -241,8 +243,8 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1">
                     <span className={cn('truncate text-sm text-foreground', hasUnread ? 'font-semibold' : 'font-medium')}>{topic.title}</span>
-                    {topic.isClosed && <span title="Chủ đề đã đóng" className="flex-shrink-0 text-muted-foreground"><LockIcon className="w-3.5 h-3.5" /></span>}
-                    {muted && <span title="Đã tắt thông báo" className="flex-shrink-0 text-muted-foreground"><BellOffIcon className="w-3.5 h-3.5" /></span>}
+                    {topic.isClosed && <span title={tr('Chủ đề đã đóng')} className="flex-shrink-0 text-muted-foreground"><LockIcon className="w-3.5 h-3.5" /></span>}
+                    {muted && <span title={tr('Đã tắt thông báo')} className="flex-shrink-0 text-muted-foreground"><BellOffIcon className="w-3.5 h-3.5" /></span>}
                     <span className="ml-auto pl-2 flex-shrink-0 text-xs text-muted-foreground whitespace-nowrap">{formatForumTopicTime(topic.topMessageDate)}</span>
                   </div>
                   <div className="flex items-center gap-1 mt-0.5">
@@ -261,7 +263,7 @@ export default function ForumTopicsPanel({ accountId, chatId, chatName, activeTo
                         {topic.unreadCount}
                       </span>
                     ) : topic.isPinned && !hasMention ? (
-                      <span title="Đã ghim" className="flex-shrink-0 text-muted-foreground/80"><PinGlyph className="w-3.5 h-3.5 rotate-45" /></span>
+                      <span title={tr('Đã ghim')} className="flex-shrink-0 text-muted-foreground/80"><PinGlyph className="w-3.5 h-3.5 rotate-45" /></span>
                     ) : null}
                   </div>
                 </div>

@@ -1,8 +1,8 @@
 /**
- * "Đăng ký webhook tự động" trong trang tích hợp KiotViet / Sapo: Deplao gọi API của nền tảng để tạo webhook trỏ về địa
- * chỉ nhận webhook (services/integrations/posWebhookRegistration.ts, chạy trên Boss — máy nhân viên chuyển lên Boss).
- * KiotViet không có màn hình quản trị webhook nên đây là cách không cần người kỹ thuật. Danh sách hiện mọi webhook của cửa
- * hàng: của Deplao (đúng / cũ địa chỉ) hay của hệ thống khác; gỡ webhook của hệ thống khác phải xác nhận lại.
+ * "Đăng ký webhook tự động" (Auto-register webhook) on the KiotViet / Sapo integration page: Deplao calls the platform API to create a webhook pointing to the
+ * receiving address (services/integrations/posWebhookRegistration.ts, runs on the owner machine; employee machines hand the work over to the owner).
+ * KiotViet has no webhook admin screen, so this needs no technical person. The list shows every webhook of the shop:
+ * Deplao's (current or old address) or another system's; removing another system's webhook must be confirmed again.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -13,24 +13,26 @@ import {
   WEBHOOK_EVENT_OPTIONS, defaultWebhookEvents, webhookEventLabel,
   type PosWebhookListResponse, type PosWebhookView, type WebhookOwnership, type WebhookRegistrationType,
 } from '../../../shared/integrations/posWebhookTopics';
+import { tr } from '../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const OWNERSHIP: Record<WebhookOwnership, { label: string; className: string }> = {
-  current: { label: 'Deplao — đang nhận', className: 'bg-success/15 text-success' },
-  stale: { label: 'Deplao — địa chỉ cũ', className: 'bg-warning/15 text-warning' },
-  other: { label: 'Hệ thống khác', className: 'bg-muted text-muted-foreground' },
+  current: { label: tr('Deplao — đang nhận'), className: 'bg-success/15 text-success' },
+  stale: { label: tr('Deplao — địa chỉ cũ'), className: 'bg-warning/15 text-warning' },
+  other: { label: tr('Hệ thống khác'), className: 'bg-muted text-muted-foreground' },
 };
 
 const INTRO: Record<WebhookRegistrationType, string> = {
-  kiotviet: 'KiotViet không có màn hình quản trị webhook — Deplao đăng ký giúp qua API: tự tạo Webhook Secret (lưu vào ô Webhook Secret ở trên) và trỏ các sự kiện đã chọn về địa chỉ nhận webhook ở trên. Bấm lại bất cứ lúc nào để làm mới — webhook cũ của Deplao được thay, webhook của hệ thống khác giữ nguyên.',
-  sapo: 'Deplao tạo webhook trên Sapo bằng ứng dụng riêng đã kết nối, trỏ về địa chỉ nhận webhook ở trên. Sapo ký webhook bằng API Secret nên không cần khoá riêng. Webhook đã đúng địa chỉ được giữ nguyên, địa chỉ cũ được sửa.',
+  kiotviet: tr('KiotViet không có màn hình quản trị webhook — Deplao đăng ký giúp qua API: tự tạo Webhook Secret (lưu vào ô Webhook Secret ở trên) và trỏ các sự kiện đã chọn về địa chỉ nhận webhook ở trên. Bấm lại bất cứ lúc nào để làm mới — webhook cũ của Deplao được thay, webhook của hệ thống khác giữ nguyên.'),
+  sapo: tr('Deplao tạo webhook trên Sapo bằng ứng dụng riêng đã kết nối, trỏ về địa chỉ nhận webhook ở trên. Sapo ký webhook bằng API Secret nên không cần khoá riêng. Webhook đã đúng địa chỉ được giữ nguyên, địa chỉ cũ được sửa.'),
 };
 
 export default function WebhookRegistrationCard({ type, name, integrationId, onChanged }: {
   type: WebhookRegistrationType;
   name: string;
-  /** Chưa lưu kết nối → chưa đăng ký được. */
+  /** Connection not saved yet → cannot register. */
   integrationId?: string;
-  /** Sau khi đăng ký (KiotViet vừa lưu Secret) → trang làm mới mục Bảo mật webhook. */
+  /** After registering (KiotViet just saved the Secret) → the page refreshes the Webhook security section. */
   onChanged?: () => void;
 }) {
   const showNotification = useAppStore(s => s.showNotification);
@@ -65,13 +67,13 @@ export default function WebhookRegistrationCard({ type, name, integrationId, onC
     setMessage(null);
     try {
       const res = await api.registerWebhooks(integrationId, events);
-      // Lỗi trước khi đọc được danh sách (chưa bật địa chỉ…) → giữ danh sách đang hiện
+      // Error before the list can be read (address not turned on yet…) → keep the list currently shown
       setState(prev => ({ ...res, webhooks: res.success || res.webhooks?.length ? res.webhooks || [] : prev?.webhooks || [] }));
       const done = (res.created?.length || 0) + (res.updated?.length || 0) + (res.kept?.length || 0);
       const notes = (res.notes || []).join('. ');
       const text = res.success
-        ? `Đã đăng ký ${done} sự kiện trên ${name}${notes ? ` — ${notes}` : ''}`
-        : res.error || 'Đăng ký webhook thất bại';
+        ? tr('Đã đăng ký {{done}} sự kiện trên {{name}}{{v1}}', { done, name, v1: notes ? ` — ${notes}` : '' })
+        : res.error || tr('Đăng ký webhook thất bại');
       setMessage({ ok: !!res.success, text });
       showNotification(text, res.success ? 'success' : 'error');
       onChanged?.();
@@ -87,11 +89,11 @@ export default function WebhookRegistrationCard({ type, name, integrationId, onC
   const remove = async (webhook: PosWebhookView) => {
     if (!integrationId || !api?.removeWebhook || busy) return;
     const ok = await showConfirm({
-      title: 'Gỡ webhook',
+      title: tr('Gỡ webhook'),
       message: webhook.ownership === 'other'
-        ? `Webhook ${webhook.event} trỏ tới ${webhook.url} không phải của kết nối Deplao này — hệ thống đó sẽ ngừng nhận dữ liệu. Vẫn gỡ?`
-        : `Gỡ webhook ${webhook.event} khỏi ${name}? Workflow "Khi phần mềm bán hàng gửi webhook" sẽ không nhận sự kiện này nữa.`,
-      confirmText: 'Gỡ',
+        ? tr('Webhook {{event}} trỏ tới {{url}} không phải của kết nối Deplao này — hệ thống đó sẽ ngừng nhận dữ liệu. Vẫn gỡ?', { event: webhook.event, url: webhook.url })
+        : tr('Gỡ webhook {{event}} khỏi {{name}}? Workflow "Khi phần mềm bán hàng gửi webhook" sẽ không nhận sự kiện này nữa.', { event: webhook.event, name }),
+      confirmText: tr('Gỡ'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -99,7 +101,7 @@ export default function WebhookRegistrationCard({ type, name, integrationId, onC
     try {
       const res = await api.removeWebhook(integrationId, webhook.id);
       if (res.success || res.webhooks?.length) setState(res);
-      showNotification(res.success ? 'Đã gỡ webhook' : res.error || 'Không gỡ được webhook', res.success ? 'success' : 'error');
+      showNotification(res.success ? tr('Đã gỡ webhook') : res.error || tr('Không gỡ được webhook'), res.success ? 'success' : 'error');
     } catch (e: any) {
       showNotification(e?.message || String(e), 'error');
     } finally {
@@ -113,10 +115,10 @@ export default function WebhookRegistrationCard({ type, name, integrationId, onC
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-foreground/80"><WebhookIcon className="w-4 h-4 inline" /> Đăng ký webhook tự động</h2>
+        <h2 className="text-sm font-semibold text-foreground/80">{trx('<0/> Đăng ký webhook tự động', { 0: <WebhookIcon className="w-4 h-4 inline" /> })}</h2>
         {integrationId && (
           <button type="button" onClick={() => { void load(); }} className="text-[11px] text-muted-foreground hover:text-foreground">
-            <RefreshIcon className="w-3.5 h-3.5 inline" /> Làm mới
+            {trx('<0/> Làm mới', { 0: <RefreshIcon className="w-3.5 h-3.5 inline" /> })}
           </button>
         )}
       </div>
@@ -124,24 +126,22 @@ export default function WebhookRegistrationCard({ type, name, integrationId, onC
         <p className="text-[11px] leading-relaxed text-muted-foreground">{INTRO[type]}</p>
 
         {!integrationId ? (
-          <p className="text-[11px] text-subtle-foreground">Bấm <strong className="text-foreground">Kết nối</strong> để lưu kết nối trước, rồi quay lại đăng ký webhook.</p>
+          <p className="text-[11px] text-subtle-foreground">{trx('Bấm <0>Kết nối</0> để lưu kết nối trước, rồi quay lại đăng ký webhook.', { 0: <strong className="text-foreground" /> })}</p>
         ) : (
           <>
             {state && !address && (
               <div role="alert" className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-2.5 text-[11px] text-foreground">
-                <AlertIcon className="w-4 h-4 inline text-warning" /> Chưa bật địa chỉ nhận webhook — bật <strong>Thanh toán, tích hợp</strong> ở
-                Cài đặt → Internet &amp; Cloud → Địa chỉ Internet rồi bấm Làm mới.
+                {trx('<0/> Chưa bật địa chỉ nhận webhook — bật <1>Thanh toán, tích hợp</1> ở Cài đặt → Internet & Cloud → Địa chỉ Internet rồi bấm Làm mới.', { 0: <AlertIcon className="w-4 h-4 inline text-warning" />, 1: <strong /> })}
               </div>
             )}
             {address && state?.temporary && (
               <div role="alert" className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-2.5 text-[11px] text-foreground">
-                <AlertIcon className="w-4 h-4 inline text-warning" /> Đang dùng địa chỉ tạm (đổi mỗi lần khởi động lại Deplao) — sau mỗi lần
-                mở lại phải bấm Đăng ký webhook để {name} gửi tới địa chỉ mới. Dùng Cloudflare tự động để có địa chỉ cố định.
+                {trx('<0/> Đang dùng địa chỉ tạm (đổi mỗi lần khởi động lại Deplao) — sau mỗi lần mở lại phải bấm Đăng ký webhook để {{name}} gửi tới địa chỉ mới. Dùng Cloudflare tự động để có địa chỉ cố định.', { 0: <AlertIcon className="w-4 h-4 inline text-warning" />, name })}
               </div>
             )}
 
             <div>
-              <p className="mb-1.5 text-[11px] font-medium text-foreground">Sự kiện gửi về Deplao</p>
+              <p className="mb-1.5 text-[11px] font-medium text-foreground">{tr('Sự kiện gửi về Deplao')}</p>
               <div className="grid gap-1 sm:grid-cols-2">
                 {WEBHOOK_EVENT_OPTIONS[type].map(option => (
                   <label key={option.value} className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
@@ -165,7 +165,7 @@ export default function WebhookRegistrationCard({ type, name, integrationId, onC
                 disabled={busy || events.length === 0 || !address}
                 className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors disabled:opacity-50"
               >
-                {busy ? 'Đang xử lý...' : 'Đăng ký webhook'}
+                {busy ? tr('Đang xử lý...') : tr('Đăng ký webhook')}
               </button>
               {message && (
                 <p className={`text-[11px] ${message.ok ? 'text-success' : 'text-destructive'}`}>
@@ -179,11 +179,11 @@ export default function WebhookRegistrationCard({ type, name, integrationId, onC
             )}
 
             <div className="space-y-1.5">
-              <p className="text-[11px] font-medium text-foreground">Webhook đang có trên {name}</p>
+              <p className="text-[11px] font-medium text-foreground">{trx('Webhook đang có trên {{name}}', { name })}</p>
               {loading ? (
-                <p className="text-[11px] text-subtle-foreground">Đang tải...</p>
+                <p className="text-[11px] text-subtle-foreground">{tr('Đang tải...')}</p>
               ) : webhooks.length === 0 ? (
-                <p className="text-[11px] text-subtle-foreground">Chưa có webhook nào.</p>
+                <p className="text-[11px] text-subtle-foreground">{tr('Chưa có webhook nào.')}</p>
               ) : webhooks.map(webhook => (
                 <div key={webhook.id} className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
                   <div className="min-w-0 flex-1">
@@ -199,7 +199,7 @@ export default function WebhookRegistrationCard({ type, name, integrationId, onC
                     type="button"
                     onClick={() => { void remove(webhook); }}
                     disabled={busy}
-                    title="Gỡ webhook"
+                    title={tr('Gỡ webhook')}
                     className="flex-shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-50"
                   >
                     <TrashIcon className="w-3.5 h-3.5" />

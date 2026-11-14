@@ -1,10 +1,10 @@
 /**
- * ScopePicker — chọn phạm vi dữ liệu cho Đồng bộ dữ liệu (dữ liệu + ảnh/file; CloudScope, src/shared/cloud/cloudContracts.ts):
- *  - Tài khoản: Tất cả (kể cả tài khoản thêm sau) / Chọn tài khoản → danh sách tài khoản của workspace đang mở
- *    (useAccountStore, có huy hiệu kênh như các màn khác).
- *  - Thời gian: Toàn bộ / Từ ngày → ô ngày (00:00 giờ máy của ngày chọn).
- * Component điều khiển (value/onChange). Nút lưu nằm ở phần dùng (Đồng bộ dữ liệu: "Lưu thiết lập") để không lưu theo
- * từng cú bấm. AccountChecklist và DateField dùng lại ở hộp Dọn file trên R2; ScopeRow dùng lại cho các hàng khác của form.
+ * ScopePicker - picks the data scope for Data sync (data + images/files; CloudScope, src/shared/cloud/cloudContracts.ts):
+ *  - Accounts: All (including accounts added later) / Pick accounts → the account list of the open workspace
+ *    (useAccountStore, with channel badges like other screens).
+ *  - Time: All time / From date → date field (00:00 local time of the chosen day).
+ * Controlled component (value/onChange). The save button lives in the parent (Data sync: "Lưu thiết lập" (Save settings)) so it does not save on
+ * every click. AccountChecklist and DateField are reused in the R2 file cleanup box; ScopeRow is reused for the other rows of the form.
  */
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { useAccountStore } from '@/store/accounts/accountStore';
@@ -23,14 +23,16 @@ import {
   toDateInput,
   type ScopeAccount,
 } from '../cloudUi';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export interface ScopePickerProps {
   value: CloudScope;
   onChange: (next: CloudScope) => void;
   disabled?: boolean;
-  /** Tài khoản để chọn; mặc định là tài khoản của workspace đang mở (useAccountStore). */
+  /** Account to pick; defaults to the account of the open workspace (useAccountStore). */
   accounts?: ReadonlyArray<ScopeAccount>;
-  /** Tên vùng cho trình đọc màn hình, vd "Phạm vi lưu media". */
+  /** Region name for screen readers, e.g. "Phạm vi lưu media" (Media storage scope). */
   label?: string;
   className?: string;
 }
@@ -38,13 +40,13 @@ export interface ScopePickerProps {
 const NO_IDS: string[] = [];
 const NO_ACCOUNTS: ReadonlyArray<ScopeAccount> = [];
 
-/** Tài khoản của workspace đang mở (selector, không đọc cả store); `override` dùng cho test / màn khác. */
+/** Accounts of the open workspace (selector, does not read the whole store); `override` is for tests / other screens. */
 export function useScopeAccounts(override?: ReadonlyArray<ScopeAccount>): ReadonlyArray<ScopeAccount> {
   const storeAccounts = useAccountStore(s => s.accounts);
   return override ?? storeAccounts ?? NO_ACCOUNTS;
 }
 
-/** Một hàng của khối phạm vi: nhãn cột trái (Tài khoản, Thời gian…), điều khiển bên phải. Dùng lại ở Đồng bộ dữ liệu. */
+/** One row of the scope block: left column label (Accounts, Time…), control on the right. Reused in Data sync. */
 export function ScopeRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1 sm:flex-row sm:gap-4">
@@ -56,14 +58,14 @@ export function ScopeRow({ label, children }: { label: string; children: React.R
 
 function AccountRow({ account, missingId, checked, disabled, onToggle }: {
   account?: ScopeAccount;
-  /** Tài khoản đã chọn nhưng không còn trong workspace (vẫn bỏ chọn được). */
+  /** Account that is selected but no longer in the workspace (can still be deselected). */
   missingId?: string;
   checked: boolean;
   disabled: boolean;
   onToggle: (on: boolean) => void;
 }) {
   const id = useId();
-  const name = account ? scopeAccountName(account) : 'Tài khoản không còn trong workspace';
+  const name = account ? scopeAccountName(account) : tr('Tài khoản không còn trong workspace');
   const meta = account ? getChannelLabel(normalizeChannel(account.channel || undefined)) : missingId;
   return (
     <li className={cn('flex items-center gap-3 px-3 py-2 transition-colors', !disabled && 'hover:bg-muted')}>
@@ -83,8 +85,8 @@ function AccountRow({ account, missingId, checked, disabled, onToggle }: {
 }
 
 /**
- * Danh sách tài khoản có ô chọn (avatar + huy hiệu kênh), "Chọn hết" / "Bỏ chọn hết". Id đã chọn mà không còn trong
- * danh sách vẫn hiện để bỏ chọn được.
+ * Account list with checkboxes (avatar + channel badge), "Chọn hết" (Select all) / "Bỏ chọn hết" (Deselect all). Selected ids that are no longer in the
+ * list still show, so they can be deselected.
  */
 export function AccountChecklist({ accounts, selected, onChange, disabled = false, className }: {
   accounts: ReadonlyArray<ScopeAccount>;
@@ -106,7 +108,7 @@ export function AccountChecklist({ accounts, selected, onChange, disabled = fals
   return (
     <div className={cn('overflow-hidden rounded-lg border border-border', className)}>
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border bg-muted/40 px-3 py-1.5">
-        <span className="text-xs text-muted-foreground">Đã chọn {fmtNum(selected.length)}/{fmtNum(total)} tài khoản</span>
+        <span className="text-xs text-muted-foreground">{trx('Đã chọn {{v1}}/{{v2}} tài khoản', { v1: fmtNum(selected.length), v2: fmtNum(total) })}</span>
         <span className="flex items-center gap-3">
           <Button
             variant="link"
@@ -115,15 +117,15 @@ export function AccountChecklist({ accounts, selected, onChange, disabled = fals
             disabled={disabled || total === 0 || selected.length === total}
             onClick={() => onChange([...accounts.map(a => a.zalo_id), ...missing])}
           >
-            Chọn hết
+            {tr('Chọn hết')}
           </Button>
           <Button variant="link" size="sm" className="text-xs" disabled={disabled || selected.length === 0} onClick={() => onChange([])}>
-            Bỏ chọn hết
+            {tr('Bỏ chọn hết')}
           </Button>
         </span>
       </div>
       {total === 0 ? (
-        <p className="px-3 py-3 text-xs text-muted-foreground">Workspace này chưa có tài khoản nào.</p>
+        <p className="px-3 py-3 text-xs text-muted-foreground">{tr('Workspace này chưa có tài khoản nào.')}</p>
       ) : (
         <ul className="max-h-64 divide-y divide-border overflow-y-auto">
           {accounts.map(account => (
@@ -145,13 +147,13 @@ export function AccountChecklist({ accounts, selected, onChange, disabled = fals
 }
 
 /**
- * Ô ngày (giá trị = 00:00 giờ máy, ms). Nháp khi gõ (ô date báo '' khi chưa gõ đủ ngày), chỉ báo lên khi là ngày hợp lệ
- * và không quá hôm nay; rời ô thì trả lại ngày đang chọn.
+ * Date field (value = 00:00 local time, ms). Draft while typing (the date input reports '' until a full date is typed); only reports up when it is a valid date
+ * and not later than today; leaving the field restores the currently chosen date.
  */
 export function DateField({ value, onChange, label, disabled = false, id, className }: {
   value: number | null;
   onChange: (ts: number) => void;
-  /** Nhãn cho trình đọc màn hình. */
+  /** Label for screen readers. */
   label: string;
   disabled?: boolean;
   id?: string;
@@ -165,7 +167,7 @@ export function DateField({ value, onChange, label, disabled = false, id, classN
     const ts = fromDateInput(text);
     if (ts == null || ts > today) {
       setDraft(text);
-      setError(ts != null ? 'Chọn ngày không quá hôm nay.' : text ? 'Ngày không hợp lệ.' : null);
+      setError(ts != null ? tr('Chọn ngày không quá hôm nay.') : text ? tr('Ngày không hợp lệ.') : null);
       return;
     }
     setDraft(null);
@@ -192,13 +194,13 @@ export function DateField({ value, onChange, label, disabled = false, id, classN
   );
 }
 
-export function ScopePicker({ value, onChange, disabled = false, accounts: accountsProp, label = 'Phạm vi', className }: ScopePickerProps) {
+export function ScopePicker({ value, onChange, disabled = false, accounts: accountsProp, label = tr('Phạm vi'), className }: ScopePickerProps) {
   const accounts = useScopeAccounts(accountsProp);
   const picking = Array.isArray(value.accounts);
   const selected: string[] = picking ? (value.accounts as string[]) : NO_IDS;
   const fromMode = !!value.fromTs;
 
-  // Đổi qua lại Tất cả ↔ Chọn tài khoản, Toàn bộ ↔ Từ ngày: giữ lựa chọn trước đó.
+  // Switching back and forth between All ↔ Pick accounts, All time ↔ From date: keep the previous choice.
   const lastPicked = useRef<string[]>(selected);
   const lastFromTs = useRef<number | null>(value.fromTs || null);
   useEffect(() => { if (Array.isArray(value.accounts)) lastPicked.current = value.accounts; }, [value.accounts]);
@@ -214,17 +216,17 @@ export function ScopePicker({ value, onChange, disabled = false, accounts: accou
 
   return (
     <div role="group" aria-label={label} className={cn('space-y-4', className)}>
-      <ScopeRow label="Tài khoản">
+      <ScopeRow label={tr('Tài khoản')}>
         <RadioList
           inline
-          label="Tài khoản"
+          label={tr('Tài khoản')}
           className="min-h-8"
           value={picking ? 'pick' : 'all'}
           disabled={disabled}
           onChange={chooseAccounts}
           options={[
-            { value: 'all', label: <>Tất cả <span className="text-muted-foreground">(kể cả tài khoản thêm sau)</span></> },
-            { value: 'pick', label: 'Chọn tài khoản' },
+            { value: 'all', label: <>{trx('Tất cả <0>(kể cả tài khoản thêm sau)</0>', { 0: <span className="text-muted-foreground" /> })}</> },
+            { value: 'pick', label: tr('Chọn tài khoản') },
           ]}
         />
         {picking && (
@@ -237,22 +239,22 @@ export function ScopePicker({ value, onChange, disabled = false, accounts: accou
         )}
       </ScopeRow>
 
-      <ScopeRow label="Thời gian">
+      <ScopeRow label={tr('Thời gian')}>
         <div className="flex min-h-8 flex-wrap items-center gap-x-5 gap-y-2">
           <RadioList
             inline
-            label="Thời gian"
+            label={tr('Thời gian')}
             value={fromMode ? 'from' : 'all'}
             disabled={disabled}
             onChange={chooseTime}
             options={[
-              { value: 'all', label: 'Toàn bộ' },
-              { value: 'from', label: 'Từ ngày' },
+              { value: 'all', label: tr('Toàn bộ') },
+              { value: 'from', label: tr('Từ ngày') },
             ]}
           />
           {fromMode && (
             <DateField
-              label="Từ ngày"
+              label={tr('Từ ngày')}
               value={value.fromTs}
               disabled={disabled}
               onChange={ts => onChange({ ...value, fromTs: ts })}

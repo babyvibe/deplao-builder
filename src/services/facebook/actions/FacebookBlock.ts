@@ -1,7 +1,7 @@
 /**
  * FacebookBlock.ts
- * Port từ Python _features/_facebook/_blocking.py (fbchat-v2 2.3.2)
- * Block/unblock user trên Facebook
+ * Ported from Python _features/_facebook/_blocking.py (fbchat-v2 2.3.2)
+ * Block/unblock a user on Facebook
  */
 
 import axios from 'axios';
@@ -14,6 +14,7 @@ import {
   parseFacebookResponse,
 } from '../FacebookGraphQLResult';
 import Logger from '../../../utils/Logger';
+import { tr } from '../../../shared/i18n';
 
 const GRAPHQL_URL = 'https://www.facebook.com/api/graphql/';
 
@@ -75,7 +76,7 @@ async function changeBlockState(
   const operation = choice === 'block' ? 'blockUser' : 'unblockUser';
   const userId = String(rawUserId || '').trim();
   if (!/^\d+$/.test(userId)) {
-    return { success: false, error: `${operation}: userId không hợp lệ` };
+    return { success: false, error: tr('{{operation}}: userId không hợp lệ', { operation }) };
   }
   await rateLimitDelay();
 
@@ -98,8 +99,8 @@ async function changeBlockState(
     // fbchat-v2 2.3.2: only a confirmed root of the block/unblock family
     // counts; HTTP 200 with an unrelated or empty node does not.
     if (!hasConfirmedMutationRoot(payload, (rootName) => rootName.toLowerCase().includes('block'))) {
-      const label = choice === 'block' ? 'chặn' : 'bỏ chặn';
-      throw new FacebookOperationError(operation, 'not_confirmed', `Facebook không xác nhận thao tác ${label} người dùng.`);
+      const label = choice === 'block' ? tr('chặn') : tr('bỏ chặn');
+      throw new FacebookOperationError(operation, 'not_confirmed', tr('Facebook không xác nhận thao tác {{label}} người dùng.', { label }));
     }
     return { success: true };
   } catch (err: any) {
@@ -109,7 +110,7 @@ async function changeBlockState(
 }
 
 /**
- * Chặn người dùng trên Facebook (N4)
+ * Block a user on Facebook (N4)
  */
 export async function blockUser(
   dataFB: FBSessionData,
@@ -120,7 +121,7 @@ export async function blockUser(
 }
 
 /**
- * Bỏ chặn người dùng trên Facebook (N4)
+ * Unblock a user on Facebook (N4)
  */
 export async function unblockUser(
   dataFB: FBSessionData,

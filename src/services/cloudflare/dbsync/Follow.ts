@@ -1,9 +1,9 @@
 /**
- * Follow — chế độ máy dự phòng: giữ bản sao CHỈ ĐỌC của một workspace máy khác tại
- * userData/cloud-follow/<workspaceUid>.db. Tải bản gốc một lần; mỗi 60 s đọc manifest (Class B) và áp các đoạn mới;
- * ghi nhịp tim <uid>/db/followers/<machineId>.json {machine, lagMs, seenAt} mỗi 5 phút (Class A — thưa).
- * Máy nguồn chụp gốc mới → tải lại gốc. Chuyển sang máy này = khôi phục từ bản sao theo dõi (không phải tải lại).
- * Không đụng DB đang dùng của app; mọi thao tác SQLite chạy trên worker phụ.
+ * Follow: standby machine mode. Keeps a READ-ONLY copy of a workspace from another machine at
+ * userData/cloud-follow/<workspaceUid>.db. Downloads the base snapshot once; every 60 s reads the manifest (Class B) and applies the new segments;
+ * writes a heartbeat <uid>/db/followers/<machineId>.json {machine, lagMs, seenAt} every 5 minutes (Class A, infrequent).
+ * When the source machine takes a new base snapshot → the base is downloaded again. Switching to this machine = restore from the followed copy (no re-download needed).
+ * Does not touch the DB the app is using; all SQLite operations run on a secondary worker.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -26,11 +26,11 @@ export interface FollowContext {
     core: CloudflareCore;
     ops: () => DbOps;
     state: StateStore;
-    /** Thư mục userData/cloud-follow. */
+    /** The userData/cloud-follow folder. */
     dir: () => string;
     machineId(): string;
     machineName(): string;
-    /** Mật khẩu để giải mã bản sao đang theo dõi (null = chưa có). */
+    /** Password used to decrypt the followed copy (null = not set yet). */
     passphrase(): string | null;
     log(level: 'log' | 'warn' | 'error', msg: string): void;
     notify(urgent?: boolean): void;
@@ -99,7 +99,7 @@ export class Follower {
         return u ? path.join(this.ctx.dir(), `${safeFileName(u)}.db`) : null;
     }
 
-    /** Bắt đầu / tiếp tục theo dõi theo trạng thái đã lưu (lần chạy đầu sau ~2 s). */
+    /** Start / resume following from the saved state (the first run is about 2 s later). */
     start(firstDelayMs = 2_000): void {
         if (!this.st) return;
         this.active = true;
@@ -107,7 +107,7 @@ export class Follower {
         this.schedule(firstDelayMs);
     }
 
-    /** Dừng hẳn (chờ nhịp đang chạy tối đa 30 s). Không xoá trạng thái — index.ts quyết định. */
+    /** Stop completely (waits up to 30 s for the running tick). Does not delete the state: index.ts decides. */
     async stop(): Promise<void> {
         this.active = false;
         if (this.timer) {
@@ -149,7 +149,7 @@ export class Follower {
         (this.timer as any)?.unref?.();
     }
 
-    /** Một nhịp theo dõi (tuần tự — gọi chồng thì dùng chung nhịp đang chạy). */
+    /** One follow tick (sequential: overlapping calls share the tick already running). */
     tick(): Promise<void> {
         if (this.running) return this.running;
         const p = this.doTick().finally(() => {
@@ -160,13 +160,13 @@ export class Follower {
     }
 
     /**
-     * Chuẩn bị chuyển sang máy này: dừng lịch, chạy một nhịp cuối (bỏ qua lỗi mạng), trả về bản sao đã có để khôi phục.
-     * null = chưa có bản sao dùng được (khôi phục sẽ tải từ R2).
+     * Get ready to switch to this machine: stop the schedule, run one last tick (network errors ignored), return the existing copy to restore from.
+     * null = no usable copy yet (the restore will download it from R2).
      */
     async prepareSwitchOver(): Promise<FollowCopyRef | null> {
         const st = this.st;
         if (!st) return null;
-        // Giữ lịch: không nhịp nào ghi vào bản sao trong lúc khôi phục chép nó (start() nhả ra).
+        // Keep the schedule paused: no tick writes to the copy while the restore is copying it (start() releases it).
         this.held = true;
         if (this.timer) {
             clearTimeout(this.timer);
@@ -183,16 +183,16 @@ export class Follower {
         return { path: file, baseKey: cur.baseKey, appliedCount: cur.appliedCount };
     }
 
-    /** Xoá file bản sao theo dõi (khi tắt theo dõi / đổi nguồn). */
+    /** Delete the followed copy file (when following is turned off / the source changes). */
     removeCopy(uid?: string): void {
         const file = this.copyPath(uid);
         if (!file) return;
         for (const f of [file, `${file}-wal`, `${file}-shm`, `${file}-journal`]) {
-            try { fs.rmSync(f, { force: true }); } catch { /* bỏ qua */ }
+            try { fs.rmSync(f, { force: true }); } catch { /* ignore */ }
         }
     }
 
-    // ─── Nhịp theo dõi ────────────────────────────────────────────────────────
+    // ─── Follow tick ────────────────────────────────────────────────────────────
 
     private async doTick(): Promise<void> {
         const st = this.st;
@@ -224,7 +224,7 @@ export class Follower {
 
             const all = await withRetry(() => loadAllSegments(r2, m, this.pageCache));
             if (st.appliedCount > all.length || (st.appliedCount > 0 && all[st.appliedCount - 1]?.key !== st.lastAppliedKey)) {
-                // Chuỗi trên R2 không còn khớp phần đã áp (hiếm: manifest bị ghi lại) → nhịp sau tải lại bản gốc.
+                // The chain on R2 no longer matches what was applied (rare: the manifest was rewritten) → the next tick downloads the base again.
                 st.baseKey = null;
                 this.ctx.state.save();
                 throw new CloudError('FOLLOW_RESYNC', 'Bản sao nguồn vừa thay đổi cấu trúc — sẽ tải lại bản gốc.');
@@ -234,7 +234,7 @@ export class Follower {
                 await this.ctx.ops().call('restorePrepare', { dbPath: copy });
                 try {
                     for (const seg of pending) {
-                        if (!this.active) break; // vừa tắt theo dõi
+                        if (!this.active) break; // just turned off following
                         const body = await withRetry(() => r2.getObject(seg.key));
                         if (!body) throw new CloudError('FOLLOW_MISSING', `Thiếu đoạn thay đổi trên ${storeLabelNow()} (máy nguồn vừa chụp gốc mới?) — sẽ thử lại.`);
                         const gz = await this.ctx.core.crypto.decryptBuffer(body, passphrase);
@@ -281,7 +281,7 @@ export class Follower {
         }
     }
 
-    /** Tải + giải mã + giải nén bản gốc vào thư mục tạm rồi thay file bản sao theo dõi. Trả số byte đã tải. */
+    /** Download + decrypt + decompress the base snapshot into a temp folder, then replace the followed copy file. Returns the number of bytes downloaded. */
     private async downloadBase(r2: R2Client, m: DbManifest, passphrase: string, copyPath: string): Promise<number> {
         const dir = this.ctx.dir();
         const work = path.join(dir, `.dl-${safeFileName(m.workspaceUid)}-${this.ctx.now()}`);
@@ -296,12 +296,12 @@ export class Follower {
             await fs.promises.rm(enc, { force: true });
             await this.ctx.ops().call('gunzipFile', { src: gz, dst: db });
             await fs.promises.rm(gz, { force: true });
-            // Bản sao không ghi _cloud_dirty: gỡ trigger/bảng theo dõi chụp kèm bản gốc.
+            // The copy does not write _cloud_dirty: the trigger/tracking tables captured with the base snapshot are removed.
             await this.ctx.ops().call('restorePrepare', { dbPath: db });
             await this.ctx.ops().call('close', { dbPath: db });
             await this.ctx.ops().call('close', { dbPath: copyPath }).catch(() => undefined);
             for (const sfx of ['-wal', '-shm', '-journal']) {
-                try { fs.rmSync(copyPath + sfx, { force: true }); } catch { /* bỏ qua */ }
+                try { fs.rmSync(copyPath + sfx, { force: true }); } catch { /* ignore */ }
             }
             fs.renameSync(db, copyPath);
             return got.size;
@@ -316,7 +316,7 @@ export class Follower {
         const now = this.ctx.now();
         const hourStart = startOfLocalHour(now);
         const last = st.log[0];
-        // Gộp theo giờ như realtime: một dòng 'follow' mỗi giờ.
+        // Grouped per hour like realtime: one 'follow' row per hour.
         if (last && startOfLocalHour(last.at) === hourStart) {
             last.endAt = now;
             last.pushes += applied;

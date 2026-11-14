@@ -1,7 +1,7 @@
 /**
  * FacebookLoginHelper.ts
- * Port từ Python _core/_facebookLogin.py
- * Đăng nhập Facebook bằng username/password (+ 2FA optional)
+ * Ported from the Python _core/_facebookLogin.py
+ * Logs in to Facebook with username/password (+ optional 2FA)
  */
 
 import axios from 'axios';
@@ -9,11 +9,12 @@ import { generate } from 'otplib';
 import { FBLoginResult } from './FacebookTypes';
 import { randStr } from './FacebookUtils';
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 const FB_AUTH_URL = 'https://b-graph.facebook.com/auth/login';
 const REQUEST_TIMEOUT = 20000;
 
-// Android Facebook app headers (như trong Python original)
+// Android Facebook app headers (as in the original Python)
 const AUTH_HEADERS = {
   'Host': 'b-graph.facebook.com',
   'Content-Type': 'application/x-www-form-urlencoded',
@@ -51,8 +52,8 @@ function buildLoginResult(dataJson: any, statusLogin: 1 | 0, cookies?: string[])
   const error = dataJson?.error || {};
   return {
     error: {
-      title: error.error_user_title || 'Đăng nhập thất bại',
-      description: error.error_user_msg || 'Lỗi không xác định',
+      title: error.error_user_title || tr('Đăng nhập thất bại'),
+      description: error.error_user_msg || tr('Lỗi không xác định'),
       error_subcode: error.error_subcode,
       error_code: error.code,
       fbtrace_id: error.fbtrace_id,
@@ -70,15 +71,15 @@ async function postLogin(data: Record<string, string>, httpsAgent?: any): Promis
     });
     return response.data;
   } catch (err: any) {
-    // Trích xuất response body từ Facebook (luôn là JSON dù status 400/401/403...)
+    // Read the response body from Facebook (always JSON, even with status 400/401/403...)
     if (err.response?.data) {
       const fbError = err.response.data;
       Logger.warn(`[FacebookLoginHelper] Facebook API error (HTTP ${err.response.status}):`, JSON.stringify(fbError));
-      // Facebook trả về { error: { ... } } trong body
+      // Facebook returns { error: { ... } } in the body
       if (fbError.error) {
         return { error: fbError.error };
       }
-      // Một số response lỗi khác có cấu trúc khác
+      // Some other error responses have a different structure
       return { error: { error_user_msg: JSON.stringify(fbError), code: err.response.status } };
     }
     Logger.warn(`[FacebookLoginHelper] Network error:`, err.message);
@@ -87,7 +88,7 @@ async function postLogin(data: Record<string, string>, httpsAgent?: any): Promis
 }
 
 async function getToken2FA(key2FA: string): Promise<string> {
-  if (!key2FA) throw new Error('Thiếu mã bí mật 2FA');
+  if (!key2FA) throw new Error(tr('Thiếu mã bí mật 2FA'));
 
   // `TOTP` instances in otplib v13 have no crypto plugin by default. The old
   // implementation therefore threw CryptoPluginMissingError, then submitted a
@@ -95,21 +96,21 @@ async function getToken2FA(key2FA: string): Promise<string> {
   // level `generate` API wires its audited crypto/base32 defaults for Node.
   const cleaned = key2FA.replace(/[\s-]/g, '').toUpperCase();
   if (!/^[A-Z2-7]+=*$/.test(cleaned)) {
-    throw new Error('Mã bí mật 2FA không đúng định dạng Base32');
+    throw new Error(tr('Mã bí mật 2FA không đúng định dạng Base32'));
   }
 
   const token = await generate({ secret: cleaned });
   if (!/^\d{6}$/.test(token)) {
-    throw new Error('Không thể tạo mã 2FA gồm 6 chữ số');
+    throw new Error(tr('Không thể tạo mã 2FA gồm 6 chữ số'));
   }
   return token;
 }
 
 /**
- * Đăng nhập Facebook bằng username/password
- * username: SĐT, email hoặc Facebook ID
- * password: Mật khẩu
- * twoFASecret: Chuỗi 16 ký tự từ Facebook 2FA setup (optional)
+ * Logs in to Facebook with username/password
+ * username: phone number, email or Facebook ID
+ * password: the password
+ * twoFASecret: 16-character string from the Facebook 2FA setup (optional)
  */
 export async function loginWithCredentials(
   username: string,
@@ -177,7 +178,7 @@ export async function loginWithCredentials(
   }
 
   // 2FA required but user didn't provide a secret - return the 2FA error immediately
-  // (không thử bước 2 với password rỗng, tránh lỗi 400 ghi đè)
+  // (do not try step 2 with an empty password: avoids a 400 error overwriting the state)
   if (!twoFASecret) {
     return buildLoginResult(dataJson, 0);
   }
@@ -190,8 +191,8 @@ export async function loginWithCredentials(
     Logger.warn(`[FacebookLoginHelper] 2FA token error: ${err.message}`);
     return {
       error: {
-        title: 'Mã bí mật 2FA không hợp lệ',
-        description: err.message || 'Không thể tạo mã xác thực 2FA.',
+        title: tr('Mã bí mật 2FA không hợp lệ'),
+        description: err.message || tr('Không thể tạo mã xác thực 2FA.'),
       },
     };
   }

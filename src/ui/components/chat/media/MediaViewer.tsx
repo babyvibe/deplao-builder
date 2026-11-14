@@ -8,12 +8,13 @@ import { ensureMediaLocal } from '@/lib/media/employeeMediaSync';
 import { Spinner } from '@/components/common/PageLoading';
 import { copyImageToClipboard } from '@/lib/chat/media/copyImage';
 import { galleryInsertShift, galleryItemKey } from '@/lib/chat/media/mediaGallery';
+import { tr, appLocale } from '../../../../shared/i18n';
 
 export interface MediaViewerImage {
-  src: string;           // remote/view URL (ưu tiên cao nhất)
-  displaySrc?: string;   // local display URL (nếu có)
-  thumbSrc?: string;     // ảnh nhỏ nhất cho dải "Bộ sưu tập" (thumb Zalo / Telegram / Facebook) - không có thì dùng displaySrc
-  fallbackSrc?: string;  // fallback URL (Zalo CDN) khi src không load được
+  src: string;           // remote/view URL (highest priority)
+  displaySrc?: string;   // local display URL (if any)
+  thumbSrc?: string;     // smallest image for the "Bộ sưu tập" (Gallery) strip (Zalo / Telegram / Facebook thumb), otherwise displaySrc
+  fallbackSrc?: string;  // fallback URL (Zalo CDN) when src does not load
   alt?: string;
   localPath?: string;    // absolute local file path (for show-in-folder)
   defaultName?: string;
@@ -66,7 +67,7 @@ function clampIndex(index: number, length: number): number {
 }
 
 export default function MediaViewer({
-  src, images, initialIndex = 0, alt = 'ảnh', zaloId, onClose,
+  src, images, initialIndex = 0, alt = tr('ảnh'), zaloId, onClose,
   hasOlder = false, hasNewer = false, loadingOlder = false, loadingNewer = false, onReachStart, onReachEnd,
 }: MediaViewerProps) {
   const showNotification = useAppStore(s => s.showNotification);
@@ -120,7 +121,7 @@ export default function MediaViewer({
   currentItemKeyRef.current = currentItemKey;
   const primarySrc = (currentItemKey && repairedSrc[currentItemKey]) || current?.displaySrc || current?.src || '';
   const fallbackSrc = current?.fallbackSrc || '';
-  // Khi primarySrc lỗi → fallback sang fallbackSrc (Zalo CDN)
+  // When primarySrc fails → fall back to fallbackSrc (Zalo CDN)
   const displaySrc = useFallback && fallbackSrc ? fallbackSrc : primarySrc;
   const viewSrc = current?.src || '';
   const currentAlt = current?.alt || alt;
@@ -148,9 +149,9 @@ export default function MediaViewer({
     }
     setIsImageLoading(false); // Reset - don't show spinner immediately
     setMainImageError(false);
-    // KHÔNG reset useFallback ở đây — nếu không sẽ tạo infinite loop:
-    //   primary lỗi → useFallback(true) → effect chạy → useFallback(false) → về primary → lỗi lại → ...
-    // Chỉ reset fallback khi user chuyển ảnh (selectIndex).
+    // Do NOT reset useFallback here: that would create an infinite loop:
+    //   primary fails → useFallback(true) → effect runs → useFallback(false) → back to primary → fails again → ...
+    // Reset the fallback only when the user changes image (selectIndex).
 
     // Immediately check if the image is already loaded (cache hit).
     // img.src might not match yet on the first render tick, so we wait one frame.
@@ -331,14 +332,14 @@ export default function MediaViewer({
   const handleCopyImage = useCallback(async () => {
     closeContextMenu();
     if (!displaySrc && !viewSrc) {
-      showNotification('Không có ảnh để sao chép', 'error');
+      showNotification(tr('Không có ảnh để sao chép'), 'error');
       return;
     }
     try {
       await copyImageToClipboard({ localPath, remoteUrl: fallbackSrc || viewSrc, fallbackSrc: displaySrc || viewSrc });
-      showNotification('Đã sao chép ảnh vào clipboard', 'success');
+      showNotification(tr('Đã sao chép ảnh vào clipboard'), 'success');
     } catch (err: any) {
-      showNotification(`Không thể sao chép ảnh: ${err?.message || 'Lỗi không xác định'}`, 'error');
+      showNotification(tr('Không thể sao chép ảnh: {{v1}}', { v1: err?.message || tr('Lỗi không xác định') }), 'error');
     }
   }, [closeContextMenu, displaySrc, viewSrc, fallbackSrc, localPath, showNotification]);
 
@@ -346,7 +347,7 @@ export default function MediaViewer({
     closeContextMenu();
     const mode = useEmployeeStore.getState().mode;
     if (mode === 'employee' && localPath) {
-      // Employee: download ảnh từ Boss → show in folder
+      // Employee: download the image from the Boss → show in folder
       const bossUrl = toLocalMediaUrl(localPath);
       if (bossUrl) {
         const { localPath: cachedPath } = await ensureMediaLocal(bossUrl, 'image');
@@ -359,13 +360,13 @@ export default function MediaViewer({
     if (localPath) {
       await ipc.file?.showItemInFolder(localPath);
     } else {
-      showNotification('Ảnh chưa được tải về máy', 'info');
+      showNotification(tr('Ảnh chưa được tải về máy'), 'info');
     }
   }, [closeContextMenu, localPath, showNotification]);
 
   /**
-   * Mở ảnh ngoài app. Ảnh trên Boss (máy nhân viên): /api/media cần token phiên nhân viên, trình duyệt ngoài không có
-   * (401) → tải về máy qua main (gắn token) rồi mở bằng trình xem ảnh mặc định. URL khác (CDN) mở như cũ.
+   * Open the image outside the app. An image on the Boss (employee machine): /api/media needs the employee session token, which an external browser does not have
+   * (401) → download to this machine via main (attaching the token), then open with the default image viewer. Other URLs (CDN) open as before.
    */
   const openExternally = useCallback(async (src: string) => {
     if (!src) return;
@@ -374,7 +375,7 @@ export default function MediaViewer({
     if (mode === 'employee' && bossBase && src.startsWith(`${bossBase}/`)) {
       const { localPath: cachedPath } = await ensureMediaLocal(src, 'image');
       if (cachedPath) await ipc.file?.openPath(cachedPath);
-      else showNotification('Không tải được ảnh từ Boss', 'error');
+      else showNotification(tr('Không tải được ảnh từ Boss'), 'error');
       return;
     }
     ipc.shell?.openExternal(src);
@@ -407,7 +408,7 @@ export default function MediaViewer({
             {hasMany && (
               <span
                 className="text-white/50 text-xs bg-black/40 px-2 py-0.5 rounded-full tabular-nums"
-                title={moreOlder || moreNewer ? 'Vị trí trong số ảnh đã tải - còn ảnh khác, cuộn bộ sưu tập để tải thêm' : undefined}
+                title={moreOlder || moreNewer ? tr('Vị trí trong số ảnh đã tải - còn ảnh khác, cuộn bộ sưu tập để tải thêm') : undefined}
               >
                 {currentIndex + 1} / {imageList.length}{moreOlder || moreNewer ? '+' : ''}
               </span>
@@ -416,35 +417,35 @@ export default function MediaViewer({
           <div className="flex items-center gap-1.5 pointer-events-auto">
             {/* Zoom out */}
             <button onClick={() => transformRef.current?.zoomOut(0.5, 200)}
-              title="Thu nhỏ (-)" disabled={zoomLevel <= 0.25}
+              title={tr('Thu nhỏ (-)')} disabled={zoomLevel <= 0.25}
               className="w-8 h-8 rounded-lg bg-foreground/10 hover:bg-foreground/20 flex items-center justify-center text-foreground/80 hover:text-foreground transition-colors disabled:opacity-30">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
             {/* Zoom level */}
             <button onClick={() => transformRef.current?.resetTransform(200)}
-              title="Reset zoom (0)"
+              title={tr('Reset zoom (0)')}
               className="text-xs text-foreground/60 hover:text-foreground bg-foreground/10 hover:bg-foreground/20 rounded-lg px-2 h-8 min-w-[44px] transition-colors font-mono">
               {Math.round(zoomLevel * 100)}%
             </button>
             {/* Zoom in */}
             <button onClick={() => transformRef.current?.zoomIn(0.5, 200)}
-              title="Phóng to (+)" disabled={zoomLevel >= 6}
+              title={tr('Phóng to (+)')} disabled={zoomLevel >= 6}
               className="w-8 h-8 rounded-lg bg-foreground/10 hover:bg-foreground/20 flex items-center justify-center text-foreground/80 hover:text-foreground transition-colors disabled:opacity-30">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
             <div className="w-px h-5 bg-foreground/20 mx-1" />
             {/* Copy image (straight to the clipboard) */}
-            <button onClick={handleCopyImage} title="Copy hình ảnh"
+            <button onClick={handleCopyImage} title={tr('Copy hình ảnh')}
               className="w-8 h-8 rounded-lg bg-foreground/10 hover:bg-foreground/20 flex items-center justify-center text-foreground/80 hover:text-foreground transition-colors">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
             </button>
             {/* Open external */}
-            <button onClick={() => { void openExternally(viewSrc); }} title="Mở trong trình duyệt"
+            <button onClick={() => { void openExternally(viewSrc); }} title={tr('Mở trong trình duyệt')}
               className="w-8 h-8 rounded-lg bg-foreground/10 hover:bg-foreground/20 flex items-center justify-center text-foreground/80 hover:text-foreground transition-colors">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
             </button>
             {/* Save */}
-            <button onClick={handleSave} disabled={saving} title="Lưu ảnh"
+            <button onClick={handleSave} disabled={saving} title={tr('Lưu ảnh')}
               className="w-8 h-8 rounded-lg bg-foreground/10 hover:bg-foreground/20 flex items-center justify-center text-foreground/80 hover:text-foreground transition-colors disabled:opacity-40">
               {saving
                 ? <Spinner size={3} />
@@ -452,7 +453,7 @@ export default function MediaViewer({
               }
             </button>
             {/* Close */}
-            <button onClick={onClose} title="Đóng (Esc)"
+            <button onClick={onClose} title={tr('Đóng (Esc)')}
               className="w-8 h-8 rounded-lg bg-white/10 hover:bg-red-600/70 flex items-center justify-center text-white/80 hover:text-white transition-colors">
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/></svg>
             </button>
@@ -463,7 +464,7 @@ export default function MediaViewer({
         {canPrev && (
           <button onClick={goPrev}
             className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-black/50 hover:bg-black/80 text-white rounded-full flex items-center justify-center transition-colors shadow-lg"
-            title="Ảnh cũ hơn (←)">
+            title={tr('Ảnh cũ hơn (←)')}>
             {pendingStep?.dir === -1 && loadingOlder
               ? <Spinner size={4} />
               : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg>}
@@ -472,7 +473,7 @@ export default function MediaViewer({
         {canNext && (
           <button onClick={goNext}
             className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-black/50 hover:bg-black/80 text-white rounded-full flex items-center justify-center transition-colors shadow-lg"
-            title="Ảnh mới hơn (→)">
+            title={tr('Ảnh mới hơn (→)')}>
             {pendingStep?.dir === 1 && loadingNewer
               ? <Spinner size={4} />
               : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>}
@@ -569,7 +570,7 @@ export default function MediaViewer({
                 onLoad={() => setIsImageLoading(false)}
                 onError={() => {
                   setIsImageLoading(false);
-                  // Try-cascade: fallback to Zalo CDN URL nếu có
+                  // Try-cascade: fall back to the Zalo CDN URL if there is one
                   const img = current;
                   if (!useFallback && img?.fallbackSrc && img.fallbackSrc !== primarySrc) {
                     setUseFallback(true);
@@ -625,7 +626,7 @@ export default function MediaViewer({
                     <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                   </svg>
                 }
-                label="Copy hình ảnh"
+                label={tr('Copy hình ảnh')}
                 onClick={handleCopyImage}
               />
               <ViewerMenuItem
@@ -634,7 +635,7 @@ export default function MediaViewer({
                     <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
                   </svg>
                 }
-                label="Mở trong thư mục"
+                label={tr('Mở trong thư mục')}
                 onClick={handleShowInFolder}
               />
             </div>
@@ -643,8 +644,8 @@ export default function MediaViewer({
 
         {/* Bottom hint */}
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-foreground/30 text-xs pointer-events-none">
-          {zoomLevel <= 1.05 ? 'Cuộn để phóng to · Double-click để phóng 2x' : 'Double-click để reset · Kéo để di chuyển'}
-          {hasMany && ' · ← → để chuyển ảnh'}
+          {zoomLevel <= 1.05 ? tr('Cuộn để phóng to · Double-click để phóng 2x') : tr('Double-click để reset · Kéo để di chuyển')}
+          {hasMany && tr(' · ← → để chuyển ảnh')}
         </div>
       </div>
 
@@ -810,7 +811,7 @@ const GalleryStrip = React.memo(function GalleryStrip(props: GalleryStripProps) 
       }}
     >
       <div className="px-2 py-2 text-[11px] text-white/40 font-medium text-center border-b border-white/10 flex-shrink-0">
-        BỘ SƯU TẬP
+        {tr('BỘ SƯU TẬP')}
       </div>
       <div className="relative flex-1 min-h-0">
         <div
@@ -840,7 +841,7 @@ const GalleryStrip = React.memo(function GalleryStrip(props: GalleryStripProps) 
 
 /** URLs that failed as a tile (expired CDN thumb, missing file): skipped by later tiles. */
 const brokenThumbUrls = new Set<string>();
-const thumbTimeFormat = new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
+const thumbTimeFormat = new Intl.DateTimeFormat(appLocale(), { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
 
 /** Smallest first: thumbnail → display (local) → remote → CDN fallback. */
 function thumbCandidates(img: MediaViewerImage): string[] {
@@ -875,7 +876,7 @@ const GalleryThumb = React.memo(function GalleryThumb({ img, index, active, onSe
         marginLeft: -THUMB_SIZE / 2,
         transition: 'opacity 150ms, transform 150ms',
       }}
-      title={img.timestamp ? thumbTimeFormat.format(img.timestamp) : `Ảnh ${index + 1}${img.alt ? ': ' + img.alt : ''}`}
+      title={img.timestamp ? thumbTimeFormat.format(img.timestamp) : tr('Ảnh {{v1}}{{v2}}', { v1: index + 1, v2: img.alt ? ': ' + img.alt : '' })}
     >
       {firstSrc && (
         <img

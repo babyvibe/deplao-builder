@@ -4,6 +4,7 @@ import { hasHiddenScanConsent } from '@/lib/crm/hiddenScanConsent';
 import { useAppStore } from '@/store/app/appStore';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { ensureHiddenScanConsent } from '@/components/crm/groups/HiddenScanConsentDialog';
+import { tr } from '../../../shared/i18n';
 
 interface UseGroupMemberSyncOptions {
   accountId: string;
@@ -11,14 +12,14 @@ interface UseGroupMemberSyncOptions {
   onMembersSynced?: () => void;
 }
 
-/** synced = đã quét + lưu; declined = người dùng không đồng ý; skipped = chưa đồng ý và không hỏi; failed = lỗi. */
+/** synced = scanned + saved; declined = the user refused; skipped = not agreed and not asked; failed = error. */
 export type GroupMemberSyncOutcome = 'synced' | 'declined' | 'skipped' | 'failed';
 
 interface UseGroupMemberSyncResult {
   /**
-   * Quét đủ thành viên nhóm qua máy chủ Deplao (gửi cookie Zalo, cần người dùng đồng ý).
-   * `askConsent`: chưa đồng ý thì hỏi bằng hộp thoại (nút người dùng bấm để quét); false = bỏ qua im lặng (vd nút tải
-   * lại của panel thành viên: chỉ quét thêm khi đã đồng ý từ trước).
+   * Fully scans the group members via the Deplao server (sends the Zalo cookie, needs the user's consent).
+   * `askConsent`: if no consent yet, asks with a dialog (the button the user clicks to scan); false = silently skip (e.g. the reload button
+   * of the members panel: only scans more if consent was given earlier).
    */
   syncMembers: (options?: { askConsent?: boolean }) => Promise<GroupMemberSyncOutcome>;
 }
@@ -42,12 +43,12 @@ export function useGroupMemberSync({
   const syncMembers = useCallback(async (options: { askConsent?: boolean } = {}): Promise<GroupMemberSyncOutcome> => {
     if (!accountId || !groupId) return 'failed';
 
-    // Đúng tài khoản của nhóm (không phải tài khoản đang chọn ở nơi khác): cookie gửi đi phải là của chính tài khoản này
+    // The correct account of the group (not the account selected elsewhere): the cookie sent must be that of this same account
     const accountState = useAccountStore.getState();
     const account = accountState.accounts.find((item) => item.zalo_id === accountId) ?? accountState.getActiveAccount();
     if (!account || account.zalo_id !== accountId) return 'failed';
 
-    // Gửi cookie Zalo lên máy chủ → phải có đồng ý trước
+    // Sending the Zalo cookie to the server → consent is required first
     if (!hasHiddenScanConsent()) {
       if (!options.askConsent) return 'skipped';
       const agreed = await ensureHiddenScanConsent({ accountName: account.full_name || account.zalo_id });
@@ -65,7 +66,7 @@ export function useGroupMemberSync({
     if (!result?.success) {
       console.warn('[useGroupMemberSync] scan failed:', result?.error || 'Unknown error');
       if (options.askConsent && result?.error) {
-        useAppStore.getState().showNotification(`Không quét được thành viên: ${result.error}`, 'error');
+        useAppStore.getState().showNotification(tr('Không quét được thành viên: {{error}}', { error: result.error }), 'error');
       }
       return 'failed';
     }
@@ -74,11 +75,11 @@ export function useGroupMemberSync({
     // by the local group-info sync. Keep a known owner/admin role when a scan
     // response does not include it.
     const existing = await DataAccessor.getGroupMembers({ zaloId: accountId, groupId });
-    // Không đọc được vai trò hiện có (employee: mất kết nối BOSS) → không ghi: lưu lúc này sẽ hạ trưởng / phó nhóm
-    // thành thành viên thường
+    // Cannot read the current roles (employee: connection to BOSS lost) → do not write: saving now would demote the group leaders / deputies
+    // to regular members
     if (isReadFailure(existing)) {
       console.warn('[useGroupMemberSync] skip save — cannot read existing members:', readFailureMessage(existing));
-      useAppStore.getState().showNotification('Chưa lưu thành viên nhóm: không đọc được danh sách hiện có (mất kết nối). Thử lại sau.', 'warning');
+      useAppStore.getState().showNotification(tr('Chưa lưu thành viên nhóm: không đọc được danh sách hiện có (mất kết nối). Thử lại sau.'), 'warning');
       return 'failed';
     }
     const existingRoles = new Map(

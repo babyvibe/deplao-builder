@@ -1,7 +1,7 @@
 /**
- * Loại của một tin để chọn cách vẽ (thẻ, thiệp, sticker, RTF, bình chọn, video, thoại, thẻ ngân hàng, vị trí, tin mẫu
- * Facebook, thẻ OA Zalo, album, ảnh, file, chữ) + nội dung chữ đã parse. Thuần: dùng bộ đệm loại tin (msgTypeCache) nếu
- * có. Kênh mới có loại tin riêng: thêm cờ ở đây + nhánh vẽ ở SharedMessageContent / MessageRow.
+ * Type of a message to choose how to draw it (contact card, greeting card, sticker, RTF, poll, video, voice, bank card, location, Facebook page
+ * template message, Zalo OA card, album, photo, file, text) + the parsed text content. Pure: uses the message type cache (msgTypeCache) if
+ * available. A new channel with its own message types: add a flag here + a draw branch in SharedMessageContent / MessageRow.
  */
 import { isZinstantMsgType } from '../../../../../shared/zalo/zaloZinstant';
 import { FB_TEMPLATE_MSG_TYPE } from '../../../../../shared/facebook/facebookTemplate';
@@ -10,7 +10,7 @@ import { parseContent } from '@/lib/chat/messages/messageParser';
 import { isBankCardType, isCardType, isEcardType, isFileType, isMediaType, isRtfMsg, isStickerType, isVideoType, isVoiceType } from '@/lib/chat/messages/messageTypeUtils';
 import type { MsgTypeInfo } from '@/lib/chat/messages/messageGrouping';
 
-/** Cột attachments có đính kèm thật (không phải '', '[]', 'null'). */
+/** The attachments column holds a real attachment (not '', '[]', 'null'). */
 function hasStoredAttachments(raw: unknown): boolean {
   if (!raw) return false;
   if (Array.isArray(raw)) return raw.length > 0;
@@ -28,18 +28,18 @@ export interface MessageKind {
   isVoiceMsg: boolean;
   isBankCardMsg: boolean;
   isLocationMsg: boolean;
-  /** Tin mẫu của Page Facebook (thẻ + nút) */
+  /** Facebook Page template message (card + button) */
   isFbTemplateMsg: boolean;
-  /** Bản tin / thông báo của Official Account Zalo (zinstant) */
+  /** News / notification from a Zalo Official Account (zinstant) */
   isZinstantMsg: boolean;
-  /** Tin Facebook cũ lưu rỗng (bản trước chưa đọc được tin mẫu) */
+  /** Old Facebook message saved empty (an earlier version could not read the template message) */
   isFbEmptyMsg: boolean;
-  /** Album ảnh (tin đầu): groupMediaMsgs = mọi tin của album */
+  /** Photo album (first message): groupMediaMsgs = every message of the album */
   isGroupMedia: boolean;
   groupMediaMsgs: any[] | null;
   isMediaMsg: boolean;
   isFileMsg: boolean;
-  /** Nội dung chữ đã parse (rỗng với tin media / thẻ…) */
+  /** Parsed text content (empty for media / card messages…) */
   content: string;
 }
 
@@ -57,7 +57,7 @@ export function classifyMessage(msg: any, cached: MsgTypeInfo | undefined, group
   const isVoiceMsg = cached?.isVoice ?? isVoiceType(msg.msg_type);
   const isBankCardMsg = isBankCardType(msg.msg_type, msg.content);
   const isLocationMsg = msg.msg_type === 'chat.location.new';
-  // Tin mẫu của Page Facebook (thẻ + nút) / tin Facebook cũ lưu rỗng (bản trước chưa đọc được tin mẫu)
+  // Facebook Page template message (card + button) / old Facebook message saved empty (an earlier version could not read the template message)
   const isFbTemplateMsg = msg.msg_type === FB_TEMPLATE_MSG_TYPE;
   const isZinstantMsg = cached?.isZinstant ?? isZinstantMsgType(msg.msg_type, msg.content);
   const isFbEmptyMsg = !isFbTemplateMsg && isFacebook(msg.channel) && (!msg.msg_type || msg.msg_type === 'text')

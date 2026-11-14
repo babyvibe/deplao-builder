@@ -4,6 +4,8 @@ import { useAppStore } from '@/store/app/appStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 interface Group {
   id: string;
   name: string;
@@ -24,7 +26,7 @@ interface GroupPickerProps {
 const GroupPicker: React.FC<GroupPickerProps> = ({
   value,
   onChange,
-  placeholder = 'Chọn nhóm...',
+  placeholder = tr('Chọn nhóm...'),
   disabled = false,
   templateVars
 }) => {
@@ -52,11 +54,11 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
     const acc = accounts.find(a => a.zalo_id === selectedAccountId);
     if (!acc) {
       setLoading(false);
-      setError('Không tìm thấy tài khoản');
+      setError(tr('Không tìm thấy tài khoản'));
       return;
     }
 
-    // Nhân viên: DB nằm ở Boss — ipc.db.getContacts trên máy nhân viên chỉ trả stub `{ success: true }`
+    // Employee: the DB is on Boss; ipc.db.getContacts on an employee machine only returns a stub `{ success: true }`
     const employeeMode = useEmployeeStore.getState().mode === 'employee';
     try {
       // Load from database first
@@ -67,7 +69,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
             if (!g.id) return;
             items.push({
               id: g.id,
-              name: g.name || `Nhóm ${g.id}`,
+              name: g.name || tr('Nhóm {{id}}', { id: g.id }),
               avatar: g.avatar,
               accountId: acc.zalo_id,
               accountName: acc.full_name || acc.display_name || acc.zalo_id,
@@ -81,7 +83,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
           if (!c.contact_id || c.contact_type !== 'group') return;
           items.push({
             id: c.contact_id,
-            name: c.alias || c.display_name || c.zalo_name || `Nhóm ${c.contact_id}`,
+            name: c.alias || c.display_name || c.zalo_name || tr('Nhóm {{contact_id}}', { contact_id: c.contact_id }),
             avatar: c.avatar_url,
             accountId: acc.zalo_id,
             accountName: acc.full_name || acc.display_name || acc.zalo_id,
@@ -92,7 +94,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
       console.warn('[GroupPicker] Failed to load from DB:', err);
     }
 
-    // Load from API as backup — nhân viên đã có danh sách nhóm từ Boss thì không gọi API Zalo (qua Boss) mỗi lần mở
+    // Load from API as backup. If an employee already has the group list from Boss, do not call the Zalo API (via Boss) every time it opens
     if (!(employeeMode && items.length > 0)) try {
       const auth = buildZaloAuth(acc);
       const groupsRes = await ipc.zalo?.getGroups(auth);
@@ -105,7 +107,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
           if (existingIds.has(groupId)) return;
           items.push({
             id: groupId,
-            name: groupInfo?.name || `Nhóm ${groupId}`,
+            name: groupInfo?.name || tr('Nhóm {{groupId}}', { groupId }),
             avatar: groupInfo?.avatar || groupInfo?.avt,
             memberCount: groupInfo?.memberCount || groupInfo?.totalMember,
             accountId: acc.zalo_id,
@@ -116,7 +118,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
     } catch (err: any) {
       console.warn('[GroupPicker] Failed to load from API:', err);
       if (items.length === 0) {
-        setError('Không thể tải danh sách nhóm');
+        setError(tr('Không thể tải danh sách nhóm'));
       }
     }
 
@@ -207,7 +209,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
               </div>
               {selectedGroup.memberCount && (
                 <div className={`text-[10px] ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-                  {selectedGroup.memberCount} thành viên
+                  {trx('{{memberCount}} thành viên', { memberCount: selectedGroup.memberCount })}
                 </div>
               )}
             </div>
@@ -261,7 +263,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
               </svg>
-              Chọn
+              {tr('Chọn')}
             </button>
           </>
         )}
@@ -271,7 +273,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
       {templateVars && templateVars.length > 0 && (
         <div className={`px-3 py-2 border-t ${isLight ? 'border-gray-100 bg-gray-50' : 'border-border/50 bg-card/50'}`}>
           <div className={`text-[10px] mb-1.5 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-            Hoặc dùng biến:
+            {tr('Hoặc dùng biến:')}
           </div>
           <div className="flex flex-wrap gap-1">
             {templateVars.map(v => (
@@ -302,7 +304,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
         }`}>
           {loading ? (
             <div className={`px-4 py-3 text-center text-xs ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-              <span className="animate-pulse">Đang tải nhóm...</span>
+              <span className="animate-pulse">{tr('Đang tải nhóm...')}</span>
             </div>
           ) : error ? (
             <div className="px-4 py-3 text-center text-xs text-red-500">
@@ -310,7 +312,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
             </div>
           ) : filteredGroups.length === 0 ? (
             <div className={`px-4 py-3 text-center text-xs ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-              Không tìm thấy nhóm nào
+              {tr('Không tìm thấy nhóm nào')}
             </div>
           ) : (
             filteredGroups.map(group => (
@@ -336,7 +338,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
                   </div>
                   {group.memberCount && (
                     <div className={`text-[10px] ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-                      {group.memberCount} thành viên
+                      {trx('{{memberCount}} thành viên', { memberCount: group.memberCount })}
                     </div>
                   )}
                 </div>

@@ -1,18 +1,18 @@
 /**
- * Tìm người dùng Zalo theo số điện thoại (findUser + getUserInfo) — dùng chung cho ô tìm kiếm của danh sách hội thoại và
- * GlobalSearchPanel. Gõ một số thì cả hai cùng tìm (trước đây mỗi lần tìm gọi findUser 2 lần, mà Zalo giới hạn số lần tìm
- * SĐT mỗi ngày): lần gọi trùng (cùng tài khoản + số) khi lần trước chưa xong dùng chung kết quả của lần đó.
+ * Finds a Zalo user by phone number (findUser + getUserInfo): shared by the search box of the conversation list and
+ * GlobalSearchPanel. When a number is typed, both search together (before, each search called findUser twice, and Zalo limits the number of
+ * phone-number searches per day): a duplicate call (same account + number) while the earlier one is still running shares that call's result.
  */
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 
-/** Người dùng tìm được (kèm isFr / isBlocked nếu đọc được hồ sơ, _searchZaloId = tài khoản đã tìm) hoặc `{ _notFound: true }`. */
+/** The user found (with isFr / isBlocked if the profile could be read, _searchZaloId = the account that searched) or `{ _notFound: true }`. */
 export type ZaloPhoneLookupResult = Record<string, any>;
 
 type LookupAccount = { zalo_id: string; cookies?: string; imei?: string; user_agent?: string };
 
 const inFlight = new Map<string, Promise<ZaloPhoneLookupResult>>();
 
-/** Lỗi gọi Zalo → promise bị từ chối (người gọi giữ cách xử lý cũ: không hiện gì). */
+/** Zalo call error → the promise is rejected (the caller keeps its old handling: shows nothing). */
 export function lookupZaloUserByPhone(acc: LookupAccount, phone: string): Promise<ZaloPhoneLookupResult> {
   const number = phone.trim();
   const key = `${acc.zalo_id}|${number}`;

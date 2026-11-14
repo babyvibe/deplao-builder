@@ -1,19 +1,19 @@
 /**
- * Manifest — bố cục bản sao DB trên R2 (một bản sao cho mỗi workspace, trong bucket của máy nguồn):
+ * Manifest: layout of the DB copy on R2 (one copy per workspace, in the source machine's bucket):
  *
- *   db-index.json                                   danh sách workspace có bản sao trong bucket (máy mới tìm bản sao)
- *   <workspaceUid>/db/manifest.json                 manifest (JSON thường, không bí mật), ghi đè sau mỗi lần đẩy
- *   <workspaceUid>/db/base-<ts>.dplc                bản gốc: SQLite → gzip → DPLC1
- *   <workspaceUid>/db/seg-<fromId>-<toId>-<ts>.dplc đoạn thay đổi: JSONL → gzip → DPLC1
- *   <workspaceUid>/db/segpage-<baseAt>-<n>.json     trang danh sách đoạn cũ (bất biến) — manifest chỉ giữ phần đuôi
- *   <workspaceUid>/db/followers/<machineId>.json    nhịp tim của máy dự phòng {machine, lagMs, seenAt}
+ *   db-index.json                                   list of workspaces that have a copy in the bucket (a new machine looks for the copy here)
+ *   <workspaceUid>/db/manifest.json                 manifest (plain JSON, no secrets), overwritten after every push
+ *   <workspaceUid>/db/base-<ts>.dplc                base snapshot: SQLite → gzip → DPLC1
+ *   <workspaceUid>/db/seg-<fromId>-<toId>-<ts>.dplc change segment: JSONL → gzip → DPLC1
+ *   <workspaceUid>/db/segpage-<baseAt>-<n>.json     page of the old segment list (immutable); the manifest only keeps the tail
+ *   <workspaceUid>/db/followers/<machineId>.json    heartbeat of the standby machine {machine, lagMs, seenAt}
  *
- * Phân trang danh sách đoạn: chế độ realtime có thể đẩy hàng nghìn đoạn/ngày — manifest ghi lại sau MỖI lần đẩy nên
- * chỉ giữ ≤ 2×SEGMENT_PAGE_SIZE đoạn mới nhất; phần cũ chuyển sang trang bất biến (một lần ghi mỗi 500 đoạn).
+ * Paging the segment list: realtime mode can push thousands of segments per day. The manifest is rewritten after EVERY push, so it
+ * only keeps the ≤ 2×SEGMENT_PAGE_SIZE newest segments; older ones move to immutable pages (one write per 500 segments).
  *
- * Phạm vi (tài khoản + từ ngày): manifest + mục db-index ghi phạm vi của bản gốc và tên các tài khoản có trong bản sao.
- * Manifest cũ không ghi = tất cả. Phạm vi hiện tại khác phạm vi trong manifest → chụp gốc mới (rebaseReason).
- * (Chỉ dùng ở main — import cloudContracts lúc chạy được; worker không nạp file này.)
+ * Scope (accounts + from date): the manifest + db-index entry record the scope of the base snapshot and the names of the accounts in the copy.
+ * An old manifest without it = all. A current scope different from the manifest's scope → take a new base snapshot (rebaseReason).
+ * (Main process only: cloudContracts is imported at run time; the worker does not load this file.)
  */
 import type { R2Client } from '../contracts';
 import type { CloudScope } from '../../../shared/cloud/cloudContracts';
@@ -46,9 +46,9 @@ export interface ManifestBase {
     key: string;
     at: number;
     highWater: number;
-    /** Kích thước bản mã trên R2. */
+    /** Size of the ciphertext on R2. */
     bytes: number;
-    /** Kích thước file SQLite gốc. */
+    /** Size of the original SQLite file. */
     rawBytes: number;
 }
 
@@ -60,26 +60,26 @@ export interface DbManifest {
     machineName: string;
     appVersion: string;
     schemaFingerprint: string;
-    /** _cloud_meta.db_uid của DB nguồn — đổi = file DB đã bị thay → chụp gốc mới. */
+    /** _cloud_meta.db_uid of the source DB: a change = the DB file was replaced → take a new base snapshot. */
     dbUid: string;
-    /** 64 byte header DPLC1 của bản gốc (base64) — kiểm tra mật khẩu mà không phải tải bản gốc. */
+    /** The 64-byte DPLC1 header of the base snapshot (base64): checks the password without downloading the base snapshot. */
     passCheck: string | null;
     base: ManifestBase | null;
     segmentPages: ManifestSegmentPage[];
-    /** Phần đuôi (mới nhất) của danh sách đoạn, theo thứ tự đẩy. */
+    /** The tail (newest) of the segment list, in push order. */
     segments: ManifestSegment[];
     segmentsCount: number;
     segmentsBytes: number;
     lastSyncAt: number;
-    /** Số dòng từng bảng LÚC CHỤP GỐC (không cập nhật theo đoạn — đếm lại mỗi đoạn quá tốn ở chế độ realtime). */
+    /** Row count per table AT THE TIME OF THE BASE SNAPSHOT (not updated per segment: recounting on every segment is too costly in realtime mode). */
     rowCounts: Record<string, number>;
     rowCountsAt: number | null;
     updatedAt: number;
-    /** Phạm vi của bản gốc (tài khoản + từ ngày). Thiếu (manifest cũ) = tất cả. */
+    /** Scope of the base snapshot (accounts + from date). Missing (old manifest) = all. */
     scope?: CloudScope;
-    /** SCOPE_POLICY_VERSION lúc chụp gốc — phạm vi giới hạn mà khác phiên bản quy tắc → chụp gốc mới. */
+    /** SCOPE_POLICY_VERSION when the base snapshot was taken: a limited scope whose rule version differs → take a new base snapshot. */
     scopePolicy?: number;
-    /** Tài khoản có trong bản sao (id = accounts.zalo_id) — màn khôi phục hiện tên. */
+    /** Accounts in the copy (id = accounts.zalo_id): the restore screen shows the names. */
     accountNames?: ManifestAccount[];
 }
 
@@ -114,7 +114,7 @@ export interface FollowerHeartbeat {
     seenAt: number;
 }
 
-// ─── Khoá object ────────────────────────────────────────────────────────────
+// ─── Object keys ────────────────────────────────────────────────────────────
 
 export const dbPrefix = (uid: string) => `${uid}/db/`;
 export const manifestKey = (uid: string) => `${uid}/db/manifest.json`;
@@ -124,13 +124,13 @@ export const segmentPageKey = (uid: string, baseAt: number, index: number) => `$
 export const followersPrefix = (uid: string) => `${uid}/db/followers/`;
 export const followerKey = (uid: string, machineId: string) => `${uid}/db/followers/${machineId}.json`;
 
-/** Tên bucket sao lưu của một máy: deplao-backup-<8 ký tự đầu của machineId>. */
+/** Backup bucket name for one machine: deplao-backup-<first 8 characters of machineId>. */
 export function backupBucketName(machineId: string): string {
     const id = String(machineId || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
     return `deplao-backup-${id || 'local'}`;
 }
 
-/** Mã bản sao trên R2 dùng làm workspaceId của RemoteDbCopy: "<bucket>/<workspaceUid>". */
+/** Copy id on R2 used as the workspaceId of RemoteDbCopy: "<bucket>/<workspaceUid>". */
 export function copyIdOf(bucket: string, uid: string): string {
     return `${bucket}/${uid}`;
 }
@@ -152,7 +152,7 @@ function num(v: unknown, d = 0): number {
     return Number.isFinite(n) ? n : d;
 }
 
-/** Phạm vi ghi trong manifest / db-index (thiếu → undefined = bản cũ, coi như tất cả). */
+/** Scope recorded in the manifest / db-index (missing → undefined = old copy, treated as all). */
 export function parseScope(v: unknown): CloudScope | undefined {
     return v && typeof v === 'object' ? normalizeScope(v) : undefined;
 }
@@ -212,8 +212,8 @@ export function cloneManifest(m: DbManifest): DbManifest {
 }
 
 /**
- * Thêm một đoạn vào manifest (bản sao mới — không sửa m). Khi phần đuôi đủ 2 trang: tách trang cũ nhất ra,
- * trả về nội dung trang để ghi lên R2 TRƯỚC khi ghi manifest.
+ * Adds one segment to the manifest (returns a new copy, does not change m). When the tail reaches 2 pages: split off the oldest page,
+ * and return its content to be written to R2 BEFORE the manifest is written.
  */
 export function appendSegment(m: DbManifest, seg: ManifestSegment): { manifest: DbManifest; page: { key: string; segments: ManifestSegment[] } | null } {
     const next = cloneManifest(m);
@@ -253,7 +253,7 @@ export function parsePage(raw: Buffer | null): ManifestSegment[] | null {
     }
 }
 
-/** Toàn bộ danh sách đoạn theo thứ tự đẩy (đọc các trang — cache theo khoá vì trang bất biến). */
+/** The whole segment list in push order (reads the pages; cached by key because the pages are immutable). */
 export async function loadAllSegments(r2: R2Client, m: DbManifest, cache?: Map<string, ManifestSegment[]>): Promise<ManifestSegment[]> {
     const out: ManifestSegment[] = [];
     for (const p of m.segmentPages) {
@@ -274,10 +274,10 @@ export function totalSegments(m: DbManifest | null): number {
     return m.segmentPages.reduce((s, p) => s + p.count, 0) + m.segments.length;
 }
 
-// ─── Khi nào chụp gốc mới ───────────────────────────────────────────────────
+// ─── When to take a new base snapshot ───────────────────────────────────────────────────
 
 export const REBASE_SEGMENT_RATIO = 0.25;
-/** Không chụp gốc lại vì tỉ lệ khi tổng đoạn còn nhỏ hơn mức này (DB nhỏ: 25% vài KB = chụp lại liên tục). */
+/** Do not re-take the base snapshot because of the ratio while the total segments are still below this level (small DB: 25% of a few KB = re-snapshot all the time). */
 export const REBASE_MIN_SEGMENT_BYTES = 2 * 1024 * 1024;
 export const REBASE_WINDOW_MIN_AGE_MS = 20 * 3600_000;
 export const REBASE_MAX_AGE_MS = 30 * 3600_000;
@@ -287,15 +287,15 @@ export interface RebaseContext {
     now: number;
     fingerprint: string;
     dbUid: string;
-    /** Giờ địa phương 0..23 (mặc định new Date(now).getHours()). */
+    /** Local hour 0..23 (default new Date(now).getHours()). */
     localHour?: number;
-    /** Phạm vi đồng bộ hiện tại (thiếu = không so phạm vi). */
+    /** Current sync scope (missing = do not compare scopes). */
     scope?: CloudScope;
 }
 
 /**
- * Phạm vi hiện tại khác phạm vi của bản gốc (manifest cũ không ghi = tất cả) → 'scope'; phạm vi giới hạn mà quy tắc
- * lọc (SCOPED_TABLES) đã đổi phiên bản → 'scope-policy'.
+ * The current scope differs from the base snapshot's scope (an old manifest without one = all) → 'scope'; a limited scope whose filter rules
+ * (SCOPED_TABLES) changed version → 'scope-policy'.
  */
 export function scopeRebaseReason(m: DbManifest, scope: CloudScope): string | null {
     const cur = normalizeScope(scope);
@@ -304,7 +304,7 @@ export function scopeRebaseReason(m: DbManifest, scope: CloudScope): string | nu
     return null;
 }
 
-/** Lý do cần chụp gốc mới (null = không cần). */
+/** Reason a new base snapshot is needed (null = not needed). */
 export function rebaseReason(m: DbManifest | null, ctx: RebaseContext): string | null {
     if (!m || !m.base) return 'no-base';
     if (m.dbUid !== ctx.dbUid) return 'db-replaced';
@@ -316,7 +316,7 @@ export function rebaseReason(m: DbManifest | null, ctx: RebaseContext): string |
     if (m.segmentsBytes > REBASE_MIN_SEGMENT_BYTES && m.segmentsBytes > REBASE_SEGMENT_RATIO * m.base.bytes) return 'segments-size';
     const age = ctx.now - m.base.at;
     const hour = ctx.localHour ?? new Date(ctx.now).getHours();
-    // Gốc > 24 h: làm vào khung 02:00–04:00 nếu máy bật; quá 30 h (máy tắt ban đêm) thì làm ngay.
+    // Base older than 24 h: do it in the 02:00-04:00 window if the machine is on; older than 30 h (machine off at night) → do it right away.
     if (age >= REBASE_MAX_AGE_MS) return 'age';
     if (age >= REBASE_WINDOW_MIN_AGE_MS && hour >= 2 && hour < 4) return 'age-night';
     return null;
@@ -333,7 +333,7 @@ export function newManifest(p: {
     passCheck: string | null;
     base: ManifestBase;
     rowCounts: Record<string, number>;
-    /** Phạm vi đã áp lên bản gốc (thiếu = tất cả). */
+    /** Scope applied to the base snapshot (missing = all). */
     scope?: CloudScope;
     accountNames?: ManifestAccount[];
 }): DbManifest {
@@ -362,7 +362,7 @@ export function newManifest(p: {
     };
 }
 
-/** Đoạn có at ≤ untilTs (khôi phục về một thời điểm). Danh sách theo thứ tự đẩy nên cắt ở đoạn đầu tiên vượt mốc. */
+/** Segments with at ≤ untilTs (restore to a point in time). The list is in push order, so cut at the first segment past the mark. */
 export function segmentsUntil(list: ManifestSegment[], untilTs?: number | null): ManifestSegment[] {
     if (!untilTs) return list;
     const out: ManifestSegment[] = [];

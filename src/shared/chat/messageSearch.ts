@@ -1,28 +1,27 @@
 /**
- * Tìm tin nhắn (ô tìm kiếm của danh sách hội thoại, máy nhân viên qua REST, Public API) — dùng chung cho
- * DatabaseService.searchMessages và test.
+ * Message search (the search box of the conversation list, employee machines through REST, Public API), shared by
+ * DatabaseService.searchMessages and the tests.
  *
- * Số liệu đo trên DB thật (1,6 triệu tin, tài khoản lớn nhất 1,36 triệu, 10/2026):
- *  - Cách cũ: FTS5 khớp nguyên từ + ORDER BY timestamp trên MỌI dòng khớp ("anh" ≈ 0,6–0,8 s), và khi FTS ra 0 kết
- *    quả (gõ dở, gõ sai, từ hiếm) thì LIKE '%…%' quét cả bảng ≈ 16–30 s — đồng bộ trên tiến trình chính của Electron,
- *    cả app đứng.
- *  - Cách mới: FTS5 theo tiền tố, lấy ≤ MESSAGE_SEARCH_FTS_CANDIDATES dòng khớp mới nhất theo rowid (≈ thứ tự lưu)
- *    rồi mới xếp theo thời gian → ≤ 20 ms; không khớp thì LIKE chỉ trên MESSAGE_SEARCH_RECENT_SCAN tin gần nhất.
+ * Measured on a real DB (1.6 million messages, the largest account 1.36 million, 10/2026):
+ *  - Old way: FTS5 exact-word match + ORDER BY timestamp over EVERY matching row ("anh" ≈ 0.6-0.8 s). When FTS returns 0 results (partial typing, typos, rare words),
+ *    LIKE '%…%' scans the whole table ≈ 16-30 s. It runs on Electron's main process, so the whole app freezes.
+ *  - New way: FTS5 by prefix, takes ≤ MESSAGE_SEARCH_FTS_CANDIDATES of the newest matching rows by rowid (≈ storage order),
+ *    and only then sorts them by time → ≤ 20 ms. With no match, LIKE only runs on the MESSAGE_SEARCH_RECENT_SCAN newest messages.
  */
 
-/** Số tin trả về tối đa (giữ như trước). */
+/** Maximum number of messages returned (kept as before). */
 export const MESSAGE_SEARCH_LIMIT = 100;
-/** Số dòng khớp FTS mới nhất (theo rowid) được xét trước khi xếp theo thời gian. */
+/** Number of the newest FTS matching rows (by rowid) examined before sorting by time. */
 export const MESSAGE_SEARCH_FTS_CANDIDATES = 300;
-/** Không có FTS / FTS không khớp: LIKE chỉ trên chừng này tin gần nhất của tài khoản (không quét cả bảng). */
+/** No FTS / FTS has no match: LIKE only runs on this many of the account's newest messages (not a scan of the whole table). */
 export const MESSAGE_SEARCH_RECENT_SCAN = 10_000;
 
 const MAX_TOKENS = 8;
 const MAX_TOKEN_LENGTH = 64;
-/** Số chữ d / đ tối đa được thử cả hai cách viết trong một từ (2^3 = 8 biến thể). */
+/** Max number of "d" / "đ" characters that are tried in both spellings within one word (2^3 = 8 variants). */
 const MAX_D_POSITIONS = 3;
 
-/** Các biến thể d / đ của một từ: unicode61 bỏ dấu (à → a, ơ → o) nhưng giữ đ, nên gõ không dấu "don" phải thử "đon". */
+/** The "d" / "đ" variants of a word: unicode61 drops diacritics ("à" → "a", "ơ" → "o") but keeps "đ", so typing "don" without accents must also try "đon". */
 function dVariants(token: string): string[] {
   const positions: number[] = [];
   for (let i = 0; i < token.length && positions.length < MAX_D_POSITIONS; i += 1) {
@@ -39,11 +38,11 @@ function dVariants(token: string): string[] {
 }
 
 /**
- * Từ khoá người dùng gõ → truy vấn FTS5 cho bảng messages_fts (tokenizer unicode61):
- *  - tách theo mọi ký tự không phải chữ / số (dấu câu, ký tự đặc biệt của cú pháp FTS5, emoji) → không lỗi cú pháp;
- *  - mỗi từ đặt trong "…" và tìm theo tiền tố ("xin ch" khớp "xin chào" khi đang gõ dở), các từ nối bằng AND;
- *  - từ có d / đ thử cả hai cách viết ("don hang" khớp "Đơn hàng").
- * Trả null khi không còn từ nào để tìm qua FTS.
+ * Keywords typed by the user → FTS5 query for the messages_fts table (unicode61 tokenizer):
+ *  - split on every character that is not a letter / digit (punctuation, FTS5 syntax special characters, emoji), so there are no syntax errors;
+ *  - each word goes inside "…" and is matched by prefix ("xin ch" matches "xin chào" while typing), and the words are joined with AND;
+ *  - a word with "d" / "đ" tries both spellings ("don hang" matches "Đơn hàng").
+ * Returns null when no words are left to search through FTS.
  */
 export function buildMessageFtsQuery(text: string): string | null {
   const tokens = String(text ?? '')

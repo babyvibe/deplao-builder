@@ -1,16 +1,16 @@
 /**
- * ConversationActions - Shared action rows cho cả group & user conversation panel.
+ * ConversationActions - Shared action rows for both the group and user conversation panels.
  *
- * Cung cấp:
- *  - <DangerActionRow>       - 1 row action (icon + label + chevron), dùng cho mọi loại action
- *  - <DeleteHistoryAction>   - Xoá lịch sử trò chuyện (chỉ trên app, xoá DB local)
- *  - <ReportAction>          - Báo xấu (gọi API reportUser hoặc reportGroup)
- *  - <LeaveGroupAction>      - Rời nhóm
- *  - <BlockUserAction>       - Chặn/bỏ chặn tin nhắn và cuộc gọi
- *  - <RemoveFriendAction>    - Xoá bạn bè
- *  - <MutualGroupsRow>       - Nhóm chung (x), mở sub-panel
- *  - <GroupActionSection>    - Kết hợp các action cho group (báo xấu + xoá lịch sử + rời nhóm)
- *  - <UserActionSection>     - Kết hợp các action cho user (nhóm chung + chặn + báo xấu + xoá bạn + xoá lịch sử)
+ * Provides:
+ *  - <DangerActionRow>       - one action row (icon + label + chevron), used for every action type
+ *  - <DeleteHistoryAction>   - Delete chat history (app only, deletes the local DB)
+ *  - <ReportAction>          - Report (calls the reportUser or reportGroup API)
+ *  - <LeaveGroupAction>      - Leave the group
+ *  - <BlockUserAction>       - Block / unblock messages and calls
+ *  - <RemoveFriendAction>    - Remove a friend
+ *  - <MutualGroupsRow>       - Mutual groups (x), opens a sub-panel
+ *  - <GroupActionSection>    - Group actions combined (report + delete history + leave group)
+ *  - <UserActionSection>     - User actions combined (mutual groups + block + report + remove friend + delete history)
  */
 
 import React, { useEffect, useState } from 'react';
@@ -25,6 +25,7 @@ import type { ChannelCapability } from '../../../../configs/channels/channelConf
 import * as channelIpc from '@/lib/channels/channelIpc';
 import { CHANNEL, isZalo } from '@/lib/channels/channelHelper';
 import { getAdapter } from '@/lib/channels/adapters/registry';
+import { tr } from '../../../../shared/i18n';
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 function useAuth() {
@@ -77,7 +78,7 @@ export function DangerActionRow({
   );
 }
 
-// ─── Xoá lịch sử trò chuyện (local only) ────────────────────────────────────
+// ─── Delete chat history (local only) ────────────────────────────────────
 interface DeleteHistoryActionProps {
   threadId: string;
   onDeleted?: () => void;
@@ -91,9 +92,9 @@ export function DeleteHistoryAction({ threadId, onDeleted }: DeleteHistoryAction
 
   const handleDelete = async () => {
     const ok = await showConfirm({
-      title: 'Xoá lịch sử trò chuyện?',
-      message: 'Tất cả tin nhắn sẽ bị xoá khỏi thiết bị này. Thao tác không thể hoàn tác.',
-      confirmText: 'Xoá lịch sử',
+      title: tr('Xoá lịch sử trò chuyện?'),
+      message: tr('Tất cả tin nhắn sẽ bị xoá khỏi thiết bị này. Thao tác không thể hoàn tác.'),
+      confirmText: tr('Xoá lịch sử'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -102,10 +103,10 @@ export function DeleteHistoryAction({ threadId, onDeleted }: DeleteHistoryAction
     try {
       await DataAccessor.deleteConversation({ zaloId: activeAccountId, contactId: threadId });
       setMessages(activeAccountId, threadId, []);
-      showNotification('Đã xoá lịch sử trò chuyện', 'success');
+      showNotification(tr('Đã xoá lịch sử trò chuyện'), 'success');
       onDeleted?.();
     } catch (e: any) {
-      showNotification(extractApiError(e, 'Xoá lịch sử thất bại'), 'error');
+      showNotification(extractApiError(e, tr('Xoá lịch sử thất bại')), 'error');
     } finally {
       setLoading(false);
     }
@@ -119,8 +120,8 @@ export function DeleteHistoryAction({ threadId, onDeleted }: DeleteHistoryAction
           <path d="M9 6V4h6v2"/>
         </svg>
       }
-      label="Xoá lịch sử trò chuyện"
-      sublabel="Chỉ xoá trên thiết bị này"
+      label={tr('Xoá lịch sử trò chuyện')}
+      sublabel={tr('Chỉ xoá trên thiết bị này')}
       onClick={handleDelete}
       variant="danger"
       disabled={loading}
@@ -128,9 +129,9 @@ export function DeleteHistoryAction({ threadId, onDeleted }: DeleteHistoryAction
   );
 }
 
-// ─── Báo xấu ─────────────────────────────────────────────────────────────────
+// ─── Report ─────────────────────────────────────────────────────────────────
 interface ReportActionProps {
-  targetId: string;        // userId hoặc groupId
+  targetId: string;        // userId or groupId
   targetName: string;
   targetType: 'user' | 'group';
   onReported?: () => void;
@@ -143,11 +144,11 @@ export function ReportAction({ targetId, targetName, targetType, onReported }: R
 
   const handleReport = async () => {
     const ok = await showConfirm({
-      title: `Báo xấu ${targetName}?`,
+      title: tr('Báo xấu {{targetName}}?', { targetName }),
       message: targetType === 'group'
-        ? 'Báo cáo nhóm này vi phạm tiêu chuẩn cộng đồng.'
-        : 'Báo cáo tài khoản này vi phạm tiêu chuẩn cộng đồng.',
-      confirmText: 'Báo xấu',
+        ? tr('Báo cáo nhóm này vi phạm tiêu chuẩn cộng đồng.')
+        : tr('Báo cáo tài khoản này vi phạm tiêu chuẩn cộng đồng.'),
+      confirmText: tr('Báo xấu'),
       variant: 'warning',
     });
     if (!ok) return;
@@ -160,10 +161,10 @@ export function ReportAction({ targetId, targetName, targetType, onReported }: R
       } else {
         await (ipc.zalo as any)?.reportUser?.({ auth, userId: targetId, reason: 0 });
       }
-      showNotification(`Đã báo xấu ${targetName}`, 'success');
+      showNotification(tr('Đã báo xấu {{targetName}}', { targetName }), 'success');
       onReported?.();
     } catch (e: any) {
-      showNotification(extractApiError(e, 'Báo xấu thất bại'), 'error');
+      showNotification(extractApiError(e, tr('Báo xấu thất bại')), 'error');
     } finally {
       setLoading(false);
     }
@@ -177,7 +178,7 @@ export function ReportAction({ targetId, targetName, targetType, onReported }: R
           <line x1="4" y1="22" x2="4" y2="15"/>
         </svg>
       }
-      label="Báo xấu"
+      label={tr('Báo xấu')}
       onClick={handleReport}
       variant="warning"
       disabled={loading}
@@ -185,7 +186,7 @@ export function ReportAction({ targetId, targetName, targetType, onReported }: R
   );
 }
 
-// ─── Rời nhóm ─────────────────────────────────────────────────────────────────
+// ─── Leave group ─────────────────────────────────────────────────────────────────
 interface LeaveGroupActionProps {
   groupId: string;
   groupName: string;
@@ -201,9 +202,9 @@ export function LeaveGroupAction({ groupId, groupName, channel = CHANNEL.ZALO, o
 
   const handleLeave = async () => {
     const ok = await showConfirm({
-      title: 'Rời khỏi nhóm này?',
-      message: `Bạn sẽ rời khỏi "${groupName}" và không nhận tin nhắn mới.`,
-      confirmText: 'Rời nhóm',
+      title: tr('Rời khỏi nhóm này?'),
+      message: tr('Bạn sẽ rời khỏi "{{groupName}}" và không nhận tin nhắn mới.', { groupName }),
+      confirmText: tr('Rời nhóm'),
       variant: 'warning',
     });
     if (!ok) return;
@@ -216,13 +217,13 @@ export function LeaveGroupAction({ groupId, groupName, channel = CHANNEL.ZALO, o
         ? await ipc.zalo?.leaveGroup({ auth, groupId })
         : await (getAdapter(channel as any) as any).leaveGroup({ accountId: activeAccountId, threadId: groupId });
       if (res?.success) {
-        showNotification('Đã rời khỏi nhóm', 'success');
+        showNotification(tr('Đã rời khỏi nhóm'), 'success');
         onLeft?.();
       } else {
-        showNotification(extractApiError(res, 'Rời nhóm thất bại'), 'error');
+        showNotification(extractApiError(res, tr('Rời nhóm thất bại')), 'error');
       }
     } catch (e: any) {
-      showNotification(extractApiError(e, 'Rời nhóm thất bại'), 'error');
+      showNotification(extractApiError(e, tr('Rời nhóm thất bại')), 'error');
     } finally {
       setLoading(false);
     }
@@ -237,7 +238,7 @@ export function LeaveGroupAction({ groupId, groupName, channel = CHANNEL.ZALO, o
           <line x1="21" y1="12" x2="9" y2="12"/>
         </svg>
       }
-      label="Rời nhóm"
+      label={tr('Rời nhóm')}
       onClick={handleLeave}
       variant="danger"
       disabled={loading}
@@ -245,7 +246,7 @@ export function LeaveGroupAction({ groupId, groupName, channel = CHANNEL.ZALO, o
   );
 }
 
-// ─── Chặn/Bỏ chặn tin nhắn và cuộc gọi ──────────────────────────────────────
+// ─── Block / unblock messages and calls ──────────────────────────────────────
 interface BlockUserActionProps {
   userId: string;
   userName: string;
@@ -261,9 +262,9 @@ export function BlockUserAction({ userId, userName, channel }: BlockUserActionPr
 
   const handleToggle = async () => {
     const ok = !isBlocked ? await showConfirm({
-      title: `Chặn ${userName}?`,
-      message: 'Họ sẽ không thể gửi tin nhắn hay gọi điện cho bạn.',
-      confirmText: 'Chặn',
+      title: tr('Chặn {{userName}}?', { userName }),
+      message: tr('Họ sẽ không thể gửi tin nhắn hay gọi điện cho bạn.'),
+      confirmText: tr('Chặn'),
       variant: 'warning',
     }) : true;
     if (!ok) return;
@@ -274,17 +275,17 @@ export function BlockUserAction({ userId, userName, channel }: BlockUserActionPr
         const res = await channelIpc.unblockUser(channel, { accountId: activeAccountId, userId });
         if (res.success !== false) {
           setIsBlocked(false);
-          showNotification(`Đã bỏ chặn ${userName}`, 'success');
-        } else showNotification(extractApiError(res, 'Bỏ chặn thất bại'), 'error');
+          showNotification(tr('Đã bỏ chặn {{userName}}', { userName }), 'success');
+        } else showNotification(extractApiError(res, tr('Bỏ chặn thất bại')), 'error');
       } else {
         const res = await channelIpc.blockUser(channel, { accountId: activeAccountId, userId });
         if (res.success !== false) {
           setIsBlocked(true);
-          showNotification(`Đã chặn ${userName}`, 'success');
-        } else showNotification(extractApiError(res, 'Chặn thất bại'), 'error');
+          showNotification(tr('Đã chặn {{userName}}', { userName }), 'success');
+        } else showNotification(extractApiError(res, tr('Chặn thất bại')), 'error');
       }
     } catch (e: any) {
-      showNotification(extractApiError(e, 'Thao tác thất bại'), 'error');
+      showNotification(extractApiError(e, tr('Thao tác thất bại')), 'error');
     } finally {
       setLoading(false);
     }
@@ -303,7 +304,7 @@ export function BlockUserAction({ userId, userName, channel }: BlockUserActionPr
           </svg>
         )
       }
-      label={isBlocked ? 'Bỏ chặn tin nhắn và cuộc gọi' : 'Chặn tin nhắn và cuộc gọi'}
+      label={isBlocked ? tr('Bỏ chặn tin nhắn và cuộc gọi') : tr('Chặn tin nhắn và cuộc gọi')}
       onClick={handleToggle}
       variant={isBlocked ? 'default' : 'warning'}
       disabled={loading}
@@ -311,7 +312,7 @@ export function BlockUserAction({ userId, userName, channel }: BlockUserActionPr
   );
 }
 
-// ─── Xoá bạn bè ──────────────────────────────────────────────────────────────
+// ─── Remove friend ──────────────────────────────────────────────────────────────
 interface RemoveFriendActionProps {
   userId: string;
   userName: string;
@@ -326,9 +327,9 @@ export function RemoveFriendAction({ userId, userName, onRemoved }: RemoveFriend
 
   const handleRemove = async () => {
     const ok = await showConfirm({
-      title: `Xoá bạn bè với ${userName}?`,
-      message: 'Bạn sẽ không còn là bạn bè và cần gửi lời mời kết bạn lại.',
-      confirmText: 'Xoá bạn',
+      title: tr('Xoá bạn bè với {{userName}}?', { userName }),
+      message: tr('Bạn sẽ không còn là bạn bè và cần gửi lời mời kết bạn lại.'),
+      confirmText: tr('Xoá bạn'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -338,17 +339,17 @@ export function RemoveFriendAction({ userId, userName, onRemoved }: RemoveFriend
     try {
       const res = await ipc.zalo?.removeFriend({ auth, userId });
       if (res?.success !== false) {
-        // Xoá khỏi DB local
+        // Remove from the local DB
         if (activeAccountId) {
           await DataAccessor.removeFriend({ zaloId: activeAccountId, userId }).catch(() => {});
         }
-        showNotification(`Đã xoá bạn bè ${userName}`, 'success');
+        showNotification(tr('Đã xoá bạn bè {{userName}}', { userName }), 'success');
         onRemoved?.();
       } else {
-        showNotification(extractApiError(res, 'Xoá bạn thất bại'), 'error');
+        showNotification(extractApiError(res, tr('Xoá bạn thất bại')), 'error');
       }
     } catch (e: any) {
-      showNotification(extractApiError(e, 'Xoá bạn thất bại'), 'error');
+      showNotification(extractApiError(e, tr('Xoá bạn thất bại')), 'error');
     } finally {
       setLoading(false);
     }
@@ -363,7 +364,7 @@ export function RemoveFriendAction({ userId, userName, onRemoved }: RemoveFriend
           <line x1="23" y1="11" x2="17" y2="11"/>
         </svg>
       }
-      label="Xoá khỏi danh sách bạn bè"
+      label={tr('Xoá khỏi danh sách bạn bè')}
       onClick={handleRemove}
       variant="danger"
       disabled={loading}
@@ -371,7 +372,7 @@ export function RemoveFriendAction({ userId, userName, onRemoved }: RemoveFriend
   );
 }
 
-// ─── Nhóm chung ───────────────────────────────────────────────────────────────
+// ─── Mutual groups ───────────────────────────────────────────────────────────────
 interface MutualGroupsRowProps {
   userId: string;
   onOpen: () => void;
@@ -419,7 +420,7 @@ export function MutualGroupsRow({ userId, onOpen }: MutualGroupsRowProps) {
           <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
         </svg>
       }
-      label={count !== null ? `Nhóm chung (${count})` : 'Nhóm chung'}
+      label={count !== null ? tr('Nhóm chung ({{count}})', { count }) : tr('Nhóm chung')}
       onClick={onOpen}
       variant="default"
     />
@@ -427,13 +428,13 @@ export function MutualGroupsRow({ userId, onOpen }: MutualGroupsRowProps) {
 }
 
 // ─── GroupActionSection ───────────────────────────────────────────────────────
-// Section gộp: Báo xấu + Xoá lịch sử + Rời nhóm
-// Đặt dưới danh sách thành viên trong GroupInfoPanel
+// Combined section: Report + Delete history + Leave group
+// Placed below the member list in GroupInfoPanel
 
 interface GroupActionSectionProps {
   groupId: string;
   groupName: string;
-  isOwner: boolean;   // owner không được rời (phải giải tán)
+  isOwner: boolean;   // The owner cannot leave (must dissolve the group)
   onLeft?: () => void;
   channelCap?: ChannelCapability;
 }
@@ -453,8 +454,8 @@ export function GroupActionSection({ groupId, groupName, isOwner, onLeft, channe
 }
 
 // ─── UserActionSection ────────────────────────────────────────────────────────
-// Section gộp: Nhóm chung + Chặn + Báo xấu + Xoá bạn + Xoá lịch sử
-// Đặt dưới media section trong ConversationInfo (user)
+// Combined section: Mutual groups + Block + Report + Remove friend + Delete history
+// Placed below the media section in ConversationInfo (user)
 
 interface UserActionSectionProps {
   userId: string;

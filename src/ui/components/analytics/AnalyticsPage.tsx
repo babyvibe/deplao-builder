@@ -25,6 +25,8 @@ import {
 } from '@/lib/analytics/mergeAnalytics';
 import { engagementNotes, engagementPercents, formatRate } from '@/lib/analytics/engagementView';
 import type { OutreachStats } from '../../../shared/analytics/messageEngagement';
+import { tr, appLocale } from '../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ── Types (DB report shapes, shared with the multi-account merge) ──────────────
 type OverviewData = DashboardOverview;
@@ -41,7 +43,7 @@ const ST_CLS: Record<string, string> = {
   active: 'bg-green-500/20 text-green-400', paused: 'bg-yellow-500/20 text-yellow-400',
   done: 'bg-blue-500/20 text-blue-400', draft: 'bg-muted text-muted-foreground',
 };
-const ST_LABEL: Record<string, string> = { active: '▶ Chạy', paused: '⏸ Dừng', done: '✓ Xong', draft: 'Nháp' };
+const ST_LABEL: Record<string, string> = { active: tr('▶ Chạy'), paused: tr('⏸ Dừng'), done: '✓ Xong', draft: tr('Nháp') };
 const EMPTY_FRIEND_REQUESTS: FriendRequestStats = { totalSent: 0, totalReceived: 0, timeline: [] };
 
 /** Account name as in the account filter (AccountMultiDropdown). */
@@ -76,7 +78,7 @@ function Hint({ children }: { children: React.ReactNode }) {
 }
 
 const SECTION_LABEL: Record<SectionFailure['section'], string> = {
-  workflow: 'Workflow', responseTime: 'thời gian phản hồi', ai: 'AI',
+  workflow: 'Workflow', responseTime: tr('thời gian phản hồi'), ai: 'AI',
 };
 
 /** Non-blocking warning: the report still shows the accounts / blocks that loaded. */
@@ -90,20 +92,20 @@ function ReportWarnings({ failedAccounts, failedSections, loadError, totalAccoun
       <div className="space-y-0.5 min-w-0">
         {failedAccounts.length > 0 && (
           <p>
-            Không tải được dữ liệu của{' '}
+            {tr('Không tải được dữ liệu của ')}
             {failedAccounts.map((f, i) => (
               <React.Fragment key={f.zaloId}>
                 {i > 0 && ', '}
                 <span className="font-semibold" title={f.error}>{accountLabel(accountsById.get(f.zaloId), f.zaloId)}</span>
               </React.Fragment>
             ))}
-            {' '}- số liệu bên dưới chỉ gồm {Math.max(0, totalAccounts - failedAccounts.length)}/{totalAccounts} tài khoản.
+            {trx(' - số liệu bên dưới chỉ gồm {{v1}}/{{totalAccounts}} tài khoản.', { v1: Math.max(0, totalAccounts - failedAccounts.length), totalAccounts })}
           </p>
         )}
         {failedSections.map(f => (
-          <p key={f.section}>Không tải được mục {SECTION_LABEL[f.section]}: {f.error}</p>
+          <p key={f.section}>{trx('Không tải được mục {{v1}}: {{error}}', { v1: SECTION_LABEL[f.section], error: f.error })}</p>
         ))}
-        {loadError && <p>Không tải được báo cáo: {loadError}</p>}
+        {loadError && <p>{trx('Không tải được báo cáo: {{loadError}}', { loadError })}</p>}
       </div>
     </div>
   );
@@ -130,7 +132,7 @@ function KPICard({ icon, label, value, sub, trend, color = 'blue' }: {
         <span className="text-xs text-muted-foreground font-medium">{label}</span>
       </div>
       <div className="flex items-end gap-2">
-        <span className="text-2xl font-bold text-foreground">{typeof value === 'number' ? value.toLocaleString('vi-VN') : value}</span>
+        <span className="text-2xl font-bold text-foreground">{typeof value === 'number' ? value.toLocaleString(appLocale()) : value}</span>
         {trend && (
           <span className={`text-xs font-semibold pb-0.5 ${trend.positive ? 'text-emerald-400' : 'text-red-400'}`}>
             {trend.positive ? '▲' : '▼'} {trend.value}
@@ -162,7 +164,7 @@ const ChartTooltip = ({ active, payload, label }: any) => {
             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color || p.fill }} />
             <span className="text-foreground/80">{p.name}</span>
           </span>
-          <span className="font-bold text-foreground">{typeof p.value === 'number' ? p.value.toLocaleString('vi-VN') : p.value}</span>
+          <span className="font-bold text-foreground">{typeof p.value === 'number' ? p.value.toLocaleString(appLocale()) : p.value}</span>
         </div>
       ))}
     </div>
@@ -178,7 +180,7 @@ const PieTooltip = ({ active, payload }: any) => {
         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: d.fill || d.color }} />
         <span className="text-foreground font-medium">{d.name || d.type}</span>
       </div>
-      <span className="text-blue-300 font-bold">{(d.value || d.count || 0).toLocaleString('vi-VN')}</span>
+      <span className="text-blue-300 font-bold">{(d.value || d.count || 0).toLocaleString(appLocale())}</span>
     </div>
   );
 };
@@ -218,18 +220,18 @@ function HeatmapGrid({ data }: { data: HeatmapPoint[] }) {
               return (
                 <div key={h}
                   className={`flex-1 aspect-square rounded-sm ${getColor(count)} transition-colors`}
-                  title={`${day} ${h}:00 - ${count} tin nhắn`}
+                  title={tr('{{day}} {{h}}:00 - {{count}} tin nhắn', { day, h, count })}
                 />
               );
             })}
           </div>
         ))}
         <div className="flex items-center gap-1 mt-2 ml-8">
-          <span className="text-[9px] text-muted-foreground">Ít</span>
+          <span className="text-[9px] text-muted-foreground">{tr('Ít')}</span>
           {['bg-card', 'bg-blue-900/40', 'bg-blue-700/50', 'bg-blue-600/60', 'bg-blue-500/70', 'bg-blue-400/80'].map((c, i) => (
             <div key={i} className={`w-3 h-3 rounded-sm ${c}`} />
           ))}
-          <span className="text-[9px] text-muted-foreground">Nhiều</span>
+          <span className="text-[9px] text-muted-foreground">{tr('Nhiều')}</span>
         </div>
       </div>
     </div>
@@ -239,12 +241,12 @@ function HeatmapGrid({ data }: { data: HeatmapPoint[] }) {
 // ── Tabs ───────────────────────────────────────────────────────────────────────
 type TabId = AnalyticsTabId;
 const TABS: { id: TabId; icon: React.ReactNode; label: string }[] = [
-  { id: 'overview', icon: <ChartIcon className="w-4 h-4" />, label: 'Tổng quan' },
-  { id: 'messages', icon: <ChatIcon className="w-4 h-4" />, label: 'Tin nhắn' },
-  { id: 'contacts', icon: <UsersIcon className="w-4 h-4" />, label: 'Liên hệ' },
-  { id: 'labels', icon: <TagIcon className="w-4 h-4" />, label: 'Nhãn' },
-  { id: 'employees', icon: <UserIcon className="w-4 h-4" />, label: 'Nhân viên' },
-  { id: 'campaigns', icon: <CampaignIcon className="w-4 h-4" />, label: 'Chiến dịch' },
+  { id: 'overview', icon: <ChartIcon className="w-4 h-4" />, label: tr('Tổng quan') },
+  { id: 'messages', icon: <ChatIcon className="w-4 h-4" />, label: tr('Tin nhắn') },
+  { id: 'contacts', icon: <UsersIcon className="w-4 h-4" />, label: tr('Liên hệ') },
+  { id: 'labels', icon: <TagIcon className="w-4 h-4" />, label: tr('Nhãn') },
+  { id: 'employees', icon: <UserIcon className="w-4 h-4" />, label: tr('Nhân viên') },
+  { id: 'campaigns', icon: <CampaignIcon className="w-4 h-4" />, label: tr('Chiến dịch') },
   { id: 'workflow', icon: <LightningIcon className="w-4 h-4" />, label: 'Workflow' },
   { id: 'ai', icon: <BotIcon className="w-4 h-4" />, label: 'AI' },
 ];
@@ -257,90 +259,90 @@ type ContactType = 'all' | 'user' | 'group';
 // ── Guide Modal ────────────────────────────────────────────────────────────────
 const GUIDE_CONTENT: Record<TabId, { title: string; sections: Array<{ heading: string; content: string }> }> = {
   overview: {
-    title: 'Hướng dẫn - Tổng quan',
+    title: tr('Hướng dẫn - Tổng quan'),
     sections: [
-      { heading: 'Tin nhắn hôm nay', content: 'Tin gửi + nhận từ 00:00 hôm nay đến hiện tại. Mũi tên ▲ / ▼ so sánh với cả ngày hôm qua (không hiện khi hôm qua không có tin).' },
-      { heading: 'Tổng tin nhắn', content: 'Tin gửi + nhận trong khoảng thời gian và loại hội thoại đang chọn.' },
-      { heading: 'Liên hệ, Nhóm', content: 'Liên hệ: số liên hệ cá nhân đã lưu, kèm số bạn bè. Nhóm: số nhóm đã lưu. Hai số này là tổng hiện có, không đổi theo khoảng thời gian.' },
-      { heading: 'Chiến dịch, Lời mời KB', content: 'Chiến dịch: tổng số chiến dịch và số đang chạy. Lời mời KB: lời mời kết bạn đã gửi và đã nhận trong khoảng thời gian.' },
-      { heading: 'Workflow chạy, AI requests', content: 'Workflow chạy: số lượt chạy và % thành công trong khoảng thời gian. AI requests: số request và tokens, tính trên toàn ứng dụng.' },
-      { heading: 'Biểu đồ tin nhắn', content: 'Tin gửi / nhận theo giờ khi khoảng thời gian từ 2 ngày trở xuống (Hôm nay, Hôm qua), theo ngày lịch khi dài hơn. Ngày tính theo giờ máy: "7 ngày" = hôm nay và 6 ngày trước, mỗi điểm là một ngày từ 00:00 đến 23:59, điểm cuối là hôm nay.' },
-      { heading: 'Tăng trưởng liên hệ', content: 'Số hội thoại 1-1 theo ngày: mỗi hội thoại được tính một lần, vào ngày có tin nhắn đầu tiên trong khoảng thời gian đang chọn.' },
-      { heading: 'Chi tiết theo từng nhãn', content: 'Số lượt gắn Nhãn Local trong khoảng thời gian, nhãn dùng nhiều nhất ở trên (không gồm nhãn Zalo).' },
-      { heading: 'Theo tài khoản', content: 'Hiện khi chọn từ 2 tài khoản: tin nhắn, gửi, nhận, hôm nay, liên hệ, bạn bè, nhóm và tỷ trọng tin nhắn của từng tài khoản, nhiều tin nhất ở trên.' },
+      { heading: tr('Tin nhắn hôm nay'), content: tr('Tin gửi + nhận từ 00:00 hôm nay đến hiện tại. Mũi tên ▲ / ▼ so sánh với cả ngày hôm qua (không hiện khi hôm qua không có tin).') },
+      { heading: tr('Tổng tin nhắn'), content: tr('Tin gửi + nhận trong khoảng thời gian và loại hội thoại đang chọn.') },
+      { heading: tr('Liên hệ, Nhóm'), content: tr('Liên hệ: số liên hệ cá nhân đã lưu, kèm số bạn bè. Nhóm: số nhóm đã lưu. Hai số này là tổng hiện có, không đổi theo khoảng thời gian.') },
+      { heading: tr('Chiến dịch, Lời mời KB'), content: tr('Chiến dịch: tổng số chiến dịch và số đang chạy. Lời mời KB: lời mời kết bạn đã gửi và đã nhận trong khoảng thời gian.') },
+      { heading: tr('Workflow chạy, AI requests'), content: tr('Workflow chạy: số lượt chạy và % thành công trong khoảng thời gian. AI requests: số request và tokens, tính trên toàn ứng dụng.') },
+      { heading: tr('Biểu đồ tin nhắn'), content: tr('Tin gửi / nhận theo giờ khi khoảng thời gian từ 2 ngày trở xuống (Hôm nay, Hôm qua), theo ngày lịch khi dài hơn. Ngày tính theo giờ máy: "7 ngày" = hôm nay và 6 ngày trước, mỗi điểm là một ngày từ 00:00 đến 23:59, điểm cuối là hôm nay.') },
+      { heading: tr('Tăng trưởng liên hệ'), content: tr('Số hội thoại 1-1 theo ngày: mỗi hội thoại được tính một lần, vào ngày có tin nhắn đầu tiên trong khoảng thời gian đang chọn.') },
+      { heading: tr('Chi tiết theo từng nhãn'), content: tr('Số lượt gắn Nhãn Local trong khoảng thời gian, nhãn dùng nhiều nhất ở trên (không gồm nhãn Zalo).') },
+      { heading: tr('Theo tài khoản'), content: tr('Hiện khi chọn từ 2 tài khoản: tin nhắn, gửi, nhận, hôm nay, liên hệ, bạn bè, nhóm và tỷ trọng tin nhắn của từng tài khoản, nhiều tin nhất ở trên.') },
     ],
   },
   messages: {
-    title: 'Hướng dẫn - Tin nhắn',
+    title: tr('Hướng dẫn - Tin nhắn'),
     sections: [
-      { heading: 'KPI', content: 'Hôm nay: tin gửi + nhận từ 00:00 hôm nay. Tổng tin nhắn: trong khoảng thời gian đang chọn. TB/ngày: tổng tin chia số ngày của khoảng. Tỷ lệ gửi: % tin bạn gửi trên tổng.' },
-      { heading: 'Tin gửi đi', content: 'Người nhận: số hội thoại 1-1 có tin bạn gửi trong khoảng, mỗi người tính một lần theo tin đầu tiên. Đã nhận: nền tảng báo đã nhận (Zalo, Facebook; Telegram không có). Đã xem: có báo đã xem hoặc khách đã trả lời. Đã phản hồi: khách nhắn lại sau tin của bạn (bỏ tin hệ thống). Zalo chỉ báo "đã xem" khi người nhận bật trạng thái Đã xem; Deplao cần đang mở để nhận các báo này. Chọn nhiều tài khoản thì có bảng theo tài khoản: tài khoản gửi nhiều mà ít người nhận / xem là dấu hiệu bị hạn chế.' },
-      { heading: 'Thời gian phản hồi', content: 'Đo từ lúc khách nhắn đến khi bạn trả lời, chỉ tính chat 1-1 và các lần trả lời trong vòng 7 ngày (bỏ qua hội thoại bị bỏ quên). Không hiện khi chọn loại hội thoại "Nhóm".\n\n• TB phản hồi: thời gian trả lời trung bình\n• Trung vị: một nửa số lần trả lời nhanh hơn con số này\n• Nhanh nhất / Chậm nhất: hai mức cực trị\n• Hội thoại: số chat 1-1 có ít nhất một lần trả lời' },
-      { heading: 'Phân bổ thời gian phản hồi', content: 'Số lần trả lời theo từng khoảng: < 1 phút, 1–5 phút, 5–15 phút … > 24 giờ (xanh = nhanh, đỏ = chậm), kèm % tin được phản hồi trong 15 phút.' },
-      { heading: 'Thời gian phản hồi TB theo giờ', content: 'Thời gian trả lời trung bình theo giờ khách nhắn đến (0h–23h), chỉ ra giờ bạn trả lời nhanh nhất và chậm nhất.' },
-      { heading: 'Lượng tin nhắn', content: 'Tin gửi, nhận và tổng theo thời gian: khoảng từ 2 ngày trở xuống vẽ theo giờ, dài hơn vẽ theo ngày lịch (00:00–23:59, điểm cuối là hôm nay).' },
-      { heading: 'Heatmap giờ cao điểm', content: 'Lưới Thứ 2 → Chủ nhật × 24 giờ, ô càng đậm càng nhiều tin - giúp tìm khung giờ khách nhắn nhiều nhất.' },
+      { heading: tr('KPI'), content: tr('Hôm nay: tin gửi + nhận từ 00:00 hôm nay. Tổng tin nhắn: trong khoảng thời gian đang chọn. TB/ngày: tổng tin chia số ngày của khoảng. Tỷ lệ gửi: % tin bạn gửi trên tổng.') },
+      { heading: tr('Tin gửi đi'), content: tr('Người nhận: số hội thoại 1-1 có tin bạn gửi trong khoảng, mỗi người tính một lần theo tin đầu tiên. Đã nhận: nền tảng báo đã nhận (Zalo, Facebook; Telegram không có). Đã xem: có báo đã xem hoặc khách đã trả lời. Đã phản hồi: khách nhắn lại sau tin của bạn (bỏ tin hệ thống). Zalo chỉ báo "đã xem" khi người nhận bật trạng thái Đã xem; Deplao cần đang mở để nhận các báo này. Chọn nhiều tài khoản thì có bảng theo tài khoản: tài khoản gửi nhiều mà ít người nhận / xem là dấu hiệu bị hạn chế.') },
+      { heading: tr('Thời gian phản hồi'), content: tr('Đo từ lúc khách nhắn đến khi bạn trả lời, chỉ tính chat 1-1 và các lần trả lời trong vòng 7 ngày (bỏ qua hội thoại bị bỏ quên). Không hiện khi chọn loại hội thoại "Nhóm".\n\n• TB phản hồi: thời gian trả lời trung bình\n• Trung vị: một nửa số lần trả lời nhanh hơn con số này\n• Nhanh nhất / Chậm nhất: hai mức cực trị\n• Hội thoại: số chat 1-1 có ít nhất một lần trả lời') },
+      { heading: tr('Phân bổ thời gian phản hồi'), content: tr('Số lần trả lời theo từng khoảng: < 1 phút, 1–5 phút, 5–15 phút … > 24 giờ (xanh = nhanh, đỏ = chậm), kèm % tin được phản hồi trong 15 phút.') },
+      { heading: tr('Thời gian phản hồi TB theo giờ'), content: tr('Thời gian trả lời trung bình theo giờ khách nhắn đến (0h–23h), chỉ ra giờ bạn trả lời nhanh nhất và chậm nhất.') },
+      { heading: tr('Lượng tin nhắn'), content: tr('Tin gửi, nhận và tổng theo thời gian: khoảng từ 2 ngày trở xuống vẽ theo giờ, dài hơn vẽ theo ngày lịch (00:00–23:59, điểm cuối là hôm nay).') },
+      { heading: tr('Heatmap giờ cao điểm'), content: tr('Lưới Thứ 2 → Chủ nhật × 24 giờ, ô càng đậm càng nhiều tin - giúp tìm khung giờ khách nhắn nhiều nhất.') },
     ],
   },
   contacts: {
-    title: 'Hướng dẫn - Liên hệ',
+    title: tr('Hướng dẫn - Liên hệ'),
     sections: [
-      { heading: 'KPI', content: 'Tổng liên hệ, Bạn bè, Nhóm và Đã gắn tag (kèm số chưa gắn). Đây là tổng hiện có, không đổi theo khoảng thời gian. Khi chọn nhiều tài khoản, mỗi tài khoản được đếm riêng: một người là liên hệ của 2 tài khoản được tính 2 lần.' },
-      { heading: 'Tăng trưởng liên hệ', content: 'Số hội thoại 1-1 theo ngày: mỗi hội thoại được tính một lần, vào ngày có tin nhắn đầu tiên trong khoảng thời gian đang chọn.' },
-      { heading: 'Phân loại liên hệ', content: 'Biểu đồ tròn chia liên hệ thành Bạn bè, Người lạ và Nhóm.' },
-      { heading: 'Lời mời kết bạn', content: 'Số lời mời kết bạn Đã gửi và Đã nhận trong khoảng thời gian, kèm biểu đồ theo ngày (tối đa 14 ngày gần nhất có lời mời).' },
+      { heading: tr('KPI'), content: tr('Tổng liên hệ, Bạn bè, Nhóm và Đã gắn tag (kèm số chưa gắn). Đây là tổng hiện có, không đổi theo khoảng thời gian. Khi chọn nhiều tài khoản, mỗi tài khoản được đếm riêng: một người là liên hệ của 2 tài khoản được tính 2 lần.') },
+      { heading: tr('Tăng trưởng liên hệ'), content: tr('Số hội thoại 1-1 theo ngày: mỗi hội thoại được tính một lần, vào ngày có tin nhắn đầu tiên trong khoảng thời gian đang chọn.') },
+      { heading: tr('Phân loại liên hệ'), content: tr('Biểu đồ tròn chia liên hệ thành Bạn bè, Người lạ và Nhóm.') },
+      { heading: tr('Lời mời kết bạn'), content: tr('Số lời mời kết bạn Đã gửi và Đã nhận trong khoảng thời gian, kèm biểu đồ theo ngày (tối đa 14 ngày gần nhất có lời mời).') },
     ],
   },
   labels: {
-    title: 'Hướng dẫn - Nhãn (Local)',
+    title: tr('Hướng dẫn - Nhãn (Local)'),
     sections: [
-      { heading: 'Phạm vi dữ liệu', content: 'Tab này chỉ thống kê Nhãn Local - nhãn bạn tạo và gắn cho hội thoại trong ứng dụng. Không gồm nhãn Zalo.' },
-      { heading: 'Cách tính', content: '• Mỗi lần gắn một nhãn cho một hội thoại là một lượt, tính theo thời điểm gắn nằm trong khoảng thời gian đang chọn\n• Nhãn đã gỡ khỏi hội thoại không còn được tính\n• Theo ngày: chia theo ngày lịch trên giờ máy (00:00–23:59)' },
-      { heading: 'Chỉ số hiển thị', content: '• Tổng lượt gắn nhãn trong khoảng thời gian\n• Số nhãn sử dụng: số nhãn khác nhau đã được gắn\n• TB/ngày: tổng lượt chia số ngày của khoảng\n• Lượt gắn nhãn theo ngày (biểu đồ cột)\n• Chi tiết theo từng nhãn: nhãn dùng nhiều nhất ở trên, mỗi thanh mang màu của nhãn' },
+      { heading: tr('Phạm vi dữ liệu'), content: tr('Tab này chỉ thống kê Nhãn Local - nhãn bạn tạo và gắn cho hội thoại trong ứng dụng. Không gồm nhãn Zalo.') },
+      { heading: tr('Cách tính'), content: tr('• Mỗi lần gắn một nhãn cho một hội thoại là một lượt, tính theo thời điểm gắn nằm trong khoảng thời gian đang chọn\n• Nhãn đã gỡ khỏi hội thoại không còn được tính\n• Theo ngày: chia theo ngày lịch trên giờ máy (00:00–23:59)') },
+      { heading: tr('Chỉ số hiển thị'), content: tr('• Tổng lượt gắn nhãn trong khoảng thời gian\n• Số nhãn sử dụng: số nhãn khác nhau đã được gắn\n• TB/ngày: tổng lượt chia số ngày của khoảng\n• Lượt gắn nhãn theo ngày (biểu đồ cột)\n• Chi tiết theo từng nhãn: nhãn dùng nhiều nhất ở trên, mỗi thanh mang màu của nhãn') },
     ],
   },
   campaigns: {
-    title: 'Hướng dẫn - Chiến dịch',
+    title: tr('Hướng dẫn - Chiến dịch'),
     sections: [
-      { heading: 'KPI', content: 'Tổng chiến dịch, Đã gửi (kèm Gửi thành công % = đã gửi ÷ tổng liên hệ), Đã nhận %, Đã xem %, Phản hồi % (trên số đã gửi) và Lỗi, cộng trên mọi chiến dịch.' },
-      { heading: 'Đã nhận, đã xem, phản hồi', content: 'Đã nhận: nền tảng báo đã nhận (Zalo, Facebook; Telegram không có). Đã xem: có báo đã xem hoặc khách đã trả lời. Đã phản hồi: khách nhắn lại sau tin của bạn (bỏ tin hệ thống). Zalo chỉ báo "đã xem" khi người nhận bật trạng thái Đã xem; Deplao cần đang mở để nhận các báo này. Chiến dịch chỉ kết bạn / mời nhóm không có tin để nhận / xem.' },
-      { heading: 'Top chiến dịch (theo số gửi)', content: 'Biểu đồ ngang so sánh Đã gửi, Đã xem, Phản hồi, Lỗi của 10 chiến dịch gửi nhiều nhất.' },
-      { heading: 'Chi tiết chiến dịch', content: 'Bảng 20 chiến dịch mới nhất với trạng thái, Tổng, Đã gửi, Đã nhận, Đã xem, Phản hồi, Lỗi; có thêm cột Tài khoản khi chọn nhiều tài khoản. Lọc người đã xem / chưa xem để gửi tiếp: mở chiến dịch ở CRM → Chiến dịch.' },
-      { heading: 'Phạm vi', content: 'Tab này tính trên mọi chiến dịch của các tài khoản đang chọn, không phụ thuộc khoảng thời gian.' },
+      { heading: tr('KPI'), content: tr('Tổng chiến dịch, Đã gửi (kèm Gửi thành công % = đã gửi ÷ tổng liên hệ), Đã nhận %, Đã xem %, Phản hồi % (trên số đã gửi) và Lỗi, cộng trên mọi chiến dịch.') },
+      { heading: tr('Đã nhận, đã xem, phản hồi'), content: tr('Đã nhận: nền tảng báo đã nhận (Zalo, Facebook; Telegram không có). Đã xem: có báo đã xem hoặc khách đã trả lời. Đã phản hồi: khách nhắn lại sau tin của bạn (bỏ tin hệ thống). Zalo chỉ báo "đã xem" khi người nhận bật trạng thái Đã xem; Deplao cần đang mở để nhận các báo này. Chiến dịch chỉ kết bạn / mời nhóm không có tin để nhận / xem.') },
+      { heading: tr('Top chiến dịch (theo số gửi)'), content: tr('Biểu đồ ngang so sánh Đã gửi, Đã xem, Phản hồi, Lỗi của 10 chiến dịch gửi nhiều nhất.') },
+      { heading: tr('Chi tiết chiến dịch'), content: tr('Bảng 20 chiến dịch mới nhất với trạng thái, Tổng, Đã gửi, Đã nhận, Đã xem, Phản hồi, Lỗi; có thêm cột Tài khoản khi chọn nhiều tài khoản. Lọc người đã xem / chưa xem để gửi tiếp: mở chiến dịch ở CRM → Chiến dịch.') },
+      { heading: tr('Phạm vi'), content: tr('Tab này tính trên mọi chiến dịch của các tài khoản đang chọn, không phụ thuộc khoảng thời gian.') },
     ],
   },
   workflow: {
-    title: 'Hướng dẫn - Workflow',
+    title: tr('Hướng dẫn - Workflow'),
     sections: [
-      { heading: 'KPI', content: 'Tổng lượt chạy, Thành công, Lỗi, Tỷ lệ thành công (lượt thành công ÷ tổng lượt) và TB thời gian của một lượt chạy, trong khoảng thời gian đang chọn.' },
-      { heading: 'Lượt chạy theo ngày', content: 'Biểu đồ cột chồng lượt thành công và lỗi theo từng ngày lịch.' },
-      { heading: 'Phân bổ kết quả', content: 'Biểu đồ tròn tỷ lệ thành công / lỗi tổng thể.' },
-      { heading: 'Top Workflows', content: 'Tối đa 10 workflow chạy nhiều nhất, kèm tỷ lệ thành công của từng workflow.' },
-      { heading: 'Nhiều tài khoản', content: 'Tính các workflow gắn với tài khoản đang chọn; workflow gắn nhiều tài khoản đã chọn chỉ được tính một lần.' },
+      { heading: tr('KPI'), content: tr('Tổng lượt chạy, Thành công, Lỗi, Tỷ lệ thành công (lượt thành công ÷ tổng lượt) và TB thời gian của một lượt chạy, trong khoảng thời gian đang chọn.') },
+      { heading: tr('Lượt chạy theo ngày'), content: tr('Biểu đồ cột chồng lượt thành công và lỗi theo từng ngày lịch.') },
+      { heading: tr('Phân bổ kết quả'), content: tr('Biểu đồ tròn tỷ lệ thành công / lỗi tổng thể.') },
+      { heading: tr('Top Workflows'), content: tr('Tối đa 10 workflow chạy nhiều nhất, kèm tỷ lệ thành công của từng workflow.') },
+      { heading: tr('Nhiều tài khoản'), content: tr('Tính các workflow gắn với tài khoản đang chọn; workflow gắn nhiều tài khoản đã chọn chỉ được tính một lần.') },
     ],
   },
   ai: {
-    title: 'Hướng dẫn - AI',
+    title: tr('Hướng dẫn - AI'),
     sections: [
-      { heading: 'KPI', content: 'Tổng requests, Tổng tokens, Prompt tokens (phần gửi cho AI) và Completion tokens (phần AI trả lời). Token là đơn vị đo lượng chữ AI xử lý.' },
-      { heading: 'AI usage theo ngày', content: 'Biểu đồ kết hợp: cột = số requests, đường = tokens tiêu thụ theo ngày lịch.' },
-      { heading: 'Phân bổ theo Model', content: 'Biểu đồ tròn tokens theo từng model AI đã dùng.' },
-      { heading: 'Chi tiết', content: 'Bảng theo Model (requests, tokens, TB tokens/request) và theo AI Assistant (requests, tokens), dùng nhiều tokens nhất ở trên.' },
-      { heading: 'Phạm vi', content: 'Số liệu AI tính trên toàn ứng dụng: nhật ký AI không ghi theo tài khoản nên bộ lọc tài khoản không áp dụng.' },
+      { heading: tr('KPI'), content: tr('Tổng requests, Tổng tokens, Prompt tokens (phần gửi cho AI) và Completion tokens (phần AI trả lời). Token là đơn vị đo lượng chữ AI xử lý.') },
+      { heading: tr('AI usage theo ngày'), content: tr('Biểu đồ kết hợp: cột = số requests, đường = tokens tiêu thụ theo ngày lịch.') },
+      { heading: tr('Phân bổ theo Model'), content: tr('Biểu đồ tròn tokens theo từng model AI đã dùng.') },
+      { heading: tr('Chi tiết'), content: tr('Bảng theo Model (requests, tokens, TB tokens/request) và theo AI Assistant (requests, tokens), dùng nhiều tokens nhất ở trên.') },
+      { heading: tr('Phạm vi'), content: tr('Số liệu AI tính trên toàn ứng dụng: nhật ký AI không ghi theo tài khoản nên bộ lọc tài khoản không áp dụng.') },
     ],
   },
   employees: {
-    title: 'Hướng dẫn - Báo cáo Nhân viên',
+    title: tr('Hướng dẫn - Báo cáo Nhân viên'),
     sections: [
-      { heading: 'KPI tổng hợp', content: 'Số nhân viên (kèm số đang hoạt động), Tổng tin gửi, Hội thoại xử lý (số hội thoại khác nhau nhân viên đã gửi tin), TB phản hồi của team và Tổng giờ online (kèm trung bình mỗi nhân viên) trong khoảng thời gian.' },
-      { heading: 'So sánh tin nhắn & hội thoại', content: 'Biểu đồ cột ngang so sánh số tin đã gửi và số hội thoại xử lý của từng nhân viên.' },
-      { heading: 'Phân bổ', content: 'Hai biểu đồ tròn: tỷ lệ đóng góp tin nhắn và giờ online của mỗi nhân viên.' },
-      { heading: 'Theo ngày', content: 'Tin nhắn theo ngày (mỗi nhân viên một màu) và giờ online theo ngày (cột chồng), chia theo ngày lịch.' },
-      { heading: 'Tốc độ phản hồi', content: 'TB phản hồi = thời gian từ tin nhắn gần nhất của khách đến khi nhân viên trả lời (chỉ tính các lần dưới 24 giờ). Xếp hạng tốc độ phản hồi: xanh dưới 5 phút, vàng dưới 15 phút, đỏ chậm hơn; kèm phân bổ thời gian phản hồi theo nhóm.' },
-      { heading: 'So sánh đa chiều', content: 'Biểu đồ radar: tin gửi, hội thoại, giờ online, tốc độ phản hồi - thấy điểm mạnh / yếu của từng người (cần ít nhất 2 nhân viên, hiện tối đa 6 người).' },
-      { heading: 'Hoạt động theo giờ', content: 'Mức hoạt động của nhân viên theo từng giờ trong ngày - xác định khung giờ làm việc nhiều nhất.' },
-      { heading: 'Bảng chi tiết', content: 'Từng nhân viên với Tin gửi, Hội thoại, TB phản hồi, Online và Hiệu suất (số tin gửi so với người gửi nhiều nhất), dòng Tổng ở cuối; nút Xuất CSV để báo cáo.' },
-      { heading: 'Bộ lọc', content: 'Chọn một hoặc nhiều nhân viên để so sánh, hoặc "Tất cả" để xem cả team; kết hợp với bộ lọc thời gian và tài khoản ở đầu trang. Giờ online tính theo phiên đăng nhập của nhân viên nên không tách theo tài khoản.' },
+      { heading: tr('KPI tổng hợp'), content: tr('Số nhân viên (kèm số đang hoạt động), Tổng tin gửi, Hội thoại xử lý (số hội thoại khác nhau nhân viên đã gửi tin), TB phản hồi của team và Tổng giờ online (kèm trung bình mỗi nhân viên) trong khoảng thời gian.') },
+      { heading: tr('So sánh tin nhắn & hội thoại'), content: tr('Biểu đồ cột ngang so sánh số tin đã gửi và số hội thoại xử lý của từng nhân viên.') },
+      { heading: tr('Phân bổ'), content: tr('Hai biểu đồ tròn: tỷ lệ đóng góp tin nhắn và giờ online của mỗi nhân viên.') },
+      { heading: tr('Theo ngày'), content: tr('Tin nhắn theo ngày (mỗi nhân viên một màu) và giờ online theo ngày (cột chồng), chia theo ngày lịch.') },
+      { heading: tr('Tốc độ phản hồi'), content: tr('TB phản hồi = thời gian từ tin nhắn gần nhất của khách đến khi nhân viên trả lời (chỉ tính các lần dưới 24 giờ). Xếp hạng tốc độ phản hồi: xanh dưới 5 phút, vàng dưới 15 phút, đỏ chậm hơn; kèm phân bổ thời gian phản hồi theo nhóm.') },
+      { heading: tr('So sánh đa chiều'), content: tr('Biểu đồ radar: tin gửi, hội thoại, giờ online, tốc độ phản hồi - thấy điểm mạnh / yếu của từng người (cần ít nhất 2 nhân viên, hiện tối đa 6 người).') },
+      { heading: tr('Hoạt động theo giờ'), content: tr('Mức hoạt động của nhân viên theo từng giờ trong ngày - xác định khung giờ làm việc nhiều nhất.') },
+      { heading: tr('Bảng chi tiết'), content: tr('Từng nhân viên với Tin gửi, Hội thoại, TB phản hồi, Online và Hiệu suất (số tin gửi so với người gửi nhiều nhất), dòng Tổng ở cuối; nút Xuất CSV để báo cáo.') },
+      { heading: tr('Bộ lọc'), content: tr('Chọn một hoặc nhiều nhân viên để so sánh, hoặc "Tất cả" để xem cả team; kết hợp với bộ lọc thời gian và tài khoản ở đầu trang. Giờ online tính theo phiên đăng nhập của nhân viên nên không tách theo tài khoản.') },
     ],
   },
 };
@@ -365,11 +367,11 @@ function GuideModal({ activeTab, onClose }: { activeTab: TabId; onClose: () => v
             </div>
           ))}
           <div className="border-t border-border pt-3 mt-3">
-            <p className="text-[11px] text-muted-foreground"><SunIcon className="w-4 h-4 inline" /> <strong className="text-muted-foreground">Loại hội thoại:</strong> "Cá nhân" = chat 1-1, "Nhóm" = nhóm chat, "Tất cả" = tổng hợp. Áp dụng cho số liệu tin nhắn (Tổng quan, Tin nhắn).
+            <p className="text-[11px] text-muted-foreground">{trx('<0/> <1>Loại hội thoại:</1> "Cá nhân" = chat 1-1, "Nhóm" = nhóm chat, "Tất cả" = tổng hợp. Áp dụng cho số liệu tin nhắn (Tổng quan, Tin nhắn).', { 0: <SunIcon className="w-4 h-4 inline" />, 1: <strong className="text-muted-foreground" /> })}
             </p>
-            <p className="text-[11px] text-muted-foreground mt-1"><CalendarIcon className="w-4 h-4 inline" /> <strong className="text-muted-foreground">Thời gian:</strong> "Hôm nay", "Hôm qua", 7 / 30 / 90 ngày hoặc Tuỳ chọn (mặc định 7 ngày), tính theo ngày lịch trên giờ máy.
+            <p className="text-[11px] text-muted-foreground mt-1">{trx('<0/> <1>Thời gian:</1> "Hôm nay", "Hôm qua", 7 / 30 / 90 ngày hoặc Tuỳ chọn (mặc định 7 ngày), tính theo ngày lịch trên giờ máy.', { 0: <CalendarIcon className="w-4 h-4 inline" />, 1: <strong className="text-muted-foreground" /> })}
             </p>
-            <p className="text-[11px] text-muted-foreground mt-1"><UsersIcon className="w-4 h-4 inline" /> <strong className="text-muted-foreground">Tài khoản:</strong> Chọn một, nhiều tài khoản hoặc "Tất cả tài khoản" (lựa chọn được ghi nhớ). Số liệu được cộng gộp; tỷ lệ % và giá trị trung bình được tính lại từ tổng, không lấy trung bình các %. Liên hệ, bạn bè, nhóm được đếm theo từng tài khoản. Thống kê AI tính trên toàn ứng dụng.
+            <p className="text-[11px] text-muted-foreground mt-1">{trx('<0/> <1>Tài khoản:</1> Chọn một, nhiều tài khoản hoặc "Tất cả tài khoản" (lựa chọn được ghi nhớ). Số liệu được cộng gộp; tỷ lệ % và giá trị trung bình được tính lại từ tổng, không lấy trung bình các %. Liên hệ, bạn bè, nhóm được đếm theo từng tài khoản. Thống kê AI tính trên toàn ứng dụng.', { 0: <UsersIcon className="w-4 h-4 inline" />, 1: <strong className="text-muted-foreground" /> })}
             </p>
           </div>
         </div>
@@ -413,7 +415,7 @@ export default function AnalyticsPage() {
   // Custom date range
   const [customFrom, setCustomFrom] = useState<string>(() => toLocalDateInput(new Date(Date.now() - 30 * 86400000)));
   const [customTo, setCustomTo] = useState<string>(() => toLocalDateInput(new Date()));
-  /** Bumped by "Làm mới": open ranges end at `now`, so the range must be recomputed to count new messages. */
+  /** Bumped by "Làm mới" (Refresh): open ranges end at `now`, so the range must be recomputed to count new messages. */
   const [rangeNonce, setRangeNonce] = useState(0);
 
   // Data
@@ -437,19 +439,19 @@ export default function AnalyticsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const loadSeqRef = useRef(0);
 
-  // Local calendar days: "7 ngày" = today + the 6 days before, from 00:00 (was now − 7×24h,
+  // Local calendar days: "7 ngày" = today + the 6 days before, from 00:00 (was now - 7×24h,
   // which split every chart point across two days and left "today" empty).
   const { from, to, periodDays } = useMemo(
     () => resolveAnalyticsRange(period, customFrom, customTo),
-    [period, customFrom, customTo, rangeNonce], // rangeNonce: "Làm mới" re-reads `now`
+    [period, customFrom, customTo, rangeNonce], // rangeNonce: "Làm mới" (Refresh) re-reads `now`
   );
 
-  const periodLabel = period === 'today' ? 'hôm nay'
-    : period === 'yesterday' ? 'hôm qua'
-      : period === '7d' ? '7 ngày'
-        : period === '30d' ? '30 ngày'
-          : period === '90d' ? '90 ngày'
-            : `${periodDays} ngày`;
+  const periodLabel = period === 'today' ? tr('hôm nay')
+    : period === 'yesterday' ? tr('hôm qua')
+      : period === '7d' ? tr('7 ngày')
+        : period === '30d' ? tr('30 ngày')
+          : period === '90d' ? tr('90 ngày')
+            : tr('{{periodDays}} ngày', { periodDays });
 
   // Map contactType to threadType for IPC calls (-1 = all)
   const threadType = useMemo(() => {
@@ -510,11 +512,11 @@ export default function AnalyticsPage() {
       setFailedAccounts(report.failedAccounts);
       setFailedSections(report.failedSections);
     } catch (err: any) {
-      if (seq === loadSeqRef.current) setLoadError(err?.message || 'Lỗi không rõ');
+      if (seq === loadSeqRef.current) setLoadError(err?.message || tr('Lỗi không rõ'));
     } finally {
       if (seq === loadSeqRef.current) setLoading(false);
     }
-    // rangeNonce: "Làm mới" also reloads closed ranges (Hôm qua / Tuỳ chọn) whose from/to do not change.
+    // rangeNonce: "Làm mới" (Refresh) also reloads closed ranges (Yesterday / Custom) whose from/to do not change.
   }, [activeTab, selectedIds, from, to, periodDays, threadType, rangeNonce]);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -528,14 +530,14 @@ export default function AnalyticsPage() {
   })) || [];
 
   const tagPieData = segmentation ? [
-    { name: 'Đã gắn tag', value: segmentation.tagged, fill: '#3b82f6' },
-    { name: 'Chưa gắn tag', value: segmentation.untagged, fill: '#4b5563' },
+    { name: tr('Đã gắn tag'), value: segmentation.tagged, fill: '#3b82f6' },
+    { name: tr('Chưa gắn tag'), value: segmentation.untagged, fill: '#4b5563' },
   ].filter(d => d.value > 0) : [];
 
   // Workflow pie
   const wfPieData = workflowData ? [
-    { name: 'Thành công', value: workflowData.successRuns, fill: '#10b981' },
-    { name: 'Lỗi', value: workflowData.errorRuns, fill: '#ef4444' },
+    { name: tr('Thành công'), value: workflowData.successRuns, fill: '#10b981' },
+    { name: tr('Lỗi'), value: workflowData.errorRuns, fill: '#ef4444' },
   ].filter(d => d.value > 0) : [];
 
   // AI model pie
@@ -546,7 +548,7 @@ export default function AnalyticsPage() {
   if (accounts.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-        Chưa có tài khoản nào. Hãy thêm tài khoản Zalo trước.
+        {tr('Chưa có tài khoản nào. Hãy thêm tài khoản Zalo trước.')}
       </div>
     );
   }
@@ -555,14 +557,14 @@ export default function AnalyticsPage() {
     <div className="flex-1 h-full overflow-y-auto p-6 space-y-5">
       {/* ── Header: Account Selector + Period + Refresh ──────────── */}
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-bold text-foreground mr-2"><ChartIcon className="w-4 h-4 inline" /> Báo cáo & Phân tích</h2>
+        <h2 className="text-lg font-bold text-foreground mr-2">{trx('<0/> Báo cáo & Phân tích', { 0: <ChartIcon className="w-4 h-4 inline" /> })}</h2>
 
         {/* Account filter: several accounts are merged into one report */}
         <AccountMultiDropdown
           accounts={accounts}
           selectedIds={selectedIds}
           onChange={handleAccountsChange}
-          selectAllLabel="Tất cả tài khoản"
+          selectAllLabel={tr('Tất cả tài khoản')}
           minSelected={1}
           showOnlyAction
         />
@@ -574,14 +576,14 @@ export default function AnalyticsPage() {
               className={`px-3 py-1 text-xs rounded-lg transition-colors ${
                 period === p ? 'bg-blue-600 text-white' : 'bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted'
               }`}>
-              {p === 'today' ? 'Hôm nay' : p === 'yesterday' ? 'Hôm qua' : p === '7d' ? '7 ngày' : p === '30d' ? '30 ngày' : p === '90d' ? '90 ngày' : 'Tuỳ chọn'}
+              {p === 'today' ? tr('Hôm nay') : p === 'yesterday' ? tr('Hôm qua') : p === '7d' ? tr('7 ngày') : p === '30d' ? tr('30 ngày') : p === '90d' ? tr('90 ngày') : tr('Tuỳ chọn')}
             </button>
           ))}
         </div>
 
         {/* Contact type filter */}
         <div className="flex gap-1 border-l border-border pl-3">
-          {([['all', 'Tất cả'], ['user', 'Cá nhân'], ['group', 'Nhóm']] as [ContactType, string][]).map(([ct, label]) => (
+          {([['all', tr('Tất cả')], ['user', tr('Cá nhân')], ['group', tr('Nhóm')]] as [ContactType, string][]).map(([ct, label]) => (
             <button key={ct} onClick={() => setContactType(ct)}
               className={`px-3 py-1 text-xs rounded-lg transition-colors ${
                 contactType === ct ? 'bg-purple-600 text-white' : 'bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted'
@@ -614,7 +616,7 @@ export default function AnalyticsPage() {
         )}
 
         {/* Help / Guide */}
-        <button onClick={() => setShowGuide(true)} title="Hướng dẫn báo cáo"
+        <button onClick={() => setShowGuide(true)} title={tr('Hướng dẫn báo cáo')}
           className="text-muted-foreground hover:text-blue-400 transition-colors p-1.5 rounded-lg hover:bg-muted/50">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="10" />
@@ -624,7 +626,7 @@ export default function AnalyticsPage() {
         </button>
 
         {/* Refresh */}
-        <button onClick={() => setRangeNonce(n => n + 1)} title="Làm mới"
+        <button onClick={() => setRangeNonce(n => n + 1)} title={tr('Làm mới')}
           className="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
@@ -711,39 +713,39 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
   /** Per-account rows (only when several accounts are selected). */
   overviewByAccount: Array<AccountResult<OverviewData>>; accountsById: Map<string, AccountInfo>;
 }) {
-  if (loading) return <PageLoading variant="skeleton" skeletonVariant="cards" text="Đang tải tổng quan..." />;
+  if (loading) return <PageLoading variant="skeleton" skeletonVariant="cards" text={tr('Đang tải tổng quan...')} />;
   if (!overview) {
-    return <div className="text-center py-16 text-muted-foreground text-sm">Chưa có dữ liệu tổng quan</div>;
+    return <div className="text-center py-16 text-muted-foreground text-sm">{tr('Chưa có dữ liệu tổng quan')}</div>;
   }
   return (
     <div className="space-y-5">
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KPICard icon={<ChatIcon className="w-4 h-4" />} label="Tin nhắn hôm nay" value={overview.todayMessages}
-          sub={`${overview.todaySent} gửi · ${overview.todayReceived} nhận`}
+        <KPICard icon={<ChatIcon className="w-4 h-4" />} label={tr('Tin nhắn hôm nay')} value={overview.todayMessages}
+          sub={tr('{{todaySent}} gửi · {{todayReceived}} nhận', { todaySent: overview.todaySent, todayReceived: overview.todayReceived })}
           trend={todayTrend} color="blue" />
-        <KPICard icon={<SendIcon className="w-4 h-4" />} label={`Tổng tin nhắn (${periodLabel})`} value={overview.totalMessages}
-          sub={`${overview.totalSent} gửi · ${overview.totalReceived} nhận`} color="purple" />
-        <KPICard icon={<UsersIcon className="w-4 h-4" />} label="Liên hệ" value={overview.totalContacts}
-          sub={`${overview.totalFriends} bạn bè`} color="green" />
-        <KPICard icon={<UsersIcon className="w-4 h-4" />} label="Nhóm" value={overview.totalGroups} color="cyan" />
-        <KPICard icon={<CampaignIcon className="w-4 h-4" />} label="Chiến dịch" value={overview.totalCampaigns}
-          sub={overview.activeCampaigns > 0 ? `${overview.activeCampaigns} đang chạy` : 'Không có đang chạy'}
+        <KPICard icon={<SendIcon className="w-4 h-4" />} label={tr('Tổng tin nhắn ({{periodLabel}})', { periodLabel })} value={overview.totalMessages}
+          sub={tr('{{totalSent}} gửi · {{totalReceived}} nhận', { totalSent: overview.totalSent, totalReceived: overview.totalReceived })} color="purple" />
+        <KPICard icon={<UsersIcon className="w-4 h-4" />} label={tr('Liên hệ')} value={overview.totalContacts}
+          sub={tr('{{totalFriends}} bạn bè', { totalFriends: overview.totalFriends })} color="green" />
+        <KPICard icon={<UsersIcon className="w-4 h-4" />} label={tr('Nhóm')} value={overview.totalGroups} color="cyan" />
+        <KPICard icon={<CampaignIcon className="w-4 h-4" />} label={tr('Chiến dịch')} value={overview.totalCampaigns}
+          sub={overview.activeCampaigns > 0 ? tr('{{activeCampaigns}} đang chạy', { activeCampaigns: overview.activeCampaigns }) : tr('Không có đang chạy')}
           color={overview.activeCampaigns > 0 ? 'green' : 'yellow'} />
-        <KPICard icon={<UserCheckIcon className="w-4 h-4" />} label="Lời mời KB" value={friendReqs.totalReceived + friendReqs.totalSent}
-          sub={`${friendReqs.totalSent} gửi · ${friendReqs.totalReceived} nhận`} color="yellow" />
-        <KPICard icon={<LightningIcon className="w-4 h-4" />} label="Workflow chạy" value={workflowData?.totalRuns ?? 0}
-          sub={workflowData ? `${workflowData.successRate}% thành công` : '-'} color="orange" />
-        <KPICard icon={<BotIcon className="w-4 h-4" />} label="AI requests" value={aiData?.totalRequests ?? 0}
-          sub={`${aiData?.totalTokens ? `${aiData.totalTokens.toLocaleString('vi-VN')} tokens · ` : ''}toàn ứng dụng`} color="purple" />
+        <KPICard icon={<UserCheckIcon className="w-4 h-4" />} label={tr('Lời mời KB')} value={friendReqs.totalReceived + friendReqs.totalSent}
+          sub={tr('{{totalSent}} gửi · {{totalReceived}} nhận', { totalSent: friendReqs.totalSent, totalReceived: friendReqs.totalReceived })} color="yellow" />
+        <KPICard icon={<LightningIcon className="w-4 h-4" />} label={tr('Workflow chạy')} value={workflowData?.totalRuns ?? 0}
+          sub={workflowData ? tr('{{successRate}}% thành công', { successRate: workflowData.successRate }) : '-'} color="orange" />
+        <KPICard icon={<BotIcon className="w-4 h-4" />} label={tr('AI requests')} value={aiData?.totalRequests ?? 0}
+          sub={tr('{{v1}}toàn ứng dụng', { v1: aiData?.totalTokens ? `${aiData.totalTokens.toLocaleString(appLocale())} tokens · ` : '' })} color="purple" />
       </div>
 
 
       {/* Charts row */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <Section title={<><TrendingUpIcon className="w-4 h-4" /> Tin nhắn {periodDays <= 2 ? 'theo giờ' : `${periodDays} ngày qua`}</>}>
+        <Section title={<>{trx('<0/> Tin nhắn {{v1}}', { 0: <TrendingUpIcon className="w-4 h-4" />, v1: periodDays <= 2 ? tr('theo giờ') : tr('{{periodDays}} ngày qua', { periodDays }) })}</>}>
           {volume.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -763,8 +765,8 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
                   <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} allowDecimals={false} />
                   <Tooltip content={ChartTooltip} />
                   <Legend wrapperStyle={{ fontSize: 10, paddingTop: 4 }} />
-                  <Area type="monotone" dataKey="sent" name="Gửi" stroke="#3b82f6" fill="url(#gSent)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="received" name="Nhận" stroke="#10b981" fill="url(#gRecv)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="sent" name={tr('Gửi')} stroke="#3b82f6" fill="url(#gSent)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="received" name={tr('Nhận')} stroke="#10b981" fill="url(#gRecv)" strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -772,9 +774,9 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
         </Section>
 
         {/* Contact Growth */}
-        <Section title={<><TrendingUpIcon className="w-4 h-4" /> Tăng trưởng liên hệ</>}>
+        <Section title={<>{trx('<0/> Tăng trưởng liên hệ', { 0: <TrendingUpIcon className="w-4 h-4" /> })}</>}>
           {contactGrowth.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -790,7 +792,7 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
                   <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} allowDecimals={false} />
                   <Tooltip content={ChartTooltip} />
                   <Legend wrapperStyle={{ fontSize: 10, paddingTop: 4 }} />
-                  <Area type="monotone" dataKey="newContacts" name="Liên hệ mới" stroke="#8b5cf6" fill="url(#gGrowthOv)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="newContacts" name={tr('Liên hệ mới')} stroke="#8b5cf6" fill="url(#gGrowthOv)" strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -800,7 +802,7 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
 
       {/* Label details */}
       {labelUsage?.byLabel?.length > 0 && (
-        <Section title={<><ChartIcon className="w-4 h-4" /> Chi tiết theo từng nhãn</>}>
+        <Section title={<>{trx('<0/> Chi tiết theo từng nhãn', { 0: <ChartIcon className="w-4 h-4" /> })}</>}>
           <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={labelUsage.byLabel.slice(0, 30)} layout="vertical"
@@ -816,11 +818,11 @@ function OverviewTab({ loading, overview, todayTrend, friendReqs, workflowData, 
                   return (
                     <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                       <p className="text-foreground font-medium mb-1">{d.emoji} {d.name}</p>
-                      <p className="text-blue-400 font-bold">{d.count} lượt <span className="text-muted-foreground font-normal">({pct}%)</span></p>
+                      <p className="text-blue-400 font-bold">{trx('{{count}} lượt <0>({{pct}}%)</0>', { count: d.count, 0: <span className="text-muted-foreground font-normal" />, pct })}</p>
                     </div>
                   );
                 }} />
-                <Bar dataKey="count" name="Lượt" radius={[0, 3, 3, 0]} maxBarSize={18}>
+                <Bar dataKey="count" name={tr('Lượt')} radius={[0, 3, 3, 0]} maxBarSize={18}>
                   {(labelUsage?.byLabel || []).slice(0, 30).map((d: any, i: number) => (
                     <Cell key={i} fill={d.color || PIE_COLORS[i % PIE_COLORS.length]} />
                   ))}
@@ -845,22 +847,22 @@ function AccountBreakdown({ rows, accountsById, periodLabel }: {
 }) {
   const sorted = [...rows].sort((a, b) => b.data.totalMessages - a.data.totalMessages);
   const grandTotal = sorted.reduce((sum, row) => sum + row.data.totalMessages, 0);
-  const fmt = (value: number) => value.toLocaleString('vi-VN');
+  const fmt = (value: number) => value.toLocaleString(appLocale());
   return (
-    <Section title={<><UsersIcon className="w-4 h-4" /> Theo tài khoản</>}>
+    <Section title={<>{trx('<0/> Theo tài khoản', { 0: <UsersIcon className="w-4 h-4" /> })}</>}>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="text-muted-foreground border-b border-border">
-              <th className="text-left py-2 px-2 font-medium">Tài khoản</th>
-              <th className="text-right py-2 px-2 font-medium">Tin nhắn ({periodLabel})</th>
-              <th className="text-right py-2 px-2 font-medium">Gửi</th>
-              <th className="text-right py-2 px-2 font-medium">Nhận</th>
-              <th className="text-right py-2 px-2 font-medium">Hôm nay</th>
-              <th className="text-right py-2 px-2 font-medium">Liên hệ</th>
-              <th className="text-right py-2 px-2 font-medium">Bạn bè</th>
-              <th className="text-right py-2 px-2 font-medium">Nhóm</th>
-              <th className="text-left py-2 px-2 font-medium w-36">Tỷ trọng tin nhắn</th>
+              <th className="text-left py-2 px-2 font-medium">{tr('Tài khoản')}</th>
+              <th className="text-right py-2 px-2 font-medium">{trx('Tin nhắn ({{periodLabel}})', { periodLabel })}</th>
+              <th className="text-right py-2 px-2 font-medium">{tr('Gửi')}</th>
+              <th className="text-right py-2 px-2 font-medium">{tr('Nhận')}</th>
+              <th className="text-right py-2 px-2 font-medium">{tr('Hôm nay')}</th>
+              <th className="text-right py-2 px-2 font-medium">{tr('Liên hệ')}</th>
+              <th className="text-right py-2 px-2 font-medium">{tr('Bạn bè')}</th>
+              <th className="text-right py-2 px-2 font-medium">{tr('Nhóm')}</th>
+              <th className="text-left py-2 px-2 font-medium w-36">{tr('Tỷ trọng tin nhắn')}</th>
             </tr>
           </thead>
           <tbody>
@@ -904,11 +906,11 @@ function fmtDuration(seconds: number): string {
   if (seconds < 3600) {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
-    return s > 0 ? `${m}p ${s}s` : `${m} phút`;
+    return s > 0 ? `${m}p ${s}s` : tr('{{m}} phút', { m });
   }
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  return m > 0 ? `${h}h ${m}p` : `${h} giờ`;
+  return m > 0 ? `${h}h ${m}p` : tr('{{h}} giờ', { h });
 }
 
 /** Short format for charts */
@@ -927,21 +929,21 @@ interface MessagesTabProps {
   overview: OverviewData | null;
   responseTime: ResponseTimeData | null;
   contactType: ContactType;
-  /** Tin gửi đi 1:1: đã nhận / đã xem / đã phản hồi */
+  /** Outgoing 1:1 messages: received / seen / replied */
   outreach: OutreachReport | null;
-  /** Theo từng tài khoản (chỉ khi chọn nhiều tài khoản) */
+  /** Per account (only when several accounts are selected) */
   outreachByAccount: Array<AccountResult<OutreachStats>>;
   accountsById: Map<string, AccountInfo>;
 }
 
-/** Một bước của phễu tin gửi đi: số / tỷ lệ lớn, dòng phụ, thanh tỷ lệ. */
+/** One step of the outgoing message funnel: the number / big rate, a sub-line, the rate bar. */
 function FunnelStat({ label, value, sub, bar, color }: {
   label: string; value: string | number; sub?: string; bar?: number | null; color?: string;
 }) {
   return (
     <div className="rounded-xl border border-border/60 bg-muted/30 px-4 py-3">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{typeof value === 'number' ? value.toLocaleString('vi-VN') : value}</p>
+      <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{typeof value === 'number' ? value.toLocaleString(appLocale()) : value}</p>
       {sub && <p className="mt-0.5 text-[11px] text-muted-foreground">{sub}</p>}
       {bar !== undefined && (
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border/60">
@@ -953,8 +955,8 @@ function FunnelStat({ label, value, sub, bar, color }: {
 }
 
 /**
- * Báo cáo → Tin nhắn → "Tin gửi đi": người nhận 1:1 có tin mình gửi trong khoảng → đã nhận / đã xem / đã phản hồi
- * (shared/analytics/messageEngagement), theo ngày và theo tài khoản (phát hiện tài khoản gửi được nhưng ít người nhận / xem).
+ * Report → Messages → "Tin gửi đi" (Outgoing messages): 1:1 recipients who have a message sent by me in the range → received / seen / replied
+ * (shared/analytics/messageEngagement), by day and by account (spots accounts that can send but have few recipients / viewers).
  */
 function OutreachSection({ outreach, byAccount, accountsById, periodLabel }: {
   outreach: OutreachReport; byAccount: Array<AccountResult<OutreachStats>>; accountsById: Map<string, AccountInfo>; periodLabel: string;
@@ -964,19 +966,19 @@ function OutreachSection({ outreach, byAccount, accountsById, periodLabel }: {
     bucket: point.bucket, 'Người nhận': point.sent, 'Đã xem': point.seen, 'Đã phản hồi': point.replied,
   }));
   return (
-    <Section title={<><SendIcon className="w-4 h-4" /> Tin gửi đi: đã nhận, đã xem, phản hồi ({periodLabel})</>}>
+    <Section title={<>{trx('<0/> Tin gửi đi: đã nhận, đã xem, phản hồi ({{periodLabel}})', { 0: <SendIcon className="w-4 h-4" />, periodLabel })}</>}>
       {outreach.sent === 0 ? (
-        <p className="py-6 text-center text-xs text-muted-foreground">Chưa gửi tin 1:1 nào trong khoảng này</p>
+        <p className="py-6 text-center text-xs text-muted-foreground">{tr('Chưa gửi tin 1:1 nào trong khoảng này')}</p>
       ) : (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <FunnelStat label="Người nhận" value={outreach.sent} sub="Hội thoại 1:1 có tin bạn gửi" />
-            <FunnelStat label="Đã nhận" value={formatRate(percents.delivered)} bar={percents.delivered} color="#3b82f6"
-              sub={outreach.deliveredBase > 0 ? `${outreach.delivered.toLocaleString('vi-VN')}/${outreach.deliveredBase.toLocaleString('vi-VN')} người` : 'Kênh không báo đã nhận'} />
-            <FunnelStat label="Đã xem" value={formatRate(percents.seen)} bar={percents.seen} color="#06b6d4"
-              sub={`${outreach.seen.toLocaleString('vi-VN')} người`} />
-            <FunnelStat label="Đã phản hồi" value={formatRate(percents.replied)} bar={percents.replied} color="#10b981"
-              sub={`${outreach.replied.toLocaleString('vi-VN')} người`} />
+            <FunnelStat label={tr('Người nhận')} value={outreach.sent} sub={tr('Hội thoại 1:1 có tin bạn gửi')} />
+            <FunnelStat label={tr('Đã nhận')} value={formatRate(percents.delivered)} bar={percents.delivered} color="#3b82f6"
+              sub={outreach.deliveredBase > 0 ? tr('{{v1}}/{{v2}} người', { v1: outreach.delivered.toLocaleString(appLocale()), v2: outreach.deliveredBase.toLocaleString(appLocale()) }) : tr('Kênh không báo đã nhận')} />
+            <FunnelStat label={tr('Đã xem')} value={formatRate(percents.seen)} bar={percents.seen} color="#06b6d4"
+              sub={tr('{{v1}} người', { v1: outreach.seen.toLocaleString(appLocale()) })} />
+            <FunnelStat label={tr('Đã phản hồi')} value={formatRate(percents.replied)} bar={percents.replied} color="#10b981"
+              sub={tr('{{v1}} người', { v1: outreach.replied.toLocaleString(appLocale()) })} />
           </div>
 
           {timeline.length > 1 && (
@@ -987,11 +989,11 @@ function OutreachSection({ outreach, byAccount, accountsById, periodLabel }: {
                   <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} allowDecimals={false} />
                   <Tooltip content={ChartTooltip} />
-                  {/* itemSorter null: chú thích theo thứ tự phễu, không theo bảng chữ cái */}
+                  {/* itemSorter null: legend in funnel order, not alphabetical */}
                   <Legend wrapperStyle={{ fontSize: 10 }} itemSorter={null} />
-                  <Bar dataKey="Người nhận" fill="#3b82f6" radius={[2, 2, 0, 0]} maxBarSize={14} />
-                  <Bar dataKey="Đã xem" fill="#06b6d4" radius={[2, 2, 0, 0]} maxBarSize={14} />
-                  <Bar dataKey="Đã phản hồi" fill="#10b981" radius={[2, 2, 0, 0]} maxBarSize={14} />
+                  <Bar dataKey="Người nhận" name={tr('Người nhận')} fill="#3b82f6" radius={[2, 2, 0, 0]} maxBarSize={14} />
+                  <Bar dataKey="Đã xem" name={tr('Đã xem')} fill="#06b6d4" radius={[2, 2, 0, 0]} maxBarSize={14} />
+                  <Bar dataKey="Đã phản hồi" name={tr('Đã phản hồi')} fill="#10b981" radius={[2, 2, 0, 0]} maxBarSize={14} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1002,24 +1004,24 @@ function OutreachSection({ outreach, byAccount, accountsById, periodLabel }: {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border text-muted-foreground">
-                    <th className="px-2 py-2 text-left font-medium">Tài khoản</th>
-                    <th className="px-2 py-2 text-right font-medium">Người nhận</th>
-                    <th className="px-2 py-2 text-right font-medium">Đã nhận</th>
-                    <th className="px-2 py-2 text-right font-medium">Đã xem</th>
-                    <th className="px-2 py-2 text-right font-medium">Đã phản hồi</th>
+                    <th className="px-2 py-2 text-left font-medium">{tr('Tài khoản')}</th>
+                    <th className="px-2 py-2 text-right font-medium">{tr('Người nhận')}</th>
+                    <th className="px-2 py-2 text-right font-medium">{tr('Đã nhận')}</th>
+                    <th className="px-2 py-2 text-right font-medium">{tr('Đã xem')}</th>
+                    <th className="px-2 py-2 text-right font-medium">{tr('Đã phản hồi')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {[...byAccount].sort((a, b) => (b.data.sent || 0) - (a.data.sent || 0)).map(({ zaloId, data }) => {
                     const p = engagementPercents(data);
-                    // Gửi nhiều nhưng ít người nhận / xem: dấu hiệu tài khoản bị hạn chế (hoặc Deplao tắt lúc khách nhận)
+                    // Sends a lot but few recipients / viewers: a sign the account is restricted (or Deplao was off when the customer received it)
                     const low = (data.deliveredBase || 0) >= 20 && p.delivered !== null && p.delivered < 50;
                     return (
                       <tr key={zaloId} className="border-b border-border/50">
                         <td className="max-w-[220px] px-2 py-2"><AccountName account={accountsById.get(zaloId)} zaloId={zaloId} /></td>
-                        <td className="px-2 py-2 text-right tabular-nums text-foreground/80">{(data.sent || 0).toLocaleString('vi-VN')}</td>
+                        <td className="px-2 py-2 text-right tabular-nums text-foreground/80">{(data.sent || 0).toLocaleString(appLocale())}</td>
                         <td className={`px-2 py-2 text-right tabular-nums ${low ? 'text-yellow-400' : 'text-foreground/80'}`}
-                          title={low ? 'Ít người nhận so với số đã gửi: tài khoản có thể bị hạn chế, hoặc Deplao không mở lúc khách nhận tin' : undefined}>
+                          title={low ? tr('Ít người nhận so với số đã gửi: tài khoản có thể bị hạn chế, hoặc Deplao không mở lúc khách nhận tin') : undefined}>
                           {formatRate(p.delivered)}
                         </td>
                         <td className="px-2 py-2 text-right tabular-nums text-foreground/80">{formatRate(p.seen)}</td>
@@ -1033,7 +1035,7 @@ function OutreachSection({ outreach, byAccount, accountsById, periodLabel }: {
           )}
 
           <div className="space-y-1">
-            <Hint>Mỗi người tính một lần theo tin đầu tiên bạn gửi trong khoảng; phản hồi tính cả sau khoảng.</Hint>
+            <Hint>{tr('Mỗi người tính một lần theo tin đầu tiên bạn gửi trong khoảng; phản hồi tính cả sau khoảng.')}</Hint>
             {engagementNotes(outreach.channels).map(note => <Hint key={note}>{note}</Hint>)}
           </div>
         </div>
@@ -1056,11 +1058,11 @@ function MessagesTab({ loading, volume, heatmap, periodDays, periodLabel, overvi
     <div className="space-y-5">
       {overview && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KPICard icon={<ChatIcon className="w-4 h-4" />} label="Hôm nay" value={overview.todayMessages}
-            sub={`${overview.todaySent} gửi · ${overview.todayReceived} nhận`} color="blue" />
-          <KPICard icon={<SendIcon className="w-4 h-4" />} label={`Tổng tin nhắn (${periodLabel})`} value={overview.totalMessages} color="purple" />
-          <KPICard icon={<ChartIcon className="w-4 h-4" />} label="TB/ngày" value={avgPerDay} color="cyan" />
-          <KPICard icon={<SendIcon className="w-4 h-4" />} label="Tỷ lệ gửi" value={`${sentRatio}%`}
+          <KPICard icon={<ChatIcon className="w-4 h-4" />} label={tr('Hôm nay')} value={overview.todayMessages}
+            sub={tr('{{todaySent}} gửi · {{todayReceived}} nhận', { todaySent: overview.todaySent, todayReceived: overview.todayReceived })} color="blue" />
+          <KPICard icon={<SendIcon className="w-4 h-4" />} label={tr('Tổng tin nhắn ({{periodLabel}})', { periodLabel })} value={overview.totalMessages} color="purple" />
+          <KPICard icon={<ChartIcon className="w-4 h-4" />} label={tr('TB/ngày')} value={avgPerDay} color="cyan" />
+          <KPICard icon={<SendIcon className="w-4 h-4" />} label={tr('Tỷ lệ gửi')} value={`${sentRatio}%`}
             sub={`${overview.totalSent} / ${overview.totalMessages}`} color="green" />
         </div>
       )}
@@ -1074,20 +1076,20 @@ function MessagesTab({ loading, volume, heatmap, periodDays, periodLabel, overvi
         <>
           {/* KPI row */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <KPICard icon="⏱️" label="TB phản hồi" value={fmtDuration(responseTime.avgSeconds)}
-              sub={`${responseTime.totalReplies} lượt trả lời`} color="blue" />
-            <KPICard icon={<ChartIcon className="w-4 h-4" />} label="Trung vị" value={fmtDuration(responseTime.medianSeconds)}
-              sub="50% trả lời nhanh hơn" color="cyan" />
-            <KPICard icon={<RocketIcon className="w-4 h-4" />} label="Nhanh nhất" value={fmtDuration(responseTime.minSeconds)} color="green" />
-            <KPICard icon="🐢" label="Chậm nhất" value={fmtDuration(responseTime.maxSeconds)} color="red" />
-            <KPICard icon={<ChatIcon className="w-4 h-4" />} label="Hội thoại" value={responseTime.totalConversations}
-              sub="có phản hồi" color="purple" />
+            <KPICard icon="⏱️" label={tr('TB phản hồi')} value={fmtDuration(responseTime.avgSeconds)}
+              sub={tr('{{totalReplies}} lượt trả lời', { totalReplies: responseTime.totalReplies })} color="blue" />
+            <KPICard icon={<ChartIcon className="w-4 h-4" />} label={tr('Trung vị')} value={fmtDuration(responseTime.medianSeconds)}
+              sub={tr('50% trả lời nhanh hơn')} color="cyan" />
+            <KPICard icon={<RocketIcon className="w-4 h-4" />} label={tr('Nhanh nhất')} value={fmtDuration(responseTime.minSeconds)} color="green" />
+            <KPICard icon="🐢" label={tr('Chậm nhất')} value={fmtDuration(responseTime.maxSeconds)} color="red" />
+            <KPICard icon={<ChatIcon className="w-4 h-4" />} label={tr('Hội thoại')} value={responseTime.totalConversations}
+              sub={tr('có phản hồi')} color="purple" />
           </div>
 
           {/* Distribution + By-hour charts */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
             {/* Distribution chart */}
-            <Section title={<><ChartIcon className="w-4 h-4" /> Phân bổ thời gian phản hồi</>}>
+            <Section title={<>{trx('<0/> Phân bổ thời gian phản hồi', { 0: <ChartIcon className="w-4 h-4" /> })}</>}>
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={(responseTime?.distribution || []).filter((d: any) => d.count > 0)} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
@@ -1102,11 +1104,11 @@ function MessagesTab({ loading, volume, heatmap, periodDays, periodLabel, overvi
                       return (
                         <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                           <p className="text-muted-foreground mb-1 font-medium">{d.bucket}</p>
-                          <p className="text-foreground font-bold">{d.count} lượt <span className="text-muted-foreground font-normal">({pct}%)</span></p>
+                          <p className="text-foreground font-bold">{trx('{{count}} lượt <0>({{pct}}%)</0>', { count: d.count, 0: <span className="text-muted-foreground font-normal" />, pct })}</p>
                         </div>
                       );
                     }} />
-                    <Bar dataKey="count" name="Số lượt" radius={[4, 4, 0, 0]} maxBarSize={32}>
+                    <Bar dataKey="count" name={tr('Số lượt')} radius={[4, 4, 0, 0]} maxBarSize={32}>
                       {(responseTime?.distribution || []).filter((d: any) => d.count > 0).map((_, i) => (
                         <Cell key={i} fill={RT_COLORS[i % RT_COLORS.length]} />
                       ))}
@@ -1120,15 +1122,14 @@ function MessagesTab({ loading, volume, heatmap, periodDays, periodLabel, overvi
                 const pct = responseTime.totalReplies > 0 ? Math.round(fast / responseTime.totalReplies * 100) : 0;
                 return (
                   <p className="text-[11px] text-muted-foreground mt-2 text-center">
-                    <CheckIcon className="w-4 h-4 inline" /> <span className="text-green-400 font-semibold">{pct}%</span> tin nhắn được phản hồi trong <span className="text-foreground">15 phút</span>
-                    {' · '}Tổng <span className="text-foreground">{responseTime.totalReplies}</span> lượt
+                    {trx('<0/> <1>{{pct}}%</1> tin nhắn được phản hồi trong <2>15 phút</2> · Tổng <3>{{totalReplies}}</3> lượt', { 0: <CheckIcon className="w-4 h-4 inline" />, 1: <span className="text-green-400 font-semibold" />, pct, 2: <span className="text-foreground" />, 3: <span className="text-foreground" />, totalReplies: responseTime.totalReplies })}
                   </p>
                 );
               })()}
             </Section>
 
             {/* By-hour chart */}
-            <Section title={<><ClockIcon className="w-4 h-4" /> Thời gian phản hồi TB theo giờ trong ngày</>}>
+            <Section title={<>{trx('<0/> Thời gian phản hồi TB theo giờ trong ngày', { 0: <ClockIcon className="w-4 h-4" /> })}</>}>
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={(responseTime?.byHour || []).filter((h: any) => h.count > 0)} margin={{ top: 4, right: 8, bottom: 0, left: -10 }}>
@@ -1143,12 +1144,12 @@ function MessagesTab({ loading, volume, heatmap, periodDays, periodLabel, overvi
                       return (
                         <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                           <p className="text-muted-foreground mb-1 font-medium">{d.hour}:00 – {d.hour}:59</p>
-                          <p className="text-foreground">TB: <span className="font-bold text-blue-400">{fmtDuration(d.avgSeconds)}</span></p>
-                          <p className="text-muted-foreground">{d.count} lượt trả lời</p>
+                          <p className="text-foreground">{trx('TB: <0>{{v1}}</0>', { 0: <span className="font-bold text-blue-400" />, v1: fmtDuration(d.avgSeconds) })}</p>
+                          <p className="text-muted-foreground">{trx('{{count}} lượt trả lời', { count: d.count })}</p>
                         </div>
                       );
                     }} />
-                    <Bar dataKey="avgSeconds" name="TB phản hồi" fill="#3b82f6" radius={[3, 3, 0, 0]} maxBarSize={20} />
+                    <Bar dataKey="avgSeconds" name={tr('TB phản hồi')} fill="#3b82f6" radius={[3, 3, 0, 0]} maxBarSize={20} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1159,11 +1160,7 @@ function MessagesTab({ loading, volume, heatmap, periodDays, periodLabel, overvi
                 const fastest = active.reduce((a, b) => a.avgSeconds < b.avgSeconds ? a : b);
                 const slowest = active.reduce((a, b) => a.avgSeconds > b.avgSeconds ? a : b);
                 return (
-                  <p className="text-[11px] text-muted-foreground mt-2 text-center"><RocketIcon className="w-4 h-4 inline" /> Nhanh nhất lúc <span className="text-green-400 font-semibold">{fastest.hour}h</span>
-                    {' '}({fmtDuration(fastest.avgSeconds)})
-                    {' · '}
-                    🐢 Chậm nhất lúc <span className="text-red-400 font-semibold">{slowest.hour}h</span>
-                    {' '}({fmtDuration(slowest.avgSeconds)})
+                  <p className="text-[11px] text-muted-foreground mt-2 text-center">{trx('<0/> Nhanh nhất lúc <1>{{hour}}h</1> ({{v1}}) · 🐢 Chậm nhất lúc <2>{{hour2}}h</2> ({{v3}})', { 0: <RocketIcon className="w-4 h-4 inline" />, 1: <span className="text-green-400 font-semibold" />, hour: fastest.hour, v1: fmtDuration(fastest.avgSeconds), 2: <span className="text-red-400 font-semibold" />, hour2: slowest.hour, v3: fmtDuration(slowest.avgSeconds) })}
                   </p>
                 );
               })()}
@@ -1173,18 +1170,16 @@ function MessagesTab({ loading, volume, heatmap, periodDays, periodLabel, overvi
       )}
 
       {contactType !== 'group' && responseTime && responseTime.totalReplies === 0 && (
-        <Section title={<><ClockIcon className="w-4 h-4" /> Thời gian phản hồi</>}>
+        <Section title={<>{trx('<0/> Thời gian phản hồi', { 0: <ClockIcon className="w-4 h-4" /> })}</>}>
           <p className="text-xs text-muted-foreground text-center py-6">
-            Chưa có dữ liệu phản hồi trong khoảng thời gian này.
-            <br />
-            <span className="text-muted-foreground">Cần có tin nhắn đến và tin trả lời để đo thời gian phản hồi.</span>
+            {trx('Chưa có dữ liệu phản hồi trong khoảng thời gian này.<0/><1>Cần có tin nhắn đến và tin trả lời để đo thời gian phản hồi.</1>', { 0: <br />, 1: <span className="text-muted-foreground" /> })}
           </p>
         </Section>
       )}
 
-      <Section title={<><TrendingUpIcon className="w-4 h-4" /> {'Lượng tin nhắn '}{periodDays <= 2 ? 'theo giờ' : periodDays + ' ngày qua'}</>}>
+      <Section title={<>{trx('<0/> Lượng tin nhắn {{v1}}', { 0: <TrendingUpIcon className="w-4 h-4" />, v1: periodDays <= 2 ? tr('theo giờ') : tr('{{v1}} ngày qua', { v1: (periodDays) }) })}</>}>
         {volume.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+          <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
         ) : (
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -1204,18 +1199,18 @@ function MessagesTab({ loading, volume, heatmap, periodDays, periodLabel, overvi
                 <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={ChartTooltip} />
                 <Legend wrapperStyle={{ fontSize: 10, paddingTop: 4 }} />
-                <Area type="monotone" dataKey="sent" name="Gửi" stroke="#3b82f6" fill="url(#gSent2)" strokeWidth={2} />
-                <Area type="monotone" dataKey="received" name="Nhận" stroke="#10b981" fill="url(#gRecv2)" strokeWidth={2} />
-                <Area type="monotone" dataKey="total" name="Tổng" stroke="#8b5cf6" fill="none" strokeWidth={1.5} strokeDasharray="4 2" />
+                <Area type="monotone" dataKey="sent" name={tr('Gửi')} stroke="#3b82f6" fill="url(#gSent2)" strokeWidth={2} />
+                <Area type="monotone" dataKey="received" name={tr('Nhận')} stroke="#10b981" fill="url(#gRecv2)" strokeWidth={2} />
+                <Area type="monotone" dataKey="total" name={tr('Tổng')} stroke="#8b5cf6" fill="none" strokeWidth={1.5} strokeDasharray="4 2" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         )}
       </Section>
 
-      <Section title={<><ActivityIcon className="w-4 h-4" /> Heatmap giờ cao điểm (7 ngày × 24 giờ)</>}>
+      <Section title={<>{trx('<0/> Heatmap giờ cao điểm (7 ngày × 24 giờ)', { 0: <ActivityIcon className="w-4 h-4" /> })}</>}>
         {heatmap.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+          <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
         ) : (
           <HeatmapGrid data={heatmap} />
         )}
@@ -1237,20 +1232,20 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
     <div className="space-y-5">
       {overview && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KPICard icon={<UsersIcon className="w-4 h-4" />} label="Tổng liên hệ" value={overview.totalContacts} color="green" />
-          <KPICard icon={<UserCheckIcon className="w-4 h-4" />} label="Bạn bè" value={overview.totalFriends} color="blue" />
-          <KPICard icon={<UsersIcon className="w-4 h-4" />} label="Nhóm" value={overview.totalGroups} color="cyan" />
-          <KPICard icon={<TagIcon className="w-4 h-4" />} label="Đã gắn tag" value={segmentation?.tagged ?? 0}
-            sub={segmentation ? `${segmentation.untagged} chưa gắn` : ''} color="purple" />
+          <KPICard icon={<UsersIcon className="w-4 h-4" />} label={tr('Tổng liên hệ')} value={overview.totalContacts} color="green" />
+          <KPICard icon={<UserCheckIcon className="w-4 h-4" />} label={tr('Bạn bè')} value={overview.totalFriends} color="blue" />
+          <KPICard icon={<UsersIcon className="w-4 h-4" />} label={tr('Nhóm')} value={overview.totalGroups} color="cyan" />
+          <KPICard icon={<TagIcon className="w-4 h-4" />} label={tr('Đã gắn tag')} value={segmentation?.tagged ?? 0}
+            sub={segmentation ? tr('{{untagged}} chưa gắn', { untagged: segmentation.untagged }) : ''} color="purple" />
         </div>
       )}
       {overview && multiAccount && (
-        <Hint>Liên hệ, bạn bè và nhóm được cộng theo từng tài khoản: một người là liên hệ của 2 tài khoản được tính 2 lần.</Hint>
+        <Hint>{tr('Liên hệ, bạn bè và nhóm được cộng theo từng tài khoản: một người là liên hệ của 2 tài khoản được tính 2 lần.')}</Hint>
       )}
 
       {/* Contact growth chart - right after KPI */}
       {contactGrowth.length > 0 && (
-        <Section title={<><TrendingUpIcon className="w-4 h-4" /> Tăng trưởng liên hệ</>}>
+        <Section title={<>{trx('<0/> Tăng trưởng liên hệ', { 0: <TrendingUpIcon className="w-4 h-4" /> })}</>}>
           <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={contactGrowth} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
@@ -1265,7 +1260,7 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
                 <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={ChartTooltip} />
                 <Legend wrapperStyle={{ fontSize: 10, paddingTop: 4 }} />
-                <Area type="monotone" dataKey="newContacts" name="Mới" stroke="#8b5cf6" fill="url(#gGrowth)" strokeWidth={2} />
+                <Area type="monotone" dataKey="newContacts" name={tr('Mới')} stroke="#8b5cf6" fill="url(#gGrowth)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -1273,9 +1268,9 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        <Section title={<><PieChartIcon className="w-4 h-4" /> Phân loại liên hệ</>}>
+        <Section title={<>{trx('<0/> Phân loại liên hệ', { 0: <PieChartIcon className="w-4 h-4" /> })}</>}>
           {pieData.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-52 flex items-center justify-center">
               <ResponsiveContainer width="100%" height="100%">
@@ -1292,19 +1287,19 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
           )}
         </Section>
 
-        <Section title={<><UserCheckIcon className="w-4 h-4" /> Lời mời kết bạn</>}>
+        <Section title={<>{trx('<0/> Lời mời kết bạn', { 0: <UserCheckIcon className="w-4 h-4" /> })}</>}>
           {(!friendReqs.timeline || friendReqs.timeline.length === 0) ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div>
               <div className="flex gap-3 mb-3">
                 <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 flex-1 text-center">
                   <div className="text-lg font-bold text-blue-400">{friendReqs.totalSent}</div>
-                  <div className="text-[10px] text-muted-foreground">Đã gửi</div>
+                  <div className="text-[10px] text-muted-foreground">{tr('Đã gửi')}</div>
                 </div>
                 <div className="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 flex-1 text-center">
                   <div className="text-lg font-bold text-green-400">{friendReqs.totalReceived}</div>
-                  <div className="text-[10px] text-muted-foreground">Đã nhận</div>
+                  <div className="text-[10px] text-muted-foreground">{tr('Đã nhận')}</div>
                 </div>
               </div>
               <div className="h-32">
@@ -1314,8 +1309,8 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
                     <XAxis dataKey="bucket" tick={{ fontSize: 8, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 8, fill: '#6b7280' }} axisLine={false} tickLine={false} allowDecimals={false} />
                     <Tooltip content={ChartTooltip} />
-                    <Bar dataKey="sent" name="Gửi" fill="#3b82f6" radius={[2, 2, 0, 0]} maxBarSize={12} />
-                    <Bar dataKey="received" name="Nhận" fill="#10b981" radius={[2, 2, 0, 0]} maxBarSize={12} />
+                    <Bar dataKey="sent" name={tr('Gửi')} fill="#3b82f6" radius={[2, 2, 0, 0]} maxBarSize={12} />
+                    <Bar dataKey="received" name={tr('Nhận')} fill="#10b981" radius={[2, 2, 0, 0]} maxBarSize={12} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1328,7 +1323,7 @@ function ContactsTab({ loading, overview, segmentation, pieData, tagPieData, con
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TAB: Labels (Nhãn Local)
+// TAB: Labels (Local label)
 // ══════════════════════════════════════════════════════════════════════════════
 function LabelsTab({ loading, labelUsage, periodDays }: {
   loading: boolean; labelUsage: LabelUsageData | null; periodDays: number;
@@ -1340,7 +1335,7 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
       <div className="flex items-center gap-2 bg-purple-500/10 border border-purple-500/20 rounded-xl px-4 py-2.5">
         <span className="text-base"><TagIcon className="w-4 h-4" /></span>
         <p className="text-xs text-purple-300">
-          <strong>Chỉ thống kê nhãn local</strong> - Nhãn do bạn tự tạo và gắn cho hội thoại trong ứng dụng. Không bao gồm nhãn từ Zalo.
+          {trx('<0>Chỉ thống kê nhãn local</0> - Nhãn do bạn tự tạo và gắn cho hội thoại trong ứng dụng. Không bao gồm nhãn từ Zalo.', { 0: <strong /> })}
         </p>
       </div>
 
@@ -1348,17 +1343,17 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
         <>
           {/* KPI row */}
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-            <KPICard icon={<TagIcon className="w-4 h-4" />} label="Tổng lượt gắn nhãn" value={labelUsage.totalAssignments}
-              sub={`trong ${periodDays} ngày`} color="purple" />
-            <KPICard icon={<ChartIcon className="w-4 h-4" />} label="Số nhãn sử dụng" value={labelUsage.totalLabelsUsed} color="blue" />
-            <KPICard icon={<TrendingUpIcon className="w-4 h-4" />} label="TB/ngày" value={labelUsage.avgPerDay} color="cyan" />
+            <KPICard icon={<TagIcon className="w-4 h-4" />} label={tr('Tổng lượt gắn nhãn')} value={labelUsage.totalAssignments}
+              sub={tr('trong {{periodDays}} ngày', { periodDays })} color="purple" />
+            <KPICard icon={<ChartIcon className="w-4 h-4" />} label={tr('Số nhãn sử dụng')} value={labelUsage.totalLabelsUsed} color="blue" />
+            <KPICard icon={<TrendingUpIcon className="w-4 h-4" />} label={tr('TB/ngày')} value={labelUsage.avgPerDay} color="cyan" />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
             {/* Timeline chart */}
-            <Section title={<><TagIcon className="w-4 h-4" /> {'Lượt gắn nhãn theo ngày ('}{periodDays}{' ngày)'}</>}>
+            <Section title={<><TagIcon className="w-4 h-4" /> {tr('Lượt gắn nhãn theo ngày (')}{periodDays}{tr(' ngày)')}</>}>
               {(labelUsage?.timeline || []).filter((t: any) => t.count > 0).length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+                <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
               ) : (
                 <div className="h-52">
                   <ResponsiveContainer width="100%" height="100%">
@@ -1378,11 +1373,11 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
                         return (
                           <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                             <p className="text-muted-foreground mb-1 font-medium">{d.bucket}</p>
-                            <p className="text-foreground font-bold">{d.count} lượt gắn nhãn</p>
+                            <p className="text-foreground font-bold">{trx('{{count}} lượt gắn nhãn', { count: d.count })}</p>
                           </div>
                         );
                       }} />
-                      <Bar dataKey="count" name="Lượt gắn" fill="url(#gLabel)" radius={[3, 3, 0, 0]} maxBarSize={24} />
+                      <Bar dataKey="count" name={tr('Lượt gắn')} fill="url(#gLabel)" radius={[3, 3, 0, 0]} maxBarSize={24} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1390,9 +1385,9 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
             </Section>
 
             {/* By-label breakdown chart */}
-            <Section title={<><ChartIcon className="w-4 h-4" /> Chi tiết theo từng nhãn</>}>
+            <Section title={<>{trx('<0/> Chi tiết theo từng nhãn', { 0: <ChartIcon className="w-4 h-4" /> })}</>}>
               {(!labelUsage.byLabel || labelUsage.byLabel.length === 0) ? (
-                <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+                <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
               ) : (
                 <div className="h-52">
                   <ResponsiveContainer width="100%" height="100%">
@@ -1409,11 +1404,11 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
                         return (
                           <div className="bg-card border border-input rounded-xl px-3 py-2 text-xs shadow-xl">
                             <p className="text-foreground font-medium mb-1">{d.emoji} {d.name}</p>
-                            <p className="text-blue-400 font-bold">{d.count} lượt <span className="text-muted-foreground font-normal">({pct}%)</span></p>
+                            <p className="text-blue-400 font-bold">{trx('{{count}} lượt <0>({{pct}}%)</0>', { count: d.count, 0: <span className="text-muted-foreground font-normal" />, pct })}</p>
                           </div>
                         );
                       }} />
-                      <Bar dataKey="count" name="Lượt" radius={[0, 3, 3, 0]} maxBarSize={18}>
+                      <Bar dataKey="count" name={tr('Lượt')} radius={[0, 3, 3, 0]} maxBarSize={18}>
                         {(labelUsage?.byLabel || []).slice(0, 30).map((d: any, i: number) => (
                           <Cell key={i} fill={d.color || PIE_COLORS[i % PIE_COLORS.length]} />
                         ))}
@@ -1428,17 +1423,15 @@ function LabelsTab({ loading, labelUsage, periodDays }: {
       )}
 
       {labelUsage?.totalAssignments === 0 && (
-        <Section title={<><TagIcon className="w-4 h-4" /> Thống kê sử dụng nhãn</>}>
+        <Section title={<>{trx('<0/> Thống kê sử dụng nhãn', { 0: <TagIcon className="w-4 h-4" /> })}</>}>
           <p className="text-xs text-muted-foreground text-center py-6">
-            Chưa có dữ liệu gắn nhãn trong khoảng thời gian này.
-            <br />
-            <span className="text-muted-foreground">Gắn nhãn local cho các hội thoại để xem thống kê tại đây.</span>
+            {trx('Chưa có dữ liệu gắn nhãn trong khoảng thời gian này.<0/><1>Gắn nhãn local cho các hội thoại để xem thống kê tại đây.</1>', { 0: <br />, 1: <span className="text-muted-foreground" /> })}
           </p>
         </Section>
       )}
 
       {!labelUsage && (
-        <div className="text-center py-16 text-muted-foreground text-sm">Chưa có dữ liệu nhãn</div>
+        <div className="text-center py-16 text-muted-foreground text-sm">{tr('Chưa có dữ liệu nhãn')}</div>
       )}
     </div>
   );
@@ -1461,27 +1454,27 @@ function CampaignsTab({ loading, campaigns, overview, multiAccount, accountsById
     name: c.name.length > 18 ? c.name.slice(0, 16) + '…' : c.name,
     sent: c.sent, seen: c.seen ?? 0, failed: c.failed, replied: c.replied,
   }));
-  // Máy chủ (Boss) bản cũ không trả số đã nhận / đã xem
+  // The server (Boss) on an old version does not return the received / seen counts
   const hasEngagement = campaigns.some(c => c.seen !== undefined);
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-        <KPICard icon={<CampaignIcon className="w-4 h-4" />} label="Tổng chiến dịch" value={overview?.totalCampaigns ?? campaigns.length} color="blue" />
-        <KPICard icon={<CheckIcon className="w-4 h-4" />} label="Đã gửi" value={totals.sent}
-          sub={`Gửi thành công ${totals.deliveryRate}%`} color="green" />
-        <KPICard icon={<SendIcon className="w-4 h-4" />} label="Đã nhận" value={hasEngagement ? formatRate(totals.receivedRate) : '—'}
-          sub={hasEngagement ? (totals.deliveredBase > 0 ? `${totals.delivered}/${totals.deliveredBase} người` : 'Kênh không báo') : undefined} color="purple" />
-        <KPICard icon={<CheckIcon className="w-4 h-4" />} label="Đã xem" value={hasEngagement ? `${totals.seenRate}%` : '—'}
-          sub={hasEngagement ? `${totals.seen} người` : undefined} color="cyan" />
-        <KPICard icon={<ChatIcon className="w-4 h-4" />} label="Phản hồi" value={`${totals.replyRate}%`}
-          sub={`${totals.replied} người`} color="orange" />
-        <KPICard icon={<CloseIcon className="w-4 h-4" />} label="Lỗi" value={totals.failed} color="red" />
+        <KPICard icon={<CampaignIcon className="w-4 h-4" />} label={tr('Tổng chiến dịch')} value={overview?.totalCampaigns ?? campaigns.length} color="blue" />
+        <KPICard icon={<CheckIcon className="w-4 h-4" />} label={tr('Đã gửi')} value={totals.sent}
+          sub={tr('Gửi thành công {{deliveryRate}}%', { deliveryRate: totals.deliveryRate })} color="green" />
+        <KPICard icon={<SendIcon className="w-4 h-4" />} label={tr('Đã nhận')} value={hasEngagement ? formatRate(totals.receivedRate) : '—'}
+          sub={hasEngagement ? (totals.deliveredBase > 0 ? tr('{{delivered}}/{{deliveredBase}} người', { delivered: totals.delivered, deliveredBase: totals.deliveredBase }) : tr('Kênh không báo')) : undefined} color="purple" />
+        <KPICard icon={<CheckIcon className="w-4 h-4" />} label={tr('Đã xem')} value={hasEngagement ? `${totals.seenRate}%` : '—'}
+          sub={hasEngagement ? tr('{{seen}} người', { seen: totals.seen }) : undefined} color="cyan" />
+        <KPICard icon={<ChatIcon className="w-4 h-4" />} label={tr('Phản hồi')} value={`${totals.replyRate}%`}
+          sub={tr('{{replied}} người', { replied: totals.replied })} color="orange" />
+        <KPICard icon={<CloseIcon className="w-4 h-4" />} label={tr('Lỗi')} value={totals.failed} color="red" />
       </div>
 
       {/* Top campaigns bar chart */}
       {barData.length > 0 && (
-        <Section title={<><ChartIcon className="w-4 h-4" /> Top chiến dịch (theo số gửi)</>}>
+        <Section title={<>{trx('<0/> Top chiến dịch (theo số gửi)', { 0: <ChartIcon className="w-4 h-4" /> })}</>}>
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={barData} layout="vertical" margin={{ top: 0, right: 8, bottom: 0, left: 80 }}>
@@ -1490,10 +1483,10 @@ function CampaignsTab({ loading, campaigns, overview, multiAccount, accountsById
                 <YAxis dataKey="name" type="category" tick={{ fontSize: 9, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={80} />
                 <Tooltip content={ChartTooltip} />
                 <Legend wrapperStyle={{ fontSize: 10 }} itemSorter={null} />
-                <Bar dataKey="sent" name="Đã gửi" fill="#3b82f6" radius={[0, 2, 2, 0]} maxBarSize={16} />
-                {hasEngagement && <Bar dataKey="seen" name="Đã xem" fill="#06b6d4" radius={[0, 2, 2, 0]} maxBarSize={16} />}
-                <Bar dataKey="replied" name="Phản hồi" fill="#10b981" radius={[0, 2, 2, 0]} maxBarSize={16} />
-                <Bar dataKey="failed" name="Lỗi" fill="#ef4444" radius={[0, 2, 2, 0]} maxBarSize={16} />
+                <Bar dataKey="sent" name={tr('Đã gửi')} fill="#3b82f6" radius={[0, 2, 2, 0]} maxBarSize={16} />
+                {hasEngagement && <Bar dataKey="seen" name={tr('Đã xem')} fill="#06b6d4" radius={[0, 2, 2, 0]} maxBarSize={16} />}
+                <Bar dataKey="replied" name={tr('Phản hồi')} fill="#10b981" radius={[0, 2, 2, 0]} maxBarSize={16} />
+                <Bar dataKey="failed" name={tr('Lỗi')} fill="#ef4444" radius={[0, 2, 2, 0]} maxBarSize={16} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1502,20 +1495,20 @@ function CampaignsTab({ loading, campaigns, overview, multiAccount, accountsById
 
       {/* Campaign table */}
       {campaigns.length > 0 && (
-        <Section title={<><ClipboardIcon className="w-4 h-4" /> Chi tiết chiến dịch</>}>
+        <Section title={<>{trx('<0/> Chi tiết chiến dịch', { 0: <ClipboardIcon className="w-4 h-4" /> })}</>}>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-muted-foreground border-b border-border">
-                  <th className="text-left py-2 px-2 font-medium">Tên</th>
-                  {multiAccount && <th className="text-left py-2 px-2 font-medium">Tài khoản</th>}
-                  <th className="text-center py-2 px-2 font-medium">Trạng thái</th>
-                  <th className="text-right py-2 px-1 font-medium">Tổng</th>
-                  <th className="text-right py-2 px-1 font-medium">Đã gửi</th>
-                  <th className="text-right py-2 px-2 font-medium">Đã nhận</th>
-                  <th className="text-right py-2 px-2 font-medium">Đã xem</th>
-                  <th className="text-right py-2 px-2 font-medium">Phản hồi</th>
-                  <th className="text-right py-2 px-1 font-medium">Lỗi</th>
+                  <th className="text-left py-2 px-2 font-medium">{tr('Tên')}</th>
+                  {multiAccount && <th className="text-left py-2 px-2 font-medium">{tr('Tài khoản')}</th>}
+                  <th className="text-center py-2 px-2 font-medium">{tr('Trạng thái')}</th>
+                  <th className="text-right py-2 px-1 font-medium">{tr('Tổng')}</th>
+                  <th className="text-right py-2 px-1 font-medium">{tr('Đã gửi')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('Đã nhận')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('Đã xem')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('Phản hồi')}</th>
+                  <th className="text-right py-2 px-1 font-medium">{tr('Lỗi')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1533,18 +1526,18 @@ function CampaignsTab({ loading, campaigns, overview, multiAccount, accountsById
                       </span>
                     </td>
                     <td className="py-2 px-1 text-right text-foreground/80">{c.total}</td>
-                    <td className="py-2 px-1 text-right" title={`Gửi thành công ${c.deliveryRate}%`}>
+                    <td className="py-2 px-1 text-right" title={tr('Gửi thành công {{deliveryRate}}%', { deliveryRate: c.deliveryRate })}>
                       <span className="text-green-400">{c.sent}</span>
                       <span className="ml-1 text-[10px] text-muted-foreground">{c.deliveryRate}%</span>
                     </td>
                     <td className="py-2 px-2 text-right text-foreground/80"
-                      title={c.deliveredBase ? `${c.delivered}/${c.deliveredBase} người` : 'Kênh không báo đã nhận'}>
+                      title={c.deliveredBase ? tr('{{delivered}}/{{deliveredBase}} người', { delivered: c.delivered, deliveredBase: c.deliveredBase }) : tr('Kênh không báo đã nhận')}>
                       {c.sendsMessage === false ? '—' : formatRate(c.receivedRate)}
                     </td>
-                    <td className="py-2 px-2 text-right text-foreground/80" title={c.seen !== undefined ? `${c.seen} người` : undefined}>
+                    <td className="py-2 px-2 text-right text-foreground/80" title={c.seen !== undefined ? tr('{{seen}} người', { seen: c.seen }) : undefined}>
                       {c.seen === undefined || c.sendsMessage === false ? '—' : `${c.seenRate ?? 0}%`}
                     </td>
-                    <td className="py-2 px-2 text-right" title={`${c.replied} người`}>
+                    <td className="py-2 px-2 text-right" title={tr('{{replied}} người', { replied: c.replied })}>
                       <span className={c.replyRate >= 30 ? 'text-green-400' : c.replyRate >= 10 ? 'text-yellow-400' : 'text-muted-foreground'}>
                         {c.replyRate}%
                       </span>
@@ -1557,7 +1550,7 @@ function CampaignsTab({ loading, campaigns, overview, multiAccount, accountsById
             </table>
           </div>
           {campaigns.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có chiến dịch nào</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có chiến dịch nào')}</p>
           )}
           {hasEngagement && (
             <div className="mt-3 space-y-1">
@@ -1570,7 +1563,7 @@ function CampaignsTab({ loading, campaigns, overview, multiAccount, accountsById
       {campaigns.length === 0 && (
         <div className="text-center py-16 text-muted-foreground text-sm">
           <span className="text-3xl mb-3 block"><CampaignIcon className="w-4 h-4" /></span>
-          {multiAccount ? 'Chưa có chiến dịch nào cho các tài khoản đã chọn' : 'Chưa có chiến dịch nào cho tài khoản này'}
+          {multiAccount ? tr('Chưa có chiến dịch nào cho các tài khoản đã chọn') : tr('Chưa có chiến dịch nào cho tài khoản này')}
         </div>
       )}
     </div>
@@ -1587,7 +1580,7 @@ function WorkflowTab({ loading, workflowData, wfPieData, multiAccount }: {
   if (!workflowData || workflowData.totalRuns === 0) {
     return (
       <div className="text-center py-16 text-muted-foreground text-sm">
-        Chưa có dữ liệu workflow trong khoảng thời gian đã chọn
+        {tr('Chưa có dữ liệu workflow trong khoảng thời gian đã chọn')}
       </div>
     );
   }
@@ -1595,21 +1588,21 @@ function WorkflowTab({ loading, workflowData, wfPieData, multiAccount }: {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <KPICard icon={<LightningIcon className="w-4 h-4" />} label="Tổng lượt chạy" value={workflowData.totalRuns} color="blue" />
-        <KPICard icon={<CheckIcon className="w-4 h-4" />} label="Thành công" value={workflowData.successRuns} color="green" />
-        <KPICard icon={<CloseIcon className="w-4 h-4" />} label="Lỗi" value={workflowData.errorRuns} color="red" />
-        <KPICard icon={<ChartIcon className="w-4 h-4" />} label="Tỷ lệ thành công" value={`${workflowData.successRate}%`} color="cyan" />
-        <KPICard icon="⏱️" label="TB thời gian" value={`${(workflowData.avgDuration / 1000).toFixed(1)}s`} color="purple" />
+        <KPICard icon={<LightningIcon className="w-4 h-4" />} label={tr('Tổng lượt chạy')} value={workflowData.totalRuns} color="blue" />
+        <KPICard icon={<CheckIcon className="w-4 h-4" />} label={tr('Thành công')} value={workflowData.successRuns} color="green" />
+        <KPICard icon={<CloseIcon className="w-4 h-4" />} label={tr('Lỗi')} value={workflowData.errorRuns} color="red" />
+        <KPICard icon={<ChartIcon className="w-4 h-4" />} label={tr('Tỷ lệ thành công')} value={`${workflowData.successRate}%`} color="cyan" />
+        <KPICard icon="⏱️" label={tr('TB thời gian')} value={`${(workflowData.avgDuration / 1000).toFixed(1)}s`} color="purple" />
       </div>
       {multiAccount && (
-        <Hint>Workflow gắn với nhiều tài khoản đã chọn chỉ được tính một lần.</Hint>
+        <Hint>{tr('Workflow gắn với nhiều tài khoản đã chọn chỉ được tính một lần.')}</Hint>
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {/* Timeline */}
-        <Section title={<><TrendingUpIcon className="w-4 h-4" /> Lượt chạy theo ngày</>}>
+        <Section title={<>{trx('<0/> Lượt chạy theo ngày', { 0: <TrendingUpIcon className="w-4 h-4" /> })}</>}>
           {(!workflowData.timeline || workflowData.timeline.length === 0) ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -1619,8 +1612,8 @@ function WorkflowTab({ loading, workflowData, wfPieData, multiAccount }: {
                   <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} allowDecimals={false} />
                   <Tooltip content={ChartTooltip} />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
-                  <Bar dataKey="success" name="Thành công" fill="#10b981" radius={[2, 2, 0, 0]} maxBarSize={16} stackId="wf" />
-                  <Bar dataKey="error" name="Lỗi" fill="#ef4444" radius={[2, 2, 0, 0]} maxBarSize={16} stackId="wf" />
+                  <Bar dataKey="success" name={tr('Thành công')} fill="#10b981" radius={[2, 2, 0, 0]} maxBarSize={16} stackId="wf" />
+                  <Bar dataKey="error" name={tr('Lỗi')} fill="#ef4444" radius={[2, 2, 0, 0]} maxBarSize={16} stackId="wf" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1628,9 +1621,9 @@ function WorkflowTab({ loading, workflowData, wfPieData, multiAccount }: {
         </Section>
 
         {/* Success/Error pie */}
-        <Section title={<><PieChartIcon className="w-4 h-4" /> Phân bổ kết quả</>}>
+        <Section title={<>{trx('<0/> Phân bổ kết quả', { 0: <PieChartIcon className="w-4 h-4" /> })}</>}>
           {wfPieData.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-52 flex items-center justify-center">
               <ResponsiveContainer width="100%" height="100%">
@@ -1650,15 +1643,15 @@ function WorkflowTab({ loading, workflowData, wfPieData, multiAccount }: {
 
       {/* Top workflows table */}
       {workflowData.topWorkflows?.length > 0 && (
-        <Section title={<><AwardIcon className="w-4 h-4" /> Top Workflows</>}>
+        <Section title={<>{trx('<0/> Top Workflows', { 0: <AwardIcon className="w-4 h-4" /> })}</>}>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-muted-foreground border-b border-border">
                   <th className="text-left py-2 px-2 font-medium">#</th>
-                  <th className="text-left py-2 px-2 font-medium">Tên Workflow</th>
-                  <th className="text-right py-2 px-2 font-medium">Lượt chạy</th>
-                  <th className="text-right py-2 px-2 font-medium">Tỷ lệ thành công</th>
+                  <th className="text-left py-2 px-2 font-medium">{tr('Tên Workflow')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('Lượt chạy')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('Tỷ lệ thành công')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1693,26 +1686,26 @@ function AITab({ loading, aiData, aiModelPie }: {
   if (!aiData || aiData.totalRequests === 0) {
     return (
       <div className="text-center py-16 text-muted-foreground text-sm">
-        Chưa có dữ liệu AI trong khoảng thời gian đã chọn
+        {tr('Chưa có dữ liệu AI trong khoảng thời gian đã chọn')}
       </div>
     );
   }
 
   return (
     <div className="space-y-5">
-      <Hint>Thống kê AI tính trên toàn ứng dụng: nhật ký AI không ghi theo tài khoản nên bộ lọc tài khoản không áp dụng.</Hint>
+      <Hint>{tr('Thống kê AI tính trên toàn ứng dụng: nhật ký AI không ghi theo tài khoản nên bộ lọc tài khoản không áp dụng.')}</Hint>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KPICard icon={<BotIcon className="w-4 h-4" />} label="Tổng requests" value={aiData.totalRequests} color="blue" />
-        <KPICard icon="🔤" label="Tổng tokens" value={aiData.totalTokens} color="purple" />
-        <KPICard icon={<InboxIcon className="w-4 h-4" />} label="Prompt tokens" value={aiData.totalPromptTokens} color="cyan" />
-        <KPICard icon={<SendIcon className="w-4 h-4" />} label="Completion tokens" value={aiData.totalCompletionTokens} color="green" />
+        <KPICard icon={<BotIcon className="w-4 h-4" />} label={tr('Tổng requests')} value={aiData.totalRequests} color="blue" />
+        <KPICard icon="🔤" label={tr('Tổng tokens')} value={aiData.totalTokens} color="purple" />
+        <KPICard icon={<InboxIcon className="w-4 h-4" />} label={tr('Prompt tokens')} value={aiData.totalPromptTokens} color="cyan" />
+        <KPICard icon={<SendIcon className="w-4 h-4" />} label={tr('Completion tokens')} value={aiData.totalCompletionTokens} color="green" />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {/* Timeline: requests + tokens */}
-        <Section title={<><TrendingUpIcon className="w-4 h-4" /> AI usage theo ngày</>}>
+        <Section title={<>{trx('<0/> AI usage theo ngày', { 0: <TrendingUpIcon className="w-4 h-4" /> })}</>}>
           {(!aiData.timeline || aiData.timeline.length === 0) ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
@@ -1732,9 +1725,9 @@ function AITab({ loading, aiData, aiModelPie }: {
         </Section>
 
         {/* Model breakdown pie */}
-        <Section title={<><PieChartIcon className="w-4 h-4" /> Phân bổ theo Model</>}>
+        <Section title={<>{trx('<0/> Phân bổ theo Model', { 0: <PieChartIcon className="w-4 h-4" /> })}</>}>
           {aiModelPie.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Chưa có dữ liệu</p>
+            <p className="text-xs text-muted-foreground text-center py-8">{tr('Chưa có dữ liệu')}</p>
           ) : (
             <div className="h-52 flex items-center justify-center">
               <ResponsiveContainer width="100%" height="100%">
@@ -1754,25 +1747,25 @@ function AITab({ loading, aiData, aiModelPie }: {
 
       {/* By model table */}
       {aiData.byModel.length > 0 && (
-        <Section title={<><ClipboardIcon className="w-4 h-4" /> Chi tiết theo Model</>}>
+        <Section title={<>{trx('<0/> Chi tiết theo Model', { 0: <ClipboardIcon className="w-4 h-4" /> })}</>}>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-muted-foreground border-b border-border">
-                  <th className="text-left py-2 px-2 font-medium">Model</th>
-                  <th className="text-right py-2 px-2 font-medium">Requests</th>
-                  <th className="text-right py-2 px-2 font-medium">Tokens</th>
-                  <th className="text-right py-2 px-2 font-medium">TB tokens/req</th>
+                  <th className="text-left py-2 px-2 font-medium">{tr('Model')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('Requests')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('Tokens')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('TB tokens/req')}</th>
                 </tr>
               </thead>
               <tbody>
                 {aiData.byModel.map((m, i) => (
                   <tr key={i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
                     <td className="py-2 px-2 text-foreground font-medium">{m.model}</td>
-                    <td className="py-2 px-2 text-right text-foreground/80">{m.requests.toLocaleString('vi-VN')}</td>
-                    <td className="py-2 px-2 text-right text-blue-400">{m.tokens.toLocaleString('vi-VN')}</td>
+                    <td className="py-2 px-2 text-right text-foreground/80">{m.requests.toLocaleString(appLocale())}</td>
+                    <td className="py-2 px-2 text-right text-blue-400">{m.tokens.toLocaleString(appLocale())}</td>
                     <td className="py-2 px-2 text-right text-muted-foreground">
-                      {m.requests > 0 ? Math.round(m.tokens / m.requests).toLocaleString('vi-VN') : '-'}
+                      {m.requests > 0 ? Math.round(m.tokens / m.requests).toLocaleString(appLocale()) : '-'}
                     </td>
                   </tr>
                 ))}
@@ -1784,22 +1777,22 @@ function AITab({ loading, aiData, aiModelPie }: {
 
       {/* By assistant table */}
       {aiData.byAssistant.length > 0 && (
-        <Section title={<><BrainIcon className="w-4 h-4" /> Chi tiết theo AI Assistant</>}>
+        <Section title={<>{trx('<0/> Chi tiết theo AI Assistant', { 0: <BrainIcon className="w-4 h-4" /> })}</>}>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-muted-foreground border-b border-border">
-                  <th className="text-left py-2 px-2 font-medium">Assistant</th>
-                  <th className="text-right py-2 px-2 font-medium">Requests</th>
-                  <th className="text-right py-2 px-2 font-medium">Tokens</th>
+                  <th className="text-left py-2 px-2 font-medium">{tr('Assistant')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('Requests')}</th>
+                  <th className="text-right py-2 px-2 font-medium">{tr('Tokens')}</th>
                 </tr>
               </thead>
               <tbody>
                 {aiData.byAssistant.map((a, i) => (
                   <tr key={i} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
                     <td className="py-2 px-2 text-foreground font-medium">{a.assistantName}</td>
-                    <td className="py-2 px-2 text-right text-foreground/80">{a.requests.toLocaleString('vi-VN')}</td>
-                    <td className="py-2 px-2 text-right text-blue-400">{a.tokens.toLocaleString('vi-VN')}</td>
+                    <td className="py-2 px-2 text-right text-foreground/80">{a.requests.toLocaleString(appLocale())}</td>
+                    <td className="py-2 px-2 text-right text-blue-400">{a.tokens.toLocaleString(appLocale())}</td>
                   </tr>
                 ))}
               </tbody>

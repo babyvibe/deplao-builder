@@ -1,10 +1,10 @@
 /**
- * WorkflowAIDialog - "Trợ lý thiết kế workflow": the user and the AI analyse the need together in a
+ * WorkflowAIDialog - "Trợ lý thiết kế workflow" (workflow design assistant): the user and the AI analyse the need together in a
  * chat until the proposal is right, then apply it (add to / replace the current workflow).
  *
  * Agent loop per user message (logic in aiCopilot.ts):
  *   system prompt (live node catalogue + current canvas) + conversation → ipc.ai.chatRaw
- *   → reply with a ```deplao-tool``` call   → run the tool locally, send "[KẾT QUẢ CÔNG CỤ]", loop
+ *   → reply with a ```deplao-tool``` call   → run the tool locally, send "[KẾT QUẢ CÔNG CỤ]" (tool result), loop
  *   → reply with a ```deplao-workflow```    → validate like the engine; errors → automatic repair
  *                                              (max MAX_REPAIRS), then show the proposal + preview
  *   → plain text                            → question / advice, the user answers
@@ -34,6 +34,8 @@ import {
   formatParseFeedback, formatValidationFeedback, materializeProposal, normalizeTypeList, parseCopilotReply,
   validateProposal,
 } from './aiCopilot';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface WorkflowAIDialogProps {
   workflowId: string;
@@ -97,31 +99,31 @@ const accountName = (account: AccountInfo): string =>
 
 const EXAMPLES: Record<string, string[]> = {
   zalo: [
-    'Khách nhắn hỏi giá thì AI trả lời tự động; khách muốn đặt hàng thì gắn nhãn "Đặt hàng" và báo cho tôi',
-    'Chào mừng thành viên mới vào nhóm Zalo bằng tin nhắn có tên của họ',
-    'Mỗi sáng 8h gửi lời chào kèm khuyến mãi cho khách có nhãn VIP',
-    'Tự động đồng ý kết bạn và gửi tin nhắn giới thiệu shop',
+    tr('Khách nhắn hỏi giá thì AI trả lời tự động; khách muốn đặt hàng thì gắn nhãn "Đặt hàng" và báo cho tôi'),
+    tr('Chào mừng thành viên mới vào nhóm Zalo bằng tin nhắn có tên của họ'),
+    tr('Mỗi sáng 8h gửi lời chào kèm khuyến mãi cho khách có nhãn VIP'),
+    tr('Tự động đồng ý kết bạn và gửi tin nhắn giới thiệu shop'),
   ],
   facebook: [
-    'Khách nhắn tin vào Page thì AI trả lời dựa trên câu hỏi của khách',
-    'Ngoài giờ làm việc (21h - 8h) tự động báo khách là shop sẽ phản hồi sớm',
-    'Khách gửi ảnh sản phẩm thì cảm ơn và hẹn nhân viên tư vấn ngay',
+    tr('Khách nhắn tin vào Page thì AI trả lời dựa trên câu hỏi của khách'),
+    tr('Ngoài giờ làm việc (21h - 8h) tự động báo khách là shop sẽ phản hồi sớm'),
+    tr('Khách gửi ảnh sản phẩm thì cảm ơn và hẹn nhân viên tư vấn ngay'),
   ],
   telegram_user: [
-    'Có tin nhắn hỏi giá thì trả lời bảng giá',
-    'Chào thành viên mới khi họ vào nhóm Telegram',
-    'Khách nhắn ngoài giờ làm việc thì tự động báo giờ hoạt động',
+    tr('Có tin nhắn hỏi giá thì trả lời bảng giá'),
+    tr('Chào thành viên mới khi họ vào nhóm Telegram'),
+    tr('Khách nhắn ngoài giờ làm việc thì tự động báo giờ hoạt động'),
   ],
   telegram_bot: [
-    'Bot trả lời lệnh /start bằng menu nút bấm: Xem sản phẩm, Liên hệ, Hỗ trợ',
-    'Khách bấm nút "Hỗ trợ" thì gửi thông tin liên hệ và báo cho admin',
-    'Bot dùng AI trả lời mọi tin nhắn riêng của khách',
+    tr('Bot trả lời lệnh /start bằng menu nút bấm: Xem sản phẩm, Liên hệ, Hỗ trợ'),
+    tr('Khách bấm nút "Hỗ trợ" thì gửi thông tin liên hệ và báo cho admin'),
+    tr('Bot dùng AI trả lời mọi tin nhắn riêng của khách'),
   ],
 };
 const CANVAS_EXAMPLES = [
-  'Giải thích workflow hiện tại đang làm gì',
-  'Kiểm tra workflow này có lỗi hoặc chỗ nào nên cải thiện không',
-  'Thêm hiệu ứng đang gõ vài giây trước khi gửi tin',
+  tr('Giải thích workflow hiện tại đang làm gì'),
+  tr('Kiểm tra workflow này có lỗi hoặc chỗ nào nên cải thiện không'),
+  tr('Thêm hiệu ứng đang gõ vài giây trước khi gửi tin'),
 ];
 
 // ─── Lightweight markdown (bold, code, lists, headings, {{ vars }}) ─────────
@@ -192,7 +194,7 @@ function EventRow({ icon, label, detail, tone }: { icon: React.ReactNode; label:
   return (
     <div className="pl-10">
       <button type="button" className="wf-chat-event" data-tone={tone} onClick={() => detail && setOpen(value => !value)}
-        title={detail ? (open ? 'Ẩn chi tiết' : 'Xem chi tiết') : undefined}>
+        title={detail ? (open ? tr('Ẩn chi tiết') : tr('Xem chi tiết')) : undefined}>
         <span className="wf-chat-event__icon">{icon}</span>
         <span className="truncate">{label}</span>
         {detail && <ChevronDownIcon className={`w-3 h-3 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />}
@@ -207,7 +209,7 @@ function ProposalCard({ item, selected, onSelect }: { item: CopilotItem; selecte
   if (item.draft) {
     return (
       <div className="wf-proposal-card mt-2" data-draft="true">
-        <p className="text-xs wf-muted">Bản nháp chưa đạt kiểm tra - AI đã tự sửa ở tin nhắn sau.</p>
+        <p className="text-xs wf-muted">{tr('Bản nháp chưa đạt kiểm tra - AI đã tự sửa ở tin nhắn sau.')}</p>
       </div>
     );
   }
@@ -218,8 +220,8 @@ function ProposalCard({ item, selected, onSelect }: { item: CopilotItem; selecte
     <button type="button" className="wf-proposal-card mt-2 w-full text-left" data-selected={String(selected)} onClick={onSelect}>
       <div className="flex items-center gap-2">
         <span className="wf-badge !h-[18px]" data-tone="green">v{item.version}</span>
-        <span className="text-[13px] font-semibold wf-text truncate flex-1">{proposal.title || 'Đề xuất workflow'}</span>
-        {item.appliedMode && <span className="wf-badge !h-[18px]" data-tone="gray">✓ Đã áp dụng</span>}
+        <span className="text-[13px] font-semibold wf-text truncate flex-1">{proposal.title || tr('Đề xuất workflow')}</span>
+        {item.appliedMode && <span className="wf-badge !h-[18px]" data-tone="gray">{tr('✓ Đã áp dụng')}</span>}
       </div>
       {(shown.length > 0 || edits > 0) && (
         <div className="mt-2 flex items-center gap-1.5 flex-wrap">
@@ -229,12 +231,12 @@ function ProposalCard({ item, selected, onSelect }: { item: CopilotItem; selecte
               <span className="text-[11.5px] wf-text-2 truncate">{node.label || getNodeLabel(node.type)}</span>
             </span>
           ))}
-          {extra > 0 && <span className="text-[11px] wf-faint">+{extra} node</span>}
-          {edits > 0 && <span className="wf-badge !h-[18px]" data-tone="yellow">sửa {edits} node cũ</span>}
+          {extra > 0 && <span className="text-[11px] wf-faint">{trx('+{{extra}} node', { extra })}</span>}
+          {edits > 0 && <span className="wf-badge !h-[18px]" data-tone="yellow">{trx('sửa {{edits}} node cũ', { edits })}</span>}
         </div>
       )}
       <p className="mt-2 text-[11.5px] font-semibold" style={{ color: 'var(--wf-focus)' }}>
-        {selected ? 'Đang xem trước →' : 'Xem trước & áp dụng →'}
+        {selected ? tr('Đang xem trước →') : tr('Xem trước & áp dụng →')}
       </p>
     </button>
   );
@@ -306,7 +308,7 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
         const list: AssistantOption[] = ((listRes as any)?.assistants || []).filter((a: AssistantOption) => a && a.id && a.enabled !== false);
         const def = (defRes as any)?.assistant;
         setAssistants(list);
-        if (def?.id) setDefaultAssistant({ id: def.id, name: def.name || 'Trợ lý mặc định' });
+        if (def?.id) setDefaultAssistant({ id: def.id, name: def.name || tr('Trợ lý mặc định') });
         let remembered = '';
         try { remembered = localStorage.getItem(ASSISTANT_KEY) || ''; } catch { /* ignore */ }
         const pick = list.find(a => a.id === remembered) || list.find(a => a.id === def?.id) || list[0];
@@ -336,7 +338,7 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
     runRef.current++;
     setBusy(false);
     setStatus('');
-    setItems([...itemsRef.current, makeItem('error', 'Đã dừng. Bạn có thể nhắn tiếp hoặc gửi lại yêu cầu.')]);
+    setItems([...itemsRef.current, makeItem('error', tr('Đã dừng. Bạn có thể nhắn tiếp hoặc gửi lại yêu cầu.'))]);
   }, [busy, setItems]);
 
   const close = useCallback(() => {
@@ -365,7 +367,7 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
     switch (call.tool) {
       case 'get_node_details': {
         const types = normalizeTypeList(call.args);
-        return { label: `Tra cứu node: ${types.join(', ') || '(trống)'}`, text: describeNodeDetails(call.args, context) };
+        return { label: tr('Tra cứu node: {{v1}}', { v1: types.join(', ') || tr('(trống)') }), text: describeNodeDetails(call.args, context) };
       }
       case 'search_contacts': {
         const query = String(call.args.query ?? call.args.search ?? call.args.name ?? '').trim();
@@ -380,24 +382,24 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
               account: accountName(account),
               items: (res?.items || []).map(entry => ({ id: entry.id, name: entry.name, type: entry.type })),
               total: res?.total || 0,
-              error: res && res.success === false ? res.error || 'không đọc được danh bạ' : undefined,
+              error: res && res.success === false ? res.error || tr('không đọc được danh bạ') : undefined,
             });
           } catch (err: any) {
-            groups.push({ account: accountName(account), items: [], total: 0, error: err?.message || 'không đọc được danh bạ' });
+            groups.push({ account: accountName(account), items: [], total: 0, error: err?.message || tr('không đọc được danh bạ') });
           }
         }
-        return { label: `Tìm hội thoại "${query || 'gần đây'}"${type !== 'all' ? ` (${type === 'group' ? 'nhóm' : 'cá nhân'})` : ''}`, text: formatContactSearch(query, groups) };
+        return { label: tr('Tìm hội thoại "{{v1}}"{{v2}}', { v1: query || tr('gần đây'), v2: type !== 'all' ? ` (${type === 'group' ? tr('nhóm') : tr('cá nhân')})` : '' }), text: formatContactSearch(query, groups) };
       }
       case 'list_labels': {
         try {
           const res = await DataAccessor.getLocalLabels({});
-          return { label: 'Đọc danh sách Nhãn Local', text: formatLabelList((res as any)?.labels || []) };
+          return { label: tr('Đọc danh sách Nhãn Local'), text: formatLabelList((res as any)?.labels || []) };
         } catch (err: any) {
-          return { label: 'Đọc danh sách Nhãn Local', text: `Không đọc được nhãn: ${err?.message || err}` };
+          return { label: tr('Đọc danh sách Nhãn Local'), text: `Không đọc được nhãn: ${err?.message || err}` };
         }
       }
       default:
-        return { label: `Công cụ không tồn tại: ${call.tool}`, text: `Công cụ "${call.tool}" không tồn tại. Chỉ có: get_node_details, search_contacts, list_labels.` };
+        return { label: tr('Công cụ không tồn tại: {{tool}}', { tool: call.tool }), text: `Công cụ "${call.tool}" không tồn tại. Chỉ có: get_node_details, search_contacts, list_labels.` };
     }
   };
 
@@ -409,13 +411,13 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
   // ── Agent loop ──
   const run = async (first: CopilotItem) => {
     if (busy) return;
-    if (!assistantId) { showNotification('Chọn trợ lý AI trước khi trò chuyện', 'warning'); return; }
+    if (!assistantId) { showNotification(tr('Chọn trợ lý AI trước khi trò chuyện'), 'warning'); return; }
     const runId = ++runRef.current;
     let working = [...itemsRef.current, first];
     const push = (...next: CopilotItem[]) => { working = [...working, ...next]; setItems(working); };
     setItems(working);
     setBusy(true);
-    setStatus('AI đang phân tích yêu cầu…');
+    setStatus(tr('AI đang phân tích yêu cầu…'));
     let toolCalls = 0;
     let repairs = 0;
     let finished = false;
@@ -425,7 +427,7 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
         const res = await callModel(buildApiMessages(buildCopilotSystemPrompt(context), working));
         if (runId !== runRef.current) return;
         if (!res?.success || !res.result?.trim()) {
-          push(makeItem('error', res?.error ? `AI báo lỗi: ${res.error}` : 'AI không trả về nội dung. Thử lại hoặc chọn trợ lý khác.'));
+          push(makeItem('error', res?.error ? tr('AI báo lỗi: {{error}}', { error: res.error }) : tr('AI không trả về nội dung. Thử lại hoặc chọn trợ lý khác.')));
           finished = true;
           break;
         }
@@ -435,16 +437,16 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
         if (parsed.toolCall) {
           reply.toolCall = parsed.toolCall;
           if (toolCalls >= MAX_TOOL_CALLS) {
-            push(reply, makeItem('check', '[HỆ THỐNG] Đã hết lượt tra cứu trong lượt này. Dùng thông tin đã có: hỏi lại người dùng hoặc đưa ra đề xuất.', { label: 'Hết lượt tra cứu - AI dùng thông tin đã có' }));
+            push(reply, makeItem('check', '[HỆ THỐNG] Đã hết lượt tra cứu trong lượt này. Dùng thông tin đã có: hỏi lại người dùng hoặc đưa ra đề xuất.', { label: tr('Hết lượt tra cứu - AI dùng thông tin đã có') }));
             continue;
           }
           toolCalls++;
           push(reply);
-          setStatus('AI đang tra cứu dữ liệu…');
+          setStatus(tr('AI đang tra cứu dữ liệu…'));
           const result = await runTool(parsed.toolCall);
           if (runId !== runRef.current) return;
           push(makeItem('tool', `[KẾT QUẢ CÔNG CỤ ${parsed.toolCall.tool}]\n${result.text}`, { label: result.label }));
-          setStatus('AI đang phân tích kết quả…');
+          setStatus(tr('AI đang phân tích kết quả…'));
           continue;
         }
 
@@ -453,8 +455,8 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
           if (repairs < MAX_REPAIRS) {
             repairs++;
             reply.draft = true;
-            push(reply, makeItem('check', formatParseFeedback(parsed.parseError), { label: `Đề xuất sai định dạng → AI gửi lại (lần ${repairs}/${MAX_REPAIRS})` }));
-            setStatus('AI đang gửi lại đề xuất…');
+            push(reply, makeItem('check', formatParseFeedback(parsed.parseError), { label: tr('Đề xuất sai định dạng → AI gửi lại (lần {{repairs}}/{{MAX_REPAIRS}})', { repairs, MAX_REPAIRS }) }));
+            setStatus(tr('AI đang gửi lại đề xuất…'));
             continue;
           }
           push(reply);
@@ -468,8 +470,8 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
           if (validation.errors.length && repairs < MAX_REPAIRS) {
             repairs++;
             reply.draft = true;
-            push(reply, makeItem('check', formatValidationFeedback(validation), { label: `Kiểm tra: ${validation.errors.length} lỗi → AI tự sửa (lần ${repairs}/${MAX_REPAIRS})` }));
-            setStatus(`AI đang sửa ${validation.errors.length} lỗi…`);
+            push(reply, makeItem('check', formatValidationFeedback(validation), { label: tr('Kiểm tra: {{count}} lỗi → AI tự sửa (lần {{repairs}}/{{MAX_REPAIRS}})', { count: validation.errors.length, repairs, MAX_REPAIRS }) }));
+            setStatus(tr('AI đang sửa {{count}} lỗi…', { count: validation.errors.length }));
             continue;
           }
           reply.version = working.reduce((max, item) => Math.max(max, item.version || 0), 0) + 1;
@@ -482,9 +484,9 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
         push(reply);
         finished = true;
       }
-      if (!finished) push(makeItem('error', 'AI chưa xong sau nhiều bước tra cứu. Nhắn "tiếp tục" để AI làm tiếp.'));
+      if (!finished) push(makeItem('error', tr('AI chưa xong sau nhiều bước tra cứu. Nhắn "tiếp tục" để AI làm tiếp.')));
     } catch (err: any) {
-      if (runId === runRef.current) push(makeItem('error', `Lỗi gọi AI: ${err?.message || err}`));
+      if (runId === runRef.current) push(makeItem('error', tr('Lỗi gọi AI: {{v1}}', { v1: err?.message || err })));
     } finally {
       if (runId === runRef.current) {
         setBusy(false);
@@ -505,7 +507,7 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
   const runLatest = useRef(run);
   runLatest.current = run;
   const askFix = useCallback((item: CopilotItem, validation: ValidationResult) => {
-    runLatest.current(makeItem('check', formatValidationFeedback(validation), { label: `Nhờ AI sửa ${validation.errors.length} lỗi của v${item.version}` }));
+    runLatest.current(makeItem('check', formatValidationFeedback(validation), { label: tr('Nhờ AI sửa {{count}} lỗi của v{{version}}', { count: validation.errors.length, version: item.version }) }));
   }, []);
 
   const apply = useCallback(async (item: CopilotItem, mode: ProposalMode) => {
@@ -515,29 +517,29 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
     const validation = validateProposal(proposal, context, mode);
     if (validation.errors.length) {
       const ok = await confirm({
-        title: 'Đề xuất còn lỗi',
-        message: `Còn ${validation.errors.length} lỗi - phần sai sẽ bị bỏ qua khi áp dụng. Có thể bấm "Nhờ AI sửa" để AI sửa trước.`,
-        confirmText: 'Vẫn áp dụng',
+        title: tr('Đề xuất còn lỗi'),
+        message: tr('Còn {{count}} lỗi - phần sai sẽ bị bỏ qua khi áp dụng. Có thể bấm "Nhờ AI sửa" để AI sửa trước.', { count: validation.errors.length }),
+        confirmText: tr('Vẫn áp dụng'),
         variant: 'warning',
       });
       if (!ok) return;
     }
     if (mode === 'replace' && context.currentNodes.length) {
       const ok = await confirm({
-        title: 'Thay thế kịch bản hiện tại?',
-        message: `${context.currentNodes.length} node trên sơ đồ sẽ được thay bằng đề xuất v${item.version}. Có thể bấm "Hoàn tác" trên sơ đồ ngay sau đó.`,
-        confirmText: 'Thay thế',
+        title: tr('Thay thế kịch bản hiện tại?'),
+        message: tr('{{count}} node trên sơ đồ sẽ được thay bằng đề xuất v{{version}}. Có thể bấm "Hoàn tác" trên sơ đồ ngay sau đó.', { count: context.currentNodes.length, version: item.version }),
+        confirmText: tr('Thay thế'),
         variant: 'danger',
       });
       if (!ok) return;
     }
     const result = materializeProposal(proposal, mode, context, uuidv4);
-    onApply(result, mode, proposal.title || `Đề xuất v${item.version}`);
-    const how = context.currentNodes.length === 0 ? 'đưa vào sơ đồ trống' : mode === 'replace' ? 'thay thế toàn bộ sơ đồ' : 'thêm / sửa trên sơ đồ hiện tại';
+    onApply(result, mode, proposal.title || tr('Đề xuất v{{version}}', { version: item.version }));
+    const how = context.currentNodes.length === 0 ? tr('đưa vào sơ đồ trống') : mode === 'replace' ? tr('thay thế toàn bộ sơ đồ') : tr('thêm / sửa trên sơ đồ hiện tại');
     setItems([
       ...itemsRef.current.map(entry => (entry.id === item.id ? { ...entry, appliedMode: mode } : entry)),
       makeItem('note', `[HỆ THỐNG] Người dùng đã áp dụng đề xuất v${item.version} (${how}). Phần "WORKFLOW HIỆN TẠI" đã cập nhật theo.`, {
-        label: `Đã áp dụng v${item.version} - ${how}`,
+        label: tr('Đã áp dụng v{{version}} - {{how}}', { version: item.version, how }),
       }),
     ]);
     onClose();
@@ -547,7 +549,7 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
   const newConversation = async () => {
     if (busy) return;
     if (items.length > 2) {
-      const ok = await confirm({ title: 'Bắt đầu cuộc trò chuyện mới?', message: 'Nội dung trò chuyện và các đề xuất hiện tại sẽ bị xoá.', confirmText: 'Bắt đầu mới', variant: 'warning' });
+      const ok = await confirm({ title: tr('Bắt đầu cuộc trò chuyện mới?'), message: tr('Nội dung trò chuyện và các đề xuất hiện tại sẽ bị xoá.'), confirmText: tr('Bắt đầu mới'), variant: 'warning' });
       if (!ok) return;
     }
     setItems([]);
@@ -594,7 +596,7 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
             <div className="min-w-0 flex-1">
               {text && <div className="wf-msg wf-msg--ai"><MarkdownLite text={text} /></div>}
               {item.parseError && !item.draft && (
-                <p className="mt-1.5 text-[11.5px]" style={{ color: '#dc2626' }}>Không đọc được đề xuất: {item.parseError}</p>
+                <p className="mt-1.5 text-[11.5px]" style={{ color: '#dc2626' }}>{trx('Không đọc được đề xuất: {{parseError}}', { parseError: item.parseError })}</p>
               )}
               {item.proposal && <ProposalCard item={item} selected={selected?.id === item.id} onSelect={() => setSelectedId(item.id)} />}
             </div>
@@ -602,15 +604,15 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
         );
       }
       case 'tool':
-        return <EventRow key={item.id} icon={item.label?.startsWith('Đọc') ? <TagIcon className="w-3 h-3" /> : <SearchIcon className="w-3 h-3" />} label={item.label || 'Đã tra cứu'} detail={item.content} />;
+        return <EventRow key={item.id} icon={item.label?.startsWith('Đọc') ? <TagIcon className="w-3 h-3" /> : <SearchIcon className="w-3 h-3" />} label={item.label || tr('Đã tra cứu')} detail={item.content} />;
       case 'check':
-        return <EventRow key={item.id} icon={<WrenchIcon className="w-3 h-3" />} label={item.label || 'Kiểm tra tự động'} detail={item.content} />;
+        return <EventRow key={item.id} icon={<WrenchIcon className="w-3 h-3" />} label={item.label || tr('Kiểm tra tự động')} detail={item.content} />;
       case 'note':
         return (
           <div key={item.id} className="flex items-center gap-2 py-1">
             <span className="flex-1 h-px" style={{ background: 'var(--wf-panel-border)' }} />
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: '#16a34a' }}>
-              <CheckCircleIcon className="w-3.5 h-3.5" /> {item.label || 'Đã áp dụng'}
+              <CheckCircleIcon className="w-3.5 h-3.5" /> {item.label || tr('Đã áp dụng')}
             </span>
             <span className="flex-1 h-px" style={{ background: 'var(--wf-panel-border)' }} />
           </div>
@@ -631,23 +633,23 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
         <div className="wf-panel__header flex items-center gap-3 px-5 py-3">
           <span className="wf-copilot-tile w-10 h-10 flex-shrink-0"><SparklesIcon className="w-5 h-5" /></span>
           <div className="flex-1 min-w-0">
-            <p className="wf-panel__title truncate">Trợ lý thiết kế workflow</p>
+            <p className="wf-panel__title truncate">{tr('Trợ lý thiết kế workflow')}</p>
             <p className="wf-panel__desc truncate">
-              Kênh {channelLabel} · {currentNodes.length ? `${currentNodes.length} node trên sơ đồ` : 'sơ đồ trống'} · trò chuyện để AI phân tích và đề xuất kịch bản
+              {trx('Kênh {{channelLabel}} ·', { channelLabel })} {currentNodes.length ? tr('{{count}} node trên sơ đồ', { count: currentNodes.length }) : tr('sơ đồ trống')} {tr('· trò chuyện để AI phân tích và đề xuất kịch bản')}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <div className="flex flex-col items-end">
               <select value={assistantId} onChange={e => chooseAssistant(e.target.value)} disabled={busy || assistants.length === 0}
-                className="wf-select wf-input--sm !w-56" title="Trợ lý AI dùng để thiết kế. Nên chọn model mạnh (GPT-5, Claude, Gemini Pro…) để kết quả chính xác hơn.">
-                {assistants.length === 0 && <option value="">{loadingAssistants ? 'Đang tải trợ lý…' : 'Chưa có trợ lý AI'}</option>}
+                className="wf-select wf-input--sm !w-56" title={tr('Trợ lý AI dùng để thiết kế. Nên chọn model mạnh (GPT-5, Claude, Gemini Pro…) để kết quả chính xác hơn.')}>
+                {assistants.length === 0 && <option value="">{loadingAssistants ? tr('Đang tải trợ lý…') : tr('Chưa có trợ lý AI')}</option>}
                 {assistants.map(a => <option key={a.id} value={a.id}>{a.name}{a.model ? ` · ${a.model}` : ''}</option>)}
               </select>
             </div>
-            <button type="button" className="wf-btn" onClick={newConversation} disabled={busy || items.length === 0} title="Xoá cuộc trò chuyện, bắt đầu lại">
-              <PlusIcon className="w-3.5 h-3.5" /> Trò chuyện mới
+            <button type="button" className="wf-btn" onClick={newConversation} disabled={busy || items.length === 0} title={tr('Xoá cuộc trò chuyện, bắt đầu lại')}>
+              {trx('<0/> Trò chuyện mới', { 0: <PlusIcon className="w-3.5 h-3.5" /> })}
             </button>
-            <button type="button" onClick={close} className="wf-icon-btn" title="Đóng (Esc) - cuộc trò chuyện được giữ lại"><CloseIcon className="w-4 h-4" /></button>
+            <button type="button" onClick={close} className="wf-icon-btn" title={tr('Đóng (Esc) - cuộc trò chuyện được giữ lại')}><CloseIcon className="w-4 h-4" /></button>
           </div>
         </div>
 
@@ -660,16 +662,16 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
                   <div className="flex items-center gap-3">
                     <span className="wf-copilot-tile w-11 h-11"><SparklesIcon className="w-5 h-5" /></span>
                     <div>
-                      <p className="text-[15px] font-semibold wf-text">Bạn muốn tự động hoá việc gì?</p>
-                      <p className="text-xs wf-muted mt-0.5">Mô tả bằng lời thường - AI sẽ hỏi lại chỗ chưa rõ rồi đề xuất kịch bản.</p>
+                      <p className="text-[15px] font-semibold wf-text">{tr('Bạn muốn tự động hoá việc gì?')}</p>
+                      <p className="text-xs wf-muted mt-0.5">{tr('Mô tả bằng lời thường - AI sẽ hỏi lại chỗ chưa rõ rồi đề xuất kịch bản.')}</p>
                     </div>
                   </div>
                   <ol className="wf-copilot-steps mt-4">
-                    <li><b>Mô tả nhu cầu</b> - ai nhắn gì, cần trả lời / gắn nhãn / báo cho ai…</li>
-                    <li><b>Cùng phân tích</b> - AI hỏi lại, tra cứu node, danh bạ, nhãn thật của bạn.</li>
-                    <li><b>Xem trước & áp dụng</b> - thêm vào hoặc thay thế kịch bản hiện tại, có thể hoàn tác.</li>
+                    <li>{trx('<0>Mô tả nhu cầu</0> - ai nhắn gì, cần trả lời / gắn nhãn / báo cho ai…', { 0: <b /> })}</li>
+                    <li>{trx('<0>Cùng phân tích</0> - AI hỏi lại, tra cứu node, danh bạ, nhãn thật của bạn.', { 0: <b /> })}</li>
+                    <li>{trx('<0>Xem trước & áp dụng</0> - thêm vào hoặc thay thế kịch bản hiện tại, có thể hoàn tác.', { 0: <b /> })}</li>
                   </ol>
-                  <p className="wf-section-title mt-5 mb-2">Gợi ý</p>
+                  <p className="wf-section-title mt-5 mb-2">{tr('Gợi ý')}</p>
                   <div className="grid gap-2">
                     {examples.map(example => (
                       <button key={example} type="button" className="wf-suggestion" disabled={busy || !assistantId} onClick={() => send(example)}>
@@ -685,7 +687,7 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
                   <span className="wf-copilot-tile w-7 h-7 flex-shrink-0 !rounded-lg"><SparklesIcon className="w-3.5 h-3.5" /></span>
                   <div className="wf-msg wf-msg--ai !py-2 flex items-center gap-2.5">
                     <span className="wf-typing"><span /><span /><span /></span>
-                    <span className="text-xs wf-muted">{status || 'AI đang suy nghĩ…'}</span>
+                    <span className="text-xs wf-muted">{status || tr('AI đang suy nghĩ…')}</span>
                   </div>
                 </div>
               )}
@@ -696,26 +698,26 @@ export default function WorkflowAIDialog({ workflowId, currentNodes, currentEdge
               {noAssistant && (
                 <div className="wf-callout mb-2" data-tone="warn">
                   <AlertIcon className="w-4 h-4" />
-                  <span>Chưa có trợ lý AI nào đang bật. Vào <b>Công cụ → Tích hợp → Trợ lý AI</b> để tạo trợ lý (nên dùng model mạnh như GPT-5, Claude, Gemini Pro).</span>
+                  <span>{trx('Chưa có trợ lý AI nào đang bật. Vào <0>Công cụ → Tích hợp → Trợ lý AI</0> để tạo trợ lý (nên dùng model mạnh như GPT-5, Claude, Gemini Pro).', { 0: <b /> })}</span>
                 </div>
               )}
               <div className="wf-composer flex items-end gap-2 pl-3.5 pr-2 py-2">
                 <textarea ref={inputRef} value={input} rows={1} onChange={onInputChange} onKeyDown={onInputKeyDown}
                   disabled={noAssistant}
-                  placeholder={items.length ? 'Trả lời AI hoặc yêu cầu chỉnh sửa…' : 'VD: Khách hỏi giá thì AI trả lời, khách muốn mua thì gắn nhãn "Đặt hàng"…'}
+                  placeholder={items.length ? tr('Trả lời AI hoặc yêu cầu chỉnh sửa…') : tr('VD: Khách hỏi giá thì AI trả lời, khách muốn mua thì gắn nhãn "Đặt hàng"…')}
                   className="flex-1 min-w-0 text-[13px] leading-5 py-1.5 max-h-[168px]" />
                 {busy ? (
-                  <button type="button" className="wf-btn !h-9 !px-3" onClick={stop} title="Dừng lượt trả lời này"><StopGlyph /> Dừng</button>
+                  <button type="button" className="wf-btn !h-9 !px-3" onClick={stop} title={tr('Dừng lượt trả lời này')}>{trx('<0/> Dừng', { 0: <StopGlyph /> })}</button>
                 ) : (
-                  <button type="button" className="wf-btn wf-btn--primary !h-9 !w-9 !px-0" onClick={() => send()} disabled={!input.trim() || !assistantId} title="Gửi (Enter)">
+                  <button type="button" className="wf-btn wf-btn--primary !h-9 !w-9 !px-0" onClick={() => send()} disabled={!input.trim() || !assistantId} title={tr('Gửi (Enter)')}>
                     <SendIcon className="w-4 h-4" />
                   </button>
                 )}
               </div>
               <p className="mt-1.5 text-[11px] wf-faint flex items-center gap-2">
-                <span>Enter để gửi · Shift+Enter xuống dòng</span>
+                <span>{tr('Enter để gửi · Shift+Enter xuống dòng')}</span>
                 {assistant && <span className="truncate">· {assistant.name}{assistant.model ? ` (${assistant.model})` : ''}</span>}
-                {totalTokens > 0 && <span className="ml-auto flex-shrink-0">{totalTokens.toLocaleString('vi-VN')} token</span>}
+                {totalTokens > 0 && <span className="ml-auto flex-shrink-0">{trx('{{v1}} token', { v1: totalTokens.toLocaleString(appLocale()) })}</span>}
               </p>
             </div>
           </section>

@@ -1,7 +1,7 @@
 /**
- * Đăng ký phần riêng từng kênh của khung chat. Thêm kênh: viết `channels/<kênh>/chatWindow.ts` (ChatWindowChannel, chỉ
- * khai báo những gì kênh làm khác) rồi thêm vào CHANNELS; hook riêng khi mở hội thoại (nếu có) gọi trong
- * useChannelThreadSync. Kênh chưa đăng ký: khung chat chỉ đọc DB.
+ * Registry of the per-channel parts of the chat window. To add a channel: write `channels/<channel>/chatWindow.ts` (ChatWindowChannel, declaring only
+ * what the channel does differently), then add it to CHANNELS; a dedicated hook for opening a conversation (if any) is called from
+ * useChannelThreadSync. Unregistered channel: the chat window only reads the DB.
  */
 import { CHANNEL } from '@/lib/channels/channelHelper';
 import type { ChatWindowChannel, ThreadSyncDeps } from './types';
@@ -17,17 +17,17 @@ const CHANNELS: Record<string, ChatWindowChannel> = {
   [CHANNEL.FACEBOOK]: facebookChatWindow,
 };
 
-/** Kênh không đăng ký: không có gì riêng (chỉ DB) */
+/** Unregistered channel: nothing special (DB only) */
 const DB_ONLY: ChatWindowChannel = {};
 
-/** Phần riêng của kênh. Không có kênh = Zalo (như isZalo). */
+/** The channel's own part. No channel = Zalo (same as isZalo). */
 export function chatWindowChannel(channel?: string | null): ChatWindowChannel {
   return CHANNELS[channel || CHANNEL.ZALO] || DB_ONLY;
 }
 
 /**
- * Việc riêng của từng kênh khi mở hội thoại (hook luôn được gọi, tự bỏ qua khi không phải kênh của mình; thứ tự gọi
- * không đổi giữa các lần vẽ). Telegram: tin topic forum, sửa dữ liệu cũ, đồng bộ cảm xúc.
+ * Per-channel work when opening a conversation (the hook is always called and skips itself when it is not its channel; the call order
+ * does not change between renders). Telegram: forum topic messages, fixing old data, syncing reactions.
  */
 export function useChannelThreadSync(deps: ThreadSyncDeps): void {
   useTelegramThreadSync(deps);

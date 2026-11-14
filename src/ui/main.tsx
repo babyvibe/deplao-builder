@@ -4,8 +4,8 @@ import App from './App';
 import './index.css';
 import Logger from '../utils/Logger';
 
-// Giao diện bận liền ≥ 1 s (long task: render lớn, xử lý loạt sự kiện…) → Nhật ký "[Hiệu năng] …". Cùng với
-// "Luồng chính bị chặn" của main process cho biết app đứng do giao diện hay do main.
+// The UI stays busy for ≥ 1 s (long task: a big render, a burst of events…) → logged as "[Hiệu năng] …" (Performance). Together with
+// the "Luồng chính bị chặn" (main thread blocked) message from the main process shows whether the app froze because of the UI or because of main.
 try {
   if (typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
     new PerformanceObserver((list) => {
@@ -16,10 +16,10 @@ try {
       }
     }).observe({ type: 'longtask', buffered: true });
   }
-} catch { /* trình duyệt không hỗ trợ long task — bỏ qua */ }
+} catch { /* the browser does not support long tasks: skip */ }
 
-// Kéo file / ảnh thả ra ngoài vùng nhận (khung chat, ô soạn tin, thư viện…): Chromium mặc định mở luôn file đó trong cửa
-// sổ app (mất giao diện, dev còn tải lại trang). Vùng nhận tự preventDefault trong dragover; chỗ khác → từ chối thả.
+// Dragging a file / image and dropping it outside a drop zone (chat frame, composer, library…): Chromium by default opens that file in the
+// app window (the UI is lost, dev still reloads the page). Drop zones call preventDefault in dragover; elsewhere the drop is refused.
 window.addEventListener('dragover', (event) => {
   if (event.defaultPrevented) return;
   event.preventDefault();

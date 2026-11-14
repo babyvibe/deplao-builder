@@ -6,13 +6,15 @@ import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { PhoneIcon } from '../icons';
 import { Channel, getChannelLabel, getChannelColor } from '../../../../configs/channels/channelConfig';
 import { CHANNEL } from '@/lib/channels/channelHelper';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 /**
  * AccountSwitcherOverlay - Ctrl+Tab quick account switcher
  *
- * Hiển thị danh sách tài khoản dạng horizontal cards ở giữa màn hình.
- * Giống Windows Alt+Tab: giữ Ctrl + Tab để navigate, thả Ctrl để chọn.
- * Index 0 = "Tất cả tài khoản" (virtual), indices 1..N = accounts[0..N-1].
+ * Shows the account list as horizontal cards in the middle of the screen.
+ * Like Windows Alt+Tab: hold Ctrl + Tab to navigate, release Ctrl to select.
+ * Index 0 = "Tất cả tài khoản" (All accounts) (virtual), indices 1..N = accounts[0..N-1].
  */
 export default function AccountSwitcherOverlay() {
   const { accountSwitcherOpen, accountSwitcherIndex, mergedInboxMode } = useAppStore(useShallow(s => ({
@@ -27,16 +29,16 @@ export default function AccountSwitcherOverlay() {
 
   if (!accountSwitcherOpen || accounts.length === 0) return null;
 
-  // Normal mode: trực tiếp accounts[]. Merged mode: ["Tất cả", ...accounts]
+  // Normal mode: accounts[] directly. Merged mode: ["Tất cả" (All), ...accounts]
   const totalItems = mergedInboxMode ? accounts.length + 1 : accounts.length;
 
-  /** Lấy account thực tế theo virtual index (null nếu là "Tất cả" ở merged mode) */
+  /** Get the real account for a virtual index (null if it is "Tất cả" (All) in merged mode) */
   const getAcc = (vi: number) => mergedInboxMode ? accounts[vi - 1] ?? null : accounts[vi] ?? null;
 
   const renderCard = (virtualIdx: number) => {
     const sel = virtualIdx === accountSwitcherIndex;
     if (virtualIdx === 0 && mergedInboxMode) {
-      // "Tất cả tài khoản" virtual card (merged mode only)
+      // "Tất cả tài khoản" (All accounts) virtual card (merged mode only)
       return (
         <div
           key="__all__"
@@ -64,14 +66,14 @@ export default function AccountSwitcherOverlay() {
           <p className={`text-sm font-semibold text-center truncate w-full max-w-[140px] ${
             isLight ? 'text-gray-800' : 'text-foreground'
           }`}>
-            Tất cả tài khoản
+            {tr('Tất cả tài khoản')}
           </p>
 
           {/* Hint */}
           <p className={`text-[10px] text-center truncate w-full max-w-[140px] ${
             isLight ? 'text-muted-foreground' : 'text-muted-foreground'
           }`}>
-            {mergedInboxMode ? 'Hiện tất cả hội thoại' : `${accounts.length} tài khoản`}
+            {mergedInboxMode ? tr('Hiện tất cả hội thoại') : tr('{{count}} tài khoản', { count: accounts.length })}
           </p>
 
           {/* Empty spacing to align with account cards */}
@@ -134,7 +136,7 @@ export default function AccountSwitcherOverlay() {
         <p className={`text-[10px] font-mono truncate w-full max-w-[140px] text-center ${
           isLight ? 'text-muted-foreground' : 'text-muted-foreground'
         }`}>
-          ID: {acc.zalo_id}
+          {trx('ID: {{zalo_id}}', { zalo_id: acc.zalo_id })}
         </p>
 
         {/* Phone */}

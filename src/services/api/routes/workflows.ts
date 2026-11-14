@@ -1,16 +1,17 @@
 /**
- * Workflow: đọc/sửa/bật tắt/chạy, sự kiện trigger.api, lịch sử chạy, danh mục node.
- * Kênh IPC: workflow:list, workflow:get, workflow:save, workflow:delete, workflow:toggle, workflow:clone,
+ * Workflow: read/edit/turn on-off/run, trigger.api events, run history, node catalog.
+ * IPC channels: workflow:list, workflow:get, workflow:save, workflow:delete, workflow:toggle, workflow:clone,
  * workflow:runManual, workflow:simulate, workflow:triggerApi, workflow:getLogs, workflow:getWebhookUrl,
  * workflow:getNodeTypes, workflow:regenerateWebhookToken, workflow:deleteLogs, workflow:cloneAll.
  *
- * Key bị giới hạn tài khoản: chỉ thấy workflow áp dụng cho tài khoản của mình (hoặc workflow chung,
- * chỉ đọc); chỉ sửa/chạy workflow mà mọi tài khoản áp dụng đều nằm trong phạm vi key.
+ * Keys limited to some accounts: only see workflows that apply to their own accounts (or shared workflows,
+ * read-only); can only edit/run a workflow when every account it applies to is within the key's scope.
  */
 import { s } from '../schema';
 import { ApiContext, ApiError, Principal, route, RouteDef } from '../types';
 import { accountAllowed } from '../auth/ApiAuth';
 import { notFound } from './common';
+import { tr } from '../../../shared/i18n';
 
 const wfParams = s.object({ workflowId: s.id() });
 
@@ -47,7 +48,7 @@ async function loadWorkflow(ctx: ApiContext, id: string, forWrite: boolean): Pro
     const wf = res?.workflow;
     if (!wf || !canSee(ctx.principal, wf)) notFound(`workflow ${id}`);
     if (forWrite && !canModify(ctx.principal, wf)) {
-        throw new ApiError(403, 'FORBIDDEN_ACCOUNT', 'Workflow áp dụng cho tài khoản ngoài phạm vi key (hoặc là workflow chung)');
+        throw new ApiError(403, 'FORBIDDEN_ACCOUNT', tr('Workflow áp dụng cho tài khoản ngoài phạm vi key (hoặc là workflow chung)'));
     }
     return wf;
 }
@@ -57,8 +58,8 @@ const workflowBody = s.object({
     description: s.string().max(2000).default(''),
     enabled: s.boolean().default(false),
     channel: s.enum(['zalo', 'facebook', 'telegram_user', 'telegram_bot'] as const).default('zalo'),
-    account_ids: s.array(s.id()).max(200).default([]).describe('Tài khoản áp dụng; rỗng = mọi tài khoản'),
-    nodes: s.array(s.any('object')).max(500).describe('Node theo định dạng của trình soạn workflow (xem GET /workflows/node-types)'),
+    account_ids: s.array(s.id()).max(200).default([]).describe(tr('Tài khoản áp dụng; rỗng = mọi tài khoản')),
+    nodes: s.array(s.any('object')).max(500).describe(tr('Node theo định dạng của trình soạn workflow (xem GET /workflows/node-types)')),
     edges: s.array(s.any('object')).max(2000),
 });
 
@@ -67,8 +68,8 @@ export function workflowRoutes(): RouteDef[] {
     return [
         route({
             method: 'GET', path: '/workflows', scope: 'workflow:read', tags, operationId: 'listWorkflows',
-            summary: 'Danh sách workflow',
-            query: s.object({ account_id: s.id().optional().describe('Chỉ workflow áp dụng cho tài khoản này') }),
+            summary: tr('Danh sách workflow'),
+            query: s.object({ account_id: s.id().optional().describe(tr('Chỉ workflow áp dụng cho tài khoản này')) }),
             handler: async ctx => {
                 const res = await ctx.call('workflow:list');
                 let list: any[] = (res?.workflows || []).filter((wf: any) => canSee(ctx.principal, wf));
@@ -78,7 +79,8 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/workflows/node-types', scope: 'workflow:read', tags, operationId: 'listWorkflowNodeTypes',
-            summary: 'Danh mục node (như palette của trình soạn) và cấu hình mặc định',
+            summary: tr('Danh mục node (như palette của trình soạn) và cấu hình mặc định'),
+            description: tr('`defaults[<type>]` liệt kê các khoá cấu hình node đó hiểu. Kiểm tra tính năng theo khoá, ví dụ `includeThreadIds` có trong `defaults["trigger.message"]` (và `tg.trigger.message`, `tgbot.trigger.message`, `fb.trigger.message`) = trigger tin nhắn nhận danh sách "Chỉ các chat/nhóm đã chọn" (mảng JSON ID; rỗng = mọi chat; ID có cả ở `excludeThreadIds` bị loại trừ).'),
             handler: async ctx => {
                 const res = await ctx.call('workflow:getNodeTypes');
                 return { groups: res?.groups || [], defaults: res?.defaults || {}, plugin_nodes: res?.pluginNodes || [] };
@@ -86,18 +88,18 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/workflows/:workflowId', scope: 'workflow:read', tags, operationId: 'getWorkflow',
-            summary: 'Một workflow (kèm nodes, edges)',
+            summary: tr('Một workflow (kèm nodes, edges)'),
             params: wfParams,
             handler: async ctx => mapWorkflow(await loadWorkflow(ctx, ctx.params.workflowId, false)),
         }),
         route({
             method: 'POST', path: '/workflows', scope: 'workflow:write', tags, operationId: 'createWorkflow',
-            summary: 'Tạo workflow',
+            summary: tr('Tạo workflow'),
             body: workflowBody,
             handler: async ctx => {
                 const b = ctx.body;
                 if (!canModify(ctx.principal, { pageIds: b.account_ids })) {
-                    throw new ApiError(403, 'FORBIDDEN_ACCOUNT', 'Key giới hạn tài khoản phải chỉ rõ account_ids trong phạm vi được cấp');
+                    throw new ApiError(403, 'FORBIDDEN_ACCOUNT', tr('Key giới hạn tài khoản phải chỉ rõ account_ids trong phạm vi được cấp'));
                 }
                 const res = await ctx.call('workflow:save', {
                     workflow: {
@@ -110,14 +112,14 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'PUT', path: '/workflows/:workflowId', scope: 'workflow:write', tags, operationId: 'updateWorkflow',
-            summary: 'Ghi đè workflow (giữ id, ngày tạo)',
+            summary: tr('Ghi đè workflow (giữ id, ngày tạo)'),
             params: wfParams,
             body: workflowBody,
             handler: async ctx => {
                 const current = await loadWorkflow(ctx, ctx.params.workflowId, true);
                 const b = ctx.body;
                 if (!canModify(ctx.principal, { pageIds: b.account_ids })) {
-                    throw new ApiError(403, 'FORBIDDEN_ACCOUNT', 'account_ids ngoài phạm vi key');
+                    throw new ApiError(403, 'FORBIDDEN_ACCOUNT', tr('account_ids ngoài phạm vi key'));
                 }
                 const res = await ctx.call('workflow:save', {
                     workflow: {
@@ -130,7 +132,7 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/workflows/:workflowId', scope: 'workflow:write', tags, operationId: 'toggleWorkflow',
-            summary: 'Bật / tắt workflow',
+            summary: tr('Bật / tắt workflow'),
             params: wfParams,
             body: s.object({ enabled: s.boolean() }),
             handler: async ctx => {
@@ -141,7 +143,7 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/workflows/:workflowId', scope: 'workflow:write', tags, operationId: 'deleteWorkflow',
-            summary: 'Xoá workflow',
+            summary: tr('Xoá workflow'),
             params: wfParams,
             handler: async ctx => {
                 await loadWorkflow(ctx, ctx.params.workflowId, true);
@@ -151,7 +153,7 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/workflows/:workflowId/clone', scope: 'workflow:write', tags, operationId: 'cloneWorkflow',
-            summary: 'Nhân bản workflow sang tài khoản khác',
+            summary: tr('Nhân bản workflow sang tài khoản khác'),
             params: wfParams,
             body: s.object({ target_account_id: s.id() }),
             handler: async ctx => {
@@ -163,7 +165,7 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/workflows/:workflowId/run', scope: 'workflow:run', tags, operationId: 'runWorkflow',
-            summary: 'Chạy workflow ngay với dữ liệu kích hoạt tuỳ ý (như nút "Chạy thử")',
+            summary: tr('Chạy workflow ngay với dữ liệu kích hoạt tuỳ ý (như nút "Chạy thử")'),
             params: wfParams,
             body: s.object({ trigger_data: s.any('object').default({}) }).optional(),
             handler: async ctx => {
@@ -174,7 +176,7 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/workflows/:workflowId/simulate', scope: 'workflow:run', tags, operationId: 'simulateWorkflow',
-            summary: 'Chạy giả lập (không gửi tin thật)',
+            summary: tr('Chạy giả lập (không gửi tin thật)'),
             params: wfParams,
             body: s.object({ trigger_data: s.any('object').default({}) }).optional(),
             handler: async ctx => {
@@ -185,19 +187,19 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/workflows/events/:eventName', scope: 'workflow:run', tags, operationId: 'emitWorkflowEvent',
-            summary: 'Bắn sự kiện cho các workflow có node "Khi API/plugin gọi" (trigger.api)',
-            description: 'Workflow khớp tên sự kiện sẽ chạy bất đồng bộ (như mọi trigger). Trong workflow dùng `{{ $trigger.payload.<trường> }}`.',
+            summary: tr('Bắn sự kiện cho các workflow có node "Khi API/plugin gọi" (trigger.api)'),
+            description: tr('Workflow khớp tên sự kiện sẽ chạy bất đồng bộ (như mọi trigger). Trong workflow dùng `{{ $trigger.payload.<trường> }}`.'),
             params: s.object({ eventName: s.string().min(1).max(100).pattern(/^[A-Za-z0-9_.:-]+$/) }),
             body: s.object({
                 payload: s.any('object').default({}),
-                account_id: s.id().optional().describe('Chỉ chạy workflow áp dụng cho tài khoản này'),
+                account_id: s.id().optional().describe(tr('Chỉ chạy workflow áp dụng cho tài khoản này')),
             }).optional(),
             examples: { request: { payload: { order_id: 'DH2291', phone: '0901234567' } }, response: { matched: 1, workflow_ids: ['8c1f…'] } },
             handler: async ctx => {
                 const accountId = ctx.body?.account_id;
                 if (accountId) await ctx.account(accountId);
                 if (ctx.principal.accountIds !== null && !accountId) {
-                    throw new ApiError(400, 'VALIDATION_ERROR', 'Key giới hạn tài khoản phải truyền account_id');
+                    throw new ApiError(400, 'VALIDATION_ERROR', tr('Key giới hạn tài khoản phải truyền account_id'));
                 }
                 const res = await ctx.call('workflow:triggerApi', {
                     eventName: ctx.params.eventName,
@@ -211,7 +213,7 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/workflows/:workflowId/runs', scope: 'workflow:read', tags, operationId: 'listWorkflowRuns',
-            summary: 'Lịch sử chạy gần đây',
+            summary: tr('Lịch sử chạy gần đây'),
             params: wfParams,
             query: s.object({ limit: s.int().min(1).max(200).default(50) }),
             handler: async ctx => {
@@ -222,7 +224,7 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/workflows/:workflowId/webhook-url', scope: 'workflow:read', tags, operationId: 'getWorkflowWebhookUrl',
-            summary: 'URL webhook công khai của node "Webhook bên ngoài"',
+            summary: tr('URL webhook công khai của node "Webhook bên ngoài"'),
             params: wfParams,
             handler: async ctx => {
                 await loadWorkflow(ctx, ctx.params.workflowId, false);
@@ -232,7 +234,7 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/workflows/:workflowId/webhook-url/regenerate', scope: 'workflow:write', tags, operationId: 'regenerateWorkflowWebhookToken',
-            summary: 'Đổi token webhook (link cũ hết hiệu lực ngay)',
+            summary: tr('Đổi token webhook (link cũ hết hiệu lực ngay)'),
             params: wfParams,
             handler: async ctx => {
                 await loadWorkflow(ctx, ctx.params.workflowId, true);
@@ -242,7 +244,7 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/workflows/:workflowId/runs', scope: 'workflow:write', tags, operationId: 'deleteWorkflowRuns',
-            summary: 'Xoá lịch sử chạy của workflow',
+            summary: tr('Xoá lịch sử chạy của workflow'),
             params: wfParams,
             handler: async ctx => {
                 await loadWorkflow(ctx, ctx.params.workflowId, true);
@@ -252,14 +254,14 @@ export function workflowRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/workflows/clone', scope: 'workflow:write', tags, operationId: 'cloneAccountWorkflows',
-            summary: 'Sao chép mọi workflow của tài khoản này sang tài khoản khác',
-            description: 'Như "Sao chép workflow sang tài khoản" trong app: bản sao áp dụng cho tài khoản đích, giữ trạng thái bật/tắt.',
+            summary: tr('Sao chép mọi workflow của tài khoản này sang tài khoản khác'),
+            description: tr('Như "Sao chép workflow sang tài khoản" trong app: bản sao áp dụng cho tài khoản đích, giữ trạng thái bật/tắt.'),
             params: s.object({ accountId: s.id() }),
             body: s.object({ to_account_id: s.id() }),
             handler: async ctx => {
                 const from = await ctx.account(ctx.params.accountId);
                 const to = await ctx.account(ctx.body.to_account_id);
-                if (from.id === to.id) throw new ApiError(400, 'VALIDATION_ERROR', 'Hai tài khoản phải khác nhau');
+                if (from.id === to.id) throw new ApiError(400, 'VALIDATION_ERROR', tr('Hai tài khoản phải khác nhau'));
                 const r = await ctx.call('workflow:cloneAll', { sourceZaloId: from.id, targetZaloId: to.id });
                 return { cloned: Number(r?.count) || 0 };
             },

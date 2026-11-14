@@ -1,7 +1,7 @@
 /**
- * ChannelAdapter.ts - Interface chung cho tất cả channel adapters
- * Mỗi channel (Zalo, Facebook, Telegram Bot, Telegram User) implement interface này.
- * UI gọi qua getAdapter(channel).method(params) thay vì if/else.
+ * ChannelAdapter.ts - Shared interface for all channel adapters
+ * Each channel (Zalo, Facebook, Telegram Bot, Telegram User) implements this interface.
+ * The UI calls through getAdapter(channel).method(params) instead of if/else.
  */
 
 import { Channel } from '../../../../configs/channels/channelConfig';
@@ -62,8 +62,8 @@ export interface SendAttachmentParams {
   /** Reply-to message ID for Telegram */
   replyToMsgId?: string;
   /**
-   * Item thư viện (máy nhân viên không có file — `filePath` rỗng): Boss tự đổi uuid → đường dẫn file của item
-   * (executeProxyAction, đã kiểm tra quyền trang).
+   * Library item (the employee machine has no file: `filePath` is empty): the Boss swaps the uuid for the item's file path itself
+   * (executeProxyAction, the page permission is checked).
    */
   libraryUuid?: string;
 }
@@ -81,10 +81,10 @@ export interface SendVideoParams {
   height?: number;
   body?: string;
   quote?: any;
-  /** Telegram: trả lời tin này (cả trong chủ đề forum / chuỗi bình luận) */
+  /** Telegram: reply to this message (also inside a forum topic / channel post comment thread) */
   replyToMsgId?: string;
   auth?: any;
-  /** Item thư viện khi máy nhân viên không có file (xem SendAttachmentParams.libraryUuid). */
+  /** Library item when the employee machine has no file (see SendAttachmentParams.libraryUuid). */
   libraryUuid?: string;
 }
 

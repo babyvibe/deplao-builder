@@ -1,12 +1,12 @@
 /**
- * Bộ lọc danh sách liên hệ CRM: Nhãn Zalo, Nhãn Local, Có SĐT, Có ghi chú, Giới tính, Sinh nhật.
+ * Filters for the CRM contact list: Zalo label, Local label, Has phone number, Has note, Gender, Birthday.
  *
- * Chạy trong `DatabaseService.getCRMContacts` TRƯỚC khi cắt trang, nên tổng số, phân trang và "Xuất CSV" tính trên
- * toàn bộ liên hệ khớp bộ lọc. Trước đây CRMPage lọc ngay trên trang đang tải (200 dòng): liên hệ ở trang khác không
- * bao giờ khớp, tổng thành số dòng của trang (mất thanh phân trang) và Xuất CSV bỏ qua bộ lọc.
+ * Runs in `DatabaseService.getCRMContacts` BEFORE the page is cut, so the total, the paging and "Xuất CSV" (Export CSV) count all
+ * contacts matching the filters. Before, CRMPage filtered only the page being loaded (200 rows): contacts on other pages never
+ * matched, the total became the row count of the page (the paging bar disappeared), and Export CSV ignored the filters.
  *
- * Nhãn Zalo chỉ có ở renderer (lấy từ API Zalo, không lưu DB) → renderer gửi kèm danh sách hội thoại của từng nhãn.
- * Thuần (không DB, không React) — test: src/__tests__/crm/crmContactFilters.test.ts.
+ * Zalo labels only exist in the renderer (fetched from the Zalo API, not stored in the DB), so the renderer sends the conversation list of each label along.
+ * Pure (no DB, no React). Test: src/__tests__/crm/crmContactFilters.test.ts.
  */
 import { localDayKey } from '../analytics/localTimeBuckets';
 
@@ -14,19 +14,19 @@ export type CRMGenderFilter = 'all' | 'male' | 'female' | 'unknown';
 export type CRMBirthdayFilter = 'all' | 'has_birthday' | 'no_birthday' | 'today' | 'this_week' | 'this_month';
 
 export interface CRMContactFilters {
-  /** Mỗi phần tử = danh sách hội thoại của MỘT nhãn Zalo đã chọn; liên hệ phải thuộc tất cả các nhãn. */
+  /** Each item = the conversation list of ONE selected Zalo label; a contact must belong to all of them. */
   zaloLabelConversations?: string[][];
-  /** Nhãn Local đã chọn; liên hệ phải có tất cả. */
+  /** Selected Local labels; a contact must have all of them. */
   localLabelIds?: number[];
   hasPhone?: boolean;
   hasNotes?: boolean;
   gender?: CRMGenderFilter;
   birthday?: CRMBirthdayFilter;
-  /** "Hôm nay" theo máy người xem ('YYYY-MM-DD') cho Hôm nay / Tuần này / Tháng này; thiếu → ngày của máy truy vấn. */
+  /** "Hôm nay" (today) date by the viewer's machine ('YYYY-MM-DD'), used for Today / This week / This month; missing → the date of the querying machine. */
   today?: string;
 }
 
-/** Các cột của một dòng getCRMContacts mà bộ lọc đọc. */
+/** The columns of one getCRMContacts row that the filter reads. */
 export interface CRMFilterRow {
   contact_id: string;
   contact_type?: string | null;
@@ -36,13 +36,13 @@ export interface CRMFilterRow {
 }
 
 export interface CRMFilterLookups {
-  /** Nhãn Local đang gán cho hội thoại `contactId`. */
+  /** Local labels assigned to the conversation `contactId`. */
   localLabelsOf?: (contactId: string) => Iterable<number> | undefined;
-  /** Số ghi chú CRM của liên hệ. */
+  /** Number of CRM notes of the contact. */
   noteCountOf?: (contactId: string) => number;
 }
 
-/** Trạng thái bộ lọc của trang Liên hệ (crmStore). */
+/** Filter state of the Contacts page (crmStore). */
 export interface CRMFilterState {
   filterLabelIds: readonly number[];
   filterLocalLabelIds: readonly number[];
@@ -59,7 +59,7 @@ export function hasCRMContactFilters(filters: CRMContactFilters | null | undefin
     || (filters.gender && filters.gender !== 'all') || (filters.birthday && filters.birthday !== 'all'));
 }
 
-/** Bộ lọc gửi cho getCRMContacts từ trạng thái trang Liên hệ; `undefined` khi không lọc gì. */
+/** Filter sent to getCRMContacts from the Contacts page state; `undefined` when nothing is filtered. */
 export function buildCRMContactFilters(
   state: CRMFilterState,
   zaloLabels: ReadonlyArray<{ id: number; conversations?: readonly string[] | null }>,
@@ -67,7 +67,7 @@ export function buildCRMContactFilters(
 ): CRMContactFilters | undefined {
   const filters: CRMContactFilters = {};
   if (state.filterLabelIds.length > 0) {
-    // Nhãn chưa tải / đã xoá → danh sách rỗng → không liên hệ nào khớp (như bộ lọc cũ)
+    // Label not loaded / deleted → empty list → no contact matches (same as the old filter)
     filters.zaloLabelConversations = state.filterLabelIds.map(id =>
       (zaloLabels.find(label => label.id === id)?.conversations || []).map(String));
   }
@@ -87,7 +87,7 @@ function dateFromKey(key: string | undefined, fallback: Date): Date {
   return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : fallback;
 }
 
-/** "DD/MM" của ngày sinh dạng DD/MM/YYYY (chấp nhận ngày / tháng một chữ số); null nếu không đọc được. */
+/** "DD/MM" of a birthday in DD/MM/YYYY form (accepts a 1-digit day / month); null if it cannot be read. */
 function birthdayDayMonth(birthday: string | null | undefined): string | null {
   if (!birthday) return null;
   const parts = String(birthday).split('/');
@@ -102,7 +102,7 @@ function dayMonthKey(date: Date): string {
   return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}`;
 }
 
-/** Hôm nay = cùng ngày/tháng; Tuần này = 7 ngày từ hôm nay; Tháng này = cùng tháng. */
+/** Today = same day/month; This week = the 7 days from today; This month = same month. */
 export function birthdayMatcher(
   filter: CRMBirthdayFilter | undefined,
   today: Date,
@@ -140,7 +140,7 @@ function genderMatches(filter: CRMGenderFilter, gender: unknown): boolean {
   return true;
 }
 
-/** Hàm lọc một dòng liên hệ; null khi không có bộ lọc nào. */
+/** Filter function for one contact row; null when there is no filter. */
 export function createCRMContactFilter(
   filters: CRMContactFilters | null | undefined,
   lookups: CRMFilterLookups = {},
@@ -154,7 +154,7 @@ export function createCRMContactFilter(
   return (row) => {
     const id = String(row.contact_id ?? '');
     if (labelSets.length > 0) {
-      // Nhãn Zalo lưu nhóm với tiền tố "g" (vd "g4579…"), contact_id thì không
+      // Zalo labels store groups with the prefix "g" (e.g. "g4579…"), but contact_id does not have it
       const groupKey = row.contact_type === 'group' ? `g${id}` : null;
       if (!labelSets.every(set => set.has(id) || (groupKey !== null && set.has(groupKey)))) return false;
     }

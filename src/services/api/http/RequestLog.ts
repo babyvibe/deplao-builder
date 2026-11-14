@@ -1,6 +1,6 @@
 /**
- * RequestLog — nhật ký request API, ghi theo lô (2 giây hoặc 100 dòng) trong một
- * transaction để không chặn main thread. Không ghi body/query (tránh lộ dữ liệu).
+ * RequestLog: API request log, written in batches (every 2 seconds or 100 rows) in one
+ * transaction so it does not block the main thread. Does not write body/query (avoids leaking data).
  */
 import { apiDb } from '../dbSchema';
 import { getApiSettingNumber } from '../settings';
@@ -26,7 +26,7 @@ export class RequestLog {
     private buffer: RequestLogRow[] = [];
     private timer: ReturnType<typeof setTimeout> | null = null;
     private lastPrune = 0;
-    /** Bộ đếm trong bộ nhớ cho tab giám sát (không cần query DB). */
+    /** In-memory counters for the monitoring tab (no DB query needed). */
     private recent: Array<{ at: number; status: number; ms: number }> = [];
 
     record(row: RequestLogRow): void {
@@ -64,7 +64,7 @@ export class RequestLog {
                 }
             });
         } catch {
-            /* Ghi log thất bại không được ảnh hưởng request. */
+            /* A failed log write must not affect the request. */
         }
         this.maybePrune();
     }
@@ -78,7 +78,7 @@ export class RequestLog {
         } catch { /* ignore */ }
     }
 
-    /** Thống kê theo principal trong N giờ gần nhất. */
+    /** Stats per principal over the last N hours. */
     usage(principalId: string, hours = 24): { total: number; errors: number; last_at: number | null; by_status: Record<string, number> } {
         this.flush();
         const since = Date.now() - hours * 3600_000;
@@ -117,7 +117,7 @@ export class RequestLog {
         }
     }
 
-    /** Chỉ số 5 phút gần nhất (tab giám sát). */
+    /** Metrics for the last 5 minutes (monitoring tab). */
     metrics(now = Date.now()): { requests_per_min: number; p95_ms: number; errors_5xx: number; window_sec: number } {
         const windowMs = 5 * 60_000;
         const rows = this.recent.filter(r => now - r.at <= windowMs);

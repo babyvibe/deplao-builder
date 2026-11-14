@@ -1,61 +1,55 @@
 import { DEFAULT_CONFIGS } from '../nodes/workflowConfig';
 import { WorkflowTemplate } from './workflowTemplates';
 import { BellIcon, BotIcon, ChartIcon, CreditCardIcon, LightningIcon, PackageIcon, ShoppingCartIcon, StarIcon, TagIcon, TrendingDownIcon, TruckIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
 
 
 // ── Integration Templates ──────────────────────────────────────────────────────
-// Các workflow mẫu kết hợp với tích hợp: KiotViet, Haravan, Nhanh.vn, Sapo, GHN, Casso/SePay (payment trigger),
-// Google Sheets, Telegram. Chỉ dùng cú pháp engine chạy được (kiểm tra ở src/__tests__/integrations/integrationTemplates.test.ts):
-//  - {{ }} chỉ chứa MỘT biến ($trigger.*, $node.<id>.*, $var.*, $date.*) — không có bộ lọc ("| formatVND"…) hay phép tính;
-//  - $trigger.* đúng các trường của trigger (thanh toán có amount, description, bankName, accountNumber, transactionId,
-//    transactionDate… — không có threadId / SĐT người gửi);
-//  - trigger thanh toán / lịch hẹn không có hội thoại → chỉ gửi vào nơi chọn sẵn (nhóm Zalo nội bộ, Telegram, Sheets);
-//  - liệt kê nhiều dòng (sản phẩm, tồn kho) = "Lặp qua danh sách" + "Lưu giá trị vào biến", gửi ở cổng "Xong".
+// Sample workflows that combine integrations: KiotViet, Haravan, Nhanh.vn, Sapo, GHN, Casso/SePay (payment trigger),
+// Google Sheets, Telegram. Only use engine syntax that actually runs (checked in src/__tests__/integrations/integrationTemplates.test.ts):
+//  - {{ }} holds ONE variable only ($trigger.*, $node.<id>.*, $var.*, $date.*), with no filter ("| formatVND"…) or arithmetic;
+//  - $trigger.* uses exactly the trigger's fields (payment has amount, description, bankName, accountNumber, transactionId,
+//    transactionDate…, no threadId / sender phone number);
+//  - payment / appointment triggers have no conversation → only send to a preset target (internal Zalo group, Telegram, Sheets);
+//  - listing many rows (products, stock) = "Lặp qua danh sách" (loop over list) + "Lưu giá trị vào biến" (save value to variable), send at the "Xong" (done) gate.
 // ──────────────────────────────────────────────────────────────────────────────
 
-/** Trigger tin nhắn cá nhân (thông tin đơn / điểm của khách không gửi vào nhóm) lọc theo từ khoá. */
+/** Personal message trigger (order / points info is not sent to the group), filtered by keyword. */
 function privateMessageTrigger(keyword: string, extra: Record<string, any> = {}) {
   return { ...DEFAULT_CONFIGS['trigger.message'], threadType: '0', keyword, keywordMode: 'contains_any', ...extra };
 }
 
-const ORDER_KEYWORDS = 'đơn hàng, don hang, kiểm tra đơn, kiem tra don, check đơn, check don';
+const ORDER_KEYWORDS = tr('đơn hàng, don hang, kiểm tra đơn, kiem tra don, check đơn, check don');
 
 const NO_SAVED_PHONE_REPLY =
-  '😥 Mình chưa tìm thấy đơn hàng theo số điện thoại bạn đã lưu với shop.\n\n' +
-  'Bạn gửi giúp mình số điện thoại đặt hàng hoặc mã đơn để shop kiểm tra nhé!';
+  tr('😥 Mình chưa tìm thấy đơn hàng theo số điện thoại bạn đã lưu với shop.\n\nBạn gửi giúp mình số điện thoại đặt hàng hoặc mã đơn để shop kiểm tra nhé!', {  });
 
 export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
 
-  // ━━━━━ 1. Nhận tiền → Báo nhóm Zalo nội bộ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 1. Payment received → notify internal Zalo group ━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-payment-notify-group',
-    name: 'Nhận tiền → Báo nhóm Zalo nội bộ',
+    name: tr('Nhận tiền → Báo nhóm Zalo nội bộ'),
     description:
-      'Khi Casso hoặc SePay báo có chuyển khoản mới, gửi ngay số tiền, nội dung chuyển khoản, ngân hàng và mã giao dịch vào nhóm Zalo nội bộ để nhân viên đối chiếu, xác nhận đơn. Giao dịch không gắn với hội thoại nào → chọn nhóm nhận ở bước "Báo nhóm nội bộ" và tài khoản Zalo gửi khi cài mẫu.',
+      tr('Khi Casso hoặc SePay báo có chuyển khoản mới, gửi ngay số tiền, nội dung chuyển khoản, ngân hàng và mã giao dịch vào nhóm Zalo nội bộ để nhân viên đối chiếu, xác nhận đơn. Giao dịch không gắn với hội thoại nào → chọn nhóm nhận ở bước "Báo nhóm nội bộ" và tài khoản Zalo gửi khi cài mẫu.'),
     category: 'tich-hop',
-    tags: ['thanh toán', 'casso', 'sepay', 'vietqr', 'thông báo', 'nhóm nội bộ'],
+    tags: [tr('thanh toán'), 'casso', 'sepay', 'vietqr', tr('thông báo'), tr('nhóm nội bộ')],
     icon: <CreditCardIcon className="w-4 h-4" />,
     difficulty: 'easy',
     nodes: [
       {
-        id: 'n1', type: 'trigger.payment', label: 'Nhận thanh toán (Casso/SePay)',
+        id: 'n1', type: 'trigger.payment', label: tr('Nhận thanh toán (Casso/SePay)'),
         position: { x: 300, y: 60 },
         config: { ...DEFAULT_CONFIGS['trigger.payment'] },
       },
       {
-        id: 'n2', type: 'zalo.sendMessage', label: 'Báo nhóm nội bộ (chọn nhóm)',
+        id: 'n2', type: 'zalo.sendMessage', label: tr('Báo nhóm nội bộ (chọn nhóm)'),
         position: { x: 300, y: 220 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
           threadId: '', threadIds: '', threadType: '1',
           message:
-            '💰 Có tiền vào!\n\n' +
-            'Số tiền: {{ $trigger.amount }}đ\n' +
-            'Nội dung CK: {{ $trigger.description }}\n' +
-            'Ngân hàng: {{ $trigger.bankName }} - TK {{ $trigger.accountNumber }}\n' +
-            'Mã GD: {{ $trigger.transactionId }}\n' +
-            'Thời gian: {{ $trigger.transactionDate }}\n\n' +
-            '👉 Đối chiếu nội dung chuyển khoản để xác nhận đơn cho khách.',
+            tr('💰 Có tiền vào!\n\nSố tiền: {{ $trigger.amount }}đ\nNội dung CK: {{ $trigger.description }}\nNgân hàng: {{ $trigger.bankName }} - TK {{ $trigger.accountNumber }}\nMã GD: {{ $trigger.transactionId }}\nThời gian: {{ $trigger.transactionDate }}\n\n👉 Đối chiếu nội dung chuyển khoản để xác nhận đơn cho khách.', {  }),
         },
       },
     ],
@@ -64,24 +58,24 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 2. Ghi nhật ký thanh toán vào Google Sheets ━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 2. Log payments to Google Sheets ━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-payment-sheet-log',
-    name: 'Ghi nhật ký giao dịch vào Google Sheets',
+    name: tr('Ghi nhật ký giao dịch vào Google Sheets'),
     description:
-      'Mỗi giao dịch Casso / SePay mới được ghi thành một dòng Google Sheets (thời gian, số tiền, nội dung, ngân hàng, số tài khoản, mã giao dịch) và báo nhanh qua Telegram. Điền ID bảng tính, file Service Account và Bot Telegram trước khi bật.',
+      tr('Mỗi giao dịch Casso / SePay mới được ghi thành một dòng Google Sheets (thời gian, số tiền, nội dung, ngân hàng, số tài khoản, mã giao dịch) và báo nhanh qua Telegram. Điền ID bảng tính, file Service Account và Bot Telegram trước khi bật.'),
     category: 'tich-hop',
-    tags: ['thanh toán', 'google sheets', 'nhật ký', 'casso', 'sepay', 'kế toán'],
+    tags: [tr('thanh toán'), 'google sheets', tr('nhật ký'), 'casso', 'sepay', tr('kế toán')],
     icon: <ChartIcon className="w-4 h-4" />,
     difficulty: 'easy',
     nodes: [
       {
-        id: 'n1', type: 'trigger.payment', label: 'Nhận thanh toán',
+        id: 'n1', type: 'trigger.payment', label: tr('Nhận thanh toán'),
         position: { x: 300, y: 60 },
         config: { ...DEFAULT_CONFIGS['trigger.payment'], minAmount: 1000 },
       },
       {
-        id: 'n2', type: 'sheets.appendRow', label: 'Ghi vào Google Sheets',
+        id: 'n2', type: 'sheets.appendRow', label: tr('Ghi vào Google Sheets'),
         position: { x: 300, y: 220 },
         config: {
           ...DEFAULT_CONFIGS['sheets.appendRow'],
@@ -92,16 +86,12 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
         },
       },
       {
-        id: 'n3', type: 'notify.telegram', label: 'Thông báo Telegram',
+        id: 'n3', type: 'notify.telegram', label: tr('Thông báo Telegram'),
         position: { x: 300, y: 380 },
         config: {
           ...DEFAULT_CONFIGS['notify.telegram'],
           message:
-            '💰 Giao dịch mới\n\n' +
-            'Số tiền: {{ $trigger.amount }}đ\n' +
-            'Nội dung: {{ $trigger.description }}\n' +
-            'Ngân hàng: {{ $trigger.bankName }} - TK {{ $trigger.accountNumber }}\n' +
-            'Thời gian: {{ $trigger.transactionDate }}',
+            tr('💰 Giao dịch mới\n\nSố tiền: {{ $trigger.amount }}đ\nNội dung: {{ $trigger.description }}\nNgân hàng: {{ $trigger.bankName }} - TK {{ $trigger.accountNumber }}\nThời gian: {{ $trigger.transactionDate }}', {  }),
         },
       },
     ],
@@ -111,34 +101,29 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 3. Cảnh báo nhận tiền lớn → Telegram ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 3. Large payment alert → Telegram ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-payment-alert-big',
-    name: 'Cảnh báo khi nhận thanh toán lớn',
+    name: tr('Cảnh báo khi nhận thanh toán lớn'),
     description:
-      'Giao dịch từ 5.000.000đ trở lên → gửi cảnh báo ngay qua Telegram cho quản lý kèm số tiền, nội dung chuyển khoản, ngân hàng và thời gian. Đổi ngưỡng ở bước "Nhận thanh toán ≥ 5 triệu".',
+      tr('Giao dịch từ 5.000.000đ trở lên → gửi cảnh báo ngay qua Telegram cho quản lý kèm số tiền, nội dung chuyển khoản, ngân hàng và thời gian. Đổi ngưỡng ở bước "Nhận thanh toán ≥ 5 triệu".'),
     category: 'tich-hop',
-    tags: ['cảnh báo', 'thanh toán lớn', 'telegram', 'casso', 'sepay', 'kế toán'],
+    tags: [tr('cảnh báo'), tr('thanh toán lớn'), 'telegram', 'casso', 'sepay', tr('kế toán')],
     icon: <BellIcon className="w-4 h-4" />,
     difficulty: 'easy',
     nodes: [
       {
-        id: 'n1', type: 'trigger.payment', label: 'Nhận thanh toán ≥ 5 triệu',
+        id: 'n1', type: 'trigger.payment', label: tr('Nhận thanh toán ≥ 5 triệu'),
         position: { x: 300, y: 60 },
         config: { ...DEFAULT_CONFIGS['trigger.payment'], minAmount: 5000000 },
       },
       {
-        id: 'n2', type: 'notify.telegram', label: 'Cảnh báo Telegram',
+        id: 'n2', type: 'notify.telegram', label: tr('Cảnh báo Telegram'),
         position: { x: 300, y: 220 },
         config: {
           ...DEFAULT_CONFIGS['notify.telegram'],
           message:
-            '🚨 THANH TOÁN LỚN!\n\n' +
-            '💰 Số tiền: {{ $trigger.amount }}đ\n' +
-            '📝 Nội dung: {{ $trigger.description }}\n' +
-            '🏦 {{ $trigger.bankName }} - TK {{ $trigger.accountNumber }}\n' +
-            '🧾 Mã GD: {{ $trigger.transactionId }}\n' +
-            '⏰ Thời gian: {{ $trigger.transactionDate }}',
+            tr('🚨 THANH TOÁN LỚN!\n\n💰 Số tiền: {{ $trigger.amount }}đ\n📝 Nội dung: {{ $trigger.description }}\n🏦 {{ $trigger.bankName }} - TK {{ $trigger.accountNumber }}\n🧾 Mã GD: {{ $trigger.transactionId }}\n⏰ Thời gian: {{ $trigger.transactionDate }}', {  }),
         },
       },
     ],
@@ -147,48 +132,43 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 4. Tra cứu đơn hàng KiotViet theo SĐT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 4. KiotViet order lookup by phone ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-lookup-order-kiotviet',
-    name: 'Tra cứu đơn hàng KiotViet qua Zalo',
+    name: tr('Tra cứu đơn hàng KiotViet qua Zalo'),
     description:
-      'Khách nhắn riêng "đơn hàng" / "kiểm tra đơn" → bot tra đơn mới nhất trong KiotViet theo SĐT đã lưu của khách (Thông tin hội thoại / CRM) và trả mã đơn, trạng thái, tổng tiền. Khách chưa lưu SĐT hoặc không có đơn → nhờ khách gửi SĐT đặt hàng / mã đơn.',
+      tr('Khách nhắn riêng "đơn hàng" / "kiểm tra đơn" → bot tra đơn mới nhất trong KiotViet theo SĐT đã lưu của khách (Thông tin hội thoại / CRM) và trả mã đơn, trạng thái, tổng tiền. Khách chưa lưu SĐT hoặc không có đơn → nhờ khách gửi SĐT đặt hàng / mã đơn.'),
     category: 'tich-hop',
-    tags: ['kiotviet', 'tra đơn', 'trạng thái', 'CSKH', 'zalo'],
+    tags: ['kiotviet', tr('tra đơn'), tr('trạng thái'), 'CSKH', 'zalo'],
     icon: <PackageIcon className="w-4 h-4" />,
     difficulty: 'easy',
     nodes: [
       {
-        id: 'n1', type: 'trigger.message', label: 'Khách hỏi đơn hàng',
+        id: 'n1', type: 'trigger.message', label: tr('Khách hỏi đơn hàng'),
         position: { x: 300, y: 60 },
         config: privateMessageTrigger(ORDER_KEYWORDS),
       },
       {
-        id: 'n2', type: 'kiotviet.lookupOrder', label: 'Tra đơn KiotViet',
+        id: 'n2', type: 'kiotviet.lookupOrder', label: tr('Tra đơn KiotViet'),
         position: { x: 300, y: 210 },
         config: { ...DEFAULT_CONFIGS['kiotviet.lookupOrder'], phone: '{{ $trigger.fromPhone }}' },
       },
       {
-        id: 'n3', type: 'logic.if', label: 'Tìm thấy đơn?',
+        id: 'n3', type: 'logic.if', label: tr('Tìm thấy đơn?'),
         position: { x: 300, y: 360 },
         config: { left: '{{ $node.n2.found }}', operator: 'equals', right: 'true' },
       },
       {
-        id: 'n4', type: 'zalo.sendMessage', label: 'Gửi thông tin đơn hàng',
+        id: 'n4', type: 'zalo.sendMessage', label: tr('Gửi thông tin đơn hàng'),
         position: { x: 100, y: 530 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
           message:
-            '📦 Đơn hàng mới nhất của bạn:\n\n' +
-            '🔖 Mã đơn: {{ $node.n2.order.code }}\n' +
-            '📌 Trạng thái: {{ $node.n2.order.statusValue }}\n' +
-            '💰 Tổng tiền: {{ $node.n2.order.total }}đ\n' +
-            '📅 Ngày tạo: {{ $node.n2.order.createdDate }}\n\n' +
-            'Bạn cần hỗ trợ thêm gì không ạ? 😊',
+            tr('📦 Đơn hàng mới nhất của bạn:\n\n🔖 Mã đơn: {{ $node.n2.order.code }}\n📌 Trạng thái: {{ $node.n2.order.statusValue }}\n💰 Tổng tiền: {{ $node.n2.order.total }}đ\n📅 Ngày tạo: {{ $node.n2.order.createdDate }}\n\nBạn cần hỗ trợ thêm gì không ạ? 😊', {  }),
         },
       },
       {
-        id: 'n5', type: 'zalo.sendMessage', label: 'Không tìm thấy đơn',
+        id: 'n5', type: 'zalo.sendMessage', label: tr('Không tìm thấy đơn'),
         position: { x: 500, y: 530 },
         config: { ...DEFAULT_CONFIGS['zalo.sendMessage'], message: NO_SAVED_PHONE_REPLY },
       },
@@ -201,19 +181,19 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 5. Hỏi giá → AI lấy tên sản phẩm → Tra KiotViet → Báo giá ━━━━━━━━━━━━━
+  // ━━━━━ 5. Price question → AI gets product name → KiotViet lookup → quote ━━━━━━━━━━━━━
   {
     id: 'tpl-int-lookup-product-price',
-    name: 'Hỏi giá → Tra sản phẩm KiotViet',
+    name: tr('Hỏi giá → Tra sản phẩm KiotViet'),
     description:
-      'Khách hỏi giá → AI lấy tên sản phẩm trong câu hỏi → tìm trong KiotViet → gửi MỘT tin liệt kê tối đa 5 sản phẩm kèm giá bán (dùng "Lặp qua danh sách"). Chọn trợ lý AI ở bước "AI lấy tên sản phẩm" trước khi bật.',
+      tr('Khách hỏi giá → AI lấy tên sản phẩm trong câu hỏi → tìm trong KiotViet → gửi MỘT tin liệt kê tối đa 5 sản phẩm kèm giá bán (dùng "Lặp qua danh sách"). Chọn trợ lý AI ở bước "AI lấy tên sản phẩm" trước khi bật.'),
     category: 'tich-hop',
-    tags: ['kiotviet', 'sản phẩm', 'báo giá', 'AI', 'bán hàng'],
+    tags: ['kiotviet', tr('sản phẩm'), tr('báo giá'), 'AI', tr('bán hàng')],
     icon: <TagIcon className="w-4 h-4" />,
     difficulty: 'medium',
     nodes: [
       {
-        id: 'n1', type: 'trigger.message', label: 'Khách hỏi giá',
+        id: 'n1', type: 'trigger.message', label: tr('Khách hỏi giá'),
         position: { x: 300, y: 50 },
         config: {
           ...DEFAULT_CONFIGS['trigger.message'],
@@ -222,7 +202,7 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
         },
       },
       {
-        id: 'n2', type: 'ai.generateText', label: 'AI lấy tên sản phẩm',
+        id: 'n2', type: 'ai.generateText', label: tr('AI lấy tên sản phẩm'),
         position: { x: 300, y: 190 },
         config: {
           aiConfigMode: 'assistant', assistantId: '',
@@ -233,39 +213,39 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
         },
       },
       {
-        id: 'n3', type: 'kiotviet.lookupProduct', label: 'Tìm sản phẩm KiotViet',
+        id: 'n3', type: 'kiotviet.lookupProduct', label: tr('Tìm sản phẩm KiotViet'),
         position: { x: 300, y: 330 },
         config: { ...DEFAULT_CONFIGS['kiotviet.lookupProduct'], keyword: '{{ $node.n2.result }}', limit: 5 },
       },
       {
-        id: 'n4', type: 'logic.if', label: 'Có sản phẩm?',
+        id: 'n4', type: 'logic.if', label: tr('Có sản phẩm?'),
         position: { x: 300, y: 470 },
         config: { left: '{{ $node.n3.found }}', operator: 'equals', right: 'true' },
       },
       {
-        id: 'n5', type: 'logic.forEach', label: 'Từng sản phẩm',
+        id: 'n5', type: 'logic.forEach', label: tr('Từng sản phẩm'),
         position: { x: 120, y: 620 },
         config: { ...DEFAULT_CONFIGS['logic.forEach'], array: '{{ $node.n3.products }}', itemVariable: 'item', maxItems: 5 },
       },
       {
-        id: 'n6', type: 'logic.setVariable', label: 'Thêm vào bảng giá',
+        id: 'n6', type: 'logic.setVariable', label: tr('Thêm vào bảng giá'),
         position: { x: 0, y: 780 },
         config: { name: 'bangGia', value: '{{ $var.bangGia }}\n• {{ $var.item.name }}: {{ $var.item.basePrice }}đ' },
       },
       {
-        id: 'n7', type: 'zalo.sendMessage', label: 'Gửi bảng giá',
+        id: 'n7', type: 'zalo.sendMessage', label: tr('Gửi bảng giá'),
         position: { x: 260, y: 780 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
-          message: '🏷️ Giá sản phẩm bạn hỏi:\n{{ $var.bangGia }}\n\nBạn muốn đặt sản phẩm nào ạ? 😊',
+          message: tr('🏷️ Giá sản phẩm bạn hỏi:\n{{ $var.bangGia }}\n\nBạn muốn đặt sản phẩm nào ạ? 😊'),
         },
       },
       {
-        id: 'n8', type: 'zalo.sendMessage', label: 'Hỏi lại tên sản phẩm',
+        id: 'n8', type: 'zalo.sendMessage', label: tr('Hỏi lại tên sản phẩm'),
         position: { x: 520, y: 620 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
-          message: 'Dạ bạn cho mình xin tên sản phẩm cụ thể để shop báo giá nhé! 😊',
+          message: tr('Dạ bạn cho mình xin tên sản phẩm cụ thể để shop báo giá nhé! 😊'),
         },
       },
     ],
@@ -280,51 +260,48 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 6. Tra vận đơn GHN từ tin nhắn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 6. GHN shipment lookup from a message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-tracking-ghn',
-    name: 'Tra vận đơn GHN từ tin nhắn Zalo',
+    name: tr('Tra vận đơn GHN từ tin nhắn Zalo'),
     description:
-      'Khách nhắn riêng đúng mã vận đơn GHN (chữ + số, vd GAPN9X3K) → bot trả trạng thái vận chuyển và thời điểm cập nhật từ GHN Express. Mã sai hoặc không tra được → nhờ khách kiểm tra lại mã.',
+      tr('Khách nhắn riêng đúng mã vận đơn GHN (chữ + số, vd GAPN9X3K) → bot trả trạng thái vận chuyển và thời điểm cập nhật từ GHN Express. Mã sai hoặc không tra được → nhờ khách kiểm tra lại mã.'),
     category: 'tich-hop',
-    tags: ['GHN', 'vận đơn', 'giao hàng', 'theo dõi', 'trạng thái'],
+    tags: ['GHN', tr('vận đơn'), tr('giao hàng'), tr('theo dõi'), tr('trạng thái')],
     icon: <TruckIcon className="w-4 h-4" />,
     difficulty: 'easy',
     nodes: [
       {
-        id: 'n1', type: 'trigger.message', label: 'Khách gửi mã vận đơn',
+        id: 'n1', type: 'trigger.message', label: tr('Khách gửi mã vận đơn'),
         position: { x: 300, y: 60 },
-        // Cả tin nhắn là một mã 6-14 ký tự có cả chữ lẫn số (không bắt số điện thoại / câu thường)
+        // The whole message is one 6-14 character code with both letters and digits (does not catch phone numbers / normal sentences)
         config: privateMessageTrigger('^(?=.*\\d)(?=.*[a-z])[a-z0-9]{6,14}$', { keywordMode: 'regex' }),
       },
       {
-        id: 'n2', type: 'ghn.getTracking', label: 'Tra trạng thái GHN',
+        id: 'n2', type: 'ghn.getTracking', label: tr('Tra trạng thái GHN'),
         position: { x: 300, y: 210 },
         config: { ...DEFAULT_CONFIGS['ghn.getTracking'], orderCode: '{{ $trigger.content }}', continueOnError: true },
       },
       {
-        id: 'n3', type: 'logic.if', label: 'Tra được vận đơn?',
+        id: 'n3', type: 'logic.if', label: tr('Tra được vận đơn?'),
         position: { x: 300, y: 360 },
         config: { left: '{{ $node.n2.status }}', operator: 'not_empty', right: '' },
       },
       {
-        id: 'n4', type: 'zalo.sendMessage', label: 'Gửi trạng thái vận đơn',
+        id: 'n4', type: 'zalo.sendMessage', label: tr('Gửi trạng thái vận đơn'),
         position: { x: 100, y: 520 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
           message:
-            '🚚 Vận đơn GHN {{ $node.n2.orderCode }}\n\n' +
-            '📦 Trạng thái: {{ $node.n2.status }}\n' +
-            '🕒 Cập nhật lúc: {{ $node.n2.updatedDate }}\n\n' +
-            'Cần hỗ trợ thêm gì không ạ? 😊',
+            tr('🚚 Vận đơn GHN {{ $node.n2.orderCode }}\n\n📦 Trạng thái: {{ $node.n2.status }}\n🕒 Cập nhật lúc: {{ $node.n2.updatedDate }}\n\nCần hỗ trợ thêm gì không ạ? 😊', {  }),
         },
       },
       {
-        id: 'n5', type: 'zalo.sendMessage', label: 'Không tra được',
+        id: 'n5', type: 'zalo.sendMessage', label: tr('Không tra được'),
         position: { x: 500, y: 520 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
-          message: 'Mình chưa tra được vận đơn "{{ $trigger.content }}" trên GHN. Bạn kiểm tra lại mã giúp mình nhé!',
+          message: tr('Mình chưa tra được vận đơn "{{ $trigger.content }}" trên GHN. Bạn kiểm tra lại mã giúp mình nhé!'),
         },
       },
     ],
@@ -336,51 +313,47 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 7. Tra điểm tích luỹ khách hàng KiotViet ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 7. KiotViet customer points lookup ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-loyalty-points',
-    name: 'Tra điểm tích luỹ KiotViet',
+    name: tr('Tra điểm tích luỹ KiotViet'),
     description:
-      'Khách nhắn riêng "tích điểm" / "xem điểm" → bot tra khách hàng KiotViet theo SĐT đã lưu của khách và gửi điểm hiện tại, tổng chi tiêu. Khách chưa lưu SĐT hoặc không có trong KiotViet → nhờ khách gửi SĐT mua hàng.',
+      tr('Khách nhắn riêng "tích điểm" / "xem điểm" → bot tra khách hàng KiotViet theo SĐT đã lưu của khách và gửi điểm hiện tại, tổng chi tiêu. Khách chưa lưu SĐT hoặc không có trong KiotViet → nhờ khách gửi SĐT mua hàng.'),
     category: 'tich-hop',
-    tags: ['kiotviet', 'tích điểm', 'loyalty', 'khách hàng'],
+    tags: ['kiotviet', tr('tích điểm'), 'loyalty', tr('khách hàng')],
     icon: <StarIcon className="w-4 h-4" />,
     difficulty: 'easy',
     nodes: [
       {
-        id: 'n1', type: 'trigger.message', label: 'Khách hỏi điểm',
+        id: 'n1', type: 'trigger.message', label: tr('Khách hỏi điểm'),
         position: { x: 300, y: 60 },
-        config: privateMessageTrigger('tích điểm, tich diem, xem điểm, xem diem, điểm tích lũy, diem tich luy'),
+        config: privateMessageTrigger(tr('tích điểm, tich diem, xem điểm, xem diem, điểm tích lũy, diem tich luy')),
       },
       {
-        id: 'n2', type: 'kiotviet.lookupCustomer', label: 'Tra khách hàng KiotViet',
+        id: 'n2', type: 'kiotviet.lookupCustomer', label: tr('Tra khách hàng KiotViet'),
         position: { x: 300, y: 210 },
         config: { ...DEFAULT_CONFIGS['kiotviet.lookupCustomer'], phone: '{{ $trigger.fromPhone }}' },
       },
       {
-        id: 'n3', type: 'logic.if', label: 'Tìm thấy khách?',
+        id: 'n3', type: 'logic.if', label: tr('Tìm thấy khách?'),
         position: { x: 300, y: 360 },
         config: { left: '{{ $node.n2.found }}', operator: 'equals', right: 'true' },
       },
       {
-        id: 'n4', type: 'zalo.sendMessage', label: 'Gửi điểm tích luỹ',
+        id: 'n4', type: 'zalo.sendMessage', label: tr('Gửi điểm tích luỹ'),
         position: { x: 100, y: 520 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
           message:
-            '⭐ Thông tin tích điểm của bạn:\n\n' +
-            '👤 Tên: {{ $node.n2.firstCustomer.name }}\n' +
-            '⭐ Điểm hiện tại: {{ $node.n2.firstCustomer.rewardPoint }} điểm\n' +
-            '💰 Tổng chi tiêu: {{ $node.n2.firstCustomer.totalInvoiced }}đ\n\n' +
-            'Cảm ơn bạn đã ủng hộ shop! 😊',
+            tr('⭐ Thông tin tích điểm của bạn:\n\n👤 Tên: {{ $node.n2.firstCustomer.name }}\n⭐ Điểm hiện tại: {{ $node.n2.firstCustomer.rewardPoint }} điểm\n💰 Tổng chi tiêu: {{ $node.n2.firstCustomer.totalInvoiced }}đ\n\nCảm ơn bạn đã ủng hộ shop! 😊', {  }),
         },
       },
       {
-        id: 'n5', type: 'zalo.sendMessage', label: 'Chưa có thông tin khách',
+        id: 'n5', type: 'zalo.sendMessage', label: tr('Chưa có thông tin khách'),
         position: { x: 500, y: 520 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
-          message: 'Mình chưa tìm thấy tài khoản tích điểm theo số điện thoại bạn đã lưu với shop. Bạn gửi giúp mình số điện thoại mua hàng nhé!',
+          message: tr('Mình chưa tìm thấy tài khoản tích điểm theo số điện thoại bạn đã lưu với shop. Bạn gửi giúp mình số điện thoại mua hàng nhé!'),
         },
       },
     ],
@@ -392,49 +365,43 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 8. Tra cứu đơn hàng Haravan qua Zalo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 8. Haravan order lookup via Zalo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-haravan-lookup-order',
-    name: 'Tra cứu đơn hàng Haravan qua Zalo',
+    name: tr('Tra cứu đơn hàng Haravan qua Zalo'),
     description:
-      'Khách nhắn riêng "đơn hàng" / "check đơn" → bot tra đơn mới nhất trong Haravan theo SĐT đã lưu của khách và gửi mã đơn, tổng tiền, trạng thái thanh toán / giao hàng, địa chỉ giao. Chưa lưu SĐT hoặc không có đơn → nhờ khách gửi SĐT / mã đơn.',
+      tr('Khách nhắn riêng "đơn hàng" / "check đơn" → bot tra đơn mới nhất trong Haravan theo SĐT đã lưu của khách và gửi mã đơn, tổng tiền, trạng thái thanh toán / giao hàng, địa chỉ giao. Chưa lưu SĐT hoặc không có đơn → nhờ khách gửi SĐT / mã đơn.'),
     category: 'tich-hop',
-    tags: ['haravan', 'đơn hàng', 'tra cứu', 'CSKH', 'e-commerce'],
+    tags: ['haravan', tr('đơn hàng'), tr('tra cứu'), 'CSKH', 'e-commerce'],
     icon: <ShoppingCartIcon className="w-4 h-4" />,
     difficulty: 'easy',
     nodes: [
       {
-        id: 'n1', type: 'trigger.message', label: 'Khách hỏi đơn hàng',
+        id: 'n1', type: 'trigger.message', label: tr('Khách hỏi đơn hàng'),
         position: { x: 300, y: 60 },
         config: privateMessageTrigger(ORDER_KEYWORDS),
       },
       {
-        id: 'n2', type: 'haravan.lookupOrder', label: 'Tra đơn Haravan',
+        id: 'n2', type: 'haravan.lookupOrder', label: tr('Tra đơn Haravan'),
         position: { x: 300, y: 210 },
         config: { ...DEFAULT_CONFIGS['haravan.lookupOrder'], phone: '{{ $trigger.fromPhone }}' },
       },
       {
-        id: 'n3', type: 'logic.if', label: 'Tìm thấy đơn?',
+        id: 'n3', type: 'logic.if', label: tr('Tìm thấy đơn?'),
         position: { x: 300, y: 360 },
         config: { left: '{{ $node.n2.found }}', operator: 'equals', right: 'true' },
       },
       {
-        id: 'n4', type: 'zalo.sendMessage', label: 'Gửi thông tin đơn Haravan',
+        id: 'n4', type: 'zalo.sendMessage', label: tr('Gửi thông tin đơn Haravan'),
         position: { x: 100, y: 530 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
           message:
-            '🛍️ Đơn hàng gần nhất của bạn:\n\n' +
-            '🔖 Mã đơn: {{ $node.n2.order.name }}\n' +
-            '💰 Tổng tiền: {{ $node.n2.order.total_price }}đ\n' +
-            '📌 Thanh toán: {{ $node.n2.order.financial_status }}\n' +
-            '🚚 Giao hàng: {{ $node.n2.order.fulfillment_status }}\n' +
-            '📍 Địa chỉ: {{ $node.n2.order.shipping_address.address1 }}, {{ $node.n2.order.shipping_address.city }}\n\n' +
-            'Cần hỗ trợ gì thêm không ạ? 😊',
+            tr('🛍️ Đơn hàng gần nhất của bạn:\n\n🔖 Mã đơn: {{ $node.n2.order.name }}\n💰 Tổng tiền: {{ $node.n2.order.total_price }}đ\n📌 Thanh toán: {{ $node.n2.order.financial_status }}\n🚚 Giao hàng: {{ $node.n2.order.fulfillment_status }}\n📍 Địa chỉ: {{ $node.n2.order.shipping_address.address1 }}, {{ $node.n2.order.shipping_address.city }}\n\nCần hỗ trợ gì thêm không ạ? 😊', {  }),
         },
       },
       {
-        id: 'n5', type: 'zalo.sendMessage', label: 'Không tìm thấy đơn',
+        id: 'n5', type: 'zalo.sendMessage', label: tr('Không tìm thấy đơn'),
         position: { x: 500, y: 530 },
         config: { ...DEFAULT_CONFIGS['zalo.sendMessage'], message: NO_SAVED_PHONE_REPLY },
       },
@@ -447,61 +414,58 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 9. AI phân loại → Tra đơn KiotViet hoặc AI trả lời ━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 9. AI classifies → KiotViet order lookup or AI reply ━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-ai-order-classify',
-    name: 'AI phân loại ý định → Tra đơn / AI trả lời',
+    name: tr('AI phân loại ý định → Tra đơn / AI trả lời'),
     description:
-      'AI phân loại tin nhắn riêng của khách: hỏi về đơn hàng → tra đơn KiotViet theo SĐT đã lưu và gửi trạng thái (không có đơn thì nhờ khách gửi SĐT / mã đơn); câu hỏi khác → trợ lý AI trả lời (dùng kiến thức và sản phẩm đã ghim của trợ lý). Chọn trợ lý AI ở 2 bước AI trước khi bật.',
+      tr('AI phân loại tin nhắn riêng của khách: hỏi về đơn hàng → tra đơn KiotViet theo SĐT đã lưu và gửi trạng thái (không có đơn thì nhờ khách gửi SĐT / mã đơn); câu hỏi khác → trợ lý AI trả lời (dùng kiến thức và sản phẩm đã ghim của trợ lý). Chọn trợ lý AI ở 2 bước AI trước khi bật.'),
     category: 'tich-hop',
-    tags: ['AI', 'phân loại', 'kiotviet', 'ý định', 'CSKH nâng cao'],
+    tags: ['AI', tr('phân loại'), 'kiotviet', tr('ý định'), tr('CSKH nâng cao')],
     icon: <BotIcon className="w-4 h-4" />,
     difficulty: 'advanced',
     nodes: [
       {
-        id: 'n1', type: 'trigger.message', label: 'Khi nhận tin nhắn riêng',
+        id: 'n1', type: 'trigger.message', label: tr('Khi nhận tin nhắn riêng'),
         position: { x: 350, y: 50 },
         config: { ...DEFAULT_CONFIGS['trigger.message'], threadType: '0', debounceSeconds: 10 },
       },
       {
-        id: 'n2', type: 'ai.classify', label: 'AI phân loại ý định',
+        id: 'n2', type: 'ai.classify', label: tr('AI phân loại ý định'),
         position: { x: 350, y: 200 },
-        config: { aiConfigMode: 'assistant', assistantId: '', categories: 'tra đơn hàng, khác', input: '{{ $trigger.content }}' },
+        config: { aiConfigMode: 'assistant', assistantId: '', categories: [tr('tra đơn hàng'), tr('khác')].join(', '), input: '{{ $trigger.content }}' },
       },
       {
-        id: 'n3', type: 'logic.if', label: 'Hỏi về đơn hàng?',
+        id: 'n3', type: 'logic.if', label: tr('Hỏi về đơn hàng?'),
         position: { x: 350, y: 350 },
-        config: { left: '{{ $node.n2.category }}', operator: 'equals', right: 'tra đơn hàng' },
+        config: { left: '{{ $node.n2.category }}', operator: 'equals', right: tr('tra đơn hàng') },
       },
       {
-        id: 'n4', type: 'kiotviet.lookupOrder', label: 'Tra đơn KiotViet',
+        id: 'n4', type: 'kiotviet.lookupOrder', label: tr('Tra đơn KiotViet'),
         position: { x: 120, y: 500 },
         config: { ...DEFAULT_CONFIGS['kiotviet.lookupOrder'], phone: '{{ $trigger.fromPhone }}' },
       },
       {
-        id: 'n5', type: 'logic.if', label: 'Tìm thấy đơn?',
+        id: 'n5', type: 'logic.if', label: tr('Tìm thấy đơn?'),
         position: { x: 120, y: 650 },
         config: { left: '{{ $node.n4.found }}', operator: 'equals', right: 'true' },
       },
       {
-        id: 'n6', type: 'zalo.sendMessage', label: 'Gửi thông tin đơn',
+        id: 'n6', type: 'zalo.sendMessage', label: tr('Gửi thông tin đơn'),
         position: { x: 0, y: 800 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
           message:
-            '📦 Đơn hàng mới nhất của bạn:\n\n' +
-            'Mã đơn: {{ $node.n4.order.code }}\n' +
-            'Trạng thái: {{ $node.n4.order.statusValue }}\n' +
-            'Tổng tiền: {{ $node.n4.order.total }}đ',
+            tr('📦 Đơn hàng mới nhất của bạn:\n\nMã đơn: {{ $node.n4.order.code }}\nTrạng thái: {{ $node.n4.order.statusValue }}\nTổng tiền: {{ $node.n4.order.total }}đ', {  }),
         },
       },
       {
-        id: 'n7', type: 'zalo.sendMessage', label: 'Không tìm thấy đơn',
+        id: 'n7', type: 'zalo.sendMessage', label: tr('Không tìm thấy đơn'),
         position: { x: 260, y: 800 },
         config: { ...DEFAULT_CONFIGS['zalo.sendMessage'], message: NO_SAVED_PHONE_REPLY },
       },
       {
-        id: 'n8', type: 'ai.generateText', label: 'AI trả lời',
+        id: 'n8', type: 'ai.generateText', label: tr('AI trả lời'),
         position: { x: 600, y: 500 },
         config: {
           aiConfigMode: 'assistant', assistantId: '',
@@ -511,7 +475,7 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
         },
       },
       {
-        id: 'n9', type: 'zalo.sendMessage', label: 'Gửi câu trả lời AI',
+        id: 'n9', type: 'zalo.sendMessage', label: tr('Gửi câu trả lời AI'),
         position: { x: 600, y: 650 },
         config: { ...DEFAULT_CONFIGS['zalo.sendMessage'], message: '{{ $node.n8.result }}' },
       },
@@ -528,48 +492,43 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 10. Tra đơn hàng Nhanh.vn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 10. Nhanh.vn order lookup ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-nhanh-lookup-order',
-    name: 'Tra đơn hàng Nhanh.vn qua Zalo',
+    name: tr('Tra đơn hàng Nhanh.vn qua Zalo'),
     description:
-      'Khách nhắn riêng "đơn hàng" / "kiểm tra đơn" → bot tra đơn mới nhất trên Nhanh.vn theo SĐT đã lưu của khách và gửi mã đơn, tổng tiền, trạng thái. Chưa lưu SĐT hoặc không có đơn → nhờ khách gửi SĐT / mã đơn.',
+      tr('Khách nhắn riêng "đơn hàng" / "kiểm tra đơn" → bot tra đơn mới nhất trên Nhanh.vn theo SĐT đã lưu của khách và gửi mã đơn, tổng tiền, trạng thái. Chưa lưu SĐT hoặc không có đơn → nhờ khách gửi SĐT / mã đơn.'),
     category: 'tich-hop',
-    tags: ['nhanh.vn', 'đơn hàng', 'tra cứu', 'CSKH', 'bán lẻ'],
+    tags: ['nhanh.vn', tr('đơn hàng'), tr('tra cứu'), 'CSKH', tr('bán lẻ')],
     icon: <LightningIcon className="w-4 h-4" />,
     difficulty: 'easy',
     nodes: [
       {
-        id: 'n1', type: 'trigger.message', label: 'Khách hỏi đơn hàng',
+        id: 'n1', type: 'trigger.message', label: tr('Khách hỏi đơn hàng'),
         position: { x: 300, y: 60 },
         config: privateMessageTrigger(ORDER_KEYWORDS),
       },
       {
-        id: 'n2', type: 'nhanh.lookupOrder', label: 'Tra đơn Nhanh.vn',
+        id: 'n2', type: 'nhanh.lookupOrder', label: tr('Tra đơn Nhanh.vn'),
         position: { x: 300, y: 210 },
         config: { ...DEFAULT_CONFIGS['nhanh.lookupOrder'], phone: '{{ $trigger.fromPhone }}' },
       },
       {
-        id: 'n3', type: 'logic.if', label: 'Tìm thấy đơn?',
+        id: 'n3', type: 'logic.if', label: tr('Tìm thấy đơn?'),
         position: { x: 300, y: 360 },
         config: { left: '{{ $node.n2.found }}', operator: 'equals', right: 'true' },
       },
       {
-        id: 'n4', type: 'zalo.sendMessage', label: 'Gửi thông tin đơn hàng',
+        id: 'n4', type: 'zalo.sendMessage', label: tr('Gửi thông tin đơn hàng'),
         position: { x: 100, y: 530 },
         config: {
           ...DEFAULT_CONFIGS['zalo.sendMessage'],
           message:
-            '⚡ Đơn hàng mới nhất của bạn:\n\n' +
-            '🔖 Mã đơn: {{ $node.n2.order.id }}\n' +
-            '💰 Tổng tiền: {{ $node.n2.order.calcTotalMoney }}đ\n' +
-            '📌 Trạng thái: {{ $node.n2.order.statusName }}\n' +
-            '📅 Ngày tạo: {{ $node.n2.order.createdDateTime }}\n\n' +
-            'Bạn cần hỗ trợ thêm gì không? 🙏',
+            tr('⚡ Đơn hàng mới nhất của bạn:\n\n🔖 Mã đơn: {{ $node.n2.order.id }}\n💰 Tổng tiền: {{ $node.n2.order.calcTotalMoney }}đ\n📌 Trạng thái: {{ $node.n2.order.statusName }}\n📅 Ngày tạo: {{ $node.n2.order.createdDateTime }}\n\nBạn cần hỗ trợ thêm gì không? 🙏', {  }),
         },
       },
       {
-        id: 'n5', type: 'zalo.sendMessage', label: 'Không tìm thấy đơn',
+        id: 'n5', type: 'zalo.sendMessage', label: tr('Không tìm thấy đơn'),
         position: { x: 500, y: 530 },
         config: { ...DEFAULT_CONFIGS['zalo.sendMessage'], message: NO_SAVED_PHONE_REPLY },
       },
@@ -582,39 +541,39 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
     ],
   },
 
-  // ━━━━━ 11. Kiểm tra tồn kho Sapo → Cảnh báo sắp hết hàng ━━━━━━━━━━━━━━━━━━━━━
+  // ━━━━━ 11. Sapo stock check → low stock alert ━━━━━━━━━━━━━━━━━━━━━
   {
     id: 'tpl-int-sapo-stock-alert',
-    name: 'Cảnh báo sắp hết hàng (Sapo)',
+    name: tr('Cảnh báo sắp hết hàng (Sapo)'),
     description:
-      'Mỗi sáng 8:00 lấy tồn kho 50 sản phẩm trên Sapo, lặp qua từng phiên bản, gom các phiên bản còn dưới 5 cái thành một danh sách rồi gửi MỘT cảnh báo qua Telegram (không có phiên bản nào sắp hết thì không gửi). Đổi ngưỡng ở bước "Còn dưới 5?".',
+      tr('Mỗi sáng 8:00 lấy tồn kho 50 sản phẩm trên Sapo, lặp qua từng phiên bản, gom các phiên bản còn dưới 5 cái thành một danh sách rồi gửi MỘT cảnh báo qua Telegram (không có phiên bản nào sắp hết thì không gửi). Đổi ngưỡng ở bước "Còn dưới 5?".'),
     category: 'tich-hop',
-    tags: ['sapo', 'tồn kho', 'cảnh báo', 'quản lý kho', 'telegram', 'lịch'],
+    tags: ['sapo', tr('tồn kho'), tr('cảnh báo'), tr('quản lý kho'), 'telegram', tr('lịch')],
     icon: <TrendingDownIcon className="w-4 h-4" />,
     difficulty: 'medium',
     nodes: [
       {
-        id: 'n1', type: 'trigger.schedule', label: 'Mỗi sáng lúc 8:00',
+        id: 'n1', type: 'trigger.schedule', label: tr('Mỗi sáng lúc 8:00'),
         position: { x: 300, y: 50 },
         config: { ...DEFAULT_CONFIGS['trigger.schedule'], cronExpression: '0 8 * * *' },
       },
       {
-        id: 'n2', type: 'sapo.getInventory', label: 'Lấy tồn kho Sapo',
+        id: 'n2', type: 'sapo.getInventory', label: tr('Lấy tồn kho Sapo'),
         position: { x: 300, y: 190 },
         config: { ...DEFAULT_CONFIGS['sapo.getInventory'], limit: 50 },
       },
       {
-        id: 'n3', type: 'logic.forEach', label: 'Từng phiên bản sản phẩm',
+        id: 'n3', type: 'logic.forEach', label: tr('Từng phiên bản sản phẩm'),
         position: { x: 300, y: 330 },
         config: { ...DEFAULT_CONFIGS['logic.forEach'], array: '{{ $node.n2.items }}', itemVariable: 'item', maxItems: 100 },
       },
       {
-        id: 'n4', type: 'logic.if', label: 'Còn dưới 5?',
+        id: 'n4', type: 'logic.if', label: tr('Còn dưới 5?'),
         position: { x: 100, y: 480 },
         config: { left: '{{ $var.item.inventory_quantity }}', operator: 'less_than', right: '5' },
       },
       {
-        id: 'n5', type: 'logic.setVariable', label: 'Thêm vào danh sách sắp hết',
+        id: 'n5', type: 'logic.setVariable', label: tr('Thêm vào danh sách sắp hết'),
         position: { x: 100, y: 630 },
         config: {
           name: 'sapHetHang',
@@ -622,16 +581,16 @@ export const INTEGRATION_TEMPLATES: WorkflowTemplate[] = [
         },
       },
       {
-        id: 'n6', type: 'logic.if', label: 'Có sản phẩm sắp hết?',
+        id: 'n6', type: 'logic.if', label: tr('Có sản phẩm sắp hết?'),
         position: { x: 500, y: 480 },
         config: { left: '{{ $var.sapHetHang }}', operator: 'not_empty', right: '' },
       },
       {
-        id: 'n7', type: 'notify.telegram', label: 'Cảnh báo tồn kho Telegram',
+        id: 'n7', type: 'notify.telegram', label: tr('Cảnh báo tồn kho Telegram'),
         position: { x: 500, y: 630 },
         config: {
           ...DEFAULT_CONFIGS['notify.telegram'],
-          message: '📉 Sản phẩm sắp hết hàng (Sapo):{{ $var.sapHetHang }}\n\nKiểm tra và nhập thêm hàng nhé!',
+          message: tr('📉 Sản phẩm sắp hết hàng (Sapo):{{ $var.sapHetHang }}\n\nKiểm tra và nhập thêm hàng nhé!'),
         },
       },
     ],

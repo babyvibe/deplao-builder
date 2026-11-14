@@ -10,17 +10,18 @@ import {
   type ErpZaloNotifySettings, type ErpZaloNotifyStatus, type ErpZaloRecipient, type ErpZaloRecipientState, type ErpZaloSendLog,
 } from '../../shared/erp/erpZaloNotify';
 import { erpPersonName } from './erpPeople';
+import { tr } from '../../shared/i18n';
 
-/** Người nhận tin Zalo, đọc DB lúc xếp hàng (lượt gửi chạy sau vài giây, lúc đó DB có thể đã đổi workspace). */
+/** The Zalo message recipient, read from the DB when queued (the send runs a few seconds later, and the DB may have changed workspace by then). */
 interface ZaloTarget {
   accountId: string;
   employeeId: string;
   name: string;
-  /** SĐT đã chuẩn hoá (zaloPhoneDigits). */
+  /** Normalised phone number (zaloPhoneDigits). */
   phone: string;
 }
 
-/** Kết quả gửi một tin Zalo: `error` = chữ cho người dùng khi không gửi được. */
+/** Result of sending one Zalo message: `error` = the text for the user when it could not be sent. */
 export interface ErpZaloDelivery { ok: boolean; error?: string }
 
 export default class ErpNotificationService {
@@ -56,8 +57,8 @@ export default class ErpNotificationService {
     )!;
     EventBroadcaster.emit('erp:event:notification', { notification: row });
 
-    // Gửi kèm qua Zalo theo Cài đặt của Quản lý công việc (bật + loại thông báo đã chọn). payload.channels chỉ còn là
-    // thông tin lưu kèm, không quyết định gửi Zalo nữa.
+    // Sent along via Zalo according to the Task Management settings (on + the selected notification types). payload.channels is now only
+    // saved info; it no longer decides whether to send via Zalo.
     this.queueZalo(recipientId, type, title, body);
     return row;
   }
@@ -72,8 +73,8 @@ export default class ErpNotificationService {
   }
 
   /**
-   * Đánh dấu đã đọc. `recipientId` → chỉ thông báo của người đó (id thông báo của người khác bị bỏ qua) — handler IPC
-   * luôn truyền danh tính người gọi; trước đây theo id bất kỳ → nhân viên (REST) đánh dấu / xoá được hộp thư người khác.
+   * Marks as read. `recipientId` → only that person's notifications (other people's notification ids are ignored): the IPC handler
+   * always passes the caller's identity; before, it worked by any id → an employee (REST) could mark / delete another person's inbox.
    */
   markRead(ids: number[], recipientId?: string): void {
     if (!ids.length) return;
@@ -89,7 +90,7 @@ export default class ErpNotificationService {
     this.db().run(`UPDATE erp_notifications SET read = 1 WHERE recipient_id = ?`, [recipientId]);
   }
 
-  /** Xoá thông báo — `recipientId` như markRead: chỉ thông báo của người đó. */
+  /** Delete a notification: `recipientId` works like markRead, only that person's notifications. */
   delete(ids: number[], recipientId?: string): void {
     if (!ids.length) return;
     const placeholders = ids.map(() => '?').join(',');
@@ -160,8 +161,8 @@ export default class ErpNotificationService {
           try {
             this.notify(
               empId, 'task_due_soon',
-              `Task sắp đến hạn: ${r.title}`,
-              `Hạn: ${erpWhenText(Number(r.due_date), false, now)}`,
+              tr('Task sắp đến hạn: {{title}}', { title: r.title }),
+              tr('Hạn: {{v1}}', { v1: erpWhenText(Number(r.due_date), false, now) }),
               `erp://task/${r.id}`,
               { taskId: r.id, channels: ['toast', 'zalo'] }
             );
@@ -202,10 +203,10 @@ export default class ErpNotificationService {
         );
         if (exists) continue;
         const titles = String(r.titles || '').split('||').filter(Boolean);
-        const more = Number(r.cnt) > 3 ? ` và ${Number(r.cnt) - 3} task khác` : '';
+        const more = Number(r.cnt) > 3 ? tr(' và {{v1}} task khác', { v1: Number(r.cnt) - 3 }) : '';
         this.notify(
           r.employee_id, 'task_overdue',
-          `${r.cnt} task quá hạn`,
+          tr('{{cnt}} task quá hạn', { cnt: r.cnt }),
           `${titles.slice(0, 3).join(', ')}${more}`,
           'erp://tasks/overdue',
           { count: r.cnt, channels: ['toast', 'zalo'], dedupeKey }
@@ -216,16 +217,16 @@ export default class ErpNotificationService {
     }
   }
 
-  // ─── Thông báo qua Zalo (Quản lý công việc → Cài đặt) ─────────────────────
+  // ─── Zalo notifications (Task Management → Settings) ─────────────────────
 
-  /** SĐT → uid Zalo đã tra, theo tài khoản gửi (`${tài khoản}|${số}`): uid, hoặc null = số không có Zalo (tra lại sau TTL) */
+  /** Phone → Zalo uid looked up, per sending account (`${account}|${number}`): the uid, or null = the number has no Zalo (look up again after the TTL) */
   private zaloUidCache: Map<string, { uid: string | null; at: number }> = new Map();
   private zaloUidInflight: Map<string, Promise<string | null>> = new Map();
-  /** Tin gửi gần đây, mới nhất trước (trang Cài đặt hiện; chỉ trong phiên chạy này). */
+  /** Recently sent messages, newest first (shown on the Settings page; this run only). */
   private zaloLog: ErpZaloSendLog[] = [];
-  /** Số tin đang chờ tới lượt trong hàng gửi của tài khoản. */
+  /** Number of messages waiting for their turn in the account's send queue. */
   private zaloPending = 0;
-  /** `${ngày}|${người nhận}` → số tin đã xếp gửi trong ngày (tối đa ERP_ZALO_DAILY_CAP). */
+  /** `${day}|${recipient}` → number of messages queued for sending that day (max ERP_ZALO_DAILY_CAP). */
   private zaloDaily: Map<string, number> = new Map();
 
   getZaloSettings(): ErpZaloNotifySettings {
@@ -241,7 +242,7 @@ export default class ErpNotificationService {
     });
   }
 
-  /** Lưu cài đặt (chỉ trường có gửi). Đổi tài khoản → phải là tài khoản Zalo có trong app; bật mà chưa chọn tài khoản → lỗi. */
+  /** Save the settings (only the fields that are sent). Changing the account → it must be a Zalo account in the app; turning it on without choosing an account → error. */
   setZaloSettings(patch: unknown): ErpZaloNotifySettings {
     const current = this.getZaloSettings();
     const next = mergeErpZaloSettings(current, patch);
@@ -249,7 +250,7 @@ export default class ErpNotificationService {
       const problem = this.zaloAccountProblem(next.accountId);
       if (problem) throw new Error(problem);
     }
-    if (next.enabled && !next.accountId) throw new Error('Chọn tài khoản Zalo gửi trước khi bật');
+    if (next.enabled && !next.accountId) throw new Error(tr('Chọn tài khoản Zalo gửi trước khi bật'));
     const db = this.db();
     db.setSetting(ERP_ZALO_SETTING_KEYS.enabled, next.enabled ? '1' : '0');
     db.setSetting(ERP_ZALO_SETTING_KEYS.accountId, next.accountId);
@@ -258,7 +259,7 @@ export default class ErpNotificationService {
     return next;
   }
 
-  /** Trạng thái cho trang Cài đặt: cài đặt, tài khoản gửi (đã kết nối chưa), người nhận, tin gần đây. */
+  /** State for the Settings page: the settings, the sending account (connected or not), the recipients, recent messages. */
   getZaloStatus(): ErpZaloNotifyStatus {
     const settings = this.getZaloSettings();
     return {
@@ -273,12 +274,12 @@ export default class ErpNotificationService {
   }
 
   /**
-   * Gửi thử (trang Cài đặt): một tin tới nhân viên bằng tài khoản đang chọn, kể cả khi chưa bật. Đi chung hàng của tài
-   * khoản; hàng dài quá ZALO_TEST_WAIT_MS → báo bận và bỏ lượt này (không gửi muộn).
+   * Test send (Settings page): one message to an employee from the selected account, even when it is not turned on. It joins the account's
+   * queue; if the queue is longer than ZALO_TEST_WAIT_MS → report busy and skip this turn (never sent late).
    */
   async sendZaloTest(employeeId: string): Promise<ErpZaloDelivery> {
     const settings = this.getZaloSettings();
-    if (!settings.accountId) return { ok: false, error: 'Chưa chọn tài khoản Zalo gửi' };
+    if (!settings.accountId) return { ok: false, error: tr('Chưa chọn tài khoản Zalo gửi') };
     const target = this.zaloTarget(employeeId, settings.accountId);
     if (typeof target === 'string') return { ok: false, error: target };
     let cancelled = false;
@@ -286,35 +287,35 @@ export default class ErpNotificationService {
     const busy = new Promise<ErpZaloDelivery>((resolve) => {
       timer = setTimeout(() => {
         cancelled = true;
-        resolve({ ok: false, error: 'Tài khoản Zalo đang bận gửi tin khác, thử lại sau ít phút' });
+        resolve({ ok: false, error: tr('Tài khoản Zalo đang bận gửi tin khác, thử lại sau ít phút') });
       }, ZALO_TEST_WAIT_MS);
     });
-    const text = erpZaloMessageText('Tin thử từ Quản lý công việc', 'Thông báo công việc sẽ gửi vào Zalo này.');
+    const text = erpZaloMessageText(tr('Tin thử từ Quản lý công việc'), tr('Thông báo công việc sẽ gửi vào Zalo này.'));
     const result = await Promise.race([this.enqueueZalo(target, text, () => cancelled), busy])
       .finally(() => { if (timer) clearTimeout(timer); });
     this.logZalo({
-      at: Date.now(), employeeId, name: target.name, title: 'Tin thử', ok: result.ok, test: true,
+      at: Date.now(), employeeId, name: target.name, title: tr('Tin thử'), ok: result.ok, test: true,
       ...(result.ok ? {} : { error: result.error }),
     });
     return result;
   }
 
   /**
-   * Thông báo vừa tạo → tin Zalo cho người nhận nếu Cài đặt bật loại này. Đọc DB ngay (cài đặt, SĐT, tài khoản), gửi
-   * sau qua hàng của tài khoản (AccountSendQueue, chung với trả lời tự động): cách nhau 5 - 10 giây, mỗi người tối đa
-   * ERP_ZALO_DAILY_CAP tin / ngày. Không bao giờ ném (thông báo trong app vẫn có).
+   * A notification just created → a Zalo message to the recipient if Settings has this type turned on. Reads the DB right away (settings, phone, account), then sends
+   * through the account's queue (AccountSendQueue, shared with auto-replies): 5 - 10 seconds apart, each person at most
+   * ERP_ZALO_DAILY_CAP messages / day. Never throws (the in-app notification is still created).
    */
   private queueZalo(recipientId: string, type: ErpNotificationType, title: string, body: string): void {
     try {
-      if (isEmployeeMachine()) return; // máy nhân viên không có kết nối Zalo; Boss gửi
+      if (isEmployeeMachine()) return; // the employee machine has no Zalo connection; Boss sends
       const settings = this.getZaloSettings();
       if (!settings.enabled || !settings.accountId || !settings.types.includes(type)) return;
       const target = this.zaloTarget(recipientId, settings.accountId);
-      if (typeof target === 'string') return; // chưa có SĐT… → trang Cài đặt hiện ở danh sách người nhận
+      if (typeof target === 'string') return; // no phone number yet… → the Settings page shows it in the recipient list
       if (!this.takeZaloDailySlot(recipientId)) {
         this.logZalo({
           at: Date.now(), employeeId: recipientId, name: target.name, title, ok: false, skipped: true,
-          error: `Đã đủ ${ERP_ZALO_DAILY_CAP} tin hôm nay, chỉ báo trong app`,
+          error: tr('Đã đủ {{ERP_ZALO_DAILY_CAP}} tin hôm nay, chỉ báo trong app', { ERP_ZALO_DAILY_CAP }),
         });
         return;
       }
@@ -330,15 +331,15 @@ export default class ErpNotificationService {
     }
   }
 
-  /** Lý do tài khoản không gửi được ('' = được). */
+  /** Reason the account cannot send ('' = it can). */
   private zaloAccountProblem(accountId: string): string {
     const account = this.db().queryOne<{ channel?: string | null }>(`SELECT channel FROM accounts WHERE zalo_id = ?`, [accountId]);
-    if (!account) return 'Không tìm thấy tài khoản gửi trong app';
-    if (account.channel && account.channel !== 'zalo') return 'Tài khoản gửi phải là tài khoản Zalo';
+    if (!account) return tr('Không tìm thấy tài khoản gửi trong app');
+    if (account.channel && account.channel !== 'zalo') return tr('Tài khoản gửi phải là tài khoản Zalo');
     return '';
   }
 
-  /** Người nhận + tài khoản gửi dùng được → thông tin gửi; không thì lý do. */
+  /** Recipient + sending account usable → the send info; otherwise the reason. */
   private zaloTarget(employeeId: string, accountId: string): ZaloTarget | string {
     const problem = this.zaloAccountProblem(accountId);
     if (problem) return problem;
@@ -346,7 +347,7 @@ export default class ErpNotificationService {
       `SELECT phone FROM erp_employee_profiles WHERE employee_id = ?`, [employeeId],
     );
     const phone = zaloPhoneDigits(profile?.phone);
-    if (!phone) return 'Chưa có SĐT trong hồ sơ Nhân sự';
+    if (!phone) return tr('Chưa có SĐT trong hồ sơ Nhân sự');
     return { accountId, employeeId, name: erpPersonName(employeeId), phone };
   }
 
@@ -356,7 +357,7 @@ export default class ErpNotificationService {
     const used = this.zaloDaily.get(key) ?? 0;
     if (used >= ERP_ZALO_DAILY_CAP) return false;
     if (!used) {
-      // Ngày mới: bỏ số đếm của các ngày trước
+      // New day: drop the counts from earlier days
       for (const k of [...this.zaloDaily.keys()]) if (!k.startsWith(`${today}|`)) this.zaloDaily.delete(k);
     }
     this.zaloDaily.set(key, used + 1);
@@ -369,7 +370,7 @@ export default class ErpNotificationService {
     return AccountSendQueue.getInstance()
       .enqueue<ErpZaloDelivery>(
         target.accountId,
-        () => (isCancelled() ? Promise.resolve<ErpZaloDelivery>({ ok: false, error: 'Đã huỷ' }) : this.deliverZalo(target, text)),
+        () => (isCancelled() ? Promise.resolve<ErpZaloDelivery>({ ok: false, error: tr('Đã huỷ') }) : this.deliverZalo(target, text)),
         min * 1000,
         max * 1000,
       )
@@ -378,21 +379,21 @@ export default class ErpNotificationService {
   }
 
   /**
-   * Gửi một tin 1-1 bằng kết nối Zalo đang chạy của tài khoản (ConnectionManager, như chiến dịch CRM): tìm uid theo SĐT
-   * → sendMessage. Không ném: lỗi trả về `{ ok: false, error }` (chữ cho người dùng).
+   * Sends a 1-1 message over the account's running Zalo connection (ConnectionManager, like the CRM campaigns): looks up the uid by phone number
+   * → sendMessage. Never throws: an error is returned as `{ ok: false, error }` (the text for the user).
    */
   private async deliverZalo(target: ZaloTarget, text: string): Promise<ErpZaloDelivery> {
     let api: any;
     try { api = zaloApiOf(target.accountId); } catch { api = undefined; }
-    if (!api) return { ok: false, error: 'Tài khoản Zalo gửi chưa kết nối' };
+    if (!api) return { ok: false, error: tr('Tài khoản Zalo gửi chưa kết nối') };
     let uid: string | null;
     try {
       uid = await this.resolveZaloUid(api, target.accountId, target.phone);
     } catch (err: any) {
-      return { ok: false, error: `Không tìm được SĐT trên Zalo: ${err?.message || err}` };
+      return { ok: false, error: tr('Không tìm được SĐT trên Zalo: {{v1}}', { v1: err?.message || err }) };
     }
-    if (!uid) return { ok: false, error: 'SĐT chưa có Zalo hoặc đã tắt tìm qua SĐT' };
-    if (uid === target.accountId) return { ok: false, error: 'SĐT này là của chính tài khoản gửi' };
+    if (!uid) return { ok: false, error: tr('SĐT chưa có Zalo hoặc đã tắt tìm qua SĐT') };
+    if (uid === target.accountId) return { ok: false, error: tr('SĐT này là của chính tài khoản gửi') };
     try {
       await withTimeout(api.sendMessage({ msg: text }, uid, 0 /* ThreadType.User */), ZALO_BOT_TIMEOUT_MS);
       return { ok: true };
@@ -402,8 +403,8 @@ export default class ErpNotificationService {
   }
 
   /**
-   * SĐT (đã chuẩn hoá) → uid Zalo (findUser). Zalo giới hạn số lần tìm SĐT mỗi ngày nên nhớ kết quả: tìm được → nhớ cả
-   * phiên, không có Zalo → thử lại sau ZALO_NOT_FOUND_TTL_MS; lỗi mạng không nhớ. Hai lần tra cùng số cùng lúc dùng chung.
+   * Phone number (normalised) → Zalo uid (findUser). Zalo limits how many phone lookups are allowed per day, so the result is cached: found → cached for the whole
+   * session; no Zalo account → retried after ZALO_NOT_FOUND_TTL_MS; network errors are not cached. Two lookups of the same number at the same time share one call.
    */
   private async resolveZaloUid(api: any, accountId: string, phone: string): Promise<string | null> {
     const key = `${accountId}|${phone}`;
@@ -436,7 +437,7 @@ export default class ErpNotificationService {
     };
   }
 
-  /** Nhân viên đang làm (+ Boss nếu đã có hồ sơ Nhân sự) với SĐT trong hồ sơ và trạng thái tìm Zalo. */
+  /** Active employees (+ the Boss if they have an HR profile) with the phone number in their profile and the Zalo lookup state. */
   private zaloRecipients(accountId: string): ErpZaloRecipient[] {
     let rows: Array<{ employee_id: string; display_name?: string | null; phone?: string | null }> = [];
     try {
@@ -447,7 +448,7 @@ export default class ErpNotificationService {
          ORDER BY e.display_name COLLATE NOCASE`,
       ) || [];
     } catch { rows = []; }
-    // Boss nhận thông báo khi là quản lý duyệt nghỉ, người tổ chức lịch…: có trong danh sách khi đã có hồ sơ Nhân sự
+    // The Boss gets notifications when acting as the leave approver, or the calendar event organiser…: included in the list once an HR profile exists
     const boss = this.db().queryOne<{ phone?: string | null }>(`SELECT phone FROM erp_employee_profiles WHERE employee_id = 'boss'`);
     const people = boss ? [{ employee_id: 'boss', display_name: 'Boss', phone: boss.phone }, ...rows] : rows;
     const now = Date.now();
@@ -477,23 +478,23 @@ export default class ErpNotificationService {
   }
 }
 
-/** Zalo không trả lời trong thời gian này → bỏ (như chiến dịch CRM), không để lời gọi treo mãi */
+/** If Zalo does not reply within this time → give up (as in the CRM campaigns), so the call never hangs */
 const ZALO_BOT_TIMEOUT_MS = 15_000;
-/** Số điện thoại không có Zalo: tra lại sau 6 giờ (nhân viên có thể vừa tạo Zalo / sửa số) */
+/** A phone number with no Zalo account: look again after 6 hours (the employee may have just created Zalo / changed the number) */
 const ZALO_NOT_FOUND_TTL_MS = 6 * 60 * 60_000;
-/** Gửi thử chờ tới lượt tối đa bấy nhiêu (hàng của tài khoản đang dài → báo bận). */
+/** Test send waits its turn for at most this long (if the account's queue is long → report busy). */
 const ZALO_TEST_WAIT_MS = 60_000;
-/** Số tin giữ trong "Gửi gần đây". */
+/** Number of messages kept in "Gửi gần đây" (Recently sent). */
 const ZALO_LOG_MAX = 30;
 
-/** Kết nối Zalo đang chạy của tài khoản. Lazy require: tránh vòng import, chỉ nạp zca-js khi thật sự cần. */
+/** The running Zalo connection of the account. Lazy require: avoids an import cycle, zca-js is only loaded when really needed. */
 function zaloApiOf(accountId: string): any {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const ConnectionManager = require('../../utils/connection/ConnectionManager').default;
   return ConnectionManager.getConnection(accountId)?.api;
 }
 
-/** Máy nhân viên (kết nối Boss): không có kết nối Zalo trực tiếp, Boss mới gửi. */
+/** Employee machine (Boss connection): no direct Zalo connection, so the Boss sends. */
 function isEmployeeMachine(): boolean {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -503,22 +504,22 @@ function isEmployeeMachine(): boolean {
   }
 }
 
-/** Lỗi Zalo khi gửi → chữ cho người dùng; lỗi kiểu "chỉ nhận tin từ bạn bè" thêm gợi ý kết bạn (mã như chiến dịch CRM). */
+/** Zalo error on send → text for the user; errors like "chỉ nhận tin từ bạn bè" (only accepts messages from friends) also suggest sending a friend request (same codes as the CRM campaigns). */
 function zaloSendErrorText(err: any): string {
-  const message = String(err?.message || err || 'Lỗi không rõ');
+  const message = String(err?.message || err || tr('Lỗi không rõ'));
   const code = Number(err?.code ?? err?.errorCode ?? err?.error_code);
   const lower = message.toLowerCase();
   const strangerBlocked = [4, 9, 214, 216, 576, 579].includes(code)
     || ['chặn', 'block', 'stranger', 'bạn bè', 'not friend'].some(word => lower.includes(word));
   return strangerBlocked
-    ? `${message} (có thể người nhận chỉ nhận tin từ bạn bè: kết bạn Zalo với tài khoản gửi)`
+    ? tr('{{message}} (có thể người nhận chỉ nhận tin từ bạn bè: kết bạn Zalo với tài khoản gửi)', { message })
     : message;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Zalo không trả lời sau ${ms / 1000} giây`)), ms);
+    timer = setTimeout(() => reject(new Error(tr('Zalo không trả lời sau {{v1}} giây', { v1: ms / 1000 }))), ms);
   });
   return Promise.race([promise, timeout]).finally(() => { if (timer) clearTimeout(timer); });
 }

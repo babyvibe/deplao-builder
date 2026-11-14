@@ -1,13 +1,13 @@
 /**
- * costModel — phép tính thuần cho "Mức sử dụng & chi phí" (không I/O, không Electron — test độc lập):
- *  - Kỳ: tháng dương lịch UTC (kỳ tính tiền R2) và ngày theo giờ Thái Bình Dương (America/Los_Angeles — hạn mức ngày
- *    của Google Drive API đặt lại lúc 0:00 giờ Thái Bình Dương; ngày đổi giờ dài 23 / 25 tiếng).
- *  - Loại thao tác R2 theo actionType của GraphQL Analytics (bảng giá developers.cloudflare.com/r2/pricing).
- *  - GB-tháng từ mẫu dung lượng: đỉnh mỗi ngày UTC của từng bucket, cộng các bucket, tổng các ngày chia 30
+ * costModel: pure calculations for "Mức sử dụng & chi phí" (Usage & cost) (no I/O, no Electron, tests run standalone):
+ *  - Period: UTC calendar month (R2 billing period) and day in Pacific time (America/Los_Angeles, where the daily quota of the Google Drive API
+ *    resets at 0:00 Pacific time; a day with a DST change lasts 23 / 25 hours).
+ *  - R2 operation types by actionType of GraphQL Analytics (pricing table: developers.cloudflare.com/r2/pricing).
+ *  - GB-month from storage samples: peak per UTC day of each bucket, buckets added, days added and divided by 30
  *    ("GB-month = average of the peak storage per day over a 30-day billing period").
- *  - Tiền theo cách làm tròn của Cloudflare: lượng dùng làm tròn LÊN tới đơn vị tính tiền kế tiếp
- *    (1,1 GB-tháng → 2; 1.000.001 thao tác → 2 triệu) rồi trừ phần miễn phí.
- *  - Dự kiến cuối kỳ theo nhịp hiện tại (tuyến tính).
+ *  - Money rounded the way Cloudflare rounds: usage rounded UP to the next billing unit
+ *    (1,1 GB-month → 2; 1.000.001 operations → 2 million), then the free allowance is subtracted.
+ *  - Expected end-of-period value at the current pace (linear).
  */
 import type { R2OpClass } from '../contracts';
 import { R2_PRICING } from '../../../shared/cloud/cloudContracts';
@@ -17,27 +17,27 @@ export const HOUR_MS = 60 * 60 * SECOND_MS;
 export const DAY_MS = 24 * HOUR_MS;
 
 /**
- * 1 GB = 10^9 byte. Bảng giá R2 không nói rõ GB hay GiB; lấy 10^9 thì cùng số byte ra nhiều GB hơn (1 GiB ≈ 1,074 GB)
- * → ước tính không bao giờ thấp hơn hoá đơn thật.
+ * 1 GB = 10^9 bytes. The R2 price list does not say whether GB or GiB; using 10^9 gives more GB for the same byte count (1 GiB ≈ 1,074 GB)
+ * → the estimate is never lower than the real bill.
  */
 export const BYTES_PER_GB = 1e9;
-/** Kỳ tính GB-tháng của Cloudflare: 30 ngày (tổng đỉnh mỗi ngày / 30 — tháng 31 ngày ra nhỉnh hơn một chút, không thấp). */
+/** Cloudflare's GB-month billing period: 30 days (sum of the daily peaks / 30; a 31-day month comes out slightly higher, never lower). */
 export const BILLING_PERIOD_DAYS = 30;
 export const PACIFIC_TIME_ZONE = 'America/Los_Angeles';
 
 export interface UsagePeriod {
     kind: 'month' | 'day';
-    /** 'YYYY-MM' (tháng UTC) hoặc 'YYYY-MM-DD' (ngày giờ Thái Bình Dương). */
+    /** 'YYYY-MM' (UTC month) or 'YYYY-MM-DD' (Pacific time day). */
     key: string;
-    /** Đầu kỳ (ms, tính cả mốc này). */
+    /** Start of the period (ms, this instant included). */
     startTs: number;
-    /** Đầu kỳ sau (ms, KHÔNG tính) — cũng là lúc hạn mức đặt lại. */
+    /** Start of the next period (ms, NOT included); also the moment the quota resets. */
     endTs: number;
 }
 
 export interface MonthPeriod extends UsagePeriod {
     kind: 'month';
-    /** Số ngày của tháng (28–31). */
+    /** Number of days in the month (28–31). */
     days: number;
 }
 
@@ -45,14 +45,14 @@ function pad2(n: number): string {
     return n < 10 ? `0${n}` : String(n);
 }
 
-// ─── Tháng UTC ───────────────────────────────────────────────────────────────
+// ─── UTC month ───────────────────────────────────────────────────────────────
 
 export function utcMonthKey(ts: number): string {
     const d = new Date(ts);
     return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}`;
 }
 
-/** Tháng dương lịch UTC chứa ts: [ngày 1 00:00 UTC, ngày 1 tháng sau 00:00 UTC). */
+/** UTC calendar month containing ts: [1st day 00:00 UTC, 1st day of the next month 00:00 UTC). */
 export function utcMonthPeriod(ts: number): MonthPeriod {
     const d = new Date(ts);
     const y = d.getUTCFullYear();
@@ -62,7 +62,7 @@ export function utcMonthPeriod(ts: number): MonthPeriod {
     return { kind: 'month', key: `${y}-${pad2(m + 1)}`, startTs, endTs, days: Math.round((endTs - startTs) / DAY_MS) };
 }
 
-/** Cộng / trừ tháng cho khoá 'YYYY-MM' (khoá sai dạng trả nguyên). */
+/** Add / subtract months for key 'YYYY-MM' (a malformed key is returned unchanged). */
 export function shiftMonthKey(key: string, delta: number): string {
     const m = /^(\d{4})-(\d{2})$/.exec(key);
     if (!m) return key;
@@ -71,11 +71,11 @@ export function shiftMonthKey(key: string, delta: number): string {
     return `${y}-${pad2(idx - y * 12 + 1)}`;
 }
 
-// ─── Ngày giờ Thái Bình Dương ────────────────────────────────────────────────
+// ─── Pacific time day ────────────────────────────────────────────────────────
 
 interface WallClock { year: number; month: number; day: number; hour: number; minute: number; second: number }
 
-/** undefined = chưa tạo; null = máy không có dữ liệu múi giờ (ICU rút gọn) → dùng UTC−8 cố định. */
+/** undefined = not created yet; null = the machine has no time zone data (reduced ICU) → use fixed UTC−8. */
 let pacificFormat: Intl.DateTimeFormat | null | undefined;
 
 function pacificFormatter(): Intl.DateTimeFormat | null {
@@ -97,7 +97,7 @@ function pacificFormatter(): Intl.DateTimeFormat | null {
     return pacificFormat;
 }
 
-/** Giờ đồng hồ ở Los Angeles tại ts (bỏ phần ms). */
+/** Clock time in Los Angeles at ts (milliseconds dropped). */
 function pacificWallClock(ts: number): WallClock {
     const fmt = pacificFormatter();
     if (!fmt) {
@@ -111,17 +111,17 @@ function pacificWallClock(ts: number): WallClock {
     for (const p of fmt.formatToParts(ts)) {
         if (p.type in out) (out as unknown as Record<string, number>)[p.type] = Number(p.value);
     }
-    if (out.hour === 24) out.hour = 0; // ICU cũ in "24" cho nửa đêm
+    if (out.hour === 24) out.hour = 0; // Old ICU prints "24" for midnight
     return out;
 }
 
-/** Độ lệch giờ Los Angeles so với UTC tại ts (ms; âm: −7 h mùa hè, −8 h mùa đông). */
+/** Offset of Los Angeles time from UTC at ts (ms; negative: −7 h in summer, −8 h in winter). */
 function pacificOffsetMs(ts: number): number {
     const w = pacificWallClock(ts);
     return Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second) - Math.floor(ts / SECOND_MS) * SECOND_MS;
 }
 
-/** 0:00 giờ Los Angeles của ngày year-month-day (ms UTC). Nửa đêm ở LA luôn tồn tại (đổi giờ lúc 2:00). */
+/** 0:00 Los Angeles time on the day year-month-day (ms UTC). Midnight in LA always exists (the clock change happens at 2:00). */
 function pacificMidnight(year: number, month: number, day: number): number {
     const asUtc = Date.UTC(year, month - 1, day);
     const first = asUtc - pacificOffsetMs(asUtc);
@@ -133,7 +133,7 @@ export function pacificDayKey(ts: number): string {
     return `${w.year}-${pad2(w.month)}-${pad2(w.day)}`;
 }
 
-/** Ngày theo giờ Thái Bình Dương chứa ts: [0:00, 0:00 hôm sau) giờ LA — 23 / 25 tiếng vào ngày đổi giờ. */
+/** Pacific time day containing ts: [0:00, next day 0:00) LA time; 23 / 25 hours on a DST-change day. */
 export function pacificDayPeriod(ts: number): UsagePeriod {
     const w = pacificWallClock(ts);
     const next = new Date(Date.UTC(w.year, w.month - 1, w.day + 1));
@@ -145,7 +145,7 @@ export function pacificDayPeriod(ts: number): UsagePeriod {
     };
 }
 
-/** Cộng / trừ ngày lịch cho khoá 'YYYY-MM-DD' (không phụ thuộc múi giờ; khoá sai dạng trả nguyên). */
+/** Add / subtract calendar days for key 'YYYY-MM-DD' (time zone independent; a malformed key is returned unchanged). */
 export function shiftDayKey(key: string, delta: number): string {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
     if (!m) return key;
@@ -153,20 +153,20 @@ export function shiftDayKey(key: string, delta: number): string {
     return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
 }
 
-// ─── Loại thao tác R2 (actionType của GraphQL Analytics) ─────────────────────
+// ─── R2 operation types (actionType of GraphQL Analytics) ─────────────────────
 
-/** Class A (ghi / liệt kê) theo bảng giá R2. */
+/** Class A (write / list) per the R2 price list. */
 export const R2_CLASS_A_ACTIONS: ReadonlyArray<string> = [
     'ListBuckets', 'PutBucket', 'ListObjects', 'PutObject', 'CopyObject', 'CompleteMultipartUpload', 'CreateMultipartUpload',
     'LifecycleStorageTierTransition', 'ListMultipartUploads', 'UploadPart', 'UploadPartCopy', 'ListParts',
     'PutBucketEncryption', 'PutBucketCors', 'PutBucketLifecycleConfiguration',
 ];
-/** Class B (đọc / kiểm tra). */
+/** Class B (read / check). */
 export const R2_CLASS_B_ACTIONS: ReadonlyArray<string> = [
     'HeadBucket', 'HeadObject', 'GetObject', 'UsageSummary', 'GetBucketEncryption', 'GetBucketLocation', 'GetBucketCors',
     'GetBucketLifecycleConfiguration',
 ];
-/** Miễn phí. */
+/** Free. */
 export const R2_FREE_ACTIONS: ReadonlyArray<string> = ['DeleteObject', 'DeleteBucket', 'AbortMultipartUpload'];
 
 const ACTION_CLASS = new Map<string, R2OpClass>([
@@ -176,8 +176,8 @@ const ACTION_CLASS = new Map<string, R2OpClass>([
 ]);
 
 /**
- * Loại thao tác theo actionType. Loại không có trong bảng giá (vd DeleteObjects, thao tác Cloudflare thêm sau) → tính
- * Class A — loại đắt nhất, để ước tính không thấp hơn hoá đơn thật.
+ * Operation type by actionType. A type not in the price list (e.g. DeleteObjects, or an operation Cloudflare adds later) → counted as
+ * Class A, the most expensive class, so the estimate is never lower than the real bill.
  */
 export function classifyR2Action(actionType: string): R2OpClass {
     return ACTION_CLASS.get(String(actionType ?? '').trim().toLowerCase()) ?? 'A';
@@ -185,7 +185,7 @@ export function classifyR2Action(actionType: string): R2OpClass {
 
 export interface R2OpTotals { classA: number; classB: number; free: number }
 
-/** Cộng số request theo loại (bỏ dòng số lượng không hợp lệ). */
+/** Add up request counts by type (skip rows with an invalid count). */
 export function sumR2Operations(groups: ReadonlyArray<{ actionType: string; requests: number }>): R2OpTotals {
     const t: R2OpTotals = { classA: 0, classB: 0, free: 0 };
     for (const g of groups || []) {
@@ -199,41 +199,41 @@ export function sumR2Operations(groups: ReadonlyArray<{ actionType: string; requ
     return t;
 }
 
-// ─── Dung lượng R2: GB-tháng từ mẫu ──────────────────────────────────────────
+// ─── R2 storage: GB-month from samples ──────────────────────────────────────────
 
 export interface R2StorageSample {
     bucket: string;
-    /** Thời điểm mẫu (ms). */
+    /** Sample time (ms). */
     ts: number;
     /** payloadSize + metadataSize (byte). */
     bytes: number;
 }
 
 export interface R2StorageStats {
-    /** Đang lưu: mẫu mới nhất của từng bucket cộng lại (byte). */
+    /** Stored now: the latest sample of each bucket added together (bytes). */
     currentBytes: number;
-    /** Đỉnh mỗi ngày UTC từ đầu kỳ tới hôm nay (cộng các bucket; byte) — phần tử 0 = ngày đầu kỳ. */
+    /** Peak per UTC day from the start of the period to today (buckets added; bytes). Element 0 = first day of the period. */
     dailyPeakBytes: number[];
-    /** GB-tháng đã dùng từ đầu kỳ = tổng đỉnh các ngày / 10^9 / 30. */
+    /** GB-months used since the start of the period = sum of the daily peaks / 10^9 / 30. */
     gbMonthSoFar: number;
     buckets: number;
 }
 
 /**
- * Đỉnh dung lượng mỗi ngày UTC (từ startTs tới ngày chứa now) + dung lượng hiện tại.
- *  - Ngày không có mẫu: dữ liệu vẫn nằm đó → dùng giá trị mẫu gần nhất trước đó của bucket.
- *  - Ngày có mẫu: đỉnh = max(giá trị mang từ trước sang, các mẫu trong ngày) (từ 0:00 tới mẫu đầu tiên dữ liệu vẫn là giá
- *    trị cũ).
- *  - Trước mẫu đầu tiên của bucket: 0 (bucket có thể chưa có) — trừ khi backfill (kết quả bị cắt ở giới hạn dòng, mẫu cũ
- *    nhất bị thiếu): lấy mẫu sớm nhất đang có cho các ngày trước đó (không thấp).
- *  - Mẫu sau now (lệch đồng hồ) tính vào ngày cuối.
+ * Peak storage per UTC day (from startTs to the day containing now) + current storage.
+ *  - Day with no sample: the data is still there → use the latest earlier sample of the bucket.
+ *  - Day with samples: peak = max(value carried over from before, samples of the day) (from 0:00 until the first sample,
+ *    the data still has the old value).
+ *  - Before the bucket's first sample: 0 (the bucket may not exist yet), except with backfill (the result was cut at the row limit, so the oldest
+ *    sample is missing): use the earliest sample available for the earlier days (not lower).
+ *  - Samples after now (clock skew) count toward the last day.
  */
 export function r2StorageStats(
     samples: ReadonlyArray<R2StorageSample>,
     opts: { startTs: number; now: number; backfill?: boolean },
 ): R2StorageStats {
     const { startTs } = opts;
-    // Kỳ tháng ≤ 31 ngày; kẹp để đầu vào sai (startTs = 0…) không tạo mảng khổng lồ.
+    // A month is at most 31 days; clamp so bad input (startTs = 0…) does not create a huge array.
     const lastDay = Math.min(400, Math.max(0, Math.floor((opts.now - startTs) / DAY_MS)));
     const daily: number[] = new Array(lastDay + 1).fill(0);
     const byBucket = new Map<string, R2StorageSample[]>();
@@ -252,7 +252,7 @@ export function r2StorageStats(
         list.sort((a, b) => a.ts - b.ts);
         currentBytes += list[list.length - 1].bytes;
         let i = 0;
-        // Giá trị đang có lúc đầu kỳ: mẫu cuối cùng trước startTs (nếu có).
+        // Value in place at the start of the period: the last sample before startTs (if any).
         let carry: number | null = null;
         while (i < list.length && list[i].ts < startTs) carry = list[i++].bytes;
         if (carry === null && opts.backfill && i < list.length) carry = list[i].bytes;
@@ -269,54 +269,54 @@ export function r2StorageStats(
     return { currentBytes, dailyPeakBytes: daily, gbMonthSoFar: gbMonthFromDailyPeaks(daily), buckets: byBucket.size };
 }
 
-/** GB-tháng từ đỉnh mỗi ngày (byte): tổng / 10^9 / 30. */
+/** GB-months from the daily peaks (bytes): sum / 10^9 / 30. */
 export function gbMonthFromDailyPeaks(dailyPeakBytes: ReadonlyArray<number>): number {
     let sum = 0;
     for (const b of dailyPeakBytes || []) if (Number.isFinite(b) && b > 0) sum += b;
     return sum / BYTES_PER_GB / BILLING_PERIOD_DAYS;
 }
 
-// ─── Thời gian đã qua + dự kiến ──────────────────────────────────────────────
+// ─── Elapsed time + projection ──────────────────────────────────────────────
 
-/** Số ngày (UTC) đã qua của tháng, tính cả hôm nay (1..days) — mỗi ngày tính bằng đỉnh của ngày đó. */
+/** Days (UTC) elapsed in the month, today included (1..days); each day counts at its own peak. */
 export function elapsedMonthDays(now: number, period: { startTs: number; days: number }): number {
     const d = Math.floor((now - period.startTs) / DAY_MS) + 1;
     return Math.min(period.days, Math.max(1, d));
 }
 
-/** Phần kỳ đã qua (0..1), không thấp hơn minFraction (đầu kỳ không nhân lên quá mức). */
+/** Fraction of the period elapsed (0..1), never below minFraction (so the start of the period does not inflate the projection). */
 export function elapsedFraction(now: number, period: { startTs: number; endTs: number }, minFraction: number): number {
     const len = period.endTs - period.startTs;
     const f = len > 0 ? (now - period.startTs) / len : 1;
     return Math.min(1, Math.max(minFraction > 0 ? minFraction : 0, Number.isFinite(f) ? f : 1));
 }
 
-/** Dự kiến cuối kỳ theo nhịp hiện tại: used / phần kỳ đã qua (làm tròn số nguyên, không nhỏ hơn used). */
+/** Projected end-of-period value at the current pace: used / fraction elapsed (rounded to an integer, never below used). */
 export function linearProjection(used: number, fraction: number): number {
     if (!Number.isFinite(used) || used <= 0) return 0;
     const f = Number.isFinite(fraction) && fraction > 0 ? Math.min(1, fraction) : 1;
     return Math.max(Math.round(used), Math.round(used / f));
 }
 
-// ─── Tiền (USD) ──────────────────────────────────────────────────────────────
+// ─── Money (USD) ──────────────────────────────────────────────────────────────
 
-/** Làm tròn LÊN tới đơn vị tính tiền; bỏ sai số dấu phẩy động rất nhỏ (10,000000000000002 GB-tháng vẫn là 10). */
+/** Round UP to the billing unit; drop tiny floating-point errors (10,000000000000002 GB-month is still 10). */
 export function ceilUnits(x: number): number {
     if (!Number.isFinite(x) || x <= 0) return 0;
     return Math.max(0, Math.ceil(x - 1e-9));
 }
 
-/** Bỏ sai số dấu phẩy động của tiền (làm tròn tới 10^-6 USD). */
+/** Drop floating-point error in money (round to 10^-6 USD). */
 export function roundUsd(x: number): number {
     return Number.isFinite(x) ? Math.round(x * 1e6) / 1e6 : 0;
 }
 
-/** Phí dung lượng R2 (USD) cho số GB-tháng: trừ 10 GB-tháng miễn phí, phần còn lại làm tròn lên từng GB-tháng. */
+/** R2 storage fee (USD) for a GB-month count: subtract 10 free GB-months, round the rest up per GB-month. */
 export function r2StorageCostUsd(gbMonth: number): number {
     return roundUsd(ceilUnits(gbMonth - R2_PRICING.freeStorageGbMonth) * R2_PRICING.storageUsdPerGbMonth);
 }
 
-/** Phí thao tác R2 (USD): trừ phần miễn phí (A: 1 triệu, B: 10 triệu), phần còn lại làm tròn lên từng triệu. */
+/** R2 operation fee (USD): subtract the free allowance (A: 1 million, B: 10 million), round the rest up per million. */
 export function r2OpsCostUsd(ops: number, cls: 'A' | 'B'): number {
     const free = cls === 'A' ? R2_PRICING.freeClassA : R2_PRICING.freeClassB;
     const price = cls === 'A' ? R2_PRICING.classAUsdPerMillion : R2_PRICING.classBUsdPerMillion;

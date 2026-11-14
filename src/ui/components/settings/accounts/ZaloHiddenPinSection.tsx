@@ -1,8 +1,8 @@
 /**
- * Cài đặt → Tài khoản → dòng "Hội thoại ẩn" dưới tài khoản Zalo (ZL-03): trạng thái mã PIN + số hội thoại đang ẩn (đọc từ
- * Zalo), nút đặt / đổi PIN và "Quên mã PIN? Đặt lại" — hỏi xác nhận 2 lần vì Zalo có thể xoá tin của các hội thoại đang
- * ẩn trên điện thoại và Zalo PC (quyết định Q5, đổi ngày 22/10/2026), khoá màn hình đang bật thì nhập lại mật khẩu
- * (FR-ZL03.7); xong mở luôn hộp đặt PIN mới.
+ * Settings → Accounts → the "Hội thoại ẩn" (Hidden conversations) row under a Zalo account (ZL-03): PIN status + number of hidden conversations (read from
+ * Zalo), the set / change PIN button and "Quên mã PIN? Đặt lại" (Forgot PIN? Reset): asks for confirmation twice because Zalo may delete messages of the hidden conversations
+ * on the phone and Zalo PC (decision Q5, changed on 22/10/2026), and if the screen lock is on, the password must be entered again
+ * (FR-ZL03.7); then the new PIN dialog opens right away.
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
@@ -13,6 +13,7 @@ import { showConfirm } from '@/components/common/ConfirmDialog';
 import { confirmAppLockPassword } from '@/components/auth/lock/AppLockPasswordPrompt';
 import { zaloAuthFor } from '@/hooks/zalo/useZaloHidden';
 import { showZaloPinDialog } from '../../chat/zalo/hidden/ZaloHiddenPinDialog';
+import { tr } from '../../../../shared/i18n';
 
 export default function ZaloHiddenPinSection({ accountId }: { accountId: string }) {
   const showNotification = useAppStore((s) => s.showNotification);
@@ -30,9 +31,9 @@ export default function ZaloHiddenPinSection({ accountId }: { accountId: string 
       const res = await ipc.zalo?.hiddenStatus({ auth, force: true });
       if (mySeq !== seq.current) return;
       if (res?.success && res.response) setStatus({ hasPin: !!res.response.hasPin, hiddenCount: Number(res.response.hiddenCount) || 0 });
-      else setError(res?.error || 'Không đọc được hội thoại ẩn từ Zalo');
+      else setError(res?.error || tr('Không đọc được hội thoại ẩn từ Zalo'));
     } catch (err: any) {
-      if (mySeq === seq.current) setError(err?.message || 'Không đọc được hội thoại ẩn từ Zalo');
+      if (mySeq === seq.current) setError(err?.message || tr('Không đọc được hội thoại ẩn từ Zalo'));
     }
   }, [accountId]);
 
@@ -44,7 +45,7 @@ export default function ZaloHiddenPinSection({ accountId }: { accountId: string 
   const openDialog = async () => {
     const mode = status?.hasPin ? 'change' : 'setup';
     if (await showZaloPinDialog({ accountId, mode })) {
-      showNotification(mode === 'change' ? 'Đã đổi mã PIN hội thoại ẩn' : 'Đã đặt mã PIN hội thoại ẩn', 'success');
+      showNotification(mode === 'change' ? tr('Đã đổi mã PIN hội thoại ẩn') : tr('Đã đặt mã PIN hội thoại ẩn'), 'success');
       void load();
     }
   };
@@ -55,18 +56,18 @@ export default function ZaloHiddenPinSection({ accountId }: { accountId: string 
     const name = account?.full_name || accountId;
     const count = status.hiddenCount;
     const proceed = await showConfirm({
-      title: 'Quên mã PIN — đặt lại?',
-      message: `Zalo sẽ xoá mã PIN hội thoại ẩn của ${name} và có thể xoá luôn toàn bộ tin nhắn của ${count > 0 ? `${count} ` : 'các '}hội thoại đang ẩn trên điện thoại và Zalo PC (không lấy lại được trên Zalo). Deplao vẫn giữ tin đã lưu trên máy này.`,
-      confirmText: 'Tiếp tục',
+      title: tr('Quên mã PIN — đặt lại?'),
+      message: tr('Zalo sẽ xoá mã PIN hội thoại ẩn của {{name}} và có thể xoá luôn toàn bộ tin nhắn của {{v1}}hội thoại đang ẩn trên điện thoại và Zalo PC (không lấy lại được trên Zalo). Deplao vẫn giữ tin đã lưu trên máy này.', { name, v1: count > 0 ? `${count} ` : tr('các ') }),
+      confirmText: tr('Tiếp tục'),
       variant: 'warning',
     });
     if (!proceed) return;
-    // Khoá màn hình đang bật → nhập lại mật khẩu trước khi đặt lại (FR-ZL03.7)
-    if (!(await confirmAppLockPassword(`Đặt lại mã PIN hội thoại ẩn Zalo của ${name}.`))) return;
+    // Screen lock is on → enter the password again before resetting (FR-ZL03.7)
+    if (!(await confirmAppLockPassword(tr('Đặt lại mã PIN hội thoại ẩn Zalo của {{name}}.', { name })))) return;
     const sure = await showConfirm({
-      title: 'Xác nhận lần cuối',
-      message: 'Đặt lại mã PIN hội thoại ẩn ngay bây giờ? Thao tác này không hoàn tác. Xong bạn đặt mã PIN mới.',
-      confirmText: 'Đặt lại mã PIN',
+      title: tr('Xác nhận lần cuối'),
+      message: tr('Đặt lại mã PIN hội thoại ẩn ngay bây giờ? Thao tác này không hoàn tác. Xong bạn đặt mã PIN mới.'),
+      confirmText: tr('Đặt lại mã PIN'),
       variant: 'danger',
     });
     if (!sure) return;
@@ -76,45 +77,45 @@ export default function ZaloHiddenPinSection({ accountId }: { accountId: string 
     try {
       const res = await ipc.zalo?.hiddenResetPin({ auth });
       if (!res?.success) {
-        showNotification(res?.error || 'Zalo từ chối đặt lại mã PIN', 'error');
+        showNotification(res?.error || tr('Zalo từ chối đặt lại mã PIN'), 'error');
         return;
       }
       useAppStore.getState().setHiddenUnlocked(accountId, false);
-      showNotification('Đã đặt lại mã PIN hội thoại ẩn', 'success');
+      showNotification(tr('Đã đặt lại mã PIN hội thoại ẩn'), 'success');
       await load();
       if (!res.response?.hasPin && await showZaloPinDialog({ accountId, mode: 'setup' })) {
-        showNotification('Đã đặt mã PIN mới', 'success');
+        showNotification(tr('Đã đặt mã PIN mới'), 'success');
         void load();
       }
     } catch (err: any) {
-      showNotification(err?.message || 'Không đặt lại được mã PIN', 'error');
+      showNotification(err?.message || tr('Không đặt lại được mã PIN'), 'error');
     } finally {
       setResetting(false);
     }
   };
 
   return (
-    <section className="space-y-1.5" aria-label="Hội thoại ẩn">
+    <section className="space-y-1.5" aria-label={tr('Hội thoại ẩn')}>
       <p className="flex items-center gap-2 text-sm text-foreground">
         <EyeOffIcon className="h-4 w-4 text-muted-foreground" />
         {status === null
-          ? (error ? 'Không rõ' : 'Đang đọc...')
-          : status.hasPin ? `Đã đặt mã PIN · ${status.hiddenCount} hội thoại đang ẩn` : 'Chưa đặt mã PIN'}
+          ? (error ? tr('Không rõ') : tr('Đang đọc...'))
+          : status.hasPin ? tr('Đã đặt mã PIN · {{hiddenCount}} hội thoại đang ẩn', { hiddenCount: status.hiddenCount }) : tr('Chưa đặt mã PIN')}
       </p>
       <p className="text-[11px] leading-4 text-muted-foreground">
-        Chuột phải một hội thoại Zalo → "Ẩn hội thoại". Gõ đúng 4 số PIN vào ô tìm kiếm để xem; PIN dùng chung với app Zalo.
+        {tr('Chuột phải một hội thoại Zalo → "Ẩn hội thoại". Gõ đúng 4 số PIN vào ô tìm kiếm để xem; PIN dùng chung với app Zalo.')}
       </p>
       {error && <p role="alert" className="text-[11px] text-destructive">{error}</p>}
       {status !== null && (
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => void openDialog()} disabled={resetting}
             className="rounded-lg border border-input px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50">
-            {status.hasPin ? 'Đổi mã PIN' : 'Đặt mã PIN'}
+            {status.hasPin ? tr('Đổi mã PIN') : tr('Đặt mã PIN')}
           </button>
           {status.hasPin && (
             <button type="button" onClick={() => void resetPin()} disabled={resetting}
               className="rounded-lg px-2 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50">
-              {resetting ? 'Đang đặt lại...' : 'Quên mã PIN? Đặt lại'}
+              {resetting ? tr('Đang đặt lại...') : tr('Quên mã PIN? Đặt lại')}
             </button>
           )}
         </div>

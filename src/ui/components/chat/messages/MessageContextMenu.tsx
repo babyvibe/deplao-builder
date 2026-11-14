@@ -11,6 +11,7 @@ import TelegramReadReceipts, { type ReadReceiptPerson } from '../telegram/messag
 import { ReactionGrid } from './reactions/ReactionPicker';
 import { displayReactionEmoji } from './reactions/ReactionComponents';
 import { sameReaction, ZALO_QUICK_REACTIONS } from '@/lib/chat/reactions/reactionChoices';
+import { tr } from '../../../../shared/i18n';
 
 
 interface MessageContextMenuProps {
@@ -20,7 +21,7 @@ interface MessageContextMenuProps {
   /** Album: the photo that was right-clicked (image actions + star act on it, like Zalo). */
   mediaMsg?: any;
   isSent: boolean;
-  isGroupAdmin?: boolean; // trưởng nhóm / phó nhóm được thu hồi tin nhắn của thành viên
+  isGroupAdmin?: boolean; // group owner / deputy can recall a member's message
   channelCap?: ChannelCapability;
   onClose: () => void;
   onReply: (msg: any) => void;
@@ -30,32 +31,32 @@ interface MessageContextMenuProps {
   onDelete: (msg: any) => void;
   onDeleteFromDb?: (msg: any) => void;
   onReact: (msg: any, reaction: string) => void;
-  /** Gỡ reaction của mình (bấm lại reaction đang chọn) */
+  /** Remove my own reaction (click the selected reaction again) */
   onCancelReact?: (msg: any) => void;
-  /** Reaction theo kênh (lib/chat/reactions/reactionChoices): `quick` hiện sẵn; còn nhiều hơn → nút mở rộng ra lưới (Telegram) */
+  /** Reactions per channel (lib/chat/reactions/reactionChoices): `quick` is shown directly; if there are more → a button expands into a grid (Telegram) */
   reactionChoices?: { quick: string[]; all: string[] };
   myReaction?: string | null;
   onPin?: (msg: any) => void;
   onEdit?: (msg: any) => void;
-  /** "Tin đánh dấu": current state of the targeted message + toggle. */
+  /** "Tin đánh dấu" (starred messages): current state of the targeted message + toggle. */
   isStarred?: boolean;
   onToggleStar?: (msg: any) => void;
-  /** Send a copy of the message to My Documents (Zalo Cloud của tôi; Telegram Saved Messages). */
+  /** Send a copy of the message to My Documents (Zalo Cloud "My Documents"; Telegram Saved Messages). */
   onSaveToMyDocuments?: (msg: any) => void;
-  /** Quản lý công việc: tạo lịch hẹn từ tin (ngày giờ đọc trong tin, tới giờ có nhắc) — chỉ truyền khi được tạo lịch. */
+  /** Task management: create an appointment from the message (date/time read from the message, reminder when due); only passed when an appointment can be created. */
   onAddToCalendar?: (msg: any) => void;
-  /** Quản lý công việc: lưu tin vào Ghi chú — chỉ truyền khi được tạo ghi chú. */
+  /** Task management: save the message to Notes; only passed when a note can be created. */
   onSaveToNote?: (msg: any) => void;
-  /** Quản lý công việc: tạo task từ tin (chữ + ảnh của tin thành nội dung task) — chỉ truyền khi được tạo task. */
+  /** Task management: create a task from the message (its text + image become the task content); only passed when a task can be created. */
   onCreateTask?: (msg: any) => void;
   showNotification?: (msg: string, type: 'success' | 'error' | 'info') => void;
-  /** Tin đã thu hồi: chỉ còn thao tác cục bộ (sao chép, lưu ảnh/file, đánh dấu, xoá khỏi app) — ẩn mọi thao tác đồng bộ lên nền tảng. */
+  /** Recalled message: only local actions remain (copy, save image/file, mark, remove from app); all platform sync actions are hidden. */
   recalled?: boolean;
-  /** Telegram, tin mình gửi (≤ 7 ngày): dòng "Đã xem" cuối menu. ChatWindow chỉ truyền khi tin đủ điều kiện. */
+  /** Telegram, message I sent (≤ 7 days): the "Đã xem" (Seen) row at the bottom of the menu. ChatWindow only passes it when the message qualifies. */
   readReceipts?: { accountId: string; resolvePerson: (userId: string) => ReadReceiptPerson | null };
 }
 
-/** Mặc định khi nơi gọi không truyền reactionChoices (Zalo: đúng các loại Zalo có — 😆 / 😯 bị gửi thành ❤️). */
+/** Default when the caller does not pass reactionChoices (Zalo: exactly the reaction types Zalo supports; 😆 / 😯 are sent as ❤️). */
 const QUICK_REACTIONS = ZALO_QUICK_REACTIONS;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -131,14 +132,14 @@ export default function MessageContextMenu({
   const quickReactions = reactionChoices?.quick ?? QUICK_REACTIONS;
   const allReactions = reactionChoices?.all ?? QUICK_REACTIONS;
   const canExpandReactions = allReactions.length > quickReactions.length;
-  // Telegram: mở rộng hàng reaction thành lưới đầy đủ (thay cho các mục menu, như Telegram)
+  // Telegram: expand the reaction row into a full grid (instead of menu items, as in Telegram)
   const [reactionsExpanded, setReactionsExpanded] = useState(false);
   const pickReaction = (emoji: string) => {
     if (onCancelReact && sameReaction(emoji, myReaction)) onCancelReact(msg);
     else onReact(msg, emoji);
     onClose();
   };
-  // Thao tác đồng bộ lên nền tảng (react, trả lời, chuyển tiếp, ghim, sửa, thu hồi, xoá phía Zalo…)
+  // Actions synced to the platform (react, reply, forward, pin, edit, recall, delete on Zalo…)
   const platform = !recalled;
   const menuRef = useRef<HTMLDivElement>(null);
   // Image actions (copy / save / folder) and the star target the right-clicked album photo
@@ -201,7 +202,7 @@ export default function MessageContextMenu({
             const params = typeof parsed?.params === 'string' ? JSON.parse(parsed.params) : (parsed?.params || {});
             const lat = params?.latitude;
             const lng = params?.longitude;
-            const desc = parsed?.description || 'Vị trí';
+            const desc = parsed?.description || tr('Vị trí');
             text = `📍 ${desc}`;
             if (lat && lng) text += `\nhttps://www.google.com/maps?q=${lat},${lng}`;
           } else if (typeof parsed === 'string') text = parsed;
@@ -214,7 +215,7 @@ export default function MessageContextMenu({
       }
       navigator.clipboard.writeText(text).catch(() => {});
       if (msg.msg_type === 'chat.location.new') {
-        showNotification?.('Đã sao chép vị trí + link Maps', 'success');
+        showNotification?.(tr('Đã sao chép vị trí + link Maps'), 'success');
         onClose();
         return;
       }
@@ -222,31 +223,31 @@ export default function MessageContextMenu({
     onClose();
   };
 
-  // Copy link URL vào clipboard (chỉ cho link messages)
+  // Copy the link URL to the clipboard (link messages only)
   const handleCopyLink = () => {
     try {
       const p = JSON.parse(msg.content || '{}');
       const url = String(p?.href || p?.title || '').trim();
       if (url) navigator.clipboard.writeText(url).catch(() => {});
-      showNotification?.('Đã sao chép link', 'success');
+      showNotification?.(tr('Đã sao chép link'), 'success');
     } catch {}
     onClose();
   };
 
-  // Copy ảnh thẳng vào clipboard (chỉ cho media) - không mở viewer / trình duyệt
+  // Copy the image straight to the clipboard (media only): does not open the viewer / browser
   const handleCopyImage = async () => {
     onClose();
-    if (!localPath && !remoteUrl) { showNotification?.('Không có ảnh để sao chép', 'error'); return; }
+    if (!localPath && !remoteUrl) { showNotification?.(tr('Không có ảnh để sao chép'), 'error'); return; }
     try {
       await copyImageToClipboard({ localPath: localPath || undefined, remoteUrl: remoteUrl || undefined });
-      showNotification?.('Đã sao chép ảnh vào clipboard', 'success');
+      showNotification?.(tr('Đã sao chép ảnh vào clipboard'), 'success');
     } catch (e: any) {
-      showNotification?.('Không thể sao chép ảnh: ' + (e?.message || 'Lỗi không xác định'), 'error');
+      showNotification?.(tr('Không thể sao chép ảnh: {{v1}}', { v1: (e?.message || tr('Lỗi không xác định')) }), 'error');
     }
   };
 
-  // Mở thư mục chứa file/ảnh (máy nhân viên: tải bản của Boss về máy trước). Ảnh Zalo máy Boss chưa lưu (chỉ có link) →
-  // nhờ Boss lưu trước — trước đây báo "File chưa được tải về máy".
+  // Open the folder containing the file/image (employee machine: download the Boss's copy to this machine first). A Zalo image the Boss machine has not saved (link only) →
+  // ask the Boss to save it first: before, this showed "File chưa được tải về máy" (File not downloaded to this machine).
   const handleShowInFolder = async () => {
     onClose();
     let path = localPath;
@@ -258,23 +259,23 @@ export default function MessageContextMenu({
     if (onThisMachine) {
       await ipc.file?.showItemInFolder(onThisMachine);
     } else if (localPath || remoteUrl) {
-      showNotification?.('File chưa được tải về máy', 'info');
+      showNotification?.(tr('File chưa được tải về máy'), 'info');
     }
   };
 
-  // Lưu về máy qua dialog
+  // Save to this machine via dialog
   const handleSaveAs = async () => {
     onClose();
     try {
       const res = await ipc.file?.saveAs({ localPath: localPath || undefined, remoteUrl: remoteUrl || undefined, defaultName });
       if (res?.canceled) return;
       if (res?.success) {
-        showNotification?.('Đã lưu file thành công', 'success');
+        showNotification?.(tr('Đã lưu file thành công'), 'success');
       } else {
-        showNotification?.('Lỗi lưu file: ' + (res?.error || ''), 'error');
+        showNotification?.(tr('Lỗi lưu file: {{v1}}', { v1: (res?.error || '') }), 'error');
       }
     } catch (e: any) {
-      showNotification?.('Lỗi: ' + e.message, 'error');
+      showNotification?.(tr('Lỗi: {{message}}', { message: e.message }), 'error');
     }
   };
 
@@ -283,10 +284,10 @@ export default function MessageContextMenu({
       className="bg-popover border border-border rounded-xl shadow-2xl py-1 text-sm select-none">
       {recalled && (
         <div className="px-4 py-2 text-[11px] leading-snug text-muted-foreground border-b border-border">
-          Tin đã thu hồi · chỉ thao tác trên máy này
+          {tr('Tin đã thu hồi · chỉ thao tác trên máy này')}
         </div>
       )}
-      {/* Reaction nhanh theo kênh; Telegram: nút ⌄ mở lưới đầy đủ reaction của hội thoại */}
+      {/* Quick reactions per channel; Telegram: the ⌄ button opens the full reaction grid of the conversation */}
       {platform && (channelCap?.supportsReaction ?? true) && quickReactions.length > 0 && (
         reactionsExpanded ? (
           <ReactionGrid emojis={allReactions} myEmoji={myReaction} onPick={pickReaction} />
@@ -296,7 +297,7 @@ export default function MessageContextMenu({
               <button key={emoji}
                 onClick={() => pickReaction(emoji)}
                 className={`text-xl leading-none p-0.5 rounded-lg hover:scale-125 transition-transform ${sameReaction(emoji, myReaction) ? 'bg-muted ring-1 ring-primary' : ''}`}
-                title={sameReaction(emoji, myReaction) ? 'Bấm lần nữa để gỡ' : emoji}>
+                title={sameReaction(emoji, myReaction) ? tr('Bấm lần nữa để gỡ') : emoji}>
                 {displayReactionEmoji(emoji)}
               </button>
             ))}
@@ -305,8 +306,8 @@ export default function MessageContextMenu({
                 type="button"
                 onClick={() => setReactionsExpanded(true)}
                 className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full bg-muted hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-                title="Xem tất cả cảm xúc"
-                aria-label="Xem tất cả cảm xúc"
+                title={tr('Xem tất cả cảm xúc')}
+                aria-label={tr('Xem tất cả cảm xúc')}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                   <polyline points="6 9 12 15 18 9" />
@@ -316,30 +317,30 @@ export default function MessageContextMenu({
           </div>
         )
       )}
-      {/* Đang xem lưới reaction: ẩn các mục menu (như Telegram) */}
+      {/* Reaction grid open: hide the menu items (as in Telegram) */}
       {!reactionsExpanded && (<>
 
       {platform && (channelCap?.supportsReply ?? true) && (
-        <MenuItem icon={<ReplyIcon className="w-4 h-4" />} label="Trả lời" onClick={() => { onReply(msg); onClose(); }} />
+        <MenuItem icon={<ReplyIcon className="w-4 h-4" />} label={tr('Trả lời')} onClick={() => { onReply(msg); onClose(); }} />
       )}
-      {/* Cuộc gọi, bình chọn, thẻ thông báo, bản tin OA, tin hệ thống… không chuyển tiếp được (Zalo cũng không cho) */}
+      {/* Calls, polls, notification cards, OA news, system messages… cannot be forwarded (Zalo does not allow it either) */}
       {platform && (channelCap?.supportsForward ?? true) && !getForwardBlockReason(msg) && (
-        <MenuItem icon="↪" label="Chuyển tiếp" onClick={() => { onForward(msg); onClose(); }} />
+        <MenuItem icon="↪" label={tr('Chuyển tiếp')} onClick={() => { onForward(msg); onClose(); }} />
       )}
-      {/* Gửi bản sao tin vào My Documents - như "Tuỳ chọn khác › Lưu vào My Documents" của Zalo (Telegram: Tin nhắn đã lưu) */}
+      {/* Send a copy of the message to My Documents, like "Tuỳ chọn khác › Lưu vào My Documents" (Other options › Save to My Documents) in Zalo (Telegram: Saved Messages) */}
       {platform && onSaveToMyDocuments && !getForwardBlockReason(target) && (
-        <MenuItem icon={<CloudIcon className="w-4 h-4" />} label="Lưu vào My Documents" onClick={() => { onSaveToMyDocuments(target); onClose(); }} />
+        <MenuItem icon={<CloudIcon className="w-4 h-4" />} label={tr('Lưu vào My Documents')} onClick={() => { onSaveToMyDocuments(target); onClose(); }} />
       )}
       {platform && onSelectMessages && (
-        <MenuItem icon="☑" label="Chọn tin nhắn" onClick={() => { onSelectMessages(msg); onClose(); }} />
+        <MenuItem icon="☑" label={tr('Chọn tin nhắn')} onClick={() => { onSelectMessages(msg); onClose(); }} />
       )}
 
-      {/* Sao chép text - cho tin nhắn text và link */}
+      {/* Copy text: for text and link messages */}
       {!isFile && !isMedia && !isVideo && (
-        <MenuItem icon={<ClipboardListIcon className="w-4 h-4" />} label="Sao chép" onClick={handleCopy} />
+        <MenuItem icon={<ClipboardListIcon className="w-4 h-4" />} label={tr('Sao chép')} onClick={handleCopy} />
       )}
 
-      {/* Sao chép link - chỉ cho tin nhắn link */}
+      {/* Copy link: link messages only */}
       {isLink && (
         <MenuItem
           icon={
@@ -349,12 +350,12 @@ export default function MessageContextMenu({
               <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
             </svg>
           }
-          label="Sao chép link"
+          label={tr('Sao chép link')}
           onClick={handleCopyLink}
         />
       )}
 
-      {/* Sao chép ảnh vào clipboard - chỉ cho ảnh, không cho video */}
+      {/* Copy image to the clipboard: images only, not videos */}
       {isMedia && (
         <MenuItem
           icon={
@@ -362,12 +363,12 @@ export default function MessageContextMenu({
               <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
             </svg>
           }
-          label="Copy hình ảnh"
+          label={tr('Copy hình ảnh')}
           onClick={handleCopyImage}
         />
       )}
 
-      {/* Mở trong thư mục - cho file, ảnh, video */}
+      {/* Open in folder: files, images, videos */}
       {(isFile || isMedia || isVideo) && (
         <MenuItem
           icon={
@@ -375,12 +376,12 @@ export default function MessageContextMenu({
               <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
             </svg>
           }
-          label="Mở trong thư mục"
+          label={tr('Mở trong thư mục')}
           onClick={handleShowInFolder}
         />
       )}
 
-      {/* Lưu về máy - cho file, ảnh, video */}
+      {/* Save to this machine: files, images, videos */}
       {(isFile || isMedia || isVideo) && (
         <MenuItem
           icon={
@@ -390,12 +391,12 @@ export default function MessageContextMenu({
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           }
-          label="Lưu về máy"
+          label={tr('Lưu về máy')}
           onClick={handleSaveAs}
         />
       )}
 
-      {/* Ghim tin nhắn */}
+      {/* Pin message */}
       {platform && (channelCap?.supportsPin ?? true) && onPin && (
         <MenuItem
           icon={
@@ -408,33 +409,33 @@ export default function MessageContextMenu({
               <path d="M3 21l6-6"/>
             </svg>
           }
-          label="Ghim tin nhắn"
+          label={tr('Ghim tin nhắn')}
           onClick={() => { onPin(msg); onClose(); }}
         />
       )}
 
-      {/* Tin đánh dấu (như Zalo) - xem lại ở menu ⋮ → Tin đánh dấu */}
+      {/* Starred message (like Zalo): see it again in the menu ⋮ → "Tin đánh dấu" */}
       {onToggleStar && (
         <MenuItem
           icon={<StarIcon className="w-4 h-4" />}
-          label={isStarred ? 'Bỏ đánh dấu tin nhắn' : 'Đánh dấu tin nhắn'}
+          label={isStarred ? tr('Bỏ đánh dấu tin nhắn') : tr('Đánh dấu tin nhắn')}
           onClick={() => { onToggleStar(target); onClose(); }}
         />
       )}
 
-      {/* Quản lý công việc: task (chữ + ảnh của tin thành nội dung) / lịch hẹn (đọc ngày giờ trong tin, tới giờ có nhắc) /
-          ghi chú từ tin */}
+      {/* Task management: task (text + images of the message become the content) / appointment (reads the date and time in the message, reminder when due) /
+          note from the message */}
       {onCreateTask && (
-        <MenuItem icon={<CheckSquareIcon className="w-4 h-4" />} label="Tạo task" onClick={() => { onCreateTask(msg); onClose(); }} />
+        <MenuItem icon={<CheckSquareIcon className="w-4 h-4" />} label={tr('Tạo task')} onClick={() => { onCreateTask(msg); onClose(); }} />
       )}
       {onAddToCalendar && (
-        <MenuItem icon={<CalendarIcon className="w-4 h-4" />} label="Thêm vào lịch" onClick={() => { onAddToCalendar(msg); onClose(); }} />
+        <MenuItem icon={<CalendarIcon className="w-4 h-4" />} label={tr('Thêm vào lịch')} onClick={() => { onAddToCalendar(msg); onClose(); }} />
       )}
       {onSaveToNote && (
-        <MenuItem icon={<FileTextIcon className="w-4 h-4" />} label="Lưu vào ghi chú" onClick={() => { onSaveToNote(msg); onClose(); }} />
+        <MenuItem icon={<FileTextIcon className="w-4 h-4" />} label={tr('Lưu vào ghi chú')} onClick={() => { onSaveToNote(msg); onClose(); }} />
       )}
 
-      {/* Sửa tin nhắn — chỉ cho tin nhắn text đã gửi, channel hỗ trợ */}
+      {/* Edit message: only for sent text messages on channels that support it */}
       {platform && isSent && onEdit && (channelCap?.supportsEdit ?? false) && (msg.msg_type === 'text' || msg.msg_type === 'chat.text') && !isFile && !isMedia && !isVideo && (
         <MenuItem
           icon={
@@ -443,23 +444,23 @@ export default function MessageContextMenu({
               <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
           }
-          label="Sửa tin nhắn"
+          label={tr('Sửa tin nhắn')}
           onClick={() => { onEdit(msg); onClose(); }}
         />
       )}
 
       {platform && (channelCap?.supportsUnsend ?? true) && isSent && (
-        <MenuItem icon="↺" label="Thu hồi tin nhắn" onClick={() => { onUndo(msg); onClose(); }} danger />
+        <MenuItem icon="↺" label={tr('Thu hồi tin nhắn')} onClick={() => { onUndo(msg); onClose(); }} danger />
       )}
       {platform && (channelCap?.supportsUnsend ?? true) && !isSent && isGroupAdmin && (
         <MenuItem
           icon="↺"
-          label="Xoá tin nhắn của thành viên"
+          label={tr('Xoá tin nhắn của thành viên')}
           onClick={() => { onUndo(msg); onClose(); }}
           danger
         />
       )}
-      {platform && <MenuItem icon="↺" label="Xóa (chỉ mình tôi)" onClick={() => { onDelete(msg); onClose(); }} danger />}
+      {platform && <MenuItem icon="↺" label={tr('Xóa (chỉ mình tôi)')} onClick={() => { onDelete(msg); onClose(); }} danger />}
       {onDeleteFromDb && (
         <MenuItem
           icon={
@@ -471,7 +472,7 @@ export default function MessageContextMenu({
               <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
             </svg>
           }
-          label="Xóa vĩnh viễn khỏi app"
+          label={tr('Xóa vĩnh viễn khỏi app')}
           onClick={() => { onDeleteFromDb(msg); onClose(); }}
           danger
         />

@@ -1,6 +1,6 @@
 /**
- * Media: upload file để gửi vào chat, thư viện media.
- * Kênh IPC: library:getItems, library:getItem, library:upload, library:updateItem, library:deleteItem,
+ * Media: upload files to send in chat, media library.
+ * IPC channels: library:getItems, library:getItem, library:upload, library:updateItem, library:deleteItem,
  * library:getFolders, library:createFolder, library:renameFolder, library:deleteFolder.
  */
 import * as fs from 'fs';
@@ -12,6 +12,7 @@ import { readBodyBuffer } from '../http/http';
 import { getApiSettingNumber } from '../settings';
 import { accountParams, notFound, offsetPage } from './common';
 import { streamFile } from './chat';
+import { tr } from '../../../shared/i18n';
 
 export interface MediaRouteDeps {
     uploads: UploadStore;
@@ -43,19 +44,19 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
     return [
         route({
             method: 'POST', path: '/media/uploads', scope: 'media:write', tags, operationId: 'uploadMedia',
-            summary: 'Upload file để gửi vào chat (trả upload_id, hết hạn sau 24 giờ)',
+            summary: tr('Upload file để gửi vào chat (trả upload_id, hết hạn sau 24 giờ)'),
             description: [
-                'Hai cách gửi:',
-                '- Raw body: header `X-Filename: ten-file.pdf` (URL-encode nếu có dấu) + `Content-Type` của file. Ghi thẳng xuống đĩa.',
-                '- `multipart/form-data` với trường `file`.',
-                'upload_id chỉ key đã upload dùng được.',
+                tr('Hai cách gửi:'),
+                tr('- Raw body: header `X-Filename: ten-file.pdf` (URL-encode nếu có dấu) + `Content-Type` của file. Ghi thẳng xuống đĩa.'),
+                tr('- `multipart/form-data` với trường `file`.'),
+                tr('upload_id chỉ key đã upload dùng được.'),
             ].join('\n'),
-            rawBody: { contentType: 'application/octet-stream', description: 'Nội dung file (hoặc multipart/form-data trường file)' },
+            rawBody: { contentType: 'application/octet-stream', description: tr('Nội dung file (hoặc multipart/form-data trường file)') },
             response: s.object({
                 upload_id: s.string(), name: s.string(), mime: s.string(), size: s.int(), kind: s.string(), expires_at: s.int(),
             }),
             handler: async ctx => {
-                if (!ctx.raw) throw new ApiError(400, 'VALIDATION_ERROR', 'Upload chỉ qua HTTP');
+                if (!ctx.raw) throw new ApiError(400, 'VALIDATION_ERROR', tr('Upload chỉ qua HTTP'));
                 const req = ctx.raw.req;
                 const maxBytes = Math.max(1, getApiSettingNumber('api_upload_max_mb')) * 1024 * 1024;
                 const ct = String(req.headers['content-type'] || '');
@@ -63,7 +64,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
                 if (ct.toLowerCase().startsWith('multipart/form-data')) {
                     const buf = await readBodyBuffer(req, maxBytes + 256 * 1024);
                     const part = parseMultipartFile(buf, ct);
-                    if (!part) throw new ApiError(400, 'VALIDATION_ERROR', 'Không tìm thấy trường file trong multipart');
+                    if (!part) throw new ApiError(400, 'VALIDATION_ERROR', tr('Không tìm thấy trường file trong multipart'));
                     rec = await deps.uploads.saveBuffer(part.data, part.name, part.mime, principalKey(ctx));
                 } else {
                     const raw = String(req.headers['x-filename'] || '');
@@ -76,20 +77,20 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/media/uploads/:uploadId', scope: 'media:write', tags, operationId: 'deleteUpload',
-            summary: 'Xoá file đã upload (không đợi hết hạn)',
+            summary: tr('Xoá file đã upload (không đợi hết hạn)'),
             params: s.object({ uploadId: s.string().min(1).max(100) }),
             handler: ctx => ({ deleted: deps.uploads.delete(ctx.params.uploadId, principalKey(ctx)) }),
         }),
 
-        // ── Thư viện ──────────────────────────────────────────────────────
+        // ── Library ──────────────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/library/items', scope: 'media:read', tags, operationId: 'listLibraryItems',
-            summary: 'Item trong thư viện media của tài khoản',
+            summary: tr('Item trong thư viện media của tài khoản'),
             params: accountParams,
             query: s.object({
                 type: s.enum(['all', 'image', 'video', 'file', 'audio'] as const).default('all'),
                 search: s.string().max(200).optional(),
-                folder_id: s.int().optional().describe('-1 = chưa có thư mục'),
+                folder_id: s.int().optional().describe(tr('-1 = chưa có thư mục')),
                 page: s.int().min(1).default(1),
                 limit: s.int().min(1).max(200).default(50),
             }),
@@ -102,7 +103,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/library/items', scope: 'media:write', tags, operationId: 'addLibraryItem',
-            summary: 'Đưa file đã upload vào thư viện',
+            summary: tr('Đưa file đã upload vào thư viện'),
             params: accountParams,
             body: s.object({
                 upload_id: s.string().min(1),
@@ -123,7 +124,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/library/items/:uuid', scope: 'media:write', tags, operationId: 'updateLibraryItem',
-            summary: 'Đổi tên, tag, thư mục, yêu thích',
+            summary: tr('Đổi tên, tag, thư mục, yêu thích'),
             params: s.object({ uuid: s.string().min(1).max(100) }),
             body: s.object({
                 name: s.string().max(200).optional(), tags: s.string().max(500).optional(),
@@ -145,7 +146,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/library/items/:uuid', scope: 'media:write', tags, operationId: 'deleteLibraryItem',
-            summary: 'Xoá item khỏi thư viện',
+            summary: tr('Xoá item khỏi thư viện'),
             params: s.object({ uuid: s.string().min(1).max(100) }),
             handler: async ctx => {
                 await libraryItem(ctx, ctx.params.uuid);
@@ -155,9 +156,9 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/library/items/:uuid/file', scope: 'media:read', tags, operationId: 'downloadLibraryItem',
-            summary: 'Tải file của item',
+            summary: tr('Tải file của item'),
             params: s.object({ uuid: s.string().min(1).max(100) }),
-            rawResponse: { contentType: 'application/octet-stream', description: 'Nội dung file', file: true },
+            rawResponse: { contentType: 'application/octet-stream', description: tr('Nội dung file'), file: true },
             handler: async ctx => {
                 const item = await libraryItem(ctx, ctx.params.uuid);
                 return streamFile(ctx, String(item._localPath || ''), item.name);
@@ -165,9 +166,9 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/library/items/:uuid/thumb', scope: 'media:read', tags, operationId: 'downloadLibraryThumb',
-            summary: 'Ảnh thu nhỏ của item',
+            summary: tr('Ảnh thu nhỏ của item'),
             params: s.object({ uuid: s.string().min(1).max(100) }),
-            rawResponse: { contentType: 'image/jpeg', description: 'Ảnh thu nhỏ', file: true },
+            rawResponse: { contentType: 'image/jpeg', description: tr('Ảnh thu nhỏ'), file: true },
             handler: async ctx => {
                 const item = await libraryItem(ctx, ctx.params.uuid);
                 if (!item._thumbLocalPath) notFound('ảnh thu nhỏ');
@@ -176,7 +177,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/library/folders', scope: 'media:read', tags, operationId: 'listLibraryFolders',
-            summary: 'Thư mục thư viện',
+            summary: tr('Thư mục thư viện'),
             params: accountParams,
             query: s.object({ type: s.string().max(20).optional() }),
             handler: async ctx => {
@@ -186,7 +187,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/library/folders', scope: 'media:write', tags, operationId: 'createLibraryFolder',
-            summary: 'Tạo thư mục',
+            summary: tr('Tạo thư mục'),
             params: accountParams,
             body: s.object({ name: s.string().min(1).max(200), color: s.string().max(20).optional() }),
             handler: async ctx => {
@@ -197,7 +198,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/library/folders/:folderId', scope: 'media:write', tags, operationId: 'renameLibraryFolder',
-            summary: 'Đổi tên thư mục',
+            summary: tr('Đổi tên thư mục'),
             params: s.object({ accountId: s.id(), folderId: s.int().min(1) }),
             body: s.object({ name: s.string().min(1).max(200) }),
             handler: async ctx => {
@@ -209,7 +210,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/library/folders/:folderId', scope: 'media:write', tags, operationId: 'deleteLibraryFolder',
-            summary: 'Xoá thư mục (file bên trong chuyển ra ngoài, không bị xoá)',
+            summary: tr('Xoá thư mục (file bên trong chuyển ra ngoài, không bị xoá)'),
             params: s.object({ accountId: s.id(), folderId: s.int().min(1) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -221,7 +222,7 @@ export function mediaRoutes(deps: MediaRouteDeps): RouteDef[] {
     ];
 }
 
-/** Thư mục phải thuộc tài khoản (handler đổi tên/xoá chỉ nhận id). */
+/** The folder must belong to the account (the rename/delete handlers only receive an id). */
 async function ownFolder(ctx: ApiContext, accountId: string, folderId: number): Promise<void> {
     const folders: any[] = (await ctx.call('library:getFolders', { zaloId: accountId }))?.folders || [];
     if (!folders.some(f => Number(f.id) === folderId)) notFound(`thư mục ${folderId}`);

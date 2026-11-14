@@ -47,8 +47,8 @@ export function withErpAuth<TInput = any, TOutput extends object = any>(
       const out = await handler(input ?? ({} as TInput), ctx, event);
       return { success: true, ...out };
     } catch (err: any) {
-      // Quyền phụ thuộc tham số kiểm tra trong handler (requireErpPermission: giao việc cho người khác, sửa hồ sơ người
-      // khác…) → cùng mã như action của withErpAuth (REST nhân viên trả 403, UI hiện hộp thoại quyền ERP)
+      // Permissions that depend on parameters are checked inside the handler (requireErpPermission: assigning work to others, editing other people's profiles
+      // etc.) → same code as the withErpAuth action (employee REST returns 403, the UI shows the ERP permission dialog)
       if (err instanceof ErpPermissionError) {
         Logger.warn(`[erpIpc] ${err.message}`);
         return { success: false, error: err.message, code: 'permission_denied' };
@@ -61,15 +61,15 @@ export function withErpAuth<TInput = any, TOutput extends object = any>(
 }
 
 /**
- * Quyền phụ thuộc tham số, kiểm tra trong handler — tính cả quyền riêng (allow / deny) của hồ sơ ERP như withErpAuth.
- * Ném ErpPermissionError → `{ success: false, code: 'permission_denied' }`. (Trước đây handler dùng `erpCan(role)` bỏ qua
- * quyền riêng và ném Error thường → `internal_error`.)
+ * Parameter-dependent permissions, checked inside the handler: includes the ERP profile's own permissions (allow / deny) like withErpAuth.
+ * Throws ErpPermissionError → `{ success: false, code: 'permission_denied' }`. (Before, the handler used `erpCan(role)`, which ignored
+ * the own permissions, and threw a plain Error → `internal_error`.)
  */
 export function requireErpPermission(action: string, ctx: ErpAuthCtx): void {
   ErpAuthContext.requirePermission(action, ctx);
 }
 
-/** Có quyền `action` không (tính cả quyền riêng của hồ sơ ERP) — không ném. */
+/** Whether the `action` permission is granted (including the ERP profile's own permissions), without throwing. */
 export function erpAllowed(action: string, ctx: ErpAuthCtx): boolean {
   return erpCanWithOverrides(ctx.role, action, ctx.permissionOverrides);
 }

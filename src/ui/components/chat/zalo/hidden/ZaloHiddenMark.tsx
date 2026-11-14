@@ -1,15 +1,16 @@
 /**
- * Kính lúp của ô tìm kiếm hội thoại, kiêm dấu hội thoại ẩn Zalo (ZL-03, quyết định Q1 — chủ dự án chốt 22/10/2026: không
- * dùng biểu tượng khoá riêng):
- *  - không có hội thoại ẩn → kính lúp xám như mọi ô tìm kiếm;
- *  - có hội thoại ẩn → kính lúp đỏ, bấm = con trỏ vào ô tìm kiếm để gõ PIN + đọc lại từ Zalo (PIN đã xoá trên điện thoại
- *    thì hội thoại hiện lại);
- *  - đang xem hội thoại ẩn (đã gõ đúng PIN) → kính lúp đỏ có nền, bấm để ẩn lại.
+ * Magnifier of the conversation search box, and the Zalo hidden-conversation mark (ZL-03, decision Q1: the project owner confirmed on 22/10/2026 that there is no
+ * separate lock icon):
+ *  - no hidden conversations → a grey magnifier like every search box;
+ *  - hidden conversations exist → a red magnifier, click = the cursor goes into the search box to type the PIN + reload from Zalo (if the PIN was removed on the phone,
+ *    the conversation shows again);
+ *  - viewing a hidden conversation (the correct PIN was typed) → a red magnifier with a background, click to hide it again.
  */
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '@/store/app/appStore';
 import { refreshHiddenFromZalo } from '@/hooks/zalo/useZaloHidden';
+import { tr } from '../../../../../shared/i18n';
 
 function SearchGlyph({ className }: { className: string }) {
   return (
@@ -19,7 +20,7 @@ function SearchGlyph({ className }: { className: string }) {
   );
 }
 
-/** Nút bao kính lúp: vùng bấm rộng hơn nhưng không đẩy chữ trong ô tìm kiếm (-m-1 p-1). */
+/** Wrapper of the magnifier: a larger click area that does not push the text in the search box (-m-1 p-1). */
 const RED_BUTTON = '-m-1 flex flex-shrink-0 items-center justify-center rounded-full p-1 text-red-500 transition-colors hover:bg-red-500/15';
 
 export default function ZaloHiddenMark({ accountIds, onFocusSearch }: {
@@ -32,19 +33,19 @@ export default function ZaloHiddenMark({ accountIds, onFocusSearch }: {
   const open = withHidden.filter((id) => !!unlocked[id]);
   if (open.length > 0) {
     return (
-      <button type="button" className={`${RED_BUTTON} bg-red-500/15`} title="Đang xem hội thoại ẩn — bấm để ẩn lại" aria-label="Ẩn lại hội thoại ẩn"
+      <button type="button" className={`${RED_BUTTON} bg-red-500/15`} title={tr('Đang xem hội thoại ẩn — bấm để ẩn lại')} aria-label={tr('Ẩn lại hội thoại ẩn')}
         onClick={() => { for (const id of open) useAppStore.getState().setHiddenUnlocked(id, false); }}>
         <SearchGlyph className="flex-shrink-0" />
       </button>
     );
   }
   return (
-    <button type="button" className={RED_BUTTON} aria-label="Có hội thoại ẩn"
-      title="Có hội thoại ẩn — gõ mã PIN vào ô tìm kiếm để xem (bấm để đọc lại từ Zalo)"
+    <button type="button" className={RED_BUTTON} aria-label={tr('Có hội thoại ẩn')}
+      title={tr('Có hội thoại ẩn — gõ mã PIN vào ô tìm kiếm để xem (bấm để đọc lại từ Zalo)')}
       onClick={() => {
         onFocusSearch();
         void refreshHiddenFromZalo(withHidden).then(({ noPin }) => {
-          if (noPin.length > 0) useAppStore.getState().showNotification('Zalo không còn mã PIN hội thoại ẩn — các hội thoại đã hiện lại', 'info');
+          if (noPin.length > 0) useAppStore.getState().showNotification(tr('Zalo không còn mã PIN hội thoại ẩn — các hội thoại đã hiện lại'), 'info');
         });
       }}>
       <SearchGlyph className="flex-shrink-0" />

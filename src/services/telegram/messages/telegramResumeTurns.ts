@@ -1,11 +1,10 @@
 /**
- * Bù tin Telegram sau khi máy thức dậy / mở khoá: từng tài khoản LẦN LƯỢT (tài khoản đang mở hội thoại trước), lượt sau
- * cách lượt trước vài giây. Trước đây mọi tài khoản cùng bù đầy đủ một lúc (GetDifference, lịch sử kênh, đồng bộ lại
- * hội thoại) đúng lúc Windows đang nạp lại bộ nhớ từ ổ đĩa → app đơ. Việc bù tin của từng tài khoản không đổi, chỉ đổi
- * lúc bắt đầu.
+ * Telegram catch-up after the machine wakes up / unlocks: each account ONE AT A TIME (the account with the open conversation first), each turn
+ * a few seconds after the previous one. Previously every account caught up in full at the same time (GetDifference, channel history, conversation resync)
+ * just as Windows was reloading memory from disk, and the app froze. The catch-up work for each account is unchanged; only the start time changes.
  *
- * Ngoài khoảng sau khi thức dậy (windowMs) mà không còn ai chờ: chạy ngay như cũ. Một lượt bù quá maxTurnMs thì tài
- * khoản kế không chờ nữa (lượt dài vẫn chạy tiếp).
+ * Outside the window after waking (windowMs), when nobody is waiting: runs at once as before. A catch-up turn longer than maxTurnMs means the next
+ * account stops waiting (the long turn still keeps running).
  */
 
 export const RESUME_TURN_WINDOW_MS = 5 * 60_000;
@@ -13,18 +12,18 @@ export const RESUME_TURN_GAP_MS = 3_000;
 export const RESUME_TURN_MAX_MS = 60_000;
 
 export interface ResumeTurns {
-  /** Máy vừa thức dậy / mở khoá: các lượt bù tin trong windowMs tới chạy lần lượt. */
+  /** The machine just woke up / was unlocked: catch-up turns within windowMs run one after another. */
   noteWake(at?: number): void;
-  /** Chờ tới lượt của tài khoản; trả hàm nhả lượt (gọi khi bù xong; gọi lại không sao). */
+  /** Wait for the account's turn; returns a release function (call it when catch-up is done; calling again is harmless). */
   turn(accountId: string): Promise<() => void>;
-  /** Số tài khoản đang chờ lượt. */
+  /** Number of accounts waiting for a turn. */
   waiting(): number;
 }
 
 type Timer = unknown;
 
 export function createResumeTurns(opts: {
-  /** Tài khoản có hội thoại Telegram đang mở (lên trước). */
+  /** Accounts with an open Telegram conversation (they go first). */
   focusedAccount: () => string | null;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => Timer;

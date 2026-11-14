@@ -1,6 +1,6 @@
 /**
- * FacebookAdapter.ts - Adapter cho kênh Facebook
- * Di chuyển nguyên trạng logic từ channelIpc.ts nhánh Facebook.
+ * FacebookAdapter.ts - Adapter for the Facebook channel
+ * Logic moved as-is from the Facebook branch of channelIpc.ts.
  */
 
 import { BaseChannelAdapter } from './BaseChannelAdapter';

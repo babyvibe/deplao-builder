@@ -3,10 +3,10 @@ import { useChatStore } from '@/store/chat/chatStore';
 import { isTelegramUser } from '@/lib/channels/channelHelper';
 
 /**
- * Bù thông tin thẻ link cho tin Telegram lưu trước khi có tiêu đề / mô tả trang (ảnh preview chỉ có tên trang) hoặc trước
- * khi video link có thẻ (vd. fxTikTok). Khi thẻ hiện ra: gom các tin cùng hội thoại trong 400 ms → 1 lần
- * `telegramUser:refreshMessageAttachments` (1 RPC getMessages, không tải media) → cập nhật attachments trong store.
- * Mỗi tin chỉ hỏi 1 lần mỗi phiên; lỗi (mất kết nối…) thì 60 s sau mới cho hỏi lại.
+ * Fills in the link-card info for Telegram messages saved before the page title / description was available (the preview image only had the site name), or before
+ * a video link had its card (e.g. fxTikTok). When the card appears: messages of the same conversation are grouped within 400 ms → 1 call
+ * `telegramUser:refreshMessageAttachments` (1 getMessages RPC, no media download) → updates the attachments in the store.
+ * Each message is asked only once per session; on error (connection lost...) it may be asked again after 60 s.
  */
 const FLUSH_DELAY_MS = 400;
 const RETRY_AFTER_FAILURE_MS = 60_000;
@@ -27,14 +27,14 @@ function parseAttachments(value: unknown): any[] {
   }
 }
 
-/** Tin cần lấy lại thông tin thẻ link từ Telegram. */
+/** Message whose link-card info needs fetching again from Telegram. */
 export function needsTelegramPreviewRefresh(msg: any): boolean {
   if (!isTelegramUser(msg?.channel) || msg?.msg_type === 'recalled' || !/^\d+$/.test(String(msg?.msg_id || ''))) return false;
   const media = parseAttachments(msg.attachments).find((attachment) => PREVIEW_MEDIA_TYPES.has(String(attachment?.type || '')));
   if (!media) return false;
-  // Định dạng cũ: có source 'webpage' + tên trang nhưng chưa có khoá tiêu đề / mô tả
+  // Old format: has source 'webpage' + the site name, but no title / description key yet
   if (media.source === 'webpage') return !('title' in media) && !('description' in media);
-  // Link preview lưu trước khi có `source` (ảnh / video của trang): nội dung tin có link
+  // Link preview saved before `source` existed (the page's image / video): message content with a link
   return URL_PATTERN.test(String(msg.content || ''));
 }
 
@@ -82,7 +82,7 @@ export function requestTelegramPreviewRefresh(msg: any): void {
   if (!timer) timer = setTimeout(() => { void flush(); }, FLUSH_DELAY_MS);
 }
 
-/** Chỉ dùng trong test. */
+/** Test only. */
 export function __resetTelegramPreviewRefresh(): void {
   requested.clear();
   pending.clear();

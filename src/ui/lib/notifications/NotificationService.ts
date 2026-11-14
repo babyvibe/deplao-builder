@@ -47,8 +47,8 @@ export async function requestNotificationPermission(): Promise<boolean> {
 }
 
 // ─── Notification queue ───────────────────────────────────────────────────────
-// OS giới hạn số notification hiển thị cùng lúc.
-// Queue đảm bảo mỗi notification được hiển thị đủ thời gian trước khi cái tiếp theo.
+// The OS limits how many notifications can be shown at once.
+// The queue makes sure each notification is shown long enough before the next one.
 
 interface QueueItem {
   title: string;
@@ -59,9 +59,9 @@ interface QueueItem {
 
 const notifQueue: QueueItem[] = [];
 let notifBusy = false;
-// Track last notification time per thread để group rapid messages
+// Track the last notification time per thread to group rapid messages
 const lastNotifTime: Record<string, number> = {};
-// Active notification instance per thread (để replace khi có tin mới cùng thread)
+// Active notification instance per thread (replaced when a new message arrives in the same thread)
 const activeNotifs: Record<string, Notification> = {};
 
 function processQueue() {
@@ -74,7 +74,7 @@ function processQueue() {
     ? `${item.threadInfo.zaloId}_${item.threadInfo.threadId}`
     : 'global';
 
-  // Đóng notification cũ của cùng thread nếu còn đang hiện
+  // Close the old notification of the same thread if it is still showing
   if (activeNotifs[threadKey]) {
     try { activeNotifs[threadKey].close(); } catch {}
     delete activeNotifs[threadKey];
@@ -85,12 +85,12 @@ function processQueue() {
       body: item.body.length > 120 ? item.body.slice(0, 117) + '…' : item.body,
       icon: item.icon || undefined,
       silent: true,
-      // KHÔNG dùng tag - tag khiến OS replace thay vì stack, làm mất notification
+      // Do NOT use a tag: a tag makes the OS replace instead of stack, which loses notifications
     });
 
     activeNotifs[threadKey] = n;
 
-    // Lưu ref để onclick có thể truy cập ngay cả sau khi timeout close
+    // Keep the ref so onclick can still access it after the timeout closes it
     const threadInfo = item.threadInfo;
     let handled = false;
 
@@ -100,7 +100,7 @@ function processQueue() {
         handled = true;
         try { n.close(); } catch {}
         delete activeNotifs[threadKey];
-        // Gửi IPC mở hội thoại
+        // Send IPC to open the conversation
         try {
           (window as any).electronAPI?.app?.openThread(threadInfo);
         } catch (e) {
@@ -109,15 +109,15 @@ function processQueue() {
       };
     }
 
-    // onclose: giải phóng queue slot cho notification tiếp theo
+    // onclose: free the queue slot for the next notification
     n.onclose = () => {
       delete activeNotifs[threadKey];
       notifBusy = false;
       setTimeout(processQueue, 300);
     };
 
-    // Hiển thị 4 giây, sau đó tự động đóng
-    // onclose sẽ xử lý queue tiếp theo (không cần duplicate trong setTimeout)
+    // Show for 4 seconds, then close automatically
+    // onclose handles the next queue item (no need to duplicate it in setTimeout)
     setTimeout(() => {
       try { n.close(); } catch {}
     }, 4000);
@@ -129,8 +129,8 @@ function processQueue() {
 }
 
 /** Show a desktop (OS) notification that appears in the system tray corner.
- *  Sử dụng queue để đảm bảo mọi notification đều được hiển thị.
- *  Rapid messages từ cùng thread trong 800ms được gộp thành 1 notification.
+ *  Uses a queue to make sure every notification is shown.
+ *  Rapid messages from the same thread within 800ms are merged into 1 notification.
  */
 export function showDesktopNotification(
   title: string,
@@ -149,14 +149,14 @@ export function showDesktopNotification(
   const timeSinceLast = now - (lastNotifTime[threadKey] || 0);
   lastNotifTime[threadKey] = now;
 
-  // Nếu có notification cùng thread đang trong queue, replace nó thay vì add mới
+  // If a notification of the same thread is already in the queue, replace it instead of adding a new one
   if (timeSinceLast < 800) {
     const existingIdx = notifQueue.findIndex(
       q => q.threadInfo?.threadId === threadInfo?.threadId &&
            q.threadInfo?.zaloId === threadInfo?.zaloId
     );
     if (existingIdx >= 0) {
-      // Update body của notification đang chờ
+      // Update the body of the pending notification
       notifQueue[existingIdx].body = body;
       notifQueue[existingIdx].title = title;
       return;

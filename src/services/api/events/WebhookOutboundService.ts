@@ -1,19 +1,19 @@
 /**
- * WebhookOutboundService — gửi sự kiện tới URL của bạn, có chữ ký HMAC, retry, dead-letter.
+ * WebhookOutboundService: sends events to your URL, with an HMAC signature, retries, dead-letter.
  *
- * Giao thức:
- *   POST <url>   Content-Type: application/json   body = envelope sự kiện
- *   X-Deplao-Event: <type>   X-Deplao-Delivery: <id>   X-Deplao-Timestamp: <giây>
+ * Protocol:
+ *   POST <url>   Content-Type: application/json   body = event envelope
+ *   X-Deplao-Event: <type>   X-Deplao-Delivery: <id>   X-Deplao-Timestamp: <seconds>
  *   X-Deplao-Signature: v1=<hex HMAC-SHA256(secret, timestamp + "." + body)>
- * Thành công = 2xx trong 10 giây (redirect không được đi theo).
- * Thử lại sau 30 s, 2 phút, 10 phút, 1 giờ, 6 giờ (tổng 6 lần) → failed (dead-letter).
- * 100 lần thất bại liên tiếp → tự tắt subscription.
+ * Success = 2xx within 10 seconds (redirects are not followed).
+ * Retried after 30 s, 2 min, 10 min, 1 h, 6 h (6 attempts in total) → failed (dead-letter).
+ * 100 consecutive failures → the subscription turns itself off.
  *
- * Hàng đợi: mỗi URL gửi tuần tự (giữ thứ tự gần đúng, không dồn dập bên nhận), tối đa
- * CONCURRENCY URL song song → một URL chậm/chết không làm trễ URL khác.
+ * Queue: each URL is sent in sequence (roughly keeps the order, does not flood the receiver), at most
+ * CONCURRENCY URLs in parallel → one slow or dead URL does not delay the others.
  *
- * Mạng nội bộ: webhook chỉ được trỏ vào 127.x / 192.168.x / 10.x… khi được tạo từ chính máy
- * (allow_private = 1) hoặc người dùng bật api_allow_private_urls. Kiểm tra lúc kết nối (netGuard).
+ * Private network: a webhook may point to 127.x / 192.168.x / 10.x… only when it was created from the machine itself
+ * (allow_private = 1) or the user enabled api_allow_private_urls. Checked at connect time (netGuard).
  */
 import * as crypto from 'crypto';
 import { randomUUID } from 'crypto';
@@ -23,15 +23,16 @@ import { EventHub, ApiEvent, canReceive } from './EventHub';
 import { getApiSettingBool } from '../settings';
 import { guardedRequest } from '../http/netGuard';
 import { decryptSecret, encryptSecret } from '../auth/secretBox';
+import { tr } from '../../../shared/i18n';
 
 export const RETRY_SCHEDULE_MS = [30_000, 120_000, 600_000, 3_600_000, 21_600_000];
-/** Lần đầu + 5 lần thử lại. */
+/** First attempt + 5 retries. */
 export const MAX_ATTEMPTS = RETRY_SCHEDULE_MS.length + 1;
 export const DISABLE_AFTER_FAILURES = 100;
 const TIMEOUT_MS = 10_000;
 const TICK_MS = 5_000;
 const CONCURRENCY = 4;
-/** Sau ngần này lần gửi liên tục cho 1 URL thì nhường lượt cho URL khác. */
+/** After this many consecutive sends to one URL, yield the turn to other URLs. */
 const PER_URL_BURST = 50;
 const RESPONSE_BODY_MAX = 2048;
 
@@ -43,7 +44,7 @@ export interface WebhookSubscription {
     events: string[];
     account_ids: string[] | null;
     active: boolean;
-    /** true = được gửi tới mạng nội bộ (tạo từ chính máy). */
+    /** true = may send to the private network (created from the machine itself). */
     allow_private: boolean;
     consecutive_failures: number;
     disabled_reason: string | null;
@@ -74,9 +75,9 @@ export interface PostResult {
 }
 
 export interface WebhookDeps {
-    /** Principal của chủ subscription (null nếu key đã bị thu hồi/hết hạn). */
+    /** Principal of the subscription owner (null if the key was revoked or expired). */
     principalForKey: (keyId: string) => Principal | null;
-    /** Thay HTTP client (test). Mặc định guardedRequest (chặn mạng nội bộ). */
+    /** Replace the HTTP client (tests). Default is guardedRequest (blocks the private network). */
     requestImpl?: typeof guardedRequest;
     logError?: (msg: string) => void;
 }
@@ -85,7 +86,7 @@ export function signPayload(secret: string, timestampSec: number, body: string):
     return 'v1=' + crypto.createHmac('sha256', secret).update(`${timestampSec}.${body}`).digest('hex');
 }
 
-/** Hàm mẫu cho bên nhận (cũng dùng trong test). */
+/** Sample receiver function (also used in tests). */
 export function verifySignature(secret: string, timestampSec: string | number, body: string, header: string, toleranceSec = 300, nowSec = Math.floor(Date.now() / 1000)): boolean {
     if (Math.abs(nowSec - Number(timestampSec)) > toleranceSec) return false;
     const expected = signPayload(secret, Number(timestampSec), body);
@@ -118,16 +119,16 @@ function toSub(row: SubRow): WebhookSubscription {
 export function validateWebhookUrl(raw: string): string {
     let u: URL;
     try { u = new URL(raw); } catch { throw new ApiError(400, 'VALIDATION_ERROR', 'URL webhook không hợp lệ'); }
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new ApiError(400, 'VALIDATION_ERROR', 'Chỉ nhận http/https');
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new ApiError(400, 'VALIDATION_ERROR', tr('Chỉ nhận http/https'));
     const port = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
-    if (port < 1024 && port !== 80 && port !== 443) throw new ApiError(400, 'VALIDATION_ERROR', 'Cổng < 1024 chỉ cho 80/443');
-    if (u.username || u.password) throw new ApiError(400, 'VALIDATION_ERROR', 'Không đặt user:pass trong URL; dùng secret để xác thực');
+    if (port < 1024 && port !== 80 && port !== 443) throw new ApiError(400, 'VALIDATION_ERROR', tr('Cổng < 1024 chỉ cho 80/443'));
+    if (u.username || u.password) throw new ApiError(400, 'VALIDATION_ERROR', tr('Không đặt user:pass trong URL; dùng secret để xác thực'));
     u.hash = '';
     return u.toString();
 }
 
 function describeError(err: any): string {
-    if (err?.code === 'PRIVATE_ADDRESS') return 'Đích thuộc mạng nội bộ — bị chặn (webhook tạo từ xa không được trỏ vào LAN/localhost; bật api_allow_private_urls nếu cần)';
+    if (err?.code === 'PRIVATE_ADDRESS') return tr('Đích thuộc mạng nội bộ — bị chặn (webhook tạo từ xa không được trỏ vào LAN/localhost; bật api_allow_private_urls nếu cần)');
     if (err?.code === 'TIMEOUT') return `Timeout ${TIMEOUT_MS / 1000}s`;
     return String(err?.message || err).slice(0, 500);
 }
@@ -142,7 +143,7 @@ export class WebhookOutboundService {
     private deliveredCount = 0;
     private lastPrune = 0;
     private pumpScheduled = false;
-    /** URL tạm nghỉ sau lỗi bất ngờ (DB không ghi được...) → không gửi trùng liên tục. */
+    /** URL paused briefly after an unexpected error (DB cannot write...) → no repeated sends in a row. */
     private cooldown = new Map<string, number>();
 
     constructor(private readonly hub: EventHub, private readonly deps: WebhookDeps) {}
@@ -175,13 +176,13 @@ export class WebhookOutboundService {
 
     get(id: string, keyId?: string | null): WebhookSubscription {
         const row = apiDb().queryOne<SubRow>('SELECT * FROM webhook_subscriptions WHERE id = ?', [id]);
-        if (!row || (keyId !== undefined && row.key_id !== keyId)) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy webhook');
+        if (!row || (keyId !== undefined && row.key_id !== keyId)) throw new ApiError(404, 'NOT_FOUND', tr('Không tìm thấy webhook'));
         return toSub(row);
     }
 
     create(input: {
         keyId: string | null; name?: string; url: string; events?: string[]; accountIds?: string[] | null; secret?: string;
-        /** Người tạo gọi từ chính máy → được trỏ vào mạng nội bộ. */
+        /** The creator called from the machine itself → may point to the private network. */
         allowPrivate?: boolean;
     }): { subscription: WebhookSubscription; secret: string } {
         const url = validateWebhookUrl(input.url);
@@ -202,7 +203,7 @@ export class WebhookOutboundService {
 
     update(id: string, keyId: string | null | undefined, patch: {
         name?: string; url?: string; events?: string[]; accountIds?: string[] | null; active?: boolean;
-        /** Chỉ áp dụng khi đổi URL: quyền trỏ vào mạng nội bộ của người sửa. */
+        /** Only applies when the URL changes: the editor's right to point to the private network. */
         allowPrivate?: boolean;
     }): WebhookSubscription {
         this.get(id, keyId);
@@ -238,7 +239,7 @@ export class WebhookOutboundService {
         this.hub.invalidateConsumers();
     }
 
-    /** Xoá mọi webhook của một chủ (key bị xoá hẳn, plugin bị gỡ). */
+    /** Delete all webhooks of one owner (key permanently deleted, plugin uninstalled). */
     removeByOwner(keyId: string): number {
         if (!apiTablesExist()) return 0;
         const ids = apiDb().query<{ id: string }>('SELECT id FROM webhook_subscriptions WHERE key_id = ?', [keyId]).map(r => r.id);
@@ -260,13 +261,13 @@ export class WebhookOutboundService {
 
     retry(deliveryId: string, keyId?: string | null): void {
         const row = apiDb().queryOne<DeliveryRow>('SELECT * FROM webhook_deliveries WHERE id = ?', [deliveryId]);
-        if (!row) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy lần gửi');
+        if (!row) throw new ApiError(404, 'NOT_FOUND', tr('Không tìm thấy lần gửi'));
         this.get(row.subscription_id, keyId);
         apiDb().run(`UPDATE webhook_deliveries SET status = 'pending', next_retry_at = ? WHERE id = ?`, [Date.now(), deliveryId]);
         this.schedulePump();
     }
 
-    /** Gửi thử ngay một sự kiện "ping" (không lưu), trả kết quả HTTP. */
+    /** Send a test "ping" event right away (not saved), return the HTTP result. */
     async test(id: string, keyId?: string | null): Promise<PostResult & { took_ms: number }> {
         this.get(id, keyId);
         const row = apiDb().queryOne<SubRow>('SELECT * FROM webhook_subscriptions WHERE id = ?', [id])!;
@@ -276,7 +277,7 @@ export class WebhookOutboundService {
         return { ...r, took_ms: Date.now() - started };
     }
 
-    // ─── Hàng đợi ────────────────────────────────────────────────────────
+    // ─── Queue ────────────────────────────────────────────────────────
 
     private allowPrivate(flag: number): boolean {
         return !!flag || getApiSettingBool('api_allow_private_urls');
@@ -287,7 +288,7 @@ export class WebhookOutboundService {
         return apiDb().query<SubRow>('SELECT * FROM webhook_subscriptions WHERE active = 1');
     }
 
-    /** Ghi lần gửi cho các subscription khớp. Trả số lần gửi tạo ra. */
+    /** Record a send for the matching subscriptions. Returns the number of sends created. */
     enqueue(event: ApiEvent): number {
         if (!event.seq) return 0;
         let count = 0;
@@ -302,7 +303,7 @@ export class WebhookOutboundService {
                 let principal: Principal | null = null;
                 if (sub.key_id) {
                     principal = this.deps.principalForKey(sub.key_id);
-                    if (!principal) continue; // key bị thu hồi/hết hạn → không gửi
+                    if (!principal) continue; // key revoked/expired → do not send
                 }
                 if (!canReceive({ principal, types: sub.events, accountIds: sub.account_ids }, event)) continue;
                 db.run(
@@ -319,7 +320,7 @@ export class WebhookOutboundService {
         return count;
     }
 
-    /** Chạy hàng đợi tới khi hết việc đến hạn; trả số lần gửi thành công trong lượt (test/thủ công). */
+    /** Run the queue until no due work is left; returns the number of successful sends in this run (tests/manual). */
     tick(): Promise<number> {
         const before = this.deliveredCount;
         return new Promise(resolve => {
@@ -351,7 +352,7 @@ export class WebhookOutboundService {
         }
     }
 
-    /** Lần gửi đến hạn cũ nhất — của một URL cho trước, hoặc của URL chưa bận. */
+    /** The oldest due send: either for a given URL, or for a URL that is not busy. */
     private nextDue(now: number, url?: string): DueRow | null {
         const params: any[] = [now];
         let extra = '';
@@ -409,7 +410,7 @@ export class WebhookOutboundService {
         this.notifyIdle();
     }
 
-    /** Gửi tuần tự các lần gửi đến hạn của một URL (tối đa PER_URL_BURST rồi nhường lượt). */
+    /** Send the due sends of one URL in sequence (up to PER_URL_BURST, then yield the turn). */
     private async drainUrl(url: string, first: DueRow): Promise<void> {
         let row: DueRow | null = first;
         for (let i = 0; row && i < PER_URL_BURST; i++) {
@@ -417,7 +418,7 @@ export class WebhookOutboundService {
             try {
                 disabled = await this.deliver(row);
             } catch (err: any) {
-                // Lỗi bất ngờ (DB...) → hoãn lần gửi này để không lặp nóng.
+                // Unexpected error (DB...) → postpone this send so it does not spin hot.
                 this.deps.logError?.(`[Webhook] deliver ${row.id}: ${err?.message || err}`);
                 this.cooldown.set(url, Date.now() + 60_000);
                 try { apiDb().run('UPDATE webhook_deliveries SET next_retry_at = ? WHERE id = ?', [Date.now() + 60_000, row.id]); } catch { /* ignore */ }
@@ -430,7 +431,7 @@ export class WebhookOutboundService {
 
     private async post(url: string, secret: string, deliveryId: string, eventType: string, body: string, allowPrivate: boolean): Promise<PostResult> {
         if (!secret) {
-            return { ok: false, status: null, body: '', error: 'Không giải mã được secret trên máy này — xoá và tạo lại webhook' };
+            return { ok: false, status: null, body: '', error: tr('Không giải mã được secret trên máy này — xoá và tạo lại webhook') };
         }
         const ts = Math.floor(Date.now() / 1000);
         const request = this.deps.requestImpl || guardedRequest;
@@ -457,14 +458,14 @@ export class WebhookOutboundService {
                 ok,
                 status: res.status,
                 body: res.body.toString('utf8'),
-                error: ok ? null : redirect ? `HTTP ${res.status} — webhook không đi theo redirect, hãy dùng URL cuối cùng` : `HTTP ${res.status}`,
+                error: ok ? null : redirect ? tr('HTTP {{status}} — webhook không đi theo redirect, hãy dùng URL cuối cùng', { status: res.status }) : `HTTP ${res.status}`,
             };
         } catch (err: any) {
             return { ok: false, status: null, body: '', error: describeError(err) };
         }
     }
 
-    /** Gửi một lần; trả true nếu subscription vừa bị tự tắt. */
+    /** Send once; returns true if the subscription was just turned off automatically. */
     private async deliver(d: DueRow): Promise<boolean> {
         const r = await this.post(d.url, decryptSecret(d.secret), d.id, d.event_type, d.payload_json, this.allowPrivate(d.allow_private));
         const db = apiDb();
@@ -492,7 +493,7 @@ export class WebhookOutboundService {
         return false;
     }
 
-    /** Dọn lần gửi cũ: delivered 7 ngày, failed 30 ngày, pending của webhook đã tắt quá 7 ngày. */
+    /** Clean up old sends: delivered after 7 days, failed after 30 days, pending for webhooks turned off for over 7 days. */
     prune(now = Date.now()): void {
         if (!apiTablesExist()) return;
         try {

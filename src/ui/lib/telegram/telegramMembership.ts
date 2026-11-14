@@ -1,4 +1,5 @@
 import { isTelegramUser } from '@/lib/channels/channelHelper';
+import { tr } from '../../../shared/i18n';
 
 type MembershipContact = {
   channel?: string | null;
@@ -13,11 +14,11 @@ export type TelegramMembershipNotice = {
 };
 
 const MEMBERSHIP_LABELS: Record<string, string> = {
-  left: 'Đã rời',
-  joinable: 'Chưa tham gia',
-  request: 'Chờ duyệt',
-  pending: 'Chờ duyệt',
-  forbidden: 'Không khả dụng',
+  left: tr('Đã rời'),
+  joinable: tr('Chưa tham gia'),
+  request: tr('Chờ duyệt'),
+  pending: tr('Chờ duyệt'),
+  forbidden: tr('Không khả dụng'),
 };
 
 /**
@@ -31,8 +32,8 @@ export function getTelegramMembershipNotice(contact: MembershipContact): Telegra
   if (state === 'member') return null;
   const canRejoin = state === 'joinable' || state === 'request';
   return {
-    label: MEMBERSHIP_LABELS[state] || 'Không còn là thành viên',
-    description: `Bạn không còn là thành viên nên tin nhắn mới không được đồng bộ realtime.${canRejoin ? ' Tham gia lại để tiếp tục nhận tin.' : ''}`,
+    label: MEMBERSHIP_LABELS[state] || tr('Không còn là thành viên'),
+    description: tr('Bạn không còn là thành viên nên tin nhắn mới không được đồng bộ realtime.{{v1}}', { v1: canRejoin ? tr(' Tham gia lại để tiếp tục nhận tin.') : '' }),
   };
 }
 

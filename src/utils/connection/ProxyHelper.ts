@@ -2,7 +2,7 @@ import Logger from '../Logger';
 import type { ProxyConfig } from '../../models';
 
 /**
- * Tạo proxy URL từ cấu hình proxy.
+ * Build a proxy URL from the proxy config.
  * Format: protocol://user:pass@host:port
  */
 export function buildProxyUrl(proxy: ProxyConfig): string {
@@ -13,9 +13,9 @@ export function buildProxyUrl(proxy: ProxyConfig): string {
 }
 
 /**
- * Tạo proxy agent tương thích với zca-js (agent option trong Zalo constructor).
- * Dùng proxy-agent để tự động nhận diện HTTP/HTTPS/SOCKS4/SOCKS5.
- * Trả về undefined nếu proxy là null/undefined hoặc nếu tạo thất bại.
+ * Create a proxy agent compatible with zca-js (the agent option in the Zalo constructor).
+ * Uses proxy-agent to detect HTTP/HTTPS/SOCKS4/SOCKS5 automatically.
+ * Returns undefined if the proxy is null/undefined or if creation fails.
  */
 export function createProxyAgent(proxy: ProxyConfig | null | undefined): any {
     if (!proxy) return undefined;

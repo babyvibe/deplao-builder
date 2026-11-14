@@ -1,7 +1,7 @@
 /**
- * Nút "Sản phẩm" trên thanh công cụ soạn tin (ZL-04, chỉ tài khoản Zalo Business): chọn danh mục, tìm sản phẩm, gửi vào
- * hội thoại dưới dạng link catalog.zalo.me kèm tên + giá. Chọn nhiều → gửi lần lượt, cách nhau ít nhất 2 s (quyết định Q8).
- * "Quản lý" mở cửa sổ thêm / sửa / xoá danh mục và sản phẩm.
+ * "Sản phẩm" (Products) button on the compose toolbar (ZL-04, only Zalo Business accounts): pick a category, search products, send into the
+ * conversation as a catalog.zalo.me link with the name + price. Select several → sent one by one, at least 2 s apart (decision Q8).
+ * "Quản lý" (Manage) opens the window to add / edit / delete categories and products.
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
@@ -12,6 +12,8 @@ import {
 } from '../../../../../shared/zalo/zaloCatalog';
 import { catalogAuth, loadCatalogs, loadProducts } from './zaloCatalogData';
 import ZaloCatalogManager from './ZaloCatalogManager';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -42,7 +44,7 @@ export default function ZaloCatalogPicker({ accountId, threadId, threadType, onC
       setCatalogId((current) => (items.some((c) => c.id === current) ? current : (items.find((c) => c.isDefault) || items[0])?.id || ''));
     } catch (err: any) {
       setCatalogs([]);
-      setError(err?.message || 'Không đọc được danh mục');
+      setError(err?.message || tr('Không đọc được danh mục'));
     }
   }, [accountId]);
 
@@ -63,7 +65,7 @@ export default function ZaloCatalogPicker({ accountId, threadId, threadType, onC
       setProducts(res.items);
       setHasMore(res.hasMore);
     } catch (err: any) {
-      setError(err?.message || 'Không đọc được sản phẩm');
+      setError(err?.message || tr('Không đọc được sản phẩm'));
     } finally {
       setLoading(false);
     }
@@ -83,14 +85,14 @@ export default function ZaloCatalogPicker({ accountId, threadId, threadType, onC
       for (let i = 0; i < items.length && !cancelled.current; i++) {
         if (i > 0) await sleep(ZALO_PRODUCT_SEND_GAP_MS);
         const res = await ipc.zalo?.sendLink({ auth: catalogAuth(accountId), url: items[i].url, message: items[i].text, threadId, type: threadType });
-        if (!res?.success) throw new Error(res?.error || 'Zalo từ chối gửi');
+        if (!res?.success) throw new Error(res?.error || tr('Zalo từ chối gửi'));
         sent++;
         setSending({ done: sent, total: items.length });
       }
-      showNotification(sent > 1 ? `Đã gửi ${sent} sản phẩm` : 'Đã gửi sản phẩm', 'success');
+      showNotification(sent > 1 ? tr('Đã gửi {{sent}} sản phẩm', { sent }) : tr('Đã gửi sản phẩm'), 'success');
       onClose();
     } catch (err: any) {
-      showNotification(`Đã gửi ${sent}/${items.length} — ${err?.message || 'lỗi gửi'}`, 'error');
+      showNotification(tr('Đã gửi {{sent}}/{{count}} — {{v1}}', { sent, count: items.length, v1: err?.message || tr('lỗi gửi') }), 'error');
       setSending(null);
     }
   };
@@ -113,30 +115,30 @@ export default function ZaloCatalogPicker({ accountId, threadId, threadType, onC
       <div className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-input bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <p className="flex-1 text-sm font-semibold text-foreground">Gửi sản phẩm (Zalo Business)</p>
+          <p className="flex-1 text-sm font-semibold text-foreground">{tr('Gửi sản phẩm (Zalo Business)')}</p>
           <button type="button" onClick={() => setManaging(true)}
-            className="rounded-lg border border-input px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted">Quản lý</button>
-          <button type="button" onClick={onClose} aria-label="Đóng"
+            className="rounded-lg border border-input px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted">{tr('Quản lý')}</button>
+          <button type="button" onClick={onClose} aria-label={tr('Đóng')}
             className="rounded-lg px-2 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground">✕</button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
-          <select value={catalogId} onChange={(e) => setCatalogId(e.target.value)} aria-label="Danh mục"
+          <select value={catalogId} onChange={(e) => setCatalogId(e.target.value)} aria-label={tr('Danh mục')}
             className="min-w-0 flex-1 rounded-lg border border-input bg-muted px-2 py-1.5 text-sm text-foreground">
-            {(catalogs || []).map((c) => <option key={c.id} value={c.id}>{c.name}{c.isDefault ? ' (mặc định)' : ''} · {c.totalProduct}</option>)}
+            {(catalogs || []).map((c) => <option key={c.id} value={c.id}>{c.name}{c.isDefault ? tr(' (mặc định)') : ''} · {c.totalProduct}</option>)}
           </select>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm sản phẩm..."
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr('Tìm sản phẩm...')}
             className="min-w-0 flex-1 rounded-lg border border-input bg-muted px-2 py-1.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none" />
         </div>
 
         <div className="min-h-[180px] flex-1 overflow-y-auto p-3">
           {error && <p role="alert" className="mb-2 text-xs text-destructive">{error}</p>}
           {catalogs === null || (loading && products.length === 0) ? (
-            <p className="py-6 text-center text-xs text-muted-foreground">Đang đọc từ Zalo...</p>
+            <p className="py-6 text-center text-xs text-muted-foreground">{tr('Đang đọc từ Zalo...')}</p>
           ) : catalogs.length === 0 ? (
-            <p className="py-6 text-center text-xs text-muted-foreground">Chưa có danh mục — bấm "Quản lý" để tạo.</p>
+            <p className="py-6 text-center text-xs text-muted-foreground">{tr('Chưa có danh mục — bấm "Quản lý" để tạo.')}</p>
           ) : visible.length === 0 ? (
-            <p className="py-6 text-center text-xs text-muted-foreground">{query ? 'Không có sản phẩm khớp' : 'Danh mục chưa có sản phẩm'}</p>
+            <p className="py-6 text-center text-xs text-muted-foreground">{query ? tr('Không có sản phẩm khớp') : tr('Danh mục chưa có sản phẩm')}</p>
           ) : (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {visible.map((p) => {
@@ -158,21 +160,21 @@ export default function ZaloCatalogPicker({ accountId, threadId, threadType, onC
           )}
           {hasMore && !query && (
             <button type="button" disabled={loading} onClick={() => void refreshProducts({ more: true })}
-              className="mt-3 w-full rounded-lg py-1.5 text-xs text-blue-500 hover:bg-muted disabled:opacity-50">Tải thêm</button>
+              className="mt-3 w-full rounded-lg py-1.5 text-xs text-blue-500 hover:bg-muted disabled:opacity-50">{tr('Tải thêm')}</button>
           )}
         </div>
 
         <div className="flex items-center gap-2 border-t border-border px-4 py-3">
           {activeCatalog?.url && (
             <button type="button" disabled={!!sending} onClick={() => void sendLinks([{ url: activeCatalog.url, text: activeCatalog.name }])}
-              className="rounded-xl px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50">Gửi cả danh mục</button>
+              className="rounded-xl px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50">{tr('Gửi cả danh mục')}</button>
           )}
           <p className="flex-1 text-[11px] text-muted-foreground">
-            {sending ? `Đang gửi ${sending.done}/${sending.total}...` : selected.length > 1 ? 'Gửi lần lượt, cách nhau 2 giây' : ''}
+            {sending ? tr('Đang gửi {{done}}/{{total}}...', { done: sending.done, total: sending.total }) : selected.length > 1 ? tr('Gửi lần lượt, cách nhau 2 giây') : ''}
           </p>
           <button type="button" disabled={selected.length === 0 || !!sending} onClick={() => void sendSelected()}
             className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50">
-            Gửi{selected.length > 0 ? ` (${selected.length})` : ''}
+            {trx('Gửi{{v1}}', { v1: selected.length > 0 ? ` (${selected.length})` : '' })}
           </button>
         </div>
       </div>

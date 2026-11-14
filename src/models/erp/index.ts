@@ -1,4 +1,4 @@
-// ERP module - re-export tất cả types
+// ERP module - re-export all types
 export * from './Project';
 export * from './Task';
 export * from './CalendarEvent';

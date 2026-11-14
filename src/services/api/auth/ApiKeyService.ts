@@ -1,8 +1,8 @@
 /**
- * ApiKeyService — cấp, xác thực, thu hồi API key.
+ * ApiKeyService: issues, verifies, and revokes API keys.
  *
- * Key = "dpk_" + 43 ký tự base62 ngẫu nhiên (~256 bit). DB chỉ lưu SHA-256 của key và
- * 12 ký tự đầu (key_prefix) để tra cứu. Key đầy đủ chỉ trả về một lần khi tạo.
+ * Key = "dpk_" + 43 random base62 characters (~256 bits). The DB only stores the SHA-256 of the key and the
+ * first 12 characters (key_prefix) for lookup. The full key is returned only once, at creation.
  */
 import * as crypto from 'crypto';
 import { apiDb } from '../dbSchema';
@@ -11,6 +11,7 @@ import {
     ApiError, ApiScope, ErpRoleName, Principal, isApiScope,
 } from '../types';
 import { getApiSettingNumber } from '../settings';
+import { tr } from '../../../shared/i18n';
 
 export const KEY_PREFIX = 'dpk_';
 const KEY_BODY_LENGTH = 43;
@@ -99,7 +100,7 @@ function randomBase62(length: number): string {
     while (out.length < length) {
         const bytes = crypto.randomBytes(length * 2);
         for (const b of bytes) {
-            // Bỏ byte >= 248 để không lệch phân phối (248 = 62 * 4).
+            // Drop bytes >= 248 so the distribution is not skewed (248 = 62 * 4).
             if (b >= 248) continue;
             out += BASE62[b % 62];
             if (out.length === length) break;
@@ -115,7 +116,7 @@ export function sanitizeScopes(input: string[] | undefined | null): ApiScope[] {
         throw new ApiError(400, 'VALIDATION_ERROR', `Scope không hợp lệ: ${invalid.join(', ')}`);
     }
     const unique = Array.from(new Set(list)) as ApiScope[];
-    if (unique.length === 0) throw new ApiError(400, 'VALIDATION_ERROR', 'Cần ít nhất một scope');
+    if (unique.length === 0) throw new ApiError(400, 'VALIDATION_ERROR', tr('Cần ít nhất một scope'));
     return unique;
 }
 
@@ -137,7 +138,7 @@ function sanitizeAccounts(input: string[] | null | undefined): string[] | null {
 function sanitizeErpRole(input: string | undefined): ErpRoleName {
     if (!input) return 'manager';
     if (!ERP_ROLES.includes(input as ErpRoleName)) {
-        throw new ApiError(400, 'VALIDATION_ERROR', `erp_role phải là: ${ERP_ROLES.join(', ')}`);
+        throw new ApiError(400, 'VALIDATION_ERROR', tr('erp_role phải là: {{v1}}', { v1: ERP_ROLES.join(', ') }));
     }
     return input as ErpRoleName;
 }
@@ -152,7 +153,7 @@ class ApiKeyService {
         return ApiKeyService.instance;
     }
 
-    /** Test: reset cache giữa các test. */
+    /** Test: reset the cache between tests. */
     static resetForTests(): void {
         ApiKeyService.instance = null;
     }
@@ -163,8 +164,8 @@ class ApiKeyService {
 
     create(input: ApiKeyInput): { key: string; record: ApiKeyRecord } {
         const name = String(input.name || '').trim();
-        if (!name) throw new ApiError(400, 'VALIDATION_ERROR', 'Thiếu tên key');
-        if (name.length > 100) throw new ApiError(400, 'VALIDATION_ERROR', 'Tên key tối đa 100 ký tự');
+        if (!name) throw new ApiError(400, 'VALIDATION_ERROR', tr('Thiếu tên key'));
+        if (name.length > 100) throw new ApiError(400, 'VALIDATION_ERROR', tr('Tên key tối đa 100 ký tự'));
         const scopes = sanitizeScopes(input.scopes);
         const accountIds = sanitizeAccounts(input.accountIds);
         const allowedIps = sanitizeIps(input.allowedIps);
@@ -172,7 +173,7 @@ class ApiKeyService {
         const erpRole = sanitizeErpRole(input.erpRole);
         const expiresAt = input.expiresAt ? Number(input.expiresAt) : null;
         if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
-            throw new ApiError(400, 'VALIDATION_ERROR', 'expires_at phải là thời điểm trong tương lai (epoch ms)');
+            throw new ApiError(400, 'VALIDATION_ERROR', tr('expires_at phải là thời điểm trong tương lai (epoch ms)'));
         }
 
         const body = randomBase62(KEY_BODY_LENGTH);
@@ -209,13 +210,13 @@ class ApiKeyService {
 
     update(id: string, patch: Partial<Omit<ApiKeyInput, 'pluginId' | 'createdBy'>>): ApiKeyRecord {
         const current = this.get(id);
-        if (!current) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy key');
-        if (current.revoked_at) throw new ApiError(409, 'CONFLICT', 'Key đã bị thu hồi');
+        if (!current) throw new ApiError(404, 'NOT_FOUND', tr('Không tìm thấy key'));
+        if (current.revoked_at) throw new ApiError(409, 'CONFLICT', tr('Key đã bị thu hồi'));
         const sets: string[] = [];
         const params: any[] = [];
         if (patch.name !== undefined) {
             const name = String(patch.name).trim();
-            if (!name || name.length > 100) throw new ApiError(400, 'VALIDATION_ERROR', 'Tên key 1–100 ký tự');
+            if (!name || name.length > 100) throw new ApiError(400, 'VALIDATION_ERROR', tr('Tên key 1–100 ký tự'));
             sets.push('name = ?'); params.push(name);
         }
         if (patch.scopes !== undefined) { sets.push('scopes_json = ?'); params.push(JSON.stringify(sanitizeScopes(patch.scopes))); }
@@ -235,7 +236,7 @@ class ApiKeyService {
         if (patch.expiresAt !== undefined) {
             const v = patch.expiresAt ? Number(patch.expiresAt) : null;
             if (v !== null && (!Number.isFinite(v) || v <= Date.now())) {
-                throw new ApiError(400, 'VALIDATION_ERROR', 'expires_at phải là thời điểm trong tương lai');
+                throw new ApiError(400, 'VALIDATION_ERROR', tr('expires_at phải là thời điểm trong tương lai'));
             }
             sets.push('expires_at = ?'); params.push(v);
         }
@@ -264,14 +265,14 @@ class ApiKeyService {
         return changed;
     }
 
-    /** Xoá hẳn key đã thu hồi (dọn danh sách). */
+    /** Permanently delete revoked keys (clears the list). */
     purge(id: string): boolean {
         const changed = apiDb().runChanges('DELETE FROM api_keys WHERE id = ? AND revoked_at IS NOT NULL', [id]);
         this.verifyCache.clear();
         return changed > 0;
     }
 
-    /** Trả record nếu key hợp lệ (chưa thu hồi, chưa hết hạn), ngược lại null. */
+    /** Returns the record if the key is valid (not revoked, not expired), otherwise null. */
     verify(rawKey: string): ApiKeyRecord | null {
         if (!this.looksLikeApiKey(rawKey)) return null;
         const prefix = rawKey.slice(KEY_PREFIX.length, KEY_PREFIX.length + LOOKUP_PREFIX_LENGTH);
@@ -297,7 +298,7 @@ class ApiKeyService {
         return null;
     }
 
-    /** Ghi last_used_at tối đa 1 lần/phút mỗi key. */
+    /** Writes last_used_at at most once a minute per key. */
     touch(id: string, ip: string): void {
         const now = Date.now();
         const last = this.lastTouch.get(id) || 0;
@@ -305,7 +306,7 @@ class ApiKeyService {
         this.lastTouch.set(id, now);
         try {
             apiDb().run('UPDATE api_keys SET last_used_at = ?, last_used_ip = ? WHERE id = ?', [now, ip || null, id]);
-        } catch { /* không chặn request vì lỗi ghi thống kê */ }
+        } catch { /* does not block the request because the stats write failed */ }
     }
 
     toPrincipal(record: ApiKeyRecord): Principal {

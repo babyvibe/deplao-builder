@@ -1,7 +1,7 @@
 /**
- * Hội thoại đang mở: đúng phần store cần cho khung chat (tài khoản, hội thoại / topic, tin, danh bạ, đang gõ, đã xem,
- * thông tin nhóm, mốc đã nhận / đã xem, quản trị viên nhóm Telegram, số liệu bài kênh). Chỉ subscribe phần của hội thoại
- * đang mở: `useChatStore()` không selector làm cả cửa sổ render lại với mọi thay đổi ở hội thoại / tài khoản khác.
+ * The open conversation: exactly the store parts the chat window needs (account, conversation / topic, messages, contacts, typing, seen,
+ * group info, received / seen marks, Telegram group admins, channel post stats). Only subscribes to the part of the open conversation:
+ * `useChatStore()` without a selector would re-render the whole window on every change in other conversations / accounts.
  */
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -15,11 +15,11 @@ import { useTelegramGroupAdmins } from '@/lib/chat/telegram/telegramGroupAdmins'
 import { useTelegramPostStats } from '@/hooks/chat/useTelegramPostStats';
 import { useTelegramPollResults } from '@/hooks/chat/useTelegramPollResults';
 
-/** Giá trị rỗng ổn định cho selector (không tạo mảng mới mỗi lần render → memo phía sau không chạy lại) */
+/** Stable empty value for selectors (does not create a new array on every render, so the memo after it does not run again) */
 const EMPTY_MESSAGES: MessageItem[] = [];
 const EMPTY_CONTACTS: ContactItem[] = [];
 
-/** Chuỗi đại diện những người đang gõ trong 1 hội thoại — selector trả chuỗi nên so theo giá trị. */
+/** String of the people typing in one conversation: the selector returns a string, so it is compared by value. */
 function typingSignature(typingUsers: Record<string, number>, prefix: string): string {
   if (!prefix) return '';
   let signature = '';
@@ -62,8 +62,8 @@ export function useOpenThread() {
     if (!activeAccountId || !activeThreadId) return undefined;
     const found = contactList.find(c => c.contact_id === activeThreadId);
     if (found) return found;
-    // Hội thoại chưa có trong các trang đã tải (hội thoại ghim / My Documents tải bù theo id): tài khoản Telegram / Facebook
-    // vẫn biết kênh, không để khung chat coi là Zalo (đồng bộ, nút Telegram, gửi tin)
+    // The conversation is not in the pages loaded so far (a pinned conversation / My Documents loaded by id): a Telegram / Facebook account
+    // still knows its channel, so the chat window does not treat it as Zalo (sync, the Telegram button, sending messages)
     if (!isNonZalo(accountChannel)) return undefined;
     return {
       owner_zalo_id: activeAccountId, contact_id: activeThreadId, display_name: '', avatar_url: '', is_friend: 0,
@@ -74,24 +74,24 @@ export function useOpenThread() {
   const channelCap = React.useMemo(() =>
     getCapability(resolveChannel(activeContact, { channel: accountChannel })),
   [activeContact, accountChannel]);
-  // Mốc người kia đã nhận / đã xem tin mình gửi (cột của hội thoại + event:receipt realtime) → dấu ✓ / ✓✓ cạnh giờ
+  // The other side's received / seen marks for the messages I sent (the conversation's columns + realtime event:receipt) → ✓ / ✓✓ marks next to the time
   const liveReceipt = useChatStore(s => (activeAccountId && activeThreadId ? s.peerReceipts[`${activeAccountId}_${activeThreadId}`] : undefined));
-  // Người kia nhắn sau tin mình gửi ⇒ đã xem các tin trước đó (Zalo / Facebook không phải lúc nào cũng báo "đã xem")
+  // The other side messaged after my message ⇒ they have seen the earlier messages (Zalo / Facebook do not always report "đã xem" (seen))
   const inferredReadTs = React.useMemo(() => inferredPeerReadTs(msgs, activeContact?.channel), [msgs, activeContact?.channel]);
   const threadReceipt = React.useMemo(() => mergePeerReceipts(
     activeContact ? { deliveredTs: activeContact.peer_delivered_ts, readTs: activeContact.peer_read_ts, readMaxId: activeContact.peer_read_max_id } : null,
     liveReceipt,
     inferredReadTs ? { readTs: inferredReadTs } : null,
   ), [activeContact?.peer_delivered_ts, activeContact?.peer_read_ts, activeContact?.peer_read_max_id, liveReceipt, inferredReadTs]);
-  // Nhóm Telegram: chức vụ (chức vụ tự đặt / Quản trị viên / Chủ nhóm) ở góc phải tên người gửi, như Telegram
+  // Telegram group: the role (custom title / Admin / Owner) at the right of the sender's name, like Telegram
   const telegramGroupAdmins = useTelegramGroupAdmins(
     activeAccountId, activeThreadId,
     isTelegramUser(activeContact?.channel) && activeContact?.contact_type === 'group',
   );
-  // Kênh Telegram: lượt xem / số bình luận của bài làm mới khi mở kênh + mỗi 60 s (như Telegram); hồ sơ người bình luận
-  // gần đây cho thanh bình luận
+  // Telegram channel: post view / comment counts refresh when the channel opens + every 60 s (like Telegram); profiles of recent commenters
+  // for the comment bar
   const postReplierPeers = useTelegramPostStats(activeAccountId, activeThreadId, activeContact?.channel, msgs);
-  // Bình chọn Telegram: kết quả làm mới khi mở hội thoại + mỗi 30 s (như Telegram)
+  // Telegram polls: results refresh when the conversation opens + every 30 s (like Telegram)
   useTelegramPollResults(activeAccountId, activeThreadId, activeContact?.channel, msgs);
 
   return {

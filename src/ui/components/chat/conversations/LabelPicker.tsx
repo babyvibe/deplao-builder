@@ -6,6 +6,8 @@ import { useAppStore } from '@/store/app/appStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
 import { TagIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 interface LabelPickerProps {
@@ -20,8 +22,8 @@ interface LabelPickerProps {
 }
 
 /**
- * Component chung cho Label Picker - hiển thị và toggle labels
- * Dùng chung cho: ConversationList filter, Context menu, ChatHeader
+ * Shared label picker: shows and toggles labels
+ * Used by: ConversationList filter, context menu, ChatHeader
  */
 export default function LabelPicker({
   labels,
@@ -41,20 +43,20 @@ export default function LabelPicker({
 
   return (
     <div className={`py-1 ${className}`}>
-      {/* Header với nút Chỉnh sửa và Cập nhật - luôn hiện nếu có prop */}
+      {/* Header with the Edit and Update buttons: always shown when the prop is set */}
       {(onEditLabels || onSync) && (
         <div className="flex items-center justify-between px-3 py-2 border-b border-border">
           {onEditLabels && (
             <button
               onClick={onEditLabels}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              title="Chỉnh sửa nhãn"
+              title={tr('Chỉnh sửa nhãn')}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                 <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
               </svg>
-              <span>Chỉnh sửa</span>
+              <span>{tr('Chỉnh sửa')}</span>
             </button>
           )}
 
@@ -63,14 +65,14 @@ export default function LabelPicker({
               onClick={onSync}
               disabled={syncingLabels}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-              title="Đồng bộ nhãn từ Zalo"
+              title={tr('Đồng bộ nhãn từ Zalo')}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                 className={syncingLabels ? 'animate-spin' : ''}>
                 <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
                 <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
               </svg>
-              <span>{syncingLabels ? 'Đang tải...' : 'Cập nhật'}</span>
+              <span>{syncingLabels ? tr('Đang tải...') : tr('Cập nhật')}</span>
             </button>
           )}
         </div>
@@ -79,11 +81,11 @@ export default function LabelPicker({
       {/* Empty state */}
       {labels.length === 0 && (
         <div className="px-3 py-3 text-xs text-muted-foreground">
-          {syncingLabels ? 'Đang tải nhãn...' : 'Chưa có nhãn'}
+          {syncingLabels ? tr('Đang tải nhãn...') : tr('Chưa có nhãn')}
         </div>
       )}
 
-      {/* Danh sách labels */}
+      {/* Label list */}
       {labels.length > 0 && (
         <div className="max-h-64 overflow-y-auto">
           {labels.map((label) => {
@@ -93,7 +95,7 @@ export default function LabelPicker({
                 key={label.id}
                 onClick={() => onToggleLabel(label)}
                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground/80 hover:bg-muted hover:text-foreground text-left transition-colors"
-                title={active ? `Gỡ nhãn "${label.text}"` : `Gán nhãn "${label.text}"`}
+                title={active ? tr('Gỡ nhãn "{{text}}"', { text: label.text }) : tr('Gán nhãn "{{text}}"', { text: label.text })}
               >
                 {/* Color dot */}
                 <span
@@ -116,8 +118,8 @@ export default function LabelPicker({
 }
 
 /**
- * Component hiển thị labels đang active (dạng pills)
- * Dùng cho ChatHeader để hiển thị labels của conversation
+ * Shows the active labels as pills
+ * Used by ChatHeader to show a conversation's labels
  */
 export function ActiveLabels({
   labels,
@@ -144,9 +146,9 @@ export function ActiveLabels({
       <button
         onClick={onClickPill}
         className={`flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors ${className}`}
-        title="Gán nhãn"
+        title={tr('Gán nhãn')}
       >
-        <span className="mr-1">Nhãn Zalo</span>
+        <span className="mr-1">{tr('Nhãn Zalo')}</span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mt-1">
           <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/>
           <line x1="7" y1="7" x2="7.01" y2="7"/>
@@ -161,7 +163,7 @@ export function ActiveLabels({
         <button
           key={l.id}
           onClick={onClickPill}
-          title={`${l.text} - nhấn để đổi nhãn Zalo`}
+          title={tr('{{text}} - nhấn để đổi nhãn Zalo', { text: l.text })}
           className="inline-flex items-center gap-0.5 text-foreground text-[11px] px-1.5 py-1 rounded-full leading-none hover:opacity-80 transition-opacity cursor-pointer"
           style={{ backgroundColor: l.color || '#3b82f6', color: '#fff' }}
         >
@@ -182,8 +184,8 @@ export function ActiveLabels({
 }
 
 /**
- * Modal chỉnh sửa danh sách nhãn (tên, màu, emoji)
- * Dùng chung cho ConversationList và ChatHeader
+ * Modal to edit the label list (name, color, emoji)
+ * Shared by ConversationList and ChatHeader
  */
 export function EditLabelsModal({ labels, labelsVersion, onClose, onSave, overrideZaloId }: {
   labels: LabelData[];
@@ -214,13 +216,13 @@ export function EditLabelsModal({ labels, labelsVersion, onClose, onSave, overri
       const res = await ipc.zalo?.updateLabels({ auth, labelData: editedLabels, version: labelsVersion });
       if (res?.success && res.response) {
         onSave(res.response.labelData, res.response.version);
-        showNotification('Đã lưu thay đổi', 'success');
+        showNotification(tr('Đã lưu thay đổi'), 'success');
         onClose();
       } else {
         throw new Error(res?.error || 'Update failed');
       }
     } catch (err: any) {
-      showNotification(err?.message || 'Lỗi khi lưu nhãn', 'error');
+      showNotification(err?.message || tr('Lỗi khi lưu nhãn'), 'error');
     } finally {
       setSaving(false);
     }
@@ -240,7 +242,7 @@ export function EditLabelsModal({ labels, labelsVersion, onClose, onSave, overri
     const maxId = Math.max(0, ...editedLabels.map(l => l.id));
     const newLabel: LabelData = {
       id: maxId + 1,
-      text: 'Nhãn mới',
+      text: tr('Nhãn mới'),
       conversations: [],
       color: '#3b82f6',
       emoji: '🏷️',
@@ -253,7 +255,7 @@ export function EditLabelsModal({ labels, labelsVersion, onClose, onSave, overri
       <div className="bg-card rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <h2 className="text-lg font-semibold text-foreground">Chỉnh sửa thẻ phân loại</h2>
+          <h2 className="text-lg font-semibold text-foreground">{tr('Chỉnh sửa thẻ phân loại')}</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12"/>
@@ -264,18 +266,18 @@ export function EditLabelsModal({ labels, labelsVersion, onClose, onSave, overri
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {editedLabels.length === 0 ? (
             <div className="text-center text-muted-foreground py-8">
-              <p>Chưa có nhãn nào</p>
-              <button onClick={handleAddLabel} className="mt-4 text-blue-400 hover:text-blue-300">+ Thêm nhãn đầu tiên</button>
+              <p>{tr('Chưa có nhãn nào')}</p>
+              <button onClick={handleAddLabel} className="mt-4 text-blue-400 hover:text-blue-300">{tr('+ Thêm nhãn đầu tiên')}</button>
             </div>
           ) : (
             <div className="space-y-3">
               {editedLabels.map((label, index) => (
                 <div key={label.id} className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                  <input type="color" value={label.color || '#3b82f6'} onChange={e => handleUpdateLabel(index, 'color', e.target.value)} className="w-10 h-10 rounded cursor-pointer" title="Chọn màu" />
-                  <input type="text" value={label.emoji || ''} onChange={e => handleUpdateLabel(index, 'emoji', e.target.value)} placeholder="🏷️" maxLength={2} className="w-12 h-10 bg-card border border-input rounded text-center text-lg" title="Emoji" />
-                  <input type="text" value={label.text} onChange={e => handleUpdateLabel(index, 'text', e.target.value)} placeholder="Tên nhãn" className="flex-1 h-10 px-3 bg-card border border-input rounded text-sm text-foreground placeholder-subtle-foreground" />
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">{label.conversations.length} hội thoại</span>
-                  <button onClick={() => handleDeleteLabel(index)} className="w-10 h-10 flex items-center justify-center text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded transition-colors" title="Xóa nhãn">
+                  <input type="color" value={label.color || '#3b82f6'} onChange={e => handleUpdateLabel(index, 'color', e.target.value)} className="w-10 h-10 rounded cursor-pointer" title={tr('Chọn màu')} />
+                  <input type="text" value={label.emoji || ''} onChange={e => handleUpdateLabel(index, 'emoji', e.target.value)} placeholder="🏷️" maxLength={2} className="w-12 h-10 bg-card border border-input rounded text-center text-lg" title={tr('Emoji')} />
+                  <input type="text" value={label.text} onChange={e => handleUpdateLabel(index, 'text', e.target.value)} placeholder={tr('Tên nhãn')} className="flex-1 h-10 px-3 bg-card border border-input rounded text-sm text-foreground placeholder-subtle-foreground" />
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">{trx('{{count}} hội thoại', { count: label.conversations.length })}</span>
+                  <button onClick={() => handleDeleteLabel(index)} className="w-10 h-10 flex items-center justify-center text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded transition-colors" title={tr('Xóa nhãn')}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
                     </svg>
@@ -289,13 +291,13 @@ export function EditLabelsModal({ labels, labelsVersion, onClose, onSave, overri
         <div className="flex items-center justify-between px-6 py-4 border-t border-border">
           <button onClick={handleAddLabel} className="flex items-center gap-2 px-4 py-2 text-sm text-blue-400 hover:text-blue-300 hover:bg-blue-900/20 rounded-lg transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
-            <span>Thêm nhãn</span>
+            <span>{tr('Thêm nhãn')}</span>
           </button>
           <div className="flex gap-2">
-            <button onClick={onClose} className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">Hủy</button>
+            <button onClick={onClose} className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">{tr('Hủy')}</button>
             <button onClick={handleSave} disabled={saving} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
               {saving && <Spinner size={4} />}
-              <span>{saving ? 'Đang lưu...' : 'Lưu'}</span>
+              <span>{saving ? tr('Đang lưu...') : tr('Lưu')}</span>
             </button>
           </div>
         </div>

@@ -37,7 +37,7 @@ export function visibleAccountsFor(accounts: AccountInfo[], employee: EmployeeVi
     return accounts;
 }
 
-/** Ngoài component (bấm link trong tin…): cùng quy tắc với useVisibleAccounts. */
+/** Outside components (clicking a link in a message…): same rules as useVisibleAccounts. */
 export function visibleAccountsNow(): AccountInfo[] {
     const employee = useEmployeeStore.getState();
     return visibleAccountsFor(useAccountStore.getState().accounts, employee);

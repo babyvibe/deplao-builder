@@ -1,17 +1,17 @@
 /**
- * plugin-worker — chạy backend của MỘT plugin trong tiến trình riêng.
+ * plugin-worker: runs the backend of ONE plugin in its own process.
  *
- * Electron: utilityProcess.fork (process.parentPort). Test: child_process.fork (process.send).
- * File này đứng một mình: chỉ dùng module có sẵn của Node (được unpack khỏi asar khi đóng gói).
+ * Electron: utilityProcess.fork (process.parentPort). Tests: child_process.fork (process.send).
+ * This file stands alone: it only uses Node's built-in modules (unpacked from asar when packaged).
  *
- * Giao thức (mọi message là object có t):
+ * Protocol (every message is an object with t):
  *   host → worker  { t:'req', id, method, params }   activate | deactivate | node.execute | route.handle
  *                                                   | schedule.run | composer.command | ping
  *   worker → host  { t:'res', id, result } | { t:'res', id, error:{ code, message, status } }
- *   worker → host  { t:'call', id, method, params }  deplao.* (API, storage, log, events…)
+ *   worker → host  { t:'call', id, method, params }  deplao.* (API, storage, log, events...)
  *   host → worker  { t:'ret', id, result } | { t:'ret', id, error }
  *   host → worker  { t:'note', method, params }     event | settings.changed
- *   worker → host  { t:'log', level, message }      console.* và deplao.log.*
+ *   worker → host  { t:'log', level, message }      console.* and deplao.log.*
  */
 /* eslint-disable @typescript-eslint/no-var-requires */
 import * as path from 'path';
@@ -24,7 +24,7 @@ const send = (msg: Msg): void => {
     try {
         if (parentPort) parentPort.postMessage(msg);
         else if (process.send) process.send(msg);
-    } catch { /* host đã đóng */ }
+    } catch { /* host already closed */ }
 };
 
 const PLUGIN_ID = process.env.DEPLAO_PLUGIN_ID || '';
@@ -33,7 +33,7 @@ const DATA_DIR = process.env.DEPLAO_PLUGIN_DATA_DIR || '';
 const ENTRY = process.env.DEPLAO_PLUGIN_ENTRY || '';
 const IS_DEV = process.env.DEPLAO_PLUGIN_DEV === '1';
 
-// ── Nhật ký: console.* → host ───────────────────────────────────────────────
+// ── Log: console.* → host ───────────────────────────────────────────────
 function fmt(args: any[]): string {
     return args.map(a => {
         if (a instanceof Error) return a.stack || a.message;
@@ -48,7 +48,7 @@ console.warn = (...a: any[]) => log('warn', ...a);
 console.error = (...a: any[]) => log('error', ...a);
 console.debug = (...a: any[]) => { if (IS_DEV) log('debug', ...a); };
 
-// Plugin không được tự thoát tiến trình hay nạp Electron.
+// A plugin must not exit the process by itself or load Electron.
 (process as any).exit = (code?: number) => { log('warn', `process.exit(${code ?? ''}) bị chặn trong plugin`); };
 const Module: any = require('module');
 const originalLoad = Module._load;
@@ -60,7 +60,7 @@ Module._load = function (request: string, ...rest: any[]) {
 process.on('uncaughtException', err => log('error', 'uncaughtException:', err));
 process.on('unhandledRejection', err => log('error', 'unhandledRejection:', err));
 
-// ── Gọi host ────────────────────────────────────────────────────────────────
+// ── Calls to host ────────────────────────────────────────────────────────────
 let nextCallId = 1;
 const calls = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
 
@@ -95,7 +95,7 @@ function resubscribe(): Promise<any> {
     return hostCall('events.subscribe', { types });
 }
 
-/** Hàm API trả data; danh sách có phân trang gắn thêm .pagination. */
+/** API function returns data; paged lists also get a .pagination property. */
 async function api(method: string, params?: any): Promise<any> {
     const res = await hostCall(method, params);
     const data = res?.data;
@@ -105,7 +105,7 @@ async function api(method: string, params?: any): Promise<any> {
     return data;
 }
 
-/** Nhóm có hàm riêng (media.upload) vẫn gọi được operationId: deplao.media.downloadLibraryItem({ uuid }). */
+/** A group with its own functions (media.upload) can still call an operationId: deplao.media.downloadLibraryItem({ uuid }). */
 function apiGroup<T extends Record<string, any>>(own: T): T {
     return new Proxy(own, {
         get(target, fn) {
@@ -168,9 +168,9 @@ const SPECIAL: Record<string, any> = {
     system: {
         info: () => hostCall('system.info'),
     },
-    // Worker + D1 trên Cloudflare đã kết nối trong Deplao (quyền cloudflare:workers). Host kiểm quyền + tiền tố tên;
-    // bundleDir / dir là thư mục tương đối trong plugin — main tự đọc file, không gửi nội dung qua RPC.
-    // Gắn tên miền: Deplao hỏi người dùng bằng hộp thoại của Deplao trước khi ghi DNS.
+    // Cloudflare Worker + D1 already connected in Deplao (cloudflare:workers permission). The host checks the permission + name prefix;
+    // bundleDir / dir is a relative folder inside the plugin: main reads the files itself, the contents are not sent over RPC.
+    // Attaching a domain: Deplao asks the user with its own dialog before writing DNS.
     cloudflare: {
         status: () => hostCall('cloudflare.status'),
         zones: () => hostCall('cloudflare.zones'),
@@ -191,7 +191,7 @@ const SPECIAL: Record<string, any> = {
     },
 };
 
-/** deplao.<nhóm>.<operationId>(params): nhóm chỉ để dễ đọc, tên hàm là operationId của API v1. */
+/** deplao.<group>.<operationId>(params): the group is only for readability, the function name is the API v1 operationId. */
 const deplao: any = new Proxy(SPECIAL, {
     get(target, ns: string) {
         if (typeof ns !== 'string') return undefined;
@@ -205,7 +205,7 @@ const deplao: any = new Proxy(SPECIAL, {
     },
 });
 
-// ── Backend của plugin ─────────────────────────────────────────────────────
+// ── Plugin backend ───────────────────────────────────────────────────────
 let backend: any = null;
 
 async function loadBackend(): Promise<any> {

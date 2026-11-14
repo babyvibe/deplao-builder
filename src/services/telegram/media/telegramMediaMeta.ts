@@ -1,13 +1,13 @@
 import { strippedPhotoToJpg } from 'telegram/Utils';
 
 /**
- * Thông tin phụ của media Telegram lưu trong messages.attachments (không gọi mạng).
+ * Extra info of Telegram media stored in messages.attachments (no network call).
  *
- * - Link preview (MessageMediaWebPage): GramJS `message.photo / .video / .document` trả media CỦA TRANG, nên tin link được lưu
- *   như ảnh / video. Gắn thêm `source: 'webpage'` + tên trang, tiêu đề, mô tả để renderer vẽ thẻ như Telegram. Không bao
- *   giờ dùng khoá `url` (renderer đọc attachments[].url làm nguồn ảnh) — URL trang nằm ở `page_url`.
- * - Video: Api.Document không có w / h / duration — các giá trị đó ở DocumentAttributeVideo (trước đây luôn lưu 0).
- * - Ảnh bìa mờ (PhotoStrippedSize, vài trăm byte có sẵn trong tin) → data URL JPEG để hiện khi video chưa tải.
+ * - Link preview (MessageMediaWebPage): GramJS `message.photo / .video / .document` returns the PAGE's media, so a link message is saved
+ *   like an image / video. Adds `source: 'webpage'` + page name, title, description so the renderer draws a card like Telegram. Never
+ *   use the `url` key (the renderer reads attachments[].url as the image source); the page URL is in `page_url`.
+ * - Video: Api.Document has no w / h / duration; those values are in DocumentAttributeVideo (previously always saved as 0).
+ * - Blurred cover (PhotoStrippedSize, a few hundred bytes available in the message) → JPEG data URL shown while the video is not yet downloaded.
  */
 
 const MAX_DESCRIPTION = 600;

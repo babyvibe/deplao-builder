@@ -1,10 +1,10 @@
 /**
- * Panel "Thành viên" của khung chat — phần thuần (test ở src/__tests__/chat/groupMembersPanel.test.ts).
+ * The "Thành viên" (Members) panel of the chat window: the pure part (tests in src/__tests__/chat/groupMembersPanel.test.ts).
  *
- * Danh sách lấy từ DB (page_group_member — cùng nguồn với CRM Nhóm: quét thành viên ẩn, thu thập từ lịch sử tin
- * Telegram, đồng bộ API), phân trang + tìm trong DB. API của Zalo / Telegram chỉ gọi khi mở panel LẦN ĐẦU cho nhóm đó
- * (đánh dấu ở localStorage) hoặc khi bấm làm mới — API thường trả ít hơn DB (Zalo khoá xem thành viên, Telegram chỉ
- * trả ~200 người gần đây).
+ * The list comes from the DB (page_group_member, the same source as the CRM "Nhóm" (Groups) tab: hidden-member scans, members collected from Telegram message history,
+ * API sync), paged + searched in the DB. The Zalo / Telegram APIs are only called when the panel is opened for the FIRST time for that group
+ * (marked in localStorage) or when the user taps refresh. The API usually returns fewer members than the DB (Zalo locks member viewing, Telegram only
+ * returns about 200 recent members).
  */
 import type { GroupMember } from '@/store/app/appStore';
 
@@ -16,7 +16,7 @@ function apiSyncKey(accountId: string, groupId: string): string {
   return `${API_SYNC_PREFIX}${accountId}:${groupId}`;
 }
 
-/** Lần đồng bộ thành viên qua API gần nhất của nhóm (0 = chưa bao giờ). */
+/** Time of the group's most recent member sync through the API (0 = never). */
 export function groupMembersApiSyncedAt(accountId: string, groupId: string): number {
   try {
     return Number(localStorage.getItem(apiSyncKey(accountId, groupId))) || 0;
@@ -29,11 +29,11 @@ export function markGroupMembersApiSynced(accountId: string, groupId: string, at
   try {
     localStorage.setItem(apiSyncKey(accountId, groupId), String(at));
   } catch {
-    // localStorage đầy / bị chặn: lần sau mở panel gọi API lại, không sao
+    // localStorage full / blocked: the API is called again the next time the panel opens, which is fine
   }
 }
 
-/** Hàng page_group_member → thành viên. */
+/** page_group_member row → member. */
 export function memberFromRow(row: any): GroupMember {
   return {
     userId: String(row?.member_id ?? '').trim(),
@@ -45,8 +45,8 @@ export function memberFromRow(row: any): GroupMember {
 }
 
 /**
- * Gộp danh sách mới (API) vào danh sách đang có: KHÔNG bỏ ai đang có (API trả thiếu), người có trong cả hai lấy vai
- * trò / trạng thái mới, tên / ảnh mới nếu có (không thì giữ cũ).
+ * Merges the new list (from the API) into the current list: nobody who is already there is removed (the API returns incomplete lists). A person in both lists takes the new
+ * role / status, and the new name / photo if there is one (otherwise the old one is kept).
  */
 export function mergeGroupMembers(existing: GroupMember[] | undefined, fresh: GroupMember[]): GroupMember[] {
   const byId = new Map<string, GroupMember>();
@@ -69,8 +69,8 @@ export function mergeGroupMembers(existing: GroupMember[] | undefined, fresh: Gr
 }
 
 /**
- * Hàng DB + thông tin sống trong cache nhóm (trạng thái online / lần cuối hoạt động của Telegram, tên / ảnh vừa lấy
- * được mà DB chưa kịp có).
+ * A DB row + live info from the group cache (Telegram online status / last seen, and the name / photo just fetched
+ * that the DB does not have yet).
  */
 export function withLiveMemberInfo(rows: GroupMember[], cached: GroupMember[] | undefined): GroupMember[] {
   if (!cached?.length) return rows;
@@ -91,7 +91,7 @@ export function withLiveMemberInfo(rows: GroupMember[], cached: GroupMember[] | 
   });
 }
 
-/** Nối trang sau vào danh sách đang hiện, bỏ người đã có (DB đổi giữa 2 lần đọc làm lệch OFFSET). */
+/** Appends the next page to the list on screen, skipping people already there (the DB changed between two reads and shifted the OFFSET). */
 export function appendMemberPage(current: GroupMember[], page: GroupMember[]): GroupMember[] {
   const seen = new Set(current.map((member) => member.userId));
   return [...current, ...page.filter((member) => member.userId && !seen.has(member.userId))];

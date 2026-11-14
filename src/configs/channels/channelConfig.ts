@@ -1,22 +1,22 @@
 /**
- * channelConfig.ts - Single Source of Truth cho tính năng từng kênh chat
- * Dùng bởi UI để quyết định hiển thị/ẩn tính năng, bởi IPC facade để route API calls.
+ * channelConfig.ts - Single Source of Truth for the features of each chat channel
+ * Used by the UI to decide which features to show/hide, and by the IPC facade to route API calls.
  */
 
 export type Channel = 'zalo' | 'facebook' | 'telegram_bot' | 'telegram_user';
 
 export interface ChannelCapability {
-  // ─── Thông tin kênh ─────────────────────────────────────────
+  // ─── Channel info ─────────────────────────────────────────
   id: Channel;
   label: string;
   icon: string;
   color: string;
 
-  // ─── Loại cuộc trò chuyện ──────────────────────────────────
+  // ─── Conversation type ──────────────────────────────────────
   supportsDM: boolean;
   supportsGroup: boolean;
 
-  // ─── Tính năng tin nhắn ─────────────────────────────────────
+  // ─── Message features ─────────────────────────────────────
   supportsText: boolean;
   supportsImage: boolean;
   supportsVideo: boolean;
@@ -31,24 +31,24 @@ export interface ChannelCapability {
   supportsUnsend: boolean;
   supportsForward: boolean;
   supportsPin: boolean;
-  supportsEdit: boolean;           // Chỉnh sửa tin nhắn đã gửi
+  supportsEdit: boolean;           // Edit a sent message
 
-  // ─── Tính năng chỉ Zalo ──────────────────────────────────────
+  // ─── Zalo-only features ──────────────────────────────────────
   supportsBusinessCard: boolean;
   supportsBankCard: boolean;
-  /** Danh mục sản phẩm (Zalo Business — SRS ZL-04); nút chỉ hiện khi tài khoản là zBusiness. */
+  /** Product catalog (Zalo Business, SRS ZL-04); the button only shows when the account is zBusiness. */
   supportsProductCatalog: boolean;
   supportsTextStyle: boolean;
-  supportsAlias: boolean;        // Biệt danh (Zalo API)
-  supportsMuteSync: boolean;     // Đồng bộ mute lên server
-  supportsPinConversation: boolean; // Ghim hội thoại (Zalo API)
-  supportsCreateGroup: boolean;  // Tạo nhóm từ user
-  supportsMutualGroups: boolean; // Nhóm chung
-  supportsBlock: boolean;        // Chặn user
-  supportsReport: boolean;       // Báo xấu
-  supportsRemoveFriend: boolean; // Xoá bạn
+  supportsAlias: boolean;        // Aliases (Zalo API)
+  supportsMuteSync: boolean;     // Sync mute to the server
+  supportsPinConversation: boolean; // Pin a conversation (Zalo API)
+  supportsCreateGroup: boolean;  // Create a group from users
+  supportsMutualGroups: boolean; // Common groups
+  supportsBlock: boolean;        // Block a user
+  supportsReport: boolean;       // Report abuse
+  supportsRemoveFriend: boolean; // Delete friend
 
-  // ─── Quản lý nhóm ──────────────────────────────────────────
+  // ─── Group management ──────────────────────────────────────────
   supportsGroupRename: boolean;
   supportsGroupEmoji: boolean;
   supportsGroupNickname: boolean;
@@ -78,11 +78,11 @@ export interface ChannelCapability {
   supportsInviteToGroup: boolean;
   supportsCampaigns: boolean;
 
-  // ─── Đăng nhập ─────────────────────────────────────────────
+  // ─── Sign in ─────────────────────────────────────────────
   loginMethods: ('qr' | 'cookie' | 'auth_json' | 'credentials' | 'phone_otp')[];
 
-  // ─── Chế độ đồng bộ tin nhắn mẫu ──────────────────────────
-  quickMessageSyncMode: 'remote' | 'local';  // remote = sync từ server, local = chỉ local
+  // ─── Template message sync mode ──────────────────────────
+  quickMessageSyncMode: 'remote' | 'local';  // remote = synced from the server, local = local only
 }
 
 export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
@@ -109,7 +109,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsUnsend: true,
     supportsForward: true,
     supportsPin: true,
-    supportsEdit: false,             // Zalo không hỗ trợ edit
+    supportsEdit: false,             // Zalo does not support edit
 
     supportsBusinessCard: true,
     supportsBankCard: true,
@@ -275,7 +275,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsCRMSearch: false,
     supportsCRMHistory: true,
     supportsCRMPhoneImport: false,
-    // Chỉ hiển thị các nhóm mà Bot đã nhận được update / đã biết.
+    // Only show the groups the Bot has received updates from / knows about.
     supportsCRMGroups: true,
     supportsScanData: false,
 
@@ -286,7 +286,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsGroupReload: false,
     supportsQuickMessages: true,     // Local-only feature
     supportsInviteToGroup: true,     // Bot API: invite link
-    // Chỉ chạy campaign tin nhắn đến các chat Bot đã biết.
+    // Only run message campaigns to the chats the Bot knows.
     supportsCampaigns: true,
     quickMessageSyncMode: 'local',
 
@@ -386,8 +386,8 @@ export function getChannelColor(channel: Channel): string {
 }
 
 /**
- * Normalize channel string — xử lý legacy data chỉ có 'zalo'/'facebook'.
- * Dùng cho workflow, DB records, import data.
+ * Normalize the channel string: handles legacy data that only has 'zalo'/'facebook'.
+ * Used for workflows, DB records, imported data.
  */
 export function normalizeChannel(ch?: string): Channel {
   if (ch && ch in CHANNEL_CONFIG) return ch as Channel;
@@ -395,8 +395,8 @@ export function normalizeChannel(ch?: string): Channel {
 }
 
 /**
- * Lấy channel từ account object một cách an toàn.
- * Account cũ có thể không có field channel → default 'zalo'.
+ * Safely get the channel from an account object.
+ * Old accounts may have no channel field → default 'zalo'.
  */
 export function resolveAccountChannel(account: { channel?: string }): Channel {
   return normalizeChannel(account.channel);

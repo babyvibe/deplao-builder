@@ -1,8 +1,8 @@
 /**
- * IntegrationQuickPanel - Side panel thao tác tích hợp nhanh
- * Hiển thị bên phải khung chat (giống ConversationInfo panel).
- * Cho phép tra cứu đơn, sản phẩm, vận chuyển, tạo đơn hàng... trực tiếp khi đang chat.
- * Nếu chưa cấu hình → hiện hướng dẫn + nút đi tới trang Tích hợp.
+ * IntegrationQuickPanel - side panel for quick integration actions
+ * Shown on the right of the chat window (like the ConversationInfo panel).
+ * Lets you look up orders, products, shipping, create orders... directly while chatting.
+ * If not configured → shows a guide + a button to go to the Integrations page.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -13,6 +13,8 @@ import { useAppStore } from '@/store/app/appStore';
 import POSOrderPanel from './pos/POSOrderPanel';
 import { IS_DEV_BUILD } from "../../../configs/app/BuildConfig";
 import { AlertIcon, ChartIcon, ClipboardListIcon, CloseIcon, CreditCardIcon, DollarIcon, EditIcon, FileTextIcon, GlobeIcon, LightningIcon, LinkIcon, MapPinIcon, PackageIcon, PinIcon, PluginIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, StarIcon, StoreIcon, TagIcon, TargetIcon, TruckIcon, UserIcon , CheckIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── Pin icon definitions (SVG) ────────────────────────────────────────────────
 const PIN_ICON_DEFS = [
@@ -71,7 +73,7 @@ function PinIconPicker({ onSelect, onClose }: { onSelect: (icon: string) => void
   }, [onClose]);
   return (
     <div ref={ref} className="absolute right-0 top-full mt-1 bg-card border border-input rounded-xl shadow-2xl z-50 p-3 w-72" onClick={e => e.stopPropagation()}>
-      <p className="text-[11px] text-muted-foreground mb-2 font-medium flex items-center gap-1"><PinIcon className="w-3 h-3" /> Chọn icon cho nut ghim:</p>
+      <p className="text-[11px] text-muted-foreground mb-2 font-medium flex items-center gap-1">{trx('<0/> Chọn icon cho nut ghim:', { 0: <PinIcon className="w-3 h-3" /> })}</p>
       <div className="grid grid-cols-6 gap-1">
         {PIN_ICON_DEFS.map(def => (
           <button key={def.id} onClick={() => onSelect(def.id)}
@@ -135,6 +137,8 @@ const ACTION_ICONS: Record<string, React.ReactNode> = {
   getProvinces: <MapPinIcon className="w-4 h-4" />,
   getDistricts: <MapPinIcon className="w-4 h-4" />,
   getWards: <MapPinIcon className="w-4 h-4" />,
+  getProvincesNew: <MapPinIcon className="w-4 h-4" />,
+  getWardsNew: <MapPinIcon className="w-4 h-4" />,
   getServices: <TruckIcon className="w-4 h-4" />,
   getTracking: <PackageIcon className="w-4 h-4" />,
   calculateFee: <DollarIcon className="w-4 h-4" />,
@@ -145,134 +149,143 @@ const ACTION_ICONS: Record<string, React.ReactNode> = {
 const ACTIONS_BY_TYPE: Record<string, QuickActionDef[]> = {
   kiotviet: [
     {
-      action: 'lookupCustomer', label: 'Tra cứu khách hàng', icon: '👤',
-      desc: 'Tìm thông tin khách hàng theo SĐT',
-      fields: [{ key: 'phone', label: 'Số điện thoại', placeholder: '0901234567' }],
+      action: 'lookupCustomer', label: tr('Tra cứu khách hàng'), icon: '👤',
+      desc: tr('Tìm thông tin khách hàng theo SĐT'),
+      fields: [{ key: 'phone', label: tr('Số điện thoại'), placeholder: '0901234567' }],
     },
     {
-      action: 'lookupOrder', label: 'Tra cứu đơn hàng', icon: '📋',
-      desc: 'Tìm đơn hàng theo mã hoặc SĐT',
+      action: 'lookupOrder', label: tr('Tra cứu đơn hàng'), icon: '📋',
+      desc: tr('Tìm đơn hàng theo mã hoặc SĐT'),
       fields: [
-        { key: 'phone', label: 'SĐT khách hàng', placeholder: '0901234567', optional: true },
-        { key: 'orderId', label: 'Mã đơn hàng', placeholder: '123456', optional: true },
+        { key: 'phone', label: tr('SĐT khách hàng'), placeholder: '0901234567', optional: true },
+        { key: 'orderId', label: tr('Mã đơn hàng'), placeholder: '123456', optional: true },
       ],
     },
     {
-      action: 'lookupProduct', label: 'Tìm sản phẩm', icon: '🔍',
-      desc: 'Tìm sản phẩm theo tên hoặc mã SKU',
+      action: 'lookupProduct', label: tr('Tìm sản phẩm'), icon: '🔍',
+      desc: tr('Tìm sản phẩm theo tên hoặc mã SKU'),
       fields: [
-        { key: 'keyword', label: 'Tên hoặc mã SKU', placeholder: 'Áo thun...' },
+        { key: 'keyword', label: tr('Tên hoặc mã SKU'), placeholder: tr('Áo thun...') },
       ],
     },
     {
-      action: 'createOrder', label: 'Tạo đơn hàng', icon: '✏️',
-      desc: 'Tạo đơn hàng mới trong KiotViet',
+      action: 'createOrder', label: tr('Tạo đơn hàng'), icon: '✏️',
+      desc: tr('Tạo đơn hàng mới trong KiotViet'),
       fields: [],
     },
   ],
   haravan: [
-    { action: 'lookupCustomer', label: 'Tra cứu khách hàng', icon: '👤', desc: 'Tìm theo SĐT',
-      fields: [{ key: 'phone', label: 'Số điện thoại', placeholder: '0901234567' }] },
-    { action: 'lookupOrder', label: 'Tra cứu đơn hàng', icon: '📋', desc: 'Tìm theo SĐT hoặc mã đơn',
+    { action: 'lookupCustomer', label: tr('Tra cứu khách hàng'), icon: '👤', desc: tr('Tìm theo SĐT'),
+      fields: [{ key: 'phone', label: tr('Số điện thoại'), placeholder: '0901234567' }] },
+    { action: 'lookupOrder', label: tr('Tra cứu đơn hàng'), icon: '📋', desc: tr('Tìm theo SĐT hoặc mã đơn'),
       fields: [
-        { key: 'phone', label: 'SĐT', placeholder: '0901234567', optional: true },
-        { key: 'orderId', label: 'Mã đơn', placeholder: 'ID đơn', optional: true },
+        { key: 'phone', label: tr('SĐT'), placeholder: '0901234567', optional: true },
+        { key: 'orderId', label: tr('Mã đơn'), placeholder: tr('ID đơn'), optional: true },
       ] },
-    { action: 'lookupProduct', label: 'Tìm sản phẩm', icon: '🔍', desc: 'Tìm theo tên',
-      fields: [{ key: 'keyword', label: 'Tên sản phẩm', placeholder: 'Áo...' }] },
-    { action: 'createOrder', label: 'Tạo đơn hàng', icon: '✏️', desc: 'Tạo đơn hàng mới trong Haravan',
+    { action: 'lookupProduct', label: tr('Tìm sản phẩm'), icon: '🔍', desc: tr('Tìm theo tên'),
+      fields: [{ key: 'keyword', label: tr('Tên sản phẩm'), placeholder: tr('Áo...') }] },
+    { action: 'createOrder', label: tr('Tạo đơn hàng'), icon: '✏️', desc: tr('Tạo đơn hàng mới trong Haravan'),
       fields: [] },
   ],
   sapo: [
-    { action: 'lookupCustomer', label: 'Tra cứu khách hàng', icon: '👤', desc: 'Tìm theo SĐT',
-      fields: [{ key: 'phone', label: 'Số điện thoại', placeholder: '0901234567' }] },
-    { action: 'lookupOrder', label: 'Tra cứu đơn hàng', icon: '📋', desc: 'Tìm theo SĐT hoặc mã đơn',
+    { action: 'lookupCustomer', label: tr('Tra cứu khách hàng'), icon: '👤', desc: tr('Tìm theo SĐT'),
+      fields: [{ key: 'phone', label: tr('Số điện thoại'), placeholder: '0901234567' }] },
+    { action: 'lookupOrder', label: tr('Tra cứu đơn hàng'), icon: '📋', desc: tr('Tìm theo SĐT hoặc mã đơn'),
       fields: [
-        { key: 'phone', label: 'SĐT', placeholder: '0901234567', optional: true },
-        { key: 'orderId', label: 'Mã đơn', placeholder: 'ID đơn', optional: true },
+        { key: 'phone', label: tr('SĐT'), placeholder: '0901234567', optional: true },
+        { key: 'orderId', label: tr('Mã đơn'), placeholder: tr('ID đơn'), optional: true },
       ] },
-    { action: 'lookupProduct', label: 'Tìm sản phẩm', icon: '🔍', desc: 'Tìm theo tên',
-      fields: [{ key: 'keyword', label: 'Tên sản phẩm', placeholder: 'Áo...' }] },
-    { action: 'createOrder', label: 'Tạo đơn hàng', icon: '✏️', desc: 'Tạo đơn hàng mới trong Sapo',
+    { action: 'lookupProduct', label: tr('Tìm sản phẩm'), icon: '🔍', desc: tr('Tìm theo tên'),
+      fields: [{ key: 'keyword', label: tr('Tên sản phẩm'), placeholder: tr('Áo...') }] },
+    { action: 'createOrder', label: tr('Tạo đơn hàng'), icon: '✏️', desc: tr('Tạo đơn hàng mới trong Sapo'),
       fields: [] },
   ],
   nhanh: [
-    { action: 'lookupCustomer', label: 'Tra cứu khách hàng', icon: '👤', desc: 'Tìm theo SĐT',
-      fields: [{ key: 'phone', label: 'Số điện thoại', placeholder: '0901234567' }] },
-    { action: 'lookupOrder', label: 'Tra cứu đơn hàng', icon: '📋', desc: 'Tìm theo SĐT hoặc mã đơn',
+    { action: 'lookupCustomer', label: tr('Tra cứu khách hàng'), icon: '👤', desc: tr('Tìm theo SĐT'),
+      fields: [{ key: 'phone', label: tr('Số điện thoại'), placeholder: '0901234567' }] },
+    { action: 'lookupOrder', label: tr('Tra cứu đơn hàng'), icon: '📋', desc: tr('Tìm theo SĐT hoặc mã đơn'),
       fields: [
-        { key: 'phone', label: 'SĐT', placeholder: '0901234567', optional: true },
-        { key: 'orderId', label: 'Mã đơn', placeholder: 'ID đơn', optional: true },
+        { key: 'phone', label: tr('SĐT'), placeholder: '0901234567', optional: true },
+        { key: 'orderId', label: tr('Mã đơn'), placeholder: tr('ID đơn'), optional: true },
       ] },
-    { action: 'lookupProduct', label: 'Tìm sản phẩm', icon: '🔍', desc: 'Tìm theo tên hoặc mã',
+    { action: 'lookupProduct', label: tr('Tìm sản phẩm'), icon: '🔍', desc: tr('Tìm theo tên hoặc mã'),
       fields: [
-        { key: 'keyword', label: 'Tên sản phẩm', placeholder: 'Sản phẩm...', optional: true },
-        { key: 'code', label: 'Mã sản phẩm', placeholder: 'SP001', optional: true },
+        { key: 'keyword', label: tr('Tên sản phẩm'), placeholder: tr('Sản phẩm...'), optional: true },
+        { key: 'code', label: tr('Mã sản phẩm'), placeholder: 'SP001', optional: true },
       ] },
-    { action: 'createOrder', label: 'Tạo đơn hàng', icon: '✏️', desc: 'Tạo đơn hàng mới trong Nhanh.vn',
+    { action: 'createOrder', label: tr('Tạo đơn hàng'), icon: '✏️', desc: tr('Tạo đơn hàng mới trong Nhanh.vn'),
       fields: [] },
   ],
   pancake: [
-    { action: 'lookupCustomer', label: 'Tra cứu khách hàng', icon: '👤', desc: 'Tìm theo SĐT',
-      fields: [{ key: 'phone', label: 'Số điện thoại', placeholder: '0901234567' }] },
-    { action: 'lookupOrder', label: 'Tra cứu đơn hàng', icon: '📋', desc: 'Tìm theo SĐT hoặc mã đơn',
+    { action: 'lookupCustomer', label: tr('Tra cứu khách hàng'), icon: '👤', desc: tr('Tìm theo SĐT'),
+      fields: [{ key: 'phone', label: tr('Số điện thoại'), placeholder: '0901234567' }] },
+    { action: 'lookupOrder', label: tr('Tra cứu đơn hàng'), icon: '📋', desc: tr('Tìm theo SĐT hoặc mã đơn'),
       fields: [
-        { key: 'phone', label: 'SĐT', placeholder: '0901234567', optional: true },
-        { key: 'orderId', label: 'Mã đơn', placeholder: 'ID đơn', optional: true },
+        { key: 'phone', label: tr('SĐT'), placeholder: '0901234567', optional: true },
+        { key: 'orderId', label: tr('Mã đơn'), placeholder: tr('ID đơn'), optional: true },
       ] },
-    { action: 'lookupProduct', label: 'Tìm sản phẩm', icon: '🔍', desc: 'Tìm theo tên hoặc mã',
+    { action: 'lookupProduct', label: tr('Tìm sản phẩm'), icon: '🔍', desc: tr('Tìm theo tên hoặc mã'),
       fields: [
-        { key: 'keyword', label: 'Từ khoá sản phẩm', placeholder: 'Sản phẩm...', optional: true },
-        { key: 'code', label: 'Mã sản phẩm', placeholder: 'SP001', optional: true },
+        { key: 'keyword', label: tr('Từ khoá sản phẩm'), placeholder: tr('Sản phẩm...'), optional: true },
+        { key: 'code', label: tr('Mã sản phẩm'), placeholder: 'SP001', optional: true },
       ] },
-    { action: 'createOrder', label: 'Tạo đơn hàng', icon: '✏️', desc: 'Tạo đơn hàng mới trong Pancake',
+    { action: 'createOrder', label: tr('Tạo đơn hàng'), icon: '✏️', desc: tr('Tạo đơn hàng mới trong Pancake'),
       fields: [] },
   ],
   ghn: [
-    { action: 'getProvinces', label: 'Danh sách tỉnh/thành', icon: '🗺️', desc: 'Lấy master data tỉnh/thành GHN',
+    { action: 'getProvincesNew', label: tr('Tỉnh/thành (địa chỉ mới)'), icon: '🗺️', desc: tr('34 tỉnh/thành sau 01/07/2025, tên dùng khi tạo đơn'),
       fields: [] },
-    { action: 'getDistricts', label: 'Danh sách quận/huyện', icon: '🏙️', desc: 'Lấy quận/huyện theo ProvinceID',
-      fields: [{ key: 'provinceId', label: 'Province ID', placeholder: '201', type: 'number' }] },
-    { action: 'getWards', label: 'Danh sách phường/xã', icon: '📍', desc: 'Lấy phường/xã theo DistrictID',
-      fields: [{ key: 'districtId', label: 'District ID', placeholder: '1442', type: 'number' }] },
-    { action: 'getServices', label: 'Dịch vụ khả dụng', icon: '🚛', desc: 'Lấy service GHN theo quận gửi / quận nhận',
+    { action: 'getWardsNew', label: tr('Phường/xã (địa chỉ mới)'), icon: '📍', desc: tr('Phường/xã theo ID tỉnh kiểu mới'),
+      fields: [{ key: 'provinceId', label: tr('ID tỉnh (kiểu mới)'), placeholder: '1000001', type: 'number' }] },
+    { action: 'getProvinces', label: tr('Tỉnh/thành (địa chỉ cũ)'), icon: '🗺️', desc: tr('Mã cũ, dùng khi tính phí và xem dịch vụ'),
+      fields: [] },
+    { action: 'getDistricts', label: tr('Danh sách quận/huyện'), icon: '🏙️', desc: tr('Lấy quận/huyện theo ProvinceID'),
+      fields: [{ key: 'provinceId', label: tr('Province ID'), placeholder: '201', type: 'number' }] },
+    { action: 'getWards', label: tr('Phường/xã (địa chỉ cũ)'), icon: '📍', desc: tr('Lấy phường/xã theo DistrictID'),
+      fields: [{ key: 'districtId', label: tr('District ID'), placeholder: '1442', type: 'number' }] },
+    { action: 'getServices', label: tr('Dịch vụ khả dụng'), icon: '🚛', desc: tr('Lấy service GHN theo quận gửi / quận nhận'),
       fields: [
-        { key: 'fromDistrict', label: 'From District', placeholder: '1447', type: 'number' },
-        { key: 'toDistrict', label: 'To District', placeholder: '1442', type: 'number' },
+        { key: 'fromDistrict', label: tr('From District'), placeholder: '1447', type: 'number' },
+        { key: 'toDistrict', label: tr('To District'), placeholder: '1442', type: 'number' },
       ] },
-    { action: 'getTracking', label: 'Tra cứu vận đơn', icon: '📦', desc: 'Tra cứu theo mã GHN',
-      fields: [{ key: 'orderCode', label: 'Mã vận đơn GHN', placeholder: 'GHNXXXXX' }] },
-    { action: 'calculateFee', label: 'Tính phí vận chuyển', icon: '💵', desc: 'Ước tính phí ship',
+    { action: 'getTracking', label: tr('Tra cứu vận đơn'), icon: '📦', desc: tr('Tra cứu theo mã GHN'),
+      fields: [{ key: 'orderCode', label: tr('Mã vận đơn GHN'), placeholder: 'GHNXXXXX' }] },
+    { action: 'calculateFee', label: tr('Tính phí vận chuyển'), icon: '💵', desc: tr('Ước tính phí ship'),
       fields: [
-        { key: 'to_district_id', label: 'ID Quận nhận', placeholder: '1442', type: 'number' },
-        { key: 'weight', label: 'Trọng lượng (gram)', placeholder: '500', type: 'number' },
-        { key: 'service_type_id', label: 'Loại dịch vụ', type: 'select',
-          options: [{ value: '2', label: '2 – Hàng nhẹ' }, { value: '5', label: '5 – Hàng nặng' }] },
+        { key: 'to_district_id', label: tr('ID Quận nhận'), placeholder: '1442', type: 'number' },
+        { key: 'to_ward_code', label: tr('Mã phường nhận'), placeholder: '20308' },
+        { key: 'weight', label: tr('Trọng lượng (gram)'), placeholder: '500', type: 'number' },
+        { key: 'service_type_id', label: tr('Loại dịch vụ'), type: 'select',
+          options: [{ value: '2', label: tr('2 – Hàng nhẹ') }, { value: '5', label: tr('5 – Hàng nặng') }] },
       ] },
   ],
   ghtk: [
-    { action: 'getTracking', label: 'Tra cứu vận đơn', icon: '🚚', desc: 'Tra cứu theo mã tracking',
-      fields: [{ key: 'trackingCode', label: 'Mã tracking GHTK', placeholder: 'xxxxxxxxxxxxxx' }] },
-    { action: 'calculateFee', label: 'Tính phí vận chuyển', icon: '💵', desc: 'Ước tính phí ship GHTK',
+    { action: 'getTracking', label: tr('Tra cứu vận đơn'), icon: '🚚', desc: tr('Tra cứu theo mã tracking'),
+      fields: [{ key: 'trackingCode', label: tr('Mã tracking GHTK'), placeholder: 'xxxxxxxxxxxxxx' }] },
+    { action: 'calculateFee', label: tr('Tính phí vận chuyển'), icon: '💵', desc: tr('Ước tính phí ship GHTK'),
       fields: [
-        { key: 'province', label: 'Tỉnh/TP nhận', placeholder: 'Hà Nội' },
-        { key: 'district', label: 'Quận/Huyện nhận', placeholder: 'Hoàn Kiếm' },
-        { key: 'weight', label: 'Trọng lượng (gram)', placeholder: '500', type: 'number' },
+        { key: 'pick_province', label: tr('Tỉnh/TP lấy hàng'), placeholder: tr('Hồ Chí Minh') },
+        { key: 'pick_ward', label: tr('Phường/Xã lấy hàng'), placeholder: tr('Phường Sài Gòn') },
+        { key: 'province', label: tr('Tỉnh/TP nhận'), placeholder: tr('Hà Nội') },
+        { key: 'ward', label: tr('Phường/Xã nhận'), placeholder: tr('Phường Hoàn Kiếm') },
+        { key: 'district', label: tr('Quận/Huyện nhận (địa chỉ cũ)'), placeholder: tr('Hoàn Kiếm'), optional: true },
+        { key: 'weight', label: tr('Trọng lượng (gram)'), placeholder: '500', type: 'number' },
+        { key: 'value', label: tr('Giá trị hàng (VNĐ)'), placeholder: '150000', type: 'number', optional: true },
       ] },
   ],
   casso: [
-    { action: 'getTransactions', label: 'Lịch sử giao dịch', icon: '💳', desc: 'Lấy giao dịch gần nhất',
-      fields: [{ key: 'pageSize', label: 'Số giao dịch', placeholder: '10', type: 'number' }] },
+    { action: 'getTransactions', label: tr('Lịch sử giao dịch'), icon: '💳', desc: tr('Lấy giao dịch gần nhất'),
+      fields: [{ key: 'pageSize', label: tr('Số giao dịch'), placeholder: '10', type: 'number' }] },
   ],
   sepay: [
-    { action: 'getTransactions', label: 'Lịch sử giao dịch', icon: '💰', desc: 'Lấy giao dịch gần nhất',
-      fields: [{ key: 'limit', label: 'Số giao dịch', placeholder: '10', type: 'number' }] },
+    { action: 'getTransactions', label: tr('Lịch sử giao dịch'), icon: '💰', desc: tr('Lấy giao dịch gần nhất'),
+      fields: [{ key: 'limit', label: tr('Số giao dịch'), placeholder: '10', type: 'number' }] },
   ],
 };
 
 // ─── DEV MODE - Fake data for UI testing ──────────────────────────────────────
 
-const DEV_MODE = IS_DEV_BUILD && false; // ← Đổi thành false khi deploy
+const DEV_MODE = IS_DEV_BUILD && false; // ← Change to false when deploying
 const DEV_DEBUG = IS_DEV_BUILD;
 const DEFAULT_PAGE_SIZE = 10;
 const PAGED_ACTIONS = new Set(['lookupCustomer', 'lookupOrder', 'lookupProduct', 'getProducts']);
@@ -366,7 +379,7 @@ const FAKE_RESULTS: Record<string, Record<string, any>> = {
 function fakeExecute(_integrationId: string, action: string, _params: Record<string, any>): Promise<any> {
   return new Promise(resolve => {
     setTimeout(() => {
-      const data = FAKE_RESULTS[action] || { message: 'Fake: Không có dữ liệu mẫu cho action này' };
+      const data = FAKE_RESULTS[action] || { message: tr('Fake: Không có dữ liệu mẫu cho action này') };
       resolve({ success: true, data });
     }, 600 + Math.random() * 800);
   });
@@ -533,47 +546,47 @@ function normalizeOrderItem(item: any) {
 
 // ── Nhanh.vn numeric status codes ──────────────────────────────────────────
 const NHANH_STATUS_MAP: Record<number, { text: string; color: string }> = {
-  1:  { text: 'Mới',             color: 'bg-blue-900/50 text-blue-400' },
-  3:  { text: 'Xác nhận',        color: 'bg-cyan-900/50 text-cyan-400' },
-  5:  { text: 'Đang đóng gói',   color: 'bg-yellow-900/50 text-yellow-400' },
-  7:  { text: 'Đóng gói xong',   color: 'bg-yellow-900/50 text-yellow-400' },
-  9:  { text: 'Đang giao hàng',  color: 'bg-yellow-900/50 text-yellow-400' },
-  11: { text: 'Giao thành công', color: 'bg-green-900/50 text-green-400' },
-  13: { text: 'Hoàn tất',        color: 'bg-green-900/50 text-green-400' },
-  15: { text: 'Đã hủy',          color: 'bg-red-900/50 text-red-400' },
-  42: { text: 'Đã đóng gói',     color: 'bg-yellow-900/50 text-yellow-400' },
-  54: { text: 'Chờ xác nhận',    color: 'bg-blue-900/50 text-blue-400' },
-  59: { text: 'Trả hàng',        color: 'bg-orange-900/50 text-orange-400' },
-  64: { text: 'Đã hủy',          color: 'bg-red-900/50 text-red-400' },
-  68: { text: 'Đã hủy',          color: 'bg-red-900/50 text-red-400' },
-  72: { text: 'Đã giao',         color: 'bg-green-900/50 text-green-400' },
+  1:  { text: tr('Mới'),             color: 'bg-blue-900/50 text-blue-400' },
+  3:  { text: tr('Xác nhận'),        color: 'bg-cyan-900/50 text-cyan-400' },
+  5:  { text: tr('Đang đóng gói'),   color: 'bg-yellow-900/50 text-yellow-400' },
+  7:  { text: tr('Đóng gói xong'),   color: 'bg-yellow-900/50 text-yellow-400' },
+  9:  { text: tr('Đang giao hàng'),  color: 'bg-yellow-900/50 text-yellow-400' },
+  11: { text: tr('Giao thành công'), color: 'bg-green-900/50 text-green-400' },
+  13: { text: tr('Hoàn tất'),        color: 'bg-green-900/50 text-green-400' },
+  15: { text: tr('Đã hủy'),          color: 'bg-red-900/50 text-red-400' },
+  42: { text: tr('Đã đóng gói'),     color: 'bg-yellow-900/50 text-yellow-400' },
+  54: { text: tr('Chờ xác nhận'),    color: 'bg-blue-900/50 text-blue-400' },
+  59: { text: tr('Trả hàng'),        color: 'bg-orange-900/50 text-orange-400' },
+  64: { text: tr('Đã hủy'),          color: 'bg-red-900/50 text-red-400' },
+  68: { text: tr('Đã hủy'),          color: 'bg-red-900/50 text-red-400' },
+  72: { text: tr('Đã giao'),         color: 'bg-green-900/50 text-green-400' },
 };
 
 function formatUnixTimestamp(ts: number | string | undefined): string {
   if (ts == null || ts === '') return '';
   const num = typeof ts === 'string' ? parseInt(ts, 10) : ts;
   if (!Number.isFinite(num) || num <= 0) return '';
-  return new Date(num * 1000).toLocaleString('vi-VN', {
+  return new Date(num * 1000).toLocaleString(appLocale(), {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
 }
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
-  completed: 'Hoàn thành',
-  complete: 'Hoàn thành',
-  delivered: 'Đã giao',
-  shipping: 'Đang giao',
-  delivering: 'Đang giao',
-  pending: 'Đang xử lý',
-  processing: 'Đang xử lý',
-  unpaid: 'Chờ thanh toán',
-  waiting_for_payment: 'Chờ thanh toán',
-  cancelled: 'Đã hủy',
-  canceled: 'Đã hủy',
-  removed: 'Đã hủy',
-  failed: 'Thất bại',
-  draft: 'Nháp',
+  completed: tr('Hoàn thành'),
+  complete: tr('Hoàn thành'),
+  delivered: tr('Đã giao'),
+  shipping: tr('Đang giao'),
+  delivering: tr('Đang giao'),
+  pending: tr('Đang xử lý'),
+  processing: tr('Đang xử lý'),
+  unpaid: tr('Chờ thanh toán'),
+  waiting_for_payment: tr('Chờ thanh toán'),
+  cancelled: tr('Đã hủy'),
+  canceled: tr('Đã hủy'),
+  removed: tr('Đã hủy'),
+  failed: tr('Thất bại'),
+  draft: tr('Nháp'),
 };
 
 function normalizeOrderStatus(rawStatus: any, numericStatus: any): { text: string; color: string } {
@@ -582,11 +595,11 @@ function normalizeOrderStatus(rawStatus: any, numericStatus: any): { text: strin
   const text = rawText
     ? (ORDER_STATUS_LABELS[normalizedKey] || rawText)
     : numericStatus === 1
-    ? 'Hoàn thành'
+    ? tr('Hoàn thành')
     : numericStatus === 2
-    ? 'Đã hủy'
+    ? tr('Đã hủy')
     : numericStatus === 0
-    ? 'Đang xử lý'
+    ? tr('Đang xử lý')
     : numericStatus != null
     ? `#${numericStatus}`
     : '-';
@@ -821,8 +834,8 @@ function OrderCard({ o }: { o: any }) {
   const normalized = normalizeOrderForDisplay(o);
 
   const PAY_LABEL: Record<string, string> = {
-    cod: 'COD', cash: 'Tiền mặt', bank_transfer: 'Chuyển khoản',
-    card: 'Thẻ', momo: 'MoMo', zalopay: 'ZaloPay', vnpay: 'VNPay', qrpay: 'QRPay',
+    cod: 'COD', cash: tr('Tiền mặt'), bank_transfer: tr('Chuyển khoản'),
+    card: tr('Thẻ'), momo: 'MoMo', zalopay: 'ZaloPay', vnpay: 'VNPay', qrpay: 'QRPay',
   };
   const hasDetail =
     normalized.items.length > 0 ||
@@ -856,7 +869,7 @@ function OrderCard({ o }: { o: any }) {
         <div className="flex items-center justify-between gap-1">
           <p className="text-[11px] text-muted-foreground truncate">{normalized.customerSummary || '-'}</p>
           <div className="flex items-center gap-1 flex-shrink-0">
-            <span className="text-xs font-semibold text-blue-300">{normalized.total.toLocaleString('vi-VN')}đ</span>
+            <span className="text-xs font-semibold text-blue-300">{trx('{{v1}}đ', { v1: normalized.total.toLocaleString(appLocale()) })}</span>
             {hasDetail && (
               <svg className={`w-3 h-3 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`}
                 viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -875,7 +888,7 @@ function OrderCard({ o }: { o: any }) {
           {(normalized.items.length > 0 || normalized.itemCount > 0) && (
             <div>
               <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide mb-1">
-                Sản phẩm ({normalized.itemCount || normalized.items.length})
+                {trx('Sản phẩm ({{v1}})', { v1: normalized.itemCount || normalized.items.length })}
               </p>
               {normalized.items.length > 0 ? (
                 <div className="space-y-1">
@@ -887,14 +900,14 @@ function OrderCard({ o }: { o: any }) {
                           <span className="text-[11px] text-foreground leading-snug truncate">{item.name}</span>
                         </div>
                         <span className="text-[11px] text-muted-foreground flex-shrink-0">
-                          {(Number(item.price) * Number(item.quantity)).toLocaleString('vi-VN')}đ
+                          {trx('{{v1}}đ', { v1: (Number(item.price) * Number(item.quantity)).toLocaleString(appLocale()) })}
                         </span>
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                <p className="text-[11px] text-muted-foreground">Có sản phẩm trong đơn nhưng API chưa trả chi tiết từng dòng.</p>
+                <p className="text-[11px] text-muted-foreground">{tr('Có sản phẩm trong đơn nhưng API chưa trả chi tiết từng dòng.')}</p>
               )}
             </div>
           )}
@@ -904,14 +917,14 @@ function OrderCard({ o }: { o: any }) {
             <div className="space-y-0.5 border-t border-border/40 pt-1.5">
               {normalized.shippingFee > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-[11px] text-muted-foreground"><TruckIcon className="w-3 h-3 inline" /> Phí ship:</span>
-                  <span className="text-[11px] text-foreground/80">+{normalized.shippingFee.toLocaleString('vi-VN')}đ</span>
+                  <span className="text-[11px] text-muted-foreground">{trx('<0/> Phí ship:', { 0: <TruckIcon className="w-3 h-3 inline" /> })}</span>
+                  <span className="text-[11px] text-foreground/80">{trx('+{{v1}}đ', { v1: normalized.shippingFee.toLocaleString(appLocale()) })}</span>
                 </div>
               )}
               {normalized.discount > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-[11px] text-muted-foreground"><TagIcon className="w-3 h-3 inline" /> Giảm giá:</span>
-                  <span className="text-[11px] text-orange-400">-{normalized.discount.toLocaleString('vi-VN')}đ</span>
+                  <span className="text-[11px] text-muted-foreground">{trx('<0/> Giảm giá:', { 0: <TagIcon className="w-3 h-3 inline" /> })}</span>
+                  <span className="text-[11px] text-orange-400">{trx('-{{v1}}đ', { v1: normalized.discount.toLocaleString(appLocale()) })}</span>
                 </div>
               )}
             </div>
@@ -928,15 +941,15 @@ function OrderCard({ o }: { o: any }) {
           {normalized.moneyToCollect > 0 && (
             <div className="flex items-center gap-1.5">
               <DollarIcon className="w-3 h-3 text-muted-foreground" />
-              <span className="text-[11px] text-foreground/80">Thu hộ: {normalized.moneyToCollect.toLocaleString('vi-VN')}đ</span>
+              <span className="text-[11px] text-foreground/80">{trx('Thu hộ: {{v1}}đ', { v1: normalized.moneyToCollect.toLocaleString(appLocale()) })}</span>
             </div>
           )}
 
           {(normalized.sourceName || normalized.sellerName || normalized.deliveryPartner) && (
             <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-              {normalized.sourceName && <p className="text-[11px] text-muted-foreground"><GlobeIcon className="w-3 h-3 inline" /> Nguồn: {normalized.sourceName}</p>}
-              {normalized.sellerName && <p className="text-[11px] text-muted-foreground"><UserIcon className="w-3 h-3 inline" /> Phụ trách: {normalized.sellerName}</p>}
-              {normalized.deliveryPartner && <p className="text-[11px] text-muted-foreground"><TruckIcon className="w-3 h-3 inline" /> DVVC: {normalized.deliveryPartner}</p>}
+              {normalized.sourceName && <p className="text-[11px] text-muted-foreground">{trx('<0/> Nguồn: {{sourceName}}', { 0: <GlobeIcon className="w-3 h-3 inline" />, sourceName: normalized.sourceName })}</p>}
+              {normalized.sellerName && <p className="text-[11px] text-muted-foreground">{trx('<0/> Phụ trách: {{sellerName}}', { 0: <UserIcon className="w-3 h-3 inline" />, sellerName: normalized.sellerName })}</p>}
+              {normalized.deliveryPartner && <p className="text-[11px] text-muted-foreground">{trx('<0/> DVVC: {{deliveryPartner}}', { 0: <TruckIcon className="w-3 h-3 inline" />, deliveryPartner: normalized.deliveryPartner })}</p>}
             </div>
           )}
 
@@ -1014,11 +1027,11 @@ function ProductCard({ p }: { p: any }) {
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           {code && <span className="text-[10px] text-muted-foreground">{code}</span>}
           {price != null && (
-            <span className="text-[11px] text-blue-300 font-medium">{Number(price).toLocaleString('vi-VN')}đ</span>
+            <span className="text-[11px] text-blue-300 font-medium">{trx('{{v1}}đ', { v1: Number(price).toLocaleString(appLocale()) })}</span>
           )}
           {stock != null && (
             <span className={`text-[10px] ${Number(stock) > 0 ? 'text-green-500' : 'text-red-400'}`}>
-              kho: {stock}
+              {trx('kho: {{stock}}', { stock })}
             </span>
           )}
         </div>
@@ -1030,12 +1043,12 @@ function ProductCard({ p }: { p: any }) {
 // ─── Result Formatter ─────────────────────────────────────────────────────────
 
 function formatResult(_action: string, data: any): React.ReactNode {
-  if (!data) return <span className="text-muted-foreground text-xs">Không có kết quả</span>;
+  if (!data) return <span className="text-muted-foreground text-xs">{tr('Không có kết quả')}</span>;
 
   // Customers
   if (data.customers !== undefined) {
     const customers: any[] = data.customers || [];
-    if (!customers.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không tìm thấy khách hàng</span>;
+    if (!customers.length) return <span className="text-yellow-400 text-xs">{trx('<0/> Không tìm thấy khách hàng', { 0: <AlertIcon className="w-3 h-3 inline" /> })}</span>;
     return (
       <div className="space-y-1.5">
         {customers.map((c: any, i: number) => {
@@ -1045,8 +1058,8 @@ function formatResult(_action: string, data: any): React.ReactNode {
               <p className="text-xs font-medium text-foreground">{customer.name}</p>
               <p className="text-[11px] text-muted-foreground">{compactJoin([customer.phone, customer.email], ' · ') || '-'}</p>
               <p className="text-[10px] text-muted-foreground">
-                ID: {customer.id || '-'} · Đơn: {customer.orderCount ?? '-'}
-                {customer.purchasedAmount > 0 ? ` · Mua: ${customer.purchasedAmount.toLocaleString('vi-VN')}đ` : ''}
+                {trx('ID: {{v1}} · Đơn: {{v2}}', { v1: customer.id || '-', v2: customer.orderCount ?? '-' })}
+                {customer.purchasedAmount > 0 ? tr(' · Mua: {{v1}}đ', { v1: customer.purchasedAmount.toLocaleString(appLocale()) }) : ''}
               </p>
               {customer.address && <p className="text-[10px] text-muted-foreground mt-1 leading-snug"><MapPinIcon className="w-3 h-3 inline" /> {customer.address}</p>}
             </div>
@@ -1056,23 +1069,23 @@ function formatResult(_action: string, data: any): React.ReactNode {
     );
   }
 
-  // Orders - dùng OrderCard expandable
+  // Orders - uses an expandable OrderCard
   if (data.orders !== undefined || data.order !== undefined) {
     const orders: any[] = firstNonEmptyArray(data.orders, data.data?.orders, data.result?.orders, data.response?.orders);
     const normalizedOrders = orders.length > 0 ? orders : (data.order ? [data.order] : []);
-    if (!normalizedOrders.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không tìm thấy đơn hàng</span>;
+    if (!normalizedOrders.length) return <span className="text-yellow-400 text-xs">{trx('<0/> Không tìm thấy đơn hàng', { 0: <AlertIcon className="w-3 h-3 inline" /> })}</span>;
     return (
       <div className="space-y-1.5">
-        <p className="text-[10px] text-muted-foreground">Nhấn vào đơn để xem chi tiết ↓</p>
+        <p className="text-[10px] text-muted-foreground">{tr('Nhấn vào đơn để xem chi tiết ↓')}</p>
         {normalizedOrders.map((o: any, i: number) => <OrderCard key={i} o={o} />)}
       </div>
     );
   }
 
-  // Products - dùng ProductCard có ảnh
+  // Products - uses a ProductCard with an image
   if (data.products !== undefined) {
     const products: any[] = data.products || [];
-    if (!products.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không tìm thấy sản phẩm</span>;
+    if (!products.length) return <span className="text-yellow-400 text-xs">{trx('<0/> Không tìm thấy sản phẩm', { 0: <AlertIcon className="w-3 h-3 inline" /> })}</span>;
     return (
       <div className="space-y-1.5">
         {products.map((p: any, i: number) => <ProductCard key={i} p={p} />)}
@@ -1083,18 +1096,18 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Provinces / Districts / Wards
   if (data.provinces !== undefined || data.districts !== undefined || data.wards !== undefined) {
     const rows: any[] = data.provinces || data.districts || data.wards || [];
-    if (!rows.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không có dữ liệu địa chỉ</span>;
+    if (!rows.length) return <span className="text-yellow-400 text-xs">{trx('<0/> Không có dữ liệu địa chỉ', { 0: <AlertIcon className="w-3 h-3 inline" /> })}</span>;
     return (
       <div className="space-y-1.5">
         {rows.slice(0, 12).map((row: any, i: number) => (
           <div key={i} className="bg-muted/50 rounded-lg px-3 py-2 border border-input/30">
             <p className="text-xs font-medium text-foreground">{row.ProvinceName || row.DistrictName || row.WardName || row.name || '-'}</p>
             <p className="text-[11px] text-muted-foreground font-mono">
-              ID: {row.ProvinceID || row.DistrictID || row.WardCode || row.id || '-'}
+              ID: {row.ProvinceID || row.DistrictID || row.WardCode || row._id || row.id || '-'}
             </p>
           </div>
         ))}
-        {rows.length > 12 && <p className="text-xs text-muted-foreground text-center">+{rows.length - 12} mục khác</p>}
+        {rows.length > 12 && <p className="text-xs text-muted-foreground text-center">{trx('+{{v1}} mục khác', { v1: rows.length - 12 })}</p>}
       </div>
     );
   }
@@ -1102,12 +1115,12 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Services
   if (data.services !== undefined) {
     const services: any[] = data.services || [];
-    if (!services.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không có dịch vụ phù hợp</span>;
+    if (!services.length) return <span className="text-yellow-400 text-xs">{trx('<0/> Không có dịch vụ phù hợp', { 0: <AlertIcon className="w-3 h-3 inline" /> })}</span>;
     return (
       <div className="space-y-1.5">
         {services.map((svc: any, i: number) => (
           <div key={i} className="bg-muted/50 rounded-lg px-3 py-2 border border-input/30">
-            <p className="text-xs font-medium text-foreground">{svc.short_name || svc.name || `Service #${svc.service_id || i + 1}`}</p>
+            <p className="text-xs font-medium text-foreground">{svc.short_name || svc.name || tr('Service #{{v1}}', { v1: svc.service_id || i + 1 })}</p>
             <p className="text-[11px] text-muted-foreground font-mono">
               service_id: {svc.service_id ?? '-'} · service_type_id: {svc.service_type_id ?? '-'}
             </p>
@@ -1122,9 +1135,9 @@ function formatResult(_action: string, data: any): React.ReactNode {
     const t = data.tracking || {};
     return (
       <div className="bg-muted/60 rounded-lg px-3 py-2 space-y-1">
-        <p className="text-sm font-medium text-foreground">Mã: {t.order_code || t.label || data.orderCode || data.trackingCode || '-'}</p>
+        <p className="text-sm font-medium text-foreground">{trx('Mã: {{v1}}', { v1: t.order_code || t.label || data.orderCode || data.trackingCode || '-' })}</p>
         <p className="text-xs text-blue-300">{data.status || t.status || t.status_text || '-'}</p>
-        {(t.updated_date || data.updatedDate) && <p className="text-[11px] text-muted-foreground">Cập nhật: {t.updated_date || data.updatedDate}</p>}
+        {(t.updated_date || data.updatedDate) && <p className="text-[11px] text-muted-foreground">{trx('Cập nhật: {{v1}}', { v1: t.updated_date || data.updatedDate })}</p>}
       </div>
     );
   }
@@ -1132,7 +1145,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Transactions
   if (data.transactions !== undefined) {
     const txs: any[] = data.transactions || [];
-    if (!txs.length) return <span className="text-yellow-400 text-xs"><AlertIcon className="w-3 h-3 inline" /> Không có giao dịch</span>;
+    if (!txs.length) return <span className="text-yellow-400 text-xs">{trx('<0/> Không có giao dịch', { 0: <AlertIcon className="w-3 h-3 inline" /> })}</span>;
     return (
       <div className="space-y-1.5">
         {txs.slice(0, 5).map((tx: any, i: number) => (
@@ -1140,7 +1153,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
             <div className="flex justify-between">
               <span className="text-xs text-muted-foreground">{tx.when || tx.transactionDate || tx.created_at || '-'}</span>
               <span className={`text-xs font-medium ${(tx.in || tx.amount || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                +{(tx.in || tx.amount || 0).toLocaleString('vi-VN')}đ
+                {trx('+{{v1}}đ', { v1: (tx.in || tx.amount || 0).toLocaleString(appLocale()) })}
               </span>
             </div>
             <p className="text-[11px] text-foreground/80 truncate">{tx.description || tx.memo || tx.content || '-'}</p>
@@ -1155,8 +1168,8 @@ function formatResult(_action: string, data: any): React.ReactNode {
     const f = data.fee;
     return (
       <div className="bg-muted/60 rounded-lg px-3 py-2 space-y-1">
-        <p className="text-sm font-medium text-foreground">Phí dự kiến: {(f.total || f.fee || f.service_fee || 0).toLocaleString('vi-VN')}đ</p>
-        {f.insurance_fee !== undefined && <p className="text-xs text-muted-foreground">Bảo hiểm: {f.insurance_fee.toLocaleString('vi-VN')}đ</p>}
+        <p className="text-sm font-medium text-foreground">{trx('Phí dự kiến: {{v1}}đ', { v1: (f.total || f.fee || f.service_fee || 0).toLocaleString(appLocale()) })}</p>
+        {f.insurance_fee !== undefined && <p className="text-xs text-muted-foreground">{trx('Bảo hiểm: {{v1}}đ', { v1: f.insurance_fee.toLocaleString(appLocale()) })}</p>}
       </div>
     );
   }
@@ -1166,8 +1179,8 @@ function formatResult(_action: string, data: any): React.ReactNode {
     const o = data.order;
     return (
       <div className="bg-green-900/30 border border-green-700/40 rounded-lg px-3 py-2">
-        <p className="text-sm font-medium text-green-300"><CheckIcon className="w-4 h-4 inline" /> Tạo đơn thành công!</p>
-        <p className="text-xs text-green-400">Mã đơn: {o.code || o.id || o.orderId || '-'}</p>
+        <p className="text-sm font-medium text-green-300">{trx('<0/> Tạo đơn thành công!', { 0: <CheckIcon className="w-4 h-4 inline" /> })}</p>
+        <p className="text-xs text-green-400">{trx('Mã đơn: {{v1}}', { v1: o.code || o.id || o.orderId || '-' })}</p>
       </div>
     );
   }
@@ -1175,7 +1188,7 @@ function formatResult(_action: string, data: any): React.ReactNode {
   // Fallback
   return (
     <details className="text-xs">
-      <summary className="text-muted-foreground cursor-pointer hover:text-foreground">Xem dữ liệu thô</summary>
+      <summary className="text-muted-foreground cursor-pointer hover:text-foreground">{tr('Xem dữ liệu thô')}</summary>
       <pre className="bg-card rounded p-2 mt-1 overflow-x-auto text-green-300 text-[10px] max-h-40">{JSON.stringify(data, null, 2)}</pre>
     </details>
   );
@@ -1271,7 +1284,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
   }, [selectedIntegration]);
 
   const executeStrict = useCallback(async (action: string, actionParams: Record<string, any>, fallbackMessage: string) => {
-    if (!selectedIntegration) throw new Error('Chưa chọn tích hợp');
+    if (!selectedIntegration) throw new Error(tr('Chưa chọn tích hợp'));
 
     const res = DEV_MODE
       ? await fakeExecute(selectedIntegration.id, action, actionParams)
@@ -1321,7 +1334,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
         actionToExecute = 'getProducts';
       }
 
-      const res = await executeStrict(actionToExecute, cleanParams, 'Thao tác thất bại');
+      const res = await executeStrict(actionToExecute, cleanParams, tr('Thao tác thất bại'));
       if (DEV_DEBUG) {
         console.log('[IntegrationQuickPanel] execute success data:', res?.data);
       }
@@ -1333,7 +1346,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
           : null,
       );
     } catch (e: any) {
-      const message = e?.message || 'Lỗi không xác định';
+      const message = e?.message || tr('Lỗi không xác định');
       const debugBlock = DEV_DEBUG && selectedIntegration && selectedAction
         ? buildDebugBlock(selectedAction.action, params)
         : '';
@@ -1371,9 +1384,9 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
           <div className="flex items-center gap-3">
             <PluginIcon className="w-5 h-5" />
             <div>
-              <p className="text-sm font-semibold text-foreground">Tích hợp nhanh</p>
+              <p className="text-sm font-semibold text-foreground">{tr('Tích hợp nhanh')}</p>
               <p className="text-[11px] text-muted-foreground">
-                {contextName ? <>Hội thoại: <span className="text-blue-400">{contextName}</span></> : 'Tra cứu đơn, sản phẩm, vận chuyển...'}
+                {contextName ? <>{trx('Hội thoại: <0>{{contextName}}</0>', { 0: <span className="text-blue-400" />, contextName })}</> : tr('Tra cứu đơn, sản phẩm, vận chuyển...')}
               </p>
             </div>
           </div>
@@ -1381,7 +1394,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
             <button
               onClick={goToIntegrationPage}
               className="text-[11px] px-3 py-1.5 rounded-lg bg-muted hover:bg-accent text-foreground/80 hover:text-blue-400 transition-colors border border-input"
-              title="Mở trang cấu hình Tích hợp"
+              title={tr('Mở trang cấu hình Tích hợp')}
             ><SettingsIcon className="w-4 h-4 inline" /></button>
             <button onClick={onClose} className="text-muted-foreground hover:text-blue-400 transition-colors p-1 rounded hover:bg-muted">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -1399,15 +1412,15 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
         ) : !hasConnectedIntegrations ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
             <div className="w-16 h-16 rounded-2xl bg-card flex items-center justify-center mb-4"><PluginIcon className="w-8 h-8" /></div>
-            <h3 className="text-base font-semibold text-foreground mb-2">Chưa có tích hợp nào được kết nối</h3>
+            <h3 className="text-base font-semibold text-foreground mb-2">{tr('Chưa có tích hợp nào được kết nối')}</h3>
             <p className="text-sm text-muted-foreground max-w-sm mb-6 leading-relaxed">
-              Hãy kết nối ít nhất một nền tảng (KiotViet, Haravan, Nhanh, Sepay, GHN…) để sử dụng tính năng tra cứu nhanh tại đây.
+              {tr('Hãy kết nối ít nhất một nền tảng (KiotViet, Haravan, Nhanh, Sepay, GHN…) để sử dụng tính năng tra cứu nhanh tại đây.')}
             </p>
             <button
               onClick={goToIntegrationPage}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-xl transition-colors"
             >
-              <PluginIcon className="w-4 h-4 inline" /> Đi tới trang tích hợp
+              {trx('<0/> Đi tới trang tích hợp', { 0: <PluginIcon className="w-4 h-4 inline" /> })}
             </button>
             <div className="mt-6 flex flex-wrap gap-2 justify-center">
               {Object.entries(TYPE_META).map(([type, meta]) => (
@@ -1419,10 +1432,10 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
             </div>
           </div>
         ) : (
-          /* ── Main layout - sidebar ẩn khi đã chọn action ──── */
+          /* ── Main layout - sidebar hidden once an action is selected ──── */
           <div className="flex-1 flex min-h-0 overflow-hidden">
 
-            {/* Left sidebar - icon-only compact list (ẩn khi đã chọn action) */}
+            {/* Left sidebar - compact icon-only list (hidden once an action is selected) */}
             {showSidebar && (
               <div className="w-12 flex-shrink-0 border-r border-border/60 bg-card/80 flex flex-col items-center py-2 gap-1">
                 {integrations.map(intg => {
@@ -1449,7 +1462,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                 {/* Add integration */}
                 <button
                   onClick={goToIntegrationPage}
-                  title="Thêm tích hợp"
+                  title={tr('Thêm tích hợp')}
                   className="mt-auto w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-blue-400 hover:bg-card transition-colors text-lg"
                 >
                   +
@@ -1457,14 +1470,14 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
               </div>
             )}
 
-            {/* Right content - full width khi đã chọn action */}
+            {/* Right content - full width once an action is selected */}
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
-              {/* ── Action grid (chưa chọn action) ─────────────── */}
+              {/* ── Action grid (no action selected yet) ─────────────── */}
               {selectedIntegration && !selectedAction && (
                 <div className="flex-1 overflow-y-auto p-4">
                   <p className="text-xs text-muted-foreground mb-3">
-                    Chọn thao tác cho <span className="text-foreground font-medium">{selectedIntegration.name}</span>:
+                    {trx('Chọn thao tác cho <0>{{name}}</0>:', { 0: <span className="text-foreground font-medium" />, name: selectedIntegration.name })}
                   </p>
                   <div className="grid grid-cols-1 gap-2">
                     {actions.map(act => {
@@ -1495,7 +1508,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                                 setPinPickerKey(pinKey);
                               }
                             }}
-                            title={isPinned ? 'Gỡ ghim khỏi toolbar' : 'Ghim ra thanh toolbar'}
+                            title={isPinned ? tr('Gỡ ghim khỏi toolbar') : tr('Ghim ra thanh toolbar')}
                             className={`absolute top-1/2 -translate-y-1/2 right-2.5 w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-all
                               ${isPinned
                                 ? 'text-yellow-400 bg-yellow-400/10 hover:bg-red-500/15 hover:text-red-400'
@@ -1525,7 +1538,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                     })}
                   </div>
                   {!actions.length && (
-                    <p className="text-sm text-muted-foreground text-center py-10">Chưa có thao tác nào cho {selectedIntegration.name}</p>
+                    <p className="text-sm text-muted-foreground text-center py-10">{trx('Chưa có thao tác nào cho {{name}}', { name: selectedIntegration.name })}</p>
                   )}
                 </div>
               )}
@@ -1538,10 +1551,10 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                   integrationName={selectedIntegration.name}
                   onBack={handleBackToActions}
                   onExecuteSearch={async (action, searchParams) => {
-                    return executeStrict(action, searchParams, 'Tra cứu sản phẩm thất bại');
+                    return executeStrict(action, searchParams, tr('Tra cứu sản phẩm thất bại'));
                   }}
                   onSubmitOrder={async (orderData) => {
-                    return executeStrict('createOrder', orderData, 'Tạo đơn thất bại');
+                    return executeStrict('createOrder', orderData, tr('Tạo đơn thất bại'));
                   }}
                   contextPhone={contextPhone}
                   contextName={contextName}
@@ -1581,7 +1594,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                                   setPinPickerKey(detailPinKey);
                                 }
                               }}
-                              title={isPinned ? 'Gỡ ghim khỏi toolbar' : 'Ghim tính năng này ra thanh toolbar'}
+                              title={isPinned ? tr('Gỡ ghim khỏi toolbar') : tr('Ghim tính năng này ra thanh toolbar')}
                               className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-colors
                                 ${isPinned ? 'text-yellow-400 bg-yellow-400/10 hover:bg-red-500/15 hover:text-red-400' : 'text-muted-foreground hover:text-yellow-400 hover:bg-yellow-400/10'}`}
                             >
@@ -1615,7 +1628,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                       <div key={field.key}>
                         <label className="block text-xs text-muted-foreground mb-1.5 font-medium">
                           {field.label}
-                          {field.optional && <span className="text-muted-foreground font-normal ml-1">(tùy chọn)</span>}
+                          {field.optional && <span className="text-muted-foreground font-normal ml-1">{tr('(tùy chọn)')}</span>}
                         </label>
                         {field.type === 'select' ? (
                           <select
@@ -1645,10 +1658,9 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                     className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
                     {executing ? (
                       <span className="flex items-center justify-center gap-2">
-                        <Spinner size={4} />
-                        Đang thực hiện...
+                        {trx('<0/>Đang thực hiện...', { 0: <Spinner size={4} /> })}
                       </span>
-                    ) : <span className="flex items-center gap-1.5">{ACTION_ICONS[selectedAction.action] || <span className="text-base">{selectedAction.icon}</span>} Thực hiện</span>}
+                    ) : <span className="flex items-center gap-1.5">{ACTION_ICONS[selectedAction.action] || <span className="text-base">{selectedAction.icon}</span>} {tr('Thực hiện')}</span>}
                   </button>
 
                   {/* Error */}
@@ -1661,7 +1673,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                   {/* Result */}
                   {result !== null && !error && (
                     <div>
-                      <p className="text-xs text-muted-foreground mb-2 font-medium"><ChartIcon className="w-4 h-4 inline" /> Kết quả:</p>
+                      <p className="text-xs text-muted-foreground mb-2 font-medium">{trx('<0/> Kết quả:', { 0: <ChartIcon className="w-4 h-4 inline" /> })}</p>
                       {formatResult(selectedAction.action, result)}
                       {resultMeta && PAGED_ACTIONS.has(executedAction || selectedAction.action) && (
                         <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
@@ -1670,18 +1682,17 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
                             disabled={executing || resultMeta.page <= 1}
                             className="px-3 py-1.5 rounded-lg bg-card border border-border disabled:opacity-40 hover:border-blue-500/40"
                           >
-                            ← Trang trước
+                            {tr('← Trang trước')}
                           </button>
                           <span>
-                            Trang {resultMeta.page}
-                            {typeof resultMeta.total === 'number' ? ` · Tổng ~ ${resultMeta.total}` : ''}
+                            {trx('Trang {{page}}{{v1}}', { page: resultMeta.page, v1: typeof resultMeta.total === 'number' ? tr(' · Tổng ~ {{total}}', { total: resultMeta.total }) : '' })}
                           </span>
                           <button
                             onClick={() => handlePageChange(resultMeta.page + 1)}
                             disabled={executing || !resultMeta.hasNext}
                             className="px-3 py-1.5 rounded-lg bg-card border border-border disabled:opacity-40 hover:border-blue-500/40"
                           >
-                            Trang sau →
+                            {tr('Trang sau →')}
                           </button>
                         </div>
                       )}
@@ -1692,7 +1703,7 @@ export default function IntegrationQuickPanel({ onClose, contextPhone, contextNa
 
               {!selectedIntegration && (
                 <div className="flex-1 flex items-center justify-center">
-                  <p className="text-sm text-muted-foreground">← Chọn một tích hợp</p>
+                  <p className="text-sm text-muted-foreground">{tr('← Chọn một tích hợp')}</p>
                 </div>
               )}
             </div>

@@ -1,16 +1,17 @@
 /**
- * "Lịch sắp tới" trong chuông thông báo (NotificationCenter → UpcomingEventsTab): lịch Quản lý công việc của mình (tổ
- * chức hoặc được mời, chưa từ chối) từ giờ tới hết 7 ngày tới.
+ * "Lịch sắp tới" (Upcoming events) in the notification bell (NotificationCenter → UpcomingEventsTab): your own ERP calendar events (organized by you
+ * or invited, not declined) from now until the end of the next 7 days.
  *
- * Chỉ là danh sách: báo trước / đúng giờ do mốc "Nhắc trước" của TỪNG lịch (main: ErpCalendarService, mặc định 15 phút +
- * đúng giờ) — mỗi dòng ghi mốc nhắc của lịch đó, không có mốc nhắc chung thứ hai (trùng, báo hai lần).
+ * This is only a list. Early and on-time alerts come from the "Nhắc trước" (remind before) setting of EACH event (main: ErpCalendarService, default 15 minutes +
+ * on time). Each row shows the reminder setting of that event. There is no second shared reminder setting (it would duplicate and alert twice).
  */
 import type { ErpCalendarEvent } from '../../../models/erp/CalendarEvent';
 import { erpDurationText, erpRemindersSummary, normalizeErpReminderMinutes } from '../../../shared/erp/erpReminderText';
 import { erpRelativeDay, isErpReminderForMe } from './erpReminder';
+import { tr } from '../../../shared/i18n';
 
 export const UPCOMING_DAYS = 7;
-/** Lịch không có mốc nhắc trước: còn chừng này phút thì tô màu "sắp tới". */
+/** Events with no early reminder are highlighted as "sắp tới" (upcoming) when this many minutes remain. */
 const SOON_WITHOUT_REMINDER_MINUTES = 15;
 
 type UpcomingEvent = Pick<ErpCalendarEvent, 'id' | 'start_at' | 'end_at' | 'all_day' | 'organizer_id' | 'attendees'>;
@@ -31,61 +32,61 @@ const endOfDay = (ts: number) => {
   return d.getTime();
 };
 
-/** Khoảng tải lịch: từ bây giờ tới hết ngày thứ 7 kể từ hôm nay. */
+/** Load range: from now until the end of the 7th day counting from today. */
 export function upcomingRange(now: number): { from: number; to: number } {
   const end = new Date(now);
   end.setDate(end.getDate() + UPCOMING_DAYS);
   return { from: now, to: endOfDay(end.getTime()) };
 }
 
-/** Giờ kết thúc thật: lịch cả ngày hết ngày đó; không có giờ kết thúc → giờ bắt đầu. */
+/** Actual end time: an all-day event ends at the end of its day; no end time → the start time. */
 export function eventEndAt(event: Pick<ErpCalendarEvent, 'start_at' | 'end_at' | 'all_day'>): number {
   const start = Number(event.start_at) || 0;
   if (event.all_day) return Math.max(endOfDay(start), Number(event.end_at) || 0);
   return Math.max(Number(event.end_at) || 0, start);
 }
 
-/** Lịch của mình chưa kết thúc (đang diễn ra hoặc sắp tới), sắp theo giờ bắt đầu. */
+/** Your own events that have not ended yet (in progress or upcoming), sorted by start time. */
 export function myUpcomingEvents<T extends UpcomingEvent>(events: readonly T[], myId: string, now: number): T[] {
   return events
     .filter(event => isErpReminderForMe(event, myId) && eventEndAt(event) >= now)
     .sort((a, b) => (Number(a.start_at) || 0) - (Number(b.start_at) || 0));
 }
 
-/** "09:00 - 10:30", "09:00", lịch cả ngày: "Cả ngày". */
+/** "09:00 - 10:30", "09:00", all-day event: "Cả ngày". */
 export function upcomingTimeText(event: Pick<ErpCalendarEvent, 'start_at' | 'end_at' | 'all_day'>): string {
-  if (event.all_day) return 'Cả ngày';
+  if (event.all_day) return tr('Cả ngày');
   const start = Number(event.start_at) || 0;
   const end = Number(event.end_at) || 0;
   return end > start && startOfDay(end) === startOfDay(start) ? `${hhmm(start)} - ${hhmm(end)}` : hhmm(start);
 }
 
-/** Mốc nhắc của lịch: "Nhắc: 15 phút trước, đúng giờ"; không có → "Không nhắc". */
+/** Reminder setting of the event: "Nhắc: 15 phút trước, đúng giờ"; none → "Không nhắc". */
 export function upcomingReminderText(event: Pick<ErpCalendarEvent, 'reminders'>): string {
-  return erpRemindersSummary((event.reminders || []).map(reminder => Number(reminder?.minutes_before))) || 'Không nhắc';
+  return erpRemindersSummary((event.reminders || []).map(reminder => Number(reminder?.minutes_before))) || tr('Không nhắc');
 }
 
 export type UpcomingTone = 'live' | 'soon' | 'later';
 
 /**
- * Trạng thái bên phải mỗi dòng: "Đang diễn ra"; còn ≤ 1 giờ: "còn 25 phút"; trong hôm nay: "còn 3 giờ"; xa hơn: không
- * ghi (ngày ở tiêu đề nhóm). Màu "sắp tới" khi đã tới mốc nhắc trước xa nhất của lịch (không có mốc: 15 phút).
+ * Status on the right of each row: "Đang diễn ra" (in progress); 1 hour or less left: "còn 25 phút"; later today: "còn 3 giờ"; further away: nothing
+ * is shown (the date is in the group header). The "sắp tới" color applies once the event reaches its earliest reminder time (no reminder: 15 minutes).
  */
 export function upcomingStatus(event: Pick<ErpCalendarEvent, 'start_at' | 'end_at' | 'all_day' | 'reminders'>, now: number): { text: string; tone: UpcomingTone } {
   const start = Number(event.start_at) || 0;
-  // Cả ngày: cột giờ đã ghi "Cả ngày", nhóm đã ghi ngày
+  // All-day: the time column already says "Cả ngày", the group already shows the date
   if (event.all_day) return { text: '', tone: startOfDay(start) <= now ? 'live' : 'later' };
-  if (start <= now) return { text: 'Đang diễn ra', tone: 'live' };
+  if (start <= now) return { text: tr('Đang diễn ra'), tone: 'live' };
   const minutes = Math.ceil((start - now) / 60_000);
   const advance = normalizeErpReminderMinutes((event.reminders || []).map(reminder => Number(reminder?.minutes_before)))
     .filter(mark => mark > 0);
   const soon = minutes <= (advance[0] ?? SOON_WITHOUT_REMINDER_MINUTES);
-  if (minutes <= 60) return { text: `còn ${erpDurationText(minutes)}`, tone: soon ? 'soon' : 'later' };
-  if (startOfDay(start) === startOfDay(now)) return { text: `còn ${Math.round(minutes / 60)} giờ`, tone: soon ? 'soon' : 'later' };
+  if (minutes <= 60) return { text: tr('còn {{v1}}', { v1: erpDurationText(minutes) }), tone: soon ? 'soon' : 'later' };
+  if (startOfDay(start) === startOfDay(now)) return { text: tr('còn {{v1}} giờ', { v1: Math.round(minutes / 60) }), tone: soon ? 'soon' : 'later' };
   return { text: '', tone: soon ? 'soon' : 'later' };
 }
 
-/** Nhóm theo ngày: "Hôm nay", "Ngày mai", "Thứ 6, 07/11". Lịch nhiều ngày đang diễn ra nằm ở hôm nay. */
+/** Grouped by day: "Hôm nay", "Ngày mai", "Thứ 6, 07/11". Multi-day events in progress are placed under today. */
 export function groupUpcomingByDay<T extends Pick<ErpCalendarEvent, 'start_at'>>(events: readonly T[], now: number): { label: string; items: T[] }[] {
   const groups: { label: string; day: number; items: T[] }[] = [];
   const today = startOfDay(now);

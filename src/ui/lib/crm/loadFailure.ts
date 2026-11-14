@@ -1,31 +1,33 @@
 /**
- * CRM — xử lý lần đọc lỗi ở các màn CRM phụ (Dashboard, chọn người nhận chiến dịch, thêm liên hệ, tìm kiếm, nhóm).
+ * CRM: handles a failed read on the secondary CRM screens (Dashboard, choosing campaign recipients, adding contacts, search, groups).
  *
- * Chế độ nhân viên: DataAccessor trả `success: false` khi đọc lỗi (mất kết nối BOSS…) — xem `isReadFailure`.
- * Quy tắc:
- *  - lỗi KHÔNG thay dữ liệu đang hiện bằng rỗng (giữ bản tốt gần nhất), trừ khi bản đó thuộc tài khoản / nhóm khác;
- *  - lỗi không được dẫn tới tập người nhận rỗng / thiếu, hay thao tác ghi dựa trên dữ liệu đọc thiếu.
- * Hàm thuần: người gọi tự tính cờ `failed` bằng `isReadFailure(res)` — test không cần React / store / REST.
+ * Employee mode: DataAccessor returns `success: false` when a read fails (connection to BOSS lost...): see `isReadFailure`.
+ * Rules:
+ *  - an error does NOT replace the data on screen with an empty set (the last good copy is kept), unless that copy belongs to another account / group;
+ *  - an error must not lead to an empty / incomplete recipient set, or to a write based on incomplete read data.
+ * Pure functions: the caller computes the `failed` flag with `isReadFailure(res)` itself, so the tests need no React / store / REST.
  */
 
-/** Việc cần làm với dữ liệu đang hiện sau một lần đọc. */
+/** What to do with the data on screen after a read. */
+import { tr } from '../../../shared/i18n';
+
 export type ReadOutcome = 'replace' | 'keep' | 'clear';
 
 /**
- * Sau một lần đọc dữ liệu của `owner` (tài khoản, hoặc `tàiKhoản:nhóm`) khi dữ liệu đang hiện thuộc `shownOwner`:
- *  - đọc thành công → `replace`;
- *  - lỗi, dữ liệu đang hiện của đúng `owner` → `keep` (giữ bản tốt gần nhất, báo "Không tải được — Thử lại");
- *  - lỗi, dữ liệu đang hiện của chủ khác (vừa đổi tài khoản / nhóm) hoặc chưa tải lần nào → `clear`: không bao giờ
- *    hiện hay thao tác trên dữ liệu của tài khoản khác.
+ * After a read of the data of `owner` (an account, or `tàiKhoản:nhóm`) when the data on screen belongs to `shownOwner`:
+ *  - read succeeded → `replace`;
+ *  - error, and the data on screen is of the same `owner` → `keep` (keeps the last good copy and shows an error with a retry option);
+ *  - error, and the data on screen belongs to another owner (the account / group was just changed) or nothing has been loaded yet → `clear`: never
+ *    shows or acts on another account's data.
  */
 export function readOutcome(failed: boolean, shownOwner: string | null, owner: string): ReadOutcome {
   if (!failed) return 'replace';
   return shownOwner != null && shownOwner === owner ? 'keep' : 'clear';
 }
 
-// ── Nhóm & thành viên nhóm (GroupMembersTab) ─────────────────────────────────
+// ── Groups & group members (GroupMembersTab) ─────────────────────────────────
 
-/** Số dòng thành viên theo nhóm (mọi dòng của bảng thành viên nhóm, như trước). */
+/** Number of member rows per group (every row of the group member table, as before). */
 export function countMembersByGroup(rows: Array<{ group_id?: string | null }> | null | undefined): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const row of rows || []) {
@@ -44,8 +46,8 @@ export interface GroupListRow {
 }
 
 /**
- * Danh sách nhóm (contact_type = 'group') từ danh sách hội thoại. `counts` = null khi đọc số thành viên lỗi → giữ số
- * đã biết của cùng nhóm trong `previous` (cùng tài khoản) thay vì 0 ("Chưa có thành viên" giả).
+ * Group list (contact_type = 'group') from the conversation list. `counts` = null when reading the member counts failed → keeps the known count
+ * of the same group in `previous` (same account) instead of 0 (a fake "Chưa có thành viên" (No members yet)).
  */
 export function buildGroupRows(
   contacts: any[] | null | undefined,
@@ -64,7 +66,7 @@ export function buildGroupRows(
     }));
 }
 
-/** SĐT theo contact_id từ danh sách hội thoại. */
+/** Phone numbers by contact_id from the conversation list. */
 export function phonesByContact(contacts: any[] | null | undefined): Record<string, string> {
   const phones: Record<string, string> = {};
   for (const c of contacts || []) {
@@ -74,8 +76,8 @@ export function phonesByContact(contacts: any[] | null | undefined): Record<stri
 }
 
 /**
- * Gộp SĐT vào danh sách thành viên. `phones` = null khi đọc danh bạ lỗi → giữ SĐT đang hiện của cùng thành viên
- * (`previous`, cùng nhóm) thay vì xoá trắng.
+ * Merges phone numbers into the member list. `phones` = null when reading the address book failed → keeps the phone numbers currently shown for the same member
+ * (`previous`, same group) instead of clearing them.
  */
 export function withMemberPhones<T extends { member_id: string }>(
   rows: T[],
@@ -87,49 +89,49 @@ export function withMemberPhones<T extends { member_id: string }>(
   return rows.map(m => ({ ...m, phone: known.get(m.member_id) || '' }));
 }
 
-// ── Chọn người nhận chiến dịch (TargetSelector) ──────────────────────────────
+// ── Choosing campaign recipients (TargetSelector) ──────────────────────────────
 
 export type TargetSelectMode = 'manual' | 'by_label' | 'friends_only' | 'groups_only' | 'by_phone' | 'by_uid' | 'by_group';
 
 export interface TargetLoadFlags {
-  /** Lần tải danh sách liên hệ CRM gần nhất lỗi (danh sách đang hiện trống hoặc cũ). */
+  /** The most recent load of the CRM contact list failed (the list on screen is empty or stale). */
   contactsFailed: boolean;
-  /** Bảng gán Nhãn Local đang dùng (bản tự tải) lỗi. */
+  /** Loading the "Nhãn Local" (Local label) assignment table in use (self-loaded copy) failed. */
   localLabelMapFailed: boolean;
-  /** Đang lọc theo ít nhất một Nhãn Local. */
+  /** Filtering by at least one "Nhãn Local" (Local label). */
   filteringByLocalLabel: boolean;
 }
 
 /**
- * Lý do khoá nút xác nhận người nhận (null = cho phép). Lần tải lỗi có thể làm tập người nhận rỗng / thiếu mà người
- * dùng không nhận ra → khoá cho tới khi tải lại được.
- *  - Theo UID: người nhận lấy nguyên từ ô nhập, không phụ thuộc danh sách liên hệ → không khoá.
- *  - Theo SĐT: khớp SĐT ↔ UID và chống trùng dựa vào danh sách liên hệ → khoá khi danh sách lỗi.
- *  - Theo thành viên nhóm: danh sách nhóm lấy từ danh sách liên hệ → khoá khi danh sách lỗi.
+ * Reason to lock the recipient confirm button (null = allowed). A failed load can leave the recipient set empty / incomplete without the
+ * user noticing → locked until it can be loaded again.
+ *  - By UID: the recipient is taken as typed in the input, not dependent on the contact list → not locked.
+ *  - By phone number: matches phone number ↔ UID and prevents duplicates using the contact list → locked when the list failed.
+ *  - By group member: the group list comes from the contact list → locked when the list failed.
  */
 export function targetConfirmBlockReason(mode: TargetSelectMode, flags: TargetLoadFlags): string | null {
   if (mode === 'by_uid') return null;
-  if (flags.contactsFailed) return 'Không tải được danh sách liên hệ';
-  if (mode === 'by_label' && flags.filteringByLocalLabel && flags.localLabelMapFailed) return 'Không tải được Nhãn Local';
+  if (flags.contactsFailed) return tr('Không tải được danh sách liên hệ');
+  if (mode === 'by_label' && flags.filteringByLocalLabel && flags.localLabelMapFailed) return tr('Không tải được Nhãn Local');
   return null;
 }
 
 export interface GroupMembersRead {
   groupId: string;
-  /** Đọc lỗi (`isReadFailure` hoặc ném lỗi). */
+  /** Read failed (`isReadFailure` or a thrown error). */
   failed: boolean;
   members?: any[] | null;
 }
 
 export interface GroupTargets {
   members: any[];
-  /** Nhóm đọc lỗi — khác rỗng thì KHÔNG được thêm `members` (tập thiếu) vào chiến dịch. */
+  /** A group whose read failed: if it is not empty, its `members` (an incomplete set) must NOT be added to the campaign. */
   failedGroupIds: string[];
 }
 
 /**
- * Người nhận từ thành viên các nhóm đã chọn: UID dạng số, chưa có trong chiến dịch (như trước), kèm các nhóm đọc lỗi.
- * Trước đây nhóm đọc lỗi bị bỏ qua lặng lẽ → chiến dịch nhận tập người nhận thiếu / rỗng.
+ * Recipients from the members of the selected groups: numeric UIDs not yet in the campaign (as before), plus the groups whose read failed.
+ * Before, a group whose read failed was silently skipped → the campaign got an incomplete / empty recipient set.
  */
 export function collectGroupTargets(reads: GroupMembersRead[], existingIds: Set<string>): GroupTargets {
   const members: any[] = [];

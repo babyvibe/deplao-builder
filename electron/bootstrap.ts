@@ -9,13 +9,22 @@
 process.env.WS_NO_BUFFER_UTIL = '1';
 process.env.WS_NO_UTF_8_VALIDATE = '1';
 
-// Đặt tên app TRƯỚC mọi thứ: thư mục dữ liệu (userData = %APPDATA%/Deplao) bị Electron chốt ở lần đầu có code hỏi tới
-// nó. Bản dev chạy thẳng từ file bootstrap nên tên mặc định là "Electron" → nếu có code hỏi userData trước khi main.ts
-// đặt tên, app mở %APPDATA%/Electron với DB trống mới (sự cố 22/10/2026). main.ts vẫn đặt lại (không sao).
+// Set the app name BEFORE anything else: Electron locks the data folder (userData = %APPDATA%/Deplao) the first time code asks for it
+// The dev build runs straight from the bootstrap file, so its default name is "Electron" → if code asks for userData before main.ts
+// sets the name, the app opens an empty new DB in %APPDATA%/Electron (incident 22/10/2026). main.ts sets it again anyway (harmless).
 require('electron').app.setName('Deplao');
 
-// Telegram: schema API layer mới cho GramJS (bản npm vẫn layer 198 → tin dùng tính năng mới thành "chưa hỗ trợ") —
-// phải trước mọi require('telegram'), xem src/services/telegram/api/telegramApiLayer.ts.
+// UI language (src/services/i18n/localeStore.ts): loaded before main.ts, so module-level tr() calls in the main
+// process are translated. It must stay after setName (userData path).
+try {
+  require('../src/services/i18n/localeStore').initMainI18n();
+  require('./ipc/i18n/i18nIpc').registerI18nBootIpc();
+} catch (err: any) {
+  console.warn('[bootstrap] i18n:', err?.message || err);
+}
+
+// Telegram: the new API layer schema for GramJS (the npm build is still on layer 198 → new-feature messages show as "chưa hỗ trợ", i.e. unsupported),
+// must run before any require('telegram'), see src/services/telegram/api/telegramApiLayer.ts.
 try {
   const layer = require('../src/services/telegram/api/telegramApiLayer').installTelegramApiLayer();
   if (!layer.installed) console.warn(`[bootstrap] Telegram API layer ${layer.layer}: ${layer.reason}`);
@@ -23,8 +32,8 @@ try {
   console.warn('[bootstrap] Telegram API layer:', err?.message || err);
 }
 
-// Chẩn đoán theo yêu cầu (file cờ <userData>/diagnostics/profile-next-startup): hồ sơ CPU 120 s đầu của main process,
-// tính cả lúc nạp main.ts + chờ app ready — bắt đầu trước require('./main').
+// On-demand diagnostics (flag file <userData>/diagnostics/profile-next-startup): CPU profile of the first 120 s of the main process,
+// including loading main.ts and waiting for app ready; it starts before require('./main').
 try {
   require('../src/utils/startup/startupProfiler').startMainStartupProfile();
 } catch (err: any) {

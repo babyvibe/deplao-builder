@@ -8,9 +8,10 @@ import * as channelIpc from '../../lib/channels/channelIpc';
 import { sendSeenForThread } from '@/lib/chat/read/sendSeenHelper';
 import { CHANNEL, isZalo } from '@/lib/channels/channelHelper';
 import DataAccessor from '../../lib/data/DataAccessor';
+import { tr } from '../../../shared/i18n';
 
 /**
- * Hook quản lý trạng thái chat - load messages, contacts, gửi tin nhắn
+ * Hook that manages chat state: load messages and contacts, send messages
  */
 export function useChat() {
   const {
@@ -38,7 +39,7 @@ export function useChat() {
     return buildZaloAuth(acc);
   }, [getActiveAccount]);
 
-  /** Tải danh sách hội thoại từ DB (hoặc REST cho employee) */
+  /** Load the conversation list from the DB (or REST for employee mode) */
   const loadContacts = useCallback(
     async (zaloId: string) => {
       try {
@@ -51,7 +52,7 @@ export function useChat() {
     [setContacts]
   );
 
-  /** Chọn thread để xem, tải messages từ DB (hoặc REST cho employee) */
+  /** Select a thread to view, load its messages from the DB (or REST for employee mode) */
   const selectThread = useCallback(
     async (contactId: string, threadType: number) => {
       if (!activeAccountId) return;
@@ -100,7 +101,7 @@ export function useChat() {
     [activeAccountId, setActiveThread, clearUnread, setMessages]
   );
 
-  /** Tải thêm messages cũ (phân trang) */
+  /** Load older messages (pagination) */
   const loadMoreMessages = useCallback(
     async (threadId: string, currentCount: number) => {
       if (!activeAccountId) return false;
@@ -110,9 +111,9 @@ export function useChat() {
           threadId,
           limit: 30,
           offset: currentCount,
-          before: undefined, // sẽ dùng offset-based tạm thời
+          before: undefined, // temporarily uses offset-based paging
         });
-        // Fallback: nếu REST không trả về items, thử IPC
+        // Fallback: if REST returns no items, try IPC
         const msgs = result?.items || result?.messages || [];
         if (msgs.length > 0) {
           prependMessages(activeAccountId, threadId, [...msgs].reverse());
@@ -126,7 +127,7 @@ export function useChat() {
     [activeAccountId, prependMessages]
   );
 
-  /** Gửi tin nhắn văn bản */
+  /** Send a text message */
   const sendMessage = useCallback(
     async (text: string): Promise<boolean> => {
       const auth = getAuth();
@@ -155,20 +156,20 @@ export function useChat() {
         });
         return true;
       } catch (err: any) {
-        showNotification('Gửi tin nhắn thất bại: ' + err.message, 'error');
+        showNotification(tr('Gửi tin nhắn thất bại: {{message}}', { message: err.message }), 'error');
         return false;
       }
     },
     [getAuth, activeThreadId, activeThreadType, activeAccountId, addMessage, showNotification]
   );
 
-  /** Lấy messages của thread hiện tại */
+  /** Get the messages of the current thread */
   const currentMessages = (): MessageItem[] => {
     if (!activeAccountId || !activeThreadId) return [];
     return messages[getMessageCacheKey(activeAccountId, activeThreadId, activeTopicId)] || [];
   };
 
-  /** Lấy contacts của account hiện tại */
+  /** Get the contacts of the current account */
   const currentContacts = (): ContactItem[] => {
     if (!activeAccountId) return [];
     return contacts[activeAccountId] || [];

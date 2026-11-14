@@ -1,5 +1,5 @@
 /**
- * Multi-account planning for Settings → Tin nhắn nhanh → Local.
+ * Multi-account planning for Settings → Quick messages → Local.
  *
  * A local LABEL is one row whose comma-separated `page_ids` lists its accounts, so "apply to
  * several accounts" is a single row: editing it re-writes `page_ids` (a deselected account
@@ -16,8 +16,10 @@
  *    dialog asks once whether to overwrite it or skip that account.
  * Accounts that are not selected and do not share the item are never touched.
  *
- * Pure (no React / IPC) — covered by src/__tests__/settings/quickMessageAccounts.test.ts.
+ * Pure (no React / IPC): covered by src/__tests__/settings/quickMessageAccounts.test.ts.
  */
+
+import { tr } from '../../../../shared/i18n';
 
 export interface QMMediaFile { path: string; type: string }
 
@@ -213,11 +215,11 @@ export function pickOwnMediaCopy<F extends QMMediaFile>(file: F, ownMedia?: QMMe
   return own && own.path !== file.path ? { ...file, path: own.path } : file;
 }
 
-/** "A, B, C và 2 tài khoản khác" */
+/** "A, B, C và 2 tài khoản khác" (A, B, C and 2 other accounts) */
 export function formatAccountNames(ids: string[], nameOf: (zaloId: string) => string, max = 3): string {
   const names = ids.map(nameOf);
   if (names.length <= max) return names.join(', ');
-  return `${names.slice(0, max).join(', ')} và ${names.length - max} tài khoản khác`;
+  return tr('{{v1}} và {{v2}} tài khoản khác', { v1: names.slice(0, max).join(', '), v2: names.length - max });
 }
 
 export interface QMResultSummaryInput {
@@ -226,7 +228,7 @@ export interface QMResultSummaryInput {
   removed?: string[];
   skipped?: string[];
   failed?: Array<{ zaloId: string; error?: string }>;
-  /** 'delete' words removals as "đã xóa" (row delete) instead of "đã gỡ" (account deselected). */
+  /** Removal wording: 'delete' rows show "đã xóa" (deleted) instead of "đã gỡ" (account deselected). */
   mode?: 'save' | 'delete';
 }
 
@@ -240,23 +242,23 @@ export function summarizeQuickMessageResult(
   const removed = input.removed ?? [];
   const skipped = input.skipped ?? [];
   const failed = input.failed ?? [];
-  const who = (ids: string[]) => (ids.length === 1 ? nameOf(ids[0]) : `${ids.length} tài khoản`);
+  const who = (ids: string[]) => (ids.length === 1 ? nameOf(ids[0]) : tr('{{count}} tài khoản', { count: ids.length }));
 
   const parts: string[] = [];
-  if (saved.length) parts.push(`đã lưu ${kw} cho ${who(saved)}`);
+  if (saved.length) parts.push(tr('đã lưu {{kw}} cho {{v1}}', { kw, v1: who(saved) }));
   if (removed.length) {
     parts.push(input.mode === 'delete'
-      ? `đã xóa ${kw} ${removed.length === 1 ? 'ở' : 'khỏi'} ${who(removed)}`
-      : `đã gỡ ${kw} khỏi ${who(removed)}`);
+      ? tr('đã xóa {{kw}} {{v1}} {{v2}}', { kw, v1: removed.length === 1 ? tr('ở') : tr('khỏi'), v2: who(removed) })
+      : tr('đã gỡ {{kw}} khỏi {{v1}}', { kw, v1: who(removed) }));
   }
-  if (skipped.length) parts.push(`bỏ qua ${who(skipped)} đã có ${kw}`);
+  if (skipped.length) parts.push(tr('bỏ qua {{v1}} đã có {{kw}}', { v1: who(skipped), kw }));
   if (failed.length) {
-    const details = failed.slice(0, 3).map(f => `${nameOf(f.zaloId)} (${f.error || 'lỗi không xác định'})`).join(', ');
-    parts.push(`lỗi ${failed.length} tài khoản: ${details}${failed.length > 3 ? ', …' : ''}`);
+    const details = failed.slice(0, 3).map(f => `${nameOf(f.zaloId)} (${f.error || tr('lỗi không xác định')})`).join(', ');
+    parts.push(tr('lỗi {{count}} tài khoản: {{details}}{{v1}}', { count: failed.length, details, v1: failed.length > 3 ? ', …' : '' }));
   }
 
   const done = saved.length + removed.length;
   const type = failed.length ? (done ? 'warning' : 'error') : (done ? 'success' : 'warning');
-  const text = parts.length ? parts.join(' · ') : 'không có thay đổi';
+  const text = parts.length ? parts.join(' · ') : tr('không có thay đổi');
   return { message: text.charAt(0).toUpperCase() + text.slice(1), type };
 }

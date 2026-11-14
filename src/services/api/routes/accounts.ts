@@ -1,6 +1,6 @@
 /**
- * Nhóm Tài khoản: danh sách, trạng thái, kết nối/ngắt, proxy.
- * Kênh IPC: login:getAccounts, login:checkHealth, login:connect, login:disconnect,
+ * Accounts group: list, status, connect/disconnect, proxy.
+ * IPC channels: login:getAccounts, login:checkHealth, login:connect, login:disconnect,
  * fb:connect, fb:disconnect, fb:checkHealth, telegramUser:startListener, telegramUser:isConnected,
  * proxy:getForAccount, proxy:setAccount, proxy:list.
  */
@@ -9,6 +9,7 @@ import { ApiError, route, RouteDef } from '../types';
 import { accountAllowed } from '../auth/ApiAuth';
 import { CHANNELS } from '../channels/ChannelActions';
 import { accountParams, scrub } from './common';
+import { tr } from '../../../shared/i18n';
 
 const accountSchema = s.object({
     id: s.string(), channel: s.string(), display_name: s.string(), avatar_url: s.string(), phone: s.string(),
@@ -31,10 +32,10 @@ export function accountRoutes(): RouteDef[] {
     return [
         route({
             method: 'GET', path: '/accounts', scope: 'accounts:read', tags: ['Tài khoản'], operationId: 'listAccounts',
-            summary: 'Danh sách tài khoản (Zalo, Facebook, Telegram) mà key được phép',
+            summary: tr('Danh sách tài khoản (Zalo, Facebook, Telegram) mà key được phép'),
             query: s.object({
-                channel: s.enum(['zalo', 'facebook', 'telegram_user', 'telegram_bot'] as const).optional().describe('Lọc theo kênh'),
-                online: s.boolean().optional().describe('Chỉ tài khoản đang online'),
+                channel: s.enum(['zalo', 'facebook', 'telegram_user', 'telegram_bot'] as const).optional().describe(tr('Lọc theo kênh')),
+                online: s.boolean().optional().describe(tr('Chỉ tài khoản đang online')),
             }),
             response: s.array(accountSchema),
             handler: async ctx => {
@@ -47,14 +48,14 @@ export function accountRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId', scope: 'accounts:read', tags: ['Tài khoản'], operationId: 'getAccount',
-            summary: 'Thông tin một tài khoản',
+            summary: tr('Thông tin một tài khoản'),
             params: accountParams,
             response: accountSchema,
             handler: ctx => ctx.account(ctx.params.accountId),
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/status', scope: 'accounts:read', tags: ['Tài khoản'], operationId: 'getAccountStatus',
-            summary: 'Trạng thái kết nối/listener chi tiết và proxy đang dùng',
+            summary: tr('Trạng thái kết nối/listener chi tiết và proxy đang dùng'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -81,8 +82,8 @@ export function accountRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/connect', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'connectAccount',
-            summary: 'Kết nối lại tài khoản bằng phiên đã lưu',
-            description: 'Dùng phiên đăng nhập đã lưu trên máy (không nhận cookie từ client). Zalo: login:connect; Facebook: fb:connect; Telegram: telegramUser:startListener.',
+            summary: tr('Kết nối lại tài khoản bằng phiên đã lưu'),
+            description: tr('Dùng phiên đăng nhập đã lưu trên máy (không nhận cookie từ client). Zalo: login:connect; Facebook: fb:connect; Telegram: telegramUser:startListener.'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -91,9 +92,9 @@ export function accountRoutes(): RouteDef[] {
                     return { connected: true, listener_connected: !!r?.listenerConnected };
                 }
                 const raw = await rawAccount(ctx, acc.id);
-                if (!raw) throw new ApiError(404, 'NOT_FOUND', 'Không tìm thấy phiên đăng nhập đã lưu');
+                if (!raw) throw new ApiError(404, 'NOT_FOUND', tr('Không tìm thấy phiên đăng nhập đã lưu'));
                 if (acc.channel === CHANNELS.TELEGRAM_USER) {
-                    if (!raw.cookies) throw new ApiError(409, 'CONFLICT', 'Phiên Telegram không còn, cần đăng nhập lại trên app');
+                    if (!raw.cookies) throw new ApiError(409, 'CONFLICT', tr('Phiên Telegram không còn, cần đăng nhập lại trên app'));
                     await ctx.call('telegramUser:startListener', { accountId: acc.id, phoneNumber: '', stringSession: raw.cookies }, { timeoutMs: 120_000 });
                     return { connected: true };
                 }
@@ -103,12 +104,12 @@ export function accountRoutes(): RouteDef[] {
                     }, { timeoutMs: 120_000 });
                     return { connected: true };
                 }
-                throw new ApiError(422, 'CHANNEL_UNSUPPORTED', `Kênh ${acc.channel} chưa hỗ trợ kết nối qua API`);
+                throw new ApiError(422, 'CHANNEL_UNSUPPORTED', tr('Kênh {{channel}} chưa hỗ trợ kết nối qua API', { channel: acc.channel }));
             },
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/disconnect', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'disconnectAccount',
-            summary: 'Ngắt kết nối tài khoản (giữ dữ liệu)',
+            summary: tr('Ngắt kết nối tài khoản (giữ dữ liệu)'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -119,7 +120,7 @@ export function accountRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/proxy', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'getAccountProxy',
-            summary: 'Proxy đang gán cho tài khoản (không trả mật khẩu)',
+            summary: tr('Proxy đang gán cho tài khoản (không trả mật khẩu)'),
             params: accountParams,
             handler: async ctx => {
                 await ctx.account(ctx.params.accountId);
@@ -129,9 +130,9 @@ export function accountRoutes(): RouteDef[] {
         }),
         route({
             method: 'PUT', path: '/accounts/:accountId/proxy', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'setAccountProxy',
-            summary: 'Gán proxy (id trong danh sách proxy) hoặc bỏ proxy (null)',
+            summary: tr('Gán proxy (id trong danh sách proxy) hoặc bỏ proxy (null)'),
             params: accountParams,
-            body: s.object({ proxy_id: s.int().nullable().describe('ID proxy từ GET /proxies; null = bỏ proxy') }),
+            body: s.object({ proxy_id: s.int().nullable().describe(tr('ID proxy từ GET /proxies; null = bỏ proxy')) }),
             handler: async ctx => {
                 await ctx.account(ctx.params.accountId);
                 await ctx.call('proxy:setAccount', { zaloId: ctx.params.accountId, proxyId: ctx.body.proxy_id ?? null });
@@ -140,7 +141,7 @@ export function accountRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/proxies', scope: 'accounts:manage', tags: ['Tài khoản'], operationId: 'listProxies',
-            summary: 'Danh sách proxy đã cấu hình (không trả mật khẩu)',
+            summary: tr('Danh sách proxy đã cấu hình (không trả mật khẩu)'),
             handler: async ctx => {
                 const res = await ctx.call('proxy:list');
                 const list = Array.isArray(res) ? res : (res?.proxies || res?.items || []);

@@ -1,10 +1,10 @@
 import React from 'react';
 
 /**
- * Mốc ngày nổi ở đầu khung chat khi người dùng cuộn (như Telegram): cho biết đang xem tin của ngày nào, ẩn sau 3 s
- * ngừng cuộn. Đọc mốc ngày trong luồng tin (`[data-day-label]`, 1 phần tử / ngày) nên rẻ; state nằm riêng trong
- * component này → cuộn không làm render lại danh sách tin. Không hiện khi app tự cuộn (tin mới, khôi phục vị trí) và
- * khi chính mốc ngày đó đang nằm ngay đầu khung (tránh 2 nhãn chồng nhau).
+ * Floating date marker at the top of the chat window while the user scrolls (like Telegram): shows the day of the messages being viewed, hidden 3 s after
+ * scrolling stops. It reads the date markers in the message flow (`[data-day-label]`, 1 element per day), so it is cheap; the state lives in this
+ * component only → scrolling does not re-render the message list. It is not shown when the app scrolls by itself (new messages, restoring the position) and
+ * when that same date marker is already at the top of the window (avoids 2 labels stacked on each other).
  */
 const HIDE_AFTER_MS = 3000;
 const USER_SCROLL_WINDOW_MS = 1200;
@@ -70,12 +70,12 @@ export default function StickyDayPill({ containerRef }: { containerRef: React.Re
 
   const visible = scrolling && !!label && !inlineAtTop;
   return (
-    // h-0 + sticky: dính ở đầu vùng cuộn, không chiếm chỗ trong luồng tin. overflow-anchor:none — không được làm điểm
-    // neo cuộn của khung chat (giữ vị trí khi tải tin cũ dựa vào neo trên các hàng tin)
-    // items-start: khung cao 0 mà để mặc định stretch thì nhãn bị kéo về cao 0 — nền thành vạch mỏng, chữ tràn ra ngoài
+    // h-0 + sticky: stuck to the top of the scroll area, takes no space in the message flow. overflow-anchor:none, so it must not be used as the
+    // scroll anchor of the chat window (keeps the position when loading older messages, anchored on the message rows)
+    // items-start: with a 0-height box and the default stretch, the label gets pulled to 0 height: the background becomes a thin line and the text overflows
     <div className="sticky top-0 z-20 h-0 flex justify-center items-start pointer-events-none [overflow-anchor:none]" aria-hidden={!visible}>
-      {/* Trôi trên bubble / ảnh → nền gần như đặc (95%), cùng tông mốc ngày giữa luồng tin, chữ màu chuẩn của theme (nền trong suốt cũ lẫn vào
-          nội dung phía sau ở cả 2 theme). Màu nền / viền là giá trị cố định: lớp ánh xạ theme sáng không đổi màu sai. */}
+      {/* Floats above bubbles / photos → an almost solid background (95%), the same tone as the date marker in the message flow, the theme's standard text color (the old transparent background mixed with
+          the content behind it in both themes). Background / border colors are fixed values: the light theme mapping does not change them wrongly. */}
       <span
         className={`mt-2 text-[11px] font-medium text-foreground bg-[rgb(196_200_207/0.95)] dark:bg-[rgb(52_55_61/0.95)] border border-[rgb(0_0_0/0.06)] dark:border-[rgb(255_255_255/0.08)] shadow-sm px-2.5 py-0.5 rounded-full transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}
       >

@@ -1,66 +1,67 @@
 /**
- * Thông báo Quản lý công việc qua Zalo: loại thông báo chọn được, cài đặt (app_settings của Boss) và chữ tin nhắn.
- * Dùng chung main (ErpNotificationService: có thông báo thuộc loại đã chọn → gửi kèm tin Zalo) và giao diện
- * (Quản lý công việc → Cài đặt).
+ * Task management notifications via Zalo: the notification types that can be selected, the settings (Boss's app_settings) and the message text.
+ * Shared by main (ErpNotificationService: if a notification of a selected type exists → send it along with the Zalo message) and the UI
+ * (Task management → Settings).
  *
- * Một tài khoản Zalo của cửa hàng gửi tin 1-1 tới SĐT nhân viên (hồ sơ Nhân sự), xếp hàng theo tài khoản như tin trả lời
- * tự động (AccountSendQueue, cách nhau vài giây) để Zalo không coi là spam. Trước đây chỉ có khoá
- * `erp.notify_zalo_account_id` mà không giao diện nào ghi → tính năng chưa bao giờ chạy.
+ * One shop Zalo account sends 1-1 messages to the employee's phone number (Staff profile), queued per account like auto-reply messages
+ * (AccountSendQueue, a few seconds apart) so Zalo does not treat them as spam. Previously only the
+ * `erp.notify_zalo_account_id` key existed and no UI wrote it → the feature never ran.
  */
 import type { ErpNotificationType } from '../../models/erp';
+import { tr } from '../i18n';
 
 export interface ErpZaloNotifyTypeOption {
   type: ErpNotificationType;
   label: string;
-  /** Dòng phụ: khi nào gửi / gửi cho ai. */
+  /** Sub-line: when to send / to whom. */
   hint?: string;
 }
 
-/** Loại thông báo gửi được qua Zalo, theo thứ tự hiện trên giao diện. */
+/** Notification types that can be sent via Zalo, in the order shown in the UI. */
 export const ERP_ZALO_NOTIFY_TYPES: readonly ErpZaloNotifyTypeOption[] = [
-  { type: 'task_assigned', label: 'Được giao task' },
-  { type: 'task_due_soon', label: 'Task sắp đến hạn', hint: 'Trước hạn 1 giờ' },
-  { type: 'task_overdue', label: 'Task quá hạn', hint: 'Tóm tắt lúc 9 giờ sáng' },
-  { type: 'event_invited', label: 'Được mời tham dự lịch' },
-  { type: 'event_reminder', label: 'Nhắc lịch', hint: 'Theo mốc nhắc của lịch' },
-  { type: 'leave_request_new', label: 'Đơn nghỉ phép mới', hint: 'Gửi quản lý trực tiếp' },
-  { type: 'leave_request_decided', label: 'Kết quả duyệt nghỉ phép', hint: 'Gửi người xin nghỉ' },
-  { type: 'note_shared', label: 'Được chia sẻ ghi chú' },
+  { type: 'task_assigned', label: tr('Được giao task') },
+  { type: 'task_due_soon', label: tr('Task sắp đến hạn'), hint: tr('Trước hạn 1 giờ') },
+  { type: 'task_overdue', label: tr('Task quá hạn'), hint: tr('Tóm tắt lúc 9 giờ sáng') },
+  { type: 'event_invited', label: tr('Được mời tham dự lịch') },
+  { type: 'event_reminder', label: tr('Nhắc lịch'), hint: tr('Theo mốc nhắc của lịch') },
+  { type: 'leave_request_new', label: tr('Đơn nghỉ phép mới'), hint: tr('Gửi quản lý trực tiếp') },
+  { type: 'leave_request_decided', label: tr('Kết quả duyệt nghỉ phép'), hint: tr('Gửi người xin nghỉ') },
+  { type: 'note_shared', label: tr('Được chia sẻ ghi chú') },
 ];
 
-/** Bật sẵn: đúng các thông báo trước đây gắn kênh Zalo (sắp đến hạn, quá hạn, mời lịch, nghỉ phép). */
+/** On by default: exactly the notifications that were previously tied to the Zalo channel (due soon, overdue, calendar invitation, leave). */
 export const DEFAULT_ERP_ZALO_TYPES: readonly ErpNotificationType[] = [
   'task_due_soon', 'task_overdue', 'event_invited', 'leave_request_new', 'leave_request_decided',
 ];
 
-/** Khoá trong app_settings của Boss. */
+/** Key in Boss's app_settings. */
 export const ERP_ZALO_SETTING_KEYS = {
   enabled: 'erp.notify_zalo_enabled',
   accountId: 'erp.notify_zalo_account_id',
   types: 'erp.notify_zalo_types',
 } as const;
 
-/** Mỗi người nhận tối đa bấy nhiêu tin Zalo mỗi ngày (vượt thì chỉ còn thông báo trong app). */
+/** Each recipient gets at most this many Zalo messages per day (beyond that, only the in-app notification is sent). */
 export const ERP_ZALO_DAILY_CAP = 30;
 
 export interface ErpZaloNotifySettings {
   enabled: boolean;
-  /** accounts.zalo_id của tài khoản gửi ('' = chưa chọn). */
+  /** accounts.zalo_id of the sending account ('' = not selected yet). */
   accountId: string;
   types: ErpNotificationType[];
 }
 
 const KNOWN_TYPES = new Set<string>(ERP_ZALO_NOTIFY_TYPES.map(option => option.type));
 
-/** Chỉ loại có trong danh sách, bỏ trùng, theo thứ tự danh sách. */
+/** Only types in the list, duplicates removed, in list order. */
 export function sanitizeErpZaloTypes(value: unknown): ErpNotificationType[] {
   const picked = new Set(Array.isArray(value) ? value.map(String).filter(type => KNOWN_TYPES.has(type)) : []);
   return ERP_ZALO_NOTIFY_TYPES.map(option => option.type).filter(type => picked.has(type));
 }
 
 /**
- * Cài đặt từ giá trị app_settings (null = chưa lưu). Chưa có công tắc mà đã có tài khoản (cấu hình tay trước đây) = bật;
- * chưa lưu loại / loại hỏng → loại mặc định.
+ * Settings from the app_settings value (null = not saved yet). No switch yet but an account already set (configured by hand before) = on;
+ * no types saved / broken types → default types.
  */
 export function parseErpZaloSettings(raw: { enabled?: string | null; accountId?: string | null; types?: string | null }): ErpZaloNotifySettings {
   const accountId = String(raw.accountId ?? '').trim();
@@ -70,12 +71,12 @@ export function parseErpZaloSettings(raw: { enabled?: string | null; accountId?:
     try {
       const parsed = JSON.parse(raw.types);
       if (Array.isArray(parsed)) types = sanitizeErpZaloTypes(parsed);
-    } catch { /* giữ mặc định */ }
+    } catch { /* keep the default */ }
   }
   return { enabled, accountId, types };
 }
 
-/** Áp phần thay đổi (chỉ trường có gửi, đúng kiểu) lên cài đặt hiện tại. */
+/** Apply the changes (only fields that are sent, with the right type) to the current settings. */
 export function mergeErpZaloSettings(current: ErpZaloNotifySettings, patch: unknown): ErpZaloNotifySettings {
   const p = patch && typeof patch === 'object' ? patch as Record<string, unknown> : {};
   return {
@@ -85,15 +86,15 @@ export function mergeErpZaloSettings(current: ErpZaloNotifySettings, patch: unkn
   };
 }
 
-/** Tin Zalo của một thông báo: "🔔 Tiêu đề" + nội dung (dòng 2). */
+/** Zalo message for a notification: "🔔 Tiêu đề" (title) + body (line 2). */
 export function erpZaloMessageText(title: string, body: string): string {
   const text = [`🔔 ${String(title ?? '').trim()}`, String(body ?? '').trim()].filter(Boolean).join('\n');
   return text.length > 1000 ? `${text.slice(0, 999)}…` : text;
 }
 
 /**
- * SĐT để tìm trên Zalo: chỉ chữ số, "0…" → "84…" (zca-js chỉ tự đổi khi ngôn ngữ là vi). Ít hơn 9 chữ số → '' (không
- * phải SĐT, không tốn lượt tìm SĐT của Zalo).
+ * Phone number to look up on Zalo: digits only, "0…" → "84…" (zca-js only converts it by itself when the language is vi). Fewer than 9 digits → '' (not
+ * a phone number, so it does not use up a Zalo phone lookup).
  */
 export function zaloPhoneDigits(raw: unknown): string {
   let digits = String(raw ?? '').replace(/\D/g, '');
@@ -101,21 +102,21 @@ export function zaloPhoneDigits(raw: unknown): string {
   return digits.length >= 9 ? digits : '';
 }
 
-// ── Trạng thái (Cài đặt → Thông báo qua Zalo) ──────────────────────────────────────────────────────────────────────
+// ── Status (Settings → Zalo notifications) ──────────────────────────────────────────────────────────────────────
 
 /**
- * ok = đã tìm thấy Zalo của SĐT; not_found = SĐT không có Zalo (hoặc tắt tìm qua SĐT); unchecked = chưa tìm SĐT trong
- * phiên này (tìm ở lần gửi đầu tiên).
+ * ok = the Zalo account of the phone number was found; not_found = the phone number has no Zalo (or phone lookup is off); unchecked = the phone number has not been looked up in
+ * this session (it is looked up on the first send).
  */
 export type ErpZaloRecipientState = 'ok' | 'not_found' | 'unchecked' | 'no_phone';
 
 export interface ErpZaloRecipient {
   employeeId: string;
   name: string;
-  /** SĐT trong hồ sơ Nhân sự (như đã nhập). */
+  /** Phone number in the Staff profile (as entered). */
   phone: string;
   state: ErpZaloRecipientState;
-  /** Lần gửi gần nhất trong phiên này. */
+  /** Most recent send in this session. */
   last?: { at: number; ok: boolean; error?: string };
 }
 
@@ -126,28 +127,28 @@ export interface ErpZaloSendLog {
   title: string;
   ok: boolean;
   error?: string;
-  /** Không gửi vì đã đủ ERP_ZALO_DAILY_CAP tin trong ngày (không phải lỗi). */
+  /** Not sent because the daily limit of ERP_ZALO_DAILY_CAP messages was already reached (not an error). */
   skipped?: boolean;
-  /** Tin gửi thử từ trang Cài đặt. */
+  /** Test message sent from the Settings page. */
   test?: boolean;
 }
 
 export interface ErpZaloNotifyStatus {
   settings: ErpZaloNotifySettings;
-  /** Tài khoản gửi đang chọn: tên, đã kết nối chưa (null = chưa chọn). */
+  /** Selected sending account: name, whether it is connected (null = not selected). */
   account: { id: string; name: string; ready: boolean; missing?: boolean; notZalo?: boolean } | null;
   recipients: ErpZaloRecipient[];
-  /** Tin gửi gần đây (mới nhất trước), chỉ trong phiên chạy này. */
+  /** Recently sent messages (newest first), this run only. */
   recent: ErpZaloSendLog[];
-  /** Số tin đang chờ tới lượt gửi. */
+  /** Number of messages waiting for their turn to send. */
   pending: number;
   gapSeconds: { min: number; max: number };
   dailyCap: number;
 }
 
 export const ERP_ZALO_RECIPIENT_STATE_LABELS: Record<ErpZaloRecipientState, string> = {
-  ok: 'Có Zalo',
-  not_found: 'Không tìm thấy Zalo',
-  unchecked: 'Chưa kiểm tra',
-  no_phone: 'Chưa có SĐT',
+  ok: tr('Có Zalo'),
+  not_found: tr('Không tìm thấy Zalo'),
+  unchecked: tr('Chưa kiểm tra'),
+  no_phone: tr('Chưa có SĐT'),
 };

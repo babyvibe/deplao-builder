@@ -1,9 +1,10 @@
 /**
- * Nút "Tải tin nhắn cũ hơn" trên tin đầu: đang tải lâu, lỗi (Thử lại), hoặc đã biết chắc còn tin cũ.
+ * The "Tải tin nhắn cũ hơn" (Load older messages) button on the first message: shown while loading is slow, on error ("Thử lại" (Retry)), or when older messages are known to remain.
  */
 import { Spinner } from '@/components/common/PageLoading';
 import type { MessageListState } from '../hooks/useMessageListState';
 import type { OlderMessages } from '../hooks/useOlderMessages';
+import { tr } from '../../../../../shared/i18n';
 
 type LoadOlderButtonProps = Pick<MessageListState, 'loadingMore' | 'loadError'> & Pick<OlderMessages, 'handleLoadMore'>;
 
@@ -22,7 +23,7 @@ export function LoadOlderButton({ handleLoadMore, loadError, loadingMore }: Load
         {loadingMore ? (
           <>
             <Spinner size={3} />
-            <span>Đang tải...</span>
+            <span>{tr('Đang tải...')}</span>
           </>
         ) : loadError ? (
           <>
@@ -31,14 +32,14 @@ export function LoadOlderButton({ handleLoadMore, loadError, loadingMore }: Load
               <line x1="12" y1="8" x2="12" y2="12"/>
               <line x1="12" y1="16" x2="12.01" y2="16"/>
             </svg>
-            <span>Lỗi - Thử lại</span>
+            <span>{tr('Lỗi - Thử lại')}</span>
           </>
         ) : (
           <>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="18 15 12 9 6 15"/>
             </svg>
-            <span>Tải tin nhắn cũ hơn</span>
+            <span>{tr('Tải tin nhắn cũ hơn')}</span>
           </>
         )}
       </button>

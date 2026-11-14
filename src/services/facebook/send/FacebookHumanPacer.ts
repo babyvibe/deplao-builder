@@ -1,15 +1,15 @@
 /**
- * Điều tốc tải lịch sử Facebook "giống người dùng thật" — tránh Facebook coi là bot và bắt xác minh (checkpoint).
+ * Throttles Facebook history loading "like a real user" to keep Facebook from treating the account as a bot and asking for verification (checkpoint).
  *
- * Một tài khoản = một bộ điều tốc (FacebookService giữ), dùng chung cho đồng bộ nền (popup) và tải khi cuộn / mở hội
- * thoại, nên mọi yêu cầu lịch sử của tài khoản cùng chịu một ngân sách:
- *  - Khoảng nghỉ ngẫu nhiên giữa các trang (phân phối log-normal quanh ~3,5 s, như người cuộn đọc), thỉnh thoảng
- *    dừng lâu hơn như đang đọc; chuyển hội thoại nghỉ 5–15 s; trang danh sách hội thoại 2–5 s.
- *  - Nghỉ giải lao: sau 30–50 trang nghỉ 1–2,5 phút; sau 250–350 trang nghỉ 6–12 phút.
- *  - Trần cứng: ≤ 10 trang / phút, ≤ 240 trang / giờ (cửa sổ trượt) — vượt thì chờ (nền) / báo bận (cuộn).
- *  - Facebook chậm / lỗi → giãn thêm (×1,6, tối đa ×4), ổn định lại thì giảm dần.
- *  - Lỗi có dấu hiệu bị chặn / checkpoint / phiên hết hạn → tạm dừng mọi yêu cầu lịch sử của tài khoản 30 phút.
- * Thuần (đồng hồ, ngẫu nhiên tiêm vào) — test: src/__tests__/facebook/facebookHumanPacer.test.ts.
+ * One account = one pacer (kept by FacebookService), shared by background sync (popup) and loading on scroll / when opening a
+ * conversation, so every history request for the account draws on the same budget:
+ *  - Random pauses between pages (log-normal distribution around ~3.5 s, like someone scrolling and reading), occasionally pausing longer
+ *    as if reading; switching conversations pauses 5-15 s; conversation-list pages 2-5 s.
+ *  - Rest breaks: after 30-50 pages rest 1-2.5 min; after 250-350 pages rest 6-12 min.
+ *  - Hard caps: ≤ 10 pages / min, ≤ 240 pages / hour (sliding window); when exceeded, wait (background) or report busy (scroll).
+ *  - Facebook slow / errors → slow down further (×1.6, max ×4), then gradually speed back up.
+ *  - Errors that look like blocking / checkpoint / expired session → pause all history requests for the account for 30 minutes.
+ * Pure logic (clock and randomness injected). Test: src/__tests__/facebook/facebookHumanPacer.test.ts.
  */
 
 export type PacerWaitReason = 'pace' | 'reading' | 'thread' | 'list' | 'break' | 'long_break' | 'budget' | 'slowdown';
@@ -20,21 +20,21 @@ export interface PacerWait {
 }
 
 export const HUMAN_HISTORY_PACING = {
-  /** Giữa hai trang lịch sử khi đồng bộ nền: log-normal quanh trung vị, kẹp [min, max]. */
+  /** Between two history pages during background sync: log-normal around the median, clamped to [min, max]. */
   page: { medianMs: 3_500, sigma: 0.35, minMs: 2_000, maxMs: 12_000 },
-  /** Thỉnh thoảng dừng lâu hơn như đang đọc. */
+  /** Occasionally pause longer, as if reading. */
   reading: { chance: 0.1, minMs: 6_000, maxMs: 15_000 },
-  /** Chuyển sang hội thoại khác. */
+  /** Switching to another conversation. */
   thread: { minMs: 5_000, maxMs: 15_000 },
-  /** Giữa hai trang danh sách hội thoại. */
+  /** Between two conversation-list pages. */
   list: { minMs: 2_000, maxMs: 5_000 },
-  /** Tải khi người dùng cuộn / mở hội thoại. */
+  /** Loading when the user scrolls / opens a conversation. */
   interactive: { minMs: 1_200, maxMs: 2_800 },
   shortBreak: { everyMin: 30, everyMax: 50, minMs: 60_000, maxMs: 150_000 },
   longBreak: { everyMin: 250, everyMax: 350, minMs: 360_000, maxMs: 720_000 },
   perMinute: 10,
   perHour: 240,
-  /** Facebook trả lời chậm hơn mức này → coi như đang bị bóp, giãn thêm. */
+  /** If Facebook answers slower than this, treat it as being throttled and slow down further. */
   slowResponseMs: 8_000,
   slowdownOnFailure: 1.6,
   slowdownOnSlow: 1.2,
@@ -45,7 +45,7 @@ export const HUMAN_HISTORY_PACING = {
 
 export type HumanPacingProfile = typeof HUMAN_HISTORY_PACING;
 
-/** Lỗi có dấu hiệu Facebook đang chặn / bắt xác minh / phiên hết hạn → dừng hẳn, không thử tiếp. */
+/** Errors that look like Facebook is blocking / requiring verification / session expired → stop completely, do not retry. */
 const RISK_PATTERN = /checkpoint|1357001|1357004|1390008|login_required|not logged in|unauthori[sz]ed|account (?:is )?(?:locked|suspended|disabled|restricted)|rate.?limit|too many requests|temporarily (?:blocked|restricted)|try again later|spam|feature (?:is )?(?:temporarily )?(?:blocked|unavailable)/i;
 
 export function isFacebookRiskError(message: unknown): boolean {
@@ -78,7 +78,7 @@ export class FacebookHumanPacer {
     return Math.round(min + (max - min) * this.random());
   }
 
-  /** Log-normal (Box–Muller) quanh trung vị: phần lớn gần trung vị, thỉnh thoảng lâu hơn — như nhịp người thật. */
+  /** Log-normal (Box-Muller) around the median: mostly close to the median, sometimes longer, like a real person's rhythm. */
   private humanGap(): number {
     const { medianMs, sigma, minMs, maxMs } = this.profile.page;
     const u1 = Math.max(this.random(), 1e-9);
@@ -91,7 +91,7 @@ export class FacebookHumanPacer {
     while (this.requestTimes.length && this.requestTimes[0] <= now - HOUR) this.requestTimes.shift();
   }
 
-  /** Chờ tới khi ngân sách phút / giờ cho phép thêm một yêu cầu (0 = được ngay). */
+  /** Wait until the minute / hour budget allows another request (0 = allowed immediately). */
   private budgetWait(now: number): number {
     this.prune(now);
     let wait = 0;
@@ -105,12 +105,12 @@ export class FacebookHumanPacer {
     return Math.max(0, Math.ceil(wait));
   }
 
-  /** Còn bao lâu nữa mới được tải lịch sử (sau dấu hiệu bị chặn). */
+  /** How much longer until history can be loaded again (after a sign of blocking). */
   cooldownRemaining(): number {
     return Math.max(0, this.cooldownUntil - this.now());
   }
 
-  /** Thời gian chờ trước trang lịch sử kế tiếp khi đồng bộ nền. */
+  /** Wait time before the next history page during background sync. */
   planBackgroundPage(): PacerWait {
     const now = this.now();
     if (this.pagesSinceLongBreak >= this.nextLongBreakAt) {
@@ -140,12 +140,12 @@ export class FacebookHumanPacer {
     return { ms: wait, reason };
   }
 
-  /** Chuyển sang hội thoại kế tiếp (mở hội thoại khác như người dùng). */
+  /** Switch to the next conversation (open another conversation like a user). */
   planThreadSwitch(): PacerWait {
     return { ms: Math.round(this.between(this.profile.thread.minMs, this.profile.thread.maxMs) * this.slowdown), reason: 'thread' };
   }
 
-  /** Giữa hai trang danh sách hội thoại. */
+  /** Between two conversation-list pages. */
   planListPage(): PacerWait {
     const now = this.now();
     let wait = Math.round(this.between(this.profile.list.minMs, this.profile.list.maxMs) * this.slowdown);
@@ -159,8 +159,8 @@ export class FacebookHumanPacer {
   }
 
   /**
-   * Tải khi người dùng cuộn / mở hội thoại: chỉ giãn ngắn (vài giây). Hết ngân sách / đang tạm dừng → `busy`
-   * (không bắt người dùng chờ cả phút; cuộn lại sau).
+   * Loading when the user scrolls / opens a conversation: only a short delay (a few seconds). When the budget is used up / paused → `busy`
+   * (the user is not made to wait a full minute; scroll again later).
    */
   planInteractivePage(): PacerWait | { busy: true; retryInMs: number } {
     const now = this.now();
@@ -173,7 +173,7 @@ export class FacebookHumanPacer {
     return { ms: Math.max(0, Math.round(gap - sinceLast)), reason: 'pace' };
   }
 
-  /** Gọi ngay trước khi gửi một yêu cầu lịch sử / danh sách. */
+  /** Called right before sending a history / list request. */
   recordRequest(countsAsPage = true): void {
     const now = this.now();
     this.lastRequestAt = now;
@@ -185,7 +185,7 @@ export class FacebookHumanPacer {
     }
   }
 
-  /** Kết quả một yêu cầu: lỗi / chậm → giãn thêm; dấu hiệu bị chặn → tạm dừng 30 phút ('risk'). */
+  /** Result of a request: errors / slowness → slow down further; signs of blocking → pause 30 minutes ('risk'). */
   recordResult(ok: boolean, latencyMs: number, error?: unknown): 'ok' | 'risk' {
     if (!ok && isFacebookRiskError(error)) {
       this.cooldownUntil = this.now() + this.profile.riskCooldownMs;
@@ -202,13 +202,13 @@ export class FacebookHumanPacer {
     return 'ok';
   }
 
-  /** Hệ số giãn hiện tại (1 = bình thường). */
+  /** Current slowdown factor (1 = normal). */
   currentSlowdown(): number {
     return this.slowdown;
   }
 }
 
-/** Ngủ `ms` nhưng dừng sớm khi `shouldStop()` (huỷ đồng bộ). Trả false nếu bị dừng. */
+/** Sleep for `ms` but stop early when `shouldStop()` returns true (sync cancelled). Returns false if it was stopped. */
 export async function sleepUnlessStopped(ms: number, shouldStop?: () => boolean, tickMs = 250): Promise<boolean> {
   const end = Date.now() + Math.max(0, ms);
   while (Date.now() < end) {

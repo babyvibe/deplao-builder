@@ -1,13 +1,13 @@
 /**
- * cloudUi.tsx — phần dùng chung của tab Cài đặt → Internet & Cloud (Cloudflare: địa chỉ cố định, lưu media R2,
- * đồng bộ DB) và của PublicAddressCard. Chỉ dùng token màu của hệ thống giao diện (bg-card, text-foreground,
+ * cloudUi.tsx - shared parts of the Settings → Internet & Cloud tab (Cloudflare: fixed address, media storage in R2,
+ * DB sync) and of PublicAddressCard. Only uses the color tokens of the UI system (bg-card, text-foreground,
  * primary / success / warning / destructive / info…).
  *
- * Mọi lệnh đi qua window.electronAPI.cloudflare (CloudflareIpc, src/shared/cloud/cloudContracts.ts). Bản app cũ không có
- * module này → cloudApi() trả undefined và giao diện tự ẩn / báo cập nhật.
+ * Every command goes through window.electronAPI.cloudflare (CloudflareIpc, src/shared/cloud/cloudContracts.ts). Old app builds without
+ * this module → cloudApi() returns undefined and the UI hides itself / asks for an update.
  *
- * Kho lưu (R2 hoặc Google Drive): CloudSettings đọc storage.status() và đặt vào StorageContext; các mảnh bên dưới đọc
- * useStoreLabel() để ghép câu ("lên R2" / "lên Google Drive"). Chưa biết kho (bản app cũ, test) = R2 như trước.
+ * Storage (R2 or Google Drive): CloudSettings reads storage.status() and sets it into StorageContext; the pieces below read
+ * useStoreLabel() to build sentences ("lên R2" (to R2) / "lên Google Drive" (to Google Drive)). Unknown storage (old app build, tests) = R2 as before.
  */
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -35,42 +35,43 @@ import {
   type TunnelMode,
   type TunnelServiceId,
 } from '../../../../shared/cloud/cloudContracts';
+import { tr } from '../../../../shared/i18n';
 
 declare const __APP_VERSION__: string;
 
 export type CloudArea = CloudChangedPayload['area'];
-/** Hai phần của trang: Địa chỉ Internet · Đồng bộ dữ liệu (dữ liệu + ảnh/file chung một thiết lập). */
+/** The two parts of the page: Internet address · Data sync (data + images/files under one setting). */
 export type CloudSection = 'address' | 'sync';
 export const CLOUD_AREAS: CloudArea[] = ['connection', 'tunnel', 'media', 'db'];
 export const CLOUD_SECTIONS: CloudSection[] = ['address', 'sync'];
 
-/** Id cũ của "Lưu media" / "Đồng bộ DB" (đã gộp vào "Đồng bộ dữ liệu") — link cũ vẫn mở đúng chỗ. */
+/** Old ids of "Lưu media" (Media storage) / "Đồng bộ DB" (DB sync), merged into "Đồng bộ dữ liệu" (Data sync): old links still open the right place. */
 const LEGACY_SECTIONS: Record<string, CloudSection> = { media: 'sync', db: 'sync' };
 
 export function isCloudSection(value: unknown): value is CloudSection {
   return typeof value === 'string' && (CLOUD_SECTIONS as string[]).includes(value);
 }
 
-/** subtab của nav:settings → phần của trang ('media' / 'db' cũ → 'sync'); không nhận ra → null. */
+/** Section of the page for nav:settings's subtab ('media' / 'db' old → 'sync'); unrecognized → null. */
 export function toCloudSection(value: unknown): CloudSection | null {
   if (isCloudSection(value)) return value;
   return typeof value === 'string' ? LEGACY_SECTIONS[value] ?? null : null;
 }
 
-/** API Cloudflare của main; undefined ở bản app cũ. Đọc lúc gọi (không cache) để test thay được mock. */
+/** The main process Cloudflare API; undefined in old app builds. Read at call time (not cached) so tests can swap the mock. */
 export function cloudApi(): CloudflareIpc | undefined {
   return (ipc as unknown as { cloudflare?: CloudflareIpc } | undefined)?.cloudflare;
 }
 
-/** Lỗi IPC của Electron → câu cho người dùng (bỏ tiền tố "Error invoking remote method…"). */
+/** Electron IPC error → a sentence for the user (strips the "Error invoking remote method…" prefix). */
 export function cleanIpcError(err: unknown): string {
   const raw = String((err as { message?: string } | null)?.message ?? err ?? '').trim();
-  if (/No handler registered/i.test(raw)) return 'Bản app này chưa có tính năng này. Hãy cập nhật Deplao.';
+  if (/No handler registered/i.test(raw)) return tr('Bản app này chưa có tính năng này. Hãy cập nhật Deplao.');
   const text = raw.replace(/^Error invoking remote method '[^']*':\s*/i, '').replace(/^(Cloud)?Error:\s*/i, '').trim();
-  return text || 'Thao tác không thành công, thử lại sau.';
+  return text || tr('Thao tác không thành công, thử lại sau.');
 }
 
-// ─── Định dạng số, dung lượng, thời gian (cố định kiểu Việt Nam, không phụ thuộc ICU) ────────
+// ─── Number, storage size and time formatting (fixed to Vietnamese style, independent of ICU) ────────
 
 const p2 = (n: number) => String(n).padStart(2, '0');
 
@@ -103,7 +104,7 @@ export function fmtBytes(bytes: number | null | undefined): string {
   return `${inByteUnit(b, unit)} ${BYTE_UNITS[unit]}`;
 }
 
-/** Hai dung lượng cùng đơn vị: "38 / 50 GB". */
+/** Two sizes in the same unit: "38 / 50 GB". */
 export function fmtBytesPair(done: number, total: number): string {
   const unit = byteUnit(Math.max(Number(done) || 0, Number(total) || 0));
   return `${inByteUnit(Number(done) || 0, unit)} / ${inByteUnit(Number(total) || 0, unit)} ${BYTE_UNITS[unit]}`;
@@ -132,43 +133,43 @@ function sameDay(a: number, b: number): boolean {
   return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
 }
 
-/** "02:00 hôm nay", "23:10 hôm qua", "14:05 12/10/2026". */
+/** "02:00 hôm nay" (02:00 today), "23:10 hôm qua" (23:10 yesterday), "14:05 12/10/2026". */
 export function fmtWhen(ts: number | null | undefined, now = Date.now()): string {
   if (!ts) return '—';
-  if (sameDay(ts, now)) return `${fmtHm(ts)} hôm nay`;
-  if (sameDay(ts, now - 86_400_000)) return `${fmtHm(ts)} hôm qua`;
+  if (sameDay(ts, now)) return tr('{{v1}} hôm nay', { v1: fmtHm(ts) });
+  if (sameDay(ts, now - 86_400_000)) return tr('{{v1}} hôm qua', { v1: fmtHm(ts) });
   return `${fmtHm(ts)} ${fmtDate(ts)}`;
 }
 
-/** Lần đồng bộ: "10:32:15" trong ngày, ngày khác thì kèm ngày. */
+/** Sync time: "10:32:15" within the day, with the date if it is another day. */
 export function fmtSyncTime(ts: number | null | undefined, now = Date.now()): string {
   if (!ts) return '—';
   return sameDay(ts, now) ? fmtClock(ts) : fmtWhen(ts, now);
 }
 
-/** Giờ ngắn cho nhãn: "13:03" trong ngày, "13:03 hôm qua", "13:03 12/10/2026". */
+/** Short time for labels: "13:03" within the day, "13:03 hôm qua" (yesterday), "13:03 12/10/2026". */
 export function fmtShortWhen(ts: number | null | undefined, now = Date.now()): string {
   if (!ts) return '—';
   return sameDay(ts, now) ? fmtHm(ts) : fmtWhen(ts, now);
 }
 
-/** Cột thời điểm của nhật ký: "10:32" trong ngày, "12/10 10:32" ngày khác. */
+/** Timestamp column of the log: "10:32" within the day, "12/10 10:32" on other days. */
 export function fmtLogTime(ts: number, now = Date.now()): string {
   if (sameDay(ts, now)) return fmtHm(ts);
   const d = new Date(ts);
   return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${fmtHm(ts)}`;
 }
 
-/** Độ trễ của máy dự phòng: "40 giây", "3 phút". */
+/** Standby machine lag: "40 giây" (40 seconds), "3 phút" (3 minutes). */
 export function fmtLag(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms)) return 'chưa rõ';
-  if (ms < 1000) return 'dưới 1 giây';
-  if (ms < 60_000) return `${Math.round(ms / 1000)} giây`;
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)} phút`;
-  return `${Math.round(ms / 3_600_000)} giờ`;
+  if (ms == null || !Number.isFinite(ms)) return tr('chưa rõ');
+  if (ms < 1000) return tr('dưới 1 giây');
+  if (ms < 60_000) return tr('{{v1}} giây', { v1: Math.round(ms / 1000) });
+  if (ms < 3_600_000) return tr('{{v1}} phút', { v1: Math.round(ms / 60_000) });
+  return tr('{{v1}} giờ', { v1: Math.round(ms / 3_600_000) });
 }
 
-/** Ước tính tiền lưu trữ R2 Standard: 10 GB-tháng đầu miễn phí, sau đó 0,015 USD/GB-tháng (chưa tính thao tác). */
+/** Estimated R2 Standard storage cost: the first 10 GB-month free, then 0,015 USD/GB-month (operations not included). */
 export function r2MonthlyUsd(bytes: number): number {
   const gb = Math.max(0, Number(bytes) || 0) / 1024 ** 3;
   return Math.max(0, gb - 10) * 0.015;
@@ -179,42 +180,42 @@ export function fmtUsd(n: number): string {
   return String(Number((Number(n) || 0).toFixed(2))).replace('.', ',');
 }
 
-/** Tiền phí (USD): 0 → "0", dưới 0,01 → "< 0,01", còn lại như fmtUsd ("0,42"). */
+/** Fee (USD): 0 → "0", under 0,01 → "< 0,01", otherwise as fmtUsd ("0,42"). */
 export function fmtCost(n: number): string {
   const v = Number(n) || 0;
   if (v <= 0) return '0';
   return v < 0.01 ? '< 0,01' : fmtUsd(v);
 }
 
-/** Đơn giá trong bảng giá: 0.015 → "0,015", 4.5 → "4,50", 0.36 → "0,36". */
+/** Unit price in the price table: 0.015 → "0,015", 4.5 → "4,50", 0.36 → "0,36". */
 export function fmtUsdPrice(n: number): string {
   const v = Number(n) || 0;
   return v.toFixed(v > 0 && v < 0.1 ? 3 : 2).replace('.', ',');
 }
 
-/** 1_000_000 → "1 triệu", 400_000_000 → "400 triệu". */
+/** 1_000_000 → "1 triệu" (1 million), 400_000_000 → "400 triệu" (400 million). */
 export function fmtMillions(n: number): string {
-  return `${fmtNum((Number(n) || 0) / 1_000_000)} triệu`;
+  return tr('{{v1}} triệu', { v1: fmtNum((Number(n) || 0) / 1_000_000) });
 }
 
-/** Tỷ giá dùng để quy đổi ước tính (chỉ để người dùng hình dung, không phải tỷ giá thật). */
+/** Exchange rate used for the estimate conversion (only to give the user a sense of scale, not a real rate). */
 export const USD_VND_RATE = 26_000;
 
-/** USD → "≈ 11.000 ₫" (làm tròn nghìn; dưới 1.000 ₫ làm tròn trăm). */
+/** USD → "≈ 11.000 ₫" (rounded to the thousand; under 1.000 ₫ rounded to the hundred). */
 export function fmtVnd(usd: number): string {
   const v = Math.max(0, Number(usd) || 0) * USD_VND_RATE;
   const step = v < 1000 ? 100 : 1000;
   return `≈ ${fmtNum(Math.round(v / step) * step)} ₫`;
 }
 
-/** Phần trăm đã dùng: "< 1%" khi rất nhỏ, còn lại làm tròn (có thể quá 100). */
+/** Percent used: "< 1%" when very small, otherwise rounded (can exceed 100). */
 export function fmtPercent(pct: number): string {
   const v = Number(pct) || 0;
   if (v > 0 && v < 1) return '< 1%';
   return `${Math.round(v)}%`;
 }
 
-/** Màu thanh mức dùng: dưới 70% bình thường, 70–100% cảnh báo, quá 100% đỏ. */
+/** Usage bar color: under 70% normal, 70–100% warning, over 100% red. */
 export function meterTone(pct: number | null | undefined): 'primary' | 'warning' | 'destructive' {
   const v = Number(pct) || 0;
   if (v > 100) return 'destructive';
@@ -222,34 +223,34 @@ export function meterTone(pct: number | null | undefined): 'primary' | 'warning'
   return 'primary';
 }
 
-/** Màu chữ % đi cùng meterTone. */
+/** Color of the % text that goes with meterTone. */
 export const METER_TEXT: Record<ReturnType<typeof meterTone>, string> = {
   primary: 'text-muted-foreground',
   warning: 'text-warning',
   destructive: 'text-destructive',
 };
 
-/** "YYYY-MM-DDTHH:mm" theo giờ máy, cho <input type="datetime-local">. */
+/** "YYYY-MM-DDTHH:mm" in local time, for <input type="datetime-local">. */
 export function toLocalInput(ts: number): string {
   const d = new Date(ts);
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
 }
 
-/** 00:00 giờ máy của ngày chứa `ts`. */
+/** 00:00 local time of the day that contains `ts`. */
 export function startOfLocalDay(ts: number): number {
   const d = new Date(ts);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
 
-/** "YYYY-MM-DD" theo giờ máy, cho <input type="date">; không có ngày → ''. */
+/** "YYYY-MM-DD" in local time, for <input type="date">; no date → ''. */
 export function toDateInput(ts: number | null | undefined): string {
   if (!ts) return '';
   const d = new Date(ts);
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 }
 
-/** "YYYY-MM-DD" của <input type="date"> → 00:00 giờ máy (ms). Sai định dạng, ngày không có thật, trước năm 2000 → null. */
+/** "YYYY-MM-DD" from <input type="date"> → 00:00 local time (ms). Wrong format, a date that does not exist, before the year 2000 → null. */
 export function fromDateInput(value: string | null | undefined): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? '').trim());
   if (!m) return null;
@@ -262,7 +263,7 @@ export function fromDateInput(value: string | null | undefined): number | null {
   return d.getTime();
 }
 
-// ─── Phiên bản app (khôi phục: không mở bản do app mới hơn tạo) ─────────────────────────────
+// ─── App version (restore: do not open a backup made by a newer app) ─────────────────────────────
 
 export const APP_VERSION: string = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '';
 
@@ -270,7 +271,7 @@ function versionParts(v: string): number[] {
   return String(v || '').trim().replace(/^v/i, '').split(/[-+]/)[0].split('.').map(x => parseInt(x, 10) || 0);
 }
 
-/** So sánh "26.10.0" theo từng phần số: >0 khi a mới hơn b. */
+/** Compare "26.10.0" part by part as numbers: >0 when a is newer than b. */
 export function compareVersions(a: string, b: string): number {
   const pa = versionParts(a);
   const pb = versionParts(b);
@@ -281,39 +282,39 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-/** Bản sao do Deplao mới hơn bản đang chạy tạo ra (schema có thể mới hơn). Không rõ phiên bản thì không chặn. */
+/** A backup made by a newer Deplao than the running one (the schema may be newer). Unknown version → do not block. */
 export function isNewerThanApp(version: string, appVersion: string = APP_VERSION): boolean {
   if (!version || !appVersion || !/\d/.test(appVersion)) return false;
   return compareVersions(version, appVersion) > 0;
 }
 
-// ─── Quyền của token ─────────────────────────────────────────────────────────────────────
+// ─── Token permissions ─────────────────────────────────────────────────────────────────────
 
 export function permissionOf(c: CloudConnectionStatus | null | undefined, feature: CloudFeature): CloudPermissionCheck | null {
   return c?.permissions?.find(p => p.feature === feature) ?? null;
 }
 
-/** Tên từng nhóm quyền của token (dòng kiểm tra ở dải tài khoản Cloudflare). */
+/** Names of each permission group of the token (the check line in the Cloudflare account bar). */
 export const CLOUD_FEATURE_LABELS: Record<CloudFeature, string> = {
-  tunnel: 'Địa chỉ cố định',
-  r2: 'Đồng bộ dữ liệu',
-  workers: 'Worker, D1 (cho ứng dụng)',
+  tunnel: tr('Địa chỉ cố định'),
+  r2: tr('Đồng bộ dữ liệu'),
+  workers: tr('Worker, D1 (cho ứng dụng)'),
 };
 
 /**
- * Dòng "Worker, D1 (cho ứng dụng)": quyền KHÔNG bắt buộc (chỉ ứng dụng tự triển khai lên Cloudflare cần) nên chỉ là
- * thông tin, không phải vấn đề của kết nối. null khi chưa kết nối hoặc main chưa kiểm (bản app cũ, chưa Kiểm tra lại).
+ * The "Worker, D1 (cho ứng dụng)" (Worker, D1 (for apps)) line: these permissions are NOT required (only apps that deploy themselves to Cloudflare need them), so it is only
+ * information, not a connection problem. null when not connected or when main has not checked yet (old app build, Recheck not yet run).
  */
 export function workersAccessLine(c: CloudConnectionStatus | null | undefined): { ok: boolean; text: string } | null {
   if (!c?.connected) return null;
   const p = permissionOf(c, 'workers');
   if (!p) return null;
-  if (p.ok) return { ok: true, text: `${CLOUD_FEATURE_LABELS.workers}: đủ quyền` };
-  const detail = p.missing?.length ? p.missing.join(', ') : 'thiếu quyền Workers Scripts, D1';
-  return { ok: false, text: `${CLOUD_FEATURE_LABELS.workers}: ${detail} — chỉ cần khi dùng ứng dụng triển khai lên Cloudflare` };
+  if (p.ok) return { ok: true, text: tr('{{workers}}: đủ quyền', { workers: CLOUD_FEATURE_LABELS.workers }) };
+  const detail = p.missing?.length ? p.missing.join(', ') : tr('thiếu quyền Workers Scripts, D1');
+  return { ok: false, text: tr('{{workers}}: {{detail}} — chỉ cần khi dùng ứng dụng triển khai lên Cloudflare', { workers: CLOUD_FEATURE_LABELS.workers, detail }) };
 }
 
-/** Đã kết nối và R2 dùng được (chưa có kết quả kiểm tra thì coi là được, main sẽ báo lỗi rõ khi gọi). */
+/** Connected and R2 usable (if no check result yet, treat it as usable; main reports a clear error when it is called). */
 export function isR2Ready(c: CloudConnectionStatus | null | undefined): boolean {
   if (!c?.connected) return false;
   const p = permissionOf(c, 'r2');
@@ -332,11 +333,11 @@ export const GOOGLE_DRIVE_URL = 'https://drive.google.com/';
 export const GOOGLE_ONE_STORAGE_URL = 'https://one.google.com/storage';
 export const GOOGLE_CLOUD_CREDENTIALS_URL = 'https://console.cloud.google.com/apis/credentials';
 
-// ─── Kho lưu đang chọn (R2 / Google Drive) ─────────────────────────────────────────────────
+// ─── Selected storage (R2 / Google Drive) ─────────────────────────────────────────────────
 
 /**
- * Trạng thái kho lưu (storage.status()) cho các mảnh bên dưới CloudSettings / SyncSection / trình khôi phục.
- * null = chưa biết (bản app cũ, test, chưa đọc xong) → mọi chỗ cư xử như trước: kho R2, sẵn sàng theo kết nối Cloudflare.
+ * Storage status (storage.status()) for the pieces below: CloudSettings / SyncSection / the restore wizard.
+ * null = unknown (old app build, tests, not read yet) → every place behaves as before: R2 storage, ready when the Cloudflare connection is ready.
  */
 export const StorageContext = createContext<CloudStorageStatus | null>(null);
 
@@ -344,29 +345,29 @@ export function useStorage(): CloudStorageStatus | null {
   return useContext(StorageContext);
 }
 
-/** Kho đang chọn; chưa biết → 'r2'. */
+/** Selected storage; unknown → 'r2'. */
 export function useStorageProvider(): CloudStorageProvider {
   return useContext(StorageContext)?.provider ?? 'r2';
 }
 
-/** Tên kho để ghép câu: "R2" (mặc định) / "Google Drive". */
+/** Storage name used in sentences: "R2" (default) / "Google Drive". */
 export function useStoreLabel(): string {
   return storageLabel(useContext(StorageContext)?.provider);
 }
 
-/** Kho dùng được ngay: có trạng thái kho thì theo main; chưa có (bản cũ / test) thì như trước — R2 đã kết nối + đủ quyền. */
+/** Storage usable right away: with a storage status it follows main; without one (old build / tests) it is as before: R2 connected + enough permissions. */
 export function isStorageReady(storage: CloudStorageStatus | null | undefined, connection: CloudConnectionStatus | null | undefined): boolean {
   return storage ? !!storage.ready : isR2Ready(connection);
 }
 
-/** "123456789012-abc…xyz9" — client_id OAuth rút gọn để hiện (bỏ đuôi .apps.googleusercontent.com). */
+/** "123456789012-abc…xyz9" - the shortened OAuth client_id shown on screen (the .apps.googleusercontent.com suffix removed). */
 export function shortClientId(clientId: string | null | undefined): string {
   const id = String(clientId || '').trim().replace(/\.apps\.googleusercontent\.com$/i, '');
-  if (!id) return 'chưa rõ';
+  if (!id) return tr('chưa rõ');
   return id.length > 20 ? `${id.slice(0, 14)}…${id.slice(-4)}` : id;
 }
 
-// ─── Địa chỉ Internet: tên dịch vụ, trạng thái, xem trước tên miền ─────────────────────────
+// ─── Internet address: service names, status, domain name preview ─────────────────────────
 
 const portOf = (service: TunnelServiceId) => SINGLE_HOST_PATH_RULES.find(r => r.service === service)?.port ?? 0;
 
@@ -374,49 +375,49 @@ export const SERVICE_ORDER: TunnelServiceId[] = ['relay', 'payments', 'workflow'
 
 export const SERVICE_META: Record<TunnelServiceId, { name: string; activeLabel: string; suffix: string; port: number; offWarning: string }> = {
   relay: {
-    name: 'Nhân viên và API',
-    activeLabel: 'Đang chạy',
+    name: tr('Nhân viên và API'),
+    activeLabel: tr('Đang chạy'),
     suffix: '',
     port: portOf('relay'),
-    offWarning: 'Nhân viên làm việc từ xa sẽ mất kết nối và API không gọi được từ Internet cho tới khi bật lại.',
+    offWarning: tr('Nhân viên làm việc từ xa sẽ mất kết nối và API không gọi được từ Internet cho tới khi bật lại.'),
   },
   payments: {
-    name: 'Thanh toán, tích hợp',
-    activeLabel: 'Đang nhận',
+    name: tr('Thanh toán, tích hợp'),
+    activeLabel: tr('Đang nhận'),
     suffix: '/webhook/…',
     port: portOf('payments'),
-    offWarning: 'Casso, SePay và phần mềm bán hàng sẽ không gửi được giao dịch / đơn hàng vào (workflow "Khi nhận thanh toán", "Khi phần mềm bán hàng gửi webhook" không chạy) cho tới khi bật lại.',
+    offWarning: tr('Casso, SePay và phần mềm bán hàng sẽ không gửi được giao dịch / đơn hàng vào (workflow "Khi nhận thanh toán", "Khi phần mềm bán hàng gửi webhook" không chạy) cho tới khi bật lại.'),
   },
   workflow: {
     name: 'Webhook workflow',
-    activeLabel: 'Đang nhận',
+    activeLabel: tr('Đang nhận'),
     suffix: '/api/workflow/webhook/…',
     port: portOf('workflow'),
-    offWarning: 'Website và dịch vụ bên ngoài sẽ không kích hoạt được workflow cho tới khi bật lại.',
+    offWarning: tr('Website và dịch vụ bên ngoài sẽ không kích hoạt được workflow cho tới khi bật lại.'),
   },
 };
 
 export const MODE_LABEL: Record<TunnelMode, string> = {
-  quick: 'Địa chỉ tạm',
-  cloudflare_auto: 'Cloudflare tự động',
+  quick: tr('Địa chỉ tạm'),
+  cloudflare_auto: tr('Cloudflare tự động'),
   ngrok: 'ngrok',
-  cloudflare_manual: 'Cloudflare thủ công',
+  cloudflare_manual: tr('Cloudflare thủ công'),
 };
 
-/** Nhãn + màu trạng thái của một địa chỉ (bảng dịch vụ, PublicAddressCard). */
-export function addressStatus(addr: PublicAddress | null | undefined, activeLabel = 'Đang chạy'): { label: string; variant: BadgeVariant; dot: string } {
-  if (!addr) return { label: 'Chưa có', variant: 'default', dot: 'bg-accent' };
-  if (!addr.enabled) return { label: 'Tắt', variant: 'default', dot: 'bg-accent' };
+/** Label + status color of one address (services table, PublicAddressCard). */
+export function addressStatus(addr: PublicAddress | null | undefined, activeLabel = tr('Đang chạy')): { label: string; variant: BadgeVariant; dot: string } {
+  if (!addr) return { label: tr('Chưa có'), variant: 'default', dot: 'bg-accent' };
+  if (!addr.enabled) return { label: tr('Tắt'), variant: 'default', dot: 'bg-accent' };
   switch (addr.state) {
     case 'active': return { label: activeLabel, variant: 'success', dot: 'bg-success' };
-    case 'starting': return { label: 'Đang bật', variant: 'info', dot: 'bg-info' };
-    case 'restarting': return { label: 'Đang chạy lại', variant: 'warning', dot: 'bg-warning' };
-    case 'error': return { label: 'Lỗi', variant: 'destructive', dot: 'bg-destructive' };
-    default: return { label: 'Tắt', variant: 'default', dot: 'bg-accent' };
+    case 'starting': return { label: tr('Đang bật'), variant: 'info', dot: 'bg-info' };
+    case 'restarting': return { label: tr('Đang chạy lại'), variant: 'warning', dot: 'bg-warning' };
+    case 'error': return { label: tr('Lỗi'), variant: 'destructive', dot: 'bg-destructive' };
+    default: return { label: tr('Tắt'), variant: 'default', dot: 'bg-accent' };
   }
 }
 
-/** Ô "Tên máy": bỏ dấu tiếng Việt, khoảng trắng → '-', chỉ giữ a-z 0-9 '-'. */
+/** "Tên máy" (Machine name) field: strips Vietnamese diacritics, spaces → '-', keeps only a-z 0-9 '-'. */
 export function sanitizeHostPrefix(raw: string): string {
   return String(raw || '')
     .normalize('NFD')
@@ -431,12 +432,12 @@ export function sanitizeHostPrefix(raw: string): string {
 }
 
 export function hostPrefixError(prefix: string): string | null {
-  if (!prefix) return 'Nhập tên máy, ví dụ shop.';
-  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(prefix)) return 'Tên máy chỉ gồm chữ a–z, số và dấu -, không bắt đầu hay kết thúc bằng dấu -.';
+  if (!prefix) return tr('Nhập tên máy, ví dụ shop.');
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(prefix)) return tr('Tên máy chỉ gồm chữ a–z, số và dấu -, không bắt đầu hay kết thúc bằng dấu -.');
   return null;
 }
 
-/** Hostname dự kiến khi gõ (giống quy tắc của main: một tên cho mọi dịch vụ, hoặc shop / shop-pay / shop-hook). */
+/** Expected hostname while typing (same rule as main: one name for every service, or shop / shop-pay / shop-hook). */
 export function previewHosts(prefix: string, zoneName: string, layout: AddressLayout): Record<TunnelServiceId, string> | null {
   if (!prefix || !zoneName) return null;
   if (layout === 'split') {
@@ -450,32 +451,32 @@ export function previewHosts(prefix: string, zoneName: string, layout: AddressLa
   return { relay: host, payments: host, workflow: host };
 }
 
-// ─── Lưu media: câu mô tả tiến độ ────────────────────────────────────────────────────────
+// ─── Media storage: progress sentences ────────────────────────────────────────────────────────
 
-/** Hàng đợi media đang lùi tạm thời (lỗi mạng / R2 giới hạn tốc độ) — lỗi khi đó là tạm thời, không phải lỗi chặn. */
+/** Media queue temporarily backing off (network error / R2 rate limit): the error at that point is temporary, not a blocking error. */
 export function isMediaBackingOff(s: MediaSyncStatus | null | undefined, now = Date.now()): boolean {
   return !!s?.backoffUntil && s.backoffUntil > now;
 }
 
 export function mediaDetail(s: MediaSyncStatus, now = Date.now()): { text: string; tone: 'muted' | 'warning' | 'destructive' } {
   const t = s.totals;
-  const failed = t.failed > 0 ? ` · ${fmtNum(t.failed)} file lỗi, sẽ thử lại` : '';
-  if (!s.enabled) return { text: 'Đang tắt, file mới không được tải lên.', tone: 'muted' };
-  if (s.paused) return { text: `Đã tạm dừng · còn ${fmtNum(t.pending)} file${failed}`, tone: 'warning' };
+  const failed = t.failed > 0 ? tr(' · {{v1}} file lỗi, sẽ thử lại', { v1: fmtNum(t.failed) }) : '';
+  if (!s.enabled) return { text: tr('Đang tắt, file mới không được tải lên.'), tone: 'muted' };
+  if (s.paused) return { text: tr('Đã tạm dừng · còn {{v1}} file{{failed}}', { v1: fmtNum(t.pending), failed }), tone: 'warning' };
   if (isMediaBackingOff(s, now)) {
-    // Lý do lùi (mạng chậm / R2 giới hạn tốc độ / lỗi tạm thời) do main ghi vào lastError
+    // Reason for backing off (slow network / R2 rate limit / temporary error) written by main into lastError
     const reason = (s.lastError || 'Tạm dừng tải lên').trim().replace(/[.。]+$/, '');
-    return { text: `${reason} — tự thử lại lúc ${fmtHm(s.backoffUntil as number)}${failed}`, tone: 'warning' };
+    return { text: tr('{{reason}} — tự thử lại lúc {{v1}}{{failed}}', { reason, v1: fmtHm(s.backoffUntil as number), failed }), tone: 'warning' };
   }
-  if (s.running) return { text: `Đang tải lên · còn ${fmtNum(t.pending)} file${failed}`, tone: 'muted' };
-  if (t.pending > 0 && s.options.nightOnly) return { text: `Chờ tới 22:00 để chạy tiếp · còn ${fmtNum(t.pending)} file${failed}`, tone: 'muted' };
-  if (t.pending > 0) return { text: `Còn ${fmtNum(t.pending)} file chờ tải lên${failed}`, tone: 'muted' };
-  return { text: `Đã lên hết${failed}`, tone: t.failed > 0 ? 'warning' : 'muted' };
+  if (s.running) return { text: tr('Đang tải lên · còn {{v1}} file{{failed}}', { v1: fmtNum(t.pending), failed }), tone: 'muted' };
+  if (t.pending > 0 && s.options.nightOnly) return { text: tr('Chờ tới 22:00 để chạy tiếp · còn {{v1}} file{{failed}}', { v1: fmtNum(t.pending), failed }), tone: 'muted' };
+  if (t.pending > 0) return { text: tr('Còn {{v1}} file chờ tải lên{{failed}}', { v1: fmtNum(t.pending), failed }), tone: 'muted' };
+  return { text: tr('Đã lên hết{{failed}}', { failed }), tone: t.failed > 0 ? 'warning' : 'muted' };
 }
 
-// ─── Phạm vi dữ liệu (Lưu media, Đồng bộ DB): tài khoản nào, từ ngày nào ──────────────────
+// ─── Data scope (Media storage, DB sync): which accounts, from which date ──────────────────
 
-/** Tài khoản tối thiểu để chọn / hiện tên trong phạm vi (cùng trường với useAccountStore). */
+/** Minimum account to choose from / show the name in the scope (same field as useAccountStore). */
 export interface ScopeAccount {
   zalo_id: string;
   full_name?: string;
@@ -488,51 +489,51 @@ export function scopeAccountName(account: ScopeAccount): string {
   return account.full_name || account.display_name || account.zalo_id;
 }
 
-/** "Tất cả tài khoản" · tên khi chỉ một tài khoản · "2 tài khoản". */
+/** "Tất cả tài khoản" (All accounts) · the name when there is only one account · "2 tài khoản" (2 accounts). */
 export function describeScopeAccounts(scope: CloudScope | null | undefined, accounts: ReadonlyArray<ScopeAccount> = []): string {
   const s = normalizeScope(scope);
-  if (s.accounts === 'all') return 'Tất cả tài khoản';
-  if (s.accounts.length === 0) return 'Chưa chọn tài khoản';
+  if (s.accounts === 'all') return tr('Tất cả tài khoản');
+  if (s.accounts.length === 0) return tr('Chưa chọn tài khoản');
   if (s.accounts.length === 1) {
     const only = s.accounts[0];
     const account = accounts.find(a => a.zalo_id === only);
-    return account ? scopeAccountName(account) : '1 tài khoản';
+    return account ? scopeAccountName(account) : tr('1 tài khoản');
   }
-  return `${fmtNum(s.accounts.length)} tài khoản`;
+  return tr('{{v1}} tài khoản', { v1: fmtNum(s.accounts.length) });
 }
 
-/** "toàn bộ thời gian" · "từ 01/01/2026". */
+/** "toàn bộ thời gian" (all time) · "từ 01/01/2026" (from 01/01/2026). */
 export function describeScopeTime(scope: CloudScope | null | undefined): string {
   const s = normalizeScope(scope);
-  return s.fromTs ? `từ ${fmtDate(s.fromTs)}` : 'toàn bộ thời gian';
+  return s.fromTs ? tr('từ {{v1}}', { v1: fmtDate(s.fromTs) }) : tr('toàn bộ thời gian');
 }
 
-/** Câu tóm tắt phạm vi: "Tất cả tài khoản · toàn bộ thời gian", "2 tài khoản · từ 01/01/2026". Thiếu = tất cả. */
+/** Scope summary sentence: "Tất cả tài khoản" (All accounts) · "toàn bộ thời gian" (all time), "2 tài khoản" (2 accounts) · "từ 01/01/2026" (from 01/01/2026). Missing = all. */
 export function describeScope(scope: CloudScope | null | undefined, accounts: ReadonlyArray<ScopeAccount> = []): string {
   return `${describeScopeAccounts(scope, accounts)} · ${describeScopeTime(scope)}`;
 }
 
-/** Lý do chưa lưu được phạm vi (main từ chối danh sách tài khoản rỗng); null = lưu được. */
+/** Reason the scope cannot be saved yet (main rejects an empty account list); null = can be saved. */
 export function scopeProblem(scope: CloudScope | null | undefined): string | null {
-  return Array.isArray(scope?.accounts) && scope.accounts.length === 0 ? 'Chọn ít nhất một tài khoản.' : null;
+  return Array.isArray(scope?.accounts) && scope.accounts.length === 0 ? tr('Chọn ít nhất một tài khoản.') : null;
 }
 
-/** Ngày gợi ý khi vừa chọn "Từ ngày": ngày 1 của tháng cách đây 3 tháng (00:00 giờ máy). */
+/** Suggested date when "Từ ngày" (From date) is first picked: the 1st of the month 3 months ago (00:00 local time). */
 export function defaultScopeFromTs(now = Date.now()): number {
   const d = new Date(now);
   return new Date(d.getFullYear(), d.getMonth() - 3, 1).getTime();
 }
 
-// ─── Điều hướng, mở trình duyệt ─────────────────────────────────────────────────────────
+// ─── Navigation, opening the browser ─────────────────────────────────────────────────────────
 
-/** Mở Cài đặt → tab (vd 'cloud' + 'address', hoặc 'employees') từ bất kỳ màn nào. */
+/** Open Settings → a tab (e.g. 'cloud' + 'address', or 'employees') from any screen. */
 export function navigateSettings(tab: string, subtab?: string): void {
   useAppStore.getState().setView('settings');
   window.setTimeout(() => window.dispatchEvent(new CustomEvent('nav:settings', { detail: { tab, subtab } })), 100);
 }
 
 export function openExternalUrl(url: string): void {
-  try { ipc.shell?.openExternal(url); } catch { /* bản cũ không có shell */ }
+  try { ipc.shell?.openExternal(url); } catch { /* old build has no shell */ }
 }
 
 // ─── Hook ───────────────────────────────────────────────────────────────────────────────
@@ -540,8 +541,8 @@ export function openExternalUrl(url: string): void {
 type IpcLike = { success: boolean; error?: string; code?: string } | null | undefined;
 
 /**
- * Chạy một lệnh IPC có trạng thái bận + thông báo. Trả kết quả khi thành công, null khi lỗi (đã báo người dùng).
- * `fn` trả undefined (bản app cũ không có module) → báo cần cập nhật.
+ * Runs one IPC command with a busy state + notification. Returns the result on success, null on error (the user has been told).
+ * `fn` returns undefined (old app build without the module) → asks for an update.
  */
 export function useCloudAction() {
   const notify = useAppStore(s => s.showNotification);
@@ -551,12 +552,12 @@ export function useCloudAction() {
     try {
       const pending = fn();
       if (!pending) {
-        notify('Bản app này chưa có tính năng Cloudflare. Hãy cập nhật Deplao.', 'warning');
+        notify(tr('Bản app này chưa có tính năng Cloudflare. Hãy cập nhật Deplao.'), 'warning');
         return null;
       }
       const res = await pending;
       if (!res || res.success === false) {
-        notify(res?.error || 'Thao tác không thành công, thử lại sau.', 'error');
+        notify(res?.error || tr('Thao tác không thành công, thử lại sau.'), 'error');
         return null;
       }
       if (okMessage) notify(okMessage, 'success');
@@ -572,8 +573,8 @@ export function useCloudAction() {
 }
 
 /**
- * Nghe CLOUD_CHANGED_EVENT. Gộp các lần đẩy dồn dập (vd tiến độ media) thành tối đa một lần gọi mỗi `delayMs`,
- * kèm danh sách phần đã đổi.
+ * Listens for CLOUD_CHANGED_EVENT. Merges bursts of pushes (e.g. media progress) into at most one call per `delayMs`,
+ * along with the list of sections that changed.
  */
 export function useCloudChanged(onChange: (areas: CloudArea[]) => void, delayMs = 800): void {
   const cbRef = useRef(onChange);
@@ -599,7 +600,7 @@ export function useCloudChanged(onChange: (areas: CloudArea[]) => void, delayMs 
   }, [delayMs]);
 }
 
-/** Gọi `tick` mỗi `ms` khi cửa sổ đang hiện (ẩn / thu nhỏ thì nghỉ); hiện lại thì gọi ngay một lần. */
+/** Calls `tick` every `ms` while the window is visible (paused when hidden / minimized); calls it once right away when shown again. */
 export function useVisibleInterval(tick: () => void, ms: number, enabled = true): void {
   const ref = useRef(tick);
   ref.current = tick;
@@ -616,7 +617,7 @@ export function useVisibleInterval(tick: () => void, ms: number, enabled = true)
   }, [ms, enabled]);
 }
 
-// ─── Mảnh giao diện ─────────────────────────────────────────────────────────────────────
+// ─── UI pieces ─────────────────────────────────────────────────────────────────────────
 
 export type NoticeTone = 'info' | 'warning' | 'destructive' | 'success';
 
@@ -634,7 +635,7 @@ const NOTICE_ICON: Record<NoticeTone, string> = {
   success: 'text-success',
 };
 
-/** Dải thông báo trong trang: icon + tiêu đề + nội dung + nút bên phải. */
+/** Notice bar on the page: icon + title + content + button on the right. */
 export function Notice({ tone = 'info', title, children, action, className }: {
   tone?: NoticeTone;
   title?: React.ReactNode;
@@ -702,7 +703,7 @@ export interface PillOption<T extends string> {
   disabled?: boolean;
 }
 
-/** Nhóm nút tròn chọn một (Cách tạo địa chỉ, Chế độ đồng bộ). */
+/** Group of round buttons where one is chosen (Address creation mode, Sync mode). */
 export function PillGroup<T extends string>({ value, options, onChange, label, disabled }: {
   value: T;
   options: PillOption<T>[];
@@ -743,12 +744,12 @@ export function PillGroup<T extends string>({ value, options, onChange, label, d
 export interface RadioOption<T extends string> {
   value: T;
   label: React.ReactNode;
-  /** Dòng giải thích nhỏ dưới nhãn. */
+  /** Small explanation line under a label. */
   description?: React.ReactNode;
   disabled?: boolean;
 }
 
-/** Nhóm chọn một kiểu radio (chấm tròn + chữ): xếp dọc, hoặc `inline` thành một hàng. */
+/** Group of radio-style choices (round dot + text): stacked vertically, or `inline` in one row. */
 export function RadioList<T extends string>({ value, options, onChange, label, disabled, inline, className }: {
   value: T;
   options: RadioOption<T>[];
@@ -803,7 +804,7 @@ export function RadioList<T extends string>({ value, options, onChange, label, d
   );
 }
 
-/** Một dòng cài đặt: tên + mô tả bên trái, điều khiển bên phải. */
+/** One settings row: name + description on the left, control on the right. */
 export function SettingRow({ title, description, control, className }: {
   title: React.ReactNode;
   description?: React.ReactNode;
@@ -822,8 +823,8 @@ export function SettingRow({ title, description, control, className }: {
 }
 
 /**
- * Lý do phần Đồng bộ dữ liệu chưa dùng được: chưa kết nối Cloudflare, tài khoản chưa bật R2 (lỗi 10042),
- * hoặc token thiếu quyền R2. Trả null khi R2 dùng được.
+ * Why the Data sync section is not usable yet: not connected to Cloudflare, the account has not enabled R2 (error 10042),
+ * or the token lacks R2 permission. Returns null when R2 is usable.
  */
 export function R2RequiredNotice({ connection, onConnect, onRecheck, rechecking }: {
   connection: CloudConnectionStatus | null;
@@ -835,10 +836,10 @@ export function R2RequiredNotice({ connection, onConnect, onRecheck, rechecking 
     return (
       <Notice
         tone="info"
-        title="Cần kết nối Cloudflare"
-        action={onConnect && <Button size="sm" onClick={onConnect}>Kết nối Cloudflare</Button>}
+        title={tr('Cần kết nối Cloudflare')}
+        action={onConnect && <Button size="sm" onClick={onConnect}>{tr('Kết nối Cloudflare')}</Button>}
       >
-        <p>Phần này lưu dữ liệu lên R2 trong tài khoản Cloudflare của bạn. Kết nối Cloudflare ở đầu trang để bật.</p>
+        <p>{tr('Phần này lưu dữ liệu lên R2 trong tài khoản Cloudflare của bạn. Kết nối Cloudflare ở đầu trang để bật.')}</p>
       </Notice>
     );
   }
@@ -847,23 +848,22 @@ export function R2RequiredNotice({ connection, onConnect, onRecheck, rechecking 
     return (
       <Notice
         tone="warning"
-        title="Tài khoản Cloudflare chưa bật R2"
+        title={tr('Tài khoản Cloudflare chưa bật R2')}
         action={(
           <>
             <Button size="sm" variant="outline" rightIcon={<ExternalLinkIcon className="h-3.5 w-3.5" />} onClick={() => openExternalUrl(r2DashboardUrl(connection.accountId))}>
-              Mở trang R2
+              {tr('Mở trang R2')}
             </Button>
             {onRecheck && (
               <Button size="sm" variant="ghost" leftIcon={<RefreshIcon className="h-4 w-4" />} loading={rechecking} onClick={onRecheck}>
-                Kiểm tra lại
+                {tr('Kiểm tra lại')}
               </Button>
             )}
           </>
         )}
       >
         <p>
-          Vào Cloudflare → R2 Object Storage và bật R2. Cloudflare yêu cầu thêm phương thức thanh toán dù chỉ dùng phần
-          miễn phí (10 GB mỗi tháng). Bật xong bấm Kiểm tra lại.
+          {tr('Vào Cloudflare → R2 Object Storage và bật R2. Cloudflare yêu cầu thêm phương thức thanh toán dù chỉ dùng phần miễn phí (10 GB mỗi tháng). Bật xong bấm Kiểm tra lại.')}
         </p>
       </Notice>
     );
@@ -872,16 +872,16 @@ export function R2RequiredNotice({ connection, onConnect, onRecheck, rechecking 
     return (
       <Notice
         tone="warning"
-        title="Token thiếu quyền R2"
+        title={tr('Token thiếu quyền R2')}
         action={onRecheck && (
           <Button size="sm" variant="ghost" leftIcon={<RefreshIcon className="h-4 w-4" />} loading={rechecking} onClick={onRecheck}>
-            Kiểm tra lại
+            {tr('Kiểm tra lại')}
           </Button>
         )}
       >
         <p>
-          {perm.missing?.length ? `${perm.missing.join(' · ')}. ` : 'Token chưa có quyền Workers R2 Storage: Edit. '}
-          Tạo token mới đủ quyền rồi bấm Quản lý → Đổi token.
+          {perm.missing?.length ? `${perm.missing.join(' · ')}. ` : tr('Token chưa có quyền Workers R2 Storage: Edit. ')}
+          {tr('Tạo token mới đủ quyền rồi bấm Quản lý → Đổi token.')}
         </p>
       </Notice>
     );
@@ -890,8 +890,8 @@ export function R2RequiredNotice({ connection, onConnect, onRecheck, rechecking 
 }
 
 /**
- * Kho lưu đang chọn chưa dùng được. R2 (hoặc chưa biết kho) → R2RequiredNotice như trước; Google Drive chưa đăng
- * nhập → "Cần đăng nhập Google Drive" + nút tới thẻ Kho lưu. Trả null khi kho dùng được.
+ * The selected storage is not usable yet. R2 (or unknown storage) → R2RequiredNotice as before; Google Drive not signed in
+ * → "Cần đăng nhập Google Drive" (Google Drive sign-in needed) + a button to the Storage card. Returns null when the storage is usable.
  */
 export function StorageRequiredNotice({ storage, connection, onConnect, onRecheck, rechecking, onPickStore }: {
   storage: CloudStorageStatus | null | undefined;
@@ -899,7 +899,7 @@ export function StorageRequiredNotice({ storage, connection, onConnect, onRechec
   onConnect?: () => void;
   onRecheck?: () => void;
   rechecking?: boolean;
-  /** Cuộn tới và làm nổi thẻ Kho lưu. */
+  /** Scroll to and highlight the Storage card. */
   onPickStore?: () => void;
 }) {
   if (storage?.provider === 'gdrive') {
@@ -907,28 +907,28 @@ export function StorageRequiredNotice({ storage, connection, onConnect, onRechec
     return (
       <Notice
         tone="info"
-        title="Cần đăng nhập Google Drive"
-        action={onPickStore && <Button size="sm" onClick={onPickStore}>Chọn kho lưu</Button>}
+        title={tr('Cần đăng nhập Google Drive')}
+        action={onPickStore && <Button size="sm" onClick={onPickStore}>{tr('Chọn kho lưu')}</Button>}
       >
         <p>
-          {storage.notReadyReason || 'Kho lưu đang chọn là Google Drive. Đăng nhập tài khoản Google ở thẻ Kho lưu để bật đồng bộ.'}
+          {storage.notReadyReason || tr('Kho lưu đang chọn là Google Drive. Đăng nhập tài khoản Google ở thẻ Kho lưu để bật đồng bộ.')}
         </p>
       </Notice>
     );
   }
-  // Cloudflare ổn theo kết nối nhưng main vẫn báo R2 chưa dùng được (lý do khác) → hiện đúng lý do của main.
+  // Cloudflare is fine per the connection, but main still says R2 is not usable (another reason) → show main's exact reason.
   if (storage && !storage.ready && isR2Ready(connection)) {
     return (
       <Notice
         tone="warning"
-        title="Kho R2 chưa dùng được"
+        title={tr('Kho R2 chưa dùng được')}
         action={onRecheck && (
           <Button size="sm" variant="ghost" leftIcon={<RefreshIcon className="h-4 w-4" />} loading={rechecking} onClick={onRecheck}>
-            Kiểm tra lại
+            {tr('Kiểm tra lại')}
           </Button>
         )}
       >
-        <p>{storage.notReadyReason || 'Kiểm tra lại token Cloudflare hoặc chọn kho khác ở thẻ Kho lưu.'}</p>
+        <p>{storage.notReadyReason || tr('Kiểm tra lại token Cloudflare hoặc chọn kho khác ở thẻ Kho lưu.')}</p>
       </Notice>
     );
   }

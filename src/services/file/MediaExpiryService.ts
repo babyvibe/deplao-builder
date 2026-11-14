@@ -1,9 +1,9 @@
 /**
- * Nhận diện media Zalo đã hết hạn (Zalo không còn lưu file):
- *   - CDN trả 404 / 410 (host CDN còn sống nhưng file đã bị xoá — vd `f20-zpc.zdn.vn` trả 404), hoặc
- *   - host CDN cũ đã bị gỡ khỏi DNS (vd `f21-zpc` / `f24-zpc.zdn.vn` → ENOTFOUND) trong khi `chat.zalo.me`
- *     vẫn phân giải được — tức không phải do máy đang mất mạng.
- * 401/403 KHÔNG tính là hết hạn (thường do cookie phiên cũ). Lỗi khác (timeout, mất mạng, 5xx) → 'unknown'.
+ * Identifies Zalo media that has expired (Zalo no longer keeps the file):
+ *   - the CDN returns 404 / 410 (the CDN host is still alive but the file was deleted, e.g. `f20-zpc.zdn.vn` returns 404), or
+ *   - an old CDN host has been removed from DNS (e.g. `f21-zpc` / `f24-zpc.zdn.vn` → ENOTFOUND) while `chat.zalo.me`
+ *     still resolves, i.e. it is not caused by this machine losing network.
+ * 401/403 do NOT count as expired (usually an old session cookie). Other errors (timeout, no network, 5xx) → 'unknown'.
  */
 import * as dns from 'dns';
 import axios from 'axios';
@@ -28,12 +28,12 @@ async function zaloDnsHealthy(): Promise<boolean> {
     try {
         await dns.promises.lookup('chat.zalo.me');
         ok = true;
-    } catch { /* mất mạng / DNS hỏng */ }
+    } catch { /* network loss / broken DNS */ }
     dnsHealth = { at: Date.now(), ok };
     return ok;
 }
 
-/** Phân loại lỗi khi tải media (lỗi axios hoặc lỗi mạng của Node). */
+/** Classify a media download error (an axios error or a Node network error). */
 export async function classifyMediaError(url: string, err: any): Promise<MediaAvailability> {
     const status = Number(err?.response?.status || 0);
     if (EXPIRED_STATUS.has(status)) return 'expired';
@@ -42,7 +42,7 @@ export async function classifyMediaError(url: string, err: any): Promise<MediaAv
     return 'unknown';
 }
 
-/** Kiểm tra nhanh 1 URL media (GET 1 byte) bằng cookie + User-Agent của tài khoản. */
+/** Quick check of one media URL (GET 1 byte) using the account's cookie + User-Agent. */
 export async function probeMediaUrl(url: string, cookiesJson?: string, userAgent?: string): Promise<MediaAvailability> {
     if (!/^https?:\/\//i.test(url)) return 'unknown';
     const headers: Record<string, string> = {

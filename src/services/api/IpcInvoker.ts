@@ -1,17 +1,18 @@
 /**
- * IpcInvoker — con đường DUY NHẤT để API v1 và plugin chạm vào nghiệp vụ:
- * gọi đúng IPC handler mà UI đang dùng (registry bọc ipcMain.handle), với
- *  - hàng đợi đồng thời (mặc định 4, 0 = không giới hạn) để không dồn main thread,
- *  - timeout (mặc định 30 s),
- *  - danh tính ERP của principal (ErpAuthContext.runAs),
- *  - ngữ cảnh "lời gọi từ API" (apiCallContext) để handler/EventHub biết nguồn.
+ * IpcInvoker: the ONLY path through which API v1 and plugins touch the business logic:
+ * calls the exact IPC handler the UI uses (the registry wraps ipcMain.handle), with
+ *  - a concurrency queue (default 4, 0 = unlimited) so the main thread is not flooded,
+ *  - a timeout (default 30 s),
+ *  - the ERP identity of the principal (ErpAuthContext.runAs),
+ *  - the "call from API" context (apiCallContext) so the handler / EventHub knows the source.
  *
- * Kiểm tra quyền đã chạy ở ApiRouter TRƯỚC khi tới đây (kênh uỷ quyền cho plugin — PLUGIN_DELEGATED_CHANNEL_PREFIXES —
- * thì ở PluginApiBridge, kèm giấy uỷ quyền PluginGrant).
+ * Permission checks already ran in ApiRouter BEFORE reaching here (delegated channels, see PLUGIN_DELEGATED_CHANNEL_PREFIXES,
+ * are checked in PluginApiBridge, together with the PluginGrant).
  */
 import { AsyncLocalStorage } from 'async_hooks';
 import { ApiError, IpcCallOptions, Principal, principalLogId } from './types';
 import { getApiSettingNumber } from './settings';
+import { tr } from '../../shared/i18n';
 
 export type IpcHandler = (event: any, ...args: any[]) => any;
 
@@ -28,7 +29,7 @@ export interface ApiCallInfo {
 
 const callContext = new AsyncLocalStorage<ApiCallInfo>();
 
-/** Lời gọi hiện tại có đến từ API/plugin không (null = từ UI hoặc nội bộ). */
+/** Whether the current call comes from an API / plugin (null = from the UI or internal). */
 export function getCurrentApiCall(): ApiCallInfo | null {
     return callContext.getStore() || null;
 }
@@ -84,7 +85,7 @@ export class Semaphore {
     }
 }
 
-// ─── Chuẩn hoá kết quả IPC ──────────────────────────────────────────────────
+// ─── Normalize IPC results ──────────────────────────────────────────────────
 
 const OFFLINE_PATTERNS = [
     /chưa kết nối/i,
@@ -107,8 +108,8 @@ export function mapIpcError(message: string, code?: string, errorMap?: Record<st
 }
 
 /**
- * Handler IPC trả nhiều dạng: `{ success, ...data }`, `{ success:false, error }`,
- * `{ error }` (zaloIpc thiếu auth), mảng hoặc giá trị trần. Ném ApiError khi thất bại.
+ * IPC handlers return several shapes: `{ success, ...data }`, `{ success:false, error }`,
+ * `{ error }` (zaloIpc when auth is missing), an array, or a bare value. Throws ApiError on failure.
  */
 export function unwrapIpcResult(res: any, opts: IpcCallOptions = {}): any {
     if (res === null || res === undefined || typeof res !== 'object' || Array.isArray(res)) return res;
@@ -126,7 +127,7 @@ export interface ErpRunner {
     runAs<T>(principal: Principal, fn: () => T): T;
 }
 
-/** Mặc định: ErpAuthContext.runAs với danh tính của principal. */
+/** Default: ErpAuthContext.runAs with the principal's identity. */
 export const defaultErpRunner: ErpRunner = {
     runAs<T>(principal: Principal, fn: () => T): T {
         try {
@@ -147,21 +148,21 @@ export const defaultErpRunner: ErpRunner = {
 };
 
 /**
- * Giấy uỷ quyền PluginApiBridge cấp cho MỘT lời gọi kênh quản trị được uỷ quyền (PLUGIN_DELEGATED_CHANNEL_PREFIXES),
- * SAU KHI bridge đã kiểm quyền manifest + tiền tố tài nguyên. Chỉ code trong main tạo được (plugin chạy ở tiến trình
- * riêng, API key đi qua route có kênh cố định). Handler đọc lại qua event.pluginGrant — không tin payload.
+ * Grant that PluginApiBridge issues for ONE call to a delegated admin channel (PLUGIN_DELEGATED_CHANNEL_PREFIXES),
+ * AFTER the bridge has checked the manifest permission + resource prefix. Only code in main can create it (plugins run in a separate
+ * process, API keys go through routes with fixed channels). The handler re-reads it via event.pluginGrant: the payload is not trusted.
  */
 export interface PluginGrant {
     pluginId: string;
-    /** Tên ứng dụng (manifest) — chỉ để hiện cho người dùng, vd trong hộp thoại xác nhận. */
+    /** App name (manifest): only to show to the user, e.g. in a confirmation dialog. */
     pluginName?: string;
-    /** Quyền manifest đã kiểm, vd 'cloudflare:workers'. */
+    /** Manifest permission that was checked, e.g. 'cloudflare:workers'. */
     permission: string;
-    /** Tiền tố tên tài nguyên của plugin (pluginShortName). */
+    /** The plugin's resource name prefix (pluginShortName). */
     resourcePrefix: string;
-    /** realpath thư mục plugin đã cài — đường dẫn file plugin gửi lên phải nằm trong đây. */
+    /** realpath of the installed plugin folder: the plugin file path sent up must be inside it. */
     pluginDir: string;
-    /** Ghi tiến độ vào nhật ký của plugin (tuỳ chọn). */
+    /** Writes progress to the plugin's log (optional). */
     log?: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
@@ -169,7 +170,7 @@ function fakeEvent(principal: Principal, pluginGrant?: PluginGrant): any {
     return {
         sender: {
             id: -1,
-            send: () => { /* API không có renderer nhận progress */ },
+            send: () => { /* the API has no renderer to receive progress */ },
             isDestroyed: () => false,
         },
         senderFrame: null,
@@ -180,16 +181,16 @@ function fakeEvent(principal: Principal, pluginGrant?: PluginGrant): any {
 }
 
 /**
- * Kênh quản trị (key, webhook của app, plugin, Cloudflare) — principal ngoài 'system' không được gọi.
- * cloudflare:* còn tự chặn mọi lời gọi từ API/plugin (e.fromApi) ngay trong handler.
+ * Admin channels (keys, app webhooks, plugins, Cloudflare): principals other than 'system' must not call them.
+ * cloudflare:* also blocks every call from the API/plugins (e.fromApi) inside the handler itself.
  */
 export const ADMIN_CHANNEL_PREFIXES = ['api:', 'plugins:', 'cloudflare:'];
 
 /**
- * Ngoại lệ DUY NHẤT của luật trên: kênh quản trị mà principal 'plugin' được gọi khi — và chỉ khi — lời gọi mang giấy
- * uỷ quyền (info.pluginGrant) của chính plugin đó do PluginApiBridge cấp sau khi kiểm quyền manifest + tiền tố.
- * API key, nhân viên, plugin không có giấy (vd route API v1 gọi thay plugin) vẫn bị chặn như mọi kênh quản trị khác.
- * Handler (electron/ipc/cloud/cloudflareWorkersIpc.ts) kiểm lại giấy + tiền tố + thư mục.
+ * The ONLY exception to the rule above: an admin channel that the 'plugin' principal may call when, and only when, the call carries the grant
+ * (info.pluginGrant) of that same plugin, issued by PluginApiBridge after it checked the manifest permission + prefix.
+ * API keys, employees, and plugins without a grant (e.g. an API v1 route calling on behalf of a plugin) are still blocked like every other admin channel.
+ * The handler (electron/ipc/cloud/cloudflareWorkersIpc.ts) re-checks the grant + prefix + folder.
  */
 export const PLUGIN_DELEGATED_CHANNEL_PREFIXES = ['cloudflare:workers:'];
 
@@ -201,7 +202,7 @@ export function isPluginDelegatedChannel(channel: string): boolean {
     return PLUGIN_DELEGATED_CHANNEL_PREFIXES.some(p => channel.startsWith(p));
 }
 
-/** Lời gọi này có được uỷ quyền cho plugin không: principal plugin + giấy của CHÍNH plugin đó + kênh được uỷ quyền. */
+/** Whether this call may be delegated to a plugin: plugin principal + that plugin's own grant + the delegated channel. */
 function delegatedGrant(channel: string, principal: Principal, grant: PluginGrant | undefined): PluginGrant | undefined {
     if (principal.kind !== 'plugin' || !grant || !isPluginDelegatedChannel(channel)) return undefined;
     if (typeof grant.pluginId !== 'string' || grant.pluginId !== principal.id) return undefined;
@@ -229,11 +230,11 @@ export class IpcInvoker {
     async invoke(channel: string, args: any[], principal: Principal, info: { requestId: string; timeoutMs?: number; pluginGrant?: PluginGrant }): Promise<any> {
         const grant = delegatedGrant(channel, principal, info.pluginGrant);
         if (principal.kind !== 'system' && isAdminChannel(channel) && !grant) {
-            // Kênh quản trị API/plugin chỉ dành cho giao diện của chủ máy — không tự nâng quyền qua API.
-            throw new ApiError(403, 'FORBIDDEN_SCOPE', `Kênh ${channel} chỉ dùng trong app`);
+            // API / plugin admin channels are for the machine owner's UI only: they cannot raise their own permissions through the API.
+            throw new ApiError(403, 'FORBIDDEN_SCOPE', tr('Kênh {{channel}} chỉ dùng trong app', { channel }));
         }
         const handler = this.source.get(channel);
-        if (!handler) throw new ApiError(501, 'NOT_IMPLEMENTED', `Thiếu kênh IPC ${channel}`);
+        if (!handler) throw new ApiError(501, 'NOT_IMPLEMENTED', tr('Thiếu kênh IPC {{channel}}', { channel }));
         const timeoutMs = info.timeoutMs || this.limits.timeoutMs() || 30_000;
         const event = fakeEvent(principal, grant);
         const call: ApiCallInfo = {
@@ -247,7 +248,7 @@ export class IpcInvoker {
             const timer = setTimeout(() => {
                 if (settled) return;
                 settled = true;
-                reject(new ApiError(504, 'TIMEOUT', `Kênh ${channel} xử lý quá ${Math.round(timeoutMs / 1000)} giây`));
+                reject(new ApiError(504, 'TIMEOUT', tr('Kênh {{channel}} xử lý quá {{v1}} giây', { channel, v1: Math.round(timeoutMs / 1000) })));
             }, timeoutMs);
             Promise.resolve()
                 .then(() => callContext.run(call, () => this.erpRunner.runAs(principal, () => handler(event, ...args))))

@@ -1,8 +1,8 @@
 /**
- * Lịch sắp tới trên thanh tiêu đề: nhắc trước (ErpCalendarService → 'erp:event:reminder' với minutesBefore > 0, App.tsx
- * nghe) làm chuông rung + hiện "15 phút nữa tới lịch hẹn" cạnh chuông (TopBar). Thông báo nhắc nằm trong chuông như thông
- * báo thường (main tạo). Mở chuông = đã thấy → thôi rung, chữ còn tới khi đọc thông báo nhắc (NotificationCenter), tới
- * giờ hẹn (popup đúng giờ thay thế) hoặc lịch đã bắt đầu.
+ * Upcoming events on the title bar: early reminders (ErpCalendarService → 'erp:event:reminder' with minutesBefore > 0, App.tsx
+ * listens) make the bell ring + show "15 phút nữa tới lịch hẹn" next to the bell (TopBar). The reminder notification sits in the bell like a regular
+ * notification (created by main). Opening the bell = seen → stops ringing; the text stays until the reminder notification is read (NotificationCenter), until
+ * the appointment time (the on-time popup replaces it), or until the event has started.
  */
 import { create } from 'zustand';
 
@@ -13,15 +13,15 @@ export interface UpcomingErpReminder {
 }
 
 interface ErpReminderAttentionState {
-  /** Sắp theo giờ hẹn (gần nhất trước). */
+  /** Sorted by appointment time (nearest first). */
   items: UpcomingErpReminder[];
   ringing: boolean;
   raise: (item: UpcomingErpReminder) => void;
-  /** Đã mở chuông: thôi rung. */
+  /** Bell opened: stop ringing. */
   acknowledge: () => void;
-  /** Đã đọc / xoá thông báo nhắc của các lịch này; không truyền = tất cả ("Đọc hết", "Xoá hết"). */
+  /** Mark as read / delete the reminder notifications of these events; not passed = all ("Đọc hết" (Read all), "Xoá hết" (Delete all)). */
   dismiss: (eventIds?: string[]) => void;
-  /** Bỏ lịch đã tới giờ. */
+  /** Remove events whose time has come. */
   prune: (now?: number) => void;
 }
 

@@ -1,12 +1,12 @@
 /**
- * MediaHandler - Serve media files từ Boss storage qua HTTP.
- * Employee dùng URL trực tiếp trong <img src> thay vì request binary — máy nhân viên tự gắn
- * `Authorization: Bearer` (session.webRequest, xem bossSessionAuth.ts) vì thẻ <img> không gửi header được.
+ * MediaHandler: serves media files from Boss storage over HTTP.
+ * Employees use the URL directly in <img src> instead of a binary request. The employee machine attaches
+ * `Authorization: Bearer` itself (session.webRequest, see bossSessionAuth.ts) because an <img> tag cannot send headers.
  *
- * Routes (bắt buộc phiên nhân viên; quyền theo tài khoản ở bossFileAccess.ts):
- *   GET /api/media/{zaloId}/{date}/{filename}  → File gốc
- *   GET /api/media/thumb/{zaloId}/{date}/{filename} → Thumbnail
- *   GET /api/media/avatar/{zaloId}/{filename}  → Avatar
+ * Routes (employee session required; per-account permissions in bossFileAccess.ts):
+ *   GET /api/media/{zaloId}/{date}/{filename}  → original file
+ *   GET /api/media/thumb/{zaloId}/{date}/{filename} → thumbnail
+ *   GET /api/media/avatar/{zaloId}/{filename}  → avatar
  */
 
 import * as fs from 'fs';
@@ -50,10 +50,10 @@ function detectMime(filePath: string): string {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
-/** Phản hồi lỗi JSON của route file — `no-store` để tunnel / trình duyệt không lưu 401/403/404. */
+/** JSON error response of the file route: `no-store` so the tunnel / browser never caches 401/403/404. */
 export function sendFileError(res: http.ServerResponse, status: number, error: string, code?: string): void {
   if (res.headersSent) {
-    try { res.end(); } catch { /* đã đóng */ }
+    try { res.end(); } catch { /* already closed */ }
     return;
   }
   res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -62,15 +62,15 @@ export function sendFileError(res: http.ServerResponse, status: number, error: s
 
 export interface SendFileOptions {
   mime: string;
-  /** Giây — Cache-Control: private, max-age (kèm Vary: Authorization). */
+  /** Seconds: Cache-Control: private, max-age (with Vary: Authorization). */
   maxAge: number;
-  /** Hỗ trợ Range (video / file); ảnh trả cả file như trước. */
+  /** Supports Range (video / files); images still return the whole file as before. */
   allowRange: boolean;
   stat?: fs.Stats;
   headers?: Record<string, string>;
 }
 
-/** Gửi file cho phiên đã xác thực: 200, 206 (Range hợp lệ) hoặc 416; cache `private` (không cache ở edge tunnel). */
+/** Sends the file to an authenticated session: 200, 206 (valid Range) or 416; cache `private` (never cached at the tunnel edge). */
 export function sendLocalFile(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -109,17 +109,17 @@ export function sendLocalFile(
   stream.pipe(res);
 }
 
-/** Phiên đang tải media (HttpRelayService đã xác thực token). */
+/** Session loading media (HttpRelayService has verified the token). */
 export interface MediaAccess {
-  /** Nhân viên đã xác thực; null → 401. */
+  /** Authenticated employee; null → 401. */
   employee: FileAccessEmployee | null;
-  /** Tên thư mục → id tài khoản chuẩn (accounts.zalo_id, không phân biệt hoa/thường) hoặc null. */
+  /** Folder name → canonical account id (accounts.zalo_id, case-insensitive) or null. */
   lookupAccount: (segment: string) => string | null;
 }
 
 /**
- * realpath cho CẢ thư mục gốc lẫn file theo cùng một cách: bản native trước (Windows: GetFinalPathNameByHandle → tên
- * chuẩn: đúng hoa/thường, tên dài thay alias 8.3, bỏ dấu chấm cuối), lỗi (ổ ảo / RAM disk…) mới dùng bản JS.
+ * realpath for BOTH the root folder and the file, in the same way: the native version first (Windows: GetFinalPathNameByHandle → canonical
+ * name: correct case, long name instead of the 8.3 alias, no trailing dot), and only if that fails (virtual drive / RAM disk...) the JS version.
  */
 const REALPATH_FNS: Array<(p: string) => string> = [(p) => fs.realpathSync.native(p), (p) => fs.realpathSync(p)];
 
@@ -127,20 +127,20 @@ function realpathPair(base: string, target: string): { base: string; target: str
   for (const realpath of REALPATH_FNS) {
     try {
       return { base: realpath(path.resolve(base)), target: realpath(target) };
-    } catch { /* thử cách sau */ }
+    } catch { /* try the next method */ }
   }
   return null;
 }
 
-/** File thật (đã theo symlink/junction) + đường dẫn tương đối so với thư mục media; 'outside' = thoát khỏi thư mục media. */
+/** Real file (symlinks/junctions followed) + path relative to the media folder; 'outside' = escapes the media folder. */
 function resolveMediaFile(mediaBasePath: string, relPath: string): { filePath: string; relPath: string } | 'outside' | null {
   const candidates = [path.resolve(mediaBasePath, relPath)];
-  // Không thấy ở thư mục media hiện tại → thử resolveAbsolutePath (file lưu dưới configFolder cũ: toBossMediaUrl lấy
-  // phần sau /media/ của đường dẫn tuyệt đối trên Boss, getBaseDir() nay trỏ chỗ khác) — vẫn phải nằm trong thư mục media.
+  // Not found in the current media folder → try resolveAbsolutePath (file stored under an old configFolder: toBossMediaUrl takes
+  // the part after /media/ of the absolute path on Boss, getBaseDir() now points elsewhere) - it must still be inside the media folder.
   try {
     const alt = FileStorageService.resolveAbsolutePath(path.join('media', relPath));
     if (alt) candidates.push(alt);
-  } catch { /* bỏ qua */ }
+  } catch { /* ignore */ }
   for (const candidate of candidates) {
     const real = realpathPair(mediaBasePath, candidate);
     if (!real) continue;
@@ -152,7 +152,7 @@ function resolveMediaFile(mediaBasePath: string, relPath: string): { filePath: s
 
 const deniedLogAt = new Map<string, number>();
 
-/** Log 403 gộp theo nhân viên + thư mục, tối đa 1 dòng / phút (một màn chat có thể tải hàng chục ảnh). */
+/** 403 logs grouped by employee + folder, at most 1 line per minute (one chat screen can load dozens of images). */
 function logDenied(employee: FileAccessEmployee, relPath: string, denied: FileAccessDenied): void {
   const folder = relPath.split(/[\\/]/).slice(0, 2).join('/');
   const key = `${employee.employee_id || '?'}|${folder}`;
@@ -164,8 +164,8 @@ function logDenied(employee: FileAccessEmployee, relPath: string, denied: FileAc
 }
 
 /**
- * File media không còn trên máy → nhờ module R2 (cloudflare/media) tải lại về đúng chỗ cũ, rồi kiểm tra lại đường dẫn thật
- * + quyền như luồng thường trước khi phục vụ. require lười: R2 tắt / chưa nạp → 404 như trước.
+ * Media file no longer on the machine → ask the R2 module (cloudflare/media) to download it back to the same place, then check the real path
+ * and the permissions again, as in the normal flow, before serving it. Lazy require: R2 off / not loaded → 404 as before.
  */
 async function serveRestoredFromCloud(
   req: http.IncomingMessage,
@@ -197,8 +197,8 @@ async function serveRestoredFromCloud(
 
 /**
  * Handle GET /api/media/* request.
- * Trả về file trực tiếp với Content-Type phù hợp.
- * Supports Range requests cho video / file.
+ * Returns the file directly with a suitable Content-Type.
+ * Supports Range requests for video / files.
  */
 export function handleMediaRequest(
   req: http.IncomingMessage,
@@ -210,7 +210,7 @@ export function handleMediaRequest(
     const employee = access?.employee;
     if (!employee) return sendFileError(res, 401, 'Unauthorized');
 
-    // /api/media/{zaloId}/{date}/{filename} | thumb/... | avatar/... → đường dẫn tương đối đã giải mã + chuẩn hoá
+    // /api/media/{zaloId}/{date}/{filename} | thumb/... | avatar/... → decoded, normalized relative path
     const relPath = parseMediaRelPath(req.url || '');
     if (!relPath) return sendFileError(res, 400, 'Invalid media path');
 
@@ -221,13 +221,13 @@ export function handleMediaRequest(
       sendFileError(res, denied.status, denied.error, denied.code);
       return false;
     };
-    // Theo URL trước (không lộ file có tồn tại hay không), rồi theo đường dẫn THẬT sau realpath
+    // Check the URL first (does not reveal whether the file exists), then the REAL path after realpath
     if (!authorize(relPath)) return;
 
     const file = resolveMediaFile(mediaBasePath, relPath);
     if (file === 'outside') return sendFileError(res, 403, 'Forbidden');
     if (!file) {
-      // Không có trên máy: thử tải lại từ R2 (lưu media lên Cloudflare đã dọn file); R2 tắt / không có → 404 như cũ
+      // Not on the machine: try downloading it again from R2 (media was uploaded to Cloudflare and the local file was cleaned up); R2 off / missing → 404 as before
       void serveRestoredFromCloud(req, res, mediaBasePath, relPath, authorize);
       return;
     }
@@ -236,7 +236,7 @@ export function handleMediaRequest(
     const stat = fs.statSync(file.filePath);
     if (!stat.isFile()) return sendFileError(res, 404, 'File not found');
     const mime = detectMime(file.filePath);
-    const maxAge = `/${relPath}`.includes('/avatar/') ? 604800 : 86400; // Avatar: 7 ngày, còn lại: 1 ngày
+    const maxAge = `/${relPath}`.includes('/avatar/') ? 604800 : 86400; // Avatar: 7 days, everything else: 1 day
     sendLocalFile(req, res, file.filePath, { mime, maxAge, allowRange: !mime.startsWith('image/'), stat });
   } catch (err: any) {
     Logger.error(`[MediaHandler] Error: ${err.message}`);

@@ -1,13 +1,13 @@
 /**
- * multipart.ts — dựng body multipart/form-data thành một Buffer (tải script Worker + tải asset lên Cloudflare).
- * Tự dựng thay vì FormData để test đọc lại được và không phụ thuộc cách undici mã hoá phần file.
+ * multipart.ts: builds a multipart/form-data body as one Buffer (uploads the Worker script + uploads assets to Cloudflare).
+ * Built by hand instead of FormData so tests can read it back and it does not depend on how undici encodes the file part.
  */
 import * as crypto from 'crypto';
 
 export interface MultipartPart {
-    /** Tên trường (Cloudflare: "metadata", tên module, hoặc hash của asset). */
+    /** Field name (Cloudflare: "metadata", the module name, or the asset hash). */
     name: string;
-    /** Có filename → phần file. */
+    /** With a filename → a file part. */
     filename?: string;
     contentType?: string;
     data: Buffer | string;

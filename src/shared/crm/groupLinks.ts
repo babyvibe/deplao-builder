@@ -1,9 +1,9 @@
 /**
- * Group / profile links pasted in "Tham gia nhóm bằng link" (main process + renderer).
+ * Group / profile links pasted in "Tham gia nhóm bằng link" (Join group by link) (main process + renderer).
  *   Zalo:     https://zalo.me/g/<code>
  *   Telegram: https://t.me/+<hash>, t.me/joinchat/<hash>, tg://join?invite=<hash>  → private invite
  *             https://t.me/<username>, @username, tg://resolve?domain=<username>     → public group / channel
- *   Facebook: https://m.me/j/<code>, messenger.com/join/<code>                        → recognised, joining is not supported
+ *   Facebook: https://m.me/j/<code>, messenger.com/join/<code>                        → recognized, joining is not supported
  */
 
 export type GroupLinkTarget =

@@ -1,6 +1,6 @@
 /**
- * semver.ts — so sánh phiên bản tối giản (MAJOR.MINOR.PATCH[-pre][+build]) cho plugin.
- * Không thêm dependency; đủ cho kiểm tra "bản mới lớn hơn" và minDeplaoVersion.
+ * semver.ts: minimal version comparison (MAJOR.MINOR.PATCH[-pre][+build]) for plugins.
+ * No extra dependency; enough to check "the new version is greater" and minDeplaoVersion.
  */
 
 export interface SemVer {
@@ -27,7 +27,7 @@ export function isValidSemver(input: string): boolean {
     return parseSemver(input) !== null;
 }
 
-/** -1 nếu a < b, 0 nếu bằng, 1 nếu a > b. Chuỗi sai định dạng coi là nhỏ nhất. */
+/** -1 if a < b, 0 if equal, 1 if a > b. A malformed string is treated as the smallest. */
 export function compareSemver(a: string, b: string): number {
     const x = parseSemver(a);
     const y = parseSemver(b);
@@ -37,7 +37,7 @@ export function compareSemver(a: string, b: string): number {
     for (const k of ['major', 'minor', 'patch'] as const) {
         if (x[k] !== y[k]) return x[k] > y[k] ? 1 : -1;
     }
-    // Bản có pre-release nhỏ hơn bản chính thức cùng số.
+    // A pre-release is smaller than the official version with the same numbers.
     if (!x.pre.length && !y.pre.length) return 0;
     if (!x.pre.length) return 1;
     if (!y.pre.length) return -1;

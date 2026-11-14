@@ -4,11 +4,12 @@ import {
   ParsedPayment, WebhookAuthResult, WebhookCapableAdapter, WebhookRequest, parseCassoPayload, parseWebhookBody,
   verifyCassoWebhook,
 } from '../paymentWebhook';
+import { tr } from '../../../shared/i18n';
 
 /**
  * Casso payment webhook adapter.
  * Credentials required: apiKey
- * Optional: secretKey = "Key bảo mật" của tích hợp Webhook V2 (hoặc Webhook cũ). Có khoá → webhook phải có chữ ký hợp lệ.
+ * Optional: secretKey = the "Key bảo mật" (security key) of the Webhook V2 integration (or the old Webhook). With a key → webhooks must have a valid signature.
  * Docs: https://developer.casso.vn
  */
 export class CassoAdapter extends IntegrationAdapter implements WebhookCapableAdapter {
@@ -38,9 +39,9 @@ export class CassoAdapter extends IntegrationAdapter implements WebhookCapableAd
         timeout: 10000,
       });
       const name = res.data?.data?.fullname || res.data?.data?.business_name || 'Casso';
-      return { success: true, message: `Kết nối Casso thành công - tài khoản: ${name}` };
+      return { success: true, message: tr('Kết nối Casso thành công - tài khoản: {{name}}', { name }) };
     } catch (e: any) {
-      return { success: false, message: `Lỗi kết nối Casso: ${e.response?.data?.error || e.message}` };
+      return { success: false, message: tr('Lỗi kết nối Casso: {{v1}}', { v1: e.response?.data?.error || e.message }) };
     }
   }
 
@@ -69,16 +70,16 @@ export class CassoAdapter extends IntegrationAdapter implements WebhookCapableAd
       }
 
       case 'handleWebhook': {
-        // Như webhook server: params.headers + params.rawBody (chuỗi body gốc); có khoá thì bắt buộc chữ ký hợp lệ.
+        // Same as the webhook server: params.headers + params.rawBody (the original body string); if a key is set, a valid signature is required.
         const rawBody = Buffer.from(typeof params.rawBody === 'string' ? params.rawBody : JSON.stringify(params.body ?? {}), 'utf8');
         const body = parseWebhookBody(rawBody);
         const auth = this.verifyWebhook({ headers: params.headers || {}, rawBody, body });
-        if (auth.ok === false) throw new Error(`Webhook Casso không hợp lệ: ${auth.message}`);
+        if (auth.ok === false) throw new Error(tr('Webhook Casso không hợp lệ: {{message}}', { message: auth.message }));
         return { valid: true, verified: auth.method !== 'none', transactions: this.parseWebhook(body).map(p => p.raw) };
       }
 
       default:
-        throw new Error(`Casso không hỗ trợ action: ${action}`);
+        throw new Error(tr('Casso không hỗ trợ action: {{action}}', { action }));
     }
   }
 }

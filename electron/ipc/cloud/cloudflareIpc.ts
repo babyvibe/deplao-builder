@@ -1,17 +1,17 @@
 /**
- * cloudflareIpc — IPC cho phần "Internet & Cloud" (Cloudflare: kết nối, địa chỉ cố định, R2 media, đồng bộ DB).
+ * cloudflareIpc: IPC for the "Internet & Cloud" section (Cloudflare: connection, fixed address, R2 media, DB sync).
  *
- * Kênh 'cloudflare:*' (khớp CloudflareIpc trong src/shared/cloud/cloudContracts.ts, preload expose window.electronAPI.cloudflare).
- * Gồm cả kho lưu (R2 / Google Drive: storage:*, google:*) và mức sử dụng & chi phí (usage:get).
- * Mọi handler:
- *  - chỉ chạy trên máy chủ với workspace local: máy nhân viên / workspace từ xa bị từ chối (cùng cách kiểm như
+ * Channel 'cloudflare:*' (matches CloudflareIpc in src/shared/cloud/cloudContracts.ts; the preload exposes window.electronAPI.cloudflare).
+ * Also covers storage (R2 / Google Drive: storage:*, google:*) and usage & cost (usage:get).
+ * Every handler:
+ *  - only runs on the host machine with a local workspace: employee machines / remote workspaces are rejected (same check as
  *    pluginIpc: AppModeManager + api/runtime.isWorkspaceAvailable);
- *  - từ chối lời gọi đến từ API v1 / plugin (event giả của IpcInvoker có fromApi) — chỉ giao diện của chủ máy.
- *    Ngoại lệ duy nhất: cloudflare:workers:* (Worker + D1 cho ứng dụng) đăng ký ở cloudflareWorkersIpc.ts với guard
- *    riêng — ứng dụng gọi được khi PluginApiBridge đã kiểm quyền "cloudflare:workers" + tiền tố và cấp giấy uỷ quyền;
- *  - trả { success: true, ...data } hoặc { success: false, error, code }. KHÔNG trả / log token, mật khẩu sao lưu
- *    hay tham số đầu vào.
- * Module tunnel / media / dbsync được require khi gọi (lỗi nạp một module không làm hỏng các kênh khác).
+ *  - rejects calls from API v1 / plugins (IpcInvoker's fake event with fromApi): only the machine owner's UI.
+ *    The only exception: cloudflare:workers:* (Worker + D1 for apps) is registered in cloudflareWorkersIpc.ts with its own guard:
+ *    an app may call it when PluginApiBridge has checked the "cloudflare:workers" permission + prefix and issued a grant;
+ *  - returns { success: true, ...data } or { success: false, error, code }. NEVER returns or logs tokens, backup passwords
+ *    or input parameters.
+ * The tunnel / media / dbsync modules are required at call time (a module load error does not break the other channels).
  */
 import { ipcMain, IpcMainInvokeEvent } from 'electron';
 import Logger, { sanitizeLogText } from '../../../src/utils/Logger';
@@ -30,8 +30,9 @@ import type {
     AddressLayout, CloudScope, CloudStorageProvider, DbSyncMode, GoogleClientInput, MediaSyncOptions, R2CleanupProgress, R2CleanupRequest,
     RestoreProgress, RestoreRequest, TunnelAutoConfig, TunnelMode, TunnelServiceId,
 } from '../../../src/shared/cloud/cloudContracts';
+import { tr, appLocale } from '../../../src/shared/i18n';
 
-// ─── Module (require muộn, có kiểm kiểu) ─────────────────────────────────────
+// ─── Modules (lazy require, type-checked) ─────────────────────────────────────
 
 function tunnel(): CloudTunnelModule {
     return (require('../../../src/services/cloudflare/tunnel') as typeof import('../../../src/services/cloudflare/tunnel')).cloudTunnel;
@@ -45,7 +46,7 @@ function db(): CloudDbModule {
     return (require('../../../src/services/cloudflare/dbsync') as typeof import('../../../src/services/cloudflare/dbsync')).cloudDb;
 }
 
-/** "Đồng bộ dữ liệu": một thiết lập chung gọi xuống đúng module DB / media (syncFacade). */
+/** "Đồng bộ dữ liệu" (Data sync): one shared setup that calls the right DB / media module (syncFacade). */
 const syncDeps: SyncFacadeDeps = {
     core: () => cloudflare,
     db: () => db(),
@@ -59,7 +60,7 @@ const syncDeps: SyncFacadeDeps = {
     },
 };
 
-// ─── Kiểm quyền ──────────────────────────────────────────────────────────────
+// ─── Permission checks ──────────────────────────────────────────────────────────────
 
 function isEmployeeMachine(): boolean {
     try {
@@ -70,15 +71,15 @@ function isEmployeeMachine(): boolean {
 }
 
 function guard(e: any): void {
-    if (e?.fromApi) throw new CloudError('APP_ONLY', 'Cài đặt Cloudflare chỉ dùng được trong app trên máy chủ');
-    if (isEmployeeMachine()) throw new CloudError('EMPLOYEE_MACHINE', 'Máy nhân viên không dùng tính năng Cloudflare — hãy cấu hình trên máy chủ');
+    if (e?.fromApi) throw new CloudError('APP_ONLY', tr('Cài đặt Cloudflare chỉ dùng được trong app trên máy chủ'));
+    if (isEmployeeMachine()) throw new CloudError('EMPLOYEE_MACHINE', tr('Máy nhân viên không dùng tính năng Cloudflare — hãy cấu hình trên máy chủ'));
     const { isWorkspaceAvailable } = require('../../../src/services/api/runtime');
     if (!isWorkspaceAvailable()) {
-        throw new CloudError('REMOTE_WORKSPACE', 'Workspace từ xa không cấu hình Cloudflare; hãy mở workspace trên máy này');
+        throw new CloudError('REMOTE_WORKSPACE', tr('Workspace từ xa không cấu hình Cloudflare; hãy mở workspace trên máy này'));
     }
 }
 
-/** Lỗi bình thường (UI hỏi trạng thái trên máy nhân viên…) — không ghi log. */
+/** Expected errors (the UI asks the status on an employee machine…), not logged. */
 const QUIET_CODES = new Set(['APP_ONLY', 'EMPLOYEE_MACHINE', 'REMOTE_WORKSPACE', 'NOT_CONNECTED', 'BAD_INPUT', 'CANCELLED', 'STORAGE_SWITCH_BLOCKED']);
 
 function fail(channel: string, err: unknown): { success: false; error: string; code: string; retryAfterMs?: number } {
@@ -88,7 +89,7 @@ function fail(channel: string, err: unknown): { success: false; error: string; c
         if (err.retryAfterMs) out.retryAfterMs = err.retryAfterMs;
         return out;
     }
-    const message = sanitizeLogText(String((err as any)?.message || err || 'Lỗi không xác định'), 500);
+    const message = sanitizeLogText(String((err as any)?.message || err || tr('Lỗi không xác định')), 500);
     Logger.error(`[cloudflareIpc] ${channel}: ${message}`);
     const code = typeof (err as any)?.code === 'string' ? String((err as any).code) : 'INTERNAL';
     return { success: false, error: message, code };
@@ -108,7 +109,7 @@ function handle(channel: string, fn: (e: IpcMainInvokeEvent, arg: any) => Promis
     });
 }
 
-// ─── Kiểm đầu vào ────────────────────────────────────────────────────────────
+// ─── Input validation ────────────────────────────────────────────────────────────
 
 const TUNNEL_MODES: ReadonlyArray<TunnelMode> = ['quick', 'ngrok', 'cloudflare_auto', 'cloudflare_manual'];
 const SERVICES: ReadonlyArray<TunnelServiceId> = ['relay', 'payments', 'workflow'];
@@ -125,19 +126,19 @@ function obj(v: unknown): Record<string, any> {
 
 function oneOf<T extends string>(v: unknown, allowed: ReadonlyArray<T>, label: string): T {
     if (typeof v === 'string' && (allowed as ReadonlyArray<string>).includes(v)) return v as T;
-    throw bad(`${label} không hợp lệ`);
+    throw bad(tr('{{label}} không hợp lệ', { label }));
 }
 
 function bool(v: unknown, label: string): boolean {
     if (typeof v === 'boolean') return v;
-    throw bad(`${label} không hợp lệ`);
+    throw bad(tr('{{label}} không hợp lệ', { label }));
 }
 
 function str(v: unknown, label: string, max: number): string {
-    if (typeof v !== 'string') throw bad(`Thiếu ${label}`);
+    if (typeof v !== 'string') throw bad(tr('Thiếu {{label}}', { label }));
     const s = v.trim();
-    if (!s) throw bad(`Thiếu ${label}`);
-    if (s.length > max) throw bad(`${label} quá dài`);
+    if (!s) throw bad(tr('Thiếu {{label}}', { label }));
+    if (s.length > max) throw bad(tr('{{label}} quá dài', { label }));
     return s;
 }
 
@@ -147,14 +148,14 @@ function optStr(v: unknown, label: string, max: number): string | undefined {
 }
 
 function num(v: unknown, label: string, min: number, max: number): number {
-    if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) throw bad(`${label} không hợp lệ`);
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) throw bad(tr('{{label}} không hợp lệ', { label }));
     return v;
 }
 
-/** Mật khẩu sao lưu: giữ nguyên (không trim), chỉ kiểm kiểu/độ dài. Không bao giờ log. */
+/** Backup password: kept as is (not trimmed), only the type and length are checked. Never logged. */
 function passphraseArg(v: unknown): string {
-    if (typeof v !== 'string' || v.length === 0) throw bad('Thiếu mật khẩu sao lưu');
-    if (v.length > 1024) throw bad('Mật khẩu sao lưu quá dài');
+    if (typeof v !== 'string' || v.length === 0) throw bad(tr('Thiếu mật khẩu sao lưu'));
+    if (v.length > 1024) throw bad(tr('Mật khẩu sao lưu quá dài'));
     return v;
 }
 
@@ -165,90 +166,89 @@ function optPassphrase(v: unknown): string | undefined {
 function autoConfigArg(v: unknown): TunnelAutoConfig {
     const o = obj(v);
     return {
-        zoneId: str(o.zoneId, 'tên miền', 64),
-        zoneName: str(o.zoneName, 'tên miền', 253),
-        hostPrefix: str(o.hostPrefix, 'tiền tố địa chỉ', 63),
-        layout: oneOf(o.layout ?? 'single', LAYOUTS, 'Kiểu địa chỉ'),
+        zoneId: str(o.zoneId, tr('tên miền'), 64),
+        zoneName: str(o.zoneName, tr('tên miền'), 253),
+        hostPrefix: str(o.hostPrefix, tr('tiền tố địa chỉ'), 63),
+        layout: oneOf(o.layout ?? 'single', LAYOUTS, tr('Kiểu địa chỉ')),
     };
 }
 
 function mediaOptionsArg(v: unknown): Partial<MediaSyncOptions> {
     const o = obj(v);
     const out: Partial<MediaSyncOptions> = {};
-    if (o.concurrency !== undefined) out.concurrency = num(o.concurrency, 'Số file tải song song', 1, 16);
-    if (o.nightOnly !== undefined) out.nightOnly = bool(o.nightOnly, 'Chỉ chạy ban đêm');
-    if (o.bandwidthKbps !== undefined) out.bandwidthKbps = num(o.bandwidthKbps, 'Giới hạn băng thông', 0, 10_000_000);
-    if (o.evictEnabled !== undefined) out.evictEnabled = bool(o.evictEnabled, 'Giải phóng ổ đĩa');
-    if (o.evictKeepDays !== undefined) out.evictKeepDays = num(o.evictKeepDays, 'Số ngày giữ file', 1, 3650);
-    if (o.evictMinFreeGb !== undefined) out.evictMinFreeGb = num(o.evictMinFreeGb, 'Dung lượng trống tối thiểu', 0, 100_000);
+    if (o.concurrency !== undefined) out.concurrency = num(o.concurrency, tr('Số file tải song song'), 1, 16);
+    if (o.nightOnly !== undefined) out.nightOnly = bool(o.nightOnly, tr('Chỉ chạy ban đêm'));
+    if (o.bandwidthKbps !== undefined) out.bandwidthKbps = num(o.bandwidthKbps, tr('Giới hạn băng thông'), 0, 10_000_000);
+    if (o.evictEnabled !== undefined) out.evictEnabled = bool(o.evictEnabled, tr('Giải phóng ổ đĩa'));
+    if (o.evictKeepDays !== undefined) out.evictKeepDays = num(o.evictKeepDays, tr('Số ngày giữ file'), 1, 3650);
+    if (o.evictMinFreeGb !== undefined) out.evictMinFreeGb = num(o.evictMinFreeGb, tr('Dung lượng trống tối thiểu'), 0, 100_000);
     if (o.scope !== undefined) out.scope = scopeArg(o.scope);
     if (o.includeShared !== undefined) out.includeShared = bool(o.includeShared, 'File chung');
     return out;
 }
 
-/** Client OAuth riêng của Google: null / bỏ trống = client chung của Deplao. Secret không trim, không log. */
+/** Google's own OAuth client: null / empty = Deplao's shared client. The secret is not trimmed and not logged. */
 function googleClientArg(v: unknown): GoogleClientInput | null {
     if (v === undefined || v === null) return null;
     const o = obj(v);
     const clientId = str(o.clientId, 'Client ID Google', 256);
     let clientSecret: string | null = null;
     if (o.clientSecret !== undefined && o.clientSecret !== null && o.clientSecret !== '') {
-        if (typeof o.clientSecret !== 'string' || o.clientSecret.length > 256) throw bad('Client secret Google không hợp lệ');
+        if (typeof o.clientSecret !== 'string' || o.clientSecret.length > 256) throw bad(tr('Client secret Google không hợp lệ'));
         clientSecret = o.clientSecret.trim();
     }
     return { clientId, clientSecret };
 }
 
 /**
- * Điều kiện đổi kho: đồng bộ (dữ liệu + ảnh) đang tắt, máy không làm máy dự phòng, không còn file chỉ nằm trên kho cũ
- * (đã dọn khỏi máy) ở workspace đang mở. Workspace khác còn file như vậy sẽ tự dừng đổi kho khi mở (MediaContext).
- * Trả lý do chặn (câu cho người dùng) hoặc null.
+ * Conditions for switching storage: sync (data + images) is off, the machine is not a standby machine, and no file exists only in the old storage
+ * (already removed from the machine) in the open workspace. Another workspace that still has such files stops the switch when it is opened (MediaContext).
+ * Returns the blocking reason (the sentence shown to the user) or null.
  */
 function storageSwitchBlocker(): string | null {
     const label = storageLabel(cloudflare.storageProvider());
     try {
         const dbStatus = db().status();
-        if (dbStatus.following) return 'Máy này đang làm máy dự phòng — tắt theo dõi trước khi đổi kho lưu.';
-        if (dbStatus.mode !== 'off') return 'Tắt đồng bộ trước khi đổi kho lưu.';
-    } catch { /* module chưa nạp: không có gì đang chạy */ }
+        if (dbStatus.following) return tr('Máy này đang làm máy dự phòng — tắt theo dõi trước khi đổi kho lưu.');
+        if (dbStatus.mode !== 'off') return tr('Tắt đồng bộ trước khi đổi kho lưu.');
+    } catch { /* module not loaded yet: nothing is running */ }
     try {
         const mediaStatus = media().status();
-        if (mediaStatus.enabled) return 'Tắt đồng bộ ảnh, file trước khi đổi kho lưu.';
+        if (mediaStatus.enabled) return tr('Tắt đồng bộ ảnh, file trước khi đổi kho lưu.');
         const evicted = Number(mediaStatus.totals?.evicted) || 0;
         if (evicted > 0) {
-            return `Còn ${evicted.toLocaleString('vi-VN')} file chỉ nằm trên ${label} (đã dọn khỏi máy). Bật lại đồng bộ, vào `
-                + 'Nâng cao → Tải lại toàn bộ file đã dọn, chờ tải xong rồi tắt đồng bộ và đổi kho.';
+            return tr('Còn {{v1}} file chỉ nằm trên {{label}} (đã dọn khỏi máy). Bật lại đồng bộ, vào Nâng cao → Tải lại toàn bộ file đã dọn, chờ tải xong rồi tắt đồng bộ và đổi kho.', { v1: evicted.toLocaleString(appLocale()), label });
         }
-    } catch { /* module chưa nạp */ }
+    } catch { /* module not loaded yet */ }
     return null;
 }
 
-/** Phạm vi (tài khoản + từ ngày): chọn tài khoản mà danh sách rỗng là lỗi (không đồng bộ gì thì tắt hẳn). */
+/** Scope (accounts + from date): an empty account selection is an error (if nothing syncs, turn sync off entirely). */
 function scopeArg(v: unknown): CloudScope {
     const o = obj(v);
-    if (o.accounts !== 'all' && !Array.isArray(o.accounts)) throw bad('Phạm vi tài khoản không hợp lệ');
-    if (o.fromTs !== undefined && o.fromTs !== null) num(o.fromTs, 'Ngày bắt đầu', 1, 8.64e15);
+    if (o.accounts !== 'all' && !Array.isArray(o.accounts)) throw bad(tr('Phạm vi tài khoản không hợp lệ'));
+    if (o.fromTs !== undefined && o.fromTs !== null) num(o.fromTs, tr('Ngày bắt đầu'), 1, 8.64e15);
     const scope = normalizeScope(o);
-    if (Array.isArray(scope.accounts) && scope.accounts.length === 0) throw bad('Chọn ít nhất một tài khoản');
+    if (Array.isArray(scope.accounts) && scope.accounts.length === 0) throw bad(tr('Chọn ít nhất một tài khoản'));
     return scope;
 }
 
-/** Tiêu chí dọn R2: phải bật ít nhất một tiêu chí; danh sách tài khoản / mốc ngày đúng kiểu. */
+/** R2 cleanup criteria: at least one criterion must be enabled; the account list / date cutoff must have the right type. */
 function cleanupArg(v: unknown): R2CleanupRequest {
     const o = obj(v);
     const req: R2CleanupRequest = {};
-    if (o.orphans !== undefined) req.orphans = bool(o.orphans, 'File của tin đã xoá');
-    if (o.outOfScope !== undefined) req.outOfScope = bool(o.outOfScope, 'File ngoài phạm vi');
-    if (o.includeCloudOnly !== undefined) req.includeCloudOnly = bool(o.includeCloudOnly, 'File chỉ còn trên R2');
-    if (o.deleteLocalOrphans !== undefined) req.deleteLocalOrphans = bool(o.deleteLocalOrphans, 'Xoá file trên máy');
-    if (o.olderThanTs !== undefined && o.olderThanTs !== null) req.olderThanTs = num(o.olderThanTs, 'Mốc ngày', 1, 8.64e15);
+    if (o.orphans !== undefined) req.orphans = bool(o.orphans, tr('File của tin đã xoá'));
+    if (o.outOfScope !== undefined) req.outOfScope = bool(o.outOfScope, tr('File ngoài phạm vi'));
+    if (o.includeCloudOnly !== undefined) req.includeCloudOnly = bool(o.includeCloudOnly, tr('File chỉ còn trên R2'));
+    if (o.deleteLocalOrphans !== undefined) req.deleteLocalOrphans = bool(o.deleteLocalOrphans, tr('Xoá file trên máy'));
+    if (o.olderThanTs !== undefined && o.olderThanTs !== null) req.olderThanTs = num(o.olderThanTs, tr('Mốc ngày'), 1, 8.64e15);
     if (o.accounts !== undefined && o.accounts !== null) {
-        if (!Array.isArray(o.accounts)) throw bad('Danh sách tài khoản không hợp lệ');
+        if (!Array.isArray(o.accounts)) throw bad(tr('Danh sách tài khoản không hợp lệ'));
         const scope = normalizeScope({ accounts: o.accounts });
         req.accounts = Array.isArray(scope.accounts) ? scope.accounts : [];
     }
     if (!req.orphans && !req.outOfScope && !req.olderThanTs && !(req.accounts && req.accounts.length)) {
-        throw bad('Chọn ít nhất một loại file cần dọn');
+        throw bad(tr('Chọn ít nhất một loại file cần dọn'));
     }
     return req;
 }
@@ -258,7 +258,7 @@ function restoreArg(v: unknown): RestoreRequest {
     const req: RestoreRequest = { workspaceId: str(o.workspaceId, 'workspace', 200) };
     const passphrase = optPassphrase(o.passphrase);
     if (passphrase !== undefined) req.passphrase = passphrase;
-    if (o.untilTs !== undefined && o.untilTs !== null) req.untilTs = num(o.untilTs, 'Thời điểm khôi phục', 0, 8.64e15);
+    if (o.untilTs !== undefined && o.untilTs !== null) req.untilTs = num(o.untilTs, tr('Thời điểm khôi phục'), 0, 8.64e15);
     return req;
 }
 
@@ -266,20 +266,20 @@ function followArg(v: unknown): { workspaceId: string; on: boolean; passphrase?:
     const o = obj(v);
     const req: { workspaceId: string; on: boolean; passphrase?: string } = {
         workspaceId: str(o.workspaceId, 'workspace', 200),
-        on: bool(o.on, 'Bật/tắt máy dự phòng'),
+        on: bool(o.on, tr('Bật/tắt máy dự phòng')),
     };
     const passphrase = optPassphrase(o.passphrase);
     if (passphrase !== undefined) req.passphrase = passphrase;
     return req;
 }
 
-// ─── Đăng ký ─────────────────────────────────────────────────────────────────
+// ─── Registration ─────────────────────────────────────────────────────────────────
 
 export function registerCloudflareIpc(): void {
-    // ── Kết nối ──
+    // ── Connection ──
     handle('cloudflare:status', () => {
         const connection = cloudflare.status();
-        // Lần đầu mở trang sau khi khởi động: làm mới quyền / tên miền ở nền, kết quả về qua CLOUD_CHANGED_EVENT.
+        // First time the page opens after startup: refresh permissions / domain in the background; the result comes back via CLOUD_CHANGED_EVENT.
         if (connection.connected && connection.checkedAt === null) {
             cloudflare.recheck().catch(err => Logger.warn(`[cloudflareIpc] recheck nền: ${sanitizeLogText(String(err?.message || err), 300)}`));
         }
@@ -300,15 +300,15 @@ export function registerCloudflareIpc(): void {
 
     handle('cloudflare:tokenTemplateUrl', () => ({ url: tokenTemplateUrl() }));
 
-    // ── Kho lưu (R2 / Google Drive) ──
+    // ── Storage (R2 / Google Drive) ──
     handle('cloudflare:storage:status', () => ({ storage: cloudflare.storageStatus() }));
 
     handle('cloudflare:storage:setProvider', async (_e, arg) => {
-        const provider = oneOf(obj(arg).provider, CLOUD_STORAGE_PROVIDERS as ReadonlyArray<CloudStorageProvider>, 'Kho lưu');
+        const provider = oneOf(obj(arg).provider, CLOUD_STORAGE_PROVIDERS as ReadonlyArray<CloudStorageProvider>, tr('Kho lưu'));
         return { storage: await cloudflare.setStorageProvider(provider, storageSwitchBlocker) };
     });
 
-    // ── Google Drive (đăng nhập Google trên trình duyệt của máy) ──
+    // ── Google Drive (Google sign-in in the machine's browser) ──
     handle('cloudflare:google:connect', async (_e, arg) => {
         await cloudflare.google.connect(googleClientArg(obj(arg).client));
         return { storage: cloudflare.storageStatus() };
@@ -328,18 +328,18 @@ export function registerCloudflareIpc(): void {
         return { storage: cloudflare.storageStatus() };
     });
 
-    // ── Mức sử dụng & chi phí ──
+    // ── Usage & cost ──
     handle('cloudflare:usage:get', async (_e, arg) => {
         const o = obj(arg);
-        const refresh = o.refresh === undefined ? false : bool(o.refresh, 'Đọc lại');
+        const refresh = o.refresh === undefined ? false : bool(o.refresh, tr('Đọc lại'));
         return { report: await cloudflare.usage.report({ refresh }) };
     });
 
-    // ── Địa chỉ Internet (tunnel) ──
+    // ── Internet address (tunnel) ──
     handle('cloudflare:tunnel:getConfig', () => ({ config: tunnel().getConfig() }));
 
     handle('cloudflare:tunnel:setMode', async (_e, arg) => ({
-        config: await tunnel().setMode(oneOf(obj(arg).mode, TUNNEL_MODES, 'Cách tạo địa chỉ')),
+        config: await tunnel().setMode(oneOf(obj(arg).mode, TUNNEL_MODES, tr('Cách tạo địa chỉ'))),
     }));
 
     handle('cloudflare:tunnel:configureAuto', async (_e, arg) => {
@@ -348,12 +348,12 @@ export function registerCloudflareIpc(): void {
     });
 
     handle('cloudflare:tunnel:setAutoStart', async (_e, arg) => {
-        await tunnel().setAutoStart(bool(obj(arg).on, 'Tự bật khi mở app'));
+        await tunnel().setAutoStart(bool(obj(arg).on, tr('Tự bật khi mở app')));
     });
 
     handle('cloudflare:tunnel:setServiceEnabled', async (_e, arg) => {
         const o = obj(arg);
-        const addresses = await tunnel().setServiceEnabled(oneOf(o.service, SERVICES, 'Dịch vụ'), bool(o.enabled, 'Bật/tắt dịch vụ'));
+        const addresses = await tunnel().setServiceEnabled(oneOf(o.service, SERVICES, tr('Dịch vụ')), bool(o.enabled, tr('Bật/tắt dịch vụ')));
         return { addresses };
     });
 
@@ -375,7 +375,7 @@ export function registerCloudflareIpc(): void {
     handle('cloudflare:media:status', () => ({ status: media().status() }));
 
     handle('cloudflare:media:setEnabled', async (_e, arg) => ({
-        status: await media().setEnabled(bool(obj(arg).on, 'Bật/tắt sao lưu media')),
+        status: await media().setEnabled(bool(obj(arg).on, tr('Bật/tắt sao lưu media'))),
     }));
 
     handle('cloudflare:media:pause', () => {
@@ -394,18 +394,18 @@ export function registerCloudflareIpc(): void {
         const onProgress = (p: R2CleanupProgress) => {
             try {
                 if (!sender.isDestroyed()) sender.send(CLOUD_CLEANUP_PROGRESS_EVENT, p);
-            } catch { /* cửa sổ đã đóng */ }
+            } catch { /* window closed */ }
         };
         return { preview: await media().cleanupPreview(req, onProgress) };
     });
 
     handle('cloudflare:media:cleanupRun', async (e, arg) => {
-        const previewId = str(obj(arg).previewId, 'mã lần quét', 100);
+        const previewId = str(obj(arg).previewId, tr('mã lần quét'), 100);
         const sender = e.sender;
         const onProgress = (p: R2CleanupProgress) => {
             try {
                 if (!sender.isDestroyed()) sender.send(CLOUD_CLEANUP_PROGRESS_EVENT, p);
-            } catch { /* cửa sổ đã đóng */ }
+            } catch { /* window closed */ }
         };
         return { result: await media().cleanupRun(previewId, onProgress) };
     });
@@ -414,24 +414,24 @@ export function registerCloudflareIpc(): void {
         await media().rehydrateAll();
     });
 
-    // ── Đồng bộ dữ liệu (một thiết lập chung: tài khoản + từ ngày + chế độ + kèm ảnh/file) ──
+    // ── Data sync (one shared setting: accounts + from date + mode + images/files included) ──
     handle('cloudflare:sync:get', () => ({ overview: readSyncOverview(syncDeps) }));
 
     handle('cloudflare:sync:apply', async (_e, arg) => {
         const o = obj(arg);
         return applySyncConfig(syncDeps, {
-            mode: oneOf(o.mode, DB_MODES, 'Chế độ đồng bộ'),
+            mode: oneOf(o.mode, DB_MODES, tr('Chế độ đồng bộ')),
             scope: scopeArg(o.scope),
-            includeMedia: bool(o.includeMedia, 'Kèm ảnh, video, file'),
+            includeMedia: bool(o.includeMedia, tr('Kèm ảnh, video, file')),
             includeShared: bool(o.includeShared ?? true, 'File chung'),
         });
     });
 
-    // ── Đồng bộ DB ──
+    // ── DB sync ──
     handle('cloudflare:db:status', () => ({ status: db().status() }));
 
     handle('cloudflare:db:setMode', async (_e, arg) => ({
-        status: await db().setMode(oneOf(obj(arg).mode, DB_MODES, 'Chế độ đồng bộ')),
+        status: await db().setMode(oneOf(obj(arg).mode, DB_MODES, tr('Chế độ đồng bộ'))),
     }));
 
     handle('cloudflare:db:setScope', async (_e, arg) => ({ status: await db().setScope(scopeArg(arg)) }));
@@ -449,7 +449,7 @@ export function registerCloudflareIpc(): void {
         const opts: { workspaceId?: string; limit?: number } = {};
         const workspaceId = optStr(o.workspaceId, 'workspace', 200);
         if (workspaceId) opts.workspaceId = workspaceId;
-        if (o.limit !== undefined && o.limit !== null) opts.limit = Math.floor(num(o.limit, 'Số dòng', 1, 5000));
+        if (o.limit !== undefined && o.limit !== null) opts.limit = Math.floor(num(o.limit, tr('Số dòng'), 1, 5000));
         return { entries: db().log(opts) };
     });
 
@@ -465,7 +465,7 @@ export function registerCloudflareIpc(): void {
         const onProgress = (p: RestoreProgress) => {
             try {
                 if (!sender.isDestroyed()) sender.send(CLOUD_RESTORE_PROGRESS_EVENT, p);
-            } catch { /* cửa sổ đã đóng */ }
+            } catch { /* window closed */ }
         };
         const res = await db().restore(req, onProgress);
         return { restoredWorkspaceId: res.restoredWorkspaceId };
@@ -483,6 +483,6 @@ export function registerCloudflareIpc(): void {
         cloudflare.notifyChanged('db');
     });
 
-    // ── Worker + D1 cho ứng dụng (cloudflare:workers:*) — guard riêng: ứng dụng có giấy uỷ quyền của PluginApiBridge ──
+    // ── Worker + D1 for apps (cloudflare:workers:*) - own guard: the app holds a PluginApiBridge grant ──
     registerCloudflareWorkersIpc();
 }

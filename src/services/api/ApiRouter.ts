@@ -1,11 +1,11 @@
 /**
- * ApiRouter — định tuyến /api/v1 với pipeline cố định:
+ * ApiRouter: routes /api/v1 through a fixed pipeline:
  *
- *   requestId → (OPTIONS) → api_enabled → workspace → match route → auth (+ chống dò key)
- *   → IP allowlist → scope → rate limit (chỉ khi khách bật) → body (giới hạn) → validate
- *   → handler (chỉ gọi IPC chung qua ctx.call) → envelope → nhật ký
+ *   requestId → (OPTIONS) → api_enabled → workspace → match route → auth (+ key brute-force protection)
+ *   → IP allowlist → scope → rate limit (only when the client turned it on) → body (size limit) → validate
+ *   → handler (only calls the shared IPC through ctx.call) → envelope → log
  *
- * `invoke()` chạy cùng pipeline (từ bước scope) cho plugin, không qua HTTP.
+ * `invoke()` runs the same pipeline (from the scope step) for plugins, without HTTP.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
@@ -21,6 +21,7 @@ import { AccountDirectory } from './AccountDirectory';
 import { RequestLog } from './http/RequestLog';
 import { BruteForceGuard, RateLimiter } from './http/RateLimiter';
 import { getApiSettingBool, getApiSettingNumber } from './settings';
+import { tr } from '../../shared/i18n';
 
 export const API_PREFIX = '/api/v1';
 
@@ -29,9 +30,9 @@ interface CompiledRoute {
     regex: RegExp;
     keys: string[];
     operationId: string;
-    /** Dạng OpenAPI: /accounts/{accountId}/conversations */
+    /** OpenAPI form: /accounts/{accountId}/conversations */
     template: string;
-    /** Số đoạn tĩnh: khi nhiều route cùng khớp, route cụ thể hơn thắng (vd /users/lookup thắng /users/:userId). */
+    /** Number of static segments: when several routes match, the more specific route wins (e.g. /users/lookup beats /users/:userId). */
     statics: number;
 }
 
@@ -42,11 +43,11 @@ export interface RouterDeps {
     rateLimiter: RateLimiter;
     guard: BruteForceGuard;
     authenticate: (token: string, ip: string) => Principal | null;
-    /** false khi workspace đang mở là workspace nhân viên (không có dữ liệu local). */
+    /** false when the open workspace is an employee workspace (has no local data). */
     isWorkspaceAvailable: () => boolean;
     /** HTML trang /docs. */
     docsHtml: () => string;
-    /** OpenAPI JSON (đã cache). */
+    /** OpenAPI JSON (cached). */
     openApi: () => any;
     onError?: (err: any, route: string) => void;
 }
@@ -120,7 +121,7 @@ class IdempotencyCache {
         this.inflight.set(key, p);
         p.then(r => {
             this.inflight.delete(key);
-            // Không cache lỗi tạm thời (offline, rate limit, 5xx) để client retry được.
+            // Do not cache temporary errors (offline, rate limit, 5xx) so the client can retry.
             if (r.status < 500 && r.status !== 409 && r.status !== 429) {
                 this.done.set(key, r);
                 if (this.done.size > IdempotencyCache.MAX) {
@@ -145,10 +146,10 @@ export class ApiRouter {
         for (const def of defs) {
             const compiled = compile(def);
             if (this.byOperationId.has(compiled.operationId)) {
-                throw new Error(`[ApiRouter] operationId trùng: ${compiled.operationId}`);
+                throw new Error(tr('[ApiRouter] operationId trùng: {{operationId}}', { operationId: compiled.operationId }));
             }
             const dup = this.routes.find(r => r.def.method === def.method && r.def.path === def.path);
-            if (dup) throw new Error(`[ApiRouter] route trùng: ${def.method} ${def.path}`);
+            if (dup) throw new Error(tr('[ApiRouter] route trùng: {{method}} {{path}}', { method: def.method, path: def.path }));
             this.routes.push(compiled);
             this.byOperationId.set(compiled.operationId, compiled);
         }
@@ -180,7 +181,7 @@ export class ApiRouter {
                 allow.push(r.def.method);
                 continue;
             }
-            // Không phụ thuộc thứ tự đăng ký: đoạn tĩnh nhiều hơn thắng; bằng nhau thì route đăng ký trước.
+            // Does not depend on registration order: more static segments win; on a tie, the route registered first wins.
             if (!best || r.statics > best.r.statics) best = { r, m };
         }
         if (best) {
@@ -196,7 +197,7 @@ export class ApiRouter {
 
     // ─── HTTP ─────────────────────────────────────────────────────────────
 
-    /** true nếu URL thuộc API v1 / docs (đã xử lý), false để relay xử lý tiếp. */
+    /** true if the URL belongs to API v1 / docs (handled here), false so the relay continues. */
     handles(url: string): boolean {
         const pathname = url.split('?')[0];
         return pathname === API_PREFIX || pathname.startsWith(API_PREFIX + '/') || pathname === '/docs' || pathname.startsWith('/docs/');
@@ -230,14 +231,14 @@ export class ApiRouter {
             }
             const subPath = pathname.slice(API_PREFIX.length) || '/';
 
-            // Tài liệu luôn xem được (kể cả khi đang chặn API): chỉ là mô tả endpoint, không có dữ liệu.
-            // Từ xa cần key chỉ khi người dùng tắt "Tài liệu công khai" (mặc định bật).
+            // The docs can always be viewed (even when the API is blocked): they only describe endpoints, with no data.
+            // A remote client needs a key only when the user turns off "Tài liệu công khai" (public docs) (default: on).
             if (subPath === '/openapi.json') {
                 routeLabel = '/v1/openapi.json';
                 if (!isLocalRequest(req) && !getApiSettingBool('api_docs_public')) {
                     const token = extractToken(req);
                     if (!token || !this.deps.authenticate(token, ip)) {
-                        throw new ApiError(401, 'UNAUTHORIZED', 'Cần API key để xem tài liệu từ xa (hoặc bật "Tài liệu công khai")');
+                        throw new ApiError(401, 'UNAUTHORIZED', tr('Cần API key để xem tài liệu từ xa (hoặc bật "Tài liệu công khai")'));
                     }
                 }
                 sendJson(res, 200, this.deps.openApi());
@@ -245,21 +246,21 @@ export class ApiRouter {
             }
 
             if (!getApiSettingBool('api_enabled')) {
-                throw new ApiError(503, 'API_DISABLED', 'API đang tắt (bật ở Công cụ → Ứng dụng, API & Webhook → API)');
+                throw new ApiError(503, 'API_DISABLED', tr('API đang tắt (bật ở Công cụ → Ứng dụng, API & Webhook → API)'));
             }
 
             const matched = this.match(method, subPath);
             if ('status' in matched) {
                 if (matched.status === 405) {
-                    throw new ApiError(405, 'METHOD_NOT_ALLOWED', `Không hỗ trợ ${method}`, undefined, { Allow: matched.allow!.join(', ') });
+                    throw new ApiError(405, 'METHOD_NOT_ALLOWED', tr('Không hỗ trợ {{method}}', { method }), undefined, { Allow: matched.allow!.join(', ') });
                 }
-                throw new ApiError(404, 'NOT_FOUND', `Không có endpoint ${method} ${API_PREFIX}${subPath}`);
+                throw new ApiError(404, 'NOT_FOUND', tr('Không có endpoint {{method}} {{API_PREFIX}}{{subPath}}', { method, API_PREFIX, subPath }));
             }
             const { route, params } = matched;
             routeLabel = `/v1${route.template}`;
 
             if (route.def.scope !== null && !this.deps.isWorkspaceAvailable()) {
-                throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', 'Máy đang mở workspace nhân viên; API chỉ phục vụ workspace local');
+                throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', tr('Máy đang mở workspace nhân viên; API chỉ phục vụ workspace local'));
             }
 
             // ── Auth ──
@@ -269,13 +270,13 @@ export class ApiRouter {
                 if (!principal) {
                     const guardOn = getApiSettingBool('api_auth_bruteforce_guard');
                     if (guardOn && this.deps.guard.isBlocked(ip)) {
-                        throw new ApiError(429, 'AUTH_BLOCKED', 'IP tạm bị chặn vì gửi quá nhiều key sai', undefined, { 'Retry-After': '600' });
+                        throw new ApiError(429, 'AUTH_BLOCKED', tr('IP tạm bị chặn vì gửi quá nhiều key sai'), undefined, { 'Retry-After': '600' });
                     }
                     if (guardOn && token) this.deps.guard.recordFailure(ip);
-                    throw new ApiError(401, 'UNAUTHORIZED', token ? 'API key không hợp lệ, đã thu hồi hoặc hết hạn' : 'Thiếu API key (Authorization: Bearer dpk_... hoặc X-Api-Key)');
+                    throw new ApiError(401, 'UNAUTHORIZED', token ? 'API key không hợp lệ, đã thu hồi hoặc hết hạn' : tr('Thiếu API key (Authorization: Bearer dpk_... hoặc X-Api-Key)'));
                 }
                 if (!ipAllowed(ip, principal.allowedIps)) {
-                    throw new ApiError(403, 'FORBIDDEN_IP', `IP ${ip} không nằm trong danh sách cho phép của key`);
+                    throw new ApiError(403, 'FORBIDDEN_IP', tr('IP {{ip}} không nằm trong danh sách cho phép của key', { ip }));
                 }
             }
 
@@ -316,7 +317,7 @@ export class ApiRouter {
             if (out.handled) return;
             sendJson(res, out.status, out.payload, out.headers);
         } catch (err: any) {
-            const apiErr = err instanceof ApiError ? err : new ApiError(500, 'INTERNAL_ERROR', 'Lỗi không mong đợi');
+            const apiErr = err instanceof ApiError ? err : new ApiError(500, 'INTERNAL_ERROR', tr('Lỗi không mong đợi'));
             if (!(err instanceof ApiError)) this.deps.onError?.(err, routeLabel);
             status = apiErr.status;
             errorCode = apiErr.code;
@@ -338,7 +339,7 @@ export class ApiRouter {
         }
     }
 
-    // ─── Thực thi (dùng chung HTTP + plugin) ─────────────────────────────
+    // ─── Execution (shared by HTTP + plugins) ─────────────────────────────
 
     private async execute(route: CompiledRoute, input: {
         principal: Principal;
@@ -358,7 +359,7 @@ export class ApiRouter {
             if (def.scope !== null && principal.kind !== 'system') {
                 const rl = this.deps.rateLimiter.take(principalLogId(principal), principal.rateLimitPerMin);
                 if (!rl.allowed) {
-                    throw new ApiError(429, 'RATE_LIMITED', `Vượt giới hạn ${rl.limit} request/phút đã đặt cho key`, undefined, {
+                    throw new ApiError(429, 'RATE_LIMITED', tr('Vượt giới hạn {{limit}} request/phút đã đặt cho key', { limit: rl.limit }), undefined, {
                         'Retry-After': String(rl.retryAfterSec),
                         'X-RateLimit-Limit': String(rl.limit),
                         'X-RateLimit-Remaining': '0',
@@ -380,7 +381,7 @@ export class ApiRouter {
             }
             return { status: 200, payload: { success: true, data: result === undefined ? null : result, request_id: requestId } };
         } catch (err: any) {
-            const apiErr = err instanceof ApiError ? err : new ApiError(500, 'INTERNAL_ERROR', 'Lỗi không mong đợi');
+            const apiErr = err instanceof ApiError ? err : new ApiError(500, 'INTERNAL_ERROR', tr('Lỗi không mong đợi'));
             if (!(err instanceof ApiError)) this.deps.onError?.(err, route.template);
             return { status: apiErr.status, payload: errorEnvelope(apiErr, requestId), headers: apiErr.headers };
         }
@@ -406,7 +407,7 @@ export class ApiRouter {
             account: async (accountId: string): Promise<AccountInfo> => {
                 requireAccount(principal, accountId);
                 const acc = await accounts.get(accountId);
-                if (!acc) throw new ApiError(404, 'NOT_FOUND', `Không tìm thấy tài khoản ${accountId}`);
+                if (!acc) throw new ApiError(404, 'NOT_FOUND', tr('Không tìm thấy tài khoản {{accountId}}', { accountId }));
                 return acc;
             },
             listAccounts: () => accounts.list(),
@@ -418,9 +419,9 @@ export class ApiRouter {
     }
 
     /**
-     * Gọi route không qua HTTP (plugin, test). `target` = operationId hoặc "METHOD /path".
-     * Route trả stream (raw) không gọi được theo cách này — trừ route file (rawResponse.file) khi người gọi truyền
-     * `binary`: cùng handler, cùng kiểm quyền / IPC, chỉ khác là nhận FileContent (base64, ≤ maxBytes) thay vì stream.
+     * Calls a route without HTTP (plugins, tests). `target` = operationId or "METHOD /path".
+     * Routes that return a stream (raw) cannot be called this way, except file routes (rawResponse.file) when the caller passes
+     * `binary`: same handler, same permission checks / IPC; the only difference is that it receives FileContent (base64, ≤ maxBytes) instead of a stream.
      */
     async invoke(target: string, input: {
         principal: Principal;
@@ -446,16 +447,16 @@ export class ApiRouter {
             }
         }
         if (!route) {
-            const err = new ApiError(404, 'NOT_FOUND', `Không có thao tác ${target}`);
+            const err = new ApiError(404, 'NOT_FOUND', tr('Không có thao tác {{target}}', { target }));
             return { status: 404, payload: errorEnvelope(err, requestId) };
         }
         const binary = route.def.rawResponse?.file && input.binary && input.binary.maxBytes > 0 ? { maxBytes: input.binary.maxBytes } : undefined;
         if (route.def.rawBody || (route.def.rawResponse && !binary)) {
-            const err = new ApiError(400, 'VALIDATION_ERROR', `${route.operationId} chỉ gọi được qua HTTP`);
+            const err = new ApiError(400, 'VALIDATION_ERROR', tr('{{operationId}} chỉ gọi được qua HTTP', { operationId: route.operationId }));
             return { status: 400, payload: errorEnvelope(err, requestId) };
         }
         if (!getApiSettingBool('api_enabled')) {
-            const err = new ApiError(503, 'API_DISABLED', 'API đang tắt (bật ở Công cụ → Ứng dụng, API & Webhook → API)');
+            const err = new ApiError(503, 'API_DISABLED', tr('API đang tắt (bật ở Công cụ → Ứng dụng, API & Webhook → API)'));
             return { status: 503, payload: errorEnvelope(err, requestId) };
         }
         const started = Date.now();

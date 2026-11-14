@@ -1,7 +1,7 @@
 /**
- * Thông báo tin nhắn mới ngay trong app: thẻ ở góc trên bên phải, dưới thanh tiêu đề (store/chat/inAppNotifyStore, quy tắc ở
- * lib/chat/notifications/inAppNotify). Ảnh + tên tài khoản (page) nhận tin, tên hội thoại, tin tối đa 2 dòng; bấm thẻ mở hội thoại, ✕ tắt
- * nhanh, rê chuột giữ lại. Mở hội thoại bằng cách khác thì thẻ của hội thoại đó tự tắt.
+ * In-app new message notification: a card at the top right, under the title bar (store/chat/inAppNotifyStore, rules in
+ * lib/chat/notifications/inAppNotify). Picture + name of the account (page) that received the message, conversation name, the message up to 2 lines. Click the card to open the conversation, ✕ to dismiss
+ * quickly, hover to keep it. If the conversation is opened another way, its card dismisses itself.
  */
 import React, { useEffect, useRef } from 'react';
 import ipc from '@/lib/ipc';
@@ -14,6 +14,7 @@ import { CloseIcon } from '@/components/common/icons';
 import { ChannelBadgeOverlay, FacebookIcon, TelegramIcon, ZaloIcon } from '../avatars/ChannelBadge';
 import { getChannelLabel, resolveAccountChannel, type Channel } from '../../../../configs/channels/channelConfig';
 import { isFacebook, isTelegram } from '@/lib/channels/channelHelper';
+import { tr } from '../../../../shared/i18n';
 
 export interface InAppToastAccount {
   name: string;
@@ -63,7 +64,7 @@ export function InAppToastCard({ toast, account, onOpen, onDismiss, onHover }: {
       <button
         type="button"
         onClick={onOpen}
-        title="Mở hội thoại"
+        title={tr('Mở hội thoại')}
         className="flex w-full items-start gap-2.5 rounded-2xl border border-border bg-card/95 p-3 pr-8 text-left shadow-xl backdrop-blur transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <AccountAvatar account={account} />
@@ -72,7 +73,7 @@ export function InAppToastCard({ toast, account, onOpen, onDismiss, onHover }: {
             <span className="truncate">{account.name}</span>
             <span className="flex-shrink-0 font-normal text-muted-foreground">· {getChannelLabel(account.channel)}</span>
             {toast.count > 1 && (
-              <span className="ml-auto flex-shrink-0 rounded-full bg-primary/15 px-1.5 text-[10px] font-semibold leading-4 text-primary" title={`${toast.count} tin mới`}>
+              <span className="ml-auto flex-shrink-0 rounded-full bg-primary/15 px-1.5 text-[10px] font-semibold leading-4 text-primary" title={tr('{{count}} tin mới', { count: toast.count })}>
                 {toast.count}
               </span>
             )}
@@ -85,8 +86,8 @@ export function InAppToastCard({ toast, account, onOpen, onDismiss, onHover }: {
       <button
         type="button"
         onClick={onDismiss}
-        title="Đóng"
-        aria-label="Đóng thông báo"
+        title={tr('Đóng')}
+        aria-label={tr('Đóng thông báo')}
         className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <CloseIcon className="h-3 w-3" />
@@ -102,13 +103,13 @@ export default function InAppMessageToasts({ belowFriendRequest = false }: { bel
   const activeThreadId = useChatStore((s) => s.activeThreadId);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Mở hội thoại bằng cách khác (danh sách, thông báo hệ điều hành…) → thẻ của nó không còn cần
+  // The conversation is opened another way (list, OS notification…) → its card is no longer needed
   useEffect(() => {
     if (activeAccountId && activeThreadId) useInAppNotifyStore.getState().dismissConversation(activeAccountId, activeThreadId);
   }, [activeAccountId, activeThreadId]);
 
-  // Thẻ đang rê chuột bị bỏ (✕, thẻ mới đẩy ra) thì trình duyệt không báo "rời chuột" → kiểm lại để các thẻ còn lại
-  // vẫn tự ẩn
+  // When the hovered card is removed (✕, a new card pushed out), the browser does not report "mouse left", so re-check so the remaining cards
+  // still hide themselves
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       const el = containerRef.current;
@@ -137,7 +138,7 @@ export default function InAppMessageToasts({ belowFriendRequest = false }: { bel
             onOpen={() => {
               store.dismissConversation(toast.accountId, toast.threadId);
               store.setHovering(false);
-              // Cùng đường với bấm thông báo hệ điều hành: đổi tài khoản, mở hội thoại, báo đã đọc (useZaloEvents)
+              // Same path as clicking an OS notification: switch account, open the conversation, mark as read (useZaloEvents)
               ipc.app?.openThread({ zaloId: toast.accountId, threadId: toast.threadId, threadType: toast.threadType });
             }}
           />

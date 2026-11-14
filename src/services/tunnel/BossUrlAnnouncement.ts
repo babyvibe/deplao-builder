@@ -1,15 +1,15 @@
 /**
- * BossUrlAnnouncement — main process, phía NHÂN VIÊN: xử lý 'relay:bossUrlChanged' Boss gửi qua Socket.IO
- * (kênh đã xác thực bằng JWT của nhân viên) khi địa chỉ WAN của Boss đổi.
+ * BossUrlAnnouncement: main process, EMPLOYEE side: handles 'relay:bossUrlChanged', which the Boss sends over Socket.IO
+ * (a channel authenticated with the employee's JWT) when the Boss's WAN address changes.
  *
- * - Workspace đang dùng đúng địa chỉ CŨ → lưu địa chỉ mới vào cấu hình workspace (nguồn sự thật duy nhất cho
- *   URL + token ở main) rồi HttpConnectionManager.onCredentialsChanged() — y như workspace:update đổi bossUrl:
- *   main phát employee:credentials (renderer init lại REST) và kết nối lại bằng địa chỉ mới, giữ token cũ.
- * - Workspace dùng địa chỉ khác (LAN…) → giữ nguyên, chỉ báo renderer để gợi ý khi cần.
- * - Đã dùng địa chỉ mới (sự kiện phát lại lúc catch-up) → bỏ qua.
- * Luôn kèm 'employee:bossUrlChanged' { workspaceId, applied, … } cho renderer (TopBar), trừ trường hợp bỏ qua.
+ * - The workspace in use has exactly the OLD address → save the new address in the workspace config (the single source of truth for
+ *   the URL + token in main), then HttpConnectionManager.onCredentialsChanged(), exactly like workspace:update changing bossUrl:
+ *   main emits employee:credentials (the renderer re-inits REST) and reconnects to the new address, keeping the old token.
+ * - The workspace uses another address (LAN…) → unchanged, only tells the renderer so it can suggest something when needed.
+ * - Already using the new address (the event replayed during catch-up) → skipped.
+ * Always sends 'employee:bossUrlChanged' { workspaceId, applied, … } to the renderer (TopBar), except when skipped.
  *
- * Wiring (HttpClientService.handlePushedEvent, trước nhánh FORWARD_CHANNELS):
+ * Wiring (HttpClientService.handlePushedEvent, before the FORWARD_CHANNELS branch):
  *   if (channel === BOSS_URL_CHANGED_EVENT) { applyBossUrlAnnouncement(this.workspaceId, data); return; }
  */
 import Logger from '../../utils/Logger';
@@ -61,7 +61,7 @@ export function applyBossUrlAnnouncement(workspaceId: string, raw: unknown): Bos
     applied = true;
     Logger.log(`[BossUrlAnnouncement] "${workspaceId}": BOSS đổi địa chỉ ${event.previousUrl} → ${event.newUrl} (${event.reason}) — đã lưu, kết nối lại bằng địa chỉ mới`);
     try {
-      // require muộn: HttpConnectionManager → HttpClientService → module này (tránh vòng import lúc nạp)
+      // Late require: HttpConnectionManager → HttpClientService → this module (avoids an import cycle at load time)
       require('../http/HttpConnectionManager').default.getInstance().onCredentialsChanged(workspaceId);
     } catch (err: any) {
       Logger.warn(`[BossUrlAnnouncement] "${workspaceId}": kết nối lại thất bại: ${err?.message || err}`);
@@ -73,7 +73,7 @@ export function applyBossUrlAnnouncement(workspaceId: string, raw: unknown): Bos
   const payload: EmployeeBossUrlChangedPayload = { ...event, workspaceId, applied };
   try {
     EventBroadcaster.sendDirect(EMPLOYEE_BOSS_URL_CHANGED, payload);
-  } catch { /* cửa sổ chưa sẵn sàng */ }
+  } catch { /* window not ready yet */ }
   return { applied, decision };
 }
 

@@ -1,12 +1,12 @@
 /**
- * MediaContext — "đang đồng bộ cho workspace nào": DB đang mở + thư mục media + mã workspace + bucket.
+ * MediaContext: "which workspace is being synced now": the open DB + the media folder + the workspace id + the bucket.
  *
- * DatabaseService chỉ có MỘT DB toàn cục, đổi khi chuyển workspace / đổi thư mục lưu trữ / khôi phục DB. Mọi thành phần
- * lấy context trước mỗi lượt việc và kiểm isValid(ctx) ngay trước khi ghi DB (đồng bộ, cùng tick) → không bao giờ ghi
- * kết quả của workspace A vào DB của workspace B. Context chỉ "ổn định" khi thư mục media (FileStorageService.getBaseDir())
- * đúng là <thư mục DB>/media — giữa lúc chuyển workspace hai giá trị lệch nhau trong chốc lát → chờ.
+ * DatabaseService has only ONE global DB, which changes when the workspace is switched / the storage folder is changed / a DB is restored. Every component
+ * takes a context before each job and checks isValid(ctx) right before writing to the DB (synchronous, same tick) → a result from
+ * workspace A is never written into workspace B's DB. The context is only "stable" when the media folder (FileStorageService.getBaseDir())
+ * is exactly <DB folder>/media; during a workspace switch the two values differ for a moment → wait.
  *
- * Dựng context có GHI DB (tạo bảng, mã workspace) → chỉ gọi khi đồng bộ media đang bật.
+ * Building a context that WRITES to the DB (creating tables, the workspace id) → call it only when media sync is turned on.
  */
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -14,25 +14,25 @@ import { CloudMediaIndex, MediaDb, SETTING_MEDIA_BUCKET, SETTING_MEDIA_PROVIDER,
 import { LogFn, MINUTE, noLog, SECOND } from './util';
 
 export interface MediaContext {
-    /** Tăng mỗi lần dựng lại (đổi workspace / DB). */
+    /** Incremented on every rebuild (workspace / DB changed). */
     readonly id: number;
     readonly dbPath: string;
     /** path.resolve(FileStorageService.getBaseDir()) */
     readonly mediaRoot: string;
-    /** realpath(mediaRoot) — gốc để tính rel_path đúng hoa/thường trên đĩa. */
+    /** realpath(mediaRoot): the root used to compute rel_path with the correct case on disk. */
     readonly realRoot: string;
-    /** Tiền tố khoá R2 của workspace (app_settings.cloud_workspace_uid). */
+    /** The workspace's R2 key prefix (app_settings.cloud_workspace_uid). */
     readonly workspaceUid: string;
     readonly bucket: string;
     readonly index: CloudMediaIndex;
-    /** Kho lúc dựng context ('r2' | 'gdrive') — đổi kho → context hết hiệu lực, dựng lại (đối chiếu chỉ mục với kho mới). */
+    /** Store when the context was built ('r2' | 'gdrive'): changing the store → the context expires and is rebuilt (the index is checked against the new store). */
     readonly provider?: string;
 }
 
-/** Nguồn context cho các thành phần (test truyền bản giả). */
+/** Context source for the components (tests pass a fake). */
 export interface ContextSource {
     get(): Promise<MediaContext | null>;
-    /** Đồng bộ, rẻ — gọi ngay trước mỗi lần ghi DB. */
+    /** Synchronous and cheap: call it right before every DB write. */
     isValid(ctx: MediaContext | null): boolean;
     invalidate(): void;
 }
@@ -41,18 +41,18 @@ export interface ContextDeps {
     activeDb(): MediaDb | null;
     activeDbPath(): string;
     mediaRoot(): string;
-    /** false = workspace nhân viên (remote): media ở đó là bản sao từ máy Boss — máy Boss sao lưu, máy này không. */
+    /** false = employee workspace (remote): the media there is a copy from the Boss machine; the Boss machine backs it up, this machine does not. */
     supportedWorkspace(): boolean;
-    /** Bucket của máy (cloud-settings.json → media.bucket). */
+    /** The machine's bucket (cloud-settings.json → media.bucket). */
     machineBucket(): string | null;
-    /** Kho đang chọn ('r2' | 'gdrive'); thiếu = 'r2'. */
+    /** Store currently selected ('r2' | 'gdrive'); missing = 'r2'. */
     provider?(): string;
     realpath(p: string): Promise<string>;
     now?(): number;
     log?: LogFn;
 }
 
-/** store_mismatch: đã đổi kho nhưng workspace này còn file chỉ nằm trên kho cũ (đã dọn khỏi máy) — chưa chuyển được. */
+/** store_mismatch: the store was changed, but this workspace still has files that exist only on the old store (cleaned off the machine): not switched yet. */
 export type ContextBlock = 'remote_workspace' | 'no_bucket' | 'unstable' | 'no_db' | 'store_mismatch' | null;
 
 const UNSTABLE_GRACE_MS = 2 * MINUTE;
@@ -76,9 +76,9 @@ export class MediaContextManager implements ContextSource {
     private unstableSince = 0;
     private uidCheckedAt = 0;
     private warnedUnstable = false;
-    /** Lý do không dựng được context (để hiện cho người dùng). */
+    /** Reason a context cannot be built (shown to the user). */
     blocked: ContextBlock = null;
-    /** Với store_mismatch: kho cũ của chỉ mục + số file chỉ còn ở đó. */
+    /** For store_mismatch: the index's old store + the number of files that exist only there. */
     mismatch: { from: string; evicted: number } | null = null;
 
     constructor(private readonly deps: ContextDeps, private readonly onChange?: (ctx: MediaContext | null) => void) {}
@@ -98,7 +98,7 @@ export class MediaContextManager implements ContextSource {
             if (!samePath(this.deps.mediaRoot(), ctx.mediaRoot)) return false;
             if (!this.deps.supportedWorkspace()) return false;
             if (ctx.provider && this.deps.provider && this.deps.provider() !== ctx.provider) return false;
-            // Cùng đường dẫn nhưng nội dung DB đã bị thay (khôi phục bản sao) → mã workspace khác → dựng lại
+            // Same path but the DB contents were replaced (a backup was restored) → different workspace id → rebuild
             const now = this.now();
             if (now - this.uidCheckedAt >= UID_RECHECK_MS) {
                 if (ctx.index.getSetting(SETTING_WORKSPACE_UID) !== ctx.workspaceUid) return false;
@@ -113,7 +113,7 @@ export class MediaContextManager implements ContextSource {
     invalidate(): void {
         if (!this.ctx) return;
         this.ctx = null;
-        try { this.onChange?.(null); } catch { /* bỏ qua */ }
+        try { this.onChange?.(null); } catch { /* ignore */ }
     }
 
     async get(): Promise<MediaContext | null> {
@@ -134,8 +134,8 @@ export class MediaContextManager implements ContextSource {
             const root = path.resolve(d.mediaRoot());
             const expected = path.join(path.dirname(dbPath), 'media');
             if (!samePath(root, expected)) {
-                // Đang chuyển workspace / thư mục lưu trữ: DB đã đổi mà thư mục media chưa (hoặc ngược lại) → đợi.
-                // Lệch kéo dài (cấu hình lạ) → tin thư mục media hiện tại.
+                // Switching workspace / storage folder: the DB has changed but the media folder has not yet (or the reverse) → wait.
+                // Prolonged mismatch (odd configuration) → trust the current media folder.
                 const now = this.now();
                 if (!this.unstableSince) this.unstableSince = now;
                 if (now - this.unstableSince < UNSTABLE_GRACE_MS) { this.blocked = 'unstable'; return null; }
@@ -149,7 +149,7 @@ export class MediaContextManager implements ContextSource {
             const db = d.activeDb();
             if (!db) { this.blocked = 'no_db'; return null; }
 
-            // Từ đây tới trước await: đồng bộ → cùng một DB
+            // From here up to the await: synchronous → same DB
             const index = new CloudMediaIndex(db);
             index.ensureSchema();
             index.resetUploading();
@@ -158,13 +158,13 @@ export class MediaContextManager implements ContextSource {
                 uid = newWorkspaceUid();
                 index.setSetting(SETTING_WORKSPACE_UID, uid);
             }
-            // Kho đã đổi (R2 ↔ Google Drive) từ lần đồng bộ trước → file đã lên kho cũ chờ tải lên kho mới
+            // Store changed (R2 ↔ Google Drive) since the last sync → files already on the old store wait to be uploaded to the new store
             const provider = (d.provider ? d.provider() : 'r2') || 'r2';
             const indexedFor = index.getSetting(SETTING_MEDIA_PROVIDER) || 'r2';
             if (indexedFor !== provider) {
                 const evicted = index.countEvicted();
                 if (evicted > 0) {
-                    // Đổi kho lúc còn file chỉ nằm trên kho cũ (vd workspace khác lúc đổi kho): chưa chuyển — mất dấu file
+                    // Store changed while files still exist only on the old store (e.g. another workspace at the time of the change): not switched yet, otherwise the files would be lost
                     this.mismatch = { from: indexedFor, evicted };
                     this.blocked = 'store_mismatch';
                     return null;
@@ -183,8 +183,8 @@ export class MediaContextManager implements ContextSource {
             }
 
             let realRoot = root;
-            try { realRoot = path.resolve(await d.realpath(root)); } catch { /* giữ root */ }
-            // Trong lúc chờ realpath, workspace có thể đã đổi → lượt sau dựng lại
+            try { realRoot = path.resolve(await d.realpath(root)); } catch { /* keep root */ }
+            // While waiting for realpath, the workspace may have changed → the next pass rebuilds it
             if (d.activeDbPath() !== dbPath || !samePath(d.mediaRoot(), root)) return null;
 
             const ctx: MediaContext = { id: ++this.seq, dbPath, mediaRoot: root, realRoot, workspaceUid: uid, bucket, index, provider };
@@ -192,7 +192,7 @@ export class MediaContextManager implements ContextSource {
             this.uidCheckedAt = this.now();
             this.blocked = null;
             this.mismatch = null;
-            try { this.onChange?.(ctx); } catch { /* bỏ qua */ }
+            try { this.onChange?.(ctx); } catch { /* ignore */ }
             return ctx;
         } catch (err) {
             log('warn', `[CloudMedia] Chưa mở được chỉ mục media: ${(err as Error)?.message || err}`);

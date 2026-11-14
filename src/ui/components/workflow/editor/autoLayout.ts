@@ -1,5 +1,5 @@
 /**
- * autoLayout.ts - "Sắp xếp tự động" for the workflow map.
+ * autoLayout.ts - "Sắp xếp tự động" (auto arrange) for the workflow map.
  *
  * Pure and deterministic (no React / React Flow imports) so it can be unit-tested.
  * Layered (Sugiyama-style) drawing, flow from top to bottom:
@@ -10,11 +10,11 @@
  *  3. Longest-path layering. A source that only feeds deep nodes moves down to sit one layer
  *     above its shallowest child.
  *  4. Edges spanning several layers get virtual "lane" vertices. Order inside each layer:
- *     DFS in handle order (IF: Đúng → Sai, Switch: cases → Mặc định, others by current x),
+ *     DFS in handle order (IF: "Đúng" (true) → "Sai" (false), Switch: cases → "Mặc định" (default), others by current x),
  *     then barycenter sweeps (down, up, down, up) that know where each handle sits on its card,
  *     then adjacent swaps; the ordering with the fewest crossings wins.
  *  5. X: Brandes–Köpf alignment + compaction (4 runs, balanced) with handle offsets, so
- *     single-child chains are perfectly straight and a parent sits centred over its branches.
+ *     single-child chains are perfectly straight and a parent sits centered over its branches.
  *     React Flow draws every edge as ONE bezier between its two handles (it ignores lanes),
  *     so a long edge whose curve would cut through a card is straightened: its two end
  *     cards are aligned with its lane and the layout is recomputed.
@@ -162,7 +162,7 @@ export function computeAutoLayout(nodes: LayoutNode[], edges: LayoutEdge[]): Lay
 // ─── Internals ────────────────────────────────────────────────────────────────
 
 const S = AUTO_LAYOUT_SPACING;
-/** Centre of the Switch "Mặc định" handle: `right: 1rem` + 12px handle shifted by -50%. */
+/** Center of the Switch "Mặc định" (default) handle: `right: 1rem` + 12px handle shifted by -50%. */
 const SWITCH_DEFAULT_INSET = 28;
 const ORDER_SWEEPS = 4;
 const TRANSPOSE_ROUNDS = 8;

@@ -1,32 +1,32 @@
 /**
- * Ảnh JPEG XL của Zalo.
+ * Zalo JPEG XL images.
  *
- * Zalo điện thoại bản mới gửi một số ảnh dạng JPEG XL: URL `https://…/jxl/<…>/<id>.jxl` (kèm
- * `params.convertible = "jxl"`). Chromium/Electron không hiển thị được JXL → ảnh lỗi.
- * Máy không giải mã được JXL thì Zalo Web/PC đổi sang bản JPG mà CDN luôn có sẵn (Zalo PC 26.9.10,
- * module `QWlH` — hàm `transcode` → `toJpg`): `/jxl/` → `/jpg/`, `.jxl` → `.jpg`, bỏ tham số `jxlstatus`.
- * URL ảnh E2EE (chứa `?e2esession`) không đổi được → giữ nguyên.
+ * Newer Zalo phone builds send some images as JPEG XL: URL `https://…/jxl/<…>/<id>.jxl` (with
+ * `params.convertible = "jxl"`). Chromium/Electron cannot display JXL → the image shows as broken.
+ * When a machine cannot decode JXL, Zalo Web/PC switches to the JPG version, which the CDN always has (Zalo PC 26.9.10,
+ * module `QWlH`: the `transcode` function → `toJpg`): `/jxl/` → `/jpg/`, `.jxl` → `.jpg`, and the `jxlstatus` parameter is dropped.
+ * E2EE image URLs (containing `?e2esession`) cannot be changed → left as they are.
  *
- * Dùng chung cho main process và renderer.
+ * Shared by the main process and the renderer.
  */
 
 const JXL_URL_RE = /^https?:\/\/.*\/jxl\/.*\.jxl/i;
 /**
- * Kiểm tra nhanh trên chuỗi JSON chưa parse. Không dò "/jxl/": Zalo hay escape dấu "/" trong chuỗi JSON lồng
- * (`params`, `quote.attach`: `https:\/\/…\/jxl\/…`) → phải dò "jxl" rồi parse ra mới kiểm tra đúng URL.
+ * Quick check on the unparsed JSON string. Do not search for "/jxl/": Zalo often escapes the "/" characters inside nested JSON strings
+ * (`params`, `quote.attach`: `https:\/\/…\/jxl\/…`), so you must search for "jxl", then parse, and check the real URL.
  */
 const JXL_HINT_RE = /jxl/i;
 const E2EE_SESSION_MARKER = '?e2esession';
 const JXL_STATUS_PARAM = 'jxlstatus';
 
-/** Các field chứa URL ảnh trong content / params của tin ảnh (giống danh sách Zalo transcode). */
+/** The fields that contain image URLs in the content / params of an image message (same list as the Zalo transcode). */
 const CONTENT_URL_KEYS = ['href', 'thumb', 'hd', 'hdUrl', 'normalUrl', 'oriUrl', 'thumbUrl', 'raw', 'rawUrl'];
 const PARAMS_URL_KEYS = ['hd', 'rawUrl', 'href', 'thumb'];
 
-/** Host media của Zalo (CDN ảnh / file, chat.zalo.me): chỉ những host này mới được nhận cookie phiên tài khoản. */
+/** Zalo media hosts (image / file CDN, chat.zalo.me): only these hosts may receive the account's session cookie. */
 const ZALO_MEDIA_HOST_RE = /(^|\.)(zdn\.vn|zadn\.vn|zalo\.me|zaloapp\.com)$/i;
 
-/** Link http(s) thuộc host media của Zalo. */
+/** An http(s) link on a Zalo media host. */
 export function isZaloMediaUrl(url: unknown): url is string {
     if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return false;
     try {
@@ -40,7 +40,7 @@ export function isZaloJxlUrl(url: unknown): url is string {
     return typeof url === 'string' && JXL_URL_RE.test(url);
 }
 
-/** URL ảnh JXL của Zalo → URL bản JPG tương ứng. URL khác giữ nguyên. */
+/** Zalo JXL image URL → the matching JPG URL. Other URLs stay unchanged. */
 export function toZaloJpgUrl(url: string): string {
     if (!isZaloJxlUrl(url) || url.includes(E2EE_SESSION_MARKER)) return url;
     try {
@@ -68,15 +68,15 @@ function convertKeys(target: Record<string, any>, keys: string[]): boolean {
 }
 
 /**
- * Đổi mọi URL ảnh JXL trong content của tin ảnh (object, hoặc chuỗi JSON) sang JPG.
- * `params` có thể là object hoặc chuỗi JSON — giữ nguyên kiểu. Trả về chính đối tượng cũ nếu không có gì đổi.
+ * Change every JXL image URL in the content of an image message (object, or JSON string) to JPG.
+ * `params` may be an object or a JSON string; keep its type. Returns the same object if nothing changed.
  */
 export function normalizeZaloPhotoContent<T>(content: T): T {
     if (typeof content === 'string') {
         if (!JXL_HINT_RE.test(content)) return content;
         try {
             const parsed = JSON.parse(content);
-            // Chỉ xử lý chuỗi JSON của object (content tin ảnh); chuỗi văn bản thường giữ nguyên.
+            // Only process the JSON string of an object (the content of an image message); plain text strings stay unchanged.
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return content;
             const next = normalizeZaloPhotoContent(parsed);
             return (next === parsed ? content : JSON.stringify(next)) as unknown as T;
@@ -95,7 +95,7 @@ export function normalizeZaloPhotoContent<T>(content: T): T {
                 copy.params = JSON.stringify(parsedParams);
                 changed = true;
             }
-        } catch { /* params không phải JSON */ }
+        } catch { /* params is not JSON */ }
     } else if (params && typeof params === 'object' && !Array.isArray(params)) {
         const paramsCopy = { ...params };
         if (convertKeys(paramsCopy, PARAMS_URL_KEYS)) {
@@ -107,8 +107,8 @@ export function normalizeZaloPhotoContent<T>(content: T): T {
 }
 
 /**
- * Đổi URL JXL trong tin nhắn zca-js (`message.data.content` + ảnh của tin được trích dẫn `data.quote.attach`)
- * TRƯỚC khi lưu DB / gửi renderer. Sửa trực tiếp trên object; trả true nếu có thay đổi.
+ * Change the JXL URLs in a zca-js message (`message.data.content` + the images of the quoted message `data.quote.attach`)
+ * BEFORE saving to the DB / sending to the renderer. Edits the object in place; returns true if anything changed.
  */
 export function normalizeZaloMessageImages(message: any): boolean {
     const data = message?.data;

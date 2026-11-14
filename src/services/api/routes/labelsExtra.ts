@@ -1,9 +1,9 @@
 /**
- * Nhãn & tin nhanh mở rộng — hội thoại theo nhãn, gán hàng loạt, thứ tự/bật tắt, sao chép sang tài khoản khác,
- * gán/gỡ nhãn Zalo trên server, tin nhắn nhanh trên server Zalo.
- * Mirror UI: ConversationList.tsx handleAssignLabel (đọc nhãn mới nhất → mỗi hội thoại một nhãn Zalo →
- * zalo:updateLabels có labelDiffs để workflow chạy, thử lại khi "Outdated"), QuickMessageManager.tsx,
- * Cài đặt → Hội thoại → Nhãn / Tin nhắn nhanh (db:setLocalLabelOrder, db:cloneLocalLabels…).
+ * Extended labels & quick messages: conversations by label, bulk assign, order/on-off, copy to another account,
+ * assign/remove Zalo labels on the server, quick messages on the Zalo server.
+ * Mirrors the UI: ConversationList.tsx handleAssignLabel (reads the latest labels → each conversation gets one Zalo label →
+ * zalo:updateLabels with labelDiffs so the workflow runs, retries when "Outdated"), QuickMessageManager.tsx,
+ * Settings → Conversations → Labels / Quick messages (db:setLocalLabelOrder, db:cloneLocalLabels…).
  */
 import { s } from '../schema';
 import { AccountInfo, ApiContext, ApiError, route, RouteDef } from '../types';
@@ -11,6 +11,7 @@ import { unwrapIpcResult } from '../IpcInvoker';
 import { CHANNELS, requireOnline, unsupported, zaloAuth } from '../channels/ChannelActions';
 import { threadTypeOf } from './chat';
 import { accountParams, notFound, scrub } from './common';
+import { tr } from '../../../shared/i18n';
 
 const labelIdParams = s.object({ labelId: s.int().min(1) });
 
@@ -33,8 +34,8 @@ function mapZaloQuickMessage(i: any): any {
 }
 
 /**
- * Gán/gỡ một nhãn Zalo cho hội thoại — đúng như handleAssignLabel: đọc nhãn mới nhất, mỗi hội thoại
- * chỉ thuộc một nhãn (gỡ khỏi nhãn khác), nhóm dùng tiền tố "g", thử lại một lần khi version cũ.
+ * Assign/remove a Zalo label for a conversation, exactly like handleAssignLabel: read the latest labels, each conversation
+ * belongs to only one label (removed from the other label), groups use the prefix "g", retry once when the version is stale.
  */
 export async function setZaloLabel(ctx: ApiContext, acc: AccountInfo, labelId: number, threadId: string, assign: boolean): Promise<{ changed: boolean }> {
     requireOnline(acc);
@@ -71,10 +72,10 @@ export async function setZaloLabel(ctx: ApiContext, acc: AccountInfo, labelId: n
 export function labelExtraRoutes(): RouteDef[] {
     const tags = ['Nhãn & tin nhanh'];
     return [
-        // ── Nhãn (local) ───────────────────────────────────────────────────
+        // ── Labels (local) ───────────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/labels/:labelId/conversations', scope: 'chat:read', tags, operationId: 'listLabelConversations',
-            summary: 'Hội thoại đang gắn một nhãn',
+            summary: tr('Hội thoại đang gắn một nhãn'),
             params: s.object({ accountId: s.id(), labelId: s.int().min(1) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -91,8 +92,8 @@ export function labelExtraRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/labels/bulk-assign', scope: 'chat:manage', tags, operationId: 'bulkAssignLabels',
-            summary: 'Gán nhiều nhãn cho nhiều hội thoại trong một lần',
-            description: 'Một transaction như thao tác gán hàng loạt trong app. Khác gán từng nhãn: không bắn workflow "Khi gán nhãn".',
+            summary: tr('Gán nhiều nhãn cho nhiều hội thoại trong một lần'),
+            description: tr('Một transaction như thao tác gán hàng loạt trong app. Khác gán từng nhãn: không bắn workflow "Khi gán nhãn".'),
             params: accountParams,
             body: s.object({ label_ids: s.array(s.int().min(1)).min(1).max(50), thread_ids: s.array(s.id()).min(1).max(1000) }),
             handler: async ctx => {
@@ -105,7 +106,7 @@ export function labelExtraRoutes(): RouteDef[] {
         }),
         route({
             method: 'PUT', path: '/labels/order', scope: 'chat:manage', tags, operationId: 'reorderLabels',
-            summary: 'Sắp xếp thứ tự nhãn (theo mảng id)',
+            summary: tr('Sắp xếp thứ tự nhãn (theo mảng id)'),
             body: s.object({ label_ids: s.array(s.int().min(1)).min(1).max(300) }),
             handler: async ctx => {
                 const known = new Set((await localLabels(ctx)).map(l => Number(l.id)));
@@ -116,7 +117,7 @@ export function labelExtraRoutes(): RouteDef[] {
         }),
         route({
             method: 'PUT', path: '/labels/:labelId/active', scope: 'chat:manage', tags, operationId: 'setLabelActive',
-            summary: 'Bật / ẩn nhãn',
+            summary: tr('Bật / ẩn nhãn'),
             params: labelIdParams,
             body: s.object({ active: s.boolean() }),
             handler: async ctx => {
@@ -127,23 +128,23 @@ export function labelExtraRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/labels/clone', scope: 'chat:manage', tags, operationId: 'cloneLabels',
-            summary: 'Sao chép bộ nhãn của tài khoản này sang tài khoản khác',
+            summary: tr('Sao chép bộ nhãn của tài khoản này sang tài khoản khác'),
             body: s.object({ from_account_id: s.id(), to_account_id: s.id() }),
             handler: async ctx => {
                 const from = await ctx.account(ctx.body.from_account_id);
                 const to = await ctx.account(ctx.body.to_account_id);
-                if (from.id === to.id) throw new ApiError(400, 'VALIDATION_ERROR', 'Hai tài khoản phải khác nhau');
+                if (from.id === to.id) throw new ApiError(400, 'VALIDATION_ERROR', tr('Hai tài khoản phải khác nhau'));
                 const r = await ctx.call('db:cloneLocalLabels', { sourceZaloId: from.id, targetZaloId: to.id });
                 return { cloned: Number(r?.count) || 0 };
             },
         }),
 
-        // ── Nhãn Zalo (server) ─────────────────────────────────────────────
+        // ── Zalo labels (server) ─────────────────────────────────────────────
         ...([true, false] as const).map(assign => route({
             method: assign ? 'POST' : 'DELETE', path: '/accounts/:accountId/zalo-labels/:labelId/conversations/:threadId', scope: 'chat:manage', tags,
             operationId: assign ? 'assignZaloLabel' : 'removeZaloLabel',
-            summary: assign ? 'Gắn nhãn Zalo cho hội thoại (mỗi hội thoại một nhãn)' : 'Gỡ nhãn Zalo khỏi hội thoại',
-            description: 'Đồng bộ lên Zalo (hiện trên điện thoại). Gắn nhãn mới sẽ gỡ nhãn Zalo cũ của hội thoại như trong app; workflow "Khi gán hoặc gỡ nhãn" vẫn chạy.',
+            summary: assign ? tr('Gắn nhãn Zalo cho hội thoại (mỗi hội thoại một nhãn)') : tr('Gỡ nhãn Zalo khỏi hội thoại'),
+            description: tr('Đồng bộ lên Zalo (hiện trên điện thoại). Gắn nhãn mới sẽ gỡ nhãn Zalo cũ của hội thoại như trong app; workflow "Khi gán hoặc gỡ nhãn" vẫn chạy.'),
             params: s.object({ accountId: s.id(), labelId: s.int().min(0), threadId: s.id() }),
             handler: async (ctx: ApiContext) => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -153,10 +154,10 @@ export function labelExtraRoutes(): RouteDef[] {
             },
         })),
 
-        // ── Tin nhắn nhanh (local) ─────────────────────────────────────────
+        // ── Quick messages (local) ─────────────────────────────────────────
         route({
             method: 'PUT', path: '/accounts/:accountId/quick-messages/order', scope: 'chat:manage', tags, operationId: 'reorderQuickMessages',
-            summary: 'Sắp xếp thứ tự tin nhắn nhanh',
+            summary: tr('Sắp xếp thứ tự tin nhắn nhanh'),
             params: accountParams,
             body: s.object({ ids: s.array(s.int().min(1)).min(1).max(300) }),
             handler: async ctx => {
@@ -169,7 +170,7 @@ export function labelExtraRoutes(): RouteDef[] {
         }),
         route({
             method: 'PUT', path: '/accounts/:accountId/quick-messages/:id/active', scope: 'chat:manage', tags, operationId: 'setQuickMessageActive',
-            summary: 'Bật / tắt một tin nhắn nhanh',
+            summary: tr('Bật / tắt một tin nhắn nhanh'),
             params: s.object({ accountId: s.id(), id: s.int().min(1) }),
             body: s.object({ active: s.boolean() }),
             handler: async ctx => {
@@ -181,22 +182,22 @@ export function labelExtraRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/quick-messages/clone', scope: 'chat:manage', tags, operationId: 'cloneQuickMessages',
-            summary: 'Sao chép tin nhắn nhanh sang tài khoản khác',
+            summary: tr('Sao chép tin nhắn nhanh sang tài khoản khác'),
             params: accountParams,
             body: s.object({ to_account_id: s.id() }),
             handler: async ctx => {
                 const from = await ctx.account(ctx.params.accountId);
                 const to = await ctx.account(ctx.body.to_account_id);
-                if (from.id === to.id) throw new ApiError(400, 'VALIDATION_ERROR', 'Hai tài khoản phải khác nhau');
+                if (from.id === to.id) throw new ApiError(400, 'VALIDATION_ERROR', tr('Hai tài khoản phải khác nhau'));
                 const r = await ctx.call('db:cloneLocalQuickMessages', { sourceZaloId: from.id, targetZaloId: to.id });
                 return { cloned: Number(r?.count) || 0 };
             },
         }),
 
-        // ── Tin nhắn nhanh trên server Zalo ───────────────────────────────
+        // ── Quick messages on the Zalo server ───────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/zalo-quick-messages', scope: 'chat:read', tags, operationId: 'listZaloQuickMessages',
-            summary: 'Tin nhắn nhanh lưu trên Zalo (dùng được cả trên điện thoại)',
+            summary: tr('Tin nhắn nhanh lưu trên Zalo (dùng được cả trên điện thoại)'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -208,7 +209,7 @@ export function labelExtraRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/zalo-quick-messages', scope: 'chat:manage', tags, operationId: 'createZaloQuickMessage',
-            summary: 'Tạo tin nhắn nhanh trên Zalo',
+            summary: tr('Tạo tin nhắn nhanh trên Zalo'),
             params: accountParams,
             body: s.object({ keyword: s.string().min(1).max(50).pattern(/^\S+$/), title: s.string().min(1).max(5000) }),
             handler: async ctx => {
@@ -221,7 +222,7 @@ export function labelExtraRoutes(): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/zalo-quick-messages/:itemId', scope: 'chat:manage', tags, operationId: 'updateZaloQuickMessage',
-            summary: 'Sửa tin nhắn nhanh trên Zalo',
+            summary: tr('Sửa tin nhắn nhanh trên Zalo'),
             params: s.object({ accountId: s.id(), itemId: s.int().min(1) }),
             body: s.object({ keyword: s.string().min(1).max(50).pattern(/^\S+$/), title: s.string().min(1).max(5000) }),
             handler: async ctx => {
@@ -234,7 +235,7 @@ export function labelExtraRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/zalo-quick-messages/:itemId', scope: 'chat:manage', tags, operationId: 'deleteZaloQuickMessage',
-            summary: 'Xoá tin nhắn nhanh trên Zalo',
+            summary: tr('Xoá tin nhắn nhanh trên Zalo'),
             params: s.object({ accountId: s.id(), itemId: s.int().min(1) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);

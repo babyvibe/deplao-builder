@@ -1,9 +1,9 @@
 /**
- * AutoMarkReadModal - "Tự động đánh dấu đã đọc" (menu ⋮ → Tự động).
+ * AutoMarkReadModal - "Tự động đánh dấu đã đọc" (Auto mark as read) (⋮ menu → Auto).
  *
  * Choose the time range of the conversations' last message (default: all), preview how many unread
  * conversations match, then run: one by one, mark read in the app (DB) and on the platform when it
- * has an API. The job keeps running in the background when the popup is closed ("Chạy nền").
+ * has an API. The job keeps running in the background when the popup is closed ("Chạy nền" (Run in background)).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -14,11 +14,13 @@ import { useAutoReadStore, AutoReadConversation } from '@/store/chat/autoReadSto
 import {
   AUTO_READ_PRESETS, AutoReadPreset, isValidAutoReadRange, resolveAutoReadRange,
 } from '@/lib/chat/read/autoMarkRead';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface Props {
   /** Accounts in scope (active account, or the merged inbox accounts of the selected channel). */
   accountIds: string[];
-  /** "Shop A", "3 tài khoản"… */
+  /** "Shop A", "3 tài khoản" (3 accounts)… */
   scopeLabel: string;
   onClose: () => void;
 }
@@ -90,10 +92,10 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
             <CheckCircleIcon className="w-5 h-5" />
           </span>
           <div className="flex-1 min-w-0">
-            <p className="text-[15px] font-semibold text-foreground">Tự động đánh dấu đã đọc</p>
-            <p className="text-xs text-muted-foreground truncate">Phạm vi: {scopeLabel}</p>
+            <p className="text-[15px] font-semibold text-foreground">{tr('Tự động đánh dấu đã đọc')}</p>
+            <p className="text-xs text-muted-foreground truncate">{trx('Phạm vi: {{scopeLabel}}', { scopeLabel })}</p>
           </div>
-          <button type="button" onClick={onClose} title={running ? 'Đóng - vẫn chạy nền' : 'Đóng (Esc)'}
+          <button type="button" onClick={onClose} title={running ? tr('Đóng - vẫn chạy nền') : tr('Đóng (Esc)')}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <CloseIcon className="w-4 h-4" />
           </button>
@@ -106,13 +108,13 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
               <>
                 <div>
                   <div className="flex items-center justify-between text-sm mb-1.5">
-                    <span className="text-foreground font-medium">Đang đánh dấu {job.done}/{job.total}</span>
+                    <span className="text-foreground font-medium">{trx('Đang đánh dấu {{done}}/{{total}}', { done: job.done, total: job.total })}</span>
                     <span className="text-muted-foreground tabular-nums">{percent}%</span>
                   </div>
                   <div className="h-2 rounded-full bg-muted overflow-hidden">
                     <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${percent}%` }} />
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground truncate">{job.current ? `Hội thoại: ${job.current}` : 'Đang chuẩn bị…'}</p>
+                  <p className="mt-2 text-xs text-muted-foreground truncate">{job.current ? tr('Hội thoại: {{current}}', { current: job.current }) : tr('Đang chuẩn bị…')}</p>
                 </div>
               </>
             ) : (
@@ -122,10 +124,10 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
                 </span>
                 <div>
                   <p className="text-sm font-semibold text-foreground">
-                    {job.status === 'stopped' ? `Đã dừng sau ${job.done}/${job.total} hội thoại` : `Đã đánh dấu đã đọc ${job.done} hội thoại`}
+                    {job.status === 'stopped' ? tr('Đã dừng sau {{done}}/{{total}} hội thoại', { done: job.done, total: job.total }) : tr('Đã đánh dấu đã đọc {{done}} hội thoại', { done: job.done })}
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Trong {Math.max(1, Math.round((job.finishedAt - job.startedAt) / 1000))} giây
+                    {trx('Trong {{v1}} giây', { v1: Math.max(1, Math.round((job.finishedAt - job.startedAt) / 1000)) })}
                   </p>
                 </div>
               </div>
@@ -133,15 +135,15 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="rounded-xl border border-border px-2 py-2">
                 <p className="text-lg font-semibold text-foreground tabular-nums">{job.synced}</p>
-                <p className="text-[11px] text-muted-foreground">Đã đồng bộ nền tảng</p>
+                <p className="text-[11px] text-muted-foreground">{tr('Đã đồng bộ nền tảng')}</p>
               </div>
               <div className="rounded-xl border border-border px-2 py-2">
                 <p className="text-lg font-semibold text-foreground tabular-nums">{job.appOnly}</p>
-                <p className="text-[11px] text-muted-foreground">Chỉ trong app</p>
+                <p className="text-[11px] text-muted-foreground">{tr('Chỉ trong app')}</p>
               </div>
               <div className="rounded-xl border border-border px-2 py-2">
                 <p className={`text-lg font-semibold tabular-nums ${job.failed ? 'text-red-500' : 'text-foreground'}`}>{job.failed}</p>
-                <p className="text-[11px] text-muted-foreground">Lỗi đồng bộ</p>
+                <p className="text-[11px] text-muted-foreground">{tr('Lỗi đồng bộ')}</p>
               </div>
             </div>
             {job.errors.length > 0 && (
@@ -155,7 +157,7 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
             )}
             {running && (
               <p className="text-[11.5px] text-muted-foreground">
-                Có thể đóng cửa sổ này - tiến trình vẫn chạy nền (xem tiến độ ở menu ⋮). Lỗi đồng bộ không ảnh hưởng: hội thoại vẫn được đánh dấu đã đọc trong app.
+                {tr('Có thể đóng cửa sổ này - tiến trình vẫn chạy nền (xem tiến độ ở menu ⋮). Lỗi đồng bộ không ảnh hưởng: hội thoại vẫn được đánh dấu đã đọc trong app.')}
               </p>
             )}
           </div>
@@ -163,7 +165,7 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
           /* ── Options ── */
           <div className="px-5 py-4 space-y-4">
             <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thời gian tin nhắn cuối</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{tr('Thời gian tin nhắn cuối')}</p>
               <div className="flex flex-wrap gap-1.5">
                 {AUTO_READ_PRESETS.map(option => (
                   <button key={option.id} type="button" onClick={() => setPreset(option.id)}
@@ -179,17 +181,15 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
               {preset === 'custom' && (
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label className="text-xs text-muted-foreground">
-                    Từ ngày
-                    <DateInputVN value={customFrom} max={customTo || undefined} onChange={e => setCustomFrom(e.target.value)}
-                      className="mt-1 w-full h-9 px-2 rounded-lg border border-input bg-background text-sm text-foreground" />
+                    {trx('Từ ngày<0/>', { 0: <DateInputVN value={customFrom} max={customTo || undefined} onChange={e => setCustomFrom(e.target.value)}
+                      className="mt-1 w-full h-9 px-2 rounded-lg border border-input bg-background text-sm text-foreground" /> })}
                   </label>
                   <label className="text-xs text-muted-foreground">
-                    Đến ngày
-                    <DateInputVN value={customTo} min={customFrom || undefined} onChange={e => setCustomTo(e.target.value)}
-                      className="mt-1 w-full h-9 px-2 rounded-lg border border-input bg-background text-sm text-foreground" />
+                    {trx('Đến ngày<0/>', { 0: <DateInputVN value={customTo} min={customFrom || undefined} onChange={e => setCustomTo(e.target.value)}
+                      className="mt-1 w-full h-9 px-2 rounded-lg border border-input bg-background text-sm text-foreground" /> })}
                   </label>
-                  {!rangeValid && <p className="col-span-2 text-xs text-red-500">"Từ ngày" phải trước "Đến ngày".</p>}
-                  {rangeValid && !customFrom && !customTo && <p className="col-span-2 text-xs text-muted-foreground">Để trống cả 2 ngày = tất cả.</p>}
+                  {!rangeValid && <p className="col-span-2 text-xs text-red-500">{tr('"Từ ngày" phải trước "Đến ngày".')}</p>}
+                  {rangeValid && !customFrom && !customTo && <p className="col-span-2 text-xs text-muted-foreground">{tr('Để trống cả 2 ngày = tất cả.')}</p>}
                 </div>
               )}
             </div>
@@ -197,25 +197,24 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
             <div className="space-y-2">
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <input type="checkbox" checked={includeOthers} onChange={e => setIncludeOthers(e.target.checked)} className="mt-0.5 accent-blue-500 w-4 h-4" />
-                <span className="text-sm text-foreground">Gồm cả hội thoại trong "Khác (lưu trữ)"</span>
+                <span className="text-sm text-foreground">{tr('Gồm cả hội thoại trong "Khác (lưu trữ)"')}</span>
               </label>
               <label className="flex items-start gap-2.5 cursor-pointer">
                 <input type="checkbox" checked={syncPlatform} onChange={e => setSyncPlatform(e.target.checked)} className="mt-0.5 accent-blue-500 w-4 h-4" />
                 <span className="text-sm text-foreground">
-                  Đồng bộ "đã đọc" lên nền tảng
-                  <span className="block text-xs text-muted-foreground">Zalo, Facebook, Telegram. Telegram Bot không có trạng thái đã đọc - chỉ đánh dấu trong app.</span>
+                  {trx('Đồng bộ "đã đọc" lên nền tảng<0>Zalo, Facebook, Telegram. Telegram Bot không có trạng thái đã đọc - chỉ đánh dấu trong app.</0>', { 0: <span className="block text-xs text-muted-foreground" /> })}
                 </span>
               </label>
             </div>
 
             <div className="rounded-xl border border-border bg-muted/40 px-3 py-2.5 min-h-[52px] flex items-center">
               {scanning || matches === null ? (
-                <span className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner size={4} /> Đang tìm hội thoại chưa đọc…</span>
+                <span className="flex items-center gap-2 text-sm text-muted-foreground">{trx('<0/> Đang tìm hội thoại chưa đọc…', { 0: <Spinner size={4} /> })}</span>
               ) : matches.length === 0 ? (
-                <span className="text-sm text-muted-foreground">Không có hội thoại chưa đọc nào phù hợp.</span>
+                <span className="text-sm text-muted-foreground">{tr('Không có hội thoại chưa đọc nào phù hợp.')}</span>
               ) : (
                 <div className="min-w-0">
-                  <p className="text-sm text-foreground">Tìm thấy <b>{matches.length}</b> hội thoại chưa đọc</p>
+                  <p className="text-sm text-foreground">{trx('Tìm thấy <0>{{count}}</0> hội thoại chưa đọc', { 0: <b />, count: matches.length })}</p>
                   <p className="text-xs text-muted-foreground truncate">
                     {byChannel.map(([channel, count]) => `${channelName[channel] || channel}: ${count}`).join(' · ')}
                     {' · '}
@@ -231,20 +230,20 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border">
           {running ? (
             <>
-              <button type="button" onClick={stop} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-red-500 hover:bg-red-500/10 transition-colors">Dừng</button>
-              <button type="button" onClick={onClose} className="h-9 px-4 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white-important transition-colors">Chạy nền</button>
+              <button type="button" onClick={stop} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-red-500 hover:bg-red-500/10 transition-colors">{tr('Dừng')}</button>
+              <button type="button" onClick={onClose} className="h-9 px-4 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white-important transition-colors">{tr('Chạy nền')}</button>
             </>
           ) : finished ? (
             <>
-              <button type="button" onClick={() => { reset(); setShowJob(false); setMatches(null); }} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-foreground/80 hover:bg-muted transition-colors">Chạy lại</button>
-              <button type="button" onClick={onClose} className="h-9 px-4 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white-important transition-colors">Đóng</button>
+              <button type="button" onClick={() => { reset(); setShowJob(false); setMatches(null); }} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-foreground/80 hover:bg-muted transition-colors">{tr('Chạy lại')}</button>
+              <button type="button" onClick={onClose} className="h-9 px-4 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white-important transition-colors">{tr('Đóng')}</button>
             </>
           ) : (
             <>
-              <button type="button" onClick={onClose} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-foreground/80 hover:bg-muted transition-colors">Huỷ</button>
+              <button type="button" onClick={onClose} className="h-9 px-4 rounded-xl text-sm font-medium border border-border text-foreground/80 hover:bg-muted transition-colors">{tr('Huỷ')}</button>
               <button type="button" onClick={startJob} disabled={!matches?.length || scanning || !rangeValid}
                 className="h-9 px-4 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white-important transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                Bắt đầu{matches?.length ? ` (${matches.length})` : ''}
+                {trx('Bắt đầu{{v1}}', { v1: matches?.length ? ` (${matches.length})` : '' })}
               </button>
             </>
           )}

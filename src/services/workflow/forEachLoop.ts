@@ -1,35 +1,35 @@
 /**
- * forEachLoop.ts — quy tắc thuần của node "Lặp qua danh sách" (logic.forEach), dùng chung engine + test.
+ * forEachLoop.ts: pure rules of the "Lặp qua danh sách" (loop over list, logic.forEach) node, shared by the engine and the tests.
  *
- * Node có hai cổng ra:
- *  - "Mỗi phần tử" (id `default`, như cạnh cũ của node): các node nối từ cổng này là thân vòng lặp, chạy lại cho từng
- *    phần tử với {{ $var.<tên biến> }} = phần tử, {{ $var.<tên biến>Index }} = số thứ tự (từ 1);
- *  - "Xong" (id `done`): chạy một lần sau khi lặp hết, biến đã lưu trong vòng lặp vẫn còn (vd. ghép danh sách rồi gửi 1 tin).
+ * The node has two output ports:
+ *  - "Mỗi phần tử" (for each item, id `default`, like the node's old edges): the nodes wired from this port are the loop body, run again for each
+ *    item with {{ $var.<variable name> }} = the item, {{ $var.<variable name>Index }} = the position (from 1);
+ *  - "Xong" (done, id `done`): runs once after the loop finishes, variables saved inside the loop are still available (e.g. join a list, then send 1 message).
  */
 
-/** Cổng ra "Xong" của logic.forEach. Mọi cổng khác (default / không đặt) = thân vòng lặp. */
+/** The "Xong" (done) output port of logic.forEach. Every other port (default / unset) = loop body. */
 export const FOR_EACH_DONE_HANDLE = 'done';
-/** Số phần tử tối đa mỗi vòng lặp (giới hạn mặc định và trần của ô "Tối đa"). */
+/** Max number of items per loop (default limit and the cap of the "Tối đa" (max) field). */
 export const MAX_FOREACH_ITEMS = 100;
-/** Tổng số lượt lặp trong một lần chạy workflow (cả vòng lặp lồng nhau) — chặn chạy vô hạn / gửi tin dồn dập. */
+/** Total number of loop passes in one workflow run (including nested loops): stops endless runs / bursts of messages. */
 export const MAX_LOOP_ITERATIONS_PER_RUN = 1000;
 
-/** Số phần tử được lặp: ô "Tối đa" (1…100), trống / sai = 100. */
+/** Number of items to loop over: the "Tối đa" (max) field (1…100), empty / invalid = 100. */
 export function forEachItemLimit(maxItems: unknown): number {
   const n = Math.floor(Number(maxItems));
   if (!Number.isFinite(n) || n <= 0) return MAX_FOREACH_ITEMS;
   return Math.min(n, MAX_FOREACH_ITEMS);
 }
 
-/** Tên biến chứa phần tử hiện tại: chữ / số / _ (không bắt đầu bằng số), sai hoặc trống = 'item'. */
+/** Name of the variable holding the current item: letters / digits / _ (must not start with a digit); invalid or empty = 'item'. */
 export function forEachVariableName(raw: unknown): string {
   const name = String(raw ?? '').trim();
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : 'item';
 }
 
 /**
- * Danh sách cần lặp: mảng giữ nguyên; chuỗi JSON mảng → mảng; chuỗi khác → mỗi dòng không trống là một phần tử;
- * object / số / rỗng → [] (không lặp).
+ * List to loop over: an array is kept as is; a JSON array string → array; other strings → each non-empty line is one item;
+ * object / number / empty → [] (no loop).
  */
 export function parseForEachList(value: unknown): any[] {
   if (Array.isArray(value)) return value;
@@ -40,7 +40,7 @@ export function parseForEachList(value: unknown): any[] {
     try {
       const parsed = JSON.parse(text);
       if (Array.isArray(parsed)) return parsed;
-    } catch { /* không phải JSON → tách dòng */ }
+    } catch { /* not JSON → split into lines */ }
   }
   return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
 }
@@ -48,8 +48,8 @@ export function parseForEachList(value: unknown): any[] {
 interface LoopEdge { source: string; target: string; sourceHandle?: string | null; data?: { telegramInline?: boolean } | null }
 
 /**
- * Thân vòng lặp: mọi node đi tới được từ node forEach qua cạnh KHÔNG thuộc cổng "Xong" (cạnh nút Telegram inline
- * không tính — chỉ chạy khi có người bấm). Node forEach không nằm trong thân.
+ * Loop body: every node reachable from the forEach node through an edge that is NOT on the "Xong" (done) port (inline Telegram button edges
+ * do not count: they only run when someone clicks). The forEach node itself is not part of the body.
  */
 export function forEachBodyNodeIds(edges: readonly LoopEdge[], forEachNodeId: string): Set<string> {
   const body = new Set<string>();

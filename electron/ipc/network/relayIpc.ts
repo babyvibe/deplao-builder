@@ -5,8 +5,9 @@ import WorkspaceManager from '../../../src/utils/app/WorkspaceManager';
 import { probeBossAddress } from '../../../src/services/tunnel/BossAddressProbe';
 import Logger from '../../../src/utils/Logger';
 import os from 'os';
+import { tr } from '../../../src/shared/i18n';
 
-/** Lấy địa chỉ IPv4 local (không loopback) */
+/** Get the local IPv4 address (not loopback) */
 function getLocalIp(): string {
     try {
         const nets = os.networkInterfaces();
@@ -79,7 +80,7 @@ export function registerRelayIpc(): void {
         }
     });
 
-    // Đổi cấu hình khi tunnel đang chạy (make-before-break): nhân viên đang nối được báo địa chỉ mới trước khi tunnel cũ tắt.
+    // Changing the config while the tunnel runs (make-before-break): employees who are connected are told the new address before the old tunnel shuts down.
     ipcMain.handle('relay:restartTunnel', async () => {
         try {
             return await relay().restartTunnel();
@@ -96,7 +97,7 @@ export function registerRelayIpc(): void {
         }
     });
 
-    // ─── Nhân viên: thăm dò địa chỉ Boss (DNS + GET /api/health, không gửi token) ────
+    // ─── Employee: probe the Boss address (DNS + GET /api/health, sends no token) ────
     ipcMain.handle('relay:probeBossAddress', async (_e, params: { url?: string; workspaceId?: string } = {}) => {
         try {
             let url = typeof params?.url === 'string' ? params.url.trim() : '';
@@ -105,7 +106,7 @@ export function registerRelayIpc(): void {
                 const ws = params?.workspaceId ? wm.getWorkspaceById(params.workspaceId) : wm.getActiveWorkspace();
                 url = ws?.type === 'remote' ? String(ws.bossUrl || '') : '';
             }
-            if (!url) return { success: false, error: 'Chưa có địa chỉ BOSS' };
+            if (!url) return { success: false, error: tr('Chưa có địa chỉ BOSS') };
             const result = await probeBossAddress(url);
             return { success: true, ...result };
         } catch (err: any) {
@@ -113,8 +114,8 @@ export function registerRelayIpc(): void {
         }
     });
 
-    // ─── Tunnel provider config (cloudflare | ngrok static domain | Cloudflare có tài khoản) ──────────────
-    // Token ngrok / Cloudflare lưu mã hoá (secretBox) và không trả về renderer — chỉ báo đã đặt hay chưa.
+    // ─── Tunnel provider config (cloudflare | ngrok static domain | Cloudflare with an account) ──────────────
+    // The ngrok / Cloudflare token is stored encrypted (secretBox) and not returned to the renderer; it only reports whether one is set.
     ipcMain.handle('relay:getTunnelConfig', async () => {
         try {
             const db = DatabaseService.getInstance();
@@ -137,14 +138,14 @@ export function registerRelayIpc(): void {
             const db = DatabaseService.getInstance();
             const { encryptSecret } = require('../../../src/services/api/auth/secretBox');
             if (cfg.provider !== undefined) {
-                if (!['cloudflare', 'ngrok', 'cloudflare_named'].includes(cfg.provider)) return { success: false, error: 'Provider không hợp lệ' };
+                if (!['cloudflare', 'ngrok', 'cloudflare_named'].includes(cfg.provider)) return { success: false, error: tr('Provider không hợp lệ') };
                 db.setSetting('relay_tunnel_provider', cfg.provider);
             }
             if (typeof cfg.authtoken === 'string' && cfg.authtoken.trim()) {
                 db.setSetting('relay_ngrok_authtoken', encryptSecret(cfg.authtoken.trim()));
             }
             if (typeof cfg.domain === 'string') {
-                // Domain tĩnh ngrok: chỉ hostname (bỏ https:// và / cuối nếu dán cả URL)
+                // ngrok static domain: hostname only (strip https:// and a trailing / if a full URL was pasted)
                 db.setSetting('relay_ngrok_domain', cfg.domain.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, ''));
             }
             if (typeof cfg.cfToken === 'string' && cfg.cfToken.trim()) {

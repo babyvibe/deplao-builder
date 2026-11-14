@@ -3,6 +3,8 @@ import ipc from '@/lib/ipc';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { ChartIcon, CheckCircleIcon, ClipboardListIcon, InboxIcon, RefreshIcon } from '@/components/common/icons';
 import { Spinner } from '@/components/common/PageLoading';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 interface EmployeeKPIStats {
@@ -119,7 +121,7 @@ export default function EmployeeKPIPanel() {
     );
 
     const handleExportCSV = () => {
-        const headers = ['Nhân viên', 'Tin gửi', 'TB phản hồi', 'Hội thoại', 'Online (giờ)'];
+        const headers = [tr('Nhân viên'), tr('Tin gửi'), tr('TB phản hồi'), tr('Hội thoại'), tr('Online (giờ)')];
         const rows = stats.map(s => [
             s.display_name,
             s.messages_sent,
@@ -127,7 +129,7 @@ export default function EmployeeKPIPanel() {
             s.conversations_handled,
             s.total_online_hours,
         ]);
-        rows.push(['TỔNG', totals.messages_sent, '-', totals.conversations_handled, totals.total_online_hours]);
+        rows.push([tr('TỔNG'), totals.messages_sent, '-', totals.conversations_handled, totals.total_online_hours]);
 
         const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
         const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -145,15 +147,15 @@ export default function EmployeeKPIPanel() {
         <div className="bg-card rounded-xl p-4 space-y-3">
             {/* Header */}
             <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><ChartIcon className="w-4 h-4 inline" /> Thống kê nhân viên
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">{trx('<0/> Thống kê nhân viên', { 0: <ChartIcon className="w-4 h-4 inline" /> })}
                 </h3>
                 <div className="flex items-center gap-2">
                     {/* Date range selector */}
                     <div className="flex items-center bg-muted rounded-lg overflow-hidden">
                         {([
-                            { key: 'today', label: 'Hôm nay' },
-                            { key: '7d', label: '7 ngày' },
-                            { key: '30d', label: '30 ngày' },
+                            { key: 'today', label: tr('Hôm nay') },
+                            { key: '7d', label: tr('7 ngày') },
+                            { key: '30d', label: tr('30 ngày') },
                         ] as const).map(({ key, label }) => (
                             <button
                                 key={key}
@@ -172,15 +174,15 @@ export default function EmployeeKPIPanel() {
                     <button
                         onClick={handleExportCSV}
                         className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1 rounded-lg hover:bg-muted transition-colors"
-                        title="Xuất CSV"
-                    ><InboxIcon className="w-4 h-4 inline" /> Export
+                        title={tr('Xuất CSV')}
+                    >{trx('<0/> Export', { 0: <InboxIcon className="w-4 h-4 inline" /> })}
                     </button>
                     {/* Refresh */}
                     <button
                         onClick={loadStats}
                         disabled={loading}
                         className="text-[11px] text-muted-foreground hover:text-foreground px-1.5 py-1 rounded-lg hover:bg-muted transition-colors"
-                        title="Làm mới"
+                        title={tr('Làm mới')}
                     >
                         {loading ? <Spinner size={3} /> : <RefreshIcon className="w-4 h-4" />}
                     </button>
@@ -191,15 +193,15 @@ export default function EmployeeKPIPanel() {
             <div className="grid grid-cols-3 gap-2">
                 <div className="bg-muted rounded-lg p-2.5 text-center">
                     <p className="text-lg font-bold text-blue-400">{totals.messages_sent}</p>
-                    <p className="text-[10px] text-muted-foreground">Tổng tin gửi</p>
+                    <p className="text-[10px] text-muted-foreground">{tr('Tổng tin gửi')}</p>
                 </div>
                 <div className="bg-muted rounded-lg p-2.5 text-center">
                     <p className="text-lg font-bold text-green-400">{totals.conversations_handled}</p>
-                    <p className="text-[10px] text-muted-foreground">Hội thoại xử lý</p>
+                    <p className="text-[10px] text-muted-foreground">{tr('Hội thoại xử lý')}</p>
                 </div>
                 <div className="bg-muted rounded-lg p-2.5 text-center">
                     <p className="text-lg font-bold text-amber-400">{totals.total_online_hours}h</p>
-                    <p className="text-[10px] text-muted-foreground">Tổng giờ online</p>
+                    <p className="text-[10px] text-muted-foreground">{tr('Tổng giờ online')}</p>
                 </div>
             </div>
 
@@ -208,22 +210,22 @@ export default function EmployeeKPIPanel() {
                 <table className="w-full text-xs">
                     <thead>
                         <tr className="text-muted-foreground border-b border-border">
-                            <th className="text-left py-2 px-2 font-medium">Nhân viên</th>
-                            <th className="text-right py-2 px-2 font-medium">Tin gửi</th>
-                            <th className="text-right py-2 px-2 font-medium">TB phản hồi</th>
-                            <th className="text-right py-2 px-2 font-medium">Hội thoại</th>
-                            <th className="text-right py-2 px-2 font-medium">Online</th>
+                            <th className="text-left py-2 px-2 font-medium">{tr('Nhân viên')}</th>
+                            <th className="text-right py-2 px-2 font-medium">{tr('Tin gửi')}</th>
+                            <th className="text-right py-2 px-2 font-medium">{tr('TB phản hồi')}</th>
+                            <th className="text-right py-2 px-2 font-medium">{tr('Hội thoại')}</th>
+                            <th className="text-right py-2 px-2 font-medium">{tr('Online')}</th>
                             <th className="text-right py-2 px-2 font-medium"></th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading ? (
                             <tr>
-                                <td colSpan={6} className="text-center py-6 text-muted-foreground">Đang tải...</td>
+                                <td colSpan={6} className="text-center py-6 text-muted-foreground">{tr('Đang tải...')}</td>
                             </tr>
                         ) : stats.length === 0 ? (
                             <tr>
-                                <td colSpan={6} className="text-center py-6 text-muted-foreground">Không có dữ liệu</td>
+                                <td colSpan={6} className="text-center py-6 text-muted-foreground">{tr('Không có dữ liệu')}</td>
                             </tr>
                         ) : (
                             <>
@@ -254,7 +256,7 @@ export default function EmployeeKPIPanel() {
                                                 <button
                                                     onClick={() => handleExpandSessions(s.employee_id)}
                                                     className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
-                                                    title="Xem phiên đăng nhập"
+                                                    title={tr('Xem phiên đăng nhập')}
                                                 >
                                                     <svg className={`w-3 h-3 transition-transform ${expandedId === s.employee_id ? '' : '-rotate-90'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9" /></svg>
                                                 </button>
@@ -266,24 +268,24 @@ export default function EmployeeKPIPanel() {
                                             <tr>
                                                 <td colSpan={6} className="px-2 pb-2">
                                                     <div className="bg-muted rounded-lg p-2 mt-1">
-                                                        <p className="text-[10px] text-muted-foreground font-semibold mb-1.5"><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử phiên đăng nhập gần nhất</p>
+                                                        <p className="text-[10px] text-muted-foreground font-semibold mb-1.5">{trx('<0/> Lịch sử phiên đăng nhập gần nhất', { 0: <ClipboardListIcon className="w-4 h-4 inline" /> })}</p>
                                                         {sessionsLoading ? (
-                                                            <p className="text-[10px] text-muted-foreground">Đang tải...</p>
+                                                            <p className="text-[10px] text-muted-foreground">{tr('Đang tải...')}</p>
                                                         ) : sessions.length === 0 ? (
-                                                            <p className="text-[10px] text-muted-foreground">Chưa có phiên nào</p>
+                                                            <p className="text-[10px] text-muted-foreground">{tr('Chưa có phiên nào')}</p>
                                                         ) : (
                                                             <div className="space-y-1 max-h-40 overflow-y-auto">
                                                                 {sessions.map((sess: any, i: number) => (
                                                                     <div key={i} className="flex items-center gap-3 text-[10px]">
                                                                         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sess.disconnected_at ? 'bg-accent' : 'bg-green-400'}`} />
                                                                         <span className="text-muted-foreground">
-                                                                            {new Date(sess.connected_at).toLocaleString('vi-VN')}
+                                                                            {new Date(sess.connected_at).toLocaleString(appLocale())}
                                                                         </span>
                                                                         <span className="text-muted-foreground">→</span>
                                                                         <span className="text-muted-foreground">
                                                                             {sess.disconnected_at
-                                                                                ? new Date(sess.disconnected_at).toLocaleString('vi-VN')
-                                                                                : <><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> Đang online</>}
+                                                                                ? new Date(sess.disconnected_at).toLocaleString(appLocale())
+                                                                                : <><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> {tr('Đang online')}</>}
                                                                         </span>
                                                                         {sess.ip_address && (
                                                                             <span className="text-muted-foreground ml-auto">{sess.ip_address}</span>
@@ -301,7 +303,7 @@ export default function EmployeeKPIPanel() {
 
                                 {/* Totals row */}
                                 <tr className="border-t border-input font-semibold">
-                                    <td className="py-2 px-2 text-foreground/80">Tổng ({stats.length} NV)</td>
+                                    <td className="py-2 px-2 text-foreground/80">{trx('Tổng ({{count}} NV)', { count: stats.length })}</td>
                                     <td className="text-right py-2 px-2 text-blue-400 font-mono">{totals.messages_sent}</td>
                                     <td className="text-right py-2 px-2 text-muted-foreground">-</td>
                                     <td className="text-right py-2 px-2 text-green-400 font-mono">{totals.conversations_handled}</td>

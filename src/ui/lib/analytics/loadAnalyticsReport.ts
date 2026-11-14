@@ -37,6 +37,7 @@ import {
   type WorkflowAnalytics,
 } from './mergeAnalytics';
 import type { OutreachStats } from '../../../shared/analytics/messageEngagement';
+import { tr } from '../../../shared/i18n';
 
 export type AnalyticsTabId = 'overview' | 'messages' | 'contacts' | 'labels' | 'campaigns' | 'workflow' | 'ai' | 'employees';
 
@@ -80,7 +81,7 @@ export interface AnalyticsReport {
   contactGrowth?: ContactGrowthPoint[];
   segmentation?: ContactSegmentation | null;
   campaigns?: CampaignRow[];
-  /** Tin gửi đi 1:1: đã nhận / đã xem / đã phản hồi (null: không tài khoản nào trả được). */
+  /** Outgoing 1:1 messages: received / seen / replied (null: no account can return it). */
   outreach?: OutreachReport | null;
   outreachByAccount?: Array<AccountResult<OutreachStats>>;
   labelUsage?: LabelUsage | null;
@@ -96,8 +97,8 @@ export interface AnalyticsReport {
 // ── Response unwrapping ────────────────────────────────────────────────────────
 
 function failureOf(res: any): string | null {
-  if (!res) return 'Không có phản hồi';
-  if (res.success === false) return String(res.error || 'Lỗi không rõ');
+  if (!res) return tr('Không có phản hồi');
+  if (res.success === false) return String(res.error || tr('Lỗi không rõ'));
   return null;
 }
 
@@ -106,7 +107,7 @@ function unwrapObject<T>(res: any): T {
   const failure = failureOf(res);
   if (failure) throw new Error(failure);
   const payload = res.data !== undefined && res.data !== null ? res.data : res;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Dữ liệu không hợp lệ');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error(tr('Dữ liệu không hợp lệ'));
   const { success: _success, error: _error, ...rest } = payload;
   return rest as T;
 }
@@ -115,13 +116,13 @@ function unwrapObject<T>(res: any): T {
 function unwrapArray<T>(res: any): T[] {
   const failure = failureOf(res);
   if (failure) throw new Error(failure);
-  if (!Array.isArray(res.data)) throw new Error('Dữ liệu không hợp lệ');
+  if (!Array.isArray(res.data)) throw new Error(tr('Dữ liệu không hợp lệ'));
   return res.data as T[];
 }
 
 function errorText(reason: unknown): string {
-  if (reason instanceof Error) return reason.message || 'Lỗi không rõ';
-  return String(reason ?? 'Lỗi không rõ');
+  if (reason instanceof Error) return reason.message || tr('Lỗi không rõ');
+  return String(reason ?? tr('Lỗi không rõ'));
 }
 
 // ── Calls ──────────────────────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ async function fetchAccountMetric(metric: AccountMetric, zaloId: string, q: Anal
     case 'labelUsage':
       return unwrapObject<LabelUsage>(await DataAccessor.getLabelUsage(range));
     case 'outreach':
-      // Không bắt buộc: máy chủ (Boss) bản cũ chưa có báo cáo này → bỏ khối, không loại cả tài khoản khỏi tab
+      // Optional: an older Boss server does not have this report yet → drop the block, do not exclude the whole account from the tab
       try {
         return unwrapObject<OutreachStats>(await DataAccessor.getOutreachStats({ ...range, granularity: q.granularity }));
       } catch {
@@ -182,7 +183,7 @@ export async function loadAnalyticsReport(
   concurrency: number = ANALYTICS_CONCURRENCY,
 ): Promise<AnalyticsReport> {
   const basePlan = TAB_PLANS[tab] || TAB_PLANS.overview;
-  // Tin gửi đi chỉ tính hội thoại 1:1: bộ lọc "Nhóm" thì không đọc
+  // Outgoing messages only count 1:1 conversations: with the "Nhóm" (Group) filter it is not read
   const plan = query.threadType === 1
     ? { ...basePlan, perAccount: basePlan.perAccount.filter(metric => metric !== 'outreach') }
     : basePlan;

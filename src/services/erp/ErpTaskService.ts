@@ -12,6 +12,7 @@ import type {
 import ErpNotificationService from './ErpNotificationService';
 import { erpPersonName } from './erpPeople';
 import { erpWhenText } from '../../shared/erp/erpNotifyText';
+import { tr } from '../../shared/i18n';
 
 export default class ErpTaskService {
   private static instance: ErpTaskService;
@@ -191,20 +192,20 @@ export default class ErpTaskService {
     };
   }
 
-  /** Người thực hiện hiện tại (kiểm tra quyền giao việc theo thay đổi). */
+  /** Current assignee (checks the right to assign when it changes). */
   getTaskAssignees(taskId: string): string[] {
     return this.db().query<{ employee_id: string }>(
       `SELECT employee_id FROM erp_task_assignees WHERE task_id = ?`, [taskId]
     ).map(r => String(r.employee_id)).filter(Boolean);
   }
 
-  /** Người tạo task (undefined = không có task). */
+  /** Task creator (undefined = no task). */
   getTaskReporterId(taskId: string): string | undefined {
     const row = this.db().queryOne<{ reporter_id: string | null }>(`SELECT reporter_id FROM erp_tasks WHERE id = ?`, [taskId]);
     return row ? String(row.reporter_id ?? '') : undefined;
   }
 
-  /** Người viết bình luận (undefined = không có bình luận). */
+  /** Comment author (undefined = no comment). */
   getCommentAuthorId(commentId: number): string | undefined {
     const row = this.db().queryOne<{ author_id: string | null }>(`SELECT author_id FROM erp_task_comments WHERE id = ?`, [commentId]);
     return row ? String(row.author_id ?? '') : undefined;
@@ -230,13 +231,13 @@ export default class ErpTaskService {
   // ─── Dependencies (Phase 2) ───────────────────────────────────────────────
 
   addDependency(taskId: string, dependsOnId: string, type: 'FS' | 'SS' | 'FF' | 'SF' = 'FS'): void {
-    if (taskId === dependsOnId) throw new Error('Task không thể phụ thuộc chính nó');
+    if (taskId === dependsOnId) throw new Error(tr('Task không thể phụ thuộc chính nó'));
     // Acyclic check: BFS from dependsOnId, fail if we reach taskId
     const visited = new Set<string>();
     const queue = [dependsOnId];
     while (queue.length) {
       const cur = queue.shift()!;
-      if (cur === taskId) throw new Error('Phụ thuộc tạo vòng lặp');
+      if (cur === taskId) throw new Error(tr('Phụ thuộc tạo vòng lặp'));
       if (visited.has(cur)) continue;
       visited.add(cur);
       const next = this.db().query<any>(
@@ -271,7 +272,7 @@ export default class ErpTaskService {
     );
     if (blockers.length) {
       const titles = blockers.map(b => b.title).slice(0, 3).join(', ');
-      throw new Error(`Task bị chặn bởi: ${titles}${blockers.length > 3 ? '…' : ''}`);
+      throw new Error(tr('Task bị chặn bởi: {{titles}}{{v1}}', { titles, v1: blockers.length > 3 ? '…' : '' }));
     }
   }
 
@@ -316,8 +317,8 @@ export default class ErpTaskService {
   }
 
   /**
-   * Báo người MỚI được giao (tạo task, đổi người thực hiện): bỏ người giao và người đã được giao từ trước.
-   * "Giao bởi Lan · Hạn: 17:00 31/10". Trước đây chỉ báo lúc tạo task (giao lại không ai được báo) và in id người giao.
+   * Notify the NEW assignees (task created, assignee changed): skip the assigner and the people already assigned before.
+   * "Giao bởi Lan · Hạn: 17:00 31/10" (Assigned by Lan · Due: 17:00 31/10). Before, it only notified when the task was created (re-assigning notified nobody) and printed the assigner's id.
    */
   private _notifyAssigned(
     taskId: string, title: string, dueDate: number | null | undefined, employeeIds: string[],
@@ -326,12 +327,12 @@ export default class ErpTaskService {
     const fresh = Array.from(new Set(employeeIds.filter(Boolean))).filter(empId => empId !== actorId && !previous.has(empId));
     if (!fresh.length) return;
     const body = [
-      `Giao bởi ${erpPersonName(actorId)}`,
-      dueDate ? `Hạn: ${erpWhenText(Number(dueDate), false, Date.now())}` : '',
+      tr('Giao bởi {{v1}}', { v1: erpPersonName(actorId) }),
+      dueDate ? tr('Hạn: {{v1}}', { v1: erpWhenText(Number(dueDate), false, Date.now()) }) : '',
     ].filter(Boolean).join(' · ');
     for (const empId of fresh) {
       try {
-        ErpNotificationService.getInstance().notify(empId, 'task_assigned', `Bạn được giao task: ${title}`, body, `erp://task/${taskId}`);
+        ErpNotificationService.getInstance().notify(empId, 'task_assigned', tr('Bạn được giao task: {{title}}', { title }), body, `erp://task/${taskId}`);
       } catch (err: any) {
         Logger.warn(`[ErpTaskService] notify assignee ${empId} failed: ${err.message}`);
       }
@@ -363,7 +364,7 @@ export default class ErpTaskService {
       this._assertDependenciesSatisfied(id);
     }
 
-    // Người thực hiện trước khi đổi: chỉ báo người mới được giao
+    // Assignee before the change: only notify the newly assigned people
     const previousAssignees = patch.assignees !== undefined ? new Set(this.getTaskAssignees(id)) : null;
 
     this.db().transaction(() => {
@@ -528,7 +529,7 @@ export default class ErpTaskService {
       condition = `AND t.status != 'cancelled'`;
     }
 
-    // Boss/admin: xem tất cả tasks, không filter theo nhân viên
+    // Boss/admin: see all tasks, no filter by employee
     if (viewAll) {
       return this.db().query<any>(`
         SELECT t.*,
@@ -540,7 +541,7 @@ export default class ErpTaskService {
       `, params).map(row => this._inflateTaskRow(row));
     }
 
-    // Employee: chỉ xem task mình liên quan (assignee/watcher/reporter)
+    // Employee: only see tasks they are involved in (assignee / watcher / reporter)
     return this.db().query<any>(`
       SELECT t.*,
         (SELECT GROUP_CONCAT(employee_id) FROM erp_task_assignees WHERE task_id = t.id) as assignees_raw,
@@ -609,9 +610,9 @@ export default class ErpTaskService {
   }
 
   /**
-   * Xoá file khi bỏ tệp đính kèm / xoá task — CHỈ file nằm trong thư mục riêng của task (media/erp/tasks/<id>, nơi
-   * saveTaskAttachment chép file vào). Tệp đính kèm trỏ tới file media khác (ảnh chat, file nhân viên upload lên Boss…)
-   * chỉ bỏ liên kết: trước đây mọi file trong thư mục media đều bị xoá → mất file của nơi khác.
+   * Deletes the file when an attachment is removed / the task is deleted: ONLY files inside the task folder (media/erp/tasks/<id>, where
+   * saveTaskAttachment copies the file). An attachment that points to another media file (a chat image, a file an employee uploaded to the Boss…)
+   * only has its link removed: before, every file in the media folder was deleted → files of other places were lost.
    */
   private _deleteOwnedAttachmentFile(taskId: string, filePath: string): void {
     try {

@@ -7,6 +7,8 @@
  * Defaults (`text_first`, no combine) keep the historical behaviour: text message, then images.
  */
 
+import { tr } from '../i18n';
+
 export type CampaignSendOrder = 'text_first' | 'images_first';
 
 export interface CampaignSendOptions {
@@ -21,7 +23,7 @@ export const DEFAULT_CAMPAIGN_SEND_OPTIONS: CampaignSendOptions = { order: 'text
 /** Telegram caption limit (Bot API + MTProto, non-premium). */
 export const TELEGRAM_CAPTION_LIMIT = 1024;
 
-/** Zalo shows a caption ("mô tả") only on a single jpg / png / webp photo. */
+/** Zalo shows a caption ("mô tả" (description)) only on a single jpg / png / webp photo. */
 const ZALO_CAPTION_IMAGE = /\.(jpe?g|png|webp)$/i;
 
 export type CampaignSendStep =
@@ -85,7 +87,7 @@ export function planBlockSend(input: {
 }
 
 export const COMBINE_FALLBACK_LABEL: Record<CombineFallback, string> = {
-  zalo_multi_image: 'Zalo chỉ gắn chữ vào 1 ảnh — nhiều ảnh sẽ gửi chữ riêng',
-  zalo_not_photo: 'Zalo chỉ gắn chữ vào ảnh jpg / png / webp',
-  caption_too_long: `Chữ dài hơn ${TELEGRAM_CAPTION_LIMIT} ký tự — Telegram không cho làm chú thích ảnh`,
+  zalo_multi_image: tr('Zalo chỉ gắn chữ vào 1 ảnh — nhiều ảnh sẽ gửi chữ riêng'),
+  zalo_not_photo: tr('Zalo chỉ gắn chữ vào ảnh jpg / png / webp'),
+  caption_too_long: tr('Chữ dài hơn {{TELEGRAM_CAPTION_LIMIT}} ký tự — Telegram không cho làm chú thích ảnh', { TELEGRAM_CAPTION_LIMIT }),
 };

@@ -1,15 +1,15 @@
 /**
- * Ảnh nhóm trong danh sách hội thoại — chỉ tải cho NHÓM ĐANG HIỆN (ConversationGroupAvatar báo khi hàng vào vùng
- * nhìn thấy, cuộn tới đâu tải tới đó).
+ * Group photos in the conversation list: only loaded for the groups CURRENTLY SHOWN (ConversationGroupAvatar reports when a row enters the
+ * visible area, so loading follows the scroll).
  *
- * Trước đây mỗi lần đổi tài khoản (và sau mọi tin nhắn đến, 1 s) danh sách quét TOÀN BỘ nhóm của tài khoản: đọc thành
- * viên từ DB rồi gọi API cho từng nhóm thiếu ảnh, mỗi nhóm một lần cập nhật store → cả danh sách dựng lại hàng trăm lần
- * → giật, nhất là tài khoản nhiều nhóm. Giờ:
- *  - hàng đợi theo nhóm (DB đồng thời tối đa 3; Zalo gom ≤10 nhóm / lần getGroupInfo; Telegram cách nhau 500 ms);
- *  - kết quả gom lại, ghi store ~1 lần / 120 ms (một lần dựng lại cho cả loạt);
- *  - nhớ theo `${tài khoản}:${nhóm}` trong suốt phiên — đổi qua lại giữa các tài khoản không tải lại; nhóm chưa có ảnh
- *    (đã thử) chỉ thử lại sau 10 phút và chỉ khi lại hiện trên màn hình.
- * Dữ liệu ảnh ghép (thành viên) nằm ở appStore.groupInfoCache — giữ nguyên qua các lần đổi tài khoản.
+ * Previously every account change (and after every incoming message, 1 s) the list scanned ALL the groups of the account: it read the members
+ * from the DB and called the API for each group missing a photo, with one store update per group → the whole list re-rendered hundreds of times
+ * → stutter, especially for accounts with many groups. Now:
+ *  - a queue per group (DB at most 3 at a time; Zalo batches ≤10 groups per getGroupInfo call; Telegram 500 ms apart);
+ *  - results are batched, written to the store ~once per 120 ms (one re-render for the whole batch);
+ *  - remembered by `${account}:${group}` for the whole session: switching between accounts does not reload; a group that still has no photo
+ *    (already tried) is only retried after 10 minutes and only when it is shown on screen again.
+ * The composite photo data (members) lives in appStore.groupInfoCache, kept across account changes.
  */
 import { useAppStore, type CachedGroupInfo } from '@/store/app/appStore';
 import { useChatStore, type ContactItem } from '@/store/chat/chatStore';
@@ -43,24 +43,24 @@ let telegramRunning = false;
 
 const keyOf = (accountId: string, groupId: string) => `${accountId}:${groupId}`;
 
-/** Thành viên dùng được cho ảnh ghép (id thật). */
+/** Members usable for the composite photo (real ids). */
 export function validGroupMembers(info: CachedGroupInfo | null | undefined) {
   return (info?.members || []).filter(member => member.userId && member.userId !== 'undefined');
 }
 
-/** Hàng đã có đủ để vẽ ảnh: ảnh nhóm, hoặc ≥ 2 thành viên có ảnh cho ảnh ghép. */
+/** Row already has enough to draw the photo: the group photo, or ≥ 2 members with photos for the composite photo. */
 export function groupAvatarSatisfied(avatarUrl: string | null | undefined, info: CachedGroupInfo | null | undefined): boolean {
   if (avatarUrl) return true;
   return validGroupMembers(info).filter(member => member.avatar).length >= 2;
 }
 
-/** Tên nhóm còn là id (chưa lấy được tên thật). */
+/** Group name is still the id (the real name could not be fetched). */
 export function groupNameMissing(contact: Pick<ContactItem, 'contact_id' | 'display_name'> | null | undefined): boolean {
   const name = String(contact?.display_name || '');
   return !name || name === contact?.contact_id || /^\d+$/.test(name);
 }
 
-/** memVerList "uid_version" / memberIds / currentMems của getGroupInfo Zalo → danh sách uid. */
+/** memVerList "uid_version" / memberIds / currentMems of Zalo getGroupInfo → list of uids. */
 export function parseZaloMemberIds(gi: any): string[] {
   const parseMemVerList = (list: string[]): string[] => list.map(entry => {
     if (typeof entry !== 'string') return String(entry || '');
@@ -76,7 +76,7 @@ export function parseZaloMemberIds(gi: any): string[] {
   return [...new Set(raw.map(id => String(id).replace(/_0$/, '').trim()).filter(id => /^\d+$/.test(id)))];
 }
 
-/** Gộp danh sách thành viên mới vào bản cache đang có (giữ cài đặt / quản trị / tên nhóm đã biết). */
+/** Merges the new member list into the existing cache entry (keeps the settings / admin info / known group name). */
 export function mergeGroupMembers(
   existing: CachedGroupInfo | undefined,
   groupId: string,
@@ -112,7 +112,7 @@ function cachedInfo(accountId: string, groupId: string): CachedGroupInfo | undef
   return (useAppStore.getState().groupInfoCache[accountId] || {})[groupId];
 }
 
-/** Ghi các kết quả đang chờ vào store một lần (một lần dựng lại danh sách cho cả loạt). */
+/** Writes the pending results into the store once (one list re-render for the whole batch). */
 export function flushGroupAvatarUpdates(): void {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
   if (pendingInfos.size > 0) {
@@ -130,7 +130,7 @@ export function flushGroupAvatarUpdates(): void {
     const updates = [...pendingContacts.values()];
     pendingContacts.clear();
     const { updateContact } = useChatStore.getState();
-    // Cùng một tác vụ → React gộp thành một lần dựng lại
+    // The same task → React merges them into one re-render
     for (const { accountId, contact } of updates) updateContact(accountId, contact);
   }
 }
@@ -156,8 +156,8 @@ function finish(accountId: string, groupId: string): void {
 }
 
 /**
- * Hàng nhóm vừa hiện trên màn hình mà chưa có ảnh: xếp hàng tải (DB trước, thiếu thì API). Bỏ qua nếu đang tải hoặc
- * vừa thử trong 10 phút — đổi qua lại giữa các tài khoản không tải lại.
+ * Group rows just shown on screen with no photo yet: queued for loading (DB first, then API if missing). Skipped if already loading or
+ * tried within the last 10 minutes: switching between accounts does not reload.
  */
 export function requestGroupAvatar(accountId: string, groupId: string): void {
   if (!accountId || !groupId) return;
@@ -194,7 +194,7 @@ async function loadFromDb(accountId: string, groupId: string): Promise<void> {
     if (rows.length > 0) {
       queueInfo(accountId, groupId, mergeGroupMembers(cachedInfo(accountId, groupId), groupId, contact?.display_name || groupId, rows));
     }
-    // Ảnh nhóm chỉ có qua API (máy Boss); nhân viên dùng dữ liệu DB của Boss
+    // Group photos only come from the API (Boss machine); employees use the Boss's DB data
     if (contact?.avatar_url || useEmployeeStore.getState().mode === 'employee') return finish(accountId, groupId);
     const channel = accountChannelOf(accountId);
     if (channel === 'telegram_user') {
@@ -202,7 +202,7 @@ async function loadFromDb(accountId: string, groupId: string): Promise<void> {
       void pumpTelegram();
       return;
     }
-    // Zalo: hỏi ảnh nhóm một lần (gom ≤10 nhóm / lần) — nhóm có ảnh riêng mà DB chưa lưu sẽ hiện đúng ảnh
+    // Zalo: ask for group photos once (batches ≤10 groups per call): a group with its own photo that the DB has not saved yet will show the right photo
     if (channel === 'zalo') {
       const list = zaloPending.get(accountId) || [];
       if (!list.includes(groupId)) list.push(groupId);
@@ -288,13 +288,13 @@ async function loadZaloBatch(accountId: string, groupIds: string[]): Promise<voi
       zaloId: accountId, contactId: groupId, displayName: groupName, avatarUrl: groupAvatar, phone: '', contactType: 'group',
     }).catch(() => {});
     if (groupAvatar) { finish(accountId, groupId); continue; }
-    // Nhóm không đặt ảnh, DB đã đủ ảnh thành viên cho ảnh ghép → xong
+    // Group has no photo set, and the DB already has enough member photos for the composite photo → done
     if (groupAvatarSatisfied('', pendingInfos.get(keyOf(accountId, groupId))?.info || cachedInfo(accountId, groupId))) {
       finish(accountId, groupId);
       continue;
     }
 
-    // Thiếu ảnh thành viên → bổ sung tên + ảnh thành viên (như trước, nhưng chỉ nhóm đang hiện)
+    // Missing member photos → add member names + photos (as before, but only for the group on screen)
     const memberIds = parseZaloMemberIds(gi);
     if (memberIds.length === 0) { finish(accountId, groupId); continue; }
     const creatorId = String(gi.creatorId || gi.creator || '').replace(/_0$/, '');
@@ -320,7 +320,7 @@ async function loadZaloBatch(accountId: string, groupIds: string[]): Promise<voi
   }
 }
 
-/** Test: trạng thái hàng đợi. */
+/** Test: queue state. */
 export const __groupAvatarLoaderTest = {
   status,
   reset(): void {

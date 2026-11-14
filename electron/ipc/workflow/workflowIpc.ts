@@ -13,13 +13,13 @@ import EventBroadcaster from '../../../src/services/event/EventBroadcaster';
 import { proxyToBossWithResult } from '../network/proxyHelper';
 
 /**
- * Workflow chạy trên Boss. Nhân viên: lưu / xoá / bật tắt / nhân bản đi proxy chờ kết quả (Boss kiểm tra quyền module
- * workflow + mọi trang của workflow thuộc tài khoản được giao — HttpRelayService.checkProxyWorkflowAccess). Trước đây
- * WorkflowEditor / kho mẫu / nhân bản gọi IPC thẳng → chỉ ghi DB cục bộ của nhân viên, Boss không bao giờ có.
- * Ghi xong trên Boss phát `workflow:changed` (relay mọi nhân viên) → danh sách workflow ở máy khác tải lại.
+ * Workflows run on Boss. Employees: save / delete / enable-disable / duplicate are proxied and wait for the result (Boss checks the workflow module
+ * permission + that every page of the workflow belongs to an assigned account: HttpRelayService.checkProxyWorkflowAccess). Before,
+ * WorkflowEditor / the template library / duplicate called IPC directly → it only wrote the employee's local DB, which Boss never had.
+ * After a write on Boss, `workflow:changed` is emitted (relayed to every employee) → the workflow list on other machines reloads.
  */
 function workflowChanged(action: string, workflowId?: string): void {
-    try { EventBroadcaster.emit('workflow:changed', { action, workflowId: workflowId || '' }); } catch { /* không chặn lệnh ghi */ }
+    try { EventBroadcaster.emit('workflow:changed', { action, workflowId: workflowId || '' }); } catch { /* does not block write commands */ }
 }
 
 function isEmployeeMode(): boolean {
@@ -32,6 +32,7 @@ function isEmployeeMode(): boolean {
 
 /** Helper: row → Workflow shape (pageIds array) */
 import { normalizeChannel } from '../../../src/configs/channels/channelConfig';
+import { tr } from '../../../src/shared/i18n';
 const normalizeWorkflowChannel = (channel?: string): WorkflowChannel => normalizeChannel(channel) as WorkflowChannel;
 
 function rowToWorkflow(r: any): Workflow {
@@ -92,7 +93,7 @@ function ensureWebhookToken(nodes: any[]): string | null {
   return hookNode.config.webhookToken;
 }
 
-/** Địa chỉ gốc của webhook workflow: gateway biết cả Cloudflare tự động (tunnel chung) lẫn tunnel riêng cổng 9889. */
+/** Base address of the workflow webhook: the gateway knows both the automatic Cloudflare tunnel (shared tunnel) and the own tunnel on port 9889. */
 function workflowTunnelUrl(): string | null {
   return WebhookGatewayService.getInstance().getStatus().tunnelUrl || TunnelService.getUrl(9889);
 }
@@ -129,7 +130,7 @@ export function registerWorkflowIpc(): void {
     // ─── Get single ───────────────────────────────────────────────────────────
     ipcMain.handle('workflow:get', async (_e, { id }: { id: string }) => {
         try {
-            if (isEmployeeMode()) return { success: false, error: "Không khả dụng" };
+            if (isEmployeeMode()) return { success: false, error: tr('Không khả dụng') };
             const row = DatabaseService.getInstance().getWorkflowById(id);
             if (!row) return { success: false, error: 'Not found' };
             return { success: true, workflow: rowToWorkflow(row) };
@@ -150,7 +151,7 @@ export function registerWorkflowIpc(): void {
             const channel = normalizeWorkflowChannel((workflow as any).channel);
             const wf: Workflow = {
                 id: workflow.id || uuidv4(),
-                name: workflow.name || 'Workflow mới',
+                name: workflow.name || tr('Workflow mới'),
                 description: workflow.description || '',
                 enabled: workflow.enabled ?? true,
                 channel,
@@ -213,22 +214,22 @@ export function registerWorkflowIpc(): void {
     });
 
     // ─── Run manual ───────────────────────────────────────────────────────────
-    // ─── Danh mục node (palette) — UI và Public API v1 dùng chung ──────────
+    // ─── Node catalog (palette): shared by the UI and Public API v1 ──────────
     ipcMain.handle('workflow:getNodeTypes', async () => {
         try {
-            // Node/trigger của plugin đang bật (palette động; node nội bộ giữ nguyên NODE_GROUPS tĩnh).
+            // Nodes / triggers of enabled plugins (dynamic palette; built-in nodes keep the static NODE_GROUPS).
             let pluginNodes: any[] = [];
-            try { pluginNodes = require('../../../src/services/plugins/PluginNodeRegistry').default.getInstance().list(); } catch { /* chưa có plugin */ }
+            try { pluginNodes = require('../../../src/services/plugins/PluginNodeRegistry').default.getInstance().list(); } catch { /* no plugins yet */ }
             return { success: true, groups: NODE_GROUPS, defaults: DEFAULT_CONFIGS, pluginNodes };
         } catch (e: any) {
             return { success: false, error: e.message };
         }
     });
 
-    // ─── Public API v1: sự kiện cho node trigger.api ─────────────────────────
+    // ─── Public API v1: events for the trigger.api node ─────────────────────────
     ipcMain.handle('workflow:triggerApi', async (_e, { eventName, payload, keyId, accountId, source }: { eventName: string; payload?: any; keyId?: string; accountId?: string; source?: string }) => {
         try {
-            if (!eventName || typeof eventName !== 'string') return { success: false, error: 'Thiếu eventName' };
+            if (!eventName || typeof eventName !== 'string') return { success: false, error: tr('Thiếu eventName') };
             const result = WorkflowEngineService.getInstance().triggerApiEvent(eventName, payload, { keyId, accountId, source });
             return { success: true, ...result };
         } catch (e: any) {
@@ -236,14 +237,14 @@ export function registerWorkflowIpc(): void {
         }
     });
 
-    // ─── Plugin: trigger riêng của plugin (contributes.triggers) ─────────────
+    // ─── Plugin: the plugin's own triggers (contributes.triggers) ─────────────
     ipcMain.handle('workflow:triggerPlugin', async (_e, { type, payload, pluginId }: { type: string; payload?: any; pluginId?: string }) => {
         try {
             const t = String(type || '');
             const registry = require('../../../src/services/plugins/PluginNodeRegistry').default.getInstance();
             const def = registry.get(t);
             if (!def || def.kind !== 'trigger' || (pluginId && def.pluginId !== pluginId)) {
-                return { success: false, error: `Trigger ${t} không thuộc plugin đang bật` };
+                return { success: false, error: tr('Trigger {{t}} không thuộc plugin đang bật', { t }) };
             }
             const result = WorkflowEngineService.getInstance().triggerPluginEvent(t, payload, { pluginId: def.pluginId });
             return { success: true, ...result };
@@ -288,13 +289,13 @@ export function registerWorkflowIpc(): void {
         try {
             if (isEmployeeMode()) return await proxyToBossWithResult('workflow:clone', { id, targetZaloId });
             const row = DatabaseService.getInstance().getWorkflowById(id);
-            if (!row) return { success: false, error: 'Không tìm thấy workflow gốc' };
+            if (!row) return { success: false, error: tr('Không tìm thấy workflow gốc') };
             const wf = rowToWorkflow(row);
             if (wf.channel !== 'zalo' && wf.channel !== 'facebook') {
-                return { success: false, error: 'Chỉ có thể nhân bản workflow Zalo hoặc Facebook ở phiên bản hiện tại.' };
+                return { success: false, error: tr('Chỉ có thể nhân bản workflow Zalo hoặc Facebook ở phiên bản hiện tại.') };
             }
             const newId = DatabaseService.getInstance().cloneWorkflow(id, targetZaloId);
-            if (!newId) return { success: false, error: 'Không tìm thấy workflow gốc' };
+            if (!newId) return { success: false, error: tr('Không tìm thấy workflow gốc') };
             // Regenerate webhook token for cloned workflow if it has trigger.webhook
             const clonedRow = DatabaseService.getInstance().getWorkflowById(newId);
             if (clonedRow) {
@@ -365,7 +366,7 @@ export function registerWorkflowIpc(): void {
             if (!row) return { success: false, error: 'Not found' };
             const wf = rowToWorkflow(row);
             const hookNode = wf.nodes.find(n => n.type === 'trigger.webhook');
-            if (!hookNode) return { success: false, error: 'Workflow này không có trigger.webhook' };
+            if (!hookNode) return { success: false, error: tr('Workflow này không có trigger.webhook') };
             const token = hookNode.config?.webhookToken || '';
             const tunnelUrl = workflowTunnelUrl();
             const webhookUrl = tunnelUrl ? tunnelUrl + '/api/workflow/webhook/' + token : null;
@@ -412,7 +413,7 @@ export function registerWorkflowIpc(): void {
             if (!row) return { success: false, error: 'Not found' };
             const wf = rowToWorkflow(row);
             const hookNode = wf.nodes.find(n => n.type === 'trigger.webhook');
-            if (!hookNode) return { success: false, error: 'Workflow này không có trigger.webhook' };
+            if (!hookNode) return { success: false, error: tr('Workflow này không có trigger.webhook') };
             const newToken = generateWebhookToken();
             if (!hookNode.config) hookNode.config = {};
             hookNode.config.webhookToken = newToken;

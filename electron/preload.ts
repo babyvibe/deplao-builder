@@ -1,10 +1,10 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron';
 import type { TelegramForumTopicContext } from '../src/models/telegram/telegram';
-// import type: preload không require file khác lúc chạy (hằng kênh được kiểm kiểu bằng typeof bên dưới).
+// import type: the preload does not require other files at runtime (channel constants are type-checked with typeof below).
 import type { CloudflareIpc, CLOUD_CHANGED_EVENT, CLOUD_CLEANUP_PROGRESS_EVENT, CLOUD_RESTORE_PROGRESS_EVENT } from '../src/shared/cloud/cloudContracts';
 
-// ─── Cloudflare (Internet & Cloud) — kênh 'cloudflare:*', xem electron/ipc/cloud/cloudflareIpc.ts ───────────
-// Token / mật khẩu sao lưu chỉ đi một chiều renderer → main (connect, setPassphrase, restore…), không bao giờ quay về.
+// ─── Cloudflare (Internet & Cloud): 'cloudflare:*' channels, see electron/ipc/cloud/cloudflareIpc.ts ───────────
+// Token / backup passwords only flow one way, renderer → main (connect, setPassphrase, restore…), and never come back.
 const CLOUD_EVENT_CHANNELS: [typeof CLOUD_CHANGED_EVENT, typeof CLOUD_RESTORE_PROGRESS_EVENT, typeof CLOUD_CLEANUP_PROGRESS_EVENT] = ['cloudflare:changed', 'cloudflare:restoreProgress', 'cloudflare:cleanupProgress'];
 const cloudflareBridge: CloudflareIpc = {
   status:           () => ipcRenderer.invoke('cloudflare:status'),
@@ -67,10 +67,19 @@ const cloudflareBridge: CloudflareIpc = {
   },
 };
 
-// Cửa sổ ẩn / thu nhỏ từ 2 phút (main: utils/startup/memoryMonitor.ts): bỏ bộ đệm ảnh, tài nguyên không còn trên màn hình.
+// Window hidden / minimized for 2+ minutes (main: utils/startup/memoryMonitor.ts): drop the image cache and resources no longer on screen.
 ipcRenderer.on('app:trimMemory', () => {
-  try { webFrame.clearCache(); } catch { /* bỏ qua */ }
+  try { webFrame.clearCache(); } catch { /* ignore */ }
 });
+
+// UI language: fetch the catalog once, synchronously, before page scripts run, so src/shared/i18n/runtime.ts
+// (window.deplaoI18n) also translates module-level constants. Main side: electron/ipc/i18n/i18nIpc.ts.
+try {
+  const i18nBoot = ipcRenderer.sendSync('i18n:boot');
+  if (i18nBoot && typeof i18nBoot.lang === 'string') contextBridge.exposeInMainWorld('deplaoI18n', i18nBoot);
+} catch {
+  /* no i18n handler in main: the UI stays Vietnamese */
+}
 
 // Expose typed API to renderer
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -117,7 +126,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkAndRefreshAvatar: (zaloId: string) => ipcRenderer.invoke('login:checkAndRefreshAvatar', { zaloId }),
   },
 
-  // ─── Đồng bộ tin nhắn từ điện thoại (Zalo mobile → máy tính) ─────
+  // ─── Sync messages from the phone (Zalo mobile → computer) ─────
   mobileSync: {
     start: (zaloId: string, range?: { fromTs?: number | null; toTs?: number | null }) =>
       ipcRenderer.invoke('zalo:mobileSync:start', { zaloId, fromTs: range?.fromTs ?? null, toTs: range?.toTs ?? null }),
@@ -343,7 +352,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Local Pinned Conversations
     getLocalPinnedConversations: (params: any) => ipcRenderer.invoke('db:getLocalPinnedConversations', params),
     setLocalPinnedConversation: (params: any) => ipcRenderer.invoke('db:setLocalPinnedConversation', params),
-    // Tự động đánh dấu đã đọc
+    // Auto mark as read
     getUnreadConversations: (params: any) => ipcRenderer.invoke('db:getUnreadConversations', params),
     // Starred messages ("Tin đánh dấu")
     getStarredMessageKeys: (params: any) => ipcRenderer.invoke('db:getStarredMessageKeys', params),
@@ -447,12 +456,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sendBadgeImage: (params: { dataUrl: string; count: number }) =>
       ipcRenderer.send('app:badgeImage', params),
     flashFrame: (active: boolean) => ipcRenderer.send('app:flashFrame', { active }),
-    /** Windows: app đang chạy bằng quyền quản trị (kéo-thả từ File Explorer bị chặn) */
+    /** Windows: the app runs with administrator rights (dragging from File Explorer is blocked) */
     isElevated: (): Promise<boolean> => ipcRenderer.invoke('app:isElevated'),
-    /** Tự mở Deplao khi bật máy (lưu theo máy) */
+    /** Open Deplao automatically when the machine starts (saved per machine) */
     getAutoLaunch: () => ipcRenderer.invoke('app:getAutoLaunch'),
     setAutoLaunch: (patch: { enabled?: boolean; hidden?: boolean }) => ipcRenderer.invoke('app:setAutoLaunch', patch),
   },
+
+  // ─── UI language (main: electron/ipc/i18n/i18nIpc.ts) ───────────
+  i18n: { getLanguages: () => ipcRenderer.invoke('i18n:getLanguages'), setLanguage: (lang: string) => ipcRenderer.invoke('i18n:setLanguage', { lang }) },
 
   // ─── Auto-update ─────────────────────────────────────────────────
   update: {
@@ -462,11 +474,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     rendererReady: () => ipcRenderer.send('update:renderer-ready'),
   },
 
-  // ─── Nhật ký (Logger) ─────────────────────────────────────────────
+  // ─── Log (Logger) ─────────────────────────────────────────────────
   logs: {
     getBuffer: () => ipcRenderer.invoke('log:getBuffer'),
     clear:     () => ipcRenderer.invoke('log:clear'),
-    // Renderer → Nhật ký (Logger main, prefix [renderer]). Fire-and-forget; main tự che bí mật + giới hạn tốc độ.
+    // Renderer → Log (main Logger, prefix [renderer]). Fire-and-forget; main masks secrets itself + limits the rate.
     append:    (level: string, msg: string) => ipcRenderer.send('log:append', { level, msg }),
   },
 
@@ -481,7 +493,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     execute:         (id: string, action: string, params?: any) => ipcRenderer.invoke('integration:execute', { id, action, params }),
     executeByType:   (type: string, action: string, params?: any) => ipcRenderer.invoke('integration:executeByType', { type, action, params }),
     getWebhookPort:  () => ipcRenderer.invoke('integration:getWebhookPort'),
-    // Đăng ký webhook tự động (KiotViet / Sapo) — chạy trên Boss
+    // Automatic webhook registration (KiotViet / Sapo) - runs on Boss
     listWebhooks:    (id: string) => ipcRenderer.invoke('integration:listWebhooks', { id }),
     registerWebhooks:(id: string, events: string[]) => ipcRenderer.invoke('integration:registerWebhooks', { id, events }),
     removeWebhook:   (id: string, webhookId: string) => ipcRenderer.invoke('integration:removeWebhook', { id, webhookId }),
@@ -572,7 +584,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAllStatuses:        () => ipcRenderer.invoke('workspace:getAllStatuses'),
     loginRemote:          (bossUrl: string, username: string, password: string) =>
                             ipcRenderer.invoke('workspace:loginRemote', { bossUrl, username, password }),
-    // Mật khẩu nhân viên đã lưu: main giữ (mã hoá safeStorage), renderer chỉ biết có / không
+    // Saved employee password: main keeps it (safeStorage encryption), the renderer only knows whether one exists
     rememberPassword:     (id: string, password: string) => ipcRenderer.invoke('workspace:rememberPassword', { id, password }),
     hasSavedPassword:     (id: string) => ipcRenderer.invoke('workspace:hasSavedPassword', { id }),
     loginRemoteSaved:     (id: string, bossUrl: string, username: string) =>
@@ -597,7 +609,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     probeBossAddress:    (params: { url?: string; workspaceId?: string }) => ipcRenderer.invoke('relay:probeBossAddress', params || {}),
   },
 
-  // ─── Public API & Plugin (Công cụ → Ứng dụng, API & Webhook) ───────────────
+  // ─── Public API & Plugins (Tools → Apps, API & Webhook) ───────────────
   api: {
     status:            () => ipcRenderer.invoke('api:status'),
     startServer:       (port?: number) => ipcRenderer.invoke('api:server:start', { port }),
@@ -966,7 +978,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     notifyUnreadCount:  (params: any) => ipcRenderer.invoke('erp:notify:unreadCount', params),
     notifyDelete:       (params: any) => ipcRenderer.invoke('erp:notify:delete', params),
     notifyDeleteAll:    (params: any) => ipcRenderer.invoke('erp:notify:deleteAll', params),
-    // Thông báo qua Zalo (Cài đặt)
+    // Notifications via Zalo (Settings)
     notifyZaloStatus:   (params: any) => ipcRenderer.invoke('erp:notify:zaloStatus', params),
     notifySetZaloSettings: (params: any) => ipcRenderer.invoke('erp:notify:setZaloSettings', params),
     notifyTestZalo:     (params: any) => ipcRenderer.invoke('erp:notify:testZalo', params),
@@ -1073,7 +1085,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'fb:onDisconnect',
       'fb:onReconnect',
       'fb:onConnectionStatus',
-      // useChatEvents đã nghe các kênh dưới nhưng thiếu ở đây → chưa bao giờ chạy (kể cả trên Boss)
+      // useChatEvents already listens to the channels below but they were missing here → it never ran (even on Boss)
       'fb:onTyping',
       'fb:onSeen',
       'fb:onThreadInfoUpdate',
@@ -1152,7 +1164,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update:        (id: number, proxy: any)        => ipcRenderer.invoke('proxy:update', { id, proxy }),
     delete:        (id: number)                    => ipcRenderer.invoke('proxy:delete', { id }),
     setAccount:    (zaloId: string, proxyId: number | null) => ipcRenderer.invoke('proxy:setAccount', { zaloId, proxyId }),
-    /** Thêm / đổi / bỏ proxy của tài khoản Zalo, Facebook và kết nối lại ngay (force: kết nối lại dù proxy không đổi) */
+    /** Add / change / remove the proxy of a Zalo or Facebook account and reconnect right away (force: reconnect even if the proxy did not change) */
     applyToAccount: (accountId: string, proxyId: number | null, opts?: { force?: boolean }) =>
       ipcRenderer.invoke('proxy:applyToAccount', { accountId, proxyId, force: !!opts?.force }),
     getForAccount: (zaloId: string)                => ipcRenderer.invoke('proxy:getForAccount', { zaloId }),

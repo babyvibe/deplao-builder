@@ -1,11 +1,11 @@
 /**
- * Hộp mở từ link bấm trong app (lib/chat/links/chatLinks), đặt 1 lần ở App:
- *  - "Tham gia nhóm bằng link" có sẵn link nhóm Zalo / Telegram chưa tham gia (xem trước rồi Tham gia, như Zalo / Telegram);
- *  - hỏi "Bắt đầu" với bot của link t.me/<bot>?start=… rồi mới gửi messages.startBot (như nút Bắt đầu của Telegram);
- *  - "Chia sẻ tới" của link t.me/share (hộp chuyển tiếp ở chế độ chia sẻ): chọn hội thoại, chữ điền sẵn ô soạn tin;
- *  - hộp thông báo của bot khi bấm nút callback (câu trả lời dạng alert).
- * Link Telegram / nhóm Zalo đi qua window.open hoặc điều hướng (vd target="_blank" trong Mini App): main gửi về
- * (app:openChatLink, electron/app/mainWindowLinks) và mở ở đây như bấm link trong tin.
+ * Dialog opened from a link clicked in the app (lib/chat/links/chatLinks), mounted once in App:
+ *  - "Tham gia nhóm bằng link" (Join group by link) for a Zalo / Telegram group link not yet joined (preview, then Join, as in Zalo / Telegram);
+ *  - asks "Bắt đầu" (Start) with the bot of a t.me/<bot>?start=… link, then sends messages.startBot (like Telegram's Start button);
+ *  - "Chia sẻ tới" (Share to) for a t.me/share link (forward dialog in share mode): pick a conversation, the text is prefilled in the compose box;
+ *  - the bot's notice box when a callback button is pressed (alert-style answer).
+ * Telegram / group links opened via window.open or navigation (e.g. target="_blank" inside a Mini App): main sends them here
+ * (app:openChatLink, electron/app/mainWindowLinks) and they open here, the same as clicking a link in a message.
  */
 import React from 'react';
 import { Button, Dialog, DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui';
@@ -21,6 +21,8 @@ import {
 import QuickJoinLinkDialog from '../quick/QuickJoinLinkDialog';
 import ForwardMessageModal from '../messages/ForwardMessageModal';
 import { accountChannel, orderQuickAccounts, quickActionSupport } from '../quick/quickActions';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export function ChatLinkHost() {
   const join = useGroupJoinRequest();
@@ -38,7 +40,7 @@ export function ChatLinkHost() {
   );
 }
 
-/** Link chia sẻ: chọn hội thoại (mọi tài khoản như chuyển tiếp) → điền chữ vào ô soạn tin từng hội thoại, mở hội thoại đầu. */
+/** Share link: pick a conversation (any account, as with forward) → the text goes into that conversation's compose box, the first conversation opens. */
 function ShareDialog({ request }: { request: ShareRequest }) {
   return (
     <ForwardMessageModal
@@ -58,7 +60,7 @@ function ShareDialog({ request }: { request: ShareRequest }) {
   );
 }
 
-/** Câu trả lời dạng alert của bot (nút callback): hộp có nút OK, như Telegram. */
+/** Bot alert answer (callback button): a box with an OK button, as in Telegram. */
 function BotAlertDialog({ request }: { request: BotAlertRequest }) {
   return (
     <Dialog open onOpenChange={(next) => { if (!next) closeBotAlert(); }} size="sm" className="max-w-[400px]">
@@ -108,12 +110,12 @@ function BotStartDialog({ request }: { request: BotStartRequest }) {
     try {
       const res = await ipc.telegramUser?.startBot?.({ accountId: request.accountId, botId: request.botId, startParam: request.startParam });
       if (!res?.success) {
-        notify(`Không bắt đầu được với ${name}${res?.error ? `: ${res.error}` : ''}`, 'error');
+        notify(tr('Không bắt đầu được với {{name}}{{v1}}', { name, v1: res?.error ? `: ${res.error}` : '' }), 'error');
         return;
       }
       closeBotStart();
     } catch (err: any) {
-      notify(`Không bắt đầu được với ${name}: ${err?.message || err}`, 'error');
+      notify(tr('Không bắt đầu được với {{name}}: {{v1}}', { name, v1: err?.message || err }), 'error');
     } finally {
       setBusy(false);
     }
@@ -123,14 +125,14 @@ function BotStartDialog({ request }: { request: BotStartRequest }) {
     <Dialog open onOpenChange={(next) => { if (!next && !busy) closeBotStart(); }} size="sm" className="max-w-[400px]">
       <DialogHeader>
         <div className="min-w-0">
-          <DialogTitle className="truncate">Bắt đầu với {name}?</DialogTitle>
-          <DialogDescription>Bot sẽ nhận lệnh /start từ link này.</DialogDescription>
+          <DialogTitle className="truncate">{trx('Bắt đầu với {{name}}?', { name })}</DialogTitle>
+          <DialogDescription>{tr('Bot sẽ nhận lệnh /start từ link này.')}</DialogDescription>
         </div>
         <DialogClose />
       </DialogHeader>
       <DialogFooter>
-        <Button variant="ghost" onClick={closeBotStart} disabled={busy}>Để sau</Button>
-        <Button onClick={() => void start()} loading={busy}>Bắt đầu</Button>
+        <Button variant="ghost" onClick={closeBotStart} disabled={busy}>{tr('Để sau')}</Button>
+        <Button onClick={() => void start()} loading={busy}>{tr('Bắt đầu')}</Button>
       </DialogFooter>
     </Dialog>
   );

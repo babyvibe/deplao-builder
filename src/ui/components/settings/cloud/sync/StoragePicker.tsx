@@ -1,11 +1,11 @@
 /**
- * Đồng bộ dữ liệu → "Kho lưu": chọn nơi đặt ảnh/file + bản sao dữ liệu — Cloudflare R2 hoặc Google Drive (Google One).
- *  - Hai thẻ chọn một (role="radio"): bảng giá / hạn mức tóm tắt (số lấy từ R2_PRICING, GDRIVE_LIMITS) và trạng thái
- *    của từng kho.
- *  - Google (GoogleAccountBlock, dùng lại ở trình khôi phục): đăng nhập trên trình duyệt (google.connect chờ tới khi
- *    người dùng đồng ý, Huỷ = cancelConnect), dung lượng tài khoản (quota), Đọc lại / Đổi tài khoản / Ngắt kết nối;
- *    "Nâng cao: dùng client OAuth riêng" (Client ID + secret + hướng dẫn tạo trên Google Cloud).
- *  - Đổi kho chỉ khi đồng bộ đang tắt (main cũng chặn, code STORAGE_SWITCH_BLOCKED — run() hiện lỗi); hỏi lại trước.
+ * Data sync → "Kho lưu" (Storage): choose where images/files and the data copies go - Cloudflare R2 or Google Drive (Google One).
+ *  - Two choose-one cards (role="radio"): price table / summary limits (numbers taken from R2_PRICING, GDRIVE_LIMITS) and the status
+ *    of each storage.
+ *  - Google (GoogleAccountBlock, reused in the restore wizard): sign in through the browser (google.connect waits until the
+ *    user agrees; Cancel = cancelConnect), account quota, Re-read / Switch account / Disconnect;
+ *    "Nâng cao: dùng client OAuth riêng" (Advanced: use own OAuth client) (Client ID + secret + guide for creating one on Google Cloud).
+ *  - Switching storage is only allowed while sync is off (main blocks it too, code STORAGE_SWITCH_BLOCKED - run() shows the error); asks first.
  */
 import React, { useId, useRef, useState } from 'react';
 import { showConfirm } from '@/components/common/ConfirmDialog';
@@ -51,10 +51,12 @@ import {
   shortClientId,
   useCloudAction,
 } from '../cloudUi';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
-// ─── Bảng giá / hạn mức tóm tắt ──────────────────────────────────────────────────────────
+// ─── Price table / summary limits ──────────────────────────────────────────────────────────
 
-/** Một dòng trong thẻ kho: chấm đầu dòng (hoặc biểu tượng cảnh báo) + chữ, kèm dòng giải thích nhỏ (i). */
+/** One line in the storage card: bullet (or warning icon) + text, with a small explanation line (i). */
 function PriceLine({ children, hint, warning = false }: { children: React.ReactNode; hint?: string; warning?: boolean }) {
   return (
     <span className={cn('block text-xs leading-relaxed', warning ? 'text-warning' : 'text-foreground/90')}>
@@ -80,16 +82,16 @@ function R2Lines() {
   const P = R2_PRICING;
   return (
     <>
-      <PriceLine>{`${P.freeStorageGbMonth} GB miễn phí mỗi tháng, sau đó ${fmtUsdPrice(P.storageUsdPerGbMonth)} USD/GB-tháng`}</PriceLine>
-      <PriceLine hint="mỗi lần đẩy file / phần file, tạo bản sao, liệt kê">
-        <strong className="font-medium text-foreground">Ghi (Class A)</strong>
-        {` — ${fmtMillions(P.freeClassA)} lượt/tháng miễn phí, sau đó ${fmtUsdPrice(P.classAUsdPerMillion)} USD/triệu`}
+      <PriceLine>{tr('{{freeStorageGbMonth}} GB miễn phí mỗi tháng, sau đó {{v1}} USD/GB-tháng', { freeStorageGbMonth: P.freeStorageGbMonth, v1: fmtUsdPrice(P.storageUsdPerGbMonth) })}</PriceLine>
+      <PriceLine hint={tr('mỗi lần đẩy file / phần file, tạo bản sao, liệt kê')}>
+        <strong className="font-medium text-foreground">{tr('Ghi (Class A)')}</strong>
+        {tr(' — {{v1}} lượt/tháng miễn phí, sau đó {{v2}} USD/triệu', { v1: fmtMillions(P.freeClassA), v2: fmtUsdPrice(P.classAUsdPerMillion) })}
       </PriceLine>
-      <PriceLine hint="mỗi lần tải file về hoặc kiểm tra file">
-        <strong className="font-medium text-foreground">Đọc (Class B)</strong>
-        {` — ${fmtMillions(P.freeClassB)} lượt/tháng miễn phí, sau đó ${fmtUsdPrice(P.classBUsdPerMillion)} USD/triệu`}
+      <PriceLine hint={tr('mỗi lần tải file về hoặc kiểm tra file')}>
+        <strong className="font-medium text-foreground">{tr('Đọc (Class B)')}</strong>
+        {tr(' — {{v1}} lượt/tháng miễn phí, sau đó {{v2}} USD/triệu', { v1: fmtMillions(P.freeClassB), v2: fmtUsdPrice(P.classBUsdPerMillion) })}
       </PriceLine>
-      <PriceLine>Xoá file: miễn phí · Tải xuống: miễn phí, không giới hạn</PriceLine>
+      <PriceLine>{tr('Xoá file: miễn phí · Tải xuống: miễn phí, không giới hạn')}</PriceLine>
     </>
   );
 }
@@ -99,27 +101,27 @@ function GoogleLines() {
   return (
     <>
       <PriceLine>
-        15 GB miễn phí, dùng chung Gmail và Google Photos; thêm dung lượng theo gói Google One (vd 100 GB 45.000 ₫/tháng)
+        {tr('15 GB miễn phí, dùng chung Gmail và Google Photos; thêm dung lượng theo gói Google One (vd 100 GB 45.000 ₫/tháng)')}
       </PriceLine>
-      <PriceLine hint={`đọc thông tin ${G.unitsRead}, liệt kê ${G.unitsList}, tải xuống ${G.unitsDownload}, ghi/sửa ${G.unitsEdit} đơn vị`}>
-        <strong className="font-medium text-foreground">Không tính phí theo lượt đọc / ghi</strong>
-        {` — hạn mức ${fmtMillions(G.unitsPerDayPerProject)} đơn vị/ngày cho cả client OAuth`}
+      <PriceLine hint={tr('đọc thông tin {{unitsRead}}, liệt kê {{unitsList}}, tải xuống {{unitsDownload}}, ghi/sửa {{unitsEdit}} đơn vị', { unitsRead: G.unitsRead, unitsList: G.unitsList, unitsDownload: G.unitsDownload, unitsEdit: G.unitsEdit })}>
+        <strong className="font-medium text-foreground">{tr('Không tính phí theo lượt đọc / ghi')}</strong>
+        {tr(' — hạn mức {{v1}} đơn vị/ngày cho cả client OAuth', { v1: fmtMillions(G.unitsPerDayPerProject) })}
       </PriceLine>
       <PriceLine>
-        {`Tải xuống: miễn phí dưới ${fmtBytes(G.egressBytesPerDayPerProject)}/ngày · Tải lên: tối đa ${fmtBytes(G.uploadBytesPerDayPerUser)}/ngày mỗi tài khoản`}
+        {tr('Tải xuống: miễn phí dưới {{v1}}/ngày · Tải lên: tối đa {{v2}}/ngày mỗi tài khoản', { v1: fmtBytes(G.egressBytesPerDayPerProject), v2: fmtBytes(G.uploadBytesPerDayPerUser) })}
       </PriceLine>
       <PriceLine warning>
-        Dung lượng đầy thì không tải lên được và Gmail có thể không nhận thư — nên dùng một tài khoản Google riêng cho sao lưu.
+        {tr('Dung lượng đầy thì không tải lên được và Gmail có thể không nhận thư — nên dùng một tài khoản Google riêng cho sao lưu.')}
       </PriceLine>
     </>
   );
 }
 
-// ─── Một thẻ kho ─────────────────────────────────────────────────────────────────────────
+// ─── One storage card ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Phần trên (nút role="radio": tên kho + bảng giá) chọn kho; phần dưới (trạng thái, đăng nhập Google…) nằm ngoài nút
- * để không lồng nút trong nút.
+ * The top part (role="radio" button: storage name + price table) picks the storage; the bottom part (status, Google sign-in…) sits outside the button
+ * so buttons are not nested inside buttons.
  */
 function StoreOption({ value, title, active, busy = false, onSelect, lines, footer }: {
   value: CloudStorageProvider;
@@ -164,7 +166,7 @@ function StoreOption({ value, title, active, busy = false, onSelect, lines, foot
         <span className="min-w-0 flex-1">
           <span className={cn('flex flex-wrap items-center gap-2 text-sm font-semibold', active ? 'text-primary' : 'text-foreground')}>
             {title}
-            {active && <Badge size="sm" variant="primary">Đang dùng</Badge>}
+            {active && <Badge size="sm" variant="primary">{tr('Đang dùng')}</Badge>}
             {busy && <CloudSpinner className="h-3.5 w-3.5" />}
           </span>
           <span id={descId} className="mt-2 block space-y-1.5">{lines}</span>
@@ -175,9 +177,9 @@ function StoreOption({ value, title, active, busy = false, onSelect, lines, foot
   );
 }
 
-// ─── Tài khoản Google ────────────────────────────────────────────────────────────────────
+// ─── Google account ────────────────────────────────────────────────────────────────────
 
-/** Trạng thái Google khi main chưa trả (phòng hờ): chưa đăng nhập, có client chung. */
+/** Google status before main has replied (just in case): not signed in, a shared client is available. */
 export const EMPTY_GOOGLE_STATUS: GoogleDriveStatus = {
   connected: false,
   email: null,
@@ -195,16 +197,16 @@ function GoogleQuota({ quota }: { quota: GoogleDriveQuota }) {
   const limit = quota.limit && quota.limit > 0 ? quota.limit : null;
   const pct = limit ? (quota.usage / limit) * 100 : null;
   const tone = meterTone(pct);
-  const trash = quota.usageInDriveTrash > 0 ? ` (thùng rác ${fmtBytes(quota.usageInDriveTrash)})` : '';
+  const trash = quota.usageInDriveTrash > 0 ? tr(' (thùng rác {{v1}})', { v1: fmtBytes(quota.usageInDriveTrash) }) : '';
   return (
     <div className="space-y-1">
       <p className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs text-foreground">
-        <span>{limit ? `Đã dùng ${fmtBytesPair(quota.usage, limit)}` : `Đã dùng ${fmtBytes(quota.usage)} · không giới hạn`}</span>
+        <span>{limit ? tr('Đã dùng {{v1}}', { v1: fmtBytesPair(quota.usage, limit) }) : tr('Đã dùng {{v1}} · không giới hạn', { v1: fmtBytes(quota.usage) })}</span>
         {pct != null && <span className={cn('font-medium tabular-nums', METER_TEXT[tone])}>{fmtPercent(pct)}</span>}
       </p>
-      {pct != null && <ProgressBar value={pct} tone={tone} label="Dung lượng tài khoản Google" />}
+      {pct != null && <ProgressBar value={pct} tone={tone} label={tr('Dung lượng tài khoản Google')} />}
       <p className="text-[11px] text-subtle-foreground">
-        {`Trong đó Drive ${fmtBytes(quota.usageInDrive)}${trash} · dùng chung Gmail, Google Photos`}
+        {tr('Trong đó Drive {{v1}}{{trash}} · dùng chung Gmail, Google Photos', { v1: fmtBytes(quota.usageInDrive), trash })}
       </p>
     </div>
   );
@@ -212,7 +214,7 @@ function GoogleQuota({ quota }: { quota: GoogleDriveQuota }) {
 
 const CLIENT_ID_RE = /^[\w.-]+\.apps\.googleusercontent\.com$/i;
 
-/** "Nâng cao: dùng client OAuth riêng": hướng dẫn tạo client Desktop trên Google Cloud + ô Client ID / secret. */
+/** "Nâng cao: dùng client OAuth riêng" (Advanced: use own OAuth client): guide to create a Desktop client on Google Cloud + Client ID / secret fields. */
 function CustomClientSection({ google, disabled, onConnect, initialOpen }: {
   google: GoogleDriveStatus;
   disabled: boolean;
@@ -221,7 +223,7 @@ function CustomClientSection({ google, disabled, onConnect, initialOpen }: {
 }) {
   const idField = useId();
   const secretField = useId();
-  // Bản app không có client chung thì đây là cách duy nhất để đăng nhập → mở sẵn.
+  // If the app build has no shared client, this is the only way to sign in → open by default.
   const [open, setOpen] = useState(initialOpen ?? !google.builtinClient);
   const [clientId, setClientId] = useState(google.customClient ? google.clientId ?? '' : '');
   const [secret, setSecret] = useState('');
@@ -230,7 +232,7 @@ function CustomClientSection({ google, disabled, onConnect, initialOpen }: {
   const submit = () => {
     const id = clientId.trim();
     if (!CLIENT_ID_RE.test(id)) {
-      setError('Client ID có dạng …apps.googleusercontent.com (Credentials → OAuth 2.0 Client IDs).');
+      setError(tr('Client ID có dạng …apps.googleusercontent.com (Credentials → OAuth 2.0 Client IDs).'));
       return;
     }
     setError(null);
@@ -241,7 +243,7 @@ function CustomClientSection({ google, disabled, onConnect, initialOpen }: {
   return (
     <details open={open} onToggle={e => setOpen(e.currentTarget.open)} className="rounded-lg border border-border">
       <summary className="cursor-pointer select-none rounded-lg px-3 py-2 text-xs font-medium text-foreground hover:bg-muted/50">
-        Nâng cao: dùng client OAuth riêng
+        {tr('Nâng cao: dùng client OAuth riêng')}
       </summary>
       <form
         className="space-y-3 border-t border-border px-3 py-3"
@@ -251,23 +253,20 @@ function CustomClientSection({ google, disabled, onConnect, initialOpen }: {
         {!google.builtinClient && (
           <Notice tone="info">
             <p>
-              Bản Deplao này không có sẵn client Google chung. Tạo client OAuth riêng (miễn phí) theo hướng dẫn dưới đây
-              rồi bấm Đăng nhập bằng client này.
+              {tr('Bản Deplao này không có sẵn client Google chung. Tạo client OAuth riêng (miễn phí) theo hướng dẫn dưới đây rồi bấm Đăng nhập bằng client này.')}
             </p>
           </Notice>
         )}
         <ol className="list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted-foreground">
-          <li>Mở Google Cloud Console, tạo một project.</li>
-          <li>{'APIs & Services → Library: bật Google Drive API.'}</li>
+          <li>{tr('Mở Google Cloud Console, tạo một project.')}</li>
+          <li>{tr('APIs & Services → Library: bật Google Drive API.')}</li>
           <li>
-            OAuth consent screen: chọn External, thêm quyền (scope) drive.file; Publishing status chọn In production — để
-            Testing thì sau 7 ngày phải đăng nhập lại.
+            {tr('OAuth consent screen: chọn External, thêm quyền (scope) drive.file; Publishing status chọn In production — để Testing thì sau 7 ngày phải đăng nhập lại.')}
           </li>
-          <li>Credentials → Create credentials → OAuth client ID → Application type: Desktop app, rồi dán Client ID và Client secret vào đây.</li>
+          <li>{tr('Credentials → Create credentials → OAuth client ID → Application type: Desktop app, rồi dán Client ID và Client secret vào đây.')}</li>
         </ol>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Dùng client riêng thì hạn mức Drive API mỗi ngày là của riêng bạn. Quyền drive.file chỉ thấy file do chính client
-          (project) đó tạo: máy khác muốn khôi phục phải đăng nhập bằng cùng client.
+          {tr('Dùng client riêng thì hạn mức Drive API mỗi ngày là của riêng bạn. Quyền drive.file chỉ thấy file do chính client (project) đó tạo: máy khác muốn khôi phục phải đăng nhập bằng cùng client.')}
         </p>
         <Button
           variant="link"
@@ -276,9 +275,9 @@ function CustomClientSection({ google, disabled, onConnect, initialOpen }: {
           rightIcon={<ExternalLinkIcon className="h-3.5 w-3.5" />}
           onClick={() => openExternalUrl(GOOGLE_CLOUD_CREDENTIALS_URL)}
         >
-          Mở Google Cloud Console
+          {tr('Mở Google Cloud Console')}
         </Button>
-        <FormField label="Client ID" htmlFor={idField}>
+        <FormField label={tr('Client ID')} htmlFor={idField}>
           <Input
             id={idField}
             spellCheck={false}
@@ -289,7 +288,7 @@ function CustomClientSection({ google, disabled, onConnect, initialOpen }: {
             onChange={e => { setClientId(e.target.value); setError(null); }}
           />
         </FormField>
-        <FormField label="Client secret" htmlFor={secretField} hint="Không bắt buộc (client Desktop dùng PKCE); có thì dán vào.">
+        <FormField label={tr('Client secret')} htmlFor={secretField} hint={tr('Không bắt buộc (client Desktop dùng PKCE); có thì dán vào.')}>
           <Input
             id={secretField}
             type="password"
@@ -301,7 +300,7 @@ function CustomClientSection({ google, disabled, onConnect, initialOpen }: {
         </FormField>
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         <Button type="submit" size="sm" variant="outline" disabled={disabled || !clientId.trim()}>
-          Đăng nhập bằng client này
+          {tr('Đăng nhập bằng client này')}
         </Button>
       </form>
     </details>
@@ -310,25 +309,25 @@ function CustomClientSection({ google, disabled, onConnect, initialOpen }: {
 
 export interface GoogleAccountBlockProps {
   google: GoogleDriveStatus;
-  /** Trạng thái kho mới từ main (đăng nhập, ngắt, đọc lại dung lượng). */
+  /** New storage status from main (sign in, disconnect, re-read the quota). */
   onStorage?: (storage: CloudStorageStatus) => void;
-  /** Đồng bộ đang dùng kho Google Drive (hỏi kỹ hơn trước khi ngắt). */
+  /** Sync is using the Google Drive storage (ask more carefully before disconnecting). */
   inUse?: boolean;
-  /** Mở sẵn phần client OAuth riêng (test); mặc định chỉ mở khi bản app không có client chung. */
+  /** Open the own OAuth client section by default (test); by default it only opens when the app build has no shared client. */
   initialClientOpen?: boolean;
 }
 
 /**
- * Tài khoản Google của kho Google Drive: chưa đăng nhập → "Đăng nhập Google" (đang chờ trình duyệt: vòng quay + Huỷ);
- * đã đăng nhập → email, dung lượng tài khoản, Đọc lại / Đổi tài khoản / Ngắt kết nối. Dùng ở thẻ Kho lưu và bước 1 của
- * trình khôi phục.
+ * Google account of the Google Drive storage: not signed in → "Đăng nhập Google" (Google sign-in) (waiting for the browser: spinner + Cancel);
+ * signed in → email, account quota, Re-read / Switch account / Disconnect. Used in the Storage card and in step 1 of the
+ * restore wizard.
  */
 export function GoogleAccountBlock({ google, onStorage, inUse = false, initialClientOpen }: GoogleAccountBlockProps) {
   const { busy, run, notify } = useCloudAction();
   const [waiting, setWaiting] = useState(false);
   const cancelled = useRef(false);
   const connecting = waiting || !!google.connecting;
-  // Đăng nhập / Đổi tài khoản: client riêng đã lưu (chỉ gửi client_id — main dùng lại secret đã lưu), không thì client chung.
+  // Sign in / Switch account: use the saved own client (only sends client_id: main reuses the saved secret), otherwise the shared client.
   const savedClient: GoogleClientInput | null = google.customClient && google.clientId ? { clientId: google.clientId } : null;
   const canSignIn = !!savedClient || !!google.builtinClient;
 
@@ -336,13 +335,13 @@ export function GoogleAccountBlock({ google, onStorage, inUse = false, initialCl
     try {
       const res = await cloudApi()?.storage?.status?.();
       if (res?.success && res.storage) onStorage?.(res.storage);
-    } catch { /* main còn báo qua CLOUD_CHANGED_EVENT */ }
+    } catch { /* main still reports via CLOUD_CHANGED_EVENT */ }
   };
 
   const connect = async (client: GoogleClientInput | null) => {
     const api = cloudApi()?.google;
     if (typeof api?.connect !== 'function') {
-      notify('Bản app này chưa có tính năng Google Drive. Hãy cập nhật Deplao.', 'warning');
+      notify(tr('Bản app này chưa có tính năng Google Drive. Hãy cập nhật Deplao.'), 'warning');
       return;
     }
     cancelled.current = false;
@@ -350,13 +349,13 @@ export function GoogleAccountBlock({ google, onStorage, inUse = false, initialCl
     try {
       const res = await api.connect(client);
       if (res?.storage) onStorage?.(res.storage);
-      if (cancelled.current) return; // người dùng bấm Huỷ: không báo lỗi
+      if (cancelled.current) return; // the user clicked Cancel: do not report an error
       if (!res?.success) {
-        notify(res?.error || 'Chưa đăng nhập được Google, thử lại sau.', 'error');
+        notify(res?.error || tr('Chưa đăng nhập được Google, thử lại sau.'), 'error');
         return;
       }
       const email = res.storage?.google?.email;
-      notify(email ? `Đã đăng nhập Google Drive · ${email}` : 'Đã đăng nhập Google Drive', 'success');
+      notify(email ? tr('Đã đăng nhập Google Drive · {{email}}', { email }) : tr('Đã đăng nhập Google Drive'), 'success');
     } catch (err) {
       if (!cancelled.current) notify(cleanIpcError(err), 'error');
     } finally {
@@ -378,13 +377,13 @@ export function GoogleAccountBlock({ google, onStorage, inUse = false, initialCl
 
   const disconnect = async () => {
     const ok = await showConfirm({
-      title: 'Ngắt kết nối Google Drive?',
-      message: `Deplao thu hồi quyền truy cập và xoá đăng nhập Google trên máy này. File đã lên Google Drive vẫn giữ nguyên.${inUse ? ' Đồng bộ dữ liệu sẽ dừng cho tới khi đăng nhập lại.' : ''}`,
-      confirmText: 'Ngắt kết nối',
+      title: tr('Ngắt kết nối Google Drive?'),
+      message: tr('Deplao thu hồi quyền truy cập và xoá đăng nhập Google trên máy này. File đã lên Google Drive vẫn giữ nguyên.{{v1}}', { v1: inUse ? tr(' Đồng bộ dữ liệu sẽ dừng cho tới khi đăng nhập lại.') : '' }),
+      confirmText: tr('Ngắt kết nối'),
       variant: 'danger',
     });
     if (!ok) return;
-    const res = await run('google-disconnect', () => cloudApi()?.google?.disconnect(), 'Đã ngắt kết nối Google Drive');
+    const res = await run('google-disconnect', () => cloudApi()?.google?.disconnect(), tr('Đã ngắt kết nối Google Drive'));
     if (res?.storage) onStorage?.(res.storage);
     else if (res) await reloadStorage();
   };
@@ -397,7 +396,7 @@ export function GoogleAccountBlock({ google, onStorage, inUse = false, initialCl
             <span aria-hidden="true" className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full bg-success" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-foreground" title={google.email ?? undefined}>
-                {google.email || 'Đã đăng nhập Google'}
+                {google.email || tr('Đã đăng nhập Google')}
               </p>
               {google.displayName && <p className="truncate text-xs text-muted-foreground">{google.displayName}</p>}
             </div>
@@ -412,11 +411,11 @@ export function GoogleAccountBlock({ google, onStorage, inUse = false, initialCl
               disabled={connecting}
               onClick={() => void refresh()}
             >
-              Đọc lại
+              {tr('Đọc lại')}
             </Button>
             {canSignIn && (
               <Button size="sm" variant="outline" disabled={connecting} onClick={() => void connect(savedClient)}>
-                Đổi tài khoản
+                {tr('Đổi tài khoản')}
               </Button>
             )}
             <Button
@@ -428,28 +427,28 @@ export function GoogleAccountBlock({ google, onStorage, inUse = false, initialCl
               disabled={connecting}
               onClick={() => void disconnect()}
             >
-              Ngắt kết nối
+              {tr('Ngắt kết nối')}
             </Button>
           </div>
         </div>
       ) : !connecting && (
         <div className="space-y-2">
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Đăng nhập trên trình duyệt của máy. Deplao chỉ xem được file do chính Deplao tạo trên Drive của bạn.
+            {tr('Đăng nhập trên trình duyệt của máy. Deplao chỉ xem được file do chính Deplao tạo trên Drive của bạn.')}
           </p>
-          {canSignIn && <Button size="sm" onClick={() => void connect(savedClient)}>Đăng nhập Google</Button>}
+          {canSignIn && <Button size="sm" onClick={() => void connect(savedClient)}>{tr('Đăng nhập Google')}</Button>}
         </div>
       )}
       {connecting && (
         <div role="status" className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <CloudSpinner className="h-3.5 w-3.5" />
-          <span className="min-w-0 flex-1">Đang chờ đăng nhập trên trình duyệt…</span>
-          <Button size="sm" variant="ghost" loading={busy === 'google-cancel'} onClick={() => void cancel()}>Huỷ</Button>
+          <span className="min-w-0 flex-1">{tr('Đang chờ đăng nhập trên trình duyệt…')}</span>
+          <Button size="sm" variant="ghost" loading={busy === 'google-cancel'} onClick={() => void cancel()}>{tr('Huỷ')}</Button>
         </div>
       )}
       {google.lastError && !connecting && <p className="text-xs text-destructive">{google.lastError}</p>}
       {google.customClient && (
-        <p className="text-[11px] text-subtle-foreground">Đang dùng client riêng ({shortClientId(google.clientId)})</p>
+        <p className="text-[11px] text-subtle-foreground">{trx('Đang dùng client riêng ({{v1}})', { v1: shortClientId(google.clientId) })}</p>
       )}
       <CustomClientSection
         google={google}
@@ -461,24 +460,24 @@ export function GoogleAccountBlock({ google, onStorage, inUse = false, initialCl
   );
 }
 
-// ─── Thẻ Kho lưu ─────────────────────────────────────────────────────────────────────────
+// ─── Storage card ─────────────────────────────────────────────────────────────────────────
 
 export interface StoragePickerProps {
   storage: CloudStorageStatus;
   connection: CloudConnectionStatus | null;
-  /** Lý do chưa đổi được kho (đồng bộ đang bật, máy dự phòng…); null = đổi được. */
+  /** Reason the storage cannot be changed yet (sync on, a standby machine…); null = can change. */
   lockReason?: string | null;
-  /** Đồng bộ đang chạy trên kho đang chọn (hỏi kỹ hơn khi ngắt Google). */
+  /** Sync is running on the selected storage (ask more carefully when disconnecting Google). */
   inUse?: boolean;
-  /** Trạng thái kho mới từ main (đổi kho, đăng nhập / ngắt Google). */
+  /** New storage status from main (switch storage, sign in / disconnect Google). */
   onStorage?: (storage: CloudStorageStatus) => void;
-  /** Đã đổi kho → đọc lại trạng thái đồng bộ. */
+  /** Storage switched → re-read the sync status. */
   onProviderChanged?: (provider: CloudStorageProvider) => void;
-  /** Cuộn tới ô kết nối Cloudflare ở đầu trang. */
+  /** Scroll to the Cloudflare connection box at the top of the page. */
   onConnect?: () => void;
-  /** Làm nổi thẻ (bấm "Chọn kho lưu" ở thông báo phía trên). */
+  /** Highlight the card (when "Chọn kho lưu" (Choose storage) is clicked in the notice above). */
   highlight?: boolean;
-  /** Mở sẵn "Nâng cao: dùng client OAuth riêng" (test). */
+  /** Open "Nâng cao: dùng client OAuth riêng" (Advanced: use own OAuth client) by default (test). */
   initialClientOpen?: boolean;
   className?: string;
 }
@@ -507,15 +506,15 @@ export function StoragePicker({
       return;
     }
     const ok = await showConfirm({
-      title: `Đổi kho lưu sang ${storageLabel(next)}?`,
-      message: `Ảnh, file sẽ được tải lên lại từ đầu lên kho mới; dữ liệu tạo bản gốc mới. Bản trên ${storageLabel(provider)} vẫn giữ — chọn lại kho cũ để khôi phục từ đó.`,
-      confirmText: 'Đổi kho lưu',
+      title: tr('Đổi kho lưu sang {{v1}}?', { v1: storageLabel(next) }),
+      message: tr('Ảnh, file sẽ được tải lên lại từ đầu lên kho mới; dữ liệu tạo bản gốc mới. Bản trên {{v1}} vẫn giữ — chọn lại kho cũ để khôi phục từ đó.', { v1: storageLabel(provider) }),
+      confirmText: tr('Đổi kho lưu'),
       variant: 'warning',
     });
     if (!ok) return;
     setTarget(next);
     try {
-      const res = await run('provider', () => cloudApi()?.storage?.setProvider(next), `Đã chọn kho ${storageLabel(next)}`);
+      const res = await run('provider', () => cloudApi()?.storage?.setProvider(next), tr('Đã chọn kho {{v1}}', { v1: storageLabel(next) }));
       if (!res) return;
       if (res.storage) onStorage?.(res.storage);
       onProviderChanged?.(next);
@@ -524,15 +523,15 @@ export function StoragePicker({
     }
   };
 
-  // Trạng thái R2: đang chọn thì theo main; không chọn thì xem kết nối Cloudflare ở đầu trang.
+  // R2 status: when a storage is chosen, follow main; when none is chosen, look at the Cloudflare connection at the top of the page.
   const r2Active = provider === 'r2';
   const r2Ready = r2Active ? storage.ready : isR2Ready(connection);
   let r2Status: string;
-  if (r2Ready) r2Status = 'Dùng tài khoản Cloudflare đã kết nối ở đầu trang';
+  if (r2Ready) r2Status = tr('Dùng tài khoản Cloudflare đã kết nối ở đầu trang');
   else if (r2Active && storage.notReadyReason) r2Status = storage.notReadyReason;
-  else if (!connection?.connected) r2Status = 'Cần kết nối Cloudflare ở đầu trang';
-  else if (permissionOf(connection, 'r2')?.r2NotEnabled) r2Status = 'Tài khoản Cloudflare chưa bật R2';
-  else r2Status = 'Token Cloudflare thiếu quyền R2';
+  else if (!connection?.connected) r2Status = tr('Cần kết nối Cloudflare ở đầu trang');
+  else if (permissionOf(connection, 'r2')?.r2NotEnabled) r2Status = tr('Tài khoản Cloudflare chưa bật R2');
+  else r2Status = tr('Token Cloudflare thiếu quyền R2');
 
   return (
     <Card
@@ -544,15 +543,14 @@ export function StoragePicker({
     >
       <div>
         <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <HardDriveIcon className="h-4 w-4 text-muted-foreground" />
-          Kho lưu
+          {trx('<0/>Kho lưu', { 0: <HardDriveIcon className="h-4 w-4 text-muted-foreground" /> })}
         </p>
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-          Nơi đặt ảnh, file và bản sao dữ liệu. Mỗi lúc dùng một kho; Địa chỉ Internet vẫn chạy trên Cloudflare.
+          {tr('Nơi đặt ảnh, file và bản sao dữ liệu. Mỗi lúc dùng một kho; Địa chỉ Internet vẫn chạy trên Cloudflare.')}
         </p>
       </div>
 
-      <div role="radiogroup" aria-label="Kho lưu" className="grid gap-3 md:grid-cols-2">
+      <div role="radiogroup" aria-label={tr('Kho lưu')} className="grid gap-3 md:grid-cols-2">
         <StoreOption
           value="r2"
           title="Cloudflare R2"
@@ -570,7 +568,7 @@ export function StoragePicker({
                 <span className="min-w-0">{r2Status}</span>
               </p>
               {!r2Ready && !connection?.connected && onConnect && (
-                <Button variant="link" size="sm" className="text-xs" onClick={onConnect}>Kết nối Cloudflare</Button>
+                <Button variant="link" size="sm" className="text-xs" onClick={onConnect}>{tr('Kết nối Cloudflare')}</Button>
               )}
             </div>
           )}

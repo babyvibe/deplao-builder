@@ -1,17 +1,18 @@
 /**
- * Nhật ký request API (giữ theo api_request_log_days). Không lưu body — chỉ đường dẫn, mã, thời gian.
+ * API request log (kept per api_request_log_days). The body is not stored: only the path, status code and time.
  */
 import { cn } from '@/lib/cn';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ipc, { ApiKeyRecord, ApiRequestLogRow } from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
 import { Badge, btn, ErrorBox, fmtTime, httpTone, inputCls } from './apiUi';
+import { tr } from '../../../../shared/i18n';
 
 export function principalLabel(principalId: string, keyNames: Map<string, string>): string {
   if (keyNames.has(principalId)) return keyNames.get(principalId)!;
-  if (principalId.startsWith('employee:')) return `Nhân viên ${principalId.slice(9)}`;
-  if (principalId.startsWith('plugin:')) return `Ứng dụng ${principalId.slice(7)}`;
-  if (principalId === 'anonymous' || !principalId) return 'Không có key';
+  if (principalId.startsWith('employee:')) return tr('Nhân viên {{v1}}', { v1: principalId.slice(9) });
+  if (principalId.startsWith('plugin:')) return tr('Ứng dụng {{v1}}', { v1: principalId.slice(7) });
+  if (principalId === 'anonymous' || !principalId) return tr('Không có key');
   return principalId;
 }
 
@@ -27,7 +28,7 @@ export default function ApiLogsPanel() {
     try {
       const [logs, keyList] = await Promise.all([ipc.api!.listLogs(200, filter || undefined), ipc.api!.listKeys(true)]);
       if (logs.success) { setRows(logs.logs || []); setError(null); }
-      else setError(logs.error || 'Không tải được nhật ký');
+      else setError(logs.error || tr('Không tải được nhật ký'));
       if (keyList.success) setKeys(keyList.keys || []);
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -44,11 +45,11 @@ export default function ApiLogsPanel() {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <select className={cn(inputCls, 'w-auto min-w-[220px]')} value={filter} onChange={e => setFilter(e.target.value)}>
-          <option value="">Mọi key</option>
+          <option value="">{tr('Mọi key')}</option>
           {keys.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
         </select>
-        <button type="button" className={btn.secondary} onClick={load} disabled={loading}>Tải lại</button>
-        <span className="text-[11px] text-subtle-foreground">200 request gần nhất. Không lưu nội dung request.</span>
+        <button type="button" className={btn.secondary} onClick={load} disabled={loading}>{tr('Tải lại')}</button>
+        <span className="text-[11px] text-subtle-foreground">{tr('200 request gần nhất. Không lưu nội dung request.')}</span>
       </div>
       <ErrorBox message={error} />
       {loading && rows.length === 0 ? (
@@ -61,16 +62,16 @@ export default function ApiLogsPanel() {
 }
 
 export function LogTable({ rows, keyNames }: { rows: ApiRequestLogRow[]; keyNames: Map<string, string> }) {
-  if (rows.length === 0) return <p className="text-xs text-subtle-foreground">Chưa có request nào.</p>;
+  if (rows.length === 0) return <p className="text-xs text-subtle-foreground">{tr('Chưa có request nào.')}</p>;
   return (
     <div className="bg-card rounded-xl p-2 overflow-x-auto">
       <table className="w-full text-[11px]">
         <thead>
           <tr className="text-subtle-foreground text-left">
-            <th className="py-1 px-2 font-medium">Thời gian</th>
-            <th className="py-1 px-2 font-medium">Ai gọi</th>
-            <th className="py-1 px-2 font-medium">Endpoint</th>
-            <th className="py-1 px-2 font-medium">Kết quả</th>
+            <th className="py-1 px-2 font-medium">{tr('Thời gian')}</th>
+            <th className="py-1 px-2 font-medium">{tr('Ai gọi')}</th>
+            <th className="py-1 px-2 font-medium">{tr('Endpoint')}</th>
+            <th className="py-1 px-2 font-medium">{tr('Kết quả')}</th>
             <th className="py-1 px-2 font-medium text-right">ms</th>
             <th className="py-1 px-2 font-medium">IP</th>
           </tr>

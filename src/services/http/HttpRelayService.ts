@@ -38,15 +38,16 @@ import {
 } from './proxyActionPolicy';
 import { isAccountChannelProxy } from './employeeChannelRoutes';
 import {
-    checkRestCommand, commandPathParams, defaultCommandAccount, positiveInt, workflowPageIds, workflowPagesAllowed,
+    checkRestCommand, commandExtraAccountIds, commandPathParams, defaultCommandAccount, positiveInt, workflowPageIds, workflowPagesAllowed,
 } from './restCommandPolicy';
 import { canAccessLibraryOwner, checkMediaAccess, classifyMediaPath } from './bossFileAccess';
 import ApiPlatform from '../api/ApiPlatform';
 import { getApiSettingBool } from '../api/settings';
+import { tr } from '../../shared/i18n';
 
 /**
- * Cloudflare tự động (src/services/cloudflare/tunnel): chế độ 'cloudflare_auto' → tunnel của relay là dịch vụ 'relay'
- * của tiến trình cloudflared dùng chung (địa chỉ cố định). Nạp lười — chế độ khác / lỗi nạp → null = chạy như cũ.
+ * Cloudflare auto (src/services/cloudflare/tunnel): in 'cloudflare_auto' mode the relay's tunnel is the 'relay' service
+ * of the shared cloudflared process (fixed address). Lazy-loaded: other modes / load errors → null = run as before.
  */
 type CloudTunnelApi = typeof import('../cloudflare/tunnel');
 
@@ -97,7 +98,7 @@ interface EmployeeSnapshot {
         is_active: number;
         /** zalo | facebook | telegram_user | telegram_bot */
         channel: string;
-        /** 1 = phiên đang chạy trên Boss (theo kênh — isAccountSessionOnline) */
+        /** 1 = session is running on Boss (per channel: isAccountSessionOnline) */
         listener_active: number;
     }>;
     onlineAccounts: string[];
@@ -110,7 +111,7 @@ interface EmployeeSnapshot {
  *
  * Replaces SocketRelayService - no persistent WebSocket connections.
  */
-/** Đường dẫn chưa có file: "a.png" → "a (1).png" → "a (2).png"… (không ghi đè file người khác vừa upload). */
+/** Path with no existing file: "a.png" → "a (1).png" → "a (2).png"… (does not overwrite a file another employee just uploaded). */
 function uniqueFilePath(dir: string, name: string): string {
     const ext = path.extname(name);
     const base = name.slice(0, name.length - ext.length);
@@ -128,9 +129,9 @@ class HttpRelayService {
     private pinnedDbPath: string | null = null;
     private offlineCheckTimer: ReturnType<typeof setInterval> | null = null;
 
-    /** REST API response cache (labels, flags, pins…): nhân viên gọi lại sau MỖI tin nhắn — tránh chặn main thread
-     *  (better-sqlite3 đồng bộ). Entry chỉ dùng được khi DB chưa đổi kể từ lúc lưu (restCacheToken) và còn trong TTL;
-     *  chỉ lưu kết quả thành công. Xem RestReadCache (employeeRestRead.ts). */
+    /** REST API response cache (labels, flags, pins…): employees call again after EVERY message. Avoids blocking the main thread
+     *  (better-sqlite3 is synchronous). An entry is only usable while the DB has not changed since it was saved (restCacheToken) and is still within the TTL;
+     *  only successful results are stored. See RestReadCache (employeeRestRead.ts). */
     private static REST_CACHE_TTL_MS = 1500; // 1.5s cache for frequent read-only queries
     private restApiCache = new RestReadCache(HttpRelayService.REST_CACHE_TTL_MS);
 
@@ -146,7 +147,7 @@ class HttpRelayService {
      * queued here and flushed the next time the employee's SSE stream reconnects.
      */
     private sseEventQueue = new Map<string, Array<{ channel: string; data: any; ts: number }>>();
-    /** Lệnh poll gần nhất theo kênh + tài khoản + hội thoại (gộp poll reaction Telegram của nhiều nhân viên). */
+    /** Latest poll command per channel + account + conversation (merges the Telegram reaction polls of several employees). */
     private recentPolls = new Map<string, RecentPoll>();
     private static SSE_QUEUE_TTL_MS = 600_000; // 10-minute TTL (was 2 min - WAN reconnect can take longer)
     private static SSE_QUEUE_MAX = 500;        // max queued events per employee (was 300)
@@ -154,16 +155,16 @@ class HttpRelayService {
     /** Tunnel state */
     private tunnelActive = false;
     private tunnelUrl: string | null = null;
-    /** Lưu tunnel cần restart khi relay start lại (sau workspace switch) */
+    /** Saved tunnel that needs a restart when the relay starts again (after a workspace switch) */
     private tunnelPendingRestart = false;
-    /** TunnelService.watch() của cổng relay (đăng ký 1 lần / cổng). */
+    /** TunnelService.watch() of the relay port (registered once per port). */
     private tunnelWatchOff: (() => void) | null = null;
     private tunnelWatchPort: number | null = null;
-    /** Lần đổi địa chỉ WAN gần nhất (so với địa chỉ lần chạy trước, lưu ở relay_tunnel_last_url). */
+    /** Most recent WAN address change (compared with the address from the previous run, saved in relay_tunnel_last_url). */
     private tunnelUrlChange: BossUrlChangedEvent | null = null;
-    /** Lần bật tunnel gần nhất là tự bật (mở app / relay chạy lại), không phải BOSS bấm. */
+    /** The most recent tunnel start was automatic (app opened / relay restarted), not pressed by BOSS. */
     private tunnelAutoStarted = false;
-    /** Cloudflare tự động: huỷ nghe thay đổi, đang ở chế độ đó, địa chỉ relay đã ghi nhận, hẹn tắt tunnel kiểu cũ. */
+    /** Cloudflare auto: stop listening for changes, is in this mode, relay address recorded, schedule the old-style tunnel to shut down. */
     private cloudTunnelOff: (() => void) | null = null;
     private cloudTunnelMode = false;
     private cloudRelayUrl: string | null = null;
@@ -171,7 +172,7 @@ class HttpRelayService {
     private static TUNNEL_LAST_URL_KEY = 'relay_tunnel_last_url';
     private static TUNNEL_AUTOSTART_KEY = 'relay_tunnel_autostart';
 
-    /** powerSaveBlocker id — chặn Mac/OS ngủ khi relay đang phục vụ nhân viên */
+    /** powerSaveBlocker id: blocks Mac/OS sleep while the relay serves employees */
     private powerSaveId: number | null = null;
 
     /**
@@ -265,8 +266,8 @@ class HttpRelayService {
     private static PUSH_TIMEOUT_MS = 3000;
 
     /**
-     * Channels to relay from EventBroadcaster → employees — một nguồn với phía nhân viên (relayChannels.ts:
-     * nhân viên chuyển tiếp đúng các kênh này; kênh không relay phải nằm trong BOSS_ONLY_CHANNELS kèm lý do).
+     * Channels to relay from EventBroadcaster → employees: the same source as the employee side (relayChannels.ts:
+     * employees forward exactly these channels; a channel that is not relayed must be in BOSS_ONLY_CHANNELS with a reason).
      */
     private static RELAY_CHANNELS: readonly string[] = RELAY_CHANNELS;
 
@@ -295,7 +296,7 @@ class HttpRelayService {
 
             const assignedAccounts = emp.assigned_accounts || [];
             const allAccounts = db.getAccounts();
-            // Trạng thái phiên theo kênh (Facebook / Telegram không nằm trong ConnectionManager của Zalo)
+            // Per-channel session state (Facebook / Telegram are not in the Zalo ConnectionManager)
             const channelOf = new Map<string, string>(
                 allAccounts.map((a: any): [string, string] => [String(a.zalo_id), String(a.channel || 'zalo')]));
             const onlineAccounts = assignedAccounts.filter((zaloId) => this.isAccountSessionOnline(zaloId, channelOf.get(zaloId)));
@@ -343,9 +344,9 @@ class HttpRelayService {
                     phone: a.phone || '',
                     is_business: a.is_business || 0,
                     is_active: a.is_active,
-                    // Kênh: máy nhân viên cần để gọi đúng adapter (thiếu → tài khoản Facebook / Telegram bị coi là Zalo)
+                    // Channel: the employee machine needs it to call the right adapter (missing → Facebook / Telegram accounts are treated as Zalo)
                     channel: (a as any).channel || 'zalo',
-                    // Zalo My Documents (hội thoại có sẵn của Zalo) → máy nhân viên ghim đúng hội thoại
+                    // Zalo My Documents (the built-in Zalo conversation) → the employee machine pins that exact conversation
                     send2me_id: db.resolveMyDocumentsId(a),
                     listener_active: onlineAccounts.includes(a.zalo_id) ? 1 : 0,
                 }));
@@ -375,23 +376,23 @@ class HttpRelayService {
         this.pinnedDbPath = DatabaseService.getInstance().getDbPath();
 
         try {
-            // Mọi yêu cầu của nhân viên phục vụ workspace local đang chạy (CSDL Boss), kể cả khi relay được bật từ một lệnh
-            // giao diện lúc màn hình đang mở workspace nhân viên (phạm vi 'ui' của dbScope lan theo luồng async).
+            // Every request from an employee serves the local workspace that is running (Boss DB), even when the relay was turned on by a command
+            // the UI while the employee workspace screen is open (the 'ui' scope of dbScope carries across async flows).
             this.httpServer = http.createServer((req, res) => runInRuntimeScope(() => this.handleHttpRequest(req, res)));
 
-            // Attach Socket.IO vào cùng HTTP server (path /socket.io)
-            // Employee dùng WebSocket thay SSE cho real-time event. Realtime + catch-up lọc theo cùng
-            // assigned_accounts với kiểm tra quyền REST (updateEmployeeRooms giữ đồng bộ).
+            // Attach Socket.IO to the same HTTP server (path /socket.io)
+            // Employees use WebSocket instead of SSE for real-time events. Realtime + catch-up filter by the same
+            // assigned_accounts as the REST permission check (updateEmployeeRooms keeps them in sync).
             SocketIOService.getInstance().attach(this.httpServer, {
                 resolveAssignedAccounts: (employeeId) => this.employees.get(employeeId)?.assigned_accounts,
             });
-            // Public API v1: namespace Socket.IO /v1 cho app ngoài & plugin (tách khỏi nhân viên).
+            // Public API v1: Socket.IO namespace /v1 for external apps & plugins (separate from employees).
             ApiPlatform.getInstance().attachSocket(SocketIOService.getInstance().getServer());
 
             this.hookEventBroadcaster();
             this.startOfflineCheck();
 
-            // Tuỳ chọn ở Công cụ → Ứng dụng, API & Webhook → API: chỉ lắng nghe 127.0.0.1 (máy không có nhân viên LAN).
+            // Option under Tools → Application, API & Webhook → API: listen on 127.0.0.1 only (a machine with no LAN employees).
             let bindLocalOnly = false;
             try { bindLocalOnly = getApiSettingBool('api_bind_localhost_only'); } catch { bindLocalOnly = false; }
 
@@ -400,11 +401,11 @@ class HttpRelayService {
                     this.running = true;
                     this.startPowerSaveBlocker();
                     Logger.log(`[HttpRelayService] ✅ Server started on port ${this.port}`);
-                    // Cloudflare tự động: nghe địa chỉ của tunnel dùng chung và ghi nhận địa chỉ hiện tại (chế độ khác: không làm gì)
+                    // Cloudflare auto: listen on the shared tunnel's address and record the current address (other modes: do nothing)
                     this.ensureCloudTunnelWatcher();
                     this.onCloudTunnelChange();
-                    // Bật lại tunnel: đang chạy trước khi relay dừng (đổi workspace) hoặc bật "Tự bật tunnel khi mở app".
-                    // Dùng đúng cấu hình đã lưu (Quick / Cloudflare có tài khoản / ngrok); lỗi (chưa có mạng) → tự thử lại.
+                    // Turn the tunnel back on: it was running before the relay stopped (workspace switch) or "Auto-start tunnel when the app opens" is on.
+                    // Use the saved config (Quick / Cloudflare with an account / ngrok); on error (no network yet) → retry automatically.
                     const restoreTunnel = this.tunnelPendingRestart || this.isTunnelAutoStart();
                     this.tunnelPendingRestart = false;
                     if (restoreTunnel) {
@@ -451,7 +452,7 @@ class HttpRelayService {
             this.sseClients.clear();
             this.sseKeepaliveTimers.clear();
             this.sseLastWriteOk.clear();
-            // Stop tunnel if active (kể cả đang tự chạy lại) — nhưng nhớ để restart sau
+            // Stop the tunnel if active (including one restarting by itself), but remember to restart it later
             if (this.tunnelActive || TunnelService.getState(this.port)) {
                 this.tunnelPendingRestart = true;
                 TunnelService.stop(this.port).catch(() => {});
@@ -493,7 +494,7 @@ class HttpRelayService {
             sseConnected: this.sseClients.has(e.employee_id),
         }));
         const tunnel = this.getTunnelStatus();
-        // Cloudflare tự động: địa chỉ từ tunnel dùng chung (tunnelActive/tunnelUrl riêng chỉ theo tunnel kiểu cũ)
+        // Cloudflare auto: the address comes from the shared tunnel (tunnelActive/tunnelUrl are only for the old-style tunnel)
         const cloudMode = !!cloudTunnelIfAuto();
         return {
             running: this.running,
@@ -510,16 +511,16 @@ class HttpRelayService {
         return this.running;
     }
 
-    /** Quản lý ngắt một nhân viên (UI / API v1): kết thúc hẳn phiên — token cũ hết hiệu lực, phải đăng nhập lại. */
+    /** Manage the removal of one employee (UI / API v1): ends the session completely. The old token is no longer valid; the employee must log in again. */
     public kickEmployee(employeeId: string): void {
-        this.terminateEmployeeSession(employeeId, 'Bị ngắt kết nối bởi quản lý');
+        this.terminateEmployeeSession(employeeId, tr('Bị ngắt kết nối bởi quản lý'));
     }
 
     /**
-     * Kết thúc hẳn phiên của một nhân viên — kick, khoá / xoá / đổi mật khẩu (employeeIpc gọi sau khi sửa / xoá):
-     * báo 'relay:kicked' kèm lý do → thu hồi token (REST / heartbeat 401, bắt tay Socket.IO bị từ chối) → ngắt socket sau
-     * ~1 s (kịp gửi thông báo) → bỏ đăng ký. Trước đây chỉ bỏ đăng ký: token còn hạn nên request kế tiếp tự đăng ký lại,
-     * socket vẫn mở. Relay không chạy → không có phiên nào để ngắt, chỉ thu hồi token.
+     * Ends an employee's session completely: kick, lock / delete / change password (employeeIpc calls this after an edit or delete):
+     * sends 'relay:kicked' with the reason → revokes the token (REST / heartbeat 401; the Socket.IO handshake is rejected) → disconnects the socket after
+     * ~1 s (time to deliver the notice) → unregisters. Previously it only unregistered: the token was still valid, so the next request re-registered it and
+     * the socket stayed open. If the relay is not running there is no session to end, so it only revokes the token.
      */
     public terminateEmployeeSession(employeeId: string, reason: string): void {
         if (!employeeId) return;
@@ -528,27 +529,27 @@ class HttpRelayService {
             if (emp) {
                 this.pushControlToEmployee(emp, 'relay:kicked', { reason });
             } else {
-                // Socket còn nối nhưng chưa đăng ký lại (vd ngay sau khi Boss khởi động lại)
+                // Socket still connected but not registered again (e.g. right after Boss restarted)
                 try {
                     const sio = SocketIOService.getInstance();
                     if (sio.isOnline(employeeId)) sio.emitToEmployee(employeeId, 'relay:kicked', { reason });
-                } catch { /* socket server chưa chạy */ }
+                } catch { /* socket server not running */ }
             }
         }
         EmployeeService.getInstance().revokeEmployeeTokens(employeeId);
         if (this.running) {
-            try { SocketIOService.getInstance().disconnectEmployee(employeeId); } catch { /* socket server chưa chạy */ }
+            try { SocketIOService.getInstance().disconnectEmployee(employeeId); } catch { /* socket server not running */ }
         }
         this.unregisterEmployee(employeeId, reason);
     }
 
     /**
-     * "Đăng xuất tất cả nhân viên": đổi khoá ký (mọi token cũ sai chữ ký — đổi trước, lỗi thì chưa đụng ai) → báo
-     * 'relay:kicked' cho mọi nhân viên đang nối → ngắt mọi socket nhân viên sau ~1 s → bỏ mọi đăng ký.
+     * "Log out all employees": changes the signing key (every old token now has a bad signature; it is changed first, so if that fails nobody is affected) → sends
+     * 'relay:kicked' to every connected employee → disconnects all employee sockets after ~1 s → removes all registrations.
      */
-    public logoutAllEmployees(reason = 'Quản lý đã đăng xuất tất cả nhân viên'): { success: boolean; notified: number; error?: string } {
+    public logoutAllEmployees(reason = tr('Quản lý đã đăng xuất tất cả nhân viên')): { success: boolean; notified: number; error?: string } {
         const rotated = EmployeeService.getInstance().rotateJwtSecret();
-        if (!rotated.success) return { success: false, notified: 0, error: rotated.error || 'Không đổi được khoá ký' };
+        if (!rotated.success) return { success: false, notified: 0, error: rotated.error || tr('Không đổi được khoá ký') };
         const notified = new Set<string>();
         if (this.running) {
             for (const emp of this.employees.values()) {
@@ -563,16 +564,16 @@ class HttpRelayService {
                     notified.add(employeeId);
                 }
                 sio.disconnectAllEmployees();
-            } catch { /* socket server chưa chạy */ }
+            } catch { /* socket server not running */ }
         }
-        // Mọi đăng ký + mọi luồng SSE (kể cả SSE của nhân viên không còn trong danh sách đăng ký)
+        // All registrations + all SSE streams (including the SSE of employees no longer in the registration list)
         const everyone = new Set<string>([...this.employees.keys(), ...this.sseClients.keys()]);
         for (const employeeId of everyone) this.unregisterEmployee(employeeId, reason);
         Logger.warn(`[HttpRelayService] 🔐 Đã đăng xuất tất cả nhân viên (${notified.size} nhân viên đang nối được báo)`);
         return { success: true, notified: notified.size };
     }
 
-    /** Bỏ đăng ký một nhân viên: đóng SSE, xoá hàng đợi, kết thúc phiên online trong DB, cập nhật danh sách. */
+    /** Unregister one employee: close the SSE, clear the queue, end the online session in the DB, update the list. */
     private unregisterEmployee(employeeId: string, why: string): void {
         const sseRes = this.sseClients.get(employeeId);
         if (sseRes) { try { sseRes.end(); } catch {} this.sseClients.delete(employeeId); }
@@ -592,15 +593,15 @@ class HttpRelayService {
     // ─── HTTP Router ──────────────────────────────────────────────────
 
     private handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-        // readBody cần res để trả 413 khi body vượt giới hạn.
+        // readBody needs res to return 413 when the body exceeds the limit.
         (req as any).__relayRes = res;
-        // ── Public API v1 + /docs (ApiPlatform) — xử lý riêng, không đụng route nhân viên ──
+        // ── Public API v1 + /docs (ApiPlatform): handled separately, does not touch the employee routes ──
         if (ApiPlatform.getInstance().handles(req.url || '')) {
             ApiPlatform.getInstance().handle(req, res).catch((err: any) => {
                 Logger.error(`[HttpRelayService] API v1 error: ${err?.message || err}`);
                 if (!res.headersSent) {
                     res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Lỗi không mong đợi' } }));
+                    res.end(JSON.stringify({ success: false, error: { code: 'INTERNAL_ERROR', message: tr('Lỗi không mong đợi') } }));
                 }
             });
             return;
@@ -670,7 +671,7 @@ class HttpRelayService {
         if (req.method === 'POST' && url.startsWith('/api/command/')) {
             return this.handleRestApi(req, res);
         }
-        // Truy vấn đọc dùng POST vì danh sách id dài (sticker theo id; liên hệ CRM lọc theo nhãn Zalo)
+        // Read queries use POST because the id list is long (stickers by id; CRM contacts filtered by Zalo label)
         if (req.method === 'POST' && url.startsWith('/api/query/stickers/by-ids')) {
             return this.handleRestApi(req, res);
         }
@@ -687,7 +688,7 @@ class HttpRelayService {
         if (req.method === 'POST' && url.startsWith('/api/library/')) {
             return this.handleRestApi(req, res);
         }
-        // Sửa / xoá item, đổi tên / xoá thư mục thư viện (DataAccessor dùng PATCH / DELETE) — trước đây router trả 404
+        // Edit / delete an item, rename / delete a library folder (DataAccessor uses PATCH / DELETE): the router used to return 404
         if ((req.method === 'PATCH' || req.method === 'DELETE') && url.startsWith('/api/library/')) {
             return this.handleRestApi(req, res);
         }
@@ -703,7 +704,7 @@ class HttpRelayService {
             try {
                 const { username, password, callbackUrl } = JSON.parse(body);
                 if (!username || !password) {
-                    return this.json(res, 400, { success: false, error: 'Thiếu username hoặc password' });
+                    return this.json(res, 400, { success: false, error: tr('Thiếu username hoặc password') });
                 }
 
                 const result = await EmployeeService.getInstance().authenticate(username, password);
@@ -762,7 +763,7 @@ class HttpRelayService {
                 });
             } catch (err: any) {
                 Logger.error(`[HttpRelayService] Login error: ${err.message}`);
-                this.json(res, 400, { success: false, error: 'Request không hợp lệ' });
+                this.json(res, 400, { success: false, error: tr('Request không hợp lệ') });
             }
         }, HttpRelayService.SMALL_BODY_BYTES);
     }
@@ -782,8 +783,8 @@ class HttpRelayService {
                     employee.callbackUrl = callbackUrl;
                 }
 
-                // Socket.IO đã thay thế SSE - không cần detect half-open nữa
-                // (heartbeat chỉ để xác nhận employee còn alive)
+                // Socket.IO has replaced SSE, so there is no need to detect half-open connections any more
+                // (the heartbeat is only used to confirm the employee is still alive)
 
                 this.json(res, 200, { success: true, ts: Date.now() });
             } catch (err: any) {
@@ -819,15 +820,15 @@ class HttpRelayService {
     }
 
     private async executeProxyAction(employee: RegisteredEmployee, channel: string, params: any): Promise<any> {
-        // ── Tài khoản thực hiện (proxyActionPolicy.resolveProxyAccount): id ghi rõ (params hoặc auth.accountId/zaloId)
-        // phải được giao; kênh chạy bằng phiên tài khoản (registry Zalo, login:connect) mà không ghi rõ → chỉ đoán khi
-        // không mơ hồ (một tài khoản được giao / hội thoại thuộc đúng một tài khoản). Trước đây thiếu zaloId → tài khoản
-        // được giao ĐẦU TIÊN: gửi tin / cảm xúc / đã đọc từ tài khoản B chạy bằng tài khoản A.
+        // ── Acting account (proxyActionPolicy.resolveProxyAccount): an explicitly stated ID (params or auth.accountId/zaloId)
+        // must be assigned; a channel that runs on an account session (Zalo registry, login:connect) without a stated ID → only guess when
+        // the guess is unambiguous (one assigned account / the conversation belongs to exactly one account). Previously, a missing zaloId → the account
+        // that was assigned FIRST: a message / reaction / read from account B ran as account A.
         const { ipcHandlerRegistry: zaloRegistry } = require('../../../electron/ipc/zalo/zaloIpc');
         const isRegistryChannel = !!zaloRegistry?.has(channel);
-        // Facebook / Telegram cá nhân (employeeChannelRoutes, nhóm "proxy"): tài khoản = params.accountId, BẮT BUỘC và phải
-        // được giao (Facebook: id nội bộ fb_accounts.id → accounts.zalo_id trước khi so). Trước đây kênh fb: / telegramUser:
-        // không qua kiểm tra tài khoản nào (resolveProxyAccount bỏ qua accountId ở cấp params).
+        // Facebook / Telegram personal (employeeChannelRoutes, "proxy" group): the account = params.accountId, REQUIRED and must be
+        // assigned (Facebook: the internal id fb_accounts.id → accounts.zalo_id before comparing). Previously the fb: / telegramUser: channels
+        // went through no account check at all (resolveProxyAccount ignored accountId at the params level).
         const isAccountChannel = isAccountChannelProxy(channel);
         const accountDecision = isAccountChannel
             ? resolveAccountChannelProxy(params, employee.assigned_accounts, (id) => this.canonicalProxyAccountId(channel, id))
@@ -844,17 +845,17 @@ class HttpRelayService {
             Logger.log(`[HttpRelayService] proxy ${channel}: tài khoản ${zaloId} suy ra từ hội thoại (UI chưa gửi id tài khoản)`);
         }
 
-        // Check permission — cần MỘT trong các module của kênh (proxyActionPolicy.proxyChannelModules: zalo/fb/telegramUser →
-        // chat, quét dữ liệu Facebook → crm, kết bạn / danh bạ → friends hoặc chat…)
+        // Check permission: needs ONE of the channel's modules (proxyActionPolicy.proxyChannelModules: zalo/fb/telegramUser →
+        // chat, Facebook data scanning → crm, add friend / contacts → friends or chat…)
         const empSvc = EmployeeService.getInstance();
         const modules = proxyChannelModules(channel);
         if (modules.length > 0 && !modules.some((m) => empSvc.hasPermission(employee.employee_id, m))) {
-            return { success: false, error: `Không có quyền truy cập module: ${modules.join(' / ')}`, code: 'MODULE_FORBIDDEN' };
+            return { success: false, error: tr('Không có quyền truy cập module: {{v1}}', { v1: modules.join(' / ') }), code: 'MODULE_FORBIDDEN' };
         }
 
-        // ── Kênh + file (proxyActionPolicy.ts). Trước đây fallback `_invokeHandlers` gọi được MỌI handler ipcMain
-        // (employee:update, relay:*, cài đặt, plugin, API key…) và handler gửi file nhận đường dẫn tuỳ ý trên máy Boss
-        // (gửi được cả file DB chứa cookie mọi tài khoản vào một cuộc trò chuyện).
+        // ── Channels + files (proxyActionPolicy.ts). Previously the `_invokeHandlers` fallback could call ANY ipcMain handler
+        // (employee:update, relay:*, settings, plugins, API keys…), and the file-sending handler accepted an arbitrary path on the Boss machine
+        // (it could send the whole DB file, containing every account's cookies, into a conversation).
         const channelDecision = checkProxyChannel(channel, (c) => !!zaloRegistry?.has(c));
         if (channelDecision.allowed === false) {
             Logger.warn(`[HttpRelayService] 🚫 proxy ${channel} employee=${employee.employee_id}: ${channelDecision.code}`);
@@ -869,20 +870,20 @@ class HttpRelayService {
         const libraryDenied = this.checkProxyLibraryItems(employee, params);
         if (libraryDenied) {
             Logger.warn(`[HttpRelayService] 🚫 proxy ${channel} employee=${employee.employee_id}: thư viện ${libraryDenied}`);
-            return { success: false, error: 'Không có quyền dùng file thư viện này', code: 'ACCOUNT_FORBIDDEN' };
+            return { success: false, error: tr('Không có quyền dùng file thư viện này'), code: 'ACCOUNT_FORBIDDEN' };
         }
-        // Lệnh chỉ mang id bản ghi (chiến dịch, tin nhắn nhanh…): bản ghi phải thuộc tài khoản được giao
+        // A command that only carries a record id (campaign, quick message…): the record must belong to the assigned account
         const ownerDenied = this.checkProxyRecordOwner(employee, channel, params);
         if (ownerDenied) {
             Logger.warn(`[HttpRelayService] 🚫 proxy ${channel} employee=${employee.employee_id}: ${ownerDenied}`);
             return { success: false, error: ownerDenied, code: 'ACCOUNT_FORBIDDEN' };
         }
-        // Kênh registry Zalo chạy bằng phiên của tài khoản → tài khoản phải có phiên (connection) trên Boss. Không có thì
-        // wrap() / resolveZaloId không khớp được cookie và rơi vào "kết nối duy nhất" → thao tác bằng tài khoản KHÁC.
-        // (Phiên đang kết nối lại — connected=false nhưng còn connection — vẫn cho chạy như trên máy Boss.)
+        // A Zalo registry channel runs on the account's session → the account must have a session (connection) on Boss. Without one, then
+        // wrap() / resolveZaloId does not match the cookie and falls into "the only connection" → the action runs as a DIFFERENT account.
+        // (A session that is reconnecting, i.e. connected=false but still has a connection, is still allowed to run as on Boss.)
         if (isRegistryChannel && zaloId && !ConnectionManager.getConnection(zaloId)) {
             Logger.warn(`[HttpRelayService] proxy ${channel}: tài khoản ${zaloId} chưa đăng nhập trên Boss`);
-            return { success: false, error: 'Tài khoản chưa đăng nhập trên Boss', code: 'ACCOUNT_OFFLINE' };
+            return { success: false, error: tr('Tài khoản chưa đăng nhập trên Boss'), code: 'ACCOUNT_OFFLINE' };
         }
 
         try {
@@ -892,10 +893,10 @@ class HttpRelayService {
                 if (realAuth) {
                     params = { ...params, auth: realAuth, _fromRelay: true };
                 } else if (zaloId) {
-                    // Không có phiên / cookie của tài khoản trên Boss: KHÔNG chuyển auth của nhân viên xuống handler — wrap()
-                    // sẽ đoán tài khoản (kết nối duy nhất / auth.zaloId) và có thể chạy bằng tài khoản khác.
+                    // No session / cookie for the account on Boss: do NOT pass the employee's auth down to the handler; wrap()
+                    // would guess the account (the only connection / auth.zaloId) and could run as another account.
                     Logger.warn(`[HttpRelayService] Proxy: could not resolve real auth for zaloId=${zaloId}, channel=${channel}`);
-                    return { success: false, error: 'Tài khoản chưa đăng nhập trên Boss', code: 'ACCOUNT_OFFLINE' };
+                    return { success: false, error: tr('Tài khoản chưa đăng nhập trên Boss'), code: 'ACCOUNT_OFFLINE' };
                 } else {
                     params = { ...params, _fromRelay: true };
                 }
@@ -924,14 +925,14 @@ class HttpRelayService {
                             return result;
                         }
                     }
-                    return { success: false, error: 'Không tìm thấy thông tin xác thực' };
+                    return { success: false, error: tr('Không tìm thấy thông tin xác thực') };
                 } catch (err: any) {
                     return { success: false, error: err.message };
                 }
             }
 
-            // Use handler registry. Facebook / Telegram cá nhân (tài khoản đã kiểm tra ở trên): ĐÚNG handler ipcMain của Boss
-            // (cùng chuẩn hoá / lưu DB / phát event như UI Boss), đi chung nhánh với registry Zalo để ghi "nhân viên nào đã gửi".
+            // Use the handler registry. Facebook / Telegram personal (account already checked above): the EXACT ipcMain handler of Boss
+            // (same normalization / DB saving / event emitting as the Boss UI), on the same branch as the Zalo registry so it records "which employee sent it".
             const { ipcHandlerRegistry } = require('../../../electron/ipc/zalo/zaloIpc');
             const handler = ipcHandlerRegistry?.get(channel)
                 ?? (isAccountChannel ? (require('electron').ipcMain as any)?._invokeHandlers?.get(channel) : undefined);
@@ -949,11 +950,11 @@ class HttpRelayService {
 
                     if (!libItem || !libItem.file_path || !fs.existsSync(libItem.file_path)) {
                         Logger.error(`[HttpRelayService] Library video file not found: ${libItem?.file_path}`);
-                        return { success: false, error: 'Không tìm thấy file video trong thư viện' };
+                        return { success: false, error: tr('Không tìm thấy file video trong thư viện') };
                     }
 
                     const videoPath = libItem.file_path;
-                    // zaloId = tài khoản đã xác định ở đầu hàm (không lấy tài khoản được giao đầu tiên)
+                    // zaloId = the account identified at the top of the function (not the first assigned account)
 
                     // Step 1: Extract video metadata & thumbnail
                     const { execSync } = require('child_process');
@@ -1026,11 +1027,11 @@ class HttpRelayService {
                             videoUrl = resp?.fileUrl || resp?.normalUrl || resp?.hdUrl || resp?.url || '';
                         } catch (err: any) {
                             Logger.error(`[HttpRelayService] Video upload error: ${err.message}`);
-                            return { success: false, error: 'Upload video thất bại' };
+                            return { success: false, error: tr('Upload video thất bại') };
                         }
                     }
                     if (!videoUrl) {
-                        return { success: false, error: 'Upload video thất bại' };
+                        return { success: false, error: tr('Upload video thất bại') };
                     }
 
                     // Step 4: Send video message
@@ -1114,8 +1115,8 @@ class HttpRelayService {
                         Logger.error(`[HttpRelayService] Library UUIDs array resolve error: ${err.message}`);
                     }
                 }
-                // Poll reaction Telegram trùng (nhiều nhân viên mở cùng nhóm) → không hỏi Telegram lần nữa trong 15 s:
-                // lần hỏi trước đã ghi DB + phát sự kiện cho mọi người (proxyActionPolicy.shouldSkipCoalescedPoll)
+                // Duplicate Telegram reaction poll (several employees open the same group) → do not ask Telegram again within 15 s:
+                // the previous poll already saved to the DB and emitted the event for everyone (proxyActionPolicy.shouldSkipCoalescedPoll)
                 if (COALESCED_POLL_CHANNELS.has(channel)) {
                     const pollKey = `${channel}|${params.accountId || ''}|${params.chatId || ''}`;
                     const pollIds: string[] = Array.isArray(params.messageIds) ? params.messageIds.map(String) : [];
@@ -1130,9 +1131,9 @@ class HttpRelayService {
                 const result = await handler(null, params);
                 this.restApiCache.clear();
 
-                // Log send actions + broadcast sender info to all workspaces. proxyActionPolicy.employeeSendInfo: Zalo theo tên
-                // kênh như cũ; Facebook / Telegram đúng các kênh gửi tin (kết quả { messageId }, hội thoại threadId / chatId);
-                // handler báo lỗi → không ghi "đã gửi" (trước đây tin gửi lỗi vẫn bị tính là nhân viên đã trả lời).
+                // Log send actions + broadcast sender info to all workspaces. proxyActionPolicy.employeeSendInfo: Zalo by name, as before;
+                // Facebook / Telegram for the exact channels that send messages (result { messageId }, conversation threadId / chatId);
+                // a handler that reports an error → do not record "sent" (previously a failed message still counted as the employee having replied).
                 const sendInfo = employeeSendInfo(channel, params, result);
                 if (sendInfo) {
                     const { msgId, threadId } = sendInfo;
@@ -1236,19 +1237,19 @@ class HttpRelayService {
                             employee_avatar: employee.avatar_url || '',
                             channel,
                         };
-                        // Push to connected employees được giao tài khoản này (cùng quy tắc với realtime Socket.IO).
-                        // Socket.IO: phát theo tài khoản + buffer cho catch-up. Nhân viên chưa nối Socket.IO (bản cũ) →
-                        // SSE / callback LAN / hàng đợi như trước. Trước đây chỉ có nhánh sau: nhân viên qua tunnel
-                        // (không SSE, không callback) bị xếp hàng mãi, không bao giờ thấy "ai đã trả lời".
+                        // Push to connected employees who are assigned this account (same rule as the Socket.IO realtime).
+                        // Socket.IO: emit per account + buffer for catch-up. Employees not connected via Socket.IO (old version) →
+                        // SSE / LAN callback / queue as before. Previously only the branch below existed: an employee over the tunnel
+                        // (no SSE, no callback) sat in the queue forever and never saw "who replied".
                         let sio: SocketIOService | null = null;
                         try {
                             sio = SocketIOService.getInstance();
                             sio.publish('relay:messageSentByEmployee', senderPayload);
-                        } catch { /* rơi về SSE / callback */ }
+                        } catch { /* fall back to SSE / callback */ }
                         const senderAudience = classifyRelayEvent('relay:messageSentByEmployee', senderPayload);
                         for (const emp of this.employees.values()) {
                             if (!canReceiveRelayEvent(senderAudience, emp.employee_id, emp.assigned_accounts)) continue;
-                            if (sio?.isOnline(emp.employee_id)) continue; // đã nhận qua Socket.IO ở trên
+                            if (sio?.isOnline(emp.employee_id)) continue; // already received via Socket.IO above
                             if (!this.pushViaSSE(emp.employee_id, 'relay:messageSentByEmployee', senderPayload)) {
                                 if (emp.callbackUrl) {
                                     this.pushToEmployee(emp, 'relay:messageSentByEmployee', senderPayload).catch(() => {});
@@ -1272,7 +1273,7 @@ class HttpRelayService {
             const internalHandlers: Map<string, Function> | undefined = (ipcMain as any)._invokeHandlers;
             if (internalHandlers && internalHandlers.has(channel)) {
                 const ipcResult = await internalHandlers.get(channel)!(null, params);
-                // Vừa ghi DB Boss: bỏ cache GET (1.5 s) để lần đọc ngay sau (UI tải lại sau khi lưu) thấy dữ liệu mới
+                // Just wrote to Boss's DB: clear the GET cache (1.5 s) so the read right after (the UI reloads after saving) sees the new data
                 this.restApiCache.clear();
                 return ipcResult;
             }
@@ -1285,8 +1286,8 @@ class HttpRelayService {
     }
 
     /**
-     * Trong `candidates` (tài khoản được giao), tài khoản nào có hội thoại / nhóm `threadIds` (bảng contacts của Boss).
-     * Dùng để đoán tài khoản cho lệnh proxy từ UI cũ không gửi id tài khoản (resolveProxyAccount).
+     * Among the `candidates` (assigned accounts), which account has the conversation / group `threadIds` (Boss's contacts table).
+     * Used to guess the account for a proxy command from an old UI that does not send an account id (resolveProxyAccount).
      */
     private lookupThreadOwners(threadIds: string[], candidates: string[]): string[] {
         const threads = threadIds.slice(0, 50);
@@ -1299,7 +1300,7 @@ class HttpRelayService {
         return rows.map((row) => String(row.owner_zalo_id));
     }
 
-    /** Chủ (owner_zalo_id) của một chiến dịch CRM; null = không có chiến dịch này. */
+    /** Owner (owner_zalo_id) of a CRM campaign; null = no such campaign. */
     private campaignOwner(campaignId: unknown): string | null {
         const id = positiveInt(campaignId);
         if (!id) return null;
@@ -1308,7 +1309,7 @@ class HttpRelayService {
         return row?.owner_zalo_id ? String(row.owner_zalo_id) : null;
     }
 
-    /** Chủ của một tin nhắn nhanh local; null = không có. */
+    /** Owner of a local quick message; null = none. */
     private quickMessageOwner(id: unknown): string | null {
         const qmId = positiveInt(id);
         if (!qmId) return null;
@@ -1318,9 +1319,9 @@ class HttpRelayService {
     }
 
     /**
-     * Lệnh proxy chỉ mang id bản ghi (không có / không đủ zaloId): bản ghi phải thuộc tài khoản được giao (và đúng
-     * tài khoản trong tham số nếu có). Trước đây đổi trạng thái / xoá chiến dịch, bật tắt tin nhắn nhanh của tài khoản
-     * KHÁC chỉ bằng id. Không thấy bản ghi → để handler tự báo. Trả thông báo lỗi, hoặc null = được phép.
+     * A proxy command that only carries a record id (no zaloId, or not enough of one): the record must belong to the assigned account (and to the
+     * account in the params, if any). Previously, changing the status / deleting a campaign or toggling a quick message of a DIFFERENT account
+     * was possible with only the id. If the record is not found, the handler reports it. Returns an error message, or null = allowed.
      */
     private checkProxyRecordOwner(employee: RegisteredEmployee, channel: string, params: any): string | null {
         let owner: string | null = null;
@@ -1336,20 +1337,25 @@ class HttpRelayService {
             return null;
         }
         if (!owner) return null;
-        if (!employee.assigned_accounts.includes(owner)) return 'Không có quyền truy cập tài khoản này';
+        if (!employee.assigned_accounts.includes(owner)) return tr('Không có quyền truy cập tài khoản này');
         const requested = String(params?.zaloId || '');
-        if (requested && requested !== owner) return 'Bản ghi không thuộc tài khoản này';
+        if (requested && requested !== owner) return tr('Bản ghi không thuộc tài khoản này');
+        // Campaign copies into other accounts: every target account must be assigned too
+        if (channel === 'crm:cloneCampaign' && commandExtraAccountIds({ targetZaloIds: params?.targetZaloIds })
+            .some((id) => !employee.assigned_accounts.includes(id))) {
+            return tr('Không có quyền truy cập tài khoản này');
+        }
         return null;
     }
 
     /**
-     * Workflow qua proxy (WorkflowEditor / kho mẫu / nhân bản của nhân viên): cùng quy tắc với REST /api/command/workflows
-     * — mọi trang của workflow (mới và đang có) thuộc tài khoản được giao; trang nguồn / đích của nhân bản cũng vậy.
+     * Workflow through the proxy (WorkflowEditor / template library / employee duplicate): the same rules as REST /api/command/workflows:
+     * every page of the workflow (new and existing) must belong to an assigned account; the source / target pages of a duplicate too.
      */
     private checkProxyWorkflowAccess(employee: RegisteredEmployee, channel: string, params: any): string | null {
         const assigned = employee.assigned_accounts;
-        const accountDenied = 'Không có quyền truy cập tài khoản này';
-        const pagesDenied = 'Workflow gắn trang không được giao cho bạn';
+        const accountDenied = tr('Không có quyền truy cập tài khoản này');
+        const pagesDenied = tr('Workflow gắn trang không được giao cho bạn');
         if (channel === 'workflow:cloneAll') {
             const ids = [params?.sourceZaloId, params?.targetZaloId].map((id) => String(id ?? ''));
             return ids.every((id) => id && assigned.includes(id)) ? null : accountDenied;
@@ -1488,10 +1494,10 @@ class HttpRelayService {
     // ═════════════════════════════════════════════════════════════════
 
     /**
-     * Handle media upload via raw binary (Content-Type: application/octet-stream).
-     * Employee sends file binary directly (không base64).
+     * Handle media upload as raw binary (Content-Type: application/octet-stream).
+     * The employee sends the file binary directly (no base64).
      * Headers: X-Filename (required), X-Zalo-Id (optional)
-     * Boss saves to media storage, returns absolute path.
+     * Boss saves it to media storage and returns the absolute path.
      */
     private handleMediaUploadMultipart(req: http.IncomingMessage, res: http.ServerResponse): void {
         const employee = this.authenticateRequest(req);
@@ -1505,16 +1511,16 @@ class HttpRelayService {
         }
         const zaloId = (req.headers['x-zalo-id'] as string) || employee.assigned_accounts[0] || '';
         if (zaloId && !employee.assigned_accounts.includes(zaloId)) {
-            return this.json(res, 403, { success: false, error: 'Không có quyền truy cập tài khoản này', code: 'ACCOUNT_FORBIDDEN' });
+            return this.json(res, 403, { success: false, error: tr('Không có quyền truy cập tài khoản này'), code: 'ACCOUNT_FORBIDDEN' });
         }
         const maxBytes = HttpRelayService.MAX_MEDIA_UPLOAD_BYTES;
         if (Number(req.headers['content-length'] || 0) > maxBytes) {
             req.resume();
-            return this.json(res, 413, { success: false, error: `File tối đa ${Math.round(maxBytes / 1024 / 1024)} MB`, code: 'PAYLOAD_TOO_LARGE' });
+            return this.json(res, 413, { success: false, error: tr('File tối đa {{v1}} MB', { v1: Math.round(maxBytes / 1024 / 1024) }), code: 'PAYLOAD_TOO_LARGE' });
         }
 
-        // Tên do nhân viên gửi (client encodeURIComponent): chỉ lấy phần tên — trước đây ghép thẳng vào đường dẫn,
-        // "..\..\Startup\x.bat" ghi được file ra ngoài thư mục media. Giữ tên gốc (Zalo dùng làm tên tệp đính kèm).
+        // The name sent by the employee (the client uses encodeURIComponent): only the name part is kept. Previously it was joined straight into the path,
+        // "..\..\Startup\x.bat" could write a file outside the media folder. The original name is kept (Zalo uses it as the attachment file name).
         const filename = toSafeFileName(rawFilename, `upload_${Date.now()}`);
         let dir: string;
         try {
@@ -1526,7 +1532,7 @@ class HttpRelayService {
             return this.json(res, 500, { success: false, error: err.message });
         }
 
-        // Ghi thẳng xuống đĩa (file tạm rồi đổi tên), không gom cả file trong RAM; vượt giới hạn → 413.
+        // Write straight to disk (temp file, then rename), without gathering the whole file in RAM; over the limit → 413.
         const tmpPath = path.join(dir, `.upload-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.part`);
         const out = fs.createWriteStream(tmpPath);
         let size = 0;
@@ -1543,16 +1549,16 @@ class HttpRelayService {
         };
         req.on('data', (chunk: Buffer) => {
             size += chunk.length;
-            if (size > maxBytes) fail(413, `File tối đa ${Math.round(maxBytes / 1024 / 1024)} MB`, 'PAYLOAD_TOO_LARGE');
+            if (size > maxBytes) fail(413, tr('File tối đa {{v1}} MB', { v1: Math.round(maxBytes / 1024 / 1024) }), 'PAYLOAD_TOO_LARGE');
         });
-        req.on('close', () => { if (!req.complete) fail(400, 'Upload bị ngắt giữa chừng'); });
+        req.on('close', () => { if (!req.complete) fail(400, tr('Upload bị ngắt giữa chừng')); });
         req.on('error', (err: Error) => fail(400, err.message));
         out.on('error', (err: Error) => fail(500, err.message));
         out.on('finish', () => {
             if (settled) return;
             if (size === 0) return fail(400, 'Empty file');
             try {
-                // Trùng tên (hai nhân viên cùng gửi "image.png") → "image (1).png" thay vì ghi đè file của người kia
+                // Name collision (two employees both send "image.png") → "image (1).png" instead of overwriting the other person's file
                 const bossPath = uniqueFilePath(dir, filename);
                 fs.renameSync(tmpPath, bossPath);
                 settled = true;
@@ -1572,10 +1578,10 @@ class HttpRelayService {
     private handleRestApi(req: http.IncomingMessage, res: http.ServerResponse): void {
         const url = req.url || '';
 
-        // ── File media / thư viện: bắt buộc phiên nhân viên + quyền tài khoản (bossFileAccess.ts) ──
-        // Trước đây mở tự do ("tunnel security") — ai biết URL Boss / tunnel là tải được file. Máy nhân viên tự gắn
-        // Authorization cho <img>/<video> (session.webRequest — bossSessionAuth.ts). KHÔNG miễn trừ loopback:
-        // cloudflared / ngrok kết nối từ 127.0.0.1 → loopback = Internet. UI của chính Boss dùng local-media://.
+        // ── Media / library files: requires an employee session + account permission (bossFileAccess.ts) ──
+        // It used to be open ("tunnel security"): anyone who knew the Boss / tunnel URL could download the files. The employee machine attaches
+        // Authorization for <img>/<video> (session.webRequest, bossSessionAuth.ts). NO loopback exemption:
+        // cloudflared / ngrok connect from 127.0.0.1 → loopback = Internet. Boss's own UI uses local-media://.
         if (req.method === 'GET') {
             const filePathname = url.indexOf('?') >= 0 ? url.slice(0, url.indexOf('?')) : url;
             const libraryFile = /^\/api\/library\/(file|thumb)\/([a-f0-9-]+)$/.exec(filePathname);
@@ -1589,7 +1595,7 @@ class HttpRelayService {
                 fileEmployee.lastSeen = Date.now();
 
                 if (libraryFile) {
-                    // Item thư viện nằm trong DB của Boss → runOnPinnedDb; LibraryHandler kiểm tra chủ item
+                    // A library item lives in Boss's DB → runOnPinnedDb; LibraryHandler checks the item's owner
                     const [, kind, uuid] = libraryFile;
                     this.runOnPinnedDb(() => (kind === 'file'
                         ? libraryHandlers.serveFile(req, res, uuid, fileEmployee)
@@ -1608,25 +1614,25 @@ class HttpRelayService {
             }
         }
 
-        // ── Các endpoint khác cần auth ──
+        // ── Other endpoints that need auth ──
         const employee = this.authenticateRequest(req);
         if (!employee) {
             return this.json(res, 401, { success: false, error: 'Unauthorized' });
         }
-        // Gọi REST thành công cũng chứng tỏ nhân viên đang online (không chỉ heartbeat)
+        // A successful REST call also proves the employee is online (not only the heartbeat)
         employee.lastSeen = Date.now();
 
-        // Parse URL để dispatch
+        // Parse the URL to dispatch
         const method = req.method;
         let params: any = {};
 
-        // Parse query params từ URL — auto-parse JSON objects/arrays (trừ ô chữ người dùng gõ: search, q, phone…)
+        // Parse query params from the URL: auto-parse JSON objects/arrays (except text boxes the user types in: search, q, phone…)
         const queryIndex = url.indexOf('?');
         const pathname = queryIndex >= 0 ? url.slice(0, queryIndex) : url;
         if (queryIndex >= 0) params = parseRestQueryParams(url.slice(queryIndex));
 
-        // ── Phân quyền: tài khoản trong tham số phải được giao cho nhân viên; /api/query/analytics/* cần quyền
-        // module 'analytics'. Lệnh ghi (/api/command/*) kiểm tra lại trên body trong executeRestCommand.
+        // ── Permissions: the accounts in the params must be assigned to the employee; /api/query/analytics/* needs the
+        // 'analytics' module. Write commands (/api/command/*) are checked again on the body in executeRestCommand.
         if (method === 'GET') {
             const denied = checkEmployeeAccess(employee, pathname, params,
                 (module) => EmployeeService.getInstance().hasPermission(employee.employee_id, module));
@@ -1636,7 +1642,7 @@ class HttpRelayService {
             }
         }
 
-        // ── Điều phối dựa trên URL pattern (chạy trong pinned DB context) ──
+        // ── Dispatch by URL pattern (runs in the pinned DB context) ──
         try {
             return this.runOnPinnedDb(() => {
                 const _db = DatabaseService.getInstance();
@@ -1661,16 +1667,16 @@ class HttpRelayService {
                     () => DatabaseService.getInstance().getContactsWithFlags(zaloId) || [], params);
                 return this.json(res, 200, { success: true, data: { items: rows } });
             }
-            // Unread conversations ("Tự động đánh dấu đã đọc") — PHẢI đứng trước regex /conversations/:id bên dưới
-            // (trước đây đặt sau → bị hiểu là hội thoại id "unread" → luôn rỗng ở chế độ nhân viên)
+            // Unread conversations, "Tự động đánh dấu đã đọc" (auto mark as read): MUST come before the /conversations/:id regex below
+            // (previously placed after it → read as the conversation id "unread" → always empty in employee mode)
             if (method === 'GET' && pathname === '/api/query/conversations/unread') {
                 return this.json(res, 200, restHandlers.getUnreadConversations(employee, params));
             }
-            // Bộ lọc danh sách hội thoại của nhân viên (kênh / tìm / Chưa đọc / Khác / Chưa trả lời / khoảng ngày)
+            // Filter for the employee's conversation list (channel / search / Unread / Other / Not replied / date range)
             if (method === 'GET' && pathname === '/api/query/conversations/filtered') {
                 return this.json(res, 200, restHandlers.getConversationsFiltered(employee, params));
             }
-            // ⚠️ Route cụ thể /api/query/conversations/<tên> phải đặt TRƯỚC regex catch-all này (employeeRestContract.test)
+            // ⚠️ The specific route /api/query/conversations/<name> must come BEFORE this catch-all regex (employeeRestContract.test)
             if (method === 'GET' && pathname.match(/^\/api\/query\/conversations\/[^/]+$/)) {
                 const contactId = pathname.split('/').pop() || '';
                 return this.json(res, 200, restHandlers.getConversationById(employee, { ...params, contactId }));
@@ -1689,15 +1695,15 @@ class HttpRelayService {
             if (method === 'GET' && pathname === '/api/query/messages') {
                 return this.json(res, 200, restHandlers.getMessages(employee, params));
             }
-            // unread / by-type PHẢI đứng trước regex /messages/:msgId bên dưới (trước đây đặt sau → bị hiểu là tin id
-            // "unread" / "by-type" → trả null: bảng tin nhóm thiếu bình chọn, đếm chưa đọc rỗng ở chế độ nhân viên)
+            // unread / by-type MUST come before the /messages/:msgId regex below (previously placed after it → read as the message id
+            // "unread" / "by-type" → return null: the group messages table has no polls, and the unread count is empty in employee mode)
             if (method === 'GET' && pathname === '/api/query/messages/unread') {
                 return this.json(res, 200, restHandlers.getUnreadCountHandler(employee, params));
             }
             if (method === 'GET' && pathname === '/api/query/messages/by-type') {
                 return this.json(res, 200, restHandlers.getMessagesByTypeHandler(employee, params));
             }
-            // ⚠️ Route cụ thể /api/query/messages/<tên> phải đặt TRƯỚC regex catch-all này (employeeRestContract.test)
+            // ⚠️ The specific route /api/query/messages/<name> must come BEFORE this catch-all regex (employeeRestContract.test)
             if (method === 'GET' && pathname.match(/^\/api\/query\/messages\/[^/]+$/)) {
                 const msgId = pathname.split('/').pop() || '';
                 return this.json(res, 200, restHandlers.getMessageById(employee, { ...params, msgId }));
@@ -1771,7 +1777,7 @@ class HttpRelayService {
                 return this.json(res, 200, restHandlers.getLinks(employee, params));
             }
 
-            // Settings — thông báo theo tài khoản (trước đây bị route chung che mất)
+            // Settings: per-account notifications (previously swallowed by the generic route)
             if (method === 'GET' && pathname === '/api/query/settings/notif') {
                 const target = String(params.zaloId || employee.assigned_accounts[0] || '');
                 const raw = target ? DatabaseService.getInstance().getSetting(`notifSettings_${target}`) : null;
@@ -1779,18 +1785,18 @@ class HttpRelayService {
                 try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
                 return this.json(res, 200, { success: true, data });
             }
-            // Settings — một khoá: chỉ khoá trong allowlist (không lộ employee_jwt_secret, token tunnel…)
+            // Settings: one key, and only keys in the allowlist (does not expose employee_jwt_secret, tunnel tokens…)
             if (method === 'GET' && pathname.match(/^\/api\/query\/settings\/[^/]+$/)) {
                 const key = decodeURIComponent(pathname.split('/').pop() || '');
                 if (!isEmployeeSettingKey(key)) {
-                    return this.json(res, 403, { success: false, error: 'Không có quyền đọc cài đặt này', code: 'SETTING_FORBIDDEN' });
+                    return this.json(res, 403, { success: false, error: tr('Không có quyền đọc cài đặt này'), code: 'SETTING_FORBIDDEN' });
                 }
                 return this.json(res, 200, restHandlers.getSetting(employee, { ...params, key }));
             }
 
-            // (Unread conversations: xem route trước regex /conversations/:id ở trên)
+            // (Unread conversations: see the route before the /conversations/:id regex above)
 
-            // Starred messages ("Tin đánh dấu") - keys of one account or the list of several
+            // Starred messages, "Tin đánh dấu" (starred): keys of one account or the list of several
             if (method === 'GET' && pathname === '/api/query/starred-messages') {
                 return this.json(res, 200, restHandlers.getStarredMessages(employee, params));
             }
@@ -1861,7 +1867,7 @@ class HttpRelayService {
 
             // ── Stickers ──
             if (method === 'GET' && pathname === '/api/query/sticker-packs') {
-                // ?catId=… = sticker của MỘT bộ (DataAccessor.getStickersByPackId); trước đây luôn trả danh sách bộ
+                // ?catId=… = the stickers of ONE pack (DataAccessor.getStickersByPackId); previously it always returned the list of packs
                 if (params.catId !== undefined && params.catId !== '') {
                     return this.json(res, 200, restHandlers.getStickersByPackIdHandler(employee, params));
                 }
@@ -1874,7 +1880,7 @@ class HttpRelayService {
                 return this.json(res, 200, restHandlers.getStickersByIdsHandler(employee, params));
             }
             if (method === 'POST' && pathname === '/api/query/stickers/by-ids') {
-                // Danh sách id nằm trong body JSON → đọc body rồi trả lời trong đúng DB của relay
+                // The id list is in the JSON body → read the body, then answer in the correct relay DB
                 this.readBody(req, (body) => {
                     let parsed: any = {};
                     try { parsed = body ? JSON.parse(body) : {}; } catch { parsed = {}; }
@@ -1894,9 +1900,9 @@ class HttpRelayService {
                 return this.json(res, 200, restHandlers.getBankCardsHandler(employee, params));
             }
 
-            // ── ERP: dự án, công việc, lịch, ghi chú, nhân sự, chấm công, nghỉ phép, thông báo ──
-            // Bảng ErpRestRoutes (route cụ thể trước /:id) → ĐÚNG handler IPC erp:* với danh tính ERP của nhân viên
-            // (executeErpRest). Quyền module 'erp' đã kiểm tra ở checkEmployeeAccess phía trên.
+            // ── ERP: projects, tasks, calendar, notes, HR, attendance, leave, notifications ──
+            // The ErpRestRoutes table (specific routes before /:id) → the EXACT erp:* IPC handler with the employee's ERP identity
+            // (executeErpRest). The 'erp' module permission was already checked in checkEmployeeAccess above.
             if (method === 'GET' && pathname.match(/^\/api\/query\/erp\//)) {
                 this.executeErpRest(employee, method, pathname, params)
                     .then(({ status, body }) => this.json(res, status, body))
@@ -1937,8 +1943,8 @@ class HttpRelayService {
                 return this.json(res, 200, restHandlers.getCRMContactsHandler(employee, params));
             }
             if (method === 'POST' && pathname === '/api/query/crm/contacts') {
-                // Lọc theo nhãn Zalo: danh sách hội thoại của nhãn nằm trong body. Kiểm quyền tài khoản trên body như GET
-                // (checkEmployeeAccess phía trên chỉ chạy cho GET), rồi trả lời trong đúng DB của relay.
+                // Filter by Zalo label: the list of conversations for the label is in the body. Check account permission on the body, like GET
+                // (checkEmployeeAccess above only runs for GET), then answer in the correct relay DB.
                 this.readBody(req, (body) => {
                     let parsed: any = {};
                     try { parsed = body ? JSON.parse(body) : {}; } catch { parsed = {}; }
@@ -1976,7 +1982,7 @@ class HttpRelayService {
                 return this.json(res, 200, restHandlers.getActivityStatsHandler(employee, params));
             }
 
-            // (Messages extended — unread / by-type: xem route trước regex /messages/:msgId ở trên)
+            // (Messages extended: unread / by-type, see the route before the /messages/:msgId regex above)
 
             // ── Quick Messages all ──
             if (method === 'GET' && pathname === '/api/query/quick-messages/all') {
@@ -2091,9 +2097,9 @@ class HttpRelayService {
             }
 
             // ── COMMAND endpoints (WRITE) ──
-            // executeRestCommand: kiểm tra quyền → handler IPC của Boss (workflow / tích hợp / chiến dịch / ghi chú / gắn
-            // nhãn — cùng logic + event như UI Boss) hoặc ghi DB trực tiếp (runOnPinnedDb). Body đọc xong mới chạy, nên
-            // phải chờ (async) và tự ghim DB — callback readBody nằm ngoài runOnPinnedDb của handleRestApi.
+            // executeRestCommand: check permission → Boss's IPC handler (workflow / integration / campaign / note / attaching
+            // label; same logic + events as the Boss UI) or write to the DB directly (runOnPinnedDb). The body is read first, then it runs, so
+            // it must wait (async) and pin the DB itself; the readBody callback is outside handleRestApi's runOnPinnedDb.
             if ((method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') && pathname.startsWith('/api/command/')) {
                 const commandMethod = method;
                 this.readBody(req, async (body) => {
@@ -2105,7 +2111,7 @@ class HttpRelayService {
                     }
                     try {
                         const result = await this.executeRestCommand(employee, pathname, { ...params, ...parsed }, commandMethod);
-                        // Bị từ chối quyền → 403 như lệnh đọc (RestQueryService: ACCOUNT_FORBIDDEN → làm mới snapshot)
+                        // Permission denied → 403 like a read command (RestQueryService: ACCOUNT_FORBIDDEN → refresh the snapshot)
                         const status = result?.success === false && result?.status === 403 ? 403 : 200;
                         return this.json(res, status, result);
                     } catch (err: any) {
@@ -2120,7 +2126,7 @@ class HttpRelayService {
             if (method === 'POST' && pathname === '/api/library/upload') {
                 return libraryHandlers.handleUpload(req, res, employee);
             }
-            // Employee mode: upload via JSON base64 (DataAccessor gửi qua RestQueryService)
+            // Employee mode: upload via JSON base64 (DataAccessor sends it through RestQueryService)
             if (method === 'POST' && pathname === '/api/library/upload/json') {
                 return libraryHandlers.handleUploadJson(req, res, employee);
             }
@@ -2138,12 +2144,12 @@ class HttpRelayService {
                 return this.json(res, 200, libraryHandlers.getItem(employee, { ...params, uuid, _bossUrl: `${proto}://${host}` }));
             }
             if (method === 'PATCH' && pathname.match(/^\/api\/library\/item\/[a-f0-9-]+$/)) {
-                // uuid nằm trong đường dẫn (trước đây chỉ đọc query → luôn "Missing uuid"); body đọc xong ngoài
-                // runOnPinnedDb → tự ghim DB; JSON hỏng → 400 (trước đây ném lỗi trong callback 'end')
+                // The uuid is in the path (previously only the query was read → always "Missing uuid"); the body is read outside
+                // runOnPinnedDb → pins the DB itself; broken JSON → 400 (previously it threw inside the 'end' callback)
                 const uuid = pathname.split('/').pop() || '';
                 this.readBody(req, (body) => {
                     let parsed: any = {};
-                    try { parsed = body ? JSON.parse(body) : {}; } catch { return this.json(res, 400, { success: false, error: 'Body không hợp lệ' }); }
+                    try { parsed = body ? JSON.parse(body) : {}; } catch { return this.json(res, 400, { success: false, error: tr('Body không hợp lệ') }); }
                     try {
                         const result = this.runOnPinnedDb(() => libraryHandlers.updateItem(employee, { ...params, ...parsed, uuid }));
                         return this.json(res, 200, result);
@@ -2164,7 +2170,7 @@ class HttpRelayService {
             if (method === 'POST' && pathname === '/api/library/folders') {
                 this.readBody(req, (body) => {
                     let parsed: any = {};
-                    try { parsed = body ? JSON.parse(body) : {}; } catch { return this.json(res, 400, { success: false, error: 'Body không hợp lệ' }); }
+                    try { parsed = body ? JSON.parse(body) : {}; } catch { return this.json(res, 400, { success: false, error: tr('Body không hợp lệ') }); }
                     try {
                         return this.json(res, 200, this.runOnPinnedDb(() => libraryHandlers.createFolder(employee, { ...params, ...parsed })));
                     } catch (err: any) {
@@ -2173,12 +2179,12 @@ class HttpRelayService {
                 });
                 return;
             }
-            // Đổi tên thư mục (DataAccessor.renameLibraryFolder) — trước đây không có route
+            // Rename a folder (DataAccessor.renameLibraryFolder): there was no route before
             if (method === 'PATCH' && pathname.match(/^\/api\/library\/folders\/\d+$/)) {
                 const id = pathname.split('/').pop() || '';
                 this.readBody(req, (body) => {
                     let parsed: any = {};
-                    try { parsed = body ? JSON.parse(body) : {}; } catch { return this.json(res, 400, { success: false, error: 'Body không hợp lệ' }); }
+                    try { parsed = body ? JSON.parse(body) : {}; } catch { return this.json(res, 400, { success: false, error: tr('Body không hợp lệ') }); }
                     try {
                         return this.json(res, 200, this.runOnPinnedDb(() => libraryHandlers.renameFolder(employee, { ...params, ...parsed, id })));
                     } catch (err: any) {
@@ -2191,7 +2197,7 @@ class HttpRelayService {
                 const id = pathname.split('/').pop() || '';
                 return this.json(res, 200, libraryHandlers.deleteFolder(employee, { ...params, id }));
             }
-            // GET /api/library/file|thumb/<uuid> được phục vụ ở đầu handleRestApi (xác thực + kiểm tra chủ item)
+            // GET /api/library/file|thumb/<uuid> is served at the start of handleRestApi (auth + owner check on the item)
 
             return this.json(res, 404, { success: false, error: `Unknown endpoint: ${method} ${pathname}` });
             }); // end runOnPinnedDb
@@ -2202,15 +2208,15 @@ class HttpRelayService {
     }
 
     /**
-     * Lệnh ghi REST của nhân viên — POST/PUT/PATCH/DELETE /api/command/*.
-     * Thứ tự: quyền tài khoản (employeeAccess) → quyền lệnh (restCommandPolicy: module, lệnh chỉ Boss, tài khoản nguồn /
-     * đích) → handler IPC của Boss nếu lệnh có handler tương ứng (executeRestCommandViaIpc) → ghi DB trực tiếp
-     * (executeRestCommandOnDb, trong DB đã ghim). Ghi xong phát CÙNG event như thao tác trên UI Boss để Boss và nhân viên
-     * khác cập nhật ngay (trước đây nhiều lệnh REST ghi DB mà không phát gì, hoặc phát thiếu ownerZaloId).
-     * Từ chối quyền → `{ success: false, …, status: 403 }` (router trả HTTP 403 như lệnh đọc).
+     * Employee REST write commands: POST/PUT/PATCH/DELETE /api/command/*.
+     * Order: account permission (employeeAccess) → command permission (restCommandPolicy: module, Boss-only commands, source / target
+     * account) → Boss's IPC handler if the command has a matching one (executeRestCommandViaIpc) → direct DB write
+     * (executeRestCommandOnDb, inside the pinned DB). After writing, it emits the SAME events as the Boss UI so Boss and the other
+     * employees update right away (previously many REST commands wrote to the DB without emitting anything, or emitted without ownerZaloId).
+     * Permission denied → `{ success: false, …, status: 403 }` (the router returns HTTP 403, like read commands).
      */
     private executeRestCommand(employee: any, pathname: string, params: any, _method?: string): Promise<any> {
-        // Chữ ký giữ dạng `private executeRestCommand(` (không async): employeeRestContract.test dùng làm mốc cuối handleRestApi
+        // The signature stays in the form `private executeRestCommand(` (not async): employeeRestContract.test uses it as the end marker of handleRestApi
         return this.runRestCommand(employee, pathname, params, _method || 'POST');
     }
 
@@ -2223,7 +2229,7 @@ class HttpRelayService {
             return { success: false, error: denied.error, code: denied.code, status: 403 };
         }
         try {
-            // ERP: bảng ErpRestRoutes → handler IPC erp:* với danh tính ERP của nhân viên (quyền ERP kiểm tra trước IPC)
+            // ERP: the ErpRestRoutes table → the erp:* IPC handler with the employee's ERP identity (ERP permission is checked before IPC)
             if (pathname.startsWith(ERP_REST_COMMAND_PREFIX)) {
                 const { status, body } = await this.executeErpRest(employee, httpMethod, pathname, params);
                 return status === 403 ? { ...body, status: 403 } : body;
@@ -2235,28 +2241,28 @@ class HttpRelayService {
             Logger.error(`[HttpRelayService] Command error (${httpMethod} ${pathname}): ${err.message}`);
             return { success: false, error: err.message };
         } finally {
-            // Vừa ghi DB: bỏ cache GET (1.5 s) để lần đọc ngay sau (UI tải lại sau khi lưu) thấy dữ liệu mới
+            // Just wrote to the DB: clear the GET cache (1.5 s) so the read right after (the UI reloads after saving) sees the new data
             this.restApiCache.clear();
         }
     }
 
-    /** Gọi handler IPC của chính Boss (như UI Boss gọi). `_fromRelay`: handler không proxy tiếp. */
+    /** Call Boss's own IPC handler (as the Boss UI calls it). `_fromRelay`: the handler does not proxy any further. */
     private async invokeBossIpc(channel: string, params: any): Promise<any> {
         const { ipcMain } = require('electron');
         const handler: Function | undefined = (ipcMain as any)._invokeHandlers?.get(channel);
         if (!handler) return { success: false, error: `No handler for channel: ${channel}` };
         const result = await handler(null, { ...params, _fromRelay: true });
-        return result ?? { success: false, error: `Handler ${channel} không trả kết quả` };
+        return result ?? { success: false, error: tr('Handler {{channel}} không trả kết quả', { channel }) };
     }
 
     /**
-     * ERP qua REST (GET /api/query/erp/*, lệnh /api/command/erp/*): route trong bảng ErpRestRoutes → ĐÚNG handler IPC
-     * erp:* của Boss, chạy với danh tính ERP của nhân viên (ErpAuthContext.forEmployee + runAs: role / quyền riêng theo
-     * hồ sơ ERP trên Boss — người làm không bao giờ lấy từ tham số). Quyền module 'erp' đã kiểm tra trước
-     * (employeeAccess / restCommandPolicy); ở đây kiểm tra quyền ERP của route TRƯỚC khi vào IPC (withErpAuth kiểm tra lại
-     * cùng action). Cùng service → event realtime phát đúng một lần như thao tác trên UI Boss; cùng phong bì
-     * `{ success, ...trường, error, code }`; từ chối quyền → `code: 'permission_denied'` + HTTP 403.
-     * Handler ERP đồng bộ (better-sqlite3): phần đọc / ghi DB chạy hết trong runOnPinnedDb trước lần `await` đầu tiên.
+     * ERP over REST (GET /api/query/erp/*, /api/command/erp/* commands): a route in the ErpRestRoutes table → the EXACT erp:* IPC handler
+     * on Boss, running with the employee's ERP identity (ErpAuthContext.forEmployee + runAs: role / permissions set per ERP profile
+     * on Boss; the caller never takes these from the params). The 'erp' module permission was already checked earlier
+     * (employeeAccess / restCommandPolicy); here the route's ERP permission is checked BEFORE entering IPC (withErpAuth checks
+     * the same action again). Same service → the realtime event is emitted exactly once, as in the Boss UI; same envelope
+     * `{ success, ...fields, error, code }`; permission denied → `code: 'permission_denied'` + HTTP 403.
+     * The ERP handlers are synchronous (better-sqlite3): the DB read/write runs entirely inside runOnPinnedDb before the first `await`.
      */
     private async executeErpRest(employee: RegisteredEmployee, httpMethod: string, pathname: string, params: any): Promise<{ status: number; body: any }> {
         const match = matchErpRestRoute(httpMethod, pathname, params);
@@ -2286,10 +2292,10 @@ class HttpRelayService {
     }
 
     /**
-     * Tệp đính kèm task do nhân viên gửi (tạo / sửa task): chỉ file đã đính trên chính task này, hoặc file trong thư mục
-     * media của Boss mà nhân viên được dùng (upload trước qua /api/media/upload) — cùng quy tắc đường dẫn với
-     * /api/proxy/action. Trước đây REST nhận đường dẫn tuỳ ý: Boss chép BẤT KỲ file nào trên máy Boss vào
-     * media/erp/tasks (mọi nhân viên tải được). Hợp lệ → đường dẫn đã chuẩn hoá (handler dùng đúng file vừa kiểm tra).
+     * Attachments on a task sent by an employee (create / edit task): only files already attached to this same task, or files in
+     * Boss's media folder that the employee is allowed to use (uploaded earlier via /api/media/upload). Same path rules as
+     * /api/proxy/action. Previously REST accepted any path: Boss copied ANY file on the Boss machine into
+     * media/erp/tasks (every employee could download it). If valid, the normalized path is returned (the handler uses exactly the file that was checked).
      */
     private checkErpTaskAttachments(employee: RegisteredEmployee, channel: string, input: any): any | null {
         const holder = erpTaskAttachmentHolder(channel, input);
@@ -2317,42 +2323,41 @@ class HttpRelayService {
         return null;
     }
 
-    /** Lệnh theo tài khoản mà không gửi zaloId (nhân viên được giao nhiều tài khoản → không đoán). */
+    /** Account-scoped command without a zaloId (the employee has several assigned accounts → no guessing). */
     private static commandAccountRequired(): any {
-        return { success: false, error: 'Thiếu tài khoản (zaloId) cho thao tác này', code: 'ACCOUNT_REQUIRED' };
+        return { success: false, error: tr('Thiếu tài khoản (zaloId) cho thao tác này'), code: 'ACCOUNT_REQUIRED' };
     }
 
     /**
-     * Chiến dịch của lệnh phải thuộc tài khoản được giao (và đúng zaloId nếu lệnh có gửi). `error` khác null = trả về
-     * ngay. Trước đây chỉ theo id: đổi trạng thái / xoá liên hệ / nhân bản chiến dịch của tài khoản khác được; xoá
-     * chiến dịch với zaloId của mình + id của người khác xoá sạch danh sách liên hệ của chiến dịch đó.
+     * The campaign of the command must belong to the assigned account (and match the zaloId if the command sends one). `error` not null = return
+     * right away. Previously it was checked by id alone: changing the status, deleting a contact or duplicating another account's campaign was allowed; and
+     * deleting a campaign with one's own zaloId plus someone else's id wiped that campaign's whole contact list.
      */
     private requireCampaignOwner(campaignId: number, zaloId: string, assigned: readonly string[]): { owner: string; error: any } {
         const owner = this.campaignOwner(campaignId);
-        if (!owner) return { owner: '', error: { success: false, error: 'Không tìm thấy chiến dịch' } };
+        if (!owner) return { owner: '', error: { success: false, error: tr('Không tìm thấy chiến dịch') } };
         if (!assigned.includes(owner) || (zaloId && zaloId !== owner)) {
-            return { owner: '', error: { success: false, error: 'Không có quyền với chiến dịch này', code: 'ACCOUNT_FORBIDDEN', status: 403 } };
+            return { owner: '', error: { success: false, error: tr('Không có quyền với chiến dịch này'), code: 'ACCOUNT_FORBIDDEN', status: 403 } };
         }
         return { owner, error: null };
     }
 
-    /** Workflow đang có phải gắn toàn trang được giao (workflowPagesAllowed). null = được phép / chưa có workflow này. */
+    /** The workflow in use must have all its pages assigned (workflowPagesAllowed). null = allowed / no such workflow. */
     private checkWorkflowPages(workflowId: string, assigned: readonly string[]): any | null {
         if (!workflowId) return null;
         const row: any = this.runOnPinnedDb((db) => db.getWorkflowById(workflowId));
         if (!row) return null;
         if (workflowPagesAllowed(workflowPageIds(row.page_ids, row.page_id), assigned)) return null;
-        return { success: false, error: 'Workflow gắn trang không được giao cho bạn', code: 'ACCOUNT_FORBIDDEN', status: 403 };
+        return { success: false, error: tr('Workflow gắn trang không được giao cho bạn'), code: 'ACCOUNT_FORBIDDEN', status: 403 };
     }
 
     /**
-     * Lệnh REST có handler IPC tương ứng trên Boss → chạy đúng handler đó: cùng chuẩn hoá, kiểm tra, event và nạp lại
-     * engine như UI Boss. Trước đây REST ghi thẳng DB: workflow lưu / bật tắt không nạp lại engine (chỉ có hiệu lực sau
-     * khi khởi động lại Boss), tích hợp gọi hàm không tồn tại (IntegrationRegistry.getInstance → luôn lỗi), chiến dịch
-     * chuyển "active" mà hàng đợi gửi không chạy, gắn nhãn không kích hoạt workflow "gắn nhãn", event cờ hội thoại thiếu
-     * ownerZaloId (nhân viên khác không lưu được), cắt id sai vị trí (`split('/')[3]` = "conversations" / "labels" /
-     * "workflows" / "integrations" → cờ, biệt danh, bật tắt ghi vào bản ghi tên đó).
-     * undefined = không phải lệnh loại này (ghi DB trực tiếp ở executeRestCommandOnDb).
+     * A REST command with a matching IPC handler on Boss → runs that handler: same normalization, checks, events and engine reload as the Boss UI.
+     * Previously REST wrote straight to the DB: saving / toggling a workflow did not reload the engine (it only took effect after Boss restarted), an integration
+     * called a function that did not exist (IntegrationRegistry.getInstance → always an error), a campaign switched to "active" while the send queue did not run,
+     * labeling did not trigger the "label" workflow, conversation flag events lacked ownerZaloId (other employees could not save), and the id was cut at the wrong position
+     * (`split('/')[3]` = "conversations" / "labels" / "workflows" / "integrations" → flags, nicknames and toggles wrote into a record with that name).
+     * undefined = not this kind of command (written directly to the DB in executeRestCommandOnDb).
      */
     private async executeRestCommandViaIpc(employee: any, pathname: string, params: any, httpMethod: string): Promise<any | undefined> {
         const assigned: string[] = (employee.assigned_accounts || []).map(String);
@@ -2360,7 +2365,7 @@ class HttpRelayService {
         const isDelete = httpMethod === 'DELETE';
         const accountRequired = HttpRelayService.commandAccountRequired;
 
-        // ── Hội thoại: cờ (tắt thông báo / mục Khác / @) + biệt danh ──
+        // ── Conversations: flags (mute notifications / Other folder / @) + nickname ──
         const flagsPath = commandPathParams(pathname, /^\/api\/command\/conversations\/([^/]+)\/flags$/);
         if (flagsPath) {
             if (!zaloId) return accountRequired();
@@ -2371,8 +2376,8 @@ class HttpRelayService {
             if (!zaloId) return accountRequired();
             return this.invokeBossIpc('db:setContactAlias', { zaloId, contactId: aliasPath[0], alias: String(params.alias ?? '') });
         }
-        // Hồ sơ liên hệ: handler chỉ phát db:contactProfileUpdated khi hồ sơ thật sự đổi (REST cũ phát mọi lần)
-        // — PHẢI đứng trước route xoá (regex /conversations/<id> khớp cả "update-profile")
+        // Contact profile: the handler only emits db:contactProfileUpdated when the profile actually changes (the old REST emitted every time)
+        // MUST come before the delete route (the /conversations/<id> regex also matches "update-profile")
         if (pathname === '/api/command/conversations/update-profile') {
             if (!zaloId) return accountRequired();
             return this.invokeBossIpc('db:updateContactProfile', {
@@ -2381,7 +2386,7 @@ class HttpRelayService {
                 isBot: null, manualDetails: !!params.manualDetails,
             });
         }
-        // Đánh dấu đã trả lời / bỏ đánh dấu hàng loạt (handler phát db:replyStateChanged như UI Boss) — trước regex xoá
+        // Mark as replied / unmark in bulk (the handler emits db:replyStateChanged like the Boss UI): before the delete regex
         if (pathname === '/api/command/conversations/replied') {
             if (!zaloId) return accountRequired();
             return this.invokeBossIpc('db:markConversationsReplied', {
@@ -2396,7 +2401,7 @@ class HttpRelayService {
             return this.invokeBossIpc('db:deleteConversation', { zaloId, contactId: conversationPath[0] });
         }
 
-        // ── Tin nhắn: đã đọc / xoá khỏi app (handler phát db:unreadChanged / event:delete như UI Boss) ──
+        // ── Messages: read / removed from app (the handler emits db:unreadChanged / event:delete like the Boss UI) ──
         if (pathname === '/api/command/messages/mark-read') {
             if (!zaloId) return accountRequired();
             return this.invokeBossIpc('db:markAsRead', { zaloId, contactId: params.contactId });
@@ -2409,7 +2414,7 @@ class HttpRelayService {
             });
         }
 
-        // ── Ghim hội thoại / tin đánh dấu / ghim tin nhắn ──
+        // ── Pin a conversation / starred messages / pin a message ──
         if (pathname === '/api/command/pinned-conversations') {
             if (!zaloId) return accountRequired();
             return this.invokeBossIpc('db:setLocalPinnedConversation', { zaloId, threadId: String(params.threadId || ''), isPinned: !!params.isPinned });
@@ -2422,7 +2427,7 @@ class HttpRelayService {
         }
         if (pathname === '/api/command/pinned-messages') {
             if (!zaloId) return accountRequired();
-            return this.invokeBossIpc('db:pinMessage', { zaloId, threadId: String(params.threadId || ''), pin: params.pin });
+            return this.invokeBossIpc('db:pinMessage', { zaloId, threadId: String(params.threadId || ''), pin: params.pin, localOnly: !!params.localOnly });
         }
         if (pathname === '/api/command/pinned-messages/bring-to-top') {
             if (!zaloId) return accountRequired();
@@ -2434,7 +2439,7 @@ class HttpRelayService {
             return this.invokeBossIpc('db:unpinMessage', { zaloId, threadId: String(params.threadId || ''), msgId: unpinPath[0] });
         }
 
-        // ── Nhãn Local (định nghĩa dùng chung) + gắn nhãn hội thoại (kích hoạt workflow "gắn nhãn" như UI Boss) ──
+        // ── Local labels (shared definitions) + attaching labels to conversations (triggers the "label" workflow like the Boss UI) ──
         if (pathname === '/api/command/labels' && !isDelete) {
             return this.invokeBossIpc('db:upsertLocalLabel', { label: params.label || {} });
         }
@@ -2460,10 +2465,10 @@ class HttpRelayService {
         }
         if (pathname === '/api/command/label-threads') {
             if (!zaloId) return accountRequired();
-            // Query string (DELETE) cho labelId dạng chuỗi — handler / event cần số như UI Boss
+            // Query string (DELETE) for a labelId given as a string: the handler / events need a number, like the Boss UI
             const labelId = positiveInt(params.labelId);
             const threadId = String(params.threadId || '');
-            if (!labelId || !threadId) return { success: false, error: 'Thiếu nhãn hoặc hội thoại' };
+            if (!labelId || !threadId) return { success: false, error: tr('Thiếu nhãn hoặc hội thoại') };
             return this.invokeBossIpc(isDelete ? 'db:removeLocalLabelFromThread' : 'db:assignLocalLabelToThread', {
                 zaloId, labelId, threadId,
                 threadType: params.threadType !== undefined ? Number(params.threadType) || 0 : undefined,
@@ -2471,7 +2476,7 @@ class HttpRelayService {
             });
         }
 
-        // ── Tin nhắn nhanh local (theo tài khoản) ──
+        // ── Local quick messages (per account) ──
         if (pathname === '/api/command/quick-messages' && !isDelete) {
             if (!zaloId) return accountRequired();
             return this.invokeBossIpc('db:upsertLocalQuickMessage', { zaloId, item: params.item || {} });
@@ -2485,11 +2490,11 @@ class HttpRelayService {
         }
         const qmFlagPath = commandPathParams(pathname, /^\/api\/command\/quick-messages\/(\d+)\/(active|order)$/);
         if (qmFlagPath) {
-            // Chỉ có id: tin nhắn nhanh phải thuộc tài khoản được giao
+            // Only an id given: the quick message must belong to the assigned account
             const id = positiveInt(qmFlagPath[0]);
             const owner = this.quickMessageOwner(id);
             if (owner && !assigned.includes(owner)) {
-                return { success: false, error: 'Không có quyền truy cập tài khoản này', code: 'ACCOUNT_FORBIDDEN', status: 403 };
+                return { success: false, error: tr('Không có quyền truy cập tài khoản này'), code: 'ACCOUNT_FORBIDDEN', status: 403 };
             }
             return qmFlagPath[1] === 'active'
                 ? this.invokeBossIpc('db:setLocalQMActive', { id, isActive: params.isActive ?? 1 })
@@ -2501,7 +2506,7 @@ class HttpRelayService {
             return this.invokeBossIpc('db:deleteLocalQuickMessage', { zaloId, id: positiveInt(qmPath[0]) });
         }
 
-        // ── CRM: ghi chú ──
+        // ── CRM: notes ──
         if (pathname === '/api/command/crm/notes') {
             if (!zaloId) return accountRequired();
             return this.invokeBossIpc('crm:saveNote', { zaloId, note: params.note || {} });
@@ -2512,7 +2517,7 @@ class HttpRelayService {
             return this.invokeBossIpc('crm:deleteNote', { zaloId, noteId: positiveInt(notePath[0]) });
         }
 
-        // ── CRM: chiến dịch (kiểm tra kênh, chạy / dừng hàng đợi, event như UI Boss) ──
+        // ── CRM: campaigns (check channel, run / stop the queue, events like the Boss UI) ──
         if (pathname === '/api/command/crm/campaigns') {
             if (!zaloId) return accountRequired();
             const campaign = params.campaign || {};
@@ -2529,6 +2534,8 @@ class HttpRelayService {
             return this.invokeBossIpc('crm:cloneCampaign', {
                 zaloId: owned.owner, campaignId, includeContacts: !!params.includeContacts, newName: params.newName,
                 contactIds: Array.isArray(params.contactIds) ? params.contactIds.map(String) : undefined,
+                // Every target was checked against the assigned accounts (restCommandPolicy: targetZaloIds)
+                targetZaloIds: Array.isArray(params.targetZaloIds) ? params.targetZaloIds.map(String) : undefined,
             });
         }
         if (pathname === '/api/command/crm/campaigns/status') {
@@ -2552,7 +2559,7 @@ class HttpRelayService {
             const contactIds = (Array.isArray(params.contactIds) ? params.contactIds : []).map((id: unknown) => String(id ?? '')).filter(Boolean);
             return this.invokeBossIpc('crm:deleteCampaignContacts', { campaignId, contactIds });
         }
-        // DataAccessor gọi /contacts/delete-all — route cũ chỉ có /contacts/all ("Unknown command")
+        // DataAccessor calls /contacts/delete-all; the old route only had /contacts/all ("Unknown command")
         if (pathname === '/api/command/crm/campaigns/contacts/all' || pathname === '/api/command/crm/campaigns/contacts/delete-all') {
             const campaignId = positiveInt(params.campaignId);
             const owned = this.requireCampaignOwner(campaignId, zaloId, assigned);
@@ -2567,11 +2574,11 @@ class HttpRelayService {
             return this.invokeBossIpc('crm:deleteCampaign', { zaloId: owned.owner, campaignId });
         }
 
-        // ── Workflow (module workflow): chỉ workflow mà mọi trang thuộc tài khoản được giao ──
+        // ── Workflows (workflow module): only workflows where every page belongs to the assigned account ──
         if (pathname === '/api/command/workflows' && !isDelete) {
             const workflow = params.workflow || params;
             if (!workflowPagesAllowed(workflowPageIds(workflow?.pageIds, workflow?.pageId), assigned)) {
-                return { success: false, error: 'Workflow gắn trang không được giao cho bạn', code: 'ACCOUNT_FORBIDDEN', status: 403 };
+                return { success: false, error: tr('Workflow gắn trang không được giao cho bạn'), code: 'ACCOUNT_FORBIDDEN', status: 403 };
             }
             const existingDenied = this.checkWorkflowPages(String(workflow?.id || ''), assigned);
             if (existingDenied) return existingDenied;
@@ -2590,7 +2597,7 @@ class HttpRelayService {
             return this.invokeBossIpc('workflow:delete', { id: workflowPath[0] });
         }
 
-        // ── Tích hợp (module integration) — cấu hình cấp workspace ──
+        // ── Integrations (integration module): workspace-level configuration ──
         if (pathname === '/api/command/integrations' && !isDelete) {
             return this.invokeBossIpc('integration:save', { integration: params.integration || params });
         }
@@ -2606,16 +2613,16 @@ class HttpRelayService {
         return undefined;
     }
 
-    /** Lệnh ghi thẳng DB Boss (đồng bộ; executeRestCommand gọi trong runOnPinnedDb). */
+    /** Writes directly to Boss's DB (synchronous; executeRestCommand calls it inside runOnPinnedDb). */
     private executeRestCommandOnDb(employee: any, pathname: string, params: any, httpMethod: string): any {
         const zaloId = defaultCommandAccount(params, employee.assigned_accounts);
         const db = DatabaseService.getInstance();
         const isDelete = httpMethod === 'DELETE';
         const accountRequired = HttpRelayService.commandAccountRequired;
 
-        // Hồ sơ liên hệ / xoá hội thoại / đã đọc / xoá tin: chạy handler IPC (executeRestCommandViaIpc)
+        // Contact profile / delete conversation / read / delete message: run Boss's IPC handler (executeRestCommandViaIpc)
 
-        // ── Nháp ── (cleanup TRƯỚC route theo threadId: trước đây "cleanup" bị coi là threadId → tạo nháp rỗng tên "cleanup")
+        // ── Drafts ── (cleanup BEFORE the threadId route: previously "cleanup" was read as a threadId and created an empty draft named "cleanup")
         if (pathname === '/api/command/drafts/cleanup') {
             db.deleteOldDrafts(parseInt(params.days) || 7);
             return { success: true };
@@ -2632,23 +2639,23 @@ class HttpRelayService {
         }
 
         // ── Settings ──
-        // Thông báo theo tài khoản (trước đây rơi vào route chung và ghi nhầm khoá "notif" rỗng)
+        // Per-account notifications (previously fell into the generic route and wrote into an empty "notif" key)
         if (pathname === '/api/command/settings/notif') {
             if (!zaloId) return { success: false, error: 'Missing zaloId' };
             db.setSetting(`notifSettings_${zaloId}`, JSON.stringify(params.settings ?? {}));
             return { success: true };
         }
-        // Một khoá: chỉ khoá trong allowlist — nhân viên không được sửa cài đặt của Boss
+        // One key: only keys in the allowlist; employees may not change Boss's settings
         if (pathname.match(/^\/api\/command\/settings\/[^/]+$/)) {
             const key = decodeURIComponent(pathname.split('/').pop() || '');
             if (!isEmployeeSettingKey(key)) {
-                return { success: false, error: 'Không có quyền sửa cài đặt này', code: 'SETTING_FORBIDDEN' };
+                return { success: false, error: tr('Không có quyền sửa cài đặt này'), code: 'SETTING_FORBIDDEN' };
             }
             db.setSetting(key, params.value || '');
             return { success: true };
         }
 
-        // ── Stickers (cache dùng chung) ──
+        // ── Stickers (shared cache) ──
         if (pathname === '/api/command/stickers/save') {
             db.saveStickers(params.stickers || []);
             return { success: true };
@@ -2666,7 +2673,7 @@ class HttpRelayService {
             return { success: true };
         }
 
-        // ── CRM Tags (theo tài khoản) ──
+        // ── CRM Tags (per account) ──
         if (pathname === '/api/command/crm/tags') {
             if (!zaloId) return accountRequired();
             const tag = params.tag || params;
@@ -2687,7 +2694,7 @@ class HttpRelayService {
             EventBroadcaster.emit('crm:tagChanged', { action: 'assign', ownerZaloId: zaloId, tagId: params.tagId, contactId: params.contactId });
             return { success: true };
         }
-        // Trước đây cắt parts[4]/parts[6] = "tags"/"contacts" → không bao giờ gỡ được thẻ nào
+        // Previously it cut parts[4]/parts[6] = "tags"/"contacts", so no tag could ever be removed
         const tagContactPath = commandPathParams(pathname, /^\/api\/command\/crm\/tags\/(\d+)\/contacts\/([^/]+)$/);
         if (tagContactPath) {
             if (!zaloId) return accountRequired();
@@ -2700,21 +2707,21 @@ class HttpRelayService {
         const tagPath = commandPathParams(pathname, /^\/api\/command\/crm\/tags\/(\d+)$/);
         if (tagPath && isDelete) {
             if (!zaloId) return accountRequired();
-            // Chỉ thẻ của tài khoản này (trước đây xoá được thẻ của mọi tài khoản theo id)
+            // Only tags of this account (previously any account's tag could be deleted by id)
             const tagId = positiveInt(tagPath[0]);
             const owned = db.queryOne<any>(`SELECT id FROM crm_tags WHERE id=? AND owner_zalo_id=?`, [tagId, zaloId]);
-            if (!owned) return { success: false, error: 'Không tìm thấy thẻ' };
+            if (!owned) return { success: false, error: tr('Không tìm thấy thẻ') };
             db.run(`DELETE FROM crm_contact_tags WHERE tag_id=? AND owner_zalo_id=?`, [tagId, zaloId]);
             db.run(`DELETE FROM crm_tags WHERE id=? AND owner_zalo_id=?`, [tagId, zaloId]);
             EventBroadcaster.emit('crm:tagChanged', { action: 'delete', ownerZaloId: zaloId, tagId });
             return { success: true };
         }
 
-        // ── Thẻ ngân hàng (theo tài khoản) ──
+        // ── Bank cards (per account) ──
         if (pathname === '/api/command/bank-cards') {
             if (!zaloId) return accountRequired();
             const id = db.upsertBankCard(zaloId, { ...params.card, ...params });
-            if (!(id > 0)) return { success: false, error: 'Không lưu được thẻ ngân hàng' };
+            if (!(id > 0)) return { success: false, error: tr('Không lưu được thẻ ngân hàng') };
             return { success: true, data: { id } };
         }
         const bankCardPath = commandPathParams(pathname, /^\/api\/command\/bank-cards\/(\d+)$/);
@@ -2724,13 +2731,13 @@ class HttpRelayService {
             return { success: true };
         }
 
-        // Proxy mạng (/api/command/proxies*, /api/command/accounts/proxy): chỉ Boss — checkRestCommand đã từ chối.
+        // Network proxies (/api/command/proxies*, /api/command/accounts/proxy): Boss only; checkRestCommand already rejects them.
 
-        // ── Tin nhắn — thu hồi, cảm xúc, đường dẫn media (đã đọc / xoá khỏi app: handler IPC) ──
+        // ── Messages: unsend, reactions, media paths (read / removed from app: IPC handler) ──
         if (pathname === '/api/command/messages/mark-recalled') {
             if (!zaloId) return accountRequired();
             db.markMessageRecalled(zaloId, params.msgId, params.threadId ? String(params.threadId) : undefined);
-            // event:undo đã được relay từ Zalo webhook — emit thêm để đồng bộ (threadId giúp UI cập nhật dòng hội thoại)
+            // event:undo is already relayed from the Zalo webhook; emit it again to sync (threadId lets the UI update the conversation row)
             EventBroadcaster.emit('event:undo', { zaloId, msgId: params.msgId, ...(params.threadId ? { threadId: String(params.threadId) } : {}) });
             return { success: true };
         }
@@ -2749,7 +2756,7 @@ class HttpRelayService {
             return { success: true };
         }
 
-        // ── Bạn bè / lời mời kết bạn (cache theo tài khoản) ──
+        // ── Friends / friend requests (cache per account) ──
         if (pathname === '/api/command/friends/batch') {
             if (!zaloId) return accountRequired();
             db.saveFriends(zaloId, params.friends || []);
@@ -2778,11 +2785,11 @@ class HttpRelayService {
             return { success: true };
         }
 
-        // ── Thành viên nhóm (cache theo tài khoản) ──
-        // DataAccessor.saveGroupMembers gọi POST /groups/members — trước đây không có route ("Unknown command")
+        // ── Group members (cache per account) ──
+        // DataAccessor.saveGroupMembers calls POST /groups/members; previously there was no route ("Unknown command")
         if (pathname === '/api/command/groups/members') {
             if (!zaloId) return accountRequired();
-            if (!params.groupId) return { success: false, error: 'Thiếu groupId' };
+            if (!params.groupId) return { success: false, error: tr('Thiếu groupId') };
             db.saveGroupMembers(zaloId, String(params.groupId), Array.isArray(params.members) ? params.members : []);
             return { success: true };
         }
@@ -2805,14 +2812,14 @@ class HttpRelayService {
             return { success: true };
         }
 
-        // ── Tài khoản — số điện thoại ──
+        // ── Accounts: phone number ──
         if (pathname === '/api/command/accounts/phone') {
             if (!zaloId) return accountRequired();
             db.updateAccountPhone(zaloId, params.phone || '');
             return { success: true };
         }
 
-        // ── AI Assistant CRUD (module ai_assistant) — cùng hàm với ai:saveAssistant / ai:deleteAssistant ──
+        // ── AI Assistant CRUD (ai_assistant module): same functions as ai:saveAssistant / ai:deleteAssistant ──
         if (pathname === '/api/command/ai/assistants') {
             const AIAssistantService = require('../ai/AIAssistantService').default;
             const savedId = AIAssistantService.getInstance().saveAssistant(params.assistant || params);
@@ -2825,7 +2832,7 @@ class HttpRelayService {
             return { success: true };
         }
 
-        // ERP (/api/command/erp/*): runRestCommand → executeErpRest (handler IPC erp:* + RBAC theo danh tính nhân viên)
+        // ERP (/api/command/erp/*): runRestCommand → executeErpRest (erp:* IPC handler + RBAC by the employee's identity)
 
         return { success: false, error: `Unknown command: ${httpMethod} ${pathname}` };
     }
@@ -2834,10 +2841,10 @@ class HttpRelayService {
     private static SSE_STALE_THRESHOLD_MS = 60_000;
 
     /**
-     * Lệnh điều khiển cho đúng một nhân viên (kicked / snapshot / quyền / tài khoản được giao): Socket.IO nếu
-     * nhân viên đang nối (kênh tức thời, không buffer), không thì SSE → callback LAN như cũ. Chỉ đi MỘT đường —
-     * gửi cả hai thì renderer xử lý hai lần (vd tải lại hội thoại hai lần khi đổi tài khoản được giao).
-     * Nhân viên bản mới không mở SSE nữa: trước đây lệnh chỉ tới được qua callback LAN, nhân viên qua tunnel không nhận.
+     * Control command for exactly one employee (kicked / snapshot / permissions / assigned accounts): via Socket.IO if
+     * the employee is connected (immediate channel, no buffer), otherwise via SSE → the LAN callback as before. Only ONE path is used:
+     * sending both would make the renderer handle it twice (e.g. reloading a conversation twice when the assigned account changes).
+     * Newer employee versions no longer open SSE. Previously commands only reached them through the LAN callback, so employees over the tunnel never received them.
      */
     private pushControlToEmployee(emp: RegisteredEmployee, channel: string, data: any): void {
         try {
@@ -2846,7 +2853,7 @@ class HttpRelayService {
                 sio.emitToEmployee(emp.employee_id, channel, data);
                 return;
             }
-        } catch { /* rơi về SSE / callback */ }
+        } catch { /* fall back to SSE / callback */ }
         if (!this.pushViaSSE(emp.employee_id, channel, data)) {
             this.pushToEmployee(emp, channel, data).catch(() => {});
         }
@@ -2903,14 +2910,14 @@ class HttpRelayService {
 
     // ─── Tunnel management ────────────────────────────────────────────
     //
-    // TunnelService giám sát tunnel (tự chạy lại khi cloudflared chết, đổi cấu hình kiểu make-before-break);
-    // relay chỉ nghe watch() của cổng mình: cập nhật trạng thái, phát relay:tunnelStatusUpdate, và khi địa chỉ
-    // WAN khác lần chạy trước (relay_tunnel_last_url, sống qua khởi động lại app) thì báo BOSS + nhân viên.
+    // TunnelService monitors the tunnel (restarts it by itself when cloudflared dies; config changes use make-before-break);
+    // the relay only listens to watch() for its own port: it updates the status, emits relay:tunnelStatusUpdate, and when the address
+    // differs from the previous run (relay_tunnel_last_url, kept across app restarts) it notifies BOSS + the employees.
 
-    /** Bật tunnel theo cấu hình đã lưu. auto = tự bật (mở app / relay chạy lại): lỗi thì TunnelService tự thử lại. */
+    /** Turn the tunnel on with the saved config. auto = started automatically (app opened / relay restarted): on error, TunnelService retries by itself. */
     public async startTunnel(options: { auto?: boolean } = {}): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
         if (!this.running) {
-            return { success: false, error: 'Relay server chưa được bật' };
+            return { success: false, error: tr('Relay server chưa được bật') };
         }
         const cloud = cloudTunnelIfAuto();
         if (cloud) return this.startCloudTunnel(cloud, options);
@@ -2928,13 +2935,13 @@ class HttpRelayService {
     }
 
     /**
-     * Áp dụng cấu hình tunnel mới khi đang chạy (vd chuyển sang Địa chỉ cố định) mà không ngắt nhân viên:
-     * tunnel mới lên trước, nhân viên đang nối được báo địa chỉ mới qua tunnel cũ, tunnel cũ tắt sau ~10 s.
-     * Tunnel mới lỗi → tunnel cũ giữ nguyên. Chưa chạy → bật bình thường.
+     * Apply a new tunnel config while running (e.g. switching to a fixed address) without disconnecting employees:
+     * the new tunnel comes up first, connected employees are told the new address over the old tunnel, and the old tunnel shuts down after ~10 s.
+     * If the new tunnel fails, the old tunnel stays. If nothing is running, start normally.
      */
     public async restartTunnel(): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
         if (!this.running) {
-            return { success: false, error: 'Relay server chưa được bật' };
+            return { success: false, error: tr('Relay server chưa được bật') };
         }
         const cloud = cloudTunnelIfAuto();
         if (cloud) return this.startCloudTunnel(cloud, {});
@@ -2952,7 +2959,7 @@ class HttpRelayService {
     public async stopTunnel(): Promise<{ success: boolean; error?: string }> {
         const cloud = cloudTunnelIfAuto();
         if (cloud) {
-            // Cloudflare tự động: tắt dịch vụ 'relay' (bỏ khỏi ingress); cloudflared vẫn chạy nếu còn dịch vụ khác
+            // Cloudflare auto: turn off the 'relay' service (remove it from ingress); cloudflared keeps running if other services remain
             try {
                 await cloud.cloudTunnel.setServiceEnabled('relay', false);
             } catch (err: any) {
@@ -2995,7 +3002,7 @@ class HttpRelayService {
         };
     }
 
-    /** "Tự bật tunnel khi mở app" (Cài đặt → Nhân viên → Kết nối, relay_tunnel_autostart = '1'). */
+    /** "Tự bật tunnel khi mở app" (auto-start the tunnel when the app opens; Settings → Employees → Connection, relay_tunnel_autostart = '1'). */
     private isTunnelAutoStart(): boolean {
         try {
             return DatabaseService.getInstance().getSetting(HttpRelayService.TUNNEL_AUTOSTART_KEY) === '1';
@@ -3004,7 +3011,7 @@ class HttpRelayService {
         }
     }
 
-    /** Một watcher bền cho tunnel của cổng relay; cổng đổi (relay bật lại cổng khác) → đăng ký lại. */
+    /** One durable watcher for the relay's tunnel port; when the port changes (the relay turns on a different port), register again. */
     private ensureTunnelWatcher(): void {
         if (this.tunnelWatchOff && this.tunnelWatchPort === this.port) return;
         this.tunnelWatchOff?.();
@@ -3013,7 +3020,7 @@ class HttpRelayService {
     }
 
     private onTunnelChange(url: string | null, info: TunnelChangeInfo): void {
-        // Cloudflare tự động: tunnel kiểu cũ của cổng (đang chờ tắt) không còn quyết định địa chỉ của relay
+        // Cloudflare auto: the port's old-style tunnel (waiting to shut down) no longer decides the relay's address
         if (cloudTunnelIfAuto()) {
             EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
             return;
@@ -3026,20 +3033,20 @@ class HttpRelayService {
         EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
     }
 
-    // ─── Cloudflare tự động ───────────────────────────────────────────
+    // ─── Cloudflare auto ───────────────────────────────────────────
     //
-    // Chế độ 'cloudflare_auto': relay là dịch vụ 'relay' của tunnel cố định dùng chung (một cloudflared cho 9900 /
-    // 9888 / 9889). Bật / tắt tunnel của relay = bật / tắt dịch vụ (chỉ đổi ingress). Địa chỉ mới lên (vd từ Quick
-    // Tunnel sang tên miền riêng) → ghi nhận + báo nhân viên như khi đổi cấu hình (recordPublicUrl); tunnel kiểu cũ
-    // của cổng giữ thêm TUNNEL_SWITCH_GRACE_MS cho nhân viên kịp chuyển rồi tắt.
+    // 'cloudflare_auto' mode: the relay is the 'relay' service of the fixed shared tunnel (one cloudflared for 9900 /
+    // 9888 / 9889). Turning the relay's tunnel on / off = turning the service on / off (only changes the ingress). A new address that comes up (e.g. from Quick
+    // Tunnel to a custom domain) → recorded and employees notified, as when the config changes (recordPublicUrl); the old-style tunnel
+    // of the port keeps running for TUNNEL_SWITCH_GRACE_MS more so employees can switch over, and then shuts down.
 
     private async startCloudTunnel(cloud: CloudTunnelApi, options: { auto?: boolean }): Promise<{ success: boolean; tunnelUrl?: string; error?: string }> {
         this.ensureCloudTunnelWatcher();
         this.tunnelAutoStarted = !!options.auto;
         try {
-            // Tự bật (mở app / relay chạy lại) chỉ khi relay đang bật ở Cloudflare tự động — không tự bật hộ BOSS
+            // Auto-start (app opened / relay restarted) only when the relay is on in Cloudflare auto mode: it does not turn the tunnel on for BOSS
             if (options.auto && !cloud.cloudTunnel.addressOf('relay').enabled) {
-                return { success: false, error: 'Relay chưa bật trong Cloudflare tự động' };
+                return { success: false, error: tr('Relay chưa bật trong Cloudflare tự động') };
             }
             await cloud.cloudTunnel.setServiceEnabled('relay', true);
             this.onCloudTunnelChange();
@@ -3048,7 +3055,7 @@ class HttpRelayService {
                 Logger.log(`[HttpRelayService] 🌐 Cloudflare tự động: ${status.tunnelUrl}`);
                 return { success: true, tunnelUrl: status.tunnelUrl };
             }
-            return { success: false, error: status.lastError || 'Địa chỉ Cloudflare chưa kết nối xong — đang tự thử lại' };
+            return { success: false, error: status.lastError || tr('Địa chỉ Cloudflare chưa kết nối xong — đang tự thử lại') };
         } catch (err: any) {
             Logger.error(`[HttpRelayService] Cloudflare tunnel start error: ${err.message}`);
             EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
@@ -3056,7 +3063,7 @@ class HttpRelayService {
         }
     }
 
-    /** RelayTunnelStatus từ địa chỉ 'relay' của tunnel dùng chung (luôn provider 'cloudflare_named', kind 'fixed'). */
+    /** RelayTunnelStatus from the 'relay' address of the shared tunnel (always provider 'cloudflare_named', kind 'fixed'). */
     private cloudTunnelStatus(cloud: CloudTunnelApi): RelayTunnelStatus {
         const address = cloud.cloudTunnel.addressOf('relay');
         const proc = address.enabled ? cloud.cloudTunnelProcessInfo() : null;
@@ -3083,13 +3090,13 @@ class HttpRelayService {
         };
     }
 
-    /** Nghe thay đổi của tunnel dùng chung (bật/tắt dịch vụ, tiến trình lên/xuống, đổi chế độ) — đăng ký một lần. */
+    /** Listens for changes to the shared tunnel (service on/off, process up/down, mode change): registered once. */
     private ensureCloudTunnelWatcher(): void {
         if (this.cloudTunnelOff) return;
         try {
             const mod: CloudTunnelApi = require('../cloudflare/tunnel');
             this.cloudTunnelOff = mod.onCloudTunnelChange(() => this.onCloudTunnelChange());
-        } catch { /* module Cloudflare không nạp được → chỉ có tunnel kiểu cũ */ }
+        } catch { /* Cloudflare module failed to load → only the old-style tunnel is available */ }
     }
 
     private onCloudTunnelChange(): void {
@@ -3097,7 +3104,7 @@ class HttpRelayService {
         const wasCloud = this.cloudTunnelMode;
         this.cloudTunnelMode = !!cloud;
         if (!cloud) {
-            // Rời chế độ Cloudflare tự động → trạng thái quay về tunnel kiểu cũ của cổng
+            // Leaving Cloudflare auto mode → the status goes back to the port's old-style tunnel
             if (wasCloud) {
                 this.cloudRelayUrl = null;
                 this.tunnelUrl = TunnelService.getUrl(this.port);
@@ -3119,14 +3126,14 @@ class HttpRelayService {
             });
             if (legacy) this.retireLegacyTunnel();
         }
-        // Relay chưa chạy: chưa ghi nhận (lần chạy sau so lại với relay_tunnel_last_url)
+        // Relay not running yet: nothing recorded (the next run compares against relay_tunnel_last_url)
         if (this.running || !url) this.cloudRelayUrl = url;
         this.tunnelUrl = url;
         this.tunnelActive = !!url;
         EventBroadcaster.emit('relay:tunnelStatusUpdate', this.getTunnelStatus());
     }
 
-    /** Đã có địa chỉ Cloudflare tự động: tunnel kiểu cũ của relay giữ thêm một lúc (nhân viên kịp nhận địa chỉ mới) rồi tắt. */
+    /** A Cloudflare auto address exists: the relay's old-style tunnel is kept a while longer (so employees can pick up the new address), then shut down. */
     private retireLegacyTunnel(): void {
         if (this.legacyTunnelRetireTimer) return;
         this.legacyTunnelRetireTimer = setTimeout(() => {
@@ -3138,9 +3145,9 @@ class HttpRelayService {
     }
 
     /**
-     * So địa chỉ vừa lên với địa chỉ lần chạy trước (lưu DB). Khác → ghi nhận lần đổi (BOSS thấy "Địa chỉ cho
-     * nhân viên đã đổi"), báo nhân viên còn nối được (LAN / tunnel cũ khi đổi cấu hình) qua Socket.IO, và
-     * thông báo hệ thống cho BOSS nếu đổi ngoài ý muốn (tunnel chạy lại / mở app).
+     * Compare the address that just came up with the address from the previous run (saved in the DB). If different → record the change (BOSS sees
+     * "the address for employees has changed"), tell the employees that are still connected (LAN / old tunnel during a config change) via Socket.IO, and
+     * send a system notification to BOSS if it changed unexpectedly (the tunnel restarted / the app opened).
      */
     private recordPublicUrl(url: string, info: TunnelChangeInfo): void {
         const current = normalizeBossUrl(url);
@@ -3161,18 +3168,18 @@ class HttpRelayService {
         const notified = this.employees.size;
         this.relayEventToEmployees(BOSS_URL_CHANGED_EVENT, change);
         Logger.log(`[HttpRelayService] 📣 Địa chỉ cho nhân viên đổi: ${previous} → ${current} (${reason}, ${info.kind}) — đã báo ${notified} nhân viên đang đăng ký`);
-        // BOSS tự bấm bật / đổi cấu hình thì đã thấy ngay trong Cài đặt; chỉ báo hệ thống khi đổi "ngầm"
+        // If BOSS turns it on or changes the config themselves, they already see it in Settings; only notify the system when it changes "ngầm" (silently)
         if (reason === 'restart' || (reason === 'start' && this.tunnelAutoStarted)) this.showTunnelUrlChangedNotification(change);
     }
 
-    /** Thông báo hệ thống cho BOSS (app có thể đang ẩn dưới khay): bấm để sao chép địa chỉ mới. */
+    /** System notification for BOSS (the app may be hidden in the tray): click it to copy the new address. */
     private showTunnelUrlChangedNotification(change: BossUrlChangedEvent): void {
         try {
             const { Notification, clipboard, BrowserWindow } = require('electron');
             if (!Notification?.isSupported?.()) return;
             const notification = new Notification({
-                title: 'Địa chỉ cho nhân viên đã đổi',
-                body: `${change.newUrl}\nNhấn để sao chép rồi gửi cho nhân viên làm việc từ xa.`,
+                title: tr('Địa chỉ cho nhân viên đã đổi'),
+                body: tr('{{newUrl}}\nNhấn để sao chép rồi gửi cho nhân viên làm việc từ xa.', { newUrl: change.newUrl }),
             });
             notification.on('click', () => {
                 try { clipboard.writeText(change.newUrl); } catch { /* ignore */ }
@@ -3185,7 +3192,7 @@ class HttpRelayService {
         }
     }
 
-    /** Đọc provider config (cloudflare mặc định, Cloudflare có tài khoản, hoặc ngrok static domain) từ DB. */
+    /** Read the provider config (cloudflare by default, Cloudflare with an account, or an ngrok static domain) from the DB. */
     private getTunnelOptions(): TunnelOptions {
         try {
             const db = DatabaseService.getInstance();
@@ -3194,7 +3201,7 @@ class HttpRelayService {
             if (provider === 'ngrok') {
                 return {
                     provider: 'ngrok',
-                    // relayIpc lưu mã hoá (enc:/plain:); giá trị cũ dạng thô vẫn đọc được
+                    // relayIpc stores it encrypted (enc:/plain:); old plain values can still be read
                     authtoken: decryptSecret(db.getSetting('relay_ngrok_authtoken') || '') || undefined,
                     domain: db.getSetting('relay_ngrok_domain') || undefined,
                 };
@@ -3212,7 +3219,7 @@ class HttpRelayService {
         return { provider: 'cloudflare' };
     }
 
-    /** Chặn OS ngủ (idle sleep) khi relay chạy — nhân viên vẫn truy cập được. */
+    /** Prevents the OS from sleeping (idle sleep) while the relay runs; employees can still reach it. */
     private startPowerSaveBlocker(): void {
         if (this.powerSaveId !== null) return;
         try {
@@ -3262,10 +3269,10 @@ class HttpRelayService {
     private relayEventToEmployees(channel: string, data: any): void {
         if (!this.running) return;
 
-        // ─── Socket.IO (transport duy nhất) ──────────────────────
-        // Buffer MỘT lần kèm người nhận (relayAudience.ts: tài khoản được giao — cùng assigned_accounts với kiểm tra
-        // quyền REST; ERP gửi đích danh; dữ liệu chung workspace) → chỉ phát tới phòng của nhân viên được nhận.
-        // Nhân viên offline → event ở buffer → catch-up (cùng quy tắc lọc) khi kết nối lại.
+        // ─── Socket.IO (the only transport) ──────────────────────
+        // Buffered ONCE, together with the recipients (relayAudience.ts: the assigned accounts, the same assigned_accounts as the
+        // REST permission check; ERP sends to named targets; workspace-wide data) → emitted only to the rooms of the employees who should receive it.
+        // An offline employee → the event goes to the buffer → catch-up (same filter rules) when they reconnect.
         try {
             SocketIOService.getInstance().publish(channel, data);
         } catch (err: any) {
@@ -3345,13 +3352,13 @@ class HttpRelayService {
                     emp.lastSeen = now;
                     continue;
                 }
-                // Socket.IO còn sống (client hiện tại dùng Socket.IO, không dùng SSE) → vẫn online
+                // Socket.IO still alive (the current client uses Socket.IO, not SSE) → still counts as online
                 try {
                     if (SocketIOService.getInstance().isOnline(empId)) {
                         emp.lastSeen = now;
                         continue;
                     }
-                } catch { /* socket server chưa chạy */ }
+                } catch { /* socket server not running */ }
 
                 if (now - emp.lastSeen > HttpRelayService.HEARTBEAT_TIMEOUT_MS) {
                     Logger.log(`[HttpRelayService] 🔴 Employee offline (heartbeat timeout): ${emp.display_name}`);
@@ -3429,7 +3436,7 @@ class HttpRelayService {
             });
             if (account && account.cookies) {
                 return {
-                    // accounts.cookies lưu mã hoá (safeStorage) — đọc SQL trực tiếp nên phải tự giải mã
+                    // accounts.cookies is stored encrypted (safeStorage); read by SQL directly, so it must decrypt itself
                     cookies: DatabaseService.getInstance().decryptCookies(account.cookies),
                     imei: account.imei || '',
                     userAgent: account.user_agent || '',
@@ -3442,8 +3449,8 @@ class HttpRelayService {
     }
 
     /**
-     * Id tài khoản của lệnh proxy Facebook / Telegram → accounts.zalo_id (dạng trong danh sách được giao). Facebook: handler
-     * nhận cả id nội bộ fb_accounts.id (UUID) lẫn id Facebook thật (= accounts.zalo_id) → đổi UUID về facebook_id.
+     * Account id of a Facebook / Telegram proxy command → accounts.zalo_id (the form used in the assigned list). Facebook: the handler
+     * receives both the internal fb_accounts.id (UUID) and the real Facebook id (= accounts.zalo_id), so the UUID is mapped back to the facebook_id.
      */
     private canonicalProxyAccountId(channel: string, accountId: string): string {
         if (!channel.startsWith('fb:') || /^\d+$/.test(accountId)) return accountId;
@@ -3452,9 +3459,9 @@ class HttpRelayService {
     }
 
     /**
-     * Tài khoản có phiên đang chạy trên Boss, theo kênh: Zalo — ConnectionManager; Facebook — FacebookConnectionManager
-     * (theo fb_accounts.id); Telegram cá nhân — listener MTProto; bot Telegram — đang nhận update. Trước đây snapshot nhân
-     * viên tra ConnectionManager (chỉ có Zalo) cho mọi kênh → tài khoản Facebook / Telegram luôn "mất kết nối" ở máy nhân viên.
+     * Accounts with a running session on Boss, per channel: Zalo → ConnectionManager; Facebook → FacebookConnectionManager
+     * (by fb_accounts.id); personal Telegram → MTProto listener; Telegram bot → currently receiving updates. Previously the employee snapshot looked up
+     * ConnectionManager (Zalo only) for every channel, so Facebook / Telegram accounts always showed "mất kết nối" (lost connection) on the employee machine.
      */
     private isAccountSessionOnline(zaloId: string, channel?: string | null): boolean {
         try {
@@ -3472,8 +3479,8 @@ class HttpRelayService {
     }
 
     /**
-     * Thư mục media của Boss: luôn theo default workspace (Boss), không theo workspace đang active — khi máy Boss
-     * đang mở workspace nhân viên, getBaseDir() trỏ về media của workspace đó → Boss không thấy file của chính mình.
+     * Boss's media folder: always the default workspace (Boss), not the active one. When Boss's machine is
+     * showing an employee workspace, getBaseDir() points at that workspace's media, so Boss could not see its own files.
      */
     private getBossMediaBasePath(): string {
         try {
@@ -3483,22 +3490,22 @@ class HttpRelayService {
             if (defaultWs && defaultWs.dbPath) {
                 return path.join(path.dirname(wm.resolveDbPath(defaultWs.dbPath)), 'media');
             }
-        } catch { /* dùng getBaseDir */ }
+        } catch { /* use getBaseDir */ }
         try { return FileStorageService.getBaseDir?.() || ''; } catch { return ''; }
     }
 
-    /** Thư mục media/<id>/ có phải tài khoản không (accounts.zalo_id: Zalo / Facebook / Telegram) → id chuẩn. */
+    /** Whether the media/<id>/ folder belongs to an account (accounts.zalo_id: Zalo / Facebook / Telegram) → the canonical id. */
     private lookupMediaAccountId(segment: string): string | null {
         const row = this.runOnPinnedDb((db) => db.queryOne<{ zalo_id: string }>(
             'SELECT zalo_id FROM accounts WHERE zalo_id = ? COLLATE NOCASE LIMIT 1', [segment]));
         return row?.zalo_id ? String(row.zalo_id) : null;
     }
 
-    /** Đường dẫn file trong lệnh proxy: chỉ thư mục media của Boss, cùng quy tắc tài khoản với tải /api/media. */
+    /** File path in a proxy command: only Boss's media folder, with the same account rules as /api/media downloads. */
     private proxyFilePathContext(employee: RegisteredEmployee): ProxyPathContext {
         const realpath = (p: string): string => {
             const abs = path.resolve(p);
-            try { return fs.realpathSync.native(abs); } catch { /* thử bản JS */ }
+            try { return fs.realpathSync.native(abs); } catch { /* try the JS version */ }
             try { return fs.realpathSync(abs); } catch { return abs; }
         };
         const roots: string[] = [];
@@ -3514,7 +3521,7 @@ class HttpRelayService {
         };
     }
 
-    /** Item thư viện (_libraryUuid / _libraryUuids) phải thuộc trang nhân viên được dùng. Trả uuid bị từ chối, hoặc null. */
+    /** A library item (_libraryUuid / _libraryUuids) must belong to the page the employee is using. Returns the rejected uuid, or null. */
     private checkProxyLibraryItems(employee: RegisteredEmployee, params: any): string | null {
         const uuids: string[] = [];
         if (typeof params?._libraryUuid === 'string' && params._libraryUuid) uuids.push(params._libraryUuid);
@@ -3523,7 +3530,7 @@ class HttpRelayService {
         const LibraryService = require('../library/LibraryService').default;
         for (const uuid of uuids) {
             const item = this.runOnPinnedDb(() => LibraryService.getInstance().getItem(uuid));
-            // Không thấy item: để luồng cũ xử lý (báo "không tìm thấy file") — không có file nào bị lộ
+            // Item not found: let the old flow handle it (it reports "file not found"), so no file is exposed
             if (item && !canAccessLibraryOwner(employee, String(item.owner_zalo_id || ''))) return uuid;
         }
         return null;
@@ -3557,7 +3564,7 @@ class HttpRelayService {
 
     /** Update assigned accounts when boss changes assignments */
     public updateEmployeeRooms(employeeId: string, newZaloIds: string[]): void {
-        // Realtime lọc theo danh sách mới ngay, kể cả socket của nhân viên chưa đăng ký lại (sau khi Boss khởi động)
+        // Realtime filters by the new list right away, including the sockets of employees who have not registered again yet (after Boss restarts)
         try { SocketIOService.getInstance().updateEmployeeAccess(employeeId, newZaloIds); } catch {}
         const emp = this.employees.get(employeeId);
         if (!emp) return;
@@ -3600,9 +3607,9 @@ class HttpRelayService {
     // ─── Utility ──────────────────────────────────────────────────────
 
     /**
-     * Đọc body có giới hạn: nhiều endpoint đọc body TRƯỚC khi xác thực (login, heartbeat, proxy),
-     * không giới hạn thì qua tunnel ai cũng làm đầy RAM được. Gộp Buffer rồi mới giải mã UTF-8
-     * (cộng chuỗi theo chunk làm vỡ ký tự tiếng Việt nằm giữa hai chunk).
+     * Read the body with a size limit: many endpoints read the body BEFORE authentication (login, heartbeat, proxy),
+     * so without a limit anyone who reaches it through the tunnel could fill the RAM. Concatenate Buffers first, then decode UTF-8
+     * (joining strings chunk by chunk breaks the Vietnamese characters that straddle two chunks).
      */
     private readBody(req: http.IncomingMessage, cb: (body: string) => void, maxBytes = HttpRelayService.MAX_BODY_BYTES): void {
         const chunks: Buffer[] = [];
@@ -3630,11 +3637,11 @@ class HttpRelayService {
         });
     }
 
-    /** Body tối đa cho route nhân viên (upload file đi đường multipart/JSON riêng). */
+    /** Maximum body size for employee routes (file uploads take their own multipart / JSON path). */
     static readonly MAX_BODY_BYTES = 50 * 1024 * 1024;
-    /** Upload media của nhân viên (POST /api/media/upload): Zalo PC gửi tệp tối đa 1 GB. Ghi thẳng xuống đĩa. */
+    /** Employee media upload (POST /api/media/upload): Zalo PC sends files up to 1 GB. Writes straight to disk. */
     static readonly MAX_MEDIA_UPLOAD_BYTES = 1024 * 1024 * 1024;
-    /** Login/heartbeat: chỉ vài trăm byte JSON. */
+    /** Login / heartbeat: only a few hundred bytes of JSON. */
     static readonly SMALL_BODY_BYTES = 256 * 1024;
 
     private json(res: http.ServerResponse, status: number, data: any): void {
@@ -3645,12 +3652,12 @@ class HttpRelayService {
     /** Cache-aware REST result - skips the synchronous better-sqlite3 query
      *  if a fresh cached response exists. This prevents main-thread blocking
      *  when the employee calls many GET endpoints after every message.
-     *  Chạy trong runOnPinnedDb (DB của relay). Entry chỉ dùng lại khi DB CHƯA đổi từ lúc lưu: Boss ghim / gắn nhãn /
-     *  tắt tiếng → ghi DB → phát event → nhân viên tải lại ngay — trước đây trong 1.5 s nhận lại giá trị CŨ đã cache và
-     *  giữ sai tới event sau. Kết quả lỗi không được cache. */
+     *  Runs inside runOnPinnedDb (the relay's DB). An entry is reused only while the DB HAS NOT changed since it was saved: Boss pins / labels /
+     *  mutes → writes to the DB → emits an event → the employee reloads right away. Previously, within 1.5 s it got back the OLD cached value and
+     *  kept it wrong until the next event. Error results are not cached. */
     private getCachedRestResult(method: string, pathname: string, employeeId: string, fetchFn: () => any, params?: Record<string, any>): any {
         if (method !== 'GET') return fetchFn();
-        // Khoá gồm cả tham số (zaloId…): trước đây chỉ theo pathname → tài khoản này nhận nhầm cờ/nhãn/ghim của tài khoản kia
+        // The key now includes the params (zaloId…): previously it used only the pathname, so this account received another account's flags / labels / pins
         const cacheKey = restCacheKey(method, pathname, employeeId, params);
         const token = this.restCacheToken();
         const cached = this.restApiCache.get(cacheKey, token);
@@ -3661,9 +3668,9 @@ class HttpRelayService {
     }
 
     /**
-     * Mốc thay đổi của DB đang phục vụ relay: total_changes() (ghi qua chính kết nối này — IPC Boss, lệnh nhân viên,
-     * listener) + PRAGMA data_version (commit của kết nối KHÁC). Đổi ⇒ mọi entry cache hết hiệu lực. null (không đọc
-     * được) ⇒ không cache — đúng trước, nhanh sau.
+     * Change marker of the DB serving the relay: total_changes() (writes through this connection: Boss IPC, employee commands,
+     * listeners) + PRAGMA data_version (commits from OTHER connections). A change ⇒ every cache entry becomes invalid. null (cannot read)
+     * ⇒ no caching: correct first, fast second.
      */
     private restCacheToken(): string | null {
         try {

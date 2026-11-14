@@ -1,21 +1,21 @@
 /**
- * Đồng ý "Quét thành viên nhóm ẩn qua máy chủ Deplao" (Zalo). Lưu theo máy (localStorage), MẶC ĐỊNH TẮT từ 26.11.0.
+ * Consent to "Quét thành viên nhóm ẩn qua máy chủ Deplao" (Hidden group member scan via the Deplao server) (Zalo). Saved per machine (localStorage), OFF by default from 26.11.0.
  *
- * Vì sao cần đồng ý: cách quét nhóm ẩn thành viên chạy trên máy chủ deplaoapp.com (giữ kín, không đưa vào mã nguồn mở
- * của app), nên app phải gửi PHIÊN ĐĂNG NHẬP ZALO (cookie + IMEI) của tài khoản đang quét lên máy chủ
- * (`scanGroupViaBackend`, lib/crm/backendService.ts). Ai có cookie đó dùng được tài khoản Zalo, nên chỉ gửi khi người
- * dùng đã đồng ý rõ ràng:
- *   - Chưa đồng ý: mọi chỗ quét hỏi bằng hộp thoại (components/crm/groups/HiddenScanConsentDialog.tsx) TRƯỚC khi gửi;
- *     "Không đồng ý" = không gửi gì, các tính năng khác vẫn chạy (làm mới nhóm bằng API Zalo trên máy vẫn được).
- *     Chỗ quét: CRM → Nhóm → Quét thành viên (nút Quét), CRM → Nhóm → Thành viên nhóm (Tải thông tin thành viên),
- *     panel thành viên nhóm trong hội thoại (nút "Quét đủ thành viên"; nút tải lại chỉ quét khi đã đồng ý),
- *     nhập nhóm hàng loạt vào kho nhóm chung (đếm thành viên).
- *   - Đồng ý (ở hộp thoại hoặc công tắc CRM → Nhóm → Quét thành viên) được nhớ trên máy này; tắt lại lúc nào cũng được,
- *     tắt là ngừng gửi ngay.
- *   - `scanGroupViaBackend` tự kiểm tra lại `hasHiddenScanConsent()`: chưa đồng ý thì trả lỗi, không gọi mạng. Chỗ gọi
- *     mới quên hỏi cũng không làm lộ cookie.
- * Máy chủ chỉ dùng cookie trong lần quét đó, không lưu; nhật ký máy chủ chỉ có ID tài khoản, ID nhóm, IP, user agent,
- * thời gian, mã kết quả (dep-lao-backend-payment: scan.controller.ts, middleware/publicApiLogger.ts).
+ * Why consent is needed: the hidden group member scan runs on the deplaoapp.com server (kept private, not in the app's open source code),
+ * so the app must send the ZALO LOGIN SESSION (cookie + IMEI) of the account being scanned to the server
+ * (`scanGroupViaBackend`, lib/crm/backendService.ts). Anyone with that cookie can use the Zalo account, so it is only sent when the user
+ * has clearly agreed:
+ *   - Not agreed yet: every scan place asks with a dialog (components/crm/groups/HiddenScanConsentDialog.tsx) BEFORE sending;
+ *     "Không đồng ý" (Do not agree) = nothing is sent, the other features still work (refreshing groups through the Zalo API on the machine is still allowed).
+ *     Scan places: CRM → "Nhóm" → "Quét thành viên" (the "Quét" (Scan) button), CRM → "Nhóm" → "Thành viên nhóm" ("Tải thông tin thành viên" (Load member info)),
+ *     the group member panel in the conversation (the "Quét đủ thành viên" (Scan all members) button; the reload button only scans when agreed),
+ *     bulk group import into the shared group library (counts members).
+ *   - Agreeing (in the dialog or the CRM → "Nhóm" → "Quét thành viên" switch) is remembered on this machine; it can be turned off at any time,
+ *     turning it off stops sending at once.
+ *   - `scanGroupViaBackend` checks `hasHiddenScanConsent()` again itself: not agreed → it returns an error and makes no network call. A new call site
+ *     that forgets to ask also does not expose the cookie.
+ * The server only uses the cookie during that scan and does not store it; the server log only has the account ID, group ID, IP, user agent,
+ * time, and result code (dep-lao-backend-payment: scan.controller.ts, middleware/publicApiLogger.ts).
  */
 import { useSyncExternalStore } from 'react';
 
@@ -23,7 +23,7 @@ const STORAGE_KEY = 'deplao.crm.hiddenScanConsent';
 
 export interface HiddenScanConsent {
   granted: boolean;
-  /** Lúc đồng ý (ms); null khi chưa đồng ý / đã tắt. */
+  /** Time of agreeing (ms); null when not agreed / turned off. */
   at: number | null;
 }
 
@@ -51,18 +51,18 @@ export function getHiddenScanConsent(): HiddenScanConsent {
   return cached;
 }
 
-/** Đã đồng ý gửi phiên đăng nhập Zalo lên máy chủ Deplao để quét nhóm ẩn (trên máy này). */
+/** Agreed to send the Zalo login session to the Deplao server to scan hidden groups (on this machine). */
 export function hasHiddenScanConsent(): boolean {
   return getHiddenScanConsent().granted;
 }
 
-/** Bật (người dùng vừa đồng ý) / tắt (rút lại đồng ý, ngừng gửi ngay). */
+/** On (the user just agreed) / off (agreement withdrawn, sending stops at once). */
 export function setHiddenScanConsent(granted: boolean, now: number = Date.now()): void {
   cached = granted ? { granted: true, at: now } : OFF;
   try {
     if (granted) globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(cached));
     else globalThis.localStorage?.removeItem(STORAGE_KEY);
-  } catch { /* localStorage hỏng: vẫn áp dụng trong phiên này */ }
+  } catch { /* localStorage broken: still applies in this session */ }
   notify();
 }
 
@@ -71,7 +71,7 @@ export function subscribeHiddenScanConsent(listener: () => void): () => void {
   return () => { listeners.delete(listener); };
 }
 
-// Cửa sổ khác của app đổi lựa chọn → đọc lại
+// Another window of the app changed the choice → read it again
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
     if (event.key !== STORAGE_KEY) return;
@@ -84,7 +84,7 @@ export function useHiddenScanConsent(): HiddenScanConsent {
   return useSyncExternalStore(subscribeHiddenScanConsent, getHiddenScanConsent, () => OFF);
 }
 
-/** Chỉ cho test: quên giá trị đã đọc. */
+/** Test only: forget the value already read. */
 export function resetHiddenScanConsentCache(): void {
   cached = null;
 }

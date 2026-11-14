@@ -1,7 +1,7 @@
 /**
- * apiIpc — IPC cho phần API của trang Công cụ → Ứng dụng, API & Webhook (chỉ renderer của Boss gọi).
+ * apiIpc: IPC for the API part of the Tools → Apps, API & Webhook page (only Boss's renderer calls it).
  *
- * Các kênh api:* KHÔNG được route v1 nào gọi tới (không tự nâng quyền qua API).
+ * No v1 route calls the api:* channels (they cannot raise their own permissions through the API).
  */
 import { ipcMain, shell } from 'electron';
 import Logger from '../../../src/utils/Logger';
@@ -13,6 +13,7 @@ import {
 import { API_SCOPES, ApiError, SCOPE_PRESETS } from '../../../src/services/api/types';
 import { principalLogId } from '../../../src/services/api/types';
 import { EVENT_TYPES } from '../../../src/services/api/events/catalog';
+import { tr } from '../../../src/shared/i18n';
 
 function relay(): any {
     return require('../../../src/services/http/HttpRelayService').default.getInstance();
@@ -60,7 +61,7 @@ export function registerApiIpc(): void {
 
     ipcMain.handle('api:server:start', async (_e, { port }: { port?: number } = {}) => {
         try {
-            if (isEmployeeMachine()) return { success: false, error: 'Máy nhân viên không chạy API server' };
+            if (isEmployeeMachine()) return { success: false, error: tr('Máy nhân viên không chạy API server') };
             const res = await relay().start(port);
             return res;
         } catch (err: any) {
@@ -78,7 +79,7 @@ export function registerApiIpc(): void {
 
     ipcMain.handle('api:settings:set', async (_e, { key, value }: { key: string; value: string }) => {
         try {
-            if (!API_SETTING_KEYS.includes(key as ApiSettingKey)) return { success: false, error: `Không có cài đặt ${key}` };
+            if (!API_SETTING_KEYS.includes(key as ApiSettingKey)) return { success: false, error: tr('Không có cài đặt {{key}}', { key }) };
             setApiSetting(key as ApiSettingKey, String(value ?? ''));
             clearApiSettingsCache();
             ApiPlatform.getInstance().invalidateOpenApi();
@@ -149,7 +150,7 @@ export function registerApiIpc(): void {
     ipcMain.handle('api:keys:purge', async (_e, { id }: { id: string }) => {
         try {
             const ok = ApiKeyService.getInstance().purge(id);
-            // Xoá hẳn key → xoá luôn webhook của key (không còn ai sở hữu).
+            // Key fully deleted → also delete the key's webhook (no one owns it anymore).
             if (ok) ApiPlatform.getInstance().getWebhooks().removeByOwner(id);
             return { success: ok };
         } catch (err: any) {
@@ -177,18 +178,18 @@ export function registerApiIpc(): void {
 
     ipcMain.handle('api:docs:open', async (_e: any, params?: { hash?: string }) => {
         try {
-            // Bấm "Mở tài liệu API" là đủ: server chưa chạy thì tự bật (trừ máy nhân viên).
+            // Clicking "Mở tài liệu API" (Open API docs) is enough: the server starts by itself if it is not running (except on employee machines).
             let st = relay().getStatus();
             let started = false;
             if (!st.running) {
-                if (isEmployeeMachine()) return { success: false, error: 'Máy nhân viên không chạy API server' };
+                if (isEmployeeMachine()) return { success: false, error: tr('Máy nhân viên không chạy API server') };
                 const res = await relay().start();
-                if (!res?.success) return { success: false, error: res?.error || 'Không bật được API server' };
+                if (!res?.success) return { success: false, error: res?.error || tr('Không bật được API server') };
                 started = true;
                 st = relay().getStatus();
                 Logger.log(`[apiIpc] API server auto-started on port ${st.port} to open docs`);
             }
-            // Chỉ nhận mục của trang docs (#guide/…, #op/…, #tag/…, #overview) — không cho ghép URL tuỳ ý.
+            // Only accepts anchors from the docs page (#guide/…, #op/…, #tag/…, #overview), no arbitrary URL building.
             const hash = typeof params?.hash === 'string' && /^#[A-Za-z0-9/_%.-]{1,120}$/.test(params.hash) ? params.hash : '';
             await shell.openExternal(`http://127.0.0.1:${st.port}/docs${hash}`);
             return { success: true, started, port: st.port };
@@ -198,7 +199,7 @@ export function registerApiIpc(): void {
     });
 
     // ─── Webhook (tab API) ────────────────────────────────────
-    // Webhook tạo trong app: chủ = null (nhận mọi tài khoản), được trỏ vào mạng nội bộ.
+    // Webhooks created in the app: owner = null (receives events from all accounts), may point at the internal network.
 
     ipcMain.handle('api:webhooks:list', async () => {
         try {

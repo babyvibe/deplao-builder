@@ -22,6 +22,7 @@ import {
   type EngagementState,
   type EngagementSupport,
 } from '../../../shared/analytics/messageEngagement';
+import { tr, appLocale } from '../../../shared/i18n';
 
 export { partialFailureOf };
 
@@ -37,31 +38,31 @@ export interface ContentBlock { id: string; text: string; images: string[]; tagA
 export interface ContentConfig extends CampaignSendOptions { mode: SendMode; blocks: ContentBlock[]; }
 
 export const CAMPAIGN_TYPE_LABEL: Record<CampaignType, string> = {
-  message: 'Tin nhắn',
-  friend_request: 'Kết bạn',
-  invite_to_group: 'Mời vào nhóm',
-  mixed: 'Hỗn hợp',
+  message: tr('Tin nhắn'),
+  friend_request: tr('Kết bạn'),
+  invite_to_group: tr('Mời vào nhóm'),
+  mixed: tr('Hỗn hợp'),
 };
 
 export const CAMPAIGN_STATUS_META: Record<CampaignStatus, { label: string; tone: BadgeTone }> = {
-  draft: { label: 'Nháp', tone: 'default' },
-  active: { label: 'Đang chạy', tone: 'success' },
-  paused: { label: 'Tạm dừng', tone: 'warning' },
-  done: { label: 'Hoàn thành', tone: 'primary' },
+  draft: { label: tr('Nháp'), tone: 'default' },
+  active: { label: tr('Đang chạy'), tone: 'success' },
+  paused: { label: tr('Tạm dừng'), tone: 'warning' },
+  done: { label: tr('Hoàn thành'), tone: 'primary' },
 };
 
-/** Tạm dừng vì lỗi liên tiếp (CRMQueueService tự dừng, shared/crm/campaignAutoStop): thay nhãn "Tạm dừng". */
-export const CAMPAIGN_AUTO_STOPPED_META: { label: string; tone: BadgeTone } = { label: 'Tự dừng', tone: 'destructive' };
+/** Paused because of consecutive errors (CRMQueueService stops itself, shared/crm/campaignAutoStop): replaces the "Tạm dừng" (Paused) label. */
+export const CAMPAIGN_AUTO_STOPPED_META: { label: string; tone: BadgeTone } = { label: tr('Tự dừng'), tone: 'destructive' };
 
 export const CONTACT_STATUS_META: Record<CampaignContactStatus, { label: string; tone: BadgeTone }> = {
-  pending: { label: 'Chờ gửi', tone: 'default' },
-  sending: { label: 'Đang gửi', tone: 'info' },
-  sent: { label: 'Đã gửi', tone: 'success' },
-  failed: { label: 'Lỗi', tone: 'destructive' },
+  pending: { label: tr('Chờ gửi'), tone: 'default' },
+  sending: { label: tr('Đang gửi'), tone: 'info' },
+  sent: { label: tr('Đã gửi'), tone: 'success' },
+  failed: { label: tr('Lỗi'), tone: 'destructive' },
 };
 
-/** "Đã gửi" nhưng một số hành động của chiến dịch Hỗn hợp lỗi (shared/crm/campaignOutcome). */
-export const CONTACT_PARTIAL_META: { label: string; tone: BadgeTone } = { label: 'Gửi một phần', tone: 'warning' };
+/** "Đã gửi" (Sent) but some actions of the mixed campaign failed (shared/crm/campaignOutcome). */
+export const CONTACT_PARTIAL_META: { label: string; tone: BadgeTone } = { label: tr('Gửi một phần'), tone: 'warning' };
 
 export function campaignTypeOf(value: string | null | undefined): CampaignType {
   return value === 'friend_request' || value === 'mixed' || value === 'invite_to_group' ? value : 'message';
@@ -71,12 +72,12 @@ export function campaignStatusOf(value: string | null | undefined): CampaignStat
   return value === 'active' || value === 'paused' || value === 'done' ? value : 'draft';
 }
 
-/** Chiến dịch đang tạm dừng vì lỗi liên tiếp (lý do còn tới khi bấm Tiếp tục). */
+/** The campaign is paused because of consecutive errors (the reason stays until "Tiếp tục" (Continue) is pressed). */
 export function isCampaignAutoStopped(campaign: { status?: string | null; auto_stop_reason?: string | null }): boolean {
   return campaign.status === 'paused' && !!String(campaign.auto_stop_reason || '').trim();
 }
 
-/** Lúc chiến dịch tự dừng "Mai gửi tiếp" tự chạy lại (0 = không hẹn: bấm Tiếp tục). */
+/** When the campaign stops itself, "Mai gửi tiếp" (Send again tomorrow) runs again automatically (0 = no schedule: press "Tiếp tục" (Continue)). */
 export function campaignScheduledResumeAt(campaign: {
   status?: string | null; auto_stop_reason?: string | null; auto_resume_at?: number | null; stop_resume_next_day?: number | null;
 }): number {
@@ -84,7 +85,7 @@ export function campaignScheduledResumeAt(campaign: {
   return Number(campaign.auto_resume_at) > 0 ? Number(campaign.auto_resume_at) : 0;
 }
 
-/** Nhãn + màu trạng thái chiến dịch (tự dừng thay "Tạm dừng"). */
+/** Label + colour of the campaign status (self-stopped replaces "Tạm dừng" (Paused)). */
 export function campaignStatusMeta(campaign: { status?: string | null; auto_stop_reason?: string | null }): { label: string; tone: BadgeTone } {
   return isCampaignAutoStopped(campaign) ? CAMPAIGN_AUTO_STOPPED_META : CAMPAIGN_STATUS_META[campaignStatusOf(campaign.status)];
 }
@@ -231,8 +232,8 @@ const STYLE_FLAGS: Record<string, SegmentStyle> = {
 };
 
 export const TEMPLATE_VARIABLE_HINT: Record<TemplateVariable, string> = {
-  name: 'Tên người nhận',
-  userId: 'ID người nhận',
+  name: tr('Tên người nhận'),
+  userId: tr('ID người nhận'),
 };
 
 const VARIABLE_RE = /\{(name|userId)\}/g;
@@ -304,12 +305,16 @@ function delayUnit(seconds: number): DelayUnit {
   return seconds < 3600 ? 'phút' : 'giờ';
 }
 
+// Unit ids stay Vietnamese (compared above); the text shows the name in the UI language
+const DELAY_UNIT_LABEL: Record<DelayUnit, string> = { 'giây': tr('giây'), 'phút': tr('phút'), 'giờ': tr('giờ') };
+
 function delayAmount(seconds: number, unit: DelayUnit): string {
   const value = unit === 'giây' ? seconds : unit === 'phút' ? seconds / 60 : seconds / 3600;
-  return String(Math.round(value * 10) / 10).replace('.', ',');
+  // decimal separator of the UI language: "1,8" in Vietnamese, "1.8" in English
+  return (Math.round(value * 10) / 10).toLocaleString(appLocale(), { maximumFractionDigits: 1, useGrouping: false });
 }
 
-/** "2 phút", "1,8–2,2 phút", "30–45 giây", "45 giây – 2 phút". */
+/** "2 phút", "1,8–2,2 phút", "30–45 giây", "45 giây – 2 phút" (examples of formatted durations). */
 export function formatDelayRange(minSeconds: number, maxSeconds: number): string {
   const lo = Math.max(0, Math.round(Math.min(minSeconds, maxSeconds)));
   const hi = Math.max(0, Math.round(Math.max(minSeconds, maxSeconds)));
@@ -318,9 +323,9 @@ export function formatDelayRange(minSeconds: number, maxSeconds: number): string
   if (loUnit === hiUnit) {
     const a = delayAmount(lo, loUnit);
     const b = delayAmount(hi, hiUnit);
-    return a === b ? `${a} ${loUnit}` : `${a}–${b} ${loUnit}`;
+    return a === b ? `${a} ${DELAY_UNIT_LABEL[loUnit]}` : `${a}–${b} ${DELAY_UNIT_LABEL[loUnit]}`;
   }
-  return `${delayAmount(lo, loUnit)} ${loUnit} – ${delayAmount(hi, hiUnit)} ${hiUnit}`;
+  return `${delayAmount(lo, loUnit)} ${DELAY_UNIT_LABEL[loUnit]} – ${delayAmount(hi, hiUnit)} ${DELAY_UNIT_LABEL[hiUnit]}`;
 }
 
 const pad2 = (value: number) => String(value).padStart(2, '0');
@@ -355,7 +360,7 @@ export interface CampaignContactRow {
 export interface CampaignContactStats {
   total: number;
   sent: number;
-  /** Trong số `sent`: liên hệ Hỗn hợp có hành động lỗi */
+  /** Among `sent`: mixed-campaign contacts with a failed action */
   partial: number;
   /** pending + sending */
   waiting: number;
@@ -397,10 +402,10 @@ export function campaignContactStats(contacts: readonly CampaignContactRow[], no
   };
 }
 
-/** Trạng thái gửi + hiệu quả (đã phản hồi / đã xem chưa phản hồi / chưa xem / chưa nhận — chỉ liên hệ đã gửi). */
+/** Send status + effect (replied / seen but not replied / not seen / not received: only contacts that were sent to). */
 export type ContactFilter = 'all' | 'waiting' | 'sent' | 'failed' | 'partial' | EngagementFilter;
 
-/** Hiệu quả của liên hệ đã gửi, theo contact_id (crm:getCampaignEngagement). */
+/** Effect for the contacts that were sent to, by contact_id (crm:getCampaignEngagement). */
 export interface CampaignEngagementView {
   byContact: ReadonlyMap<string, EngagementState>;
   support: EngagementSupport;
@@ -408,7 +413,7 @@ export interface CampaignEngagementView {
 
 export type EngagementLevel = 'replied' | 'seen' | 'delivered';
 
-/** Mức cao nhất đã đạt: đã phản hồi ⇒ đã xem ⇒ đã nhận. null = mới đã gửi (chưa có tín hiệu). */
+/** The highest level reached: replied ⇒ seen ⇒ received. null = only sent so far (no signal yet). */
 export function engagementLevelOf(state: EngagementState | null | undefined): EngagementLevel | null {
   if (!state) return null;
   if (state.replied) return 'replied';
@@ -418,23 +423,23 @@ export function engagementLevelOf(state: EngagementState | null | undefined): En
 }
 
 export const ENGAGEMENT_LEVEL_META: Record<EngagementLevel, { label: string; tone: BadgeTone }> = {
-  replied: { label: 'Đã phản hồi', tone: 'success' },
-  seen: { label: 'Đã xem', tone: 'info' },
-  delivered: { label: 'Đã nhận', tone: 'primary' },
+  replied: { label: tr('Đã phản hồi'), tone: 'success' },
+  seen: { label: tr('Đã xem'), tone: 'info' },
+  delivered: { label: tr('Đã nhận'), tone: 'primary' },
 };
 
 export const ENGAGEMENT_FILTER_LABEL: Record<EngagementFilter, string> = {
-  replied: 'Đã phản hồi',
-  seen_no_reply: 'Đã xem, chưa phản hồi',
-  not_seen: 'Chưa xem',
-  not_delivered: 'Chưa nhận',
+  replied: tr('Đã phản hồi'),
+  seen_no_reply: tr('Đã xem, chưa phản hồi'),
+  not_seen: tr('Chưa xem'),
+  not_delivered: tr('Chưa nhận'),
 };
 
 export function isEngagementFilter(filter: ContactFilter): filter is EngagementFilter {
   return filter === 'replied' || filter === 'seen_no_reply' || filter === 'not_seen' || filter === 'not_delivered';
 }
 
-/** Số liên hệ đã gửi khớp từng bộ lọc hiệu quả. */
+/** Number of sent-to contacts matching each effect filter. */
 export function engagementFilterCounts(contacts: readonly CampaignContactRow[], engagement: CampaignEngagementView | null | undefined): Record<EngagementFilter, number> {
   const counts: Record<EngagementFilter, number> = { replied: 0, seen_no_reply: 0, not_seen: 0, not_delivered: 0 };
   if (!engagement) return counts;
@@ -482,10 +487,10 @@ function csvCell(value: unknown): string {
   return text;
 }
 
-/** CSV with a UTF-8 BOM-less body (the caller prepends the BOM for Excel). `engagement`: thêm cột "Hiệu quả". */
+/** CSV with a UTF-8 BOM-less body (the caller prepends the BOM for Excel). `engagement`: adds an "Hiệu quả" (Effect) column. */
 export function buildCampaignContactsCsv(contacts: readonly CampaignContactRow[], engagement?: CampaignEngagementView | null): string {
-  const header = ['STT', 'Tên', 'UID', 'Số điện thoại', 'Trạng thái', 'Thời gian gửi', 'Lỗi'];
-  if (engagement) header.push('Hiệu quả');
+  const header = ['STT', tr('Tên'), 'UID', tr('Số điện thoại'), tr('Trạng thái'), tr('Thời gian gửi'), tr('Lỗi')];
+  if (engagement) header.push(tr('Hiệu quả'));
   const rows = contacts.map((contact, index) => {
     const cells = [
       index + 1,
@@ -493,7 +498,7 @@ export function buildCampaignContactsCsv(contacts: readonly CampaignContactRow[]
       csvCell(contact.contact_id || ''),
       csvCell(contact.phone || ''),
       csvCell(contact.status || ''),
-      csvCell(contact.sent_at ? new Date(contact.sent_at).toLocaleString('vi-VN') : ''),
+      csvCell(contact.sent_at ? new Date(contact.sent_at).toLocaleString(appLocale()) : ''),
       csvCell(contact.error || ''),
     ];
     if (engagement) {

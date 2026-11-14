@@ -2,13 +2,13 @@
  * zaloAliasUtils.ts
  *
  * Shared utility for fetching alias lists with correct pagination.
- * Zalo API (zca-js) giới hạn count = 200/page, cần tăng page dần đến khi hết.
+ * The Zalo API (zca-js) limits count = 200/page, so the page number must keep increasing until there are no more results.
  */
 
 import ipc from '@/lib/ipc';
 
 const ALIAS_PAGE_SIZE = 200;
-const MAX_PAGES = 50; // safety: tối đa 50 trang (10,000 items)
+const MAX_PAGES = 50; // safety: at most 50 pages (10,000 items)
 
 export interface AliasItem {
   userId: string;
@@ -16,11 +16,11 @@ export interface AliasItem {
 }
 
 /**
- * Fetch tất cả aliases bằng pagination:
+ * Fetch all aliases with pagination:
  * - count = 200 / page
- * - page bắt đầu từ 1, tăng dần
- * - dừng khi API trả về items rỗng
- * - có safety MAX_PAGES để tránh loop vô hạn
+ * - page starts at 1 and increases
+ * - stops when the API returns empty items
+ * - has a MAX_PAGES safety limit to avoid an infinite loop
  */
 export async function fetchAllAliases(auth: any): Promise<AliasItem[]> {
   let page = 1;

@@ -1,6 +1,6 @@
 /**
- * Biểu tượng plugin: ảnh từ manifest.icon, hoặc chữ cái đầu trên nền gradient cố định theo id.
- * Chữ trắng đặt bằng style (theme sáng remap class text-foreground).
+ * Plugin icon: image from manifest.icon, or the first letter on a gradient background fixed per id.
+ * White text is set by style (the light theme remaps the text-foreground class).
  */
 import React from 'react';
 

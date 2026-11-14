@@ -1,10 +1,10 @@
 /**
- * worker — tiến trình nền (worker_threads) của đồng bộ DB: mọi thao tác SQLite nặng chạy ở đây, có connection riêng.
- * Sau `tsc -p tsconfig.electron.json` file này nằm cạnh các module dbsync khác (worker.js) — main tạo bằng
- * `new Worker(path.join(__dirname, 'worker.js'))` (xem DbOpsClient.ts).
+ * worker: background thread (worker_threads) of the DB sync: all heavy SQLite work runs here, on its own connection.
+ * After `tsc -p tsconfig.electron.json` this file sits next to the other dbsync modules (worker.js). main creates it with
+ * `new Worker(path.join(__dirname, 'worker.js'))` (see DbOpsClient.ts).
  *
- * Chỉ import module trong thư mục dbsync + Node + better-sqlite3 (đường dẫn .node truyền qua workerData.nativeBinding),
- * để chạy được cả khi thư mục dbsync được unpack khỏi app.asar.
+ * Only imports modules from the dbsync folder + Node + better-sqlite3 (the .node path is passed in via workerData.nativeBinding),
+ * so it still runs when the dbsync folder is unpacked from app.asar.
  */
 import { parentPort, workerData } from 'worker_threads';
 import { createOpsHandler } from './ops';

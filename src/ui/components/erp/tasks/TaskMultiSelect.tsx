@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface TaskMultiSelectOption {
   value: string;
@@ -65,14 +67,14 @@ export default function TaskMultiSelect({ options, value, onChange, placeholder,
           </span>
         )) : <span className="text-muted-foreground font-medium">{placeholder}</span>}
         <span className={`ml-auto inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${toneStyle.count}`}>
-          {selectedOptions.length} chọn
+          {trx('{{count}} chọn', { count: selectedOptions.length })}
         </span>
         <span className="text-sm text-muted-foreground">▾</span>
       </button>
       {open && (
         <div className="absolute z-20 mt-2 w-full rounded-xl border border-input bg-card shadow-2xl max-h-64 overflow-auto p-2.5">
           <div className="px-1 pb-2 text-[11px] font-medium text-muted-foreground">
-            {selectedOptions.length > 0 ? `Đã chọn ${selectedOptions.length} người` : placeholder}
+            {selectedOptions.length > 0 ? tr('Đã chọn {{count}} người', { count: selectedOptions.length }) : placeholder}
           </div>
           {options.map(option => {
             const checked = value.includes(option.value);
@@ -97,10 +99,10 @@ export default function TaskMultiSelect({ options, value, onChange, placeholder,
               onClick={() => onChange([])}
               className={`text-[11px] font-medium ${toneStyle.action}`}
             >
-              Bỏ chọn hết
+              {tr('Bỏ chọn hết')}
             </button>
             <button type="button" onClick={() => setOpen(false)} className={`text-[11px] font-medium ${toneStyle.action}`}>
-              Đóng
+              {tr('Đóng')}
             </button>
           </div>
         </div>

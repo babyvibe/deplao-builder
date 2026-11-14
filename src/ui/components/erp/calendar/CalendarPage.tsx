@@ -6,6 +6,8 @@ import { TrashIcon } from '@/components/common/icons';
 import { hasLinkedConversation, openLinkedConversation } from '@/lib/erp/erpLinkedConversation';
 import ReminderChips from '../shared/ReminderChips';
 import { DEFAULT_ERP_REMINDERS, erpRemindersSummary } from '../../../../shared/erp/erpReminderText';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 type ViewMode = 'week' | 'month' | 'list';
@@ -41,12 +43,12 @@ function eventToFormSeed(event: ErpCalendarEvent): Partial<CreateCalendarEventIn
     color: event.color,
     linked_task_id: event.linked_task_id,
     linked_contact_id: event.linked_contact_id,
-    // Sửa lịch gửi lại cả danh sách mốc nhắc (ErpCalendarService thay toàn bộ, mốc đã nhắc giữ "đã nhắc")
+    // Editing an event resends the whole reminder list (ErpCalendarService replaces everything; reminders already sent keep "đã nhắc" (reminded))
     reminders: (event.reminders ?? []).map(r => ({ minutes_before: r.minutes_before, channel: r.channel })),
   };
 }
 
-/** Lịch mới: nhắc 15 phút trước (chuông) + đúng giờ (popup như nhắc hẹn Zalo). */
+/** New event: remind 15 minutes before (bell) + on time (popup, like Zalo appointment reminders). */
 const defaultReminders = (): CreateCalendarEventInput['reminders'] =>
   DEFAULT_ERP_REMINDERS.map(minutes => ({ minutes_before: minutes, channel: 'toast' as const }));
 
@@ -161,11 +163,11 @@ export default function CalendarPage() {
       <div className="flex items-center flex-wrap gap-2 px-4 py-2 border-b border-border/60 flex-shrink-0">
         <button onClick={goPrev}        className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">←</button>
         <button onClick={() => setCurrentDate(Date.now())}
-                className="px-2 py-1 text-xs text-muted-foreground hover:bg-muted rounded-lg">Hôm nay</button>
+                className="px-2 py-1 text-xs text-muted-foreground hover:bg-muted rounded-lg">{tr('Hôm nay')}</button>
         <button onClick={goNext}        className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">→</button>
 
         <span className="text-sm text-foreground/80 font-medium ml-1 min-w-[130px]">
-          {new Date(currentDate).toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })}
+          {new Date(currentDate).toLocaleDateString(appLocale(), { month: 'long', year: 'numeric' })}
         </span>
 
         {/* Month / date jumpers */}
@@ -179,7 +181,7 @@ export default function CalendarPage() {
             setCurrentDate(d.getTime());
           }}
           className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500"
-          title="Chọn tháng"
+          title={tr('Chọn tháng')}
         />
         <input
           type="date"
@@ -190,19 +192,19 @@ export default function CalendarPage() {
             setCurrentDate(d.getTime());
           }}
           className="bg-muted border border-input rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-blue-500"
-          title="Đi tới ngày"
+          title={tr('Đi tới ngày')}
         />
 
         <div className="flex gap-1 ml-auto">
           {(['week', 'month', 'list'] as ViewMode[]).map(v => (
             <button key={v} onClick={() => setViewMode(v)}
               className={`px-2.5 py-1 text-xs rounded-lg ${viewMode === v ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:bg-muted'}`}>
-              {v === 'week' ? 'Tuần' : v === 'month' ? 'Tháng' : 'Danh sách'}
+              {v === 'week' ? tr('Tuần') : v === 'month' ? tr('Tháng') : tr('Danh sách')}
             </button>
           ))}
           <button onClick={() => openCreateEventModal()}
             className="ml-1 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg">
-            + Sự kiện
+            {tr('+ Sự kiện')}
           </button>
         </div>
       </div>
@@ -221,17 +223,17 @@ export default function CalendarPage() {
           <div className="space-y-3">
             {listEvents.length === 0 ? (
               <div className="h-40 rounded-xl border border-border/60 bg-card flex items-center justify-center text-sm text-muted-foreground">
-                Chưa có sự kiện trong phạm vi đang chọn
+                {tr('Chưa có sự kiện trong phạm vi đang chọn')}
               </div>
             ) : (
               listEvents.map(ev => (
                 <div key={ev.id} className="group rounded-xl border border-border/60 bg-card px-4 py-3 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-xs text-muted-foreground mb-1">{new Date(ev.start_at).toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
+                    <div className="text-xs text-muted-foreground mb-1">{new Date(ev.start_at).toLocaleDateString(appLocale(), { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
                     <button onClick={() => setSelectedEvent(ev)} className="text-left text-sm font-medium text-foreground hover:text-blue-300 truncate max-w-full">{ev.title}</button>
                     <div className="text-xs text-muted-foreground mt-1">
-                      {new Date(ev.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-                      {ev.end_at && ev.end_at > ev.start_at ? ` → ${new Date(ev.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                      {new Date(ev.start_at).toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' })}
+                      {ev.end_at && ev.end_at > ev.start_at ? ` → ${new Date(ev.end_at).toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' })}` : ''}
                     </div>
                     {ev.location && <div className="text-xs text-muted-foreground mt-1">📍 {ev.location}</div>}
                   </div>
@@ -240,7 +242,7 @@ export default function CalendarPage() {
                     <button
                       onClick={() => setDeleteTarget(ev)}
                       className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 opacity-0 pointer-events-none transition-all group-hover:opacity-100 group-hover:pointer-events-auto focus:opacity-100 focus:pointer-events-auto hover:border-red-400/50 hover:bg-red-500/20 hover:text-foreground"
-                    ><TrashIcon className="w-4 h-4 inline" /> Xóa
+                    >{trx('<0/> Xóa', { 0: <TrashIcon className="w-4 h-4 inline" /> })}
                     </button>
                   </div>
                 </div>
@@ -281,11 +283,11 @@ export default function CalendarPage() {
                       key={ev.id}
                       className="group relative h-7 text-[11px] px-2 py-1 rounded-lg truncate cursor-pointer"
                       style={{ background: (ev.color || '#3b82f6') + '33', color: ev.color || '#60a5fa' }}
-                      title={`${ev.title} - ${new Date(ev.start_at).toLocaleString('vi-VN')}`}
+                      title={`${ev.title} - ${new Date(ev.start_at).toLocaleString(appLocale())}`}
                       onClick={() => setSelectedEvent(ev)}
                     >
                       <span>
-                        {new Date(ev.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} {ev.title}
+                        {new Date(ev.start_at).toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' })} {ev.title}
                       </span>
                     </div>
                   ))}
@@ -300,7 +302,7 @@ export default function CalendarPage() {
                       onClick={() => setSelectedDayTs(dayTs)}
                       className="text-[10px] text-blue-400 hover:text-blue-300"
                     >
-                      Xem thêm ({hiddenCount})
+                      {trx('Xem thêm ({{hiddenCount}})', { hiddenCount })}
                     </button>
                   )}
                 </div>
@@ -315,16 +317,16 @@ export default function CalendarPage() {
       {showModal && (
         <ErpOverlay onClose={closeEventModal} className="z-50">
           <ErpModalCard className="w-full max-w-md p-5">
-            <h3 className="text-sm font-bold text-foreground mb-4">{editingEventId ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện mới'}</h3>
+            <h3 className="text-sm font-bold text-foreground mb-4">{editingEventId ? tr('Chỉnh sửa sự kiện') : tr('Tạo sự kiện mới')}</h3>
             <div className="space-y-3">
               <input
-                placeholder="Tiêu đề sự kiện"
+                placeholder={tr('Tiêu đề sự kiện')}
                 value={newEvent.title ?? ''}
                 onChange={e => setNewEvent(v => ({ ...v, title: e.target.value }))}
                 className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
               <div>
-                <label className="text-[11px] text-muted-foreground mb-1 block">Bắt đầu</label>
+                <label className="text-[11px] text-muted-foreground mb-1 block">{tr('Bắt đầu')}</label>
                 <input
                   type="datetime-local"
                   value={newEvent.start_at ? new Date(newEvent.start_at - new Date(newEvent.start_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
@@ -338,11 +340,11 @@ export default function CalendarPage() {
                   setHasEndTime(checked);
                   if (!checked) setNewEvent(v => ({ ...v, end_at: undefined }));
                 }} />
-                Có thời gian / ngày kết thúc
+                {tr('Có thời gian / ngày kết thúc')}
               </label>
               {hasEndTime && (
                 <div>
-                  <label className="text-[11px] text-muted-foreground mb-1 block">Kết thúc</label>
+                  <label className="text-[11px] text-muted-foreground mb-1 block">{tr('Kết thúc')}</label>
                   <input
                     type="datetime-local"
                     value={newEvent.end_at ? new Date(newEvent.end_at - new Date(newEvent.end_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
@@ -352,20 +354,20 @@ export default function CalendarPage() {
                 </div>
               )}
               <input
-                placeholder="Địa điểm (tùy chọn)"
+                placeholder={tr('Địa điểm (tùy chọn)')}
                 value={newEvent.location ?? ''}
                 onChange={e => setNewEvent(v => ({ ...v, location: e.target.value }))}
                 className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
               <textarea
-                placeholder="Ghi chú / note thông tin thêm (tùy chọn)"
+                placeholder={tr('Ghi chú / note thông tin thêm (tùy chọn)')}
                 value={newEvent.description ?? ''}
                 onChange={e => setNewEvent(v => ({ ...v, description: e.target.value }))}
                 rows={3}
                 className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-y"
               />
               <div>
-                <label id="erp-event-reminders" className="text-[11px] text-muted-foreground mb-1 block">Nhắc trước</label>
+                <label id="erp-event-reminders" className="text-[11px] text-muted-foreground mb-1 block">{tr('Nhắc trước')}</label>
                 <ReminderChips
                   labelledBy="erp-event-reminders"
                   value={(newEvent.reminders ?? []).map(r => r.minutes_before)}
@@ -393,8 +395,8 @@ export default function CalendarPage() {
                 }}
                 disabled={!newEvent.title?.trim() || !newEvent.start_at || (hasEndTime && !newEvent.end_at)}
                 className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm rounded-lg"
-              >{editingEventId ? 'Lưu' : 'Tạo'}</button>
-              <button onClick={closeEventModal} className="px-4 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg text-sm">Huỷ</button>
+              >{editingEventId ? tr('Lưu') : tr('Tạo')}</button>
+              <button onClick={closeEventModal} className="px-4 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg text-sm">{tr('Huỷ')}</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>
@@ -406,9 +408,9 @@ export default function CalendarPage() {
           <ErpModalCard className="w-full max-w-sm p-5">
             <h3 className="text-sm font-bold text-foreground mb-2">{selectedEvent.title}</h3>
             <p className="text-xs text-muted-foreground">
-              {new Date(selectedEvent.start_at).toLocaleString('vi-VN')}
+              {new Date(selectedEvent.start_at).toLocaleString(appLocale())}
               {selectedEvent.end_at && selectedEvent.end_at > selectedEvent.start_at
-                ? ` → ${new Date(selectedEvent.end_at).toLocaleString('vi-VN')}`
+                ? ` → ${new Date(selectedEvent.end_at).toLocaleString(appLocale())}`
                 : ''}
             </p>
             {selectedEvent.location && <p className="text-xs text-muted-foreground mt-1">📍 {selectedEvent.location}</p>}
@@ -417,23 +419,23 @@ export default function CalendarPage() {
             )}
             {selectedEvent.description && <p className="text-xs text-foreground/80 mt-2 whitespace-pre-wrap">{selectedEvent.description}</p>}
             <div className="flex gap-2 mt-4 justify-end">
-              {/* Lịch thêm từ tin nhắn: mở đúng hội thoại, nhảy tới tin */}
+              {/* Event added from a message: opens the right conversation and jumps to the message */}
               {hasLinkedConversation(selectedEvent) && (
                 <button
                   onClick={() => { const event = selectedEvent; setSelectedEvent(null); openLinkedConversation(event); }}
                   className="mr-auto px-3 py-1.5 text-xs text-blue-300 hover:text-white hover:bg-blue-600 rounded-lg"
-                >Mở hội thoại</button>
+                >{tr('Mở hội thoại')}</button>
               )}
               <button
                 onClick={() => openEditEventModal(selectedEvent)}
                 className="px-3 py-1.5 text-xs text-blue-300 hover:text-white hover:bg-blue-600 rounded-lg"
-              >Sửa</button>
+              >{tr('Sửa')}</button>
               <button
                 onClick={() => { setDeleteTarget(selectedEvent); setSelectedEvent(null); }}
                 className="px-3 py-1.5 text-xs font-medium text-red-300 border border-red-500/30 bg-red-500/10 hover:text-white hover:bg-red-600 rounded-lg"
-              >Xoá</button>
+              >{tr('Xoá')}</button>
               <button onClick={() => setSelectedEvent(null)}
-                className="px-3 py-1.5 text-xs text-foreground/80 hover:text-foreground hover:bg-muted rounded-lg">Đóng</button>
+                className="px-3 py-1.5 text-xs text-foreground/80 hover:text-foreground hover:bg-muted rounded-lg">{tr('Đóng')}</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>
@@ -442,7 +444,7 @@ export default function CalendarPage() {
       {/* Delete confirm */}
       {deleteTarget && (
         <ConfirmDialog
-          message={`Xoá sự kiện "${deleteTarget.title}"?`}
+          message={tr('Xoá sự kiện "{{title}}"?', { title: deleteTarget.title })}
           onConfirm={() => { deleteEvent(deleteTarget.id); setDeleteTarget(null); }}
           onCancel={() => setDeleteTarget(null)}
         />
@@ -452,7 +454,7 @@ export default function CalendarPage() {
         <ErpOverlay onClose={() => setSelectedDayTs(null)} className="z-50" backdropClassName="bg-black/50">
           <ErpModalCard className="w-full max-w-lg p-5">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-foreground">Danh sách sự kiện ngày {new Date(selectedDayTs).toLocaleDateString('vi-VN')}</h3>
+              <h3 className="text-sm font-bold text-foreground">{trx('Danh sách sự kiện ngày {{v1}}', { v1: new Date(selectedDayTs).toLocaleDateString(appLocale()) })}</h3>
               <button onClick={() => setSelectedDayTs(null)} className="text-muted-foreground hover:text-foreground">✕</button>
             </div>
             <div className="space-y-2 max-h-[60vh] overflow-auto">
@@ -461,15 +463,15 @@ export default function CalendarPage() {
                   <div className="min-w-0">
                     <button onClick={() => { setSelectedEvent(ev); setSelectedDayTs(null); }} className="text-left text-sm text-foreground hover:text-blue-300 truncate max-w-full">{ev.title}</button>
                     <div className="text-xs text-muted-foreground mt-1">
-                      {new Date(ev.start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-                      {ev.end_at && ev.end_at > ev.start_at ? ` → ${new Date(ev.end_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                      {new Date(ev.start_at).toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' })}
+                      {ev.end_at && ev.end_at > ev.start_at ? ` → ${new Date(ev.end_at).toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' })}` : ''}
                     </div>
                     {ev.description && <div className="text-[11px] text-muted-foreground mt-1 whitespace-pre-wrap">{ev.description}</div>}
                   </div>
                   <button
                     onClick={() => setDeleteTarget(ev)}
                     className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 hover:border-red-400/50 hover:bg-red-500/20 hover:text-foreground"
-                  ><TrashIcon className="w-4 h-4 inline" /> Xóa
+                  >{trx('<0/> Xóa', { 0: <TrashIcon className="w-4 h-4 inline" /> })}
                   </button>
                 </div>
               ))}

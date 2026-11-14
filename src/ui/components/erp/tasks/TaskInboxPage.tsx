@@ -11,14 +11,16 @@ import { ConfirmDialog, ErpModalCard, ErpOverlay } from '../shared/ErpDialogs';
 import { ERP_DATE_FILTER_OPTIONS, getDefaultCustomRange, resolveErpDateRange, type ErpDateFilterPreset } from '../shared/erpDateFilters';
 import type { CreateCalendarEventInput, ErpCalendarEvent, ErpTask } from '../../../../models/erp';
 import { AlertIcon, CalendarIcon, CheckIcon, CloseIcon, TargetIcon, UsersIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 const STATUS_LABELS: Record<string, string> = {
-  todo: 'Cần làm',
-  doing: 'Đang làm',
-  review: 'Xem xét',
-  done: 'Hoàn thành',
-  cancelled: 'Huỷ',
+  todo: tr('Cần làm'),
+  doing: tr('Đang làm'),
+  review: tr('Xem xét'),
+  done: tr('Hoàn thành'),
+  cancelled: tr('Huỷ'),
 };
 
 function startOfDay(ts: number) {
@@ -41,7 +43,7 @@ function taskFallsWithinWindow(task: ErpTask, windowStart: number, futureEnd: nu
 }
 
 function roleLabel(role: string) {
-  return role === 'owner' ? 'Chủ hệ thống (Boss)' : role === 'admin' ? 'Quản trị ERP' : role === 'manager' ? 'Quản lý' : 'Nhân viên';
+  return role === 'owner' ? tr('Chủ hệ thống (Boss)') : role === 'admin' ? tr('Quản trị ERP') : role === 'manager' ? tr('Quản lý') : tr('Nhân viên');
 }
 
 function eventToFormSeed(event: ErpCalendarEvent): Partial<CreateCalendarEventInput> {
@@ -87,7 +89,7 @@ export default function TaskInboxPage() {
   }, []);
 
   const loadOwnEvents = useCallback(async () => {
-    // Nhân viên: lịch trên Boss (REST — Boss lấy người xem từ token). Lỗi đọc → giữ lịch đang hiện
+    // Employee: events come from the owner (REST; the owner takes the viewer from the token). On read error → keep the events currently shown
     const res: any = await DataAccessor.erpCalendarEvents({ from: windowStart, to: windowEnd, organizerId: currentEmployeeId });
     if (res?.success) {
       const next = (res.events || [])
@@ -140,7 +142,7 @@ export default function TaskInboxPage() {
       end_at: hasEndTime ? eventDraft.end_at : undefined,
     };
     if (payload.end_at !== undefined && payload.end_at < payload.start_at) {
-      showNotification('Thời gian kết thúc phải lớn hơn hoặc bằng thời gian bắt đầu', 'warning');
+      showNotification(tr('Thời gian kết thúc phải lớn hơn hoặc bằng thời gian bắt đầu'), 'warning');
       return;
     }
 
@@ -151,14 +153,14 @@ export default function TaskInboxPage() {
         : await DataAccessor.erpCalendarCreate(payload));
 
       if (!res?.success) {
-        showNotification(res?.error || 'Không thể lưu sự kiện', 'error');
+        showNotification(res?.error || tr('Không thể lưu sự kiện'), 'error');
         return;
       }
 
       closeEventModal();
       resetEventForm({});
       await loadOwnEvents();
-      showNotification(editingEventId ? 'Đã cập nhật sự kiện' : 'Đã tạo sự kiện mới', 'success');
+      showNotification(editingEventId ? tr('Đã cập nhật sự kiện') : tr('Đã tạo sự kiện mới'), 'success');
     } finally {
       setSavingEvent(false);
     }
@@ -169,13 +171,13 @@ export default function TaskInboxPage() {
     const target = deleteTarget;
     const res: any = withErpDeniedNotice(await DataAccessor.erpCalendarDelete(target.id));
     if (!res?.success) {
-      showNotification(res?.error || 'Không thể xóa sự kiện', 'error');
+      showNotification(res?.error || tr('Không thể xóa sự kiện'), 'error');
       return;
     }
     setDeleteTarget(null);
     setSelectedEvent(current => current?.id === target.id ? null : current);
     await loadOwnEvents();
-    showNotification('Đã xóa sự kiện', 'success');
+    showNotification(tr('Đã xóa sự kiện'), 'success');
   }, [deleteTarget, loadOwnEvents, showNotification]);
 
   const relevantTasks = useMemo(() => {
@@ -191,16 +193,16 @@ export default function TaskInboxPage() {
     const review = relevantTasks.filter(task => task.status === 'review');
 
     const cards = [
-      { label: 'Cần làm', value: todo.length, tone: 'text-blue-100', chip: 'text-blue-200 bg-blue-900/30 border-blue-500/30', card: 'border-blue-500/20 bg-blue-900/10' },
-      { label: 'Đang làm', value: doing.length, tone: 'text-sky-300', chip: 'text-sky-300 bg-sky-900/50 border-sky-600', card: 'border-sky-600/30 bg-sky-900/50' },
-      { label: 'Đã hoàn thành', value: done.length, tone: 'text-green-200', chip: 'text-green-200 bg-green-900/50 border-green-600/40', card: 'border-green-600/30 bg-green-900/30' },
-      { label: 'Quá hạn', value: overdue.length, tone: 'text-red-200', chip: 'text-red-200 bg-red-900/40 border-red-400/40', card: 'border-red-500/20 bg-red-500/5' },
+      { label: tr('Cần làm'), value: todo.length, tone: 'text-blue-100', chip: 'text-blue-200 bg-blue-900/30 border-blue-500/30', card: 'border-blue-500/20 bg-blue-900/10' },
+      { label: tr('Đang làm'), value: doing.length, tone: 'text-sky-300', chip: 'text-sky-300 bg-sky-900/50 border-sky-600', card: 'border-sky-600/30 bg-sky-900/50' },
+      { label: tr('Đã hoàn thành'), value: done.length, tone: 'text-green-200', chip: 'text-green-200 bg-green-900/50 border-green-600/40', card: 'border-green-600/30 bg-green-900/30' },
+      { label: tr('Quá hạn'), value: overdue.length, tone: 'text-red-200', chip: 'text-red-200 bg-red-900/40 border-red-400/40', card: 'border-red-500/20 bg-red-500/5' },
     ];
 
     if (perms.role === 'owner' || perms.role === 'admin' || perms.role === 'manager') {
-      cards.push({ label: 'Chờ xem xét', value: review.length, tone: 'text-yellow-200', chip: 'text-yellow-200 bg-yellow-900/40 border-yellow-500/30', card: 'border-yellow-500/20 bg-yellow-500/10' });
+      cards.push({ label: tr('Chờ xem xét'), value: review.length, tone: 'text-yellow-200', chip: 'text-yellow-200 bg-yellow-900/40 border-yellow-500/30', card: 'border-yellow-500/20 bg-yellow-500/10' });
     } else {
-      cards.push({ label: 'Sự kiện trong kỳ', value: events.length, tone: 'text-violet-300', chip: 'text-violet-300 bg-violet-600/20 border-violet-500/40', card: 'border-violet-500/20 bg-purple-500/10' });
+      cards.push({ label: tr('Sự kiện trong kỳ'), value: events.length, tone: 'text-violet-300', chip: 'text-violet-300 bg-violet-600/20 border-violet-500/40', card: 'border-violet-500/20 bg-purple-500/10' });
     }
 
     return { cards, overdue };
@@ -223,11 +225,11 @@ export default function TaskInboxPage() {
       <div className="px-4 py-3 border-b border-border/60 flex-shrink-0 space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Tổng quan công việc của tôi</h3>
-            <p className="text-[11px] text-muted-foreground mt-1">Vai trò hiện tại: <span className="text-foreground/80">{roleLabel(perms.role)}</span></p>
+            <h3 className="text-sm font-semibold text-foreground">{tr('Tổng quan công việc của tôi')}</h3>
+            <p className="text-[11px] text-muted-foreground mt-1">{trx('Vai trò hiện tại: <0>{{v1}}</0>', { 0: <span className="text-foreground/80" />, v1: roleLabel(perms.role) })}</p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Thời gian</span>
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">{tr('Thời gian')}</span>
             <select
               value={dateFilter}
               onChange={e => setDateFilter(e.target.value as ErpDateFilterPreset)}
@@ -259,7 +261,7 @@ export default function TaskInboxPage() {
             <div key={card.label} className={`rounded-xl border px-4 py-3 shadow-sm ${card.card}`}>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">{card.label}</div>
-                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${card.chip}`}>task</span>
+                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${card.chip}`}>{tr('task')}</span>
               </div>
               <div className={`text-[32px] leading-none font-bold mt-3 tracking-tight ${card.tone}`}>{card.value}</div>
             </div>
@@ -270,14 +272,14 @@ export default function TaskInboxPage() {
       <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] gap-4">
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Task trong giai đoạn đã chọn</div>
-            <div className="text-[11px] text-muted-foreground">{taskList.length} / {relevantTasks.length} task hiển thị</div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{tr('Task trong giai đoạn đã chọn')}</div>
+            <div className="text-[11px] text-muted-foreground">{trx('{{count}} / {{count1}} task hiển thị', { count: taskList.length, count1: relevantTasks.length })}</div>
           </div>
 
           {taskList.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 text-muted-foreground bg-card border border-border/50 rounded-xl">
               <span className="mb-2"><CheckIcon className="w-8 h-8" /></span>
-              <p className="text-sm">Không có task nào trong giai đoạn này</p>
+              <p className="text-sm">{tr('Không có task nào trong giai đoạn này')}</p>
             </div>
           ) : (
             taskList.map(task => {
@@ -305,7 +307,7 @@ export default function TaskInboxPage() {
                   <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground flex-wrap">
                     <span className="font-medium"><span className={`inline-block w-2.5 h-2.5 rounded-full ${task.priority === 'urgent' ? 'bg-red-500' : task.priority === 'high' ? 'bg-orange-500' : task.priority === 'normal' ? 'bg-blue-500' : 'bg-gray-400'}`} /> {task.priority}</span>
                     {task.due_date && (
-                      <span className={overdue ? 'text-red-300 font-medium' : 'text-muted-foreground'}><CalendarIcon className="w-4 h-4 inline" /> {new Date(task.due_date).toLocaleDateString('vi-VN')}
+                      <span className={overdue ? 'text-red-300 font-medium' : 'text-muted-foreground'}><CalendarIcon className="w-4 h-4 inline" /> {new Date(task.due_date).toLocaleDateString(appLocale())}
                       </span>
                     )}
                     {!!task.assignees?.length && (
@@ -323,7 +325,7 @@ export default function TaskInboxPage() {
                         {task.watchers.slice(0, 2).map(employeeId => (
                           <EmployeeAvatar key={`watcher-${task.id}-${employeeId}`} employeeId={employeeId} size={16} showName={false} />
                         ))}
-                        <span>{task.watchers.length} theo dõi</span>
+                        <span>{trx('{{count}} theo dõi', { count: task.watchers.length })}</span>
                       </div>
                     )}
                   </div>
@@ -335,19 +337,19 @@ export default function TaskInboxPage() {
 
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Lịch của tôi</div>
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{tr('Lịch của tôi')}</div>
             <button
               type="button"
               onClick={openCreateEventModal}
               className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-300 hover:border-blue-400/50 hover:bg-blue-500/20 hover:text-foreground transition-colors"
             >
               <span className="text-sm leading-none">＋</span>
-              <span>Thêm sự kiện</span>
+              <span>{tr('Thêm sự kiện')}</span>
             </button>
           </div>
           <div className="bg-card border border-border/60 rounded-xl p-3 space-y-2">
             {events.length === 0 ? (
-              <div className="text-sm text-muted-foreground py-6 text-center">Không có sự kiện trong khoảng thời gian hiện tại</div>
+              <div className="text-sm text-muted-foreground py-6 text-center">{tr('Không có sự kiện trong khoảng thời gian hiện tại')}</div>
             ) : (
               events.slice(0, 12).map(event => (
                 <button
@@ -360,7 +362,7 @@ export default function TaskInboxPage() {
                     <p className="text-sm text-foreground font-medium truncate">{event.title}</p>
                     <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: event.color || '#3b82f6' }} />
                   </div>
-                  <p className="text-xs text-foreground/80 mt-1">{new Date(event.start_at).toLocaleString('vi-VN')}</p>
+                  <p className="text-xs text-foreground/80 mt-1">{new Date(event.start_at).toLocaleString(appLocale())}</p>
                   {event.location && <p className="text-[11px] text-muted-foreground mt-1">📍 {event.location}</p>}
                 </button>
               ))
@@ -369,7 +371,7 @@ export default function TaskInboxPage() {
 
           {summaryCards.overdue.length > 0 && (
             <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-3">
-              <div className="text-xs font-semibold text-red-300 uppercase tracking-wider mb-2">Ưu tiên xử lý</div>
+              <div className="text-xs font-semibold text-red-300 uppercase tracking-wider mb-2">{tr('Ưu tiên xử lý')}</div>
               <div className="space-y-2">
                 {summaryCards.overdue.slice(0, 4).map(task => (
                   <button
@@ -379,7 +381,7 @@ export default function TaskInboxPage() {
                     className="w-full text-left rounded-lg border border-red-500/10 bg-card px-3 py-2 hover:border-red-400/40"
                   >
                     <div className="text-sm text-foreground truncate">{task.title}</div>
-                    <div className="text-[11px] text-red-300 mt-1">Quá hạn từ {task.due_date ? new Date(task.due_date).toLocaleDateString('vi-VN') : '-'}</div>
+                    <div className="text-[11px] text-red-300 mt-1">{trx('Quá hạn từ {{v1}}', { v1: task.due_date ? new Date(task.due_date).toLocaleDateString(appLocale()) : '-' })}</div>
                   </button>
                 ))}
               </div>
@@ -395,16 +397,16 @@ export default function TaskInboxPage() {
       {showEventModal && (
         <ErpOverlay onClose={closeEventModal} className="z-50">
           <ErpModalCard className="w-full max-w-md p-5">
-            <h3 className="text-sm font-bold text-foreground mb-4">{editingEventId ? 'Chỉnh sửa sự kiện' : 'Tạo sự kiện mới'}</h3>
+            <h3 className="text-sm font-bold text-foreground mb-4">{editingEventId ? tr('Chỉnh sửa sự kiện') : tr('Tạo sự kiện mới')}</h3>
             <div className="space-y-3">
               <input
-                placeholder="Tiêu đề sự kiện"
+                placeholder={tr('Tiêu đề sự kiện')}
                 value={eventDraft.title ?? ''}
                 onChange={e => setEventDraft(v => ({ ...v, title: e.target.value }))}
                 className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
               <div>
-                <label className="text-[11px] text-muted-foreground mb-1 block">Bắt đầu</label>
+                <label className="text-[11px] text-muted-foreground mb-1 block">{tr('Bắt đầu')}</label>
                 <input
                   type="datetime-local"
                   value={eventDraft.start_at ? new Date(eventDraft.start_at - new Date(eventDraft.start_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
@@ -422,11 +424,11 @@ export default function TaskInboxPage() {
                     if (!checked) setEventDraft(v => ({ ...v, end_at: undefined }));
                   }}
                 />
-                Có thời gian / ngày kết thúc
+                {tr('Có thời gian / ngày kết thúc')}
               </label>
               {hasEndTime && (
                 <div>
-                  <label className="text-[11px] text-muted-foreground mb-1 block">Kết thúc</label>
+                  <label className="text-[11px] text-muted-foreground mb-1 block">{tr('Kết thúc')}</label>
                   <input
                     type="datetime-local"
                     value={eventDraft.end_at ? new Date(eventDraft.end_at - new Date(eventDraft.end_at).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
@@ -436,13 +438,13 @@ export default function TaskInboxPage() {
                 </div>
               )}
               <input
-                placeholder="Địa điểm (tùy chọn)"
+                placeholder={tr('Địa điểm (tùy chọn)')}
                 value={eventDraft.location ?? ''}
                 onChange={e => setEventDraft(v => ({ ...v, location: e.target.value }))}
                 className="w-full bg-muted border border-input rounded-lg px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500"
               />
               <textarea
-                placeholder="Ghi chú / note thông tin thêm (tùy chọn)"
+                placeholder={tr('Ghi chú / note thông tin thêm (tùy chọn)')}
                 value={eventDraft.description ?? ''}
                 onChange={e => setEventDraft(v => ({ ...v, description: e.target.value }))}
                 rows={3}
@@ -454,8 +456,8 @@ export default function TaskInboxPage() {
                 onClick={handleSaveEvent}
                 disabled={savingEvent || !eventDraft.title?.trim() || !eventDraft.start_at || (hasEndTime && !eventDraft.end_at)}
                 className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm rounded-lg"
-              >{savingEvent ? 'Đang lưu...' : (editingEventId ? 'Lưu' : 'Tạo')}</button>
-              <button onClick={closeEventModal} className="px-4 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg text-sm">Huỷ</button>
+              >{savingEvent ? tr('Đang lưu...') : (editingEventId ? tr('Lưu') : tr('Tạo'))}</button>
+              <button onClick={closeEventModal} className="px-4 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg text-sm">{tr('Huỷ')}</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>
@@ -466,9 +468,9 @@ export default function TaskInboxPage() {
           <ErpModalCard className="w-full max-w-sm p-5">
             <h3 className="text-sm font-bold text-foreground mb-2">{selectedEvent.title}</h3>
             <p className="text-xs text-muted-foreground">
-              {new Date(selectedEvent.start_at).toLocaleString('vi-VN')}
+              {new Date(selectedEvent.start_at).toLocaleString(appLocale())}
               {selectedEvent.end_at && selectedEvent.end_at > selectedEvent.start_at
-                ? ` → ${new Date(selectedEvent.end_at).toLocaleString('vi-VN')}`
+                ? ` → ${new Date(selectedEvent.end_at).toLocaleString(appLocale())}`
                 : ''}
             </p>
             {selectedEvent.location && <p className="text-xs text-muted-foreground mt-1">📍 {selectedEvent.location}</p>}
@@ -477,15 +479,15 @@ export default function TaskInboxPage() {
               <button
                 onClick={() => openEditEventModal(selectedEvent)}
                 className="px-3 py-1.5 text-xs text-blue-300 hover:text-white hover:bg-blue-600 rounded-lg"
-              >Sửa</button>
+              >{tr('Sửa')}</button>
               <button
                 onClick={() => {
                   setDeleteTarget(selectedEvent);
                   setSelectedEvent(null);
                 }}
                 className="px-3 py-1.5 text-xs font-medium text-red-300 border border-red-500/30 bg-red-500/10 hover:text-white hover:bg-red-600 rounded-lg"
-              >Xoá</button>
-              <button onClick={() => setSelectedEvent(null)} className="px-3 py-1.5 text-xs text-foreground/80 hover:text-foreground hover:bg-muted rounded-lg">Đóng</button>
+              >{tr('Xoá')}</button>
+              <button onClick={() => setSelectedEvent(null)} className="px-3 py-1.5 text-xs text-foreground/80 hover:text-foreground hover:bg-muted rounded-lg">{tr('Đóng')}</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>
@@ -493,7 +495,7 @@ export default function TaskInboxPage() {
 
       {deleteTarget && (
         <ConfirmDialog
-          message={`Xoá sự kiện "${deleteTarget.title}"?`}
+          message={tr('Xoá sự kiện "{{title}}"?', { title: deleteTarget.title })}
           onConfirm={handleDeleteEvent}
           onCancel={() => setDeleteTarget(null)}
         />

@@ -1,14 +1,14 @@
 /**
- * cloudSettings — cấu hình Cloudflare của MÁY NÀY: userData/cloud-settings.json (không nằm trong DB nên đồng bộ DB
- * không mang lên R2).
+ * cloudSettings: Cloudflare settings of THIS MACHINE: userData/cloud-settings.json (not in the DB, so DB sync
+ * does not carry it up to R2).
  *
- *  - Ghi nguyên tử: file tạm (fsync) rồi rename.
- *  - Bí mật (token Cloudflare, mật khẩu sao lưu, refresh token Google, client secret Google riêng) mã hoá bằng electron
- *    safeStorage (base64). Không có safeStorage
- *    (hoặc Linux chỉ có 'basic_text') → ném CloudError('SAFE_STORAGE_UNAVAILABLE'), KHÔNG lưu dạng thường.
- *  - Bản giải mã chỉ nhớ trong RAM; get() không bao giờ chứa bí mật.
- *  - machineId (uuid) + machineName (os.hostname()) sinh một lần.
- *  - Đường dẫn file / safeStorage / hostname / uuid tiêm được để test.
+ *  - Atomic write: temp file (fsync) then rename.
+ *  - Secrets (Cloudflare token, backup password, Google refresh token, the separate Google client secret) are encrypted with electron
+ *    safeStorage (base64). Without safeStorage
+ *    (or on Linux with only 'basic_text') → throws CloudError('SAFE_STORAGE_UNAVAILABLE'), NEVER saves in plain text.
+ *  - The decrypted copy is only kept in RAM; get() never contains a secret.
+ *  - machineId (uuid) + machineName (os.hostname()) are generated once.
+ *  - The file path / safeStorage / hostname / uuid can be injected for tests.
  */
 import * as fs from 'fs';
 import * as os from 'os';
@@ -18,6 +18,7 @@ import { CloudError, CloudSettingsData, CloudSettingsStore } from './contracts';
 import type { DbSyncMode, MediaSyncOptions, TunnelAutoConfig, TunnelMode, TunnelServiceId } from '../../shared/cloud/cloudContracts';
 import { isCloudStorageProvider } from '../../shared/cloud/cloudContracts';
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 export const CLOUD_SETTINGS_FILE = 'cloud-settings.json';
 
@@ -47,7 +48,7 @@ const SECRET_LABELS: Record<SecretName, string> = {
 interface SettingsFile {
     version: 1;
     settings: CloudSettingsData;
-    /** base64 của safeStorage.encryptString(...) */
+    /** base64 of safeStorage.encryptString(...) */
     secrets: Partial<Record<SecretName, string>>;
 }
 
@@ -87,7 +88,7 @@ export function defaultCloudSettings(machineId: string, machineName: string): Cl
     };
 }
 
-// ─── Chuẩn hoá (giữ trường lạ, sửa trường sai kiểu về mặc định) ─────────────
+// ─── Normalize (keeps unknown fields, resets wrongly typed fields to defaults) ─────────────
 
 function isObj(v: unknown): v is Record<string, any> {
     return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -176,7 +177,7 @@ export function normalizeCloudSettings(raw: unknown, defaults: CloudSettingsData
             following,
         },
         sync: { ...sy, includeMedia: boolOr(sy.includeMedia, true) },
-        // Bản cũ chỉ có R2 → thiếu / sai kiểu = 'r2'
+        // Old versions had only R2 → missing / wrong type = 'r2'
         storage: { ...st, provider: isCloudStorageProvider(st.provider) ? st.provider : 'r2' },
         google: {
             ...g,
@@ -193,11 +194,11 @@ function clone<T>(v: T): T {
     return JSON.parse(JSON.stringify(v)) as T;
 }
 
-/** Ngủ đồng bộ ngắn (chỉ dùng khi thử lại rename trên Windows). */
+/** Short synchronous sleep (only used when retrying a rename on Windows). */
 function sleepSync(ms: number): void {
     try {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-    } catch { /* môi trường không hỗ trợ: bỏ qua */ }
+    } catch { /* environment does not support it: ignore */ }
 }
 
 // ─── Store ───────────────────────────────────────────────────────────────────
@@ -205,7 +206,7 @@ function sleepSync(ms: number): void {
 export class CloudSettings implements CloudSettingsStore {
     private data: CloudSettingsData | null = null;
     private secrets: Partial<Record<SecretName, string>> = {};
-    /** Bản giải mã trong RAM (undefined = chưa đọc). */
+    /** Decrypted copy in RAM (undefined = not read yet). */
     private plain: Partial<Record<SecretName, string | null>> = {};
 
     constructor(private readonly opts: CloudSettingsOptions = {}) {}
@@ -214,7 +215,7 @@ export class CloudSettings implements CloudSettingsStore {
         return clone(this.load());
     }
 
-    /** Bản đang giữ (chỉ đọc, KHÔNG sửa) — dùng ở đường nóng trong core để khỏi clone. */
+    /** The held copy (read-only, DO NOT modify), used on the hot path in core to avoid cloning. */
     peek(): Readonly<CloudSettingsData> {
         return this.load();
     }
@@ -261,24 +262,24 @@ export class CloudSettings implements CloudSettingsStore {
         this.writeSecret('googleClientSecret', secret);
     }
 
-    /** Máy này lưu được bí mật không (safeStorage thật, không phải 'basic_text'). */
+    /** Whether this machine can store secrets (real safeStorage, not 'basic_text'). */
     secretsAvailable(): boolean {
         return this.usableSafeStorage() !== null;
     }
 
-    /** Ném CloudError('SAFE_STORAGE_UNAVAILABLE') nếu không lưu được bí mật. */
+    /** Throws CloudError('SAFE_STORAGE_UNAVAILABLE') if secrets cannot be stored. */
     assertSecretsAvailable(): void {
         if (!this.usableSafeStorage()) throw this.unavailableError();
     }
 
-    /** Đường dẫn file cấu hình (để hiển thị / test). */
+    /** Path of the config file (for display / tests). */
     filePath(): string {
         if (this.opts.filePath) return this.opts.filePath();
         const { app } = require('electron');
         return path.join(app.getPath('userData'), CLOUD_SETTINGS_FILE);
     }
 
-    // ── nội bộ ──
+    // ── internal ──
 
     private load(): CloudSettingsData {
         if (this.data) return this.data;
@@ -291,7 +292,7 @@ export class CloudSettings implements CloudSettingsStore {
                 break;
             } catch (err: any) {
                 if (err?.code === 'ENOENT') break;
-                if (attempt >= 3) throw new CloudError('SETTINGS_UNREADABLE', `Không đọc được cấu hình Cloudflare (${err?.code || err?.message || err})`);
+                if (attempt >= 3) throw new CloudError('SETTINGS_UNREADABLE', tr('Không đọc được cấu hình Cloudflare ({{v1}})', { v1: err?.code || err?.message || err }));
                 sleepSync(50);
             }
         }
@@ -300,7 +301,7 @@ export class CloudSettings implements CloudSettingsStore {
                 raw = JSON.parse(text);
             } catch (err: any) {
                 const backup = `${file}.corrupt-${Date.now()}`;
-                try { fs.copyFileSync(file, backup); } catch { /* bỏ qua */ }
+                try { fs.copyFileSync(file, backup); } catch { /* ignore */ }
                 Logger.warn(`[cloudSettings] ${path.basename(file)} hỏng (${err?.message}); đã sao lưu sang ${path.basename(backup)} và dùng mặc định`);
                 raw = null;
             }
@@ -316,7 +317,7 @@ export class CloudSettings implements CloudSettingsStore {
         }
         this.secrets = secrets;
         this.data = settings;
-        // machineId/machineName chỉ sinh một lần: ghi ngay khi file chưa có.
+        // machineId/machineName are generated only once: written right away when the file does not exist yet.
         const rawSettings = isObj(raw) && isObj(raw.settings) ? raw.settings : null;
         if (!rawSettings || !strOrNull(rawSettings.machineId) || !strOrNull(rawSettings.machineName)) {
             try {
@@ -346,8 +347,8 @@ export class CloudSettings implements CloudSettingsStore {
                 return;
             } catch (err: any) {
                 if (attempt >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes(err?.code)) {
-                    try { fs.unlinkSync(tmp); } catch { /* bỏ qua */ }
-                    throw new CloudError('SETTINGS_WRITE_FAILED', `Không ghi được cấu hình Cloudflare (${err?.code || err?.message || err})`);
+                    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+                    throw new CloudError('SETTINGS_WRITE_FAILED', tr('Không ghi được cấu hình Cloudflare ({{v1}})', { v1: err?.code || err?.message || err }));
                 }
                 sleepSync(30 * (attempt + 1));
             }
@@ -364,7 +365,7 @@ export class CloudSettings implements CloudSettingsStore {
             return null;
         }
         const ss = this.usableSafeStorage();
-        // Chưa sẵn sàng (trước app ready) → không nhớ kết quả, lần sau đọc lại.
+        // Not ready yet (before app ready) → do not remember the result, read again next time.
         if (!ss) return null;
         try {
             const value = ss.decryptString(Buffer.from(enc, 'base64'));
@@ -387,14 +388,14 @@ export class CloudSettings implements CloudSettingsStore {
             this.plain[name] = null;
             return;
         }
-        if (typeof value !== 'string') throw new CloudError('BAD_INPUT', 'Giá trị bí mật không hợp lệ');
+        if (typeof value !== 'string') throw new CloudError('BAD_INPUT', tr('Giá trị bí mật không hợp lệ'));
         const ss = this.usableSafeStorage();
         if (!ss) throw this.unavailableError();
         let encrypted: string;
         try {
             encrypted = ss.encryptString(value).toString('base64');
         } catch (err: any) {
-            throw new CloudError('SAFE_STORAGE_UNAVAILABLE', `Không mã hoá được bằng safeStorage (${err?.message || err})`);
+            throw new CloudError('SAFE_STORAGE_UNAVAILABLE', tr('Không mã hoá được bằng safeStorage ({{v1}})', { v1: err?.message || err }));
         }
         nextSecrets[name] = encrypted;
         this.persist(settings, nextSecrets);
@@ -412,7 +413,7 @@ export class CloudSettings implements CloudSettingsStore {
         if (!ss || typeof ss.isEncryptionAvailable !== 'function') return null;
         try {
             if (!ss.isEncryptionAvailable()) return null;
-            // Linux không có keyring: 'basic_text' = khoá cố định, coi như không mã hoá.
+            // Linux without a keyring: 'basic_text' = a fixed key, treated as not encrypted.
             if (typeof ss.getSelectedStorageBackend === 'function' && ss.getSelectedStorageBackend() === 'basic_text') return null;
         } catch {
             return null;
@@ -423,7 +424,7 @@ export class CloudSettings implements CloudSettingsStore {
     private unavailableError(): CloudError {
         return new CloudError(
             'SAFE_STORAGE_UNAVAILABLE',
-            'Máy này không có kho mã hoá an toàn của hệ điều hành (safeStorage) nên không lưu được token / mật khẩu',
+            tr('Máy này không có kho mã hoá an toàn của hệ điều hành (safeStorage) nên không lưu được token / mật khẩu'),
         );
     }
 
@@ -440,5 +441,5 @@ export class CloudSettings implements CloudSettingsStore {
     }
 }
 
-/** Store dùng chung của app (đọc file lần đầu khi cần, không chạm đĩa lúc import). */
+/** The app's shared store (reads the file the first time it is needed, does not touch the disk at import). */
 export const cloudSettings = new CloudSettings();

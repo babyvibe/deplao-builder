@@ -14,6 +14,8 @@ import { CalendarIcon, ClockIcon, CloseIcon, CloudIcon, EditIcon, FolderIcon, Gh
 import { CHANNEL } from '@/lib/channels/channelHelper';
 import type { Channel } from '../../../../configs/channels/channelConfig';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 
@@ -51,14 +53,14 @@ function PaginationBar({ page, totalPages, total, pageSize, onPageChange, onPage
   return (
     <div className="flex items-center justify-between px-4 py-2 border-t border-border flex-shrink-0">
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-subtle-foreground">{total.toLocaleString('vi-VN')} liên hệ</span>
+        <span className="text-[11px] text-subtle-foreground">{trx('{{v1}} liên hệ', { v1: total.toLocaleString(appLocale()) })}</span>
         {onPageSizeChange && (
           <select
             value={pageSize}
             onChange={e => onPageSizeChange(Number(e.target.value))}
             className="bg-card border border-input rounded px-1.5 py-0.5 text-[11px] text-foreground/80 focus:outline-none focus:border-blue-500 cursor-pointer">
             {[50, 100, 200, 500].map(s => (
-              <option key={s} value={s}>{s}/trang</option>
+              <option key={s} value={s}>{tr('{{s}}/trang', { s })}</option>
             ))}
           </select>
         )}
@@ -99,11 +101,11 @@ function PaginationBar({ page, totalPages, total, pageSize, onPageChange, onPage
               autoFocus
             />
             <button onClick={handleJump}
-              className="px-2 py-1 rounded bg-blue-600 text-xs text-white hover:bg-blue-700">Đến</button>
+              className="px-2 py-1 rounded bg-blue-600 text-xs text-white hover:bg-blue-700">{tr('Đến')}</button>
           </div>
         )}
       </div>
-      <span className="text-[11px] text-subtle-foreground">Trang {page + 1}/{totalPages}</span>
+      <span className="text-[11px] text-subtle-foreground">{trx('Trang {{v1}}/{{totalPages}}', { v1: page + 1, totalPages })}</span>
     </div>
   );
 }
@@ -178,7 +180,7 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
       <button onClick={() => setOpen(v => !v)}
         className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${
           activeCount > 0 ? 'bg-blue-600 border-blue-600 text-white' : 'border-input text-muted-foreground hover:border-border-strong'
-        }`}><TagIcon className="w-4 h-4 inline" /> {activeCount > 0 ? `${activeCount} nhãn` : 'Nhãn'}
+        }`}><TagIcon className="w-4 h-4 inline" /> {activeCount > 0 ? tr('{{activeCount}} nhãn', { activeCount }) : tr('Nhãn')}
       </button>
       {open && (
         <div className="absolute top-full left-0 mt-1 bg-card border border-input rounded-xl shadow-xl z-50 min-w-[180px] max-h-64 overflow-hidden flex flex-col">
@@ -188,7 +190,7 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
               <button onClick={() => setTab('local')}
                 className={`flex-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
                   tab === 'local' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
-                }`}><HardDriveIcon className="w-4 h-4 inline" /> Local</button>
+                }`}>{trx('<0/> Local', { 0: <HardDriveIcon className="w-4 h-4 inline" /> })}</button>
               {supportsZaloLabels && <button onClick={() => setTab('zalo')}
                 className={`flex-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
                   tab === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
@@ -198,7 +200,7 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
           <div className="overflow-y-auto">
             {tab === 'local' ? (
               !localLabels?.length
-                ? <p className="text-xs text-muted-foreground px-3 py-2">Chưa có Nhãn Local</p>
+                ? <p className="text-xs text-muted-foreground px-3 py-2">{tr('Chưa có Nhãn Local')}</p>
                 : localLabels.map(label => (
                     <button key={`local-${label.id}`} onClick={() => toggleLocal(label.id)}
                       className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted text-left transition-colors">
@@ -214,7 +216,7 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
                   ))
             ) : (
               !allLabels.length
-                ? <p className="text-xs text-muted-foreground px-3 py-2">Chưa có nhãn Zalo</p>
+                ? <p className="text-xs text-muted-foreground px-3 py-2">{tr('Chưa có nhãn Zalo')}</p>
                 : allLabels.map(label => (
                     <button key={label.id} onClick={() => toggleZalo(label.id)}
                       className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted text-left transition-colors">
@@ -229,7 +231,7 @@ function LabelFilterDropdown({ allLabels, filterLabelIds, filterLocalLabelIds, o
           {activeCount > 0 && (
             <button onClick={() => onChange({ filterLabelIds: [], filterLocalLabelIds: [] })}
               className="w-full text-xs text-muted-foreground hover:text-foreground px-3 py-2 border-t border-border text-left flex-shrink-0">
-              Xóa bộ lọc
+              {tr('Xóa bộ lọc')}
             </button>
           )}
         </div>
@@ -259,11 +261,11 @@ function ContactTypeFilterDropdown({ filterContactTypes, onChange, supportsFrien
   };
 
   const allOptions: { key: ContactTypeFilter; label: string; icon: React.ReactNode }[] = [
-    { key: 'friend', label: 'Bạn bè', icon: <UserCheckIcon className="w-4 h-4" /> },
-    { key: 'non_friend', label: 'Chưa là bạn bè', icon: <GhostIcon className="w-4 h-4" /> },
-    { key: 'group', label: 'Nhóm', icon: <UsersIcon className="w-4 h-4" /> },
-    { key: 'has_phone', label: 'Có SĐT', icon: <PhoneIcon className="w-4 h-4" /> },
-    { key: 'has_notes', label: 'Có ghi chú', icon: <EditIcon className="w-4 h-4" /> },
+    { key: 'friend', label: tr('Bạn bè'), icon: <UserCheckIcon className="w-4 h-4" /> },
+    { key: 'non_friend', label: tr('Chưa là bạn bè'), icon: <GhostIcon className="w-4 h-4" /> },
+    { key: 'group', label: tr('Nhóm'), icon: <UsersIcon className="w-4 h-4" /> },
+    { key: 'has_phone', label: tr('Có SĐT'), icon: <PhoneIcon className="w-4 h-4" /> },
+    { key: 'has_notes', label: tr('Có ghi chú'), icon: <EditIcon className="w-4 h-4" /> },
   ];
   const OPTIONS = supportsFriendState
     ? allOptions
@@ -271,10 +273,10 @@ function ContactTypeFilterDropdown({ filterContactTypes, onChange, supportsFrien
 
   const activeCount = filterContactTypes.length;
   const label = activeCount === 0
-    ? 'Loại'
+    ? tr('Loại')
     : activeCount === 1
-      ? OPTIONS.find(o => o.key === filterContactTypes[0])?.label ?? 'Loại'
-      : `${activeCount} loại`;
+      ? OPTIONS.find(o => o.key === filterContactTypes[0])?.label ?? tr('Loại')
+      : tr('{{activeCount}} loại', { activeCount });
 
   return (
     <div ref={ref} className="relative flex-shrink-0">
@@ -301,7 +303,7 @@ function ContactTypeFilterDropdown({ filterContactTypes, onChange, supportsFrien
           {activeCount > 0 && (
             <button onClick={() => onChange([])}
               className="w-full text-xs text-muted-foreground hover:text-foreground px-3 py-2 border-t border-border text-left">
-              Xóa bộ lọc
+              {tr('Xóa bộ lọc')}
             </button>
           )}
         </div>
@@ -324,10 +326,10 @@ function GenderFilterDropdown({ value, onChange }: {
   }, []);
 
   const OPTIONS: { key: GenderFilter; label: string; icon: React.ReactNode }[] = [
-    { key: 'all', label: 'Tất cả', icon: <UserIcon className="w-4 h-4" /> },
-    { key: 'male', label: 'Nam', icon: <UserIcon className="w-4 h-4" /> },
-    { key: 'female', label: 'Nữ', icon: <UserIcon className="w-4 h-4" /> },
-    { key: 'unknown', label: 'Không xác định', icon: <CloseIcon className="w-4 h-4" /> },
+    { key: 'all', label: tr('Tất cả'), icon: <UserIcon className="w-4 h-4" /> },
+    { key: 'male', label: tr('Nam'), icon: <UserIcon className="w-4 h-4" /> },
+    { key: 'female', label: tr('Nữ'), icon: <UserIcon className="w-4 h-4" /> },
+    { key: 'unknown', label: tr('Không xác định'), icon: <CloseIcon className="w-4 h-4" /> },
   ];
 
   const current = OPTIONS.find(o => o.key === value);
@@ -339,7 +341,7 @@ function GenderFilterDropdown({ value, onChange }: {
         className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${
           isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-input text-muted-foreground hover:border-border-strong'
         }`}>
-        {isActive ? `${current?.icon} ${current?.label}` : '⚧ Giới tính'}
+        {isActive ? `${current?.icon} ${current?.label}` : tr('⚧ Giới tính')}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="ml-0.5">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
@@ -375,12 +377,12 @@ function BirthdayFilterDropdown({ value, onChange }: {
   }, []);
 
   const OPTIONS: { key: BirthdayFilter; label: string; icon: React.ReactNode }[] = [
-    { key: 'all', label: 'Tất cả', icon: <CalendarIcon className="w-4 h-4" /> },
-    { key: 'today', label: 'Hôm nay', icon: <GiftIcon className="w-4 h-4" /> },
-    { key: 'this_week', label: 'Tuần này', icon: <CalendarIcon className="w-4 h-4" /> },
-    { key: 'this_month', label: 'Tháng này', icon: <StarIcon className="w-4 h-4" /> },
-    { key: 'has_birthday', label: 'Có ngày sinh', icon: <GiftIcon className="w-4 h-4" /> },
-    { key: 'no_birthday', label: 'Chưa có', icon: <CloseIcon className="w-4 h-4" /> },
+    { key: 'all', label: tr('Tất cả'), icon: <CalendarIcon className="w-4 h-4" /> },
+    { key: 'today', label: tr('Hôm nay'), icon: <GiftIcon className="w-4 h-4" /> },
+    { key: 'this_week', label: tr('Tuần này'), icon: <CalendarIcon className="w-4 h-4" /> },
+    { key: 'this_month', label: tr('Tháng này'), icon: <StarIcon className="w-4 h-4" /> },
+    { key: 'has_birthday', label: tr('Có ngày sinh'), icon: <GiftIcon className="w-4 h-4" /> },
+    { key: 'no_birthday', label: tr('Chưa có'), icon: <CloseIcon className="w-4 h-4" /> },
   ];
 
   const current = OPTIONS.find(o => o.key === value);
@@ -392,7 +394,7 @@ function BirthdayFilterDropdown({ value, onChange }: {
         className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border transition-colors ${
           isActive ? 'bg-blue-600 border-blue-600 text-white' : 'border-input text-muted-foreground hover:border-border-strong'
         }`}>
-        {isActive ? `${current?.icon} ${current?.label}` : 'Sinh nhật'}
+        {isActive ? `${current?.icon} ${current?.label}` : tr('Sinh nhật')}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="ml-0.5">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
@@ -429,12 +431,12 @@ function SortDropdown({ sortBy, sortDir, onChange }: {
   }, []);
 
   const OPTIONS = [
-    { key: 'name:asc', label: 'Tên A → Z', icon: '' },
-    { key: 'name:desc', label: 'Tên Z → A', icon: '' },
-    { key: 'last_message:desc', label: 'Tin nhắn gần nhất', icon: <ClockIcon className="w-4 h-4" /> },
+    { key: 'name:asc', label: tr('Tên A → Z'), icon: '' },
+    { key: 'name:desc', label: tr('Tên Z → A'), icon: '' },
+    { key: 'last_message:desc', label: tr('Tin nhắn gần nhất'), icon: <ClockIcon className="w-4 h-4" /> },
   ];
   const current = `${sortBy}:${sortDir}`;
-  const currentLabel = OPTIONS.find(o => o.key === current)?.label || 'Sắp xếp';
+  const currentLabel = OPTIONS.find(o => o.key === current)?.label || tr('Sắp xếp');
 
   return (
     <div ref={ref} className="relative flex-shrink-0">
@@ -488,7 +490,7 @@ function ActionsDropdown({ total, exportingCSV, onExportCSV, onImportPhones }: {
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
           <circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>
         </svg>
-        Thao tác
+        {tr('Thao tác')}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
@@ -511,7 +513,7 @@ function ActionsDropdown({ total, exportingCSV, onExportCSV, onImportPhones }: {
                 <line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
             )}
-            <span>{exportingCSV ? 'Đang xuất...' : `Xuất CSV (${total})`}</span>
+            <span>{exportingCSV ? tr('Đang xuất...') : tr('Xuất CSV ({{total}})', { total })}</span>
           </button>
           {/* Import phones */}
           {onImportPhones && (
@@ -522,7 +524,7 @@ function ActionsDropdown({ total, exportingCSV, onExportCSV, onImportPhones }: {
                 <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/>
                 <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
               </svg>
-              <span>Thêm liên hệ theo SĐT</span>
+              <span>{tr('Thêm liên hệ theo SĐT')}</span>
             </button>
           )}
         </div>
@@ -550,13 +552,13 @@ export default function CRMContactList({
     const d = new Date(ts);
     const now = new Date();
     if (d.getFullYear() === now.getFullYear())
-      return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
-    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' });
+      return d.toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit' });
+    return d.toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit', year: '2-digit' });
   };
 
   function escapeCSV(val: any): string {
     const s = String(val ?? '');
-    // Excel tự chuyển số dài (SĐT, UID) thành scientific notation → ép giữ dạng text
+    // Excel turns long numbers (phone numbers, UIDs) into scientific notation → force them to stay as text
     if (/^\d+$/.test(s) && s.length >= 5)
       return '="' + s + '"';
     if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r'))
@@ -572,20 +574,20 @@ export default function CRMContactList({
       const allContacts = onExportAll ? await onExportAll() : (contacts || []);
       if (!allContacts?.length) return;
 
-      const headers = ['Tên hiển thị', 'Biệt danh', 'Điện thoại', 'UID', 'Loại', 'Bạn bè', 'Giới tính', 'Sinh nhật', 'Tin nhắn cuối', 'Ghi chú'];
+      const headers = [tr('Tên hiển thị'), tr('Biệt danh'), tr('Điện thoại'), 'UID', tr('Loại'), tr('Bạn bè'), tr('Giới tính'), tr('Sinh nhật'), tr('Tin nhắn cuối'), tr('Ghi chú')];
       const rows = allContacts.map((c: any) => {
-        const typeLabel = c.contact_type === 'group' ? 'Nhóm' : c.is_friend === 1 ? 'Bạn bè' : 'Chưa là bạn bè';
-        const genderLabel = c.gender === 0 ? 'Nam' : c.gender === 1 ? 'Nữ' : '';
+        const typeLabel = c.contact_type === 'group' ? tr('Nhóm') : c.is_friend === 1 ? tr('Bạn bè') : tr('Chưa là bạn bè');
+        const genderLabel = c.gender === 0 ? 'Nam' : c.gender === 1 ? tr('Nữ') : '';
         return [
           escapeCSV(c.display_name || c.contact_id),
           escapeCSV(c.alias || ''),
           escapeCSV(c.phone || ''),
           escapeCSV(c.contact_id),
           escapeCSV(typeLabel),
-          escapeCSV(c.is_friend === 1 ? 'Có' : 'Không'),
+          escapeCSV(c.is_friend === 1 ? tr('Có') : tr('Không')),
           escapeCSV(genderLabel),
           escapeCSV(c.birthday || ''),
-          escapeCSV(c.last_message_time ? new Date(c.last_message_time).toLocaleString('vi-VN') : ''),
+          escapeCSV(c.last_message_time ? new Date(c.last_message_time).toLocaleString(appLocale()) : ''),
           escapeCSV(c.note_count || 0),
         ].join(',');
       });
@@ -669,13 +671,13 @@ export default function CRMContactList({
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input value={searchText} onChange={e => onFilterChange({ searchText: e.target.value, page: 0 })}
-                 placeholder="Tên, SĐT, UID..."
+                 placeholder={tr('Tên, SĐT, UID...')}
                  className="w-full bg-card border border-input rounded-lg pl-7 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors" />
         </div>
 
         <div className="flex-1"></div>
 
-        {/* Actions dropdown (Export CSV + Import SĐT) */}
+        {/* Actions dropdown (Export CSV + Import phone numbers) */}
         <ActionsDropdown
           total={total}
           exportingCSV={exportingCSV}
@@ -695,21 +697,21 @@ export default function CRMContactList({
           {allSelected ? (
             <>
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-              Bỏ chọn ({contacts.length})
+              {trx('Bỏ chọn ({{count}})', { count: contacts.length })}
             </>
           ) : (
             <>
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-              Trang này ({contacts.length})
+              {trx('Trang này ({{count}})', { count: contacts.length })}
             </>
           )}
         </button>
         <span className="w-8 flex-shrink-0" />
-        <span className="flex-1 ml-2">Tên</span>
-        <span className="w-16 flex-shrink-0 text-center">Giới tính</span>
-        <span className="w-24 flex-shrink-0 text-center">Sinh nhật</span>
-        <span className="w-28 flex-shrink-0 ">Điện thoại</span>
-        <span className="w-20 flex-shrink-0 text-right">Tin nhắn</span>
+        <span className="flex-1 ml-2">{tr('Tên')}</span>
+        <span className="w-16 flex-shrink-0 text-center">{tr('Giới tính')}</span>
+        <span className="w-24 flex-shrink-0 text-center">{tr('Sinh nhật')}</span>
+        <span className="w-28 flex-shrink-0 ">{tr('Điện thoại')}</span>
+        <span className="w-20 flex-shrink-0 text-right">{tr('Tin nhắn')}</span>
       </div>
 
 
@@ -722,7 +724,7 @@ export default function CRMContactList({
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mb-3 opacity-40">
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
             </svg>
-            <p className="text-sm">Không có liên hệ nào</p>
+            <p className="text-sm">{tr('Không có liên hệ nào')}</p>
           </div>
         ) : (
           contacts.map(contact => {
@@ -776,7 +778,7 @@ export default function CRMContactList({
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm text-foreground truncate font-medium">{name}</span>
                     {contact.contact_type === 'group'
-                      ? <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">nhóm</span>
+                      ? <span className="text-[9px] text-purple-400 flex-shrink-0 bg-purple-400/10 px-1 rounded">{tr('nhóm')}</span>
                       : contact.is_friend === 1 && <span className="text-[9px] text-green-500 flex-shrink-0">●</span>}
                     {contact.note_count > 0 && <span className="text-[12px] text-yellow-500 flex-shrink-0"><EditIcon className="w-4 h-4" /></span>}
                   </div>
@@ -811,8 +813,8 @@ export default function CRMContactList({
                 </div>
                 {/* Gender column */}
                 <span className="w-16 flex-shrink-0 hidden lg:block text-center">
-                  {contact.gender === 0 && <span className="text-[11px] text-blue-400">♂ Nam</span>}
-                  {contact.gender === 1 && <span className="text-[11px] text-pink-400">♀ Nữ</span>}
+                  {contact.gender === 0 && <span className="text-[11px] text-blue-400">{tr('♂ Nam')}</span>}
+                  {contact.gender === 1 && <span className="text-[11px] text-pink-400">{tr('♀ Nữ')}</span>}
                 </span>
                 {/* Birthday column */}
                 <span className="w-24 flex-shrink-0 hidden lg:block text-center text-[11px] text-muted-foreground">
@@ -827,7 +829,7 @@ export default function CRMContactList({
                   {onMessage && (
                     <button
                       onClick={e => { e.stopPropagation(); onMessage(contact); }}
-                      title="Nhắn tin"
+                      title={tr('Nhắn tin')}
                       className="p-1 rounded-md text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors opacity-0 group-hover:opacity-100">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>

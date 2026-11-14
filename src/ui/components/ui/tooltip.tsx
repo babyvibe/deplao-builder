@@ -1,5 +1,5 @@
 /**
- * Tooltip — small portaled label shown after a hover/keyboard-focus delay.
+ * Tooltip: small portaled label shown after a hover/keyboard-focus delay.
  *
  * ```tsx
  * <Tooltip content="Ghim hội thoại" side="bottom">

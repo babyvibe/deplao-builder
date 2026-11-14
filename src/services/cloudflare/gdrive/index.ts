@@ -1,9 +1,9 @@
 /**
- * Google Drive làm kho lưu (thay R2): đăng nhập OAuth (googleOAuth), lớp HTTP (DriveApi), client kiểu R2Client cho
- * từng "bucket" = thư mục Deplao/<bucket> (DriveStore), dịch vụ gom (GoogleDriveService).
+ * Google Drive as the storage (instead of R2): OAuth sign-in (googleOAuth), the HTTP layer (DriveApi), an R2Client-style client for
+ * each "bucket" = folder Deplao/<bucket> (DriveStore), and the aggregating service (GoogleDriveService).
  *
- * CloudflareService gọi createGoogleDrive() trong constructor — hàm này không chạm Electron / mạng / đĩa. Không import
- * CloudflareService ở đây (vòng import): mọi thứ cần dùng đi qua deps.
+ * CloudflareService calls createGoogleDrive() in its constructor; this function does not touch Electron / network / disk. Do not import
+ * CloudflareService here (import cycle): everything needed comes in through deps.
  */
 import type { GoogleDriveCore } from '../contracts';
 import { GoogleDriveService } from './GoogleDriveService';

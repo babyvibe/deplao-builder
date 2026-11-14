@@ -1,8 +1,10 @@
 /**
- * Lọc danh sách hội thoại theo khoảng ngày (menu ⋮): theo thời điểm tin cuối của hội thoại, ngày theo giờ máy (00:00 →
- * 23:59:59 giờ địa phương). DB lọc cùng quy tắc (DatabaseService.getContactsFiltered: fromTs / toTs; bản ghi cũ lưu
- * giây được đổi ra mili-giây trước khi so).
+ * Filters the conversation list by date range (⋮ menu): by the time of the conversation's last message, days by local time (00:00 →
+ * 23:59:59 local time). The DB filters by the same rule (DatabaseService.getContactsFiltered: fromTs / toTs; old records that store seconds
+ * are converted to milliseconds before comparing).
  */
+import { tr } from '../../../../shared/i18n';
+
 export type DateRangePreset = 'today' | '3d' | '7d' | '30d' | 'custom';
 
 export interface ConversationDateRange {
@@ -13,10 +15,10 @@ export interface ConversationDateRange {
 }
 
 export const DATE_RANGE_PRESETS: ReadonlyArray<{ preset: Exclude<DateRangePreset, 'custom'>; label: string }> = [
-  { preset: 'today', label: 'Hôm nay' },
-  { preset: '3d', label: '3 ngày qua' },
-  { preset: '7d', label: '7 ngày qua' },
-  { preset: '30d', label: '30 ngày qua' },
+  { preset: 'today', label: tr('Hôm nay') },
+  { preset: '3d', label: tr('3 ngày qua') },
+  { preset: '7d', label: tr('7 ngày qua') },
+  { preset: '30d', label: tr('30 ngày qua') },
 ];
 
 const PRESET_DAYS: Record<Exclude<DateRangePreset, 'custom'>, number> = { today: 1, '3d': 3, '7d': 7, '30d': 30 };
@@ -33,7 +35,7 @@ export function localDayEnd(ts: number): number {
   return date.getTime();
 }
 
-/** "Hôm nay" / "N ngày qua": tính cả hôm nay, từ 00:00 của ngày đầu. */
+/** "Hôm nay" (Today) / "N ngày qua" (last N days): includes today, from 00:00 of the first day. */
 export function presetDateRange(preset: Exclude<DateRangePreset, 'custom'>, now = Date.now()): ConversationDateRange {
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
@@ -53,7 +55,7 @@ const shortDate = (ts: number) => {
   return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}`;
 };
 
-/** Hai ô chọn ngày ("yyyy-mm-dd") → khoảng; thiếu một đầu = một ngày, nhập ngược thì đảo lại. */
+/** The two date pickers ("yyyy-mm-dd") → a range; a missing end = one day; entered backwards → swapped. */
 export function customDateRange(from: string, to: string): ConversationDateRange | null {
   let start = parseDateInput(from);
   let end = parseDateInput(to);
@@ -65,13 +67,13 @@ export function customDateRange(from: string, to: string): ConversationDateRange
   return { preset: 'custom', fromTs: localDayStart(start), toTs: localDayEnd(end), label };
 }
 
-/** Giá trị cho <input type="date"> (giờ máy). */
+/** Value for <input type="date"> (local time). */
 export function toDateInputValue(ts: number): string {
   const date = new Date(ts);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-/** Tin cuối của hội thoại nằm trong khoảng (null = không lọc). */
+/** The conversation's last message is inside the range (null = no filter). */
 export function inConversationDateRange(lastMessageTime: unknown, range: ConversationDateRange | null | undefined): boolean {
   if (!range) return true;
   let ts = Number(lastMessageTime) || 0;

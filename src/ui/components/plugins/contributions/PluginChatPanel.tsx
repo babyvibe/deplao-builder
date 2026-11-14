@@ -1,6 +1,6 @@
 /**
- * PluginChatPanel — panel plugin bên phải màn chat; gửi context.changed khi đổi hội thoại.
- * Context: tài khoản, hội thoại, kênh, thông tin khách (tên, ảnh, số điện thoại nếu có).
+ * PluginChatPanel - plugin panel on the right of the chat screen; sends context.changed when the conversation changes.
+ * Context: account, conversation, channel, customer info (name, photo, phone number if any).
  */
 import React, { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -10,6 +10,7 @@ import { useChatStore } from '@/store/chat/chatStore';
 import { usePluginStore } from '@/store/plugins/pluginStore';
 import { CloseIcon } from '@/components/common/icons';
 import PluginFrame from '../runtime/PluginFrame';
+import { tr } from '../../../../shared/i18n';
 
 export default function PluginChatPanel() {
   const panel = useAppStore(s => s.activePluginPanel);
@@ -54,7 +55,7 @@ export default function PluginChatPanel() {
             </button>
           );
         })}
-        <button type="button" title="Đóng" onClick={() => setPanel(null)} className="ml-auto w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
+        <button type="button" title={tr('Đóng')} onClick={() => setPanel(null)} className="ml-auto w-7 h-7 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground">
           <CloseIcon className="w-4 h-4" />
         </button>
       </div>
@@ -65,7 +66,7 @@ export default function PluginChatPanel() {
   );
 }
 
-/** Nút trên header chat: bật/tắt panel plugin (ẩn khi không có panel nào). */
+/** Button in the chat header: turns the plugin panel on / off (hidden when there is no panel). */
 export function PluginPanelToggle() {
   const panels = usePluginStore(s => s.contributions.chatPanels);
   const panel = useAppStore(s => s.activePluginPanel);
@@ -75,7 +76,7 @@ export function PluginPanelToggle() {
   return (
     <button
       type="button"
-      title={open ? 'Ẩn panel ứng dụng' : 'Panel ứng dụng'}
+      title={open ? tr('Ẩn panel ứng dụng') : tr('Panel ứng dụng')}
       onClick={() => setPanel(open ? null : { pluginId: panels[0].pluginId, panelId: panels[0].id })}
       className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${open ? 'bg-primary text-white' : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
     >

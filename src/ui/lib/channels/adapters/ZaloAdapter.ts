@@ -1,6 +1,6 @@
 /**
- * ZaloAdapter.ts - Adapter cho kênh Zalo
- * Di chuyển nguyên trạng logic từ channelIpc.ts nhánh Zalo.
+ * ZaloAdapter.ts - Adapter for the Zalo channel
+ * Logic moved as-is from the Zalo branch of channelIpc.ts.
  */
 
 import { BaseChannelAdapter } from './BaseChannelAdapter';
@@ -13,6 +13,7 @@ import {
 } from './ChannelAdapter';
 import ipc, { buildZaloAuth } from '../../ipc';
 import DataAccessor from '../../data/DataAccessor';
+import { tr } from '../../../../shared/i18n';
 
 export class ZaloAdapter extends BaseChannelAdapter {
   readonly channel = 'zalo' as const;
@@ -23,8 +24,8 @@ export class ZaloAdapter extends BaseChannelAdapter {
       const { useAccountStore } = require('../../../store/accounts/accountStore');
       const account = useAccountStore.getState().accounts?.find((a: any) => a.zalo_id === accountId);
       if (account?.cookies) return buildZaloAuth(account, accountId);
-      // Máy nhân viên không có cookie (snapshot không gửi) → auth chỉ mang accountId, Boss gắn phiên thật của đúng tài
-      // khoản đó (trước đây trả undefined → "Missing auth", hoặc Boss dùng tài khoản được giao đầu tiên)
+      // The employee machine has no cookie (the snapshot does not send one) → auth only carries accountId, and the Boss attaches the real session of that
+      // account (previously it returned undefined → "Missing auth", or the Boss used the first assigned account)
       const { useEmployeeStore } = require('../../../store/employee/employeeStore');
       if (account && useEmployeeStore.getState().mode === 'employee') return buildZaloAuth(account, accountId);
     } catch {}
@@ -75,7 +76,7 @@ export class ZaloAdapter extends BaseChannelAdapter {
       type: params.threadType,
     });
     const videoUrl: string = uploadVideoRes?.response?.fileUrl || '';
-    if (!videoUrl) return { success: false, error: 'Upload video thất bại' };
+    if (!videoUrl) return { success: false, error: tr('Upload video thất bại') };
 
     // Send video message
     await ipc.zalo?.sendVideo({
@@ -170,7 +171,7 @@ export class ZaloAdapter extends BaseChannelAdapter {
     }) ?? { success: false, error: 'Zalo IPC not available' };
   }
 
-  // editMessage: Zalo không hỗ trợ → dùng default từ BaseChannelAdapter
+  // editMessage: Zalo does not support it → uses the default from BaseChannelAdapter
 
   async createPoll(params: PollParams): Promise<ActionResult> {
     return ipc.zalo?.createPoll?.({

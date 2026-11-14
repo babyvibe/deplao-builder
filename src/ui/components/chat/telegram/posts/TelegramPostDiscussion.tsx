@@ -1,20 +1,19 @@
 /**
- * Phần bình luận của bài đăng kênh Telegram, như Telegram: mở ngay trong khung chat (phủ lên kênh — danh sách bài vẫn
- * giữ nguyên bên dưới nên quay lại đúng vị trí bài đang xem, không bị cuộn xuống cuối).
+ * Comments on a Telegram channel post, as in Telegram: opened right in the chat frame (over the channel: the post list stays put underneath, so going back returns to the post being read, without scrolling to the bottom).
  *
- * Bình luận nằm ở NHÓM THẢO LUẬN của kênh (main: telegramUser:getPostDiscussion) — trước đây bình luận bị lưu lẫn vào kênh
- * như bài đăng (thẻ "BÀI ĐĂNG KÊNH", ngược thứ tự, người gửi "U"). Ở đây: bài gốc trên cùng, "Bắt đầu thảo luận", bình
- * luận cũ → mới theo ngày, người gửi có ảnh / tên màu, trả lời bình luận khác có trích dẫn, tham gia nhóm khi nhóm bắt buộc
- * (hoặc gửi yêu cầu duyệt).
+ * The comments live in the channel's DISCUSSION GROUP (main: telegramUser:getPostDiscussion). Before, the comments were stored mixed into the channel
+ * like posts (a "BÀI ĐĂNG KÊNH" (CHANNEL POST) card, reversed order, sender "U"). Here: the original post at the top, "Bắt đầu thảo luận" (Start discussion), older → newer comments by date,
+ * senders with photo / colored name, replies to other comments with a quote, join the group when the group requires it
+ * (or send a join request).
  *
- * Gửi = ô soạn tin của khung chat (MessageInput qua ComposerTargetContext): chữ, ảnh, video, tệp, ghi âm, sticker, GIF,
- * @nhắc tên, tin nhắn nhanh, dán / kéo thả ảnh, trả lời một bình luận — vào nhóm thảo luận, chủ đề = tin gốc. Bình luận
- * nằm trong store (khoá nhóm thảo luận + chủ đề) nên tin vừa gửi, file tải xong, cảm xúc đều cập nhật như khung chat.
+ * Sending = the chat frame's compose box (MessageInput via ComposerTargetContext): text, images, video, files, voice, stickers, GIFs,
+ * @mentions, quick messages, paste / drag-and-drop images, reply to a comment: goes into the discussion group, the topic = the original post. Comments
+ * live in the store (keyed by the discussion group + topic), so a sent message, a finished file download, and reactions all update just like the chat frame.
  *
- * Mở như Telegram: chưa đọc bình luận nào → từ bình luận đầu tiên (bài gốc ở trên); còn bình luận chưa đọc → ngay vạch
- * "Bình luận chưa đọc"; đã đọc hết → mới nhất. Tải thêm hai chiều khi cuộn, bình luận hiện ra thì báo đã đọc
- * (messages.readDiscussion — lần mở sau bắt đầu đúng chỗ, điện thoại hết báo bình luận mới). Thả cảm xúc y như khung chat
- * (MessageReactionCorner dùng chung: nút ở góc dưới bong bóng, giữ chuột 300 ms là mở, bấm chip xem ai đã thả).
+ * Opens like Telegram: no comments read yet → from the first comment (the original post at the top); unread comments → right at the "Bình luận chưa đọc"
+ * (Unread comments) divider; all read → the newest. Loads more in both directions while scrolling; comments that come into view are marked as read
+ * (messages.readDiscussion, so the next opening starts in the right place and the phone stops showing new-comment alerts). Reactions work just like the chat frame
+ * (MessageReactionCorner shared: the button sits in the bottom corner of the bubble, hold the mouse 300 ms to open, click the chip to see who reacted).
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
@@ -48,18 +47,19 @@ import { formatBubbleTime, formatFullDateTime } from '../../messages/MessageTime
 import { TELEGRAM_POST_WIDTH, TelegramPostLayoutContext, formatTelegramPostCount, pickTelegramPostStats } from './telegramPostLayout';
 import { TelegramPostFooter } from './TelegramPostParts';
 import TelegramRichMessageBody, { getRichMessageBlocks } from '../messages/TelegramRichMessageBody';
+import { tr } from '../../../../../shared/i18n';
 
 const PAGE_SIZE = 50;
 const POLL_MS = 30_000;
-/** Cuộn gần đáy hơn ngần này coi như đang ở cuối (bình luận mới về thì cuộn theo). */
+/** Scrolled within this distance of the bottom counts as being at the end (new comments scroll along). */
 const STICK_BOTTOM_PX = 120;
-/** Còn cách đầu / cuối ngần này thì tải thêm. */
+/** Load more when within this distance of the top / bottom. */
 const LOAD_MORE_PX = 400;
-/** Giữ vị trí mở đầu (vạch chưa đọc / bài gốc) trong lúc ảnh tải xong, tới khi người dùng tự cuộn hoặc hết thời gian. */
+/** Keep the opening position (unread divider / original post) while images load, until the user scrolls or time runs out. */
 const ANCHOR_LOCK_MS = 4_000;
-/** Bình luận hiện ra được bao lâu thì báo đã đọc (gom nhiều lần cuộn thành một lần gọi). */
+/** How long a comment is visible before it counts as read (several scrolls are batched into one call). */
 const READ_DELAY_MS = 800;
-/** Có tin mới trong nhóm thảo luận (mình vừa gửi / người khác bình luận) → lấy lại phần mới nhất sau ngần này. */
+/** New message in the discussion group (I just sent one / someone else commented) → fetch the newest part after this delay. */
 const LIVE_REFRESH_MS = 1_500;
 const EMPTY_LIST: any[] = [];
 
@@ -81,7 +81,7 @@ interface DiscussionMeta {
   maxId: number;
 }
 
-/** Bình luận: tin của nhóm thảo luận trong store (tải từ Telegram có thêm tên / ảnh người gửi; tin vừa gửi có id tạm). */
+/** Comments: messages of the discussion group in the store (Telegram loads include the sender's name / photo; a message I just sent has a temporary id). */
 interface Comment {
   msg_id: string;
   owner_zalo_id?: string;
@@ -120,15 +120,15 @@ function videoLocalPath(msg: any): string {
 }
 
 function commentSnippet(comment: Comment | undefined): string {
-  if (!comment) return 'Bình luận';
+  if (!comment) return tr('Bình luận');
   const text = String(comment.content || '').trim();
   if (text && !text.startsWith('{')) return text.replace(/\s+/g, ' ').slice(0, 120);
   const type = String(comment.msg_type || '');
   if (isVideoType(type) || type === 'gif') return 'Video';
-  if (isVoiceType(type)) return 'Tin nhắn thoại';
+  if (isVoiceType(type)) return tr('Tin nhắn thoại');
   if (isStickerType(type)) return 'Sticker';
-  if (type === 'photo' || type === 'image') return 'Hình ảnh';
-  return 'Tệp đính kèm';
+  if (type === 'photo' || type === 'image') return tr('Hình ảnh');
+  return tr('Tệp đính kèm');
 }
 
 function dayKey(timestamp: number): string {
@@ -145,19 +145,19 @@ function newestCommentId(comments: Comment[]): number {
   return newest;
 }
 
-/** Cảm xúc của mình trên bình luận (Telegram: mỗi người một) — null = chưa thả. */
+/** My reaction on the comment (Telegram: one per person), null = none. */
 function myReactionOf(reactions: unknown, accountId: string): string | null {
   const full = parseReactionsFull(reactions, 'telegram_user');
   return Object.entries(full.emoji || {}).find(([, entry]) => (entry as any)?.users?.[accountId] > 0)?.[0] || null;
 }
 
 function reactionErrorText(message: string): string {
-  if (/REACTION_INVALID|REACTION_EMPTY/i.test(message)) return 'Nhóm thảo luận không cho thả cảm xúc này';
-  if (/CHAT_WRITE_FORBIDDEN|USER_BANNED|CHAT_ADMIN_REQUIRED|CHANNEL_PRIVATE/i.test(message)) return 'Bạn không được thả cảm xúc trong nhóm thảo luận này';
-  return `Không thả được cảm xúc${message ? `: ${message}` : ''}`;
+  if (/REACTION_INVALID|REACTION_EMPTY/i.test(message)) return tr('Nhóm thảo luận không cho thả cảm xúc này');
+  if (/CHAT_WRITE_FORBIDDEN|USER_BANNED|CHAT_ADMIN_REQUIRED|CHANNEL_PRIVATE/i.test(message)) return tr('Bạn không được thả cảm xúc trong nhóm thảo luận này');
+  return tr('Không thả được cảm xúc{{v1}}', { v1: message ? `: ${message}` : '' });
 }
 
-/** Gắn vào App: hiện khi người dùng mở bình luận của một bài trong kênh đang mở. */
+/** Mounted in App: shown when the user opens the comments of a post in the open channel. */
 export function TelegramPostDiscussionHost({ activeAccountId, activeThreadId }: { activeAccountId: string | null; activeThreadId: string | null }) {
   const postDiscussion = useChatStore((state) => state.postDiscussion);
   const setPostDiscussion = useChatStore((state) => state.setPostDiscussion);
@@ -186,26 +186,26 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
   const [hasNewer, setHasNewer] = React.useState(false);
   const [loadingOlder, setLoadingOlder] = React.useState(false);
   const [loadingNewer, setLoadingNewer] = React.useState(false);
-  /** Mốc đã đọc lúc mở (vạch "Bình luận chưa đọc" đứng yên tới khi đóng, như Telegram) */
+  /** Read marker at opening (the "Bình luận chưa đọc" (Unread comments) divider stays put until closed, as in Telegram) */
   const [unreadFrom, setUnreadFrom] = React.useState<number | null>(null);
   const [showJump, setShowJump] = React.useState(false);
-  /** Lỗi thả cảm xúc / tham gia nhóm (gửi tin: ô soạn tin tự báo như khung chat) */
+  /** Error reacting / joining the group (sending a message: the compose box reports it itself, as in the chat frame) */
   const [actionError, setActionError] = React.useState('');
   const [joinState, setJoinState] = React.useState<'idle' | 'joining' | 'requested' | 'failed'>('idle');
   const [viewer, setViewer] = React.useState<{ images: MediaViewerImage[]; index: number } | null>(null);
   const [video, setVideo] = React.useState<any | null>(null);
-  /** Bảng "ai đã thả cảm xúc" của một bình luận (như khung chat) */
+  /** "Who reacted" table for a comment (as in the chat frame) */
   const [reactorsFor, setReactorsFor] = React.useState<{ comment: Comment; emoji: string } | null>(null);
-  /** Hồ sơ người bình luận (bấm ảnh / tên, như trong nhóm) */
+  /** Commenter's profile (click the photo / name, as in the group) */
   const [profileFor, setProfileFor] = React.useState<{ userId: string; x: number; y: number } | null>(null);
-  // Thanh chọn cảm xúc: dùng chung hẹn giờ với khung chat (giữ chuột 300 ms mở, rời 250 ms đóng)
+  // Reaction picker: shares the timers with the chat frame (hold the mouse 300 ms to open, leave for 250 ms to close)
   const reactionHover = useReactionHoverPicker();
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const contentRef = React.useRef<HTMLDivElement>(null);
   const stickBottomRef = React.useRef(false);
   const prependAnchorRef = React.useRef<{ height: number; top: number } | null>(null);
-  /** Vị trí mở đầu cần áp sau lần vẽ kế tiếp / còn giữ trong lúc ảnh tải (tới khi người dùng tự cuộn). */
+  /** Opening position to apply after the next draw / kept while images load (until the user scrolls). */
   const pendingAnchorRef = React.useRef<Anchor | null>(null);
   const lockedAnchorRef = React.useRef<Anchor | null>(null);
   const lockTimerRef = React.useRef<number>(0);
@@ -221,11 +221,11 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
   const loadingOlderRef = React.useRef(false);
   const loadingNewerRef = React.useRef(false);
 
-  // ── Bình luận = tin của nhóm thảo luận trong store, khoá theo chủ đề (tin gốc) ────────────────────────────────────
+  // ── Comments = messages of the discussion group in the store, keyed by topic (the original post) ──────────────────────────────────
   const topicKey = discussion ? getMessageCacheKey(accountId, discussion.chatId, discussion.rootId) : '';
   const storeComments = useChatStore((state) => (topicKey ? state.messages[topicKey] : undefined)) as Comment[] | undefined;
   const comments: Comment[] = storeComments ?? EMPTY_LIST;
-  /** Bản gần nhất (store bỏ bớt hội thoại cũ khi giữ quá 20 → khôi phục ngay, không để trống phần bình luận). */
+  /** Latest copy (the store drops old conversations when more than 20 are kept → restore right away, so the comments area is never empty). */
   const lastCommentsRef = React.useRef<Comment[]>([]);
   if (storeComments) lastCommentsRef.current = storeComments;
   const commentsRef = React.useRef<Comment[]>(comments);
@@ -245,11 +245,11 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     useChatStore.getState().setMessages(accountId, discussion.chatId, lastCommentsRef.current as any, discussion.rootId);
   }, [accountId, discussion, storeComments]);
 
-  // Cảm xúc nhóm thảo luận cho phép (tải khi mở thanh chọn)
+  // Reactions allowed in the discussion group (loaded when the picker opens)
   const groupReactions = useTelegramChatReactions(accountId, discussion?.chatId, !!discussion?.chatId);
   const reactionChoices = React.useMemo(() => getReactionChoices('telegram_user', groupReactions.reactions).all, [groupReactions.reactions]);
 
-  // Bài gốc trong kênh (đang có trong store vì người dùng mở từ kênh) + các ảnh cùng album
+  // The original post in the channel (in the store because the user opened it from the channel) + the images of the same album
   const channelMsgs = useChatStore((state) => state.messages[getMessageCacheKey(accountId, channelId, null)]);
   const { post, album } = React.useMemo(() => {
     const list = channelMsgs || [];
@@ -260,7 +260,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     return { post: found, album: siblings.length ? siblings : [found] };
   }, [channelMsgs, postId]);
 
-  // Tên / ảnh người gửi: tải từ Telegram kèm tin; tin về trực tiếp / vừa gửi thì tra danh bạ + thành viên nhóm đã biết
+  // Sender name / photo: loaded from Telegram with the message; a message that arrives directly / just sent looks up contacts + known group members
   const accountContacts = useChatStore((state) => state.contacts[accountId]) ?? EMPTY_LIST;
   const groupCacheMembers = useAppStore((state) => (discussion?.chatId ? (state as any).groupInfoCache?.[accountId]?.[discussion.chatId]?.members : undefined)) ?? EMPTY_LIST;
   const profiles = React.useMemo(() => {
@@ -297,7 +297,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     lockTimerRef.current = 0;
   }, []);
 
-  /** initial / jump = thay toàn bộ (giữ tin đang gửi); còn lại gộp trang vào danh sách. */
+  /** initial / jump = replace everything (keeping the messages being sent); otherwise the older / newer pages are merged into the list. */
   const applyResult = React.useCallback((result: any, mode: PageMode | 'jump') => {
     if (!result?.success || !result.discussion) return false;
     const meta = result.discussion as DiscussionMeta;
@@ -324,11 +324,11 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
       writeComments(meta, (current) => mergeDiscussionComments(current, incoming));
       if (result.hasOlder != null) setHasOlder(!!result.hasOlder);
     } else {
-      // newer / latest: thêm ở dưới (làm mới định kỳ cũng cập nhật sửa / cảm xúc của các bình luận mới nhất)
+      // newer / latest: add below (the periodic refresh also updates edits / reactions on the newest comments)
       writeComments(meta, (current) => mergeDiscussionComments(current, incoming));
       if (mode === 'newer' && result.hasNewer != null) setHasNewer(!!result.hasNewer);
     }
-    // Số bình luận của bài trong kênh = số thật của phần bình luận (trước đây lệch với Telegram)
+    // The post's comment count in the channel = the real number of comments (it used to differ from Telegram)
     const store = useChatStore.getState();
     const target = (store.messages[getMessageCacheKey(accountId, channelId, null)] || []).find((msg) => String(msg.msg_id) === String(postId));
     if (target) {
@@ -339,7 +339,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     return true;
   }, [accountId, channelId, postId, releaseAnchorLock, writeComments]);
 
-  // ── Báo đã đọc: bình luận mới nhất đang hiện trên màn hình (cửa sổ đang dùng, như Telegram) ────────────────────────
+  // ── Read marker: the newest comment visible on screen (window in use, as in Telegram) ────────────────────────
   const markVisibleRead = React.useCallback(async () => {
     const meta = discussionRef.current;
     const scroller = scrollRef.current;
@@ -391,7 +391,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     };
   }, [scheduleReadCheck]);
 
-  // ── Mở đầu + làm mới 30 s / lần (chỉ khi đang ở phần mới nhất — chưa tải tới cuối thì làm mới sẽ để hở khoảng giữa) ──
+  // ── Opening + refresh every 30 s (only when at the newest part; if not loaded to the end yet, a refresh would leave a gap in the middle) ──
   const refreshLatest = React.useCallback(() => {
     if (document.hidden || !discussionRef.current || hasNewerRef.current) return;
     void fetchPage('latest').then((result) => applyResult(result, 'latest'));
@@ -405,7 +405,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
       if (cancelled) return;
       const ok = applyResult(result, 'initial');
       setLoading(false);
-      if (!ok) setError(result?.error || 'Không tải được bình luận');
+      if (!ok) setError(result?.error || tr('Không tải được bình luận'));
     });
     const timer = window.setInterval(() => { if (!cancelled) refreshLatest(); }, POLL_MS);
     return () => {
@@ -420,12 +420,12 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     void fetchPage('initial').then((result) => {
       const ok = applyResult(result, 'initial');
       setLoading(false);
-      if (!ok) setError(result?.error || 'Không tải được bình luận');
+      if (!ok) setError(result?.error || tr('Không tải được bình luận'));
     });
   };
 
-  // Tin mới trong nhóm thảo luận (mình vừa gửi — echo của Telegram; hoặc người khác bình luận khi mình là thành viên) →
-  // lấy lại phần mới nhất: đúng chỗ trong chuỗi bình luận, đủ tên / ảnh người gửi. Ảnh đại diện người bình luận tải nền.
+  // New message in the discussion group (I just sent it, Telegram's echo; or someone else commented while I am a member) →
+  // fetch the newest part: at the right place in the comment chain, with the sender's name / photo. The commenter's avatar loads in the background.
   React.useEffect(() => {
     const offMessage = ipc.on?.('event:message', (data: any) => {
       const group = discussionRef.current?.chatId;
@@ -451,7 +451,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     };
   }, [accountId, refreshLatest, writeComments]);
 
-  // Esc = đóng bảng cảm xúc / thanh chọn / bỏ trả lời / quay lại kênh (khi không mở trình xem ảnh / video)
+  // Esc = close the reaction table / picker / cancel reply / go back to the channel (when no image / video viewer is open)
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || viewer || video) return;
@@ -478,7 +478,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, viewer, video, profileFor, reactorsFor, reactionHover.openId, reactionHover.close]);
 
-  // ── Vị trí cuộn ─────────────────────────────────────────────────────────────────────────────────────────────────────
+  // ── Scroll position ─────────────────────────────────────────────────────────────────────────────────────────────────────
   const applyAnchor = React.useCallback((anchor: Anchor) => {
     const scroller = scrollRef.current;
     if (!scroller) return;
@@ -494,7 +494,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     scroller.scrollTop = scroller.scrollHeight;
   }, []);
 
-  /** Đang ở cuối? (bám cuối khi bình luận mới về) + nút ↓ — tính lại sau mỗi lần cuộn / đặt vị trí. */
+  /** At the bottom? (sticks to the bottom when new comments arrive) + the ↓ button: recomputed after every scroll / position change. */
   const syncScrollState = React.useCallback(() => {
     const scroller = scrollRef.current;
     if (!scroller) return 0;
@@ -523,12 +523,12 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     }
     if (stickBottomRef.current) {
       scroller.scrollTop = scroller.scrollHeight;
-      // Bình luận mới về khi đang đọc ở cuối → cũng tính đã đọc
+      // New comment arrives while reading at the bottom → also count it as read
       scheduleReadCheck();
     }
   }, [comments, loading, hasOlder, applyAnchor, scheduleReadCheck, syncScrollState]);
 
-  // Ảnh / video tải xong làm nội dung đổi cao: còn giữ vị trí mở đầu thì giữ, đang ở cuối thì bám cuối
+  // An image / video finishing loading changes the height: if the opening position is still kept, keep it; if at the bottom, stick to the bottom
   React.useEffect(() => {
     const scroller = scrollRef.current;
     const content = contentRef.current;
@@ -570,7 +570,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     }
   }, [applyResult, fetchPage]);
 
-  /** Nút ↓: chưa tải tới cuối thì tải trang mới nhất (bỏ khoảng giữa), đã có thì cuộn xuống. */
+  /** ↓ button: if not loaded to the end yet, load the latest page (dropping the middle gap); if already there, scroll down. */
   const jumpToLatest = React.useCallback(async () => {
     releaseAnchorLock();
     const scroller = scrollRef.current;
@@ -582,7 +582,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     applyResult(await fetchPage('latest'), 'jump');
   }, [applyResult, fetchPage, releaseAnchorLock]);
 
-  // Mình vừa gửi bình luận (ô soạn tin thêm tin tạm ở cuối): như Telegram, nhảy xuống cuối để thấy tin vừa gửi
+  // I just sent a comment (the compose box adds a temp message at the end): as in Telegram, jump to the bottom to see the message just sent
   const lastSentRef = React.useRef('');
   React.useEffect(() => {
     const last = comments[comments.length - 1];
@@ -602,7 +602,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     scheduleReadCheck();
   };
 
-  // ── Tham gia nhóm thảo luận (nhóm bắt buộc tham gia mới được bình luận) ────────────────────────────────────────────
+  // ── Join the discussion group (a group that requires joining before commenting) ────────────────────────────────────────────
   const join = async () => {
     const meta = discussionRef.current;
     if (!meta || joinState === 'joining') return;
@@ -612,7 +612,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
       const result = await ipc.telegramUser?.joinGroup?.({ accountId, chatId: meta.chatId });
       if (!result?.success) {
         setJoinState('failed');
-        setActionError(result?.error || 'Không tham gia được nhóm thảo luận');
+        setActionError(result?.error || tr('Không tham gia được nhóm thảo luận'));
         return;
       }
       if (result.requested) {
@@ -623,11 +623,11 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
       applyResult(await fetchPage(hasNewerRef.current ? 'newer' : 'latest', hasNewerRef.current ? newestCommentId(commentsRef.current) : 0), 'latest');
     } catch (err: any) {
       setJoinState('failed');
-      setActionError(err?.message || 'Không tham gia được nhóm thảo luận');
+      setActionError(err?.message || tr('Không tham gia được nhóm thảo luận'));
     }
   };
 
-  // ── Cảm xúc ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+  // ── Reactions ─────────────────────────────────────────────────────────────────────────────────────────────────────────
   const react = React.useCallback(async (comment: Comment, emoji: string) => {
     const meta = discussionRef.current;
     if (!meta || isPendingComment(comment) || !emoji) return;
@@ -648,7 +648,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     }
   }, [accountId, writeComments]);
 
-  // ── Xem ảnh / video ─────────────────────────────────────────────────────────────────────────────────────────────────
+  // ── View image / video ─────────────────────────────────────────────────────────────────────────────────────────────────
   const openImage = React.useCallback((url: string) => {
     if (url) setViewer({ images: [{ src: url, displaySrc: url }], index: 0 });
   }, []);
@@ -662,7 +662,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     setVideo({ localPath, width: media?.width || undefined, height: media?.height || undefined, duration: media?.duration || undefined, msgId: msg.msg_id, threadId: msg.thread_id });
   }, []);
 
-  // Ô soạn tin của khung chat, gửi vào nhóm thảo luận / chuỗi bình luận
+  // The chat frame's compose box, sending into the discussion group / comment thread
   const composerTarget = React.useMemo<ComposerTarget | null>(() => (discussion ? {
     kind: 'telegramComments',
     accountId,
@@ -673,7 +673,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
       contact_id: discussion.chatId, channel: 'telegram_user', contact_type: 'group', display_name: discussion.title,
       avatar_url: discussion.avatar, telegram_peer_type: 'supergroup',
     },
-    placeholder: 'Viết bình luận… (Enter gửi, Shift+Enter xuống dòng)',
+    placeholder: tr('Viết bình luận… (Enter gửi, Shift+Enter xuống dòng)'),
   } : null), [accountId, discussion?.chatId, discussion?.rootId, discussion?.title, discussion?.avatar]);
 
   const byId = React.useMemo(() => new Map(comments.map((comment) => [String(comment.msg_id), comment])), [comments]);
@@ -739,7 +739,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
       || next.timestamp - comment.timestamp > 5 * 60_000 || next.msg_id === unreadDividerId;
     const unreadDivider = unreadHere ? (
       <div data-unread-divider className="-mx-3 my-2 bg-primary/10 py-1 text-center text-xs font-medium text-primary select-none">
-        Bình luận chưa đọc
+        {tr('Bình luận chưa đọc')}
       </div>
     ) : null;
     if (comment.msg_type === 'system') {
@@ -755,16 +755,16 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
     }
     const sender = senderOf(comment);
     const color = peerColorIndex(comment.sender_id, sender.name) ?? 5;
-    // Trả lời một bình luận khác (trả lời thẳng vào bài = tin gốc thì không có trích dẫn)
+    // Reply to another comment (replying straight to the post = the original message has no quote)
     const replyId = comment.reply_to_id && String(comment.reply_to_id) !== String(discussion?.rootId) ? String(comment.reply_to_id) : '';
     const replied = replyId ? byId.get(replyId) : undefined;
-    const repliedName = replied ? (replied.is_sent ? 'Bạn' : senderOf(replied).name) : 'Bình luận';
+    const repliedName = replied ? (replied.is_sent ? tr('Bạn') : senderOf(replied).name) : tr('Bình luận');
     const reactionCounts = parseReactions(comment.reactions, 'telegram_user');
     const hasReactions = Object.values(reactionCounts).some((count) => count > 0);
     const mine = myReactionOf(comment.reactions, accountId);
     const { boxed, node } = renderContent(comment);
     const avatar = sender.avatar ? toLocalMediaUrl(sender.avatar) : '';
-    // Bấm ảnh / tên người bình luận → hồ sơ Telegram như trong nhóm
+    // Click the commenter's photo / name → the Telegram profile, as in the group
     const openProfile = isUserCommentSender(comment)
       ? (event: React.MouseEvent) => {
         event.stopPropagation();
@@ -776,8 +776,8 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
       : <PeerInitials id={comment.sender_id} name={sender.name} className="h-8 w-8 text-xs" />;
     const time = (
       <span className={`ml-2 inline-flex shrink-0 items-center gap-1 align-bottom text-[11px] leading-4 select-none ${failed ? 'text-red-500' : 'text-subtle-foreground'}`} title={formatFullDateTime(comment.timestamp)}>
-        {comment.is_edited ? 'đã sửa' : ''}
-        {failed ? 'Gửi lỗi' : pending ? 'Đang gửi…' : formatBubbleTime(comment.timestamp)}
+        {comment.is_edited ? tr('đã sửa') : ''}
+        {failed ? tr('Gửi lỗi') : pending ? tr('Đang gửi…') : formatBubbleTime(comment.timestamp)}
       </span>
     );
     return (
@@ -792,7 +792,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
           {!isSent && (
             <div className="h-8 w-8 shrink-0">
               {endsRun && (openProfile ? (
-                <button type="button" onClick={openProfile} title={`Xem thông tin: ${sender.name}`}
+                <button type="button" onClick={openProfile} title={tr('Xem thông tin: {{name}}', { name: sender.name })}
                   className="h-8 w-8 overflow-hidden rounded-full transition-all hover:ring-2 hover:ring-blue-400 focus:outline-none">
                   {avatarNode}
                 </button>
@@ -823,7 +823,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
               </div>
               {!boxed && <div className="mt-0.5 flex justify-end">{time}</div>}
             </div>
-            {/* Nút / chip cảm xúc ở góc dưới bong bóng — y như khung chat (giữ chuột 300 ms mở thanh chọn, bấm chip xem ai thả) */}
+            {/* Reaction button / chip at the bottom corner of the bubble, same as the chat frame (hold the mouse 300 ms to open the picker, click the chip to see who reacted) */}
             {numericId && (
               <MessageReactionCorner
                 isSent={isSent}
@@ -846,11 +846,11 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
               />
             )}
           </div>
-          {/* Thao tác khi rê chuột, như khung chat: trả lời bình luận (ô soạn tin bên dưới hiện trích dẫn) */}
+          {/* Hover actions, as in the chat frame: reply to a comment (the compose box below shows the quote) */}
           {numericId && discussion?.canWrite && (
             <div className="flex items-center gap-0.5 self-end mb-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-100 flex-shrink-0 flex-nowrap">
               <MsgActionBtn
-                title="Trả lời"
+                title={tr('Trả lời')}
                 onClick={() => useChatStore.getState().setReplyTo(comment as any)}
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -884,7 +884,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
             placeholderSrc={info?.thumb || undefined} duration={info?.duration || undefined} />
         : <TelegramVideoPending msg={post} onPlay={(downloaded) => playVideo(downloaded)} />;
     }
-    // Ảnh / album tự vẽ chú thích; video / chữ: chú thích vẽ ở đây
+    // Image / album draws its own caption; video / text: the caption is drawn here
     const showText = !isAlbum && !isPhoto && (rich || (caption && !caption.startsWith('{')));
     return (
       <div className="mb-2 flex justify-start">
@@ -907,9 +907,9 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
   };
   return (
     <div className="absolute inset-0 z-30 flex flex-col bg-background" onClick={(event) => event.stopPropagation()}>
-      {/* Đầu: quay lại kênh, "Bình luận" + số, tên nhóm thảo luận */}
+      {/* Header: back to the channel, "Bình luận" (Comments) + count, discussion group name */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-2 py-1.5">
-        <button type="button" onClick={onClose} title="Quay lại bài đăng (Esc)"
+        <button type="button" onClick={onClose} title={tr('Quay lại bài đăng (Esc)')}
           className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <polyline points="15 6 9 12 15 18" />
@@ -917,17 +917,17 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
         </button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">
-            {total > 0 ? `${formatTelegramPostCount(total)} bình luận` : 'Bình luận'}
+            {total > 0 ? tr('{{v1}} bình luận', { v1: formatTelegramPostCount(total) }) : tr('Bình luận')}
           </div>
           {meta?.title && <div className="truncate text-[11px] text-muted-foreground">{meta.title}</div>}
         </div>
       </div>
 
       <div className="relative flex min-h-0 flex-1 flex-col">
-        {/* Đang tải thêm: nổi trên danh sách (không đẩy nội dung → không giật vị trí đang đọc) */}
+        {/* Loading more: floats over the list (does not push the content, so the reading position does not jump) */}
         {(loadingOlder || loadingNewer) && (
           <div className={`pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 rounded-full bg-card/95 px-3 py-1 text-[11px] text-muted-foreground shadow ${loadingOlder ? 'top-2' : 'bottom-2'}`}>
-            {loadingOlder ? 'Đang tải bình luận cũ hơn…' : 'Đang tải bình luận mới hơn…'}
+            {loadingOlder ? tr('Đang tải bình luận cũ hơn…') : tr('Đang tải bình luận mới hơn…')}
           </div>
         )}
         <div
@@ -937,7 +937,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
           onPointerDown={releaseOnUserScroll}
           onTouchStart={releaseOnUserScroll}
           onKeyDown={releaseOnUserScroll}
-          // Kéo thả ảnh / file vào danh sách bình luận = gửi như kéo vào khung chat (ô soạn tin bên dưới nhận)
+          // Drag and drop an image / file into the comment list = send it like dropping it into the chat frame (the compose box below receives it)
           onDragOver={(event) => {
             if (!discussion?.canWrite) return;
             event.preventDefault();
@@ -956,26 +956,26 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
             {!hasOlder && !loading && !error && (
               <div className="my-2 flex justify-center">
                 <span className="rounded-full bg-black/20 px-2.5 py-0.5 text-[11px] text-white dark:bg-white/15">
-                  {comments.length ? 'Bắt đầu thảo luận' : 'Chưa có bình luận'}
+                  {comments.length ? tr('Bắt đầu thảo luận') : tr('Chưa có bình luận')}
                 </span>
               </div>
             )}
-            {loading && <div className="py-6 text-center text-sm text-muted-foreground">Đang tải bình luận…</div>}
+            {loading && <div className="py-6 text-center text-sm text-muted-foreground">{tr('Đang tải bình luận…')}</div>}
             {!loading && error && (
               <div className="py-6 text-center text-sm text-muted-foreground">
                 <div>{error}</div>
-                <button type="button" className="mt-2 text-primary hover:underline" onClick={retry}>Thử lại</button>
+                <button type="button" className="mt-2 text-primary hover:underline" onClick={retry}>{tr('Thử lại')}</button>
               </div>
             )}
             {!loading && comments.map(renderComment)}
           </div>
         </div>
-        {/* Xuống bình luận mới nhất (như Telegram) */}
+        {/* Jump to the newest comment (as in Telegram) */}
         {showJump && !loading && (
           <button
             type="button"
             onClick={() => void jumpToLatest()}
-            title="Bình luận mới nhất"
+            title={tr('Bình luận mới nhất')}
             className="absolute bottom-3 right-3 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-lg hover:text-foreground"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -988,19 +988,19 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
       {actionError && (
         <div className="shrink-0 border-t border-border bg-card px-3 py-1 text-xs text-red-500">{actionError}</div>
       )}
-      {/* Ô bình luận: ô soạn tin của khung chat (gửi đủ loại tin); nhóm bắt buộc tham gia → nút tham gia */}
+      {/* Comment box: the chat frame's compose box (sends every message type); a group that requires joining → the join button */}
       {meta && !meta.canWrite ? (
         <div className="shrink-0 border-t border-border bg-card px-3 py-2">
           <div className="flex flex-col items-center gap-1.5 py-1 text-center text-sm">
             {joinState === 'requested' ? (
-              <span className="text-muted-foreground">Đã gửi yêu cầu tham gia — chờ quản trị viên nhóm thảo luận duyệt</span>
+              <span className="text-muted-foreground">{tr('Đã gửi yêu cầu tham gia — chờ quản trị viên nhóm thảo luận duyệt')}</span>
             ) : meta.joinMode !== 'none' ? (
               <button type="button" onClick={() => void join()} disabled={joinState === 'joining'}
                 className="rounded-md px-3 py-1.5 font-medium text-primary hover:bg-primary/10 disabled:opacity-60">
-                {joinState === 'joining' ? 'Đang tham gia…' : meta.joinMode === 'request' ? 'Gửi yêu cầu tham gia để bình luận' : 'Tham gia nhóm thảo luận để bình luận'}
+                {joinState === 'joining' ? tr('Đang tham gia…') : meta.joinMode === 'request' ? tr('Gửi yêu cầu tham gia để bình luận') : tr('Tham gia nhóm thảo luận để bình luận')}
               </button>
             ) : (
-              <span className="text-muted-foreground">{meta.reason || 'Không bình luận được bài này'}</span>
+              <span className="text-muted-foreground">{meta.reason || tr('Không bình luận được bài này')}</span>
             )}
           </div>
         </div>
@@ -1010,7 +1010,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
         </ComposerTargetContext.Provider>
       ) : (
         <div className="shrink-0 border-t border-border bg-card px-4 py-3 text-center text-sm text-muted-foreground">
-          {error ? 'Chưa bình luận được — thử tải lại phần bình luận' : 'Đang tải…'}
+          {error ? tr('Chưa bình luận được — thử tải lại phần bình luận') : tr('Đang tải…')}
         </div>
       )}
 

@@ -1,5 +1,6 @@
 import Logger from '../../utils/Logger';
 import DatabaseService from '../database/DatabaseService';
+import { tr } from '../../shared/i18n';
 
 /**
  * Tables to sync from Boss → Employee, filtered by assigned zaloIds.
@@ -36,8 +37,8 @@ const SYNCABLE_TABLES_BY_ZALO = [
 
 /**
  * Tables synced fully (device-wide, no zaloId filter).
- * KHÔNG có app_settings: bảng này giữ khoá ký JWT nhân viên (employee_jwt_secret), token tunnel
- * (relay_cf_tunnel_token, relay_ngrok_authtoken)… — gửi đi là nhân viên giả được token của người khác.
+ * NOT app_settings: this table holds the employee JWT signing key (employee_jwt_secret), the tunnel tokens
+ * (relay_cf_tunnel_token, relay_ngrok_authtoken)…; sending it out would let an employee impersonate someone else with their token.
  */
 const SYNCABLE_TABLES_GLOBAL = [
     { table: 'stickers',              tsCol: 'updated_at' },
@@ -100,16 +101,16 @@ const PRIVACY_FILTERED_ERP_TABLES = new Set([
 const ACCOUNT_SAFE_COLUMNS = 'zalo_id, full_name, avatar_url, phone, is_business, is_active, last_seen, listener_active';
 
 /**
- * Cột bí mật không bao giờ rời máy Boss: credential tích hợp (API key, khoá bảo mật webhook Casso / SePay…) và
- * API key trợ lý AI. credentials_encrypted là JSON thường khi máy không có safeStorage; bản đã mã hoá cũng vô dụng ở
- * máy khác. Nhân viên xem tích hợp qua REST /api/query/integrations (listConfigs — đã bỏ credential).
+ * Secret columns never leave the Boss machine: integration credentials (API keys, the Casso / SePay webhook security keys…) and
+ * the AI assistant API key. credentials_encrypted is plain JSON when the machine has no safeStorage; an encrypted copy is useless on
+ * another machine. Employees see integrations through REST /api/query/integrations (listConfigs, credentials removed).
  */
 const SECRET_COLUMNS: Readonly<Record<string, readonly string[]>> = {
     integrations: ['credentials_encrypted'],
     ai_assistants: ['api_key_encrypted'],
 };
 
-/** Bỏ cột bí mật của bảng trước khi đưa vào payload gửi nhân viên. */
+/** Remove the secret columns of the table before putting it into the payload sent to employees. */
 export function withoutSecretColumns(table: string, rows: any[]): any[] {
     const secret = SECRET_COLUMNS[table];
     if (!secret || rows.length === 0) return rows;
@@ -138,11 +139,11 @@ interface ProgressCallback {
 /**
  * DataSyncService - Handles DB sync between Boss and Employee machines.
  *
- * Boss side: exports filtered data for employee's assigned zaloIds.
- * Employee side: imports data into local DB.
+ * Boss side: exports filtered data for the employee's assigned zaloIds.
+ * Employee side: imports data into the local DB.
  *
- * Hiện KHÔNG được nối vào đâu (không có nơi gọi từ 26.7.0): nhân viên đọc dữ liệu qua REST /api/query/* và
- * /api/sync/snapshot. Nếu nối lại: payload không được chứa bí mật (SECRET_COLUMNS, không app_settings).
+ * Currently NOT wired to anything (no caller since 26.7.0): employees read data through REST /api/query/* and
+ * /api/sync/snapshot. If it is wired again: the payload must not contain secrets (SECRET_COLUMNS, no app_settings).
  */
 class DataSyncService {
     private static instance: DataSyncService;
@@ -311,7 +312,7 @@ class DataSyncService {
         const db = DatabaseService.getInstance();
         const inClause = zaloIds.map(id => `'${this.esc(id)}'`).join(',');
 
-        onProgress?.('Đang xóa dữ liệu cũ...', 5);
+        onProgress?.(tr('Đang xóa dữ liệu cũ...'), 5);
 
         // Clear existing data for assigned zaloIds in zaloId-filtered tables
         for (const spec of SYNCABLE_TABLES_BY_ZALO) {
@@ -332,7 +333,7 @@ class DataSyncService {
             db.exec(`DELETE FROM accounts WHERE zalo_id IN (${inClause})`);
         } catch {}
 
-        onProgress?.('Đang nhập tài khoản...', 10);
+        onProgress?.(tr('Đang nhập tài khoản...'), 10);
 
         // Import safe account info (create minimal account records)
         for (const acc of payload.accounts || []) {
@@ -352,7 +353,7 @@ class DataSyncService {
             if (!rows || rows.length === 0) continue;
 
             const percent = 10 + Math.round((tableIdx / tableNames.length) * 85);
-            onProgress?.(`Đang nhập ${tableName} (${rows.length} dòng)...`, percent);
+            onProgress?.(tr('Đang nhập {{tableName}} ({{count}} dòng)...', { tableName, count: rows.length }), percent);
 
             this.bulkInsert(db, tableName, rows);
             tableIdx++;
@@ -360,7 +361,7 @@ class DataSyncService {
 
         // Save
         db.forceFlush();
-        onProgress?.('Hoàn tất đồng bộ!', 100);
+        onProgress?.(tr('Hoàn tất đồng bộ!'), 100);
         Logger.log(`[DataSyncService] Full import complete: ${tableNames.length} tables`);
     }
 
@@ -370,7 +371,7 @@ class DataSyncService {
     public importDeltaSync(payload: SyncPayload, onProgress?: ProgressCallback): void {
         const db = DatabaseService.getInstance();
 
-        onProgress?.('Đang cập nhật tài khoản...', 5);
+        onProgress?.(tr('Đang cập nhật tài khoản...'), 5);
 
         // Update account safe info
         for (const acc of payload.accounts || []) {
@@ -393,14 +394,14 @@ class DataSyncService {
             if (!rows || rows.length === 0) continue;
 
             const percent = 5 + Math.round((tableIdx / tableNames.length) * 90);
-            onProgress?.(`Đang cập nhật ${tableName} (${rows.length})...`, percent);
+            onProgress?.(tr('Đang cập nhật {{tableName}} ({{count}})...', { tableName, count: rows.length }), percent);
 
             this.bulkInsert(db, tableName, rows);
             tableIdx++;
         }
 
         db.forceFlush();
-        onProgress?.('Hoàn tất cập nhật!', 100);
+        onProgress?.(tr('Hoàn tất cập nhật!'), 100);
         Logger.log(`[DataSyncService] Delta import complete: ${tableNames.length} tables`);
     }
 

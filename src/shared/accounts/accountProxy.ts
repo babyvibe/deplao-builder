@@ -1,10 +1,10 @@
 /**
- * Proxy riêng của tài khoản (accounts.proxy_id): chọn lúc đăng nhập, thêm / đổi / bỏ được về sau ở Cài đặt → Tài khoản
- * và Cài đặt → Proxy, tài khoản tự kết nối lại qua proxy mới (issue #73, trước đây phải đăng nhập lại).
- * Chỉ Zalo (zca-js) và Facebook (phiên + MQTT) đi qua proxy; Telegram chưa hỗ trợ.
+ * The account's own proxy (accounts.proxy_id): chosen at login, and can be added / changed / removed later in Settings → Accounts
+ * and Settings → Proxy. The account reconnects through the new proxy by itself (issue #73; previously the user had to log in again).
+ * Only Zalo (zca-js) and Facebook (session + MQTT) go through a proxy; Telegram is not supported yet.
  */
 
-/** Kênh dùng được proxy riêng; tài khoản cũ không có channel = Zalo. */
+/** Channels that can use their own proxy; old accounts without a channel = Zalo. */
 export function supportsAccountProxy(channel?: string | null): boolean {
   return !channel || channel === 'zalo' || channel === 'facebook';
 }

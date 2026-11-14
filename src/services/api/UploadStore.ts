@@ -1,11 +1,11 @@
 /**
- * UploadStore — file tạm do client API upload (hoặc tải từ URL) để gửi vào chat.
+ * UploadStore: temporary files uploaded by an API client (or downloaded from a URL) to send into a chat.
  *
- * Bảo mật:
- *  - Client KHÔNG BAO GIỜ truyền đường dẫn file trên máy; chỉ dùng upload_id.
- *  - upload_id gắn với principal đã upload (key khác không dùng được).
- *  - Tải từ URL: chỉ http/https, chặn IP nội bộ/loopback (SSRF), giới hạn dung lượng + thời gian.
- *  - Hết hạn sau 24 giờ, dọn khi khởi động và mỗi giờ.
+ * Security:
+ *  - The client NEVER passes a file path on the machine; it only uses upload_id.
+ *  - upload_id is bound to the principal that uploaded it (another key cannot use it).
+ *  - Download from a URL: http/https only, blocks internal / loopback IPs (SSRF), limits size + time.
+ *  - Expires after 24 hours; cleaned up at startup and every hour.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -14,6 +14,7 @@ import { randomUUID } from 'crypto';
 import type { IncomingMessage } from 'http';
 import { ApiError } from './types';
 import { mediaBaseDir } from './runtime';
+import { tr } from '../../shared/i18n';
 
 export { isPrivateAddress };
 
@@ -68,7 +69,7 @@ function safeDecode(value: string): string {
     try { return decodeURIComponent(value); } catch { return value; }
 }
 
-/** Tên file trong Content-Disposition (filename*=UTF-8''... ưu tiên hơn filename="..."). */
+/** File name in Content-Disposition (filename*=UTF-8''... takes priority over filename="..."). */
 export function filenameFromDisposition(header: string | undefined): string {
     const v = String(header || '');
     const star = /filename\*\s*=\s*(?:UTF-8|utf-8)?''([^;]+)/.exec(v);
@@ -81,11 +82,11 @@ export function filenameFromDisposition(header: string | undefined): string {
 function mapFetchError(err: any): ApiError {
     if (err instanceof ApiError) return err;
     if (err instanceof BlockedAddressError || err?.code === 'PRIVATE_ADDRESS') {
-        return new ApiError(400, 'VALIDATION_ERROR', 'URL trỏ vào mạng nội bộ — bị chặn. Hãy upload file qua POST /media/uploads (hoặc bật api_allow_private_urls).');
+        return new ApiError(400, 'VALIDATION_ERROR', tr('URL trỏ vào mạng nội bộ — bị chặn. Hãy upload file qua POST /media/uploads (hoặc bật api_allow_private_urls).'));
     }
-    if (err instanceof GuardTimeoutError || err?.code === 'TIMEOUT') return new ApiError(504, 'TIMEOUT', 'Tải URL quá thời gian');
-    if (err?.code === 'ENOTFOUND' || err?.code === 'EAI_AGAIN') return new ApiError(400, 'VALIDATION_ERROR', 'Không phân giải được tên miền của URL');
-    return new ApiError(502, 'UPSTREAM_ERROR', `Tải URL thất bại: ${String(err?.message || err).slice(0, 300)}`);
+    if (err instanceof GuardTimeoutError || err?.code === 'TIMEOUT') return new ApiError(504, 'TIMEOUT', tr('Tải URL quá thời gian'));
+    if (err?.code === 'ENOTFOUND' || err?.code === 'EAI_AGAIN') return new ApiError(400, 'VALIDATION_ERROR', tr('Không phân giải được tên miền của URL'));
+    return new ApiError(502, 'UPSTREAM_ERROR', tr('Tải URL thất bại: {{v1}}', { v1: String(err?.message || err).slice(0, 300) }));
 }
 
 export class UploadStore {
@@ -114,7 +115,7 @@ export class UploadStore {
     }
 
     async saveBuffer(buf: Buffer, name: string, mime: string, principalId: string): Promise<UploadRecord> {
-        if (buf.length === 0) throw new ApiError(400, 'VALIDATION_ERROR', 'File rỗng');
+        if (buf.length === 0) throw new ApiError(400, 'VALIDATION_ERROR', tr('File rỗng'));
         const safeName = sanitizeFileName(name);
         const { id, filePath } = this.newTarget(safeName);
         await fs.promises.writeFile(filePath, buf);
@@ -125,13 +126,13 @@ export class UploadStore {
         });
     }
 
-    /** Ghi thẳng request body (raw upload) xuống đĩa, không giữ cả file trong RAM. */
+    /** Writes the raw request body straight to disk, without keeping the whole file in RAM. */
     saveStream(req: IncomingMessage, name: string, mime: string, maxBytes: number, principalId: string): Promise<UploadRecord> {
         const safeName = sanitizeFileName(name);
         const declared = Number(req.headers['content-length'] || 0);
         if (declared && declared > maxBytes) {
             req.resume();
-            return Promise.reject(new ApiError(413, 'PAYLOAD_TOO_LARGE', `File tối đa ${Math.round(maxBytes / 1024 / 1024)} MB`));
+            return Promise.reject(new ApiError(413, 'PAYLOAD_TOO_LARGE', tr('File tối đa {{v1}} MB', { v1: Math.round(maxBytes / 1024 / 1024) })));
         }
         const { id, filePath } = this.newTarget(safeName);
         return new Promise((resolve, reject) => {
@@ -150,14 +151,14 @@ export class UploadStore {
                 if (size > maxBytes) {
                     req.unpipe(out);
                     req.resume();
-                    fail(new ApiError(413, 'PAYLOAD_TOO_LARGE', `File tối đa ${Math.round(maxBytes / 1024 / 1024)} MB`));
+                    fail(new ApiError(413, 'PAYLOAD_TOO_LARGE', tr('File tối đa {{v1}} MB', { v1: Math.round(maxBytes / 1024 / 1024) })));
                 }
             });
             req.on('error', fail);
             out.on('error', fail);
             out.on('finish', () => {
                 if (failed) return;
-                if (size === 0) return fail(new ApiError(400, 'VALIDATION_ERROR', 'File rỗng'));
+                if (size === 0) return fail(new ApiError(400, 'VALIDATION_ERROR', tr('File rỗng')));
                 const now = Date.now();
                 resolve(this.remember({
                     id, path: filePath, name: safeName, mime: mime || mimeFromName(safeName), size,
@@ -169,15 +170,15 @@ export class UploadStore {
     }
 
     /**
-     * Tải file từ URL (http/https) về kho tạm, ghi thẳng xuống đĩa.
-     * Mạng nội bộ bị chặn ngay lúc kết nối (cả khi URL công khai redirect vào 127.0.0.1/LAN),
-     * trừ khi `allowPrivate` (request từ chính máy hoặc người dùng bật api_allow_private_urls).
+     * Downloads a file from a URL (http/https) into the temporary store, writing straight to disk.
+     * Internal networks are blocked at connection time (even when a public URL redirects to 127.0.0.1/LAN),
+     * unless `allowPrivate` (the request comes from this machine itself, or the user turned on api_allow_private_urls).
      */
     async saveFromUrl(rawUrl: string, principalId: string, maxBytes: number, opts: { allowPrivate?: boolean; timeoutMs?: number } = {}): Promise<UploadRecord> {
         let url: URL;
         try { url = new URL(rawUrl); } catch { throw new ApiError(400, 'VALIDATION_ERROR', 'URL không hợp lệ'); }
         if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-            throw new ApiError(400, 'VALIDATION_ERROR', 'Chỉ nhận URL http/https');
+            throw new ApiError(400, 'VALIDATION_ERROR', tr('Chỉ nhận URL http/https'));
         }
         let r: GuardedStream;
         try {
@@ -193,7 +194,7 @@ export class UploadStore {
         try {
             if (r.status < 200 || r.status >= 300) {
                 r.stream.resume();
-                throw new ApiError(502, 'UPSTREAM_ERROR', `Tải URL thất bại: HTTP ${r.status}`);
+                throw new ApiError(502, 'UPSTREAM_ERROR', tr('Tải URL thất bại: HTTP {{status}}', { status: r.status }));
             }
             const mime = String(r.headers['content-type'] || '').split(';')[0].trim();
             const fromHeader = filenameFromDisposition(r.headers['content-disposition'] as string | undefined);
@@ -211,10 +212,10 @@ export class UploadStore {
     get(id: string, principalId: string): UploadRecord {
         const rec = this.records.get(id);
         if (!rec || rec.expires_at < Date.now() || !fs.existsSync(rec.path)) {
-            throw new ApiError(404, 'NOT_FOUND', `upload_id ${id} không tồn tại hoặc đã hết hạn`);
+            throw new ApiError(404, 'NOT_FOUND', tr('upload_id {{id}} không tồn tại hoặc đã hết hạn', { id }));
         }
         if (rec.principal_id !== principalId) {
-            throw new ApiError(403, 'FORBIDDEN_SCOPE', 'upload_id thuộc về key khác');
+            throw new ApiError(403, 'FORBIDDEN_SCOPE', tr('upload_id thuộc về key khác'));
         }
         return rec;
     }
@@ -237,7 +238,7 @@ export class UploadStore {
                 fs.promises.rm(path.dirname(rec.path), { recursive: true, force: true }).catch(() => {});
             }
         }
-        // File mồ côi từ phiên trước (index chỉ ở RAM).
+        // Orphan files from a previous session (the index is only in RAM).
         try {
             const dir = this.baseDirProvider();
             if (!fs.existsSync(dir)) return;
@@ -258,7 +259,7 @@ function extForMime(mime: string): string {
     return '';
 }
 
-/** Tách phần file đầu tiên của multipart/form-data (đủ cho n8n, Make, curl -F). */
+/** Splits out the first file part of multipart/form-data (enough for n8n, Make, curl -F). */
 export function parseMultipartFile(buf: Buffer, contentType: string): { name: string; mime: string; data: Buffer; fields: Record<string, string> } | null {
     const m = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType || '');
     if (!m) return null;
@@ -277,7 +278,7 @@ export function parseMultipartFile(buf: Buffer, contentType: string): { name: st
         let body = buf.slice(headerEnd + 4, next);
         if (body.slice(-2).toString() === '\r\n') body = body.slice(0, -2);
         const dispLine = /content-disposition:([^\r\n]*)/i.exec(headers)?.[1] || '';
-        // Neo sau đầu dòng hoặc dấu ";" để "filename=" không bị nhận nhầm thành "name=".
+        // Anchor after the start of a line or a ";" so that "filename=" is not mistaken for "name=".
         const fieldName = /(?:^|;)\s*name="([^"]*)"/i.exec(dispLine)?.[1];
         const fileName = /(?:^|;)\s*filename\*?="?([^";]*)"?/i.exec(dispLine)?.[1];
         const typeMatch = /content-type:\s*([^\r\n]+)/i.exec(headers);
@@ -285,7 +286,7 @@ export function parseMultipartFile(buf: Buffer, contentType: string): { name: st
             if (fileName !== undefined && !file) {
                 let decoded = fileName;
                 if (/^utf-8''/i.test(decoded)) {
-                    try { decoded = decodeURIComponent(decoded.replace(/^utf-8''/i, '')); } catch { /* giữ nguyên */ }
+                    try { decoded = decodeURIComponent(decoded.replace(/^utf-8''/i, '')); } catch { /* keep as is */ }
                 }
                 file = { name: decoded || 'file', mime: typeMatch ? typeMatch[1].trim() : '', data: body };
             } else if (fileName === undefined) {

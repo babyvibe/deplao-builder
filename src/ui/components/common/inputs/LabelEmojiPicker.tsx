@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { tr } from '../../../../shared/i18n';
 
 // ─── Emoji Categories ─────────────────────────────────────────────────────────
 const EMOJI_CATEGORIES = {
@@ -51,7 +52,7 @@ export function LabelEmojiPicker({ value, onChange, onClose }: LabelEmojiPickerP
           type="text"
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
-          placeholder="Tìm emoji..."
+          placeholder={tr('Tìm emoji...')}
           className="w-full bg-muted text-foreground text-sm rounded-lg px-3 py-1.5 border border-input focus:border-blue-500 outline-none"
         />
       </div>
@@ -77,13 +78,13 @@ export function LabelEmojiPicker({ value, onChange, onClose }: LabelEmojiPickerP
           </div>
         ))}
         {Object.values(filteredCategories).flat().length === 0 && (
-          <p className="text-center text-muted-foreground text-sm py-4">Không tìm thấy emoji</p>
+          <p className="text-center text-muted-foreground text-sm py-4">{tr('Không tìm thấy emoji')}</p>
         )}
       </div>
 
       {/* Current selection */}
       <div className="px-3 py-2 border-t border-border flex items-center gap-2 bg-card">
-        <span className="text-muted-foreground text-xs">Đã chọn:</span>
+        <span className="text-muted-foreground text-xs">{tr('Đã chọn:')}</span>
         <span className="text-2xl">{value || '🏷️'}</span>
       </div>
     </div>
@@ -151,7 +152,7 @@ export function KeyboardShortcutInput({ value, onChange, placeholder }: Keyboard
         onKeyDown={handleKeyDown}
         onFocus={handleFocus}
         onBlur={handleBlur}
-        placeholder={placeholder || 'Click để ghi phím tắt...'}
+        placeholder={placeholder || tr('Click để ghi phím tắt...')}
         className={`w-full bg-muted text-foreground text-sm rounded-lg px-3 py-2 border outline-none cursor-pointer ${
           isRecording 
             ? 'border-blue-500 ring-2 ring-blue-500/30' 
@@ -163,7 +164,7 @@ export function KeyboardShortcutInput({ value, onChange, placeholder }: Keyboard
           type="button"
           onClick={clearShortcut}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
-          title="Xóa phím tắt"
+          title={tr('Xóa phím tắt')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>

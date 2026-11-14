@@ -1,26 +1,26 @@
 /**
- * telegramReadHistory.ts — update "đã đọc" của Telegram (MTProto), theo đúng chiều:
- *  - Inbox  (updateReadHistoryInbox / updateReadChannelInbox): MÌNH đã đọc tin đến của hội thoại tới max_id (trên điện
- *    thoại / app khác), kèm still_unread_count = số tin còn chưa đọc theo Telegram → số chưa đọc của hội thoại.
- *  - Outbox (updateReadHistoryOutbox / updateReadChannelOutbox): NGƯỜI KHÁC đã đọc tin mình gửi tới max_id → tin gửi
- *    thành 'read' ("✓ Đã xem").
- * Bản cũ xử lý ngược: khách đọc tin của mình thì số chưa đọc của mình bị xoá (nhóm thường: ai đọc cũng xoá), mình đọc
- * trên điện thoại thì không xoá mà lại gắn "đã xem" cho tin mình gửi; siêu nhóm / kênh (Channel) không được xử lý.
- * Không import GramJS: nhận object update (className) để test được.
+ * telegramReadHistory.ts: Telegram (MTProto) "read" updates, in the correct direction:
+ *  - Inbox (updateReadHistoryInbox / updateReadChannelInbox): I have read the incoming messages of the conversation up to max_id (on the phone /
+ *    another app), with still_unread_count = the number of messages still unread according to Telegram → the conversation's unread count.
+ *  - Outbox (updateReadHistoryOutbox / updateReadChannelOutbox): THE OTHER SIDE has read my sent messages up to max_id → the sent messages become
+ *    'read' ("✓ Đã xem" (seen)).
+ * The old code did it the other way round: when a customer read my messages, MY unread count was cleared (in normal groups, anyone reading cleared it), and when I
+ * read on the phone it cleared nothing but marked my sent messages "đã xem" (seen); supergroups / channels (Channel) were not handled.
+ * Does not import GramJS: it takes the update objects (className) so it can be tested.
  */
 
 export type TelegramReadDirection = 'inbox' | 'outbox';
 
 export interface TelegramReadUpdate {
   direction: TelegramReadDirection;
-  /** Id hội thoại đã đánh dấu kiểu GramJS: user = 123, nhóm thường = -123, siêu nhóm / kênh = -100123. */
+  /** Conversation id marked the GramJS way: user = 123, normal group = -123, supergroup / channel = -100123. */
   chatId: string;
   maxId: number;
-  /** Inbox: số tin còn chưa đọc theo Telegram. */
+  /** Inbox: the number of messages still unread according to Telegram. */
   stillUnreadCount?: number;
 }
 
-/** Số tin mới nhất của hội thoại được xét khi đổi trạng thái (như DatabaseService.markAsRead) — không quét cả hội thoại. */
+/** The newest message of the conversation considered when changing state (like DatabaseService.markAsRead): the whole conversation is not scanned. */
 export const TELEGRAM_READ_SCOPE = 200;
 
 function channelChatId(channelId: unknown): string {
@@ -29,7 +29,7 @@ function channelChatId(channelId: unknown): string {
   return /^\d+$/.test(id) && id !== '0' ? `-100${id}` : '';
 }
 
-/** Update đã đọc → hướng + hội thoại; null nếu không phải update đã đọc / thiếu dữ liệu. */
+/** Read update → direction + conversation; null if it is not a read update or data is missing. */
 export function parseTelegramReadUpdate(update: any, peerToChatId: (peer: any) => string): TelegramReadUpdate | null {
   let direction: TelegramReadDirection;
   let chatId: string;
@@ -69,16 +69,16 @@ export interface TelegramReadDb {
 }
 
 export interface TelegramReadResult {
-  /** Inbox: số chưa đọc mới — chỉ có khi khác giá trị đang lưu. */
+  /** Inbox: the new unread count, only when it differs from the stored value. */
   unread?: number;
-  /** Inbox: đã đọc hết nên tắt cờ @ của hội thoại. */
+  /** Inbox: everything read, so turn off the conversation's @ flag. */
   mentionCleared: boolean;
 }
 
-/** Ghi update đã đọc vào DB. Hội thoại không đổi gì → không ghi contacts (người gọi không phát event). */
+/** Write the read update to the DB. A conversation that changes nothing is not written to contacts (the caller does not emit an event). */
 export function applyTelegramReadUpdate(db: TelegramReadDb, accountId: string, read: TelegramReadUpdate): TelegramReadResult {
   const result: TelegramReadResult = { mentionCleared: false };
-  // Inbox: tin NHẬN tới max_id; Outbox: tin GỬI tới max_id (id tin Telegram chỉ duy nhất trong 1 hội thoại)
+  // Inbox: messages RECEIVED up to max_id; Outbox: messages SENT up to max_id (a Telegram message id is unique only within one conversation)
   db.run(
     `UPDATE messages SET status = 'read'
      WHERE id IN (SELECT id FROM messages WHERE owner_zalo_id = ? AND thread_id = ? ORDER BY timestamp DESC LIMIT ?)

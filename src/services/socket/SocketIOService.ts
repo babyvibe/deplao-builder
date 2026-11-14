@@ -1,16 +1,16 @@
 /**
- * SocketIOService - Boss-side Socket.IO server.
+ * SocketIOService: Boss-side Socket.IO server.
  *
  * Attaches to the existing HTTP server (port 9900) at path /socket.io.
- * - Employee authenticates via token from handshake.auth
- * - Each employee joins their own room emp:{employeeId} — SAU khi xử lý 'catch-up' (phát lại xong mới vào phòng →
- *   phần phát lại và event trực tiếp không trùng / đảo thứ tự)
- * - Mỗi event được buffer MỘT lần (EventBuffer) kèm audience (relayAudience.ts) rồi chỉ phát tới phòng của nhân viên
- *   được nhận: tài khoản được giao (cùng nguồn assigned_accounts với kiểm tra quyền REST), event gửi đích danh,
- *   hoặc dữ liệu chung của workspace
- * - Catch-up (catchUpProtocol.ts): employee gửi 'catch-up' { lastSeqId, bootId } → Boss phát lại phần đã lỡ (lọc theo
- *   nhân viên, có giới hạn) hoặc báo reset (Boss khởi động lại / buffer không đủ) để employee resync
- * - Mỗi lần attach = luồng mới (bootId mới, seqId lớn hơn luồng trước)
+ * - An employee authenticates with the token from handshake.auth
+ * - Each employee joins their own room emp:{employeeId} AFTER 'catch-up' is handled (the replay finishes before joining the room →
+ *   replayed events and live events do not duplicate or come out of order)
+ * - Every event is buffered ONCE (EventBuffer) with its audience (relayAudience.ts), then sent only to the rooms of the employees
+ *   who may receive it: assigned accounts (same assigned_accounts source as the REST permission checks), events addressed to a specific employee,
+ *   or the workspace's shared data
+ * - Catch-up (catchUpProtocol.ts): the employee sends 'catch-up' { lastSeqId, bootId } → Boss replays the missed part (filtered per
+ *   employee, with a limit) or reports a reset (Boss restarted / buffer not large enough) so the employee resyncs
+ * - Every attach = a new stream (new bootId, seqId larger than the previous stream)
  *
  * Room lifecycle (Socket.IO dynamic rooms):
  * - Room created automatically on first socket.join()
@@ -49,24 +49,24 @@ import { socketRejectionMessage } from '../employee/employeeTokenPolicy';
 
 export interface SocketIOAttachOptions {
   /**
-   * Tài khoản được giao của nhân viên — cùng nguồn với kiểm tra quyền REST (HttpRelayService: RegisteredEmployee
-   * .assigned_accounts). undefined = nhân viên chưa đăng ký → dùng danh sách đọc lúc socket xác thực.
+   * The employee's assigned accounts: same source as the REST permission checks (HttpRelayService: RegisteredEmployee
+   * .assigned_accounts). undefined = the employee is not registered → use the list read when the socket authenticated.
    */
   resolveAssignedAccounts?: (employeeId: string) => readonly string[] | undefined;
 }
 
 const EMPLOYEE_ROOM_PREFIX = 'emp:';
-/** Client nào cũng gửi 'catch-up' ngay khi nối; phòng hờ client không gửi → vẫn vào phòng sau ngần này. */
+/** Every client sends 'catch-up' right after connecting; as a fallback for a client that does not send it → it still joins the room after this delay. */
 const CATCH_UP_JOIN_FALLBACK_MS = 5_000;
 
 function employeeRoom(employeeId: string): string {
   return `${EMPLOYEE_ROOM_PREFIX}${employeeId}`;
 }
 
-/** Chờ ngần này trước khi Boss ngắt socket (kick / thu hồi) — 'relay:kicked' vừa phát kịp tới client. */
+/** Waits this long before Boss disconnects the socket (kick / revoke), so 'relay:kicked' is delivered to the client first. */
 const DISCONNECT_FLUSH_DELAY_MS = 1_000;
 
-/** Nhân viên của socket: namespace nhân viên (socket.data.employeeId) hoặc /v1 (API) đăng nhập bằng JWT nhân viên. */
+/** The socket's employee: the employee namespace (socket.data.employeeId) or /v1 (API) logged in with an employee JWT. */
 function socketEmployeeId(socket: Socket): string {
   const data = socket.data as { employeeId?: unknown; principal?: { kind?: unknown; id?: unknown } } | undefined;
   if (typeof data?.employeeId === 'string' && data.employeeId) return data.employeeId;
@@ -80,19 +80,19 @@ class SocketIOService {
   private io: SocketIOServer | null = null;
   private running = false;
 
-  /** Buffer catch-up (5000 event gần nhất, mỗi event MỘT lần kèm audience) — luồng mới mỗi lần attach. */
+  /** Catch-up buffer (the latest 5000 events, each stored ONCE with its audience): a new stream on every attach. */
   private eventBuffer = new EventBuffer<RelayAudience>();
 
-  /** Track online employees (Socket.IO connection, đã vào phòng) */
+  /** Track online employees (Socket.IO connection, joined the room) */
   private onlineEmployees = new Set<string>();
 
   private resolveAssigned: ((employeeId: string) => readonly string[] | undefined) | null = null;
-  /** Tài khoản được giao đọc lúc socket xác thực — dự phòng khi nhân viên chưa đăng ký ở HttpRelayService. */
+  /** Assigned accounts read when the socket authenticated: a fallback when the employee is not registered in HttpRelayService. */
   private socketAssigned = new Map<string, string[]>();
-  /** seqId cuối cùng đã gửi (event hoặc mốc 'seq') tới từng nhân viên — biết khi nào cần gửi mốc. */
+  /** Last seqId sent to each employee (an event or a 'seq' mark) → knows when a mark needs to be sent. */
   private lastSentSeq = new Map<string, number>();
 
-  /** Server Socket.IO đang chạy (Public API v1 gắn namespace /v1 vào đây). */
+  /** The running Socket.IO server (the Public API v1 attaches the /v1 namespace here). */
   public getServer(): SocketIOServer | null {
     return this.io;
   }
@@ -105,8 +105,8 @@ class SocketIOService {
   }
 
   /**
-   * Attach Socket.IO vào HTTP server hiện tại.
-   * Gọi từ HttpRelayService.start() sau khi tạo httpServer.
+   * Attaches Socket.IO to the current HTTP server.
+   * Called from HttpRelayService.start() after httpServer is created.
    */
   public attach(httpServer: http.Server, options: SocketIOAttachOptions = {}): void {
     if (this.running) {
@@ -114,7 +114,7 @@ class SocketIOService {
       return;
     }
 
-    // Luồng mới: event lúc relay tắt không được buffer → nhân viên phải biết (bootId khác) để resync
+    // New stream: events while the relay was off were not buffered → employees must know (different bootId) to resync
     this.eventBuffer.reset();
     this.resolveAssigned = options.resolveAssignedAccounts ?? null;
     this.socketAssigned.clear();
@@ -126,13 +126,13 @@ class SocketIOService {
         origin: '*',
         methods: ['GET', 'POST'],
       },
-      // Ping/pong 25s, timeout 30s → phát hiện mất kết nối trong ~55s
-      // Timeout 30s (tăng từ 20s) để tránh false disconnect trên tunnel
+      // Ping/pong 25 s, timeout 30 s → detects a lost connection within ~55 s
+      // Timeout 30 s (raised from 20 s) to avoid false disconnects over a tunnel
       pingInterval: 25000,
       pingTimeout: 30000,
-      // WebSocket ưu tiên, fallback HTTP polling nếu WS bị firewall chặn
+      // WebSocket first, fall back to HTTP polling if a firewall blocks WS
       transports: ['websocket', 'polling'],
-      // Giảm memory unused
+      // Reduce unused memory
       maxHttpBufferSize: 1e6, // 1MB
     });
 
@@ -145,11 +145,11 @@ class SocketIOService {
 
       try {
         const empService = EmployeeService.getInstance();
-        // Chữ ký + hạn + nhân viên còn bật + chưa bị thu hồi (kick / khoá / đổi mật khẩu / đổi khoá ký)
+        // Signature + expiry + employee still enabled + not revoked (kick / lock / password change / signing key change)
         const payload = empService.validateToken(token);
 
         if (!payload?.valid || !payload.employee_id) {
-          // Khớp isAuthRejectionMessage của client → dừng hẳn, báo "phiên hết hạn"; lỗi DB phía Boss → client thử lại
+          // Matches the client's isAuthRejectionMessage → stop completely and report "phiên hết hạn" (session expired); a Boss-side DB error → the client retries
           return next(new Error(socketRejectionMessage(payload?.reason)));
         }
 
@@ -184,7 +184,7 @@ class SocketIOService {
     }
     Logger.log(`[SocketIOService] 🟢 ${displayName} connected (socket=${socket.id})`);
 
-    // Vào phòng riêng SAU khi catch-up phát lại xong — Socket.IO tự tạo room nếu chưa tồn tại
+    // Join the private room AFTER the catch-up replay finishes: Socket.IO creates the room if it does not exist yet
     let joined = false;
     const joinRoom = () => {
       if (joined || !socket.connected) return;
@@ -199,7 +199,7 @@ class SocketIOService {
       joinRoom();
     }, CATCH_UP_JOIN_FALLBACK_MS);
 
-    // ── Catch-up: client mới { proto, lastSeqId, bootId, sinceTs } + ack; client cũ { lastSeqId } ──
+    // ── Catch-up: new client { proto, lastSeqId, bootId, sinceTs } + ack; old client { lastSeqId } ──
     socket.on('catch-up', (payload: unknown, ack?: unknown) => {
       clearTimeout(joinFallback);
       const reply = typeof ack === 'function' ? (ack as (result: CatchUpResult) => void) : null;
@@ -210,13 +210,13 @@ class SocketIOService {
     socket.on('disconnect', (reason) => {
       clearTimeout(joinFallback);
       this.onlineEmployees.delete(employeeId);
-      // Socket.IO tự động rời room khi disconnect
+      // Socket.IO leaves the room automatically on disconnect
       Logger.log(`[SocketIOService] 🔴 ${displayName} disconnected (reason=${reason})`);
 
-      // Nếu còn socket khác cùng employeeId thì vẫn online
+      // If another socket with the same employeeId is still connected, the employee stays online
       const remainingSockets = this.io?.sockets.adapter.rooms.get(employeeRoom(employeeId));
       if (remainingSockets && remainingSockets.size > 0) {
-        this.onlineEmployees.add(employeeId); // vẫn còn socket khác
+        this.onlineEmployees.add(employeeId); // another socket still exists
       }
     });
 
@@ -227,8 +227,8 @@ class SocketIOService {
   }
 
   /**
-   * Phát lại phần đã lỡ (chỉ event nhân viên này được nhận), vào phòng, rồi trả ack — cùng một lượt đồng bộ nên
-   * không event trực tiếp nào chen giữa phần phát lại và ack.
+   * Replays the missed part (only events this employee may receive), joins the room, then returns the ack: one sync pass, so
+   * no live event slips in between the replayed part and the ack.
    */
   private handleCatchUp(
     socket: Socket,
@@ -263,7 +263,7 @@ class SocketIOService {
 
     if (reply) {
       const result: CatchUpResult = plan?.result ?? {
-        // planCatchUp lỗi → client resync cho chắc
+        // planCatchUp failed → the client resyncs to be safe
         proto: CATCH_UP_PROTOCOL,
         mode: 'reset',
         reason: 'catchup-gap',
@@ -290,9 +290,9 @@ class SocketIOService {
   }
 
   /**
-   * Phát một event relay: buffer MỘT lần kèm audience rồi gửi tới phòng của nhân viên được nhận.
-   * Nhân viên offline (không có socket trong phòng) → event vẫn ở buffer → catch-up khi kết nối lại.
-   * Không throw.
+   * Emits a relay event: buffers it ONCE with its audience, then sends it to the room of each employee who may receive it.
+   * An employee who is offline (no socket in the room) → the event stays in the buffer → caught up on reconnect.
+   * Does not throw.
    */
   public publish(channel: string, data: any): void {
     if (!this.io || !this.running) return;
@@ -307,15 +307,15 @@ class SocketIOService {
   }
 
   /**
-   * Gửi event tới ĐÚNG một nhân viên (buffer như publish, audience = nhân viên đó).
-   * Không throw dù employee không tồn tại / offline.
+   * Sends an event to EXACTLY one employee (buffered like publish, audience = that employee).
+   * Does not throw even if the employee does not exist / is offline.
    */
   public emitToEmployee(employeeId: string, channel: string, data: any): void {
     if (!this.io || !this.running || !employeeId) return;
     this.dispatch(channel, data, addressedAudience(employeeId));
   }
 
-  /** Tài khoản được giao vừa đổi (Boss gán lại) — dùng cho nhân viên chưa đăng ký ở HttpRelayService. */
+  /** An assigned account has just changed (Boss reassigned it): used for employees not registered in HttpRelayService. */
   public updateEmployeeAccess(employeeId: string, accounts: readonly string[]): void {
     if (!employeeId || !this.socketAssigned.has(employeeId)) return;
     this.socketAssigned.set(employeeId, normalizeAccountList(accounts));
@@ -323,7 +323,7 @@ class SocketIOService {
 
   private dispatch(channel: string, data: any, audience: RelayAudience): void {
     if (audience.kind === 'nobody') return;
-    // Event tức thời (typing): phát trực tiếp, không buffer / không seqId
+    // Instant events (typing): sent live, not buffered / no seqId
     const event = isEphemeralRelayChannel(channel) ? null : this.eventBuffer.push(channel, data, audience);
     try {
       this.deliverLive(channel, data, audience, event);
@@ -343,13 +343,13 @@ class SocketIOService {
         targets.push(employeeRoom(employeeId));
         if (event) this.lastSentSeq.set(employeeId, event.seqId);
       } else if (event && event.seqId - (this.lastSentSeq.get(employeeId) ?? 0) >= SEQ_WATERMARK_EVERY) {
-        // Nhân viên ít event: báo mốc để vị trí của họ không tụt xa đầu buffer (tránh resync oan khi kết nối lại)
+        // Employees with few events: send a mark so their position does not fall far behind the head of the buffer (avoids a false resync on reconnect)
         watermarks.push(employeeRoom(employeeId));
         this.lastSentSeq.set(employeeId, event.seqId);
       }
     }
     if (targets.length > 0) {
-      // Một lần encode cho mọi phòng đích
+      // Encode once for every target room
       const envelope: EventEnvelope = event ? toEnvelope(event, bootId) : { channel, data, bootId };
       io.to(targets).emit('event', envelope);
     }
@@ -359,7 +359,7 @@ class SocketIOService {
     }
   }
 
-  /** Nhân viên có socket đã vào phòng (đã catch-up). */
+  /** Employees whose socket has joined the room (caught up). */
   private joinedEmployeeIds(): string[] {
     const rooms = this.io?.sockets.adapter.rooms;
     if (!rooms) return [];
@@ -370,19 +370,19 @@ class SocketIOService {
     return ids;
   }
 
-  /** Danh sách hiện hành: nhân viên đã đăng ký (nguồn của kiểm tra quyền REST) → không thì danh sách lúc xác thực. */
+  /** Current list: the registered employees (the source of the REST permission checks) → otherwise the list read at authentication. */
   private assignedAccountsFor(employeeId: string): readonly string[] {
     if (this.resolveAssigned) {
       try {
         const accounts = this.resolveAssigned(employeeId);
         if (accounts) return accounts;
-      } catch { /* dùng danh sách lúc xác thực */ }
+      } catch { /* use the list read at authentication */ }
     }
     return this.socketAssigned.get(employeeId) ?? [];
   }
 
   /**
-   * Kiểm tra employee có đang online qua Socket.IO không
+   * Checks whether an employee is currently online through Socket.IO
    */
   public isOnline(employeeId: string): boolean {
     if (!this.io) return false;
@@ -391,29 +391,29 @@ class SocketIOService {
   }
 
   /**
-   * Đếm số employee đang online
+   * Counts the employees currently online
    */
   public getOnlineCount(): number {
     return this.joinedEmployeeIds().length;
   }
 
-  /** Nhân viên có socket đã vào phòng (đang nhận realtime). */
+  /** Employees whose socket has joined the room (receiving realtime events). */
   public getOnlineEmployeeIds(): string[] {
     return this.joinedEmployeeIds();
   }
 
   /**
-   * Ngắt mọi socket của một nhân viên sau `delayMs` — kick / khoá / xoá / đổi mật khẩu, gọi SAU khi đã thu hồi token
-   * (client tự nối lại sẽ bị bắt tay từ chối). Không chỉ phòng emp:{id}: gồm cả socket chưa catch-up xong và socket /v1
-   * (API) đăng nhập bằng JWT của nhân viên. Chỉ ngắt socket đang có lúc gọi — socket nối trong lúc chờ đã qua bắt tay
-   * sau khi thu hồi, tức token mới (đăng nhập lại) → giữ. Trả về số socket sẽ ngắt.
+   * Disconnects all sockets of one employee after `delayMs`: kick / lock / delete / password change. Called AFTER the token has been revoked
+   * (a client that reconnects by itself is rejected at the handshake). Not only the emp:{id} room: it includes sockets that have not finished catch-up and /v1
+   * (API) sockets logged in with the employee's JWT. Only disconnects the sockets that exist at the time of the call: a socket connected during the wait passed the handshake
+   * after the revoke, so it carries the new token (logged in again) → kept. Returns the number of sockets that will be disconnected.
    */
   public disconnectEmployee(employeeId: string, delayMs = DISCONNECT_FLUSH_DELAY_MS): number {
     if (!employeeId) return 0;
     return this.disconnectMatching((id) => id === employeeId, delayMs, `nhân viên ${employeeId}`);
   }
 
-  /** Ngắt mọi socket nhân viên (Đăng xuất tất cả — gọi SAU khi đã đổi khoá ký). */
+  /** Disconnects all employee sockets ("Đăng xuất tất cả" = log out everywhere; called AFTER the signing key has been changed). */
   public disconnectAllEmployees(delayMs = DISCONNECT_FLUSH_DELAY_MS): number {
     return this.disconnectMatching(() => true, delayMs, 'mọi nhân viên');
   }
@@ -446,7 +446,7 @@ class SocketIOService {
   }
 
   /**
-   * Dừng server
+   * Stops the server
    */
   public stop(): void {
     if (this.io) {
@@ -458,12 +458,12 @@ class SocketIOService {
     this.socketAssigned.clear();
     this.lastSentSeq.clear();
     this.resolveAssigned = null;
-    // Giải phóng buffer; lần attach sau là luồng mới (bootId mới)
+    // Free the buffer; the next attach is a new stream (new bootId)
     this.eventBuffer.reset();
     Logger.log('[SocketIOService] Stopped');
   }
 
-  /** Chỉ dùng cho test */
+  /** For tests only */
   public _getBuffer(): EventBuffer<RelayAudience> { return this.eventBuffer; }
 }
 

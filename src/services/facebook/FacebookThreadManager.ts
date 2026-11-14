@@ -12,10 +12,11 @@ import {
 import { buildFormData, buildPostConfig, parseFBResponse, rateLimitDelay } from './FacebookUtils';
 import { assertFacebookMutationSuccess, parseFacebookResponse } from './FacebookGraphQLResult';
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 const GRAPHQL_BATCH_URL = 'https://www.facebook.com/api/graphqlbatch/';
 
-/** Loại đính kèm theo __typename của GraphQL (trước đây mọi đính kèm lưu thành `file`). */
+/** Attachment kind from the GraphQL __typename (previously every attachment was stored as `file`). */
 function graphQLBlobType(typename: unknown): string {
   switch (String(typename || '')) {
     case 'MessageImage':
@@ -105,9 +106,9 @@ export async function getThreadList(dataFB: FBSessionData, tags: string[] = ['IN
 }
 
 /**
- * Một trang danh sách hội thoại (cùng truy vấn với getThreadList, `before` = mốc của hội thoại cuối trang trước).
- * getThreadList chỉ lấy 50 hội thoại mới nhất; đồng bộ theo khoảng thời gian cần đi tiếp tới hết khoảng.
- * Trả kèm mốc hoạt động (ms) của từng hội thoại và mốc trang sau (null = hết).
+ * One page of the conversation list (same query as getThreadList, `before` = the marker of the last conversation on the previous page).
+ * getThreadList only fetches the 50 most recent conversations; time-range sync must keep going until the range is covered.
+ * Returns the activity time (ms) of each conversation and the marker of the next page (null = end).
  */
 export async function getThreadListPage(
   dataFB: FBSessionData,
@@ -137,7 +138,7 @@ export async function getThreadListPage(
   try {
     parsed = JSON.parse(dataGet);
   } catch (err: any) {
-    return { threads: [], nextBefore: null, error: `Không đọc được danh sách hội thoại: ${err.message}` };
+    return { threads: [], nextBefore: null, error: tr('Không đọc được danh sách hội thoại: {{message}}', { message: err.message }) };
   }
   if (parsed?.o0?.error) {
     const err = parsed.o0.error;
@@ -199,7 +200,7 @@ export function parseThreadNodes(dataGet: string, accountId: string, fbUserId?: 
             .map((a: any) => a?.name || '')
             .filter(Boolean)
             .slice(0, 4);
-          threadName = otherNames.length > 0 ? otherNames.join(', ') : 'Nhóm không tên';
+          threadName = otherNames.length > 0 ? otherNames.join(', ') : tr('Nhóm không tên');
         }
         // Group avatar: use thread image_src if available, else first participant avatar
         avatarUrl = node?.image?.uri || '';
@@ -223,7 +224,7 @@ export function parseThreadNodes(dataGet: string, accountId: string, fbUserId?: 
         // keep it as fallback when participant data is partial.
         avatarUrl = actorAvatar(actor) || node?.image?.uri || '';
       }
-      if (!threadName) threadName = 'Không có tên';
+      if (!threadName) threadName = tr('Không có tên');
       // The persisted inbox query returns this as `unread_count` on current
       // Messenger responses. Keep the camelCase fallback for older payloads;
       // a missing field deliberately remains zero rather than reusing a stale
@@ -489,10 +490,10 @@ export async function fetchThreadMessages(
         repliedNode?.message_sender?.id || repliedNode?.sender_id ||
         repliedNode?.messageMetadata?.actorFbId || undefined;
 
-      // Tin hệ thống (đổi tên nhóm, thêm thành viên…): chữ nằm ở snippet
+      // System messages (group renamed, member added…): the text is in the snippet
       const isAdmin = /AdminText/i.test(String(node.__typename || ''));
       const bodyText = typeof node.body === 'string' ? node.body : node.body?.text;
-      // Tin mẫu của Page / chia sẻ / thẻ sản phẩm: extensible_attachment (trước đây bỏ qua → tin rỗng)
+      // Page template / share / product card messages: extensible_attachment (previously skipped → empty message)
       const template = node.extensible_attachment ? templateFromStoryAttachment(node.extensible_attachment) : null;
       const sticker = node.sticker;
       return {

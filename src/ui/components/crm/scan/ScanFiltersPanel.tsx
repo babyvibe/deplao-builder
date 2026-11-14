@@ -2,6 +2,7 @@ import React from 'react';
 import type { ScanType } from '../../../../services/facebook/scan/FacebookScanTypes';
 import type { ScanFilters } from './ScanSessionTypes';
 import { YEAR_OPTIONS, COMMENT_SORT_OPTIONS } from './ScanSessionTypes';
+import { tr } from '../../../../shared/i18n';
 
 interface Props {
   scanType: ScanType;
@@ -21,7 +22,7 @@ export default function ScanFiltersPanel({ scanType, filters, onChange }: Props)
   const showCommentKeyword = scanType === 'post_comments';
   const showPhoneFilter = scanType === 'post_comments';
 
-  // Không hiển thị gì nếu không có filter nào phù hợp
+  // Show nothing if no filter matches
   if (!showYearFilter && !showPublicFilter && !showRecentFilter && !showCommentSort && !showCommentKeyword && !showPhoneFilter) {
     return null;
   }
@@ -33,7 +34,7 @@ export default function ScanFiltersPanel({ scanType, filters, onChange }: Props)
         <label className="flex items-center gap-1 cursor-pointer flex-shrink-0">
           <input type="checkbox" checked={!!filters.public} onChange={(e) => update({ public: e.target.checked })}
             className="w-3 h-3 rounded bg-muted border-border-strong text-blue-500" />
-          <span className="text-[11px] text-muted-foreground">Công khai</span>
+          <span className="text-[11px] text-muted-foreground">{tr('Công khai')}</span>
         </label>
       )}
 
@@ -42,7 +43,7 @@ export default function ScanFiltersPanel({ scanType, filters, onChange }: Props)
         <label className="flex items-center gap-1 cursor-pointer flex-shrink-0">
           <input type="checkbox" checked={!!filters.recent} onChange={(e) => update({ recent: e.target.checked })}
             className="w-3 h-3 rounded bg-muted border-border-strong text-blue-500" />
-          <span className="text-[11px] text-muted-foreground">Gần đây</span>
+          <span className="text-[11px] text-muted-foreground">{tr('Gần đây')}</span>
         </label>
       )}
 
@@ -65,7 +66,7 @@ export default function ScanFiltersPanel({ scanType, filters, onChange }: Props)
       {/* Comment keyword filter */}
       {showCommentKeyword && (
         <input type="text" value={filters.commentKeyword || ''} onChange={(e) => update({ commentKeyword: e.target.value })}
-          placeholder="Lọc từ khóa..."
+          placeholder={tr('Lọc từ khóa...')}
           className="bg-muted/50 text-foreground/80 text-[11px] rounded-lg px-2.5 py-1.5 w-32 border border-input/30 focus:outline-none focus:border-blue-500 placeholder-subtle-foreground flex-shrink-0" />
       )}
 
@@ -74,7 +75,7 @@ export default function ScanFiltersPanel({ scanType, filters, onChange }: Props)
         <label className="flex items-center gap-1 cursor-pointer flex-shrink-0">
           <input type="checkbox" checked={!!filters.detectPhone} onChange={(e) => update({ detectPhone: e.target.checked })}
             className="w-3 h-3 rounded bg-muted border-border-strong text-emerald-500" />
-          <span className="text-[11px] text-muted-foreground">Có SĐT</span>
+          <span className="text-[11px] text-muted-foreground">{tr('Có SĐT')}</span>
         </label>
       )}
     </div>

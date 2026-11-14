@@ -1,10 +1,10 @@
 /**
- * PhoneLoginTab.tsx - UI đăng nhập Telegram cá nhân qua số điện thoại
+ * PhoneLoginTab.tsx - Telegram personal login UI via phone number
  *
- * 3 bước:
- * 1. Nhập số điện thoại → gửi mã OTP
- * 2. Nhập mã OTP → xác nhận
- * 3. (Nếu có 2FA) Nhập mật khẩu cloud
+ * 3 steps:
+ * 1. Enter the phone number → send the OTP code
+ * 2. Enter the OTP code → confirm
+ * 3. (If 2FA is on) Enter the cloud password
  */
 
 import React, { useState } from 'react';
@@ -14,6 +14,8 @@ import { useAppStore } from '@/store/app/appStore';
 import { createDefaultLabels } from '@/lib/labels/defaultLabels';
 import { Spinner } from '@/components/common/PageLoading';
 import { CheckIcon, AlertIcon, SmartphoneIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface Props {
   onSuccess: () => void;
@@ -34,10 +36,10 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
   const { showNotification } = useAppStore();
   const addAccount = useAccountStore(s => s.addAccount);
 
-  // Bước 1: Gửi mã OTP
+  // Step 1: Send the OTP code
   const handleSendCode = async () => {
     if (!phoneNumber.trim()) {
-      setError('Vui lòng nhập số điện thoại');
+      setError(tr('Vui lòng nhập số điện thoại'));
       return;
     }
     // Normalize phone number
@@ -52,19 +54,19 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
         setPhoneCodeHash(res.phoneCodeHash);
         setStep('code');
       } else {
-        setError(res?.error || 'Không thể gửi mã OTP');
+        setError(res?.error || tr('Không thể gửi mã OTP'));
       }
     } catch (err: any) {
-      setError(err.message || 'Lỗi kết nối');
+      setError(err.message || tr('Lỗi kết nối'));
     } finally {
       setLoading(false);
     }
   };
 
-  // Bước 2: Xác nhận mã OTP
+  // Step 2: Confirm the OTP code
   const handleSignIn = async () => {
     if (!code.trim()) {
-      setError('Vui lòng nhập mã OTP');
+      setError(tr('Vui lòng nhập mã OTP'));
       return;
     }
     setLoading(true);
@@ -78,24 +80,24 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
       });
 
       if (res?.success && res.stringSession && res.accountId) {
-        // Login thành công
+        // Login succeeded
         await handleLoginSuccess(res.accountId, res.stringSession, res.userInfo);
       } else if (res?.error === '2FA_REQUIRED') {
         setStep('password');
       } else {
-        setError(res?.error || 'Mã OTP không đúng');
+        setError(res?.error || tr('Mã OTP không đúng'));
       }
     } catch (err: any) {
-      setError(err.message || 'Lỗi xác nhận');
+      setError(err.message || tr('Lỗi xác nhận'));
     } finally {
       setLoading(false);
     }
   };
 
-  // Bước 3: Xác nhận 2FA
+  // Step 3: Confirm 2FA
   const handleSignIn2FA = async () => {
     if (!password.trim()) {
-      setError('Vui lòng nhập mật khẩu');
+      setError(tr('Vui lòng nhập mật khẩu'));
       return;
     }
     setLoading(true);
@@ -107,16 +109,16 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
       if (res?.success && res.stringSession && res.accountId) {
         await handleLoginSuccess(res.accountId, res.stringSession, res.userInfo);
       } else {
-        setError(res?.error || 'Mật khẩu không đúng');
+        setError(res?.error || tr('Mật khẩu không đúng'));
       }
     } catch (err: any) {
-      setError(err.message || 'Lỗi xác nhận 2FA');
+      setError(err.message || tr('Lỗi xác nhận 2FA'));
     } finally {
       setLoading(false);
     }
   };
 
-  // Xử lý sau khi login thành công
+  // Handle after a successful login
   const handleLoginSuccess = async (accountId: string, stringSession: string, userInfo?: any) => {
     const fullPhone = countryCode + phoneNumber.trim().replace(/^0/, '');
     const fullName = userInfo?.firstName
@@ -132,7 +134,7 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
       phone: fullPhone,
       username,
       imei: '',
-      cookies: stringSession, // Lưu StringSession vào cookies column
+      cookies: stringSession, // Save the StringSession in the cookies column
       user_agent: '',
       channel: 'telegram_user',
     } as any);
@@ -166,19 +168,19 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
       stringSession,
     });
 
-    // Fetch self avatar sau khi listener kết nối thành công
+    // Fetch the self avatar after the listener connects successfully
     if (listenerRes?.success) {
       try {
         const avatarRes = await (ipc as any).telegramUser?.fetchSelfAvatar?.(accountId);
         if (avatarRes?.success && avatarRes.avatarUrl) {
           useAccountStore.getState().updateAccount(accountId, { avatar_url: avatarRes.avatarUrl });
-          // Cập nhật luôn vào DB
+          // Update the DB right away
           await ipc.db?.updateContactProfile?.({ zaloId: accountId, contactId: accountId, displayName: fullName, avatarUrl: avatarRes.avatarUrl });
         }
       } catch { /* fire-and-forget */ }
     }
 
-    showNotification('Đăng nhập Telegram thành công!', 'success');
+    showNotification(tr('Đăng nhập Telegram thành công!'), 'success');
     setStep('done');
     setTimeout(onSuccess, 1500);
   };
@@ -201,18 +203,18 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
         ))}
       </div>
 
-      {/* Bước 1: Nhập SĐT */}
+      {/* Step 1: Enter phone number */}
       {step === 'phone' && (
         <>
           <div className="bg-blue-900/20 border border-blue-700/30 rounded-xl p-4">
-            <p className="text-blue-300 text-xs font-semibold mb-2">📱 Đăng nhập Telegram cá nhân</p>
+            <p className="text-blue-300 text-xs font-semibold mb-2">{tr('📱 Đăng nhập Telegram cá nhân')}</p>
             <p className="text-blue-400 text-[11px] leading-relaxed">
-              Nhập số điện thoại đã đăng ký Telegram. Mã OTP sẽ được gửi đến ứng dụng Telegram trên điện thoại của bạn.
+              {tr('Nhập số điện thoại đã đăng ký Telegram. Mã OTP sẽ được gửi đến ứng dụng Telegram trên điện thoại của bạn.')}
             </p>
           </div>
 
           <div>
-            <label className="text-foreground/80 text-xs font-medium mb-1.5 block">Số điện thoại</label>
+            <label className="text-foreground/80 text-xs font-medium mb-1.5 block">{tr('Số điện thoại')}</label>
             <div className="relative">
               <select
                 value={countryCode}
@@ -239,18 +241,18 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
         </>
       )}
 
-      {/* Bước 2: Nhập mã OTP */}
+      {/* Step 2: Enter OTP code */}
       {step === 'code' && (
         <>
           <div className="bg-green-900/20 border border-green-700/30 rounded-xl p-4">
-            <p className="text-green-300 text-xs font-semibold mb-2">✉️ Kiểm tra Telegram</p>
+            <p className="text-green-300 text-xs font-semibold mb-2">{tr('✉️ Kiểm tra Telegram')}</p>
             <p className="text-green-400 text-[11px] leading-relaxed">
-              Mã OTP đã được gửi đến ứng dụng Telegram của bạn. Nhập mã gồm 5 chữ số bên dưới.
+              {tr('Mã OTP đã được gửi đến ứng dụng Telegram của bạn. Nhập mã gồm 5 chữ số bên dưới.')}
             </p>
           </div>
 
           <div>
-            <label className="text-foreground/80 text-xs font-medium mb-1.5 block">Mã OTP</label>
+            <label className="text-foreground/80 text-xs font-medium mb-1.5 block">{tr('Mã OTP')}</label>
             <input
               type="text"
               value={code}
@@ -265,23 +267,23 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
         </>
       )}
 
-      {/* Bước 3: Nhập 2FA */}
+      {/* Step 3: Enter 2FA */}
       {step === 'password' && (
         <>
           <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-4">
-            <p className="text-yellow-300 text-xs font-semibold mb-2">🔒 Xác thực 2 lớp</p>
+            <p className="text-yellow-300 text-xs font-semibold mb-2">{tr('🔒 Xác thực 2 lớp')}</p>
             <p className="text-yellow-400 text-[11px] leading-relaxed">
-              Tài khoản Telegram của bạn có bật xác thực 2 lớp. Nhập mật khẩu cloud password.
+              {tr('Tài khoản Telegram của bạn có bật xác thực 2 lớp. Nhập mật khẩu cloud password.')}
             </p>
           </div>
 
           <div>
-            <label className="text-foreground/80 text-xs font-medium mb-1.5 block">Mật khẩu</label>
+            <label className="text-foreground/80 text-xs font-medium mb-1.5 block">{tr('Mật khẩu')}</label>
             <input
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="Nhập mật khẩu 2FA"
+              placeholder={tr('Nhập mật khẩu 2FA')}
               className="w-full bg-muted border border-input rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors"
               disabled={loading}
               autoFocus
@@ -296,8 +298,8 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
           <div className="w-16 h-16 rounded-full bg-green-600/30 flex items-center justify-center">
             <CheckIcon className="w-8 h-8 text-green-400" />
           </div>
-          <p className="text-green-300 text-sm font-semibold">Đăng nhập thành công!</p>
-          <p className="text-muted-foreground text-xs">Đang khởi động listener...</p>
+          <p className="text-green-300 text-sm font-semibold">{tr('Đăng nhập thành công!')}</p>
+          <p className="text-muted-foreground text-xs">{tr('Đang khởi động listener...')}</p>
         </div>
       )}
 
@@ -315,7 +317,7 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
           onClick={step === 'phone' ? onBack : () => { setStep('phone'); setError(''); }}
           className="flex-1 px-4 py-2.5 bg-muted hover:bg-accent text-foreground/80 text-sm rounded-lg transition-colors"
         >
-          {step === 'phone' ? 'Quay lại' : 'Sửa SĐT'}
+          {step === 'phone' ? tr('Quay lại') : tr('Sửa SĐT')}
         </button>
 
         {step === 'phone' && (
@@ -324,7 +326,7 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
             disabled={!phoneNumber.trim() || loading}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
           >
-            {loading ? <><Spinner size={4} /> Đang gửi...</> : 'Gửi mã OTP'}
+            {loading ? <>{trx('<0/> Đang gửi...', { 0: <Spinner size={4} /> })}</> : tr('Gửi mã OTP')}
           </button>
         )}
 
@@ -334,7 +336,7 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
             disabled={code.length < 5 || loading}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
           >
-            {loading ? <><Spinner size={4} /> Đang xác nhận...</> : 'Xác nhận'}
+            {loading ? <>{trx('<0/> Đang xác nhận...', { 0: <Spinner size={4} /> })}</> : tr('Xác nhận')}
           </button>
         )}
 
@@ -344,7 +346,7 @@ export default function PhoneLoginTab({ onSuccess, onBack }: Props) {
             disabled={!password.trim() || loading}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
           >
-            {loading ? <><Spinner size={4} /> Đang xác nhận...</> : 'Xác nhận'}
+            {loading ? <>{trx('<0/> Đang xác nhận...', { 0: <Spinner size={4} /> })}</> : tr('Xác nhận')}
           </button>
         )}
       </div>

@@ -1,6 +1,6 @@
 /**
- * DesignSystemPage — trang mẫu để duyệt token màu + bộ component cơ bản ở cả hai theme.
- * Không phụ thuộc store/electronAPI; mount trong Settings → Giao diện (dev) và harness ds-preview.
+ * DesignSystemPage: sample page to browse the color tokens and the basic component set in both themes.
+ * Does not depend on store/electronAPI; mounted in Settings → Appearance (dev) and the ds-preview harness.
  */
 import React, { useState } from 'react';
 import { cn } from '@/lib/cn';
@@ -21,6 +21,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogBody, Dialo
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from './dropdown-menu';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './tabs';
 import { Tooltip } from './tooltip';
+import { tr } from '../../../shared/i18n';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ export function DesignSystemPage() {
   return (
     <div className="space-y-10 text-foreground">
       {/* ── Tokens ── */}
-      <Section title="Màu nền và bề mặt" description="Lớp sau đặt trên lớp trước: background → card → popover. muted/accent cho ô nhập, hover, đang chọn.">
+      <Section title={tr('Màu nền và bề mặt')} description={tr('Lớp sau đặt trên lớp trước: background → card → popover. muted/accent cho ô nhập, hover, đang chọn.')}>
         <div className="grid grid-cols-3 gap-4 sm:grid-cols-5">
           <Swatch cls="bg-background" name="background" />
           <Swatch cls="bg-card" name="card" />
@@ -80,7 +81,7 @@ export function DesignSystemPage() {
         </div>
       </Section>
 
-      <Section title="Đường kẻ">
+      <Section title={tr('Đường kẻ')}>
         <div className="grid grid-cols-3 gap-4">
           <Swatch cls="border-border bg-card" name="border" border />
           <Swatch cls="border-input bg-card" name="input" border />
@@ -88,20 +89,20 @@ export function DesignSystemPage() {
         </div>
       </Section>
 
-      <Section title="Chữ">
+      <Section title={tr('Chữ')}>
         <Card>
           <CardContent className="space-y-1.5">
-            <p className="text-base font-semibold text-foreground">Tiêu đề · text-foreground font-semibold</p>
-            <p className="text-sm text-foreground">Nội dung chính · text-sm text-foreground</p>
-            <p className="text-sm text-foreground/80">Nội dung phụ nhẹ · text-foreground/80</p>
-            <p className="text-sm text-muted-foreground">Mô tả, nhãn · text-muted-foreground</p>
-            <p className="text-xs text-subtle-foreground">Thời gian, placeholder, số đếm · text-xs text-subtle-foreground</p>
-            <p className="text-sm text-primary">Link, đang chọn · text-primary</p>
+            <p className="text-base font-semibold text-foreground">{tr('Tiêu đề · text-foreground font-semibold')}</p>
+            <p className="text-sm text-foreground">{tr('Nội dung chính · text-sm text-foreground')}</p>
+            <p className="text-sm text-foreground/80">{tr('Nội dung phụ nhẹ · text-foreground/80')}</p>
+            <p className="text-sm text-muted-foreground">{tr('Mô tả, nhãn · text-muted-foreground')}</p>
+            <p className="text-xs text-subtle-foreground">{tr('Thời gian, placeholder, số đếm · text-xs text-subtle-foreground')}</p>
+            <p className="text-sm text-primary">{tr('Link, đang chọn · text-primary')}</p>
           </CardContent>
         </Card>
       </Section>
 
-      <Section title="Màu nhấn và trạng thái" description="Nền đặc chỉ cho nút chính. Trạng thái dùng nền nhạt /15 + chữ màu.">
+      <Section title={tr('Màu nhấn và trạng thái')} description={tr('Nền đặc chỉ cho nút chính. Trạng thái dùng nền nhạt /15 + chữ màu.')}>
         <div className="grid grid-cols-3 gap-4 sm:grid-cols-5">
           <Swatch cls="bg-primary" name="primary" />
           <Swatch cls="bg-destructive" name="destructive" />
@@ -117,96 +118,96 @@ export function DesignSystemPage() {
       </Section>
 
       {/* ── Buttons ── */}
-      <Section title="Button" description="6 biến thể × 4 cỡ. Một nút chính mỗi vùng; còn lại secondary/outline/ghost.">
+      <Section title={tr('Button')} description={tr('6 biến thể × 4 cỡ. Một nút chính mỗi vùng; còn lại secondary/outline/ghost.')}>
         <Card>
           <CardContent className="space-y-4">
             <Row label="variant">
-              <Button>Lưu thay đổi</Button>
-              <Button variant="secondary">Huỷ</Button>
-              <Button variant="outline">Xuất file</Button>
-              <Button variant="ghost">Bỏ qua</Button>
-              <Button variant="destructive">Xoá</Button>
-              <Button variant="link">Xem chi tiết</Button>
+              <Button>{tr('Lưu thay đổi')}</Button>
+              <Button variant="secondary">{tr('Huỷ')}</Button>
+              <Button variant="outline">{tr('Xuất file')}</Button>
+              <Button variant="ghost">{tr('Bỏ qua')}</Button>
+              <Button variant="destructive">{tr('Xoá')}</Button>
+              <Button variant="link">{tr('Xem chi tiết')}</Button>
             </Row>
             <Row label="size">
-              <Button size="sm">Nhỏ</Button>
-              <Button size="md">Vừa</Button>
-              <Button size="lg">Lớn</Button>
-              <Button size="icon" aria-label="Thêm"><PlusIcon className="h-4 w-4" /></Button>
-              <Button size="icon" variant="outline" aria-label="Cài đặt"><SettingsIcon className="h-4 w-4" /></Button>
-              <Button size="icon" variant="ghost" aria-label="Xoá"><TrashIcon className="h-4 w-4" /></Button>
+              <Button size="sm">{tr('Nhỏ')}</Button>
+              <Button size="md">{tr('Vừa')}</Button>
+              <Button size="lg">{tr('Lớn')}</Button>
+              <Button size="icon" aria-label={tr('Thêm')}><PlusIcon className="h-4 w-4" /></Button>
+              <Button size="icon" variant="outline" aria-label={tr('Cài đặt')}><SettingsIcon className="h-4 w-4" /></Button>
+              <Button size="icon" variant="ghost" aria-label={tr('Xoá')}><TrashIcon className="h-4 w-4" /></Button>
             </Row>
             <Row label="icon">
-              <Button leftIcon={<PlusIcon className="h-4 w-4" />}>Thêm tài khoản</Button>
-              <Button variant="secondary" leftIcon={<DownloadIcon className="h-4 w-4" />}>Tải xuống</Button>
-              <Button variant="outline" rightIcon={<ExternalLinkIcon className="h-4 w-4" />}>Mở Zalo</Button>
-              <Button variant="ghost" leftIcon={<RefreshIcon className="h-4 w-4" />}>Làm mới</Button>
+              <Button leftIcon={<PlusIcon className="h-4 w-4" />}>{tr('Thêm tài khoản')}</Button>
+              <Button variant="secondary" leftIcon={<DownloadIcon className="h-4 w-4" />}>{tr('Tải xuống')}</Button>
+              <Button variant="outline" rightIcon={<ExternalLinkIcon className="h-4 w-4" />}>{tr('Mở Zalo')}</Button>
+              <Button variant="ghost" leftIcon={<RefreshIcon className="h-4 w-4" />}>{tr('Làm mới')}</Button>
             </Row>
             <Row label="state">
-              <Button loading>Đang lưu</Button>
-              <Button variant="secondary" loading>Đang tải</Button>
-              <Button disabled>Vô hiệu</Button>
-              <Button variant="outline" disabled>Vô hiệu</Button>
-              <Button variant="destructive" loading>Đang xoá</Button>
+              <Button loading>{tr('Đang lưu')}</Button>
+              <Button variant="secondary" loading>{tr('Đang tải')}</Button>
+              <Button disabled>{tr('Vô hiệu')}</Button>
+              <Button variant="outline" disabled>{tr('Vô hiệu')}</Button>
+              <Button variant="destructive" loading>{tr('Đang xoá')}</Button>
             </Row>
           </CardContent>
         </Card>
       </Section>
 
       {/* ── Form controls ── */}
-      <Section title="Form" description="Ô nhập cao 36px, nền muted, viền input. Lỗi đổi viền sang destructive và hiện dòng lỗi.">
+      <Section title={tr('Form')} description={tr('Ô nhập cao 36px, nền muted, viền input. Lỗi đổi viền sang destructive và hiện dòng lỗi.')}>
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>Thông tin tài khoản</CardTitle>
-              <CardDescription>FormField xếp dọc: nhãn, control, gợi ý hoặc lỗi.</CardDescription>
+              <CardTitle>{tr('Thông tin tài khoản')}</CardTitle>
+              <CardDescription>{tr('FormField xếp dọc: nhãn, control, gợi ý hoặc lỗi.')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <FormField label="Tên hiển thị" required hint="Tên này hiện với khách hàng.">
-                <Input placeholder="VD: Deplao Support" defaultValue="Deplao Support" />
+              <FormField label={tr('Tên hiển thị')} required hint={tr('Tên này hiện với khách hàng.')}>
+                <Input placeholder={tr('VD: Deplao Support')} defaultValue="Deplao Support" />
               </FormField>
-              <FormField label="Số điện thoại" error="Số điện thoại không hợp lệ.">
+              <FormField label={tr('Số điện thoại')} error={tr('Số điện thoại không hợp lệ.')}>
                 <Input invalid defaultValue="09xx" />
               </FormField>
-              <FormField label="Kênh mặc định">
+              <FormField label={tr('Kênh mặc định')}>
                 <Select value={channel} onChange={(e) => setChannel(e.target.value)}>
                   <option value="zalo">Zalo</option>
                   <option value="facebook">Facebook</option>
                   <option value="telegram">Telegram</option>
                 </Select>
               </FormField>
-              <FormField label="Ghi chú">
-                <Textarea placeholder="Ghi chú nội bộ…" rows={3} />
+              <FormField label={tr('Ghi chú')}>
+                <Textarea placeholder={tr('Ghi chú nội bộ…')} rows={3} />
               </FormField>
-              <FormField label="Tìm kiếm (disabled)">
-                <Input disabled placeholder="Không khả dụng" />
+              <FormField label={tr('Tìm kiếm (disabled)')}>
+                <Input disabled placeholder={tr('Không khả dụng')} />
               </FormField>
             </CardContent>
             <CardFooter>
-              <Button>Lưu</Button>
-              <Button variant="ghost">Huỷ</Button>
+              <Button>{tr('Lưu')}</Button>
+              <Button variant="ghost">{tr('Huỷ')}</Button>
             </CardFooter>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Tuỳ chọn</CardTitle>
-              <CardDescription>Switch cho bật/tắt tức thì, Checkbox cho lựa chọn trong form.</CardDescription>
+              <CardTitle>{tr('Tuỳ chọn')}</CardTitle>
+              <CardDescription>{tr('Switch cho bật/tắt tức thì, Checkbox cho lựa chọn trong form.')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Switch checked={notify} onCheckedChange={setNotify} label="Thông báo tin nhắn mới" description="Hiện thông báo desktop khi có tin nhắn." />
-              <Switch checked={sound} onCheckedChange={setSound} label="Âm thanh" />
-              <Switch checked disabled onCheckedChange={() => {}} label="Bắt buộc (khoá)" size="sm" />
+              <Switch checked={notify} onCheckedChange={setNotify} label={tr('Thông báo tin nhắn mới')} description={tr('Hiện thông báo desktop khi có tin nhắn.')} />
+              <Switch checked={sound} onCheckedChange={setSound} label={tr('Âm thanh')} />
+              <Switch checked disabled onCheckedChange={() => {}} label={tr('Bắt buộc (khoá)')} size="sm" />
               <div className="h-px bg-border" />
-              <Checkbox checked={agree} onCheckedChange={setAgree} label="Đồng bộ tin nhắn cũ" description="Tải 30 ngày gần nhất khi thêm tài khoản." />
-              <Checkbox checked={false} onCheckedChange={() => {}} label="Ẩn hội thoại đã lưu trữ" />
-              <Checkbox checked disabled onCheckedChange={() => {}} label="Khoá bởi quản trị" />
+              <Checkbox checked={agree} onCheckedChange={setAgree} label={tr('Đồng bộ tin nhắn cũ')} description={tr('Tải 30 ngày gần nhất khi thêm tài khoản.')} />
+              <Checkbox checked={false} onCheckedChange={() => {}} label={tr('Ẩn hội thoại đã lưu trữ')} />
+              <Checkbox checked disabled onCheckedChange={() => {}} label={tr('Khoá bởi quản trị')} />
               <div className="h-px bg-border" />
               <div className="space-y-1.5">
-                <Label>Tìm nhanh</Label>
+                <Label>{tr('Tìm nhanh')}</Label>
                 <div className="relative">
                   <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle-foreground" />
-                  <Input className="pl-8" placeholder="Tìm hội thoại, khách hàng…" />
+                  <Input className="pl-8" placeholder={tr('Tìm hội thoại, khách hàng…')} />
                 </div>
               </div>
             </CardContent>
@@ -215,22 +216,22 @@ export function DesignSystemPage() {
       </Section>
 
       {/* ── Badges ── */}
-      <Section title="Badge" description="Một bảng trạng thái dùng chung: cùng nhãn, cùng màu ở mọi màn.">
+      <Section title={tr('Badge')} description={tr('Một bảng trạng thái dùng chung: cùng nhãn, cùng màu ở mọi màn.')}>
         <Card>
           <CardContent className="space-y-3">
             <Row label="variant">
-              <Badge>Mặc định</Badge>
-              <Badge variant="primary">Đang xử lý</Badge>
-              <Badge variant="success">Hoàn tất</Badge>
-              <Badge variant="warning">Chờ duyệt</Badge>
-              <Badge variant="destructive">Thất bại</Badge>
-              <Badge variant="info">Mới</Badge>
-              <Badge variant="outline">Nhãn</Badge>
+              <Badge>{tr('Mặc định')}</Badge>
+              <Badge variant="primary">{tr('Đang xử lý')}</Badge>
+              <Badge variant="success">{tr('Hoàn tất')}</Badge>
+              <Badge variant="warning">{tr('Chờ duyệt')}</Badge>
+              <Badge variant="destructive">{tr('Thất bại')}</Badge>
+              <Badge variant="info">{tr('Mới')}</Badge>
+              <Badge variant="outline">{tr('Nhãn')}</Badge>
             </Row>
             <Row label="dot">
-              <Badge dot variant="success">Online</Badge>
-              <Badge dot variant="warning">Bận</Badge>
-              <Badge dot>Offline</Badge>
+              <Badge dot variant="success">{tr('Online')}</Badge>
+              <Badge dot variant="warning">{tr('Bận')}</Badge>
+              <Badge dot>{tr('Offline')}</Badge>
             </Row>
             <Row label="size sm">
               <Badge size="sm" variant="primary">Zalo</Badge>
@@ -243,18 +244,18 @@ export function DesignSystemPage() {
       </Section>
 
       {/* ── Cards + list rows ── */}
-      <Section title="Card và dòng danh sách" description="Card có viền, không bóng. Dòng danh sách hover bg-muted, đang chọn bg-accent.">
+      <Section title={tr('Card và dòng danh sách')} description={tr('Card có viền, không bóng. Dòng danh sách hover bg-muted, đang chọn bg-accent.')}>
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
-            <CardHeader actions={<Button size="sm" variant="outline" leftIcon={<FilterIcon className="h-3.5 w-3.5" />}>Lọc</Button>}>
-              <CardTitle>Hội thoại gần đây</CardTitle>
-              <CardDescription>3 hội thoại chưa đọc</CardDescription>
+            <CardHeader actions={<Button size="sm" variant="outline" leftIcon={<FilterIcon className="h-3.5 w-3.5" />}>{tr('Lọc')}</Button>}>
+              <CardTitle>{tr('Hội thoại gần đây')}</CardTitle>
+              <CardDescription>{tr('3 hội thoại chưa đọc')}</CardDescription>
             </CardHeader>
             <CardContent padding="none" className="pt-3">
               {[
-                { name: 'Nguyễn Văn A', msg: 'Em gửi báo giá giúp anh nhé', time: '09:41', unread: 2, active: true },
-                { name: 'Shop Hoa Tươi', msg: 'Đơn #1042 đã giao', time: 'Hôm qua', unread: 0, active: false },
-                { name: 'Nhóm CSKH', msg: 'Lan: ok chị', time: 'T2', unread: 5, active: false },
+                { name: tr('Nguyễn Văn A'), msg: tr('Em gửi báo giá giúp anh nhé'), time: '09:41', unread: 2, active: true },
+                { name: tr('Shop Hoa Tươi'), msg: tr('Đơn #1042 đã giao'), time: tr('Hôm qua'), unread: 0, active: false },
+                { name: tr('Nhóm CSKH'), msg: tr('Lan: ok chị'), time: 'T2', unread: 5, active: false },
               ].map((r) => (
                 <div key={r.name} className={cn('flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-muted', r.active && 'bg-accent')}>
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-medium text-primary">{r.name[0]}</div>
@@ -275,15 +276,15 @@ export function DesignSystemPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Thống kê hôm nay</CardTitle>
-              <CardDescription>So với hôm qua</CardDescription>
+              <CardTitle>{tr('Thống kê hôm nay')}</CardTitle>
+              <CardDescription>{tr('So với hôm qua')}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  { label: 'Tin nhắn', value: '1.284', delta: '+12%', up: true },
-                  { label: 'Khách mới', value: '37', delta: '+4', up: true },
-                  { label: 'Chưa trả lời', value: '9', delta: '-3', up: false },
+                  { label: tr('Tin nhắn'), value: '1.284', delta: '+12%', up: true },
+                  { label: tr('Khách mới'), value: '37', delta: '+4', up: true },
+                  { label: tr('Chưa trả lời'), value: '9', delta: '-3', up: false },
                 ].map((s) => (
                   <div key={s.label} className="rounded-lg bg-muted p-3">
                     <div className="text-xs text-muted-foreground">{s.label}</div>
@@ -294,32 +295,32 @@ export function DesignSystemPage() {
               </div>
             </CardContent>
             <CardFooter>
-              <Button variant="link" size="sm">Xem báo cáo đầy đủ</Button>
+              <Button variant="link" size="sm">{tr('Xem báo cáo đầy đủ')}</Button>
             </CardFooter>
           </Card>
         </div>
       </Section>
 
       {/* ── Tabs ── */}
-      <Section title="Tabs" description="underline cho điều hướng trang; pills cho bộ lọc nhỏ.">
+      <Section title={tr('Tabs')} description={tr('underline cho điều hướng trang; pills cho bộ lọc nhỏ.')}>
         <Card>
           <CardContent className="space-y-6">
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList>
-                <TabsTrigger value="all" icon={<InboxIcon className="h-4 w-4" />} count={24}>Tất cả</TabsTrigger>
-                <TabsTrigger value="unread" icon={<MessageIcon className="h-4 w-4" />} count={3}>Chưa đọc</TabsTrigger>
-                <TabsTrigger value="groups" icon={<UsersIcon className="h-4 w-4" />}>Nhóm</TabsTrigger>
-                <TabsTrigger value="archived" disabled>Lưu trữ</TabsTrigger>
+                <TabsTrigger value="all" icon={<InboxIcon className="h-4 w-4" />} count={24}>{tr('Tất cả')}</TabsTrigger>
+                <TabsTrigger value="unread" icon={<MessageIcon className="h-4 w-4" />} count={3}>{tr('Chưa đọc')}</TabsTrigger>
+                <TabsTrigger value="groups" icon={<UsersIcon className="h-4 w-4" />}>{tr('Nhóm')}</TabsTrigger>
+                <TabsTrigger value="archived" disabled>{tr('Lưu trữ')}</TabsTrigger>
               </TabsList>
-              <TabsContent value="all" className="pt-3 text-sm text-muted-foreground">Danh sách tất cả hội thoại.</TabsContent>
-              <TabsContent value="unread" className="pt-3 text-sm text-muted-foreground">Chỉ hội thoại chưa đọc.</TabsContent>
-              <TabsContent value="groups" className="pt-3 text-sm text-muted-foreground">Chỉ nhóm.</TabsContent>
+              <TabsContent value="all" className="pt-3 text-sm text-muted-foreground">{tr('Danh sách tất cả hội thoại.')}</TabsContent>
+              <TabsContent value="unread" className="pt-3 text-sm text-muted-foreground">{tr('Chỉ hội thoại chưa đọc.')}</TabsContent>
+              <TabsContent value="groups" className="pt-3 text-sm text-muted-foreground">{tr('Chỉ nhóm.')}</TabsContent>
             </Tabs>
             <Tabs value={pillTab} onValueChange={setPillTab} variant="pills">
               <TabsList>
-                <TabsTrigger value="day">Hôm nay</TabsTrigger>
-                <TabsTrigger value="week">7 ngày</TabsTrigger>
-                <TabsTrigger value="month">30 ngày</TabsTrigger>
+                <TabsTrigger value="day">{tr('Hôm nay')}</TabsTrigger>
+                <TabsTrigger value="week">{tr('7 ngày')}</TabsTrigger>
+                <TabsTrigger value="month">{tr('30 ngày')}</TabsTrigger>
               </TabsList>
             </Tabs>
           </CardContent>
@@ -327,27 +328,27 @@ export function DesignSystemPage() {
       </Section>
 
       {/* ── Overlays ── */}
-      <Section title="Dialog · Dropdown · Tooltip" description="Mọi popup dùng bg-popover + border. Backdrop bg-black/60 ở cả hai theme.">
+      <Section title={tr('Dialog · Dropdown · Tooltip')} description={tr('Mọi popup dùng bg-popover + border. Backdrop bg-black/60 ở cả hai theme.')}>
         <Card>
           <CardContent className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" onClick={() => setDialogOpen(true)}>Mở dialog xác nhận</Button>
-            <Button variant="outline" onClick={() => setFormDialogOpen(true)}>Mở dialog form</Button>
+            <Button variant="outline" onClick={() => setDialogOpen(true)}>{tr('Mở dialog xác nhận')}</Button>
+            <Button variant="outline" onClick={() => setFormDialogOpen(true)}>{tr('Mở dialog form')}</Button>
             <DropdownMenu
               align="start"
-              trigger={<Button variant="outline" rightIcon={<ChevronDownIcon className="h-4 w-4" />}>Thao tác</Button>}
+              trigger={<Button variant="outline" rightIcon={<ChevronDownIcon className="h-4 w-4" />}>{tr('Thao tác')}</Button>}
             >
-              <DropdownMenuLabel>Hội thoại</DropdownMenuLabel>
-              <DropdownMenuItem icon={<EditIcon className="h-4 w-4" />} onSelect={() => {}} shortcut="E">Đổi tên</DropdownMenuItem>
-              <DropdownMenuItem icon={<CopyIcon className="h-4 w-4" />} onSelect={() => {}}>Sao chép link</DropdownMenuItem>
-              <DropdownMenuItem icon={<BellIcon className="h-4 w-4" />} onSelect={() => {}} disabled>Tắt thông báo</DropdownMenuItem>
+              <DropdownMenuLabel>{tr('Hội thoại')}</DropdownMenuLabel>
+              <DropdownMenuItem icon={<EditIcon className="h-4 w-4" />} onSelect={() => {}} shortcut="E">{tr('Đổi tên')}</DropdownMenuItem>
+              <DropdownMenuItem icon={<CopyIcon className="h-4 w-4" />} onSelect={() => {}}>{tr('Sao chép link')}</DropdownMenuItem>
+              <DropdownMenuItem icon={<BellIcon className="h-4 w-4" />} onSelect={() => {}} disabled>{tr('Tắt thông báo')}</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem icon={<TrashIcon className="h-4 w-4" />} destructive onSelect={() => {}}>Xoá hội thoại</DropdownMenuItem>
+              <DropdownMenuItem icon={<TrashIcon className="h-4 w-4" />} destructive onSelect={() => {}}>{tr('Xoá hội thoại')}</DropdownMenuItem>
             </DropdownMenu>
-            <Tooltip content="Gửi tin nhắn (Enter)">
-              <Button size="icon" aria-label="Gửi"><SendIcon className="h-4 w-4" /></Button>
+            <Tooltip content={tr('Gửi tin nhắn (Enter)')}>
+              <Button size="icon" aria-label={tr('Gửi')}><SendIcon className="h-4 w-4" /></Button>
             </Tooltip>
-            <Tooltip content="Hồ sơ khách hàng" side="bottom">
-              <Button size="icon" variant="ghost" aria-label="Hồ sơ"><UserIcon className="h-4 w-4" /></Button>
+            <Tooltip content={tr('Hồ sơ khách hàng')} side="bottom">
+              <Button size="icon" variant="ghost" aria-label={tr('Hồ sơ')}><UserIcon className="h-4 w-4" /></Button>
             </Tooltip>
           </CardContent>
         </Card>
@@ -355,65 +356,65 @@ export function DesignSystemPage() {
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen} size="sm">
           <DialogHeader>
             <div>
-              <DialogTitle>Xoá hội thoại?</DialogTitle>
-              <DialogDescription>Tin nhắn sẽ bị xoá khỏi Deplao. Không thể hoàn tác.</DialogDescription>
+              <DialogTitle>{tr('Xoá hội thoại?')}</DialogTitle>
+              <DialogDescription>{tr('Tin nhắn sẽ bị xoá khỏi Deplao. Không thể hoàn tác.')}</DialogDescription>
             </div>
             <DialogClose />
           </DialogHeader>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setDialogOpen(false)}>Huỷ</Button>
-            <Button variant="destructive" onClick={() => setDialogOpen(false)}>Xoá</Button>
+            <Button variant="ghost" onClick={() => setDialogOpen(false)}>{tr('Huỷ')}</Button>
+            <Button variant="destructive" onClick={() => setDialogOpen(false)}>{tr('Xoá')}</Button>
           </DialogFooter>
         </Dialog>
 
         <Dialog open={formDialogOpen} onOpenChange={setFormDialogOpen} size="md">
           <DialogHeader>
             <div>
-              <DialogTitle>Thêm nhãn mới</DialogTitle>
-              <DialogDescription>Nhãn dùng để phân loại khách hàng trong CRM.</DialogDescription>
+              <DialogTitle>{tr('Thêm nhãn mới')}</DialogTitle>
+              <DialogDescription>{tr('Nhãn dùng để phân loại khách hàng trong CRM.')}</DialogDescription>
             </div>
             <DialogClose />
           </DialogHeader>
           <DialogBody className="space-y-4">
-            <FormField label="Tên nhãn" required>
-              <Input autoFocus placeholder="VD: Khách VIP" />
+            <FormField label={tr('Tên nhãn')} required>
+              <Input autoFocus placeholder={tr('VD: Khách VIP')} />
             </FormField>
-            <FormField label="Màu">
+            <FormField label={tr('Màu')}>
               <Select defaultValue="primary">
-                <option value="primary">Xanh</option>
-                <option value="success">Lục</option>
-                <option value="warning">Cam</option>
+                <option value="primary">{tr('Xanh')}</option>
+                <option value="success">{tr('Lục')}</option>
+                <option value="warning">{tr('Cam')}</option>
               </Select>
             </FormField>
-            <FormField label="Mô tả" hint="Tuỳ chọn">
-              <Textarea rows={3} placeholder="Khách mua trên 10 triệu/tháng" />
+            <FormField label={tr('Mô tả')} hint={tr('Tuỳ chọn')}>
+              <Textarea rows={3} placeholder={tr('Khách mua trên 10 triệu/tháng')} />
             </FormField>
           </DialogBody>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setFormDialogOpen(false)}>Huỷ</Button>
-            <Button onClick={() => setFormDialogOpen(false)}>Tạo nhãn</Button>
+            <Button variant="ghost" onClick={() => setFormDialogOpen(false)}>{tr('Huỷ')}</Button>
+            <Button onClick={() => setFormDialogOpen(false)}>{tr('Tạo nhãn')}</Button>
           </DialogFooter>
         </Dialog>
       </Section>
 
       {/* ── Feedback ── */}
-      <Section title="Trạng thái rỗng và thông báo">
+      <Section title={tr('Trạng thái rỗng và thông báo')}>
         <div className="grid gap-4 lg:grid-cols-2">
           <Card>
             <EmptyState
               icon={<InboxIcon className="h-6 w-6" />}
-              title="Chưa có hội thoại"
-              description="Khi khách nhắn tin qua Zalo, Facebook hoặc Telegram, hội thoại sẽ hiện ở đây."
-              action={<Button leftIcon={<PlusIcon className="h-4 w-4" />}>Thêm tài khoản</Button>}
+              title={tr('Chưa có hội thoại')}
+              description={tr('Khi khách nhắn tin qua Zalo, Facebook hoặc Telegram, hội thoại sẽ hiện ở đây.')}
+              action={<Button leftIcon={<PlusIcon className="h-4 w-4" />}>{tr('Thêm tài khoản')}</Button>}
             />
           </Card>
           <Card>
             <CardContent className="space-y-3">
               {[
-                { icon: <CheckCircleIcon className="h-4 w-4" />, cls: 'border-success/30 bg-success/10 text-success', text: 'Đã đồng bộ 1.284 tin nhắn.' },
-                { icon: <AlertIcon className="h-4 w-4" />, cls: 'border-warning/30 bg-warning/10 text-warning', text: 'Tài khoản Zalo sắp hết phiên đăng nhập.' },
-                { icon: <AlertIcon className="h-4 w-4" />, cls: 'border-destructive/30 bg-destructive/10 text-destructive', text: 'Không gửi được tin nhắn. Thử lại?' },
-                { icon: <InfoIcon className="h-4 w-4" />, cls: 'border-info/30 bg-info/10 text-info', text: 'Phiên bản 26.11.0 đã sẵn sàng cài đặt.' },
+                { icon: <CheckCircleIcon className="h-4 w-4" />, cls: 'border-success/30 bg-success/10 text-success', text: tr('Đã đồng bộ 1.284 tin nhắn.') },
+                { icon: <AlertIcon className="h-4 w-4" />, cls: 'border-warning/30 bg-warning/10 text-warning', text: tr('Tài khoản Zalo sắp hết phiên đăng nhập.') },
+                { icon: <AlertIcon className="h-4 w-4" />, cls: 'border-destructive/30 bg-destructive/10 text-destructive', text: tr('Không gửi được tin nhắn. Thử lại?') },
+                { icon: <InfoIcon className="h-4 w-4" />, cls: 'border-info/30 bg-info/10 text-info', text: tr('Phiên bản 26.11.1 đã sẵn sàng cài đặt.') },
               ].map((n) => (
                 <div key={n.text} className={cn('flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm', n.cls)}>
                   {n.icon}

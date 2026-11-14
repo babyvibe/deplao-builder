@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, protocol, net, Notification, safeStorage, powerMonitor } from 'electron';
-// Public API v1: ghi nhận mọi IPC handler để API/plugin gọi đúng logic của UI (phải đứng trước các import IPC).
+// Public API v1: record every IPC handler so the API/plugins call the same logic as the UI (must come before the IPC imports).
 import { ipcHandlerRegistry } from './ipc/handlerRegistry';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -33,6 +33,7 @@ import { registerLibraryIpc } from './ipc/library/libraryIpc';
 import { registerMobileSyncIpc } from './ipc/zalo/mobileSyncIpc';
 import { registerApiIpc } from './ipc/api/apiIpc';
 import { registerPluginIpc } from './ipc/plugins/pluginIpc';
+import { registerI18nIpc } from './ipc/i18n/i18nIpc';
 import { registerCloudflareIpc } from './ipc/cloud/cloudflareIpc';
 import ApiPlatform from '../src/services/api/ApiPlatform';
 import WorkspaceManager from '../src/utils/app/WorkspaceManager';
@@ -57,6 +58,7 @@ import { newerInstallToRelaunch, type LaunchInfo } from './app/singleInstanceRel
 import { rendererCspHeaders } from './app/rendererCsp';
 import { isExternalUrl, isInAppChatLink, mainFrameNavigation } from './app/mainWindowLinks';
 import { createAutoLaunch, type AutoLaunch } from '../src/utils/startup/autoLaunch';
+import { tr } from '../src/shared/i18n';
 
 // CHANNEL constant — same as src/ui/lib/channels/channelHelper.ts (electron build excludes src/ui/)
 const CHANNEL = { ZALO: 'zalo', FACEBOOK: 'facebook', TELEGRAM_BOT: 'telegram_bot', TELEGRAM_USER: 'telegram_user' } as const;
@@ -93,21 +95,21 @@ const isDev = IS_DEV_BUILD;
 let isQuitting = false;
 
 // ─── Hardware acceleration ────────────────────────────────────────────────────
-// Giữ GPU acceleration BẬT: tắt hardware acceleration khiến CPU render toàn bộ UI,
-// dẫn đến renderer unresponsive → màn hình đen sau khi dùng một lúc.
-// app.disableHardwareAcceleration(); // ← ĐÃ XÓA: gây freeze/màn đen
+// Keep GPU acceleration ON: turning off hardware acceleration makes the CPU render the whole UI,
+// which makes the renderer unresponsive → black screen after a while of use.
+// app.disableHardwareAcceleration(); // ← REMOVED: caused freeze / black screen
 
 // ─── Cached icons ──────────────────────────────────────────────────────────────
 let cachedNormalIcon: Electron.NativeImage | null = null;
 let cachedDotIcon:    Electron.NativeImage | null = null;
 let cachedOverlayDot: Electron.NativeImage | null = null;   // 16×16 red dot overlay cho Windows taskbar
 let currentIconIsDot = false;
-let dockBounceId: number | null = null;  // macOS: bounce request ID để cancel đúng
+let dockBounceId: number | null = null;  // macOS: bounce request ID so it can be cancelled correctly
 
-/** Cancel dock bounce / taskbar flash trên cả macOS và Windows */
+/** Cancel the dock bounce / taskbar flash on both macOS and Windows */
 function cancelDockBounce() {
   if (process.platform === 'darwin') {
-    // macOS: cancel bounce bằng ID đã lưu
+    // macOS: cancel the bounce using the saved ID
     if (dockBounceId !== null && app.dock) {
       app.dock.cancelBounce(dockBounceId);
       dockBounceId = null;
@@ -124,7 +126,7 @@ function resolveIconPath(relativePath: string): string {
   return fromDir;
 }
 
-/** Load icon: ưu tiên _128.png (128x128), fallback .png gốc rồi resize */
+/** Load the icon: prefer _128.png (128x128), fall back to the original .png and resize */
 function loadIcon(baseName: string): Electron.NativeImage {
   const png128 = resolveIconPath(`resources/icons/${baseName}_128.png`);
   if (fs.existsSync(png128)) {
@@ -151,23 +153,23 @@ function loadIcons() {
 }
 
 
-// ─── Vô hiệu hóa remote debugging ngay khi load (trước app.whenReady) ────────
+// ─── Disable remote debugging as soon as it loads (before app.whenReady) ────────
 if (!isDev) {
   app.commandLine.appendSwitch('remote-debugging-port', '0');
   app.commandLine.appendSwitch('--inspect',     '0');
   app.commandLine.appendSwitch('--inspect-brk', '0');
 }
 
-// ─── Force Vietnamese locale → input[type="date"] hiển thị dd/mm/yyyy ────────
+// ─── Force the Vietnamese locale → input[type="date"] shows dd/mm/yyyy ────────
 app.commandLine.appendSwitch('lang', 'vi-VN');
 app.commandLine.appendSwitch('accept-lang', 'vi-VN,vi;q=0.9');
 
-// Đặt tên app (hiện trên taskbar, tray, macOS dock)
+// Set the app name (shown on the taskbar, tray, macOS dock)
 app.setName('Deplao');
 
-// Windows: đặt AppUserModelId để taskbar/notification hiển thị đúng icon & tên
-// Dev: AUMID unique mỗi lần chạy → Windows tạo icon cache mới → hiện đúng icon
-// Production: AUMID cố định (khớp appId electron-builder, exe đã embed icon qua afterPack)
+// Windows: set the AppUserModelId so the taskbar / notifications show the right icon & name
+// Dev: a unique AUMID every run → Windows creates a new icon cache → the right icon shows
+// Production: fixed AUMID (matches the electron-builder appId; the exe has the icon embedded via afterPack)
 if (process.platform === 'win32') {
   app.setAppUserModelId(isDev ? `com.Deplao.dev.${Date.now()}` : 'com.Deplao.app');
 }
@@ -177,7 +179,7 @@ if (process.platform === 'win32') {
 // Usage in renderer: local-media:///D:/path/to/file.jpg
 //
 // deplao://openChat?accountId=xxx&threadId=yyy&threadType=0&channel=zalo
-//   → deep link: mở app + active đúng hội thoại
+//   → deep link: opens the app + activates the right conversation
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'local-media',
@@ -199,7 +201,7 @@ protocol.registerSchemesAsPrivileged([
     },
   },
   {
-    // UI plugin: mỗi plugin một origin riêng deplao-plugin://<id> (không bypass CSP).
+    // Plugin UI: each plugin gets its own origin deplao-plugin://<id> (does not bypass CSP).
     scheme: 'deplao-plugin',
     privileges: {
       standard: true,
@@ -216,20 +218,20 @@ app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication');
 app.commandLine.appendSwitch('disable-features', 'Autofill');
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
-// Bản vừa bấm mở gửi kèm phiên bản + đường dẫn chạy: bản cũ còn chạy ngầm (đã ẩn xuống khay) thấy bản mới hơn thì tự
-// thoát và mở bản mới (singleInstanceRelaunch.ts). Trước đây cài bản mới xong bấm mở không thấy gì tới khi tắt bản cũ.
+// The build just launched sends its version + run path: an old build still running in the background (hidden to the tray) that sees a newer build quits itself
+// and opens the new build (singleInstanceRelaunch.ts). Before, after installing a new build and clicking open, nothing appeared until the old build was closed.
 const launchInfo: LaunchInfo = {
   version: app.getVersion(),
   packaged: app.isPackaged,
-  // AppImage: process.execPath nằm trong thư mục mount tạm của chính file .AppImage
+  // AppImage: process.execPath is inside the temporary mount folder of the .AppImage file itself
   execPath: process.env.APPIMAGE || process.execPath,
 };
 const gotLock = app.requestSingleInstanceLock(launchInfo as unknown as Record<string, unknown>);
 if (!gotLock) {
-  // Đã có instance đang chạy → focus instance đó rồi thoát
-  // ⚡ FIX: app.quit() là async - code phía dưới vẫn chạy tiếp nếu không exit ngay.
-  // Nếu không exit, instance thứ 2 vẫn đăng ký protocols, IPC handlers, tạo tray icon,
-  // chạy ngầm không cửa sổ → process treo trong Task Manager.
+  // An instance is already running → focus that instance and quit
+  // ⚡ FIX: app.quit() is async - the code below keeps running if it does not exit right away.
+  // If it does not exit, the second instance still registers protocols and IPC handlers and creates the tray icon,
+  // and runs in the background with no window → the process hangs in Task Manager.
   app.quit();
   process.exit(0);
 }
@@ -239,14 +241,14 @@ let inAppBrowserWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let rendererReportedReady = false;
 
-// ─── Tự mở cùng máy (src/utils/startup/autoLaunch.ts) ─────────────────────────────────
-// Tạo khi cần: userData chỉ đúng sau app.setName('Deplao').
+// ─── Launch at login (src/utils/startup/autoLaunch.ts) ─────────────────────────────────
+// Create when needed: userData is only correct after app.setName('Deplao').
 let autoLaunchInstance: AutoLaunch | null = null;
 function getAutoLaunch(): AutoLaunch {
   autoLaunchInstance ??= createAutoLaunch({
     platform: process.platform,
     packaged: app.isPackaged,
-    // AppImage: process.execPath nằm trong thư mục mount tạm của file .AppImage
+    // AppImage: process.execPath is inside the temporary mount folder of the .AppImage file
     launchPath: process.env.APPIMAGE || process.execPath,
     homeDir: app.getPath('home'),
     xdgConfigHome: process.env.XDG_CONFIG_HOME,
@@ -258,7 +260,7 @@ function getAutoLaunch(): AutoLaunch {
   });
   return autoLaunchInstance;
 }
-/** Hệ điều hành vừa tự mở app lúc đăng nhập + người dùng chọn chạy ngầm: cửa sổ đầu tiên không hiện */
+/** The OS launched the app at sign-in and the user chose to run in the background: the first window is not shown */
 let startHiddenAtLogin = false;
 let onRendererReportedReady: (() => void) | null = null;
 
@@ -301,7 +303,7 @@ function createWindow() {
     minHeight: 600,
     title: 'Deplao',
     // Windows: frameless → custom title bar
-    // macOS: hiddenInset → ẩn title bar, giữ traffic light buttons
+    // macOS: hiddenInset → hides the title bar, keeps the traffic light buttons
     frame: isMac,
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     trafficLightPosition: isMac ? { x: 12, y: 12 } : undefined,
@@ -319,7 +321,7 @@ function createWindow() {
     },
     show: false,
   });
-  // Hồ sơ CPU giao diện lúc mở app — chỉ khi được yêu cầu (file cờ diagnostics/profile-next-startup, xem utils/startup/startupProfiler)
+  // CPU profile of the UI at app launch: only when requested (flag file diagnostics/profile-next-startup, see utils/startup/startupProfiler)
   startRendererStartupProfile(mainWindow.webContents);
 
   // Load Vite dev server or built files
@@ -329,7 +331,7 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
 
-  // DevTools: chỉ mở trong dev build
+  // DevTools: only open in the dev build
   if (SHOW_DEV_TOOLS) {
     mainWindow.webContents.openDevTools();
   } else {
@@ -352,10 +354,10 @@ function createWindow() {
     if (cachedNormalIcon && !cachedNormalIcon.isEmpty()) {
       mainWindow?.setIcon(cachedNormalIcon);
     }
-    // Tự mở cùng máy: chạy ngầm ở khay, báo một lần (bấm khay hoặc mở Deplao lần nữa để hiện cửa sổ)
+    // Launch at login: runs in the background in the tray, notifies once (click the tray or open Deplao again to show the window)
     if (startHiddenAtLogin) {
       startHiddenAtLogin = false;
-      showTrayNotification('Deplao đã mở cùng máy', 'Đang chạy ngầm để nhận tin nhắn. Bấm biểu tượng Deplao ở khay để mở.');
+      showTrayNotification(tr('Deplao đã mở cùng máy'), tr('Đang chạy ngầm để nhận tin nhắn. Bấm biểu tượng Deplao ở khay để mở.'));
       return;
     }
     mainWindow?.show();
@@ -377,11 +379,11 @@ function createWindow() {
     }
   }, 8_000).unref();
 
-  // Link / điều hướng (app/mainWindowLinks): preload gắn electronAPI cho mọi trang của cửa sổ này → khung chính chỉ ở
-  // giao diện Deplao. Link web (link không bắt click, window.open, target="_blank", chuột giữa, mini app Telegram) mở
-  // bằng trình duyệt của máy để giữ phiên đăng nhập; không mở cửa sổ Electron.
+  // Links / navigation (app/mainWindowLinks): the preload attaches electronAPI to every page of this window → the main window only stays in the
+  // Deplao UI. Web links (link not caught by a click, window.open, target="_blank", middle click, Telegram mini apps) open
+  // in the machine's browser to keep the login session; no Electron window is opened.
   const linkOptions = { isDev, devOrigin: 'http://localhost:27799', entryFile: path.join(__dirname, '../../dist/index.html') };
-  // Link Telegram / nhóm Zalo: giao diện mở hội thoại / Mini App trong app (app:openChatLink), không ra trình duyệt
+  // Telegram / Zalo group links: the UI opens the conversation / Mini App inside the app (app:openChatLink), not in the browser
   const openLinkOutside = (url: string) => {
     if (isInAppChatLink(url) && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app:openChatLink', url);
     else if (isExternalUrl(url)) shell.openExternal(url).catch(() => {});
@@ -417,9 +419,9 @@ function createWindow() {
   });
 
   // ── Renderer crash recovery ────────────────────────────────────────────
-  // Khi renderer process bị crash hoặc bị kill bởi OS (OOM) → màn trắng,
-  // nút X bị chặn bởi close handler → user phải mở Task Manager.
-  // Fix: tự reload lại renderer, nếu vẫn crash → quit hoàn toàn.
+  // When the renderer process crashes or the OS kills it (OOM) → white screen,
+  // the X button is blocked by the close handler → the user has to open Task Manager.
+  // Fix: automatically reload the renderer; if it still crashes → quit completely.
   let crashCount = 0;
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error(`[main] Renderer process gone: ${details.reason} (exitCode=${details.exitCode})`);
@@ -442,7 +444,7 @@ function createWindow() {
     }
   });
 
-  // Window bị treo (unresponsive) → thông báo và reload
+  // Window is hung (unresponsive) → show a notice and reload
   mainWindow.on('unresponsive', () => {
     console.warn('[main] Window unresponsive - reloading renderer');
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -450,8 +452,8 @@ function createWindow() {
     }
   });
 
-  // Load HTML thất bại (file bị thiếu, Vite dev server chưa bật, ...)
-  // → window tồn tại nhưng trắng, ready-to-show vẫn fire → user thấy trắng
+  // Loading the HTML failed (file missing, Vite dev server not running, ...)
+  // → the window exists but is blank, ready-to-show still fires → the user sees a blank window
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[main] did-fail-load: ${errorCode} ${errorDescription} - ${validatedURL}`);
     if (!isDev) return;
@@ -474,20 +476,20 @@ function createWindow() {
     loadDevRenderer(`load failure ${errorDescription}`, 1500);
   });
 
-  // Production: console.* của renderer đã bị tắt (terser drop_console + obfuscator) → chỉ còn lỗi do Chromium
-  // tự báo (uncaught exception, unhandled rejection, CSP…). Đưa warn/error đó vào Nhật ký (prefix [renderer]).
-  // Dev không cần (DevTools + Logger renderer đã gửi qua 'log:append' → tránh ghi trùng).
+  // Production: the renderer's console.* is turned off (terser drop_console + obfuscator) → only errors from Chromium remain
+  // report themselves (uncaught exception, unhandled rejection, CSP…). Put those warn/error entries into the Log (prefix [renderer]).
+  // Not needed in dev (DevTools + the renderer Logger already sends it via 'log:append' → avoids duplicate writes).
   if (!isDev) {
     mainWindow.webContents.on('console-message', (details: any) => {
       try {
         const level = details?.level;
         if (level !== 'error' && level !== 'warning') return;
-        if (details?.frame?.parent) return; // iframe plugin → bỏ qua
+        if (details?.frame?.parent) return; // plugin iframe → ignored
         const message = String(details?.message ?? '');
-        if (!message || message.startsWith('Failed to load resource')) return; // ảnh/CDN hỏng: quá ồn
-        // source 'console': Logger bỏ chuỗi trích dẫn (có thể chứa dữ liệu), cắt ngắn, thêm prefix [console]
+        if (!message || message.startsWith('Failed to load resource')) return; // broken images / CDN: too noisy
+        // source 'console': Logger drops quoted strings (they may contain data), truncates them, adds the [console] prefix
         Logger.appendFromRenderer(level === 'error' ? 'error' : 'warn', message, 'console');
-      } catch { /* frame đã dispose */ }
+      } catch { /* frame already disposed */ }
     });
   }
 
@@ -495,9 +497,9 @@ function createWindow() {
     try { return mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null; } catch { return null; }
   };
 
-  // CSP: chặn inline scripts bên ngoài trong production, chỉ cho nội dung của Deplao (app/rendererCsp). Trình duyệt nội
-  // bộ, mini app Telegram dùng chung session giữ nguyên như bản dev; trang ứng dụng deplao-plugin:// giữ CSP riêng.
-  // ⚠️ Cũng chỉ MỘT listener onHeadersReceived cho session này (xem ghi chú bên dưới).
+  // CSP: blocks external inline scripts in production, applies only to Deplao's own content (app/rendererCsp). The internal browser
+  // and Telegram mini apps that share the session stay as in the dev build; deplao-plugin:// app pages keep their own CSP.
+  // ⚠️ Also only ONE onHeadersReceived listener for this session (see the note below).
   if (!isDev) {
     mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
       const responseHeaders = rendererCspHeaders(details, mainContentsId());
@@ -505,17 +507,17 @@ function createWindow() {
     });
   }
 
-  // Nhân viên: <img>/<video> trỏ thẳng tới file của Boss (/api/media, /api/library). Boss bắt buộc Authorization mà
-  // thẻ không gửi được → gắn token phiên nhân viên ở đây — chỉ cho Boss đã đăng ký, chỉ khung chính cửa sổ này.
-  // ⚠️ Electron chỉ giữ MỘT listener mỗi sự kiện webRequest của một session: đây là onBeforeSendHeaders DUY NHẤT của
-  // session cửa sổ chính (trình duyệt nội bộ dùng chung session, bị loại theo webContentsId) — cần thêm thì gộp vào hook.
+  // Employee: <img>/<video> point straight at Boss's files (/api/media, /api/library). Boss requires an Authorization header that
+  // tags cannot send → attach the employee session token here: only for registered Boss, only for this window's main frame.
+  // ⚠️ Electron keeps only ONE listener per webRequest event of a session: this is the ONLY onBeforeSendHeaders of the
+  // main window's session (the internal browser shares the session and is excluded by webContentsId) → to add more, merge them into this hook.
   installBossFileAuthHook(mainWindow.webContents.session, mainContentsId);
   setPreferredBossWorkspace(() => {
     try { return WorkspaceManager.getInstance().getActiveWorkspaceId(); } catch { return undefined; }
   });
   HttpConnectionManager.getInstance().seedBossSessions();
 
-  // Nút X của OS frame (không dùng vì frame=false) - vẫn handle để an toàn
+  // The OS frame's X button (not used because frame=false) - still handled for safety
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
@@ -533,7 +535,7 @@ function createWindow() {
     mainWindow?.webContents.send('app:windowFocus', true);
   });
   mainWindow.on('blur', () => mainWindow?.webContents.send('app:windowFocus', false));
-  // Ẩn / thu nhỏ lâu: nhả bộ đệm ảnh của cửa sổ + ghi RAM vào Nhật ký (utils/startup/memoryMonitor.ts)
+  // Hidden / minimized for a long time: release the window's image cache + write RAM to the Log (utils/startup/memoryMonitor.ts)
   mainWindow.on('minimize', () => {
     mainWindow?.webContents.send('app:windowFocus', false);
     if (mainWindow) noteWindowHidden(mainWindow);
@@ -551,9 +553,9 @@ function createWindow() {
     cancelDockBounce();
     mainWindow?.webContents.send('app:windowFocus', true);
     noteWindowShown();
-    // Re-apply overlay sau khi show lại
+    // Re-apply the overlay after showing again
     if (process.platform === 'win32' && currentIconIsDot && cachedOverlayDot && !cachedOverlayDot.isEmpty()) {
-      mainWindow?.setOverlayIcon(cachedOverlayDot, 'Tin chưa đọc');
+      mainWindow?.setOverlayIcon(cachedOverlayDot, tr('Tin chưa đọc'));
     }
   });
 
@@ -563,10 +565,10 @@ function createWindow() {
   // Set HttpConnectionManager window reference for status push events
   HttpConnectionManager.getInstance().setMainWindow(mainWindow);
 
-  // Khi có instance thứ 2 cố mở → focus instance hiện tại
-  // Trên Windows: deep link từ trình duyệt → argv chứa URL cần parse
+  // When a second instance tries to open → focus the current instance
+  // On Windows: deep link from the browser → argv contains the URL to parse
   app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
-    // Bản mới hơn vừa được cài và bấm mở trong lúc bản này chạy ngầm → thoát, mở bản mới (kèm deep link nếu có)
+    // A newer build was just installed and opened while this build runs in the background → quit, open the new build (with the deep link if any)
     const newer = newerInstallToRelaunch(launchInfo, additionalData);
     if (newer) {
       Logger.log(`[main] Bản ${newer.version} vừa được mở (đang chạy ${launchInfo.version}) → thoát để mở bản mới`);
@@ -574,7 +576,7 @@ function createWindow() {
       app.relaunch({ execPath: newer.execPath, args: deepLink ? [deepLink] : [] });
       isQuitting = true;
       app.quit();
-      // Dọn dẹp khi thoát bị kẹt: app.exit vẫn mở bản mới (process.exit thì không)
+      // Cleanup when quitting gets stuck: app.exit still opens the new build (process.exit does not)
       setTimeout(() => app.exit(0), 8000).unref();
       return;
     }
@@ -584,7 +586,7 @@ function createWindow() {
       mainWindow.focus();
     }
 
-    // Parse deep link URL từ command line (Windows protocol handler)
+    // Parse the deep link URL from the command line (Windows protocol handler)
     const deepLinkUrl = argv.find((arg: string) => arg.startsWith('deplao://'));
     if (deepLinkUrl) {
       handleDeepLink(deepLinkUrl);
@@ -601,29 +603,16 @@ function createWindow() {
   return mainWindow;
 }
 
-function createTray() {
-  let icon = cachedNormalIcon && !cachedNormalIcon.isEmpty()
-    ? cachedNormalIcon
-    : nativeImage.createFromPath(resolveIconPath(
-        process.platform === 'win32' ? 'resources/icons/icon.ico' : 'resources/icons/icon.png'
-      ));
-
-  // macOS menu bar: tray icon phải nhỏ (~18×18 points). Icon 128px sẽ hiện rất to.
-  // Resize xuống 18×18 để hiển thị đúng kích thước trên menu bar macOS.
-  if (process.platform === 'darwin' && !icon.isEmpty()) {
-    icon = icon.resize({ width: 18, height: 18 });
-  }
-
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-
-  const contextMenu = Menu.buildFromTemplate([
+/** Tray menu. Rebuilt when the UI language changes, so the labels follow tr() (see registerI18nIpc below). */
+function buildTrayMenu(): Menu {
+  return Menu.buildFromTemplate([
     {
-      label: 'Mở Deplao',
+      label: tr('Mở Deplao'),
       click: () => { mainWindow?.show(); mainWindow?.focus(); },
     },
     { type: 'separator' },
     {
-      label: 'Thoát hoàn toàn',
+      label: tr('Thoát hoàn toàn'),
       click: () => {
         isQuitting = true;
         app.quit();
@@ -634,11 +623,27 @@ function createTray() {
       },
     },
   ]);
+}
+
+function createTray() {
+  let icon = cachedNormalIcon && !cachedNormalIcon.isEmpty()
+    ? cachedNormalIcon
+    : nativeImage.createFromPath(resolveIconPath(
+        process.platform === 'win32' ? 'resources/icons/icon.ico' : 'resources/icons/icon.png'
+      ));
+
+  // macOS menu bar: the tray icon must be small (~18×18 points). A 128px icon would show up very large.
+  // Resize to 18×18 so it displays at the right size in the macOS menu bar.
+  if (process.platform === 'darwin' && !icon.isEmpty()) {
+    icon = icon.resize({ width: 18, height: 18 });
+  }
+
+  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
 
   tray.setToolTip('Deplao');
-  tray.setContextMenu(contextMenu);
+  tray.setContextMenu(buildTrayMenu());
 
-  // Double-click tray → mở app
+  // Double-click the tray → open the app
   tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
   // Single click tray → toggle
   tray.on('click', () => {
@@ -651,10 +656,10 @@ function createTray() {
   });
 }
 
-/** Hiển thị thông báo system tray khi ẩn ứng dụng xuống tray */
+/** Show a system tray notification when the app is hidden to the tray */
 function showTrayNotification(
-  title = 'Deplao đang chạy ngầm',
-  body = 'Ứng dụng vẫn đang hoạt động và nhận tin nhắn bình thường. Nhấn vào biểu tượng tray để mở lại.',
+  title = tr('Deplao đang chạy ngầm'),
+  body = tr('Ứng dụng vẫn đang hoạt động và nhận tin nhắn bình thường. Nhấn vào biểu tượng tray để mở lại.'),
 ) {
   if (!Notification.isSupported()) return;
   const notif = new Notification({
@@ -663,7 +668,7 @@ function showTrayNotification(
     silent: false,
   });
   notif.show();
-  // Tự đóng sau 5 giây
+  // Close automatically after 5 seconds
   setTimeout(() => notif.close(), 5000);
 }
 
@@ -675,18 +680,18 @@ function registerWindowControls() {
     else mainWindow?.maximize();
   });
 
-  // Nút X trên custom title bar → ẩn xuống tray (không thoát hoàn toàn)
+  // The X button on the custom title bar → hides to the tray (does not fully quit)
   ipcMain.on('window:close', () => {
     mainWindow?.hide();
     showTrayNotification();
   });
 
-  // Nút thoát hoàn toàn từ tray menu hoặc renderer
+  // Full quit from the tray menu or the renderer
   ipcMain.on('window:quit', () => {
     isQuitting = true;
     app.quit();
-    // Force-exit: DB close() đã chạy trong before-quit (sync, ~1ms).
-    // 5s đủ cho socket disconnect + service stop. Nếu vẫn kẹt → force kill.
+    // Force-exit: the DB close() already ran in before-quit (sync, ~1ms).
+    // 5s is enough for the socket disconnect + service stop. If it still hangs → force kill.
     setTimeout(() => {
       console.warn('[main] Force-exit after 5s timeout — background service may be stuck');
       process.exit(0);
@@ -695,23 +700,23 @@ function registerWindowControls() {
 
   ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
 
-  // ─── Nhật ký (Logger) → renderer ─────────────────────────────────
-  // Hook console toàn cục để cả console.* thẳng (không qua Logger) cũng vào buffer
+  // ─── Log (Logger) → renderer ─────────────────────────────────
+  // Hook the global console so that direct console.* calls (not through Logger) also go into the buffer
   Logger.installConsoleHook();
-  // Forward mỗi log mới sang tab Nhật ký (throttle-free, buffer đã giới hạn 2000 dòng)
+  // Forward each new log entry to the Log tab (no throttling, the buffer is capped at 2000 lines)
   Logger.onEntry((entry) => {
-    try { mainWindow?.webContents.send('log:entry', entry); } catch { /* window đã đóng */ }
+    try { mainWindow?.webContents.send('log:entry', entry); } catch { /* window already closed */ }
   });
   ipcMain.handle('log:getBuffer', () => Logger.getBuffer());
   ipcMain.handle('log:clear', () => { Logger.clearBuffer(); return true; });
-  // Renderer → Nhật ký: console renderer bị strip ở production, nên Logger renderer gửi warn/error/notice
-  // qua kênh này. appendFromRenderer tự kiểm tra kiểu, che token/cookie, giới hạn 20 dòng/s + gộp dòng trùng 2 s.
+  // Renderer → Log: the renderer console is stripped in production, so the renderer Logger sends warn/error/notice
+  // through this channel. appendFromRenderer checks the types itself, masks tokens/cookies, limits to 20 lines/s + merges duplicate lines within 2 s.
   ipcMain.on('log:append', (_event, payload: { level?: unknown; msg?: unknown } | undefined) => {
     Logger.appendFromRenderer(payload?.level, payload?.msg);
   });
 
   // Open external link in browser
-  // Chỉ http, https, mailto (app/mainWindowLinks): link lấy từ tin nhắn, link lạ (file:, ms-msdt:…) chạy được chương trình.
+  // Only http, https, mailto (app/mainWindowLinks): links taken from messages, unknown links (file:, ms-msdt:…) can run programs.
   ipcMain.on('shell:openExternal', (_event, url: string) => {
     if (isExternalUrl(url)) shell.openExternal(url).catch(() => {});
   });
@@ -720,19 +725,19 @@ function registerWindowControls() {
     try {
       const resolved = FileStorageService.resolveAbsolutePath(filePath);
       if (!resolved || !fs.existsSync(resolved)) {
-        return { success: false, error: 'Không tìm thấy tệp đính kèm' };
+        return { success: false, error: tr('Không tìm thấy tệp đính kèm') };
       }
       const error = await shell.openPath(resolved);
       return error ? { success: false, error } : { success: true };
     } catch (error: any) {
-      return { success: false, error: error?.message || 'Không thể mở tệp' };
+      return { success: false, error: error?.message || tr('Không thể mở tệp') };
     }
   });
 
   ipcMain.handle('shell:openInApp', async (_event, url: string) => {
     try {
       if (!/^https?:\/\//i.test(url)) {
-        return { success: false, error: 'Chỉ hỗ trợ liên kết web http/https' };
+        return { success: false, error: tr('Chỉ hỗ trợ liên kết web http/https') };
       }
 
       if (!inAppBrowserWindow || inAppBrowserWindow.isDestroyed()) {
@@ -741,7 +746,7 @@ function registerWindowControls() {
           height: 820,
           minWidth: 860,
           minHeight: 620,
-          title: 'Trình duyệt nội bộ',
+          title: tr('Trình duyệt nội bộ'),
           autoHideMenuBar: true,
           parent: mainWindow ?? undefined,
           backgroundColor: '#131518',
@@ -761,13 +766,13 @@ function registerWindowControls() {
       inAppBrowserWindow.focus();
       return { success: true };
     } catch (error: any) {
-      return { success: false, error: error?.message || 'Không thể mở liên kết trong app' };
+      return { success: false, error: error?.message || tr('Không thể mở liên kết trong app') };
     }
   });
 
-  // ── Quyền quản trị (Windows) ─────────────────────────────────────
-  // App chạy bằng "Run as administrator" thì Windows (UIPI) chặn kéo-thả file từ File Explorer vào app — mọi kênh đều
-  // không kéo được ảnh / file. Giao diện hỏi một lần lúc mở app để cảnh báo; `net session` chỉ chạy được khi có quyền.
+  // ── Administrator rights (Windows) ─────────────────────────────────────
+  // If the app runs as "Run as administrator", Windows (UIPI) blocks dragging files from File Explorer into the app: all channels
+  // cannot drag images / files. The UI asks once when the app opens to warn; `net session` only works when you have the rights.
   let elevatedCheck: Promise<boolean> | null = null;
   ipcMain.handle('app:isElevated', () => {
     if (process.platform !== 'win32') return false;
@@ -783,7 +788,7 @@ function registerWindowControls() {
     return elevatedCheck;
   });
 
-  // ── Tự mở cùng máy (Cài đặt → Thông báo → Khởi động cùng máy), lưu theo máy ──────────────
+  // ── Launch at login (Settings → Notifications → Start with the OS), saved per machine ──────────────
   ipcMain.handle('app:getAutoLaunch', () => getAutoLaunch().status());
   ipcMain.handle('app:setAutoLaunch', (_event, patch: { enabled?: boolean; hidden?: boolean }) => {
     try {
@@ -802,16 +807,16 @@ function registerWindowControls() {
       if (count > 0) {
         if (!currentIconIsDot) {
           currentIconIsDot = true;
-          // Overlay dot trên taskbar (Windows native API - không bị icon cache)
+          // Overlay dot on the taskbar (Windows native API - not affected by the icon cache)
           if (cachedOverlayDot && !cachedOverlayDot.isEmpty()) {
-            mainWindow.setOverlayIcon(cachedOverlayDot, `${count} tin chưa đọc`);
+            mainWindow.setOverlayIcon(cachedOverlayDot, tr('{{count}} tin chưa đọc', { count }));
           }
-          // Tray icon dùng icon_dot (tray không bị cache)
+          // The tray icon uses icon_dot (the tray is not cached)
           if (cachedDotIcon && !cachedDotIcon.isEmpty()) {
             tray?.setImage(cachedDotIcon);
           }
         }
-        tray?.setToolTip(`Deplao - ${count} tin chưa đọc`);
+        tray?.setToolTip(tr('Deplao - {{count}} tin chưa đọc', { count }));
       } else {
         if (currentIconIsDot) {
           currentIconIsDot = false;
@@ -833,8 +838,8 @@ function registerWindowControls() {
   ipcMain.on('app:flashFrame', (_event, { active }: { active: boolean }) => {
     if (!mainWindow) return;
     if (process.platform === 'darwin') {
-      // macOS: dùng dock.bounce('informational') → bounce 1 lần nhẹ nhàng
-      // Lưu bounceId để cancelDockBounce() có thể cancel khi focus lại
+      // macOS: uses dock.bounce('informational') → one gentle bounce
+      // Store bounceId so cancelDockBounce() can cancel it when the window regains focus
       if (active && app.dock) {
         dockBounceId = app.dock.bounce('informational');
       } else if (!active) {
@@ -845,19 +850,19 @@ function registerWindowControls() {
     }
   });
 
-  // ── Notification click → focus window + mở thread ───────────────
+  // ── Notification click → focus window + open thread ───────────────
   ipcMain.on('app:openThread', (_event, { zaloId, threadId, threadType }: { zaloId: string; threadId: string; threadType: number }) => {
     if (!mainWindow) return;
 
-    // Restore + focus: Windows không always reliable với focus() khi minimized
+    // Restore + focus: on Windows, focus() is not always reliable when minimized
     if (mainWindow.isMinimized()) mainWindow.restore();
     if (!mainWindow.isVisible()) mainWindow.show();
     mainWindow.setAlwaysOnTop(true);
     mainWindow.focus();
-    // Bỏ alwaysOnTop sau 200ms - chỉ cần để "kick" window lên foreground
+    // Remove alwaysOnTop after 200ms - only needed to "kick" the window to the foreground
     setTimeout(() => { try { mainWindow?.setAlwaysOnTop(false); } catch {} }, 200);
 
-    // Delay nhẹ để đảm bảo renderer sẵn sàng nhận IPC
+    // Short delay to make sure the renderer is ready to receive IPC
     setTimeout(() => {
       try {
         mainWindow?.webContents.send('app:openThread', { zaloId, threadId, threadType });
@@ -867,12 +872,12 @@ function registerWindowControls() {
 }
 
 /**
- * Xử lý deep link URL từ custom protocol deplao://
+ * Handle the deep link URL from the custom protocol deplao://
  *
- * Định dạng:
+ * Format:
  *   deplao://openChat?accountId=xxx&threadId=yyy&threadType=0&channel=zalo
  *
- * Hỗ trợ thêm action mới bằng cách mở rộng switch(action) bên dưới.
+ * Add a new action by extending the switch(action) below.
  */
 function handleDeepLink(url: string): void {
   try {
@@ -894,7 +899,7 @@ function handleDeepLink(url: string): void {
           return;
         }
 
-        // Gọi lại logic giống notification click → focus + gửi IPC
+        // Call the same logic as the notification click → focus + send IPC
         if (!mainWindow) return;
 
         if (mainWindow.isMinimized()) mainWindow.restore();
@@ -924,8 +929,8 @@ function handleDeepLink(url: string): void {
 }
 
 /**
- * Auto-reconnect tất cả Telegram accounts khi app khởi động.
- * Tương tự reconnectAllFBAccounts nhưng cho Telegram Bot + User.
+ * Auto-reconnect all Telegram accounts when the app starts.
+ * Similar to reconnectAllFBAccounts, but for Telegram Bot + User.
  */
 async function reconnectAllTelegramAccounts(): Promise<void> {
   try {
@@ -960,8 +965,8 @@ async function reconnectAllTelegramAccounts(): Promise<void> {
             console.warn(`[main] Telegram User ${acc.zalo_id} has no session - skipping`);
             continue;
           }
-          // Kiểm tra session hợp lệ (GramJS session là base64 decode thành JSON)
-          // Nếu session bắt đầu bằng "U2Fsd" = encrypted blob chưa decrypt được → skip
+          // Check that the session is valid (a GramJS session is base64 that decodes to JSON)
+          // If the session starts with "U2Fsd" = an encrypted blob that could not be decrypted → skip
           if (stringSession.trimStart().startsWith('U2Fsd')) {
             console.warn(`[main] Telegram User ${acc.zalo_id} session is encrypted blob (decrypt failed) - needs re-login`);
             continue;
@@ -1084,13 +1089,13 @@ async function startupAllWorkspaces(): Promise<void> {
   HttpConnectionManager.getInstance().startHealthCheck(60_000);
 }
 
-// ─── Cloudflare (địa chỉ cố định, R2 media, đồng bộ DB) — tuỳ chọn, mặc định tắt ─────────────────
-// Module được require muộn: lỗi nạp / init của một module không làm hỏng khởi động app.
+// ─── Cloudflare (fixed address, R2 media, DB sync): optional, off by default ─────────────────
+// The module is required late: a load / init error in one module does not break app startup.
 type CloudLifecycleModule = { init(): Promise<void>; shutdown(): Promise<void> };
 let cloudModulesStarted = false;
 let cloudShutdownState: 'idle' | 'running' | 'done' = 'idle';
 
-/** Cloudflare chỉ chạy trên máy chủ (không phải máy nhân viên). */
+/** Cloudflare only runs on the host machine (not on an employee machine). */
 function cloudAllowedHere(): boolean {
   try {
     return require('../src/utils/app/AppModeManager').default.getInstance().getMode() !== 'employee';
@@ -1104,7 +1109,7 @@ function loadCloudModules(): Array<{ name: string; mod: CloudLifecycleModule }> 
     ['tunnel', () => (require('../src/services/cloudflare/tunnel') as typeof import('../src/services/cloudflare/tunnel')).cloudTunnel],
     ['media', () => (require('../src/services/cloudflare/media') as typeof import('../src/services/cloudflare/media')).cloudMedia],
     ['db', () => (require('../src/services/cloudflare/dbsync') as typeof import('../src/services/cloudflare/dbsync')).cloudDb],
-    // Bộ đếm mức sử dụng kho (R2 / Google Drive): ghi xuống đĩa khi thoát (bình thường ghi gộp ~15 s)
+    // Usage counter for storage (R2 / Google Drive): written to disk on quit (normally written in batches every ~15 s)
     ['usage', () => {
       const { cloudflare } = require('../src/services/cloudflare/CloudflareService') as typeof import('../src/services/cloudflare/CloudflareService');
       return { init: async () => undefined, shutdown: async () => { cloudflare.usage.flush(); } };
@@ -1122,7 +1127,7 @@ function loadCloudModules(): Array<{ name: string; mod: CloudLifecycleModule }> 
   return out;
 }
 
-/** Khởi động module Cloudflare (tự bật lại tunnel / hàng đợi R2 / đồng bộ DB nếu đã bật). Không ném. */
+/** Start the Cloudflare module (re-enables the tunnel / R2 queue / DB sync if they were on). Does not throw. */
 async function startCloudModules(): Promise<void> {
   if (cloudModulesStarted || !cloudAllowedHere()) return;
   cloudModulesStarted = true;
@@ -1135,7 +1140,7 @@ async function startCloudModules(): Promise<void> {
   }
 }
 
-/** Dừng module Cloudflare khi thoát (không xoá gì trên Cloudflare), chờ tối đa timeoutMs. */
+/** Stop the Cloudflare module on quit (deletes nothing on Cloudflare), waiting at most timeoutMs. */
 async function shutdownCloudModules(timeoutMs: number): Promise<void> {
   const tasks = loadCloudModules().map(({ name, mod }) => Promise.resolve()
     .then(() => mod.shutdown())
@@ -1148,9 +1153,9 @@ async function shutdownCloudModules(timeoutMs: number): Promise<void> {
 }
 
 /**
- * local-media://: file không có trên máy → hỏi module R2 media (null khi R2 tắt / không có trên R2). Không ném.
- * Chờ ngắn (4 s) khi giao diện còn link CDN của kênh để hiện thay — ảnh ra ngay, R2 vẫn tải tiếp ở nền cho lần sau;
- * chờ dài (45 s) khi giao diện báo R2 là nguồn duy nhất (link CDN đã hết hạn / không có: `?cw=long`).
+ * local-media://: a file that is not on the machine → asks the R2 media module (null when R2 is off / the file is not on R2). Does not throw.
+ * Short wait (4 s) when the UI still has the channel's CDN link to show instead: the image appears at once, and R2 keeps downloading in the background for next time;
+ * long wait (45 s) when the UI says R2 is the only source (CDN link expired / missing: `?cw=long`).
  */
 const CLOUD_MEDIA_WAIT_SHORT_MS = 4_000;
 const CLOUD_MEDIA_WAIT_LONG_MS = 45_000;
@@ -1167,9 +1172,9 @@ async function resolveMissingMediaFromCloud(absPath: string, waitMs: number): Pr
 }
 
 /**
- * Chẩn đoán video phục vụ qua local-media: HEVC (Chromium không phát được), moov không nằm trong 64 KB đầu (chưa
- * faststart, <video> không đọc được thông tin). Mỗi file một lần mỗi phiên, đọc bất đồng bộ ở nền. Trước đây mở và đọc
- * 64 KB đồng bộ trên main cho MỖI request Range của trình phát video.
+ * Video diagnostics for video served via local-media: HEVC (Chromium cannot play it), moov not within the first 64 KB (not
+ * faststart, so <video> cannot read the info). Once per file per session, read asynchronously in the background. Before, it opened and read
+ * 64 KB synchronously on the main process for EVERY Range request of the video player.
  */
 const checkedVideoContainers = new Set<string>();
 function checkVideoContainerOnce(absPath: string, fileSize: number): void {
@@ -1204,8 +1209,8 @@ function checkVideoContainerOnce(absPath: string, fileSize: number): void {
 }
 
 /**
- * before-quit: hoãn thoát tối đa ~3 s để module Cloudflare dừng gọn (cloudflared, hàng đợi R2, đồng bộ DB) khi DB
- * còn mở, rồi app.quit() lại — lần before-quit thứ hai chạy phần dọn dẹp như cũ. true = đã hoãn.
+ * before-quit: delays quitting by up to ~3 s so the Cloudflare module can stop cleanly (cloudflared, R2 queue, DB sync) while the DB
+ * is still open, then calls app.quit() again: the second before-quit run does the cleanup as before. true = quit was delayed.
  */
 function deferQuitForCloudShutdown(event: { preventDefault(): void }): boolean {
   if (!cloudModulesStarted || cloudShutdownState === 'done') return false;
@@ -1220,18 +1225,18 @@ function deferQuitForCloudShutdown(event: { preventDefault(): void }): boolean {
 }
 
 app.whenReady().then(async () => {
-  // Luồng chính bị chặn ≥ 1 s (SQLite đồng bộ, vòng lặp dài…) → Nhật ký "[Hiệu năng] …" — tìm nguyên nhân "Not Responding".
+  // Main thread blocked ≥ 1 s (sync SQLite, long loops…) → Log "[Hiệu năng] …" (performance) to find the cause of "Not Responding".
   startMainThreadWatchdog();
-  // RAM theo từng tiến trình (main, cửa sổ, GPU…) → Nhật ký "[Hiệu năng] RAM Deplao …" mỗi 30 phút
+  // RAM per process (main, windows, GPU…) → Log "[Hiệu năng] RAM Deplao …" (performance) every 30 minutes
   startMemoryMonitor(() => app.getAppMetrics());
-  // Đọc DB nặng (mở hội thoại, tìm tin, danh sách ảnh / file / hội thoại) chạy trong worker đọc, không chặn luồng chính
+  // Heavy DB reads (opening a conversation, searching messages, lists of images / files / conversations) run in the read worker, not blocking the main thread
   dbReads.enable({ log: (msg) => Logger.warn(msg) });
   // A resume wakes the Electron main process and background sync services, but
   // Chromium's requests to Vite can remain suspended. The blank screen in dev
   // is therefore a renderer recovery problem, not a stopped message listener.
-  // Việc nặng chạy nền (chụp bản gốc DB, quét media, bù tin Telegram) chờ sau khi máy thức dậy / mở khoá và dừng khi máy
-  // ngủ giữa chừng: chạy đúng lúc mở máy làm ổ đĩa 100 %, app đơ (utils/startup/systemIdle.ts).
-  // powerMonitor không báo (Modern Standby trên vài máy): nhịp 30 giây tự nhận ra máy vừa ngủ dậy
+  // Heavy background work (DB base snapshot, media scan, Telegram message catch-up) waits until the machine wakes / unlocks, and stops when the machine
+  // goes to sleep midway: running it right at boot pushes the disk to 100 % and the app freezes (utils/startup/systemIdle.ts).
+  // powerMonitor does not report on some machines (Modern Standby): a 30-second tick detects that the machine just woke up
   startWakeWatch();
   powerMonitor.on('suspend', () => {
     noteSystemPower('suspend');
@@ -1274,14 +1279,14 @@ app.whenReady().then(async () => {
   // Supports Range requests for video/audio streaming (seeking, partial load)
   protocol.handle('local-media', async (request) => {
     try {
-      // local-media trả ACAO * và bypass CSP: chỉ trang của chính app được đọc. Plugin, trình duyệt
-      // nội bộ, Mini App… (Origin khác app) bị chặn để không đọc được file bất kỳ trên máy.
+      // local-media returns ACAO * and bypasses CSP: only the app's own pages may read it. Plugins, the internal browser,
+      // Telegram Mini apps… (Origin other than the app) are blocked so they cannot read any file on the machine.
       if (require('../src/services/plugins/PluginProtocol').isBlockedMediaRequest(request.headers, (request as any).referrer, 'http://localhost:27799')) {
         return new Response('Forbidden', { status: 403 });
       }
       const requestUrl = new URL(request.url);
       let filePath = decodeURIComponent(requestUrl.pathname);
-      // Gợi ý của giao diện khi file phải lấy từ R2: 'long' = không còn nguồn nào khác (CDN của kênh hết hạn / không có).
+      // The UI's hint for when the file must come from R2: 'long' = no other source is left (channel CDN expired / missing).
       const cloudWaitMs = requestUrl.searchParams.get('cw') === 'long' ? CLOUD_MEDIA_WAIT_LONG_MS : CLOUD_MEDIA_WAIT_SHORT_MS;
       // Windows: strip leading slash → "D:/..." or "media/..."
       if (process.platform === 'win32' && filePath.startsWith('/')) {
@@ -1291,8 +1296,8 @@ app.whenReady().then(async () => {
       const configFolder = path.dirname(FileStorageService.getBaseDir());
       // console.log(`[local-media] Request: url=${request.url} → filePath=${filePath} configFolder=${configFolder}`);
 
-      // Kiểm tra file bất đồng bộ: existsSync / statSync / đọc đầu video trên main process cho mỗi ảnh và mỗi request
-      // Range của video làm cả app khựng khi ổ đĩa bận (máy thiếu RAM ghi pagefile, app khác đọc ghi nhiều).
+      // Asynchronous file checks: existsSync / statSync / reading the start of the video on the main process for each image and each request
+      // video Range requests froze the whole app when the disk was busy (machine short on RAM for pagefile writes, other apps reading and writing a lot).
       const statFile = (p: string) => fs.promises.stat(p).then((s) => (s.isFile() ? s : null), () => null);
       let stat: fs.Stats | null;
       if (!path.isAbsolute(filePath)) {
@@ -1332,7 +1337,7 @@ app.whenReady().then(async () => {
       }
 
       if (!stat) {
-        // R2 media (tuỳ chọn, mặc định tắt): file đã được dọn khỏi máy / máy mới khôi phục → tải lại từ R2.
+        // R2 media (optional, off by default): files cleaned off the machine / a newly restored machine → download them again from R2.
         const fromCloud = await resolveMissingMediaFromCloud(path.resolve(filePath), cloudWaitMs);
         if (fromCloud) { filePath = fromCloud; stat = await statFile(filePath); }
       }
@@ -1348,7 +1353,7 @@ app.whenReady().then(async () => {
       const fileSize = stat.size;
       const ext = path.extname(absPath).toLowerCase();
 
-      // Chẩn đoán video (HEVC, chưa faststart): một lần mỗi file, đọc ở nền, không giữ response
+      // Video diagnostics (HEVC, not faststart): once per file, read in the background, the response is not kept
       if (ext === '.mp4' || ext === '.mov') checkVideoContainerOnce(absPath, fileSize);
       const mimeTypes: Record<string, string> = {
         '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
@@ -1373,9 +1378,9 @@ app.whenReady().then(async () => {
         return new Response(null, { status: 204, headers: corsHeaders });
       }
 
-      // Stream file bất đồng bộ. Trước đây readFileSync CẢ file trên main process cho mỗi request — với video
-      // là mỗi request Range (trình phát gửi nhiều request) — nên mở hội thoại nhiều ảnh / video chặn main
-      // process: IPC (tin nhắn, tin ghim…) và các ảnh khác phải xếp hàng chờ.
+      // Asynchronous file streaming. Before, readFileSync read the WHOLE file on the main process for each request, and with video
+      // every Range request (the player sends many requests), so opening a conversation with many images / videos blocked the main
+      // process: IPC (messages, pinned messages…) and other images had to queue up and wait.
       const fileBody = (range?: { start: number; end: number }) =>
         Readable.toWeb(fs.createReadStream(absPath, range)) as unknown as ReadableStream;
 
@@ -1450,7 +1455,7 @@ app.whenReady().then(async () => {
     }, 30_000).unref();
   };
 
-  // ── Anti-debug: kiểm tra debugger attach (chỉ production/staging) ──────────
+  // ── Anti-debug: check whether a debugger is attached (production / staging only) ──────────
   if (!isDev) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const inspector = require('inspector') as typeof import('inspector');
@@ -1469,23 +1474,23 @@ app.whenReady().then(async () => {
   loadIcons();
 
   // ── Register deplao:// as default protocol client ─────────────────────
-  // Cho phép OS mở app khi click link deplao:// trong trình duyệt
+  // Let the OS open the app when a deplao:// link is clicked in the browser
   //
-  // ⚠️ Production: app đã đóng gói → setAsDefaultProtocolClient hoạt động đúng.
-  // ⚠️ Development: KHÔNG gọi setAsDefaultProtocolClient - dùng manual reg script
-  //    (xem hướng dẫn trong agents/references/deep-link-feature.md)
+  // ⚠️ Production: the app is packaged → setAsDefaultProtocolClient works correctly.
+  // ⚠️ Development: do NOT call setAsDefaultProtocolClient - use the manual registration script
+  //    (see the guide in agents/references/deep-link-feature.md)
   if (app.isPackaged) {
     if (!app.isDefaultProtocolClient('deplao')) {
       app.setAsDefaultProtocolClient('deplao');
     }
   }
 
-  // Hệ điều hành tự mở lúc đăng nhập: chạy ngầm nếu người dùng chọn vậy
+  // The OS launches the app at sign-in: runs in the background if the user chose that
   try { startHiddenAtLogin = getAutoLaunch().startHidden(process.argv); } catch { startHiddenAtLogin = false; }
   createWindow();
   createTray();
   registerWindowControls();
-  // Tự mở cùng máy: bật mặc định (cả máy cập nhật từ bản cũ), giữ đúng đường dẫn chạy hiện tại
+  // Launch at login: on by default (machines updated from an old build too), keeps the current run path
   try {
     const autoLaunch = getAutoLaunch().syncAtStartup();
     Logger.log(`[main] Tự mở cùng máy: ${!autoLaunch.supported ? 'không áp dụng (bản dev)' : autoLaunch.enabled ? 'bật' : 'tắt'}`
@@ -1504,18 +1509,18 @@ app.whenReady().then(async () => {
     console.log('[main] Renderer app mounted');
     onRendererReportedReady?.();
   });
-  // Giao diện đã tải xong danh sách hội thoại → khi luồng chính rảnh mới chạy việc nền nặng (đồng bộ bù tin cũ
-  // Telegram…) — xem src/utils/startup/startupSettle.ts. Chạy ngay lúc mở app làm app giật.
+  // Once the UI has loaded the conversation list → heavy background work only starts when the main thread is idle (catch-up sync of old messages
+  // Telegram…) - see src/utils/startup/startupSettle.ts. Running it right at app launch makes the app stutter.
   ipcMain.on('app:uiSettled', (event) => {
     if (event.sender !== mainWindow?.webContents) return;
     console.log('[main] Renderer UI settled');
     settleWhenMainIdle('renderer UI loaded');
   });
 
-  // ── Handle deep link từ initial launch (first instance) ──────────
-  // Khi click deplao:// link lần đầu:
-  //   - Production đúng: URL nằm ở process.argv[1] hoặc sau dấu `--`
-  //   - Dev / sai config: Electron nhận URL ở argv[1] thay vì main script path
+  // ── Handle the deep link from the initial launch (first instance) ──────────
+  // When a deplao:// link is clicked for the first time:
+  //   - Production (correct): the URL is in process.argv[1] or after a `--`
+  //   - Dev / wrong config: Electron receives the URL in argv[1] instead of the main script path
   const initialDeepLink = process.argv.find((arg) => arg.startsWith('deplao://'));
   if (initialDeepLink) {
     setTimeout(() => handleDeepLink(initialDeepLink), 3000);
@@ -1563,10 +1568,12 @@ app.whenReady().then(async () => {
       }
     },
   });
-  // Sự kiện cho API/plugin: chỉ đăng ký hook; không ghi gì khi chưa ai dùng API.
+  // Events for the API/plugins: only registers the hook; writes nothing until someone uses the API.
   ApiPlatform.getInstance().startEvents();
-  // Plugin: IPC + protocol deplao-plugin://; plugin đã bật khởi động sau khi cửa sổ hiện.
+  // Plugins: IPC + protocol deplao-plugin://; enabled plugins start after the window is shown.
   registerPluginIpc();
+  // UI language: language picker IPC. A change rebuilds the tray menu (its labels are translated).
+  registerI18nIpc({ onLanguageChanged: () => { if (tray) tray.setContextMenu(buildTrayMenu()); } });
   try {
     const PluginsPlatform = require('../src/services/plugins/PluginsPlatform').default;
     const { forkElectron } = require('../src/services/plugins/PluginSandbox');
@@ -1596,7 +1603,7 @@ app.whenReady().then(async () => {
     if (connectorStartupStarted) return;
     connectorStartupStarted = true;
     console.log('[main] Renderer visible; starting channel connectors');
-    // Renderer không báo giao diện đã tải xong (app:uiSettled) → vẫn bắt đầu việc nền sau 60 giây
+    // If the renderer does not report that the UI has finished loading (app:uiSettled), start the background work anyway after 60 seconds
     armStartupSettleFallback(60_000);
 
     reconnectAllFBAccounts().catch(err => {
@@ -1605,8 +1612,8 @@ app.whenReady().then(async () => {
     reconnectAllTelegramAccounts().catch(err => {
       console.error('[main] reconnectAllTelegramAccounts error:', err.message);
     });
-    // Một lần: tin Telegram đã gửi trước 26.10.3 mang giờ máy → xếp lại theo tin kề trên Telegram (sau khi app ổn định).
-    // Máy nhân viên chỉ giữ bản sao DB của Boss → không sửa.
+    // One-time: Telegram messages sent before 26.10.3 carry the machine's clock time → re-sort them by the adjacent message on Telegram (after the app has settled).
+    // An employee machine only keeps a copy of Boss's DB → do not modify it.
     try {
       if (require('../src/utils/app/AppModeManager').default.getInstance().getMode() !== 'employee') {
         require('../src/services/telegram/messages/telegramSentTimestampRepair').scheduleTelegramSentTimestampRepair();
@@ -1619,7 +1626,7 @@ app.whenReady().then(async () => {
     setTimeout(() => startupAllWorkspaces().catch(err => {
       console.error('[main] startupAllWorkspaces error:', err.message);
     }), 500);
-    // Cloudflare (tuỳ chọn, mặc định tắt): sau khi DB + relay đã khởi động; không chặn khởi động.
+    // Cloudflare (optional, off by default): after the DB + relay have started; does not block startup.
     setTimeout(() => { void startCloudModules(); }, 5000);
   };
   onRendererReportedReady = () => {
@@ -1655,10 +1662,10 @@ app.whenReady().then(async () => {
   }, 3700);
   // Initialize Workflow Engine after a short delay to ensure DB is ready
   setTimeout(() => WorkflowEngineService.getInstance().initialize(), 2000);
-  // Initialize Integration Registry. integration:payment → trigger.payment do WorkflowEngineService tự đăng ký
-  // (rehookEvents) — thêm hook ở đây sẽ chạy mỗi workflow thanh toán hai lần.
+  // Initialize Integration Registry. integration:payment → trigger.payment is registered automatically by WorkflowEngineService
+  // (rehookEvents): adding a hook here would run every payment workflow twice.
   setTimeout(() => IntegrationRegistry.initialize(), 2500);
-  // Public API v1: tự bật API server nếu người dùng bật "Tự bật khi mở app" (mặc định tắt).
+  // Public API v1: auto-starts the API server if the user turned on "Tự bật khi mở app" (start when the app opens) (off by default).
   setTimeout(async () => {
     try {
       const { getApiSettingBool } = require('../src/services/api/settings');
@@ -1684,7 +1691,7 @@ app.whenReady().then(async () => {
     });
   }, 3000);
 
-  // Initialize Tracking Service (chỉ chạy trong production build)
+  // Initialize Tracking Service (runs only in the production build)
   setTimeout(() => {
     try {
       TrackingService.getInstance().start();
@@ -1693,8 +1700,8 @@ app.whenReady().then(async () => {
     }
   }, 5000);
 
-  // ─── Media cleanup scheduler (tự động xoá media cũ) ─────────────────────
-  // Chạy mỗi ngày lúc 3:00 sáng, kiểm tra tất cả tài khoản có cấu hình auto-delete
+  // ─── Media cleanup scheduler (automatically deletes old media) ─────────────────────
+  // Runs every day at 3:00 AM and checks all accounts that have auto-delete configured
   const mediaCleanupJob = cron.schedule('0 3 * * *', async () => {
     console.log('[MediaCleanup] Running daily scheduled cleanup...');
     try {
@@ -1719,18 +1726,18 @@ app.whenReady().then(async () => {
   });
   console.log('[MediaCleanup] Scheduler initialized - runs daily at 3:00 AM');
 
-  // Check for updates — đợi renderer sẵn sàng rồi mới check
+  // Check for updates: wait for the renderer to be ready first
   if (!isDev) {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
 
-    // Đợi renderer load xong rồi mới check update (tránh race condition)
-    // IPC: renderer báo đã sẵn sàng nhận update events
+    // Wait for the renderer to finish loading before checking for updates (avoids a race condition)
+    // IPC: the renderer reports it is ready to receive update events
     ipcMain.once('update:renderer-ready', () => {
       console.log('[AutoUpdate] Renderer ready — checking for updates');
       autoUpdater.checkForUpdates();
     });
-    // Fallback: nếu renderer không báo sau 10s, tự check
+    // Fallback: if the renderer does not report back after 10s, check on its own
     setTimeout(() => {
       autoUpdater.checkForUpdates();
     }, 10_000);
@@ -1771,17 +1778,17 @@ app.whenReady().then(async () => {
     });
   }
 
-  // IPC từ renderer: trigger check for update
+  // IPC from the renderer: trigger check for update
   ipcMain.on('update:check', () => {
     if (!isDev) autoUpdater.checkForUpdates();
   });
 
-  // IPC từ renderer: trigger download (user confirmed)
+  // IPC from the renderer: trigger download (user confirmed)
   ipcMain.on('update:download', () => {
     if (!isDev) autoUpdater.downloadUpdate();
   });
 
-  // IPC từ renderer: install và restart
+  // IPC from the renderer: install and restart
   ipcMain.on('update:install', () => {
     if (!isDev) autoUpdater.quitAndInstall(false, true);
   });
@@ -1803,21 +1810,21 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', (event) => {
-  // Cloudflare: dừng tunnel / hàng đợi R2 / đồng bộ DB trước (≤ ~3 s), rồi quit lại và chạy phần dưới như cũ.
+  // Cloudflare: stop the tunnel / R2 queue / DB sync first (≤ ~3 s), then quit again and run the rest below as before.
   if (deferQuitForCloudShutdown(event)) return;
   isQuitting = true;
 
-  // Dừng tiến trình plugin (deactivate ≤ 5 s chạy nền; utilityProcess tự đóng khi app thoát).
+  // Stop the plugin processes (deactivate ≤ 5 s in the background; the utilityProcess closes by itself when the app quits).
   try {
     const PluginsPlatform = require('../src/services/plugins/PluginsPlatform').default;
     void PluginsPlatform.getInstance().stop();
   } catch {}
 
-  // ── Cleanup background services giữ event loop ──────────────────────
-  // Nếu không dọn, CRM timers / cron / webhook server giữ process sống,
-  // app "tắt" rồi nhưng vẫn chạy ngầm trong Task Manager.
+  // ── Clean up background services that keep the event loop alive ──────────────────────
+  // If they are not cleaned up, CRM timers / cron / the webhook server keep the process alive,
+  // the app "quits" but keeps running in the background in Task Manager.
   try {
-    // Dừng tất cả CRM queue timers
+    // Stop all CRM queue timers
     const crmTimers = CRMQueueService.getInstance() as any;
     if (crmTimers?.timers) {
       for (const [zaloId, timer] of crmTimers.timers) {
@@ -1828,7 +1835,7 @@ app.on('before-quit', (event) => {
   } catch {}
 
   try {
-    // Dừng tất cả workflow cron jobs
+    // Stop all workflow cron jobs
     const wfe = WorkflowEngineService.getInstance() as any;
     if (wfe?.cronJobs) {
       for (const [, job] of wfe.cronJobs) {
@@ -1839,12 +1846,12 @@ app.on('before-quit', (event) => {
   } catch {}
 
   try {
-    // Dừng webhook HTTP server
+    // Stop the webhook HTTP server
     IntegrationRegistry.stopWebhookServer();
   } catch {}
 
   try {
-    // Dừng webhook gateway
+    // Stop the webhook gateway
     WebhookGatewayService.getInstance().stop();
   } catch {}
 
@@ -1881,11 +1888,11 @@ app.on('will-quit', () => {
 });
 
 // ─── Global error handlers ──────────────────────────────────────────────────
-// Không có handlers → unhandled error trong main process = treo im lặng,
-// app chạy ngầm mà renderer đã chết → user thấy trắng / không hiển thị gì.
+// With no handlers → an unhandled error in the main process = a silent hang,
+// the app keeps running in the background while the renderer has died → the user sees a blank window / nothing displayed.
 process.on('uncaughtException', (error) => {
   console.error('[main] Uncaught exception:', error);
-  // Không crash app - log rồi tiếp tục
+  // Do not crash the app - log it and continue
 });
 
 process.on('unhandledRejection', (reason) => {

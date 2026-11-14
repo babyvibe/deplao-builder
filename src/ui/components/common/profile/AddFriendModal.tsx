@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface AddFriendModalProps {
   displayName: string;
@@ -9,16 +11,16 @@ interface AddFriendModalProps {
 }
 
 /**
- * Modal soạn lời mời kết bạn - dùng chung ở FriendList, ConversationList, v.v.
- * UserProfilePopup dùng inline compose riêng bên trong popup.
+ * Modal to compose a friend request, shared by FriendList, ConversationList, etc.
+ * UserProfilePopup uses its own inline compose inside the popup.
  */
 export default function AddFriendModal({ displayName, avatar, sending, onConfirm, onClose }: AddFriendModalProps) {
-  const [msg, setMsg] = useState('Xin chào! Mình muốn kết bạn với bạn.');
+  const [msg, setMsg] = useState(tr('Xin chào! Mình muốn kết bạn với bạn.'));
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      onConfirm(msg.trim() || 'Xin chào!');
+      onConfirm(msg.trim() || tr('Xin chào!'));
     }
     if (e.key === 'Escape') onClose();
   };
@@ -41,7 +43,7 @@ export default function AddFriendModal({ displayName, avatar, sending, onConfirm
               </div>}
           <div>
             <p className="text-sm font-semibold text-foreground truncate max-w-[180px]">{displayName}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Soạn lời mời kết bạn</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{tr('Soạn lời mời kết bạn')}</p>
           </div>
         </div>
 
@@ -54,9 +56,9 @@ export default function AddFriendModal({ displayName, avatar, sending, onConfirm
           maxLength={200}
           autoFocus
           className="w-full bg-muted border border-input rounded-xl px-3 py-2 text-sm text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 resize-none mb-1"
-          placeholder="Lời nhắn kết bạn..."
+          placeholder={tr('Lời nhắn kết bạn...')}
         />
-        <p className="text-[11px] text-muted-foreground text-right mb-3">{msg.length}/200 · Ctrl+Enter để gửi</p>
+        <p className="text-[11px] text-muted-foreground text-right mb-3">{trx('{{count}}/200 · Ctrl+Enter để gửi', { count: msg.length })}</p>
 
         {/* Actions */}
         <div className="flex gap-2">
@@ -65,10 +67,10 @@ export default function AddFriendModal({ displayName, avatar, sending, onConfirm
             disabled={sending}
             className="flex-1 py-2 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors disabled:opacity-50"
           >
-            Hủy
+            {tr('Hủy')}
           </button>
           <button
-            onClick={() => onConfirm(msg.trim() || 'Xin chào!')}
+            onClick={() => onConfirm(msg.trim() || tr('Xin chào!'))}
             disabled={sending}
             className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium flex items-center justify-center gap-1.5"
           >
@@ -77,14 +79,14 @@ export default function AddFriendModal({ displayName, avatar, sending, onConfirm
                 <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
                 </svg>
-                Đang gửi...
+                {tr('Đang gửi...')}
               </>
             ) : (
               <>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
                 </svg>
-                Gửi lời mời
+                {tr('Gửi lời mời')}
               </>
             )}
           </button>

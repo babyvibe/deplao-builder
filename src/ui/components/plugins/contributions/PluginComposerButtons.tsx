@@ -1,14 +1,15 @@
 /**
- * Nút của plugin trên thanh công cụ ô soạn tin (contributes.composerButtons).
- *  - target 'backend': gọi commands[id] của backend với ngữ cảnh hội thoại; kết quả có
- *    insertText → chèn vào ô soạn tin, toast → hiện thông báo.
- *  - target 'ui': mở panel plugin (nếu có) và gửi 'command' vào iframe.
+ * A plugin button on the composer toolbar (contributes.composerButtons).
+ *  - target 'backend': calls the backend's commands[id] with the conversation context; if the result has
+ *    insertText → insert it into the composer, toast → show a notification.
+ *  - target 'ui': opens the plugin panel (if any) and sends 'command' into the iframe.
  */
 import React, { useState } from 'react';
 import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/app/appStore';
 import { usePluginStore } from '@/store/plugins/pluginStore';
 import { PluginIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
 
 export default function PluginComposerButtons({ accountId, threadId }: { accountId: string | null; threadId: string | null }) {
   const buttons = usePluginStore(s => s.contributions.composerButtons);
@@ -24,7 +25,7 @@ export default function PluginComposerButtons({ accountId, threadId }: { account
     if (b.target === 'ui') {
       const panel = panels.find(p => p.pluginId === b.pluginId);
       if (panel) setPanel({ pluginId: panel.pluginId, panelId: panel.id });
-      // Chờ panel mount rồi mới gửi lệnh.
+      // Wait for the panel to mount before sending the command.
       setTimeout(() => window.dispatchEvent(new CustomEvent('plugins:command', { detail: { pluginId: b.pluginId, command: { id: b.id, context } } })), 150);
       return;
     }
@@ -33,7 +34,7 @@ export default function PluginComposerButtons({ accountId, threadId }: { account
     try {
       const res = await ipc.plugins?.command(b.pluginId, b.id, context);
       if (!res?.success) {
-        showNotification(res?.error || 'Ứng dụng báo lỗi', 'error');
+        showNotification(res?.error || tr('Ứng dụng báo lỗi'), 'error');
         return;
       }
       const out = res.result;

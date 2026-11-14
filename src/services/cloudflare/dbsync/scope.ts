@@ -1,37 +1,37 @@
 /**
- * scope — phạm vi đồng bộ (tài khoản + từ ngày) phía worker. Chính sách bảng: tableSelection.SCOPED_TABLES.
+ * scope: sync scope (accounts + from date) on the worker side. Table policy: tableSelection.SCOPED_TABLES.
  *
- *  - Bản gốc: lọc trên BẢN SAO vừa backup (không bao giờ trên DB sống) — applyScopeToCopy.
- *    secure_delete = ON (ô/trang bị xoá ghi đè 0 → nội dung đã lọc không còn trong byte file tải lên), trang trống có sẵn
- *    từ trước cũng ghi đè 0; xoá theo chính sách (bảng con trước bảng cha); FTS của bảng bị lọc dựng lại chỉ với dòng còn
- *    giữ (DROP bảng FTS cũ → cả nội dung lẫn chỉ mục của tin đã lọc bị xoá trắng).
- *  - Đoạn thay đổi: RowScope kiểm từng dòng khi gói (đọc DB sống trong cùng giao dịch đọc của packSegment).
+ *  - Base snapshot: filtered on the COPY that was just backed up (never on the live DB): applyScopeToCopy.
+ *    secure_delete = ON (deleted cells/pages are overwritten with 0 → the filtered content is no longer in the bytes of the uploaded file), empty pages that already
+ *    existed are overwritten with 0 too; rows are deleted per the policy (child tables before parent tables); the FTS of a filtered table is rebuilt with only the rows still
+ *    kept (DROP the old FTS table → the content and the index of the filtered messages are both wiped clean).
+ *  - Change segments: RowScope checks each row while packing (reads the live DB in the same read transaction as packSegment).
  *
- * Chỉ import trong thư mục dbsync (chạy trong worker — xem sqlConn.ts). CloudScope chỉ dùng làm kiểu.
+ * Only import inside the dbsync folder (runs in the worker, see sqlConn.ts). CloudScope is only used as a type.
  */
 import type { CloudScope } from '../../../shared/cloud/cloudContracts';
 import { SqlConn, SqlStatement, quoteIdent, tableExists, toNumber } from './sqlConn';
 import { ResolvedScopePolicy, pickRowidAlias, resolveScopePolicies, tableColumns } from './tableSelection';
 
-/** Phạm vi dạng dùng trong worker. */
+/** Scope in the form used inside the worker. */
 export interface ResolvedScope {
-    /** id tài khoản được giữ (accounts.zalo_id); null = mọi tài khoản. */
+    /** Account ids to keep (accounts.zalo_id); null = all accounts. */
     accounts: string[] | null;
-    /** Chỉ giữ lịch sử từ mốc này (ms); null = toàn bộ thời gian. */
+    /** Only keep history from this point (ms); null = all time. */
     fromTs: number | null;
 }
 
-/** Giá trị thời gian nhỏ hơn mốc này là GIÂY (dữ liệu lạ) — nhân 1000 trước khi so với fromTs (ms). */
+/** A time value smaller than this is in SECONDS (odd data) → multiply by 1000 before comparing with fromTs (ms). */
 export const SECONDS_LIMIT = 100_000_000_000;
-/** Xoá ≥ ngần này dòng (và ≥ 1/4 bảng) → gỡ chỉ mục của bảng rồi tạo lại (xoá rải rác qua 8 chỉ mục rất chậm). */
+/** Deleting at least this many rows (and ≥ 1/4 of the table) → drop the table's indexes, then recreate them (scattered deletes through 8 indexes are very slow). */
 export const BULK_DELETE_ROWS = 50_000;
 export const ACCOUNT_NAMES_MAX = 500;
 
 const KEEP_TABLE = 'temp."_cloud_scope_keep"';
 
 /**
- * Phạm vi do main gửi (đã normalizeScope) → dạng worker; null = toàn bộ (không lọc gì).
- * Danh sách tài khoản rỗng = không giữ dữ liệu riêng của tài khoản nào (IPC đã chặn, ở đây vẫn hiểu đúng nghĩa).
+ * The scope sent by main (already normalizeScope'd) → worker form; null = everything (no filtering).
+ * An empty account list = keep no account-specific data at all (IPC already blocks it, but it is still understood correctly here).
  */
 export function resolveScope(v: Partial<CloudScope> | null | undefined): ResolvedScope | null {
     if (!v || typeof v !== 'object') return null;
@@ -43,13 +43,13 @@ export function resolveScope(v: Partial<CloudScope> | null | undefined): Resolve
     return { accounts, fromTs };
 }
 
-// ─── Điều kiện SQL "ngoài phạm vi" (bản gốc) ────────────────────────────────
+// ─── SQL conditions for "outside the scope" (base snapshot) ────────────────────────────────
 
 function msExpr(c: string): string {
     return `(CASE WHEN ${c} < ${SECONDS_LIMIT} THEN ${c} * 1000 ELSE ${c} END)`;
 }
 
-/** Dòng cũ hơn fromTs (chỉ bảng lịch sử). Thời gian NULL / 0 / dạng chữ → không rõ → giữ. */
+/** Rows older than fromTs (history tables only). Time NULL / 0 / text → unknown → keep. */
 function timeOutSql(p: ResolvedScopePolicy, fromTs: number | null): string | null {
     if (!p.time || fromTs === null) return null;
     const c = quoteIdent(p.time);
@@ -57,8 +57,8 @@ function timeOutSql(p: ResolvedScopePolicy, fromTs: number | null): string | nul
 }
 
 /**
- * Dòng thuộc tài khoản KHÔNG được chọn (cột tài khoản rỗng → giữ). Dùng trong WHERE của chính bảng p; cột của bảng
- * cha nằm trong truy vấn con FROM bảng cha (tên cột không đầu tố → khớp bảng gần nhất).
+ * Rows that belong to an account that is NOT selected (empty account column → keep). Used in the WHERE of table p itself; the columns of the
+ * parent table are in a subquery FROM the parent table (a column name without a prefix → matches the nearest table).
  */
 function accountOutSql(p: ResolvedScopePolicy): string {
     const c = quoteIdent(p.column);
@@ -76,7 +76,7 @@ function accountOutSql(p: ResolvedScopePolicy): string {
     return `(${known} AND ${c} IN (SELECT ${pk} FROM ${quoteIdent(parent.table)} WHERE ${pk} IS NOT NULL AND ${accountOutSql(parent)}))`;
 }
 
-/** WHERE của lệnh xoá cho một bảng (null = bảng này không có gì để lọc với phạm vi này). */
+/** WHERE clause of the delete for one table (null = this table has nothing to filter for this scope). */
 export function scopeDeleteWhere(p: ResolvedScopePolicy, scope: ResolvedScope): string | null {
     const parts: string[] = [];
     if (scope.accounts) parts.push(accountOutSql(p));
@@ -85,16 +85,16 @@ export function scopeDeleteWhere(p: ResolvedScopePolicy, scope: ResolvedScope): 
     return parts.length ? parts.join(' OR ') : null;
 }
 
-// ─── Lọc bản sao chụp gốc ───────────────────────────────────────────────────
+// ─── Filter the base snapshot copy ───────────────────────────────────────────────────
 
 export interface ScopeApplyReport {
-    /** Số dòng đã bỏ theo bảng. */
+    /** Rows removed per table. */
     removed: Record<string, number>;
-    /** Bảng FTS đã dựng lại. */
+    /** FTS tables rebuilt. */
     fts: string[];
-    /** Trang trống có sẵn trong bản sao đã ghi đè 0. */
+    /** Empty pages already in the copy that were overwritten with 0. */
     wipedPages: number;
-    /** journal_mode thực tế lúc lọc ('off' nếu connection cho phép). */
+    /** The actual journal_mode while filtering ('off' if the connection allows it). */
     journal: string;
 }
 
@@ -104,8 +104,8 @@ function pragmaValue(conn: SqlConn, sql: string): unknown {
 }
 
 /**
- * Trang trống (freelist) chép từ DB sống còn nguyên dữ liệu cũ (DB sống không bật secure_delete) → chiếm hết bằng
- * zeroblob rồi bỏ: mọi trang trống thành 0. Gọi khi secure_delete đã ON (trang gốc của bảng tạm cũng được ghi 0 khi bỏ).
+ * Empty pages (freelist) copied from the live DB still hold the old data (the live DB does not turn on secure_delete) → fill them all with
+ * zeroblob, then drop it: every empty page becomes 0. Called when secure_delete is already ON (the original pages of the temp table are also written as 0 when dropped).
  */
 function wipeFreePages(conn: SqlConn): number {
     const free = toNumber(pragmaValue(conn, 'PRAGMA freelist_count'));
@@ -115,7 +115,7 @@ function wipeFreePages(conn: SqlConn): number {
     try {
         conn.exec('CREATE TABLE "_cloud_scope_wipe" (b BLOB)');
         const ins = conn.prepare('INSERT INTO "_cloud_scope_wipe" (b) VALUES (zeroblob(?))');
-        // Trang tràn chứa (page_size − 4) byte; dư vài trang cho chắc (file chỉ dài thêm vài trang 0).
+        // An overflow page holds (page_size − 4) bytes; a few extra pages to be safe (the file only grows by a few zero pages).
         let left = (free + 2) * Math.max(512, pageSize - 4);
         while (left > 0) {
             const n = Math.min(left, 128 * 1024 * 1024);
@@ -125,7 +125,7 @@ function wipeFreePages(conn: SqlConn): number {
         conn.exec('DROP TABLE "_cloud_scope_wipe"');
         conn.exec('COMMIT');
     } catch (err) {
-        try { conn.exec('ROLLBACK'); } catch { /* đã huỷ */ }
+        try { conn.exec('ROLLBACK'); } catch { /* cancelled */ }
         throw err;
     }
     return free;
@@ -144,8 +144,8 @@ function deleteRows(conn: SqlConn, table: string, where: string, bulkRows: numbe
                 .map((r: any) => ({ name: String(r.name), sql: String(r.sql) }));
         }
     }
-    // Chỉ mục khai báo (không phải chỉ mục ngầm của UNIQUE/PRIMARY KEY) gỡ rồi tạo lại bằng đúng câu lệnh cũ — trang cũ của
-    // chỉ mục được ghi 0 (secure_delete), chỉ mục mới chỉ có khoá của dòng còn giữ.
+    // Declared indexes (not the implicit indexes of UNIQUE/PRIMARY KEY) are dropped and recreated with the exact same statement; the old pages of
+    // the index are written as 0 (secure_delete); the new index only has the keys of the rows that are kept.
     for (const ix of indexes) conn.exec(`DROP INDEX ${quoteIdent(ix.name)}`);
     const removed = toNumber(conn.prepare(`DELETE FROM ${T} WHERE ${where}`).run().changes);
     for (const ix of indexes) conn.exec(ix.sql);
@@ -153,9 +153,9 @@ function deleteRows(conn: SqlConn, table: string, where: string, bulkRows: numbe
 }
 
 /**
- * FTS5 "<bảng>_fts" của bảng có chính sách: chỉ giữ dòng FTS có rowid còn trong bảng nguồn (đã lọc).
- * FTS tự giữ nội dung (như messages_fts): chép dòng giữ lại ra bảng tạm → DROP bảng FTS (cả bảng bóng: nội dung + chỉ mục
- * cũ, ghi 0) → tạo lại bằng đúng câu lệnh cũ → nạp lại. FTS nội dung ngoài: 'rebuild' từ bảng nguồn đã lọc.
+ * The FTS5 "<table>_fts" of a table that has a policy: keeps only the FTS rows whose rowid is still in the source table (filtered).
+ * FTS keeps its own content (like messages_fts): copy the kept rows to a temp table → DROP the FTS table (the shadow tables too: content + old index,
+ * written as 0) → recreate it with the exact same statement → reload. External-content FTS: 'rebuild' from the filtered source table.
  */
 function rebuildScopedFts(conn: SqlConn, policies: Map<string, ResolvedScopePolicy>): string[] {
     const done: string[] = [];
@@ -171,14 +171,14 @@ function rebuildScopedFts(conn: SqlConn, policies: Map<string, ResolvedScopePoli
             try {
                 conn.exec(`INSERT INTO ${ft} (${ft}) VALUES ('rebuild')`);
                 done.push(name);
-            } catch { /* contentless: không dựng lại được — bỏ qua */ }
+            } catch { /* contentless: cannot be rebuilt, skip it */ }
             continue;
         }
         const cols = tableColumns(conn, name).insertable;
         const srcRowid = pickRowidAlias(tableColumns(conn, src.table).all);
         if (!cols.length || !srcRowid) continue;
         const kept = `SELECT ${srcRowid} FROM ${quoteIdent(src.table)}`;
-        // Không dòng FTS nào trỏ tới tin đã bỏ → khỏi dựng lại (FTS lớn mà phạm vi chỉ bỏ ít tin thì đây là phần tốn nhất).
+        // No FTS row points to a removed message → no rebuild needed (when the FTS is large and the scope only removes a few messages, this is the costliest part).
         if (!conn.prepare(`SELECT 1 AS x FROM ${ft} WHERE rowid NOT IN (${kept}) LIMIT 1`).get()) continue;
         const list = cols.map(quoteIdent).join(', ');
         conn.exec('DROP TABLE IF EXISTS temp."_cloud_scope_fts"');
@@ -193,19 +193,19 @@ function rebuildScopedFts(conn: SqlConn, policies: Map<string, ResolvedScopePoli
 }
 
 /**
- * Lọc BẢN SAO chụp gốc theo phạm vi (gọi trong worker, trên file tạm — KHÔNG phải DB sống). File hỏng giữa chừng thì
- * cả bản sao bị bỏ (ops 'snapshot' xoá file khi lỗi) nên không cần nhật ký giao dịch.
+ * Filters the COPY of the base snapshot by scope (called in the worker, on the temp file, NOT the live DB). If the file breaks midway then
+ * the whole copy is discarded (the 'snapshot' op deletes the file on error), so no transaction log is needed.
  *
- * Trigger bị gỡ trong lúc lọc rồi tạo lại y nguyên: không chạy trigger FTS từng dòng (chậm, để lại dấu trong chỉ mục)
- * và không ghi _cloud_dirty cho hàng triệu dòng bị bỏ. foreign_keys = OFF: chỉ chính sách quyết định xoá gì
- * (không xoá dây chuyền sang bảng chung, không lỗi khoá ngoại khi xoá dòng cha).
+ * Triggers are removed during filtering and then recreated exactly as they were: no FTS trigger runs per row (slow, and it leaves traces in the index)
+ * and nothing is written to _cloud_dirty for millions of removed rows. foreign_keys = OFF: only the policy decides what is deleted
+ * (no cascade into shared tables, no foreign-key error when a parent row is deleted).
  */
 export function applyScopeToCopy(conn: SqlConn, scope: ResolvedScope | null, opts: { bulkDeleteRows?: number } = {}): ScopeApplyReport {
     const report: ScopeApplyReport = { removed: {}, fts: [], wipedPages: 0, journal: '' };
     if (!scope) return report;
     const bulkRows = Math.max(1, Math.floor(opts.bulkDeleteRows ?? BULK_DELETE_ROWS));
-    conn.exec('PRAGMA journal_mode = DELETE'); // ra khỏi WAL (bản backup của DB WAL) — gộp -wal vào file
-    // OFF bị bỏ qua khi connection ở chế độ defensive (giữ 'delete' — vẫn đúng, chỉ tốn chỗ cho file journal).
+    conn.exec('PRAGMA journal_mode = DELETE'); // out of WAL (the backup of a WAL DB): merge -wal into the file
+    // OFF is skipped when the connection is in defensive mode (keeps 'delete', which is still correct, just uses more space for the journal file).
     report.journal = String(pragmaValue(conn, 'PRAGMA journal_mode = OFF') ?? '').toLowerCase();
     conn.exec('PRAGMA synchronous = OFF');
     conn.exec('PRAGMA foreign_keys = OFF');
@@ -228,7 +228,7 @@ export function applyScopeToCopy(conn: SqlConn, scope: ResolvedScope | null, opt
             const ins = conn.prepare(`INSERT OR IGNORE INTO ${KEEP_TABLE} (id) VALUES (?)`);
             for (const id of scope.accounts) ins.run(id);
         }
-        // Bảng con trước bảng cha: điều kiện của bảng con đọc dòng cha (chưa bị xoá) để biết chủ.
+        // Child tables before parent tables: the child's condition reads the parent row (not deleted yet) to find its owner.
         for (const p of ordered) {
             const where = scopeDeleteWhere(p, scope);
             if (!where) continue;
@@ -240,13 +240,13 @@ export function applyScopeToCopy(conn: SqlConn, scope: ResolvedScope | null, opt
         if (scope.accounts) conn.exec(`DROP TABLE IF EXISTS ${KEEP_TABLE}`);
         conn.exec('COMMIT');
     } catch (err) {
-        try { conn.exec('ROLLBACK'); } catch { /* đã huỷ / journal OFF */ }
+        try { conn.exec('ROLLBACK'); } catch { /* cancelled / journal OFF */ }
         throw err;
     }
     return report;
 }
 
-/** Tài khoản có trong DB (sau khi lọc) — ghi vào manifest để màn khôi phục hiện tên. */
+/** Accounts in the DB (after filtering): written to the manifest so the restore screen shows the names. */
 export function readAccountNames(conn: SqlConn): Array<{ id: string; name: string; channel: string }> {
     if (!tableExists(conn, 'accounts')) return [];
     const cols = new Set(tableColumns(conn, 'accounts').all.map(c => c.toLowerCase()));
@@ -263,9 +263,9 @@ export function readAccountNames(conn: SqlConn): Array<{ id: string; name: strin
         }));
 }
 
-// ─── Lọc từng dòng khi gói đoạn thay đổi ────────────────────────────────────
+// ─── Per-row filter when packing change segments ────────────────────────────────────
 
-/** Giá trị cột tài khoản → chuỗi id; null = rỗng (dữ liệu chung → giữ). BLOB không bao giờ là id được chọn. */
+/** Account column value → id string; null = empty (shared data → keep). A BLOB is never a selected id. */
 function idOf(v: unknown): string | null {
     if (v === null || v === undefined) return null;
     if (typeof v === 'string') return v === '' ? null : v;
@@ -283,8 +283,8 @@ function isBefore(v: unknown, fromTs: number): boolean {
 }
 
 /**
- * Kiểm dòng theo phạm vi khi gói đoạn (cùng quy tắc với scopeDeleteWhere). Dòng cha / fb_accounts đọc từ DB sống trong
- * cùng giao dịch đọc, nhớ kết quả trong một lần gói.
+ * Checks a row against the scope while packing a segment (same rules as scopeDeleteWhere). Parent rows / fb_accounts are read from the live DB in the
+ * same read transaction, and the result is remembered for one pack.
  */
 export class RowScope {
     private readonly keep: Set<string> | null;
@@ -300,10 +300,10 @@ export class RowScope {
         this.policies = resolveScopePolicies(conn);
         try {
             for (const r of conn.prepare('SELECT name FROM sqlite_sequence').all()) this.noReuse.add(String(r.name).toLowerCase());
-        } catch { /* không có bảng AUTOINCREMENT */ }
+        } catch { /* no AUTOINCREMENT table */ }
     }
 
-    /** Dòng (đọc ở chế độ bigInts, tên cột như khai báo) thuộc phạm vi? Bảng không có chính sách → luôn thuộc. */
+    /** Is the row (read in bigInts mode, column names as declared) in scope? A table with no policy → always in scope. */
     inScope(table: string, row: Record<string, unknown>): boolean {
         const p = this.policies.get(table.toLowerCase());
         if (!p) return true;
@@ -313,14 +313,14 @@ export class RowScope {
     }
 
     /**
-     * Bảng AUTOINCREMENT (có trong sqlite_sequence): rowid không bao giờ được cấp lại → dòng ngoài phạm vi chưa từng có
-     * trong bản sao, bỏ qua hẳn được. Bảng khác: rowid có thể được dùng lại → phải gửi lệnh xoá (xem Segment.packSegment).
+     * AUTOINCREMENT table (listed in sqlite_sequence): a rowid is never issued again → a row outside the scope has never
+     * been in the copy, so it can be skipped entirely. Other tables: a rowid can be reused → a delete command must be sent (see Segment.packSegment).
      */
     neverReusesRowids(table: string): boolean {
         return this.noReuse.has(table.toLowerCase());
     }
 
-    /** value = giá trị cột `p.column` của dòng. */
+    /** value = the value of column `p.column` in the row. */
     private accountIn(p: ResolvedScopePolicy, value: unknown): boolean {
         const keep = this.keep;
         if (!keep) return true;
@@ -328,7 +328,7 @@ export class RowScope {
         if (id === null) return true;
         if (p.kind === 'account') return keep.has(id);
         if (p.kind === 'fbAccount') {
-            if (keep.has(id)) return true; // Facebook kiểu cũ: cột chứa thẳng id tài khoản
+            if (keep.has(id)) return true; // Old-style Facebook: the column holds the account id directly
             if (!p.parent || !p.parentKey) return false;
         }
         const parent = p.parent as ResolvedScopePolicy;
@@ -336,13 +336,13 @@ export class RowScope {
         const hit = this.cache.get(cacheKey);
         if (hit !== undefined) return hit;
         const found = this.lookup(parent, p.parentKey as string, value);
-        // fbAccount: không có fb_accounts tương ứng → id lạ, không được chọn. parent: không còn dòng cha → không biết chủ → giữ.
+        // fbAccount: no matching fb_accounts row → an unknown id, cannot be selected. parent: no parent row left → owner unknown → keep.
         const res = found === undefined ? p.kind === 'parent' : this.accountIn(parent, found);
         this.cache.set(cacheKey, res);
         return res;
     }
 
-    /** Giá trị cột tài khoản/khoá của dòng cha; undefined = không có dòng cha. */
+    /** The account/key column values of the parent row; undefined = no parent row. */
     private lookup(parent: ResolvedScopePolicy, key: string, value: unknown): unknown {
         const sql = `SELECT ${quoteIdent(parent.column)} AS v FROM ${quoteIdent(parent.table)} WHERE ${quoteIdent(key)} = ? LIMIT 1`;
         let st = this.stmts.get(sql);

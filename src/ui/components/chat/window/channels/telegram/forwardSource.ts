@@ -1,10 +1,11 @@
 /**
- * Telegram: nguồn của tin chuyển tiếp ("Chuyển tiếp từ <nguồn>"): tên lưu kèm tin; không có thì tra liên hệ / thành
- * viên nhóm; tin của chính mình → "Bạn". Kênh khác: telegramForward = null.
+ * Telegram: source of a forwarded message ("Chuyển tiếp từ <nguồn>" (Forwarded from <source>)): the name is stored with the message; if missing, look up the contact or
+ * group member; a message from yourself → "Bạn" (You). Other channels: telegramForward = null.
  */
 import { getTelegramForwardMeta } from '@/lib/media/mediaResolver';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import type { MessageRowContext } from '../../rows/rowContext';
+import { tr } from '../../../../../../shared/i18n';
 
 export function resolveTelegramForward(
   { activeAccountId, getContact, getGroupMember }: Pick<MessageRowContext, 'activeAccountId' | 'getContact' | 'getGroupMember'>,
@@ -14,11 +15,11 @@ export function resolveTelegramForward(
   const forwardKnown = telegramForward?.fromId ? (getContact(telegramForward.fromId) || getGroupMember(telegramForward.fromId)) as any : null;
   const forwardKnownName = String(forwardKnown?.alias || forwardKnown?.display_name || forwardKnown?.displayName || '');
   const forwardName = !telegramForward ? ''
-    : telegramForward.fromId && telegramForward.fromId === activeAccountId ? 'Bạn'
+    : telegramForward.fromId && telegramForward.fromId === activeAccountId ? tr('Bạn')
     : telegramForward.fromName
       || (forwardKnownName && forwardKnownName !== telegramForward.fromId ? forwardKnownName : '')
       || (telegramForward.fromUsername ? `@${telegramForward.fromUsername}` : '')
-      || (telegramForward.fromType === 'channel' ? 'Kênh Telegram' : telegramForward.fromType === 'chat' ? 'Nhóm Telegram' : 'Người dùng Telegram');
+      || (telegramForward.fromType === 'channel' ? tr('Kênh Telegram') : telegramForward.fromType === 'chat' ? tr('Nhóm Telegram') : tr('Người dùng Telegram'));
   const forwardAvatar = telegramForward ? toLocalMediaUrl(forwardKnown?.avatar_url || forwardKnown?.avatar || '') : '';
   return { telegramForward, forwardName, forwardAvatar };
 }

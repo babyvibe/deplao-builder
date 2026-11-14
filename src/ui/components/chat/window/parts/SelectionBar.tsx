@@ -1,5 +1,5 @@
 /**
- * Thanh chọn nhiều tin: sao chép, tạo task / thêm vào lịch / lưu ghi chú, chuyển tiếp.
+ * Multi-select bar: copy, create a task / add to calendar / save as a note, forward.
  */
 import { CalendarIcon, CheckSquareIcon, FileTextIcon } from '@/components/common/icons';
 import { messageImageSource } from '@/lib/chat/erp/messageTaskImages';
@@ -9,6 +9,8 @@ import type { useQuickErpAccess } from '@/hooks/erp/useQuickErpAccess';
 import type { OpenThread } from '../hooks/useOpenThread';
 import type { MessageSelection } from '../hooks/useMessageSelection';
 import type { ChatWindowDialogs } from '../hooks/useChatWindowDialogs';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type SelectionBarProps = Pick<OpenThread, 'msgs' | 'channelCap' | 'showNotification'>
   & Pick<MessageSelection, 'selectedMsgIds' | 'setIsSelecting' | 'setSelectedMsgIds'>
@@ -23,7 +25,7 @@ export function SelectionBar({ channelCap, erpAccess, msgs, selectedMsgIds, setE
           className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
-        <span className="text-sm text-blue-400 font-medium">Đã chọn {selectedMsgIds.size} tin nhắn</span>
+        <span className="text-sm text-blue-400 font-medium">{trx('Đã chọn {{count}} tin nhắn', { count: selectedMsgIds.size })}</span>
       </div>
       <div className="flex items-center gap-1.5">
         <button onClick={() => {
@@ -32,25 +34,25 @@ export function SelectionBar({ channelCap, erpAccess, msgs, selectedMsgIds, setE
           const texts = selectedMsgs.map(m => extractMsgText(m)).filter(t => t && t !== '[Tin nhắn]');
           if (texts.length > 0) {
             navigator.clipboard.writeText(texts.join('\n'));
-            showNotification(`Đã sao chép ${texts.length} tin nhắn`, 'success');
+            showNotification(tr('Đã sao chép {{count}} tin nhắn', { count: texts.length }), 'success');
           } else {
-            showNotification('Không có tin nhắn văn bản nào được chọn', 'info');
+            showNotification(tr('Không có tin nhắn văn bản nào được chọn'), 'info');
           }
         }}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-muted text-foreground/80 hover:text-foreground text-xs transition-colors">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-          Sao chép
+          {tr('Sao chép')}
         </button>
-        {/* Quản lý công việc: các tin đã chọn → một task (nội dung = chữ + ảnh) / một lịch hẹn (ghi chú = nội dung các tin)
-            / một ghi chú */}
+        {/* Task management: the selected messages → one task (content = text + photos) / one calendar appointment (note = the content of the messages)
+            / one note */}
         {(['task', 'event', 'note'] as const).filter(kind => erpAccess[kind]).map(kind => (
           <button key={kind} onClick={() => {
             const selectedMsgs = msgs.filter(m => selectedMsgIds.has(m.msg_id))
               .sort((a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0));
             const hasText = selectedMsgs.some(m => { const t = extractMsgText(m); return t && t !== '[Tin nhắn]'; });
-            // Task lấy cả ảnh của tin
+            // The task takes the message's photos too
             if (!hasText && !(kind === 'task' && selectedMsgs.some(m => messageImageSource(m)))) {
-              showNotification(kind === 'task' ? 'Các tin đã chọn không có chữ hoặc ảnh' : 'Các tin đã chọn không có nội dung chữ', 'info');
+              showNotification(kind === 'task' ? tr('Các tin đã chọn không có chữ hoặc ảnh') : tr('Các tin đã chọn không có nội dung chữ'), 'info');
               return;
             }
             setErpDraft({ kind, msgs: selectedMsgs });
@@ -59,20 +61,20 @@ export function SelectionBar({ channelCap, erpAccess, msgs, selectedMsgIds, setE
           }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-muted text-foreground/80 hover:text-foreground text-xs transition-colors">
             {kind === 'task' ? <CheckSquareIcon className="w-3.5 h-3.5" /> : kind === 'event' ? <CalendarIcon className="w-3.5 h-3.5" /> : <FileTextIcon className="w-3.5 h-3.5" />}
-            {kind === 'task' ? 'Tạo task' : kind === 'event' ? 'Thêm vào lịch' : 'Lưu ghi chú'}
+            {kind === 'task' ? tr('Tạo task') : kind === 'event' ? tr('Thêm vào lịch') : tr('Lưu ghi chú')}
           </button>
         ))}
         {channelCap.supportsForward && (
           <button onClick={() => {
             const selectedMsgs = msgs.filter(m => selectedMsgIds.has(m.msg_id));
-            // Cuộc gọi, bình chọn, tin hệ thống… không chuyển tiếp được → bỏ ra trước khi chọn người nhận
+            // Calls, polls, system messages… cannot be forwarded → removed before choosing the recipient
             const forwardable = selectedMsgs.filter(m => !getForwardBlockReason(m));
             const skipped = selectedMsgs.length - forwardable.length;
             if (skipped > 0) {
               showNotification(
                 forwardable.length > 0
-                  ? `Bỏ qua ${skipped} tin không chuyển tiếp được (cuộc gọi, bình chọn, tin hệ thống…)`
-                  : 'Các tin đã chọn không chuyển tiếp được (cuộc gọi, bình chọn, tin hệ thống…)',
+                  ? tr('Bỏ qua {{skipped}} tin không chuyển tiếp được (cuộc gọi, bình chọn, tin hệ thống…)', { skipped })
+                  : tr('Các tin đã chọn không chuyển tiếp được (cuộc gọi, bình chọn, tin hệ thống…)'),
                 'info',
               );
             }
@@ -84,7 +86,7 @@ export function SelectionBar({ channelCap, erpAccess, msgs, selectedMsgIds, setE
           }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 014-4h12"/></svg>
-            Chuyển tiếp
+            {tr('Chuyển tiếp')}
           </button>
         )}
       </div>

@@ -1,6 +1,6 @@
 /**
- * BaseChannelAdapter.ts - Base class xử lý "không hỗ trợ" tập trung
- * Adapter con chỉ override đúng method mình hỗ trợ.
+ * BaseChannelAdapter.ts - Base class that handles "không hỗ trợ" (not supported) centrally
+ * Child adapters only override the methods they support.
  */
 
 import {
@@ -28,28 +28,29 @@ import {
   PollParams,
 } from './ChannelAdapter';
 import { Channel } from '../../../../configs/channels/channelConfig';
+import { tr } from '../../../../shared/i18n';
 
 export abstract class BaseChannelAdapter implements ChannelAdapter {
   abstract readonly channel: Channel;
 
   protected notSupported(action: string): ActionResult {
-    return { success: false, error: `${this.channel} không hỗ trợ ${action}` };
+    return { success: false, error: tr('{{channel}} không hỗ trợ {{action}}', { channel: this.channel, action }) };
   }
 
   async sendMessage(_params: SendMessageParams): Promise<ActionResult> {
-    return this.notSupported('gửi tin nhắn');
+    return this.notSupported(tr('gửi tin nhắn'));
   }
 
   async sendAttachment(_params: SendAttachmentParams): Promise<ActionResult> {
-    return this.notSupported('gửi file');
+    return this.notSupported(tr('gửi file'));
   }
 
   async sendVideo(_params: SendVideoParams): Promise<ActionResult> {
-    return this.notSupported('gửi video');
+    return this.notSupported(tr('gửi video'));
   }
 
   async unsendMessage(_params: UnsendParams): Promise<ActionResult> {
-    return this.notSupported('thu hồi tin nhắn');
+    return this.notSupported(tr('thu hồi tin nhắn'));
   }
 
   async addReaction(_params: ReactionParams): Promise<ActionResult> {
@@ -73,38 +74,38 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   }
 
   async connectAccount(_params: ConnectParams): Promise<ActionResult> {
-    return this.notSupported('kết nối tài khoản');
+    return this.notSupported(tr('kết nối tài khoản'));
   }
 
   async disconnectAccount(_params: DisconnectParams): Promise<ActionResult> {
-    return this.notSupported('ngắt kết nối');
+    return this.notSupported(tr('ngắt kết nối'));
   }
 
   async checkHealth(_params: HealthParams): Promise<HealthResult> {
-    return { success: false, alive: false, error: `${this.channel} không hỗ trợ health check` };
+    return { success: false, alive: false, error: tr('{{channel}} không hỗ trợ health check', { channel: this.channel }) };
   }
 
   async changeGroupName(_params: GroupNameParams): Promise<ActionResult> {
-    return this.notSupported('đổi tên nhóm');
+    return this.notSupported(tr('đổi tên nhóm'));
   }
 
   async blockUser(_params: BlockParams): Promise<ActionResult> {
-    return this.notSupported('chặn người dùng');
+    return this.notSupported(tr('chặn người dùng'));
   }
 
   async unblockUser(_params: BlockParams): Promise<ActionResult> {
-    return this.notSupported('bỏ chặn người dùng');
+    return this.notSupported(tr('bỏ chặn người dùng'));
   }
 
   async forwardMessage(_params: ForwardParams): Promise<ActionResult> {
-    return this.notSupported('chuyển tiếp tin nhắn');
+    return this.notSupported(tr('chuyển tiếp tin nhắn'));
   }
 
   async editMessage(_params: EditParams): Promise<ActionResult> {
-    return this.notSupported('chỉnh sửa tin nhắn');
+    return this.notSupported(tr('chỉnh sửa tin nhắn'));
   }
 
   async createPoll(_params: PollParams): Promise<ActionResult> {
-    return this.notSupported('tạo bình chọn');
+    return this.notSupported(tr('tạo bình chọn'));
   }
 }

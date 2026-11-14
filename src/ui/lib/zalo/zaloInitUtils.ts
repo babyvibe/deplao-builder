@@ -3,8 +3,8 @@
  *
  * Account first-run initialization - syncs friends, labels, quick messages and
  * groups when a new (or previously-unseen) account first accesses the Chat view.
- * Lịch sử tin nhắn KHÔNG tải ở đây: người dùng chủ động bấm "Đồng bộ tin nhắn từ điện thoại"
- * trên topbar (AccountInitPanel hiện gợi ý). "Tin nhắn cũ" (requestOldMessages) đã bỏ.
+ * Message history is NOT loaded here: the user clicks "Đồng bộ tin nhắn từ điện thoại"
+ * on the topbar (AccountInitPanel shows a hint). "Tin nhắn cũ" (old messages, requestOldMessages) has been removed.
  *
  * ┌─ runAccountInit ──────────────────────────────────────────────────────────┐
  * │  checks localStorage guard → checkAccountInitNeeds (fast DB reads)       │
@@ -12,7 +12,7 @@
  * │      friends          (getFriends API → saveFriends DB)                  │
  * │      labels           (getLabels API  → appStore.setLabels)              │
  * │      quickMessages    (getQuickMessageList API → bulkReplaceLocalQM DB)  │
- * │      groups           (syncZaloGroups: nhóm → thành viên)                │
+ * │      groups           (syncZaloGroups: groups → members)                 │
  * │  → marks account as initialized in localStorage                          │
  * └───────────────────────────────────────────────────────────────────────────┘
  */
@@ -28,6 +28,7 @@ import { syncZaloGroups, SyncGroupsProgress } from './zaloGroupUtils';
 import { syncZaloLabelsToLocalDB } from '../labels/labelUtils';
 import { extractUserProfile } from '../../../utils/zalo/profileUtils';
 import { fetchAllAliases } from './zaloAliasUtils';
+import { tr } from '../../../shared/i18n';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -162,8 +163,8 @@ function _wasLocalDataRecentlyVerified(zaloId: string): boolean {
  * the check is skipped for the next 24 h.
  */
 export async function checkAccountInitNeeds(zaloId: string): Promise<InitNeeds> {
-  // Nhân viên: đồng bộ ban đầu (bạn bè, nhãn, tin nhắn nhanh, nhóm) là việc của Boss — dữ liệu đọc từ Boss.
-  // Trước đây "không chạy" chỉ nhờ ipc.db.getContacts trả stub làm `.filter` ném lỗi bị nuốt.
+  // Employee: the initial sync (friends, labels, quick messages, groups) is the owner's machine's job; the data is read from the owner's machine.
+  // Previously "không chạy" (did not run) only happened because ipc.db.getContacts returned a stub and the `.filter` call threw an error that was swallowed.
   if (useEmployeeStore.getState().mode === 'employee') {
     return { friends: false, labels: false, quickMessages: false, groups: false, any: false };
   }
@@ -201,8 +202,8 @@ export async function checkAccountInitNeeds(zaloId: string): Promise<InitNeeds> 
     ? (localLabelsRes.value?.labels?.length ?? 0)
     : 0;
 
-  // Lỗi đọc (employee: mất kết nối BOSS) ≠ bảng trống: không kích hoạt đồng bộ lại (đồng bộ có thể thay / sao chép
-  // dữ liệu thật trên BOSS) và không đóng dấu "đã kiểm tra" — lần sau kiểm tra lại.
+  // A read error (employee: lost connection to the owner's machine) is not an empty table: it does not trigger a re-sync (a sync could replace / copy
+  // real data on the owner's machine) and does not stamp "đã kiểm tra" (checked): the next time it checks again.
   const readFailed = (r: PromiseSettledResult<any>) => r.status === 'fulfilled' && isReadFailure(r.value);
   const unverified = readFailed(friendsRes) || readFailed(qmRes) || readFailed(localLabelsRes);
 
@@ -229,7 +230,7 @@ async function _syncFriends(
   auth: any,
   onProgress: (u: InitTaskProgress) => void,
 ): Promise<void> {
-  onProgress({ task: 'friends', status: 'running', detail: 'Đang tải danh sách bạn bè...' });
+  onProgress({ task: 'friends', status: 'running', detail: tr('Đang tải danh sách bạn bè...') });
   try {
     const res = await ipc.zalo?.getFriends(auth);
     const data = res?.response;
@@ -252,7 +253,7 @@ async function _syncFriends(
       onProgress({
         task: 'friends', status: 'running',
         current: normalized.length, total: normalized.length,
-        detail: 'Đang cập nhật biệt danh bạn bè...',
+        detail: tr('Đang cập nhật biệt danh bạn bè...'),
       });
       let aliasCount = 0;
       try {
@@ -274,7 +275,7 @@ async function _syncFriends(
       // ── Step 3: Batch fetch gender/birthday via getUserInfo ──────────────
       onProgress({
         task: 'friends', status: 'running',
-        detail: 'Đang tải giới tính & sinh nhật bạn bè...',
+        detail: tr('Đang tải giới tính & sinh nhật bạn bè...'),
       });
       let profileCount = 0;
       const BATCH_SIZE = 40;
@@ -312,7 +313,7 @@ async function _syncFriends(
             task: 'friends', status: 'running',
             current: Math.min(i + BATCH_SIZE, normalized.length),
             total: normalized.length,
-            detail: `Đang tải hồ sơ ${Math.min(i + BATCH_SIZE, normalized.length)}/${normalized.length}...`,
+            detail: tr('Đang tải hồ sơ {{v1}}/{{count}}...', { v1: Math.min(i + BATCH_SIZE, normalized.length), count: normalized.length }),
           });
           // Small delay between batches to avoid rate limiting
           if (i + BATCH_SIZE < normalized.length) {
@@ -324,19 +325,19 @@ async function _syncFriends(
       }
 
       // ── Done ────────────────────────────────────────────────────────────
-      const details: string[] = [`${normalized.length} bạn bè`];
-      if (aliasCount > 0) details.push(`${aliasCount} biệt danh`);
-      if (profileCount > 0) details.push(`${profileCount} hồ sơ`);
+      const details: string[] = [tr('{{count}} bạn bè', { count: normalized.length })];
+      if (aliasCount > 0) details.push(tr('{{aliasCount}} biệt danh', { aliasCount }));
+      if (profileCount > 0) details.push(tr('{{profileCount}} hồ sơ', { profileCount }));
       onProgress({
         task: 'friends', status: 'done',
         total: normalized.length, current: normalized.length,
         detail: details.join(', '),
       });
     } else {
-      onProgress({ task: 'friends', status: 'done', detail: 'Không có bạn bè' });
+      onProgress({ task: 'friends', status: 'done', detail: tr('Không có bạn bè') });
     }
   } catch (err: any) {
-    onProgress({ task: 'friends', status: 'error', detail: err?.message || 'Lỗi tải bạn bè' });
+    onProgress({ task: 'friends', status: 'error', detail: err?.message || tr('Lỗi tải bạn bè') });
   }
 }
 
@@ -347,7 +348,7 @@ async function _syncLabels(
   auth: any,
   onProgress: (u: InitTaskProgress) => void,
 ): Promise<void> {
-  onProgress({ task: 'labels', status: 'running', detail: 'Đang tải nhãn...' });
+  onProgress({ task: 'labels', status: 'running', detail: tr('Đang tải nhãn...') });
   try {
     // Check if this is a Zalo account
     const accounts = useChatStore.getState().contacts;
@@ -381,25 +382,25 @@ async function _syncLabels(
       }
 
       const details: string[] = [];
-      if (zaloLabelCount > 0) details.push(`${zaloLabelCount} nhãn Zalo`);
-      if (zaloToLocalCount > 0) details.push(`${zaloToLocalCount} nhãn → local DB`);
+      if (zaloLabelCount > 0) details.push(tr('{{zaloLabelCount}} nhãn Zalo', { zaloLabelCount }));
+      if (zaloToLocalCount > 0) details.push(tr('{{zaloToLocalCount}} nhãn → local DB', { zaloToLocalCount }));
       onProgress({
         task: 'labels', status: 'done',
         total: zaloLabelCount, current: zaloLabelCount,
-        detail: details.length > 0 ? details.join(', ') : 'Không có nhãn',
+        detail: details.length > 0 ? details.join(', ') : tr('Không có nhãn'),
       });
     } else {
-      // ── Facebook/Telegram: tạo nhãn mặc định ────────────────────────────
+      // ── Facebook/Telegram: create default labels ────────────────────────────
       const createdCount = await createDefaultLabels(activeAccountId);
       onProgress({
         task: 'labels', status: 'done',
         total: DEFAULT_NON_ZALO_LABELS.length,
         current: createdCount,
-        detail: `Đã tạo ${createdCount} nhãn mặc định`,
+        detail: tr('Đã tạo {{createdCount}} nhãn mặc định', { createdCount }),
       });
     }
   } catch (err: any) {
-    onProgress({ task: 'labels', status: 'error', detail: err?.message || 'Lỗi tải nhãn' });
+    onProgress({ task: 'labels', status: 'error', detail: err?.message || tr('Lỗi tải nhãn') });
   }
 }
 
@@ -408,7 +409,7 @@ async function _syncQuickMessages(
   auth: any,
   onProgress: (u: InitTaskProgress) => void,
 ): Promise<void> {
-  onProgress({ task: 'quickMessages', status: 'running', detail: 'Đang tải tin nhắn nhanh...' });
+  onProgress({ task: 'quickMessages', status: 'running', detail: tr('Đang tải tin nhắn nhanh...') });
   try {
     const res = await ipc.zalo?.getQuickMessageList({ auth });
     const items: any[] = res?.response?.items ?? [];
@@ -424,7 +425,7 @@ async function _syncQuickMessages(
       onProgress({
         task: 'quickMessages', status: 'done',
         total: items.length, current: items.length,
-        detail: `${items.length} tin nhắn nhanh`,
+        detail: tr('{{count}} tin nhắn nhanh', { count: items.length }),
       });
     } else {
       // ── Zalo API returned 0 → try to clone from another account ─────────
@@ -444,14 +445,14 @@ async function _syncQuickMessages(
         onProgress({
           task: 'quickMessages', status: 'done',
           total: cnt, current: cnt,
-          detail: `Đã sao chép ${cnt} tin nhắn nhanh`,
+          detail: tr('Đã sao chép {{cnt}} tin nhắn nhanh', { cnt }),
         });
       } else {
-        onProgress({ task: 'quickMessages', status: 'done', detail: 'Không có tin nhắn nhanh' });
+        onProgress({ task: 'quickMessages', status: 'done', detail: tr('Không có tin nhắn nhanh') });
       }
     }
   } catch (err: any) {
-    onProgress({ task: 'quickMessages', status: 'error', detail: err?.message || 'Lỗi tải tin nhắn nhanh' });
+    onProgress({ task: 'quickMessages', status: 'error', detail: err?.message || tr('Lỗi tải tin nhắn nhanh') });
   }
 }
 
@@ -509,7 +510,7 @@ export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
       // Phase 1: Sync groups (if needed)
       if (needs.groups) {
         onProgress('groups', {
-          task: 'groups', status: 'running', detail: 'Đang đồng bộ nhóm...',
+          task: 'groups', status: 'running', detail: tr('Đang đồng bộ nhóm...'),
         });
         try {
           await syncZaloGroups({
@@ -524,8 +525,8 @@ export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
                 total:   p.phase === 'groups' ? p.total   : (p.groupTotal   ?? 1),
                 detail:
                   p.phase === 'groups'
-                    ? `Đồng bộ nhóm ${p.current}/${p.total}`
-                    : `Tải thành viên${p.currentGroupName ? ': ' + p.currentGroupName : ''}`,
+                    ? tr('Đồng bộ nhóm {{current}}/{{total}}', { current: p.current, total: p.total })
+                    : tr('Tải thành viên{{v1}}', { v1: p.currentGroupName ? ': ' + p.currentGroupName : '' }),
                 groupProgress: p,
               });
             },
@@ -533,11 +534,11 @@ export async function runAccountInit(opts: AccountInitOptions): Promise<void> {
               // onProgress is already called inside the syncZaloGroups onProgress callback.
             },
           });
-          onProgress('groups', { task: 'groups', status: 'done', detail: 'Đã đồng bộ nhóm' });
+          onProgress('groups', { task: 'groups', status: 'done', detail: tr('Đã đồng bộ nhóm') });
         } catch (err: any) {
           onProgress('groups', {
             task: 'groups', status: 'error',
-            detail: err?.message || 'Lỗi đồng bộ nhóm',
+            detail: err?.message || tr('Lỗi đồng bộ nhóm'),
           });
         }
       }

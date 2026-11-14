@@ -3,6 +3,8 @@ import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { submitSharedGroup, scanGroupViaBackend, DEFAULT_CATEGORIES, type SharedGroupCategory } from '@/lib/crm/backendService';
 import { ensureHiddenScanConsent } from './HiddenScanConsentDialog';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── Icons ──────────────────────────────────────────────────────────────────
 
@@ -34,11 +36,11 @@ const CloseIcon = (
 // ─── Category Mapping ────────────────────────────────────────────────────────
 
 const CATEGORY_MAP: Record<string, number> = {
-  // 3 nhóm mới
+  // 3 new groups
   'game sạch': 18, 'game bẩn': 18, 'game': 18,
   'crypto coin trade': 19, 'crypto': 19, 'coin': 19, 'trade': 19,
   'tạp hóa': 20,
-  // Map vào category có sẵn
+  // Map into an existing category
   'thời trang': 8, 'mẹ và bé': 11, 'bđs': 2, 'bất động sản': 2,
   'làm đẹp': 9, 'nước hoa': 9, 'gia dụng': 12, 'nội thất': 12,
   'đồ chơi': 99, 'maketing. mmo': 4, 'marketing': 4, 'mmo': 4,
@@ -171,7 +173,7 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
     const colLinhVuc = findCol('lĩnh vực', 'linh vuc');
 
     if (!colLink) {
-      alert('Không tìm thấy cột "Link Nhóm Zalo" trong CSV');
+      alert(tr('Không tìm thấy cột "Link Nhóm Zalo" trong CSV'));
       return;
     }
 
@@ -184,7 +186,7 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
         csvName: colTen ? row[colTen] || '' : '',
         lineVuc: colLinhVuc ? row[colLinhVuc] || '' : '',
         status: (groupId ? 'pending' : 'skipped') as 'pending' | 'skipped',
-        error: groupId ? undefined : 'Link không hợp lệ',
+        error: groupId ? undefined : tr('Link không hợp lệ'),
       };
     }).filter(g => g.groupId); // Only keep valid groups
 
@@ -196,10 +198,10 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
   const handleStartImport = useCallback(async () => {
     const acc = useAccountStore.getState().getActiveAccount();
     if (!acc) {
-      alert('Không tìm thấy tài khoản Zalo đang đăng nhập');
+      alert(tr('Không tìm thấy tài khoản Zalo đang đăng nhập'));
       return;
     }
-    // Đếm thành viên từng nhóm = quét qua máy chủ Deplao (gửi cookie Zalo) → hỏi đồng ý một lần cho cả lượt nhập
+    // Counting members of each group = scanning through the Deplao server (sends the Zalo cookie) → ask consent once for the whole import run
     if (!(await ensureHiddenScanConsent({ accountName: acc.full_name || acc.zalo_id }))) return;
 
     setStep('importing');
@@ -212,14 +214,14 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
 
     for (let i = 0; i < groups.length; i++) {
       const group = groups[i];
-      setProgress({ current: i + 1, total: groups.length, phase: `Đang tra cứu: ${group.csvName || group.groupId}` });
+      setProgress({ current: i + 1, total: groups.length, phase: tr('Đang tra cứu: {{v1}}', { v1: group.csvName || group.groupId }) });
 
-      // Flow: Join nhóm → Scan backend → Lấy số TV → Submit
+      // Flow: Join group → Scan backend → Get the member count → Submit
       try {
         const linkUrl = group.link.startsWith('http') ? group.link : `https://zalo.me/g/${group.groupId}`;
 
-        // Step 1: Join nhóm (để có quyền truy cập)
-        setProgress({ current: i + 1, total: groups.length, phase: `Đang tham gia: ${group.csvName || group.groupId}` });
+        // Step 1: Join the group (to get access)
+        setProgress({ current: i + 1, total: groups.length, phase: tr('Đang tham gia: {{v1}}', { v1: group.csvName || group.groupId }) });
         let joinedGroupId = '';
 
         try {
@@ -230,18 +232,18 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
             group.avatar = joinRes.response.fullAvt || joinRes.response.avt || '';
           }
         } catch (joinErr: any) {
-          // Có thể đã là thành viên hoặc nhóm không tồn tại → tiếp tục
+          // Might already be a member, or the group does not exist → continue
           console.log(`[BulkImport] Join error for ${group.groupId}:`, joinErr.message);
         }
 
-        // Step 2: Scan backend để lấy số thành viên
-        setProgress({ current: i + 1, total: groups.length, phase: `Đang quét: ${group.csvName || group.groupId}` });
+        // Step 2: Scan backend to get the member count
+        setProgress({ current: i + 1, total: groups.length, phase: tr('Đang quét: {{v1}}', { v1: group.csvName || group.groupId }) });
 
-        // Backend cần numeric groupId, thử dùng joinedGroupId hoặc gọi getGroupLinkInfo 1 lần
+        // The backend needs a numeric groupId; try joinedGroupId, or call getGroupLinkInfo once
         let numericGroupId = joinedGroupId;
 
         if (!numericGroupId || !/^\d+$/.test(numericGroupId)) {
-          // Gọi getGroupLinkInfo để lấy numeric ID (chậm hơn để tránh rate limit)
+          // Call getGroupLinkInfo to get the numeric ID (slower, to avoid the rate limit)
           try {
             const linkInfoRes: any = await ipc.zalo?.getGroupLinkInfo({ auth, link: linkUrl, memberPage: 1 });
             if (linkInfoRes?.success && linkInfoRes?.response) {
@@ -254,7 +256,7 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
           }
         }
 
-        // Scan backend nếu có numeric ID
+        // Scan backend if there is a numeric ID
         let memberCount = 0;
         if (numericGroupId && /^\d+$/.test(numericGroupId)) {
           try {
@@ -287,14 +289,14 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
         // Filter by min members
         if (memberCount < minMembers) {
           group.status = 'skipped';
-          group.error = memberCount > 0 ? `Chỉ có ${memberCount} thành viên (< ${minMembers})` : 'Không lấy được số thành viên';
+          group.error = memberCount > 0 ? tr('Chỉ có {{memberCount}} thành viên (< {{minMembers}})', { memberCount, minMembers }) : tr('Không lấy được số thành viên');
           skippedCount++;
         } else {
           // Submit to backend
           try {
             if (!/^\d+$/.test(finalGroupId)) {
               group.status = 'error';
-              group.error = `group_id "${finalGroupId}" không hợp lệ (phải là số)`;
+              group.error = tr('group_id "{{finalGroupId}}" không hợp lệ (phải là số)', { finalGroupId });
               errorCount++;
             } else {
               const submitRes = await submitSharedGroup({
@@ -305,7 +307,7 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
                 groupLink: linkUrl,
                 memberCount,
                 categoryId,
-                note: `[Bulk import] Lĩnh vực: ${group.lineVuc || 'N/A'}`,
+                note: tr('[Bulk import] Lĩnh vực: {{v1}}', { v1: group.lineVuc || 'N/A' }),
               });
 
               if (submitRes.success) {
@@ -313,7 +315,7 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
                 successCount++;
               } else {
                 group.status = 'error';
-                group.error = submitRes.message || 'Lỗi submit';
+                group.error = submitRes.message || tr('Lỗi submit');
                 errorCount++;
               }
             }
@@ -331,7 +333,7 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
 
       // Update state for re-render
       setGroups([...groups]);
-      await sleep(30000); // Rate limit 30s giữa mỗi nhóm để tránh bị chặn
+      await sleep(30000); // 30 s rate limit between groups to avoid being blocked
     }
 
     setResult({ success: successCount, error: errorCount, skipped: skippedCount });
@@ -355,12 +357,12 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
             </svg>
           </div>
           <div className="flex-1">
-            <h3 className="font-semibold text-foreground text-sm">Nhập hàng loạt nhóm Zalo</h3>
+            <h3 className="font-semibold text-foreground text-sm">{tr('Nhập hàng loạt nhóm Zalo')}</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {step === 'upload' && 'Chọn file CSV chứa danh sách nhóm'}
-              {step === 'preview' && `${groups.length} nhóm hợp lệ sẽ được xử lý`}
-              {step === 'importing' && `Đang xử lý ${progress.current}/${progress.total}...`}
-              {step === 'result' && 'Hoàn tất'}
+              {step === 'upload' && tr('Chọn file CSV chứa danh sách nhóm')}
+              {step === 'preview' && tr('{{count}} nhóm hợp lệ sẽ được xử lý', { count: groups.length })}
+              {step === 'importing' && tr('Đang xử lý {{current}}/{{total}}...', { current: progress.current, total: progress.total })}
+              {step === 'result' && tr('Hoàn tất')}
             </p>
           </div>
           <button onClick={onClose} className="text-subtle-foreground hover:text-foreground/80 transition-colors p-1">
@@ -379,8 +381,8 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
                 className="border-2 border-dashed border-input hover:border-blue-500 rounded-xl p-8 text-center cursor-pointer transition-colors"
               >
                 <div className="text-muted-foreground mb-3">{UploadIcon}</div>
-                <p className="text-sm text-foreground/80 font-medium">Chọn file CSV</p>
-                <p className="text-xs text-subtle-foreground mt-1">hoặc kéo thả file vào đây</p>
+                <p className="text-sm text-foreground/80 font-medium">{tr('Chọn file CSV')}</p>
+                <p className="text-xs text-subtle-foreground mt-1">{tr('hoặc kéo thả file vào đây')}</p>
               </div>
               <input
                 ref={fileInputRef}
@@ -391,10 +393,10 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
               />
 
               <div className="text-xs text-subtle-foreground space-y-1">
-                <p className="font-medium text-muted-foreground">CSV cần có cột:</p>
-                <p>• <span className="text-foreground/80">Link Nhóm Zalo</span> (bắt buộc) — https://zalo.me/g/xxx</p>
-                <p>• <span className="text-foreground/80">Tên Nhóm Zalo</span> (tùy chọn)</p>
-                <p>• <span className="text-foreground/80">Lĩnh Vực</span> (tùy chọn) — để map category</p>
+                <p className="font-medium text-muted-foreground">{tr('CSV cần có cột:')}</p>
+                <p>{trx('• <0>Link Nhóm Zalo</0> (bắt buộc) — https://zalo.me/g/xxx', { 0: <span className="text-foreground/80" /> })}</p>
+                <p>{trx('• <0>Tên Nhóm Zalo</0> (tùy chọn)', { 0: <span className="text-foreground/80" /> })}</p>
+                <p>{trx('• <0>Lĩnh Vực</0> (tùy chọn) — để map category', { 0: <span className="text-foreground/80" /> })}</p>
               </div>
             </div>
           )}
@@ -406,17 +408,17 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
               <div className="flex gap-3 text-xs">
                 <div className="flex-1 bg-muted/50 rounded-lg p-3 text-center">
                   <p className="text-lg font-bold text-foreground">{groups.length}</p>
-                  <p className="text-muted-foreground">Nhóm hợp lệ</p>
+                  <p className="text-muted-foreground">{tr('Nhóm hợp lệ')}</p>
                 </div>
                 <div className="flex-1 bg-muted/50 rounded-lg p-3 text-center">
                   <p className="text-lg font-bold text-subtle-foreground">{minMembers}</p>
-                  <p className="text-muted-foreground">Tối thiểu TV</p>
+                  <p className="text-muted-foreground">{tr('Tối thiểu TV')}</p>
                 </div>
               </div>
 
               {/* Min members input */}
               <div className="flex items-center gap-2">
-                <label className="text-xs text-muted-foreground whitespace-nowrap">Tối thiểu thành viên:</label>
+                <label className="text-xs text-muted-foreground whitespace-nowrap">{tr('Tối thiểu thành viên:')}</label>
                 <input
                   type="number"
                   value={minMembers}
@@ -443,7 +445,7 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
                 ))}
                 {groups.length > 20 && (
                   <div className="px-3 py-2 text-center text-xs text-subtle-foreground">
-                    ... và {groups.length - 20} nhóm nữa
+                    {trx('... và {{v1}} nhóm nữa', { v1: groups.length - 20 })}
                   </div>
                 )}
               </div>
@@ -479,7 +481,7 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
                       {g.resolvedName || g.csvName || g.groupId}
                     </span>
                     {g.memberCount !== undefined && (
-                      <span className="text-subtle-foreground">{g.memberCount.toLocaleString('vi-VN')} TV</span>
+                      <span className="text-subtle-foreground">{trx('{{v1}} TV', { v1: g.memberCount.toLocaleString(appLocale()) })}</span>
                     )}
                     {g.error && <span className="text-subtle-foreground text-[10px] truncate max-w-[150px]">{g.error}</span>}
                   </div>
@@ -496,27 +498,27 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
                   {CheckIcon}
                 </div>
                 <div>
-                  <p className="text-sm text-green-400 font-semibold">Hoàn tất!</p>
+                  <p className="text-sm text-green-400 font-semibold">{tr('Hoàn tất!')}</p>
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-3 text-center text-xs">
                 <div className="bg-green-500/10 rounded-lg p-3">
                   <p className="text-lg font-bold text-green-400">{result.success}</p>
-                  <p className="text-muted-foreground">Thành công</p>
+                  <p className="text-muted-foreground">{tr('Thành công')}</p>
                 </div>
                 <div className="bg-red-500/10 rounded-lg p-3">
                   <p className="text-lg font-bold text-red-400">{result.error}</p>
-                  <p className="text-muted-foreground">Lỗi</p>
+                  <p className="text-muted-foreground">{tr('Lỗi')}</p>
                 </div>
                 <div className="bg-yellow-500/10 rounded-lg p-3">
                   <p className="text-lg font-bold text-yellow-400">{result.skipped}</p>
-                  <p className="text-muted-foreground">Bỏ qua</p>
+                  <p className="text-muted-foreground">{tr('Bỏ qua')}</p>
                 </div>
               </div>
 
               <p className="text-xs text-muted-foreground text-center">
-                Nhóm đã import sẽ có trạng thái "chờ duyệt" trên admin.
+                {tr('Nhóm đã import sẽ có trạng thái "chờ duyệt" trên admin.')}
               </p>
             </div>
           )}
@@ -526,12 +528,12 @@ export default function BulkImportGroupsModal({ pageId, onClose, onImported }: B
         <div className="flex gap-2 px-6 py-4 border-t border-border flex-shrink-0">
           <button onClick={onClose}
             className="flex-1 py-2.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent transition-colors">
-            {step === 'result' ? 'Đóng' : 'Hủy'}
+            {step === 'result' ? tr('Đóng') : tr('Hủy')}
           </button>
           {step === 'preview' && (
             <button onClick={handleStartImport}
               className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2">
-              🚀 Bắt đầu nhập ({groups.length} nhóm)
+              {trx('🚀 Bắt đầu nhập ({{count}} nhóm)', { count: groups.length })}
             </button>
           )}
         </div>

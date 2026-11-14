@@ -1,20 +1,20 @@
 /**
- * Ảnh đại diện chữ kiểu Telegram cho người / hội thoại chưa có ảnh: 2 chữ (từ đầu + từ cuối, bỏ emoji) trên dải màu theo
- * id — cùng màu với tên người đó trong tin nhắn, ở mọi kênh và mọi nơi (danh sách hội thoại, đầu khung chat, thành viên…).
- * Kích thước + cỡ chữ do nơi dùng truyền qua className (vd "w-10 h-10 text-sm").
+ * Telegram-style letter avatar for a person / conversation without a photo: 2 letters (first word + last word, emoji removed) on a color strip by
+ * id, the same color as that person's name in messages, everywhere in every channel (conversation list, chat window header, members…).
+ * The size + font size are passed by the caller through className (e.g. "w-10 h-10 text-sm").
  */
 import React from 'react';
 import { nameInitial, peerColorIndex, peerInitials } from '@/lib/chat/messages/peerStyle';
 
 export interface PeerInitialsProps {
-  /** id người dùng / hội thoại (quyết định màu); thiếu → màu theo tên */
+  /** User / conversation id (decides the color); missing → color by name */
   id?: string | number | null;
   name?: string | null;
   className?: string;
   title?: string;
-  /** Chữ khi tên rỗng */
+  /** Text when the name is empty */
   fallback?: string;
-  /** Ảnh rất nhỏ (≤ 20px): 1 chữ cho dễ đọc */
+  /** Very small image (≤ 20px): 1 letter so it is easier to read */
   single?: boolean;
   style?: React.CSSProperties;
 }

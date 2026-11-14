@@ -1,14 +1,14 @@
 /**
- * MediaRehydrate — đưa file media từ R2 về lại máy.
+ * MediaRehydrate: brings media files back from R2 to the machine.
  *
- *  - resolveMissing(absPath, { waitMs }): gọi từ local-media:// và route media của nhân viên khi file KHÔNG có trên máy.
- *    Chỉ file trong thư mục media của workspace đang mở mà chỉ mục ghi 'uploaded' / 'evicted' ('removed' = đã dọn khỏi
- *    R2 → không tải) → getObjectToFile về đúng đường dẫn gốc (đặt lại mtime gốc), state → 'uploaded', ghi lần mở. Gộp
- *    các yêu cầu trùng file; chờ tối đa waitMs (mặc định 60 s, kẹp 0…120 s) rồi trả null — lượt tải VẪN chạy tiếp ở nền
- *    (giữ trong inflight, không ghi "không có" vì nơi gọi thôi chờ) → lần sau có file ngay hoặc nhập vào cùng lượt tải.
- *    Không bao giờ ném.
- *  - rehydrateAll(): tải lại mọi file đã dọn ('evicted', rồi 'uploaded' mà máy không còn) — nền, 2 file song song,
- *    dừng khi ổ còn dưới 2 GB.
+ *  - resolveMissing(absPath, { waitMs }): called from local-media:// and from the employee media route when the file is NOT on the machine.
+ *    Only files inside the open workspace's media folder that the index records as 'uploaded' / 'evicted' ('removed' = cleaned from
+ *    R2 → not downloaded) → getObjectToFile to the exact original path (the original mtime is restored), state → 'uploaded', records the access time. Merges
+ *    duplicate requests for the same file; waits up to waitMs (default 60 s, clamped to 0…120 s) and then returns null: the download KEEPS RUNNING in the background
+ *    (kept in inflight; it does not record "not found" just because the caller stopped waiting) → next time the file is there at once, or it joins the same download.
+ *    Never throws.
+ *  - rehydrateAll(): re-downloads every cleaned file ('evicted', then 'uploaded' that the machine no longer has): in the background, 2 files in parallel,
+ *    stops when the disk has less than 2 GB free.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -19,12 +19,13 @@ import type { ContextSource, MediaContext } from './MediaContext';
 import {
     classifyR2Error, errorText, freeDiskBytes, GIB, LogFn, MINUTE, noLog, SECOND, sleep, storeLabelNow, withTimeout, yieldToLoop,
 } from './util';
+import { tr } from '../../../shared/i18n';
 
 export const RESOLVE_TIMEOUT_MS = MINUTE;
-/** Trần của waitMs do nơi gọi truyền vào. */
+/** Upper limit of the waitMs passed in by the caller. */
 export const RESOLVE_MAX_WAIT_MS = 2 * MINUTE;
-const NEGATIVE_TTL_MS = MINUTE;          // không có trong chỉ mục / chưa lên R2
-const SHORT_NEGATIVE_TTL_MS = 10 * SECOND; // lỗi tạm (R2 bận, mạng)
+const NEGATIVE_TTL_MS = MINUTE;          // not in the index / not yet on R2
+const SHORT_NEGATIVE_TTL_MS = 10 * SECOND; // temporary error (R2 busy, network)
 const NEGATIVE_MAX = 5000;
 const BULK_CONCURRENCY = 2;
 const BULK_MIN_FREE_BYTES = 2 * GIB;
@@ -39,11 +40,11 @@ export interface RehydrateFs {
 export interface RehydrateDeps {
     ctx: ContextSource;
     r2(bucket: string): R2Client;
-    /** Hàng đợi đang lùi vì R2 bận → không tải về lúc này. */
+    /** The queue is backing off because R2 is busy → no downloads for now. */
     isBackingOff(): boolean;
-    /** R2 bận khi tải về → lùi chung với hàng đợi tải lên. */
+    /** R2 busy while downloading → back off together with the upload queue. */
     onBusy(retryAfterMs?: number): void;
-    /** Thông báo cho người dùng (vd ổ đầy khi tải lại toàn bộ). */
+    /** Notification for the user (e.g. disk full while re-downloading everything). */
     onNotice?(message: string): void;
     onChange?(): void;
     now?(): number;
@@ -79,9 +80,9 @@ export class MediaRehydrate {
         return !!this.bulk;
     }
 
-    // ─── Theo yêu cầu ──────────────────────────────────────────────────
+    // ─── On request ──────────────────────────────────────────────────
 
-    /** Thời gian chờ: waitMs hợp lệ → kẹp [0, 120 s]; không có → mặc định (60 s, test đổi qua deps.timeoutMs). */
+    /** Wait time: a valid waitMs is clamped to [0, 120 s]; missing → default (60 s, tests change it via deps.timeoutMs). */
     private waitFor(opts?: { waitMs?: number }): number {
         const w = opts ? opts.waitMs : undefined;
         if (typeof w === 'number' && Number.isFinite(w)) return Math.min(RESOLVE_MAX_WAIT_MS, Math.max(0, Math.floor(w)));
@@ -106,7 +107,7 @@ export class MediaRehydrate {
                 job = this.lookupAndRestore(ctx, rel, key).finally(() => this.inflight.delete(key));
                 this.inflight.set(key, job);
             }
-            // Hết thời gian chờ chỉ trả null cho nơi gọi; lượt tải không bị huỷ, không ghi vào bộ nhớ "không có"
+            // When the wait times out, only the caller gets null; the download is not cancelled and nothing is recorded as "not found"
             return await withTimeout(job, this.waitFor(opts), null);
         } catch {
             return null;
@@ -138,8 +139,8 @@ export class MediaRehydrate {
     }
 
     /**
-     * Đường dẫn bất kỳ trong thư mục media → rel. Thư mục cha còn trên máy → lấy đúng hoa/thường qua realpath
-     * (chỉ mục lưu tên đúng như trên đĩa).
+     * Any path inside the media folder → rel. If the parent folder is still on the machine, get the correct case via realpath
+     * (the index stores names exactly as they are on disk).
      */
     private async relForMissing(ctx: MediaContext, absPath: string): Promise<string | null> {
         let abs = absPath;
@@ -156,7 +157,7 @@ export class MediaRehydrate {
                 const realDir = await this.fs.realpath(absPathFor(ctx.mediaRoot, rel.slice(0, slash)));
                 const relDir = relPathInRoot(ctx.realRoot, realDir);
                 if (relDir) rel = `${relDir}/${rel.slice(slash + 1)}`;
-            } catch { /* thư mục cha không còn → giữ nguyên */ }
+            } catch { /* parent folder gone → keep as is */ }
         }
         return rel;
     }
@@ -168,38 +169,38 @@ export class MediaRehydrate {
         return row;
     }
 
-    /** Tải một file về đúng chỗ cũ. null khi không tải được (R2 bận, không còn trên R2…). Có thể ném lỗi R2. */
+    /** Downloads one file to its original location. null when it cannot be downloaded (R2 busy, no longer on R2…). May throw an R2 error. */
     private async restore(ctx: MediaContext, row: MediaRow, canWrite: () => boolean): Promise<string | null> {
         const rel = row.rel_path;
         const target = absPathFor(ctx.mediaRoot, rel);
         try {
             const st = await this.fs.stat(target);
             if (st.isFile()) {
-                // Đã có trên máy (yêu cầu khác vừa tải xong / file được chép lại) — chỉ sửa trạng thái nếu đang ghi 'evicted'
+                // Already on the machine (another request just finished downloading it / the file was copied back) → only fix the state if it is recorded as 'evicted'
                 if (row.state === 'evicted' && canWrite()) ctx.index.markRestored(rel, this.now());
                 return target;
             }
-        } catch { /* chưa có → tải */ }
+        } catch { /* not there yet → download */ }
         if (this.deps.isBackingOff()) return null;
         await this.fs.mkdir(path.dirname(target), { recursive: true });
         const res = await this.deps.r2(ctx.bucket).getObjectToFile(objectKeyFor(ctx.workspaceUid, rel), target);
         if (!res) {
             this.log('warn', `[CloudMedia] Không còn trên R2: ${rel}`);
-            if (canWrite()) ctx.index.markMissing(rel, `Không còn bản trên ${storeLabelNow()}`);
+            if (canWrite()) ctx.index.markMissing(rel, tr('Không còn bản trên {{v1}}', { v1: storeLabelNow() }));
             return null;
         }
         if (Number(row.mtime_ms) > 0) {
-            // Giữ mtime gốc → lượt quét sau không coi là file mới / đã đổi (không tải lên lại)
-            try { await this.fs.utimes(target, new Date(), new Date(Number(row.mtime_ms))); } catch { /* bỏ qua */ }
+            // Keep the original mtime → the next scan does not treat it as a new / changed file (no re-upload)
+            try { await this.fs.utimes(target, new Date(), new Date(Number(row.mtime_ms))); } catch { /* ignore */ }
         }
         if (canWrite()) ctx.index.markRestored(rel, this.now());
         this.deps.onChange?.();
         return target;
     }
 
-    // ─── Tải lại toàn bộ ───────────────────────────────────────────────
+    // ─── Re-download everything ───────────────────────────────────────────────
 
-    /** Chạy nền (gọi lại khi đang chạy → dùng chung lượt đang chạy). */
+    /** Runs in the background (calling it while it runs → shares the run in progress). */
     rehydrateAll(isCurrent: () => boolean): Promise<void> {
         if (!this.bulk) {
             this.bulk = this.runBulk(isCurrent)
@@ -217,7 +218,7 @@ export class MediaRehydrate {
         const wait = this.deps.sleep || sleep;
         let restored = 0;
         let sinceSpaceCheck = Number.POSITIVE_INFINITY;
-        // 'evicted' = đã dọn khỏi máy; 'uploaded' mà máy không còn file (vd DB khôi phục sang máy mới)
+        // 'evicted' = cleaned off the machine; 'uploaded' but the machine no longer has the file (e.g. the DB was restored on a new machine)
         for (const state of ['evicted', 'uploaded'] as const) {
             let before: { mtime: number; rel: string } | undefined;
             for (;;) {
@@ -242,7 +243,7 @@ export class MediaRehydrate {
                         sinceSpaceCheck = 0;
                         const free = await freeBytes(ctx.realRoot);
                         if (free !== null && free < BULK_MIN_FREE_BYTES) {
-                            this.deps.onNotice?.(`Ổ đĩa còn dưới 2 GB — đã dừng tải lại media từ ${storeLabelNow()}.`);
+                            this.deps.onNotice?.(tr('Ổ đĩa còn dưới 2 GB — đã dừng tải lại media từ {{v1}}.', { v1: storeLabelNow() }));
                             return;
                         }
                     }

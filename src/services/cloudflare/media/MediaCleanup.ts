@@ -1,23 +1,23 @@
 /**
- * MediaCleanup — công cụ dọn file trên R2. Chỉ chạy khi người dùng chủ động bấm (xoá tin trong app KHÔNG tự xoá gì trên R2).
+ * MediaCleanup: tool that cleans files off R2. Runs only when the user clicks it on purpose (deleting a message in the app does NOT delete anything on R2).
  *
- *  1. preview(req) — chỉ đọc, không xoá gì: rà chỉ mục cloud_media của workspace đang mở (dòng 'uploaded' / 'evicted')
- *     theo trang khoá chính, chọn file khớp MỘT trong các tiêu chí đã bật:
- *       • orphans     file media của tài khoản (không bao giờ là file dùng chung) mà không còn dòng nào trong DB trỏ tới.
- *                     Rà MỌI bảng thật (trừ chỉ mục R2 / bảng đồng bộ / FTS), mọi cột không phải số, theo lô rowid ≤ 500
- *                     dòng + nhường vòng lặp (DB khách có hàng triệu tin). Thừa tham chiếu = dọn ít đi (an toàn). File sửa
- *                     trong 24 giờ qua không xét. DatabaseService trả [] khi truy vấn lỗi → kiểm lại bằng MAX(rowid),
- *                     lệch là dừng hẳn (không bao giờ đoán "mồ côi").
- *       • accounts    mọi file của các tài khoản này (keys.accountOfRelPath, kể cả thư mục Facebook theo fb_accounts.id).
- *       • olderThan   thời điểm file (mtime, kẹp theo thư mục ngày) < mốc.
- *       • outOfScope  ngoài phạm vi lưu hiện tại (tài khoản không chọn, trước "từ ngày", file chung khi đã tắt).
- *     File chỉ còn trên R2 (đã dọn khỏi máy / máy không còn file) bị bỏ qua trừ khi includeCloudOnly (đếm skippedCloudOnly).
- *     Nhớ danh sách 15 phút dưới một mã ngẫu nhiên (chỉ lần quét mới nhất).
- *  2. run(previewId) — xoá đúng danh sách đã xem: kiểm lại từng dòng ngay trước khi xoá (đổi từ lúc quét → bỏ qua; file
- *     còn trên máy lúc quét mà nay mất → bỏ qua trừ khi đã cho xoá file chỉ còn trên R2), DeleteObjects ≤ 1000 khoá / lần
- *     (không có thì xoá từng object, 4 song song), R2 bận → lùi chung với hàng đợi rồi thử lại. Dòng → 'removed' (không xoá
- *     dòng; không tự tải lên lại trừ khi file đổi). deleteLocalOrphans → xoá luôn bản trên máy của file mồ côi đã xoá
- *     trên R2 (chỉ file mồ côi, chỉ trong thư mục media, đúng bản đã quét). Chạy trong hàng của MediaEvictor.
+ *  1. preview(req): read only, deletes nothing. Scans the cloud_media index of the open workspace (rows 'uploaded' / 'evicted')
+ *     page by page on the primary key, and picks the files that match ONE of the enabled criteria:
+ *       • orphans     media files of an account (never shared files) that no DB row points to any more.
+ *                     Scans EVERY real table (except the R2 index / DB sync tables / FTS), every non-numeric column, in rowid batches of ≤ 500
+ *                     rows + yields to the event loop (customer DBs can have millions of messages). Extra references = less cleanup (safe). Files edited
+ *                     in the last 24 hours are not considered. If a DatabaseService query returns [] on error → re-check with MAX(rowid),
+ *                     a mismatch stops everything (never guess "mồ côi" (orphan) files).
+ *       • accounts    every file of these accounts (keys.accountOfRelPath, including Facebook folders by fb_accounts.id).
+ *       • olderThan   file time (mtime, clamped to the day folder) < the cutoff.
+ *       • outOfScope  outside the current storage scope (account not selected, before "từ ngày" (from date), shared files when they are turned off).
+ *     Files that exist only on R2 (cleaned off the machine / machine no longer has them) are skipped unless includeCloudOnly (counted in skippedCloudOnly).
+ *     The list is remembered for 15 minutes under a random code (only the latest scan).
+ *  2. run(previewId): deletes exactly the list that was reviewed: re-checks each row right before deleting (changed since the scan → skip; a file
+ *     that was on the machine at scan time and is gone now → skip, unless deleting files that exist only on R2 has been allowed), DeleteObjects ≤ 1000 keys / call
+ *     (without it, deletes object by object, 4 in parallel), R2 busy → back off the whole queue, then retry. Row → 'removed' (the row is not deleted;
+ *     it is not uploaded again unless the file changes). deleteLocalOrphans → also deletes the on-machine copy of the orphan files that were deleted
+ *     from R2 (only orphan files, only inside the media folder, only the copy that was scanned). Runs in the MediaEvictor queue.
  */
 import { randomBytes } from 'crypto';
 import * as fs from 'fs';
@@ -31,9 +31,10 @@ import {
 } from './keys';
 import type { ContextSource, MediaContext } from './MediaContext';
 import { classifyR2Error, DAY, errorText, LogFn, MINUTE, noLog, SECOND, sleep, storeLabelNow, yieldToLoop } from './util';
+import { tr } from '../../../shared/i18n';
 
 export const CLEANUP_PREVIEW_TTL_MS = 15 * MINUTE;
-/** File mồ côi phải cũ hơn 24 giờ (file vừa lưu có thể chưa kịp ghi vào DB). */
+/** An orphan file must be older than 24 hours (a file just saved may not have been written to the DB yet). */
 export const ORPHAN_MIN_AGE_MS = DAY;
 const INDEX_PAGE = 1000;
 const REF_PAGE = 500;
@@ -44,8 +45,8 @@ const MAX_DELETE_ATTEMPTS = 6;
 const MAX_SAMPLES = 20;
 const PROGRESS_EVERY_MS = 300;
 /**
- * Bảng không rà tham chiếu: chỉ mục R2 (chứa rel của MỌI file — rà vào thì không file nào còn mồ côi) và bảng của đồng
- * bộ DB. Bảng ảo (FTS) và bảng bóng của nó bị bỏ theo kiểu bảng.
+ * Tables not scanned for references: the R2 index (it holds the rel of EVERY file, so scanning it would leave no orphans) and the
+ * DB sync tables. Virtual tables (FTS) and their shadow tables are skipped by table kind.
  */
 const SKIP_REF_TABLES = new Set(['cloud_media', '_cloud_dirty', '_cloud_meta', 'cloud_sync_log']);
 
@@ -58,17 +59,17 @@ export interface CleanupFs {
 export interface CleanupDeps {
     ctx: ContextSource;
     r2(bucket: string): R2Client;
-    /** Phạm vi lưu hiện tại (tiêu chí "ngoài phạm vi"); null = mọi file đều trong phạm vi. */
+    /** Current storage scope (for the "ngoài phạm vi" (outside scope) criterion); null = every file is in scope. */
     scope(ctx: MediaContext): MediaScopeFilter | null;
-    /** Bí danh thư mục tài khoản (Facebook: fb_accounts.id → facebook_id). */
+    /** Account folder aliases (Facebook: fb_accounts.id → facebook_id). */
     aliases(ctx: MediaContext): ReadonlyMap<string, string> | null;
-    /** Hàng đợi đang lùi chung vì R2 bận. */
+    /** The queue is backing off as a whole because R2 is busy. */
     isBackingOff(): boolean;
-    /** ms còn lại của đợt lùi (0 = không lùi). */
+    /** ms left in the back-off (0 = not backing off). */
     backoffRemainingMs(): number;
-    /** R2 bận khi xoá → lùi chung với hàng đợi tải lên. */
+    /** R2 busy while deleting → back off together with the upload queue. */
     onBusy(retryAfterMs?: number): void;
-    /** Chạy fn trong hàng dọn file (không chồng với MediaEvictor). */
+    /** Runs fn in the file cleanup queue (does not overlap with MediaEvictor). */
     exclusive<T>(fn: () => Promise<T>): Promise<T>;
     now?(): number;
     fs?: CleanupFs;
@@ -80,9 +81,9 @@ interface CleanupItem {
     rel: string;
     size: number;
     mtimeMs: number;
-    /** Khớp tiêu chí orphans — chỉ những file này mới được xoá bản trên máy (deleteLocalOrphans). */
+    /** Matches the orphans criterion; only these files may have their on-machine copy deleted (deleteLocalOrphans). */
     orphan: boolean;
-    /** Còn bản trên máy lúc quét. */
+    /** Still had an on-machine copy at scan time. */
     local: boolean;
 }
 
@@ -110,11 +111,11 @@ interface StoredPreview {
 
 export interface RefTable {
     name: string;
-    /** Cột có thể chứa chữ (không khai báo kiểu số). */
+    /** Column that may hold text (not declared as a numeric type). */
     columns: string[];
-    /** Tên rowid dùng được; null = WITHOUT ROWID (phân trang OFFSET). */
+    /** Usable rowid name; null = WITHOUT ROWID (paged with OFFSET). */
     rowid: string | null;
-    /** MAX(rowid) (hoặc COUNT(*)) — cho thanh tiến độ. */
+    /** MAX(rowid) (or COUNT(*)) for the progress bar. */
     estimate: number;
 }
 
@@ -125,19 +126,19 @@ function quoteIdent(name: string): string {
 }
 
 function scanFailed(table: string): CloudError {
-    return new CloudError('CLEANUP_SCAN_FAILED', `Không đọc được bảng ${table} để kiểm tra file còn được dùng — chưa dọn gì, hãy thử lại.`);
+    return new CloudError('CLEANUP_SCAN_FAILED', tr('Không đọc được bảng {{table}} để kiểm tra file còn được dùng — chưa dọn gì, hãy thử lại.', { table }));
 }
 
 function abortedError(): CloudError {
-    return new CloudError('CLEANUP_ABORTED', `Đã đổi workspace hoặc tắt lưu media trong lúc dọn ${storeLabelNow()} — hãy quét lại.`);
+    return new CloudError('CLEANUP_ABORTED', tr('Đã đổi workspace hoặc tắt lưu media trong lúc dọn {{v1}} — hãy quét lại.', { v1: storeLabelNow() }));
 }
 
 function busyError(): CloudError {
-    return new CloudError('CLEANUP_BUSY', `Đang quét / dọn file trên ${storeLabelNow()} — chờ lượt này xong rồi thử lại.`);
+    return new CloudError('CLEANUP_BUSY', tr('Đang quét / dọn file trên {{v1}} — chờ lượt này xong rồi thử lại.', { v1: storeLabelNow() }));
 }
 
 function expiredError(): CloudError {
-    return new CloudError('PREVIEW_EXPIRED', 'Kết quả quét đã cũ, hãy quét lại');
+    return new CloudError('PREVIEW_EXPIRED', tr('Kết quả quét đã cũ, hãy quét lại'));
 }
 
 function reporter(onProgress?: (p: R2CleanupProgress) => void): Report {
@@ -150,13 +151,13 @@ function reporter(onProgress?: (p: R2CleanupProgress) => void): Report {
         const safeTotal = Math.max(0, Math.floor(total) || 0);
         const p: R2CleanupProgress = { phase, done: Math.min(safeTotal, Math.max(0, Math.floor(done) || 0)), total: safeTotal };
         if (message) p.message = message;
-        try { onProgress(p); } catch { /* cửa sổ đã đóng */ }
+        try { onProgress(p); } catch { /* window already closed */ }
     };
 }
 
 /**
- * Bảng thật có thể chứa đường dẫn media (cột không khai báo kiểu số). PRAGMA table_list (SQLite ≥ 3.37) phân biệt sẵn
- * bảng ảo / bảng bóng / WITHOUT ROWID; bản cũ hơn → đọc sqlite_master. Đọc lỗi → ném (không đoán).
+ * Real tables may hold media paths (columns not declared as numeric). PRAGMA table_list (SQLite ≥ 3.37) already tells
+ * virtual / shadow tables / WITHOUT ROWID apart; older versions → read sqlite_master. A read error → throw (no guessing).
  */
 export function listReferenceTables(db: MediaDb): RefTable[] {
     let entries: Array<{ name: string; type: string; wr: number }> = [];
@@ -182,7 +183,7 @@ export function listReferenceTables(db: MediaDb): RefTable[] {
         if (t.type !== 'table' || /^sqlite_/i.test(t.name) || SKIP_REF_TABLES.has(t.name)) continue;
         const q = quoteIdent(t.name);
         const info = db.all<{ name: unknown; type: unknown }>(`PRAGMA table_info(${q})`);
-        // Bảng nào cũng có cột: rỗng = đọc lỗi
+        // Every table has a column: empty = read error
         if (!info.length) throw scanFailed(t.name);
         const columns = info.filter((c) => !/INT|REAL|FLOA|DOUB/i.test(String(c.type || ''))).map((c) => String(c.name));
         if (!columns.length) continue;
@@ -214,7 +215,7 @@ export class MediaCleanup {
         return this.deps.sleep ? this.deps.sleep(ms) : sleep(ms);
     }
 
-    /** Dừng lưu media: bỏ danh sách đã quét. */
+    /** Stop media storage: drop the scanned list. */
     reset(): void {
         this.stored = null;
     }
@@ -223,7 +224,7 @@ export class MediaCleanup {
         return this.busy;
     }
 
-    // ─── Bước 1: quét ──────────────────────────────────────────────────
+    // ─── Step 1: scan ──────────────────────────────────────────────────
 
     async preview(req: R2CleanupRequest, isCurrent: () => boolean, onProgress?: (p: R2CleanupProgress) => void): Promise<R2CleanupPreview> {
         const r = (req && typeof req === 'object' ? req : {}) as R2CleanupRequest;
@@ -234,14 +235,14 @@ export class MediaCleanup {
         const includeCloudOnly = r.includeCloudOnly === true;
         const deleteLocalOrphans = r.deleteLocalOrphans === true;
         if (!wantOrphans && !accounts.size && olderThanTs === null && !wantOutOfScope) {
-            throw new CloudError('BAD_INPUT', 'Chọn ít nhất một tiêu chí dọn.');
+            throw new CloudError('BAD_INPUT', tr('Chọn ít nhất một tiêu chí dọn.'));
         }
         if (this.busy) throw busyError();
         this.busy = true;
         const report = reporter(onProgress);
         try {
             const ctx = await this.deps.ctx.get();
-            if (!ctx) throw new CloudError('MEDIA_UNAVAILABLE', 'Chưa mở được chỉ mục media của workspace này — thử lại sau ít phút.');
+            if (!ctx) throw new CloudError('MEDIA_UNAVAILABLE', tr('Chưa mở được chỉ mục media của workspace này — thử lại sau ít phút.'));
             const alive = () => isCurrent() && this.deps.ctx.isValid(ctx);
             if (!alive()) throw abortedError();
             const startedAt = this.now();
@@ -254,7 +255,7 @@ export class MediaCleanup {
             let done = 0;
             report('scan', 0, total, undefined, true);
 
-            // 1. Chỉ mục: file đã lên R2 khớp tiêu chí + ứng viên mồ côi (file của tài khoản, sửa trước 24 giờ)
+            // 1. Index: files already on R2 that match the criteria + orphan candidates (account files edited more than 24 hours ago)
             const matched = new Map<string, Candidate>();
             const orphanCandidates: Candidate[] = [];
             const candidateKeys = new Set<string>();
@@ -291,7 +292,7 @@ export class MediaCleanup {
             }
             done = Math.max(done, indexTotal);
 
-            // 2. Mồ côi: không dòng nào trong DB trỏ tới (rà hết bảng, hoặc dừng sớm khi mọi ứng viên đều có tham chiếu)
+            // 2. Orphans: no DB row points to them (scan all tables, or stop early once every candidate has a reference)
             if (orphanCandidates.length) {
                 const found = new Set<string>();
                 for (const t of tables) {
@@ -308,7 +309,7 @@ export class MediaCleanup {
                 }
             }
 
-            // 3. File chỉ còn trên R2 (đã dọn khỏi máy / máy không còn file): bỏ trừ khi được phép
+            // 3. Files that exist only on R2 (cleaned off the machine / machine has no copy): skipped unless allowed
             const list = Array.from(matched.values()).sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
             const items: CleanupItem[] = [];
             const byReason = { orphans: 0, accounts: 0, olderThan: 0, outOfScope: 0 };
@@ -336,7 +337,7 @@ export class MediaCleanup {
             }
             if (!alive()) throw abortedError();
 
-            // 4. Nhớ danh sách (chỉ lần quét mới nhất, 15 phút)
+            // 4. Remember the list (only the latest scan, 15 minutes)
             const createdAt = this.now();
             const id = randomBytes(12).toString('hex');
             this.stored = {
@@ -375,9 +376,9 @@ export class MediaCleanup {
     }
 
     /**
-     * Rà một bảng theo lô (rowid tăng dần, ≤ 500 dòng / truy vấn, nhường vòng lặp giữa các lô), ghi tham chiếu tìm được.
-     * true = mọi ứng viên đã có tham chiếu (khỏi rà tiếp). Trang rỗng mà MAX(rowid) còn lớn hơn = truy vấn lỗi → thử lại
-     * một lần rồi ném.
+     * Scans one table in batches (rowid ascending, ≤ 500 rows / query, yields to the event loop between batches), recording the references found.
+     * true = every candidate already has a reference (no need to scan further). An empty page while MAX(rowid) is still larger = query error → retry
+     * once, then throw.
      */
     private async scanTable(db: MediaDb, t: RefTable, candidates: Set<string>, found: Set<string>, alive: () => boolean,
         onPosition: (pos: number) => void): Promise<boolean> {
@@ -442,7 +443,7 @@ export class MediaCleanup {
         }
     }
 
-    // ─── Bước 2: xoá ───────────────────────────────────────────────────
+    // ─── Step 2: delete ───────────────────────────────────────────────────
 
     async run(previewId: string, isCurrent: () => boolean, onProgress?: (p: R2CleanupProgress) => void): Promise<R2CleanupResult> {
         const p = this.stored;
@@ -456,7 +457,7 @@ export class MediaCleanup {
         try {
             const ctx = await this.deps.ctx.get();
             if (!ctx || ctx.dbPath !== p.dbPath || ctx.workspaceUid !== p.workspaceUid || ctx.bucket !== p.bucket) throw expiredError();
-            // Dùng một lần: chạy lại phải quét lại
+            // Single use: running it again requires a new scan
             this.stored = null;
             return await this.deps.exclusive(() => this.deleteAll(ctx, p, isCurrent, report));
         } catch (err) {
@@ -479,8 +480,8 @@ export class MediaCleanup {
         for (let i = 0; i < total && !stopError; i += DELETE_BATCH) {
             if (!alive()) { stopError = abortedError(); break; }
             const batch = p.items.slice(i, i + DELETE_BATCH);
-            // Kiểm lại ngay trước khi xoá: dòng vẫn đã lên R2 và đúng bản đã quét; file còn trên máy lúc quét mà nay đã mất
-            // (bị dọn khỏi máy từ lúc đó) → bản trên R2 thành bản duy nhất → chỉ xoá khi người dùng cho xoá cả loại đó
+            // Re-check right before deleting: the row is still on R2 and matches the scanned copy; a file that had an on-machine copy at scan time and has lost it since
+            // (cleaned off the machine since then) → its R2 copy becomes the only copy → delete only if the user allowed deleting that whole category
             const stats = await Promise.all(batch.map((b) => (b.local ? this.statOrNull(absPathFor(ctx.realRoot, b.rel)) : Promise.resolve(null))));
             if (!alive()) { stopError = abortedError(); break; }
             const rows = ctx.index.getRows(batch.map((b) => b.rel));
@@ -497,7 +498,7 @@ export class MediaCleanup {
             const keys = ready.map((b) => objectKeyFor(ctx.workspaceUid, b.rel));
             const out = await this.deleteKeys(r2, keys, alive);
             const removed = ready.filter((_, k) => out.deleted.has(keys[k]));
-            // Workspace đã đổi giữa chừng: không ghi DB của workspace khác (lần sau HEAD / tải về thấy thiếu sẽ tự sửa)
+            // Workspace changed midway: do not write into another workspace's DB (the next HEAD / download will notice the missing row and fix it)
             if (removed.length && this.deps.ctx.isValid(ctx)) ctx.index.markRemoved(removed.map((b) => b.rel));
             result.deleted += removed.length;
             for (const b of removed) result.bytes += b.size;
@@ -515,7 +516,7 @@ export class MediaCleanup {
         const mb = (result.bytes / 1024 / 1024).toFixed(1);
         if (stopError) {
             this.log('warn', `[CloudMedia] Dọn R2 dừng: ${errorText(stopError)} — đã xoá ${result.deleted} file (${mb} MB), còn ${result.failed} file`);
-            // Chưa xoá được gì → báo lỗi thẳng cho người dùng (vd token thiếu quyền); đã xoá một phần → trả kết quả
+            // Nothing deleted yet → report the error straight to the user (e.g. token missing permission); partly deleted → return the result
             if (!result.deleted) throw stopError;
             report('error', processed, total, errorText(stopError), true);
         } else {
@@ -530,7 +531,7 @@ export class MediaCleanup {
         try { return await this.fs.stat(p); } catch { return null; }
     }
 
-    /** Xoá bản trên máy của file mồ côi: chỉ trong thư mục media (không theo junction ra ngoài), đúng bản đã quét. */
+    /** Deletes the on-machine copy of an orphan file: only inside the media folder (does not follow junctions out of it), and only the copy that was scanned. */
     private async removeLocal(ctx: MediaContext, b: CleanupItem, alive: () => boolean): Promise<boolean> {
         try {
             const real = await this.fs.realpath(absPathFor(ctx.realRoot, b.rel));
@@ -546,8 +547,8 @@ export class MediaCleanup {
     }
 
     /**
-     * Xoá các khoá trên R2: DeleteObjects một lần (≤ 1000 khoá), không có thì từng object (4 song song). R2 bận / mất mạng →
-     * lùi chung rồi thử lại phần còn lại (tối đa 6 lần); lỗi khác (token, bucket…) → dừng, trả lỗi.
+     * Deletes the keys on R2: one DeleteObjects call (≤ 1000 keys); without it, object by object (4 in parallel). R2 busy / no network →
+     * back off the whole queue, then retry the rest (up to 6 times); any other error (token, bucket…) → stop and return the error.
      */
     private async deleteKeys(r2: R2Client, keys: string[], alive: () => boolean): Promise<{ deleted: Set<string>; error: unknown }> {
         const deleted = new Set<string>();
@@ -575,7 +576,7 @@ export class MediaCleanup {
                     let firstError: unknown = null;
                     settled.forEach((s, j) => {
                         if (s.status === 'fulfilled') deleted.add(group[j]);
-                        else if (firstError === null) firstError = s.reason ?? new Error('Xoá trên R2 lỗi');
+                        else if (firstError === null) firstError = s.reason ?? new Error(tr('Xoá trên R2 lỗi'));
                     });
                     if (firstError !== null) throw firstError;
                 }

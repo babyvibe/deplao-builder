@@ -26,26 +26,28 @@ import {
   type ErpPermissionOverrideMode,
   type ErpPermissionOverrides,
 } from '../../../../models/erp/Permission';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const EMPLOYEE_MODULES = [
-  { key: 'chat', label: 'Chat', icon: <ChatIcon className="w-4 h-4" />, desc: 'Gửi / nhận tin nhắn' },
-  { key: 'crm', label: 'CRM', icon: <ChartIcon className="w-4 h-4" />, desc: 'Quản lý khách hàng' },
-  { key: 'workflow', label: 'Workflow', icon: <LightningIcon className="w-4 h-4" />, desc: 'Tự động hoá' },
-  { key: 'integration', label: 'Tích hợp', icon: <LinkIcon className="w-4 h-4" />, desc: 'POS / Shipping / dịch vụ ngoài' },
-  { key: 'analytics', label: 'Thống kê', icon: <TrendingUpIcon className="w-4 h-4" />, desc: 'Báo cáo phân tích' },
-  { key: 'ai_assistant', label: 'AI', icon: <BotIcon className="w-4 h-4" />, desc: 'Trợ lý AI' },
-  { key: 'settings_accounts', label: 'QL tài khoản Zalo', icon: <UserIcon className="w-4 h-4" />, desc: 'Phần cài đặt tài khoản' },
-  { key: 'settings_employees', label: 'QL nhân viên', icon: <UserIcon className="w-4 h-4" />, desc: 'Phần cài đặt nhân viên' },
+  { key: 'chat', label: tr('Chat'), icon: <ChatIcon className="w-4 h-4" />, desc: tr('Gửi / nhận tin nhắn') },
+  { key: 'crm', label: 'CRM', icon: <ChartIcon className="w-4 h-4" />, desc: tr('Quản lý khách hàng') },
+  { key: 'workflow', label: 'Workflow', icon: <LightningIcon className="w-4 h-4" />, desc: tr('Tự động hoá') },
+  { key: 'integration', label: tr('Tích hợp'), icon: <LinkIcon className="w-4 h-4" />, desc: tr('POS / Shipping / dịch vụ ngoài') },
+  { key: 'analytics', label: tr('Thống kê'), icon: <TrendingUpIcon className="w-4 h-4" />, desc: tr('Báo cáo phân tích') },
+  { key: 'ai_assistant', label: 'AI', icon: <BotIcon className="w-4 h-4" />, desc: tr('Trợ lý AI') },
+  { key: 'settings_accounts', label: tr('QL tài khoản Zalo'), icon: <UserIcon className="w-4 h-4" />, desc: tr('Phần cài đặt tài khoản') },
+  { key: 'settings_employees', label: tr('QL nhân viên'), icon: <UserIcon className="w-4 h-4" />, desc: tr('Phần cài đặt nhân viên') },
 ] as const;
 
 const EMPLOYEE_MODULE_KEYS = new Set<string>(EMPLOYEE_MODULES.map(module => module.key));
 
 const ERP_ROLE_OPTIONS = [
-  { value: 'member', label: 'Member' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'manager', label: 'Manager' },
-  { value: 'owner', label: 'Owner' },
-  { value: 'guest', label: 'Guest' },
+  { value: 'member', label: tr('Member') },
+  { value: 'admin', label: tr('Admin') },
+  { value: 'manager', label: tr('Manager') },
+  { value: 'owner', label: tr('Owner') },
+  { value: 'guest', label: tr('Guest') },
 ] as const;
 
 const ROLE_TREE_ORDER = ['owner', 'admin', 'manager', 'member', 'guest', 'unassigned'] as const;
@@ -65,7 +67,7 @@ function getRoleLabel(role?: string | null) {
     : role === 'manager' ? 'Manager'
     : role === 'member' ? 'Member'
     : role === 'guest' ? 'Guest'
-    : 'Chưa gán role';
+    : tr('Chưa gán role');
 }
 
 function buildEmployeeModulePermissionMap(employee: any | null | undefined) {
@@ -105,9 +107,9 @@ function buildEmployeeMetaMap(employees: any[], profiles: any[], departments: an
       name: employee?.display_name || (employeeId === 'boss' ? 'Boss' : employeeId),
       username: employee?.username || '',
       departmentId,
-      departmentName: departmentId ? (departments.find((item: any) => item.id === departmentId)?.name || '-') : 'Chưa gán phòng ban',
+      departmentName: departmentId ? (departments.find((item: any) => item.id === departmentId)?.name || '-') : tr('Chưa gán phòng ban'),
       positionId,
-      positionName: positionId ? (positions.find((item: any) => item.id === positionId)?.name || '-') : 'Chưa gán chức vụ',
+      positionName: positionId ? (positions.find((item: any) => item.id === positionId)?.name || '-') : tr('Chưa gán chức vụ'),
       role: getResolvedProfileRole(employee, profile),
     });
   }
@@ -134,7 +136,7 @@ function matchEmployeeMeta(
 
 function formatDateCell(ts?: number | null) {
   if (!ts) return '-';
-  return new Date(ts).toLocaleDateString('vi-VN');
+  return new Date(ts).toLocaleDateString(appLocale());
 }
 
 function buildActionPermissionState(profile: any | null | undefined): Record<ErpPermissionAction, 'inherit' | ErpPermissionOverrideMode> {
@@ -160,11 +162,11 @@ export default function HrmPage() {
   const [tab, setTab] = useState<'departments' | 'positions' | 'employees' | 'attendance' | 'leave'>('employees');
 
   const tabs = [
-    { id: 'employees',   label: 'Nhân sự' },
-    { id: 'departments', label: 'Phòng ban' },
-    { id: 'positions',   label: 'Chức vụ' },
-    { id: 'attendance',  label: 'Chấm công' },
-    { id: 'leave',       label: 'Nghỉ phép' },
+    { id: 'employees',   label: tr('Nhân sự') },
+    { id: 'departments', label: tr('Phòng ban') },
+    { id: 'positions',   label: tr('Chức vụ') },
+    { id: 'attendance',  label: tr('Chấm công') },
+    { id: 'leave',       label: tr('Nghỉ phép') },
   ] as const;
 
   return (
@@ -248,10 +250,10 @@ function EmployeesTab() {
           return {
             id: employee?.employee_id || profile?.employee_id,
             departmentId: profile?.department_id ?? 'unassigned',
-            departmentName: deptName === '-' ? 'Chưa gán phòng ban' : deptName,
+            departmentName: deptName === '-' ? tr('Chưa gán phòng ban') : deptName,
             name: employee?.display_name || getEmpName(profile?.employee_id),
             username: employee?.username || '',
-            positionName: positions.find(x => x.id === profile?.position_id)?.name || 'Chưa gán chức vụ',
+            positionName: positions.find(x => x.id === profile?.position_id)?.name || tr('Chưa gán chức vụ'),
             hasAccount: !!employee,
             moduleCount: countEnabledVisibleModules(employee),
             actionOverrideCount: Object.keys(actionOverrides).length,
@@ -295,30 +297,30 @@ function EmployeesTab() {
     const employeeId = row.employee?.employee_id || row.profile?.employee_id;
     if (!employeeId) return;
     try {
-      // Tài khoản nhân viên chỉ Boss quản lý (IPC employee:* trên máy nhân viên chạy DB cục bộ) — nhân viên quản lý chỉ
-      // xoá hồ sơ ERP (REST → Boss)
+      // Employee accounts are managed only by the owner (IPC employee:* on the employee machine runs against the local DB), so here employees only
+      // delete ERP profiles (REST → owner)
       if (isEmployeeMode && !row.profile) {
-        showNotification('Chỉ Boss xoá được tài khoản nhân viên', 'error');
+        showNotification(tr('Chỉ Boss xoá được tài khoản nhân viên'), 'error');
         return;
       }
       if (row.employee && !isEmployeeMode) {
         const res = await ipc.employee?.delete?.(employeeId);
         if (!res?.success) {
-          showNotification(res?.error || 'Không thể xóa nhân viên', 'error');
+          showNotification(res?.error || tr('Không thể xóa nhân viên'), 'error');
           return;
         }
       }
       if (row.profile) {
         const res: any = withErpDeniedNotice(await DataAccessor.erpDeleteProfile(employeeId));
         if (res && !res.success) {
-          showNotification(res.error || 'Không thể xóa hồ sơ ERP', 'error');
+          showNotification(res.error || tr('Không thể xóa hồ sơ ERP'), 'error');
           return;
         }
       }
       await Promise.all([loadEmployees(), loadProfiles()]);
-      showNotification('Đã xóa nhân viên khỏi ERP', 'success');
+      showNotification(tr('Đã xóa nhân viên khỏi ERP'), 'success');
     } catch (error: any) {
-      showNotification(error?.message || 'Xóa nhân viên thất bại', 'error');
+      showNotification(error?.message || tr('Xóa nhân viên thất bại'), 'error');
     }
   };
 
@@ -326,14 +328,14 @@ function EmployeesTab() {
     <div className="p-4">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">Danh sách nhân sự ({rows.length})</h3>
-          <p className="text-[11px] text-muted-foreground mt-1">Dữ liệu tài khoản đồng bộ trực tiếp với mục <span className="text-foreground/80">Cài đặt → Nhân viên</span>; ERP chỉ bổ sung hồ sơ nội bộ.</p>
+          <h3 className="text-sm font-semibold text-foreground">{trx('Danh sách nhân sự ({{count}})', { count: rows.length })}</h3>
+          <p className="text-[11px] text-muted-foreground mt-1">{trx('Dữ liệu tài khoản đồng bộ trực tiếp với mục <0>Cài đặt → Nhân viên</0>; ERP chỉ bổ sung hồ sơ nội bộ.', { 0: <span className="text-foreground/80" /> })}</p>
         </div>
         <div className="flex items-center gap-2 self-start">
           <button
             type="button"
             onClick={() => setRoleTreeOpen(true)}
-            title="Biểu đồ cây theo role"
+            title={tr('Biểu đồ cây theo role')}
             className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card text-sm text-foreground transition-colors hover:border-blue-500/50 hover:bg-muted"
           >
             🌳
@@ -348,7 +350,7 @@ function EmployeesTab() {
               onClick={() => setEditorState({ employee: null, profile: null })}
               className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
             >
-              + Thêm nhân viên
+              {tr('+ Thêm nhân viên')}
             </button>
           )}
         </div>
@@ -358,11 +360,11 @@ function EmployeesTab() {
         <table className="w-full text-xs">
           <thead className="bg-muted/50 text-muted-foreground">
             <tr>
-              <th className="px-3 py-2 text-left">Tài khoản</th>
-              <th className="px-3 py-2 text-left">Phòng ban</th>
-              <th className="px-3 py-2 text-left">Chức vụ</th>
-              <th className="px-3 py-2 text-left">SĐT</th>
-              <th className="px-3 py-2 text-left">Role</th>
+              <th className="px-3 py-2 text-left">{tr('Tài khoản')}</th>
+              <th className="px-3 py-2 text-left">{tr('Phòng ban')}</th>
+              <th className="px-3 py-2 text-left">{tr('Chức vụ')}</th>
+              <th className="px-3 py-2 text-left">{tr('SĐT')}</th>
+              <th className="px-3 py-2 text-left">{tr('Role')}</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -372,12 +374,12 @@ function EmployeesTab() {
                 <td className="px-3 py-2">
                   <div className="font-medium">{employee?.display_name || getEmpName(profile?.employee_id)}</div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">
-                    {employee?.username ? `@${employee.username}` : 'Chưa có tài khoản đăng nhập'}
+                    {employee?.username ? `@${employee.username}` : tr('Chưa có tài khoản đăng nhập')}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {employee?.role === 'boss' && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-600/20 text-amber-300">Boss</span>}
-                    {employee && !employee.is_active && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-red-600/20 text-red-300">Vô hiệu</span>}
-                    {!profile && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-yellow-600/20 text-yellow-300">Thiếu hồ sơ ERP</span>}
+                    {employee && !employee.is_active && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-red-600/20 text-red-300">{tr('Vô hiệu')}</span>}
+                    {!profile && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-yellow-600/20 text-yellow-300">{tr('Thiếu hồ sơ ERP')}</span>}
                   </div>
                 </td>
                 <td className="px-3 py-2">{getDeptName(profile?.department_id)}</td>
@@ -391,7 +393,7 @@ function EmployeesTab() {
                     return (
                       <div>
                         <span className={`px-2 py-0.5 rounded-full text-[10px] ${getRoleBadgeClass(resolvedRole)}`}>{getRoleLabel(resolvedRole)}</span>
-                        <div className="text-[10px] text-muted-foreground mt-1"><LockIcon className="w-4 h-4 inline" /> {moduleCount} module · <SettingsIcon className="w-4 h-4 inline" /> {actionOverrideCount} action riêng</div>
+                        <div className="text-[10px] text-muted-foreground mt-1">{trx('<0/> {{moduleCount}} module · <1/> {{actionOverrideCount}} action riêng', { 0: <LockIcon className="w-4 h-4 inline" />, moduleCount, 1: <SettingsIcon className="w-4 h-4 inline" />, actionOverrideCount })}</div>
                       </div>
                     );
                   })()}
@@ -399,19 +401,19 @@ function EmployeesTab() {
                 <td className="px-3 py-2 text-right">
                   <div className="flex items-center justify-end gap-2 text-[11px]">
                     {(canManageEmployees || profile?.employee_id === currentEmployeeId) && (employee || profile) && (
-                      <ActionIconButton onClick={() => setEditorState({ employee, profile })} title="Sửa nhân sự" color="text-blue-400 hover:text-blue-300">
+                      <ActionIconButton onClick={() => setEditorState({ employee, profile })} title={tr('Sửa nhân sự')} color="text-blue-400 hover:text-blue-300">
                         <EditIcon className="w-4 h-4" />
                       </ActionIconButton>
                     )}
                     {canManageEmployees && (
-                      <ActionIconButton onClick={() => setDeleteTarget({ employee, profile })} title="Xóa nhân sự" color="text-red-400 hover:text-red-300"><TrashIcon className="w-4 h-4 inline" /> </ActionIconButton>
+                      <ActionIconButton onClick={() => setDeleteTarget({ employee, profile })} title={tr('Xóa nhân sự')} color="text-red-400 hover:text-red-300"><TrashIcon className="w-4 h-4 inline" /> </ActionIconButton>
                     )}
                   </div>
                 </td>
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">Chưa có nhân sự nào</td></tr>
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">{tr('Chưa có nhân sự nào')}</td></tr>
             )}
           </tbody>
         </table>
@@ -420,7 +422,7 @@ function EmployeesTab() {
       {/* Quick "add missing employees" section */}
       {canManageDepartments && (
         <div className="mt-4">
-          <h4 className="text-xs font-semibold text-muted-foreground mb-2">Tạo hồ sơ ERP cho nhân viên đã có tài khoản</h4>
+          <h4 className="text-xs font-semibold text-muted-foreground mb-2">{tr('Tạo hồ sơ ERP cho nhân viên đã có tài khoản')}</h4>
           <div className="flex flex-wrap gap-2">
             {employees
               .filter((e: any) => !profiles.find(p => p.employee_id === e.employee_id))
@@ -441,8 +443,8 @@ function EmployeesTab() {
           <ErpModalCard className="w-full max-w-5xl max-h-[88vh] overflow-auto rounded-xl border-input p-5">
             <div className="flex items-start justify-between gap-3 mb-4">
               <div>
-                <h3 className="text-foreground font-semibold">Biểu đồ cây theo role</h3>
-                <p className="text-[11px] text-muted-foreground mt-1">Hiển thị cấu trúc role ERP → phòng ban → từng nhân sự để rà nhanh phân tầng nhân sự.</p>
+                <h3 className="text-foreground font-semibold">{tr('Biểu đồ cây theo role')}</h3>
+                <p className="text-[11px] text-muted-foreground mt-1">{tr('Hiển thị cấu trúc role ERP → phòng ban → từng nhân sự để rà nhanh phân tầng nhân sự.')}</p>
               </div>
               <button onClick={() => setRoleTreeOpen(false)} className="text-muted-foreground hover:text-foreground">✕</button>
             </div>
@@ -462,15 +464,15 @@ function EmployeesTab() {
           onSave={async ({ employeeId, employeePatch, profilePatch, modulePermissionsPatch, shouldCreateAccount, shouldUpdateAccount }: any) => {
             let resolvedEmployeeId = employeeId;
             if (isEmployeeMode) {
-              // Máy nhân viên: tài khoản / quyền module chỉ Boss quản lý (IPC employee:* ở đây chạy DB cục bộ) — chỉ lưu hồ
-              // sơ ERP lên Boss (REST, Boss kiểm tra quyền sửa hồ sơ / đổi vai trò)
+              // Employee machine: accounts / module permissions are managed only by the owner (IPC employee:* here runs against the local DB): only save
+              // the ERP profile to the owner (REST, the owner checks edit rights / role changes)
               if (shouldCreateAccount || !resolvedEmployeeId) {
-                showNotification('Chỉ Boss tạo được tài khoản nhân viên mới', 'error');
+                showNotification(tr('Chỉ Boss tạo được tài khoản nhân viên mới'), 'error');
                 return;
               }
               const saved = await upsertProfile(resolvedEmployeeId, profilePatch);
               if (!saved.success) {
-                showNotification(saved.error || 'Không lưu được hồ sơ', 'error');
+                showNotification(saved.error || tr('Không lưu được hồ sơ'), 'error');
                 return;
               }
               await Promise.all([loadEmployees(), loadProfiles()]);
@@ -480,14 +482,14 @@ function EmployeesTab() {
             if (shouldCreateAccount) {
               const created = await ipc.employee?.create?.(employeePatch);
               if (!created?.success || !created?.employee?.employee_id) {
-                showNotification(created?.error || 'Không thể tạo nhân sự', 'error');
+                showNotification(created?.error || tr('Không thể tạo nhân sự'), 'error');
                 return;
               }
               resolvedEmployeeId = created.employee.employee_id;
             } else if (resolvedEmployeeId && shouldUpdateAccount && employeePatch) {
               const updated = await ipc.employee?.update?.(resolvedEmployeeId, employeePatch);
               if (!updated?.success) {
-                showNotification(updated?.error || 'Không thể cập nhật tài khoản', 'error');
+                showNotification(updated?.error || tr('Không thể cập nhật tài khoản'), 'error');
                 return;
               }
             }
@@ -495,7 +497,7 @@ function EmployeesTab() {
               if (modulePermissionsPatch && (shouldCreateAccount || shouldUpdateAccount)) {
                 const permissionRes = await ipc.employee?.setPermissions?.(resolvedEmployeeId, modulePermissionsPatch);
                 if (permissionRes && !permissionRes.success) {
-                  showNotification(permissionRes.error || 'Không thể cập nhật quyền module', 'error');
+                  showNotification(permissionRes.error || tr('Không thể cập nhật quyền module'), 'error');
                   return;
                 }
               }
@@ -508,7 +510,7 @@ function EmployeesTab() {
       )}
       {deleteTarget && (
         <ConfirmDialog
-          message={`Xóa nhân viên "${deleteTarget.employee?.display_name || deleteTarget.profile?.employee_id || deleteTarget.employee?.employee_id}" khỏi hệ thống?`}
+          message={tr('Xóa nhân viên "{{v1}}" khỏi hệ thống?', { v1: deleteTarget.employee?.display_name || deleteTarget.profile?.employee_id || deleteTarget.employee?.employee_id })}
           onConfirm={async () => {
             await handleDeleteEmployee(deleteTarget);
             setDeleteTarget(null);
@@ -550,78 +552,78 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
     <ErpOverlay onClose={onClose}>
       <ErpModalCard className="w-full max-w-5xl max-h-[88vh] overflow-auto rounded-xl border-input p-4 sm:p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-foreground font-semibold">{isEdit ? 'Cập nhật nhân sự' : 'Thêm nhân sự mới'}</h3>
+          <h3 className="text-foreground font-semibold">{isEdit ? tr('Cập nhật nhân sự') : tr('Thêm nhân sự mới')}</h3>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
 
         <div className="space-y-4 text-xs">
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <div className="space-y-3">
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Tài khoản</div>
-            <Field label="Tên hiển thị">
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{tr('Tài khoản')}</div>
+            <Field label={tr('Tên hiển thị')}>
               <input value={accountForm.display_name} onChange={e => setAccountForm({ ...accountForm, display_name: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
             </Field>
-            <Field label="Tên đăng nhập">
+            <Field label={tr('Tên đăng nhập')}>
               <input disabled={isEdit} value={accountForm.username} onChange={e => setAccountForm({ ...accountForm, username: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground disabled:opacity-50" />
             </Field>
-            <Field label={isEdit ? 'Mật khẩu mới (bỏ trống để giữ nguyên)' : 'Mật khẩu'}>
+            <Field label={isEdit ? tr('Mật khẩu mới (bỏ trống để giữ nguyên)') : tr('Mật khẩu')}>
               <input type="password" value={accountForm.password} onChange={e => setAccountForm({ ...accountForm, password: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
             </Field>
-            <Field label="Vai trò tài khoản">
+            <Field label={tr('Vai trò tài khoản')}>
               <select disabled={!canManageEmployees} value={accountForm.role} onChange={e => setAccountForm({ ...accountForm, role: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground disabled:opacity-50">
-                <option value="employee">Nhân viên</option>
+                <option value="employee">{tr('Nhân viên')}</option>
                 <option value="boss">Boss</option>
               </select>
             </Field>
             {isEdit && canManageEmployees && (
-              <Field label="Trạng thái">
+              <Field label={tr('Trạng thái')}>
                 <select value={String(accountForm.is_active)} onChange={e => setAccountForm({ ...accountForm, is_active: Number(e.target.value) })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground">
-                  <option value="1">Đang hoạt động</option>
-                  <option value="0">Vô hiệu</option>
+                  <option value="1">{tr('Đang hoạt động')}</option>
+                  <option value="0">{tr('Vô hiệu')}</option>
                 </select>
               </Field>
             )}
             {!hasAccount && hasProfile && (
               <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-[11px] text-yellow-200">
-                Hồ sơ ERP này chưa có tài khoản đăng nhập nên chưa thể gán quyền module Deplao.
+                {tr('Hồ sơ ERP này chưa có tài khoản đăng nhập nên chưa thể gán quyền module Deplao.')}
               </div>
             )}
           </div>
 
           <div className="space-y-3">
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Hồ sơ ERP</div>
-            <Field label="Phòng ban">
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{tr('Hồ sơ ERP')}</div>
+            <Field label={tr('Phòng ban')}>
               <select value={profileForm.department_id ?? ''} onChange={e => setProfileForm({ ...profileForm, department_id: e.target.value ? Number(e.target.value) : null })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground">
-                <option value="">- không -</option>
+                <option value="">{tr('- không -')}</option>
                 {departments.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </Field>
-            <Field label="Chức vụ">
+            <Field label={tr('Chức vụ')}>
               <select value={profileForm.position_id ?? ''} onChange={e => setProfileForm({ ...profileForm, position_id: e.target.value ? Number(e.target.value) : null })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground">
-                <option value="">- không -</option>
+                <option value="">{tr('- không -')}</option>
                 {positions.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </Field>
-            <Field label="Role ERP">
+            <Field label={tr('Role ERP')}>
               <select disabled={!canManageEmployees} value={profileForm.erp_role ?? 'member'} onChange={e => setProfileForm({ ...profileForm, erp_role: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground disabled:opacity-50">
                 {ERP_ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </Field>
-            <Field label="SĐT"><input value={profileForm.phone ?? ''} onChange={e => setProfileForm({ ...profileForm, phone: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" /></Field>
-            <Field label="Email"><input value={profileForm.email ?? ''} onChange={e => setProfileForm({ ...profileForm, email: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" /></Field>
+            <Field label={tr('SĐT')}><input value={profileForm.phone ?? ''} onChange={e => setProfileForm({ ...profileForm, phone: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" /></Field>
+            <Field label={tr('Email')}><input value={profileForm.email ?? ''} onChange={e => setProfileForm({ ...profileForm, email: e.target.value })} className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" /></Field>
           </div>
           </div>
 
           <div className="space-y-3">
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Phân quyền</div>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{tr('Phân quyền')}</div>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
             <div className="rounded-xl border border-border/60 bg-card p-3">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div>
-                  <div className="text-xs font-semibold text-foreground">Quyền module Deplao</div>
-                  <div className="text-[11px] text-muted-foreground mt-1">Áp dụng cho các module ngoài ERP khi nhân viên đăng nhập.</div>
+                  <div className="text-xs font-semibold text-foreground">{tr('Quyền module Deplao')}</div>
+                  <div className="text-[11px] text-muted-foreground mt-1">{tr('Áp dụng cho các module ngoài ERP khi nhân viên đăng nhập.')}</div>
                 </div>
-                {!canConfigureModulePermissions && <span className="text-[10px] text-muted-foreground">Chỉ quản lý mới được chỉnh</span>}
+                {!canConfigureModulePermissions && <span className="text-[10px] text-muted-foreground">{tr('Chỉ quản lý mới được chỉnh')}</span>}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {EMPLOYEE_MODULES.map(module => (
@@ -643,10 +645,10 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
             <div className="rounded-xl border border-border/60 bg-card p-3">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <div>
-                  <div className="text-xs font-semibold text-foreground">Quyền action ERP</div>
-                  <div className="text-[11px] text-muted-foreground mt-1">Role hiện tại: <span className="text-foreground/80">{getRoleLabel(effectiveRole)}</span>. Có thể ghi đè riêng từng action.</div>
+                  <div className="text-xs font-semibold text-foreground">{tr('Quyền action ERP')}</div>
+                  <div className="text-[11px] text-muted-foreground mt-1">{trx('Role hiện tại: <0>{{v1}}</0>. Có thể ghi đè riêng từng action.', { 0: <span className="text-foreground/80" />, v1: getRoleLabel(effectiveRole) })}</div>
                 </div>
-                {!canManageEmployees && <span className="text-[10px] text-muted-foreground">Chỉ quản lý mới được chỉnh</span>}
+                {!canManageEmployees && <span className="text-[10px] text-muted-foreground">{tr('Chỉ quản lý mới được chỉnh')}</span>}
               </div>
               <div className="space-y-3 max-h-[360px] overflow-auto pr-1">
                 {ERP_PERMISSION_GROUPS.map(group => (
@@ -660,7 +662,7 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
                           <div>
                             <div className="text-xs text-foreground font-medium">{meta.label}</div>
                             <div className="text-[10px] text-muted-foreground mt-0.5">{meta.description}</div>
-                            <div className="text-[10px] text-muted-foreground mt-1">Mặc định theo role: {inheritedAllowed ? 'Cho phép' : 'Chặn'} · Role được phép: {ERP_PERMISSIONS[action].join(', ')}</div>
+                            <div className="text-[10px] text-muted-foreground mt-1">{trx('Mặc định theo role: {{v1}} · Role được phép: {{v2}}', { v1: inheritedAllowed ? tr('Cho phép') : tr('Chặn'), v2: ERP_PERMISSIONS[action].join(', ') })}</div>
                           </div>
                           <select
                             disabled={!canManageEmployees}
@@ -668,9 +670,9 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
                             onChange={e => setActionPermissions(current => ({ ...current, [action]: e.target.value as 'inherit' | ErpPermissionOverrideMode }))}
                             className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground disabled:opacity-50"
                           >
-                            <option value="inherit">Kế thừa role ({inheritedAllowed ? 'Cho phép' : 'Chặn'})</option>
-                            <option value="allow">Cho phép riêng</option>
-                            <option value="deny">Chặn riêng</option>
+                            <option value="inherit">{tr('Kế thừa role ({{v1}})', { v1: inheritedAllowed ? tr('Cho phép') : tr('Chặn') })}</option>
+                            <option value="allow">{tr('Cho phép riêng')}</option>
+                            <option value="deny">{tr('Chặn riêng')}</option>
                           </select>
                         </div>
                       );
@@ -684,7 +686,7 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
         </div>
 
         <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-3 py-1.5 text-muted-foreground hover:text-foreground text-xs">Hủy</button>
+          <button onClick={onClose} className="px-3 py-1.5 text-muted-foreground hover:text-foreground text-xs">{tr('Hủy')}</button>
           <button onClick={() => onSave({
             employeeId: employee?.employee_id ?? profile?.employee_id,
             employeePatch: hasAccount
@@ -702,9 +704,9 @@ function EmployeeEditorModal({ employee, profile, departments, positions, canMan
             },
             shouldCreateAccount: !isEdit,
             shouldUpdateAccount: hasAccount,
-          })} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">Lưu</button>
+          })} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">{tr('Lưu')}</button>
         </div>
-        {(employee?.employee_id || profile?.employee_id) && <div className="text-[10px] text-muted-foreground mt-2">Employee ID: {employee?.employee_id || profile?.employee_id}</div>}
+        {(employee?.employee_id || profile?.employee_id) && <div className="text-[10px] text-muted-foreground mt-2">{trx('Employee ID: {{v1}}', { v1: employee?.employee_id || profile?.employee_id })}</div>}
       </ErpModalCard>
     </ErpOverlay>
   );
@@ -734,7 +736,7 @@ function RoleTreePanel({ roleTree }: { roleTree: any[] }) {
   if (roleTree.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
-        Chưa có dữ liệu role để dựng cây nhân sự
+        {tr('Chưa có dữ liệu role để dựng cây nhân sự')}
       </div>
     );
   }
@@ -742,17 +744,17 @@ function RoleTreePanel({ roleTree }: { roleTree: any[] }) {
   return (
     <div>
       <div className="flex items-center justify-end mb-3">
-        <div className="text-[11px] text-muted-foreground">{roleTree.length} nhánh role đang có dữ liệu</div>
+        <div className="text-[11px] text-muted-foreground">{trx('{{count}} nhánh role đang có dữ liệu', { count: roleTree.length })}</div>
       </div>
       <div className="grid grid-cols-1 2xl:grid-cols-2 gap-4">
         {roleTree.map(branch => (
           <div key={branch.role} className="rounded-xl border border-border/60 bg-card p-4">
             <div className="flex items-center justify-between gap-3 mb-3">
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Role ERP</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{tr('Role ERP')}</div>
                 <div className="text-sm font-semibold text-foreground mt-1">{branch.label}</div>
               </div>
-              <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${branch.badgeClass}`}>{branch.count} nhân sự</span>
+              <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${branch.badgeClass}`}>{trx('{{count}} nhân sự', { count: branch.count })}</span>
             </div>
 
             <div className="space-y-3">
@@ -770,14 +772,14 @@ function RoleTreePanel({ roleTree }: { roleTree: any[] }) {
                           <div className="min-w-0">
                             <div className="text-sm text-foreground font-medium truncate">{member.name}</div>
                             <div className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                              {member.username ? `@${member.username}` : 'Chưa có tài khoản'} · {member.positionName}
+                              {member.username ? `@${member.username}` : tr('Chưa có tài khoản')} · {member.positionName}
                             </div>
                           </div>
-                          {!member.hasAccount && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-600/20 text-yellow-300">Thiếu tài khoản</span>}
+                          {!member.hasAccount && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-600/20 text-yellow-300">{tr('Thiếu tài khoản')}</span>}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
-                          <span><LockIcon className="w-4 h-4 inline" /> {member.moduleCount} module</span>
-                          <span><SettingsIcon className="w-4 h-4 inline" /> {member.actionOverrideCount} action riêng</span>
+                          <span>{trx('<0/> {{moduleCount}} module', { 0: <LockIcon className="w-4 h-4 inline" />, moduleCount: member.moduleCount })}</span>
+                          <span>{trx('<0/> {{actionOverrideCount}} action riêng', { 0: <SettingsIcon className="w-4 h-4 inline" />, actionOverrideCount: member.actionOverrideCount })}</span>
                         </div>
                       </div>
                     ))}
@@ -804,10 +806,10 @@ function DepartmentsTab() {
   return (
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-foreground">Phòng ban ({departments.length})</h3>
+        <h3 className="text-sm font-semibold text-foreground">{trx('Phòng ban ({{count}})', { count: departments.length })}</h3>
         {perms.can('department.manage') && (
           <button onClick={() => setCreating(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">
-            + Thêm phòng ban
+            {tr('+ Thêm phòng ban')}
           </button>
         )}
       </div>
@@ -817,36 +819,36 @@ function DepartmentsTab() {
             <div>
               <div className="text-sm text-foreground font-medium">{d.name}</div>
               {d.description && <div className="text-xs text-muted-foreground mt-0.5">{d.description}</div>}
-              <div className="text-[10px] text-muted-foreground mt-0.5">{(d as any).employeeCount ?? 0} nhân sự</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">{trx('{{v1}} nhân sự', { v1: (d as any).employeeCount ?? 0 })}</div>
             </div>
             {perms.can('department.manage') && (
               <div className="flex gap-1">
                 <button onClick={async () => {
-                  const name = prompt('Tên phòng ban mới', d.name);
+                  const name = prompt(tr('Tên phòng ban mới'), d.name);
                   if (name && name !== d.name) await updateDepartment(d.id, { name });
-                }} className="text-blue-400 hover:text-blue-300 text-xs" title="Sửa phòng ban"><EditIcon className="w-4 h-4" /></button>
+                }} className="text-blue-400 hover:text-blue-300 text-xs" title={tr('Sửa phòng ban')}><EditIcon className="w-4 h-4" /></button>
                 <button onClick={async () => {
-                  if (confirm(`Xóa phòng ban "${d.name}"?`)) await deleteDepartment(d.id);
-                }} className="text-red-400 hover:text-red-300 text-xs" title="Xóa phòng ban"><TrashIcon className="w-4 h-4" /></button>
+                  if (confirm(tr('Xóa phòng ban "{{name}}"?', { name: d.name }))) await deleteDepartment(d.id);
+                }} className="text-red-400 hover:text-red-300 text-xs" title={tr('Xóa phòng ban')}><TrashIcon className="w-4 h-4" /></button>
               </div>
             )}
           </div>
         ))}
-        {departments.length === 0 && <div className="text-center text-muted-foreground text-xs py-6">Chưa có phòng ban</div>}
+        {departments.length === 0 && <div className="text-center text-muted-foreground text-xs py-6">{tr('Chưa có phòng ban')}</div>}
       </div>
 
       {creating && (
         <ErpOverlay onClose={() => { setCreating(false); setNewName(''); }}>
           <ErpModalCard className="w-full max-w-sm rounded-xl border-input p-5">
-            <h3 className="text-foreground font-semibold mb-3">Tạo phòng ban</h3>
+            <h3 className="text-foreground font-semibold mb-3">{tr('Tạo phòng ban')}</h3>
             <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
-              placeholder="Tên phòng ban" className="w-full bg-muted border border-input rounded px-3 py-2 text-foreground text-sm mb-4" />
+              placeholder={tr('Tên phòng ban')} className="w-full bg-muted border border-input rounded px-3 py-2 text-foreground text-sm mb-4" />
             <div className="flex justify-end gap-2">
-              <button onClick={() => { setCreating(false); setNewName(''); }} className="px-3 py-1.5 text-muted-foreground text-xs">Hủy</button>
+              <button onClick={() => { setCreating(false); setNewName(''); }} className="px-3 py-1.5 text-muted-foreground text-xs">{tr('Hủy')}</button>
               <button disabled={!newName.trim()} onClick={async () => {
                 await createDepartment({ name: newName.trim() });
                 setCreating(false); setNewName('');
-              }} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50">Tạo</button>
+              }} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50">{tr('Tạo')}</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>
@@ -868,12 +870,12 @@ function PositionsTab() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">Chức vụ ({positions.length})</h3>
-          <p className="text-[11px] text-muted-foreground mt-1">Quản lý danh mục chức vụ để gán nhanh cho hồ sơ nhân sự ERP.</p>
+          <h3 className="text-sm font-semibold text-foreground">{trx('Chức vụ ({{count}})', { count: positions.length })}</h3>
+          <p className="text-[11px] text-muted-foreground mt-1">{tr('Quản lý danh mục chức vụ để gán nhanh cho hồ sơ nhân sự ERP.')}</p>
         </div>
         {perms.can('position.manage') && (
           <button onClick={() => setCreating(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">
-            + Thêm chức vụ
+            {tr('+ Thêm chức vụ')}
           </button>
         )}
       </div>
@@ -884,49 +886,49 @@ function PositionsTab() {
             <div>
               <div className="text-sm text-foreground font-medium">{position.name}</div>
               <div className="text-[11px] text-muted-foreground mt-0.5">
-                {departments.find(d => d.id === position.department_id)?.name || 'Toàn công ty'} · Cấp {position.level ?? 0}
+                {departments.find(d => d.id === position.department_id)?.name || tr('Toàn công ty')} {trx('· Cấp {{v1}}', { v1: position.level ?? 0 })}
               </div>
             </div>
             {perms.can('position.manage') && (
               <div className="flex gap-2 text-xs">
                 <button onClick={async () => {
-                  const nextName = prompt('Tên chức vụ', position.name);
+                  const nextName = prompt(tr('Tên chức vụ'), position.name);
                   if (!nextName?.trim()) return;
-                  const nextLevel = prompt('Cấp bậc', String(position.level ?? 0));
+                  const nextLevel = prompt(tr('Cấp bậc'), String(position.level ?? 0));
                   await updatePosition(position.id, { name: nextName.trim(), level: Number(nextLevel || 0) });
-                }} className="text-blue-400 hover:text-blue-300" title="Sửa chức vụ"><EditIcon className="w-4 h-4" /></button>
+                }} className="text-blue-400 hover:text-blue-300" title={tr('Sửa chức vụ')}><EditIcon className="w-4 h-4" /></button>
                 <button onClick={async () => {
-                  if (!confirm(`Xóa chức vụ "${position.name}"?`)) return;
+                  if (!confirm(tr('Xóa chức vụ "{{name}}"?', { name: position.name }))) return;
                   await deletePosition(position.id);
-                }} className="text-red-400 hover:text-red-300" title="Xóa chức vụ"><TrashIcon className="w-4 h-4" /></button>
+                }} className="text-red-400 hover:text-red-300" title={tr('Xóa chức vụ')}><TrashIcon className="w-4 h-4" /></button>
               </div>
             )}
           </div>
         ))}
-        {positions.length === 0 && <div className="text-center text-muted-foreground text-xs py-6">Chưa có chức vụ nào</div>}
+        {positions.length === 0 && <div className="text-center text-muted-foreground text-xs py-6">{tr('Chưa có chức vụ nào')}</div>}
       </div>
 
       {creating && (
         <ErpOverlay onClose={() => { setCreating(false); setName(''); setDepartmentId(''); }}>
           <ErpModalCard className="w-full max-w-sm rounded-xl border-input p-5">
-            <h3 className="text-foreground font-semibold mb-3">Tạo chức vụ</h3>
+            <h3 className="text-foreground font-semibold mb-3">{tr('Tạo chức vụ')}</h3>
             <div className="space-y-3 text-xs">
-              <Field label="Tên chức vụ">
+              <Field label={tr('Tên chức vụ')}>
                 <input autoFocus value={name} onChange={e => setName(e.target.value)} className="w-full bg-muted border border-input rounded px-3 py-2 text-foreground" />
               </Field>
-              <Field label="Phòng ban">
+              <Field label={tr('Phòng ban')}>
                 <select value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="w-full bg-muted border border-input rounded px-3 py-2 text-foreground">
-                  <option value="">Toàn công ty</option>
+                  <option value="">{tr('Toàn công ty')}</option>
                   {departments.map((department: any) => <option key={department.id} value={department.id}>{department.name}</option>)}
                 </select>
               </Field>
             </div>
             <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => { setCreating(false); setName(''); setDepartmentId(''); }} className="px-3 py-1.5 text-muted-foreground text-xs">Hủy</button>
+              <button onClick={() => { setCreating(false); setName(''); setDepartmentId(''); }} className="px-3 py-1.5 text-muted-foreground text-xs">{tr('Hủy')}</button>
               <button disabled={!name.trim()} onClick={async () => {
                 await createPosition({ name: name.trim(), department_id: departmentId ? Number(departmentId) : null });
                 setCreating(false); setName(''); setDepartmentId('');
-              }} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50">Tạo</button>
+              }} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50">{tr('Tạo')}</button>
             </div>
           </ErpModalCard>
         </ErpOverlay>
@@ -1006,18 +1008,18 @@ function AttendanceTab() {
   return (
     <div className="p-4">
       <div className="bg-card rounded-lg border border-border p-4 mb-4">
-        <div className="text-xs text-muted-foreground mb-2">Hôm nay</div>
+        <div className="text-xs text-muted-foreground mb-2">{tr('Hôm nay')}</div>
         <div className="flex items-center gap-4">
           <div className="flex-1">
             <div className="text-sm text-foreground">
               {todayAttendance?.check_in_at
-                ? <>Check-in: <span className="text-green-400">{new Date(todayAttendance.check_in_at).toLocaleTimeString()}</span></>
-                : <span className="text-muted-foreground">Chưa check-in</span>}
+                ? <>{trx('Check-in: <0>{{v1}}</0>', { 0: <span className="text-green-400" />, v1: new Date(todayAttendance.check_in_at).toLocaleTimeString() })}</>
+                : <span className="text-muted-foreground">{tr('Chưa check-in')}</span>}
             </div>
             <div className="text-sm text-foreground mt-1">
               {todayAttendance?.check_out_at
-                ? <>Check-out: <span className="text-blue-400">{new Date(todayAttendance.check_out_at).toLocaleTimeString()}</span></>
-                : <span className="text-muted-foreground">Chưa check-out</span>}
+                ? <>{trx('Check-out: <0>{{v1}}</0>', { 0: <span className="text-blue-400" />, v1: new Date(todayAttendance.check_out_at).toLocaleTimeString() })}</>
+                : <span className="text-muted-foreground">{tr('Chưa check-out')}</span>}
             </div>
           </div>
           <div className="flex gap-2">
@@ -1025,12 +1027,12 @@ function AttendanceTab() {
               disabled={!!todayAttendance?.check_in_at}
               onClick={() => checkIn()}
               className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white text-xs rounded"
-            >Check-in</button>
+            >{tr('Check-in')}</button>
             <button
               disabled={!todayAttendance?.check_in_at || !!todayAttendance?.check_out_at}
               onClick={() => checkOut()}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs rounded"
-            >Check-out</button>
+            >{tr('Check-out')}</button>
           </div>
         </div>
       </div>
@@ -1038,45 +1040,45 @@ function AttendanceTab() {
       <div className="mb-3 rounded-xl border border-border/60 bg-card p-3 text-xs">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div>
-            <div className="text-sm font-semibold text-foreground">Bộ lọc chấm công</div>
-            <div className="text-[11px] text-muted-foreground mt-1">Lọc theo nhân sự, phòng ban, chức vụ, quyền ERP và ngày ghi nhận công.</div>
+            <div className="text-sm font-semibold text-foreground">{tr('Bộ lọc chấm công')}</div>
+            <div className="text-[11px] text-muted-foreground mt-1">{tr('Lọc theo nhân sự, phòng ban, chức vụ, quyền ERP và ngày ghi nhận công.')}</div>
           </div>
-          <div className="text-[11px] text-muted-foreground">{filteredAttendanceList.length} bản ghi phù hợp</div>
+          <div className="text-[11px] text-muted-foreground">{trx('{{count}} bản ghi phù hợp', { count: filteredAttendanceList.length })}</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
         {canViewOthers && (
           <>
-            <button onClick={() => { setScope('all'); setEmployeeFilter(''); }} className={`px-2.5 py-1 rounded ${scope === 'all' ? 'bg-blue-600 text-white' : 'bg-muted text-foreground/80'}`}>Tất cả</button>
-            <button onClick={() => { setScope('mine'); setEmployeeFilter(''); }} className={`px-2.5 py-1 rounded ${scope === 'mine' ? 'bg-blue-600 text-white' : 'bg-muted text-foreground/80'}`}>Của tôi</button>
+            <button onClick={() => { setScope('all'); setEmployeeFilter(''); }} className={`px-2.5 py-1 rounded ${scope === 'all' ? 'bg-blue-600 text-white' : 'bg-muted text-foreground/80'}`}>{tr('Tất cả')}</button>
+            <button onClick={() => { setScope('mine'); setEmployeeFilter(''); }} className={`px-2.5 py-1 rounded ${scope === 'mine' ? 'bg-blue-600 text-white' : 'bg-muted text-foreground/80'}`}>{tr('Của tôi')}</button>
             <select value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
-              <option value="">{scope === 'all' ? 'Tất cả nhân sự' : 'Nhân sự hiện tại'}</option>
+              <option value="">{scope === 'all' ? tr('Tất cả nhân sự') : tr('Nhân sự hiện tại')}</option>
               <option value="boss">Boss</option>
               {employeeOptions.map(option => <option key={option.employeeId} value={option.employeeId}>{option.name}</option>)}
             </select>
           </>
         )}
           <select value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
-            <option value="">Tất cả phòng ban</option>
+            <option value="">{tr('Tất cả phòng ban')}</option>
             {departments.map((department: any) => <option key={department.id} value={department.id}>{department.name}</option>)}
           </select>
           <select value={positionFilter} onChange={e => setPositionFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
-            <option value="">Tất cả chức vụ</option>
+            <option value="">{tr('Tất cả chức vụ')}</option>
             {positions.map((position: any) => <option key={position.id} value={position.id}>{position.name}</option>)}
           </select>
           <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
-            <option value="">Tất cả role ERP</option>
+            <option value="">{tr('Tất cả role ERP')}</option>
             {ERP_ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            <option value="unassigned">Chưa gán role</option>
+            <option value="unassigned">{tr('Chưa gán role')}</option>
           </select>
           <select value={dateFilter} onChange={e => setDateFilter(e.target.value as ErpDateFilterPreset)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             {ERP_DATE_FILTER_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           {dateFilter === 'custom' && (
             <>
-              <label className="text-muted-foreground">Từ</label>
+              <label className="text-muted-foreground">{tr('Từ')}</label>
               <input type="date" value={customDateRange.from} onChange={e => setCustomDateRange(range => ({ ...range, from: e.target.value }))}
                 className="bg-muted border border-input rounded px-2 py-1 text-foreground" />
-              <label className="text-muted-foreground">Đến</label>
+              <label className="text-muted-foreground">{tr('Đến')}</label>
               <input type="date" value={customDateRange.to} onChange={e => setCustomDateRange(range => ({ ...range, to: e.target.value }))}
                 className="bg-muted border border-input rounded px-2 py-1 text-foreground" />
             </>
@@ -1088,11 +1090,11 @@ function AttendanceTab() {
         <table className="w-full text-xs">
           <thead className="bg-muted/50 text-muted-foreground">
             <tr>
-              {(canViewOthers || scope === 'all' || !!employeeFilter) && <th className="px-3 py-2 text-left">Nhân viên</th>}
-              <th className="px-3 py-2 text-left">Ngày</th>
-              <th className="px-3 py-2 text-left">Vào</th>
-              <th className="px-3 py-2 text-left">Ra</th>
-              <th className="px-3 py-2 text-left">Số giờ</th>
+              {(canViewOthers || scope === 'all' || !!employeeFilter) && <th className="px-3 py-2 text-left">{tr('Nhân viên')}</th>}
+              <th className="px-3 py-2 text-left">{tr('Ngày')}</th>
+              <th className="px-3 py-2 text-left">{tr('Vào')}</th>
+              <th className="px-3 py-2 text-left">{tr('Ra')}</th>
+              <th className="px-3 py-2 text-left">{tr('Số giờ')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
@@ -1104,7 +1106,7 @@ function AttendanceTab() {
                   {(canViewOthers || scope === 'all' || !!employeeFilter) && (
                     <td className="px-3 py-2">
                       <div className="font-medium">{getEmpName(a.employee_id)}</div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">{meta?.departmentName || tr('Chưa gán phòng ban')} · {meta?.positionName || tr('Chưa gán chức vụ')} · {getRoleLabel(meta?.role)}</div>
                     </td>
                   )}
                   <td className="px-3 py-2">{a.date}</td>
@@ -1115,7 +1117,7 @@ function AttendanceTab() {
               );
             })}
             {filteredAttendanceList.length === 0 && (
-              <tr><td colSpan={(canViewOthers || scope === 'all' || !!employeeFilter) ? 5 : 4} className="px-3 py-6 text-center text-muted-foreground">Chưa có dữ liệu</td></tr>
+              <tr><td colSpan={(canViewOthers || scope === 'all' || !!employeeFilter) ? 5 : 4} className="px-3 py-6 text-center text-muted-foreground">{tr('Chưa có dữ liệu')}</td></tr>
             )}
           </tbody>
         </table>
@@ -1170,34 +1172,34 @@ function LeaveTab() {
       <div className="rounded-xl border border-border/60 bg-card p-3 text-xs">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
           <div>
-            <div className="text-sm font-semibold text-foreground">Bộ lọc nghỉ phép</div>
-            <div className="text-[11px] text-muted-foreground mt-1">Lọc đơn theo phòng ban, chức vụ, quyền ERP và ngày tạo đơn.</div>
+            <div className="text-sm font-semibold text-foreground">{tr('Bộ lọc nghỉ phép')}</div>
+            <div className="text-[11px] text-muted-foreground mt-1">{tr('Lọc đơn theo phòng ban, chức vụ, quyền ERP và ngày tạo đơn.')}</div>
           </div>
-          <div className="text-[11px] text-muted-foreground">{filteredMyLeaves.length}{canApprove ? ` / ${filteredPendingLeaves.length}` : ''} bản ghi hiển thị</div>
+          <div className="text-[11px] text-muted-foreground">{trx('{{count}}{{v1}} bản ghi hiển thị', { count: filteredMyLeaves.length, v1: canApprove ? ` / ${filteredPendingLeaves.length}` : '' })}</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
-            <option value="">Tất cả phòng ban</option>
+            <option value="">{tr('Tất cả phòng ban')}</option>
             {departments.map((department: any) => <option key={department.id} value={department.id}>{department.name}</option>)}
           </select>
           <select value={positionFilter} onChange={e => setPositionFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
-            <option value="">Tất cả chức vụ</option>
+            <option value="">{tr('Tất cả chức vụ')}</option>
             {positions.map((position: any) => <option key={position.id} value={position.id}>{position.name}</option>)}
           </select>
           <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
-            <option value="">Tất cả role ERP</option>
+            <option value="">{tr('Tất cả role ERP')}</option>
             {ERP_ROLE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            <option value="unassigned">Chưa gán role</option>
+            <option value="unassigned">{tr('Chưa gán role')}</option>
           </select>
           <select value={createdDateFilter} onChange={e => setCreatedDateFilter(e.target.value as ErpDateFilterPreset)} className="bg-muted border border-input rounded px-2 py-1 text-foreground">
             {ERP_DATE_FILTER_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           {createdDateFilter === 'custom' && (
             <>
-              <label className="text-muted-foreground">Từ</label>
+              <label className="text-muted-foreground">{tr('Từ')}</label>
               <input type="date" value={customCreatedRange.from} onChange={e => setCustomCreatedRange(range => ({ ...range, from: e.target.value }))}
                 className="bg-muted border border-input rounded px-2 py-1 text-foreground" />
-              <label className="text-muted-foreground">Đến</label>
+              <label className="text-muted-foreground">{tr('Đến')}</label>
               <input type="date" value={customCreatedRange.to} onChange={e => setCustomCreatedRange(range => ({ ...range, to: e.target.value }))}
                 className="bg-muted border border-input rounded px-2 py-1 text-foreground" />
             </>
@@ -1207,9 +1209,9 @@ function LeaveTab() {
 
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold text-foreground">Đơn nghỉ phép của tôi</h3>
+          <h3 className="text-sm font-semibold text-foreground">{tr('Đơn nghỉ phép của tôi')}</h3>
           <button onClick={() => setCreating(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">
-            + Tạo đơn
+            {tr('+ Tạo đơn')}
           </button>
         </div>
         <LeaveTable rows={filteredMyLeaves} onCancel={cancelLeave} getEmployeeMeta={employeeMeta} />
@@ -1217,7 +1219,7 @@ function LeaveTab() {
 
       {canApprove && (
         <div>
-          <h3 className="text-sm font-semibold text-foreground mb-2">Đơn chờ duyệt ({filteredPendingLeaves.length})</h3>
+          <h3 className="text-sm font-semibold text-foreground mb-2">{trx('Đơn chờ duyệt ({{count}})', { count: filteredPendingLeaves.length })}</h3>
           <LeaveTable rows={filteredPendingLeaves} showActor approvable onDecide={decideLeave} getEmployeeMeta={employeeMeta} />
         </div>
       )}
@@ -1233,13 +1235,13 @@ function LeaveTable({ rows, showActor, approvable, onDecide, onCancel, getEmploy
       <table className="w-full text-xs">
         <thead className="bg-muted/50 text-muted-foreground">
           <tr>
-            {showActor && <th className="px-3 py-2 text-left">Người gửi</th>}
-            <th className="px-3 py-2 text-left">Loại</th>
-            <th className="px-3 py-2 text-left">Ngày tạo</th>
-            <th className="px-3 py-2 text-left">Từ</th>
-            <th className="px-3 py-2 text-left">Đến</th>
-            <th className="px-3 py-2 text-left">Lý do</th>
-            <th className="px-3 py-2 text-left">Trạng thái</th>
+            {showActor && <th className="px-3 py-2 text-left">{tr('Người gửi')}</th>}
+            <th className="px-3 py-2 text-left">{tr('Loại')}</th>
+            <th className="px-3 py-2 text-left">{tr('Ngày tạo')}</th>
+            <th className="px-3 py-2 text-left">{tr('Từ')}</th>
+            <th className="px-3 py-2 text-left">{tr('Đến')}</th>
+            <th className="px-3 py-2 text-left">{tr('Lý do')}</th>
+            <th className="px-3 py-2 text-left">{tr('Trạng thái')}</th>
             <th className="px-3 py-2"></th>
           </tr>
         </thead>
@@ -1251,7 +1253,7 @@ function LeaveTable({ rows, showActor, approvable, onDecide, onCancel, getEmploy
               {showActor && (
                 <td className="px-3 py-2">
                   <div className="font-medium text-foreground">{meta?.name || l.requester_id}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">{meta?.departmentName || 'Chưa gán phòng ban'} · {meta?.positionName || 'Chưa gán chức vụ'} · {getRoleLabel(meta?.role)}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{meta?.departmentName || tr('Chưa gán phòng ban')} · {meta?.positionName || tr('Chưa gán chức vụ')} · {getRoleLabel(meta?.role)}</div>
                 </td>
               )}
               <td className="px-3 py-2">{l.leave_type}</td>
@@ -1270,18 +1272,18 @@ function LeaveTable({ rows, showActor, approvable, onDecide, onCancel, getEmploy
               <td className="px-3 py-2 text-right space-x-1">
                 {approvable && l.status === 'pending' && (
                   <>
-                    <button onClick={() => onDecide(l.id, 'approved')} className="text-green-400 hover:text-green-300 text-[11px]">Duyệt</button>
-                    <button onClick={() => { const note = prompt('Lý do từ chối?') || ''; onDecide(l.id, 'rejected', note); }} className="text-red-400 hover:text-red-300 text-[11px]">Từ chối</button>
+                    <button onClick={() => onDecide(l.id, 'approved')} className="text-green-400 hover:text-green-300 text-[11px]">{tr('Duyệt')}</button>
+                    <button onClick={() => { const note = prompt(tr('Lý do từ chối?')) || ''; onDecide(l.id, 'rejected', note); }} className="text-red-400 hover:text-red-300 text-[11px]">{tr('Từ chối')}</button>
                   </>
                 )}
                 {!approvable && l.status === 'pending' && (
-                  <button onClick={() => onCancel(l.id)} className="text-muted-foreground hover:text-foreground text-[11px]">Hủy</button>
+                  <button onClick={() => onCancel(l.id)} className="text-muted-foreground hover:text-foreground text-[11px]">{tr('Hủy')}</button>
                 )}
               </td>
             </tr>
           );})}
           {(!rows || rows.length === 0) && (
-            <tr><td colSpan={showActor ? 8 : 7} className="px-3 py-6 text-center text-muted-foreground">Không có đơn nào</td></tr>
+            <tr><td colSpan={showActor ? 8 : 7} className="px-3 py-6 text-center text-muted-foreground">{tr('Không có đơn nào')}</td></tr>
           )}
         </tbody>
       </table>
@@ -1301,38 +1303,38 @@ function LeaveCreateModal({ onClose, onSubmit }: any) {
     <ErpOverlay onClose={onClose}>
       <ErpModalCard className="w-full max-w-md rounded-xl border-input p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-foreground font-semibold">Tạo đơn nghỉ phép</h3>
+          <h3 className="text-foreground font-semibold">{tr('Tạo đơn nghỉ phép')}</h3>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
         </div>
         <div className="space-y-3 text-xs">
-          <Field label="Loại">
+          <Field label={tr('Loại')}>
             <select value={form.leave_type} onChange={e => setForm({ ...form, leave_type: e.target.value })}
               className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground">
-              <option value="annual">Nghỉ phép năm</option>
-              <option value="sick">Nghỉ ốm</option>
-              <option value="unpaid">Nghỉ không lương</option>
-              <option value="other">Khác</option>
+              <option value="annual">{tr('Nghỉ phép năm')}</option>
+              <option value="sick">{tr('Nghỉ ốm')}</option>
+              <option value="unpaid">{tr('Nghỉ không lương')}</option>
+              <option value="other">{tr('Khác')}</option>
             </select>
           </Field>
           <div className="grid grid-cols-2 gap-2">
-            <Field label="Từ ngày">
+            <Field label={tr('Từ ngày')}>
               <input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })}
                 className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
             </Field>
-            <Field label="Đến ngày">
+            <Field label={tr('Đến ngày')}>
               <input type="date" value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })}
                 className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
             </Field>
           </div>
-          <Field label="Lý do">
+          <Field label={tr('Lý do')}>
             <textarea value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} rows={3}
               className="w-full bg-muted border border-input rounded px-2 py-1.5 text-foreground" />
           </Field>
         </div>
         <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-3 py-1.5 text-muted-foreground hover:text-foreground text-xs">Hủy</button>
+          <button onClick={onClose} className="px-3 py-1.5 text-muted-foreground hover:text-foreground text-xs">{tr('Hủy')}</button>
           <button disabled={!form.reason.trim()} onClick={() => onSubmit(form)}
-            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50">Gửi đơn</button>
+            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50">{tr('Gửi đơn')}</button>
         </div>
       </ErpModalCard>
     </ErpOverlay>

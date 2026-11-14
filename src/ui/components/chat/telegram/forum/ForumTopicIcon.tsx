@@ -1,6 +1,6 @@
 /**
- * Biểu tượng chủ đề forum như Telegram: General = "#", chủ đề có emoji tuỳ chỉnh = emoji đó (ảnh tĩnh, tải khi hiện ra),
- * còn lại = bong bóng màu của chủ đề (iconColor) với chữ cái đầu của tên.
+ * Forum topic icon, as in Telegram: General = "#", a topic with a custom emoji = that emoji (static image, loaded when shown),
+ * otherwise = the topic's colored bubble (iconColor) with the first letter of its name.
  */
 import React from 'react';
 import { cn } from '@/lib/cn';
@@ -8,7 +8,7 @@ import { HashIcon } from '@/components/common/icons';
 import { StickerThumb } from '@/components/chat/telegram/stickers/TelegramStickerTile';
 import { forumTopicColor, isGeneralForumTopic, type ForumTopicRow } from '../../../../../shared/telegram/forumTopics';
 
-/** Pha màu với trắng (0..1) — nửa trên bong bóng sáng hơn, như Telegram. */
+/** Blend the color with white (0..1): the top half of the bubble is lighter, as in Telegram. */
 function lighten(hex: string, amount: number): string {
   const value = parseInt(hex.slice(1), 16);
   const mix = (channel: number) => Math.round(channel + (255 - channel) * amount);
@@ -23,7 +23,7 @@ export function ForumTopicIcon({ accountId, topic, className }: {
   topic: Pick<ForumTopicRow, 'id' | 'title' | 'iconColor' | 'iconEmoji'>;
   className?: string;
 }) {
-  // useId của React 18 có dấu ":" — bỏ đi cho chắc khi tham chiếu url(#…)
+  // React 18's useId contains ":": strip it to be safe when referencing url(#…)
   const gradientId = `tg-topic-${React.useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   if (isGeneralForumTopic(topic)) {
     return (
@@ -43,7 +43,7 @@ export function ForumTopicIcon({ accountId, topic, className }: {
           <stop offset="1" stopColor={color} />
         </linearGradient>
       </defs>
-      {/* Bong bóng chat có đuôi bên trái phía dưới */}
+      {/* Chat bubble with a tail at the bottom left */}
       <path d="M12 2.5a9.5 9.5 0 1 1-4.86 17.66l-3.37 1.06a.6.6 0 0 1-.75-.75l1.06-3.37A9.5 9.5 0 0 1 12 2.5z" fill={`url(#${gradientId})`} />
       <text x="12" y="12.4" textAnchor="middle" dominantBaseline="central" fontSize="10.5" fontWeight="700" fill="#fff">{letter}</text>
     </svg>

@@ -12,6 +12,7 @@ import * as crypto from 'crypto';
 import Logger from '../../../utils/Logger';
 import DatabaseService from '../../database/DatabaseService';
 import { BOT_DISCONNECT_REASON, type BotPauseReason, type BotPollState } from '../../../shared/telegram/telegramBotStatus';
+import { tr } from '../../../shared/i18n';
 
 export type { BotPauseReason, BotPollState };
 
@@ -83,15 +84,15 @@ interface ActivePoller {
   offset: number;
   running: boolean;
   /**
-   * Đang tạm dừng vì lỗi Telegram (poller vẫn giữ tài khoản + consumer để chạy lại không mất gì):
-   *  - conflict (409): nơi khác (OpenClaw, bot server, Deplao máy khác…) đang gọi getUpdates cùng token. Không tự chạy
-   *    lại (hai bên sẽ giành tin của nhau), chỉ chạy lại khi người dùng bấm kết nối lại (resumeBot).
-   *  - unauthorized / not_found (401 / 404): token bị thu hồi / bot bị xoá — health check thử lại mỗi phút.
+   * Paused because of a Telegram error (the poller still keeps the account + consumers, so it can run again without losing anything):
+   *  - conflict (409): somewhere else (OpenClaw, a bot server, another Deplao machine…) is calling getUpdates with the same token. It does not run
+   *    again by itself (the two would fight over the messages); it only runs again when the user clicks reconnect (resumeBot).
+   *  - unauthorized / not_found (401 / 404): token revoked / bot deleted; the health check retries every minute.
    */
   pausedReason?: BotPauseReason;
-  /** Tăng mỗi lần chạy lại: lượt getUpdates của lần chạy trước trả về muộn thì bỏ qua. */
+  /** Incremented each time the poller runs again: a getUpdates result from an earlier run that arrives late is ignored. */
   generation: number;
-  /** Lý do đã báo giao diện gần nhất (token lỗi: health check thử lại mỗi phút, chỉ báo một lần tới khi nhận tin lại được). */
+  /** Last reason reported to the UI (token error: the health check retries every minute, reported only once until messages are received again). */
   notifiedReason?: BotPauseReason;
   timer: ReturnType<typeof setTimeout> | null;
   consumers: Map<string, BotUpdateConsumer[]>; // accountId → consumers
@@ -202,9 +203,9 @@ function normalizeUpdate(raw: any): NormalizedUpdate {
 // ─── Polling loop ───────────────────────────────────────────────────────────
 
 /**
- * Lượt chạy `generation` của poller còn hiệu lực: chưa dừng / tạm dừng / chạy lại, và poller vẫn là poller của token.
- * Lượt cũ trả về muộn (getUpdates treo tới 25 s) thì bỏ: lỗi 409 của nó là do chính lượt mới cắt ngang, không phải
- * nơi khác giành tin; update của nó chưa được xác nhận (offset) nên Telegram giao lại cho lượt mới.
+ * The poller's `generation` run is still valid: not stopped / paused / restarted, and the poller is still the token's poller.
+ * An old run that returns late (getUpdates hangs up to 25 s) is ignored: its 409 error was caused by the new run cutting in, not by
+ * somewhere else taking the messages; its updates were not acknowledged (offset), so Telegram delivers them to the new run again.
  */
 function isLive(poller: ActivePoller, generation: number): boolean {
   return poller.running && poller.generation === generation && activePollers.get(poller.tokenHash) === poller;
@@ -228,7 +229,7 @@ function resumePoller(poller: ActivePoller): void {
 }
 
 function emitDisconnected(poller: ActivePoller, pause: BotPauseReason): void {
-  // 409 luôn báo (chỉ chạy lại khi người dùng bấm Kết nối lại); token lỗi chỉ báo lần đầu
+  // 409 is always reported (it only runs again when the user clicks reconnect); a token error is reported only the first time
   if (pause !== 'conflict' && poller.notifiedReason === pause) return;
   poller.notifiedReason = pause;
   const reason = BOT_DISCONNECT_REASON[pause];
@@ -331,7 +332,7 @@ async function pollLoop(poller: ActivePoller, generation: number): Promise<void>
     }
     Logger.warn(`[BotIngress] Poll error ${poller.tokenHash}: ${err.message}`);
 
-    // Token bị thu hồi / bot bị xoá (401 / 404): tạm dừng (giữ tài khoản + consumer), health check thử lại mỗi phút
+    // Token revoked / bot deleted (401 / 404): pause (keep the account + consumer), the health check retries every minute
     if (err.response?.status === 401 || err.response?.status === 404) {
       Logger.warn(`[BotIngress] Fatal error ${err.response.status} for token ${poller.tokenHash} — pausing poller`);
       const reason: BotPauseReason = err.response.status === 401 ? 'unauthorized' : 'not_found';
@@ -369,12 +370,12 @@ function stopPollerByTokenHash(tokenHash: string): void {
  * If a poller for the same token already exists, just registers the accountId
  * without starting a second getUpdates loop (TG-015 fix).
  *
- * Trả về true khi token đang nhận tin. false = poller của token đang tạm dừng vì nơi khác nhận tin (409): tài khoản
- * vẫn được gắn vào poller (đăng ký consumer bình thường), chỉ nhận tin lại khi người dùng bấm kết nối lại (resumeBot).
+ * Returns true when the token is receiving messages. false = the token's poller is paused because somewhere else receives messages (409): the account
+ * is still attached to the poller (registers its consumer as usual); it only receives messages again when the user clicks reconnect (resumeBot).
  */
 export function startBot(account: BotAccount): boolean {
   const tokenHash = hashToken(account.botToken);
-  // Cùng tài khoản đổi token (kết nối lại bằng token mới): gỡ khỏi poller của token cũ
+  // Same account changed its token (reconnect with a new token): remove it from the old token's poller
   const previousHash = accountIdToTokenHash.get(account.accountId);
   if (previousHash && previousHash !== tokenHash) stopBot(account.accountId);
   const existingPoller = activePollers.get(tokenHash);
@@ -391,7 +392,7 @@ export function startBot(account: BotAccount): boolean {
         Logger.warn(`[BotIngress] Polling remains paused for ${account.accountId}: Telegram reported another getUpdates consumer. Stop the other consumer, then reconnect the bot.`);
         return false;
       }
-      // 401 / 404 lần trước (health check thử lại): chạy lại lượt mới
+      // 401 / 404 last time (the health check retries): run a new pass
       resumePoller(existingPoller);
     }
     Logger.log(`[BotIngress] Reusing existing poller for ${account.accountId} (@${account.botUsername}) on token ${tokenHash}`);
@@ -421,8 +422,8 @@ export function startBot(account: BotAccount): boolean {
 }
 
 /**
- * Người dùng bấm kết nối lại: poller của tài khoản đang tạm dừng (kể cả 409 — người dùng đã tắt nơi kia) chạy lại ngay,
- * giữ nguyên các consumer (hộp thư, workflow). Trả về true khi poller đang / bắt đầu nhận tin lại.
+ * The user clicks reconnect: the account's paused poller (including a 409, the user has turned off the other side) runs again at once,
+ * keeping the consumers (inbox, workflows). Returns true when the poller is / starts receiving messages again.
  */
 export function resumeBot(accountId: string): boolean {
   const tokenHash = accountIdToTokenHash.get(accountId);
@@ -528,7 +529,7 @@ export function hasPollingConflict(accountId: string): boolean {
   return getPollState(accountId) === 'conflict';
 }
 
-/** Trạng thái nhận tin của tài khoản bot: đang nhận / tạm dừng (lý do) / không có poller. */
+/** Receiving state of the bot account: receiving / paused (reason) / no poller. */
 export function getPollState(accountId: string): BotPollState {
   const tokenHash = accountIdToTokenHash.get(accountId);
   const poller = tokenHash ? activePollers.get(tokenHash) : undefined;
@@ -555,7 +556,7 @@ export async function validateBotToken(botToken: string): Promise<{ success: boo
     if (res.data?.ok) {
       return { success: true, bot: res.data.result };
     }
-    return { success: false, error: 'Token không hợp lệ' };
+    return { success: false, error: tr('Token không hợp lệ') };
   } catch (err: any) {
     return { success: false, error: err.response?.data?.description || err.message };
   }

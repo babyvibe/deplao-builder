@@ -13,14 +13,15 @@ import {
 import Logger from '../../../src/utils/Logger';
 import * as fs from 'fs';
 import * as path from 'path';
+import { tr } from '../../../src/shared/i18n';
 
 /** Faststart repair queue: dedup concurrent ensureFaststart calls for the same file */
 const pendingFaststart = new Map<string, Promise<{ success: boolean; fixed?: boolean; reason?: string; error?: string }>>();
 
-/** Lấy đường dẫn ffmpeg: ưu tiên ffmpeg-static, fallback về PATH */
+/** Get the ffmpeg path: prefer ffmpeg-static, fall back to PATH */
 function getFfmpegBin(): string {
     try {
-        // ffmpeg-static trả về path tới binary
+        // ffmpeg-static returns the path to the binary
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         let ffmpegStatic = require('ffmpeg-static') as string;
         // Fix path when running inside Electron asar archive
@@ -34,20 +35,20 @@ function getFfmpegBin(): string {
     return 'ffmpeg'; // fallback PATH
 }
 
-/** URL file của Boss ứng với đường dẫn file Boss lưu trong tin (giống toLocalMediaUrl ở giao diện). */
+/** Boss file URL for the Boss file path stored in the message (same as toLocalMediaUrl in the UI). */
 function bossFileUrl(bossUrl: string, localPath: string, fallbackName: string): string {
     const base = bossUrl.replace(/\/+$/, '');
     const normalized = localPath.replace(/\\/g, '/');
     const mediaMatch = normalized.match(/(?:^|\/)(media|_uploads|avatar)\/(.+)/);
-    // Mã hoá từng đoạn: tên file có "#", "%"… (Boss giải mã một lần)
+    // Encode each segment: file names with "#", "%"… (Boss decodes once)
     if (mediaMatch) return `${base}/api/${mediaMatch[1]}/${mediaMatch[2].split('/').map(encodeURIComponent).join('/')}`;
     return `${base}/api/media/external/${encodeURIComponent(normalized || fallbackName)}`;
 }
 
 /**
- * Máy nhân viên: file của tin nằm trên máy Boss (local_paths là đường dẫn của Boss) → lưu bản Boss đã lưu: bản đã tải về
- * máy này trước đó (mở file / xem ảnh), không có thì tải từ Boss bằng token phiên nhân viên.
- * 'unavailable' = không phải workspace nhân viên.
+ * Employee machine: the message's file is on the Boss machine (local_paths holds Boss's path) → use the copy Boss saved: the copy already
+ * downloaded to this machine earlier (opening the file / viewing the image); if there is none, download it from Boss with the employee session token.
+ * 'unavailable' = not an employee workspace.
  */
 async function saveFromBoss(localPath: string, destPath: string, fallbackName: string): Promise<'saved' | 'failed' | 'unavailable'> {
     const { default: WorkspaceManager } = require('../../../src/utils/app/WorkspaceManager');
@@ -60,7 +61,7 @@ async function saveFromBoss(localPath: string, destPath: string, fallbackName: s
             fs.copyFileSync(cached, destPath);
             return 'saved';
         }
-    } catch { /* tải lại từ Boss */ }
+    } catch { /* re-download from Boss */ }
     try {
         const response = await fetch(url, {
             headers: { 'Authorization': `Bearer ${ws.token}` },
@@ -76,8 +77,8 @@ async function saveFromBoss(localPath: string, destPath: string, fallbackName: s
 }
 
 /**
- * Tải thẳng link gốc của file (CDN Zalo / Facebook / URL Boss) về chỗ người dùng chọn. Trước đây phải có zaloId (không
- * nơi gọi nào truyền) → mọi file chưa có trên máy báo "zaloId required for remote download".
+ * Download the original file link (Zalo CDN / Facebook CDN / Boss URL) directly to the location the user picks. Before, it required a zaloId (which no
+ * caller passed) → every file not yet on the machine reported "zaloId required for remote download".
  */
 async function downloadUrlTo(url: string, destPath: string, opts: { image: boolean; cookiesJson?: string; userAgent?: string }): Promise<void> {
     const source = opts.image ? toZaloJpgUrl(url) : url;
@@ -93,11 +94,11 @@ async function downloadUrlTo(url: string, destPath: string, opts: { image: boole
     const response = await net.fetch(source, { headers });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
-    if (!buffer.length) throw new Error('File rỗng');
+    if (!buffer.length) throw new Error(tr('File rỗng'));
     fs.writeFileSync(destPath, buffer);
 }
 
-/** Phụ thuộc thật (DB, ổ đĩa, CDN) của imageRepair cho file:repairImage / file:ensureMessageImage. */
+/** Real dependencies (DB, disk, CDN) of imageRepair for file:repairImage / file:ensureMessageImage. */
 function imageRepairDeps(threadIdHint: string | undefined, emitLocalPath: ImageRepairDeps['emitLocalPath']): ImageEnsureDeps {
     const db = DatabaseService.getInstance();
     return {
@@ -114,11 +115,11 @@ function imageRepairDeps(threadIdHint: string | undefined, emitLocalPath: ImageR
                 try {
                     const lp = typeof row.local_paths === 'string' ? JSON.parse(row.local_paths || '{}') : (row.local_paths || {});
                     info.localPath = String(lp?.main || lp?.hd || '');
-                } catch { /* local_paths hỏng */ }
+                } catch { /* broken local_paths */ }
                 try {
                     const contentRaw = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
                     info.imageUrl = DatabaseService.extractImageUrlFromContent(contentRaw) || '';
-                } catch { /* content không phải JSON */ }
+                } catch { /* content is not JSON */ }
             } catch (e: any) {
                 Logger.warn(`[fileIpc] repairImage: DB lookup failed: ${e.message}`);
             }
@@ -139,7 +140,7 @@ function imageRepairDeps(threadIdHint: string | undefined, emitLocalPath: ImageR
         log: (message) => Logger.log(message),
         warn: (message) => Logger.warn(message),
         isZaloMediaUrl,
-        // File đã dọn lên Cloudflare R2 (lưu media lên cloud) → lấy lại về chỗ cũ; R2 tắt / chưa nạp → false
+        // File moved to Cloudflare R2 (media saved to the cloud) → fetch it back to its old place; R2 off / not loaded → false
         restoreFromCloud: async (absPath) => {
             try {
                 return !!(await require('../../../src/services/cloudflare/media').cloudMedia.resolveMissingMediaFile(absPath));
@@ -150,7 +151,7 @@ function imageRepairDeps(threadIdHint: string | undefined, emitLocalPath: ImageR
     };
 }
 
-/** Giao diện đang mở workspace nhân viên (remote) và lệnh không phải Boss chạy hộ nhân viên (`_fromRelay`). */
+/** The UI has an employee (remote) workspace open and the command is not from Boss running on the employee's behalf (`_fromRelay`). */
 function imageRunsOnBoss(params: any): boolean {
     if (params?._fromRelay) return false;
     try {
@@ -161,7 +162,7 @@ function imageRunsOnBoss(params: any): boolean {
     }
 }
 
-/** Chỉ id tin: Boss tự lấy link ảnh + đường dẫn trong DB của nó (không nhận link / đường dẫn từ máy nhân viên). */
+/** Message id only: Boss looks up the image link + path in its own DB (does not accept a link / path from the employee machine). */
 function ensureImageParams(params: any): { zaloId: string; msgId: string; threadId?: string; force: boolean } {
     return {
         zaloId: String(params?.zaloId || ''),
@@ -171,10 +172,10 @@ function ensureImageParams(params: any): { zaloId: string; msgId: string; thread
     };
 }
 
-/** Tải ảnh có thể mất tới 30 s (CDN) + lấy lại từ R2 */
+/** Downloading an image can take up to 30 s (CDN) + fetching it back from R2 */
 const ENSURE_IMAGE_TIMEOUT_MS = 90_000;
 
-/** Máy nhân viên: nhờ Boss có ảnh của tin (tải bằng phiên tài khoản trên Boss); kết quả là đường dẫn trên máy Boss. */
+/** Employee machine: asks Boss to get the message's image (downloaded with the account session on Boss); the result is the path on the Boss machine. */
 async function ensureImageOnBoss(params: any): Promise<ImageEnsureResult> {
     const { proxyToBossWithResult } = require('../network/proxyHelper');
     return proxyToBossWithResult('file:ensureMessageImage', ensureImageParams(params), { timeoutMs: ENSURE_IMAGE_TIMEOUT_MS });
@@ -219,8 +220,8 @@ export function registerFileIpc() {
         try {
             // Resolve relative paths (stored in DB as folder-agnostic relative paths)
             const resolved = FileStorageService.resolveAbsolutePath(filePath);
-            if (!resolved || !fs.existsSync(resolved)) return { success: false, error: 'Không tìm thấy file trên máy', notFound: true };
-            // shell.openPath không ném lỗi: trả chuỗi lỗi (không có app mở được…) — trước đây bỏ qua, giao diện tưởng đã mở
+            if (!resolved || !fs.existsSync(resolved)) return { success: false, error: tr('Không tìm thấy file trên máy'), notFound: true };
+            // shell.openPath does not throw: it returns an error string (no app can open it…). Before, this was ignored and the UI thought it had opened
             const openError = await shell.openPath(resolved);
             if (openError) return { success: false, error: openError };
             return { success: true };
@@ -229,7 +230,7 @@ export function registerFileIpc() {
         }
     });
 
-    /** Mở thư mục chứa file và highlight file đó (Explorer/Finder) */
+    /** Open the folder containing the file and highlight it (Explorer/Finder) */
     ipcMain.handle('file:showItemInFolder', async (_event, filePath: string) => {
         try {
             // Resolve relative paths (stored in DB as folder-agnostic relative paths)
@@ -242,7 +243,7 @@ export function registerFileIpc() {
     });
 
     /**
-     * Lưu file về máy: hiện dialog chọn vị trí, copy file local hoặc download từ URL
+     * Save a file to the machine: shows a location picker, copies the local file or downloads from the URL
      */
     ipcMain.handle('file:saveAs', async (_event, params: {
         localPath?: string;
@@ -260,16 +261,16 @@ export function registerFileIpc() {
 
             const filters: Electron.FileFilter[] = [];
             if (imageExts.includes(extNoDot)) {
-                filters.push({ name: 'Hình ảnh', extensions: imageExts });
+                filters.push({ name: tr('Hình ảnh'), extensions: imageExts });
             } else if (videoExts.includes(extNoDot)) {
                 filters.push({ name: 'Video', extensions: videoExts });
             }
-            filters.push({ name: 'Tất cả file', extensions: ['*'] });
+            filters.push({ name: tr('Tất cả file'), extensions: ['*'] });
 
             const result = await dialog.showSaveDialog({
                 defaultPath: params.defaultName,
                 filters,
-                title: 'Lưu file về máy',
+                title: tr('Lưu file về máy'),
             });
 
             if (result.canceled || !result.filePath) {
@@ -292,7 +293,7 @@ export function registerFileIpc() {
                         try { fs.unlinkSync(resolvedLocalPath); } catch {}
                     }
                 } else {
-                    // Non-image: chỉ check size > 0
+                    // Non-image: only check size > 0
                     try { localValid = fs.statSync(resolvedLocalPath).size > 0; } catch {}
                 }
             }
@@ -300,7 +301,7 @@ export function registerFileIpc() {
             if (localValid && resolvedLocalPath) {
                 fs.copyFileSync(resolvedLocalPath, destPath);
             } else {
-                // Máy nhân viên: lấy bản Boss đã lưu trước (đúng file của tin), không được thì link gốc
+                // Employee machine: get Boss's saved copy first (the message's exact file), otherwise the original link
                 const fromBoss = params.localPath ? await saveFromBoss(params.localPath, destPath, params.defaultName) : 'unavailable';
                 if (fromBoss !== 'saved') {
                     if (params.remoteUrl) {
@@ -310,12 +311,12 @@ export function registerFileIpc() {
                             });
                         } catch (e: any) {
                             Logger.error(`[fileIpc] saveAs download error: ${e.message}`);
-                            return { success: false, error: `Không tải được file (${e.message}). Link gốc có thể đã hết hạn.` };
+                            return { success: false, error: tr('Không tải được file ({{message}}). Link gốc có thể đã hết hạn.', { message: e.message }) };
                         }
                     } else if (fromBoss === 'failed') {
-                        return { success: false, error: 'Không tải được file từ máy Boss. Kiểm tra kết nối tới Boss rồi thử lại.' };
+                        return { success: false, error: tr('Không tải được file từ máy Boss. Kiểm tra kết nối tới Boss rồi thử lại.') };
                     } else {
-                        return { success: false, error: 'Không có nguồn file để lưu' };
+                        return { success: false, error: tr('Không có nguồn file để lưu') };
                     }
                 }
             }
@@ -327,7 +328,7 @@ export function registerFileIpc() {
         }
     });
 
-    /** Lưu base64 data thành file tạm để gửi ảnh clipboard */
+    /** Save base64 data as a temp file to send a clipboard image */
     ipcMain.handle('file:saveTempBlob', async (_event, { base64, ext, filename }: { base64: string; ext: string; filename?: string }) => {
         try {
             const tmpDir = path.join(app.getPath('temp'), 'deplao-clipboard');
@@ -346,8 +347,8 @@ export function registerFileIpc() {
     });
 
     /**
-     * Đọc ảnh từ local path hoặc remote URL và trả về base64.
-     * Dùng main process để tránh CORS khi fetch remote URL từ renderer.
+     * Read an image from a local path or remote URL and return it as base64.
+     * Uses the main process to avoid CORS when fetching a remote URL from the renderer.
      */
     ipcMain.handle('file:readImageAsBase64', async (_event, { localPath: lp, remoteUrl }: { localPath?: string; remoteUrl?: string }) => {
         try {
@@ -362,7 +363,7 @@ export function registerFileIpc() {
             }
             if (remoteUrl) {
                 const response = await net.fetch(remoteUrl, {
-                    // URL file của Boss (nhân viên) cần token phiên; URL khác (CDN) không gắn gì
+                    // Boss file URLs (employees) need the session token; other URLs (CDN) get nothing attached
                     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', ...bossAuthHeaders(remoteUrl) },
                 });
                 if (!response.ok) return { success: false, error: `HTTP ${response.status}` };
@@ -380,7 +381,7 @@ export function registerFileIpc() {
     });
 
     /**
-     * Lấy metadata video (duration, width, height) và extract thumbnail dùng ffmpeg-static.
+     * Get video metadata (duration, width, height) and extract a thumbnail using ffmpeg-static.
      */
     ipcMain.handle('file:getVideoMeta', async (_event, { filePath: videoPath }: { filePath: string }) => {
         try {
@@ -402,9 +403,9 @@ export function registerFileIpc() {
 
             const { execFileSync, spawnSync } = await import('child_process');
 
-            // ── Probe metadata bằng ffmpeg -i (stderr) ──────────────────
+            // ── Probe metadata with ffmpeg -i (stderr) ──────────────────
             try {
-                // ffmpeg -i in ra info vào stderr, không cần output file
+                // ffmpeg -i prints the info to stderr, no output file needed
                 const probe = spawnSync(ffmpegBin, ['-i', resolvedVideoPath, '-hide_banner'], {
                     timeout: 10000,
                     encoding: 'utf8',
@@ -448,7 +449,7 @@ export function registerFileIpc() {
                 }
             };
 
-            // Thử seek tại 10% duration (ít nhất 1s, tối đa 5s), fallback về 0s
+            // Try seeking to 10% of the duration (at least 1s, at most 5s), fall back to 0s
             const seek1 = duration > 1 ? Math.min(Math.max(Math.floor(duration * 0.1), 1), 5) : 0;
             gotThumb = tryExtract(seek1);
             if (!gotThumb && seek1 > 0) {
@@ -469,11 +470,11 @@ export function registerFileIpc() {
     });
 
     /**
-     * Sửa ảnh lỗi: tải lại từ CDN (phiên của tài khoản), file đọc được thì cập nhật DB + báo giao diện rồi mới bỏ file cũ.
-     * Renderer gọi khi img onError (MediaBubble / MediaViewer) và khi quét ảnh hỏng lúc mở hội thoại.
-     * Máy nhân viên: ảnh của tin nằm trên máy Boss (local_paths là đường dẫn của Boss) → Boss kiểm tra bản của nó, thiếu /
-     * hỏng thì Boss tải lại (file:ensureMessageImage); kết quả là đường dẫn trên máy Boss. Trước đây tải về máy nhân viên
-     * rồi ghi đường dẫn đó vào tin: Boss không có file đó → ảnh lỗi → lại tải → ảnh nháy liên tục.
+     * Repair a broken image: re-download it from the CDN (the account's session); if the file is readable, update the DB + notify the UI, then remove the old file.
+     * The renderer calls this on img onError (MediaBubble / MediaViewer) and when a broken image is found while scanning a conversation on open.
+     * Employee machine: the message's image is on the Boss machine (local_paths holds Boss's path) → Boss checks its own copy; if it is missing /
+     * broken, Boss re-downloads it (file:ensureMessageImage); the result is the path on the Boss machine. Before, it downloaded to the employee machine
+     * and wrote that path into the message: Boss did not have the file → image broken → downloaded again → the image kept flickering.
      */
     ipcMain.handle('file:repairImage', async (_event, params: {
         zaloId: string;
@@ -481,21 +482,21 @@ export function registerFileIpc() {
         threadId?: string;
         localPath?: string;
         remoteUrl?: string;
-        /** true = bỏ qua cờ "đã hết hạn" (người dùng bấm Thử tải lại) */
+        /** true = ignore the "đã hết hạn" (expired) flag (the user clicked "Thử tải lại" (Retry download)) */
         force?: boolean;
         _fromRelay?: boolean;
     }) => {
         if (imageRunsOnBoss(params)) return ensureImageOnBoss(params);
-        // Một lượt cho mỗi tin, tải xong mới bỏ file cũ, chỉ xoá file trong thư mục media — imageRepair.ts
+        // One pass per message. The old file is removed only after the new download finishes, and only files in the media folder are deleted (imageRepair.ts)
         return repairMessageImage(params, imageRepairDeps(params?.threadId, (zaloId, msgId, threadId, relPath) =>
             EventBroadcaster.sendDirect('event:localPath', { zaloId, msgId, threadId, localPaths: { main: relPath } })));
     });
 
     /**
-     * Ảnh của tin Zalo phải có trên máy Boss: đã có → trả đường dẫn; chưa có (tin đồng bộ lịch sử, Boss tắt máy lúc nhận,
-     * tải lỗi) → tải bằng phiên tài khoản (imageRepair.ensureMessageImage). Giao diện gọi khi ảnh chỉ có link Zalo hiện ra
-     * (lib/media/ensureMessageImage). Máy nhân viên chuyển lên Boss (proxy: quyền chat + tài khoản được giao); Boss báo
-     * event:localPath cho giao diện Boss và nhân viên được giao tài khoản.
+     * A Zalo message's image must exist on the Boss machine: if it is there → return the path; if not (history-synced message, Boss was off when it arrived,
+     * download failed) → download it with the account session (imageRepair.ensureMessageImage). The UI calls this when an image only shows the Zalo link
+     * (lib/media/ensureMessageImage). Employee machines hand this over to Boss (proxy: chat permission + assigned account); Boss reports
+     * event:localPath to the Boss UI and to the employee assigned the account.
      */
     ipcMain.handle('file:ensureMessageImage', async (_event, params: {
         zaloId: string;
@@ -511,9 +512,9 @@ export function registerFileIpc() {
     });
 
     /**
-     * Tải media của 1 tin Zalo về máy — dùng khi chuyển tiếp tin chưa tải: zca-js chỉ gửi lại ảnh / GIF / file từ file
-     * local, mà tin đồng bộ từ điện thoại / tin cũ không tự tải media. Tên file + key local_paths giống lúc tự tải khi
-     * nhận tin (EventBroadcaster) → bubble hiện "đã có trên máy", lần sau dùng lại không tải nữa.
+     * Download the media of 1 Zalo message to the machine. Used when forwarding a message that has not been downloaded: zca-js only resends images / GIFs / files from a
+     * local file, and messages synced from the phone / old messages do not download their media by themselves. The file name + local_paths key are the same as when
+     * the message is received (EventBroadcaster) → the bubble shows "đã có trên máy" (already on the machine); next time it is reused without downloading again.
      */
     ipcMain.handle('file:downloadMessageMedia', async (_event, params: {
         zaloId: string;
@@ -522,7 +523,7 @@ export function registerFileIpc() {
         kind: 'image' | 'gif' | 'file' | 'voice' | 'video';
     }) => {
         const { zaloId, msgId, threadId, kind } = params || ({} as any);
-        if (!zaloId || !msgId || !kind) return { success: false, error: 'Thiếu thông tin tin nhắn' };
+        if (!zaloId || !msgId || !kind) return { success: false, error: tr('Thiếu thông tin tin nhắn') };
         const isHttp = (value: unknown): value is string => typeof value === 'string' && /^https?:\/\//i.test(value);
         const parseObject = (value: unknown): any => {
             if (value && typeof value === 'object') return value;
@@ -532,10 +533,10 @@ export function registerFileIpc() {
         try {
             const db = DatabaseService.getInstance();
             const row: any = db.getMessageById(zaloId, String(msgId), threadId);
-            if (!row) return { success: false, error: 'Không tìm thấy tin nhắn' };
+            if (!row) return { success: false, error: tr('Không tìm thấy tin nhắn') };
             const content = parseObject(row.content);
             const contentParams = parseObject(content?.params) || {};
-            // Tin định dạng cũ để link ở cột attachments
+            // Old-format messages keep the link in the attachments column
             const attachment = (() => {
                 try {
                     const list = JSON.parse(row.attachments || '[]');
@@ -558,7 +559,7 @@ export function registerFileIpc() {
                     if (rel) localPaths = { main: rel };
                 }
             } else if (kind === 'gif') {
-                // Link dự phòng ở attachments chỉ dùng cho ảnh / file: tin cũ loại khác để icon / link bản tin ở đó
+                // The fallback link in attachments is only used for images / files: other old message types keep the icon / link of the message there
                 const url = [content?.href].find(isHttp);
                 const rel = url ? await FileStorageService.downloadImage(zaloId, url, `gif_${id}.gif`, cookies, userAgent) : '';
                 if (rel) localPaths = { main: rel };
@@ -577,20 +578,20 @@ export function registerFileIpc() {
                     const ext = contentParams.fileExt ? `.${contentParams.fileExt}` : path.extname(title);
                     const fileName = (title.includes('.') ? title : `${title || `file_${id}`}${ext}`)
                         .replace(/[/\\?%*:|"<>]/g, '_').replace(/[. ]+$/, '').trim() || `file_${id}${ext}`;
-                    // Thư mục con theo msgId: giữ tên file gốc (người nhận thấy đúng tên) mà không đụng file trùng tên
+                    // Subfolder per msgId: keeps the original file name (the recipient sees the right name) without touching files with the same name
                     const rel = await FileStorageService.downloadFile(zaloId, url, fileName, cookies, userAgent, `fw_${id}`);
                     if (rel) localPaths = { file: rel, fileName };
                 }
             }
 
             const mainPath = localPaths.main || localPaths.file;
-            if (!mainPath) return { success: false, error: 'Không tải được tệp từ Zalo (không có link hoặc link đã hết hạn)' };
+            if (!mainPath) return { success: false, error: tr('Không tải được tệp từ Zalo (không có link hoặc link đã hết hạn)') };
             if (kind === 'image' || kind === 'gif') {
                 const absPath = FileStorageService.resolveAbsolutePath(mainPath);
                 const check = FileStorageService.validateImageFile(absPath);
                 if (!check.valid && check.reason !== 'truncated') {
-                    try { fs.unlinkSync(absPath); } catch { /* đã xoá */ }
-                    return { success: false, error: `Ảnh tải về không đọc được (${check.reason})` };
+                    try { fs.unlinkSync(absPath); } catch { /* deleted */ }
+                    return { success: false, error: tr('Ảnh tải về không đọc được ({{reason}})', { reason: check.reason }) };
                 }
             }
             db.updateLocalPaths(zaloId, String(row.msg_id || msgId), localPaths);
@@ -602,8 +603,8 @@ export function registerFileIpc() {
     });
 
     /**
-     * Kiểm tra media (video / ảnh trong album) còn trên CDN Zalo không. Hết hạn → lưu cờ media_expired.
-     * Trả { expired: true } nếu đã hết hạn; { expired: false, unknown: true } nếu không xác định được (mất mạng…).
+     * Check whether the media (video / image in an album) is still on the Zalo CDN. Expired → save the media_expired flag.
+     * Returns { expired: true } if it has expired; { expired: false, unknown: true } if it cannot be determined (no network…).
      */
     ipcMain.handle('file:checkMediaExpired', async (_event, params: {
         zaloId: string;
@@ -705,8 +706,8 @@ export function registerFileIpc() {
     });
 
     /**
-     * Batch validate ảnh local: kiểm tra nhiều ảnh cùng lúc, trả về danh sách ảnh lỗi.
-     * Renderer gọi khi load messages để tìm và repair ảnh hỏng từ trước.
+     * Batch validate local images: checks several images at once and returns the list of broken ones.
+     * The renderer calls this when messages load to find and repair images broken earlier.
      */
     ipcMain.handle('file:validateLocalImages', async (_event, items: Array<{
         zaloId: string;
@@ -724,13 +725,13 @@ export function registerFileIpc() {
                 if (!absPath) continue;
                 const ext = path.extname(absPath).replace('.', '').toLowerCase();
                 const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'avif'];
-                if (!imageExts.includes(ext)) continue; // Chỉ validate ảnh
+                if (!imageExts.includes(ext)) continue; // Validate images only
 
-                // I/O bất đồng bộ: chạy mỗi lần mở hội thoại — bản đồng bộ chặn main, các IPC khác (tải tin…) phải chờ
+                // Async I/O: runs each time a conversation is opened. A sync version would block main, and other IPCs (loading messages…) would have to wait
                 const v = await FileStorageService.validateImageFileAsync(absPath);
-                // JPEG thiếu marker kết thúc vẫn hiển thị được (repairImage cũng cho qua) — trước đây bị xoá rồi tải lại
-                // mỗi lần mở hội thoại. Không xoá file ở đây: repairImage tải bản mới xong mới bỏ file cũ (tải lỗi thì
-                // vẫn còn file cũ, không biến thành ảnh lỗi ở mọi nơi).
+                // A JPEG missing its end marker can still be displayed (repairImage also lets it through). Before, it was deleted and downloaded again
+                // each time a conversation is opened. Do not delete the file here: repairImage removes the old file only after the new one is downloaded (if the download fails, then
+                // the old file stays and does not turn into a broken image everywhere).
                 if (!v.valid && v.reason !== 'truncated') corrupted.push({ ...item, reason: v.reason || 'unknown' });
             } catch {}
         }
@@ -739,23 +740,23 @@ export function registerFileIpc() {
     });
 
     /**
-     * MediaCache: resolve URL với cache-first
-     * Employee: kiểm tra cache local trước, nếu miss thì download background + trả về boss URL
+     * MediaCache: resolve URL cache-first
+     * Employee: check the local cache first; on a miss, download in the background + return the Boss URL
      */
     ipcMain.handle('media:resolveUrl', async (_event, { bossUrl, mediaType }: { bossUrl: string; mediaType?: string }) => {
         try {
             const cache = MediaCacheService.getInstance();
             if (!bossUrl) return { success: true, displayUrl: '', fromCache: false };
 
-            // 1. Kiểm tra MediaCacheService trước
+            // 1. Check MediaCacheService first
             const cached = cache.hasCache(bossUrl);
             if (cached) {
                 const result = await cache.resolveUrl(bossUrl, (mediaType || 'image') as any);
                 return { success: true, displayUrl: result.displayUrl, fromCache: true };
             }
 
-            // 2. Kiểm tra workspace media directory (file đã download từ trước)
-            //    Boss URL pattern: /api/media/{path} → map về workspace media/
+            // 2. Check the workspace media directory (file already downloaded earlier)
+            //    Boss URL pattern: /api/media/{path} → maps to workspace media/
             try {
                 const mediaPath = bossUrl.includes('/api/media/')
                     ? 'media/' + decodeUrlPath(bossUrl.split('/api/media/')[1].split(/[?#]/)[0])
@@ -763,7 +764,7 @@ export function registerFileIpc() {
                 if (mediaPath) {
                     const absPath = FileStorageService.resolveAbsolutePath(mediaPath);
                     if (absPath && fs.existsSync(absPath)) {
-                        // File tồn tại trong workspace → dùng file:// URL
+                        // File exists in the workspace → use the file:// URL
                         const normalized = absPath.replace(/\\/g, '/');
                         const fileUrl = `file:///${normalized.startsWith('/') ? '' : '/'}${normalized}`;
                         Logger.log(`[fileIpc] media:resolveUrl → workspace hit: ${mediaPath}`);
@@ -772,7 +773,7 @@ export function registerFileIpc() {
                 }
             } catch {}
 
-            // 3. Cache miss → download background từ Boss
+            // 3. Cache miss → download in the background from Boss
             const result = await cache.resolveUrl(bossUrl, (mediaType || 'image') as any);
             return { success: true, displayUrl: result.displayUrl, fromCache: result.fromCache };
         } catch (err: any) {
@@ -781,7 +782,7 @@ export function registerFileIpc() {
         }
     });
 
-    /** Check xem URL đã được cache hoặc có trong workspace media chưa (sync, nhanh) */
+    /** Check whether the URL is already cached or in the workspace media (sync, fast) */
     ipcMain.handle('media:hasCache', async (_event, { bossUrl }: { bossUrl: string }) => {
         try {
             const cache = MediaCacheService.getInstance();
@@ -803,9 +804,9 @@ export function registerFileIpc() {
     });
 
     /**
-     * Employee mode: ensure media file is available locally.
-     * Khác với media:resolveUrl (background download), handler này CHỜ download
-     * hoàn tất trước khi trả về — dùng khi user click mở video/file để có file local ngay.
+     * Employee mode: ensure the media file is available locally.
+     * Unlike media:resolveUrl (background download), this handler WAITS for the download
+     * to finish before it returns - used when the user clicks to open a video/file so the local file is ready at once.
      *
      * Input: { bossUrl: string, mediaType?: string }
      * Output: { success: boolean, displayUrl: string, localPath?: string, fromCache: boolean }
@@ -815,10 +816,10 @@ export function registerFileIpc() {
             const cache = MediaCacheService.getInstance();
             if (!bossUrl) return { success: true, displayUrl: '', fromCache: false };
 
-            // Dùng resolveUrlSync — chờ download nếu cache miss
+            // Use resolveUrlSync: waits for the download if the cache misses
             const result = await cache.resolveUrlSync(bossUrl, (mediaType || 'image') as any);
 
-            // Extract local path từ file:// URL
+            // Extract the local path from the file:// URL
             let localPath = '';
             if (result.displayUrl.startsWith('file://')) {
                 const urlPath = result.displayUrl.replace('file:///', '');
@@ -828,15 +829,15 @@ export function registerFileIpc() {
                 if (process.platform === 'win32' && localPath.startsWith('/')) {
                     localPath = localPath.replace(/^\//, '');
                 }
-                // Kiểm tra file thực sự tồn tại
+                // Check the file really exists
                 try {
                     if (!require('fs').existsSync(localPath)) {
                         localPath = '';
                     }
                 } catch { localPath = ''; }
             }
-            // Ưu tiên bản sao đúng tên + đuôi trong thư mục media: file cache hash không có đuôi → openPath không chọn
-            // được app. (File Boss giờ cần token nên không mở URL Boss bằng trình duyệt ngoài được nữa.)
+            // Prefer the copy with the right name + extension in the media folder: a cache file's hash has no extension, so openPath cannot choose the right app
+            // for it. (Boss files now need a token, so a Boss URL can no longer be opened in an external browser.)
             const namedCopy = cache.getLocalCopyPath(bossUrl) || cache.ensureLocalCopy(bossUrl, localPath);
             if (namedCopy) localPath = namedCopy;
 
@@ -853,8 +854,8 @@ export function registerFileIpc() {
     });
 
     /**
-     * Batch preload: nhận danh sách Boss URLs, trigger download background
-     * Trả về ngay, không đợi download hoàn tất
+     * Batch preload: takes a list of Boss URLs and triggers background downloads
+     * Returns at once, without waiting for the downloads to finish
      */
     ipcMain.handle('media:preloadBatch', async (_event, { urls }: { urls: string[] }) => {
         try {
@@ -862,7 +863,7 @@ export function registerFileIpc() {
             let triggered = 0;
             for (const url of urls) {
                 if (!url) continue;
-                // Skip nếu đã có trong cache hoặc workspace media
+                // Skip if it is already in the cache or the workspace media
                 if (cache.hasCache(url)) continue;
                 const mediaPath = url.includes('/api/media/')
                     ? 'media/' + url.split('/api/media/')[1].split('?')[0]

@@ -1,3 +1,5 @@
+import { tr } from '../../../../shared/i18n';
+
 export type ErpDateFilterPreset = 'today' | 'yesterday' | 'last7' | 'last14' | 'last30' | 'custom';
 
 export interface ErpCustomDateRange {
@@ -6,12 +8,12 @@ export interface ErpCustomDateRange {
 }
 
 export const ERP_DATE_FILTER_OPTIONS: Array<{ id: ErpDateFilterPreset; label: string }> = [
-  { id: 'today', label: 'Hôm nay' },
-  { id: 'yesterday', label: 'Hôm qua' },
-  { id: 'last7', label: '7 ngày qua' },
-  { id: 'last14', label: '14 ngày qua' },
-  { id: 'last30', label: '1 tháng qua' },
-  { id: 'custom', label: 'Custom' },
+  { id: 'today', label: tr('Hôm nay') },
+  { id: 'yesterday', label: tr('Hôm qua') },
+  { id: 'last7', label: tr('7 ngày qua') },
+  { id: 'last14', label: tr('14 ngày qua') },
+  { id: 'last30', label: tr('1 tháng qua') },
+  { id: 'custom', label: tr('Custom') },
 ];
 
 export function startOfDay(ts: number) {

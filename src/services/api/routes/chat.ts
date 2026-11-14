@@ -1,10 +1,10 @@
 /**
- * Nhóm Chat — hội thoại và tin nhắn cho mọi kênh (Zalo, Facebook, Telegram).
+ * Chat group: conversations and messages for every channel (Zalo, Facebook, Telegram).
  *
- * Đọc: db:getContactsFiltered, db:getContactById, db:getMessages, db:getMessageById,
+ * Read: db:getContactsFiltered, db:getContactById, db:getMessages, db:getMessageById,
  *       db:getMessagesAround, db:getMessagesByType, db:searchMessages, db:getMediaMessages,
  *       db:getFileMessages, db:getLinks, db:getPinnedMessages, db:getUnreadCount, db:getDraft.
- * Ghi: ChannelActions (mirror UI) + db:setLocalPinnedConversation, db:setContactFlags,
+ * Write: ChannelActions (mirrors the UI) + db:setLocalPinnedConversation, db:setContactFlags,
  *       db:setContactAlias, db:pinMessage/unpinMessage, db:upsertDraft/deleteDraft, db:deleteMessages.
  */
 import * as fs from 'fs';
@@ -19,6 +19,7 @@ import {
     accountParams, mapConversation, mapMessage, messageParams, notFound, offsetPage, pageShape, threadParams,
     threadTypeSchema, allowPrivateTargets,
 } from './common';
+import { tr } from '../../../shared/i18n';
 
 export interface ChatRouteDeps {
     uploads: UploadStore;
@@ -34,8 +35,8 @@ const conversationSchema = s.object({
 const messageSchema = s.object({
     msg_id: s.string(), cli_msg_id: s.string().nullable(), account_id: s.string(), channel: s.string(),
     thread_id: s.string(), thread_type: s.string(), sender_id: s.string(), sender_name: s.string().nullable(),
-    is_self: s.boolean(), msg_type: s.string(), content: s.string().describe('Nội dung gốc (có thể là JSON của kênh)'),
-    text: s.string().describe('Văn bản thuần rút từ content'), timestamp: s.int(), status: s.string().nullable(),
+    is_self: s.boolean(), msg_type: s.string(), content: s.string().describe(tr('Nội dung gốc (có thể là JSON của kênh)')),
+    text: s.string().describe(tr('Văn bản thuần rút từ content')), timestamp: s.int(), status: s.string().nullable(),
     is_recalled: s.boolean(), is_edited: s.boolean(), topic_id: s.string().nullable(), reply_to_id: s.string().nullable(),
     attachments: s.array(s.any()), quote: s.any().nullable(), reactions: s.any(), has_local_media: s.boolean(),
     handled_by_employee: s.string().nullable(),
@@ -46,20 +47,20 @@ const mentionSchema = s.object({
 });
 
 const attachmentInput = s.object({
-    upload_id: s.string().optional().describe('ID từ POST /media/uploads'),
-    library_uuid: s.string().optional().describe('UUID item trong thư viện media'),
-    url: s.string().format('uri').optional().describe('Link http/https công khai, server tự tải về (≤ giới hạn upload)'),
-    kind: s.enum(['image', 'video', 'audio', 'file'] as const).optional().describe('Bỏ trống = tự nhận theo đuôi file'),
+    upload_id: s.string().optional().describe(tr('ID từ POST /media/uploads')),
+    library_uuid: s.string().optional().describe(tr('UUID item trong thư viện media')),
+    url: s.string().format('uri').optional().describe(tr('Link http/https công khai, server tự tải về (≤ giới hạn upload)')),
+    kind: s.enum(['image', 'video', 'audio', 'file'] as const).optional().describe(tr('Bỏ trống = tự nhận theo đuôi file')),
     caption: s.string().max(2000).optional(),
 });
 
 const sendBody = s.object({
-    thread_type: threadTypeSchema.optional().describe('Bỏ trống = tự tra theo hội thoại'),
+    thread_type: threadTypeSchema.optional().describe(tr('Bỏ trống = tự tra theo hội thoại')),
     text: s.string().max(10000).optional(),
     attachments: s.array(attachmentInput).max(10).optional(),
     sticker_id: s.union(s.string(), s.int()).optional(),
     link: s.object({ url: s.string().format('uri'), text: s.string().max(2000).optional() }).optional(),
-    quote_msg_id: s.string().optional().describe('Trả lời tin nhắn này'),
+    quote_msg_id: s.string().optional().describe(tr('Trả lời tin nhắn này')),
     mentions: s.array(mentionSchema).max(50).optional(),
 });
 
@@ -80,11 +81,11 @@ export async function loadMessage(ctx: ApiContext, accountId: string, threadId: 
     return row;
 }
 
-/** Đổi attachment input thành file trên máy (chỉ file do server tạo / thư viện được phép). */
+/** Turn an attachment input into a file on the machine (only files created by the server or allowed library files). */
 export async function resolveAttachment(ctx: ApiContext, deps: ChatRouteDeps, a: any): Promise<{ path: string; name: string; kind: actions.FileKind; caption?: string }> {
     const principalId = `${ctx.principal.kind}:${ctx.principal.id}`;
     const given = [a.upload_id, a.library_uuid, a.url].filter(Boolean).length;
-    if (given !== 1) throw new ApiError(400, 'VALIDATION_ERROR', 'Mỗi attachment cần đúng một trong upload_id, library_uuid, url');
+    if (given !== 1) throw new ApiError(400, 'VALIDATION_ERROR', tr('Mỗi attachment cần đúng một trong upload_id, library_uuid, url'));
     if (a.upload_id) {
         const rec = deps.uploads.get(a.upload_id, principalId);
         return { path: rec.path, name: rec.name, kind: (a.kind || rec.kind) as actions.FileKind, caption: a.caption };
@@ -94,10 +95,10 @@ export async function resolveAttachment(ctx: ApiContext, deps: ChatRouteDeps, a:
         const item = res?.item;
         if (!item) notFound(`item thư viện ${a.library_uuid}`);
         if (!accountAllowed(ctx.principal, String(item.owner_zalo_id))) {
-            throw new ApiError(403, 'FORBIDDEN_ACCOUNT', 'Item thư viện thuộc tài khoản key không được cấp');
+            throw new ApiError(403, 'FORBIDDEN_ACCOUNT', tr('Item thư viện thuộc tài khoản key không được cấp'));
         }
         const p = String(item._localPath || '');
-        if (!p || !fs.existsSync(p)) throw new ApiError(404, 'NOT_FOUND', 'File của item thư viện không còn trên máy');
+        if (!p || !fs.existsSync(p)) throw new ApiError(404, 'NOT_FOUND', tr('File của item thư viện không còn trên máy'));
         const kind = a.kind || (item.type === 'image' ? 'image' : item.type === 'video' ? 'video' : kindFromName(item.name || p));
         return { path: p, name: item.name || 'file', kind, caption: a.caption };
     }
@@ -109,16 +110,16 @@ export async function resolveAttachment(ctx: ApiContext, deps: ChatRouteDeps, a:
 export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
     const tags = ['Chat'];
     return [
-        // ── Hội thoại ─────────────────────────────────────────────────────
+        // ── Conversations ─────────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/conversations', scope: 'chat:read', tags, operationId: 'listConversations',
-            summary: 'Danh sách hội thoại, mới nhất trước',
+            summary: tr('Danh sách hội thoại, mới nhất trước'),
             params: accountParams,
             query: s.object({
                 ...pageShape,
-                search: s.string().max(200).optional().describe('Tìm theo tên/số điện thoại'),
+                search: s.string().max(200).optional().describe(tr('Tìm theo tên/số điện thoại')),
                 unread_only: s.boolean().optional(),
-                folder: s.enum(['all', 'main', 'others'] as const).default('all').describe('Zalo: hộp thư chính / khác'),
+                folder: s.enum(['all', 'main', 'others'] as const).default('all').describe(tr('Zalo: hộp thư chính / khác')),
             }),
             response: s.array(conversationSchema),
             handler: async ctx => {
@@ -138,7 +139,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId', scope: 'chat:read', tags, operationId: 'getConversation',
-            summary: 'Một hội thoại kèm nhãn và trạng thái ghim',
+            summary: tr('Một hội thoại kèm nhãn và trạng thái ghim'),
             params: threadParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -157,13 +158,13 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/conversations/:threadId', scope: 'chat:manage', tags, operationId: 'updateConversation',
-            summary: 'Ghim, tắt thông báo, đặt biệt danh (trên Deplao)',
-            description: 'Các cờ lưu trên Deplao như UI: ghim cục bộ (db:setLocalPinnedConversation), tắt thông báo (db:setContactFlags), biệt danh (db:setContactAlias).',
+            summary: tr('Ghim, tắt thông báo, đặt biệt danh (trên Deplao)'),
+            description: tr('Các cờ lưu trên Deplao như UI: ghim cục bộ (db:setLocalPinnedConversation), tắt thông báo (db:setContactFlags), biệt danh (db:setContactAlias).'),
             params: threadParams,
             body: s.object({
                 pinned: s.boolean().optional(),
                 muted: s.boolean().optional(),
-                mute_until: s.int().min(0).optional().describe('Epoch ms; 0 = vô thời hạn'),
+                mute_until: s.int().min(0).optional().describe(tr('Epoch ms; 0 = vô thời hạn')),
                 alias: s.string().max(100).optional(),
             }),
             handler: async ctx => {
@@ -173,7 +174,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
                     await ctx.call('db:setLocalPinnedConversation', { zaloId: acc.id, threadId: ctx.params.threadId, isPinned: pinned });
                 }
                 if (muted !== undefined) {
-                    // Như appStore.setMuted: vô thời hạn → is_muted=1; có hạn → mute_until (is_muted=0).
+                    // Same as appStore.setMuted: indefinitely → is_muted=1; timed → mute_until (is_muted=0).
                     const until = muted ? (mute_until || 0) : 0;
                     await ctx.call('db:setContactFlags', {
                         zaloId: acc.id, contactId: ctx.params.threadId,
@@ -188,7 +189,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/unread-count', scope: 'chat:read', tags, operationId: 'getUnreadCount',
-            summary: 'Tổng số tin chưa đọc của tài khoản',
+            summary: tr('Tổng số tin chưa đọc của tài khoản'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -197,17 +198,17 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
             },
         }),
 
-        // ── Tin nhắn ──────────────────────────────────────────────────────
+        // ── Messages ──────────────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/messages', scope: 'chat:read', tags, operationId: 'listMessages',
-            summary: 'Tin nhắn của hội thoại, mới → cũ, phân trang bằng `before`',
-            description: 'Trang sau: gọi lại với `before = pagination.next_before`. Tin cùng mốc thời gian có thể lặp ở ranh giới trang — khử trùng theo `msg_id`.',
+            summary: tr('Tin nhắn của hội thoại, mới → cũ, phân trang bằng `before`'),
+            description: tr('Trang sau: gọi lại với `before = pagination.next_before`. Tin cùng mốc thời gian có thể lặp ở ranh giới trang — khử trùng theo `msg_id`.'),
             params: threadParams,
             query: s.object({
                 limit: s.int().min(1).max(200).default(50),
-                before: s.int().min(0).optional().describe('Chỉ lấy tin có timestamp <= before (epoch ms)'),
+                before: s.int().min(0).optional().describe(tr('Chỉ lấy tin có timestamp <= before (epoch ms)')),
                 topic_id: s.string().optional().describe('Telegram forum topic'),
-                type: s.string().max(50).optional().describe('Lọc theo msg_type (vd: photo, file)'),
+                type: s.string().max(50).optional().describe(tr('Lọc theo msg_type (vd: photo, file)')),
             }),
             response: s.array(messageSchema),
             handler: async ctx => {
@@ -228,7 +229,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId', scope: 'chat:read', tags, operationId: 'getMessage',
-            summary: 'Một tin nhắn',
+            summary: tr('Một tin nhắn'),
             params: messageParams,
             response: messageSchema,
             handler: async ctx => {
@@ -238,7 +239,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId/around', scope: 'chat:read', tags, operationId: 'getMessagesAround',
-            summary: 'Các tin xung quanh một tin (để mở lại ngữ cảnh)',
+            summary: tr('Các tin xung quanh một tin (để mở lại ngữ cảnh)'),
             params: messageParams,
             query: s.object({ limit: s.int().min(1).max(100).default(30) }),
             handler: async ctx => {
@@ -252,11 +253,11 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/messages/search', scope: 'chat:read', tags, operationId: 'searchMessages',
-            summary: 'Tìm tin nhắn theo nội dung (full-text)',
+            summary: tr('Tìm tin nhắn theo nội dung (full-text)'),
             params: accountParams,
             query: s.object({
-                q: s.string().min(1).max(200).describe('Từ khoá'),
-                thread_id: s.string().optional().describe('Chỉ trong một hội thoại'),
+                q: s.string().min(1).max(200).describe(tr('Từ khoá')),
+                thread_id: s.string().optional().describe(tr('Chỉ trong một hội thoại')),
                 limit: s.int().min(1).max(200).default(50),
             }),
             handler: async ctx => {
@@ -269,7 +270,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/media', scope: 'chat:read', tags, operationId: 'listConversationMedia',
-            summary: 'Ảnh/video, file hoặc link đã chia sẻ trong hội thoại',
+            summary: tr('Ảnh/video, file hoặc link đã chia sẻ trong hội thoại'),
             params: threadParams,
             query: s.object({ kind: s.enum(['media', 'file', 'link'] as const).default('media'), ...pageShape }),
             handler: async ctx => {
@@ -285,28 +286,28 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
             },
         }),
 
-        // ── Gửi ───────────────────────────────────────────────────────────
+        // ── Send ───────────────────────────────────────────────────────────
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/messages', scope: 'chat:send', tags, operationId: 'sendMessage',
-            summary: 'Gửi tin: văn bản, file/ảnh/video, sticker, link (mọi kênh)',
+            summary: tr('Gửi tin: văn bản, file/ảnh/video, sticker, link (mọi kênh)'),
             description: [
-                'Gửi đúng như khi bấm gửi trên app (cùng handler IPC, cùng hàng đợi gửi). Thứ tự: attachments → sticker → link → text.',
+                tr('Gửi đúng như khi bấm gửi trên app (cùng handler IPC, cùng hàng đợi gửi). Thứ tự: attachments → sticker → link → text.'),
                 '',
-                'File đính kèm KHÔNG nhận đường dẫn trên máy: dùng `upload_id` (POST /media/uploads), `library_uuid` hoặc `url` công khai.',
-                'Video Zalo đi qua chuỗi getVideoMeta → uploadVideoThumb → uploadVideoFile → sendVideo như UI.',
-                'Hỗ trợ header `Idempotency-Key` để gửi lại an toàn khi mất kết nối.',
+                tr('File đính kèm KHÔNG nhận đường dẫn trên máy: dùng `upload_id` (POST /media/uploads), `library_uuid` hoặc `url` công khai.'),
+                tr('Video Zalo đi qua chuỗi getVideoMeta → uploadVideoThumb → uploadVideoFile → sendVideo như UI.'),
+                tr('Hỗ trợ header `Idempotency-Key` để gửi lại an toàn khi mất kết nối.'),
             ].join('\n'),
             params: threadParams,
             body: sendBody,
             examples: {
-                request: { text: 'Đơn #2291 đã giao, cảm ơn anh!', attachments: [{ upload_id: 'upl_8f1c...' }] },
+                request: { text: tr('Đơn #2291 đã giao, cảm ơn anh!'), attachments: [{ upload_id: 'upl_8f1c...' }] },
                 response: { channel: 'zalo', thread_id: '8899001122', sent: [{ type: 'file', msg_id: '7712', cli_msg_id: null }, { type: 'text', msg_id: '7713', cli_msg_id: '1760000000123' }] },
             },
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 const b = ctx.body;
                 if (!b.text && !(b.attachments?.length) && b.sticker_id === undefined && !b.link) {
-                    throw new ApiError(400, 'VALIDATION_ERROR', 'Cần ít nhất một trong text, attachments, sticker_id, link');
+                    throw new ApiError(400, 'VALIDATION_ERROR', tr('Cần ít nhất một trong text, attachments, sticker_id, link'));
                 }
                 actions.requireOnline(acc);
                 const threadId = ctx.params.threadId;
@@ -339,8 +340,8 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId/forward', scope: 'chat:send', tags, operationId: 'forwardMessage',
-            summary: 'Chuyển tiếp tin sang hội thoại khác (cùng tài khoản)',
-            description: 'Hỗ trợ văn bản, ảnh, video, file (gửi lại từ file local như UI) và forward gốc của Facebook/Telegram. Loại khác trả 422.',
+            summary: tr('Chuyển tiếp tin sang hội thoại khác (cùng tài khoản)'),
+            description: tr('Hỗ trợ văn bản, ảnh, video, file (gửi lại từ file local như UI) và forward gốc của Facebook/Telegram. Loại khác trả 422.'),
             params: messageParams,
             body: s.object({
                 targets: s.array(s.object({ thread_id: s.id(), thread_type: threadTypeSchema.default('user') })).min(1).max(20),
@@ -354,7 +355,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId/reactions', scope: 'chat:send', tags, operationId: 'addReaction',
-            summary: 'Thả reaction (emoji hoặc mã Zalo như HEART, LIKE)',
+            summary: tr('Thả reaction (emoji hoặc mã Zalo như HEART, LIKE)'),
             params: messageParams,
             body: s.object({ emoji: s.string().min(1).max(32) }),
             handler: async ctx => {
@@ -369,7 +370,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId/reactions', scope: 'chat:send', tags, operationId: 'removeReaction',
-            summary: 'Gỡ reaction của mình',
+            summary: tr('Gỡ reaction của mình'),
             params: messageParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -380,7 +381,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId/recall', scope: 'chat:manage', tags, operationId: 'recallMessage',
-            summary: 'Thu hồi tin (với mọi người) rồi đánh dấu đã thu hồi trong DB',
+            summary: tr('Thu hồi tin (với mọi người) rồi đánh dấu đã thu hồi trong DB'),
             params: messageParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -391,7 +392,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId', scope: 'chat:send', tags, operationId: 'editMessage',
-            summary: 'Sửa nội dung tin đã gửi (Facebook, Telegram)',
+            summary: tr('Sửa nội dung tin đã gửi (Facebook, Telegram)'),
             params: messageParams,
             body: s.object({ text: s.string().min(1).max(10000) }),
             handler: async ctx => {
@@ -403,8 +404,8 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId', scope: 'chat:manage', tags, operationId: 'deleteMessageForMe',
-            summary: 'Xoá tin phía mình',
-            description: 'Zalo: zalo:deleteMessage (onlyMe) rồi đánh dấu trong DB như UI. Kênh khác: chỉ xoá khỏi DB của Deplao.',
+            summary: tr('Xoá tin phía mình'),
+            description: tr('Zalo: zalo:deleteMessage (onlyMe) rồi đánh dấu trong DB như UI. Kênh khác: chỉ xoá khỏi DB của Deplao.'),
             params: messageParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -426,7 +427,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId/pin', scope: 'chat:manage', tags, operationId: 'pinMessage',
-            summary: 'Ghim tin trong hội thoại',
+            summary: tr('Ghim tin trong hội thoại'),
             params: messageParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -450,7 +451,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId/pin', scope: 'chat:manage', tags, operationId: 'unpinMessage',
-            summary: 'Bỏ ghim tin',
+            summary: tr('Bỏ ghim tin'),
             params: messageParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -465,7 +466,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/pinned-messages', scope: 'chat:read', tags, operationId: 'listPinnedMessages',
-            summary: 'Tin đã ghim của hội thoại',
+            summary: tr('Tin đã ghim của hội thoại'),
             params: threadParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -475,7 +476,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/read', scope: 'chat:manage', tags, operationId: 'markConversationRead',
-            summary: 'Đánh dấu đã đọc (DB + báo "đã xem" lên kênh)',
+            summary: tr('Đánh dấu đã đọc (DB + báo "đã xem" lên kênh)'),
             params: threadParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -487,7 +488,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/conversations/:threadId/typing', scope: 'chat:send', tags, operationId: 'sendTyping',
-            summary: 'Hiện trạng thái "đang gõ"',
+            summary: tr('Hiện trạng thái "đang gõ"'),
             params: threadParams,
             body: s.object({ thread_type: threadTypeSchema.optional() }).optional(),
             handler: async ctx => {
@@ -498,10 +499,10 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
             },
         }),
 
-        // ── Nháp ──────────────────────────────────────────────────────────
+        // ── Drafts ──────────────────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/draft', scope: 'chat:read', tags, operationId: 'getDraft',
-            summary: 'Tin nháp đang soạn',
+            summary: tr('Tin nháp đang soạn'),
             params: threadParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -511,7 +512,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'PUT', path: '/accounts/:accountId/conversations/:threadId/draft', scope: 'chat:manage', tags, operationId: 'saveDraft',
-            summary: 'Lưu tin nháp (hiện trong ô soạn của app)',
+            summary: tr('Lưu tin nháp (hiện trong ô soạn của app)'),
             params: threadParams,
             body: s.object({ content: s.string().max(10000) }),
             handler: async ctx => {
@@ -522,7 +523,7 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId/draft', scope: 'chat:manage', tags, operationId: 'deleteDraft',
-            summary: 'Xoá tin nháp',
+            summary: tr('Xoá tin nháp'),
             params: threadParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -531,16 +532,16 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
             },
         }),
 
-        // ── File đính kèm của tin ─────────────────────────────────────────
+        // ── Attachments of a message ─────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/conversations/:threadId/messages/:msgId/media', scope: 'media:read', tags: ['Media'], operationId: 'downloadMessageMedia',
-            summary: 'Tải file/ảnh/video/ghi âm của một tin (tự tải về máy nếu chưa có)',
+            summary: tr('Tải file/ảnh/video/ghi âm của một tin (tự tải về máy nếu chưa có)'),
             params: messageParams,
-            rawResponse: { contentType: 'application/octet-stream', description: 'Nội dung file', file: true },
+            rawResponse: { contentType: 'application/octet-stream', description: tr('Nội dung file'), file: true },
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 const row = await loadMessage(ctx, acc.id, ctx.params.threadId, ctx.params.msgId);
-                // Ghi âm Zalo: app tự tải nền khi tin tới (EventBroadcaster) — gọi ngay sau tin thì có thể chưa xong → tải luôn.
+                // Zalo voice notes: the app downloads them in the background when the message arrives (EventBroadcaster), so calling right after the message may not be done yet → download now.
                 const kind: string = VOICE_MSG_TYPES.includes(String(row.msg_type || '')) ? 'voice' : actions.forwardKind(row);
                 let filePath = '';
                 try {
@@ -551,14 +552,14 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
                     const dl = await ctx.call('file:downloadMessageMedia', { zaloId: acc.id, msgId: String(row.msg_id), threadId: String(row.thread_id), kind }, { timeoutMs: 300_000 });
                     filePath = String(dl?.localPath || '');
                 }
-                if (!filePath) throw new ApiError(404, 'NOT_FOUND', 'Tin này không có file trên máy (hoặc link đã hết hạn)');
+                if (!filePath) throw new ApiError(404, 'NOT_FOUND', tr('Tin này không có file trên máy (hoặc link đã hết hạn)'));
                 return streamFile(ctx, filePath);
             },
         }),
     ];
 }
 
-/** Loại tin ghi âm (Zalo chat.voice; giống bộ lọc trigger). */
+/** Voice message type (Zalo chat.voice; same as the trigger filter). */
 const VOICE_MSG_TYPES = ['chat.voice', 'voice', 'audio'];
 
 function fmtMb(bytes: number): string {
@@ -566,24 +567,24 @@ function fmtMb(bytes: number): string {
 }
 
 /**
- * Stream file trên máy ra response. Đường dẫn tương đối (media/...) được resolve qua FileStorageService.
- * Gọi không qua HTTP với ctx.binary (plugin) → trả FileContent base64 (file lớn hơn maxBytes → 413).
+ * Stream a file on the machine to the response. Relative paths (media/...) are resolved through FileStorageService.
+ * Called without HTTP with ctx.binary (plugin) → returns FileContent as base64 (a file larger than maxBytes → 413).
  */
 export async function streamFile(ctx: ApiContext, filePath: string, downloadName?: string): Promise<typeof RESPONSE_HANDLED | FileContent> {
-    if (!ctx.raw && !ctx.binary) throw new ApiError(400, 'VALIDATION_ERROR', 'Chỉ tải được qua HTTP');
+    if (!ctx.raw && !ctx.binary) throw new ApiError(400, 'VALIDATION_ERROR', tr('Chỉ tải được qua HTTP'));
     let abs = filePath;
     try {
         const FileStorageService = require('../../file/FileStorageService').default;
         abs = FileStorageService.resolveAbsolutePath(filePath);
     } catch { /* test */ }
-    if (!abs || !fs.existsSync(abs)) throw new ApiError(404, 'NOT_FOUND', 'File không còn trên máy');
+    if (!abs || !fs.existsSync(abs)) throw new ApiError(404, 'NOT_FOUND', tr('File không còn trên máy'));
     const stat = fs.statSync(abs);
     const name = downloadName || require('path').basename(abs);
     const { mimeFromName } = require('../UploadStore');
     if (!ctx.raw) {
         const maxBytes = ctx.binary!.maxBytes;
         if (stat.size > maxBytes) {
-            throw new ApiError(413, 'PAYLOAD_TOO_LARGE', `File ${fmtMb(stat.size)} lớn hơn giới hạn ${fmtMb(maxBytes)} khi đọc qua ứng dụng — tải qua HTTP API`);
+            throw new ApiError(413, 'PAYLOAD_TOO_LARGE', tr('File {{v1}} lớn hơn giới hạn {{v2}} khi đọc qua ứng dụng — tải qua HTTP API', { v1: fmtMb(stat.size), v2: fmtMb(maxBytes) }));
         }
         const buf = await fs.promises.readFile(abs);
         return { name, mime: mimeFromName(name), size: buf.length, base64: buf.toString('base64') };

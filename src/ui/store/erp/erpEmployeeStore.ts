@@ -8,7 +8,7 @@ import { isErpModuleOff, withErpDeniedNotice } from './erpStoreHelpers';
 
 type AttendanceFilter = { employeeId?: string; from?: string; to?: string; all?: boolean };
 
-/** Dòng chấm công thuộc bảng đang hiện (cùng người / mọi người, trong khoảng ngày). */
+/** Timesheet rows belonging to the table currently shown (same person / everyone, within the date range). */
 function attendanceMatches(filter: AttendanceFilter | null, a: ErpAttendance): boolean {
   if (!filter) return false;
   const employeeId = (a as any).employee_id;
@@ -18,9 +18,9 @@ function attendanceMatches(filter: AttendanceFilter | null, a: ErpAttendance): b
   return true;
 }
 
-// Nhân sự / chấm công / nghỉ phép nằm trên DB Boss: mọi lệnh qua DataAccessor (nhân viên → REST, Boss lấy người làm
-// từ token). Trước đây check-in, đơn nghỉ phép, duyệt đơn… ở máy nhân viên đi IPC cục bộ → Boss không bao giờ thấy.
-// Đọc lỗi → giữ dữ liệu đang hiện; ghi lỗi → không đổi state, bị từ chối quyền → hộp thoại quyền ERP.
+// HR / timesheet / leave data lives in the owner's machine DB: every command goes through DataAccessor (employee → REST, the owner's machine takes the acting person
+// from the token). Previously check-ins, leave requests, approvals… on the employee machine went through local IPC → the owner's machine never saw them.
+// Read error → keep the data currently shown; write error → state unchanged; permission denied → ERP permission dialog.
 
 interface ErpEmployeeState {
   departments: ErpDepartment[];
@@ -28,11 +28,11 @@ interface ErpEmployeeState {
   profiles: ErpEmployeeProfile[];
   myLeaves: ErpLeaveRequest[];
   pendingLeaves: ErpLeaveRequest[];
-  /** Đã tải đơn chờ duyệt (người có quyền duyệt mở trang nghỉ phép / báo cáo) → event nghỉ phép thì tải lại. */
+  /** Pending approval requests have been loaded (the approver opened the leave / report page) → a leave event reloads them. */
   pendingLeavesLoaded: boolean;
   todayAttendance: ErpAttendance | null;
   attendanceList: ErpAttendance[];
-  /** Bộ lọc của bảng chấm công đang hiện — event chấm công khớp bộ lọc thì thêm dòng (vd quản lý thấy check-in mới). */
+  /** Filter of the timesheet table currently shown: a timesheet event that matches the filter adds a row (e.g. a manager sees a new check-in). */
   attendanceFilter: AttendanceFilter | null;
   seat: { limit: number; used: number; remaining: number } | null;
 
@@ -60,13 +60,13 @@ interface ErpEmployeeState {
   decideLeave: (id: number, status: 'approved' | 'rejected', note?: string) => Promise<void>;
   cancelLeave: (id: number) => Promise<void>;
 
-  /** Kết quả lưu (Boss / handler từ chối → success:false + error) — người gọi báo lỗi thay vì đóng form. */
+  /** Save result (owner's machine / handler refused → success:false + error); the caller shows the error instead of closing the form. */
   upsertProfile: (employeeId: string, patch: any) => Promise<{ success: boolean; error?: string }>;
 
   _onLeaveChanged: (leave: ErpLeaveRequest) => void;
   _onAttendanceUpdated: (a: ErpAttendance) => void;
   _onProfileUpdated: (p: ErpEmployeeProfile) => void;
-  /** erp:event:employeeProfileDeleted — bỏ hồ sơ khỏi danh sách (Boss xoá ở máy khác). */
+  /** erp:event:employeeProfileDeleted: remove the profile from the list (the owner's machine deleted it). */
   _onProfileDeleted: (employeeId: string) => void;
 }
 
@@ -189,8 +189,8 @@ export const useErpEmployeeStore = create<ErpEmployeeState>((set, get) => ({
     myLeaves: s.myLeaves.map(l => l.id === leave.id ? leave : l),
     pendingLeaves: s.pendingLeaves.filter(l => l.id !== leave.id),
   })),
-  // Chấm công của chính mình hôm nay + bảng chấm công đang hiện: dòng đã có thì thay, dòng mới khớp bộ lọc của bảng thì
-  // thêm (quản lý xem "mọi người" thấy check-in mới ngay). Event tới mọi nhân viên — bảng "của tôi" không thêm người khác.
+  // Today's timesheet of the user + the timesheet table currently shown: an existing row is replaced, a new row that matches the table's filter
+  // is added (a manager viewing "mọi người" (everyone) sees the new check-in at once). The event goes to all employees; the "của tôi" (mine) table does not add other people.
   _onAttendanceUpdated: (a) => set(s => {
     if (!a) return s;
     const sameDay = (x: ErpAttendance | null | undefined) => !!x && (x as any).employee_id === (a as any).employee_id && x.date === a.date;

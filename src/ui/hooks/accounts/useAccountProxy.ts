@@ -1,15 +1,16 @@
 /**
- * Thêm / đổi / bỏ proxy của một tài khoản rồi kết nối lại ngay (proxy:applyToAccount, không cần đăng nhập lại). Dùng
- * chung cho dòng "Proxy" ở Cài đặt → Tài khoản và danh sách tài khoản dưới mỗi proxy ở Cài đặt → Proxy.
+ * Add / change / remove a proxy for one account, then reconnect right away (proxy:applyToAccount, no re-login needed). Shared by
+ * the "Proxy" line in Settings → Accounts and the account list under each proxy in Settings → Proxy.
  */
 import { useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
+import { tr } from '../../../shared/i18n';
 
 export type ApplyAccountProxyOutcome = {
   ok: boolean;
-  /** false = đã lưu proxy nhưng tài khoản chưa kết nối lại được */
+  /** false = proxy saved, but the account could not reconnect */
   connected?: boolean;
   error?: string;
 };
@@ -30,7 +31,7 @@ export function useApplyAccountProxy() {
       res = { success: false, error: err?.message };
     }
     if (!res?.success) {
-      const error = res?.error || 'Không đổi được proxy';
+      const error = res?.error || tr('Không đổi được proxy');
       if (!opts.quiet) showNotification(error, 'error');
       return { ok: false, error };
     }
@@ -38,12 +39,12 @@ export function useApplyAccountProxy() {
     updateAccount(accountId, { proxy_id: res.proxyId ?? null });
     if (res.changed === false && !opts.force) return { ok: true, connected: true };
     if (res.connected === false) {
-      const error = res.reconnectError || 'Chưa kết nối lại được';
-      if (!opts.quiet) showNotification(`Đã lưu proxy nhưng chưa kết nối lại được: ${error}`, 'warning');
+      const error = res.reconnectError || tr('Chưa kết nối lại được');
+      if (!opts.quiet) showNotification(tr('Đã lưu proxy nhưng chưa kết nối lại được: {{error}}', { error }), 'warning');
       return { ok: true, connected: false, error };
     }
     if (!opts.quiet) {
-      showNotification(proxyId != null ? 'Đã đổi proxy, tài khoản đã kết nối lại' : 'Đã bỏ proxy, tài khoản đã kết nối lại', 'success');
+      showNotification(proxyId != null ? tr('Đã đổi proxy, tài khoản đã kết nối lại') : tr('Đã bỏ proxy, tài khoản đã kết nối lại'), 'success');
     }
     return { ok: true, connected: true };
   }, [updateAccount, showNotification]);

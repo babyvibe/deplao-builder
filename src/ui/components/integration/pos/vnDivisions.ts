@@ -11,6 +11,12 @@ import {
   stripAdministrativePrefix,
   type Division,
 } from '../../../../configs/hanhchinhVN/VietnamAdministrative';
+import {
+  getProvincesV2,
+  getWardsV2,
+  getProvinceNameV2,
+  getWardNameV2,
+} from '../../../../configs/hanhchinhVN/VietnamAdministrativeV2';
 
 export type { Division };
 export {
@@ -24,4 +30,9 @@ export {
   getDistrictShortName,
   getWardShortName,
   stripAdministrativePrefix,
+  // 2-level units after 01/07/2025 (no district)
+  getProvincesV2,
+  getWardsV2,
+  getProvinceNameV2,
+  getWardNameV2,
 };

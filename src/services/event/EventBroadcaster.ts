@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import Logger from '../../utils/Logger';
+import { ZALO_PINNED_MESSAGE_TOPIC } from '../../shared/zalo/zaloMessagePins';
 import { normalizeZaloMessageImages } from '../../utils/zalo/zaloImageUrl';
 import DatabaseService from '../database/DatabaseService';
 import { groupEventActorId, groupEventActorText, profileFromUserInfo } from '../../shared/zalo/zaloGroupEventActor';
@@ -9,18 +10,19 @@ import FileStorageService from '../file/FileStorageService';
 import { groupAdminRole, groupOwnerRole } from '../../shared/chat/groupMemberRoles';
 import { zaloReactionIconToEmoji } from '../../shared/zalo/zaloReactions';
 import { applyZaloClearUnread, type ZaloClearUnread } from '../zalo/zaloReadElsewhere';
+import { tr } from '../../shared/i18n';
 
-/** Callback để invalidate group cache trong ZaloLoginHelper (tránh circular import) */
+/** Callback to invalidate the group cache in ZaloLoginHelper (avoids a circular import) */
 let _invalidateGroupCacheFn: ((zaloId: string, groupId: string) => void) | null = null;
 export function registerGroupCacheInvalidator(fn: (zaloId: string, groupId: string) => void) {
     _invalidateGroupCacheFn = fn;
 }
 
 /**
- * EventBroadcaster - Thay thế ApiService webhook bằng Electron IPC events
- * Broadcast Zalo events từ main process → renderer process
+ * EventBroadcaster - Replaces the ApiService webhook with Electron IPC events
+ * Broadcasts Zalo events from the main process → the renderer process
  */
-/** Một dòng thông báo nhóm đang chờ tra tên người thực hiện (nhóm ẩn thành viên). */
+/** One group notification line waiting to look up the name of the actor (the group hides its member list). */
 interface GroupActorJob {
     zaloId: string;
     groupId: string;
@@ -36,7 +38,7 @@ class EventBroadcaster {
     private static window: BrowserWindow | null = null;
     /** Cache previous groupSetting per group to detect what changed in update_setting events */
     private static previousGroupSettings = new Map<string, Record<string, number>>();
-    /** Hooks đăng ký bởi WorkflowEngineService để nhận event trước renderer */
+    /** Hooks registered by WorkflowEngineService to receive events before the renderer */
     private static beforeSendHooks: Map<string, Array<(data: any) => void>> = new Map();
 
     /**
@@ -96,7 +98,7 @@ class EventBroadcaster {
         this.window = win;
     }
 
-    /** Generic channel emit - dùng bởi CRMQueueService và các service khác */
+    /** Generic channel emit - used by CRMQueueService and other services */
     public static emit(channel: string, data: any): void {
         this.send(channel, data);
     }
@@ -123,7 +125,7 @@ class EventBroadcaster {
         this.withBossDb(fn);
     }
 
-    /** Như runOnBossDb nhưng trả về kết quả của `fn` (fn phải đồng bộ). */
+    /** Like runOnBossDb, but returns the result of `fn` (fn must be synchronous). */
     public static withBossDb<T>(fn: (db: DatabaseService) => T): T {
         const { bossDbPath } = this.resolveBossContext();
         const db = DatabaseService.getInstance();
@@ -140,8 +142,8 @@ class EventBroadcaster {
     }
 
     /**
-     * Đăng ký hook nhận event trước khi gửi về renderer.
-     * WorkflowEngineService dùng để trigger workflow.
+     * Registers a hook that receives events before they are sent to the renderer.
+     * WorkflowEngineService uses it to trigger workflows.
      * Returns an unsubscribe function to remove the hook.
      */
     public static onBeforeSend(channel: string, callback: (data: any) => void): () => void {
@@ -170,7 +172,7 @@ class EventBroadcaster {
         this.beforeSendHooks.clear();
     }
 
-    /** Convert BigInt → string recursively để Electron IPC serialize được */
+    /** Convert BigInt → string recursively so Electron IPC can serialise it */
     private static sanitizeBigInt(obj: any): any {
         if (obj === null || obj === undefined) return obj;
         if (typeof obj === 'bigint') return String(obj);
@@ -186,7 +188,7 @@ class EventBroadcaster {
     }
 
     private static send(channel: string, data: any): void {
-        // Fire before-send hooks (sync, không chặn send)
+        // Fire before-send hooks (sync, does not block the send)
         const hooks = this.beforeSendHooks.get(channel);
         const message = data?.message || data || {};
         const msgData = message?.data || data?.data || {};
@@ -211,7 +213,7 @@ class EventBroadcaster {
             }
         }
         if (this.window && !this.window.isDestroyed()) {
-            // Sanitize BigInt trước khi gửi qua IPC
+            // Sanitise BigInt before sending over IPC
             const safeData = EventBroadcaster.sanitizeBigInt(data);
             this.window.webContents.send(channel, safeData);
         }
@@ -245,6 +247,38 @@ class EventBroadcaster {
                 }
             }
         }
+    }
+
+    /** Global ID of the message a pinned-message board topic names ('' when the topic does not say). */
+    private static topicPinnedMsgId(topic: any): string {
+        let params: any = {};
+        try { params = typeof topic?.params === 'string' ? JSON.parse(topic.params || '{}') : (topic?.params || {}); } catch {}
+        const msgId = String(params?.global_msg_id || '');
+        return msgId === '0' ? '' : msgId;
+    }
+
+    /**
+     * A pinned message of a group board (topic type 2): stored under the message ID, like the "đã ghim một tin nhắn"
+     * (pinned a message) notification does. A pin already listed (e.g. made from this app) keeps its name and order.
+     */
+    private static saveTopicMessagePin(db: any, zaloId: string, groupId: string, topic: any): void {
+        const pinnedMsgId = EventBroadcaster.topicPinnedMsgId(topic);
+        if (!pinnedMsgId) return;
+        if (db.getPinnedMessages(zaloId, groupId).some((row: any) => String(row.msg_id) === pinnedMsgId)) return;
+        let params: any = {};
+        try { params = typeof topic?.params === 'string' ? JSON.parse(topic.params || '{}') : (topic?.params || {}); } catch {}
+        const orig: any = db.getMessageById(zaloId, pinnedMsgId, groupId);
+        const clientType = Number(params.msg_type) || 1;
+        db.pinMessage(zaloId, groupId, {
+            msgId: pinnedMsgId,
+            msgType: orig?.msg_type || (clientType === 32 ? 'photo' : clientType === 44 ? 'video' : 'text'),
+            content: orig?.content || '',
+            previewText: String(params.title || ''),
+            previewImage: String(params.thumb || ''),
+            senderId: String(params.senderUid || orig?.sender_id || ''),
+            senderName: String(params.senderName || ''),
+            timestamp: Number(orig?.timestamp || topic?.createTime || Date.now()),
+        });
     }
 
     /**
@@ -293,16 +327,16 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast tin nhắn mới đến renderer
-     * Auto-save vào database
+     * Broadcast a new message to the renderer
+     * Auto-saves it to the database
      *
      * @param options.silent  When true (old messages / group history reload):
-     *   - Skip entirely if message already exists in DB (avoid duplicate broadcast)
-     *   - For NEW messages, mark `_silent` flag so renderer skips sound/notification
+     *   - Skip entirely if the message already exists in the DB (avoid a duplicate broadcast)
+     *   - For NEW messages, set the `_silent` flag so the renderer skips the sound / notification
      */
     public static async broadcastMessage(zaloId: string, message: any, options?: { silent?: boolean; fromRelay?: boolean }): Promise<void> {
         try {
-            // Ảnh JPEG XL (Zalo điện thoại bản mới) → URL bản JPG trước khi lưu DB / tải về / gửi renderer.
+            // JPEG XL image (newer Zalo phone builds) → the JPG version URL before saving to the DB / downloading / sending to the renderer.
             normalizeZaloMessageImages(message);
             const undoControl = this.getUndoControlPayload(message);
             if (undoControl) {
@@ -337,12 +371,12 @@ class EventBroadcaster {
                 if (msgId && DatabaseService.getInstance().hasMessage(zaloId, String(msgId))) {
                     return; // Already in DB → skip entirely (no save, no event, no download)
                 }
-                // New message but from getGroupChatHistory (lịch sử) → mark silent
+                // New message but from getGroupChatHistory (history) → mark silent
                 message._silent = true;
             }
 
-            // ─── Zalo giao trùng một tin (id khác, cùng người gửi + cliMsgId + nội dung — thường tin nhóm) ─────────
-            // Bản đầu đã lưu → bỏ hẳn bản sau: không lưu, không gửi giao diện, không chạy workflow / webhook
+            // ─── Zalo delivered one message twice (different id, same sender + cliMsgId + content, usually group messages) ─────────
+            // The first copy is already saved → drop the later copy entirely: not saved, not sent to the UI, no workflow / webhook run
             try {
                 const dbs = DatabaseService.getInstance();
                 const duplicate = bossDbPath
@@ -352,7 +386,7 @@ class EventBroadcaster {
                     Logger.log(`[EventBroadcaster] Bỏ tin Zalo giao trùng: msgId=${message.data?.msgId} cliMsgId=${message.data?.cliMsgId} threadId=${message.threadId}`);
                     return;
                 }
-            } catch { /* kiểm tra lỗi → xử lý như tin mới */ }
+            } catch { /* if the check fails → handle as a new message */ }
 
             // ─── Early-detect webchat/msginfo.actionlist notifications ───────────────
             // Zalo sends general conversation notifications (group setting changes,
@@ -378,8 +412,8 @@ class EventBroadcaster {
                     } catch {}
 
                     // ── Auto-pin/unpin from actionlist webhook ──────────────────────
-                    // Zalo gửi webhook này khi ai đó ghim/bỏ ghim tin nhắn trong hội thoại
-                    // actionType = "action.groupchat.jump.msg" → ghim; title chứa "bỏ ghim" → unpin
+                    // Zalo sends this webhook when someone pins / unpins a message in a conversation
+                    // actionType = "action.groupchat.jump.msg" → pin; a title containing "bỏ ghim" (unpin) → unpin
                     try {
                         const wcParams = typeof (earlyContent as any).params === 'string'
                             ? JSON.parse((earlyContent as any).params)
@@ -405,16 +439,19 @@ class EventBroadcaster {
                                 if (isUnpin) {
                                     db.unpinMessage(zaloId, message.threadId, pinnedMsgId);
                                     Logger.log(`[EventBroadcaster] Auto-unpinned msg ${pinnedMsgId} in thread ${message.threadId}`);
+                                } else if (db.getPinnedMessages(zaloId, message.threadId).some((p: any) => String(p.msg_id) === pinnedMsgId)) {
+                                    // Already listed: pinned from this app, Zalo echoes the pin back. Keep the author's name and the order.
+                                    Logger.log(`[EventBroadcaster] Pin ${pinnedMsgId} already listed in thread ${message.threadId}`);
                                 } else {
-                                    // Lấy tên người ghim từ highLightsV2
+                                    // Get the pinner's name from highLightsV2
                                     const senderName: string = (wcParams?.highLightsV2?.[0]?.dpn ||
                                         wcParams?.simpleInfos?.[0]?.dpn || '') as string;
                                     const senderId = String(message.data?.uidFrom || message.data?.userId || '');
 
-                                    // Thử lấy tin nhắn gốc từ DB để có preview đầy đủ
+                                    // Try to get the source message from the DB to build a full preview
                                     const origMsg = db.getMessageById(zaloId, pinnedMsgId);
                                     if (origMsg) {
-                                        // Build pin từ tin nhắn gốc
+                                        // Build the pin from the source message
                                         let previewText = '';
                                         let previewImage = '';
                                         const mt = origMsg.msg_type || '';
@@ -445,7 +482,7 @@ class EventBroadcaster {
                                             timestamp: origMsg.timestamp,
                                         });
                                     } else {
-                                        // Không có tin gốc → lưu với preview tối thiểu
+                                        // No source message → save with a minimal preview
                                         const msgTypeFromAction = actionData?.msg_type ? String(actionData.msg_type) : 'unknown';
                                         const isPhotoType = msgTypeFromAction === '32' || titleText.toLowerCase().includes('hình ảnh') || titleText.toLowerCase().includes('photo');
                                         db.pinMessage(zaloId, message.threadId, {
@@ -534,7 +571,7 @@ class EventBroadcaster {
             }
             // ─────────────────────────────────────────────────────────────────────────
 
-            // Lưu vào database - always target the boss (default) workspace DB
+            // Save to the database - always targets the boss (default) workspace DB
             if (bossDbPath) {
                 DatabaseService.getInstance().withDbPath(bossDbPath, () => {
                     DatabaseService.getInstance().saveMessage(zaloId, message);
@@ -614,7 +651,7 @@ class EventBroadcaster {
                 }
             }
 
-            // ── Debug: log bank card content để phân tích cấu trúc webhook ──
+            // ── Debug: log bank card content to analyse the webhook structure ──
             const rawMsgTypeDbg = String(message.data?.msgType || '');
             if (rawMsgTypeDbg === 'chat.webcontent') {
                 const bankContent = message.data?.content;
@@ -625,14 +662,14 @@ class EventBroadcaster {
             // ── The following DB operations are SKIPPED when bossDbPath is set ──
             // (they were already done inside the withDbPath block above)
             if (!bossDbPath) {
-                // Nếu là tin nhắn của chính mình (isSelf) → đánh dấu đã đọc ngay
+                // If it is my own message (isSelf) → mark as read at once
                 if (message.isSelf && message.threadId) {
                     try {
                         await DatabaseService.getInstance().markAsRead(zaloId, message.threadId);
                     } catch {}
                 }
 
-                // Nếu có thông tin tên trong message → lưu ngay vào DB
+                // If the message contains name info → save it to the DB straight away
                 if (!message.isSelf && message.type !== 1) {
                     const dName: string = (message.data as any)?.dName || '';
                     const senderInfo = (message.data as any)?.senderInfo;
@@ -646,7 +683,7 @@ class EventBroadcaster {
                     }
                 }
 
-                // Cho group messages: cố gắng lấy tên nhóm từ groupInfo trong data
+                // For group messages: try to get the group name from groupInfo in the data
                 if (message.type === 1) {
                     const groupId = message.threadId || '';
                     const groupInfo = (message.data as any)?.groupInfo || (message.data as any)?.group;
@@ -673,7 +710,7 @@ class EventBroadcaster {
                 }
             }
 
-            // ─── Phân loại message: file hay ảnh ─────────────────────────────
+            // ─── Classify the message: file or image ─────────────────────────────
             const contentRaw = message.data?.content;
             const rawMsgType = String(message.data?.msgType || '');
             const msgId = message.data?.msgId || '';
@@ -691,21 +728,21 @@ class EventBroadcaster {
             const SKIP_DOWNLOAD_MSG_TYPES = ['chat.ecard', 'group.poll'];
             const shouldSkipDownload = SKIP_DOWNLOAD_MSG_TYPES.includes(rawMsgType);
 
-            // Card message (danh thiếp): chat.recommended / action contains "recommened"
+            // Card message (business card): chat.recommended / action contains "recommened"
             const CARD_MSG_TYPES = ['chat.recommended', 'chat.recommend'];
             const isCardMsg = CARD_MSG_TYPES.includes(rawMsgType) ||
                 (contentRaw && typeof contentRaw === 'object' &&
                     String(contentRaw.action || '').includes('recommened'));
 
-            // File message: share.file hoặc content có title + href (không có rawUrl/hd)
-            // Loại trừ card messages để tránh download href=www.zaloapp.com
+            // File message: share.file, or content with a title + href (no rawUrl / hd)
+            // Exclude card messages to avoid downloading href=www.zaloapp.com
             // Video: chat.video.msg - download thumbnail + video file
             const isVideoMsg = rawMsgType === 'chat.video.msg' ||
                 (contentRaw && typeof contentRaw === 'object' &&
                     contentRaw.href && String(contentRaw.href).includes('video') &&
                     contentRaw.thumb && !contentRaw.title);
 
-            // Voice message: chat.voice - download audio file, KHÔNG phải ảnh/file
+            // Voice message: chat.voice - download the audio file, NOT an image / file
             const isVoiceMsg = rawMsgType === 'chat.voice';
 
             if (!shouldSkipDownload && isVoiceMsg && contentRaw && typeof contentRaw === 'object' && msgId) {
@@ -728,7 +765,7 @@ class EventBroadcaster {
 
                 const downloads: Promise<void>[] = [];
 
-                // Download thumbnail (ảnh đại diện) trước → hiển thị ngay
+                // Download the thumbnail (avatar image) first → shown at once
                 if (thumbUrl) {
                     downloads.push(
                         FileStorageService.downloadImage(zaloId, thumbUrl, `thumb_${msgId}.jpg`, mediaCookies, mediaUserAgent).then((thumbPath) => {
@@ -743,8 +780,8 @@ class EventBroadcaster {
                     );
                 }
 
-                // Download video file (background, không block) — báo tiến độ: bong bóng hiện "2.1 / 5.0 MB" và chưa cho
-                // mở trình phát tới khi tải xong (như Telegram)
+                // Download the video file (in the background, not blocking), report progress: the bubble shows "2.1 / 5.0 MB" and does not allow
+                // playback until the download finishes (as in Telegram)
                 if (videoUrl) {
                     const { mediaProgressReporter } = require('../media/mediaProgress') as typeof import('../media/mediaProgress');
                     const progress = mediaProgressReporter(zaloId, String(message.threadId || ''), String(msgId));
@@ -787,8 +824,8 @@ class EventBroadcaster {
                     contentRaw.title && contentRaw.href &&
                     !contentParams.rawUrl && !contentParams.hd));
 
-            // Ảnh: chat.photo, photo, image, hoặc content có href+params.hd/rawUrl
-            // Cho phép có title (caption) - title là chú thích ảnh, không phải tên file
+            // Image: chat.photo, photo, image, or content with href + params.hd / rawUrl
+            // A title (caption) is allowed - the title is the image caption, not the file name
             const isPhoto = !isFileMsg && !isCardMsg && !isVideoMsg && !isVoiceMsg && (
                 rawMsgType === 'chat.photo' || rawMsgType === 'photo' || rawMsgType === 'image' ||
                 (contentRaw && typeof contentRaw === 'object' &&
@@ -796,20 +833,20 @@ class EventBroadcaster {
                      (contentRaw.href && !contentRaw.title)))
             );
 
-            // ─── Download ảnh ─────────────────────────────────────────────
+            // ─── Download image ─────────────────────────────────────────────
             if (!shouldSkipDownload && isPhoto && contentRaw && typeof contentRaw === 'object' && msgId) {
                 const imgUrl = DatabaseService.extractImageUrlFromContent(contentRaw);
                 if (imgUrl) {
                     const downloadPhoto = (attempt: number): void => {
                         FileStorageService.downloadImage(zaloId, imgUrl, undefined, mediaCookies, mediaUserAgent).then((localPath) => {
-                            // CDN trả 401/403/409/410 → '' : không ghi local_paths rỗng (giao diện vẫn hiện ảnh CDN)
+                            // CDN returns 401/403/409/410 → '' : do not write an empty local_paths (the UI still shows the CDN image)
                             if (!localPath) return;
-                            // File không hiển thị được (trang lỗi HTML, JPEG XL…) không được thành "ảnh trên máy": giao diện
-                            // sẽ đổi sang file đó → lỗi → tự sửa lại.
+                            // A file that cannot be displayed (an HTML error page, JPEG XL…) must not become an "ảnh trên máy" (image on the machine): the UI
+                            // will switch to that file → error → it repairs itself.
                             const absPath = FileStorageService.resolveAbsolutePath(localPath);
                             const check = FileStorageService.validateImageFile(absPath);
                             if (!check.valid && check.reason !== 'truncated') {
-                                try { fs.unlinkSync(absPath); } catch { /* đã mất */ }
+                                try { fs.unlinkSync(absPath); } catch { /* already gone */ }
                                 Logger.warn(`[EventBroadcaster] Image for msg ${msgId} not displayable (${check.reason}) — keep CDN`);
                                 return;
                             }
@@ -818,7 +855,7 @@ class EventBroadcaster {
                             Logger.log(`[EventBroadcaster] Downloaded image for msg ${msgId}: ${localPath}`);
                         }).catch((err) => {
                             Logger.warn(`[EventBroadcaster] Image download failed for ${msgId}: ${err.message}`);
-                            // Mạng chập chờn / quá giờ (không phải CDN trả lỗi HTTP): thử lại 1 lần, trừ khi đã có file (tự sửa)
+                            // Network flaky / timed out (not a CDN HTTP error): retry once, unless a file already exists (self-repair)
                             if (attempt > 0 || err?.response) return;
                             const retry = setTimeout(() => {
                                 try {
@@ -858,12 +895,12 @@ class EventBroadcaster {
                 }
             }
 
-            // ─── Download file đính kèm ────────────────────────────────────
+            // ─── Download attachment file ────────────────────────────────────
             if (!shouldSkipDownload && isFileMsg && contentRaw && typeof contentRaw === 'object' && msgId) {
                 const fileHref = String(contentRaw.href || '');
                 const fileTitle = String(contentRaw.title || '');
                 if (fileHref && fileTitle) {
-                    // Lấy extension từ params.fileExt hoặc từ tên file
+                    // Get the extension from params.fileExt or from the file name
                     const paramsData: any = (() => {
                         try {
                             const p = contentRaw.params;
@@ -884,7 +921,7 @@ class EventBroadcaster {
                 }
             }
 
-            // Download attachments array nếu có
+            // Download the attachments array if there is one
             if (!shouldSkipDownload && message.data?.attachments?.length > 0) {
                 FileStorageService.downloadAttachments(zaloId, message.data.attachments).catch(
                     (err) => Logger.warn(`[EventBroadcaster] Failed to download attachments: ${err.message}`)
@@ -912,7 +949,7 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast kết nối thành công
+     * Broadcast connection succeeded
      */
     public static broadcastConnected(zaloId: string, accountInfo: any): void {
         Logger.log(`[EventBroadcaster] Broadcasting connected for ${zaloId}`);
@@ -920,15 +957,15 @@ class EventBroadcaster {
     }
 
     /**
-     * Hồ sơ của chính tài khoản vừa đổi (hiện có: cờ Zalo Business). Renderer cập nhật accountStore; relay cho nhân viên
-     * được giao tài khoản (id trong zaloId).
+     * Profile of the account itself that just changed (currently: the Zalo Business flag). The renderer updates accountStore; the relay sends it to the employees
+     * assigned the account (the id is in zaloId).
      */
     public static broadcastAccountProfile(zaloId: string, profile: { is_business?: 0 | 1 }): void {
         this.sendAware('event:accountProfile', { zaloId, ...profile });
     }
 
     /**
-     * Broadcast ngắt kết nối
+     * Broadcast disconnected
      */
     public static broadcastDisconnected(zaloId: string, reason?: string): void {
         Logger.log(`[EventBroadcaster] Broadcasting disconnected for ${zaloId}`);
@@ -969,7 +1006,7 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast lời mời kết bạn (incoming) + tự động lưu vào DB.
+     * Broadcast a friend request (incoming) + automatically save it to the DB.
      * Called from ZaloLoginHelper ONLY for FriendEventType.REQUEST (type=2).
      * The caller is responsible for resolving user info (getUserInfo) first.
      *
@@ -1000,8 +1037,8 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast khi mình gửi lời mời kết bạn thành công.
-     * Cache vào friend_requests(direction='sent') + broadcast realtime cho UI.
+     * Broadcast when I successfully send a friend request.
+     * Cached into friend_requests(direction='sent') + broadcast in realtime to the UI.
      */
     public static broadcastFriendRequestSent(
         zaloId: string,
@@ -1035,8 +1072,8 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast khi lời mời kết bạn bị xoá khỏi cache local.
-     * Dùng cho REJECT_REQUEST / huỷ lời mời / đối phương thu hồi lời mời.
+     * Broadcast when a friend request is removed from the local cache.
+     * Used for REJECT_REQUEST / cancelling a request / the other side recalling its request.
      */
     public static broadcastFriendRequestRemoved(
         zaloId: string,
@@ -1072,8 +1109,8 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast khi trở thành bạn bè.
-     * Add vào friends DB + broadcast event:friendAccepted.
+     * Broadcast when two people become friends.
+     * Adds to the friends DB + broadcasts event:friendAccepted.
      */
     public static broadcastFriendAccepted(
         zaloId: string,
@@ -1097,9 +1134,9 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast khi bạn bè bị xóa (FriendEventType.REMOVE = 1).
-     * Remove from friends DB + event:friendRemoved (trước đây chỉ xoá DB: UI Boss / nhân viên vẫn hiện "bạn bè"
-     * tới khi tải lại).
+     * Broadcast when a friend is removed (FriendEventType.REMOVE = 1).
+     * Removes from the friends DB + event:friendRemoved (before, only the DB was cleared: the Boss UI / employees still showed "bạn bè" (friends)
+     * until they reloaded).
      */
     public static broadcastFriendRemoved(zaloId: string, friendId: string): void {
         if (!friendId) return;
@@ -1131,14 +1168,14 @@ class EventBroadcaster {
                 const msg = d.msg || '';
                 const color = d.color !== undefined && d.color !== 'null' ? Number(d.color) : -1;
                 const content = {
-                    title: msg ? JSON.parse(msg) : 'Nhắc hẹn',
+                    title: msg ? JSON.parse(msg) : tr('Nhắc hẹn'),
                     description: '',
                     params: JSON.stringify({
                         actions: [{
                             actionId: 'action.open.reminder',
                             data: JSON.stringify({
                                 act: 'remind_reminder11',
-                                data: JSON.stringify({ emoji, color, params: { title: msg ? JSON.parse(msg) : 'Nhắc hẹn' } })
+                                data: JSON.stringify({ emoji, color, params: { title: msg ? JSON.parse(msg) : tr('Nhắc hẹn') } })
                             })
                         }]
                     })
@@ -1150,8 +1187,8 @@ class EventBroadcaster {
             }
         }
 
-        // Nhóm ẩn danh sách thành viên: updateMembers rỗng → người thực hiện (sourceId). Tên tra trong DB; chưa có thì
-        // getUserInfo (gộp lô) rồi sửa dòng thông báo — trước đây luôn là "Thành viên đã rời khỏi nhóm".
+        // Group hides its member list: updateMembers is empty → the actor (sourceId). The name is looked up in the DB; if not there yet, then
+        // getUserInfo (batched) and the notification line is fixed up. Before, it was always "Thành viên đã rời khỏi nhóm" (A member left the group).
         const actorId = groupId ? groupEventActorId(eventType, rawEvent) : '';
         const actor = actorId ? EventBroadcaster.lookupKnownMember(zaloId, groupId, actorId) : null;
         const systemText = actorId
@@ -1165,7 +1202,11 @@ class EventBroadcaster {
             try {
                 const d = rawEvent?.data || rawEvent || {};
                 const topic = d.topic;
-                if (topic && groupId) {
+                if (topic && groupId && Number(topic.type) === ZALO_PINNED_MESSAGE_TOPIC) {
+                    // A pinned message (from the phone or from Deplao), not a note: it used to be listed twice
+                    try { this.runOnBossDb((db) => EventBroadcaster.saveTopicMessagePin(db, zaloId, groupId, topic)); } catch {}
+                    this.sendAware('event:pinsUpdated', { zaloId, threadId: groupId });
+                } else if (topic && groupId) {
                     let noteTitle = '';
                     try { noteTitle = JSON.parse(topic.params || '{}').title || ''; } catch {}
                     const topicId = String(topic.id || '');
@@ -1194,7 +1235,13 @@ class EventBroadcaster {
                 const topic = d.topic;
                 if (topic && groupId) {
                     const topicId = String(topic.id || topic.topicId || '');
+                    const unpinnedMsgId = EventBroadcaster.topicPinnedMsgId(topic);
+                    if (unpinnedMsgId) {
+                        try { this.runOnBossDb((db) => db.unpinMessage(zaloId, groupId, unpinnedMsgId)); } catch {}
+                        this.sendAware('event:pinsUpdated', { zaloId, threadId: groupId });
+                    }
                     if (topicId) {
+                        // note_<id> also clears a pinned message once stored as a note by older versions
                         try { this.runOnBossDb((db) => db.unpinMessage(zaloId, groupId, `note_${topicId}`)); } catch {}
                         this.sendAware('event:groupEvent', {
                             zaloId, groupId, eventType: 'unpin_topic', notePin: { topicId },
@@ -1215,7 +1262,17 @@ class EventBroadcaster {
                     try { noteTitle = JSON.parse(topic.params || '{}').title || ''; } catch {}
                     const topicId = String(topic.id || '');
                     const action = topic.action;
-                    if (topicId) {
+                    if (topicId && Number(topic.type) === ZALO_PINNED_MESSAGE_TOPIC) {
+                        // Pinned message topic: the message pin list, never a note
+                        const pinnedMsgId = EventBroadcaster.topicPinnedMsgId(topic);
+                        if (action === 1) {
+                            try { this.runOnBossDb((db) => EventBroadcaster.saveTopicMessagePin(db, zaloId, groupId, topic)); } catch {}
+                        } else if (action === 0) {
+                            try { this.runOnBossDb((db) => db.unpinMessage(zaloId, groupId, `note_${topicId}`)); } catch {}
+                            if (pinnedMsgId) { try { this.runOnBossDb((db) => db.unpinMessage(zaloId, groupId, pinnedMsgId)); } catch {} }
+                        }
+                        this.sendAware('event:pinsUpdated', { zaloId, threadId: groupId });
+                    } else if (topicId) {
                         if (action === 1) {
                             const creatorId = String(d.sourceId || topic.creatorId || '');
                             const createTime = Number(topic.createTime || Date.now());
@@ -1269,8 +1326,8 @@ class EventBroadcaster {
                             case 'leave': case 'remove_member': case 'block_member':
                                 db.removeGroupMember(zaloId, groupId, uid);
                                 break;
-                            // Quy ước Zalo trong DB: phó nhóm = 1, trưởng nhóm = 2 (shared/chat/groupMemberRoles) — trước đây
-                            // ghi phó nhóm mới thành 2 → hiện "Trưởng nhóm"
+                            // Zalo's rule in the DB: deputy = 1, group leader = 2 (shared/chat/groupMemberRoles). Before,
+                            // writing a new deputy as 2 showed "Trưởng nhóm" (Group leader)
                             case 'add_admin':
                                 db.upsertGroupMember(zaloId, groupId, { memberId: uid, displayName: um.dName || um.zaloName || '', avatar: um.avatar || um.avatar_25 || '', role: groupAdminRole('zalo') });
                                 break;
@@ -1297,11 +1354,11 @@ class EventBroadcaster {
         }
     }
 
-    // ─── Nhóm ẩn thành viên: tên người thực hiện sự kiện ─────────────────────
+    // ─── Group hides members: the name of the person who did the event ─────────────────────
 
-    /** Tên / avatar đã biết của một người (bản thân, liên hệ, thành viên nhóm đã lưu) — không gọi mạng. */
+    /** Name / avatar already known for a person (self, a contact, a saved group member), no network call. */
     private static lookupKnownMember(zaloId: string, groupId: string, uid: string): { name: string; avatar: string } | null {
-        if (uid === zaloId) return { name: 'Bạn', avatar: '' };
+        if (uid === zaloId) return { name: tr('Bạn'), avatar: '' };
         try {
             return this.withBossDb((db) => {
                 const contact: any = db.getContactById(zaloId, uid);
@@ -1324,7 +1381,7 @@ class EventBroadcaster {
     private static actorProfileCache = new Map<string, { name: string; avatar: string; at: number }>();
     private static actorLookupQueue = new Map<string, { jobs: GroupActorJob[] }>();
 
-    /** Gom các sự kiện trong ~1,5 s thành một lệnh getUserInfo (≤ 50 UID) cho mỗi tài khoản. */
+    /** Gathers the events within ~1,5 s into one getUserInfo command (≤ 50 UIDs) per account. */
     private static scheduleActorResolution(job: GroupActorJob): void {
         const cached = this.actorProfileCache.get(`${job.zaloId}:${job.actorId}`);
         if (cached && Date.now() - cached.at < this.ACTOR_PROFILE_TTL_MS) {
@@ -1366,7 +1423,7 @@ class EventBroadcaster {
         }
     }
 
-    /** Sửa dòng thông báo đã lưu / đang hiện (chỉ khi vẫn là chữ tạm) và báo renderer + nhân viên. */
+    /** Fixes the saved / showing notification line (only while it is still the temporary text) and notifies the renderer + employees. */
     private static applyResolvedActor(job: GroupActorJob, profile: { name: string; avatar: string }): void {
         const text = groupEventActorText(job.eventType, profile.name, job.rawEvent);
         if (!text || text === job.placeholder) return;
@@ -1374,7 +1431,7 @@ class EventBroadcaster {
         try {
             this.runOnBossDb((db) => {
                 db.run(
-                    // CAST: không để SQLite quét cả nhóm theo index thread (xem SAME_THREAD_SQL ở DatabaseService)
+                    // CAST: do not let SQLite scan the whole group through the thread index (see SAME_THREAD_SQL in DatabaseService)
                     `UPDATE messages SET content = ?, attachments = ?
                      WHERE owner_zalo_id = ? AND CAST(thread_id AS TEXT) = ? AND msg_id = ? AND content = ?`,
                     [text, JSON.stringify(members), job.zaloId, job.groupId, job.msgId, job.placeholder],
@@ -1400,14 +1457,14 @@ class EventBroadcaster {
      * Value [0] = text when turned off, [1] = text when turned on.
      */
     private static readonly VISIBLE_SETTINGS: Record<string, [string, string]> = {
-        joinAppr:       ['Hình thức tham gia nhóm: Không cần phê duyệt', 'Hình thức tham gia nhóm: Cần phê duyệt'],
-        lockSendMsg:    ['Đã mở khóa gửi tin nhắn cho thành viên',       'Đã khóa gửi tin nhắn cho thành viên'],
-        blockName:      ['Cho phép thành viên đổi tên nhóm',              'Đã khóa đổi tên nhóm'],
-        addMemberOnly:  ['Thành viên có thể thêm người vào nhóm',         'Chỉ trưởng/phó nhóm mới được thêm thành viên'],
-        setTopicOnly:   ['Thành viên có thể đặt chủ đề nhóm',             'Chỉ trưởng/phó nhóm mới được đặt chủ đề'],
-        lockCreatePost: ['Thành viên có thể đăng bài',                    'Chỉ trưởng/phó nhóm mới được đăng bài'],
-        lockCreatePoll: ['Thành viên có thể tạo bình chọn',               'Chỉ trưởng/phó nhóm mới được tạo bình chọn'],
-        lockViewMember: ['Thành viên có thể xem danh sách thành viên',    'Đã ẩn danh sách thành viên'],
+        joinAppr:       [tr('Hình thức tham gia nhóm: Không cần phê duyệt'), tr('Hình thức tham gia nhóm: Cần phê duyệt')],
+        lockSendMsg:    [tr('Đã mở khóa gửi tin nhắn cho thành viên'),       tr('Đã khóa gửi tin nhắn cho thành viên')],
+        blockName:      [tr('Cho phép thành viên đổi tên nhóm'),              tr('Đã khóa đổi tên nhóm')],
+        addMemberOnly:  [tr('Thành viên có thể thêm người vào nhóm'),         tr('Chỉ trưởng/phó nhóm mới được thêm thành viên')],
+        setTopicOnly:   [tr('Thành viên có thể đặt chủ đề nhóm'),             tr('Chỉ trưởng/phó nhóm mới được đặt chủ đề')],
+        lockCreatePost: [tr('Thành viên có thể đăng bài'),                    tr('Chỉ trưởng/phó nhóm mới được đăng bài')],
+        lockCreatePoll: [tr('Thành viên có thể tạo bình chọn'),               tr('Chỉ trưởng/phó nhóm mới được tạo bình chọn')],
+        lockViewMember: [tr('Thành viên có thể xem danh sách thành viên'),    tr('Đã ẩn danh sách thành viên')],
     };
 
     /**
@@ -1428,17 +1485,17 @@ class EventBroadcaster {
         const d = rawEvent?.data || rawEvent || {};
         const updateMembers: any[] = d.updateMembers || [];
         const memberNames = updateMembers.map((m: any) => m.dName || m.zaloName || m.id || '').filter(Boolean).join(', ');
-        const actor = memberNames || 'Thành viên';
+        const actor = memberNames || tr('Thành viên');
 
         switch (eventType) {
             case 'join':
-                return `${actor} đã tham gia nhóm`;
+                return tr('{{actor}} đã tham gia nhóm', { actor });
             case 'leave':
-                return `${actor} đã rời khỏi nhóm`;
+                return tr('{{actor}} đã rời khỏi nhóm', { actor });
             case 'remove_member':
-                return `${actor} đã bị xóa khỏi nhóm`;
+                return tr('{{actor}} đã bị xóa khỏi nhóm', { actor });
             case 'block_member':
-                return `${actor} đã bị cấm khỏi nhóm`;
+                return tr('{{actor}} đã bị cấm khỏi nhóm', { actor });
             case 'update_setting': {
                 const newSettings: Record<string, number> = d.groupSetting || {};
                 const extraData = d.extraData || {};
@@ -1491,26 +1548,26 @@ class EventBroadcaster {
             case 'new_link': {
                 const link: string = d.link || d.inviteLink || d.groupLink || d.linkJoin
                     || d.info?.group_link || '';
-                if (link) return `Link mới tham gia nhóm: ${link}`;
-                return 'Link nhóm mới đã được tạo';
+                if (link) return tr('Link mới tham gia nhóm: {{link}}', { link });
+                return tr('Link nhóm mới đã được tạo');
             }
             case 'update':
             case 'update_avatar': {
                 const subType: number = d.subType || 0;
                 const groupName: string = d.groupName || '';
-                if (subType === 1 && groupName) return `Tên nhóm đã được đổi thành "${groupName}"`;
-                if (subType === 2 || d.avt || d.fullAvt) return 'Ảnh nhóm đã được thay đổi';
-                if (groupName) return `Tên nhóm đã được đổi thành "${groupName}"`;
-                return 'Nhóm đã được cập nhật';
+                if (subType === 1 && groupName) return tr('Tên nhóm đã được đổi thành "{{groupName}}"', { groupName });
+                if (subType === 2 || d.avt || d.fullAvt) return tr('Ảnh nhóm đã được thay đổi');
+                if (groupName) return tr('Tên nhóm đã được đổi thành "{{groupName}}"', { groupName });
+                return tr('Nhóm đã được cập nhật');
             }
             case 'add_admin':
-                return `${actor} đã được thêm làm phó nhóm`;
+                return tr('{{actor}} đã được thêm làm phó nhóm', { actor });
             case 'remove_admin':
-                return `${actor} đã bị xóa khỏi vai trò phó nhóm`;
+                return tr('{{actor}} đã bị xóa khỏi vai trò phó nhóm', { actor });
             case 'join_request': {
                 const uids: string[] = d.uids || [];
                 const total: number = d.totalPending || uids.length || 1;
-                return `${total} người đang chờ phê duyệt vào nhóm`;
+                return tr('{{total}} người đang chờ phê duyệt vào nhóm', { total });
             }
             case 'remind_topic': {
                 const emoji = d.emoji || '⏰';
@@ -1521,14 +1578,14 @@ class EventBroadcaster {
                 } catch {
                     title = msg;
                 }
-                return title ? `${emoji} ${title}` : `${emoji} Nhắc hẹn`;
+                return title ? `${emoji} ${title}` : tr('{{emoji}} Nhắc hẹn', { emoji });
             }
             default:
                 return '';
         }
     }
 
-    /** Tin Zalo đã hết hạn tự xoá (FR-ZL05.6): Zalo dọn tin trên thiết bị Zalo, Deplao giữ nguyên nội dung. */
+    /** Zalo message past its auto-delete time (FR-ZL05.6): Zalo cleans up the message on Zalo devices, Deplao keeps the content. */
     private static ttlExpiredIds(zaloId: string, msgIds: string[], threadId?: string): Set<string> {
         try {
             return this.withBossDb((db) => db.zaloTtlExpiredMessageIds(zaloId, msgIds, threadId));
@@ -1556,8 +1613,8 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast delete messages (chat.delete event) - marks as recalled in DB and notifies renderer.
-     * Không xoá khỏi DB để giữ lịch sử - chỉ đánh dấu recalled.
+     * Broadcast delete messages (chat.delete event) - marks them as recalled in the DB and notifies the renderer.
+     * Not deleted from the DB, to keep the history: only marked as recalled.
      */
     public static broadcastDeleteMessages(zaloId: string, msgIds: string[], threadId: string): void {
         const expired = msgIds.length > 0 ? this.ttlExpiredIds(zaloId, msgIds.map(String), threadId) : new Set<string>();
@@ -1608,9 +1665,9 @@ class EventBroadcaster {
 
     /**
      * Broadcast seen/read event
-     * Phân biệt 2 model theo docs:
-     *   UserSeenMessage  (type=0): data = { idTo, msgId, realMsgId }  → 1 người seen = người dùng kia
-     *   GroupSeenMessage (type=1): data = { msgId, groupId, seenUids[] } → nhiều người seen trong nhóm
+     * Two models per the docs:
+     *   UserSeenMessage  (type=0): data = { idTo, msgId, realMsgId }  → 1 person seen = the other user
+     *   GroupSeenMessage (type=1): data = { msgId, groupId, seenUids[] } → several people seen in the group
      */
     public static broadcastSeen(zaloId: string, data: any): void {
         try {
@@ -1627,7 +1684,7 @@ class EventBroadcaster {
                 // UserSeenMessage
                 const threadId = data?.threadId || data?.data?.idTo || data?.data?.uidFrom || '';
                 const msgId    = data?.data?.msgId || data?.data?.realMsgId || data?.msgId || '';
-                // userId = người đối diện đã seen (không phải mình)
+                // userId = the other person who has seen it (not me)
                 const userId   = data?.data?.uidFrom || data?.uidFrom || threadId;
                 if (threadId) {
                     this.send('event:seen', { zaloId, threadId, msgId, isGroup: false, seenUids: [userId] });
@@ -1639,8 +1696,8 @@ class EventBroadcaster {
     }
 
     /**
-     * Zalo: hội thoại đã đọc ở máy khác (điện thoại / Zalo PC, cmd 504 / 524, services/zalo/zaloReadElsewhere) → số chưa
-     * đọc trong DB Boss + renderer (db:unreadChanged; 0 = renderer xoá ngay). Không gửi "đã xem" ngược lên Zalo.
+     * Zalo: conversation read on another device (phone / Zalo PC, cmd 504 / 524, services/zalo/zaloReadElsewhere) → the unread count
+     * in the Boss DB + renderer (db:unreadChanged; 0 = the renderer clears it at once). Does not send "đã xem" (seen) back up to Zalo.
      */
     public static broadcastZaloReadElsewhere(zaloId: string, items: ZaloClearUnread[]): void {
         for (const item of items) {
@@ -1663,7 +1720,7 @@ class EventBroadcaster {
     }
 
     /**
-     * Broadcast QR code update (`message`: câu báo cho người dùng khi status = 'error')
+     * Broadcast QR code update (`message`: the text for the user when status = 'error')
      */
     public static broadcastQRUpdate(tempId: string, qrDataUrl: string, status: string, message?: string): void {
         this.send('qr:update', { tempId, qrDataUrl, status, ...(message ? { message } : {}) });
@@ -1671,7 +1728,7 @@ class EventBroadcaster {
 
     /**
      * Broadcast listener dead (max retries exhausted or fatal token error)
-     * → renderer hiển thị cảnh báo và nút reconnect thủ công
+     * → the renderer shows a warning and a manual reconnect button
      */
     public static broadcastListenerDead(zaloId: string, reason: string): void {
         Logger.warn(`[EventBroadcaster] broadcastListenerDead: ${zaloId} reason=${reason}`);

@@ -1,9 +1,9 @@
 /**
- * SQL đọc tín hiệu đã nhận / đã xem / đã phản hồi của tin MÌNH gửi (quy tắc: shared/analytics/messageEngagement.ts).
- * Mỗi người nhận tra tối đa 2 lần trên chỉ mục hội thoại messages(owner_zalo_id, thread_id, timestamp), dạng
- * `ORDER BY timestamp LIMIT 1` để dừng ở tin đầu tiên khớp (MIN(...) kèm điều kiện is_sent / msg_type phải đọc hết đoạn
- * tin sau mốc). `thread_id = <cột>` để nguyên (không CAST): đây là tra theo khoảng thời gian trong một hội thoại, không
- * phải tra mã tin (xem bẫy chỉ mục ở messageIdScope / SAME_THREAD_SQL). Kế hoạch được khoá bằng
+ * SQL that reads the received / viewed / replied signals of the messages I SENT (rules: shared/analytics/messageEngagement.ts).
+ * Each recipient is looked up at most 2 times on the conversation index messages(owner_zalo_id, thread_id, timestamp), as
+ * `ORDER BY timestamp LIMIT 1` so it stops at the first matching message (MIN(...) with the is_sent / msg_type conditions would have to read the whole
+ * range of messages after the mark). `thread_id = <column>` is kept as is (no CAST): this is a time-range lookup inside one conversation, not a
+ * message-id lookup (see the index trap at messageIdScope / SAME_THREAD_SQL). The plan is locked by
  * src/__tests__/database/messageEngagement.test.ts.
  */
 import {
@@ -17,7 +17,7 @@ export interface EngagementQueryable {
   query<T = any>(sql: string, params?: any[]): T[];
 }
 
-/** Giờ tin THẬT đầu tiên người nhận gửi sau mốc (0 = chưa có). */
+/** Time of the first REAL message the recipient sends after the mark (0 = none yet). */
 function firstReplySql(ownerExpr: string, threadExpr: string, anchorExpr: string): string {
   return `COALESCE((SELECT r.timestamp FROM messages r
         WHERE r.owner_zalo_id = ${ownerExpr} AND r.thread_id = ${threadExpr} AND r.timestamp > ${anchorExpr}
@@ -37,8 +37,8 @@ export interface CampaignEngagementRow {
 }
 
 /**
- * Liên hệ ĐÃ GỬI của các chiến dịch + tín hiệu. Mốc = tin mình gửi sớm nhất quanh lúc gửi
- * ([sent_at − 5 phút, sent_at + 1 phút], tin của chiến dịch), không thấy → sent_at − 1 phút.
+ * Contacts the campaigns have already SENT to, plus their signals. Mark = my earliest message around the send time
+ * ([sent_at − 5 min, sent_at + 1 min], messages of the campaign); none found → sent_at − 1 min.
  */
 export function campaignEngagementRows(db: EngagementQueryable, campaignIds: readonly number[]): CampaignEngagementRow[] {
   const ids = [...new Set(campaignIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
@@ -73,11 +73,11 @@ export interface OutreachRow {
 }
 
 /**
- * Người nhận tin 1:1 của một tài khoản trong khoảng [sinceTs, untilTs]: mỗi hội thoại một dòng, mốc = tin thật đầu tiên
- * mình gửi trong khoảng. Bỏ hội thoại với chính mình (Telegram Saved Messages, Zalo My Documents) và nhóm.
- * `GROUP BY +m.thread_id`: không có `+`, SQLite (node:sqlite 3.51 / better-sqlite3 3.53) chọn idx_messages_thread để khỏi
- * xếp tạm cho GROUP BY = duyệt MỌI tin của tài khoản (hàng trăm nghìn dòng); có `+` thì đi
- * idx_messages_owner_type_timestamp theo đúng khoảng ngày rồi gom bằng bảng tạm.
+ * 1:1 recipients of an account in the range [sinceTs, untilTs]: one row per conversation, the mark = the first real message
+ * I sent in the range. Skips conversations with myself (Telegram Saved Messages, Zalo My Documents) and groups.
+ * `GROUP BY +m.thread_id`: without the `+`, SQLite (node:sqlite 3.51 / better-sqlite3 3.53) picks idx_messages_thread so it does not need a
+ * temp sort for GROUP BY = scanning ALL messages of the account (hundreds of thousands of rows); with the `+` it uses
+ * idx_messages_owner_type_timestamp for the exact date range and then groups with a temp table.
  */
 export function outreachRows(
   db: EngagementQueryable,

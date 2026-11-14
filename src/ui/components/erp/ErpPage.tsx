@@ -11,6 +11,7 @@ import HrmPage from './hrm/HrmPage';
 import ErpReportsPage from './reports/ErpReportsPage';
 import ErpSettingsPage from './settings/ErpSettingsPage';
 import { SettingsIcon } from '@/components/common/icons';
+import { tr } from '../../../shared/i18n';
 
 type ErpSubView = 'inbox' | 'tasks' | 'calendar' | 'notes' | 'hrm' | 'reports' | 'settings';
 
@@ -43,7 +44,7 @@ export default function ErpPage() {
   const navItems: { id: ErpSubView; label: string; icon: React.ReactNode; show?: boolean }[] = [
     {
       id: 'inbox',
-      label: 'Của tôi',
+      label: tr('Của tôi'),
       icon: (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
@@ -52,7 +53,7 @@ export default function ErpPage() {
     },
     {
       id: 'tasks',
-      label: 'Task',
+      label: tr('Task'),
       icon: (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
@@ -61,7 +62,7 @@ export default function ErpPage() {
     },
     {
       id: 'calendar',
-      label: 'Lịch',
+      label: tr('Lịch'),
       icon: (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
@@ -72,7 +73,7 @@ export default function ErpPage() {
     },
     {
       id: 'notes',
-      label: 'Note',
+      label: tr('Note'),
       icon: (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -83,7 +84,7 @@ export default function ErpPage() {
     },
     {
       id: 'hrm',
-      label: 'Nhân sự',
+      label: tr('Nhân sự'),
       show: perms.can('erp.access'),
       icon: (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -96,7 +97,7 @@ export default function ErpPage() {
     },
     {
       id: 'reports',
-      label: 'Báo cáo',
+      label: tr('Báo cáo'),
       show: perms.role === 'owner' || perms.role === 'admin',
       icon: (
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -106,9 +107,9 @@ export default function ErpPage() {
       ),
     },
     {
-      // Thông báo qua Zalo…: owner / admin
+      // Notify via Zalo…: owner / admin
       id: 'settings',
-      label: 'Cài đặt',
+      label: tr('Cài đặt'),
       show: perms.can('settings.erp'),
       icon: <SettingsIcon className="w-4 h-4" />,
     },
@@ -128,7 +129,7 @@ export default function ErpPage() {
               <rect x="16" y="17" width="6" height="6" rx="1"/>
             </svg>
           </span>
-          <span className="text-foreground font-semibold text-sm">Quản lý công việc</span>
+          <span className="text-foreground font-semibold text-sm">{tr('Quản lý công việc')}</span>
         </div>
 
         {navItems.filter(i => i.show !== false).map(item => (
@@ -155,7 +156,7 @@ export default function ErpPage() {
         {subView === 'notes' && <NotesPage />}
         {subView === 'hrm' && <HrmPage />}
         {subView === 'reports' && <ErpReportsPage />}
-        {/* Mở từ trình mở nhanh mà không có quyền → về "Của tôi" */}
+        {/* Opened from the quick opener without permission → back to "Của tôi" (Mine) */}
         {subView === 'settings' && (perms.can('settings.erp') ? <ErpSettingsPage /> : <TaskInboxPage />)}
       </div>
     </div>

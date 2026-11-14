@@ -1,17 +1,18 @@
 /**
- * Nhắc lịch Quản lý công việc (ERP) trên giao diện: main (ErpCalendarService) phát 'erp:event:reminder' tới giờ nhắc;
- * App.tsx hiện popup "nhắc hẹn" giống nhắc hẹn Zalo (ReminderNotification, có nhạc) khi ĐÚNG GIỜ. Nhắc trước (15 phút…)
- * là thông báo thường trong chuông + chuông rung "15 phút nữa tới lịch hẹn" trên thanh tiêu đề
- * (store/erp/erpReminderAttentionStore). Trước đây sự kiện này chỉ được nghe khi đang mở trang ERP và không ai hiện →
- * lịch hẹn ERP không bao giờ báo.
+ * ERP calendar reminders in the UI: main (ErpCalendarService) emits 'erp:event:reminder' at the reminder time;
+ * App.tsx shows a "nhắc hẹn" popup like the Zalo reminder (ReminderNotification, with sound) at the exact time. Early reminders (15 minutes…)
+ * are regular notifications in the bell, and the bell rings with "15 phút nữa tới lịch hẹn" on the title bar
+ * (store/erp/erpReminderAttentionStore). Previously this event was only heard while the ERP page was open, and nothing was shown, so
+ * ERP appointments never alerted.
  *
- * - Chỉ nhắc lịch của mình: người tổ chức hoặc người được mời (máy Boss nhận MỌI sự kiện của cả workspace).
- * - Lịch đã qua lâu (máy tắt lúc tới giờ, mở lại mới nhắc bù) → báo nhẹ "đã lỡ", không bật popup có nhạc.
+ * - Only reminders for your own events: the organizer or an invitee (the owner's machine receives ALL events of the whole workspace).
+ * - Events that ended long ago (the machine was off at the due time, so the reminder is made up on reopen) → a quiet notice marked "đã lỡ" (missed), with no popup and no sound.
  */
 import type { ErpCalendarEvent, ErpEventType } from '../../../models/erp/CalendarEvent';
 import { erpReminderLeadText } from '../../../shared/erp/erpReminderText';
+import { tr } from '../../../shared/i18n';
 
-/** Lịch kết thúc quá chừng này mới tới nhắc → coi là đã lỡ. */
+/** An event that ended longer ago than this, when its reminder arrives, counts as missed. */
 export const ERP_REMINDER_MISSED_AFTER_MS = 10 * 60_000;
 
 export const ERP_EVENT_EMOJI: Record<ErpEventType, string> = {
@@ -28,44 +29,44 @@ export function isErpReminderForMe(event: Pick<ErpCalendarEvent, 'organizer_id' 
   return !!event.attendees?.some(attendee => String(attendee.employee_id) === myId && attendee.status !== 'declined');
 }
 
-/** Dòng trên tiêu đề popup / thông báo: "Đến giờ hẹn!" / "15 phút nữa tới lịch hẹn". */
+/** Line in the popup / notification title: "Đến giờ hẹn!" / "15 phút nữa tới lịch hẹn". */
 export function erpReminderHeading(minutesBefore: number): string {
   const minutes = Math.max(0, Math.round(Number(minutesBefore) || 0));
-  return minutes === 0 ? 'Đến giờ hẹn!' : erpReminderLeadText(minutes * 60_000);
+  return minutes === 0 ? tr('Đến giờ hẹn!') : erpReminderLeadText(minutes * 60_000);
 }
 
 const pad2 = (value: number) => String(value).padStart(2, '0');
-const WEEKDAYS = ['chủ nhật', 'thứ 2', 'thứ 3', 'thứ 4', 'thứ 5', 'thứ 6', 'thứ 7'];
+const WEEKDAYS = [tr('chủ nhật'), tr('thứ 2'), tr('thứ 3'), tr('thứ 4'), tr('thứ 5'), tr('thứ 6'), tr('thứ 7')];
 
-/** "hôm nay", "ngày mai", "hôm qua", "thứ 6, 30/10". */
+/** "hôm nay" (today), "ngày mai" (tomorrow), "hôm qua" (yesterday), "thứ 6, 30/10" (Friday 30/10). */
 export function erpRelativeDay(ts: number, now: Date = new Date()): string {
   const start = new Date(ts);
   const dayDiff = Math.round(
     (new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime()
       - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000,
   );
-  return dayDiff === 0 ? 'hôm nay'
-    : dayDiff === 1 ? 'ngày mai'
-      : dayDiff === -1 ? 'hôm qua'
+  return dayDiff === 0 ? tr('hôm nay')
+    : dayDiff === 1 ? tr('ngày mai')
+      : dayDiff === -1 ? tr('hôm qua')
         : `${WEEKDAYS[start.getDay()]}, ${pad2(start.getDate())}/${pad2(start.getMonth() + 1)}`;
 }
 
-/** "09:00 hôm nay", "09:00 ngày mai", "09:00 thứ 6, 30/10"; cả ngày: "Cả ngày hôm nay". */
+/** "09:00 hôm nay", "09:00 ngày mai", "09:00 thứ 6, 30/10"; all-day: "Cả ngày hôm nay". */
 export function erpReminderWhen(event: Pick<ErpCalendarEvent, 'start_at' | 'all_day'>, now: Date = new Date()): string {
   const start = new Date(event.start_at);
   const dayText = erpRelativeDay(event.start_at, now);
-  return event.all_day ? `Cả ngày ${dayText}` : `${pad2(start.getHours())}:${pad2(start.getMinutes())} ${dayText}`;
+  return event.all_day ? tr('Cả ngày {{dayText}}', { dayText }) : `${pad2(start.getHours())}:${pad2(start.getMinutes())} ${dayText}`;
 }
 
-/** Tới nhắc khi lịch đã kết thúc từ lâu (máy tắt lúc tới giờ) → đã lỡ. */
+/** A reminder that arrives after the event ended long ago (the machine was off at the due time) → missed. */
 export function isMissedErpReminder(event: Pick<ErpCalendarEvent, 'start_at' | 'end_at'>, now: number = Date.now()): boolean {
   const end = Math.max(Number(event.end_at) || 0, Number(event.start_at) || 0);
   return now - end > ERP_REMINDER_MISSED_AFTER_MS;
 }
 
 /**
- * Ghi chú hiện trong popup: bỏ dòng trống thừa, tối đa `maxLines` dòng. `withoutConversationLine`: popup đã có phần hội
- * thoại → bỏ dòng "Hội thoại: …" (thêm vào ghi chú lúc tạo lịch để xem trong trang Lịch).
+ * Note text shown in the popup: drops extra blank lines, at most `maxLines` lines. `withoutConversationLine`: when the popup already has
+ * the conversation section, drops the "Hội thoại: …" line (added to the note when the event was created, so it shows on the Calendar page).
  */
 export function erpReminderNote(description: string | null | undefined, maxLines = 6, withoutConversationLine = false): string {
   const lines = String(description || '').split(/\r?\n/).map(line => line.trimEnd())

@@ -1,8 +1,8 @@
 /**
- * Sticker / GIF Telegram phía renderer — dữ liệu dùng chung giữa bảng Sticker · GIF trong ô nhập và popup bộ sticker,
- * giữ suốt phiên (mở lại bảng hiện ngay bản đã có, đồng thời hỏi lại main — main so `hash` với Telegram nên thay đổi từ
- * app Telegram khác vẫn về). Ảnh sticker tải theo hàng đợi (thứ tự ô hiện ra), tối đa 4 yêu cầu cùng lúc; ô đã cuộn
- * qua mà chưa tới lượt thì bỏ (không tải cả bộ 120 sticker khi chỉ lướt qua).
+ * Telegram sticker / GIF on the renderer side: data shared between the Sticker · GIF panel in the input box and the sticker-set popup,
+ * kept for the whole session (reopening the panel shows what is already there at once, and also asks main again: main compares `hash` with Telegram, so changes made from
+ * another Telegram app still come back). Sticker images load through a queue (in the order the cells appear), at most 4 requests at once; a cell that was
+ * scrolled past before its turn is dropped (the whole set of 120 stickers is not loaded just because the user scrolled past).
  */
 import React from 'react';
 import ipc from '../../ipc';
@@ -18,6 +18,7 @@ import type {
   TelegramStickerSetInfo,
   TelegramStickerSetRef,
 } from '../../../../shared/telegram/telegramStickers';
+import { tr } from '../../../../shared/i18n';
 
 export type { TelegramCoveredStickerSet, TelegramStickerItem, TelegramStickerSetInfo, TelegramStickerSetRef };
 
@@ -42,7 +43,7 @@ interface AccountState {
   gifsRequest?: Promise<void>;
 }
 
-// ── Đăng ký thay đổi (useSyncExternalStore) ───────────────────────────────────────────────────────────────────────
+// ── Change subscription (useSyncExternalStore) ───────────────────────────────────────────────────────────────────────
 
 const listeners = new Set<() => void>();
 let version = 0;
@@ -57,7 +58,7 @@ function subscribe(listener: () => void): () => void {
   return () => { listeners.delete(listener); };
 }
 
-/** Re-render khi dữ liệu sticker / GIF đổi. */
+/** Re-render when the sticker / GIF data changes. */
 export function useTelegramStickerData(): number {
   return React.useSyncExternalStore(subscribe, () => version);
 }
@@ -70,7 +71,7 @@ function account(accountId: string): AccountState {
   return state;
 }
 
-/** Chỉ dùng trong test. */
+/** Test only. */
 export function __resetTelegramStickerStore(): void {
   accounts.clear();
   fileCache.clear();
@@ -85,7 +86,7 @@ export function stickerSetKey(ref: TelegramStickerSetRef): string {
   return ref.id ? `id:${ref.id}` : `name:${String(ref.shortName || '').toLowerCase()}`;
 }
 
-// ── Bảng sticker ──────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Sticker panel ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 export function getStickerPanel(accountId: string): StickerPanelData | undefined {
   return accounts.get(accountId)?.panel;
@@ -95,7 +96,7 @@ export function getStickerPanelError(accountId: string): string | undefined {
   return accounts.get(accountId)?.panelError;
 }
 
-/** Tải (hoặc kiểm tra lại) bảng sticker: bộ đã cài + gần đây + yêu thích. */
+/** Loads (or re-checks) the sticker panel: installed sets + recent + favourites. */
 export function loadStickerPanel(accountId: string): Promise<void> {
   const state = account(accountId);
   if (state.panelRequest) return state.panelRequest;
@@ -106,7 +107,7 @@ export function loadStickerPanel(accountId: string): Promise<void> {
         state.panel = { sets: res.sets || [], recent: res.recent || [], faved: res.faved || [] };
         state.panelError = undefined;
       } else {
-        state.panelError = res?.error || 'Không tải được sticker';
+        state.panelError = res?.error || tr('Không tải được sticker');
       }
     } catch (err: any) {
       state.panelError = err?.message || String(err);
@@ -129,7 +130,7 @@ function rememberSet(state: AccountState, loaded: LoadedStickerSet, requested?: 
   if (requested) state.sets.set(stickerSetKey(requested), loaded);
 }
 
-/** Nội dung 1 bộ (theo id + access hash hoặc short name). */
+/** Contents of 1 set (by id + access hash or short name). */
 export function loadStickerSet(accountId: string, ref: TelegramStickerSetRef, force = false): Promise<LoadedStickerSet | { error: string }> {
   const state = account(accountId);
   const key = stickerSetKey(ref);
@@ -144,7 +145,7 @@ export function loadStickerSet(accountId: string, ref: TelegramStickerSetRef, fo
         ...(ref.id && ref.accessHash ? { setId: ref.id, accessHash: ref.accessHash } : {}),
         ...(ref.shortName ? { shortName: ref.shortName } : {}),
       });
-      if (!res?.success || !res.set) return { error: res?.error || 'Không tải được bộ sticker' };
+      if (!res?.success || !res.set) return { error: res?.error || tr('Không tải được bộ sticker') };
       const loaded = { set: res.set, stickers: res.stickers || [] };
       rememberSet(state, loaded, ref);
       notify();
@@ -159,11 +160,11 @@ export function loadStickerSet(accountId: string, ref: TelegramStickerSetRef, fo
   return request;
 }
 
-/** Bộ sticker của 1 tin sticker cũ (chưa lưu thông tin bộ): main hỏi lại Telegram tin đó. */
+/** Sticker set of an old sticker message (set info not saved yet): main asks Telegram for that message again. */
 export async function loadStickerSetOfMessage(accountId: string, chatId: string, messageId: string): Promise<LoadedStickerSet | { error: string }> {
   try {
     const res = await ipc.telegramUser?.getStickerSetOfMessage?.({ accountId, chatId, messageId });
-    if (!res?.success || !res.set) return { error: res?.error || 'Không tải được bộ sticker' };
+    if (!res?.success || !res.set) return { error: res?.error || tr('Không tải được bộ sticker') };
     const loaded = { set: res.set, stickers: res.stickers || [] };
     rememberSet(account(accountId), loaded);
     notify();
@@ -174,8 +175,8 @@ export async function loadStickerSetOfMessage(accountId: string, chatId: string,
 }
 
 /**
- * Tải lần lượt nội dung các bộ đã cài (2 bộ cùng lúc, theo thứ tự trong bảng) — để có biểu tượng bộ ở thanh dưới và các
- * mục sticker khi cuộn. Mỗi bộ 1 lần / phiên (main kiểm tra hash).
+ * Loads the contents of the installed sets one after another (2 sets at a time, in the panel's order), so the set icons in the bottom bar and the
+ * sticker sections are available when scrolling. Each set once per session (main checks the hash).
  */
 export async function preloadStickerSets(accountId: string, sets: TelegramStickerSetInfo[], isCancelled: () => boolean): Promise<void> {
   const queue = sets.filter((set) => !getLoadedStickerSet(accountId, { id: set.id }));
@@ -188,13 +189,13 @@ export async function preloadStickerSets(accountId: string, sets: TelegramSticke
   await Promise.all([worker(), worker()]);
 }
 
-/** Thêm / gỡ bộ khỏi tài khoản; cập nhật ngay bảng (thêm lên đầu như Telegram, gỡ thì bỏ khỏi bảng). */
+/** Adds / removes a set from the account; updates the panel at once (added at the top as in Telegram, removed sets are taken off the panel). */
 export async function setStickerSetInstalled(accountId: string, set: TelegramStickerSetInfo, installed: boolean): Promise<{ success: boolean; error?: string }> {
   try {
     const res = await ipc.telegramUser?.setStickerSetInstalled?.({
       accountId, setId: set.id, accessHash: set.accessHash, shortName: set.shortName, installed,
     });
-    if (!res?.success) return { success: false, error: res?.error || 'Không thực hiện được' };
+    if (!res?.success) return { success: false, error: res?.error || tr('Không thực hiện được') };
     const state = account(accountId);
     const updated = { ...set, installed, archived: false };
     for (const [key, loaded] of state.sets) {
@@ -212,18 +213,18 @@ export async function setStickerSetInstalled(accountId: string, set: TelegramSti
   }
 }
 
-/** Tìm bộ sticker (từ khoá rỗng = bộ thịnh hành). Kết quả không lưu lại — trạng thái "đã thêm" lấy từ bảng hiện tại. */
+/** Searches sticker sets (an empty keyword = trending sets). Results are not saved: the "đã thêm" (added) state comes from the current panel. */
 export async function searchTelegramStickerSets(accountId: string, query: string): Promise<{ sets: TelegramCoveredStickerSet[]; error?: string }> {
   try {
     const res = await ipc.telegramUser?.searchStickerSets?.({ accountId, query });
-    if (!res?.success) return { sets: [], error: res?.error || 'Không tìm được bộ sticker' };
+    if (!res?.success) return { sets: [], error: res?.error || tr('Không tìm được bộ sticker') };
     return { sets: res.sets || [] };
   } catch (err: any) {
     return { sets: [], error: err?.message || String(err) };
   }
 }
 
-/** Bộ đã có trong bảng của tài khoản chưa (sau khi thêm / gỡ ở đây cập nhật ngay). */
+/** Whether the set is already in the account's panel (updated at once after adding / removing here). */
 export function isStickerSetInstalled(accountId: string, setId: string): boolean {
   const state = accounts.get(accountId);
   if (state?.panel) return state.panel.sets.some((set) => set.id === setId);
@@ -244,7 +245,7 @@ export function loadSavedGifs(accountId: string): Promise<void> {
       const res = await ipc.telegramUser?.getGifs?.({ accountId });
       if (res?.success) state.savedGifs = res.gifs || [];
     } catch {
-      // giữ danh sách cũ
+      // keep the old list
     } finally {
       state.gifsRequest = undefined;
       notify();
@@ -254,7 +255,7 @@ export function loadSavedGifs(accountId: string): Promise<void> {
   return request;
 }
 
-/** Bỏ GIF khỏi "GIF đã lưu" của tài khoản (ẩn ngay, lấy lại danh sách sau). */
+/** Removes a GIF from the account's "GIF đã lưu" (saved GIFs) (hidden at once, the list is fetched again later). */
 export async function removeSavedGif(accountId: string, docId: string): Promise<boolean> {
   const state = account(accountId);
   const previous = state.savedGifs;
@@ -264,13 +265,13 @@ export async function removeSavedGif(accountId: string, docId: string): Promise<
   }
   try {
     const res = await ipc.telegramUser?.saveGif?.({ accountId, docId, saved: false });
-    if (!res?.success) throw new Error(res?.error || 'Không bỏ được GIF');
+    if (!res?.success) throw new Error(res?.error || tr('Không bỏ được GIF'));
     loadSavedGifs(accountId).catch(() => {});
     return true;
   } catch (err: any) {
     state.savedGifs = previous;
     notify();
-    useAppStore.getState().showNotification(`Không bỏ được GIF: ${err?.message || String(err)}`, 'error');
+    useAppStore.getState().showNotification(tr('Không bỏ được GIF: {{v1}}', { v1: err?.message || String(err) }), 'error');
     return false;
   }
 }
@@ -278,14 +279,14 @@ export async function removeSavedGif(accountId: string, docId: string): Promise<
 export async function searchTelegramGifs(accountId: string, query: string, offset = ''): Promise<{ gifs: TelegramStickerItem[]; nextOffset: string; error?: string }> {
   try {
     const res = await ipc.telegramUser?.searchGifs?.({ accountId, query, offset });
-    if (!res?.success) return { gifs: [], nextOffset: '', error: res?.error || 'Không tìm được GIF' };
+    if (!res?.success) return { gifs: [], nextOffset: '', error: res?.error || tr('Không tìm được GIF') };
     return { gifs: res.gifs || [], nextOffset: res.nextOffset || '' };
   } catch (err: any) {
     return { gifs: [], nextOffset: '', error: err?.message || String(err) };
   }
 }
 
-// ── File để vẽ ────────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Files to draw ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export interface StickerFile {
   url: string;
@@ -310,7 +311,7 @@ export function getCachedStickerFile(accountId: string, docId: string, variant: 
 
 function pumpFileQueue(): void {
   while (activeFileRequests < MAX_FILE_REQUESTS && fileQueue.length > 0) {
-    // Theo thứ tự ô hiện ra (trên → dưới); việc không còn ai chờ (ô đã cuộn qua, tự huỷ) thì bỏ
+    // In the order the cells appear (top → bottom); a job nobody waits for any more (the cell was scrolled past, cancelled itself) is dropped
     const job = fileQueue.shift()!;
     if (job.waiters.size === 0) { fileJobs.delete(job.key); continue; }
     job.started = true;
@@ -318,7 +319,7 @@ function pumpFileQueue(): void {
     job.run()
       .catch(() => null)
       .then((file) => {
-        // Lỗi (mất mạng, quá hạn) không ghi nhớ: ô hiện lại thì thử lại
+        // Errors (network loss, timeout) are not remembered: the cell tries again when it shows again
         if (file) fileCache.set(job.key, file);
         fileJobs.delete(job.key);
         job.waiters.forEach((waiter) => waiter(file));
@@ -331,8 +332,8 @@ function pumpFileQueue(): void {
 }
 
 /**
- * Xin file vẽ sticker / GIF; `onReady` được gọi khi có (null = lỗi). Trả về hàm huỷ — ô rời khỏi màn hình thì huỷ để
- * việc chưa chạy không chiếm lượt.
+ * Requests the drawable file of a sticker / GIF; `onReady` is called when it is available (null = error). Returns a cancel function: when the cell leaves the screen, cancel it so
+ * the job that has not run yet does not take a turn.
  */
 export function requestStickerFile(
   accountId: string,
@@ -366,7 +367,7 @@ export function requestStickerFile(
   return () => { current.waiters.delete(onReady); };
 }
 
-/** Hook: file của sticker khi `enabled` (ô đang hiện / đang rê chuột). */
+/** Hook: the sticker's file when `enabled` (the cell is shown / hovered). */
 export function useStickerFile(accountId: string, docId: string, variant: 'thumb' | 'full', enabled: boolean): StickerFile | null | undefined {
   const [file, setFile] = React.useState<StickerFile | null | undefined>(() => getCachedStickerFile(accountId, docId, variant));
   React.useEffect(() => {
@@ -378,20 +379,20 @@ export function useStickerFile(accountId: string, docId: string, variant: 'thumb
   return file;
 }
 
-// ── Gửi ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Sending ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export interface StickerSendTarget {
   accountId: string;
   chatId: string;
   topicId?: string | null;
   /**
-   * Ô soạn tin gửi vào chỗ khác hội thoại đang mở (phần bình luận bài đăng kênh → nhóm thảo luận): tin đang trả lời của ô
-   * đó. Không có → trích dẫn chung, chỉ khi gửi vào đúng hội thoại đang mở.
+   * A composer sending to a place other than the open conversation (the comments of a channel post → the discussion group): the message that composer is replying to.
+   * None → the general quote, only when sending to the conversation that is open.
    */
   replyTo?: import('../../../store/chat/chatStore').MessageItem | null;
 }
 
-/** Hội thoại đang mở (tài khoản Telegram cá nhân). */
+/** The open conversation (personal Telegram account). */
 export function activeStickerTarget(): StickerSendTarget | null {
   const accountId = useAccountStore.getState().activeAccountId;
   const { activeThreadId, activeTopicId } = useChatStore.getState();
@@ -400,12 +401,12 @@ export function activeStickerTarget(): StickerSendTarget | null {
 }
 
 /**
- * Gửi sticker / GIF vào hội thoại (đang trả lời tin nào thì gửi dạng trả lời tin đó, như Telegram). Tin hiện ra qua
- * event của main (lưu như tin của mình gửi từ thiết bị khác).
+ * Sends a sticker / GIF to the conversation (if a message is being replied to, it is sent as a reply to that message, as in Telegram). The message appears through
+ * an event from main (saved like my own message sent from another device).
  */
 export async function sendTelegramStickerItem(item: TelegramStickerItem, target: StickerSendTarget | null = activeStickerTarget()): Promise<boolean> {
   const notifyError = (message: string) => useAppStore.getState().showNotification(message, 'error');
-  if (!target) { notifyError('Chưa mở hội thoại'); return false; }
+  if (!target) { notifyError(tr('Chưa mở hội thoại')); return false; }
   const chat = useChatStore.getState();
   const reply = target.replyTo !== undefined
     ? target.replyTo
@@ -422,31 +423,31 @@ export async function sendTelegramStickerItem(item: TelegramStickerItem, target:
       ? await ipc.telegramUser?.sendGif?.({ ...common, documentId: item.id })
       : await ipc.telegramUser?.sendSticker?.({ ...common, stickerId: item.id });
     if (!res?.success) {
-      notifyError(`${item.format === 'gif' ? 'Gửi GIF' : 'Gửi sticker'} thất bại: ${res?.error || 'lỗi không rõ'}`);
+      notifyError(tr('{{v1}} thất bại: {{v2}}', { v1: item.format === 'gif' ? tr('Gửi GIF') : tr('Gửi sticker'), v2: res?.error || tr('lỗi không rõ') }));
       return false;
     }
     if (reply) {
       forgetReplyDraft(reply);
       if (useChatStore.getState().replyTo === reply) useChatStore.getState().setReplyTo(null);
     }
-    // Gần đây / GIF đã lưu đổi trên tài khoản → lần mở bảng sau lấy lại
+    // Recent / saved GIFs changed on the account → fetched again the next time the panel opens
     if (item.format === 'gif') loadSavedGifs(target.accountId).catch(() => {});
     else loadStickerPanel(target.accountId).catch(() => {});
     return true;
   } catch (err: any) {
-    notifyError(`Gửi thất bại: ${err?.message || String(err)}`);
+    notifyError(tr('Gửi thất bại: {{v1}}', { v1: err?.message || String(err) }));
     return false;
   }
 }
 
-// ── Popup bộ sticker ──────────────────────────────────────────────────────────────────────────────────────────────
+// ── Sticker set popup ──────────────────────────────────────────────────────────────────────────────────────────────
 
 export interface StickerSetModalRequest {
   accountId: string;
-  /** Có thì gửi sticker bấm trong popup vào hội thoại này. */
+  /** If set, a sticker tapped in the popup is sent to this conversation. */
   target?: StickerSendTarget | null;
   ref?: TelegramStickerSetRef;
-  /** Tin sticker cũ chưa có thông tin bộ → hỏi lại Telegram theo tin. */
+  /** Old sticker message without set info → ask Telegram again for that message. */
   message?: { chatId: string; messageId: string };
 }
 
@@ -475,8 +476,8 @@ export function useTelegramStickerSetModal(): StickerSetModalRequest | null {
 }
 
 /**
- * Mở popup bộ sticker của 1 tin sticker Telegram (cá nhân). Tin lưu từ bản này có sẵn thông tin bộ; tin cũ thì main hỏi
- * lại Telegram theo tin. Sticker bấm trong popup gửi vào hội thoại đang mở.
+ * Opens the sticker-set popup of 1 Telegram sticker message (personal). Messages saved from this version already have the set info; for old messages main asks
+ * Telegram again for that message. A sticker tapped in the popup is sent to the open conversation.
  */
 export function openStickerSetOfMessage(msg: { owner_zalo_id?: string; thread_id?: string; msg_id?: string; attachments?: any; channel?: string }): void {
   const accountId = String(msg.owner_zalo_id || '');
@@ -498,7 +499,7 @@ export function openStickerSetOfMessage(msg: { owner_zalo_id?: string; thread_id
   });
 }
 
-/** Thông tin bộ của tin sticker Telegram (attachment có set_id / set_short_name từ bản này trở đi). */
+/** Set info of a Telegram sticker message (the attachment has set_id / set_short_name from this version on). */
 export function stickerSetRefOfAttachment(attachment: any): TelegramStickerSetRef | null {
   if (!attachment) return null;
   const id = attachment.set_id ? String(attachment.set_id) : '';

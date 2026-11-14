@@ -1,13 +1,13 @@
-/** Tài khoản unified - Zalo + Facebook + Telegram */
+/** Unified account - Zalo + Facebook + Telegram */
 export interface Account {
     id?: number;
     zalo_id: string;
     full_name: string;
     avatar_url: string;
     phone?: string;
-    /** Telegram bot/user username (không có phone) */
+    /** Telegram bot/user username (no phone number) */
     username?: string;
-    /** 1 = tài khoản Business (trả phí), 0 = cá nhân */
+    /** 1 = Business account (paid), 0 = personal */
     is_business?: number;
     imei: string;
     user_agent: string;
@@ -18,6 +18,6 @@ export interface Account {
     listener_active?: number;
     channel?: string;
     proxy_id?: number | null;
-    /** Zalo: ID hội thoại "My Documents" (loginInfo.send2me_id) — không phải zalo_id */
+    /** Zalo: ID of the "My Documents" conversation (loginInfo.send2me_id), not zalo_id */
     send2me_id?: string;
 }

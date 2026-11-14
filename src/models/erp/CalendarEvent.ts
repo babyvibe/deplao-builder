@@ -14,11 +14,11 @@ export interface ErpCalendarEvent {
   color?: string;
   organizer_id?: string;
   linked_task_id?: string;
-  /** Hội thoại gắn với lịch (contact_id / thread id). */
+  /** Conversation attached to a calendar event (contact_id / thread id). */
   linked_contact_id?: string;
-  /** Tài khoản chat của hội thoại gắn với lịch (zalo_id) — nhắc lịch mở đúng hội thoại. */
+  /** Chat account of the conversation attached to a calendar event (zalo_id): the reminder opens the right conversation. */
   linked_account_id?: string;
-  /** Tin nhắn tạo ra lịch ("Thêm vào lịch" từ tin) — nhắc lịch nhảy tới tin này. */
+  /** Message that created the calendar event ("Thêm vào lịch" (Add to calendar) from a message): the reminder jumps to this message. */
   linked_msg_id?: string;
   recurring_rule?: string;
   created_at: number;

@@ -5,6 +5,8 @@ import {
   type SharedGroupItem,
   type SharedGroupCategory,
 } from '@/lib/crm/backendService';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── Icons ──────────────────────────────────────────────────────────────────
 
@@ -62,7 +64,7 @@ interface SharedGroupsCategoryPopupProps {
 
 const PAGE_SIZE = 50;
 
-/** Bỏ dấu tiếng Việt để search */
+/** Strip Vietnamese diacritics for search */
 function removeDiacritics(str: string): string {
   return str.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 }
@@ -162,8 +164,8 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
           {/* Header */}
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-foreground">Nhóm chung</h3>
-              <p className="text-[11px] text-muted-foreground mt-0.5">{totalGroups} nhóm</p>
+              <h3 className="text-sm font-semibold text-foreground">{tr('Nhóm chung')}</h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{trx('{{totalGroups}} nhóm', { totalGroups })}</p>
             </div>
             <button onClick={onClose} className="text-subtle-foreground hover:text-foreground/80 transition-colors p-1">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -174,7 +176,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
 
           {/* Category list */}
           <div className="flex-1 overflow-y-auto py-1">
-            {/* "Tất cả" */}
+            {/* "Tất cả" (All) */}
             <button onClick={() => handleCategoryChange(null)}
               className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors
                 ${selectedCategoryId === null
@@ -182,7 +184,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
                   : 'text-foreground hover:bg-muted hover:text-foreground'}`}>
               <span className="text-lg flex-shrink-0">📋</span>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium">Tất cả</p>
+                <p className="text-xs font-medium">{tr('Tất cả')}</p>
               </div>
               <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full
                 ${selectedCategoryId === null ? 'bg-green-500/10 text-green-400' : 'bg-muted text-foreground'}`}>
@@ -228,12 +230,12 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
             {/*      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>*/}
             {/*      <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>*/}
             {/*    </svg>*/}
-            {/*    Nhập hàng loạt*/}
+            {/* Bulk import */}
             {/*  </button>*/}
             {/*)}*/}
             <button onClick={onShareGroup}
               className="flex-1 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5">
-              {ShareIcon} Chia sẻ nhóm
+              {trx('{{ShareIcon}} Chia sẻ nhóm', { ShareIcon })}
             </button>
           </div>
         </div>
@@ -244,14 +246,14 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
           <div className="px-4 py-3 border-b border-border space-y-2.5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">
-                {selectedCategory ? `${selectedCategory.icon} ${selectedCategory.name}` : '📋 Tất cả nhóm'}
+                {selectedCategory ? `${selectedCategory.icon} ${selectedCategory.name}` : tr('📋 Tất cả nhóm')}
               </h3>
-              <span className="text-[11px] text-muted-foreground">{filteredGroups.length} kết quả</span>
+              <span className="text-[11px] text-muted-foreground">{trx('{{count}} kết quả', { count: filteredGroups.length })}</span>
             </div>
             <div className="relative">
               <div className="absolute left-3 top-1/2 -translate-y-1/2 text-subtle-foreground">{SearchIcon}</div>
               <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)}
-                placeholder="Tìm theo tên nhóm, ID, người chia sẻ..."
+                placeholder={tr('Tìm theo tên nhóm, ID, người chia sẻ...')}
                 className="w-full bg-muted border border-input rounded-lg pl-9 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-green-500" />
             </div>
           </div>
@@ -260,7 +262,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
           <div className="flex-1 overflow-y-auto">
             {loading && (
               <div className="flex items-center justify-center py-12 text-muted-foreground text-sm gap-2">
-                {SpinIcon} Đang tải...
+                {trx('{{SpinIcon}} Đang tải...', { SpinIcon })}
               </div>
             )}
 
@@ -268,12 +270,12 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
               <div className="flex flex-col items-center justify-center h-full px-6 text-center">
                 <div className="text-3xl mb-2">{searchText ? '🔍' : '📭'}</div>
                 <p className="text-sm text-muted-foreground">
-                  {searchText ? 'Không tìm thấy nhóm' : 'Chưa có nhóm nào'}
+                  {searchText ? tr('Không tìm thấy nhóm') : tr('Chưa có nhóm nào')}
                 </p>
                 {!searchText && (
                   <button onClick={onShareGroup}
                     className="mt-3 px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5">
-                    {ShareIcon} Chia sẻ nhóm đầu tiên
+                    {trx('{{ShareIcon}} Chia sẻ nhóm đầu tiên', { ShareIcon })}
                   </button>
                 )}
               </div>
@@ -299,7 +301,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
                     <div className="flex-1 min-w-0">
                       <p className="text-[13px] text-foreground font-medium truncate">{group.groupName}</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
-                        {group.memberCount.toLocaleString('vi-VN')} thành viên
+                        {trx('{{v1}} thành viên', { v1: group.memberCount.toLocaleString(appLocale()) })}
                       </p>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         {group.submittedByAvatar ? (
@@ -324,7 +326,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
                           ${copiedId === group.shareId
                             ? 'bg-green-600 text-white'
                             : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-                        {copiedId === group.shareId ? <>{CheckSmallIcon} Đã copy</> : <>{CopyIcon} Copy link</>}
+                        {copiedId === group.shareId ? <>{trx('{{CheckSmallIcon}} Đã copy', { CheckSmallIcon })}</> : <>{trx('{{CopyIcon}} Copy link', { CopyIcon })}</>}
                       </button>
                     </div>
                   </div>
@@ -337,7 +339,7 @@ export default function SharedGroupsCategoryPopup({ pageId, onClose, onShareGrou
           {totalPages > 1 && (
             <div className="px-4 py-2.5 border-t border-border flex items-center justify-between">
               <span className="text-[11px] text-subtle-foreground">
-                Trang {currentPage}/{totalPages} · {totalCount} nhóm
+                {trx('Trang {{currentPage}}/{{totalPages}} · {{totalCount}} nhóm', { currentPage, totalPages, totalCount })}
               </span>
               <div className="flex items-center gap-1">
                 <button onClick={() => handlePageChange(Math.max(1, currentPage - 1))}

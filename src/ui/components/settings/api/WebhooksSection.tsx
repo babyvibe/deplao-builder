@@ -1,7 +1,7 @@
 /**
- * Phần Webhook của trang Ứng dụng, API & Webhook — gộp hai chiều dữ liệu cho dễ hiểu:
- *  - Nhận dữ liệu vào: hệ thống khác gửi vào Deplao (trước là Cài đặt → Webhooks).
- *  - Gửi sự kiện ra ngoài: Deplao báo sự kiện tới URL của bạn (trước là tab Webhook của API).
+ * The Webhook section of the Apps, API & Webhook page: both directions of data in one place, to make it easier to understand:
+ *  - Incoming data: other systems send data into Deplao (previously Settings → Webhooks).
+ *  - Outgoing events: Deplao reports events to your URL (previously the Webhook tab of the API).
  */
 import React, { useEffect, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -12,19 +12,21 @@ import { openDocs } from '@/components/plugins/hub/PluginDevPanel';
 import { ErrorBox } from './apiUi';
 import InboundWebhooksPanel from './InboundWebhooksPanel';
 import ApiWebhooksPanel from './ApiWebhooksPanel';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export type WebhookSub = 'inbound' | 'outbound';
 
 const SUBS: Array<{ id: WebhookSub; label: string; direction: string; icon: React.ReactNode }> = [
-  { id: 'inbound', label: 'Nhận dữ liệu vào', direction: 'Hệ thống khác → Deplao', icon: <DownloadIcon /> },
-  { id: 'outbound', label: 'Gửi sự kiện ra ngoài', direction: 'Deplao → URL của bạn', icon: <SendIcon /> },
+  { id: 'inbound', label: tr('Nhận dữ liệu vào'), direction: tr('Hệ thống khác → Deplao'), icon: <DownloadIcon /> },
+  { id: 'outbound', label: tr('Gửi sự kiện ra ngoài'), direction: tr('Deplao → URL của bạn'), icon: <SendIcon /> },
 ];
 
 export default function WebhooksSection({ initial = 'inbound' }: { initial?: WebhookSub }) {
   const showNotification = useAppStore(s => s.showNotification);
   const setSection = useAppStore(s => s.setPluginHubSection);
   const [sub, setSub] = useState<WebhookSub>(initial);
-  // Webhook gửi ra chạy cả khi API server tắt, chỉ dừng khi "Cho phép gọi API" bị tắt.
+  // Outgoing webhooks keep running even when the API server is off; they only stop when "Cho phép gọi API" (Allow API calls) is turned off.
   const [apiBlocked, setApiBlocked] = useState(false);
 
   useEffect(() => {
@@ -40,7 +42,7 @@ export default function WebhooksSection({ initial = 'inbound' }: { initial?: Web
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Tabs value={sub} onValueChange={v => setSub(v as WebhookSub)}>
-          <TabsList aria-label="Chiều dữ liệu">
+          <TabsList aria-label={tr('Chiều dữ liệu')}>
             {SUBS.map(s => (
               <TabsTrigger key={s.id} value={s.id} icon={s.icon} title={s.direction}>
                 {s.label}
@@ -50,8 +52,8 @@ export default function WebhooksSection({ initial = 'inbound' }: { initial?: Web
           </TabsList>
         </Tabs>
         {sub === 'outbound' && (
-          <Button variant="ghost" size="sm" leftIcon={<BookIcon className="w-4 h-4" />} title="Định dạng sự kiện, kiểm tra chữ ký, thử lại" onClick={() => openDocs('#guide/webhooks', showNotification)}>
-            Tài liệu webhook ↗
+          <Button variant="ghost" size="sm" leftIcon={<BookIcon className="w-4 h-4" />} title={tr('Định dạng sự kiện, kiểm tra chữ ký, thử lại')} onClick={() => openDocs('#guide/webhooks', showNotification)}>
+            {tr('Tài liệu webhook ↗')}
           </Button>
         )}
       </div>
@@ -59,15 +61,15 @@ export default function WebhooksSection({ initial = 'inbound' }: { initial?: Web
       {sub === 'inbound' ? (
         <InboundWebhooksPanel />
       ) : !ipc.api ? (
-        <ErrorBox message="Bản app này chưa có module API. Hãy cập nhật app." />
+        <ErrorBox message={tr('Bản app này chưa có module API. Hãy cập nhật app.')} />
       ) : (
         <>
           {apiBlocked && (
             <div role="alert" className="flex gap-2 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-foreground">
               <AlertIcon className="w-4 h-4 flex-shrink-0 text-warning" />
               <span>
-                Đang tạm dừng gửi vì công tắc <strong>Cho phép gọi API</strong> đang tắt. Bật lại ở{' '}
-                <button type="button" className="font-medium text-primary hover:underline" onClick={() => setSection('api')}>API → Tổng quan</button>.
+                {trx('Đang tạm dừng gửi vì công tắc <0>Cho phép gọi API</0> đang tắt. Bật lại ở ', { 0: <strong /> })}
+                <button type="button" className="font-medium text-primary hover:underline" onClick={() => setSection('api')}>{tr('API → Tổng quan')}</button>.
               </span>
             </div>
           )}

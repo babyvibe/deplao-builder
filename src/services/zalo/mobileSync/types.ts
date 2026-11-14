@@ -1,9 +1,9 @@
 /**
- * Kiểu dữ liệu cho tính năng "Đồng bộ tin nhắn từ điện thoại" (Zalo mobile → Deplao).
- * Dựa trên zca-js PR #269 (pullMobile + sync_event) và luồng của Zalo PC 26.9.
+ * Types for the "Đồng bộ tin nhắn từ điện thoại" (sync messages from phone) feature (Zalo mobile → Deplao).
+ * Based on zca-js PR #269 (pullMobile + sync_event) and the Zalo PC 26.9 flow.
  */
 
-/** Các `act` của control event `act_type = "syncmsgmb"` (WS cmd 601). */
+/** The `act` values of the control event `act_type = "syncmsgmb"` (WS cmd 601). */
 export enum SyncEventType {
     USER_CONFIRM = 'user_confirm',
     SYNCMSG_INFO = 'syncmsg_info',
@@ -13,7 +13,7 @@ export enum SyncEventType {
 
 /**
  * user_action (Zalo PC: isUserConfirm / isUserReject / isMobileRestoring):
- * 0 = từ chối, 1 = đồng ý, 2 = điện thoại đang khôi phục dữ liệu (bận), 3 = đồng ý + khôi phục.
+ * 0 = rejected, 1 = confirmed, 2 = the phone is restoring data (busy), 3 = confirmed + restore.
  */
 export interface TSyncEventUserConfirm {
     user_action: number;
@@ -28,7 +28,7 @@ export interface SyncDbInfo {
 }
 
 export interface TSyncEventSyncMsgInfo {
-    /** UID "plain" (dạng ngắn của mobile) của chính tài khoản. */
+    /** The "plain" UID (short form used by mobile) of the account itself. */
     uid: number | string;
     url: string;
     time?: number;
@@ -42,7 +42,7 @@ export interface TSyncEventSyncMsgInfo {
     client_time?: number;
     from_seq_id?: number;
     public_key: string;
-    /** AES key (base64) được mã hoá RSA PKCS#1 bằng public key mình gửi đi. */
+    /** AES key (base64) encrypted with RSA PKCS#1 using the public key we sent. */
     encrypted_key: string;
     trigger_reason?: number;
     is_full_transfer?: number;
@@ -50,8 +50,8 @@ export interface TSyncEventSyncMsgInfo {
 }
 
 /**
- * transfer_error: status 1 = điện thoại đang chuẩn bị bản sao lưu, status 2 = điện thoại không hoạt động
- * (app ở nền / màn hình tắt), error_code != 0 = sao lưu thất bại.
+ * transfer_error: status 1 = the phone is preparing the backup, status 2 = the phone is inactive
+ * (app in background / screen off), error_code != 0 = backup failed.
  */
 export interface TSyncEventTransferError {
     public_key?: string;
@@ -82,9 +82,9 @@ export function initializeSyncEvent(data: any, act: string, actType: string): Sy
 }
 
 export interface PullMobileParams {
-    /** RSA public key (SPKI DER, base64) — mobile dùng để mã hoá AES key. */
+    /** RSA public key (SPKI DER, base64): the mobile uses it to encrypt the AES key. */
     public_key: string;
-    /** Tên máy hiển thị trên điện thoại, cũng dùng để khớp sự kiện trả về. */
+    /** Device name shown on the phone, also used to match the returned events. */
     pc_name: string;
     from_seq_id?: number;
     is_retry?: number;
@@ -93,13 +93,13 @@ export interface PullMobileParams {
 }
 
 export interface NoisedIdsResult {
-    /** UID web (19 số) theo đúng thứ tự `uids` truyền vào; '' nếu server không trả. */
+    /** Web UIDs (19 digits) in the same order as the `uids` passed in; '' if the server does not return one. */
     fids: string[];
-    /** Group ID web theo đúng thứ tự `gids` truyền vào. */
+    /** Web group IDs in the same order as the `gids` passed in. */
     gids: string[];
 }
 
-// ─── Trạng thái phiên đồng bộ gửi về renderer (event:mobileSync) ────────────
+// ─── Sync session status sent to the renderer (event:mobileSync) ────────────
 
 export type MobileSyncStage =
     | 'idle'
@@ -119,16 +119,16 @@ export interface MobileSyncStats {
     conversations: number;
     conversationsResolved: number;
     conversationsUnresolved: number;
-    /** Tin trong khoảng thời gian đã chọn đọc được từ bản sao lưu. */
+    /** Messages in the chosen time range that were read from the backup. */
     messagesRead: number;
     messagesImported: number;
     messagesSkipped: number;
-    /** Tin có trong bản sao lưu nhưng ngoài khoảng thời gian đã chọn — không đọc, không nhập. */
+    /** Messages in the backup but outside the chosen time range: not read, not imported. */
     messagesOutOfRange: number;
     durationMs: number;
 }
 
-/** Khoảng thời gian cần đồng bộ (TimeStamp ms). null = không giới hạn phía đó. */
+/** Time range to sync (TimeStamp ms). null = no limit on that side. */
 export interface MobileSyncRange {
     fromTs: number | null;
     toTs: number | null;
@@ -137,7 +137,7 @@ export interface MobileSyncRange {
 export interface MobileSyncStatus {
     zaloId: string;
     stage: MobileSyncStage;
-    /** 0-100 cho stage hiện tại (download / giải mã / import). */
+    /** 0-100 for the current stage (download / decrypt / import). */
     progress: number;
     message: string;
     pcName?: string;

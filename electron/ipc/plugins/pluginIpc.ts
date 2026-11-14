@@ -1,9 +1,9 @@
 /**
- * pluginIpc — IPC cho trang Ứng dụng, API & Webhook (cài, bật/tắt, cài đặt, nhật ký plugin) và cầu iframe của UI plugin.
+ * pluginIpc: IPC for the Apps, API & Webhook page (install, enable/disable, settings, plugin log) and the iframe bridge of the plugin UI.
  *
- * Mọi kênh dùng tiền tố "plugins:" → IpcInvoker chặn với principal không phải 'system'
- * (API key / plugin không tự cài, bật, đổi quyền plugin được).
- * plugins:invoke nhận pluginId từ renderer (PluginFrame biết iframe nào gửi), không tin message.
+ * Every channel uses the "plugins:" prefix → IpcInvoker blocks any principal other than 'system'
+ * (API keys / plugins cannot install, enable or change plugin permissions by themselves).
+ * plugins:invoke takes pluginId from the renderer (PluginFrame knows which iframe sent it) and does not trust the message.
  */
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import * as fs from 'fs';
@@ -11,6 +11,7 @@ import Logger from '../../../src/utils/Logger';
 import { ApiError } from '../../../src/services/api/types';
 import PluginsPlatform from '../../../src/services/plugins/PluginsPlatform';
 import PluginNodeRegistry from '../../../src/services/plugins/PluginNodeRegistry';
+import { tr } from '../../../src/shared/i18n';
 
 function fail(err: any): { success: false; error: string; code?: string; status?: number; details?: any } {
     if (err instanceof ApiError) return { success: false, error: err.message, code: err.code, status: err.status, details: err.details };
@@ -30,16 +31,16 @@ function isEmployeeMachine(): boolean {
 }
 
 function guardMachine(): void {
-    if (isEmployeeMachine()) throw new ApiError(409, 'CONFLICT', 'Máy nhân viên không chạy ứng dụng mở rộng');
+    if (isEmployeeMachine()) throw new ApiError(409, 'CONFLICT', tr('Máy nhân viên không chạy ứng dụng mở rộng'));
     const { isWorkspaceAvailable } = require('../../../src/services/api/runtime');
-    if (!isWorkspaceAvailable()) throw new ApiError(409, 'CONFLICT', 'Workspace từ xa không chạy ứng dụng mở rộng; hãy mở workspace trên máy này');
+    if (!isWorkspaceAvailable()) throw new ApiError(409, 'CONFLICT', tr('Workspace từ xa không chạy ứng dụng mở rộng; hãy mở workspace trên máy này'));
 }
 
 const senderHooked = new WeakSet<Electron.WebContents>();
 
 /**
- * Giao diện đang mở workspace nhân viên: ứng dụng của workspace local vẫn chạy nền (dbScope) nhưng trang / nút / node
- * của chúng không hiện trong giao diện nhân viên.
+ * While the UI has an employee workspace open, the apps of the local workspace keep running in the background (dbScope), but their pages / buttons / nodes
+ * are not shown in the employee UI.
  */
 const EMPTY_CONTRIBUTIONS = { pages: [], chatPanels: [], composerButtons: [] };
 function uiContributions(): any {
@@ -69,7 +70,7 @@ export function registerPluginIpc(): void {
             guardMachine();
             const win = BrowserWindow.fromWebContents(e.sender) || undefined;
             const res = await dialog.showOpenDialog(win as any, {
-                title: 'Chọn gói ứng dụng (.zip)',
+                title: tr('Chọn gói ứng dụng (.zip)'),
                 filters: [{ name: 'Plugin Deplao', extensions: ['zip'] }],
                 properties: ['openFile'],
             });
@@ -83,7 +84,7 @@ export function registerPluginIpc(): void {
     ipcMain.handle('plugins:inspectZip', async (_e, { path }: { path: string }) => {
         try {
             guardMachine();
-            if (!path || !/\.zip$/i.test(path) || !fs.existsSync(path)) return { success: false, error: 'Chọn file .zip của ứng dụng' };
+            if (!path || !/\.zip$/i.test(path) || !fs.existsSync(path)) return { success: false, error: tr('Chọn file .zip của ứng dụng') };
             return { success: true, preview: platform().manager.inspectZip(path) };
         } catch (err) {
             return fail(err);
@@ -94,7 +95,7 @@ export function registerPluginIpc(): void {
         try {
             guardMachine();
             const win = BrowserWindow.fromWebContents(e.sender) || undefined;
-            const res = await dialog.showOpenDialog(win as any, { title: 'Chọn thư mục ứng dụng đang phát triển', properties: ['openDirectory'] });
+            const res = await dialog.showOpenDialog(win as any, { title: tr('Chọn thư mục ứng dụng đang phát triển'), properties: ['openDirectory'] });
             if (res.canceled || !res.filePaths[0]) return { success: true, canceled: true };
             return { success: true, preview: platform().manager.inspectDevFolder(res.filePaths[0]) };
         } catch (err) {
@@ -186,7 +187,7 @@ export function registerPluginIpc(): void {
         try {
             const m = platform().manager;
             const rec = m.get(String(id));
-            if (!rec) return { success: false, error: 'Không có ứng dụng này' };
+            if (!rec) return { success: false, error: tr('Không có ứng dụng này') };
             const dir = kind === 'data' ? m.storage.dataDir(rec.id) : rec.install_path;
             const err = await shell.openPath(dir);
             return err ? { success: false, error: err } : { success: true };
@@ -203,7 +204,7 @@ export function registerPluginIpc(): void {
         }
     });
 
-    // ─── Cầu iframe UI plugin ───────────────────────────────────────────
+    // ─── Plugin UI iframe bridge ───────────────────────────────────────────
 
     ipcMain.handle('plugins:invoke', async (_e, { pluginId, method, params }: { pluginId: string; method: string; params?: any }) => {
         try {

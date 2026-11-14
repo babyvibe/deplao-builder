@@ -1,10 +1,11 @@
 /**
- * zaloPrivacySettings.ts — cài đặt quyền riêng tư Zalo (ZL-02, SRS Deplao): bảng dùng chung main (kiểm khoá / giá trị trước
- * khi gọi Zalo) + renderer (vẽ màn Cài đặt → Tài khoản → Quyền riêng tư Zalo).
+ * zaloPrivacySettings.ts: Zalo privacy settings (ZL-02, SRS Deplao): table shared by main (checks the key / value before calling Zalo) + renderer (draws the Settings → Account → Zalo privacy screen).
  *
- * zca-js 2.2.0: getSettings() → UserSetting; updateSettings(type, value) — mỗi lần một cài đặt. Hai khoá ghi
- * archivedChatStatus / quickMessageStatus (camelCase) khác tên trường đọc archived_chat_status / quick_message_status.
+ * zca-js 2.2.0: getSettings() → UserSetting; updateSettings(type, value), one setting at a time. The two write keys
+ * archivedChatStatus / quickMessageStatus (camelCase) differ from the read fields archived_chat_status / quick_message_status.
  */
+
+import { tr } from '../i18n';
 
 export type ZaloSettingKey =
   | 'view_birthday' | 'show_online_status' | 'display_seen_status'
@@ -15,25 +16,25 @@ export type ZaloSettingKey =
 export type ZaloSettingGroup = 'display' | 'messaging' | 'friendSources' | 'utilities';
 
 export interface ZaloSettingDef {
-  /** Khoá ghi (giá trị của UpdateSettingsType). */
+  /** Write key (a value of UpdateSettingsType). */
   key: ZaloSettingKey;
-  /** Trường đọc trong getSettings(). */
+  /** Read field in getSettings(). */
   readField: string;
   group: ZaloSettingGroup;
   label: string;
-  /** Một dòng hệ quả hiện dưới tên cài đặt. */
+  /** One consequence line shown under the setting name. */
   hint: string;
   kind: 'toggle' | 'select';
   options?: ReadonlyArray<{ value: number; label: string }>;
-  /** Giá trị cần hỏi lại trước khi đổi (vd "Chỉ bạn bè" chặn khách chưa kết bạn). */
+  /** A value to confirm again before changing (e.g. "Chỉ bạn bè" (Friends only) blocks customers who are not friends yet). */
   confirm?: { value: number; title: string; message: string };
 }
 
 export const ZALO_SETTING_GROUPS: ReadonlyArray<{ id: ZaloSettingGroup; label: string }> = [
-  { id: 'display', label: 'Hiển thị' },
-  { id: 'messaging', label: 'Tin nhắn & cuộc gọi' },
-  { id: 'friendSources', label: 'Cho phép người lạ tìm thấy và kết bạn qua' },
-  { id: 'utilities', label: 'Tiện ích' },
+  { id: 'display', label: tr('Hiển thị') },
+  { id: 'messaging', label: tr('Tin nhắn & cuộc gọi') },
+  { id: 'friendSources', label: tr('Cho phép người lạ tìm thấy và kết bạn qua') },
+  { id: 'utilities', label: tr('Tiện ích') },
 ];
 
 const friendSource = (key: ZaloSettingKey, label: string, hint: string): ZaloSettingDef =>
@@ -41,42 +42,42 @@ const friendSource = (key: ZaloSettingKey, label: string, hint: string): ZaloSet
 
 export const ZALO_PRIVACY_SETTINGS: ReadonlyArray<ZaloSettingDef> = [
   {
-    key: 'view_birthday', readField: 'view_birthday', group: 'display', kind: 'select', label: 'Ngày sinh',
-    hint: 'Cách ngày sinh hiện trên hồ sơ Zalo của tài khoản này.',
-    options: [{ value: 0, label: 'Không hiện' }, { value: 1, label: 'Hiện ngày / tháng / năm' }, { value: 2, label: 'Chỉ hiện ngày / tháng' }],
+    key: 'view_birthday', readField: 'view_birthday', group: 'display', kind: 'select', label: tr('Ngày sinh'),
+    hint: tr('Cách ngày sinh hiện trên hồ sơ Zalo của tài khoản này.'),
+    options: [{ value: 0, label: tr('Không hiện') }, { value: 1, label: tr('Hiện ngày / tháng / năm') }, { value: 2, label: tr('Chỉ hiện ngày / tháng') }],
   },
   {
-    key: 'show_online_status', readField: 'show_online_status', group: 'display', kind: 'toggle', label: 'Hiện trạng thái truy cập',
-    hint: 'Tắt thì người khác không thấy tài khoản đang online hay truy cập lúc nào.',
+    key: 'show_online_status', readField: 'show_online_status', group: 'display', kind: 'toggle', label: tr('Hiện trạng thái truy cập'),
+    hint: tr('Tắt thì người khác không thấy tài khoản đang online hay truy cập lúc nào.'),
   },
   {
-    key: 'display_seen_status', readField: 'display_seen_status', group: 'display', kind: 'toggle', label: 'Hiện trạng thái "Đã xem"',
-    hint: 'Tắt thì người gửi không thấy bạn đã xem tin; Deplao cũng có thể không nhận được dấu đã xem từ Zalo.',
+    key: 'display_seen_status', readField: 'display_seen_status', group: 'display', kind: 'toggle', label: tr('Hiện trạng thái "Đã xem"'),
+    hint: tr('Tắt thì người gửi không thấy bạn đã xem tin; Deplao cũng có thể không nhận được dấu đã xem từ Zalo.'),
   },
   {
-    key: 'receive_message', readField: 'receive_message', group: 'messaging', kind: 'select', label: 'Cho phép nhắn tin',
-    hint: 'Ai được nhắn tin cho tài khoản này.',
-    options: [{ value: 1, label: 'Mọi người' }, { value: 2, label: 'Chỉ bạn bè' }],
-    confirm: { value: 2, title: 'Chỉ cho bạn bè nhắn tin?', message: 'Khách chưa kết bạn sẽ không nhắn được cho tài khoản này nữa.' },
+    key: 'receive_message', readField: 'receive_message', group: 'messaging', kind: 'select', label: tr('Cho phép nhắn tin'),
+    hint: tr('Ai được nhắn tin cho tài khoản này.'),
+    options: [{ value: 1, label: tr('Mọi người') }, { value: 2, label: tr('Chỉ bạn bè') }],
+    confirm: { value: 2, title: tr('Chỉ cho bạn bè nhắn tin?'), message: tr('Khách chưa kết bạn sẽ không nhắn được cho tài khoản này nữa.') },
   },
   {
-    key: 'accept_stranger_call', readField: 'accept_stranger_call', group: 'messaging', kind: 'select', label: 'Cho phép gọi điện',
-    hint: 'Ai được gọi thoại / video cho tài khoản này.',
-    options: [{ value: 3, label: 'Mọi người' }, { value: 4, label: 'Bạn bè và người từng liên hệ' }, { value: 2, label: 'Chỉ bạn bè' }],
-    confirm: { value: 2, title: 'Chỉ cho bạn bè gọi điện?', message: 'Khách chưa kết bạn sẽ không gọi được cho tài khoản này nữa.' },
+    key: 'accept_stranger_call', readField: 'accept_stranger_call', group: 'messaging', kind: 'select', label: tr('Cho phép gọi điện'),
+    hint: tr('Ai được gọi thoại / video cho tài khoản này.'),
+    options: [{ value: 3, label: tr('Mọi người') }, { value: 4, label: tr('Bạn bè và người từng liên hệ') }, { value: 2, label: tr('Chỉ bạn bè') }],
+    confirm: { value: 2, title: tr('Chỉ cho bạn bè gọi điện?'), message: tr('Khách chưa kết bạn sẽ không gọi được cho tài khoản này nữa.') },
   },
-  friendSource('add_friend_via_phone', 'Số điện thoại', 'Người khác tìm thấy và kết bạn bằng số điện thoại.'),
-  friendSource('add_friend_via_qr', 'Mã QR của tôi', 'Người khác kết bạn bằng cách quét mã QR.'),
-  friendSource('add_friend_via_group', 'Nhóm chung', 'Thành viên nhóm chung xem hồ sơ và kết bạn được.'),
-  friendSource('add_friend_via_contact', 'Danh thiếp Zalo', 'Người nhận danh thiếp của bạn kết bạn được.'),
-  friendSource('display_on_recommend_friend', 'Gợi ý "Có thể bạn quen"', 'Tài khoản xuất hiện trong gợi ý kết bạn của người khác.'),
+  friendSource('add_friend_via_phone', tr('Số điện thoại'), tr('Người khác tìm thấy và kết bạn bằng số điện thoại.')),
+  friendSource('add_friend_via_qr', tr('Mã QR của tôi'), tr('Người khác kết bạn bằng cách quét mã QR.')),
+  friendSource('add_friend_via_group', tr('Nhóm chung'), tr('Thành viên nhóm chung xem hồ sơ và kết bạn được.')),
+  friendSource('add_friend_via_contact', tr('Danh thiếp Zalo'), tr('Người nhận danh thiếp của bạn kết bạn được.')),
+  friendSource('display_on_recommend_friend', tr('Gợi ý "Có thể bạn quen"'), tr('Tài khoản xuất hiện trong gợi ý kết bạn của người khác.')),
   {
-    key: 'archivedChatStatus', readField: 'archived_chat_status', group: 'utilities', kind: 'toggle', label: 'Lưu trữ trò chuyện',
-    hint: 'Mục Lưu trữ trò chuyện trên app Zalo.',
+    key: 'archivedChatStatus', readField: 'archived_chat_status', group: 'utilities', kind: 'toggle', label: tr('Lưu trữ trò chuyện'),
+    hint: tr('Mục Lưu trữ trò chuyện trên app Zalo.'),
   },
   {
-    key: 'quickMessageStatus', readField: 'quick_message_status', group: 'utilities', kind: 'toggle', label: 'Tin nhắn nhanh',
-    hint: 'Tính năng Tin nhắn nhanh trên app Zalo.',
+    key: 'quickMessageStatus', readField: 'quick_message_status', group: 'utilities', kind: 'toggle', label: tr('Tin nhắn nhanh'),
+    hint: tr('Tính năng Tin nhắn nhanh trên app Zalo.'),
   },
 ];
 
@@ -84,7 +85,7 @@ export function zaloSettingDef(key: unknown): ZaloSettingDef | undefined {
   return ZALO_PRIVACY_SETTINGS.find((def) => def.key === key);
 }
 
-/** Khoá có trong bảng và giá trị đúng tập Zalo nhận (toggle: 0 / 1; select: theo lựa chọn). */
+/** Key present in the table, and the value is exactly the set Zalo accepts (toggle: 0 / 1; select: by the choice). */
 export function isValidZaloSettingValue(key: unknown, value: unknown): boolean {
   const def = zaloSettingDef(key);
   if (!def || typeof value !== 'number' || !Number.isInteger(value)) return false;
@@ -92,7 +93,7 @@ export function isValidZaloSettingValue(key: unknown, value: unknown): boolean {
   return !!def.options?.some((option) => option.value === value);
 }
 
-/** Giá trị hiện tại của một cài đặt từ getSettings (boolean → 1 / 0); thiếu → null. */
+/** Current value of a setting from getSettings (boolean → 1 / 0); missing → null. */
 export function readZaloSettingValue(def: ZaloSettingDef, settings: Record<string, any> | null | undefined): number | null {
   const raw = settings?.[def.readField];
   if (raw === undefined || raw === null || raw === '') return null;
@@ -101,7 +102,7 @@ export function readZaloSettingValue(def: ZaloSettingDef, settings: Record<strin
   return Number.isFinite(n) ? n : null;
 }
 
-/** Xác thực 2 lớp (chỉ đọc): true / false; Zalo không trả → null. */
+/** Two-step verification (read only): true / false; Zalo does not return it → null. */
 export function zaloTwoFactorEnabled(settings: Record<string, any> | null | undefined): boolean | null {
   const raw = settings?.setting_2FA_status;
   if (raw === undefined || raw === null || raw === '') return null;

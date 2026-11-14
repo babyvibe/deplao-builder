@@ -1,8 +1,8 @@
 /**
- * Nút + popup "Đồng bộ tin nhắn Facebook" trên thanh trên (giống "Đồng bộ tin nhắn từ điện thoại" của Zalo): chọn tài
- * khoản Facebook + khoảng thời gian → main tải lịch sử mọi hội thoại có hoạt động trong khoảng (qua bridge, từng trang,
- * không giới hạn số tin), chạy nền, tiến độ qua `event:fbHistorySync`. Thay cho "Đồng bộ lại hội thoại Facebook" cũ
- * (chỉ lấy danh sách 50 hội thoại + tin cuối của vài hội thoại gần đây).
+ * Button + popup "Đồng bộ tin nhắn Facebook" (Sync Facebook messages) in the top bar (like "Đồng bộ tin nhắn từ điện thoại" for Zalo): pick a
+ * Facebook account + a time range → main downloads the history of every conversation active in the range (through the bridge, page by page,
+ * no message limit), runs in the background, with progress via `event:fbHistorySync`. Replaces the old "Đồng bộ lại hội thoại Facebook"
+ * (which only fetched the list of 50 conversations + the last messages of a few recent conversations).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -22,20 +22,22 @@ import {
 import {
   FB_HISTORY_SYNC_EVENT, isFbHistorySyncActive, type FbHistorySyncStatus,
 } from '../../../../shared/facebook/facebookHistorySync';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
-const fmt = (n: number) => (Number(n) || 0).toLocaleString('vi-VN');
+const fmt = (n: number) => (Number(n) || 0).toLocaleString(appLocale());
 
-/** Lý do đang nghỉ (nhịp người dùng thật — main/FacebookHumanPacer). */
+/** Reason for the pause (pacing like a real user: main/FacebookHumanPacer). */
 const PAUSE_TEXT: Record<string, string> = {
-  break: 'Nghỉ giải lao như người dùng thật',
-  long_break: 'Nghỉ dài sau nhiều trang',
-  budget: 'Đã tải nhiều trong thời gian ngắn — chờ cho an toàn',
-  slowdown: 'Facebook đang chậm — giãn thêm thời gian',
-  reading: 'Đang nghỉ như đang đọc tin',
-  thread: 'Chuẩn bị mở hội thoại tiếp theo',
-  list: 'Đang nghỉ giữa hai trang danh sách',
-  pace: 'Đang nghỉ giữa hai trang',
-  bridge: 'Chờ kết nối Messenger của bridge',
+  break: tr('Nghỉ giải lao như người dùng thật'),
+  long_break: tr('Nghỉ dài sau nhiều trang'),
+  budget: tr('Đã tải nhiều trong thời gian ngắn — chờ cho an toàn'),
+  slowdown: tr('Facebook đang chậm — giãn thêm thời gian'),
+  reading: tr('Đang nghỉ như đang đọc tin'),
+  thread: tr('Chuẩn bị mở hội thoại tiếp theo'),
+  list: tr('Đang nghỉ giữa hai trang danh sách'),
+  pace: tr('Đang nghỉ giữa hai trang'),
+  bridge: tr('Chờ kết nối Messenger của bridge'),
 };
 
 const fmtCountdown = (ms: number) => {
@@ -44,9 +46,9 @@ const fmtCountdown = (ms: number) => {
   return `${m}:${String(total % 60).padStart(2, '0')}`;
 };
 
-/** Sau khi đồng bộ: nạp lại danh sách hội thoại + hội thoại đang mở của tài khoản đó. */
+/** After syncing: reload the conversation list + the open conversation of that account. */
 async function reloadAfterSync(accountId: string) {
-  try { await reloadAccountContacts(accountId); } catch { /* giữ danh sách đang có */ }
+  try { await reloadAccountContacts(accountId); } catch { /* keep the current list */ }
   const chat = useChatStore.getState();
   const threadId = chat.activeThreadId;
   if (!threadId || useAccountStore.getState().activeAccountId !== accountId) return;
@@ -55,7 +57,7 @@ async function reloadAfterSync(accountId: string) {
     const messages = res?.messages ?? res?.items ?? [];
     const latest = useChatStore.getState();
     if (messages.length && latest.activeThreadId === threadId) latest.setMessages(accountId, threadId, [...messages].reverse());
-  } catch { /* lần mở sau sẽ đọc lại */ }
+  } catch { /* the next open will read it again */ }
 }
 
 function MessengerGlyph({ className = '' }: { className?: string }) {
@@ -80,12 +82,12 @@ export default function FacebookSyncButton() {
   const [rangePreset, setRangePreset] = useState<RangePreset>('week');
   const [customFrom, setCustomFrom] = useState(() => toDateInput(startOfDaysAgo(WEEK_DAYS)));
   const [customTo, setCustomTo] = useState(() => toDateInput(new Date()));
-  // Mỗi lượt tải phải xác nhận lại đã đọc cảnh báo rủi ro checkpoint (mở popup / bắt đầu xong → bỏ chọn)
+  // Each run must confirm again that the checkpoint risk warning was read (reset when the popup opens / after starting → unchecked)
   const [riskAccepted, setRiskAccepted] = useState(false);
   const openRef = useRef(open);
   openRef.current = open;
   useEffect(() => { if (open) setRiskAccepted(false); }, [open]);
-  // Đếm ngược thời gian nghỉ trên popup
+  // Countdown of the pause time shown in the popup
   const [nowTick, setNowTick] = useState(() => Date.now());
 
   const fbAccounts = useMemo(() => {
@@ -125,9 +127,9 @@ export default function FacebookSyncButton() {
       setStatuses(prev => ({ ...prev, [data.accountId]: data }));
       if (data.stage === 'completed' || data.stage === 'cancelled') {
         void reloadAfterSync(data.accountId);
-        if (!openRef.current && data.stage === 'completed') showNotification(data.message || 'Đã đồng bộ tin nhắn Facebook', 'success');
+        if (!openRef.current && data.stage === 'completed') showNotification(data.message || tr('Đã đồng bộ tin nhắn Facebook'), 'success');
       } else if (data.stage === 'failed' && !openRef.current) {
-        showNotification(data.error || 'Đồng bộ tin nhắn Facebook thất bại', 'error');
+        showNotification(data.error || tr('Đồng bộ tin nhắn Facebook thất bại'), 'error');
       }
     });
   }, [showNotification]);
@@ -154,17 +156,17 @@ export default function FacebookSyncButton() {
     if (!targetId || busy || !riskAccepted || !ipc.fb?.startHistorySync) return;
     const { range, error } = resolveRange(rangePreset, customFrom, customTo);
     if (!range) {
-      showNotification(error || 'Khoảng thời gian không hợp lệ', 'error');
+      showNotification(error || tr('Khoảng thời gian không hợp lệ'), 'error');
       return;
     }
     setBusy(true);
     try {
       const res = await ipc.fb.startHistorySync({ accountId: targetId, fromTs: range.fromTs, toTs: range.toTs });
       if (res?.status) setStatuses(prev => ({ ...prev, [targetId]: res.status as FbHistorySyncStatus }));
-      if (!res?.success && !res?.status) showNotification(res?.error || 'Không thể bắt đầu đồng bộ', 'error');
+      if (!res?.success && !res?.status) showNotification(res?.error || tr('Không thể bắt đầu đồng bộ'), 'error');
       else setRiskAccepted(false);
     } catch (e: any) {
-      showNotification('Lỗi: ' + (e?.message || 'Không thể bắt đầu đồng bộ'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (e?.message || tr('Không thể bắt đầu đồng bộ')) }), 'error');
     } finally {
       setBusy(false);
     }
@@ -176,7 +178,7 @@ export default function FacebookSyncButton() {
     if (res?.status) setStatuses(prev => ({ ...prev, [targetId]: res.status as FbHistorySyncStatus }));
   }, [targetId]);
 
-  // Luôn mount (không lỡ sự kiện); chỉ hiện nút khi có tài khoản Facebook để đồng bộ.
+  // Always mounted (so no event is missed); the button only shows when there is a Facebook account to sync.
   if (!targetId || !isFacebook(account?.channel)) return null;
   const showAccountPicker = accountOptions.length > 1;
   const finished = status && (status.stage === 'completed' || status.stage === 'failed' || status.stage === 'cancelled');
@@ -189,9 +191,9 @@ export default function FacebookSyncButton() {
         onClick={() => setOpen(true)}
         className={`relative w-9 h-9 flex items-center justify-center transition-colors ${open || runningAccount ? 'text-blue-400 bg-muted' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         title={runningAccount
-          ? `Đang đồng bộ tin nhắn Facebook (${runningAccount.full_name || runningAccount.zalo_id}): ${statuses[runningAccount.zalo_id]?.message || ''}`
-          : 'Đồng bộ tin nhắn Facebook'}
-        aria-label="Đồng bộ tin nhắn Facebook"
+          ? tr('Đang đồng bộ tin nhắn Facebook ({{v1}}): {{v2}}', { v1: runningAccount.full_name || runningAccount.zalo_id, v2: statuses[runningAccount.zalo_id]?.message || '' })
+          : tr('Đồng bộ tin nhắn Facebook')}
+        aria-label={tr('Đồng bộ tin nhắn Facebook')}
       >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <polyline points="1 4 1 10 7 10" />
@@ -211,17 +213,17 @@ export default function FacebookSyncButton() {
                 <MessengerGlyph className="w-6 h-6" />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
-                <h3 className="text-foreground font-semibold text-base leading-snug">Đồng bộ tin nhắn Facebook</h3>
+                <h3 className="text-foreground font-semibold text-base leading-snug">{tr('Đồng bộ tin nhắn Facebook')}</h3>
                 {showAccountPicker ? (
                   <div className="mt-2">
-                    <p className="text-[11px] text-muted-foreground mb-1">Tài khoản Facebook cần đồng bộ</p>
+                    <p className="text-[11px] text-muted-foreground mb-1">{tr('Tài khoản Facebook cần đồng bộ')}</p>
                     <AccountSelectorDropdown options={accountOptions} activeId={targetId} onSelect={setPickedId} fullWidth />
                   </div>
                 ) : (
                   <p className="text-muted-foreground text-xs mt-0.5 truncate">{account?.full_name || targetId}</p>
                 )}
                 {status?.range && status.stage !== 'idle' && (
-                  <p className="text-subtle-foreground text-[11px] mt-1 truncate">Khoảng thời gian: {describeRange(status.range)}</p>
+                  <p className="text-subtle-foreground text-[11px] mt-1 truncate">{trx('Khoảng thời gian: {{v1}}', { v1: describeRange(status.range) })}</p>
                 )}
               </div>
             </div>
@@ -229,11 +231,11 @@ export default function FacebookSyncButton() {
             <div className="px-6 pb-5 space-y-4">
               {!status || status.stage === 'idle' ? (
                 <div className="text-sm text-foreground/80 space-y-2 leading-relaxed">
-                  <p>Tải tin nhắn Messenger trong khoảng thời gian bạn chọn cho mọi hội thoại có hoạt động trong khoảng đó — tải lần lượt từng trang tới hết khoảng, không giới hạn số tin.</p>
+                  <p>{tr('Tải tin nhắn Messenger trong khoảng thời gian bạn chọn cho mọi hội thoại có hoạt động trong khoảng đó — tải lần lượt từng trang tới hết khoảng, không giới hạn số tin.')}</p>
                   <ul className="list-disc list-inside text-muted-foreground space-y-1 text-[13px]">
-                    <li>Tin đã có được bỏ qua; tin mẫu của Trang trước đây hiện rỗng được sửa lại.</li>
-                    <li>Hội thoại mã hoá đầu cuối không tải được tin cũ (Facebook không cho thiết bị mới đọc), chỉ có tin nhận khi Deplao đang chạy.</li>
-                    <li>Tải nhiều có thể mất vài giờ — ẩn popup, đồng bộ vẫn chạy nền.</li>
+                    <li>{tr('Tin đã có được bỏ qua; tin mẫu của Trang trước đây hiện rỗng được sửa lại.')}</li>
+                    <li>{tr('Hội thoại mã hoá đầu cuối không tải được tin cũ (Facebook không cho thiết bị mới đọc), chỉ có tin nhận khi Deplao đang chạy.')}</li>
+                    <li>{tr('Tải nhiều có thể mất vài giờ — ẩn popup, đồng bộ vẫn chạy nền.')}</li>
                   </ul>
                 </div>
               ) : (
@@ -249,11 +251,11 @@ export default function FacebookSyncButton() {
                       <span className="min-w-0 break-words">{status.error || status.message}</span>
                     </div>
                     {running && status.currentThreadName && (
-                      <p className="mt-1 text-[11px] text-muted-foreground truncate">Đang tải: {status.currentThreadName}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground truncate">{trx('Đang tải: {{currentThreadName}}', { currentThreadName: status.currentThreadName })}</p>
                     )}
                     {pausedMs > 0 && (
                       <p className="mt-1 text-[11px] text-muted-foreground">
-                        ⏸ {PAUSE_TEXT[status.pauseReason || 'pace'] || PAUSE_TEXT.pace} · còn {fmtCountdown(pausedMs)}
+                        {trx('⏸ {{v1}} · còn {{v2}}', { v1: PAUSE_TEXT[status.pauseReason || 'pace'] || PAUSE_TEXT.pace, v2: fmtCountdown(pausedMs) })}
                       </p>
                     )}
                   </div>
@@ -268,11 +270,11 @@ export default function FacebookSyncButton() {
 
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="rounded-lg bg-card border border-border px-3 py-2">
-                      <div className="text-subtle-foreground">Tin mới</div>
+                      <div className="text-subtle-foreground">{tr('Tin mới')}</div>
                       <div className="text-foreground font-semibold text-sm">{fmt(status.messagesSaved)}</div>
                     </div>
                     <div className="rounded-lg bg-card border border-border px-3 py-2">
-                      <div className="text-subtle-foreground">Hội thoại</div>
+                      <div className="text-subtle-foreground">{tr('Hội thoại')}</div>
                       <div className="text-foreground font-semibold text-sm">
                         {fmt(status.threadsDone)}
                         <span className="text-subtle-foreground font-normal">/{fmt(status.threadsTotal)}</span>
@@ -280,9 +282,9 @@ export default function FacebookSyncButton() {
                     </div>
                     {finished && (status.skippedE2EE > 0 || status.failedThreads > 0 || status.messagesReceived > status.messagesSaved) && (
                       <div className="col-span-2 text-subtle-foreground leading-relaxed">
-                        {status.messagesReceived > status.messagesSaved && `${fmt(status.messagesReceived - status.messagesSaved)} tin đã có trong máy. `}
-                        {status.skippedE2EE > 0 && `${fmt(status.skippedE2EE)} hội thoại mã hoá đầu cuối không tải được tin cũ. `}
-                        {status.failedThreads > 0 && `${fmt(status.failedThreads)} hội thoại Facebook chưa trả lời — đồng bộ lại để thử tiếp.`}
+                        {status.messagesReceived > status.messagesSaved && tr('{{v1}} tin đã có trong máy. ', { v1: fmt(status.messagesReceived - status.messagesSaved) })}
+                        {status.skippedE2EE > 0 && tr('{{v1}} hội thoại mã hoá đầu cuối không tải được tin cũ. ', { v1: fmt(status.skippedE2EE) })}
+                        {status.failedThreads > 0 && tr('{{v1}} hội thoại Facebook chưa trả lời — đồng bộ lại để thử tiếp.', { v1: fmt(status.failedThreads) })}
                       </div>
                     )}
                   </div>
@@ -298,7 +300,7 @@ export default function FacebookSyncButton() {
                     onPreset={setRangePreset}
                     onFrom={setCustomFrom}
                     onTo={setCustomTo}
-                    allHint="Toàn bộ lịch sử của mọi hội thoại — lâu nhất và gửi nhiều yêu cầu nhất (rủi ro checkpoint cao nhất); chỉ chọn khi thật sự cần."
+                    allHint={tr('Toàn bộ lịch sử của mọi hội thoại — lâu nhất và gửi nhiều yêu cầu nhất (rủi ro checkpoint cao nhất); chỉ chọn khi thật sự cần.')}
                   />
                 </div>
               )}
@@ -307,13 +309,9 @@ export default function FacebookSyncButton() {
                 <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-3 flex gap-2.5 items-start">
                   <span className="text-orange-400 mt-0.5"><AlertIcon className="w-4 h-4" /></span>
                   <div className="min-w-0">
-                    <p className="text-orange-500 text-xs font-semibold mb-0.5">Không cần tin nhắn cũ thì đừng tải</p>
+                    <p className="text-orange-500 text-xs font-semibold mb-0.5">{tr('Không cần tin nhắn cũ thì đừng tải')}</p>
                     <p className="text-orange-400 text-[11px] leading-relaxed">
-                      Tin nhắn mới vẫn tự về khi Deplao đang chạy — không cần đồng bộ. Tải lịch sử gửi nhiều yêu cầu tới Facebook:
-                      Deplao đã giãn nhịp như người dùng thật (nghỉ ngẫu nhiên giữa các trang, nghỉ giải lao sau mỗi 30–50 trang,
-                      tối đa khoảng 240 trang / giờ, tự dừng khi Facebook có dấu hiệu hạn chế) nhưng{' '}
-                      <strong className="text-orange-300">vẫn có rủi ro bị checkpoint</strong> (Facebook yêu cầu xác minh hoặc
-                      tạm khoá tài khoản). Chọn khoảng thời gian ngắn nhất đủ dùng.
+                      {trx('Tin nhắn mới vẫn tự về khi Deplao đang chạy — không cần đồng bộ. Tải lịch sử gửi nhiều yêu cầu tới Facebook: Deplao đã giãn nhịp như người dùng thật (nghỉ ngẫu nhiên giữa các trang, nghỉ giải lao sau mỗi 30–50 trang, tối đa khoảng 240 trang / giờ, tự dừng khi Facebook có dấu hiệu hạn chế) nhưng <0>vẫn có rủi ro bị checkpoint</0> (Facebook yêu cầu xác minh hoặc tạm khoá tài khoản). Chọn khoảng thời gian ngắn nhất đủ dùng.', { 0: <strong className="text-orange-300" /> })}
                     </p>
                     <label className="mt-2 flex items-center gap-2 text-xs text-foreground cursor-pointer select-none">
                       <input
@@ -322,7 +320,7 @@ export default function FacebookSyncButton() {
                         onChange={e => setRiskAccepted(e.target.checked)}
                         className="accent-orange-500 w-4 h-4"
                       />
-                      Tôi hiểu rủi ro và vẫn muốn tải
+                      {tr('Tôi hiểu rủi ro và vẫn muốn tải')}
                     </label>
                   </div>
                 </div>
@@ -333,23 +331,23 @@ export default function FacebookSyncButton() {
               <button
                 onClick={() => setOpen(false)}
                 className="px-4 py-2 rounded-xl text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-muted transition-colors"
-                title={running ? 'Đồng bộ vẫn tiếp tục chạy nền' : undefined}
+                title={running ? tr('Đồng bộ vẫn tiếp tục chạy nền') : undefined}
               >
-                {running ? 'Ẩn' : 'Đóng'}
+                {running ? tr('Ẩn') : tr('Đóng')}
               </button>
               {running ? (
                 <button onClick={handleCancel} className="px-5 py-2 rounded-xl text-sm font-semibold transition-colors bg-red-600 hover:bg-red-700 text-white">
-                  Huỷ đồng bộ
+                  {tr('Huỷ đồng bộ')}
                 </button>
               ) : (
                 <button
                   onClick={handleStart}
                   disabled={busy || rangeInvalid || !riskAccepted}
-                  title={!riskAccepted ? 'Đọc cảnh báo và chọn "Tôi hiểu rủi ro" trước khi tải' : undefined}
+                  title={!riskAccepted ? tr('Đọc cảnh báo và chọn "Tôi hiểu rủi ro" trước khi tải') : undefined}
                   className="px-5 py-2 rounded-xl text-sm font-semibold transition-colors bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60 flex items-center gap-2"
                 >
                   {busy && <Spinner size={3} />}
-                  {status && status.stage !== 'idle' ? 'Đồng bộ lại' : 'Bắt đầu đồng bộ'}
+                  {status && status.stage !== 'idle' ? tr('Đồng bộ lại') : tr('Bắt đầu đồng bộ')}
                 </button>
               )}
             </div>

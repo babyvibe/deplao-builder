@@ -1,25 +1,25 @@
 /**
- * Máy có đang rảnh để chạy việc nặng (chép + nén cả DB, quét cả thư mục media…) không. Như bảo trì của Windows,
- * OneDrive, Time Machine: không chạy ngay sau khi máy thức dậy / mở khoá / mở app (Windows đang nạp lại bộ nhớ từ ổ đĩa,
- * các kênh đang đồng bộ bù), chờ người dùng không chạm máy một lúc và máy đang cắm sạc; chờ quá lâu thì vẫn chạy.
+ * Whether the machine is idle enough to run heavy work (copying + compressing the whole DB, scanning the whole media folder…). Like Windows maintenance,
+ * OneDrive and Time Machine: it does not run right after the machine wakes up / is unlocked / the app opens (Windows is reloading memory from disk,
+ * channels are catching up on sync). It waits until the user has not touched the machine for a while and the machine is plugged in; if it waits too long, it runs anyway.
  *
- * main.ts báo sự kiện powerMonitor qua noteSystemPower(); module khác nghe bằng onSystemPower(). Ngoài Electron (test)
- * systemIdleInfo() = null → idleWaitReason() không bắt chờ (chạy như trước).
+ * main.ts reports powerMonitor events through noteSystemPower(); other modules listen with onSystemPower(). Outside Electron (tests),
+ * systemIdleInfo() = null → idleWaitReason() does not wait (runs as before).
  */
 
 export type SystemPowerEvent = 'suspend' | 'resume' | 'unlock';
 
 export interface SystemIdleInfo {
-    /** Thời gian người dùng không chạm bàn phím / chuột (ms; null = không biết). */
+    /** Time since the user last touched the keyboard / mouse (ms; null = unknown). */
     idleMs: number | null;
     onBattery: boolean;
 }
 
 export type IdleWaitReason = 'wake' | 'battery' | 'active';
 
-/** Sau khi máy thức dậy / mở khoá / mở app: chưa chạy việc nặng. */
+/** After the machine wakes up / is unlocked / the app opens: heavy work has not started yet. */
 export const WAKE_QUIET_MS = 15 * 60_000;
-/** Người dùng không chạm máy từng này mới coi là rảnh. */
+/** The user must not touch the machine for this long before it counts as idle. */
 export const IDLE_MIN_MS = 10 * 60_000;
 
 export const IDLE_WAIT_LABEL: Record<IdleWaitReason, string> = {
@@ -29,8 +29,8 @@ export const IDLE_WAIT_LABEL: Record<IdleWaitReason, string> = {
 };
 
 /**
- * Hẹn giờ / nhịp chạy trễ hơn mức này = tiến trình vừa bị đóng băng (máy ngủ / Modern Standby, app treo): coi như máy
- * vừa thức dậy (máy đang nạp lại bộ nhớ từ ổ đĩa, mạng chưa sẵn sàng).
+ * A timer / tick that runs later than this = the process was just frozen (machine asleep / Modern Standby, app hung): treated as
+ * the machine having just woken up (memory is being reloaded from disk, the network is not ready yet).
  */
 export const TIME_JUMP_MS = 2 * 60_000;
 const WAKE_WATCH_INTERVAL_MS = 30_000;
@@ -39,11 +39,11 @@ const PROCESS_STARTED_AT = Date.now() - Math.round(process.uptime() * 1000);
 let lastWakeAt = 0;
 const listeners = new Set<(ev: SystemPowerEvent, at: number) => void>();
 
-/** powerMonitor (main.ts): máy sắp ngủ / vừa thức dậy / vừa mở khoá. */
+/** powerMonitor (main.ts): the machine is about to sleep / just woke up / was just unlocked. */
 export function noteSystemPower(ev: SystemPowerEvent, at = Date.now()): void {
     if (ev !== 'suspend') lastWakeAt = Math.max(lastWakeAt, at);
     for (const fn of [...listeners]) {
-        try { fn(ev, at); } catch { /* một nơi nghe lỗi không ảnh hưởng nơi khác */ }
+        try { fn(ev, at); } catch { /* one listener's error does not affect the others */ }
     }
 }
 
@@ -55,8 +55,8 @@ export function onSystemPower(fn: (ev: SystemPowerEvent, at: number) => void): (
 let wakeWatch: ReturnType<typeof setInterval> | null = null;
 
 /**
- * main.ts: nhịp 30 giây phát hiện máy vừa ngủ dậy khi powerMonitor không báo (hai nhịp cách nhau quá TIME_JUMP_MS)
- * → noteSystemPower('resume'). Chỉ báo cho các việc nặng chờ máy rảnh, không thay cho xử lý resume của từng kênh.
+ * main.ts: a 30-second tick detects that the machine just woke up when powerMonitor does not report it (two ticks more than TIME_JUMP_MS apart)
+ * → noteSystemPower('resume'). It only reports to heavy work that waits for an idle machine; it does not replace each channel's own resume handling.
  */
 export function startWakeWatch(): void {
     if (wakeWatch) return;
@@ -69,17 +69,17 @@ export function startWakeWatch(): void {
     (wakeWatch as any)?.unref?.();
 }
 
-/** Mốc máy thức dậy / mở khoá gần nhất (0 = chưa có từ lúc mở app). */
+/** Time of the most recent wake / unlock (0 = none since the app opened). */
 export function lastSystemWakeAt(): number {
     return lastWakeAt;
 }
 
-/** Mốc mở app / máy thức dậy / mở khoá gần nhất. */
+/** Time of the most recent app open / wake / unlock. */
 export function lastWakeOrStartAt(): number {
     return Math.max(PROCESS_STARTED_AT, lastWakeAt);
 }
 
-/** Người dùng có đang dùng máy / máy chạy pin không. Ngoài Electron (test) = null. */
+/** Whether the user is using the machine / the machine is on battery. Outside Electron (tests) = null. */
 export function systemIdleInfo(): SystemIdleInfo | null {
     try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -92,14 +92,14 @@ export function systemIdleInfo(): SystemIdleInfo | null {
 }
 
 /**
- * null = được chạy việc nặng ngay; còn lại = lý do phải chờ. info null (không biết) = không chờ. Vừa thức dậy thì chờ
- * cả khi đã chờ quá maxWaitMs (tính từ dueSince; dueSince 0 = không giới hạn).
+ * null = heavy work may run right away; otherwise = the reason it must wait. info null (unknown) = do not wait. Just woke up → waits
+ * even if it has already waited longer than maxWaitMs (counted from dueSince; dueSince 0 = no limit).
  */
 export function idleWaitReason(p: {
     now: number;
-    /** Mốc mở app / thức dậy / mở khoá gần nhất. */
+    /** Time of the most recent app open / wake / unlock. */
     wakeAt: number;
-    /** Lúc việc nặng bắt đầu đến hạn (0 = không tính mức chờ tối đa). */
+    /** When the heavy work became due (0 = no maximum wait is counted). */
     dueSince: number;
     maxWaitMs: number;
     info: SystemIdleInfo | null;

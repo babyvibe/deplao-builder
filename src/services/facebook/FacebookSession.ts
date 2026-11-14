@@ -1,7 +1,7 @@
 /**
  * FacebookSession.ts
- * Port từ Python _core/_session.py
- * Khởi tạo Facebook session từ cookie - parse fb_dtsg, jazoest, FacebookID, etc.
+ * Ported from Python _core/_session.py
+ * Initialize the Facebook session from the cookie: parse fb_dtsg, jazoest, FacebookID, etc.
  */
 
 import axios from 'axios';
@@ -11,7 +11,7 @@ import Logger from '../../utils/Logger';
 
 const FB_HOME_URL = 'https://www.facebook.com/';
 
-/** Các field bắt buộc phải parse được để session hợp lệ */
+/** Fields that must be parseable for the session to be valid */
 const REQUIRED_SESSION_FIELDS: (keyof FBSessionData)[] = [
   'fb_dtsg', 'jazoest', 'sessionID', 'FacebookID', 'clientRevision',
 ];
@@ -53,8 +53,8 @@ export function fbHeaders(cookie: string): Record<string, string> {
 }
 
 /**
- * Fetch Facebook homepage HTML với đầy đủ headers
- * @throws Error nếu HTTP request thất bại
+ * Fetch the Facebook homepage HTML with all required headers
+ * @throws Error if the HTTP request fails
  */
 export async function fetchFBHomepage(cookie: string, httpsAgent?: any): Promise<string> {
   try {
@@ -73,15 +73,15 @@ export async function fetchFBHomepage(cookie: string, httpsAgent?: any): Promise
 }
 
 /**
- * Khởi tạo session từ cookie string
- * Trả về FBSessionData với tất cả thông tin cần thiết cho mọi request.
+ * Initialize the session from a cookie string
+ * Returns FBSessionData with all the information needed for every request.
  *
- * Port từ Python _core/_session.py dataGetHome() - bao gồm:
- * - Parse tất cả session fields từ homepage HTML
+ * Ported from Python _core/_session.py dataGetHome(), including:
+ * - Parse all session fields from the homepage HTML
  * - Validate REQUIRED_SESSION_FIELDS
- * - Throw error nếu thiếu field bắt buộc hoặc HTTP request thất bại
+ * - Throw an error if a required field is missing or the HTTP request fails
  *
- * @throws Error nếu không fetch được homepage hoặc thiếu session fields bắt buộc
+ * @throws Error if the homepage cannot be fetched or required session fields are missing
  */
 export async function initSession(cookie: string, httpsAgent?: any): Promise<FBSessionData> {
   let html: string;
@@ -106,7 +106,7 @@ export async function initSession(cookie: string, httpsAgent?: any): Promise<FBS
 
   result.cookieFacebook = cookie;
 
-  // Validate required fields (port từ Python REQUIRED_SESSION_FIELDS)
+  // Validate required fields (ported from Python REQUIRED_SESSION_FIELDS)
   const missing = REQUIRED_SESSION_FIELDS.filter((f) => !hasValue(result[f]));
   if (missing.length > 0) {
     const errMsg = `[FacebookSession] Missing required session fields: ${missing.join(', ')}`
@@ -115,7 +115,7 @@ export async function initSession(cookie: string, httpsAgent?: any): Promise<FBS
     throw new Error(errMsg);
   }
 
-  // Validate FacebookID là số (port từ Python)
+  // Validate that FacebookID is numeric (ported from Python)
   const fbId = String(result.FacebookID || '').trim();
   if (fbId && !fbId.match(/^\d+$/)) {
     throw new Error(`[FacebookSession] FacebookID is not numeric: ${fbId}`);
@@ -125,13 +125,13 @@ export async function initSession(cookie: string, httpsAgent?: any): Promise<FBS
 }
 
 /**
- * Kiểm tra cookie có còn sống không
- * Cookie alive = có parse được FacebookID từ homepage
+ * Check whether the cookie is still alive
+ * Cookie alive = a FacebookID can be parsed from the homepage
  */
 export async function checkCookieAlive(cookie: string, httpsAgent?: any): Promise<boolean> {
   try {
     await initSession(cookie, httpsAgent);
-    // initSession() đã validate required fields + FacebookID - nếu không throw là OK
+    // initSession() has already validated the required fields + FacebookID; if it does not throw, it is OK
     return true;
   } catch (err: any) {
     Logger.warn(`[FacebookSession] checkCookieAlive error: ${err.message}`);
@@ -140,13 +140,13 @@ export async function checkCookieAlive(cookie: string, httpsAgent?: any): Promis
 }
 
 /**
- * Login bằng username/password (mobile/Android qua b-graph hoặc Messenger Lite)
- * chỉ trả về cookie phiên tối thiểu (c_user, xs, datr, fr). Trang www.facebook.com
- * khi mở bằng trình duyệt còn set thêm cookie web (sb, wd, presence, ...) qua
- * Set-Cookie; thiếu chúng, endpoint /api/graphql/ (dùng cho quét dữ liệu) có thể
- * từ chối session. Hàm này mở homepage một lần, gom cookie mới từ Set-Cookie và
- * gộp vào cookie gốc — KHÔNG ghi đè cookie đã có (giữ nguyên c_user/xs/datr/fr).
- * Lỗi không ném: trả về cookie gốc nếu không lấy thêm được.
+ * Log in with username/password (mobile/Android via b-graph or Messenger Lite).
+ * Only returns the minimal session cookies (c_user, xs, datr, fr). When www.facebook.com is opened
+ * in a browser it sets more web cookies (sb, wd, presence, ...) via Set-Cookie; without them the
+ * /api/graphql/ endpoint (used for data scanning) may reject the session. This function opens the
+ * homepage once, collects the new cookies from Set-Cookie and merges them into the original cookie string:
+ * it does NOT overwrite existing cookies (keeps c_user/xs/datr/fr).
+ * Errors are not thrown: it returns the original cookies if no extra cookies can be fetched.
  */
 export async function augmentWebCookies(cookie: string, httpsAgent?: any): Promise<string> {
   const merged = new Map<string, string>();
@@ -168,7 +168,7 @@ export async function augmentWebCookies(cookie: string, httpsAgent?: any): Promi
 
     const setCookies = response.headers?.['set-cookie'];
     if (Array.isArray(setCookies)) {
-      // Chỉ bỏ qua attribute cookie (expires/domain/path/...) — không phải tên cookie.
+      // Only skip cookie attributes (expires/domain/path/...), not cookie names.
       const attributeRe = /^(expires|domain|path|max-age|samesite|secure|httponly|priority|version|comment)$/i;
       for (const raw of setCookies) {
         const first = String(raw).split(';')[0];
@@ -177,7 +177,7 @@ export async function augmentWebCookies(cookie: string, httpsAgent?: any): Promi
         const key = first.slice(0, eq).trim();
         const value = first.slice(eq + 1).trim();
         if (!key || !value || attributeRe.test(key)) continue;
-        // Chỉ thêm cookie còn thiếu — không ghi đè cookie auth hiện có.
+        // Only add missing cookies; do not overwrite the existing auth cookies.
         if (!merged.has(key)) merged.set(key, value);
       }
     }
@@ -189,7 +189,7 @@ export async function augmentWebCookies(cookie: string, httpsAgent?: any): Promi
 }
 
 /**
- * Decode HTML entities và Unicode escapes
+ * Decode HTML entities and Unicode escapes
  */
 function decodeHtmlEntities(text: string): string {
   if (!text) return text;
@@ -203,16 +203,16 @@ function decodeHtmlEntities(text: string): string {
 }
 
 /**
- * Lấy tên và avatar từ Facebook homepage HTML
- * - Avatar: parse từ thẻ <image xlink:href="..."> trong homepage
- * - Tên: parse từ "NAME":"..." trong homepage HTML
- * @param html  HTML trả về từ facebook.com homepage (cần Accept header đúng)
+ * Get the name and avatar from the Facebook homepage HTML
+ * - Avatar: parsed from the <image xlink:href="..."> tag in the homepage
+ * - Name: parsed from "NAME":"..." in the homepage HTML
+ * @param html  HTML returned by the facebook.com homepage (requires the correct Accept header)
  */
 export async function fetchBasicProfileFromHome(html: string): Promise<{ name: string; avatarUrl: string }> {
   let name = '';
   let avatarUrl = '';
 
-  // ── Avatar: parse từ thẻ <image xlink:href="..."> trong homepage ──────
+  // ── Avatar: parsed from the <image xlink:href="..."> tag in the homepage ──────
   try {
     const imgMatch = html.match(/xlink:href="(https:\/\/scontent[^"]+)"/);
     if (imgMatch?.[1]) {
@@ -230,7 +230,7 @@ export async function fetchBasicProfileFromHome(html: string): Promise<{ name: s
     } catch {}
   }
 
-  // ── Tên: "NAME":"<display name>" từ homepage HTML ─────────────────────
+  // ── Name: "NAME":"<display name>" from the homepage HTML ─────────────────────
   try {
     const nameMatch = html.match(/"NAME":"(.*?)"/);
     if (nameMatch?.[1] && !nameMatch[1].match(/^\d+$/) && nameMatch[1].length < 100) {
@@ -256,9 +256,9 @@ export async function fetchBasicProfileFromHome(html: string): Promise<{ name: s
  * may redirect or hydrate a different person. Do not persist a contact name
  * from this function; use FacebookUserInfo.getFacebookUserInfo instead.
  *
- * Chiến lược:
- *   1. www.facebook.com/profile.php?id={userId} - parse xlink:href hoặc profile_pic_uri
- *   2. Fallback: mbasic.facebook.com/{userId} - HTML nhẹ, parse <img src>
+ * Strategy:
+ *   1. www.facebook.com/profile.php?id={userId} - parse xlink:href or profile_pic_uri
+ *   2. Fallback: mbasic.facebook.com/{userId} - lightweight HTML, parse <img src>
  */
 export async function fetchUserAvatarFromProfile(cookie: string, userId: string, httpsAgent?: any): Promise<string | null> {
   // The /picture route is bound to the requested numeric ID, unlike a
@@ -282,7 +282,7 @@ export async function getFacebookAvatarById(cookie: string, userId: string, http
 /**
  * Legacy HTML profile fetch. Do not use for contact identity.
  * - Avatar: parse <image style="height:168px;width:168px"> xlink:href
- * - Tên: parse <h1> → <div role="button"> → text content
+ * - Name: parse <h1> → <div role="button"> → text content
  */
 export async function getUserInfoFacebookHtml(cookie: string, userId: string, httpsAgent?: any): Promise<{ name: string; avatarUrl: string } | null> {
   try {
@@ -322,13 +322,13 @@ export async function getUserInfoFacebookHtml(cookie: string, userId: string, ht
       if (picMatch?.[1]) avatarUrl = picMatch[1].replace(/\\\//g, '/');
     }
 
-    // ── Tên: <h1> → <div role="button" tabindex="0"> text content ─────
+    // ── Name: <h1> → <div role="button" tabindex="0"> text content ─────
     const h1Match = html.match(/<h1[^>]*>[\s\S]*?<div[^>]*role="button"[^>]*>([^<&]+)/);
     if (h1Match?.[1]) {
       name = h1Match[1].trim();
     }
 
-    // Fallback tên: "NAME":"..." trong JSON
+    // Name fallback: "NAME":"..." in the JSON
     if (!name) {
       const nameMatch = html.match(/"NAME":"(.*?)"/);
       if (nameMatch?.[1] && !nameMatch[1].match(/^\d+$/) && nameMatch[1].length < 100) {
@@ -336,7 +336,7 @@ export async function getUserInfoFacebookHtml(cookie: string, userId: string, ht
       }
     }
 
-    // ── Fallback CDN + mbasic cho avatar nếu www không có ────────
+    // ── CDN + mbasic fallback for the avatar if www has none ────────
     if (!avatarUrl) {
       const cdnUrl = await tryFetchCdnRedirect(cookie, userId, httpsAgent);
       if (cdnUrl) avatarUrl = cdnUrl;
@@ -355,13 +355,13 @@ export async function getUserInfoFacebookHtml(cookie: string, userId: string, ht
 }
 
 /**
- * Facebook /picture endpoint redirects directly to the CDN URL.
- * Dùng HEAD request để follow redirects mà không download image body.
- * KHÔNG BAO GIỜ nhầm avatar vì Facebook tự xác định ảnh đúng.
+ * The Facebook /picture endpoint redirects directly to the CDN URL.
+ * Use a HEAD request to follow the redirects without downloading the image body.
+ * NEVER mistake the avatar: Facebook itself determines the correct image.
  */
 async function tryFetchCdnRedirect(cookie: string, userId: string, httpsAgent?: any): Promise<string | null> {
-  // Dùng maxRedirects:0 để bắt redirect, đọc Location header
-  // HEAD request → không download image body
+  // Use maxRedirects:0 to catch the redirect and read the Location header
+  // HEAD request → do not download the image body
   try {
     const response = await axios.head(`https://www.facebook.com/${userId}/picture?type=large`, {
       headers: {
@@ -373,19 +373,19 @@ async function tryFetchCdnRedirect(cookie: string, userId: string, httpsAgent?: 
       validateStatus: (status) => status >= 200 && status < 400,
       ...(httpsAgent ? { httpsAgent } : {}),
     });
-    // Nếu không redirect (200 OK), thử request URL
+    // If there is no redirect (200 OK), try requesting the URL
     const reqUrl = response.request?.res?.responseUrl || (response.request as any)?.responseUrl || '';
     if (reqUrl.includes('fbcdn') || reqUrl.includes('scontent')) return reqUrl;
     // redirect URL trong Location header
     if (response.headers?.location) return response.headers.location;
   } catch (err: any) {
-    // Khi maxRedirects=0, axios throw error với redirect info
+    // With maxRedirects=0, axios throws an error that carries the redirect info
     if (err.response?.headers?.location) {
       return err.response.headers.location;
     }
-    // Một số tài khoản/đối tượng E2EE không công khai endpoint /picture.
-    // 404 không phải lỗi phân giải UID; gọi lại cùng endpoint bằng HEAD sẽ chỉ
-    // tạo thêm một request và log lỗi trùng lặp.
+    // Some E2EE accounts/objects do not expose the /picture endpoint publicly.
+    // A 404 is not a UID resolution error; calling the same endpoint again with HEAD only will
+    // make another request and log a duplicate error.
     if (err.response?.status === 404) {
       Logger.debug(`[FacebookSession] CDN avatar unavailable for ${userId} (404)`);
       return null;
@@ -393,7 +393,7 @@ async function tryFetchCdnRedirect(cookie: string, userId: string, httpsAgent?: 
     Logger.debug(`[FacebookSession] tryFetchCdnRedirect failed for ${userId}: ${err.message}`);
   }
 
-  // Fallback: HEAD request với maxRedirects=5 để axios tự follow
+  // Fallback: HEAD request with maxRedirects=5 so axios follows the redirects itself
   try {
     const response = await axios.head(`https://www.facebook.com/${userId}/picture?type=large`, {
       headers: {
@@ -423,8 +423,8 @@ async function tryFetchWww(cookie: string, userId: string, httpsAgent?: any): Pr
     const html = response.data as string;
 
     // Priority 1: <image style="height:168px;width:168px"> - profile picture circle
-    // Facebook dùng 168px là kích thước cố định cho profile picture thumbnail
-    // Match cả thẻ <image> có style 168px, rồi extract xlink:href
+    // Facebook uses 168px as the fixed size of the profile picture thumbnail
+    // Match any <image> tag with a 168px style, then extract xlink:href
     const imgTagRe = /<image[^>]*style="[^"]*height:\s*168px[^"]*width:\s*168px[^"]*"[^>]*>/i;
     const imgTagMatch = html.match(imgTagRe);
     if (imgTagMatch) {

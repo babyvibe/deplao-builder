@@ -1,8 +1,9 @@
 /**
- * http.ts — tiện ích HTTP cho API v1: đọc body có giới hạn, ghi JSON an toàn.
+ * http.ts: HTTP helpers for API v1: read a body with a size limit, write JSON safely.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { ApiError } from '../types';
+import { tr } from '../../../shared/i18n';
 
 export const CORS_HEADERS: Record<string, string> = {
     'Access-Control-Allow-Origin': '*',
@@ -13,18 +14,18 @@ export const CORS_HEADERS: Record<string, string> = {
 };
 
 /**
- * JSON.stringify chịu được BigInt (id Telegram/Zalo), Buffer (bỏ qua) và vòng tham chiếu (bỏ nút lặp).
- * Chỉ coi là vòng khi đối tượng là TỔ TIÊN của chính nó trên nhánh đang ghi; cùng một đối tượng xuất hiện
- * ở nhiều chỗ (vd mảng `tags` dùng chung cho mọi route một nhóm) vẫn được ghi đầy đủ ở mọi chỗ.
+ * JSON.stringify handles BigInt (Telegram/Zalo ids), skips Buffer, and handles circular references (the repeated node is dropped).
+ * Only treated as a cycle when the object is an ANCESTOR of itself on the branch being written. The same object appearing
+ * in several places (e.g. a `tags` array shared by all routes of a group) is still written in full at every place.
  */
 export function safeStringify(value: any): string {
     const ancestors: object[] = [];
     return JSON.stringify(value, function (this: any, key: string, v: any) {
         if (typeof v === 'bigint') return v.toString();
-        // Giá trị gốc trước toJSON (Buffer.toJSON đã đổi thành { type, data }).
+        // Original value before toJSON (Buffer.toJSON has changed to { type, data }).
         if (Buffer.isBuffer(this?.[key])) return undefined;
         if (v && typeof v === 'object') {
-            // `this` là đối tượng chứa v: bỏ các nút đã ghi xong khỏi chuỗi tổ tiên.
+            // `this` is the object holding v: remove the nodes already written from the ancestor chain.
             while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) ancestors.pop();
             if (ancestors.includes(v)) return undefined;
             ancestors.push(v);
@@ -48,12 +49,12 @@ export function sendJson(res: ServerResponse, status: number, payload: any, head
     res.end(body);
 }
 
-/** Đọc body thành Buffer, huỷ request khi vượt giới hạn. */
+/** Read the body into a Buffer, abort the request when the limit is exceeded. */
 export function readBodyBuffer(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
     return new Promise((resolve, reject) => {
         const declared = Number(req.headers['content-length'] || 0);
         if (declared && declared > maxBytes) {
-            reject(new ApiError(413, 'PAYLOAD_TOO_LARGE', `Body tối đa ${Math.round(maxBytes / 1024 / 1024)} MB`));
+            reject(new ApiError(413, 'PAYLOAD_TOO_LARGE', tr('Body tối đa {{v1}} MB', { v1: Math.round(maxBytes / 1024 / 1024) })));
             req.resume();
             return;
         }
@@ -65,7 +66,7 @@ export function readBodyBuffer(req: IncomingMessage, maxBytes: number): Promise<
             size += chunk.length;
             if (size > maxBytes) {
                 done = true;
-                reject(new ApiError(413, 'PAYLOAD_TOO_LARGE', `Body tối đa ${Math.round(maxBytes / 1024 / 1024)} MB`));
+                reject(new ApiError(413, 'PAYLOAD_TOO_LARGE', tr('Body tối đa {{v1}} MB', { v1: Math.round(maxBytes / 1024 / 1024) })));
                 req.resume();
                 return;
             }
@@ -91,7 +92,7 @@ export async function readJsonBody(req: IncomingMessage, maxBytes: number): Prom
     try {
         return JSON.parse(text);
     } catch {
-        throw new ApiError(400, 'INVALID_JSON', 'Body không phải JSON hợp lệ');
+        throw new ApiError(400, 'INVALID_JSON', tr('Body không phải JSON hợp lệ'));
     }
 }
 

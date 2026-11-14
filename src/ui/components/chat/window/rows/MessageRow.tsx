@@ -1,9 +1,9 @@
 /**
- * Một hàng trong khung chat: mốc ngày, rồi theo loại: tin hệ thống (SystemNoticeRow), tin thu hồi (RecalledRow), còn
- * lại là bong bóng tin: ảnh người gửi, tên + chức vụ, chuyển tiếp, trích dẫn (QuotePreview), nội dung theo loại
- * (SharedMessageContent; chữ: TextMessageBody, video: VideoMessageBody), giờ / ✓✓, chân bài kênh Telegram, cảm xúc
- * (MessageReactions), trạng thái gửi của nhân viên, nút khi rê chuột. Album ảnh / chuỗi sticker / bình chọn trùng: chỉ
- * tin đầu vẽ hàng. Loại tin: messageKind.ts.
+ * One row in the chat window: the date marker, then by type: system message (SystemNoticeRow), unsent / recalled message (RecalledRow), otherwise a message
+ * bubble: sender avatar, name + role, forward, quote (QuotePreview), content by type
+ * (SharedMessageContent; text: TextMessageBody, video: VideoMessageBody), time / ✓✓, Telegram channel post footer, reactions
+ * (MessageReactions), employee send status, hover buttons. Photo album / sticker run / duplicate poll: only
+ * the first message draws the row. Message types: messageKind.ts.
  */
 import React from 'react';
 import { groupRankLabel, peerColorIndex, telegramRankLabel } from '@/lib/chat/messages/peerStyle';
@@ -43,7 +43,7 @@ import { TelegramPostRowFooter } from '../channels/telegram/TelegramPostRowFoote
 import { handleTelegramInlineButton } from '@/lib/chat/links/chatLinks';
 import type { MessageRowContext } from './rowContext';
 
-/** Mốc ngày (tin hiển thị đầu tiên của mỗi ngày lịch) */
+/** Date marker (the first displayed message of each calendar day) */
 function renderDaySeparator(timestamp: number) {
   const label = formatDaySeparator(timestamp);
   return (
@@ -53,7 +53,7 @@ function renderDaySeparator(timestamp: number) {
   );
 }
 
-/** Vẽ một hàng tin (renderItem của ChatHistoryList). Trả null cho tin không vẽ hàng riêng. */
+/** Draws one message row (renderItem of ChatHistoryList). Returns null for messages that do not draw their own row. */
 export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number): React.ReactNode {
   const {
     activeAccountId, activeThreadId, activeContact, channelCap, msgs, contactList, threadReceipt, telegramGroupAdmins,
@@ -102,7 +102,7 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
     return renderSystemNoticeRow(ctx, { msg, idx, daySeparator, isTelegramPinnedNotice });
   }
 
-  // Bắt đầu lượt tin (đổi người gửi / cách > 30 phút): hiện tên người gửi trong nhóm. Mốc ngày: daySeparator.
+  // Start of a message run (sender changed / more than 30 minutes apart): show the sender's name in the group. Date marker: daySeparator.
   const startsRun = !prevMsg ||
     (msg.timestamp - prevMsg.timestamp > 30 * 60 * 1000) ||
     prevMsg.sender_id !== msg.sender_id;
@@ -119,8 +119,8 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
   const avatarUrl = toLocalMediaUrl(contact?.avatar_url || groupMember?.avatar || '');
   const displayName = preferredContactName || groupMember?.displayName || contactName || msg.sender_id;
 
-  // Kiểu Telegram cho mọi kênh: màu theo người gửi (tên, ảnh đại diện chữ), chức vụ cạnh tên (lib/chat/messages/peerStyle).
-  // Chức vụ: Telegram → danh sách quản trị viên (chức vụ tự đặt) khi đã tải, còn lại theo role thành viên nhóm.
+  // Telegram style for every channel: color by sender (name, letter avatar), role next to the name (lib/chat/messages/peerStyle).
+  // Role: Telegram → list of admins (custom titles) once loaded, otherwise by the group member role.
   const senderPeer = !isSent ? (peerColorIndex(msg.sender_id, displayName) ?? 5) : null;
   const senderRank = !isSent && msg.thread_type === 1
     ? (isTelegramCh(msg.channel) && telegramGroupAdmins.size > 0
@@ -133,32 +133,32 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
 
   const isRecalled = msg.is_recalled === 1 || msg.status === 'recalled' || msg.msg_type === 'recalled';
 
-  // ── Recalled message - dùng RecalledBubble chung với MessageBubbles ─
+  // ── Recalled message: uses the shared RecalledBubble with MessageBubbles ─
   if (isRecalled) {
     return renderRecalledRow(ctx, { msg, idx, isSent, daySeparator, isLastInRun, displayName, avatarUrl, senderAvatarFallback });
   }
 
-  // OPTIMIZATION: Dùng cache thay vì parse lại type cho mỗi message (rows/messageKind)
+  // OPTIMIZATION: Use the cache instead of parsing the type again for each message (rows/messageKind)
   const {
     isCardMsg, isEcardMsg, isStickerMsg, isRtf, isPollMsg, isVideoMsg, isVoiceMsg, isBankCardMsg, isLocationMsg,
     isFbTemplateMsg, isZinstantMsg, isFbEmptyMsg, isGroupMedia, groupMediaMsgs, isMediaMsg, isFileMsg, content,
   } = classifyMessage(msg, msgTypeCache.get(msg.msg_id), groupedFirstMsgs);
   const telegramPostMeta = getTelegramPostMeta(msg);
-  // Telegram: tin chuyển tiếp → "Chuyển tiếp từ <nguồn>" (channels/telegram/forwardSource)
+  // Telegram: forwarded message → "Chuyển tiếp từ <nguồn>" (Forwarded from <source>) (channels/telegram/forwardSource)
   const { telegramForward, forwardName, forwardAvatar } = resolveTelegramForward(ctx, msg);
-  // Bài đăng kênh Telegram (như Telegram): ảnh / album / video sát mép khung bài; số liệu lấy cả album (Telegram gắn
-  // số bình luận vào MỘT tin của album — trước đây đọc tin đầu nên lệch / mất)
+  // Telegram channel post (like Telegram): photo / album / video flush with the post frame; the counts include the whole album (Telegram attaches
+  // the comment count to ONE message of the album; it used to read the first message, so the count was off / lost)
   const postEdgeMedia = !!telegramPostMeta && (isMediaMsg || isGroupMedia || isVideoMsg);
   const postStats = telegramPostMeta
     ? pickTelegramPostStats((groupMediaMsgs || [msg]).map((m: any) => ({ msgId: String(m.msg_id), meta: getTelegramPostMeta(m) })))
     : null;
-  // Tin định dạng phong phú (tiêu đề, danh sách, bảng, ảnh / video trong tin)
+  // Rich-format messages (headings, lists, tables, photos / videos inside the message)
   const richBlocks = isTelegramUser(msg.channel) ? getRichMessageBlocks(msg) : null;
-  // Tin hệ thống Telegram (vd. "Channel created") lưu nhầm thành "bài đăng kênh" rỗng ở bản cũ: không vẽ thẻ trống.
-  // Bài đăng thật luôn có chữ hoặc media; lần tải lịch sử kế tiếp sửa hàng thành dòng thông báo.
+  // Telegram system message (e.g. "Channel created") that an old version saved by mistake as an empty "bài đăng kênh" (channel post): do not draw an empty card.
+  // Real posts always have text or media; the next history load turns the row into a notice line.
   if (telegramPostMeta && msg.msg_type === 'text' && !String(msg.content || '').trim() && !isGroupMedia) return null;
 
-  // Tin trả lời loại ảnh / album / file / thẻ: MỘT khung bong bóng bao cả trích dẫn lẫn nội dung (như Telegram)
+  // Reply to a photo / album / file / card: ONE bubble frame wrapping both the quote and the content (like Telegram)
   const isNoBubbleMsg = isMediaMsg || isGroupMedia || isFileMsg || isCardMsg || isEcardMsg || isStickerMsg || isBankCardMsg || isFbTemplateMsg || isZinstantMsg;
   const hasQuote = !!(msg.quote_data || (msg.reply_to_id && !(
     msg.channel === 'telegram_user' && msg.topic_id != null &&
@@ -166,26 +166,26 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
   )));
   const quoteShell = hasQuote && isNoBubbleMsg && !isEcardMsg && !isStickerMsg && !isBankCardMsg && !telegramPostMeta;
 
-  // Tên người gửi trong nhóm (mọi kênh): trong bong bóng, màu theo người gửi + chức vụ góc phải (như Telegram).
-  // Tin ảnh / album / file / thẻ mở đầu lượt: bọc MỘT khung (như tin trả lời — quoteShell) để tên nằm trong khung;
-  // sticker / thiệp / thẻ ngân hàng không khung → tên trên tin như cũ (có màu).
-  // Tin mình gửi: ✓ đã gửi / ✓✓ đã nhận / ✓✓ màu nhấn đã xem (kênh không hỗ trợ → null, không vẽ dấu)
+  // Sender name in a group (all channels): inside the bubble, colored by sender + role at the top right (like Telegram).
+  // A photo / album / file / card message that starts a run: wraps it in ONE frame (like a reply message: quoteShell) so the name sits inside the frame;
+  // sticker / greeting card / bank card with no frame → the name above the message stays as before (colored).
+  // My sent messages: ✓ sent / ✓✓ received / ✓✓ in accent color = seen (channels without support → null, no mark drawn)
   const outgoingStatus = isSent ? outgoingMessageStatus(msg, msg.channel || activeContact?.channel, threadReceipt) : null;
   const showGroupName = !isSent && !isEcardMsg && msg.thread_type === 1 && startsRun && !!displayName && displayName !== msg.sender_id;
   const nameShell = showGroupName && isNoBubbleMsg && !quoteShell && !isStickerMsg && !isBankCardMsg && !telegramPostMeta;
-  // Ảnh / album / file chuyển tiếp: "Chuyển tiếp từ …" chung khung với nội dung, chữ xuống dòng theo bề rộng ảnh (như
-  // Telegram); trước đây dòng nguồn nằm trên ảnh, ngoài khung, dài hơn ảnh thì kéo lệch cả tin
+  // Forwarded photos / album / file: "Chuyển tiếp từ …" (Forwarded from …) shares the frame with the content, text wraps to the photo width (like
+  // Telegram); before, the source line sat above the photo, outside the frame, and if it was longer than the photo it pulled the whole message sideways
   const forwardShell = !!telegramForward && isNoBubbleMsg && !telegramPostMeta && !isStickerMsg && !isEcardMsg && !isBankCardMsg;
   const bubbleShell = quoteShell || nameShell || forwardShell;
   const nameInBubble = showGroupName && !telegramPostMeta && (!isNoBubbleMsg || bubbleShell);
-  // Giờ gửi ở góc dưới phải, chung dòng chữ cuối nếu đủ chỗ (như Telegram) — chỉ tin chữ thường; tin có khối riêng
-  // (thăm dò, video, thẻ link có tên trang / tiêu đề, nội dung cũ đang mở) giữ dòng giờ riêng. Tin link Telegram
-  // không có thẻ (chỉ URL) là tin chữ thường.
+  // Send time at the bottom right, on the same line as the last word if there is room (like Telegram): plain text messages only; messages with their own block
+  // (polls, video, link cards with a site name / title, old content being viewed) keep their own time line. Telegram link messages
+  // with no card (URL only) are plain text messages.
   const inlineTime = !isNoBubbleMsg && !telegramPostMeta && !isFbEmptyMsg && !richBlocks
     && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isRtf && !isLocationMsg
     && !(msg.msg_type === 'telegram.webpage' && getTelegramWebpageMeta(msg)) && !revealedEditIds.has(msg.msg_id);
 
-  // Sticker nhóm: nhiều sticker liền nhau từ cùng người gửi trong 30 phút
+  // Sticker group: several consecutive stickers from the same sender within 30 minutes
   const isGroupedStickerFirst = isStickerMsg && !!groupedStickerFirstMsgs[msg.msg_id];
   const groupStickerMsgs = isGroupedStickerFirst ? groupedStickerFirstMsgs[msg.msg_id] : null;
 
@@ -222,12 +222,12 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
     <div key={msg.msg_id + idx} id={`msg-${msg.msg_id}`} data-msg-ids={getRowMsgIds(msg)} data-out={isSent ? '' : undefined}
       className={`flex flex-col mb-0.5 rounded-lg transition-colors ${isEcardMsg ? 'items-center' : isSent ? 'items-end' : 'items-start'} group/msg${isMsgSelected ? ' bg-blue-500/10 ring-1 ring-blue-500/40 rounded-lg' : ''}${isSelecting && !isEcardMsg ? ' cursor-pointer' : ''}`}
       onClick={isSelecting && !isEcardMsg ? (e) => {
-        // Skip click nếu vừa kết thúc drag-select (tránh toggle ngay sau drag)
+        // Skip the click if a drag-select just ended (avoids toggling right after a drag)
         if (Date.now() < clickSuppressUntilRef.current) return;
         e.stopPropagation(); toggleMsgSelect();
       } : undefined}
       onPointerDown={!isEcardMsg ? (e) => {
-        // Không intercept pointerdown trên interactive elements
+        // Do not intercept pointerdown on interactive elements
         const target = e.target as HTMLElement;
         if (target.closest('a, button, img, video, audio, [role="button"], input, textarea, select')) return;
         dragSelectRef.current = {
@@ -257,12 +257,12 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
           onContextMenu={(e) => {
             if (isSelecting) { e.preventDefault(); return; } // Suppress context menu in selection mode
             if (isEcardMsg) return;
-            if (isGroupedStickerFirst) return; // Mỗi sticker trong nhóm tự xử lý context menu
-            // Nếu người dùng đang chọn text → để browser xử lý (copy tự nhiên)
+            if (isGroupedStickerFirst) return; // Each sticker in the group handles its own context menu
+            // If the user is selecting text → let the browser handle it (natural copy)
             const sel = window.getSelection();
             if (sel && sel.toString().length > 0) return;
             e.preventDefault();
-            // Album: ảnh được bấm chuột phải (Copy hình ảnh / Lưu về máy / đánh dấu áp vào đúng ảnh đó, như Zalo)
+            // Album: a photo that is right-clicked (Copy image / Save to computer / star applies to that exact photo, like Zalo)
             const albumTile = (e.target as HTMLElement)?.closest?.('[data-album-msg-id]') as HTMLElement | null;
             const albumMsgId = albumTile?.dataset.albumMsgId;
             const mediaMsg = albumMsgId
@@ -279,18 +279,18 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
           {/* Employee avatar on right side - every message with handled_by_employee */}
           {isSent && !isEcardMsg && <HandledByEmployeeAvatar msg={msg} />}
 
-          {/* Bài đăng kênh: cột không rộng hơn khung bài. Khung bài rộng min(30rem, 100%) theo chính cột này, lúc đo cột
-              trình duyệt bỏ qua phần trăm → cột giãn hết khung chat, nút 👍 (góc của cột) và nút Trả lời lệch ra ngoài bài */}
+          {/* Channel post: the column is not wider than the post frame. The post frame is min(30rem, 100%) of this column itself; when measuring the column,
+              the browser ignores the percentage → the column stretches to the whole chat, and the 👍 button (the column's corner) and the Reply button fall outside the post */}
           <div className={`flex flex-col ${isEcardMsg ? 'w-full items-center' : isSent ? 'items-end' : 'items-start'} relative min-w-0${hasReactions && !isGroupedStickerFirst && !telegramPostMeta ? ' mb-3' : ''}`}
             style={telegramPostMeta ? { maxWidth: TELEGRAM_POST_MAX_WIDTH } : undefined}>
-            {/* Tên người gửi trong nhóm cho tin không khung (sticker…); tin có khung: trong bong bóng — nameInBubble */}
+            {/* Sender name in a group for messages without a frame (stickers…); messages with a frame: inside the bubble (nameInBubble) */}
             {showGroupName && !nameInBubble && (
               <p className="flex items-center gap-2 mb-0.5 px-1 min-w-0 max-w-full">
                 <span className={`chat-peer-${senderPeer ?? 5} chat-peer-name truncate text-xs font-semibold`}>{displayName}</span>
                 {senderRank && <span className="chat-rank shrink-0 rounded-full px-1.5 py-px text-[10px] leading-4">{senderRank}</span>}
               </p>
             )}
-            {/* Sticker chuyển tiếp (không khung): nguồn đặt ngay trên sticker */}
+            {/* Forwarded sticker (no frame): the source sits right above the sticker */}
             {telegramForward && isNoBubbleMsg && !telegramPostMeta && !bubbleShell && (
               <TelegramForwardHeader name={forwardName} sourceId={telegramForward.fromId} avatarUrl={forwardAvatar}
                 postAuthor={telegramForward.postAuthor} className="mb-0.5 px-1" />
@@ -305,10 +305,10 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
                 ? 'px-3 py-2 bg-bubble-out text-foreground border border-bubble-out-border'
                 : 'px-3 py-2 bg-bubble-in text-foreground border border-bubble-in-border'
             } ${useEmployeeStore.getState().mode === 'employee' && (msg.send_status === 'pending' ? 'opacity-60' : msg.send_status === 'sending' ? 'opacity-80' : '')}`}>
-            {/* Bài đăng: media sát mép (chữ tự đệm trong khung ảnh / video), bài chữ có đệm; người đăng ở chân bài */}
+            {/* Posts: media flush with the edge (the text pads itself inside the photo / video frame), text posts have padding; the poster sits in the post footer */}
             <div className={telegramPostMeta && !postEdgeMedia ? 'px-3 pt-2' : undefined}>
-            {/* Tên người gửi (màu theo người gửi, bấm mở hồ sơ) + chức vụ ở góc phải, đầu bong bóng. Khung bao ảnh /
-                file (nameShell): tên không kéo rộng khung (w-0 min-w-full) — rộng theo ảnh như Telegram */}
+            {/* Sender name (colored by sender, click to open the profile) + role at the right corner, top of the bubble. Frame around a photo /
+                file (nameShell): the name does not stretch the frame (w-0 min-w-full), it is as wide as the photo, like Telegram */}
             {nameInBubble && (
               <div className={`flex items-center gap-2 min-w-0 ${bubbleShell ? `px-2.5 pt-1.5${quoteShell ? '' : ' pb-1.5'}` : 'mb-0.5'}${nameShell ? ' w-0 min-w-full' : ''}`}>
                 <button
@@ -326,15 +326,15 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
                 )}
               </div>
             )}
-            {/* Tin chuyển tiếp: nguồn ở đầu bong bóng, trên trích dẫn (như Telegram). Khung bao ảnh / file: chữ xuống dòng
-                theo bề rộng ảnh, không kéo rộng khung (w-0 min-w-full) */}
+            {/* Forwarded message: the source sits at the top of the bubble, above the quote (like Telegram). Frame around a photo / file: text wraps
+                to the photo width, does not stretch the frame (w-0 min-w-full) */}
             {telegramForward && (!isNoBubbleMsg || telegramPostMeta || bubbleShell) && (
               <TelegramForwardHeader name={forwardName} sourceId={telegramForward.fromId} avatarUrl={forwardAvatar}
                 postAuthor={telegramForward.postAuthor}
                 className={bubbleShell ? `w-0 min-w-full px-2.5 pb-1.5${nameInBubble ? '' : ' pt-1.5'}` : postEdgeMedia ? 'mb-1 px-3 pt-2' : 'mb-1'} />
             )}
             <TelegramPostLayoutContext.Provider value={postEdgeMedia}>
-            {/* Bài đăng kênh: tệp / thoại / bình chọn… nằm trong khung bài, không lồng thêm bong bóng riêng */}
+            {/* Channel post: files / voice / polls… sit inside the post frame, without a separate bubble on top */}
             <BubbleEmbedContext.Provider value={bubbleShell || !!telegramPostMeta}>
             {/* Quote preview - supports both pre-built quote_data and reply_to_id fallback */}
             {(msg.quote_data || (msg.reply_to_id && !(
@@ -443,9 +443,9 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
           </MessageTtlContext.Provider>
 
 
-          {/* Nút reaction ở góc dưới, phía TRONG khung chat (như các app lớn): tin của mình → góc trái, tin người
-              khác → góc phải — gần giữa màn hình, dễ với tới; thanh chọn mọc lên từ nút, tin sát mép trên thì mọc
-              xuống. Đang mở → z-30: chip reaction của các tin bên dưới (z-20, sau trong DOM) không đè lên thanh */}
+          {/* Reaction button at the bottom corner, INSIDE the chat window (like big apps): your own message → left corner, other people's message →
+              right corner, near the middle of the screen, easy to reach; the picker pops up from the button, and for a message flush with the top edge it pops down
+              instead. When open → z-30: the reaction chips of the messages below (z-20, later in the DOM) do not cover the bar */}
           {channelCap.supportsReaction && !isEcardMsg && !isGroupedStickerFirst && (
             <MessageReactions ctx={ctx} msg={msg} isSent={isSent} reactionCounts={reactionCounts} telegramPostMeta={telegramPostMeta} />
           )}

@@ -1,14 +1,14 @@
 /**
- * Gom tin để hiển thị trong khung chat (thuần, không React): album ảnh (Zalo groupLayoutId / Telegram grouped_id /
- * ảnh Facebook liền nhau trong 30 giây), bình chọn trùng (nhiều lần vote cùng pollId → 1 bong bóng), chuỗi sticker
- * cùng người gửi trong 30 phút, chỉ mục msg_id → vị trí, loại tin đã parse sẵn cho từng hàng.
+ * Groups messages for display in the chat window (pure, no React): photo albums (Zalo groupLayoutId / Telegram grouped_id /
+ * Facebook photos next to each other within 30 seconds), duplicate polls (many votes with the same pollId → 1 bubble), runs of stickers
+ * from the same sender within 30 minutes, an index of msg_id → position, and the message type parsed in advance for each row.
  */
 import { isCardType, isEcardType, isFileType, isMediaType, isRtfMsg, isStickerType, isVideoType, isVoiceType } from '@/lib/chat/messages/messageTypeUtils';
 import { isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { parseContent } from '@/lib/chat/messages/messageParser';
 import { isZinstantMsgType } from '../../../../shared/zalo/zaloZinstant';
 
-/** Trích xuất groupLayoutId từ tin nhắn ảnh gửi theo nhóm (is_group_layout=1) */
+/** Extracts the groupLayoutId from a photo message sent as a group (is_group_layout=1) */
 export function getGroupLayoutId(msg: any): string | null {
   if (!isMediaType(msg.msg_type, msg.content, msg.attachments)) return null;
   if (isTelegram(msg.channel)) {
@@ -41,13 +41,13 @@ export function getGroupLayoutId(msg: any): string | null {
 }
 
 export interface MediaAlbums {
-  /** msg_id ảnh đầu → mọi tin của album (theo thứ tự trong album) */
+  /** msg_id of the first photo → every message of the album (in album order) */
   groupedFirstMsgs: Record<string, any[]>;
-  /** Tin không phải ảnh đầu của album (không vẽ hàng riêng) */
+  /** A message that is not the album's first photo (does not draw its own row) */
   groupedSkipIds: Set<string>;
 }
 
-/** Album ảnh: cùng groupLayoutId (Zalo / Telegram) + ảnh Facebook cùng người gửi trong 30 giây. */
+/** Photo album: same groupLayoutId (Zalo / Telegram) + Facebook photos from the same sender within 30 seconds. */
 export function groupMediaAlbums(msgs: any[]): MediaAlbums {
   const byLayout: Record<string, any[]> = {};
   msgs.forEach((msg) => {
@@ -58,7 +58,7 @@ export function groupMediaAlbums(msgs: any[]): MediaAlbums {
     byLayout[key].push(msg);
   });
 
-  // ── Facebook: gom ảnh từ cùng người gửi trong 30 giây ────────────────
+  // ── Facebook: group photos from the same sender within 30 seconds ────────────────
   const FB_GROUP_WINDOW_MS = 30000;
   let fbCurrentGroup: any[] = [];
   const fbGroups: any[][] = [];
@@ -69,10 +69,10 @@ export function groupMediaAlbums(msgs: any[]): MediaAlbums {
   };
 
   for (const msg of msgs) {
-    // Bỏ qua nếu đã nằm trong group Zalo layout
+    // Skip if already in a Zalo layout group
     const existingLayoutId = getGroupLayoutId(msg);
     if (existingLayoutId) { commitFbGroup(); continue; }
-    // Chỉ gom media message Facebook
+    // Only group Facebook media messages
     const isFbMedia = isFacebook(msg.channel) && isMediaType(msg.msg_type, msg.content, msg.attachments);
     if (!isFbMedia) { commitFbGroup(); continue; }
 
@@ -112,7 +112,7 @@ export function groupMediaAlbums(msgs: any[]): MediaAlbums {
     for (let i = 1; i < sorted.length; i++) groupedSkipIds.add(sorted[i].msg_id);
   }
 
-  // Facebook time-based groups (messages đã có thứ tự sẵn)
+  // Facebook time-based groups (messages are already in order)
   for (const group of fbGroups) {
     groupedFirstMsgs[group[0].msg_id] = group;
     for (let i = 1; i < group.length; i++) groupedSkipIds.add(group[i].msg_id);
@@ -121,7 +121,7 @@ export function groupMediaAlbums(msgs: any[]): MediaAlbums {
   return { groupedFirstMsgs, groupedSkipIds };
 }
 
-/** Bình chọn: nhiều sự kiện vote cùng pollId → chỉ hiện 1 bong bóng (mới nhất). */
+/** Polls: many vote events with the same pollId → only one bubble is shown (the newest). */
 export function pollDuplicateIds(msgs: any[]): Set<string> {
   const skip = new Set<string>();
   const latest = new Map<string, { msgId: string; ts: number }>();
@@ -149,7 +149,7 @@ export interface StickerRuns {
   groupedStickerSkipIds: Set<string>;
 }
 
-/** Sticker liền nhau cùng người gửi trong 30 phút → 1 hàng. */
+/** Stickers next to each other from the same sender within 30 minutes → 1 row. */
 export function groupStickerRuns(msgs: any[], groupedSkipIds: Set<string>, pollSkipIds: Set<string>): StickerRuns {
   const STICKER_GROUP_WINDOW_MS = 30 * 60 * 1000;
   const firstMsgs: Record<string, any[]> = {};
@@ -167,12 +167,12 @@ export function groupStickerRuns(msgs: any[], groupedSkipIds: Set<string>, pollS
   for (const msg of msgs) {
     if (groupedSkipIds.has(msg.msg_id)) continue;
     if (pollSkipIds.has(msg.msg_id)) continue;
-    // Thu hồi / hệ thống phá vỡ nhóm sticker
+    // A recalled message / system message breaks the sticker group
     if (msg.is_recalled === 1 || msg.status === 'recalled' || msg.msg_type === 'recalled' || msg.msg_type === 'system') {
       commitGroup(); continue;
     }
     if (msg.msg_type !== 'chat.sticker') { commitGroup(); continue; }
-    // Đây là sticker
+    // This is a sticker
     if (currentGroup.length === 0) {
       currentGroup = [msg];
     } else {
@@ -191,7 +191,7 @@ export function groupStickerRuns(msgs: any[], groupedSkipIds: Set<string>, pollS
   return { groupedStickerFirstMsgs: firstMsgs, groupedStickerSkipIds: skipIds };
 }
 
-/** msg_id → vị trí ĐẦU TIÊN trong danh sách (như find / findIndex). */
+/** msg_id → FIRST position in the list (like find / findIndex). */
 export function indexMessagesById(msgs: any[]): Map<unknown, number> {
   const index = new Map<unknown, number>();
   msgs.forEach((m, i) => { if (!index.has(m.msg_id)) index.set(m.msg_id, i); });
@@ -213,7 +213,7 @@ export interface MsgTypeInfo {
   content: string;
 }
 
-/** Loại tin + nội dung chữ đã parse cho từng tin (JSON.parse 1 lần / tin, không mỗi lần render). */
+/** Message type + text content parsed for each message (JSON.parse once per message, not on every render). */
 export function buildMsgTypeCache(msgs: any[], groupedFirstMsgs: Record<string, any[]>): Map<string, MsgTypeInfo> {
   const cache = new Map<string, MsgTypeInfo>();
 
@@ -221,22 +221,22 @@ export function buildMsgTypeCache(msgs: any[], groupedFirstMsgs: Record<string, 
     const mt = msg.msg_type || '';
     const mc = msg.content || '';
 
-    // Sử dụng các helper functions có sẵn
+    // Use the existing helper functions
     const isCard = isCardType(mt, mc);
     const isEcard = isEcardType(mt);
     const isSticker = isStickerType(mt);
     const isRtf = isRtfMsg(mt, mc);
     const isPoll = mt === 'group.poll' || mt === 'telegram.poll' || (mt === 'poll' && isTelegram(msg.channel));
-    // Bot Telegram: GIF (animation, mp4) phát như video; `voice` là tin ghi âm
+    // Telegram bot: GIF (animation, mp4) plays like a video; `voice` is a voice recording
     const isVideo = isVideoType(mt) || mt === 'gif';
     const isVoice = isVoiceType(mt);
     const isGroupMedia = !isPoll && !isVoice && !!groupedFirstMsgs[msg.msg_id];
-    // Bản tin / thông báo của Official Account (zinstant) — thẻ riêng, không đoán thành ảnh / file
+    // Official Account news / notifications (zinstant): their own card, not guessed as a photo / file
     const isZinstant = isZinstantMsgType(mt, mc);
     const isMedia = !isCard && !isEcard && !isSticker && !isGroupMedia && !isRtf && !isPoll && !isVideo && !isVoice && !isZinstant && isMediaType(mt, mc, msg.attachments);
     const isFile = !isCard && !isEcard && !isSticker && !isMedia && !isRtf && !isPoll && !isVideo && !isVoice && !isZinstant && isFileType(mt, mc, msg.attachments);
 
-    // Parse content 1 lần
+    // Parse the content once
     const content = (isMedia || isFile || isCard || isEcard || isSticker || isGroupMedia || isRtf || isPoll || isVideo || isVoice || isZinstant)
       ? ''
       : parseContent(mc, mt, msg.channel);

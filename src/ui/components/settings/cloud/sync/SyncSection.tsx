@@ -1,17 +1,17 @@
 /**
- * Cài đặt → Internet & Cloud → Đồng bộ dữ liệu: MỘT thiết lập cho dữ liệu (DB) và ảnh/file (media) của workspace đang
- * mở (sync.get / sync.apply — src/shared/cloud/cloudContracts.ts):
- *  1. Thiết lập đồng bộ — form nháp, lưu bằng MỘT nút ("Lưu thiết lập", "Bật đồng bộ" khi đang tắt): tài khoản, thời
- *     gian, chế độ (Tắt · Theo giờ · Realtime), kèm ảnh/video/file (mặc định bật) + file chung, mật khẩu sao lưu.
- *     Đang đồng bộ thì thu gọn thành một dòng tóm tắt + "Thay đổi".
- *  2. Trạng thái — Dữ liệu (lần đồng bộ, bản trên R2, phạm vi, tiến độ chụp bản gốc; Đồng bộ ngay, Khôi phục…) và
- *     Ảnh & file (đã lên bao nhiêu, tiến độ, lý do đang chờ; Tạm dừng / Tiếp tục).
- *  3. Nâng cao (SyncAdvanced, mở sẵn) — tải ảnh, giữ / xoá file trên máy, dọn R2, máy dự phòng, bản sao DB, nhật ký.
- * Bật lần đầu cần mật khẩu sao lưu: chưa đặt (hoặc main báo PASSPHRASE_REQUIRED) → hộp đặt mật khẩu rồi lưu tiếp.
+ * Settings → Internet & Cloud → Data sync: ONE setting for the data (DB) and the images/files (media) of the open
+ * workspace (sync.get / sync.apply - src/shared/cloud/cloudContracts.ts):
+ *  1. Sync settings: draft form, saved with ONE button ("Lưu thiết lập" (Save settings), "Bật đồng bộ" (Turn on sync) when it is off): account, time
+ *     range, mode (Off · Hourly · Realtime), with images/videos/files (on by default) + shared files, backup password.
+ *     While syncing, it collapses into a one-line summary + "Thay đổi" (Change).
+ *  2. Status: Data (last sync, copy on R2, scope, progress of the original snapshot; Sync now, Restore…) and
+ *     Images & files (how much is uploaded, progress, reason for waiting; Pause / Resume).
+ *  3. Advanced (SyncAdvanced, open by default): image download, keep / delete files on the machine, R2 cleanup, standby machine, DB copy, log.
+ * The first time you turn it on, a backup password is needed: not set (or main reports PASSPHRASE_REQUIRED) → password dialog, then save again.
  *
- * Kho lưu (khi biết trạng thái kho — storage.status()): thẻ "Kho lưu" (StoragePicker: R2 / Google Drive) ở đầu phần và
- * "Mức sử dụng & chi phí" (UsageCard) dưới phần Trạng thái; câu chữ dùng tên kho đang chọn (StorageContext). Chưa biết
- * kho (bản app cũ) → như trước: R2, sẵn sàng theo kết nối Cloudflare, không có hai thẻ này.
+ * Storage (when the storage status is known - storage.status()): the "Kho lưu" (Storage) card (StoragePicker: R2 / Google Drive) at the top of the section and
+ * "Mức sử dụng & chi phí" (Usage & cost) (UsageCard) below the Status part; the wording uses the selected storage name (StorageContext). Unknown
+ * storage (old app build) → as before: R2, ready when the Cloudflare connection is ready, without these two cards.
  */
 import React, { useRef, useState } from 'react';
 import { showConfirm } from '@/components/common/ConfirmDialog';
@@ -88,33 +88,35 @@ import {
 } from './syncHelpers';
 import { PassphraseDialog, SnapshotProgress, StandbyCard, type PassphraseDialogKind } from './syncParts';
 import { UsageCard } from './UsageCard';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export interface SyncSectionProps {
   connection: CloudConnectionStatus | null;
   /**
-   * Kho lưu (storage.status()). Thiếu (undefined) = lấy từ StorageContext; null = chưa biết (bản app cũ) → như trước:
-   * kho R2, sẵn sàng theo kết nối Cloudflare, không có thẻ Kho lưu / Mức sử dụng.
+   * Storage (storage.status()). Missing (undefined) = taken from StorageContext; null = unknown (old app build) → as before:
+   * R2 storage, ready when the Cloudflare connection is ready, no Storage / Usage cards shown.
    */
   storage?: CloudStorageStatus | null;
-  /** Trạng thái kho mới từ main (đổi kho, đăng nhập / ngắt Google). */
+  /** New storage status from main (switch storage, sign in / disconnect Google). */
   onStorage?: (storage: CloudStorageStatus) => void;
-  /** sync.get(); null = chưa đọc được (vẽ theo mặc định). */
+  /** sync.get(); null = could not be read yet (drawn with defaults). */
   overview: SyncOverview | null;
-  /** Trạng thái mới từ main (sync.apply, media.setOptions, db.follow…). */
+  /** New state from main (sync.apply, media.setOptions, db.follow…). */
   onOverview?: (overview: SyncOverview) => void;
   onRefresh?: () => void;
   onConnect?: () => void;
   onRecheck?: () => void;
   rechecking?: boolean;
-  /** Hiện dải "Đã khôi phục dữ liệu…" (CloudSettings đã hiện ở đầu trang thì tắt). */
+  /** Shows the "Đã khôi phục dữ liệu…" (Data restored…) strip (turned off when CloudSettings already shows it at the top of the page). */
   showRestoreBanner?: boolean;
-  /** Tài khoản để chọn / hiện tên; mặc định tài khoản của workspace đang mở. */
+  /** Account to pick / show the name; defaults to the account of the open workspace. */
   accounts?: ReadonlyArray<ScopeAccount>;
-  /** Mở sẵn form khi đồng bộ đang bật (test). */
+  /** Open the form by default when sync is on (test). */
   initialEditing?: boolean;
-  /** Mở sẵn phần Nâng cao (mặc định có). */
+  /** Open the Advanced section by default (default on). */
   initialAdvancedOpen?: boolean;
-  /** Nhật ký đã đọc trước (test). */
+  /** Log read earlier (test). */
   initialLog?: SyncLogEntry[] | null;
 }
 
@@ -125,8 +127,8 @@ const DETAIL_TONE = {
 } as const;
 
 /**
- * Hỏi lại trước khi lưu: tắt đồng bộ; đổi tài khoản / thời gian khi đã có bản trên kho (bản gốc mới thay bản cũ);
- * thôi tải ảnh khi còn file đã dọn khỏi máy (chỉ còn trên kho). `label` = tên kho. Trả true khi được lưu.
+ * Asks again before saving: turning sync off; changing account / time range when a copy is already on the storage (the new base snapshot replaces the old one);
+ * stopping image download while some files cleaned from the machine remain (only on the storage). `label` = storage name. Returns true when saved.
  */
 async function confirmSyncChange(
   before: SyncConfig,
@@ -140,40 +142,40 @@ async function confirmSyncChange(
   const evicted = media.totals.evicted;
   const strands = media.enabled && evicted > 0 && !(after.mode !== 'off' && after.includeMedia);
   const strandText = strands
-    ? `${fmtNum(evicted)} file đã dọn khỏi máy (chỉ còn trên ${label}) sẽ không mở được cho tới khi bật lại — nên tải về máy trước: Nâng cao → Tải lại toàn bộ file đã dọn.`
+    ? tr('{{v1}} file đã dọn khỏi máy (chỉ còn trên {{label}}) sẽ không mở được cho tới khi bật lại — nên tải về máy trước: Nâng cao → Tải lại toàn bộ file đã dọn.', { v1: fmtNum(evicted), label })
     : '';
   const join = (...parts: string[]) => parts.filter(Boolean).join(' ');
 
   if (turningOff) {
     return showConfirm({
-      title: 'Tắt đồng bộ?',
+      title: tr('Tắt đồng bộ?'),
       message: join(
-        `Bản trên ${label} vẫn giữ và vẫn khôi phục được.`,
-        rebase ? 'Lần bật sau sẽ tạo bản gốc mới theo tài khoản / thời gian mới.' : '',
+        tr('Bản trên {{label}} vẫn giữ và vẫn khôi phục được.', { label }),
+        rebase ? tr('Lần bật sau sẽ tạo bản gốc mới theo tài khoản / thời gian mới.') : '',
         strandText,
       ),
-      confirmText: 'Tắt đồng bộ',
+      confirmText: tr('Tắt đồng bộ'),
       variant: 'warning',
     });
   }
   if (rebase) {
     return showConfirm({
-      title: 'Đổi tài khoản / thời gian?',
+      title: tr('Đổi tài khoản / thời gian?'),
       message: join(
-        `Đổi tài khoản / thời gian sẽ tạo bản gốc mới trên ${label} theo lựa chọn mới; bản cũ sẽ bị thay. File ảnh đã lên ${label} vẫn giữ.`,
+        tr('Đổi tài khoản / thời gian sẽ tạo bản gốc mới trên {{label}} theo lựa chọn mới; bản cũ sẽ bị thay. File ảnh đã lên {{label}} vẫn giữ.', { label }),
         strandText,
       ),
-      confirmText: 'Lưu và tạo bản mới',
+      confirmText: tr('Lưu và tạo bản mới'),
       variant: 'warning',
     });
   }
   if (strands) {
-    return showConfirm({ title: 'Bỏ kèm ảnh, video, file?', message: strandText, confirmText: 'Vẫn lưu', variant: 'warning' });
+    return showConfirm({ title: tr('Bỏ kèm ảnh, video, file?'), message: strandText, confirmText: tr('Vẫn lưu'), variant: 'warning' });
   }
   return true;
 }
 
-/** Đặt kho lưu vào StorageContext cho mọi mảnh bên dưới (SyncAdvanced, hộp dọn file, trình khôi phục…). */
+/** Puts the storage into StorageContext for every piece below (SyncAdvanced, the file cleanup box, the restore wizard…). */
 export default function SyncSection(props: SyncSectionProps) {
   const contextStorage = useStorage();
   const storage = props.storage !== undefined ? props.storage : contextStorage;
@@ -209,7 +211,7 @@ function SyncSectionBody({
   const ready = isStorageReady(storage, connection);
   const { busy, run, notify } = useCloudAction();
 
-  // "Chọn kho lưu" ở thông báo phía trên: cuộn tới thẻ Kho lưu và làm nổi một lúc.
+  // "Chọn kho lưu" (Choose storage) in the notice above: scroll to the Storage card and highlight it for a while.
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const [pickerFlash, setPickerFlash] = useState(false);
   const focusPicker = () => {
@@ -218,12 +220,12 @@ function SyncSectionBody({
     window.setTimeout(() => setPickerFlash(false), 1800);
   };
 
-  // Form nháp: null = đang hiện đúng thiết lập đã lưu. Chỉ lưu khi bấm nút.
+  // Draft form: null = showing exactly the saved settings. Only saved when the button is clicked.
   const [draft, setDraft] = useState<SyncConfig | null>(null);
   const [formOpen, setFormOpen] = useState(initialEditing);
   const [applying, setApplying] = useState(false);
   const [passDialog, setPassDialog] = useState<PassphraseDialogKind | null>(null);
-  // Thiết lập chờ lưu sau khi đặt mật khẩu (bật đồng bộ lần đầu).
+  // Settings waiting to be saved after setting the password (turning sync on for the first time).
   const pendingApply = useRef<SyncConfig | null>(null);
   const [wizard, setWizard] = useState<RestoreWizardOptions | null>(null);
 
@@ -243,7 +245,7 @@ function SyncSectionBody({
     setFormOpen(false);
   };
 
-  /** Gộp trạng thái mới của một module vào overview đang có (chưa có overview thì đọc lại). */
+  /** Merge a module's new state into the existing overview (without an overview yet → re-read). */
   const patchOverview = (patch: Partial<SyncOverview>) => {
     if (overview && onOverview) onOverview({ ...overview, ...patch });
     else onRefresh?.();
@@ -252,7 +254,7 @@ function SyncSectionBody({
   const apply = async (cfg: SyncConfig) => {
     const sync = cloudApi()?.sync;
     if (typeof sync?.apply !== 'function') {
-      notify('Bản app này chưa có tính năng này. Hãy cập nhật Deplao.', 'warning');
+      notify(tr('Bản app này chưa có tính năng này. Hãy cập nhật Deplao.'), 'warning');
       return;
     }
     const before = saved;
@@ -265,8 +267,8 @@ function SyncSectionBody({
           setPassDialog('enable');
           return;
         }
-        notify(res?.error || 'Lưu không thành công, thử lại sau.', 'error');
-        onRefresh?.(); // các bước trước chỗ lỗi có thể đã lưu
+        notify(res?.error || tr('Lưu không thành công, thử lại sau.'), 'error');
+        onRefresh?.(); // steps before the error point may have been saved
         return;
       }
       if (res.overview && onOverview) onOverview(res.overview);
@@ -298,7 +300,7 @@ function SyncSectionBody({
   const submitPassphrase = async (passphrase: string) => {
     const kind = passDialog;
     if (!kind) return;
-    const okMessage = kind === 'change' ? 'Đã đổi mật khẩu sao lưu' : kind === 'set' ? 'Đã đặt mật khẩu sao lưu' : undefined;
+    const okMessage = kind === 'change' ? tr('Đã đổi mật khẩu sao lưu') : kind === 'set' ? tr('Đã đặt mật khẩu sao lưu') : undefined;
     const res = await run('pass', () => cloudApi()?.db.setPassphrase(passphrase), okMessage);
     if (!res) return;
     setPassDialog(null);
@@ -314,23 +316,23 @@ function SyncSectionBody({
   };
 
   const syncNow = async () => {
-    if (await run('sync', () => cloudApi()?.db.syncNow(), `Đang đồng bộ lên ${label}`)) onRefresh?.();
+    if (await run('sync', () => cloudApi()?.db.syncNow(), tr('Đang đồng bộ lên {{label}}', { label }))) onRefresh?.();
   };
   const pauseMedia = async () => { if (await run('pause', () => cloudApi()?.media.pause())) onRefresh?.(); };
-  // Thiết lập cũ: đồng bộ dữ liệu tắt mà ảnh vẫn tải lên (bật riêng ở màn hình cũ) — dừng ảnh cho khớp một công tắc.
+  // Old settings: data sync off but images still uploaded (turned on separately in the old screen) → stop the images so they match one switch.
   const stopMediaOnly = async () => {
-    const res = await run('media-off', () => cloudApi()?.media.setEnabled(false), 'Đã dừng tải ảnh, file');
+    const res = await run('media-off', () => cloudApi()?.media.setEnabled(false), tr('Đã dừng tải ảnh, file'));
     if (res?.status) patchOverview({ media: res.status });
     else if (res) onRefresh?.();
   };
   const resumeMedia = async () => { if (await run('resume', () => cloudApi()?.media.resume())) onRefresh?.(); };
   const openRestore = () => setWizard({ mode: 'same', workspaceId: db.workspaces[0]?.workspaceId, passphraseSet: !!db.passphraseSet });
 
-  // Đổi kho chỉ khi không còn gì chạy trên kho hiện tại (main cũng chặn — STORAGE_SWITCH_BLOCKED).
+  // Switch storage only when nothing is running on the current storage (main blocks it too: STORAGE_SWITCH_BLOCKED).
   const storeLockReason = syncOn || media.enabled
-    ? 'Tắt đồng bộ để đổi kho lưu.'
+    ? tr('Tắt đồng bộ để đổi kho lưu.')
     : db.following
-      ? 'Tắt theo dõi bản sao (máy dự phòng) để đổi kho lưu.'
+      ? tr('Tắt theo dõi bản sao (máy dự phòng) để đổi kho lưu.')
       : null;
 
   return (
@@ -363,18 +365,18 @@ function SyncSectionBody({
       {!syncOn && media.enabled && (
         <Notice
           tone="warning"
-          title={`Ảnh, file vẫn đang tải lên ${label}`}
+          title={tr('Ảnh, file vẫn đang tải lên {{label}}', { label })}
           action={(
             <Button size="sm" variant="outline" loading={busy === 'media-off'} onClick={() => void stopMediaOnly()}>
-              Dừng tải ảnh
+              {tr('Dừng tải ảnh')}
             </Button>
           )}
         >
-          <p>Thiết lập cũ: đồng bộ dữ liệu đang tắt nhưng ảnh, file vẫn tải lên. Bật đồng bộ để chạy cả hai, hoặc dừng tải ảnh.</p>
+          <p>{tr('Thiết lập cũ: đồng bộ dữ liệu đang tắt nhưng ảnh, file vẫn tải lên. Bật đồng bộ để chạy cả hai, hoặc dừng tải ảnh.')}</p>
         </Notice>
       )}
 
-      {/* Máy này đang theo dõi bản của máy khác: việc chính của máy này, hiện ngay đầu phần. */}
+      {/* This machine is monitoring another machine's copy: its main job, shown right at the top of the section. */}
       {db.following && (
         <StandbyCard
           status={db}
@@ -389,23 +391,23 @@ function SyncSectionBody({
       <Card className={cn('space-y-4 p-4', !ready && 'opacity-60')}>
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-foreground">Thiết lập đồng bộ</p>
+            <p className="text-sm font-semibold text-foreground">{tr('Thiết lập đồng bộ')}</p>
             {syncOn ? (
               <p className="mt-1 flex items-start gap-2 text-sm text-foreground">
                 <span className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full bg-success" aria-hidden="true" />
-                <span>Đang đồng bộ: {describeSyncConfig(saved, accounts)}</span>
+                <span>{trx('Đang đồng bộ: {{v1}}', { v1: describeSyncConfig(saved, accounts) })}</span>
               </p>
             ) : (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {hasCopy
-                  ? `Đang tắt. Bản trên ${label} vẫn giữ và vẫn khôi phục được.`
-                  : `Chọn tài khoản, thời gian và chế độ rồi bấm Bật đồng bộ. Dữ liệu được mã hoá trên máy trước khi tải lên ${label} của bạn.`}
+                  ? tr('Đang tắt. Bản trên {{label}} vẫn giữ và vẫn khôi phục được.', { label })
+                  : tr('Chọn tài khoản, thời gian và chế độ rồi bấm Bật đồng bộ. Dữ liệu được mã hoá trên máy trước khi tải lên {{label}} của bạn.', { label })}
               </p>
             )}
           </div>
           {syncOn && !formOpen && (
             <Button size="sm" variant="outline" leftIcon={<EditIcon className="h-4 w-4" />} onClick={() => setFormOpen(true)}>
-              Thay đổi
+              {tr('Thay đổi')}
             </Button>
           )}
         </div>
@@ -413,15 +415,15 @@ function SyncSectionBody({
         {editing && (
           <div className="space-y-4">
             <ScopePicker
-              label="Tài khoản và thời gian đồng bộ"
+              label={tr('Tài khoản và thời gian đồng bộ')}
               value={value.scope}
               accounts={accounts}
               disabled={formDisabled}
               onChange={scope => edit({ scope })}
             />
-            <ScopeRow label="Chế độ">
+            <ScopeRow label={tr('Chế độ')}>
               <PillGroup
-                label="Chế độ đồng bộ"
+                label={tr('Chế độ đồng bộ')}
                 value={value.mode}
                 disabled={locked}
                 onChange={(mode: DbSyncMode) => edit({ mode })}
@@ -433,14 +435,14 @@ function SyncSectionBody({
               />
               <p className="text-xs text-muted-foreground">{syncModeNote(value.mode, label)}</p>
             </ScopeRow>
-            <ScopeRow label="Ảnh, file">
+            <ScopeRow label={tr('Ảnh, file')}>
               <div className="space-y-2.5 pt-1.5">
                 <Checkbox
                   checked={value.includeMedia}
                   disabled={formDisabled}
                   onCheckedChange={includeMedia => edit({ includeMedia })}
-                  label="Kèm ảnh, video, file"
-                  description={`Chạy nền, tải dần lên ${label}. Bỏ chọn thì chỉ đồng bộ tin nhắn, danh bạ, cài đặt.`}
+                  label={tr('Kèm ảnh, video, file')}
+                  description={tr('Chạy nền, tải dần lên {{label}}. Bỏ chọn thì chỉ đồng bộ tin nhắn, danh bạ, cài đặt.', { label })}
                 />
                 {value.includeMedia && (
                   <Checkbox
@@ -448,7 +450,7 @@ function SyncSectionBody({
                     checked={value.includeShared}
                     disabled={formDisabled}
                     onCheckedChange={includeShared => edit({ includeShared })}
-                    label="File chung (thư viện media, công việc, file tải lên)"
+                    label={tr('File chung (thư viện media, công việc, file tải lên)')}
                   />
                 )}
               </div>
@@ -458,8 +460,8 @@ function SyncSectionBody({
 
         <div className="space-y-1 border-t border-border pt-3">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-medium text-foreground">Mật khẩu sao lưu</p>
-            <Badge size="sm" variant={db.passphraseSet ? 'success' : 'default'}>{db.passphraseSet ? 'Đã đặt' : 'Chưa đặt'}</Badge>
+            <p className="text-sm font-medium text-foreground">{tr('Mật khẩu sao lưu')}</p>
+            <Badge size="sm" variant={db.passphraseSet ? 'success' : 'default'}>{db.passphraseSet ? tr('Đã đặt') : tr('Chưa đặt')}</Badge>
             <Button
               variant="link"
               size="sm"
@@ -467,20 +469,20 @@ function SyncSectionBody({
               disabled={!ready || locked}
               onClick={() => setPassDialog(db.passphraseSet ? 'change' : 'set')}
             >
-              {db.passphraseSet ? 'Đổi mật khẩu' : 'Đặt mật khẩu'}
+              {db.passphraseSet ? tr('Đổi mật khẩu') : tr('Đặt mật khẩu')}
             </Button>
           </div>
           <p className="flex items-start gap-1.5 text-xs leading-relaxed text-muted-foreground">
             <AlertIcon className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
-            <span>{`Lưu mã hoá trên máy này để app tự đồng bộ. Quên mật khẩu thì máy khác không mở được bản trên ${label}.`}</span>
+            <span>{tr('Lưu mã hoá trên máy này để app tự đồng bộ. Quên mật khẩu thì máy khác không mở được bản trên {{label}}.', { label })}</span>
           </p>
         </div>
 
         {editing && (
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
-            {dirty && <span className="mr-auto text-xs text-warning">{problem || 'Chưa lưu thay đổi'}</span>}
+            {dirty && <span className="mr-auto text-xs text-warning">{problem || tr('Chưa lưu thay đổi')}</span>}
             {(dirty || formOpen) && (
-              <Button size="sm" variant="ghost" disabled={locked} onClick={cancelEdit}>Huỷ</Button>
+              <Button size="sm" variant="ghost" disabled={locked} onClick={cancelEdit}>{tr('Huỷ')}</Button>
             )}
             <Button
               size="sm"
@@ -488,14 +490,14 @@ function SyncSectionBody({
               disabled={!dirty || !!problem || busy === 'pass' || (!ready && value.mode !== 'off')}
               onClick={() => void save()}
             >
-              {turningOn ? 'Bật đồng bộ' : 'Lưu thiết lập'}
+              {turningOn ? tr('Bật đồng bộ') : tr('Lưu thiết lập')}
             </Button>
           </div>
         )}
       </Card>
 
       <Card className="p-4">
-        <p className="text-sm font-semibold text-foreground">Trạng thái</p>
+        <p className="text-sm font-semibold text-foreground">{tr('Trạng thái')}</p>
         <div className="divide-y divide-border">
           <DataStatus
             db={db}
@@ -558,7 +560,7 @@ function SyncSectionBody({
   );
 }
 
-// ─── Trạng thái ────────────────────────────────────────────────────────────────────────
+// ─── Status ────────────────────────────────────────────────────────────────────────
 
 function StatusHeading({ icon, title, actions }: { icon: React.ReactNode; title: React.ReactNode; actions?: React.ReactNode }) {
   return (
@@ -572,11 +574,11 @@ function StatusHeading({ icon, title, actions }: { icon: React.ReactNode; title:
   );
 }
 
-/** Dữ liệu: một khối cho mỗi workspace trên máy (lần đồng bộ, bản trên kho, phạm vi, tiến độ chụp bản gốc / lỗi). */
+/** Data: one block for each workspace on the machine (last sync, copy on the storage, scope, progress of the original snapshot / errors). */
 function DataStatus({ db, mode, scope, accounts, ready, syncing, onSyncNow, onRestore }: {
   db: DbSyncStatus;
   mode: DbSyncMode;
-  /** Phạm vi đã lưu (workspace không ghi phạm vi riêng thì dùng cái này). */
+  /** Saved scope (a workspace without its own scope uses this one). */
   scope: CloudScope;
   accounts: ReadonlyArray<ScopeAccount>;
   ready: boolean;
@@ -588,13 +590,13 @@ function DataStatus({ db, mode, scope, accounts, ready, syncing, onSyncNow, onRe
   const workspaces = db.workspaces;
   const working = workspaces.some(w => w.state === 'syncing' || w.state === 'snapshotting');
   return (
-    <section aria-label="Dữ liệu" className="space-y-3 py-3">
+    <section aria-label={tr('Dữ liệu')} className="space-y-3 py-3">
       <StatusHeading
         icon={<DatabaseIcon />}
-        title="Dữ liệu"
+        title={tr('Dữ liệu')}
         actions={(
           <>
-            <Button size="sm" variant="outline" disabled={!ready} onClick={onRestore}>Khôi phục…</Button>
+            <Button size="sm" variant="outline" disabled={!ready} onClick={onRestore}>{tr('Khôi phục…')}</Button>
             <Button
               size="sm"
               leftIcon={<RefreshIcon className="h-4 w-4" />}
@@ -602,7 +604,7 @@ function DataStatus({ db, mode, scope, accounts, ready, syncing, onSyncNow, onRe
               disabled={!ready || mode === 'off' || working}
               onClick={onSyncNow}
             >
-              Đồng bộ ngay
+              {tr('Đồng bộ ngay')}
             </Button>
           </>
         )}
@@ -620,7 +622,7 @@ function DataStatus({ db, mode, scope, accounts, ready, syncing, onSyncNow, onRe
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">
-          {mode === 'off' ? `Chưa có bản nào trên ${label}.` : 'Đang chuẩn bị bản gốc đầu tiên…'}
+          {mode === 'off' ? tr('Chưa có bản nào trên {{label}}.', { label }) : tr('Đang chuẩn bị bản gốc đầu tiên…')}
         </p>
       )}
     </section>
@@ -631,15 +633,15 @@ function WorkspaceStatus({ ws, showName, scopeText }: { ws: DbSyncWorkspaceStatu
   const label = useStoreLabel();
   const working = ws.state === 'syncing' || ws.state === 'snapshotting';
   const dot = ws.state === 'error' ? 'bg-destructive' : ws.state === 'paused' ? 'bg-warning' : ws.lastSyncAt ? 'bg-success' : 'bg-accent';
-  const stateText = ws.state === 'syncing' ? 'Đang đồng bộ…'
-    : ws.state === 'snapshotting' ? 'Đang chụp bản gốc…'
-      : ws.state === 'paused' ? 'Đang tạm dừng'
-        : ws.state === 'error' ? (ws.lastError || 'Đồng bộ bị lỗi, sẽ thử lại.')
+  const stateText = ws.state === 'syncing' ? tr('Đang đồng bộ…')
+    : ws.state === 'snapshotting' ? tr('Đang chụp bản gốc…')
+      : ws.state === 'paused' ? tr('Đang tạm dừng')
+        : ws.state === 'error' ? (ws.lastError || tr('Đồng bộ bị lỗi, sẽ thử lại.'))
           : null;
-  // Bản gốc mới (chép + nén cả DB, nặng ổ đĩa) chờ lúc máy rảnh
-  const waitText = ws.baseWaiting === 'battery' ? 'Chụp bản gốc mới khi cắm sạc'
-    : ws.baseWaiting === 'active' ? 'Chụp bản gốc mới khi máy rảnh'
-      : ws.baseWaiting === 'wake' ? 'Chụp bản gốc mới sau ít phút'
+  // New base snapshot (copies + compresses the whole DB, heavy on disk) waits until the machine is idle
+  const waitText = ws.baseWaiting === 'battery' ? tr('Chụp bản gốc mới khi cắm sạc')
+    : ws.baseWaiting === 'active' ? tr('Chụp bản gốc mới khi máy rảnh')
+      : ws.baseWaiting === 'wake' ? tr('Chụp bản gốc mới sau ít phút')
         : null;
   return (
     <div className="flex items-start gap-2.5">
@@ -647,14 +649,14 @@ function WorkspaceStatus({ ws, showName, scopeText }: { ws: DbSyncWorkspaceStatu
       <div className="min-w-0 flex-1 space-y-0.5">
         {showName && <p className="text-[11px] font-medium uppercase tracking-wider text-subtle-foreground">{ws.name}</p>}
         <p className="text-sm text-foreground">
-          {ws.lastSyncAt ? `Đồng bộ gần nhất ${fmtSyncTime(ws.lastSyncAt)} · ${fmtNum(ws.lastChanges)} thay đổi` : 'Chưa đồng bộ lần nào'}
+          {ws.lastSyncAt ? tr('Đồng bộ gần nhất {{v1}} · {{v2}} thay đổi', { v1: fmtSyncTime(ws.lastSyncAt), v2: fmtNum(ws.lastChanges) }) : tr('Chưa đồng bộ lần nào')}
         </p>
         <p className="text-xs text-muted-foreground">
           {ws.baseAt
-            ? `Bản trên ${label}: gốc ${fmtWhen(ws.baseAt)} + ${fmtNum(ws.segments)} đoạn · ${fmtBytes(ws.bytes)} · đã mã hoá`
-            : `Chưa có bản trên ${label}`}
+            ? tr('Bản trên {{label}}: gốc {{v1}} + {{v2}} đoạn · {{v3}} · đã mã hoá', { label, v1: fmtWhen(ws.baseAt), v2: fmtNum(ws.segments), v3: fmtBytes(ws.bytes) })
+            : tr('Chưa có bản trên {{label}}', { label })}
         </p>
-        <p className="text-xs text-muted-foreground">Phạm vi: {scopeText}</p>
+        <p className="text-xs text-muted-foreground">{trx('Phạm vi: {{scopeText}}', { scopeText })}</p>
         {ws.progress && <SnapshotProgress progress={ws.progress} />}
         {stateText && !ws.progress && (
           <p className={cn('flex items-center gap-1.5 text-xs', ws.state === 'error' ? 'text-destructive' : ws.state === 'paused' ? 'text-warning' : 'text-muted-foreground')}>
@@ -662,14 +664,14 @@ function WorkspaceStatus({ ws, showName, scopeText }: { ws: DbSyncWorkspaceStatu
           </p>
         )}
         {!stateText && !ws.progress && waitText && (
-          <p className="text-xs text-muted-foreground" title="Bản gốc chép và nén cả dữ liệu nên chờ lúc máy rảnh.">{waitText}</p>
+          <p className="text-xs text-muted-foreground" title={tr('Bản gốc chép và nén cả dữ liệu nên chờ lúc máy rảnh.')}>{waitText}</p>
         )}
       </div>
     </div>
   );
 }
 
-/** Ảnh & file: đã lên bao nhiêu, tiến độ, lý do đang chờ (lùi vì mạng / kho giới hạn = cảnh báo), Tạm dừng / Tiếp tục. */
+/** Images & files: how much is uploaded, progress, reason for waiting (backed off due to network / storage limit = warning), Pause / Resume. */
 function MediaStatus({ media, includeMedia, ready, busy, onPause, onResume }: {
   media: MediaSyncStatus;
   includeMedia: boolean;
@@ -686,7 +688,7 @@ function MediaStatus({ media, includeMedia, ready, busy, onPause, onResume }: {
   const actions = includeMedia && media.enabled ? (
     media.paused ? (
       <Button size="sm" variant="outline" leftIcon={<PlayIcon className="h-4 w-4" />} loading={busy === 'resume'} disabled={!ready} onClick={onResume}>
-        Tiếp tục
+        {tr('Tiếp tục')}
       </Button>
     ) : (
       <Button
@@ -697,26 +699,26 @@ function MediaStatus({ media, includeMedia, ready, busy, onPause, onResume }: {
         disabled={!ready || (!media.running && t.pending === 0)}
         onClick={onPause}
       >
-        Tạm dừng
+        {tr('Tạm dừng')}
       </Button>
     )
   ) : undefined;
 
   return (
-    <section aria-label="Ảnh và file" className="space-y-2 py-3">
-      <StatusHeading icon={<ImageIcon />} title="Ảnh & file" actions={actions} />
+    <section aria-label={tr('Ảnh và file')} className="space-y-2 py-3">
+      <StatusHeading icon={<ImageIcon />} title={tr('Ảnh & file')} actions={actions} />
       {!includeMedia ? (
         <p className="text-xs text-muted-foreground">
-          Không kèm ảnh, video, file{t.uploaded > 0 ? ` · ${fmtNum(t.uploaded)} file đã lên ${label} vẫn giữ` : ''}.
+          {tr('Không kèm ảnh, video, file')}{t.uploaded > 0 ? tr(' · {{v1}} file đã lên {{label}} vẫn giữ', { v1: fmtNum(t.uploaded), label }) : ''}.
         </p>
       ) : (
         <>
           {showTotals && (
             <>
               <p className="text-sm text-foreground">
-                Đã lên {fmtNum(t.uploaded)} / {fmtNum(t.files)} file · {fmtBytesPair(t.bytesUploaded, t.bytesTotal)}
+                {trx('Đã lên {{v1}} / {{v2}} file · {{v3}}', { v1: fmtNum(t.uploaded), v2: fmtNum(t.files), v3: fmtBytesPair(t.bytesUploaded, t.bytesTotal) })}
               </p>
-              <ProgressBar value={pct} tone={media.lastError ? 'warning' : 'primary'} label={`Tiến độ tải ảnh, file lên ${label}`} />
+              <ProgressBar value={pct} tone={media.lastError ? 'warning' : 'primary'} label={tr('Tiến độ tải ảnh, file lên {{label}}', { label })} />
             </>
           )}
           <p className={cn('text-xs', DETAIL_TONE[detail.tone])}>{detail.text}</p>
@@ -730,8 +732,8 @@ function MediaStatus({ media, includeMedia, ready, busy, onPause, onResume }: {
 }
 
 /**
- * Dung lượng đang dùng trên kho (dữ liệu + ảnh/file). R2: kèm ước tính tiền mỗi tháng + link trang R2 trên Cloudflare;
- * Google Drive: dung lượng + link Google Drive (dung lượng tài khoản, hạn mức ở thẻ Mức sử dụng & chi phí).
+ * Space used on the storage (data + images/files). R2: with the estimated monthly cost + a link to the R2 page on Cloudflare;
+ * Google Drive: space used + a link to Google Drive (account quota and limits are in the "Mức sử dụng & chi phí" (Usage & cost) card).
  */
 function StoreUsage({ db, media, provider, accountId }: {
   db: DbSyncStatus;
@@ -745,7 +747,7 @@ function StoreUsage({ db, media, provider, accountId }: {
   if (provider === 'gdrive') {
     return (
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
-        <span>{`Dung lượng trên Google Drive: ${fmtBytes(total)}`}</span>
+        <span>{tr('Dung lượng trên Google Drive: {{v1}}', { v1: fmtBytes(total) })}</span>
         <Button
           variant="link"
           size="sm"
@@ -753,7 +755,7 @@ function StoreUsage({ db, media, provider, accountId }: {
           rightIcon={<ExternalLinkIcon className="h-3.5 w-3.5" />}
           onClick={() => openExternalUrl(GOOGLE_DRIVE_URL)}
         >
-          Mở Google Drive
+          {tr('Mở Google Drive')}
         </Button>
       </div>
     );
@@ -761,7 +763,7 @@ function StoreUsage({ db, media, provider, accountId }: {
   const cost = r2MonthlyUsd(total);
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
-      <span>Dung lượng R2: {fmtBytes(total)} · {cost > 0 ? `ước tính ${fmtUsd(cost)} USD/tháng` : 'trong phần miễn phí 10 GB'}</span>
+      <span>{trx('Dung lượng R2: {{v1}} · {{v2}}', { v1: fmtBytes(total), v2: cost > 0 ? tr('ước tính {{v1}} USD/tháng', { v1: fmtUsd(cost) }) : tr('trong phần miễn phí 10 GB') })}</span>
       <Button
         variant="link"
         size="sm"
@@ -769,7 +771,7 @@ function StoreUsage({ db, media, provider, accountId }: {
         rightIcon={<ExternalLinkIcon className="h-3.5 w-3.5" />}
         onClick={() => openExternalUrl(r2DashboardUrl(accountId))}
       >
-        Mở R2 trên Cloudflare
+        {tr('Mở R2 trên Cloudflare')}
       </Button>
     </div>
   );

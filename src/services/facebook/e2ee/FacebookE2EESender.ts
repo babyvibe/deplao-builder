@@ -1,9 +1,9 @@
 /**
  * FacebookE2EESender.ts
- * Port từ Python `api` class trong _send_e2ee.py
+ * Ported from the Python `api` class in _send_e2ee.py
  *
- * Gửi tin nhắn E2EE mã hóa cho hội thoại 1:1 qua Go bridge.
- * Hỗ trợ standalone mode (tự tạo bridge) hoặc reuse mode (dùng chung bridge với listener).
+ * Sends encrypted E2EE messages for 1:1 conversations through the Go bridge.
+ * Supports standalone mode (creates its own bridge) or reuse mode (shares the bridge with the listener).
  */
 
 import { FacebookE2EEBridge, BridgeError, BridgeNotReadyError } from './FacebookE2EEBridge';
@@ -15,10 +15,11 @@ import {
 } from '../FacebookUtils';
 import { FBE2EESendResult, FBSendResult } from '../FacebookTypes';
 import Logger from '../../../utils/Logger';
+import { tr } from '../../../shared/i18n';
 
 /** Error shown for an E2EE send the server did not acknowledge in time. */
 export const UNCERTAIN_E2EE_SEND_ERROR =
-  'Facebook chưa xác nhận tin nhắn E2EE - tin nhắn có thể đã được gửi. Hãy kiểm tra hội thoại trước khi gửi lại.';
+  tr('Facebook chưa xác nhận tin nhắn E2EE - tin nhắn có thể đã được gửi. Hãy kiểm tra hội thoại trước khi gửi lại.');
 
 /**
  * Map a bridge E2EE text send to FBSendResult. fbchat-v2 2.3.2 reports
@@ -38,7 +39,7 @@ export function e2eeSendOutcome(result: FBE2EESendResult): FBSendResult {
 export type E2EESenderMode = 'standalone' | 'reuse';
 
 export interface E2EESenderOptions {
-  /** Reuse bridge từ listener (recommended) hoặc tự tạo standalone */
+  /** Reuse the bridge from the listener (recommended) or create a standalone one */
   mode?: E2EESenderMode;
   /** Bridge instance (required for reuse mode) */
   bridge?: FacebookE2EEBridge;
@@ -128,12 +129,12 @@ export class FacebookE2EESender {
   // ─── Send ────────────────────────────────────────────────────────────────
 
   /**
-   * Gửi tin nhắn E2EE
+   * Send an E2EE message
    *
-   * @param chatJid  JID đầy đủ (`{userId}@msgr`) hoặc Facebook user ID
-   * @param text     Nội dung tin nhắn
-   * @param replyMessageId    (optional) message ID để reply
-   * @param replySenderJid    (optional) sender JID của message được reply
+   * @param chatJid  Full JID (`{userId}@msgr`) or Facebook user ID
+   * @param text     Message content
+   * @param replyMessageId    (optional) message ID to reply to
+   * @param replySenderJid    (optional) sender JID of the message being replied to
    */
   public async send(
     chatJid: string | number,
@@ -165,7 +166,7 @@ export class FacebookE2EESender {
   }
 
   /**
-   * Gửi E2EE message đến user (convenience - tự động build JID)
+   * Send an E2EE message to a user (convenience: builds the JID automatically)
    */
   public async sendToUser(
     userId: string | number,
@@ -207,7 +208,7 @@ export class FacebookE2EESender {
   }
 
   /**
-   * Gửi reaction cho tin nhắn E2EE 1:1
+   * Send a reaction to an E2EE 1:1 message
    */
   public async sendReaction(
     chatJid: string | number,
@@ -230,7 +231,7 @@ export class FacebookE2EESender {
   }
 
   /**
-   * Gửi ảnh qua E2EE 1:1
+   * Send an image via E2EE 1:1
    */
   public async sendImage(
     chatJid: string | number,
@@ -251,7 +252,7 @@ export class FacebookE2EESender {
   }
 
   /**
-   * Gửi video qua E2EE 1:1
+   * Send a video via E2EE 1:1
    */
   public async sendVideo(
     chatJid: string | number,
@@ -272,7 +273,7 @@ export class FacebookE2EESender {
   }
 
   /**
-   * Gửi audio qua E2EE 1:1
+   * Send audio via E2EE 1:1
    */
   public async sendAudio(
     chatJid: string | number,
@@ -293,7 +294,7 @@ export class FacebookE2EESender {
   }
 
   /**
-   * Gửi file/tài liệu qua E2EE 1:1
+   * Send a file/document via E2EE 1:1
    */
   public async sendFile(
     chatJid: string | number,
@@ -314,7 +315,7 @@ export class FacebookE2EESender {
   }
 
   /**
-   * Gửi sticker qua E2EE 1:1 (C4)
+   * Send a sticker via E2EE 1:1 (C4)
    */
   public async sendSticker(
     chatJid: string | number,

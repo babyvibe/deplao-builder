@@ -1,16 +1,18 @@
 /**
- * restCommandPolicy.ts — lệnh ghi REST của nhân viên (POST/PUT/PATCH/DELETE /api/command/*): phần quy tắc thuần, có test.
+ * restCommandPolicy.ts: REST write commands of employees (POST/PUT/PATCH/DELETE /api/command/*): the pure rule part, has tests.
  *
- * checkEmployeeAccess (employeeAccess.ts) đã kiểm tra id tài khoản thông thường (zaloId…) trong tham số. Ở đây là phần
- * riêng của lệnh ghi, chạy ngay sau nó trong HttpRelayService.executeRestCommand:
- *   1. Quyền module theo nhóm lệnh — cùng bảng với đường proxy (channelToModule): crm/* → crm, workflows → workflow,
- *      integrations → integration, ai/* → ai_assistant. Trước đây REST không kiểm tra: nhân viên bị tắt module vẫn
- *      sửa / xoá được chiến dịch, workflow, tích hợp, trợ lý AI của Boss.
- *   2. Lệnh chỉ Boss được làm: proxy mạng (/api/command/proxies*, /api/command/accounts/proxy). Gán proxy cho tài khoản =
- *      chuyển toàn bộ lưu lượng (kể cả cookie) của tài khoản qua máy chủ do người gọi chọn.
- *   3. Tài khoản nguồn / đích của lệnh nhân bản (sourceZaloId / targetZaloId) cũng phải được giao — trước đây nhân viên
- *      chép được tin nhắn nhanh / nhãn của tài khoản không được giao sang tài khoản của mình (và ngược lại).
+ * checkEmployeeAccess (employeeAccess.ts) has already checked the usual account ids (zaloId...) in the parameters. This is the
+ * part specific to write commands, run right after it in HttpRelayService.executeRestCommand:
+ *   1. Module permission per command group, using the same table as the proxy path (channelToModule): crm/* → crm, workflows → workflow,
+ *      integrations → integration, ai/* → ai_assistant. Previously REST did not check: an employee whose module was turned off could still
+ *      edit / delete Boss's campaigns, workflows, integrations and AI assistant.
+ *   2. Commands only Boss may run: network proxies (/api/command/proxies*, /api/command/accounts/proxy). Assigning a proxy to an account =
+ *      routing all of the account's traffic (cookies included) through a server chosen by the caller.
+ *   3. The source / target accounts of a clone command (sourceZaloId / targetZaloId / targetZaloIds) must also be assigned: previously
+ *      an employee could copy quick messages / labels from an account they were not assigned into their own account (and the reverse).
  */
+
+import { tr } from '../../shared/i18n';
 
 export interface CommandEmployee {
   assigned_accounts?: readonly string[] | null;
@@ -22,28 +24,30 @@ export type RestCommandDenied = {
   error: string;
 };
 
-/** Nhóm lệnh gắn với một module quyền (cùng tên module với EmployeeService / ALL_MODULES). */
+/** Command group tied to one permission module (same module name as EmployeeService / ALL_MODULES). */
 const COMMAND_MODULES: ReadonlyArray<{ prefix: string; module: string }> = [
   { prefix: '/api/command/crm/', module: 'crm' },
   { prefix: '/api/command/workflows', module: 'workflow' },
   { prefix: '/api/command/integrations', module: 'integration' },
   { prefix: '/api/command/ai/', module: 'ai_assistant' },
-  // ERP: quyền ERP chi tiết (RBAC theo hồ sơ ERP) kiểm tra thêm ở HttpRelayService.executeErpRest
+  // ERP: detailed ERP permissions (RBAC per ERP profile) are checked additionally in HttpRelayService.executeErpRest
   { prefix: '/api/command/erp/', module: 'erp' },
 ];
 
-/** Lệnh chỉ Boss được làm (nhân viên luôn bị từ chối). */
+/** Commands only Boss may run (employees are always rejected). */
 const BOSS_ONLY_COMMAND_PREFIXES: readonly string[] = ['/api/command/proxies', '/api/command/accounts/proxy'];
 
-/** Tham số tài khoản phụ của lệnh ghi (ngoài các khoá checkEmployeeAccess đã kiểm tra). */
+/** Secondary account parameters of a write command (beyond the keys checkEmployeeAccess already checked). */
 export const COMMAND_EXTRA_ACCOUNT_KEYS = ['sourceZaloId', 'targetZaloId'] as const;
+/** The same, as a list (campaign clone into several accounts: targetZaloIds). */
+export const COMMAND_EXTRA_ACCOUNT_LIST_KEYS = ['targetZaloIds'] as const;
 
 function matchesPrefix(pathname: string, prefix: string): boolean {
   if (prefix.endsWith('/')) return pathname.startsWith(prefix);
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
-/** Module quyền cần cho một lệnh ghi (undefined = không yêu cầu module riêng, vd nhãn / tin nhắn nhanh / ghim). */
+/** Permission module needed for a write command (undefined = no separate module required, e.g. labels / quick messages / pins). */
 export function requiredCommandModule(pathname: string): string | undefined {
   const path = String(pathname || '');
   return COMMAND_MODULES.find((rule) => matchesPrefix(path, rule.prefix))?.module;
@@ -54,20 +58,25 @@ export function isBossOnlyCommand(pathname: string): boolean {
   return BOSS_ONLY_COMMAND_PREFIXES.some((prefix) => matchesPrefix(path, prefix));
 }
 
-/** Id tài khoản nguồn / đích trong tham số lệnh (rỗng thì bỏ qua). */
+/** Source / target account ids in the command parameters (empty ones are skipped). */
 export function commandExtraAccountIds(params: Record<string, unknown> | null | undefined): string[] {
   const ids = new Set<string>();
   if (!params) return [];
-  for (const key of COMMAND_EXTRA_ACCOUNT_KEYS) {
-    const raw = params[key];
-    if (raw === undefined || raw === null) continue;
+  const add = (raw: unknown) => {
+    if (raw === undefined || raw === null) return;
     const id = String(raw).trim();
     if (id) ids.add(id);
+  };
+  for (const key of COMMAND_EXTRA_ACCOUNT_KEYS) add(params[key]);
+  for (const key of COMMAND_EXTRA_ACCOUNT_LIST_KEYS) {
+    const raw = params[key];
+    // Not a list → the whole value is one id (never skipped: a string would otherwise pass unchecked)
+    if (Array.isArray(raw)) raw.forEach(add); else add(raw);
   }
   return [...ids];
 }
 
-/** null = được phép. `hasPermission(module)` do Boss cung cấp (EmployeeService.hasPermission). */
+/** null = allowed. `hasPermission(module)` is provided by Boss (EmployeeService.hasPermission). */
 export function checkRestCommand(
   employee: CommandEmployee,
   pathname: string,
@@ -75,22 +84,22 @@ export function checkRestCommand(
   hasPermission: (module: string) => boolean,
 ): RestCommandDenied | null {
   if (isBossOnlyCommand(pathname)) {
-    return { status: 403, code: 'COMMAND_FORBIDDEN', error: 'Thao tác này chỉ Boss được thực hiện' };
+    return { status: 403, code: 'COMMAND_FORBIDDEN', error: tr('Thao tác này chỉ Boss được thực hiện') };
   }
   const assigned = new Set((employee.assigned_accounts || []).map(String));
   if (commandExtraAccountIds(params).some((id) => !assigned.has(id))) {
-    return { status: 403, code: 'ACCOUNT_FORBIDDEN', error: 'Không có quyền truy cập tài khoản này' };
+    return { status: 403, code: 'ACCOUNT_FORBIDDEN', error: tr('Không có quyền truy cập tài khoản này') };
   }
   const module = requiredCommandModule(pathname);
   if (module && !hasPermission(module)) {
-    return { status: 403, code: 'MODULE_FORBIDDEN', error: `Không có quyền truy cập module: ${module}` };
+    return { status: 403, code: 'MODULE_FORBIDDEN', error: tr('Không có quyền truy cập module: {{module}}', { module }) };
   }
   return null;
 }
 
 /**
- * Tài khoản mặc định khi lệnh không gửi `zaloId`: chỉ khi nhân viên được giao đúng MỘT tài khoản (không mơ hồ).
- * Trước đây luôn lấy tài khoản được giao đầu tiên → lệnh thiếu tham số ghi nhầm sang tài khoản khác.
+ * Default account when the command does not send `zaloId`: only when the employee is assigned exactly ONE account (no ambiguity).
+ * Previously the first assigned account was always taken → a command missing that parameter wrote into a different account.
  */
 export function defaultCommandAccount(params: Record<string, unknown> | null | undefined, assignedAccounts: readonly string[] | null | undefined): string {
   const explicit = params?.zaloId;
@@ -100,9 +109,9 @@ export function defaultCommandAccount(params: Record<string, unknown> | null | u
 }
 
 /**
- * Phần động của đường dẫn lệnh, theo regex có nhóm bắt (đã giải mã %xx). Trước đây cắt bằng `split('/')[3]` →
- * với /api/command/conversations/<id>/flags lấy nhầm chữ "conversations" làm id (cờ / biệt danh / xoá hội thoại ghi
- * vào liên hệ tên "conversations"; tương tự nhãn, workflow, tích hợp).
+ * Dynamic part of the command path, via a regex with capture groups (%xx decoded). Previously it was cut with `split('/')[3]` →
+ * for /api/command/conversations/<id>/flags it took the word "conversations" as the id (flags / aliases / conversation deletes were written
+ * to the contact named "conversations"; the same for labels, workflows, integrations).
  */
 export function commandPathParams(pathname: string, pattern: RegExp): string[] | null {
   const match = pattern.exec(String(pathname || ''));
@@ -112,7 +121,7 @@ export function commandPathParams(pathname: string, pattern: RegExp): string[] |
   });
 }
 
-/** Danh sách trang của workflow: mảng pageIds, chuỗi "a,b" (cột page_ids) hoặc pageId đơn lẻ. */
+/** Page list of a workflow: a pageIds array, an "a,b" string (page_ids column) or a single pageId. */
 export function workflowPageIds(pageIds: unknown, pageId?: unknown): string[] {
   const list: unknown[] = Array.isArray(pageIds)
     ? pageIds
@@ -123,8 +132,8 @@ export function workflowPageIds(pageIds: unknown, pageId?: unknown): string[] {
 }
 
 /**
- * Nhân viên chỉ được lưu / bật tắt / xoá workflow mà MỌI trang của nó thuộc tài khoản được giao — workflow gắn cả trang
- * không được giao thì sửa nó = đổi tự động trả lời của tài khoản đó. Workflow chung (không gắn trang) giữ như trước.
+ * An employee may only save / toggle / delete a workflow whose EVERY page belongs to an assigned account. Editing a workflow attached to a page
+ * that is not assigned would change that account's auto replies. Shared workflows (not attached to a page) stay as before.
  */
 export function workflowPagesAllowed(pageIds: readonly string[], assignedAccounts: readonly string[] | null | undefined): boolean {
   if (pageIds.length === 0) return true;
@@ -132,7 +141,7 @@ export function workflowPagesAllowed(pageIds: readonly string[], assignedAccount
   return pageIds.every((id) => assigned.has(id));
 }
 
-/** Số nguyên dương từ tham số (id nhãn / chiến dịch / tin nhắn nhanh…); không hợp lệ → 0. */
+/** Positive integer from a parameter (id of a label / campaign / quick message...); invalid → 0. */
 export function positiveInt(value: unknown): number {
   const n = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;

@@ -1,6 +1,6 @@
 /**
- * syncLog — nhật ký đồng bộ trong chính DB workspace (bảng cloud_sync_log, KHÔNG có trigger theo dõi).
- * Giữ tối đa LOG_KEEP dòng mỗi DB. Chế độ realtime gộp mọi lần đẩy trong một giờ vào một dòng 'segments-hour'.
+ * syncLog: sync log inside the workspace DB itself (table cloud_sync_log, with NO tracking trigger).
+ * Keeps at most LOG_KEEP rows per DB. Realtime mode merges all pushes within one hour into a single 'segments-hour' row.
  */
 import type { SyncLogEntry } from '../../../shared/cloud/cloudContracts';
 import { SqlConn, tableExists, toNumber } from './sqlConn';

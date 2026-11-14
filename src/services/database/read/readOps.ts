@@ -1,12 +1,12 @@
 /**
- * readOps — chạy câu SELECT của DatabaseService trên kết nối SQLite CHỈ ĐỌC riêng, trong worker_threads (dbReadWorker.ts):
- * mở hội thoại, tìm tin, danh sách ảnh / file không chặn luồng chính của app khi ổ đĩa chậm (máy vừa thức dậy, RAM đầy).
- * Câu lệnh và tham số do DatabaseService tạo như cũ (DbReadClient.ts); ở đây chỉ chạy.
+ * readOps: runs DatabaseService's SELECT statements on its own READ-ONLY SQLite connection, inside worker_threads (dbReadWorker.ts):
+ * opening a conversation, searching messages, photo / file lists do not block the app's main thread when the disk is slow (the machine just woke up, RAM full).
+ * The statements and parameters are built by DatabaseService as before (DbReadClient.ts); this file only runs them.
  *
- * Kết nối giữ theo đường dẫn DB, tự đóng sau IDLE_CLOSE_MS không dùng: không giữ file lâu (đổi workspace, khôi phục,
- * chuyển thư mục cần thay / xoá file; DatabaseService còn gọi closeAll ngay trước những lúc đó).
+ * A connection is kept per DB path and closed automatically after IDLE_CLOSE_MS unused: it does not hold the file for long (switching workspace, restoring,
+ * moving the folder needs to replace / delete the file; DatabaseService also calls closeAll right before those moments).
  *
- * File này và dbReadWorker.ts chỉ import Node — worker chạy được cả khi thư mục được unpack khỏi app.asar.
+ * This file and dbReadWorker.ts import only Node: the worker runs even when the folder is unpacked from app.asar.
  */
 import * as path from 'path';
 
@@ -30,7 +30,7 @@ export const IDLE_CLOSE_MS = 10_000;
 export interface ReadOps {
     run(req: ReadRequest): unknown;
     closeAll(): void;
-    /** Đóng kết nối không dùng từ IDLE_CLOSE_MS (worker gọi theo nhịp). */
+    /** Close a connection that has not been used for IDLE_CLOSE_MS (the worker calls this on a timer). */
     sweep(): void;
     openCount(): number;
 }
@@ -47,7 +47,7 @@ export function createReadOps(open: OpenReadConn, opts: { idleCloseMs?: number; 
         const entry = conns.get(key);
         if (!entry) return;
         conns.delete(key);
-        try { entry.conn.close(); } catch { /* đã đóng */ }
+        try { entry.conn.close(); } catch { /* closed */ }
     };
     return {
         run(req: ReadRequest): unknown {

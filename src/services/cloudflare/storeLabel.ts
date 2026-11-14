@@ -1,6 +1,6 @@
 /**
- * Tên kho đang chọn cho câu báo ("R2" / "Google Drive") ở các module chỉ nhận R2Client (media, đồng bộ DB, khôi phục).
- * Đọc lúc gọi (require muộn, tránh vòng import với CloudflareService); lỗi / core giả trong test → "R2".
+ * Name of the selected store used in messages ("R2" / "Google Drive") in the modules that only accept R2Client (media, DB sync, restore).
+ * Read at call time (lazy require, avoids an import cycle with CloudflareService); on error / a fake core in tests → "R2".
  */
 export function storeLabelNow(): string {
     try {

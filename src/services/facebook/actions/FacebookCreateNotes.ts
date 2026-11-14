@@ -1,7 +1,7 @@
 /**
  * FacebookCreateNotes.ts
- * Port từ Python _messaging/_createNotes.py (fbchat-v2 2.3.2)
- * Tạo Messenger Notes (24h)
+ * Ported from Python _messaging/_createNotes.py (fbchat-v2 2.3.2)
+ * Create Messenger Notes (24h)
  */
 
 import axios from 'axios';
@@ -14,6 +14,7 @@ import {
   parseFacebookResponse,
 } from '../FacebookGraphQLResult';
 import Logger from '../../../utils/Logger';
+import { tr } from '../../../shared/i18n';
 
 const GRAPHQL_URL = 'https://www.facebook.com/api/graphql/';
 
@@ -33,11 +34,11 @@ function generateClientId(): string {
 }
 
 /**
- * Tạo Messenger Note mới (N2)
- * Notes là tin nhắn tự hủy sau 24h, hiển thị ở đầu inbox.
+ * Create a new Messenger Note (N2)
+ * Notes are messages that self-destruct after 24h and appear at the top of the inbox.
  *
  * fbchat-v2 2.3.2: a mutation is sent once (never retried: a lost response may
- * still have created the note) and only a confirmed status node is success.
+ * still have created the note), and only a confirmed status node counts as success.
  */
 export async function createNote(
   dataFB: FBSessionData,
@@ -57,7 +58,7 @@ export async function createNote(
       client_mutation_id: generateClientId(),
       actor_id: String(dataFB.FacebookID),
       text: String(text),
-      duration: 86400, // 24 giờ
+      duration: 86400, // 24 hours
       note_type: 'TEXT_NOTE',
       privacy: normalizePrivacy(privacy),
       session_id: generateClientId(),
@@ -83,7 +84,7 @@ export async function createNote(
     assertFacebookMutationSuccess('createNote', parsed);
     const status = parsed?.data?.xfb_rich_status_create?.status;
     if (!isNonEmptyMutationNode(status)) {
-      throw new FacebookOperationError('createNote', 'not_confirmed', 'Facebook không trả về trạng thái tạo note hợp lệ.');
+      throw new FacebookOperationError('createNote', 'not_confirmed', tr('Facebook không trả về trạng thái tạo note hợp lệ.'));
     }
     const noteId = status?.id;
     return { success: true, noteId: noteId ? String(noteId) : undefined };

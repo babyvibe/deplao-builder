@@ -1,19 +1,19 @@
 /**
- * DriveStore — một "bucket" trên Google Drive (thư mục Deplao/<bucket>) theo đúng hợp đồng R2Client để module media /
- * đồng bộ DB dùng nguyên, không biết mình đang chạy trên Drive.
+ * DriveStore: one "bucket" on Google Drive (folder Deplao/<bucket>) that follows the R2Client contract exactly, so the media module and the
+ * DB sync can use it unchanged without knowing they run on Drive.
  *
- *  - Khoá `a/b/c.jpg` = thư mục a → b (con của thư mục bucket) + file `c.jpg`. Đọc không bao giờ tạo thư mục (thiếu =
- *    không có object); ghi tạo thư mục còn thiếu — hai lệnh ghi song song cùng thư mục chỉ tạo một (dồn theo đường dẫn),
- *    hai lệnh ghi cùng khoá chạy lần lượt.
- *  - Cache trong RAM: đường dẫn thư mục → id; khoá → { id, size, md5, modifiedTime } (LRU ~5000). Thư mục do chính
- *    store này vừa tạo: biết chắc trong đó có tên nào → file mới không cần tra (đỡ 100 đơn vị quota / file lúc tải lên
- *    lần đầu hàng loạt).
- *  - Drive cho trùng tên: đọc lấy file mới nhất (modifiedTime), thư mục lấy bản tạo sớm nhất (mọi máy chọn cùng một).
- *  - putFile ≤ 5 MiB: một request multipart; lớn hơn: phiên resumable, đoạn 8 MiB, mỗi đoạn thử lại 3 lần (hỏi lại
- *    server đã nhận tới đâu rồi gửi tiếp). ETag = md5Checksum của Drive (PUT và HEAD cùng giá trị).
- *  - Xoá = xoá hẳn (không vào thùng rác — thùng rác vẫn tính dung lượng tài khoản).
- *  - id đã nhớ không còn (người dùng xoá thư mục / file trên Drive → 404) → quên cache, kiểm lại thư mục gốc, làm lại
- *    một lần. Thư mục bucket được kiểm lại 10 phút / lần (bị bỏ vào thùng rác thì file mới không rơi vào thùng rác).
+ *  - Key `a/b/c.jpg` = folder a → b (inside the bucket folder) + file `c.jpg`. Reads never create folders (missing =
+ *    no object); writes create the missing folders. Two parallel writes into the same folder create it only once (merged by path),
+ *    two writes to the same key run one after another.
+ *  - In-RAM cache: folder path → id; key → { id, size, md5, modifiedTime } (LRU ~5000). For a folder this store has just
+ *    created, it knows exactly which names are in it, so new files need no lookup (saves 100 quota units per file during
+ *    a mass first upload).
+ *  - Drive allows duplicate names: reads take the newest file (modifiedTime), folders take the earliest-created one (every machine picks the same one).
+ *  - putFile ≤ 5 MiB: one multipart request; larger: a resumable session, 8 MiB chunks, each chunk retried 3 times (asks the
+ *    server how much it received, then continues). ETag = Drive's md5Checksum (PUT and HEAD return the same value).
+ *  - Delete = permanent delete (not to the trash, since the trash still counts against the account quota).
+ *  - A remembered id that is gone (the user deleted the folder / file on Drive → 404) → forget the cache, re-check the root folder, retry
+ *    once. The bucket folder is re-checked every 10 minutes (if it was moved to the trash, new files must not land there).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -24,10 +24,11 @@ import {
     ContentSource, DEFAULT_MIME, DriveApi, DriveFileMeta, FOLDER_MIME, NETWORK_WAIT_MS, ResumableState,
     escapeQueryValue, isDriveRetryable, isNotFound,
 } from './DriveApi';
+import { tr } from '../../../shared/i18n';
 
 export const DRIVE_SIMPLE_UPLOAD_MAX = 5 * 1024 * 1024;
 export const DRIVE_CHUNK_SIZE = 8 * 1024 * 1024;
-/** Đoạn resumable phải là bội của 256 KiB (trừ đoạn cuối). */
+/** Resumable chunks must be a multiple of 256 KiB (except the last chunk). */
 export const DRIVE_CHUNK_ALIGN = 256 * 1024;
 const CHUNK_BACKOFF_MS = [1000, 3000, 9000];
 const FILE_CACHE_MAX = 5000;
@@ -35,12 +36,12 @@ const DELETE_CONCURRENCY = 4;
 const FOLDER_RECHECK_MS = 10 * 60_000;
 const TOMBSTONE_TTL_MS = 10 * 60_000;
 const TOMBSTONE_MAX = 20_000;
-/** Thư mục "mới" giữ tối đa bấy nhiêu tên; vượt thì thôi theo dõi (quay về tra từng file). */
+/** A "fresh" folder keeps at most this many names; beyond that it stops tracking (falls back to looking up each file). */
 const FRESH_NAMES_MAX = 20_000;
 const FILE_FIELDS = 'id,name,size,md5Checksum,modifiedTime';
 const LIST_FIELDS = 'nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime)';
 const MAX_APP_PROPERTIES = 30;
-/** Drive: mỗi appProperty tối đa 124 byte UTF-8 cho cả khoá + giá trị. */
+/** Drive: each appProperty allows at most 124 UTF-8 bytes for key + value together. */
 const MAX_APP_PROPERTY_BYTES = 124;
 
 type PutFileOptions = R2PutOptions & {
@@ -51,45 +52,45 @@ type PutFileOptions = R2PutOptions & {
 export interface DriveStoreOptions {
     bucket: string;
     api: DriveApi;
-    /** id thư mục gốc "Deplao" (create=false: không tạo — null nếu chưa có). */
+    /** id of the root folder "Deplao" (create=false: do not create; null if it does not exist yet). */
     rootId: (create: boolean) => Promise<string | null>;
-    /** Một id đã nhớ không còn → lần sau kiểm lại thư mục gốc. */
+    /** A remembered id that is gone → next time, re-check the root folder. */
     invalidateRoot: () => void;
-    /** Đổi tài khoản / thư mục gốc → số tăng → store tự quên cache. */
+    /** Account / root folder changed → the number goes up → the store forgets its cache by itself. */
     generation?: () => number;
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
-    /** Ngưỡng tải một request (multipart); lớn hơn dùng resumable. Mặc định 5 MiB. */
+    /** Threshold for a single-request upload (multipart); larger ones use resumable. Default 5 MiB. */
     simpleUploadMax?: number;
-    /** Cỡ đoạn resumable (làm tròn xuống bội 256 KiB). Mặc định 8 MiB. */
+    /** Resumable chunk size (rounded down to a multiple of 256 KiB). Default 8 MiB. */
     chunkSize?: number;
-    /** Số lần thử lại mỗi đoạn (mặc định 3). */
+    /** Retries per chunk (default 3). */
     chunkRetries?: number;
     fileCacheMax?: number;
-    /** deleteObjects: số lệnh xoá song song (mặc định 4). */
+    /** deleteObjects: number of parallel delete calls (default 4). */
     deleteConcurrency?: number;
 }
 
 interface CachedFile { id: string; parent: string; size: number; md5: string; modifiedTime: string }
-/** cached = lấy từ cache (có thể cũ); false = vừa tra trên Drive. */
+/** cached = taken from the cache (may be stale); false = just looked up on Drive. */
 interface FoundFile extends CachedFile { cached: boolean }
 
 interface ListCursor {
     v: 1;
-    /** prefix của lần gọi đầu (mã trang chỉ dùng được với đúng prefix đó) */
+    /** prefix of the first call (a page token only works with that exact prefix) */
     p: string;
-    /** thư mục còn phải liệt kê (BFS): id + tiền tố khoá; f = lọc tên ở tầng đầu */
+    /** folders still to list (BFS): id + key prefix; f = name filter applied at the top level */
     q: Array<{ id: string; path: string; f?: string }>;
-    /** pageToken của Drive cho q[0] */
+    /** Drive pageToken for q[0] */
     t: string | null;
 }
 
-// ─── Tiện ích ────────────────────────────────────────────────────────────────
+// ─── Utilities ────────────────────────────────────────────────────────────────
 
 function checkKey(key: string): string {
     const k = String(key ?? '');
     if (!k || Buffer.byteLength(k, 'utf8') > 1024 || k.startsWith('/') || k.endsWith('/') || k.includes('//')) {
-        throw new CloudError('R2_BAD_KEY', 'Tên object không hợp lệ');
+        throw new CloudError('R2_BAD_KEY', tr('Tên object không hợp lệ'));
     }
     return k;
 }
@@ -117,10 +118,10 @@ function toInfo(key: string, f: DriveFileMeta): R2ObjectInfo {
 }
 
 function errText(err: unknown): string {
-    return String((err as Error)?.message || err || 'Lỗi không xác định').slice(0, 300);
+    return String((err as Error)?.message || err || tr('Lỗi không xác định')).slice(0, 300);
 }
 
-/** Cắt chuỗi theo byte UTF-8 (không cắt đôi ký tự). */
+/** Truncates a string by UTF-8 bytes (never splits a character in two). */
 function truncateUtf8(s: string, maxBytes: number): string {
     if (Buffer.byteLength(s, 'utf8') <= maxBytes) return s;
     let out = '';
@@ -134,7 +135,7 @@ function truncateUtf8(s: string, maxBytes: number): string {
     return out;
 }
 
-/** metadata kiểu R2 → appProperties của Drive (≤ 30 mục, khoá + giá trị ≤ 124 byte; không vừa thì cắt / bỏ). */
+/** R2-style metadata → Drive appProperties (≤ 30 entries, key + value ≤ 124 bytes; anything that does not fit is truncated / dropped). */
 export function toAppProperties(metadata: Record<string, string> | undefined | null): Record<string, string> {
     const out: Record<string, string> = {};
     let count = 0;
@@ -153,7 +154,7 @@ function bufferSource(buf: Buffer): ContentSource {
     return { size: buf.length, open: (start, end) => buf.subarray(start, end) };
 }
 
-/** Đọc [start, end) của file theo khối 256 KiB (không nạp cả file vào RAM). */
+/** Reads [start, end) of the file in 256 KiB blocks (the whole file is not loaded into RAM). */
 function fileSource(filePath: string, size: number): ContentSource {
     return {
         size,
@@ -171,7 +172,7 @@ function fileSource(filePath: string, size: number): ContentSource {
     };
 }
 
-/** Gom nội dung tải về vào RAM (getObject). */
+/** Collects the downloaded content into RAM (getObject). */
 class BufferSink extends Writable {
     private readonly chunks: Buffer[] = [];
 
@@ -208,11 +209,11 @@ function decodeCursor(token: string, prefix: string): ListCursor {
             && c.q.every((x: any) => x && typeof x.id === 'string' && typeof x.path === 'string' && (x.f === undefined || typeof x.f === 'string'))
             && (c.t === null || typeof c.t === 'string');
         if (ok) return c as ListCursor;
-    } catch { /* rơi xuống lỗi */ }
-    throw new CloudError('R2_BAD_REQUEST', 'Mã trang danh sách không hợp lệ');
+    } catch { /* falls through to the error */ }
+    throw new CloudError('R2_BAD_REQUEST', tr('Mã trang danh sách không hợp lệ'));
 }
 
-/** Lỗi riêng của một khoá khi xoá nhiều (còn lại — bận / mạng / quyền — là lỗi cả lệnh, ném ra). */
+/** Error for one key when deleting many (any other error, such as busy / network / permission, fails the whole call and is thrown). */
 function isPerKeyError(err: unknown): boolean {
     return !(err instanceof CloudError) || err.code === 'R2_ERROR';
 }
@@ -227,15 +228,15 @@ export class DriveStore implements R2Client {
     private readonly chunkRetries: number;
     private readonly fileCacheMax: number;
     private readonly deleteConcurrency: number;
-    /** đường dẫn thư mục trong bucket ('' = thư mục bucket) → id */
+    /** folder path inside the bucket ('' = the bucket folder) → id */
     private readonly folders = new Map<string, { id: string; checkedAt: number }>();
-    /** đang tra / tạo thư mục (một việc cho mỗi đường dẫn) */
+    /** folder lookup / creation in progress (one job per path) */
     private readonly folderJobs = new Map<string, { create: boolean; promise: Promise<string | null> }>();
-    /** khoá → file (LRU theo thứ tự chèn của Map) */
+    /** key → file (LRU by the Map's insertion order) */
     private readonly files = new Map<string, CachedFile>();
-    /** id thư mục do store này tạo → tên (file / thư mục con) có thể đã có trong đó; ngoài danh sách = chắc chắn chưa có */
+    /** id of a folder this store created → names (files / subfolders) that may already be in it; not in the list = definitely not there yet */
     private readonly fresh = new Map<string, Set<string>>();
-    /** khoá vừa xoá (ms) — xoá lại trong 10 phút khỏi phải tra (thử lại deleteObjects sau khi bận) */
+    /** key just deleted (ms): deleting it again within 10 minutes needs no lookup (a deleteObjects retry after busy) */
     private readonly tombstones = new Map<string, number>();
     private readonly keyLocks = new Map<string, Promise<void>>();
     private cacheGen = 0;
@@ -253,7 +254,7 @@ export class DriveStore implements R2Client {
         this.seenGen = opts.generation ? opts.generation() : 0;
     }
 
-    // ── API công khai (R2Client) ──
+    // ── Public API (R2Client) ──
 
     async putObject(key: string, body: Buffer | string, opts: R2PutOptions = {}): Promise<{ etag: string }> {
         this.sync();
@@ -267,7 +268,7 @@ export class DriveStore implements R2Client {
         this.sync();
         const k = checkKey(key);
         const st = await fs.promises.stat(filePath);
-        if (!st.isFile()) throw new CloudError('R2_BAD_FILE', `Không phải file: ${path.basename(filePath)}`);
+        if (!st.isFile()) throw new CloudError('R2_BAD_FILE', tr('Không phải file: {{v1}}', { v1: path.basename(filePath) }));
         const size = st.size;
         const meta = await this.withKeyLock(k, () => this.retryStale(() => this.upload(k, fileSource(filePath, size), opts, opts)));
         const sent = meta.size !== undefined && meta.size !== null && meta.size !== '' ? Number(meta.size) : NaN;
@@ -312,7 +313,7 @@ export class DriveStore implements R2Client {
         const gen = this.cacheGen;
         const cached = this.cacheGet(k);
         if (cached && cached.parent === folderId) {
-            // id đã nhớ: get theo id (5 đơn vị) thay vì tra theo tên (100) — luôn đọc số mới (máy khác có thể vừa ghi đè)
+            // remembered id: get by id (5 units) instead of looking up by name (100): always reads the latest value (another machine may have just overwritten it)
             try {
                 const f = await this.api.getFile(cached.id, `${FILE_FIELDS},trashed`);
                 if (f && !f.trashed && f.name === name) {
@@ -335,9 +336,9 @@ export class DriveStore implements R2Client {
     }
 
     /**
-     * Xoá nhiều khoá: từng file (Drive không có lệnh xoá hàng loạt), 4 lệnh song song. Thiếu file = coi như đã xoá.
-     * Bận / mất mạng / bị từ chối → dừng nhận khoá mới, chờ các lệnh đang chạy rồi ném (như lỗi cả request của R2);
-     * khoá vừa xoá được nhớ 10 phút nên lần thử lại không tốn lượt tra.
+     * Deletes many keys: file by file (Drive has no bulk delete), 4 calls in parallel. A missing file = treated as already deleted.
+     * Busy / no network / refused → stop taking new keys, wait for the running calls, then throw (like a whole-request error of R2);
+     * a just-deleted key is remembered for 10 minutes, so a retry costs no lookup.
      */
     async deleteObjects(keys: string[]): Promise<{ deleted: string[]; errors: Array<{ key: string; code: string; message: string }> }> {
         this.sync();
@@ -368,8 +369,8 @@ export class DriveStore implements R2Client {
     }
 
     /**
-     * Một trang danh sách (≤ maxKeys). prefix 'a/b/' = mọi file dưới thư mục a/b (đệ quy); 'a/b/x' = trong a/b chỉ lấy
-     * tên bắt đầu bằng 'x' (file, hoặc thư mục → lấy hết bên trong). Mã trang = trạng thái duyệt (base64 JSON).
+     * One page of the listing (≤ maxKeys). prefix 'a/b/' = every file under folder a/b (recursive); 'a/b/x' = inside a/b, only names
+     * starting with 'x' (a file, or a folder → take everything inside it). The page token = the traversal state (base64 JSON).
      */
     async listObjects(prefix: string, opts: { continuationToken?: string; maxKeys?: number } = {}): Promise<{ objects: R2ObjectInfo[]; nextToken: string | null }> {
         this.sync();
@@ -402,7 +403,7 @@ export class DriveStore implements R2Client {
                 });
             } catch (err) {
                 if (!isNotFound(err)) throw err;
-                page = { files: [], nextPageToken: null }; // thư mục vừa bị xoá giữa hai trang
+                page = { files: [], nextPageToken: null }; // folder deleted between two pages
             }
             for (const f of page.files) {
                 const name = String(f.name || '');
@@ -426,28 +427,28 @@ export class DriveStore implements R2Client {
     }
 
     presignGet(_key: string, _expiresSec?: number): string {
-        throw new CloudError('UNSUPPORTED', 'Google Drive không có liên kết tải ký sẵn');
+        throw new CloudError('UNSUPPORTED', tr('Google Drive không có liên kết tải ký sẵn'));
     }
 
-    /** Tạo thư mục Deplao/<bucket> nếu chưa có (ensureBucket). */
+    /** Creates the folder Deplao/<bucket> if it does not exist yet (ensureBucket). */
     async ensureBucketFolder(): Promise<string> {
         this.sync();
         return this.retryStale(async () => {
             const id = await this.folderId('', true);
-            if (!id) throw new CloudError('R2_ERROR', 'Không tạo được thư mục trên Google Drive');
+            if (!id) throw new CloudError('R2_ERROR', tr('Không tạo được thư mục trên Google Drive'));
             return id;
         });
     }
 
-    // ── Tải lên ──
+    // ── Upload ──
 
     private async upload(key: string, source: ContentSource, opts: R2PutOptions, cb: Pick<PutFileOptions, 'onProgress' | 'onRetry'>): Promise<DriveFileMeta> {
         const { dir, name } = splitKey(key);
         const gen = this.cacheGen;
         const folderId = await this.folderId(dir, true);
-        if (!folderId) throw new CloudError('R2_ERROR', 'Không tạo được thư mục trên Google Drive');
+        if (!folderId) throw new CloudError('R2_ERROR', tr('Không tạo được thư mục trên Google Drive'));
         const existing = await this.findFile(key, folderId, name);
-        if (existing && opts.ifNoneMatch === '*') throw new CloudError('R2_EXISTS', 'Đã có file này trên Google Drive', 412);
+        if (existing && opts.ifNoneMatch === '*') throw new CloudError('R2_EXISTS', tr('Đã có file này trên Google Drive'), 412);
 
         const size = source.size;
         const mimeType = opts.contentType || DEFAULT_MIME;
@@ -458,10 +459,10 @@ export class DriveStore implements R2Client {
             : { name, parents: [folderId], mimeType, ...(hasProps ? { appProperties: props } : {}) };
         const progress = (sent: number) => {
             if (!cb.onProgress) return;
-            try { cb.onProgress(Math.max(0, Math.min(sent, size)), size); } catch { /* callback lỗi không làm hỏng tải lên */ }
+            try { cb.onProgress(Math.max(0, Math.min(sent, size)), size); } catch { /* a failing callback does not break the upload */ }
         };
         this.tombstones.delete(key);
-        // Ghi tên trước khi tạo: request lỗi mà Drive vẫn tạo xong → lần sau phải tra, không tạo trùng
+        // Record the name before creating: if the request fails but Drive still created the file → next time look it up, do not create a duplicate
         if (!existing) this.noteName(folderId, name);
 
         let meta: DriveFileMeta;
@@ -477,7 +478,7 @@ export class DriveStore implements R2Client {
         return meta;
     }
 
-    /** Phiên resumable: đoạn chunkSize, mỗi đoạn thử lại chunkRetries lần, hỏi lại server đã nhận tới đâu trước khi gửi lại. */
+    /** Resumable session: chunkSize per chunk, each chunk retried chunkRetries times, asking the server how far it got before resending. */
     private async uploadResumable(
         fileId: string | null, metadata: Record<string, unknown>, mimeType: string, source: ContentSource,
         progress: (sent: number) => void, onRetry?: PutFileOptions['onRetry'],
@@ -490,10 +491,10 @@ export class DriveStore implements R2Client {
         for (;;) {
             let state: ResumableState | null = null;
             if (offset >= total) {
-                // Server báo đã đủ byte nhưng chưa trả file (hiếm) → hỏi lại để lấy kết quả
+                // Server reports all bytes received but has not returned the file (rare) → ask again to get the result
                 state = await this.api.queryUpload(session, total);
                 if (state.file) return state.file;
-                throw new CloudError('R2_ERROR', 'Google Drive chưa hoàn tất file vừa tải lên');
+                throw new CloudError('R2_ERROR', tr('Google Drive chưa hoàn tất file vừa tải lên'));
             }
             chunkNo++;
             const start = offset;
@@ -506,10 +507,10 @@ export class DriveStore implements R2Client {
                     if (!isDriveRetryable(err) || attempt >= this.chunkRetries) throw err;
                     try {
                         onRetry?.({ part: chunkNo, attempt: attempt + 1, maxAttempts: this.chunkRetries, error: errText(err) });
-                    } catch { /* callback lỗi không làm hỏng tải lên */ }
+                    } catch { /* a failing callback does not break the upload */ }
                     const hinted = err instanceof CloudError && err.retryAfterMs ? Math.min(err.retryAfterMs, 30_000) : 0;
                     await this.sleep(Math.max(hinted, CHUNK_BACKOFF_MS[Math.min(attempt, CHUNK_BACKOFF_MS.length - 1)]));
-                    // Server có thể đã nhận một phần / cả đoạn vừa lỗi → hỏi lại rồi gửi tiếp từ đó
+                    // Server may have received part or all of the chunk that just failed → ask again, then continue from there
                     try {
                         const st = await this.api.queryUpload(session, total);
                         if (st.file || st.next !== start) {
@@ -523,9 +524,9 @@ export class DriveStore implements R2Client {
             }
             if (state.file) return state.file;
             if (state.next <= start) {
-                // Server không giữ thêm byte nào (hiếm): không lặp vô hạn
+                // Server holds no more bytes (rare): do not loop forever
                 if (++stalls > this.chunkRetries) {
-                    throw new CloudError('R2_BUSY', 'Google Drive chưa nhận dữ liệu tải lên — tự thử lại sau.', 503, NETWORK_WAIT_MS);
+                    throw new CloudError('R2_BUSY', tr('Google Drive chưa nhận dữ liệu tải lên — tự thử lại sau.'), 503, NETWORK_WAIT_MS);
                 }
             } else {
                 stalls = 0;
@@ -535,9 +536,9 @@ export class DriveStore implements R2Client {
         }
     }
 
-    // ── Đọc / xoá ──
+    // ── Read / delete ──
 
-    /** Tìm file rồi đọc; id trong cache đã mất (404) → tra lại theo tên một lần. null = không có. */
+    /** Find the file then read it; if the cached id is gone (404) → look it up by name once more. null = not found. */
     private async readObject<T>(key: string, read: (found: FoundFile) => Promise<T>): Promise<T | null> {
         const { dir, name } = splitKey(key);
         const folderId = await this.folderId(dir, false);
@@ -559,7 +560,7 @@ export class DriveStore implements R2Client {
     private verifySize(r: { bytes: number; contentLength: number | null; encoded: boolean }, found: FoundFile): void {
         const expected = !r.encoded && r.contentLength !== null ? r.contentLength : !found.cached ? found.size : null;
         if (expected !== null && expected !== r.bytes) {
-            throw new CloudError('R2_NETWORK', 'Tải từ Google Drive bị đứt giữa chừng', undefined, NETWORK_WAIT_MS);
+            throw new CloudError('R2_NETWORK', tr('Tải từ Google Drive bị đứt giữa chừng'), undefined, NETWORK_WAIT_MS);
         }
     }
 
@@ -578,7 +579,7 @@ export class DriveStore implements R2Client {
                 ids = [cached.id];
             } else {
                 const freshNames = this.fresh.get(folderId);
-                // Tra theo tên: xoá hết các bản trùng tên (R2: xoá xong thì HEAD phải không còn)
+                // Look up by name: delete all the duplicate-named copies (R2: after deleting, HEAD must return nothing)
                 ids = freshNames && !freshNames.has(name) ? [] : (await this.queryFiles(folderId, name)).map(f => f.id);
             }
             let stale = false;
@@ -596,9 +597,9 @@ export class DriveStore implements R2Client {
         this.markDeleted(key);
     }
 
-    // ── Thư mục ──
+    // ── Folders ──
 
-    /** id thư mục theo đường dẫn trong bucket ('' = thư mục bucket); create=false không tạo (null nếu thiếu). */
+    /** folder id by path inside the bucket ('' = the bucket folder); create=false does not create (null if missing). */
     private async folderId(dir: string, create: boolean): Promise<string | null> {
         const hit = this.folders.get(dir);
         if (hit) {
@@ -608,7 +609,7 @@ export class DriveStore implements R2Client {
                 hit.checkedAt = this.now();
                 return hit.id;
             }
-            // Thư mục bucket (hoặc "Deplao") đã bị xoá / bỏ vào thùng rác trên Drive → quên mọi id, kiểm lại thư mục gốc
+            // The bucket folder (or "Deplao") was deleted / moved to the trash on Drive → forget all ids, re-check the root folder
             if (gen === this.cacheGen) {
                 this.resetCaches();
                 this.opts.invalidateRoot();
@@ -619,7 +620,7 @@ export class DriveStore implements R2Client {
         if (job) {
             const id = await job.promise;
             if (id || job.create || !create) return id;
-            return this.folderId(dir, create); // việc đang chạy chỉ tra (không tạo) và không thấy → giờ tạo
+            return this.folderId(dir, create); // a job that was only looking (not creating) found nothing → now create it
         }
         const promise: Promise<string | null> = this.resolveFolder(dir, create).finally(() => {
             const cur = this.folderJobs.get(dir);
@@ -673,7 +674,7 @@ export class DriveStore implements R2Client {
 
     // ── File ──
 
-    /** File theo khoá: cache (có thể cũ) → không cần tra nếu thư mục do mình tạo và chưa từng ghi tên này → tra theo tên. */
+    /** File by key: cache (may be stale) → no lookup needed if this store created the folder and never wrote this name; otherwise look it up by name. */
     private async findFile(key: string, folderId: string, name: string): Promise<FoundFile | null> {
         const hit = this.cacheGet(key);
         if (hit && hit.parent === folderId) return { ...hit, cached: true };
@@ -689,7 +690,7 @@ export class DriveStore implements R2Client {
         return { ...entry, cached: false };
     }
 
-    /** Các file đúng tên trong thư mục, mới nhất trước. */
+    /** Files with the exact name in the folder, newest first. */
     private async queryFiles(folderId: string, name: string): Promise<DriveFileMeta[]> {
         const res = await this.api.listFiles({
             q: `name = '${escapeQueryValue(name)}' and '${escapeQueryValue(folderId)}' in parents and trashed = false and mimeType != '${FOLDER_MIME}'`,
@@ -697,7 +698,7 @@ export class DriveStore implements R2Client {
             orderBy: 'modifiedTime desc',
             pageSize: 100,
         });
-        // So tên chính xác ở máy (phòng Drive so khớp không phân biệt hoa / thường)
+        // Compare names exactly on this machine (guards against Drive matching case-insensitively)
         return res.files
             .filter(f => f.name === name)
             .sort((a, b) => timeOf(b.modifiedTime) - timeOf(a.modifiedTime));
@@ -727,7 +728,7 @@ export class DriveStore implements R2Client {
         return entry;
     }
 
-    /** Kết quả liệt kê: chỉ nhớ khi chưa có hoặc mới hơn bản đang nhớ (trùng tên → bản mới nhất thắng). */
+    /** Listing result: only remembered if nothing is stored yet or it is newer than the stored copy (for duplicate names, the newest wins). */
     private rememberListed(key: string, parent: string, f: DriveFileMeta): void {
         const cur = this.files.get(key);
         if (cur && cur.parent === parent && cur.id !== f.id && timeOf(cur.modifiedTime) > timeOf(f.modifiedTime)) return;
@@ -767,7 +768,7 @@ export class DriveStore implements R2Client {
 
     // ── Chung ──
 
-    /** id đã nhớ không còn (404) → quên hết, kiểm lại thư mục gốc, làm lại đúng một lần. */
+    /** Remembered id no longer exists (404) → forget everything, re-check the root folder, redo it exactly once. */
     private async retryStale<T>(fn: () => Promise<T>): Promise<T> {
         try {
             return await fn();
@@ -779,7 +780,7 @@ export class DriveStore implements R2Client {
         }
     }
 
-    /** Ghi / xoá cùng một khoá chạy lần lượt (không tạo hai file trùng tên, If-None-Match đúng nghĩa). */
+    /** Writes / deletes on the same key run one after another (no two files with the same name; If-None-Match works as intended). */
     private async withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
         const prev = this.keyLocks.get(key);
         let release!: () => void;
@@ -795,7 +796,7 @@ export class DriveStore implements R2Client {
         }
     }
 
-    /** Đổi tài khoản / thư mục gốc (GoogleDriveService tăng số thế hệ) → quên cache. */
+    /** Account / root folder changed (GoogleDriveService bumps the generation number) → forget the cache. */
     private sync(): void {
         const g = this.opts.generation ? this.opts.generation() : 0;
         if (g !== this.seenGen) {

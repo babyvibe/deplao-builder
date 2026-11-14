@@ -1,25 +1,25 @@
 /**
- * Phần bình luận của bài đăng kênh Telegram (nhóm thảo luận): gộp các trang bình luận (tải thêm cũ hơn / làm mới định kỳ),
- * thứ tự như Telegram (cũ ở trên, mới ở dưới), và cập nhật số bình luận của bài trong kênh.
+ * The comments section of a Telegram channel post (discussion group): merges the comment pages (loading older ones / periodic refresh),
+ * in Telegram's order (oldest on top, newest at the bottom), and updates the comment count of the post in the channel.
  */
 
 export interface DiscussionCommentLike {
   msg_id: string;
   timestamp: number;
   local_paths?: string;
-  /** Tin vừa gửi từ ô soạn tin (MessageQueue): id tạm, gửi xong có real_msg_id */
+  /** Message just sent from the composer (MessageQueue): temporary id, real_msg_id once sent */
   temp_id?: string;
   real_msg_id?: string;
 }
 
-/** Tin vừa gửi chưa có bản thật từ Telegram (id tạm). */
+/** Message just sent that has no real copy from Telegram yet (temporary id). */
 export function isPendingComment(comment: DiscussionCommentLike): boolean {
   return !!comment.temp_id && !/^\d+$/.test(String(comment.msg_id));
 }
 
 /**
- * Người bình luận là người dùng Telegram: bấm ảnh / tên mở hồ sơ như trong nhóm. Bình luận gửi dưới danh nghĩa nhóm / kênh
- * (quản trị viên ẩn danh, kênh tự đăng) có sender_kind 'chat' và id âm: không phải người, không mở hồ sơ.
+ * The commenter is a Telegram user: tapping the photo / name opens the profile, as in the group. Comments sent in the name of the group / channel
+ * (anonymous admin, channel auto-posts) have sender_kind 'chat' and a negative id: not a person, they do not open a profile.
  */
 export function isUserCommentSender(comment: { sender_id?: string | null; sender_kind?: string }): boolean {
   return comment.sender_kind !== 'chat' && /^\d+$/.test(String(comment.sender_id || ''));
@@ -41,10 +41,10 @@ function compareComments(a: DiscussionCommentLike, b: DiscussionCommentLike): nu
 }
 
 /**
- * Gộp bình luận theo msg_id: bản mới thay bản cũ (sửa / cảm xúc), đường dẫn file đã tải giữ lại từ cả hai, sắp cũ → mới.
+ * Merges comments by msg_id: the newer copy replaces the older one (edit / reaction), the downloaded file paths are kept from both, sorted old → new.
  */
 export function mergeDiscussionComments<T extends DiscussionCommentLike>(current: T[], incoming: T[]): T[] {
-  // Tin vừa gửi (id tạm) mà bản thật đã về → bỏ bản tạm (không hiện 2 lần)
+  // A message just sent (temporary id) whose real copy has arrived → drop the temp copy (so it does not show twice)
   const incomingIds = new Set(incoming.map((comment) => String(comment.msg_id)));
   const byId = new Map<string, T>();
   for (const comment of current) {
@@ -64,7 +64,7 @@ export function mergeDiscussionComments<T extends DiscussionCommentLike>(current
   return Array.from(byId.values()).sort(compareComments);
 }
 
-/** id bình luận cũ nhất đã tải (offset để tải trang cũ hơn); không có → 0. */
+/** id of the oldest comment loaded (offset for loading older pages); none → 0. */
 export function oldestCommentId(comments: DiscussionCommentLike[]): number {
   let oldest = 0;
   for (const comment of comments) {
@@ -75,7 +75,7 @@ export function oldestCommentId(comments: DiscussionCommentLike[]): number {
 }
 
 /**
- * attachments của bài đăng kênh với số bình luận mới (đếm thật từ phần bình luận) — null khi không có thẻ bài / không đổi.
+ * The attachments of the channel post with the new comment count (counted from the comments section); null when there is no post card / nothing changed.
  */
 export function withPostCommentCount(attachmentsJson: string | null | undefined, total: number): string | null {
   let attachments: any[];
@@ -93,7 +93,7 @@ export function withPostCommentCount(attachmentsJson: string | null | undefined,
   return JSON.stringify(attachments);
 }
 
-/** Bình luận chưa đọc đầu tiên đã tải (id > mốc đã đọc lúc mở) — chỗ đặt vạch "Bình luận chưa đọc"; không có → null. */
+/** First unread comment loaded (id > the read mark when opened): where the "Bình luận chưa đọc" (Unread comments) divider goes; none → null. */
 export function firstUnreadCommentId(comments: DiscussionCommentLike[], readMaxId: number | null | undefined): string | null {
   const read = Number(readMaxId) || 0;
   if (read <= 0) return null;
@@ -112,8 +112,8 @@ interface ReactionShape {
 }
 
 /**
- * Cảm xúc của mình trên một bình luận (Telegram: mỗi người một cảm xúc) — hiện ngay khi bấm, trước khi Telegram trả số
- * chính thức (event:telegramReaction thay lại). `emoji` rỗng = gỡ. Trả JSON mới (định dạng { total, lastReact, emoji }).
+ * My reaction on a comment (Telegram: one reaction per person): shown at once when tapped, before Telegram returns the
+ * official count (event:telegramReaction replaces it later). An empty `emoji` = remove. Returns a new JSON (format { total, lastReact, emoji }).
  */
 export function setOwnReaction(reactionsJson: string | null | undefined, userId: string, emoji: string): string {
   let parsed: any = null;

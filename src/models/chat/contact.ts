@@ -15,35 +15,35 @@ export interface Contact {
     is_muted?: number;
     mute_until?: number;
     is_in_others?: number;
-    /** Zalo tự xoá tin mới sau N ms (ZL-05, 0 = tắt) */
+    /** Zalo auto-deletes new messages after N ms (ZL-05, 0 = off) */
     zalo_auto_delete_ttl?: number;
-    /** 1 = hội thoại đang ẩn trên Zalo (ZL-03) */
+    /** 1 = conversation is hidden on Zalo (ZL-03) */
     zalo_hidden?: number;
     gender?: number | null;
     birthday?: string | null;
-    /** Lần cuối tên/avatar được làm mới hàng loạt từ API (unix ms); 0/NULL = chưa bao giờ */
+    /** Last time the name/avatar was bulk-refreshed from the API (unix ms); 0/NULL = never */
     info_refreshed_at?: number;
     channel?: string;
 }
 
-/** Một profile lấy được từ `zalo:refreshContactsInfo` (chỉ các trường dùng để hiển thị). */
+/** One profile obtained from `zalo:refreshContactsInfo` (only the fields used for display). */
 export interface ContactInfoProfile {
     contactId: string;
     displayName: string;
     avatarUrl: string;
 }
 
-/** Kết quả `zalo:refreshContactsInfo` — làm mới tên/avatar liên hệ hàng loạt theo UID. */
+/** Result of `zalo:refreshContactsInfo`: bulk refresh of contact names/avatars by UID. */
 export interface ContactsInfoRefreshResult {
-    /** Số dòng contacts đã được cập nhật tên/avatar trong DB */
+    /** Number of contacts rows whose name/avatar were updated in the DB */
     updated: number;
-    /** UID không lấy được profile (API không trả về, lô lỗi, hoặc chưa kịp hỏi khi dừng sớm) */
+    /** UIDs whose profile could not be fetched (the API did not return it, batch failed, or not asked yet when stopped early) */
     failed: string[];
-    /** Số UID đã hỏi API thành công (kể cả UID không có profile) */
+    /** Number of UIDs successfully asked from the API (including UIDs without a profile) */
     checked: number;
-    /** Profile nhận được, để renderer cập nhật store tại chỗ */
+    /** Profiles received, so the renderer can update the store in place */
     profiles: ContactInfoProfile[];
-    /** Lý do dừng sớm (hết phiên / giới hạn tần suất / lỗi lặp lại) nếu có */
+    /** Reason for stopping early (session expired / rate limit / repeated error), if any */
     error?: string;
 }
 
@@ -84,7 +84,7 @@ export interface FriendRequest {
     updated_at: number;
 }
 
-/** Link được chia sẻ trong hội thoại */
+/** Link shared in the conversation */
 export interface Link {
     id?: number;
     owner_zalo_id: string;

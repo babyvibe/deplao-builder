@@ -4,11 +4,12 @@
  * Facebook stores media in `msg.attachments` (JSON array).
  * Zalo stores media in `msg.content` (JSON object) + `msg.local_paths`.
  * 
- * UI code gọi resolver thay vì tự check msg.channel === 'facebook'.
+ * UI code calls the resolver instead of checking msg.channel === 'facebook' itself.
  */
 
 import { isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { isTelegramMetaAttachment } from '../../../shared/telegram/telegramAttachmentTypes';
+import { tr } from '../../../shared/i18n';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -282,9 +283,9 @@ export function getTelegramPostMeta(msg: MsgLike): {
   forwards: number;
   comments: number;
   discussionChannelId: string;
-  /** id người bình luận gần đây (ảnh nhỏ ở thanh bình luận, như Telegram) */
+  /** IDs of recent commenters (small avatars on the comment bar, like Telegram) */
   recentRepliers: string[];
-  /** Bình luận mới nhất / mình đã đọc tới (0 = chưa từng mở phần bình luận) → chấm "chưa đọc" */
+  /** Newest comment / last one I read (0 = comments never opened) → "chưa đọc" (unread) dot */
   commentsMaxId: number;
   commentsReadMaxId: number;
 } | null {
@@ -306,16 +307,16 @@ export function getTelegramPostMeta(msg: MsgLike): {
 }
 
 export interface TelegramForwardMeta {
-  /** user / channel / chat; hidden = người gốc ẩn tài khoản khi chuyển tiếp (chỉ có tên) */
+  /** user / channel / chat; hidden = the original sender hid the account when forwarding (name only) */
   fromType: 'user' | 'channel' | 'chat' | 'hidden';
   fromId: string;
   fromName: string;
   fromUsername: string;
-  /** Chữ ký người đăng của bài kênh gốc */
+  /** Author signature of the original channel post */
   postAuthor: string;
 }
 
-/** Tin Telegram được chuyển tiếp (attachments type telegram_forward, TelegramUserListener) → nguồn gốc; không phải → null. */
+/** A forwarded Telegram message (attachments type telegram_forward, TelegramUserListener) → its origin; otherwise → null. */
 export function getTelegramForwardMeta(msg: MsgLike): TelegramForwardMeta | null {
   if (!isTelegram(msg.channel)) return null;
   const attachment = extractAttachments(msg).find((item) => item.type === 'telegram_forward') as Record<string, any> | undefined;
@@ -334,21 +335,21 @@ export function getTelegramForwardMeta(msg: MsgLike): TelegramForwardMeta | null
 
 /**
  * Get status display text.
- * Facebook: always "✓ Đã gửi" (no read receipts)
- * Telegram: "✓ Đã xem" if status='read', otherwise "✓ Đã gửi"
+ * Facebook: always "✓ Đã gửi" (Sent), no read receipts
+ * Telegram: "✓ Đã xem" (Seen) if status='read', otherwise "✓ Đã gửi" (Sent)
  * Zalo: based on is_sent/is_read flags
  */
 export function getStatusDisplay(msg: MsgLike, isSelf: boolean): StatusDisplay {
   if (isFacebook(msg.channel)) {
     if (msg.is_sent === 1 || isSelf) {
-      return { text: '✓ Đã gửi', showCheckmark: true };
+      return { text: tr('✓ Đã gửi'), showCheckmark: true };
     }
     return { text: '', showCheckmark: false };
   }
   if (isTelegram(msg.channel)) {
     if (msg.is_sent === 1 || isSelf) {
       const isRead = (msg as any).status === 'read';
-      return { text: isRead ? '✓ Đã xem' : '✓ Đã gửi', showCheckmark: true };
+      return { text: isRead ? tr('✓ Đã xem') : tr('✓ Đã gửi'), showCheckmark: true };
     }
     return { text: '', showCheckmark: false };
   }

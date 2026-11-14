@@ -37,18 +37,18 @@ export interface CRMCampaign {
     per_contact_delay_max_seconds?: number;
     daily_send_limit?: number;
     daily_start_time?: string;
-    /** Tự dừng khi N liên hệ lỗi liên tiếp; 0 = không dừng (shared/crm/campaignAutoStop) */
+    /** Stop automatically after N contacts fail in a row; 0 = never stop (shared/crm/campaignAutoStop) */
     stop_after_failures?: number;
-    /** Số liên hệ gửi lỗi liên tiếp hiện tại (hàng đợi ghi, về 0 khi gửi được / đổi trạng thái) */
+    /** Current number of contacts that failed in a row (send queue; back to 0 when a send succeeds / status changes) */
     consecutive_failures?: number;
-    /** Lý do tự dừng ('' = không); xoá khi Tiếp tục */
+    /** Reason for the auto stop ('' = none); cleared on Resume */
     auto_stop_reason?: string;
     auto_stopped_at?: number;
-    /** Tự dừng: chỉ tính người lạ (Zalo: bạn bè, nhóm không đổi chuỗi lỗi) — 0 / 1 */
+    /** Auto stop: only count strangers (Zalo: friends and groups do not break the error streak): 0 / 1 */
     stop_strangers_only?: number;
-    /** Tự dừng: mai gửi tiếp (dừng tới Giờ bắt đầu chạy hôm sau) — 0 / 1 */
+    /** Auto stop: send again tomorrow (stop until the start time the next day): 0 / 1 */
     stop_resume_next_day?: number;
-    /** Lúc tự chạy lại sau khi tự dừng "Mai gửi tiếp" (0 = không hẹn) */
+    /** When to resume automatically after an auto stop "Mai gửi tiếp" (send again tomorrow) (0 = not scheduled) */
     auto_resume_at?: number;
     created_at?: number;
     updated_at?: number;

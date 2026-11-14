@@ -6,25 +6,26 @@ import { fitMediaBox, getKnownDims, rememberDims, type MediaDims } from '@/lib/c
 import { isTransferring, useMessageMediaProgress } from '@/lib/media/mediaProgress';
 import { VideoDownloadOverlay } from './MediaDownloadProgress';
 import { TelegramPostLayoutContext, telegramPostMediaAspect } from '../telegram/posts/telegramPostLayout';
+import { tr } from '../../../../shared/i18n';
 
 interface FBVideoThumbProps {
   videoPath: string;
   /** Called when user clicks play. If provided, opens inline player instead of external app. */
   onPlay?: () => void;
-  /** Kích thước thật (Telegram): khung theo tỉ lệ video — video dọc không bị cắt, khớp khung lúc chưa tải. */
+  /** Real size (Telegram): frame follows the video's aspect ratio; portrait video is not cropped, matches the frame before loading. */
   width?: number;
   height?: number;
-  /** Tin chứa video: nhớ kích thước đo được từ file (bản ghi cũ lưu 0) → lần sau hiện đúng khung ngay. */
+  /** Message containing a video: remember the size measured from the file (old records stored 0), so the right frame shows next time. */
   dimsMsg?: any;
-  /** Ảnh bìa mờ có sẵn trong tin, hiện trong lúc chưa chụp được khung hình đầu. */
+  /** Blurred cover image included in the message, shown until the first frame can be captured. */
   placeholderSrc?: string;
-  /** Tự phát không tiếng khi đang hiện trên màn hình (Telegram, video nhỏ) — xem lib/media/inlineAutoplay. */
+  /** Autoplay muted while on screen (Telegram, small video), see lib/media/inlineAutoplay. */
   autoPlayInline?: boolean;
-  /** Thời lượng (giây) cho nhãn thời gian còn lại khi file chưa báo duration. */
+  /** Duration in seconds for the time-remaining label when the file does not report a duration. */
   duration?: number;
 }
 
-/** Khung video như ảnh: thu theo tỉ lệ thật (dọc 9:16 → 203 × 360), không cắt mất phần video. */
+/** Video frame like an image: sized to the true ratio (portrait 9:16 → 203 × 360), so no part of the video is cropped. */
 export function fitVideoBox(dims: MediaDims | null): { width: number; height: number } {
   return dims ? fitMediaBox(dims, { maxW: 280, maxH: 360, minW: 120, minH: 90 }) : { width: 280, height: 160 };
 }
@@ -37,7 +38,7 @@ function formatClock(seconds: number): string {
 export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg, placeholderSrc, autoPlayInline, duration }: FBVideoThumbProps) {
   const [measured, setMeasured] = React.useState<MediaDims | null>(() => (dimsMsg ? getKnownDims(dimsMsg) : null));
   const box = fitVideoBox(width && height ? { w: width, h: height } : measured);
-  // Bài đăng kênh Telegram: rộng hết khung bài (video dọc không làm khung hẹp lại, như Telegram)
+  // Channel post (Telegram): full width of the post (a portrait video does not narrow the frame, as in Telegram)
   const postLayout = React.useContext(TelegramPostLayoutContext);
   const postBox = postLayout ? telegramPostMediaAspect(width || measured?.w, height || measured?.h) : null;
   const boxRef = React.useRef<HTMLDivElement>(null);
@@ -52,11 +53,11 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
 
   const mediaUrl = videoPath ? toLocalMediaUrl(videoPath) : '';
   const playingInline = useInlineAutoplay(boxRef, !!autoPlayInline && !!mediaUrl && !inlineFailed);
-  // Chưa có file (Facebook: tin mới về, main đang tải) → vòng tiến độ + "x / y MB" thay nút phát
+  // No file yet (Facebook: new message just arrived, main is downloading) → progress ring + "x / y MB" instead of the play button
   const progress = useMessageMediaProgress(videoPath ? null : dimsMsg);
   const transferring = !videoPath && isTransferring(progress);
 
-  // Ref: object tin đổi mỗi lần cập nhật (reaction…) — không được làm chạy lại việc chụp khung hình bên dưới
+  // Ref: the message object changes on every update (reaction…), so it must not re-run the first-frame capture below
   const dimsMsgRef = React.useRef(dimsMsg);
   dimsMsgRef.current = dimsMsg;
   const noteDims = React.useCallback((w: number, h: number) => {
@@ -65,8 +66,8 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
     setMeasured((previous) => (previous && previous.w === w && previous.h === h ? previous : { w, h }));
   }, []);
 
-  // Có suất phát → phát (mặc định không tiếng); mất suất (cuộn đi, quá 3 video, cửa sổ ẩn…) → gỡ nguồn để giải phóng
-  // bộ giải mã, tắt tiếng
+  // Has a playback slot → play (muted by default); slot lost (scrolled away, more than 3 videos, window hidden…) → release the source to free the
+  // decoder, muted
   React.useEffect(() => {
     if (!playingInline) {
       setInlineStarted(false);
@@ -183,7 +184,7 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
     if (p) p.finally(() => setOpening(false)); else setOpening(false);
   };
 
-  // Nút loa: bật / tắt tiếng ngay trong khung (không mở trình phát toàn màn hình)
+  // Speaker button: mute / unmute inside the frame (does not open the fullscreen player)
   const toggleSound = (e: React.MouseEvent) => {
     e.stopPropagation();
     const video = inlineVideoRef.current;
@@ -224,15 +225,15 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
       onClick={handlePlay}
       className={`relative group/video overflow-hidden bg-black select-none ${postBox ? '' : 'rounded-xl ring-1 ring-black/[0.12] '}${transferring ? 'cursor-progress' : 'cursor-pointer'}`}
       style={postBox ? { width: '100%', aspectRatio: String(postBox.box) } : { width: box.width, height: box.height, maxWidth: '100%' }}
-      title={transferring ? 'Đang tải video — xem được khi tải xong' : playingInline ? 'Bấm để xem toàn màn hình' : undefined}
+      title={transferring ? tr('Đang tải video — xem được khi tải xong') : playingInline ? tr('Bấm để xem toàn màn hình') : undefined}
     >
-      {/* Bài đăng kênh, video dọc: hai bên lấp bằng chính khung hình làm mờ (như Telegram) */}
+      {/* Channel post, portrait video: the sides are filled by the blurred frame itself (as in Telegram) */}
       {postBox?.letterbox && (thumbDataUrl || placeholderSrc) && (
         <img src={thumbDataUrl || placeholderSrc} alt="" aria-hidden className="pointer-events-none absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-60" />
       )}
       {/* Background: captured thumbnail, blurred in-message thumb, or gray placeholder */}
       {thumbDataUrl ? (
-        <img src={thumbDataUrl} alt="video thumb" className={`w-full h-full ${postBox?.letterbox ? 'relative object-contain' : 'object-cover'}`} />
+        <img src={thumbDataUrl} alt={tr('video thumb')} className={`w-full h-full ${postBox?.letterbox ? 'relative object-contain' : 'object-cover'}`} />
       ) : placeholderSrc ? (
         <img src={placeholderSrc} alt="" className="w-full h-full object-cover blur-md scale-110" />
       ) : (
@@ -244,7 +245,7 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
         </div>
       )}
 
-      {/* Tự phát không tiếng (như Telegram): bấm video mở trình phát toàn màn hình, bấm loa bật tiếng tại chỗ */}
+      {/* Muted autoplay (as in Telegram): click the video to open the fullscreen player, click the speaker to unmute in place */}
       {playingInline && (
         <video
           ref={inlineVideoRef}
@@ -272,8 +273,8 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
         <button
           type="button"
           onClick={toggleSound}
-          title={soundOn ? 'Tắt tiếng' : 'Bật tiếng'}
-          aria-label={soundOn ? 'Tắt tiếng' : 'Bật tiếng'}
+          title={soundOn ? tr('Tắt tiếng') : tr('Bật tiếng')}
+          aria-label={soundOn ? tr('Tắt tiếng') : tr('Bật tiếng')}
           aria-pressed={soundOn}
           className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-black/55 hover:bg-black/75 px-2 py-0.5 text-[11px] font-medium text-white-important transition-colors"
         >
@@ -310,13 +311,13 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
 
       {/* Action buttons - top right, on hover */}
       <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/video:opacity-100 transition-opacity">
-        <button onClick={handleOpenFolder} title="Mở thư mục"
+        <button onClick={handleOpenFolder} title={tr('Mở thư mục')}
           className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
           </svg>
         </button>
-        <button onClick={handleSaveAs} title="Lưu về máy"
+        <button onClick={handleSaveAs} title={tr('Lưu về máy')}
           className="w-7 h-7 bg-black/60 hover:bg-black/80 rounded-lg flex items-center justify-center text-white-important transition-colors">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>

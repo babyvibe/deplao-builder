@@ -1,21 +1,22 @@
 /**
  * RestQueryService - Employee-side REST client (renderer).
- * Dùng trong employee mode để gọi REST API lên Boss. Boss/standalone mode không dùng file này.
+ * Used in employee mode to call the REST API on Boss. Boss / standalone mode does not use this file.
  *
- * Singleton. Phân loại kết quả (xem exchange() + interpret()):
- *  - CHỈ lỗi transport tính vào mất kết nối: fetch reject, timeout/abort (gồm cả lúc đọc body),
- *    HTTP 502/503/504 (gateway/tunnel). 3 lỗi liên tiếp → "blocked": request trả NOT_CONNECTED ngay,
- *    trừ tối đa 1 request thật mỗi ~2 s được đi qua làm probe; health probe chạy sau 1 s rồi backoff
- *    2/4/8 s (tối đa 15 s). Khi kết nối lại → status listener (true) + onRecovered.
- *  - KHÔNG tính: 2xx sai hình dạng (data:null, JSON lỗi), 4xx/5xx khác, 401/403. Body không phải JSON
- *    → BAD_RESPONSE (kèm status). Mọi phản hồi JSON từ Boss (kể cả 4xx/5xx) chứng minh mạng ổn → reset bộ đếm.
- *  - postBinary: lỗi transport KHÔNG tính (upload lớn có thể bị proxy/tunnel cắt riêng lẻ), thành công vẫn tính.
+ * Singleton. Result classification (see exchange() + interpret()):
+ *  - ONLY transport errors count toward a lost connection: fetch reject, timeout / abort (including while reading the body),
+ *    HTTP 502/503/504 (gateway / tunnel). 3 errors in a row → "blocked": the request returns NOT_CONNECTED right away,
+ *    except that at most 1 real request every ~2 s is let through as a probe; the health probe runs after 1 s, then backs off
+ *    2/4/8 s (max 15 s). When the connection comes back → status listener (true) + onRecovered.
+ *  - NOT counted: 2xx with the wrong shape (data: null, broken JSON), other 4xx/5xx, 401/403. A body that is not JSON
+ *    → BAD_RESPONSE (with the status). Any JSON reply from Boss (even 4xx/5xx) proves the network is fine → reset the counter.
+ *  - postBinary: transport errors are NOT counted (large uploads can be cut individually by the proxy / tunnel); success still counts.
  *
- * Log: warn/error + sự kiện chuyển trạng thái đi qua Logger → IPC 'log:append' → Nhật ký (main) với
- * prefix [renderer]. Không bao giờ log token / query / body — chỉ method + path + status + thời gian.
+ * Log: warn/error + state-change events go through Logger → IPC 'log:append' → the Log view (main) with the
+ * [renderer] prefix. Never logs the token / query / body, only method + path + status + duration.
  */
 
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 export type RestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -32,7 +33,7 @@ export interface RestResponse<T = any> {
   data?: T;
   error?: string;
   code?: string;
-  /** HTTP status khi lỗi đến từ một phản hồi HTTP (BAD_RESPONSE, HTTP_xxx, ACCOUNT_FORBIDDEN…). */
+  /** HTTP status when the error comes from an HTTP response (BAD_RESPONSE, HTTP_xxx, ACCOUNT_FORBIDDEN…). */
   status?: number;
   pagination?: {
     page: number;
@@ -44,26 +45,26 @@ export interface RestResponse<T = any> {
 
 export type RestStatusListener = (connected: boolean, latency: number) => void;
 
-/** Số lỗi transport liên tiếp trước khi chặn request (blocked). */
+/** Number of transport errors in a row before requests are blocked. */
 export const MAX_CONSECUTIVE_FAILURES = 3;
 const HEALTH_CHECK_INTERVAL_MS = 15_000;
 const HEALTH_PROBE_TIMEOUT_MS = 10_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const LOGIN_TIMEOUT_MS = 15_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
-/** Lịch health probe khi blocked: 1 s, rồi backoff 2/4/8 s, tối đa 15 s. */
+/** Health probe schedule while blocked: 1 s, then backoff 2/4/8 s, max 15 s. */
 const RECOVERY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000];
-/** Khi blocked: tối đa 1 request thật được đi qua mỗi ~2 s để thử kết nối (probe-through). */
+/** While blocked: at most 1 real request is let through about every 2 s to test the connection (probe-through). */
 const PROBE_THROUGH_INTERVAL_MS = 2_000;
-/** Lỗi gateway (tunnel/proxy không tới được Boss) — Boss không bao giờ tự trả các mã này. */
+/** Gateway errors (tunnel / proxy cannot reach Boss): Boss never returns these codes itself. */
 const GATEWAY_STATUSES = new Set([502, 503, 504]);
-const NOT_CONNECTED_ERROR = 'Chưa kết nối tới BOSS';
-/** Host tunnel ngrok (free/paid) — chèn trang cảnh báo trình duyệt nếu thiếu header bỏ qua. */
+const NOT_CONNECTED_ERROR = tr('Chưa kết nối tới BOSS');
+/** ngrok tunnel hosts (free / paid): insert a browser warning page unless the bypass header is sent. */
 const NGROK_HOST_SUFFIXES = ['ngrok-free.app', 'ngrok-free.dev', 'ngrok.app', 'ngrok.io'];
 
 // ── URL / header helpers (export cho test) ─────────────────────────
 
-/** Chuẩn hoá Boss URL: thêm http:// nếu thiếu, bỏ query/hash và '/' cuối — GIỮ sub-path (vd https://host/boss). */
+/** Normalize the Boss URL: add http:// if missing, strip the query / hash and the trailing '/', KEEP the sub-path (e.g. https://host/boss). */
 export function normalizeBossUrl(raw: string): string {
   let url = String(raw ?? '').trim();
   if (!url) return '';
@@ -77,8 +78,8 @@ export function normalizeBossUrl(raw: string): string {
 }
 
 /**
- * Ghép Boss URL (có thể có sub-path) + path API (có thể kèm query sẵn) + query object.
- * Nối chuỗi thay vì new URL(path, base) — cách cũ làm rơi sub-path. Ném lỗi nếu URL không hợp lệ.
+ * Join the Boss URL (may have a sub-path) + the API path (may already include a query) + the query object.
+ * Uses string concatenation instead of new URL(path, base): the old way dropped the sub-path. Throws if the URL is invalid.
  */
 export function buildBossUrl(baseUrl: string, path: string, query?: Record<string, any>): string {
   const p = String(path ?? '');
@@ -94,8 +95,8 @@ export function buildBossUrl(baseUrl: string, path: string, query?: Record<strin
 }
 
 /**
- * Header vượt trang cảnh báo tunnel — CHỈ cho host tunnel. Boss bản cũ từ chối header lạ ở CORS
- * preflight, nên tuyệt đối không gửi cho LAN / host khác.
+ * The tunnel-warning bypass header: ONLY for tunnel hosts. Older Boss versions reject unknown headers in the
+ * CORS preflight, so it must never be sent to the LAN or to other hosts.
  */
 export function tunnelBypassHeaders(baseUrl: string): Record<string, string> {
   let host = '';
@@ -106,7 +107,7 @@ export function tunnelBypassHeaders(baseUrl: string): Record<string, string> {
   return {};
 }
 
-/** Path để log: bỏ query string (có thể chứa id tài khoản / từ khoá tìm kiếm). */
+/** Path for logging: the query string is stripped (it may contain account ids / search keywords). */
 function pathForLog(path: string): string {
   const p = String(path ?? '');
   const i = p.indexOf('?');
@@ -120,8 +121,8 @@ function fmtSeconds(ms: number): string {
 type LogKind = 'log' | 'notice' | 'warn' | 'error';
 
 /**
- * Ghi log an toàn — lỗi của logger không bao giờ làm hỏng request.
- * warn/error/notice được Logger chuyển về Nhật ký (main); log chỉ ở console dev.
+ * Safe logging: a logger error never breaks a request.
+ * warn / error / notice are forwarded by Logger to the Log view (main); logs only go to the dev console.
  */
 function log(kind: LogKind, msg: string): void {
   try {
@@ -138,7 +139,7 @@ function dispatchWindowEvent(name: string, detail: any): void {
     const CustomEventCtor = g.CustomEvent;
     if (!w || typeof w.dispatchEvent !== 'function' || typeof CustomEventCtor !== 'function') return;
     w.dispatchEvent(new CustomEventCtor(name, { detail }));
-  } catch { /* listener lỗi không ảnh hưởng request */ }
+  } catch { /* a listener error does not affect the request */ }
 }
 
 function pickCode(json: any): string {
@@ -154,7 +155,7 @@ function pickError(json: any): string {
   return '';
 }
 
-// ── Low-level exchange: fetch + đọc body dưới CÙNG một timeout ─────
+// ── Low-level exchange: fetch + reading the body under the SAME timeout ─────
 
 type Exchange =
   | { kind: 'json'; status: number; ok: boolean; json: any; elapsed: number }
@@ -176,8 +177,8 @@ function discardBody(res: any): void {
 }
 
 /**
- * Timer bắt đầu ngay trước fetch và bao cả lúc đọc body: body treo cũng bị abort.
- * Không bao giờ throw — mọi kết cục được trả về dạng Exchange.
+ * The timer starts right before fetch and covers reading the body too: a hung body is aborted as well.
+ * Never throws; every outcome is returned as an Exchange.
  */
 async function exchange(url: string, init: Record<string, any>, timeoutMs: number, allowBinary: boolean): Promise<Exchange> {
   const controller = new AbortController();
@@ -190,7 +191,7 @@ async function exchange(url: string, init: Record<string, any>, timeoutMs: numbe
       reject(new Error('timeout'));
     }, timeoutMs);
   });
-  deadline.catch(() => { /* kết cục timeout xử lý qua cờ timedOut */ });
+  deadline.catch(() => { /* a timeout outcome is handled through the timedOut flag */ });
   const start = Date.now();
   try {
     const res: any = await Promise.race([fetch(url, { ...init, signal: controller.signal } as any), deadline]);
@@ -207,14 +208,14 @@ async function exchange(url: string, init: Record<string, any>, timeoutMs: numbe
       return { kind: 'binary', status, blob, elapsed: Date.now() - start };
     }
     if (mime && !mime.includes('json')) {
-      // HTML (trang cảnh báo tunnel, lỗi proxy…) — không parse, không đọc nội dung.
+      // HTML (tunnel warning page, proxy error…): not parsed, the content is not read.
       discardBody(res);
       return { kind: 'invalid', status, contentType: mime, reason: 'content-type', elapsed: Date.now() - start };
     }
     const text: string = await Promise.race([res.text(), deadline]);
     const elapsed = Date.now() - start;
     if (typeof text !== 'string' || !text.trim()) {
-      // Body rỗng (vd 204): coi như thành công/thất bại theo status
+      // Empty body (e.g. 204): treated as success / failure based on the status
       return { kind: 'json', status, ok, json: { success: ok }, elapsed };
     }
     let json: any;
@@ -243,7 +244,7 @@ class RestQueryService {
   private baseUrl: string = '';
   private token: string = '';
   private tunnelHeaders: Record<string, string> = {};
-  /** Tăng mỗi lần init đổi cấu hình / reset → bỏ qua kết quả của request/probe cũ. */
+  /** Incremented on every init that changes the config / reset → discards the results of older requests / probes. */
   private generation = 0;
   private consecutiveFailures = 0;
   private lastFailure = '';
@@ -255,7 +256,7 @@ class RestQueryService {
   private healthProbeInFlight = false;
   private probeThroughInFlight = false;
   private lastProbeThroughAt = 0;
-  /** Có request bị từ chối / vừa bị chặn → lần thành công kế tiếp sẽ gọi onRecovered (1 lần). */
+  /** A request was rejected / just blocked → the next success calls onRecovered (once). */
   private recoveryPending = false;
   private refusedCount = 0;
   private refusalLogged = false;
@@ -273,14 +274,14 @@ class RestQueryService {
   // ── Listeners ────────────────────────────────────────────────────
 
   /**
-   * @deprecated Dùng addStatusListener (nhiều listener). Giữ để tương thích: đây là MỘT slot riêng,
-   * gọi lại sẽ thay callback trước của slot này (không ảnh hưởng listener của addStatusListener).
+   * @deprecated Use addStatusListener (multiple listeners). Kept for compatibility: this is ONE separate slot;
+   * calling it again replaces the previous callback in this slot (it does not affect the addStatusListener listeners).
    */
   public setOnStatusChange(cb: RestStatusListener | null): void {
     this.legacyStatusListener = typeof cb === 'function' ? cb : null;
   }
 
-  /** Đăng ký listener trạng thái kết nối (nhiều listener cùng lúc). Trả về hàm huỷ đăng ký. */
+  /** Register a connection-status listener (several at once). Returns an unregister function. */
   public addStatusListener(cb: RestStatusListener): () => void {
     const entry = { cb };
     this.statusListeners.add(entry);
@@ -288,8 +289,8 @@ class RestQueryService {
   }
 
   /**
-   * Gọi 1 lần mỗi khi client từ mất kết nối / blocked (hoặc request bị từ chối vì chưa init) trở lại
-   * kết nối được — qua health probe hoặc request thành công. Data loader dùng để tải lại. Trả về hàm huỷ.
+   * Called once each time the client goes from lost connection / blocked (or a request was rejected because it was not initialized yet) back to
+   * connected, through the health probe or a successful request. The data loader uses it to reload. Returns an unregister function.
    */
   public onRecovered(cb: () => void): () => void {
     const entry = { cb };
@@ -299,7 +300,7 @@ class RestQueryService {
 
   private notifyStatus(connected: boolean, latency: number): void {
     for (const entry of Array.from(this.statusListeners)) {
-      try { entry.cb(connected, latency); } catch { /* listener lỗi không ảnh hưởng listener khác */ }
+      try { entry.cb(connected, latency); } catch { /* a listener error does not affect the other listeners */ }
     }
     try { this.legacyStatusListener?.(connected, latency); } catch { /* ignore */ }
   }
@@ -313,8 +314,8 @@ class RestQueryService {
   // ── Lifecycle ────────────────────────────────────────────────────
 
   /**
-   * Khởi tạo với Boss URL + JWT token. Idempotent: cùng URL + token → không reset gì.
-   * Khác → cấu hình lại, reset bộ đếm, khởi động lại health check.
+   * Initialize with the Boss URL + JWT token. Idempotent: the same URL + token → nothing is reset.
+   * Different → reconfigure, reset the counter, restart the health check.
    */
   public init(baseUrl: string, token: string): void {
     const url = normalizeBossUrl(baseUrl);
@@ -339,7 +340,7 @@ class RestQueryService {
     this.probeThroughInFlight = false;
     this.lastProbeThroughAt = 0;
     if (previousUrl && previousUrl !== url) {
-      // Boss khác = phiên mới (luồng chuyển workspace tự tải lại) → không báo onRecovered cho phiên cũ.
+      // A different Boss = a new session (the workspace switch flow reloads by itself), so do not call onRecovered for the old session.
       this.recoveryPending = false;
       this.refusedCount = 0;
       this.refusalLogged = false;
@@ -350,7 +351,7 @@ class RestQueryService {
     this.notifyStatus(this.isConnected(), 0);
   }
 
-  /** Reset (khi logout). Listener vẫn giữ nguyên. */
+  /** Reset (on logout). The listeners stay in place. */
   public reset(): void {
     this.generation++;
     this.stopHealthCheck();
@@ -377,7 +378,7 @@ class RestQueryService {
     return !!this.baseUrl && !!this.token && !this.blocked;
   }
 
-  /** true khi đang chặn request vì lỗi transport liên tiếp (chỉ 1 request/~2 s được đi làm probe). */
+  /** true while requests are blocked because of repeated transport errors (only 1 request every ~2 s is let through as a probe). */
   public isBlocked(): boolean {
     return this.blocked;
   }
@@ -390,7 +391,7 @@ class RestQueryService {
     return this.token;
   }
 
-  // ── Health check (15 s khi đang kết nối) ─────────────────────────
+  // ── Health check (every 15 s while connected) ─────────────────────────
 
   private startHealthCheck(): void {
     this.stopHealthCheck();
@@ -406,8 +407,8 @@ class RestQueryService {
 
   private async healthTick(): Promise<void> {
     if (!this.baseUrl || !this.token) return;
-    if (this.blocked) return;                    // recovery probe đang lo
-    if (this.consecutiveFailures === 0) return;  // khoẻ → không tạo traffic thừa
+    if (this.blocked) return;                    // a recovery probe is already in progress
+    if (this.consecutiveFailures === 0) return;  // healthy → no extra traffic created
     if (this.healthProbeInFlight) return;
     const gen = this.generation;
     this.healthProbeInFlight = true;
@@ -464,7 +465,7 @@ class RestQueryService {
     this.recoveryAttempt++;
     const attempt = this.recoveryAttempt;
     const r = await this.probeHealth();
-    if (gen !== this.generation || !this.blocked) return; // đã cấu hình lại / đã hồi phục qua probe-through
+    if (gen !== this.generation || !this.blocked) return; // already reconfigured / already recovered via probe-through
     if (r.kind === 'ok') {
       this.onTransportOk(gen, r.latency, 'health probe');
       return;
@@ -495,7 +496,7 @@ class RestQueryService {
     if (!this.blocked && this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) this.enterBlocked();
   }
 
-  /** Boss trả lời (JSON bất kỳ status, binary 2xx) → mạng ổn: reset bộ đếm, gỡ blocked, báo onRecovered. */
+  /** Boss replied (JSON with any status, or binary 2xx) → the network is fine: reset the counter, clear blocked, call onRecovered. */
   private onTransportOk(gen: number, latency: number, via: string): void {
     if (gen !== this.generation) return;
     this.consecutiveFailures = 0;
@@ -520,7 +521,7 @@ class RestQueryService {
     }
   }
 
-  /** 'open' = gửi bình thường; 'probe' = đang blocked nhưng được đi làm probe; 'closed' = từ chối ngay. */
+  /** 'open' = send normally; 'probe' = blocked but allowed through as a probe; 'closed' = reject right away. */
   private acquireGate(allowProbe: boolean): 'open' | 'probe' | 'closed' {
     if (!this.baseUrl || !this.token) return 'closed';
     if (!this.blocked) return 'open';
@@ -572,14 +573,14 @@ class RestQueryService {
         url = buildBossUrl(this.baseUrl, opts.path, opts.query);
       } catch {
         log('warn', `[RestQueryService] INVALID_URL: ${label}`);
-        return { success: false, error: 'Địa chỉ Boss không hợp lệ', code: 'INVALID_URL' };
+        return { success: false, error: tr('Địa chỉ Boss không hợp lệ'), code: 'INVALID_URL' };
       }
       let body: string | undefined;
       try {
         body = opts.body ? JSON.stringify(opts.body) : undefined;
       } catch (err: any) {
         log('warn', `[RestQueryService] BAD_REQUEST: ${label} — body không serialize được`);
-        return { success: false, error: err?.message || 'Body không hợp lệ', code: 'BAD_REQUEST' };
+        return { success: false, error: err?.message || tr('Body không hợp lệ'), code: 'BAD_REQUEST' };
       }
       const timeoutMs = opts.timeout && opts.timeout > 0 ? opts.timeout : DEFAULT_TIMEOUT_MS;
       const ex = await exchange(url, { method: opts.method, headers: this.buildHeaders(true), body }, timeoutMs, true);
@@ -603,12 +604,12 @@ class RestQueryService {
       case 'gateway':
         log('warn', `[RestQueryService] HTTP ${ex.status} (gateway): ${label} (${ex.elapsed}ms)${tag}`);
         this.onTransportFailure(gen, `${label} → HTTP ${ex.status}`);
-        return { success: false, error: `Boss/tunnel không phản hồi (HTTP ${ex.status})`, code: `HTTP_${ex.status}`, status: ex.status };
+        return { success: false, error: tr('Boss/tunnel không phản hồi (HTTP {{status}})', { status: ex.status }), code: `HTTP_${ex.status}`, status: ex.status };
       case 'invalid':
-        // Không tính vào mất kết nối (vd trang cảnh báo tunnel, lỗi proxy, JSON hỏng).
+        // Not counted as a lost connection (e.g. a tunnel warning page, a proxy error, broken JSON).
         log('warn', `[RestQueryService] BAD_RESPONSE: ${label} — HTTP ${ex.status}, ${ex.contentType || 'không có content-type'}`
           + ` (${ex.reason}, ${ex.elapsed}ms)${tag}`);
-        return { success: false, error: `Phản hồi không hợp lệ từ Boss (HTTP ${ex.status})`, code: 'BAD_RESPONSE', status: ex.status };
+        return { success: false, error: tr('Phản hồi không hợp lệ từ Boss (HTTP {{status}})', { status: ex.status }), code: 'BAD_RESPONSE', status: ex.status };
       case 'binary': {
         this.onTransportOk(gen, ex.elapsed, label);
         const size = Number(ex.blob?.size) || 0;
@@ -625,18 +626,18 @@ class RestQueryService {
           return { success: false, error: pickError(json) || `HTTP ${ex.status}`, code, status: ex.status };
         }
         if (!json.success) {
-          // Lỗi nghiệp vụ — Boss vẫn trả lời nên không tính là lỗi mạng.
+          // Business error: Boss still replied, so it is not counted as a network error.
           const code = pickCode(json) || 'UNKNOWN';
           log('warn', `[RestQueryService] FAILED: ${label} → ${code} (${ex.elapsed}ms)`);
           return { success: false, error: pickError(json) || 'Request failed', code };
         }
         if (json.data !== undefined) {
-          // data có thể null (sticker chưa cache, tin trích dẫn không tồn tại…) — không được đọc thẳng .items
+          // data may be null (sticker not cached, a quoted message that does not exist…): do not read .items directly
           const items = Array.isArray(json.data) ? json.data : (Array.isArray(json.data?.items) ? json.data.items : null);
           log('log', `[RestQueryService] OK ${label} (${ex.elapsed}ms${items ? `, ${items.length} items` : ''})`);
           return { success: true, data: json.data, pagination: json.pagination };
         }
-        // Fallback: trả về toàn bộ (cho endpoint không bọc data)
+        // Fallback: return everything (for endpoints that do not wrap data)
         log('log', `[RestQueryService] OK ${label} (${ex.elapsed}ms)`);
         return { success: true, data: json as T };
       }
@@ -667,8 +668,8 @@ class RestQueryService {
   }
 
   /**
-   * Upload binary data to boss. Returns bossPath on success.
-   * Khi blocked: từ chối ngay (không làm probe). Lỗi transport KHÔNG tính vào mất kết nối.
+   * Upload binary data to Boss. Returns bossPath on success.
+   * While blocked: rejected right away (no probe). Transport errors are NOT counted as a lost connection.
    */
   public async postBinary(path: string, data: Uint8Array | Blob, headers: Record<string, string>, timeout = UPLOAD_TIMEOUT_MS): Promise<RestResponse> {
     const label = `POST ${pathForLog(path)} (binary)`;
@@ -679,7 +680,7 @@ class RestQueryService {
       url = buildBossUrl(this.baseUrl, path);
     } catch {
       log('warn', `[RestQueryService] INVALID_URL: ${label}`);
-      return { success: false, error: 'Địa chỉ Boss không hợp lệ', code: 'INVALID_URL' };
+      return { success: false, error: tr('Địa chỉ Boss không hợp lệ'), code: 'INVALID_URL' };
     }
     const isBlob = typeof Blob !== 'undefined' && data instanceof Blob;
     const body = isBlob ? data : new Uint8Array(data as Uint8Array);
@@ -705,10 +706,10 @@ class RestQueryService {
       }
       case 'invalid':
         log('warn', `[RestQueryService] BAD_RESPONSE: ${label} — HTTP ${ex.status}, ${ex.contentType || 'không có content-type'} (${ex.reason}, ${ex.elapsed}ms)`);
-        return { success: false, error: `Phản hồi không hợp lệ từ Boss (HTTP ${ex.status})`, code: 'BAD_RESPONSE', status: ex.status };
+        return { success: false, error: tr('Phản hồi không hợp lệ từ Boss (HTTP {{status}})', { status: ex.status }), code: 'BAD_RESPONSE', status: ex.status };
       case 'gateway':
         log('warn', `[RestQueryService] HTTP ${ex.status} (gateway): ${label} (${ex.elapsed}ms)`);
-        return { success: false, error: `Boss/tunnel không phản hồi (HTTP ${ex.status})`, code: `HTTP_${ex.status}`, status: ex.status };
+        return { success: false, error: tr('Boss/tunnel không phản hồi (HTTP {{status}})', { status: ex.status }), code: `HTTP_${ex.status}`, status: ex.status };
       case 'timeout':
         log('warn', `[RestQueryService] TIMEOUT: ${label} (${timeoutMs}ms)`);
         return { success: false, error: 'Request timeout', code: 'TIMEOUT' };
@@ -720,9 +721,9 @@ class RestQueryService {
     }
   }
 
-  // ── Convenience: login (không cần token) ─────────────────────────
+  // ── Convenience: login (no token needed) ─────────────────────────
 
-  /** Gọi POST /api/auth/login — đặc biệt vì chưa có token. Không ảnh hưởng trạng thái kết nối. */
+  /** Calls POST /api/auth/login: special because there is no token yet. Does not affect the connection status. */
   public static async login(baseUrl: string, username: string, password: string): Promise<RestResponse<{
     token: string;
     employee: any;
@@ -733,7 +734,7 @@ class RestQueryService {
     try {
       url = buildBossUrl(base, '/api/auth/login');
     } catch {
-      return { success: false, error: 'Địa chỉ Boss không hợp lệ', code: 'INVALID_URL' };
+      return { success: false, error: tr('Địa chỉ Boss không hợp lệ'), code: 'INVALID_URL' };
     }
     const ex = await exchange(url, {
       method: 'POST',
@@ -749,20 +750,20 @@ class RestQueryService {
           return { ...json, success: false, error: pickError(json) || `HTTP ${ex.status}`, code, status: ex.status };
         }
         log('log', `[RestQueryService] login: HTTP ${ex.status} (${ex.elapsed}ms)`);
-        // Boss trả {success, token, employee, snapshot} — KHÔNG có data wrapper; giữ nguyên cho caller.
+        // Boss returns {success, token, employee, snapshot}: NO data wrapper; kept as is for the caller.
         return json as RestResponse<{ token: string; employee: any; snapshot: any }>;
       }
       case 'invalid':
         log('warn', `[RestQueryService] BAD_RESPONSE: POST /api/auth/login — HTTP ${ex.status}, ${ex.contentType || 'không có content-type'} (${ex.reason}, ${ex.elapsed}ms)`);
         return {
           success: false,
-          error: `Phản hồi không hợp lệ từ Boss (HTTP ${ex.status}) — kiểm tra lại địa chỉ Boss / tunnel`,
+          error: tr('Phản hồi không hợp lệ từ Boss (HTTP {{status}}) — kiểm tra lại địa chỉ Boss / tunnel', { status: ex.status }),
           code: 'BAD_RESPONSE',
           status: ex.status,
         };
       case 'gateway':
         log('warn', `[RestQueryService] login: HTTP ${ex.status} (gateway, ${ex.elapsed}ms)`);
-        return { success: false, error: `Boss/tunnel không phản hồi (HTTP ${ex.status})`, code: `HTTP_${ex.status}`, status: ex.status };
+        return { success: false, error: tr('Boss/tunnel không phản hồi (HTTP {{status}})', { status: ex.status }), code: `HTTP_${ex.status}`, status: ex.status };
       case 'timeout':
         log('warn', `[RestQueryService] login: TIMEOUT (${LOGIN_TIMEOUT_MS}ms)`);
         return { success: false, error: 'Request timeout', code: 'TIMEOUT' };

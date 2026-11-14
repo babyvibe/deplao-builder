@@ -1,16 +1,16 @@
 /**
- * CloudflareService — lõi dùng chung của tính năng "Internet & Cloud" (singleton `cloudflare`).
+ * CloudflareService: the shared core of the "Internet & Cloud" feature (singleton `cloudflare`).
  *
- *  - connect: kiểm token (tokens/verify; token 'cfat_' là token của tài khoản) → liệt kê tên miền → thử quyền
- *    từng tính năng (tunnel, R2, Worker + D1 cho ứng dụng — không bắt buộc) bằng các GET rẻ → lưu token (safeStorage)
+ *  - connect: verifies the token (tokens/verify; a token starting with 'cfat_' is an account token) → lists the domains → tests the permissions
+ *    of each feature (tunnel, R2, Worker + D1 for apps, not required) with cheap GETs → saves the token (safeStorage)
  *    + tokenId + tokenKind.
- *  - status(): trạng thái nhớ trong RAM (không gọi mạng). recheck() thử lại quyền.
- *  - api(): client REST dùng chung (ngân sách 100 request / 5 phút cho cả app). r2(bucket) / store(bucket): client của
- *    KHO ĐANG CHỌN — R2 (S3 theo bucket) hoặc Google Drive (thư mục Deplao/<bucket>, ./gdrive) — media và đồng bộ DB chỉ
- *    gọi qua đây nên chạy được trên cả hai kho. google: đăng nhập Google Drive; usage: đếm thao tác + ước tính chi phí.
- *  - notifyChanged(area): đẩy CLOUD_CHANGED_EVENT tới mọi cửa sổ + listener trong main.
+ *  - status(): state remembered in RAM (no network calls). recheck() tests the permissions again.
+ *  - api(): shared REST client (budget 100 requests / 5 minutes for the whole app). r2(bucket) / store(bucket): the client of
+ *    the SELECTED STORAGE: R2 (S3 per bucket) or Google Drive (folder Deplao/<bucket>, ./gdrive). Media and DB sync only
+ *    call through here, so they work with both storages. google: signs in to Google Drive; usage: counts operations + estimates the cost.
+ *  - notifyChanged(area): pushes CLOUD_CHANGED_EVENT to every window + listeners in main.
  *
- * Token và mật khẩu sao lưu KHÔNG BAO GIỜ được log hay trả về renderer.
+ * The token and the backup password are NEVER logged or returned to the renderer.
  */
 import {
     CloudError, CloudflareApi, CloudflareCore, CloudCrypto, CloudUsageModule, GoogleDriveCore, R2Client,
@@ -29,41 +29,42 @@ import { createGoogleDrive } from './gdrive';
 import { createCloudUsage } from './usage';
 import { WORKERS_PERMISSION_LABELS } from './workers/validate';
 import Logger from '../../utils/Logger';
+import { tr } from '../../shared/i18n';
 
 type Area = 'connection' | 'tunnel' | 'media' | 'db';
 
-/** Tên quyền đúng như trên trang tạo token của Cloudflare (Dashboard tiếng Anh). */
+/** Permission names exactly as on Cloudflare's token creation page (the English Dashboard). */
 export const CF_PERMISSION_LABELS = {
     tunnel: 'Account · Cloudflare Tunnel · Edit',
     dns: 'Zone · DNS · Edit',
     zone: 'Zone · Zone · Read',
     r2: 'Account · Workers R2 Storage · Edit',
-    /** Không bắt buộc: chỉ để xem mức dùng R2 toàn tài khoản (Cài đặt → Đồng bộ dữ liệu → Mức sử dụng & chi phí). */
+    /** Optional: only used to show the account-wide R2 usage (Settings → Data sync → Usage & cost). */
     analytics: 'Account · Account Analytics · Read',
-    /** Không bắt buộc: chỉ ứng dụng (plugin) có quyền cloudflare:workers dùng — Worker + D1 (workers/WorkersDeployer). */
+    /** Optional: only used by apps (plugins) that have the cloudflare:workers permission: Worker + D1 (workers/WorkersDeployer). */
     workersScripts: WORKERS_PERMISSION_LABELS.workers,
     d1: WORKERS_PERMISSION_LABELS.d1,
 } as const;
 
 /**
- * Nhóm quyền điền sẵn cho link tạo token (user token).
- * LƯU Ý: khoá nhóm quyền phải được đối chiếu với
- * https://developers.cloudflare.com/fundamentals/api/reference/permissions/ (chưa kiểm tự động — không fetch lúc build).
+ * Pre-filled permission group for the token creation link (user token).
+ * NOTE: the permission group keys must be checked against
+ * https://developers.cloudflare.com/fundamentals/api/reference/permissions/ (not checked automatically, not fetched at build time).
  */
 export const TOKEN_TEMPLATE_PERMISSIONS: ReadonlyArray<{ key: string; type: 'read' | 'edit' }> = [
     { key: 'argotunnel', type: 'edit' },
     { key: 'dns', type: 'edit' },
     { key: 'zone', type: 'read' },
     { key: 'workers_r2', type: 'edit' },
-    // Mức dùng R2 toàn tài khoản (GraphQL Analytics) — key theo developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template
+    // Account-wide R2 usage (GraphQL Analytics), key per developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template
     { key: 'account_analytics', type: 'read' },
-    // Worker + D1 cho ứng dụng (deplao.cloudflare) — key `workers_scripts`, `d1` theo bảng "Permission reference" của
-    // trang account-owned-token-template ở trên (đối chiếu 20/10/2026); tên hiển thị "Workers Scripts Edit", "D1 Edit".
+    // Worker + D1 for apps (deplao.cloudflare): keys `workers_scripts`, `d1` per the "Permission reference" table of
+    // the account-owned-token-template page above (checked 20/10/2026); display names "Workers Scripts Edit", "D1 Edit".
     { key: 'workers_scripts', type: 'edit' },
     { key: 'd1', type: 'edit' },
 ];
 
-/** Link trang tạo API token của Cloudflare, điền sẵn quyền cần cho Deplao. */
+/** Link to Cloudflare's API token creation page, with the permissions Deplao needs pre-filled. */
 export function tokenTemplateUrl(): string {
     const keys = encodeURIComponent(JSON.stringify(TOKEN_TEMPLATE_PERMISSIONS));
     return `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${keys}&accountId=*&zoneId=all&name=Deplao`;
@@ -73,21 +74,21 @@ const ACCOUNT_ID_RE = /^[0-9a-f]{32}$/;
 const BUCKET_RE = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 const LOCATION_HINT_RE = /^[a-z]{2,8}$/;
 
-/** Tên bucket R2: 3–63 ký tự a-z, 0-9, '-', không bắt đầu / kết thúc bằng '-'. */
+/** R2 bucket name: 3-63 characters a-z, 0-9, '-', must not start or end with '-'. */
 export function isValidBucketName(name: string): boolean {
     return BUCKET_RE.test(name);
 }
 
 function missingPermission(label: string): string {
-    return `Thiếu quyền "${label}"`;
+    return tr('Thiếu quyền "{{label}}"', { label });
 }
 
 function errMessage(err: unknown): string {
     if (err instanceof CloudError) return err.message;
-    return String((err as any)?.message || err || 'Lỗi không xác định');
+    return String((err as any)?.message || err || tr('Lỗi không xác định'));
 }
 
-/** Lỗi do token/quyền (khác lỗi mạng, khác R2 chưa bật). */
+/** Error caused by the token/permissions (not a network error, not R2 not enabled). */
 function isPermissionError(err: unknown): boolean {
     if (!(err instanceof CloudError)) return false;
     if (err.code === 'R2_NOT_ENABLED') return false;
@@ -107,7 +108,7 @@ function isConflict(err: unknown): boolean {
     return err instanceof CloudError && (err.status === 409 || cfErrorCodes(err).includes(10004));
 }
 
-/** Lỗi tạm thời (mạng, 5xx, 429): không kết luận được gì về token. */
+/** Temporary error (network, 5xx, 429): nothing can be concluded about the token. */
 function isTransient(err: unknown): boolean {
     return err instanceof CloudError && ['NETWORK', 'TIMEOUT', 'RATE_LIMITED', 'CF_UNAVAILABLE', 'BAD_RESPONSE'].includes(err.code);
 }
@@ -139,9 +140,9 @@ export interface CloudflareServiceDeps {
     fetchImpl?: FetchLike;
     r2Fetch?: R2Fetch;
     budget?: RequestBudget;
-    /** Gửi sự kiện tới renderer (mặc định: mọi BrowserWindow). */
+    /** Send an event to the renderer (default: every BrowserWindow). */
     broadcast?: (channel: string, payload: CloudChangedPayload) => void;
-    /** Thay module Google Drive / bộ đếm mức sử dụng (test). */
+    /** Replace the Google Drive module / usage counter (tests). */
     google?: (core: CloudflareService) => GoogleDriveCore;
     usage?: (core: CloudflareService) => CloudUsageModule;
 }
@@ -171,7 +172,7 @@ export class CloudflareService implements CloudflareCore {
             : createGoogleDrive({ settings: this.settings, usage: this.usage, notify: () => this.notifyChanged('connection') });
     }
 
-    // ── Trạng thái ──
+    // ── Status ──
 
     status(): CloudConnectionStatus {
         try {
@@ -182,7 +183,7 @@ export class CloudflareService implements CloudflareCore {
                 return {
                     ...emptyStatus(),
                     accountId: s.accountId,
-                    lastError: hadSecret ? 'Không đọc được token đã lưu trên máy này — hãy kết nối lại' : null,
+                    lastError: hadSecret ? tr('Không đọc được token đã lưu trên máy này — hãy kết nối lại') : null,
                 };
             }
             const c = this.cached;
@@ -206,14 +207,14 @@ export class CloudflareService implements CloudflareCore {
         const accountId = String(input?.accountId ?? '').trim().toLowerCase();
         const token = String(input?.token ?? '').trim().replace(/^Bearer\s+/i, '');
         if (!ACCOUNT_ID_RE.test(accountId)) {
-            throw new CloudError('BAD_ACCOUNT_ID', 'Account ID không hợp lệ (32 ký tự 0-9, a-f — xem ở trang tổng quan tài khoản Cloudflare)');
+            throw new CloudError('BAD_ACCOUNT_ID', tr('Account ID không hợp lệ (32 ký tự 0-9, a-f — xem ở trang tổng quan tài khoản Cloudflare)'));
         }
         if (token.length < 20 || token.length > 512 || !/^[A-Za-z0-9._~+/=-]+$/.test(token)) {
-            throw new CloudError('BAD_TOKEN', 'Token Cloudflare không hợp lệ (dán đúng chuỗi token vừa tạo)');
+            throw new CloudError('BAD_TOKEN', tr('Token Cloudflare không hợp lệ (dán đúng chuỗi token vừa tạo)'));
         }
-        // Không lưu được bí mật thì dừng trước khi gọi mạng.
+        // If the secret cannot be saved, stop before making any network call.
         this.settings.assertSecretsAvailable();
-        if (this.connecting) throw new CloudError('BUSY', 'Đang kết nối Cloudflare, chờ một chút');
+        if (this.connecting) throw new CloudError('BUSY', tr('Đang kết nối Cloudflare, chờ một chút'));
         this.connecting = true;
         let verified: VerifiedToken;
         let probe: ProbeResult;
@@ -319,7 +320,7 @@ export class CloudflareService implements CloudflareCore {
 
     api(): CloudflareApi {
         const s = this.settings.peek();
-        if (!s.accountId || !this.settings.getToken()) throw new CloudError('NOT_CONNECTED', 'Chưa kết nối Cloudflare');
+        if (!s.accountId || !this.settings.getToken()) throw new CloudError('NOT_CONNECTED', tr('Chưa kết nối Cloudflare'));
         return this.client;
     }
 
@@ -329,7 +330,7 @@ export class CloudflareService implements CloudflareCore {
 
     store(bucket: string): R2Client {
         const name = String(bucket ?? '').trim();
-        if (!isValidBucketName(name)) throw new CloudError('BAD_BUCKET', 'Tên bucket không hợp lệ (3–63 ký tự a-z, 0-9, -)');
+        if (!isValidBucketName(name)) throw new CloudError('BAD_BUCKET', tr('Tên bucket không hợp lệ (3–63 ký tự a-z, 0-9, -)'));
         if (this.storageProvider() === 'gdrive') return this.google.store(name);
         let client = this.r2Clients.get(name);
         if (!client) {
@@ -345,7 +346,7 @@ export class CloudflareService implements CloudflareCore {
         return client;
     }
 
-    // ── Kho lưu (R2 / Google Drive) ──
+    // ── Storage (R2 / Google Drive) ──
 
     storageProvider(): CloudStorageProvider {
         try {
@@ -360,13 +361,13 @@ export class CloudflareService implements CloudflareCore {
         if (this.storageProvider() === 'gdrive') {
             return this.google.isConnected()
                 ? { ready: true, reason: null }
-                : { ready: false, reason: 'Chưa đăng nhập Google Drive — đăng nhập Google ở phần Kho lưu.' };
+                : { ready: false, reason: tr('Chưa đăng nhập Google Drive — đăng nhập Google ở phần Kho lưu.') };
         }
         const c = this.status();
-        if (!c.connected) return { ready: false, reason: 'Chưa kết nối Cloudflare — kết nối Cloudflare ở đầu trang (hoặc chọn kho Google Drive).' };
+        if (!c.connected) return { ready: false, reason: tr('Chưa kết nối Cloudflare — kết nối Cloudflare ở đầu trang (hoặc chọn kho Google Drive).') };
         const p = c.permissions.find(x => x.feature === 'r2');
-        if (p?.r2NotEnabled) return { ready: false, reason: 'Tài khoản Cloudflare chưa bật R2 (Cloudflare → R2 Object Storage).' };
-        if (p && !p.ok) return { ready: false, reason: `Token Cloudflare thiếu quyền R2${p.missing?.length ? ` (${p.missing.join(', ')})` : ''}.` };
+        if (p?.r2NotEnabled) return { ready: false, reason: tr('Tài khoản Cloudflare chưa bật R2 (Cloudflare → R2 Object Storage).') };
+        if (p && !p.ok) return { ready: false, reason: tr('Token Cloudflare thiếu quyền R2{{v1}}.', { v1: p.missing?.length ? ` (${p.missing.join(', ')})` : '' }) };
         return { ready: true, reason: null };
     }
 
@@ -377,7 +378,7 @@ export class CloudflareService implements CloudflareCore {
     }
 
     async setStorageProvider(provider: CloudStorageProvider, guard?: () => string | null): Promise<CloudStorageStatus> {
-        if (!isCloudStorageProvider(provider)) throw new CloudError('BAD_INPUT', 'Kho lưu không hợp lệ');
+        if (!isCloudStorageProvider(provider)) throw new CloudError('BAD_INPUT', tr('Kho lưu không hợp lệ'));
         const prev = this.storageProvider();
         if (prev === provider) return this.storageStatus();
         const blocked = guard ? guard() : null;
@@ -403,7 +404,7 @@ export class CloudflareService implements CloudflareCore {
 
     async ensureBucket(name: string, opts: { locationHint?: string } = {}): Promise<void> {
         const bucket = String(name ?? '').trim();
-        if (!isValidBucketName(bucket)) throw new CloudError('BAD_BUCKET', 'Tên bucket không hợp lệ (3–63 ký tự a-z, 0-9, -)');
+        if (!isValidBucketName(bucket)) throw new CloudError('BAD_BUCKET', tr('Tên bucket không hợp lệ (3–63 ký tự a-z, 0-9, -)'));
         if (this.storageProvider() === 'gdrive') {
             await this.google.ensureBucket(bucket);
             return;
@@ -415,20 +416,20 @@ export class CloudflareService implements CloudflareCore {
             await api.request('GET', `/accounts/${accountId}/r2/buckets/${bucket}`);
             return;
         } catch (err) {
-            if (isR2NotEnabled(err)) throw new CloudError('R2_NOT_ENABLED', 'Tài khoản Cloudflare chưa bật R2', (err as CloudError).status);
+            if (isR2NotEnabled(err)) throw new CloudError('R2_NOT_ENABLED', tr('Tài khoản Cloudflare chưa bật R2'), (err as CloudError).status);
             if (!isNotFound(err)) throw err;
         }
         try {
             await api.request('POST', `/accounts/${accountId}/r2/buckets`, { name: bucket, locationHint });
             Logger.log(`[Cloudflare] Đã tạo bucket R2 ${bucket} (${locationHint})`);
         } catch (err) {
-            if (isR2NotEnabled(err)) throw new CloudError('R2_NOT_ENABLED', 'Tài khoản Cloudflare chưa bật R2', (err as CloudError).status);
-            if (isConflict(err)) return; // vừa được tạo song song / đã có
+            if (isR2NotEnabled(err)) throw new CloudError('R2_NOT_ENABLED', tr('Tài khoản Cloudflare chưa bật R2'), (err as CloudError).status);
+            if (isConflict(err)) return; // just created in parallel / already exists
             throw err;
         }
     }
 
-    // ── Sự kiện ──
+    // ── Events ──
 
     notifyChanged(area: Area): void {
         const payload: CloudChangedPayload = { area, at: Date.now() };
@@ -441,10 +442,10 @@ export class CloudflareService implements CloudflareCore {
                 for (const win of windows) {
                     try {
                         if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(CLOUD_CHANGED_EVENT, payload);
-                    } catch { /* cửa sổ đang đóng */ }
+                    } catch { /* window is closing */ }
                 }
             }
-        } catch { /* test / chưa có electron */ }
+        } catch { /* test / Electron not available yet */ }
         for (const cb of Array.from(this.listeners)) {
             try {
                 cb(area);
@@ -461,7 +462,7 @@ export class CloudflareService implements CloudflareCore {
         };
     }
 
-    // ── nội bộ ──
+    // ── internal ──
 
     private r2Credentials(): SigV4Credentials | null {
         const s = this.settings.peek();
@@ -475,8 +476,8 @@ export class CloudflareService implements CloudflareCore {
     }
 
     /**
-     * Kiểm token: token 'cfat_' (của tài khoản) → /accounts/{id}/tokens/verify; còn lại thử /user/tokens/verify rồi
-     * tới /accounts/{id}/tokens/verify. knownKind (khi recheck) → chỉ thử đúng loại đó.
+     * Verify the token: token 'cfat_' (account token) → /accounts/{id}/tokens/verify; otherwise try /user/tokens/verify, then
+     * /accounts/{id}/tokens/verify. knownKind (when rechecking) → only try that same kind.
      */
     private async verifyToken(
         client: CloudflareApiClient, accountId: string, token: string, knownKind: 'account' | 'user' | null, unbudgeted: boolean,
@@ -489,9 +490,9 @@ export class CloudflareService implements CloudflareCore {
             const p = kind === 'user' ? '/user/tokens/verify' : `/accounts/${accountId}/tokens/verify`;
             try {
                 const r = await client.request<any>('GET', p, undefined, { unbudgeted });
-                if (!r || !r.id) throw new CloudError('INVALID_TOKEN', 'Cloudflare không trả về mã của token');
+                if (!r || !r.id) throw new CloudError('INVALID_TOKEN', tr('Cloudflare không trả về mã của token'));
                 if (r.status && r.status !== 'active') {
-                    throw new CloudError('TOKEN_INACTIVE', r.status === 'expired' ? 'Token Cloudflare đã hết hạn' : 'Token Cloudflare đang bị tắt');
+                    throw new CloudError('TOKEN_INACTIVE', r.status === 'expired' ? tr('Token Cloudflare đã hết hạn') : tr('Token Cloudflare đang bị tắt'));
                 }
                 return { id: String(r.id), kind, expiresOn: typeof r.expires_on === 'string' ? r.expires_on : null };
             } catch (err) {
@@ -502,12 +503,12 @@ export class CloudflareService implements CloudflareCore {
         const status = lastErr instanceof CloudError ? lastErr.status : undefined;
         throw new CloudError(
             'INVALID_TOKEN',
-            'Token Cloudflare không hợp lệ, đã hết hạn hoặc không thuộc Account ID này',
+            tr('Token Cloudflare không hợp lệ, đã hết hạn hoặc không thuộc Account ID này'),
             status,
         );
     }
 
-    /** Liệt kê tên miền + thử quyền từng tính năng bằng các GET rẻ (không tạo gì trên Cloudflare). */
+    /** List the domains + test each feature's permissions with cheap GETs (creates nothing on Cloudflare). */
     private async probe(client: CloudflareApiClient, accountId: string): Promise<ProbeResult> {
         const [zonesRes, tunnelRes, r2Res, scriptsRes, d1Res] = await Promise.allSettled([
             client.requestAll<any>('/zones', { query: { 'account.id': accountId, status: 'active' }, perPage: 50, maxPages: 10 }),
@@ -544,7 +545,7 @@ export class CloudflareService implements CloudflareCore {
 
         if (zonesRes.status === 'fulfilled') {
             if (zones.length === 0) {
-                tunnelMissing.push('Chưa có tên miền nào đang hoạt động trong tài khoản (hoặc token chưa được cấp quyền cho tên miền nào)');
+                tunnelMissing.push(tr('Chưa có tên miền nào đang hoạt động trong tài khoản (hoặc token chưa được cấp quyền cho tên miền nào)'));
             } else {
                 try {
                     await client.request('GET', `/zones/${zones[0].id}/dns_records`, undefined, { query: { per_page: 1 } });
@@ -558,20 +559,20 @@ export class CloudflareService implements CloudflareCore {
         const tunnel: CloudPermissionCheck = tunnelMissing.length
             ? { feature: 'tunnel', ok: false, missing: tunnelMissing }
             : tunnelUncheckedReasons.length
-                ? { feature: 'tunnel', ok: false, missing: [`Chưa kiểm tra được: ${tunnelUncheckedReasons[0]}`] }
+                ? { feature: 'tunnel', ok: false, missing: [tr('Chưa kiểm tra được: {{v1}}', { v1: tunnelUncheckedReasons[0] })] }
                 : { feature: 'tunnel', ok: true };
 
         let r2: CloudPermissionCheck;
         if (r2Res.status === 'fulfilled') {
             r2 = { feature: 'r2', ok: true };
         } else if (isR2NotEnabled(r2Res.reason)) {
-            r2 = { feature: 'r2', ok: false, r2NotEnabled: true, missing: ['Tài khoản Cloudflare chưa bật R2 (mở Cloudflare Dashboard → R2 để bật)'] };
+            r2 = { feature: 'r2', ok: false, r2NotEnabled: true, missing: [tr('Tài khoản Cloudflare chưa bật R2 (mở Cloudflare Dashboard → R2 để bật)')] };
         } else if (isPermissionError(r2Res.reason)) {
             r2 = { feature: 'r2', ok: false, missing: [missingPermission(CF_PERMISSION_LABELS.r2)] };
         } else {
             const msg = errMessage(r2Res.reason);
             transient.push(msg);
-            r2 = { feature: 'r2', ok: false, missing: [`Chưa kiểm tra được: ${msg}`] };
+            r2 = { feature: 'r2', ok: false, missing: [tr('Chưa kiểm tra được: {{msg}}', { msg })] };
         }
 
         return { zones, accountName, permissions: [tunnel, r2, workersCheck(scriptsRes, d1Res)], lastError: transient[0] ?? null };
@@ -579,9 +580,9 @@ export class CloudflareService implements CloudflareCore {
 }
 
 /**
- * Worker + D1 (cho ứng dụng, quyền cloudflare:workers): KHÔNG bắt buộc — thiếu quyền không là lỗi của kết nối, lỗi tạm
- * thời của hai GET này cũng không thành lastError (giao diện chỉ hiện một dòng thông tin, không chấm đỏ).
- * GET chỉ chứng minh quyền đọc; thiếu Edit thì lời gọi ghi của ứng dụng báo CF_PERMISSION.
+ * Worker + D1 (for apps, cloudflare:workers permission): NOT required. A missing permission is not a connection error, and a temporary
+ * error of these two GETs does not become lastError either (the UI only shows an info line, not a red mark).
+ * A GET only proves read permission; without Edit, the app's write call reports CF_PERMISSION.
  */
 function workersCheck(scripts: PromiseSettledResult<unknown>, d1: PromiseSettledResult<unknown>): CloudPermissionCheck {
     const missing: string[] = [];
@@ -593,28 +594,28 @@ function workersCheck(scripts: PromiseSettledResult<unknown>, d1: PromiseSettled
         else unchecked.push(errMessage(res.reason));
     }
     if (missing.length) return { feature: 'workers', ok: false, missing };
-    if (unchecked.length) return { feature: 'workers', ok: false, missing: [`Chưa kiểm tra được: ${unchecked[0]}`] };
+    if (unchecked.length) return { feature: 'workers', ok: false, missing: [tr('Chưa kiểm tra được: {{v1}}', { v1: unchecked[0] })] };
     return { feature: 'workers', ok: true };
 }
 
 /**
- * Dung lượng Deplao đã đẩy lên kho (ảnh/file đã lên + bản sao DB) theo trạng thái cục bộ — để ước tính khi không có số
- * liệu toàn tài khoản. Đọc module lúc gọi (require muộn, tránh vòng import). Không ném.
+ * Storage used by Deplao that it has uploaded (photos/files already uploaded + DB copies), based on the local state, to estimate when there are no
+ * account-wide figures. Reads the module at call time (late require, avoids circular imports). Never throws.
  */
 function localStoredBytes(): number {
     let total = 0;
     try {
         const { cloudMedia } = require('./media') as typeof import('./media');
         total += Number(cloudMedia.status()?.totals?.bytesUploaded) || 0;
-    } catch { /* module chưa nạp */ }
+    } catch { /* module not loaded yet */ }
     try {
         const { cloudDb } = require('./dbsync') as typeof import('./dbsync');
         for (const w of cloudDb.status()?.workspaces || []) total += Number(w.bytes) || 0;
-    } catch { /* module chưa nạp */ }
+    } catch { /* module not loaded yet */ }
     return total;
 }
 
-/** Lõi Cloudflare dùng chung (main process). */
+/** Shared Cloudflare core (main process). */
 export const cloudflare: CloudflareCore = new CloudflareService();
 
 export { CloudApiError };

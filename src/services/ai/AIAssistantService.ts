@@ -15,6 +15,7 @@ import { requestAICompletion } from './AIProviderAdapter';
 import { normalizeAIModel } from '../../shared/ai/aiModelCatalog';
 import { normalizeSuggestionCount, parseSuggestionResult, suggestionSystemPrompt } from '../../shared/ai/replySuggestions';
 import type { AIAssistant, AIAssistantFile, ChatMessage, AIPlatform } from '../../models';
+import { tr } from '../../shared/i18n';
 
 // ─── Encryption helpers ───────────────────────────────────────────────────────
 
@@ -66,7 +67,7 @@ function resolveApiUrl(platform: string, model: string, apiKey: string, baseUrl:
     } else if (platform === 'claude') {
       return `${base}/v1/messages`;
     }
-    // Nếu baseUrl đã có version prefix (vd /v1), thêm trực tiếp /chat/completions
+    // If baseUrl already has a version prefix (e.g. /v1), add /chat/completions directly
     if (base.match(/\/v\d+$/)) {
       return `${base}/chat/completions`;
     }
@@ -381,8 +382,8 @@ VÍ DỤ ĐẦU RA ĐÚNG:
   // ─── Public AI methods ──────────────────────────────────────────────────
 
   /**
-   * Gợi ý câu trả lời từ lịch sử hội thoại. `count` = số câu (1..5; ô soạn tin mặc định 3 — cài ở menu Gợi ý AI);
-   * không truyền (API, nhân viên bản cũ) = 5 như trước.
+   * Suggest reply sentences from the conversation history. `count` = number of sentences (1..5; the compose box default is 3, set in the AI suggestions menu);
+   * if not passed (API, old employee builds) = 5 as before.
    */
   public async getSuggestions(assistantId: string, chatHistory: Array<{ role: string; content: string }>, count?: number): Promise<string[]> {
     const assistant = this.getAssistant(assistantId);
@@ -390,8 +391,8 @@ VÍ DỤ ĐẦU RA ĐÚNG:
 
     const wanted = normalizeSuggestionCount(count);
     const contextCount = assistant.contextMessageCount || 30;
-    // KHÔNG dùng buildSystemPrompt() ở đây vì assistant system prompt có thể lấn át
-    // instruction suggest (đặc biệt với model FREE). Chỉ dùng instruction thuần.
+    // Do NOT use buildSystemPrompt() here, because the assistant system prompt may override
+    // the suggest instruction (especially with FREE models). Use only the plain instruction.
     const messages: ChatMessage[] = [
       { role: 'system', content: suggestionSystemPrompt(wanted) },
       ...chatHistory.slice(-contextCount).map(m => ({
@@ -418,8 +419,8 @@ VÍ DỤ ĐẦU RA ĐÚNG:
    */
   public async chat(assistantId: string, conversationMessages: Array<{ role: string; content: string }>, structured: boolean = false, maxTokensOverride?: number): Promise<{ result: string; totalTokens: number; promptTokens: number; completionTokens: number }> {
     const assistant = this.getAssistant(assistantId);
-    if (!assistant) throw new Error('Trợ lý AI không tồn tại');
-    if (!assistant.enabled) throw new Error('Trợ lý AI đã bị tắt');
+    if (!assistant) throw new Error(tr('Trợ lý AI không tồn tại'));
+    if (!assistant.enabled) throw new Error(tr('Trợ lý AI đã bị tắt'));
 
     const systemPrompt = await this.buildSystemPrompt(assistant, structured);
     const messages: ChatMessage[] = [
@@ -443,8 +444,8 @@ VÍ DỤ ĐẦU RA ĐÚNG:
     opts: { maxTokens?: number; temperature?: number } = {},
   ): Promise<{ result: string; totalTokens: number; promptTokens: number; completionTokens: number }> {
     const assistant = this.getAssistant(assistantId);
-    if (!assistant) throw new Error('Trợ lý AI không tồn tại');
-    if (!assistant.enabled) throw new Error('Trợ lý AI đã bị tắt');
+    if (!assistant) throw new Error(tr('Trợ lý AI không tồn tại'));
+    if (!assistant.enabled) throw new Error(tr('Trợ lý AI đã bị tắt'));
     const chatMessages: ChatMessage[] = messages
       .filter(m => m && typeof m.content === 'string' && m.content.trim())
       .map(m => ({ role: (m.role === 'system' || m.role === 'assistant' ? m.role : 'user') as ChatMessage['role'], content: m.content }));
@@ -457,8 +458,8 @@ VÍ DỤ ĐẦU RA ĐÚNG:
    */
   public async chatForWorkflow(assistantId: string, conversationMessages: Array<{ role: string; content: string }>): Promise<{ result: string; totalTokens: number; promptTokens: number; completionTokens: number }> {
     const assistant = this.getAssistant(assistantId);
-    if (!assistant) throw new Error('Trợ lý AI không tồn tại');
-    if (!assistant.enabled) throw new Error('Trợ lý AI đã bị tắt');
+    if (!assistant) throw new Error(tr('Trợ lý AI không tồn tại'));
+    if (!assistant.enabled) throw new Error(tr('Trợ lý AI đã bị tắt'));
 
     const systemPrompt = await this.buildSystemPrompt(assistant, true);
     const messages: ChatMessage[] = [
@@ -477,15 +478,15 @@ VÍ DỤ ĐẦU RA ĐÚNG:
    */
   public async testConnection(assistantId: string): Promise<{ success: boolean; message: string }> {
     const assistant = this.getAssistant(assistantId);
-    if (!assistant) return { success: false, message: 'Không tìm thấy trợ lý' };
+    if (!assistant) return { success: false, message: tr('Không tìm thấy trợ lý') };
 
     try {
       const { result } = await this.callLLM(assistant, [
         { role: 'user', content: 'Xin chào, đây là tin nhắn test. Trả lời ngắn gọn.' }
       ], 50);
-      return { success: true, message: result ? `✅ Kết nối thành công! AI trả lời: "${result.substring(0, 80)}"` : '✅ Kết nối OK' };
+      return { success: true, message: result ? tr('✅ Kết nối thành công! AI trả lời: "{{v1}}"', { v1: result.substring(0, 80) }) : tr('✅ Kết nối OK') };
     } catch (e: any) {
-      return { success: false, message: `❌ Lỗi: ${e.response?.data?.error?.message || e.message}` };
+      return { success: false, message: tr('❌ Lỗi: {{v1}}', { v1: e.response?.data?.error?.message || e.message }) };
     }
   }
 

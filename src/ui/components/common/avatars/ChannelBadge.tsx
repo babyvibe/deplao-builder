@@ -1,5 +1,5 @@
 /**
- * ChannelBadge.tsx - Hiển thị badge kênh (Zalo / Facebook) trên avatar, contact card, etc.
+ * ChannelBadge.tsx - Shows the channel badge (Zalo / Facebook) on avatars, contact cards, etc.
  */
 
 import React from 'react';

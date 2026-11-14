@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { useAppStore } from '@/store/app/appStore';
 import { AlertIcon, CheckIcon, ClipboardListIcon, CloseIcon, InboxIcon, SendIcon, SkipForwardIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 interface Props {
@@ -44,12 +46,12 @@ function NodeResultDetail({ nr, isLight }: { nr: any; isLight: boolean }) {
       >
         <span>{nodeIcon(nr.status)}</span>
         <span className={isLight ? 'text-gray-700' : 'text-foreground/80'}>{nr.label || nr.nodeType}</span>
-        {nr.iteration ? <span className="text-muted-foreground">(lượt {nr.iteration})</span> : null}
+        {nr.iteration ? <span className="text-muted-foreground">{trx('(lượt {{iteration}})', { iteration: nr.iteration })}</span> : null}
         <span className={isLight ? 'text-muted-foreground' : 'text-muted-foreground'}>{nr.durationMs}ms</span>
         {hasError && <span className="text-red-500 text-[10px] truncate max-w-[200px]">{nr.error || nr.output?._errorMessage}</span>}
         {(hasInput || hasOutput || hasError) && (
           <span className={`ml-auto text-[10px] ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-            {showDetails ? '▲' : '▼'} chi tiết
+            {trx('{{v1}} chi tiết', { v1: showDetails ? '▲' : '▼' })}
           </span>
         )}
       </button>
@@ -60,20 +62,20 @@ function NodeResultDetail({ nr, isLight }: { nr: any; isLight: boolean }) {
           {/* Error details */}
           {nr.output?._errorType && (
             <div className="mb-2 border-l-2 border-red-500 pl-2">
-              <div className="text-red-500 font-semibold mb-0.5"><CloseIcon className="w-3 h-3 inline text-red-500" /> LỖI: {nr.output._errorType}</div>
+              <div className="text-red-500 font-semibold mb-0.5">{trx('<0/> LỖI: {{_errorType}}', { 0: <CloseIcon className="w-3 h-3 inline text-red-500" />, _errorType: nr.output._errorType })}</div>
               {nr.output._httpStatus && <div className={isLight ? 'text-muted-foreground' : 'text-muted-foreground'}>HTTP {nr.output._httpStatus} {nr.output._httpStatusText}</div>}
-              {nr.output._errorCode && <div className={isLight ? 'text-muted-foreground' : 'text-muted-foreground'}>Code: {nr.output._errorCode}</div>}
+              {nr.output._errorCode && <div className={isLight ? 'text-muted-foreground' : 'text-muted-foreground'}>{trx('Code: {{_errorCode}}', { _errorCode: nr.output._errorCode })}</div>}
               {nr.output._errorMessage && <div className="text-red-400">{nr.output._errorMessage}</div>}
               {nr.output._responseData && (
                 <details className="mt-1">
-                  <summary className="cursor-pointer text-orange-500">Response body</summary>
+                  <summary className="cursor-pointer text-orange-500">{tr('Response body')}</summary>
                   <pre className="mt-0.5 whitespace-pre-wrap break-word max-h-32 overflow-y-auto">{formatValue(nr.output._responseData)}</pre>
                 </details>
               )}
-              {nr.output._requestSummary && <div className={isLight ? 'text-muted-foreground' : 'text-muted-foreground'}>Request: {nr.output._requestSummary}</div>}
+              {nr.output._requestSummary && <div className={isLight ? 'text-muted-foreground' : 'text-muted-foreground'}>{trx('Request: {{_requestSummary}}', { _requestSummary: nr.output._requestSummary })}</div>}
               {nr.output._stackTrace && (
                 <details className="mt-1">
-                  <summary className="cursor-pointer text-muted-foreground">Stack trace</summary>
+                  <summary className="cursor-pointer text-muted-foreground">{tr('Stack trace')}</summary>
                   <pre className="mt-0.5 whitespace-pre-wrap text-[9px] text-muted-foreground">{nr.output._stackTrace}</pre>
                 </details>
               )}
@@ -83,7 +85,7 @@ function NodeResultDetail({ nr, isLight }: { nr: any; isLight: boolean }) {
           {/* Input (rendered config) */}
           {hasInput && (
             <details className="mb-1">
-              <summary className="cursor-pointer text-blue-500"><InboxIcon className="w-4 h-4 inline" /> Đầu vào (input)</summary>
+              <summary className="cursor-pointer text-blue-500">{trx('<0/> Đầu vào (input)', { 0: <InboxIcon className="w-4 h-4 inline" /> })}</summary>
               <pre className="mt-0.5 whitespace-pre-wrap break-word max-h-40 overflow-y-auto">{formatValue(nr.input)}</pre>
             </details>
           )}
@@ -91,7 +93,7 @@ function NodeResultDetail({ nr, isLight }: { nr: any; isLight: boolean }) {
           {/* Output (response data) */}
           {hasOutput && (
             <details>
-              <summary className="cursor-pointer text-green-500"><SendIcon className="w-4 h-4 inline" /> Đầu ra (output)</summary>
+              <summary className="cursor-pointer text-green-500">{trx('<0/> Đầu ra (output)', { 0: <SendIcon className="w-4 h-4 inline" /> })}</summary>
               <pre className="mt-0.5 whitespace-pre-wrap break-word max-h-40 overflow-y-auto">{formatValue(nr.output)}</pre>
             </details>
           )}
@@ -113,7 +115,7 @@ export default function RunHistoryPanel({ workflowId }: Props) {
     if (!workflowId) return;
     setLoading(true);
     try {
-      // DataAccessor: chế độ nhân viên đọc lịch sử chạy trên Boss (IPC đọc DB cục bộ của máy nhân viên → trống)
+      // DataAccessor: in employee mode, run history is read from the Boss (IPC reads the employee machine's local DB → empty)
       const res = await DataAccessor.getWorkflowRunLogs(workflowId, 30);
       if (res?.success) setLogs(res.logs);
     } finally {
@@ -154,7 +156,7 @@ export default function RunHistoryPanel({ workflowId }: Props) {
           <span className={`transition-transform duration-200 ${isCollapsed ? '' : 'rotate-180'}`}>
             {isCollapsed ? '▲' : '▼'}
           </span>
-          <span className={`text-xs font-semibold ${isLight ? 'text-gray-700' : 'text-foreground/80'}`}><ClipboardListIcon className="w-4 h-4 inline" /> Lịch sử chạy
+          <span className={`text-xs font-semibold ${isLight ? 'text-gray-700' : 'text-foreground/80'}`}>{trx('<0/> Lịch sử chạy', { 0: <ClipboardListIcon className="w-4 h-4 inline" /> })}
           </span>
           {logs.length > 0 && (
             <span className={`text-[10px] px-1.5 py-0.5 rounded ${
@@ -175,11 +177,11 @@ export default function RunHistoryPanel({ workflowId }: Props) {
                   : 'text-muted-foreground hover:text-foreground/80'
               }`}
             >
-              {loading ? '...' : '↻ Refresh'}
+              {loading ? '...' : tr('↻ Refresh')}
             </button>
           )}
           <span className={`text-[10px] ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-            {isCollapsed ? 'Click để mở rộng' : 'Click để thu nhỏ'}
+            {isCollapsed ? tr('Click để mở rộng') : tr('Click để thu nhỏ')}
           </span>
         </div>
       </div>
@@ -189,7 +191,7 @@ export default function RunHistoryPanel({ workflowId }: Props) {
         <div className="flex-1 overflow-y-auto text-[11px]">
           {logs.length === 0 && (
             <p className={`text-center py-4 ${isLight ? 'text-muted-foreground' : 'text-muted-foreground'}`}>
-              Chưa có lần chạy nào
+              {tr('Chưa có lần chạy nào')}
             </p>
           )}
           {logs.map(log => (
@@ -202,7 +204,7 @@ export default function RunHistoryPanel({ workflowId }: Props) {
               >
                 <span>{statusIcon(log.status)}</span>
                 <span className={isLight ? 'text-gray-700' : 'text-foreground/80'}>
-                  {new Date(log.started_at || log.startedAt).toLocaleTimeString('vi-VN')}
+                  {new Date(log.started_at || log.startedAt).toLocaleTimeString(appLocale())}
                 </span>
                 <span className={`font-medium ${log.status === 'success' ? 'text-green-500' : log.status === 'error' ? 'text-red-500' : 'text-yellow-500'}`}>
                   {log.status}
@@ -222,7 +224,7 @@ export default function RunHistoryPanel({ workflowId }: Props) {
                   {log.errorMessage && (
                     <p className="text-red-500 text-[11px] mb-1"><AlertIcon className="w-3 h-3 inline" /> {log.errorMessage}</p>
                   )}
-                  {/* Node trong "Lặp qua danh sách" có một dòng mỗi lượt → key theo vị trí */}
+                  {/* A node in "Lặp qua danh sách" (loop over list) has one row per iteration → key by position */}
                   {(log.nodeResults || []).map((nr: any, i: number) => (
                     <NodeResultDetail key={`${nr.nodeId}-${i}`} nr={nr} isLight={isLight} />
                   ))}

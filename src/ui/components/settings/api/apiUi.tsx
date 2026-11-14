@@ -1,24 +1,26 @@
 /**
- * apiUi.tsx — mảnh giao diện dùng chung cho trang Công cụ → Ứng dụng, API & Webhook (phần API và phần Ứng dụng).
- * Chỉ dùng token màu của hệ thống giao diện (bg-card, text-foreground, primary/success/warning/destructive…).
+ * apiUi.tsx - shared UI pieces for the Tools → Apps, API & Webhook page (the API section and the Apps section).
+ * Only uses the color tokens of the UI system (bg-card, text-foreground, primary/success/warning/destructive…).
  */
 import React, { useState } from 'react';
 import { CheckIcon, CopyIcon, AlertIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export function fmtTime(ts?: number | null): string {
   if (!ts) return '—';
-  return new Date(ts).toLocaleString('vi-VN', { hour12: false });
+  return new Date(ts).toLocaleString(appLocale(), { hour12: false });
 }
 
 export function fmtAgo(ts?: number | null, now = Date.now()): string {
-  if (!ts) return 'chưa dùng';
+  if (!ts) return tr('chưa dùng');
   const sec = Math.max(0, Math.round((now - ts) / 1000));
-  if (sec < 60) return 'vừa xong';
+  if (sec < 60) return tr('vừa xong');
   const min = Math.round(sec / 60);
-  if (min < 60) return `${min} phút trước`;
+  if (min < 60) return tr('{{min}} phút trước', { min });
   const hours = Math.round(min / 60);
-  if (hours < 48) return `${hours} giờ trước`;
-  return `${Math.round(hours / 24)} ngày trước`;
+  if (hours < 48) return tr('{{hours}} giờ trước', { hours });
+  return tr('{{v1}} ngày trước', { v1: Math.round(hours / 24) });
 }
 
 export const btn = {
@@ -82,14 +84,14 @@ export function CopyField({ value, label, secret }: { value: string; label?: str
       await navigator.clipboard.writeText(value);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch { /* clipboard bị chặn */ }
+    } catch { /* clipboard blocked */ }
   };
   return (
     <div className="bg-muted rounded-lg px-3 py-2">
       {label && <p className="text-[11px] text-muted-foreground mb-0.5">{label}</p>}
       <div className="flex items-center gap-2">
         <code className={`flex-1 text-xs break-all select-all font-mono ${secret ? 'text-warning' : 'text-success'}`}>{value}</code>
-        <button type="button" onClick={copy} className="text-primary hover:text-primary-hover flex-shrink-0" title="Copy">
+        <button type="button" onClick={copy} className="text-primary hover:text-primary-hover flex-shrink-0" title={tr('Copy')}>
           {copied ? <CheckIcon className="w-4 h-4" /> : <CopyIcon className="w-4 h-4" />}
         </button>
       </div>
@@ -131,15 +133,15 @@ export function ErrorBox({ message }: { message?: string | null }) {
   );
 }
 
-/** Hộp hiện bí mật (API key / webhook secret) đúng một lần. */
+/** Box that shows a secret (API key / webhook secret) exactly once. */
 export function OneTimeSecret({ title, value, onDone }: { title: string; value: string; onDone: () => void }) {
   return (
     <div className="rounded-xl border border-warning/40 bg-warning/10 p-4 space-y-2">
       <p className="text-sm font-semibold text-warning">{title}</p>
-      <p className="text-xs text-muted-foreground">Chỉ hiện <strong>một lần</strong>. Copy và lưu vào nơi an toàn (biến môi trường, trình quản lý mật khẩu). Mất thì tạo cái mới.</p>
+      <p className="text-xs text-muted-foreground">{trx('Chỉ hiện <0>một lần</0>. Copy và lưu vào nơi an toàn (biến môi trường, trình quản lý mật khẩu). Mất thì tạo cái mới.', { 0: <strong /> })}</p>
       <CopyField value={value} secret />
       <div className="flex justify-end">
-        <button type="button" className={btn.primary} onClick={onDone}>Tôi đã lưu</button>
+        <button type="button" className={btn.primary} onClick={onDone}>{tr('Tôi đã lưu')}</button>
       </div>
     </div>
   );
@@ -155,7 +157,7 @@ export function Field({ label, hint, children }: { label: string; hint?: React.R
   );
 }
 
-/** Danh sách tài khoản rút gọn để chọn quyền (key, webhook). */
+/** Short account list to pick permissions for (key, webhook). */
 export interface AccountOption {
   id: string;
   name: string;
@@ -164,7 +166,7 @@ export interface AccountOption {
 
 export function AccountPicker({ accounts, value, onChange }: {
   accounts: AccountOption[];
-  /** null = tất cả tài khoản */
+  /** null = all accounts */
   value: string[] | null;
   onChange: (next: string[] | null) => void;
 }) {
@@ -179,15 +181,15 @@ export function AccountPicker({ accounts, value, onChange }: {
     <div className="space-y-2">
       <div className="flex gap-4 text-xs text-foreground/80">
         <label className="flex items-center gap-1.5 cursor-pointer">
-          <input type="radio" checked={all} onChange={() => onChange(null)} /> Tất cả tài khoản
+          <input type="radio" checked={all} onChange={() => onChange(null)} /> {tr('Tất cả tài khoản')}
         </label>
         <label className="flex items-center gap-1.5 cursor-pointer">
-          <input type="radio" checked={!all} onChange={() => onChange(value || [])} /> Chỉ tài khoản được chọn
+          <input type="radio" checked={!all} onChange={() => onChange(value || [])} /> {tr('Chỉ tài khoản được chọn')}
         </label>
       </div>
       {!all && (
         <div className="max-h-40 overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
-          {accounts.length === 0 && <p className="text-xs text-subtle-foreground px-3 py-2">Chưa có tài khoản nào.</p>}
+          {accounts.length === 0 && <p className="text-xs text-subtle-foreground px-3 py-2">{tr('Chưa có tài khoản nào.')}</p>}
           {accounts.map(acc => (
             <label key={acc.id} className="flex items-center gap-2 px-3 py-1.5 text-xs text-foreground/80 cursor-pointer hover:bg-muted">
               <input type="checkbox" checked={!!value?.includes(acc.id)} onChange={() => toggle(acc.id)} />

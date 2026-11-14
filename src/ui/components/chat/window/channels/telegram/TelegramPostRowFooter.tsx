@@ -1,6 +1,6 @@
 /**
- * Chân bài đăng kênh Telegram: cảm xúc trong khung bài (bấm = thả / gỡ), người đăng + lượt xem + giờ, thanh bình luận
- * (mở nhóm thảo luận ngay trong khung chat).
+ * Footer of a Telegram channel post: reactions inside the post frame (click = add / remove), author + views + time, comment bar
+ * (opens the discussion group right in the chat window).
  */
 import { useChatStore } from '@/store/chat/chatStore';
 import { parseReactionsFull } from '../../../messages/reactions/ReactionComponents';
@@ -13,7 +13,7 @@ export function TelegramPostRowFooter({ ctx, msg, isSent, telegramPostMeta, post
   const { activeAccountId, activeThreadId, handleCancelReaction, handleReact, postReplierPeers } = ctx;
   return (
     <>
-      {/* Cảm xúc trong khung bài, bấm = thả / gỡ (như Telegram) */}
+      {/* Reactions inside the post frame, click = add / remove (like Telegram) */}
       {hasReactions && (() => {
         const rFull = parseReactionsFull(msg.reactions, msg.channel);
         const mine = activeAccountId
@@ -29,7 +29,7 @@ export function TelegramPostRowFooter({ ctx, msg, isSent, telegramPostMeta, post
       })()}
       <TelegramPostFooter postAuthor={postStats?.postAuthor || telegramPostMeta.postAuthor}
         views={postStats?.views ?? telegramPostMeta.views} edited={msg.is_edited === 1} timestamp={msg.timestamp} />
-      {/* Bình luận nằm ở nhóm thảo luận của kênh: mở ngay trong khung chat, quay lại đúng chỗ bài đang xem */}
+      {/* Comments live in the channel's discussion group: opens right in the chat window, and returns to the exact spot of the post being viewed */}
       {postStats?.hasDiscussion && activeAccountId && activeThreadId && (
         <TelegramPostCommentsBar count={postStats.comments} repliers={postStats.recentRepliers} peers={postReplierPeers}
           isSent={isSent} unread={postStats.unread}

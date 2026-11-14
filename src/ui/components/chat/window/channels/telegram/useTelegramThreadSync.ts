@@ -1,7 +1,7 @@
 /**
- * Riêng Telegram khi mở hội thoại: tin của topic forum (DB trước, rồi API), sửa hàng cũ thiếu trích dẫn / lưu rỗng
- * (lấy lại theo id), lấy lại cảm xúc chính thức của các tin có cảm xúc của mình, và hỏi lại cảm xúc của tin đang hiện
- * mỗi 20 giây ở nhóm / kênh (Telegram chỉ đẩy cảm xúc cho tác giả tin). Kênh khác: không làm gì.
+ * Telegram-only work when opening a conversation: messages of a forum topic (DB first, then the API), fixing old rows that lack a quote or were saved empty
+ * (fetched again by id), re-fetching the official reactions of messages that have your own reaction, and asking again for the reactions of the message on screen
+ * every 20 seconds in groups / channels (Telegram only pushes reactions to the message author). Other channels: nothing to do.
  */
 import { useEffect, useRef } from 'react';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -14,7 +14,7 @@ import type { ThreadSyncDeps } from '../types';
 const TG_REACTION_POLL_MS = 20_000;
 const TG_REACTION_POLL_BATCH = 50;
 
-/** Reaction của tin (chuỗi JSON hoặc object { emoji: { [e]: { users } } }) có người dùng này không */
+/** Whether this user is in the message's reactions (a JSON string or an object { emoji: { [e]: { users } } }) */
 function reactionsIncludeUser(raw: unknown, userId: string): boolean {
   if (!raw || !userId) return false;
   let parsed: any = raw;
@@ -215,7 +215,7 @@ export function useTelegramThreadSync(deps: ThreadSyncDeps) {
   useEffect(() => {
     if (!activeAccountId || !activeThreadId || activeContact?.channel !== 'telegram_user') return;
     const candidates = msgs.filter(message => {
-      // Tin lưu thành "chưa hỗ trợ" khi app còn dùng API layer cũ (tin định dạng phong phú, checklist…): lấy lại theo id
+      // Messages saved as "chưa hỗ trợ" (not supported yet) while the app still used the old API layer (rich-format messages, checklists…): fetch again by id
       if (message.msg_type === 'telegram.unsupported') return true;
       if (String(message.content || '').trim() || message.msg_type !== 'text') return false;
       try {
@@ -265,9 +265,9 @@ export function useTelegramThreadSync(deps: ThreadSyncDeps) {
       }));
   }, [activeAccountId, activeThreadId, activeTopicId, activeContact?.channel, msgs, threadKey]);
 
-  // Telegram: lấy lại reaction chính thức (GetMessagesReactions) cho các tin có reaction của chính mình khi mở hội
-  // thoại. Sửa dần dữ liệu bị cộng dồn sai trước đây — reaction của bài kênh trùng ID bị ghi nhầm sang tin ở hội thoại
-  // khác (luôn kèm reaction của mình) — và đồng bộ reaction mình đổi trên thiết bị khác. Mỗi tin 1 lần / phiên.
+  // Telegram: re-fetch the official reactions (GetMessagesReactions) for messages that have your own reaction when opening a
+  // conversation. Gradually fixes data that was wrongly summed before (a channel post reaction with a duplicate ID was written onto a message in another
+  // conversation, always with your own reaction too), and syncs reactions you changed on another device. Once per message per session.
   const refreshedTgReactionsRef = useRef(new Set<string>());
   useEffect(() => {
     if (!threadReady || !activeAccountId || !activeThreadId || activeContact?.channel !== 'telegram_user') return;
@@ -285,10 +285,10 @@ export function useTelegramThreadSync(deps: ThreadSyncDeps) {
     refresh({ accountId: activeAccountId, chatId: activeThreadId, messageIds }).catch(() => {});
   }, [threadReady, activeAccountId, activeThreadId, activeContact?.channel, msgs]);
 
-  // Telegram nhóm / kênh: Telegram chỉ đẩy reaction cho TÁC GIẢ tin; reaction trên tin của người khác phải tự hỏi lại
-  // (khuyến nghị của Telegram: poll messages.getMessagesReactions cho tin đang hiển thị mỗi 15-30 giây). Chỉ hội thoại
-  // đang mở + cửa sổ đang hiện; main chỉ ghi DB / phát sự kiện khi reaction thực sự đổi. Chat riêng không cần: đổi
-  // reaction tới qua UpdateEditMessage.
+  // Telegram groups / channels: Telegram only pushes reactions to the message AUTHOR; reactions on other people's messages must be asked for again
+  // (Telegram's recommendation: poll messages.getMessagesReactions for the messages on screen every 15-30 seconds). Only the open conversation
+  // and only while its window is visible; main only writes to the DB / emits an event when a reaction really changes. Private chats do not need it: reaction changes arrive
+  // through UpdateEditMessage.
   const tgReactionPollMsgsRef = useRef(msgs);
   tgReactionPollMsgsRef.current = msgs;
   useEffect(() => {

@@ -1,29 +1,29 @@
 /**
  * Logger Service - Controlled Logging System
- * Dịch vụ Logger - Hệ thống ghi log có thể kiểm soát
+ * Logger service: a logging system that can be turned on and off
  * Allows enable/disable logging via API or environment config
- * Cho phép bật/tắt logging thông qua API hoặc cấu hình môi trường
+ * Enables or disables logging through the API or the environment config
  *
- * Dùng chung cho main process và renderer:
- *  - Main: buffer 2000 dòng → Settings → Nhật ký (log:getBuffer / log:entry).
- *  - Renderer: console bị strip ở production (vite/terser + obfuscator), nên warn/error/notice được
- *    chuyển về main qua window.electronAPI.logs.append (IPC 'log:append') → main ghi vào Nhật ký với
- *    prefix [renderer] (appendFromRenderer). Cả hai phía đều che token/mật khẩu/cookie, giới hạn
- *    ≤ 20 dòng/giây và gộp dòng trùng trong 2 s.
+ * Shared by the main process and the renderer:
+ *  - Main: buffer of 2000 lines → Settings → Logs (log:getBuffer / log:entry).
+ *  - Renderer: console is stripped in production (vite/terser + obfuscator), so warn/error/notice are
+ *    sent to main through window.electronAPI.logs.append (IPC 'log:append') → main writes them to Logs with the
+ *    prefix [renderer] (appendFromRenderer). Both sides mask tokens/passwords/cookies, limit to
+ *    ≤ 20 lines/second, and merge duplicate lines within 2 s.
  */
 export type LogLevel = 'log' | 'error' | 'warn' | 'info' | 'debug';
 export interface LogEntry { ts: number; level: LogLevel; msg: string; }
 
-const MAX_BUFFER = 2000; // giữ 2000 dòng gần nhất trong RAM
+const MAX_BUFFER = 2000; // keep the latest 2000 lines in RAM
 const LOG_LEVELS: readonly LogLevel[] = ['log', 'error', 'warn', 'info', 'debug'];
 
-/** Log renderer → main: tối đa N dòng/giây, gộp dòng trùng trong DEDUPE_MS, cắt dòng quá dài. */
+/** Renderer → main logs: at most N lines/second, merge duplicate lines within DEDUPE_MS, cut overly long lines. */
 export const RENDERER_LOG_MAX_PER_SEC = 20;
 export const RENDERER_LOG_DEDUPE_MS = 2000;
 export const RENDERER_LOG_MAX_LEN = 2000;
 export const RENDERER_LOG_PREFIX = '[renderer]';
 
-// Giữ tham chiếu console gốc để tránh đệ quy khi hook console toàn cục.
+// Keep references to the original console to avoid recursion when the global console hook is installed.
 const rawConsole = {
     log: console.log.bind(console),
     error: console.error.bind(console),
@@ -32,20 +32,20 @@ const rawConsole = {
     debug: console.debug.bind(console),
 };
 
-// ── Che bí mật trong log ─────────────────────────────────────────────
+// ── Mask secrets in logs ─────────────────────────────────────────────
 
 const SECRET_RULES: Array<[RegExp, string]> = [
-    // Cookie: che tới hết dòng (giá trị cookie chứa ';' / '=')
+    // Cookie: mask up to the end of the line (cookie values contain ';' / '=')
     [/\b(set-cookie|cookies?)(["']?\s*[:=]\s*)[^\r\n]*/gi, '$1$2***'],
-    // key=value, "key":"value", key: value — token / mật khẩu / khoá API / header Authorization
+    // key=value, "key":"value", key: value: token / password / API key / Authorization header
     [/\b(authorization|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|jwt|password|passwd|pwd|secret|signature|sig|session[_-]?id|imei)(["']?\s*[:=]\s*)(?:(?:bearer|basic)\s+)?("[^"]*"|'[^']*'|[^\s,;&}\]]+)/gi, '$1$2***'],
-    // Bearer/Basic trong chuỗi tự do
+    // Bearer/Basic inside free text
     [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 ***'],
-    // JWT trơn
+    // Plain JWT
     [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, '***'],
 ];
 
-/** Che token/mật khẩu/cookie và cắt dòng quá dài — dùng cho log đi qua IPC renderer → main. */
+/** Mask tokens/passwords/cookies and cut overly long lines; used for logs sent through IPC from the renderer to main. */
 export function sanitizeLogText(text: string, maxLen: number = RENDERER_LOG_MAX_LEN): string {
     let out = String(text ?? '');
     for (const [re, replacement] of SECRET_RULES) out = out.replace(re, replacement);
@@ -53,7 +53,7 @@ export function sanitizeLogText(text: string, maxLen: number = RENDERER_LOG_MAX_
     return out;
 }
 
-/** Ghép tham số log thành 1 dòng (Error → "Name: message" thay vì "{}"). */
+/** Join log arguments into 1 line (Error → "Name: message" instead of "{}"). */
 function formatLogArgs(args: any[]): string {
     return args.map(a => {
         if (typeof a === 'string') return a;
@@ -63,9 +63,9 @@ function formatLogArgs(args: any[]): string {
 }
 
 /**
- * Giới hạn tốc độ (≤ maxPerSec dòng/giây) + gộp dòng trùng trong cửa sổ dedupeMs.
- * Dòng chỉ khác nhau ở thời lượng ("35ms", "1.2s") được coi là trùng.
- * Số dòng bị gộp / bị bỏ được báo kèm ở dòng được ghi kế tiếp.
+ * Rate limit (≤ maxPerSec lines/second) + merge duplicate lines within the dedupeMs window.
+ * Lines that differ only in duration ("35ms", "1.2s") count as duplicates.
+ * The number of merged / dropped lines is reported on the next line that is written.
  */
 export class LogRateLimiter {
     private windowStart = 0;
@@ -78,7 +78,7 @@ export class LogRateLimiter {
         private readonly dedupeMs: number = RENDERER_LOG_DEDUPE_MS,
     ) {}
 
-    /** Trả về các dòng được phép ghi (có thể kèm dòng tổng kết số dòng bị bỏ); mảng rỗng = chặn. */
+    /** Returns the lines that may be written (may include a summary line with the number of dropped lines); an empty array = blocked. */
     public admit(level: LogLevel, msg: string, now: number = Date.now()): Array<{ level: LogLevel; msg: string }> {
         const key = `${level}|${msg.replace(/\d+(?:\.\d+)?\s?(?:ms|s)\b/g, '#')}`;
         const seen = this.recent.get(key);
@@ -115,7 +115,7 @@ export class LogRateLimiter {
         for (const [k, v] of this.recent) {
             if (now - v.ts >= this.dedupeMs) this.recent.delete(k);
         }
-        // Vẫn quá nhiều dòng khác nhau → bỏ dòng cũ nhất (Map giữ thứ tự chèn)
+        // Still too many different lines → drop the oldest one (a Map keeps insertion order)
         while (this.recent.size > 300) {
             const oldest = this.recent.keys().next().value;
             if (oldest === undefined) break;
@@ -130,21 +130,21 @@ class Logger {
     private buffer: LogEntry[] = [];
     private listener: ((entry: LogEntry) => void) | null = null;
     private consoleHooked = false;
-    /** Renderer: giới hạn log gửi sang main. */
+    /** Renderer: limit for logs sent to main. */
     private readonly forwardLimiter = new LogRateLimiter();
-    /** Main: giới hạn log nhận từ renderer (IPC + console-message). */
+    /** Main: limit for logs received from the renderer (IPC + console-message). */
     private readonly ingestLimiter = new LogRateLimiter();
     private forwarding = false;
 
     private constructor() {
-        // Buffer luôn ghi (kể cả production) để tab Nhật ký xem được;
-        // isEnabled chỉ điều khiển việc in ra console.
+        // The buffer always records (even in production) so the Logs tab can show it;
+        // isEnabled only controls printing to the console.
         this.isEnabled = process.env.NODE_ENV !== 'production';
     }
 
     /**
-     * Hook console.* toàn cục để mọi console thẳng (không qua Logger) cũng vào buffer.
-     * Gọi 1 lần ở main process. Dùng rawConsole để in ra → không đệ quy.
+     * Hooks the global console.* so that console calls made directly (not through Logger) also go into the buffer.
+     * Called once in the main process. Uses rawConsole to print → no recursion.
      */
     public installConsoleHook(): void {
         if (this.consoleHooked) return;
@@ -158,13 +158,13 @@ class Logger {
         }
     }
 
-    /** Đăng ký 1 listener (main process forward sang renderer). */
+    /** Register 1 listener (the main process forwards to the renderer). */
     public onEntry(cb: (entry: LogEntry) => void): void { this.listener = cb; }
 
-    /** Lấy toàn bộ buffer hiện có (dùng khi mở tab lần đầu). */
+    /** Get the whole current buffer (used when the tab is opened for the first time). */
     public getBuffer(): LogEntry[] { return this.buffer; }
 
-    /** Xóa buffer. */
+    /** Clear the buffer. */
     public clearBuffer(): void { this.buffer = []; }
 
     private record(level: LogLevel, args: any[]): string {
@@ -172,13 +172,13 @@ class Logger {
         const entry: LogEntry = { ts: Date.now(), level, msg };
         this.buffer.push(entry);
         if (this.buffer.length > MAX_BUFFER) this.buffer.shift();
-        try { this.listener?.(entry); } catch { /* listener lỗi không được làm sập log */ }
+        try { this.listener?.(entry); } catch { /* a failing listener must not crash the log */ }
         return msg;
     }
 
     /**
-     * Renderer → main (Nhật ký). Chỉ chạy khi có window.electronAPI.logs.append (renderer);
-     * ở main process không có electronAPI nên là no-op.
+     * Renderer → main (Logs). Only runs when window.electronAPI.logs.append exists (renderer);
+     * the main process has no electronAPI, so it is a no-op there.
      */
     private forwardToMain(level: LogLevel, msg: string): void {
         if (this.forwarding) return;
@@ -190,15 +190,15 @@ class Logger {
             for (const line of this.forwardLimiter.admit(level, sanitizeLogText(msg))) {
                 append(line.level, line.msg);
             }
-        } catch { /* IPC lỗi không được làm sập caller */ }
+        } catch { /* an IPC error must not crash the caller */ }
         finally { this.forwarding = false; }
     }
 
     /**
-     * Main: ghi 1 dòng log do renderer gửi vào buffer/Nhật ký với prefix [renderer]. Tự kiểm tra kiểu,
-     * che bí mật, giới hạn tốc độ + gộp dòng trùng.
-     * source 'console' = lỗi Chromium tự báo (webContents 'console-message'): có thể trích dữ liệu
-     * (vd JSON.parse lỗi in lại input) → bỏ chuỗi trong "…" và chuỗi '…' dài, cắt còn 500 ký tự.
+     * Main: writes 1 log line sent by the renderer into the buffer / Logs with the prefix [renderer]. Checks the type itself,
+     * masks secrets, rate limits + merges duplicate lines.
+     * source 'console' = an error Chromium reports by itself (webContents 'console-message'): it may contain data
+     * (e.g. a JSON.parse error that echoes the input) → drops the "…" strings and long '…' strings, cut to 500 characters.
      */
     public appendFromRenderer(level: unknown, msg: unknown, source: 'ipc' | 'console' = 'ipc'): void {
         if (typeof msg !== 'string') return;
@@ -231,7 +231,7 @@ class Logger {
 
     /**
      * Enable logging
-     * Bật logging
+     * Turn logging on
      */
     public enable(): void {
         this.isEnabled = true;
@@ -240,7 +240,7 @@ class Logger {
 
     /**
      * Disable logging
-     * Tắt logging
+     * Turn logging off
      */
     public disable(): void {
         rawConsole.log(`[${new Date().toISOString()}] [Logger] 🔇 Logging disabled`);
@@ -249,7 +249,7 @@ class Logger {
 
     /**
      * Check if logging is enabled
-     * Kiểm tra xem logging có được bật không
+     * Check whether logging is turned on
      */
     public isLoggingEnabled(): boolean {
         return this.isEnabled;
@@ -257,7 +257,7 @@ class Logger {
 
     /**
      * Get status
-     * Lấy trạng thái
+     * Get the status
      */
     public getStatus(): {
         enabled: boolean;
@@ -271,7 +271,7 @@ class Logger {
 
     /**
      * Log info message (only if enabled)
-     * Ghi log thông tin (chỉ khi được bật)
+     * Write an info log (only when enabled)
      */
     public log(...args: any[]): void {
         this.record('log', args);
@@ -282,7 +282,7 @@ class Logger {
 
     /**
      * Log error message (always shown, even when disabled)
-     * Ghi log lỗi (luôn hiển thị, ngay cả khi tắt). Ở renderer: chuyển về Nhật ký (main).
+     * Log an error (always shown, even when disabled). In the renderer: forwarded to Logs (main).
      */
     public error(...args: any[]): void {
         const msg = this.record('error', args);
@@ -292,7 +292,7 @@ class Logger {
 
     /**
      * Log warning message (only if enabled)
-     * Ghi log cảnh báo (chỉ khi được bật). Ở renderer: chuyển về Nhật ký (main).
+     * Log a warning (only when enabled). In the renderer: forwarded to Logs (main).
      */
     public warn(...args: any[]): void {
         const msg = this.record('warn', args);
@@ -304,7 +304,7 @@ class Logger {
 
     /**
      * Log info message (only if enabled)
-     * Ghi log thông tin (chỉ khi được bật)
+     * Write an info log (only when enabled)
      */
     public info(...args: any[]): void {
         this.record('info', args);
@@ -314,8 +314,8 @@ class Logger {
     }
 
     /**
-     * Sự kiện quan trọng mức info (vd chuyển trạng thái kết nối): ghi như info và — ở renderer —
-     * luôn chuyển về Nhật ký của main (info/log thường thì không).
+     * An important info-level event (e.g. a connection state change): logged as info, and in the renderer
+     * always forwarded to the main Logs (plain info/log calls are not).
      */
     public notice(...args: any[]): void {
         const msg = this.record('info', args);
@@ -327,7 +327,7 @@ class Logger {
 
     /**
      * Log debug message (only if enabled)
-     * Ghi log debug (chỉ khi được bật)
+     * Write a debug log (only when enabled)
      */
     public debug(...args: any[]): void {
         this.record('debug', args);

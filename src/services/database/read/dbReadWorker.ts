@@ -1,9 +1,9 @@
 /**
- * dbReadWorker — luồng nền đọc SQLite cho DatabaseService (readOps.ts). Sau `tsc -p tsconfig.electron.json` nằm cạnh
- * readOps.js; main tạo bằng `new Worker(.../dbReadWorker.js, { workerData: { nativeBinding } })` (DbReadClient.ts).
+ * dbReadWorker: background SQLite read thread for DatabaseService (readOps.ts). After `tsc -p tsconfig.electron.json` it sits next to
+ * readOps.js; main creates it with `new Worker(.../dbReadWorker.js, { workerData: { nativeBinding } })` (DbReadClient.ts).
  *
- * Chỉ import Node + better-sqlite3 (đường dẫn .node truyền qua workerData.nativeBinding) — chạy được cả khi thư mục
- * được unpack khỏi app.asar.
+ * Imports only Node + better-sqlite3 (the .node path is passed via workerData.nativeBinding), so it runs even when the folder
+ * is unpacked from app.asar.
  */
 import { parentPort, workerData } from 'worker_threads';
 import { IDLE_CLOSE_MS, ReadConn, createReadOps } from './readOps';
@@ -20,7 +20,7 @@ if (port) {
         return {
             all: (sql, params) => db.prepare(sql).all(...params),
             get: (sql, params) => db.prepare(sql).get(...params),
-            close: () => { try { db.close(); } catch { /* đã đóng */ } },
+            close: () => { try { db.close(); } catch { /* closed */ } },
         };
     };
     const ops = createReadOps(open);
@@ -30,7 +30,7 @@ if (port) {
         if (!msg || typeof msg.id !== 'number') return;
         if (msg.op === 'closeAll') {
             ops.closeAll();
-            // Main chờ đồng bộ (Atomics.wait) trước khi đóng / thay file DB
+            // Main waits synchronously (Atomics.wait) before closing / replacing the DB file
             if (msg.flag instanceof SharedArrayBuffer) {
                 const flag = new Int32Array(msg.flag);
                 Atomics.store(flag, 0, 1);

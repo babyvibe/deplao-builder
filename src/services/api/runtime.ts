@@ -1,14 +1,14 @@
 /**
- * runtime.ts — thông tin môi trường cho lớp API (lazy require để module chạy được trong test).
+ * runtime.ts: environment info for the API layer (lazy require so the module can run in tests).
  */
 
 let cachedVersion: string | null = null;
 
 /**
- * Phiên bản app (so minDeplaoVersion của plugin, /health, siêu dữ liệu bản sao lưu…).
- * Bản đóng gói: app.getVersion() = package.json lúc build. Chạy dev (`electron dist-electron/electron/bootstrap.js`):
- * Electron nhận đường dẫn file nên không đọc package.json → getVersion() trả version đóng dấu trong electron.exe của
- * node_modules (postinstall patch-electron-icon.js, chỉ cập nhật khi npm install → thường cũ) → đọc package.json của repo.
+ * App version (compared with the plugin's minDeplaoVersion, /health, backup metadata…).
+ * Packaged build: app.getVersion() = package.json at build time. Dev run (`electron dist-electron/electron/bootstrap.js`):
+ * Electron receives the file path, so it does not read package.json → getVersion() returns the version stamped in the electron.exe of
+ * node_modules (postinstall patch-electron-icon.js, only updated on npm install → usually old) → read the repo's package.json instead.
  */
 export function appVersion(): string {
     if (cachedVersion) return cachedVersion;
@@ -19,7 +19,7 @@ export function appVersion(): string {
     return cachedVersion || 'dev';
 }
 
-/** version trong package.json gần nhất phía trên file này (src/… khi test, dist-electron/src/… khi chạy dev). */
+/** The version in the nearest package.json above this file (src/… in tests, dist-electron/src/… in dev runs). */
 function repoPackageVersion(): string {
     const fs = require('fs') as typeof import('fs');
     const path = require('path') as typeof import('path');
@@ -28,7 +28,7 @@ function repoPackageVersion(): string {
         try {
             const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
             if (pkg && typeof pkg.version === 'string' && pkg.version) return pkg.version;
-        } catch { /* chưa tới thư mục repo */ }
+        } catch { /* not at the repo folder yet */ }
         const up = path.dirname(dir);
         if (up === dir) break;
         dir = up;
@@ -36,7 +36,7 @@ function repoPackageVersion(): string {
     return '';
 }
 
-/** Chỉ cho test: xoá version đã nhớ. */
+/** Tests only: clears the remembered version. */
 export function resetAppVersionCacheForTests(): void {
     cachedVersion = null;
 }
@@ -60,7 +60,7 @@ export function activeWorkspace(): { id: string; name: string; type: string } | 
     }
 }
 
-/** API chỉ phục vụ workspace local (workspace nhân viên không có dữ liệu trên máy). */
+/** The API only serves the local workspace (employee workspaces have no data on the machine). */
 export function isWorkspaceAvailable(): boolean {
     const ws = activeWorkspace();
     return !ws || ws.type !== 'remote';

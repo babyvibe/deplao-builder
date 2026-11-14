@@ -1,13 +1,13 @@
 /**
- * PluginApiBridge — mọi lời gọi deplao.* của plugin (UI qua postMessage→IPC, backend qua RPC).
+ * PluginApiBridge: every deplao.* call from a plugin (UI through postMessage → IPC, backend through RPC).
  *
- *  - Hàm API (operationId hoặc "METHOD /path") → ApiRouter.invoke với principal plugin:<id>:
- *    cùng kiểm tra scope/tài khoản, cùng validate, cùng IPC handler với app ngoài và UI.
- *  - Hàm riêng của plugin (storage, settings, log, events, http, workflow.trigger, media.upload,
- *    system) kiểm tra quyền plugin ở đây rồi mới chạm dữ liệu.
- *  - deplao.cloudflare.* (chỉ backend, quyền "cloudflare:workers"): kiểm quyền manifest, tên Worker / D1 theo tiền tố
- *    (pluginShortName) và thư mục nằm trong ứng dụng TẠI ĐÂY, rồi mới gọi kênh cloudflare:workers:* qua IpcInvoker
- *    kèm giấy uỷ quyền (PluginGrant) — kênh quản trị duy nhất plugin chạm được, token Cloudflare không ra khỏi main.
+ *  - API function (operationId or "METHOD /path") → ApiRouter.invoke with the principal plugin:<id>:
+ *    the same scope / account checks, the same validation, the same IPC handler as external apps and the UI.
+ *  - The plugin's own functions (storage, settings, log, events, http, workflow.trigger, media.upload,
+ *    system) check the plugin permission here before touching any data.
+ *  - deplao.cloudflare.* (backend only, permission "cloudflare:workers"): checks the manifest permission, the Worker / D1 names by prefix
+ *    (pluginShortName) and that the folder is inside the app HERE, and only then calls the cloudflare:workers:* channel through IpcInvoker
+ *    with a delegation grant (PluginGrant): the only admin channel a plugin can reach, the Cloudflare token never leaves main.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -24,6 +24,7 @@ import {
 import type { PluginRecord, PluginRuntimeHandle } from './PluginManager';
 import type { PluginLogStore, PluginStorage } from './PluginStorage';
 import { isSafeRelativePath, PLUGIN_API_VERSION, pluginShortName } from './manifest';
+import { tr } from '../../shared/i18n';
 
 export interface OperationInfo {
     method: string;
@@ -44,9 +45,9 @@ export interface BridgeDeps {
     hub: () => EventHub;
     invokeIpc: (channel: string, payload: any, principal: Principal) => Promise<any>;
     /**
-     * Kênh quản trị được uỷ quyền cho plugin (cloudflare:workers:*, xem PLUGIN_DELEGATED_CHANNEL_PREFIXES): bridge đã kiểm
-     * quyền + tiền tố, `grant` đi kèm tới handler. Trả NGUYÊN kết quả handler ({ success, result } | { success:false,
-     * error, code }) để giữ mã lỗi CF_*. Thiếu (bản test cũ) → deplao.cloudflare báo NOT_IMPLEMENTED.
+     * Admin channels delegated to plugins (cloudflare:workers:*, see PLUGIN_DELEGATED_CHANNEL_PREFIXES): the bridge has already checked
+     * the permission + prefix, and `grant` is passed along to the handler. Returns the handler result UNCHANGED ({ success, result } | { success:false,
+     * error, code }) to keep the CF_* error codes. Missing (old test builds) → deplao.cloudflare reports NOT_IMPLEMENTED.
      */
     invokeDelegated?: (channel: string, payload: any, principal: Principal, grant: PluginGrant, timeoutMs: number) => Promise<any>;
     uploads: () => UploadStore;
@@ -56,11 +57,11 @@ export interface BridgeDeps {
 
 const HTTP_MAX_BYTES = 5 * 1024 * 1024;
 const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
-/** Hàm API trả file (downloadMessageMedia, downloadLibraryItem…): plugin nhận base64, tối đa bằng giới hạn upload. */
+/** API functions that return files (downloadMessageMedia, downloadLibraryItem...): the plugin receives base64, up to the upload limit. */
 const FILE_MAX_BYTES = UPLOAD_MAX_BYTES;
 const TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-www-form-urlencoded)|.*\+json|.*\+xml)/i;
 
-/** Không có Content-Type: coi là chữ chỉ khi là UTF-8 hợp lệ và không có byte 0 (file nhị phân → base64, không hỏng). */
+/** No Content-Type: treated as text only when it is valid UTF-8 and has no 0 byte (binary files → base64, not corrupted). */
 function looksLikeText(body: Buffer): boolean {
     if (!body.length) return true;
     if (body.includes(0)) return false;
@@ -72,7 +73,7 @@ function looksLikeText(body: Buffer): boolean {
     }
 }
 
-/** Thời gian chờ tối đa từng hàm deplao.cloudflare (triển khai tải asset + script có thể vài phút). */
+/** Maximum wait time for each deplao.cloudflare function (deploys that upload assets + scripts can take a few minutes). */
 const CLOUDFLARE_TIMEOUTS_MS = {
     status: 60_000,
     get: 60_000,
@@ -82,21 +83,21 @@ const CLOUDFLARE_TIMEOUTS_MS = {
     deploy: 10 * 60_000,
     zones: 60_000,
     domains: 60_000,
-    /** Gồm cả lúc chờ người dùng trả lời hộp thoại xác nhận của Deplao. */
+    /** This includes the time spent waiting for the user to answer Deplao's confirmation dialog. */
     domainAttach: 10 * 60_000,
     domainDetach: 60_000,
 };
 
 function need(rec: PluginRecord, perm: string): void {
     if (!rec.granted_permissions.includes(perm)) {
-        throw new ApiError(403, 'FORBIDDEN_SCOPE', `Plugin cần quyền "${perm}" trong manifest`, { required: perm });
+        throw new ApiError(403, 'FORBIDDEN_SCOPE', tr('Plugin cần quyền "{{perm}}" trong manifest', { perm }), { required: perm });
     }
 }
 
-/** Mã lỗi của handler cloudflare:workers:* / CloudError → ApiError (giữ mã CF_* của hợp đồng). */
+/** Error codes from the cloudflare:workers:* handler / CloudError → ApiError (keeps the contract's CF_* codes). */
 function cloudflareApiError(code: unknown, message: unknown, retryAfterMs?: unknown): ApiError {
     const raw = typeof code === 'string' ? code : '';
-    const text = String(message || 'Lỗi không rõ');
+    const text = String(message || tr('Lỗi không rõ'));
     const details = typeof retryAfterMs === 'number' && retryAfterMs > 0 ? { retryAfterMs } : undefined;
     const mapped = raw === 'BAD_INPUT' ? 'VALIDATION_ERROR' : raw;
     if (WORKERS_ERROR_STATUS[mapped]) return new ApiError(WORKERS_ERROR_STATUS[mapped], mapped, text, details);
@@ -110,7 +111,7 @@ function toCloudflareApiError(err: unknown): ApiError {
     return new ApiError(500, 'INTERNAL_ERROR', String((err as any)?.message || err));
 }
 
-/** Tách tham số phẳng của SDK thành path params / query / body theo route. */
+/** Splits the SDK's flat parameters into path params / query / body according to the route. */
 export function splitParams(info: OperationInfo, params: any): { params: Record<string, any>; query: Record<string, any>; body: any } {
     const input = params && typeof params === 'object' && !Array.isArray(params) ? { ...params } : {};
     const pathParams: Record<string, any> = {};
@@ -139,16 +140,16 @@ export class PluginApiBridge {
     private active(pluginId: string): { rec: PluginRecord; principal: Principal } {
         const rec = this.deps.manager.get(pluginId);
         const principal = this.deps.manager.principalFor(pluginId);
-        if (!rec || !principal) throw new ApiError(409, 'CONFLICT', `Plugin ${pluginId} chưa được bật`);
+        if (!rec || !principal) throw new ApiError(409, 'CONFLICT', tr('Plugin {{pluginId}} chưa được bật', { pluginId }));
         return { rec, principal };
     }
 
     private async callApi(principal: Principal, target: string, input: { params?: any; query?: any; body?: any }): Promise<any> {
-        // binary: route file trả { name, mime, size, base64 } thay vì "chỉ gọi được qua HTTP" (route khác bỏ qua).
+        // binary: a file route returns { name, mime, size, base64 } instead of "chỉ gọi được qua HTTP" (only callable over HTTP; other routes skip it).
         const { status, payload } = await this.deps.invoke(target, { principal, ...input, binary: { maxBytes: FILE_MAX_BYTES } });
         if (!payload?.success) {
             const e = payload?.error || {};
-            throw new ApiError(status || 500, e.code || 'INTERNAL_ERROR', e.message || 'Lỗi không rõ', e.details);
+            throw new ApiError(status || 500, e.code || 'INTERNAL_ERROR', e.message || tr('Lỗi không rõ'), e.details);
         }
         return payload.pagination ? { data: payload.data, pagination: payload.pagination } : { data: payload.data };
     }
@@ -160,12 +161,12 @@ export class PluginApiBridge {
 
         switch (m) {
             case 'backend.call': {
-                // UI của plugin gọi commands[name] trong backend của CHÍNH plugin đó.
-                if (origin !== 'ui') throw new ApiError(400, 'VALIDATION_ERROR', 'backend.call chỉ dùng từ UI plugin');
+                // The plugin's UI calls commands[name] in the backend of that SAME plugin.
+                if (origin !== 'ui') throw new ApiError(400, 'VALIDATION_ERROR', tr('backend.call chỉ dùng từ UI plugin'));
                 const name = String(p.name || '');
-                if (!/^[A-Za-z0-9_.:-]{1,60}$/.test(name)) throw new ApiError(400, 'VALIDATION_ERROR', 'Tên command không hợp lệ');
+                if (!/^[A-Za-z0-9_.:-]{1,60}$/.test(name)) throw new ApiError(400, 'VALIDATION_ERROR', tr('Tên command không hợp lệ'));
                 const runtime = this.deps.manager.runtimeFor(pluginId);
-                if (!runtime) throw new ApiError(409, 'CONFLICT', 'Plugin không có phần chạy nền (runtime web)');
+                if (!runtime) throw new ApiError(409, 'CONFLICT', tr('Plugin không có phần chạy nền (runtime web)'));
                 try {
                     return await runtime.call('composer.command', { id: name, context: p.params ?? {} }, 30_000);
                 } catch (err: any) {
@@ -179,7 +180,7 @@ export class PluginApiBridge {
             case 'api.request': {
                 const verb = String(p.method || 'GET').toUpperCase();
                 const path = String(p.path || '');
-                if (!/^(GET|POST|PUT|PATCH|DELETE)$/.test(verb) || !path.startsWith('/')) throw new ApiError(400, 'VALIDATION_ERROR', 'api.request cần { method, path: "/..." }');
+                if (!/^(GET|POST|PUT|PATCH|DELETE)$/.test(verb) || !path.startsWith('/')) throw new ApiError(400, 'VALIDATION_ERROR', tr('api.request cần { method, path: "/..." }'));
                 return this.callApi(principal, `${verb} ${path}`, { query: p.query, body: p.body });
             }
 
@@ -201,7 +202,7 @@ export class PluginApiBridge {
                 return this.deps.manager.storage.list(pluginId, p.prefix || '', p.limit);
             case 'storage.dataDir':
                 need(rec, 'storage');
-                if (origin !== 'backend') throw new ApiError(400, 'VALIDATION_ERROR', 'storage.dataDir chỉ dùng ở backend');
+                if (origin !== 'backend') throw new ApiError(400, 'VALIDATION_ERROR', tr('storage.dataDir chỉ dùng ở backend'));
                 return this.deps.manager.storage.dataDir(pluginId);
 
             case 'log.debug':
@@ -215,21 +216,21 @@ export class PluginApiBridge {
                 need(rec, 'events:emit');
                 const name = String(p.name || '');
                 const allowed = rec.manifest.contributes?.events || [];
-                if (!allowed.includes(name)) throw new ApiError(400, 'VALIDATION_ERROR', `Sự kiện "${name}" chưa khai báo trong contributes.events`);
+                if (!allowed.includes(name)) throw new ApiError(400, 'VALIDATION_ERROR', tr('Sự kiện "{{name}}" chưa khai báo trong contributes.events', { name }));
                 const ev = this.deps.hub().publish({ type: `plugin.${pluginId}.${name}`, account_id: '', channel: '', data: p.data ?? null });
                 return { id: ev?.id ?? null, seq: ev?.seq ?? 0 };
             }
 
             case 'events.subscribe': {
-                if (origin !== 'backend') throw new ApiError(400, 'VALIDATION_ERROR', 'UI đăng ký sự kiện qua cầu UI');
-                if (!principal.scopes.has('events:subscribe')) throw new ApiError(403, 'FORBIDDEN_SCOPE', 'Cần scope events:subscribe');
+                if (origin !== 'backend') throw new ApiError(400, 'VALIDATION_ERROR', tr('UI đăng ký sự kiện qua cầu UI'));
+                if (!principal.scopes.has('events:subscribe')) throw new ApiError(403, 'FORBIDDEN_SCOPE', tr('Cần scope events:subscribe'));
                 this.backendSubs.get(pluginId)?.();
                 const types = Array.isArray(p.types) ? p.types.map(String).slice(0, 50) : null;
                 const unsubscribe = this.deps.hub().subscribe({
                     principal,
                     types,
                     handler: (ev: ApiEvent) => {
-                        if (ev.type.startsWith(`plugin.${pluginId}.`)) return; // không vòng lại chính mình
+                        if (ev.type.startsWith(`plugin.${pluginId}.`)) return; // does not loop back to itself
                         this.deps.manager.runtimeFor(pluginId)?.notify('event', ev);
                     },
                 });
@@ -245,13 +246,13 @@ export class PluginApiBridge {
                 need(rec, 'workflow:nodes');
                 const type = String(p.type || '');
                 if (!(rec.manifest.contributes?.triggers || []).some(t => t.type === type)) {
-                    throw new ApiError(400, 'VALIDATION_ERROR', `Trigger "${type}" chưa khai báo trong contributes.triggers`);
+                    throw new ApiError(400, 'VALIDATION_ERROR', tr('Trigger "{{type}}" chưa khai báo trong contributes.triggers', { type }));
                 }
                 return this.deps.invokeIpc('workflow:triggerPlugin', { type, payload: p.payload ?? {}, pluginId }, principal);
             }
 
             case 'http.fetch': {
-                if (origin !== 'backend') throw new ApiError(400, 'VALIDATION_ERROR', 'http.fetch chỉ dùng ở backend; UI dùng fetch với ui.connectSrc');
+                if (origin !== 'backend') throw new ApiError(400, 'VALIDATION_ERROR', tr('http.fetch chỉ dùng ở backend; UI dùng fetch với ui.connectSrc'));
                 need(rec, 'network');
                 const init = p.init || {};
                 const res = await (this.deps.requestImpl || guardedRequest)(String(p.url || ''), {
@@ -266,7 +267,7 @@ export class PluginApiBridge {
                     throw new ApiError(502, 'UPSTREAM_ERROR', `http.fetch: ${err?.message || err}`);
                 });
                 const type = String(res.headers['content-type'] || '');
-                // responseType: 'text' | 'base64' ép kiểu trả; mặc định đoán theo Content-Type (thiếu thì xem nội dung).
+                // responseType: 'text' | 'base64' forces the return type; by default it is guessed from the Content-Type (if missing, the content is inspected).
                 const textual = init.responseType === 'text' ? true
                     : init.responseType === 'base64' ? false
                         : TEXT_TYPES.test(type) || (!type && looksLikeText(res.body));
@@ -280,9 +281,9 @@ export class PluginApiBridge {
             }
 
             case 'media.upload': {
-                if (!principal.scopes.has('media:write') && !principal.scopes.has('chat:send')) throw new ApiError(403, 'FORBIDDEN_SCOPE', 'Cần scope media:write hoặc chat:send');
+                if (!principal.scopes.has('media:write') && !principal.scopes.has('chat:send')) throw new ApiError(403, 'FORBIDDEN_SCOPE', tr('Cần scope media:write hoặc chat:send'));
                 const b64 = String(p.dataBase64 || '');
-                if (b64.length > Math.ceil(UPLOAD_MAX_BYTES / 3) * 4 + 4) throw new ApiError(413, 'PAYLOAD_TOO_LARGE', 'Upload qua plugin tối đa 25 MB');
+                if (b64.length > Math.ceil(UPLOAD_MAX_BYTES / 3) * 4 + 4) throw new ApiError(413, 'PAYLOAD_TOO_LARGE', tr('Upload qua plugin tối đa 25 MB'));
                 const buf = Buffer.from(b64, 'base64');
                 const record = await this.deps.uploads().saveBuffer(buf, String(p.name || 'file'), String(p.mime || ''), `plugin:${pluginId}`);
                 return { upload_id: record.id, name: record.name, kind: record.kind, size: record.size, mime: record.mime, expires_at: record.expires_at };
@@ -301,31 +302,31 @@ export class PluginApiBridge {
                 return this.cloudflare(rec, principal, m, p, origin);
 
             default: {
-                // operationId của API v1: "sendMessage" hoặc "api.sendMessage".
+                // operationId of API v1: "sendMessage" or "api.sendMessage".
                 const opId = m.startsWith('api.') ? m.slice(4) : m;
                 const info = this.deps.operations().get(opId);
-                if (!info) throw new ApiError(404, 'NOT_FOUND', `Không có hàm "${m}" (xem operationId trong /docs)`);
+                if (!info) throw new ApiError(404, 'NOT_FOUND', tr('Không có hàm "{{m}}" (xem operationId trong /docs)', { m }));
                 const split = splitParams(info, p);
                 return this.callApi(principal, opId, split);
             }
         }
     }
 
-    /** Plugin tắt → huỷ đăng ký sự kiện của backend. */
+    /** Plugin turned off → unsubscribes its backend events. */
     cleanup(pluginId: string): void {
         this.backendSubs.get(pluginId)?.();
         this.backendSubs.delete(pluginId);
     }
 
     /**
-     * deplao.cloudflare.* — kiểm TRƯỚC khi gọi IPC: chỉ backend, quyền manifest "cloudflare:workers" (PLUGIN_PERMISSION),
-     * tên Worker / D1 = tiền tố hoặc "<tiền tố>-…" (CF_NAME_FORBIDDEN), bundleDir / dir là thư mục tương đối nằm trong
-     * ứng dụng (CF_BUNDLE_INVALID). Rồi gọi kênh cloudflare:workers:* kèm giấy uỷ quyền; handler ở main kiểm lại lần nữa.
+     * deplao.cloudflare.*: checked BEFORE calling IPC: backend only, manifest permission "cloudflare:workers" (PLUGIN_PERMISSION),
+     * Worker / D1 name = the prefix or "<prefix>-…" (CF_NAME_FORBIDDEN), bundleDir / dir must be a relative folder inside the
+     * app (CF_BUNDLE_INVALID). Then calls the cloudflare:workers:* channel with the delegation grant; the handler in main checks again.
      */
     private async cloudflare(rec: PluginRecord, principal: Principal, method: string, p: any, origin: 'ui' | 'backend'): Promise<any> {
-        if (origin !== 'backend') throw new ApiError(400, 'VALIDATION_ERROR', 'deplao.cloudflare chỉ dùng ở backend của ứng dụng (UI gọi qua deplao.backend.call)');
+        if (origin !== 'backend') throw new ApiError(400, 'VALIDATION_ERROR', tr('deplao.cloudflare chỉ dùng ở backend của ứng dụng (UI gọi qua deplao.backend.call)'));
         if (!rec.granted_permissions.includes(WORKERS_PERMISSION)) {
-            throw new ApiError(403, 'PLUGIN_PERMISSION', `Ứng dụng cần quyền "${WORKERS_PERMISSION}" trong manifest`, { required: WORKERS_PERMISSION });
+            throw new ApiError(403, 'PLUGIN_PERMISSION', tr('Ứng dụng cần quyền "{{WORKERS_PERMISSION}}" trong manifest', { WORKERS_PERMISSION }), { required: WORKERS_PERMISSION });
         }
         const prefix = pluginShortName(rec.id);
         let channel = '';
@@ -346,7 +347,7 @@ export class PluginApiBridge {
                     timeoutMs = CLOUDFLARE_TIMEOUTS_MS.get;
                     break;
                 case 'cloudflare.workers.deployBundle': {
-                    const opts = normalizeDeployOptions(p, prefix); // tên Worker + D1 trong bindings, binding, secret
+                    const opts = normalizeDeployOptions(p, prefix); // Worker + D1 names in bindings, binding, secret
                     channel = 'cloudflare:workers:deploy';
                     payload = {
                         name: opts.name,
@@ -397,12 +398,12 @@ export class PluginApiBridge {
                     timeoutMs = CLOUDFLARE_TIMEOUTS_MS.domainDetach;
                     break;
                 default:
-                    throw new ApiError(404, 'NOT_FOUND', `Không có hàm "${method}"`);
+                    throw new ApiError(404, 'NOT_FOUND', tr('Không có hàm "{{method}}"', { method }));
             }
         } catch (err) {
             throw toCloudflareApiError(err);
         }
-        if (!this.deps.invokeDelegated) throw new ApiError(501, 'NOT_IMPLEMENTED', 'Bản app này chưa hỗ trợ deplao.cloudflare');
+        if (!this.deps.invokeDelegated) throw new ApiError(501, 'NOT_IMPLEMENTED', tr('Bản app này chưa hỗ trợ deplao.cloudflare'));
         const grant: PluginGrant = Object.freeze({
             pluginId: rec.id,
             pluginName: String(rec.name || rec.id).slice(0, 80),
@@ -416,19 +417,19 @@ export class PluginApiBridge {
         return res && typeof res === 'object' && 'result' in res ? res.result : null;
     }
 
-    /** realpath thư mục ứng dụng đã cài. */
+    /** realpath of the installed app folder. */
     private pluginRoot(rec: PluginRecord): string {
         try {
             return fs.realpathSync(rec.install_path);
         } catch {
-            throw new CloudError('CF_BUNDLE_INVALID', 'Không thấy thư mục của ứng dụng trên máy');
+            throw new CloudError('CF_BUNDLE_INVALID', tr('Không thấy thư mục của ứng dụng trên máy'));
         }
     }
 
-    /** Thư mục tương đối trong ứng dụng → đường dẫn tuyệt đối (realpath), từ chối mọi thứ nằm ngoài (.., tuyệt đối, symlink). */
+    /** Relative folder inside the app → absolute path (realpath); rejects anything outside (.., absolute paths, symlinks). */
     private pluginDirectory(rec: PluginRecord, rel: unknown, label: string): string {
         if (typeof rel !== 'string' || !isSafeRelativePath(rel)) {
-            throw new CloudError('CF_BUNDLE_INVALID', `${label} phải là thư mục tương đối trong ứng dụng, vd "vendor/fintrack"`);
+            throw new CloudError('CF_BUNDLE_INVALID', tr('{{label}} phải là thư mục tương đối trong ứng dụng, vd "vendor/fintrack"', { label }));
         }
         const root = this.pluginRoot(rec);
         const full = path.resolve(root, ...rel.split('/').filter(Boolean));
@@ -436,10 +437,10 @@ export class PluginApiBridge {
         try {
             real = fs.realpathSync(full);
         } catch {
-            throw new CloudError('CF_BUNDLE_INVALID', `Không thấy thư mục "${rel}" trong ứng dụng`);
+            throw new CloudError('CF_BUNDLE_INVALID', tr('Không thấy thư mục "{{rel}}" trong ứng dụng', { rel }));
         }
-        if (real !== root && !real.startsWith(root + path.sep)) throw new CloudError('CF_BUNDLE_INVALID', `${label} phải nằm trong thư mục của ứng dụng`);
-        if (!fs.statSync(real).isDirectory()) throw new CloudError('CF_BUNDLE_INVALID', `"${rel}" không phải thư mục`);
+        if (real !== root && !real.startsWith(root + path.sep)) throw new CloudError('CF_BUNDLE_INVALID', tr('{{label}} phải nằm trong thư mục của ứng dụng', { label }));
+        if (!fs.statSync(real).isDirectory()) throw new CloudError('CF_BUNDLE_INVALID', tr('"{{rel}}" không phải thư mục', { rel }));
         return real;
     }
 }

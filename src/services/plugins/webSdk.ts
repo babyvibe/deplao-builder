@@ -1,14 +1,14 @@
 /**
- * webSdk.ts — SDK deplao.* cho UI plugin (chạy trong iframe), phục vụ tại
- * deplao-plugin://<id>/__deplao/sdk.js. Bản copy cho bundler: packages/plugin-sdk/web.js
- * (sinh bằng `node scripts/sync-plugin-sdk.js`, test kiểm tra hai bản giống nhau).
+ * webSdk.ts: the deplao.* SDK for the plugin UI (runs in the iframe), served at
+ * deplao-plugin://<id>/__deplao/sdk.js. The copy for bundlers: packages/plugin-sdk/web.js
+ * (generated with `node scripts/sync-plugin-sdk.js`; a test checks that the two copies are identical).
  *
- * Giao thức JSON-RPC 2.0 qua postMessage với app cha:
+ * JSON-RPC 2.0 protocol over postMessage with the parent app:
  *   plugin → app  { jsonrpc:'2.0', id, method, params }
  *   app → plugin  { jsonrpc:'2.0', id, result } | { jsonrpc:'2.0', id, error:{ code, message, data } }
  *   app → plugin  { jsonrpc:'2.0', method:'event'|'context.changed'|'theme.changed'|'settings.changed'|'command', params }
  *
- * Viết bằng ES2017 thuần, không dấu backtick (nằm trong template literal của TS).
+ * Plain ES2017, with no backticks (it sits inside a TS template literal).
  */
 export const WEB_SDK_VERSION = '1.0.0';
 

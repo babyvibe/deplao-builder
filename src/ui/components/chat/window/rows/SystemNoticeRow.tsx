@@ -1,6 +1,6 @@
 /**
- * Tin hệ thống / sự kiện nhóm (thêm / rời nhóm, đổi tên…, Telegram: tin đã ghim): dòng giữa khung, tên thành viên kèm
- * ảnh nhỏ bấm mở hồ sơ. Hàm vẽ (không phải component) → giữ nguyên key / cây phần tử của hàng như bản cũ.
+ * System message / group event (joined / left group, renamed…, Telegram: pinned message): a line in the middle of the window, member names with a
+ * small avatar, clickable to open the profile. A draw function (not a component) → keeps the same key / element tree of the row as the old version.
  */
 import React from 'react';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
@@ -11,14 +11,14 @@ export function renderSystemNoticeRow(
   { msg, idx, daySeparator, isTelegramPinnedNotice }: Pick<RowLocals, 'msg' | 'idx' | 'daySeparator' | 'isTelegramPinnedNotice'>,
 ): React.ReactNode {
   const { setUserProfilePopup } = ctx;
-  // Parse updateMembers từ attachments nếu có
+  // Parse updateMembers from attachments if present
   let sysMembers: Array<{id: string; dName: string; avatar: string}> = [];
   try {
     const att = typeof msg.attachments === 'string' ? JSON.parse(msg.attachments) : (msg.attachments || []);
     if (Array.isArray(att) && att.length > 0 && att[0]?.id) sysMembers = att;
   } catch {}
 
-  // Build inline content - avatar + tên trước mỗi member
+  // Build inline content: avatar + name before each member
   const renderSysContent = () => {
     if (!sysMembers.length) return <>{msg.content}</>;
     let remaining = msg.content as string;
@@ -28,9 +28,9 @@ export function renderSystemNoticeRow(
       if (!name) return;
       const nameIdx = remaining.indexOf(name);
       if (nameIdx === -1) return;
-      // Text trước tên
+      // Text before the name
       if (nameIdx > 0) parts.push(<span key={`pre-${mi}`}>{remaining.slice(0, nameIdx)}</span>);
-      // Avatar nhỏ + tên clickable inline
+      // Small avatar + clickable name inline
       parts.push(
         <button
           key={m.id}

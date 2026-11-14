@@ -1,9 +1,9 @@
 /**
- * emojiUtils.ts - Constants và helpers cho emoji (Zalo codes, emoji categories, reaction mapping)
- * Dùng chung cho ChatWindow, MessageBubbles, MessageInput, và các component khác.
+ * emojiUtils.ts - Constants and helpers for emoji (Zalo codes, emoji categories, reaction mapping)
+ * Shared by ChatWindow, MessageBubbles, MessageInput, and other components.
  */
 
-/** Zalo text reaction codes → Unicode emoji (dùng để convert khi display) */
+/** Zalo text reaction codes → Unicode emoji (used to convert when displaying) */
 export const ZALO_CODE_TO_EMOJI: Record<string, string> = {
   '/-heart':   '❤️',  '/-strong':  '👍',  ':>':       '😄',  ':o':       '😮',
   ':-((': '😢',  ':-h': '😡',  ':-*': '😘',  ":')": '😂',
@@ -24,12 +24,21 @@ export const ZALO_CODE_TO_EMOJI: Record<string, string> = {
   ':-P': '😛',  ':O': '😲',  '>:(': '😠',  ":'(": '😢',
 };
 
-/** Chuyển đổi Zalo reaction code → Unicode emoji (dùng cho display) */
+/**
+ * Font stack of message text that should draw emoji in color (Telegram): the app's text fonts FIRST, color emoji fonts
+ * after, so a symbol such as ❤ or ✈ without the emoji selector is drawn in color instead of the monochrome Segoe UI Symbol
+ * (Windows). Emoji fonts must never come first: they also hold digits, "#", "*" and the space (keycap emoji), so on macOS
+ * Apple Color Emoji drew wide digits and spaces while the letters fell back to a serif font.
+ */
+export const COLOR_EMOJI_TEXT_FONT =
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
+
+/** Converts a Zalo reaction code → Unicode emoji (used for display) */
 export function zaloCodeToEmoji(code: string): string {
   return ZALO_CODE_TO_EMOJI[code] ?? code;
 }
 
-/** Thay thế tất cả Zalo codes trong text bằng Unicode emoji */
+/** Replaces all Zalo codes in the text with Unicode emoji */
 export function convertZaloEmojis(text: string): string {
   if (!text) return text;
   const direct = ZALO_CODE_TO_EMOJI[text];
@@ -44,7 +53,7 @@ export function convertZaloEmojis(text: string): string {
   return result;
 }
 
-/** Map Unicode emoji → Zalo reaction code (dùng khi gửi reaction) */
+/** Map Unicode emoji → Zalo reaction code (used when sending a reaction) */
 export const EMOJI_TO_REACTION: Record<string, string> = {
   '❤️': 'HEART', '👍': 'LIKE', '😄': 'HAHA', '😮': 'WOW', '😢': 'CRY', '😡': 'ANGRY',
   '😘': 'KISS', '😂': 'TEARS_OF_JOY', '💩': 'SHIT', '🌹': 'ROSE', '💔': 'BROKEN_HEART',

@@ -1,15 +1,16 @@
 /**
- * Chuyển tiếp tin nhắn — phân loại tin theo cách phải gửi lại.
+ * Message forwarding: classifies messages by how they must be re-sent.
  *
- * `forwardMessage` của zca-js chỉ chuyển tiếp được văn bản (msgType "1"; message rỗng → "Missing message content"),
- * nên mỗi loại tin Zalo phải gửi lại bằng API riêng: chữ định dạng → sendMessage + styles, link → sendLink,
- * danh thiếp → sendCard, sticker → sendSticker, tin thoại → sendVoice, video → sendVideo, ảnh / GIF → sendImage,
- * file → sendFile. Loại Zalo không cho chuyển tiếp (cuộc gọi, bình chọn, thẻ thông báo, bản tin OA, nội dung
- * tương tác / thẻ ngân hàng, tin hệ thống…) → `unsupported` để ẩn nút "Chuyển tiếp".
+ * zca-js `forwardMessage` only forwards text (msgType "1"; empty message → "Missing message content"),
+ * so each Zalo message type must be re-sent with its own API: formatted text → sendMessage + styles, link → sendLink,
+ * contact card → sendCard, sticker → sendSticker, voice message → sendVoice, video → sendVideo, photo / GIF → sendImage,
+ * file → sendFile. Types Zalo does not allow to be forwarded (calls, polls, notification cards, OA news, interactive content /
+ * bank cards, system messages...) → `unsupported` to hide the "Chuyển tiếp" (Forward) button.
  */
 import { isZalo } from '../../channels/channelHelper';
 import { extractMsgText } from '../messages/messageParser';
 import { isFileType, isMediaType, isStickerType, isVideoType, isVoiceType } from '../messages/messageTypeUtils';
+import { tr } from '../../../../shared/i18n';
 
 export type ForwardKind =
   | 'text' | 'rtf' | 'location' | 'link' | 'card' | 'sticker'
@@ -18,21 +19,21 @@ export type ForwardKind =
 
 export interface ForwardPlan {
   kind: ForwardKind;
-  /** Loại tin không chuyển tiếp được (kind = 'unsupported') — dùng trong thông báo */
+  /** Message type that cannot be forwarded (kind = 'unsupported'), used in notifications */
   reason?: string;
 }
 
-/** Loại tin Zalo không chuyển tiếp được (Zalo cũng không cho) */
+/** Zalo message type that cannot be forwarded (Zalo does not allow it either) */
 const UNSUPPORTED_MSG_TYPES: Record<string, string> = {
-  'chat.ecard': 'Thẻ thông báo',
-  'group.poll': 'Bình chọn',
-  'chat.poll': 'Bình chọn',
-  'chat.todo': 'Công việc',
-  'chat.list.action': 'Bản tin Official Account',
-  'chat.webcontent': 'Nội dung tương tác của Zalo',
-  'chat.webcontent.v2': 'Nội dung tương tác của Zalo',
-  'chat.undo': 'Tin đã thu hồi',
-  recalled: 'Tin đã thu hồi',
+  'chat.ecard': tr('Thẻ thông báo'),
+  'group.poll': tr('Bình chọn'),
+  'chat.poll': tr('Bình chọn'),
+  'chat.todo': tr('Công việc'),
+  'chat.list.action': tr('Bản tin Official Account'),
+  'chat.webcontent': tr('Nội dung tương tác của Zalo'),
+  'chat.webcontent.v2': tr('Nội dung tương tác của Zalo'),
+  'chat.undo': tr('Tin đã thu hồi'),
+  recalled: tr('Tin đã thu hồi'),
   system: 'Tin hệ thống',
 };
 
@@ -69,25 +70,25 @@ const isHttpUrl = (value: unknown): value is string => typeof value === 'string'
 
 export function getForwardPlan(msg: any): ForwardPlan {
   const msgType = String(msg?.msg_type || '');
-  if (msg?.is_recalled === 1 || msg?.status === 'recalled') return { kind: 'unsupported', reason: 'Tin đã thu hồi' };
+  if (msg?.is_recalled === 1 || msg?.status === 'recalled') return { kind: 'unsupported', reason: tr('Tin đã thu hồi') };
   const obj = parseContentObject(msg?.content);
   const action = String(obj?.action || '');
-  if (action === 'zinstant.bankcard') return { kind: 'unsupported', reason: 'Thẻ ngân hàng' };
+  if (action === 'zinstant.bankcard') return { kind: 'unsupported', reason: tr('Thẻ ngân hàng') };
   const blocked = UNSUPPORTED_MSG_TYPES[msgType];
   if (blocked) return { kind: 'unsupported', reason: blocked };
 
-  // Tin định dạng cũ (nhập từ bản sao lưu điện thoại kiểu cũ): zalo_<số>, nhật ký cuộc gọi, tin thoại "[Voice]",
-  // "video" không có content JSON (thực chất là bản tin zinstant, link trong attachments là icon)
+  // Old-format messages (imported from an old-style phone backup): zalo_<number>, call logs, voice messages "[Voice]",
+  // "video" without JSON content (really a zinstant news message, the link in attachments is an icon)
   if (isZalo(msg?.channel) && (/^zalo_\d+$/.test(msgType) || msgType === 'call' || msgType === 'emoji'
     || (msgType === 'video' && !obj))) {
-    return { kind: 'unsupported', reason: 'Tin nhắn định dạng cũ' };
+    return { kind: 'unsupported', reason: tr('Tin nhắn định dạng cũ') };
   }
 
   if (msgType === 'chat.recommended' || msgType === 'chat.recommend' || action.startsWith('recommened.')) {
     if (action === 'recommened.link' || action === 'recommended.link') return { kind: 'link' };
     if (action === 'recommened.user' || action === 'recommened.vip') return { kind: 'card' };
-    if (action === 'recommened.calltime' || action === 'recommened.misscall') return { kind: 'unsupported', reason: 'Cuộc gọi' };
-    return { kind: 'unsupported', reason: 'Thẻ Zalo' };
+    if (action === 'recommened.calltime' || action === 'recommened.misscall') return { kind: 'unsupported', reason: tr('Cuộc gọi') };
+    return { kind: 'unsupported', reason: tr('Thẻ Zalo') };
   }
   if (msgType === 'webchat' && action === 'rtf') return { kind: 'rtf' };
   if (msgType === 'chat.location.new') return { kind: 'location' };
@@ -103,13 +104,13 @@ export function getForwardPlan(msg: any): ForwardPlan {
   return { kind: 'text' };
 }
 
-/** null = chuyển tiếp được; ngược lại là tên loại tin không chuyển tiếp được */
+/** null = can be forwarded; otherwise the name of the message type that cannot be forwarded */
 export function getForwardBlockReason(msg: any): string | null {
   const plan = getForwardPlan(msg);
-  return plan.kind === 'unsupported' ? plan.reason || 'Loại tin nhắn này' : null;
+  return plan.kind === 'unsupported' ? plan.reason || tr('Loại tin nhắn này') : null;
 }
 
-/** Cách cũ (Facebook / Telegram giữ nguyên): content là văn bản / chú thích, bỏ placeholder "[Tin nhắn]". */
+/** Old way (kept for Facebook / Telegram): content is the text / caption, drop the "[Tin nhắn]" placeholder. */
 function legacyForwardText(msg: any): string {
   const content = msg?.content;
   if (!content || content === 'null') return '';
@@ -118,9 +119,9 @@ function legacyForwardText(msg: any): string {
 }
 
 /**
- * Chữ đi kèm khi chuyển tiếp: nội dung tin văn bản, hoặc chú thích ảnh / video (gửi thành tin riêng sau media).
- * Zalo: `title` của file là tên file, của link / danh thiếp là nội dung thẻ → không gửi thêm
- * (trước đây gửi nhầm "File: <title>").
+ * Text sent along when forwarding: the text of a text message, or the caption of a photo / video (sent as a separate message after the media).
+ * Zalo: the `title` of a file is the file name, of a link / contact card it is the card's content → nothing extra is sent
+ * (it used to wrongly send "File: <title>").
  */
 export function getForwardCaption(msg: any, kind: ForwardKind = getForwardPlan(msg).kind): string {
   if (!isZalo(msg?.channel)) return legacyForwardText(msg);
@@ -143,7 +144,7 @@ export function getForwardCaption(msg: any, kind: ForwardKind = getForwardPlan(m
 
 export type ZaloTextStyle = { start: number; len: number; st: string; indentSize?: number };
 
-/** Tin chữ định dạng (webchat action "rtf"): nội dung + styles, cắt styles vào độ dài chữ (Zalo từ chối style vượt quá). */
+/** Formatted text message (webchat action "rtf"): content + styles, styles are trimmed to the text length (Zalo rejects styles that go beyond it). */
 export function getZaloRichText(msg: any): { text: string; styles: ZaloTextStyle[] } {
   const obj = parseContentObject(msg?.content);
   const text = typeof obj?.title === 'string' ? obj.title : '';
@@ -159,7 +160,7 @@ export function getZaloRichText(msg: any): { text: string; styles: ZaloTextStyle
   return { text, styles };
 }
 
-/** Tin link (recommened.link): `title` là chữ người gửi (thường chứa link), `href` là link. */
+/** Link message (recommened.link): `title` is the sender's text (usually containing the link), `href` is the link. */
 export function getZaloLinkInfo(msg: any): { url: string; text: string } {
   const obj = parseContentObject(msg?.content);
   const text = firstText(obj?.title).trim();
@@ -167,15 +168,15 @@ export function getZaloLinkInfo(msg: any): { url: string; text: string } {
   return { url: isHttpUrl(url) ? url : '', text };
 }
 
-/** Danh thiếp (recommened.user / .vip): `params` = UID web (chuỗi 19 số), `description` là JSON có phone. */
+/** Contact card (recommened.user / .vip): `params` = web UID (19-digit string), `description` is JSON containing the phone. */
 export function getZaloCardInfo(msg: any): { userId: string; phone: string; name: string } {
   const obj = parseContentObject(msg?.content);
   let desc: Record<string, any> = {};
   if (obj?.description && typeof obj.description === 'object') desc = obj.description;
   else if (typeof obj?.description === 'string' && obj.description.trimStart().startsWith('{')) {
-    try { desc = JSON.parse(obj.description) || {}; } catch { /* không phải JSON */ }
+    try { desc = JSON.parse(obj.description) || {}; } catch { /* not JSON */ }
   }
-  // params dạng số > 2^53 sẽ bị JSON.parse làm tròn → chỉ nhận chuỗi số
+  // numeric params > 2^53 would be rounded by JSON.parse → accept only numeric strings
   const candidates = [obj?.params, desc.uid, desc.userId, desc.id];
   const userId = String(candidates.find(v => typeof v === 'string' && /^\d+$/.test(v.trim()) && v.trim() !== '0') || '').trim();
   return { userId, phone: firstText(desc.phone).trim(), name: firstText(obj?.title).trim() };
@@ -187,14 +188,14 @@ export function getZaloStickerId(msg: any): number {
   return Number.isFinite(id) && id > 0 ? id : 0;
 }
 
-/** Tin thoại Zalo: link m4a (params.m4a, hoặc href) */
+/** Zalo voice message: m4a link (params.m4a, or href) */
 export function getZaloVoiceUrl(msg: any): string {
   const obj = parseContentObject(msg?.content);
   const params = parseParams(obj);
   return [params.m4a, obj?.href].find(isHttpUrl) || '';
 }
 
-/** Link CDN + thông số của tin video Zalo (content: href, thumb, params.duration ms, video_width, video_height). */
+/** CDN link + parameters of a Zalo video message (content: href, thumb, params.duration in ms, video_width, video_height). */
 export function getZaloVideoInfo(msg: any): { videoUrl: string; thumbUrl: string; duration?: number; width?: number; height?: number } | null {
   if (!isZalo(msg?.channel)) return null;
   const obj = parseContentObject(msg?.content);

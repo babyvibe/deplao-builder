@@ -25,6 +25,7 @@ import {
   registerPosWebhooks, removePosWebhook,
 } from './posWebhookRegistration';
 import { isWebhookRegistrationType } from '../../shared/integrations/posWebhookTopics';
+import { tr } from '../../shared/i18n';
 
 /** Map of active adapter instances (integrationId → adapter) */
 const adapterInstances = new Map<string, IntegrationAdapter>();
@@ -33,17 +34,17 @@ const adapterInstances = new Map<string, IntegrationAdapter>();
 let webhookServer: http.Server | null = null;
 let webhookPort = 9888;
 
-/** Một lần nhận / từ chối webhook (chỉ RAM) — trang tích hợp hiện để người dùng biết webhook có bị từ chối không. */
+/** One received / rejected webhook (RAM only): the integration page shows it so the user knows whether a webhook was rejected. */
 export interface WebhookEventInfo {
   at: number;
   message: string;
-  /** Lần nhận: cách xác thực ('none' = chưa đặt khoá bảo mật). */
+  /** Received: the authentication method ('none' = no security key set). */
   method?: WebhookAuthMethod;
-  /** Lần từ chối: lý do (missing_signature, invalid_signature, stale_timestamp, unsupported_auth, no_secret, disabled). */
+  /** Rejected: the reason (missing_signature, invalid_signature, stale_timestamp, unsupported_auth, no_secret, disabled). */
   reason?: string;
 }
 
-/** Trạng thái webhook của kết nối Casso / SePay / phần mềm bán hàng (KiotViet, Haravan, Sapo, Nhanh.vn, Pancake) trong listConfigs(). */
+/** Webhook status of the Casso / SePay / POS software connections (KiotViet, Haravan, Sapo, Nhanh.vn, Pancake) in listConfigs(). */
 export interface IntegrationWebhookInfo {
   secretConfigured: boolean;
   lastAccepted?: WebhookEventInfo;
@@ -56,17 +57,17 @@ export interface WebhookHttpResult {
 }
 
 const webhookStatus = new Map<string, { lastAccepted?: WebhookEventInfo; lastRejected?: WebhookEventInfo }>();
-/** Giao dịch đã phát (Casso / SePay gửi lại khi lỗi, admin phát lại thủ công) — mỗi giao dịch chỉ chạy workflow một lần. */
+/** Transactions already emitted (Casso / SePay resend them after an error, admin re-emits manually): each transaction runs the workflow only once. */
 const seenTransactions = new RecentKeys();
-/** Sự kiện POS đã phát (nền tảng gửi lại khi Deplao trả lời chậm / lỗi) — mỗi đơn / khách / sản phẩm chỉ chạy workflow một lần. */
+/** POS events already emitted (the platform resends them when Deplao replies slowly / errors): each order / customer / product runs the workflow only once. */
 const seenPosEvents = new RecentKeys();
 
 const ACCEPTED_MESSAGES: Record<WebhookAuthMethod, string> = {
-  'casso-signature': 'Đã nhận — chữ ký Webhook V2 hợp lệ',
-  'casso-token': 'Đã nhận — secure-token hợp lệ (Webhook cũ)',
-  'sepay-signature': 'Đã nhận — chữ ký HMAC-SHA256 hợp lệ',
-  'sepay-apikey': 'Đã nhận — API Key hợp lệ',
-  none: 'Đã nhận — không kiểm tra chữ ký (chưa đặt khoá bảo mật)',
+  'casso-signature': tr('Đã nhận — chữ ký Webhook V2 hợp lệ'),
+  'casso-token': tr('Đã nhận — secure-token hợp lệ (Webhook cũ)'),
+  'sepay-signature': tr('Đã nhận — chữ ký HMAC-SHA256 hợp lệ'),
+  'sepay-apikey': tr('Đã nhận — API Key hợp lệ'),
+  none: tr('Đã nhận — không kiểm tra chữ ký (chưa đặt khoá bảo mật)'),
 };
 
 function noteWebhook(integrationId: string, kind: 'lastAccepted' | 'lastRejected', info: WebhookEventInfo): void {
@@ -80,9 +81,9 @@ function webhookReply(status: number, body: Record<string, any>): WebhookHttpRes
 }
 
 /**
- * Webhook phần mềm bán hàng (posWebhook.ts): BẮT BUỘC khoá xác thực — chưa đặt khoá, thiếu / sai chữ ký → 401, không chạy
- * workflow. Hợp lệ → mỗi đơn / khách / sản phẩm phát 'integration:posWebhook' (trigger "Khi phần mềm bán hàng gửi webhook")
- * một lần; `?event=` ở địa chỉ nhận đặt tên sự kiện khi nền tảng không gửi.
+ * POS software webhook (posWebhook.ts): a verification key is REQUIRED. No key set, or a missing / wrong signature → 401, the workflow does not run.
+ * Valid → each order / customer / product emits 'integration:posWebhook' (trigger "When the sales software sends a webhook")
+ * once; `?event=` on the receiving address names the event when the platform does not send one.
  */
 function processPosWebhook(
   candidates: IntegrationConfig[],
@@ -112,7 +113,7 @@ function processPosWebhook(
 
   const { cfg, type } = accepted;
   let eventOverride = '';
-  try { eventOverride = new URL(input.url || '/', 'http://127.0.0.1').searchParams.get('event') || ''; } catch { /* không có ?event= */ }
+  try { eventOverride = new URL(input.url || '/', 'http://127.0.0.1').searchParams.get('event') || ''; } catch { /* no ?event= */ }
   const parsed = parsePosWebhook(type, { ...request, eventOverride });
   let emitted = 0;
   let duplicates = 0;
@@ -127,8 +128,8 @@ function processPosWebhook(
   }
   EventBroadcaster.emit('integration:webhook', { integrationId: cfg.id, integrationType: cfg.type, url: pathname, payload: body, verified: true });
   const summary = parsed.ping
-    ? 'lượt kiểm tra khi bật webhook'
-    : `${emitted} sự kiện mới${duplicates ? `, ${duplicates} trùng (bỏ qua)` : ''}`;
+    ? tr('lượt kiểm tra khi bật webhook')
+    : tr('{{emitted}} sự kiện mới{{v1}}', { emitted, v1: duplicates ? tr(', {{duplicates}} trùng (bỏ qua)', { duplicates }) : '' });
   noteWebhook(cfg.id, 'lastAccepted', { at: now, message: `${accepted.message} — ${summary}` });
   Logger.log(`[WebhookServer] ${cfg.type} ${cfg.id}: ${summary}`);
   return webhookReply(200, { success: true });
@@ -149,7 +150,7 @@ function createAdapter(config: IntegrationConfig): IntegrationAdapter {
     case 'pancake':  return new PancakeAdapter(config);
     case 'telegram_bot': return new TelegramBotAdapter(config);
     default:
-      throw new Error(`Loại integration không hỗ trợ: ${config.type}`);
+      throw new Error(tr('Loại integration không hỗ trợ: {{type}}', { type: config.type }));
   }
 }
 
@@ -237,8 +238,8 @@ export const IntegrationRegistry = {
   },
 
   /**
-   * List all integration configs (credentials stripped). Casso / SePay và phần mềm bán hàng kèm `webhook`: đã đặt khoá
-   * chưa + lần nhận / từ chối gần nhất.
+   * List all integration configs (credentials stripped). Casso / SePay and POS software include `webhook`: whether a key is set
+   * + the latest received / rejected webhook.
    */
   listConfigs(): Array<Omit<IntegrationConfig, 'credentials'> & { webhook?: IntegrationWebhookInfo }> {
     return dbListAll().map(({ credentials, ...rest }) => {
@@ -342,7 +343,7 @@ export const IntegrationRegistry = {
   /** Test connection for a given integration id */
   async testConnection(id: string): Promise<{ success: boolean; message: string }> {
     const cfg = this.getConfigWithCredentials(id);
-    if (!cfg) return { success: false, message: 'Integration không tồn tại' };
+    if (!cfg) return { success: false, message: tr('Integration không tồn tại') };
     try {
       const adapter = createAdapter(cfg);
       const result = await adapter.testConnection();
@@ -365,7 +366,7 @@ export const IntegrationRegistry = {
     if (!adapter) {
       // Try creating on the fly
       const cfg = this.getConfigWithCredentials(id);
-      if (!cfg) throw new Error(`Integration ${id} không tồn tại`);
+      if (!cfg) throw new Error(tr('Integration {{id}} không tồn tại', { id }));
       const fresh = createAdapter(cfg);
       adapterInstances.set(id, fresh);
       return fresh.executeAction(action, params);
@@ -380,7 +381,7 @@ export const IntegrationRegistry = {
         return adapter.executeAction(action, params);
       }
     }
-    throw new Error(`Không có integration ${type} nào đang kết nối`);
+    throw new Error(tr('Không có integration {{type}} nào đang kết nối', { type }));
   },
 
   getWebhookPort(): number {
@@ -388,17 +389,17 @@ export const IntegrationRegistry = {
   },
 
   /**
-   * Đăng ký webhook tự động (KiotViet / Sapo, posWebhookRegistration.ts): bối cảnh cho một kết nối đang bật. `address` =
-   * địa chỉ nhận webhook hiện tại (IPC đọc từ PaymentsTunnel). Lưu khoá (Secret KiotViet…) qua saveConfig — gộp credential cũ.
+   * Automatic webhook registration (KiotViet / Sapo, posWebhookRegistration.ts): context for an enabled connection. `address` =
+   * the current webhook receiving address (IPC reads it from PaymentsTunnel). Keys (KiotViet Secret...) are saved through saveConfig, merged with the old credentials.
    */
   webhookRegistrationContext(id: string, address: WebhookAddress): RegistrationContext | { error: string } {
     const cfg = this.getConfigWithCredentials(id);
-    if (!cfg) return { error: 'Integration không tồn tại' };
-    if (!isWebhookRegistrationType(cfg.type)) return { error: 'Chỉ KiotViet và Sapo đăng ký webhook tự động được' };
-    if (!cfg.enabled) return { error: 'Kết nối đang tắt — bật "Kích hoạt" rồi bấm Cập nhật trước' };
+    if (!cfg) return { error: tr('Integration không tồn tại') };
+    if (!isWebhookRegistrationType(cfg.type)) return { error: tr('Chỉ KiotViet và Sapo đăng ký webhook tự động được') };
+    if (!cfg.enabled) return { error: tr('Kết nối đang tắt — bật "Kích hoạt" rồi bấm Cập nhật trước') };
     let adapter: unknown = null;
-    try { adapter = createAdapter(cfg); } catch (e: any) { return { error: e?.message || 'Không tạo được kết nối' }; }
-    if (!isPosWebhookApi(adapter)) return { error: 'Kết nối này chưa hỗ trợ đăng ký webhook' };
+    try { adapter = createAdapter(cfg); } catch (e: any) { return { error: e?.message || tr('Không tạo được kết nối') }; }
+    if (!isPosWebhookApi(adapter)) return { error: tr('Kết nối này chưa hỗ trợ đăng ký webhook') };
     return {
       type: cfg.type,
       integrationId: cfg.id,
@@ -438,17 +439,17 @@ export const IntegrationRegistry = {
   },
 
   /**
-   * Xử lý một request tới /webhook/{integrationId | loại} (body đã đọc xong) — tách khỏi HTTP để test.
-   * Chỉ kết nối đang bật. Casso / SePay phải qua verifyWebhook của adapter (đã đặt khoá → bắt buộc chữ ký hợp lệ);
-   * mỗi giao dịch tiền vào phát 'integration:payment' đúng một lần (chống trùng theo id giao dịch).
-   * Phần mềm bán hàng: processPosWebhook (luôn cần khoá xác thực) → 'integration:posWebhook'.
+   * Handles one request to /webhook/{integrationId | type} (body already read), separated from HTTP for testing.
+   * Only enabled connections. Casso / SePay must pass the adapter's verifyWebhook (a key is set → a valid signature is required);
+   * each incoming payment emits 'integration:payment' exactly once (de-duplicated by transaction id).
+   * POS software: processPosWebhook (always needs a verification key) → 'integration:posWebhook'.
    */
   processWebhook(input: { method?: string; url?: string; headers: WebhookHeaders; rawBody: Buffer; now?: number }): WebhookHttpResult {
     if (String(input.method || '').toUpperCase() !== 'POST') return webhookReply(405, { success: false, error: 'Method not allowed' });
     const now = input.now ?? Date.now();
 
     let pathname = '/';
-    try { pathname = new URL(input.url || '/', 'http://127.0.0.1').pathname; } catch { /* giữ '/' */ }
+    try { pathname = new URL(input.url || '/', 'http://127.0.0.1').pathname; } catch { /* keep '/' */ }
     const parts = pathname.split('/').filter(Boolean);
     let route = '';
     try { route = parts.length === 2 && parts[0] === 'webhook' ? decodeURIComponent(parts[1]) : ''; } catch { route = ''; }
@@ -457,7 +458,7 @@ export const IntegrationRegistry = {
     const configs = dbListAll();
     const byId = configs.find(c => c.id === route);
     if (byId && !byId.enabled) {
-      noteWebhook(byId.id, 'lastRejected', { at: now, reason: 'disabled', message: 'Kết nối đang tắt (Kích hoạt) — webhook bị bỏ qua' });
+      noteWebhook(byId.id, 'lastRejected', { at: now, reason: 'disabled', message: tr('Kết nối đang tắt (Kích hoạt) — webhook bị bỏ qua') });
       return webhookReply(404, { success: false, error: 'Integration not found or disabled' });
     }
     const candidates = byId ? [byId] : configs.filter(c => c.type === route && c.enabled);
@@ -476,13 +477,13 @@ export const IntegrationRegistry = {
     const payments: Array<{ cfg: IntegrationConfig; adapter: WebhookCapableAdapter }> = [];
     for (const cfg of candidates) {
       let adapter: unknown = null;
-      try { adapter = createAdapter(cfg); } catch { /* loại không còn hỗ trợ */ }
+      try { adapter = createAdapter(cfg); } catch { /* type no longer supported */ }
       if (isWebhookCapable(adapter)) payments.push({ cfg, adapter });
     }
     if (!payments.length) {
       const pos = candidates.filter(c => isPosWebhookType(c.type));
       if (pos.length) return processPosWebhook(pos, input, pathname, body, now);
-      // Vận chuyển (GHN / GHTK)…: chưa có cơ chế xác thực webhook — giữ hành vi cũ, chỉ phát sự kiện chung (không trigger nào dùng).
+      // Shipping (GHN / GHTK)...: no webhook verification mechanism yet, keep the old behavior, only emit the generic event (no trigger uses it).
       const cfg = candidates[0];
       EventBroadcaster.emit('integration:webhook', { integrationId: cfg.id, integrationType: cfg.type, url: pathname, payload: body, verified: false });
       return webhookReply(200, { success: true });
@@ -497,7 +498,7 @@ export const IntegrationRegistry = {
         rejections.push({ cfg, reason: auth.reason, message: auth.message });
         continue;
       }
-      // Route theo loại có nhiều kết nối: ưu tiên kết nối có khoá khớp chữ ký hơn kết nối chưa đặt khoá
+      // Routing by type with several connections: prefer the connection whose key matches the signature over a connection with no key set
       if (!accepted || (accepted.method === 'none' && auth.method !== 'none')) accepted = { cfg, adapter, method: auth.method };
       if (auth.method !== 'none') break;
     }
@@ -513,9 +514,9 @@ export const IntegrationRegistry = {
     let duplicates = 0;
     let outgoing = 0;
     for (const { tx, raw } of adapter.parseWebhook(body)) {
-      // "Khi nhận thanh toán" chỉ dành cho tiền vào
+      // "When a payment is received" is for money in only
       if (tx.direction !== 'in') { outgoing++; continue; }
-      // id "0" = giao dịch thử (nút Gọi thử / Gửi thử) — không chống trùng
+      // id "0" = test transaction (Call test / Send test button): no de-duplication
       if (tx.transactionId && tx.transactionId !== '0' && seenTransactions.seen(`${cfg.type}:${tx.transactionId}`, now)) {
         duplicates++;
         continue;
@@ -536,7 +537,7 @@ export const IntegrationRegistry = {
     return webhookReply(200, { success: true });
   },
 
-  /** Request HTTP của webhook server: chỉ POST, body tối đa MAX_WEBHOOK_BODY_BYTES (đọc nguyên bytes), rồi processWebhook. */
+  /** HTTP request of the webhook server: POST only, body up to MAX_WEBHOOK_BODY_BYTES (raw bytes read), then processWebhook. */
   handleWebhookHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
     const send = (result: WebhookHttpResult, close = false): void => {
       if (res.headersSent) return;
@@ -573,7 +574,7 @@ export const IntegrationRegistry = {
     webhookPort = port || 9888;
 
     webhookServer = http.createServer((req, res) => this.handleWebhookHttp(req, res));
-    // Địa chỉ Internet trỏ vào cổng này: không giữ kết nối gửi header / body nhỏ giọt
+    // Internet address pointing at this port: do not keep connections that trickle headers / body
     webhookServer.headersTimeout = 10_000;
     webhookServer.requestTimeout = 15_000;
 

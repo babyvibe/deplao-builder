@@ -1,9 +1,9 @@
 /**
- * Reaction Telegram (emoji chuẩn, không gồm custom emoji Premium). Telegram nhận ĐÚNG chuỗi trong danh sách của nó —
- * không có ký tự biến thể U+FE0F (tim là "❤", không phải "❤️"); gửi biến thể khác → REACTION_INVALID.
+ * Telegram reactions (standard emoji, not including Premium custom emoji). Telegram accepts EXACTLY the strings in its list:
+ * no U+FE0F variant character (the heart is "❤", not "❤️"); sending another variant → REACTION_INVALID.
  */
 
-/** Danh sách mặc định (thứ tự của Telegram) khi chưa lấy được danh sách thật của hội thoại. */
+/** Default list (Telegram's order), used when the conversation's real list could not be fetched yet. */
 export const DEFAULT_TELEGRAM_REACTIONS: readonly string[] = [
   '👍', '👎', '❤', '🔥', '🥰', '👏', '😁', '🤔', '🤯', '😱', '🤬', '😢', '🎉', '🤩', '🤮', '💩', '🙏', '👌', '🕊', '🤡',
   '🥱', '🥴', '😍', '🐳', '❤‍🔥', '🌚', '🌭', '💯', '🤣', '⚡', '🍌', '🏆', '💔', '🤨', '😐', '🍓', '🍾', '💋', '🖕', '😈',
@@ -18,21 +18,21 @@ export function normalizeTelegramReaction(emoji: string): string {
 export type TelegramChatReactions =
   | { kind: 'all' }
   | { kind: 'none' }
-  /** Admin chỉ cho phép một số reaction (theo thứ tự admin chọn). */
+  /** Admin allows only some reactions (in the order the admin picks). */
   | { kind: 'some'; emoticons: string[] };
 
 export interface TelegramReactionCatalog {
-  /** messages.getAvailableReactions — thứ tự của Telegram. */
+  /** messages.getAvailableReactions: Telegram's order. */
   available: Array<{ emoticon: string; premium?: boolean; inactive?: boolean }>;
-  /** messages.getTopReactions — reaction hay dùng của chính tài khoản, theo thứ tự. */
+  /** messages.getTopReactions: the account's own most-used reactions, in order. */
   top: string[];
   chat: TelegramChatReactions;
   isPremium: boolean;
 }
 
 /**
- * Reaction dùng được trong hội thoại, hay dùng trước (như menu Telegram): hội thoại tắt reaction → []; admin chọn
- * một số → đúng các reaction đó; còn lại → danh sách chuẩn, bỏ loại Premium khi tài khoản không có Premium.
+ * Reactions usable in the conversation, most-used first (like the Telegram menu): conversation has reactions off → []; admin picks
+ * some → exactly those reactions; otherwise → the standard list, without Premium-only types when the account has no Premium.
  */
 export function orderTelegramReactions(catalog: TelegramReactionCatalog): string[] {
   if (catalog.chat.kind === 'none') return [];

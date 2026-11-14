@@ -8,15 +8,17 @@ import ipc from '@/lib/ipc';
 import { channelSupports, type Channel } from '@/../configs/channels/channelConfig';
 import { CHANNEL } from '@/lib/channels/channelHelper';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type FriendStatus =
   | 'loading'
-  | 'friend'           // đã là bạn bè
-  | 'stranger'         // chưa kết bạn
-  | 'sent'             // đã gửi yêu cầu, đang chờ đối phương chấp nhận
-  | 'received';        // đối phương đã gửi yêu cầu đến mình
+  | 'friend'           // already friends
+  | 'stranger'         // not friends yet
+  | 'sent'             // request sent, waiting for the other side to accept
+  | 'received';        // the other side has sent a request to me
 
-// Hiển thị thanh kết bạn phía dưới pinned bar khi chat với người chưa là bạn
+// Show the friend bar below the pinned bar when chatting with someone who is not a friend yet
 
 export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onReady }: {
   zaloId: string;
@@ -33,7 +35,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
     showNotification: s.showNotification,
   })));
 
-  // Khi status thoát khỏi 'loading' → thông báo parent để scroll to bottom
+  // When the status leaves 'loading' → notify the parent to scroll to bottom
   React.useEffect(() => {
     if (status !== 'loading') {
       onReady?.();
@@ -48,14 +50,14 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
       setStatus('friend'); // FB contacts are always "accessible"
       return;
     }
-    // Chỉ dùng Zalo IPC cho Zalo accounts
+    // Only use Zalo IPC for Zalo accounts
     if (acc && (acc.channel || CHANNEL.ZALO) !== CHANNEL.ZALO) {
       setStatus('friend');
       return;
     }
 
     // Fast sync check: contact already has is_friend flag from Zalo sync
-    // Kiểm tra cả is_friend (số) và isFr (flag bổ sung trong store)
+    // Check both is_friend (number) and isFr (extra flag in the store)
     if (contact?.is_friend === 1 || contact?.isFr === 1) {
       setStatus('friend');
       return;
@@ -70,10 +72,10 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
         if (friendRes?.isFriend) { setStatus('friend'); return; }
 
         // 2. Confirm via Zalo API (authoritative source)
-        // zca-js getFriendRequestStatus trả về: { is_friend, is_requested, is_requesting }
-        // is_friend=1 → bạn bè
-        // is_requested=1 → mình đã gửi yêu cầu (đang chờ đối phương chấp nhận)
-        // is_requesting=1 → đối phương đã gửi yêu cầu đến mình
+        // zca-js getFriendRequestStatus returns: { is_friend, is_requested, is_requesting }
+        // is_friend=1 → friends
+        // is_requested=1 → I sent the request (waiting for the other side to accept)
+        // is_requesting=1 → the other side has sent a request to me
         const auth = getAuth();
         if (!auth) { setStatus('stranger'); return; }
         const res = await ipc.zalo?.getFriendRequestStatus({ auth, userId });
@@ -92,7 +94,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
     return () => { cancelled = true; };
   }, [zaloId, userId, contact?.is_friend, contact?.isFr]);
 
-  // Realtime: đồng bộ trạng thái kết bạn ngay khi có event từ listener
+  // Realtime: sync the friend status right away when an event arrives from the listener
   React.useEffect(() => {
     const unsubAccepted = ipc.on?.('event:friendAccepted', (data: any) => {
       if (data?.zaloId === zaloId && data?.userId === userId) {
@@ -113,7 +115,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
       }
     });
 
-    // Hủy kết bạn (Zalo / điện thoại / máy khác) → hiện lại thanh "Kết bạn"
+    // Unfriended (on Zalo / phone / another device) → show the "Kết bạn" (Add friend) bar again
     const unsubFriendRemoved = ipc.on?.('event:friendRemoved', (data: any) => {
       if (data?.zaloId === zaloId && String(data?.userId || '') === String(userId)) {
         setStatus('stranger');
@@ -137,9 +139,9 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
       await ipc.zalo?.sendFriendRequest({ auth, userId, msg: sendMsg.trim() });
       setStatus('sent');
       setSendPopupOpen(false);
-      showNotification('Đã gửi yêu cầu kết bạn', 'success');
+      showNotification(tr('Đã gửi yêu cầu kết bạn'), 'success');
     } catch (e: any) {
-      showNotification('Gửi yêu cầu thất bại: ' + e.message, 'error');
+      showNotification(tr('Gửi yêu cầu thất bại: {{message}}', { message: e.message }), 'error');
     } finally { setSending(false); }
   };
 
@@ -151,12 +153,12 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
       if (!auth) throw new Error('No auth');
       await ipc.zalo?.acceptFriendRequest({ auth, userId });
       setStatus('friend');
-      showNotification('Đã chấp nhận kết bạn', 'success');
+      showNotification(tr('Đã chấp nhận kết bạn'), 'success');
       // Update local DB - also remove from friend_requests
       DataAccessor.addFriend({ zaloId, friend: { userId, displayName: contact?.display_name || contact?.alias || '', avatar: contact?.avatar_url || contact?.avatar || '' } }).catch(() => {});
       DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
     } catch (e: any) {
-      showNotification('Thất bại: ' + e.message, 'error');
+      showNotification(tr('Thất bại: {{message}}', { message: e.message }), 'error');
     } finally { setSending(false); }
   };
 
@@ -168,9 +170,9 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
       if (!auth) throw new Error('No auth');
       await ipc.zalo?.rejectFriendRequest({ auth, userId });
       setStatus('stranger');
-      showNotification('Đã từ chối yêu cầu kết bạn', 'success');
+      showNotification(tr('Đã từ chối yêu cầu kết bạn'), 'success');
     } catch (e: any) {
-      showNotification('Từ chối thất bại: ' + e.message, 'error');
+      showNotification(tr('Từ chối thất bại: {{message}}', { message: e.message }), 'error');
     } finally { setSending(false); }
   };
 
@@ -182,13 +184,13 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
       if (!auth) throw new Error('No auth');
       await ipc.zalo?.undoFriendRequest({ auth, userId });
       setStatus('stranger');
-      showNotification('Đã huỷ yêu cầu kết bạn', 'success');
+      showNotification(tr('Đã huỷ yêu cầu kết bạn'), 'success');
     } catch (e: any) {
-      showNotification('Huỷ thất bại: ' + e.message, 'error');
+      showNotification(tr('Huỷ thất bại: {{message}}', { message: e.message }), 'error');
     } finally { setSending(false); }
   };
 
-  // Đã là bạn bè → không hiện
+  // Already friends → not shown
   if (status === 'loading' || status === 'friend') return null;
 
   const displayName = contact?.alias || contact?.display_name || userId;
@@ -210,17 +212,17 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
         <div className="flex-1 min-w-0">
           {status === 'stranger' && (
             <span className="text-sm text-foreground/80">
-              Gửi yêu cầu kết bạn tới <span className="font-medium text-foreground">{displayName}</span>
+              {trx('Gửi yêu cầu kết bạn tới <0>{{displayName}}</0>', { 0: <span className="font-medium text-foreground" />, displayName })}
             </span>
           )}
           {status === 'sent' && (
             <span className="text-sm text-muted-foreground">
-              Đã gửi yêu cầu kết bạn tới <span className="font-medium text-foreground/80">{displayName}</span> - đang chờ chấp nhận
+              {trx('Đã gửi yêu cầu kết bạn tới <0>{{displayName}}</0> - đang chờ chấp nhận', { 0: <span className="font-medium text-foreground/80" />, displayName })}
             </span>
           )}
           {status === 'received' && (
             <span className="text-sm text-foreground/80">
-              <span className="font-medium text-foreground">{displayName}</span> đã gửi cho bạn yêu cầu kết bạn
+              {trx('<0>{{displayName}}</0> đã gửi cho bạn yêu cầu kết bạn', { 0: <span className="font-medium text-foreground" />, displayName })}
             </span>
           )}
         </div>
@@ -234,7 +236,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Kết bạn
+              {tr('Kết bạn')}
             </button>
           )}
           {status === 'sent' && (
@@ -247,7 +249,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
                 ? <Spinner size={3} />
                 : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               }
-              Huỷ yêu cầu
+              {tr('Huỷ yêu cầu')}
             </button>
           )}
           {status === 'received' && (
@@ -257,7 +259,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
                 disabled={sending}
                 className="px-3 py-1.5 bg-muted hover:bg-accent text-foreground/80 hover:text-foreground text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
               >
-                Từ chối
+                {tr('Từ chối')}
               </button>
               <button
                 onClick={handleAccept}
@@ -268,7 +270,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
                   ? <Spinner size={3} />
                   : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
                 }
-                Chấp nhận
+                {tr('Chấp nhận')}
               </button>
             </>
           )}
@@ -296,7 +298,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
                 )}
                 <div>
                   <p className="font-semibold text-foreground text-sm">{displayName}</p>
-                  <p className="text-xs text-muted-foreground">Gửi yêu cầu kết bạn</p>
+                  <p className="text-xs text-muted-foreground">{tr('Gửi yêu cầu kết bạn')}</p>
                 </div>
               </div>
               <button onClick={() => setSendPopupOpen(false)}
@@ -308,13 +310,13 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
             {/* Body */}
             <div className="px-5 py-4 space-y-3">
               <div>
-                <label className="text-xs text-muted-foreground font-medium block mb-1.5">Lời nhắn kèm theo (tùy chọn)</label>
+                <label className="text-xs text-muted-foreground font-medium block mb-1.5">{tr('Lời nhắn kèm theo (tùy chọn)')}</label>
                 <textarea
                   autoFocus
                   value={sendMsg}
                   onChange={e => setSendMsg(e.target.value)}
                   maxLength={150}
-                  placeholder="Xin chào, tôi muốn kết bạn với bạn!"
+                  placeholder={tr('Xin chào, tôi muốn kết bạn với bạn!')}
                   rows={3}
                   className="w-full bg-muted border border-input focus:border-blue-500 rounded-xl px-3 py-2.5 text-sm text-foreground placeholder-subtle-foreground focus:outline-none resize-none transition-colors"
                   onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSendRequest(); }}
@@ -327,7 +329,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
             <div className="flex gap-3 px-5 pb-5 pt-1">
               <button onClick={() => setSendPopupOpen(false)}
                 className="flex-1 py-2.5 rounded-xl bg-muted hover:bg-accent text-sm text-foreground/80 transition-colors">
-                Huỷ
+                {tr('Huỷ')}
               </button>
               <button
                 onClick={handleSendRequest}
@@ -335,7 +337,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
                 className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm text-white font-semibold transition-colors flex items-center justify-center gap-2"
               >
                 {sending && <Spinner size={4} />}
-                Gửi yêu cầu
+                {tr('Gửi yêu cầu')}
               </button>
             </div>
           </div>

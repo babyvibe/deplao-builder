@@ -1,8 +1,8 @@
 /**
- * RateLimiter — token bucket theo principal. CHỈ chạy khi khách tự đặt giới hạn > 0
- * (cho key, hoặc mặc định toàn cục). Mặc định không giới hạn.
+ * RateLimiter: token bucket per principal. Runs ONLY when the customer sets a limit > 0
+ * (for a key, or the global default). No limit by default.
  *
- * BruteForceGuard — tạm chặn IP gửi quá nhiều key sai. Key hợp lệ luôn đi qua.
+ * BruteForceGuard: temporarily blocks an IP that sends too many wrong keys. Valid keys always pass.
  */
 
 interface Bucket { tokens: number; updatedAt: number; limit: number; }
@@ -10,7 +10,7 @@ interface Bucket { tokens: number; updatedAt: number; limit: number; }
 export class RateLimiter {
     private buckets = new Map<string, Bucket>();
 
-    /** limitPerMin <= 0 → luôn cho qua. Trả số giây cần chờ khi vượt (0 = được phép). */
+    /** limitPerMin <= 0 → always allowed. Returns the seconds to wait when over the limit (0 = allowed). */
     take(id: string, limitPerMin: number, now = Date.now()): { allowed: boolean; retryAfterSec: number; remaining: number; limit: number } {
         if (!limitPerMin || limitPerMin <= 0) return { allowed: true, retryAfterSec: 0, remaining: -1, limit: 0 };
         let b = this.buckets.get(id);

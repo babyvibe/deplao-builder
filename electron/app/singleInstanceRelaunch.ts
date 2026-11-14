@@ -1,18 +1,18 @@
 /**
- * Cài bản mới khi bản cũ còn chạy ngầm (nút X chỉ ẩn Deplao xuống khay): bấm mở bản mới thì khoá một-instance đưa về
- * bản cũ và bản mới thoát ngay, người dùng thấy "cài lại không chạy" (Ubuntu: cài .deb / tải AppImage mới; macOS: kéo đè
- * Deplao.app). Bản mới gửi kèm phiên bản + đường dẫn chạy qua requestSingleInstanceLock; bản cũ thấy bản mới hơn thì tự
- * thoát và mở bản mới. Cùng bản hoặc bản cũ hơn: chỉ hiện cửa sổ như trước. Windows: trình cài tự đóng app trước.
+ * Installing a new build while the old one still runs in the background (the X button only hides Deplao to the tray): when the new build is launched,
+ * the single-instance lock hands it to the old build and the new one exits right away, so the user sees "cài lại không chạy" (reinstalled, but it does not start)
+ * (Ubuntu: install the new .deb / download a new AppImage; macOS: drag over Deplao.app). The new build sends its version + run path via requestSingleInstanceLock;
+ * the old build, seeing a newer one, quits and opens the new build. Same build or an older one: only show the window as before. Windows: the installer closes the app first.
  */
 export interface LaunchInfo {
   version: string;
-  /** Bản đóng gói (không phải npm run dev) */
+  /** Packaged build (not npm run dev) */
   packaged: boolean;
-  /** Đường dẫn để mở lại: AppImage là file .AppImage, không phải thư mục mount tạm của nó */
+  /** Path to relaunch: for an AppImage, the .AppImage file itself, not its temporary mount folder */
   execPath: string;
 }
 
-/** So phiên bản dạng 26.10.3 theo từng số (26.10.10 > 26.10.9). */
+/** Compares versions such as 26.10.3 number by number (26.10.10 > 26.10.9). */
 export function compareAppVersions(a: string, b: string): number {
   const parts = (value: string) => String(value || '').split(/[.+-]/).map((part) => Number.parseInt(part, 10) || 0);
   const left = parts(a);
@@ -24,11 +24,11 @@ export function compareAppVersions(a: string, b: string): number {
   return 0;
 }
 
-/** Bản vừa bấm mở mới hơn bản đang chạy → trả nơi mở lại; không thì null (chỉ hiện cửa sổ). */
+/** If the build just launched is newer than the running one → return where to relaunch; otherwise null (only show the window). */
 export function newerInstallToRelaunch(running: LaunchInfo, incoming: unknown): LaunchInfo | null {
   const info = (incoming && typeof incoming === 'object' ? incoming : null) as Partial<LaunchInfo> | null;
   if (!info || typeof info.version !== 'string' || typeof info.execPath !== 'string' || !info.execPath) return null;
-  // npm run dev dùng chung thư mục dữ liệu với bản cài: không bao giờ tự thoát / mở lại vì nó
+  // npm run dev shares the data folder with the installed build: never quit / relaunch because of it
   if (!running.packaged || info.packaged !== true) return null;
   if (compareAppVersions(info.version, running.version) <= 0) return null;
   return { version: info.version, packaged: true, execPath: info.execPath };

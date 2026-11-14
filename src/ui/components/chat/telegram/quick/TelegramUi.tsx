@@ -1,10 +1,11 @@
-/** Mảnh giao diện dùng chung cho các hộp thoại Telegram (ảnh đại diện chữ cái, chọn ảnh, bước, ô chọn tròn). */
+/** Shared UI pieces for the Telegram dialogs (letter avatars, photo picker, steps, round checkboxes). */
 import React, { useState } from 'react';
 import ipc from '@/lib/ipc';
 import { cn } from '@/lib/cn';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { CheckIcon, CloseIcon } from '@/components/common/icons';
 import { telegramInitials, telegramPeerColor } from './telegramPeople';
+import { tr } from '../../../../../shared/i18n';
 
 export function TelegramAvatar({ id, name, src, size = 36, className }: {
   id: string;
@@ -29,7 +30,7 @@ export function TelegramAvatar({ id, name, src, size = 36, className }: {
   );
 }
 
-/** Loa phát tin (biểu tượng "Kênh mới" của Telegram). */
+/** Megaphone icon (the "Kênh mới" (New channel) icon of Telegram). */
 export function MegaphoneGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
@@ -48,7 +49,7 @@ export function CameraIcon({ className }: { className?: string }) {
   );
 }
 
-/** Chọn ảnh nhóm / kênh (hộp chọn file của máy — Electron mới không còn File.path). */
+/** Pick a group / channel photo (the OS file picker: newer Electron no longer has File.path). */
 export function TelegramPhotoField({ value, onChange, size = 72, disabled }: {
   value: string;
   onChange: (path: string) => void;
@@ -57,7 +58,7 @@ export function TelegramPhotoField({ value, onChange, size = 72, disabled }: {
 }) {
   const [failed, setFailed] = useState(false);
   const pick = async () => {
-    const res: any = await ipc.file?.openDialog({ filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
+    const res: any = await ipc.file?.openDialog({ filters: [{ name: tr('Ảnh'), extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
     const path = res?.filePaths?.[0];
     if (path) {
       setFailed(false);
@@ -67,7 +68,7 @@ export function TelegramPhotoField({ value, onChange, size = 72, disabled }: {
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
       <button type="button" onClick={() => void pick()} disabled={disabled}
-        aria-label={value ? 'Đổi ảnh' : 'Chọn ảnh'} title={value ? 'Đổi ảnh' : 'Chọn ảnh'}
+        aria-label={value ? tr('Đổi ảnh') : tr('Chọn ảnh')} title={value ? tr('Đổi ảnh') : tr('Chọn ảnh')}
         className="group relative flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-primary/10 text-primary ring-1 ring-inset ring-primary/25 transition-colors hover:bg-primary/15 disabled:opacity-60">
         {value && !failed ? (
           <>
@@ -81,7 +82,7 @@ export function TelegramPhotoField({ value, onChange, size = 72, disabled }: {
         )}
       </button>
       {value && !disabled && (
-        <button type="button" onClick={() => onChange('')} aria-label="Bỏ ảnh" title="Bỏ ảnh"
+        <button type="button" onClick={() => onChange('')} aria-label={tr('Bỏ ảnh')} title={tr('Bỏ ảnh')}
           className="absolute -right-0.5 -top-0.5 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-sm hover:text-foreground">
           <CloseIcon className="h-3 w-3" />
         </button>
@@ -90,7 +91,7 @@ export function TelegramPhotoField({ value, onChange, size = 72, disabled }: {
   );
 }
 
-/** Ô chọn tròn kiểu Telegram. */
+/** Round checkbox, Telegram style. */
 export function RoundCheck({ checked }: { checked: boolean }) {
   return (
     <span aria-hidden className={cn(
@@ -102,10 +103,10 @@ export function RoundCheck({ checked }: { checked: boolean }) {
   );
 }
 
-/** "Bước 1/3" + các chấm. */
+/** "Bước 1/3" (Step 1/3) + the dots. */
 export function StepDots({ step, total }: { step: number; total: number }) {
   return (
-    <span className="inline-flex items-center gap-1.5" aria-label={`Bước ${step}/${total}`}>
+    <span className="inline-flex items-center gap-1.5" aria-label={tr('Bước {{step}}/{{total}}', { step, total })}>
       {Array.from({ length: total }, (_, index) => (
         <span key={index} className={cn('h-1.5 rounded-full transition-all', index + 1 === step ? 'w-4 bg-primary' : index + 1 < step ? 'w-1.5 bg-primary/60' : 'w-1.5 bg-border-strong')} />
       ))}

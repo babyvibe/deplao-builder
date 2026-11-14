@@ -1,14 +1,16 @@
 /**
- * Tương thích giữa schema gốc của GramJS (layer 198) và layer mới Deplao nạp (telegramApiLayer.ts): các chỗ Telegram đổi
- * cấu trúc mà Deplao đọc / gửi. Mọi hàm chạy được với CẢ HAI layer (DEPLAO_TELEGRAM_LAYER=198, test dùng GramJS gốc).
+ * Compatibility between GramJS's original schema (layer 198) and the new layer Deplao loads (telegramApiLayer.ts): the places where Telegram changed
+ * the structure that Deplao reads / sends. Every function works with BOTH layers (DEPLAO_TELEGRAM_LAYER=198; tests use the original GramJS).
  */
 
 /**
- * "Cộng đồng" (layer 22x): `Community` / `CommunityForbidden` trong `chats`, `DialogCommunity` (không có `peer`) trong
- * `dialogs`. GramJS 2.26 gọi getPeerId với mọi chat / dialog khi duyệt danh sách hội thoại (iterDialogs) → ném "Cannot
- * cast Community…" và cả lượt tải hỏng; mã Deplao cũng coi mọi chat là nhóm / kênh. Deplao chưa hỗ trợ cộng đồng → bỏ
- * khỏi kết quả RPC trước khi GramJS / Deplao đọc (các nhóm / kênh bên trong cộng đồng vẫn là hội thoại riêng).
+ * "Community" (layer 22x): `Community` / `CommunityForbidden` in `chats`, `DialogCommunity` (no `peer`) in
+ * `dialogs`. GramJS 2.26 calls getPeerId on every chat / dialog when iterating the conversation list (iterDialogs) → throws "Cannot
+ * cast Community…" and the whole load fails; Deplao code also treats every chat as a group / channel. Deplao does not support communities yet, so they are removed
+ * from the results before GramJS / Deplao read them (the groups / channels inside a community are still separate conversations).
  */
+import { tr } from '../../../shared/i18n';
+
 const UNSUPPORTED_CHAT_CLASSES = new Set(['Community', 'CommunityForbidden']);
 const UNSUPPORTED_DIALOG_CLASSES = new Set(['DialogCommunity']);
 
@@ -20,11 +22,11 @@ function stripInPlace(container: any, depth: number): void {
   if (Array.isArray(container.dialogs) && container.dialogs.some((dialog: any) => UNSUPPORTED_DIALOG_CLASSES.has(dialog?.className))) {
     container.dialogs = container.dialogs.filter((dialog: any) => !UNSUPPORTED_DIALOG_CLASSES.has(dialog?.className));
   }
-  // messages.ChatInviteJoinResultOk bọc `updates` (Updates có chats)
+  // messages.ChatInviteJoinResultOk wraps `updates` (Updates has chats)
   if (container.updates && !Array.isArray(container.updates)) stripInPlace(container.updates, depth + 1);
 }
 
-/** Bỏ cộng đồng khỏi kết quả RPC (sửa tại chỗ, trả lại chính kết quả). */
+/** Remove communities from the RPC result (edits in place, returns the same result). */
 export function stripUnsupportedTelegramPeers<T>(result: T): T {
   stripInPlace(result, 0);
   return result;
@@ -32,14 +34,14 @@ export function stripUnsupportedTelegramPeers<T>(result: T): T {
 
 export interface InlineButtonInfo {
   text: string;
-  /** url_auth = nút "đăng nhập bằng Telegram" (keyboardButtonUrlAuth): messages.requestUrlAuth cần buttonId. */
+  /** url_auth = the "đăng nhập bằng Telegram" (log in with Telegram) button (keyboardButtonUrlAuth): messages.requestUrlAuth needs a buttonId. */
   type: 'url' | 'url_auth' | 'webview' | 'callback';
   url?: string;
   buttonId?: number;
 }
 
 /**
- * Nút inline của tin: layer 198 = KeyboardButtonUrl / KeyboardButtonWebView / KeyboardButtonCallback…; layer 23x =
+ * Inline buttons of a message: layer 198 = KeyboardButtonUrl / KeyboardButtonWebView / KeyboardButtonCallback…; layer 23x =
  * KeyboardInlineButton { text, type: InlineButtonTypeUrl / WebView / Callback / UrlAuth / Copy … }.
  */
 export function inlineButtonInfo(button: any): InlineButtonInfo {
@@ -58,14 +60,14 @@ export function inlineButtonInfo(button: any): InlineButtonInfo {
   if (kind === 'KeyboardButtonWebView' || kind === 'KeyboardButtonSimpleWebView' || typeKind === 'InlineButtonTypeWebView') {
     return { text, type: 'webview', url: String(button?.url || type?.url || '') };
   }
-  // Callback và các nút khác (trò chơi, mua, chuyển inline, sao chép…): chỉ hiện chữ
+  // Callback and other buttons (games, buy, switch inline, copy…): show the text only
   return { text: text || kind, type: 'callback' };
 }
 
 /**
- * Kết quả tham gia nhóm (messages.importChatInvite / channels.joinChannel): layer 198 = Updates; layer 23x =
- * messages.ChatInviteJoinResultOk { updates } hoặc messages.ChatInviteJoinResultWebView (nhóm bắt xác minh qua bot —
- * phải mở bằng app Telegram, Deplao không mở được trang của bot).
+ * Result of joining a group (messages.importChatInvite / channels.joinChannel): layer 198 = Updates; layer 23x =
+ * messages.ChatInviteJoinResultOk { updates } or messages.ChatInviteJoinResultWebView (a group that requires verification through a bot:
+ * must be opened in the Telegram app, Deplao cannot open the bot's page).
  */
 export function chatInviteJoinOutcome(result: any): { kind: 'joined'; updates: any } | { kind: 'bot_verification' } {
   const kind = String(result?.className || '');
@@ -75,4 +77,4 @@ export function chatInviteJoinOutcome(result: any): { kind: 'joined'; updates: a
 }
 
 export const TELEGRAM_BOT_VERIFICATION_ERROR =
-  'Nhóm này yêu cầu xác minh qua bot trước khi tham gia — hãy tham gia bằng app Telegram rồi Deplao sẽ tự cập nhật.';
+  tr('Nhóm này yêu cầu xác minh qua bot trước khi tham gia — hãy tham gia bằng app Telegram rồi Deplao sẽ tự cập nhật.');

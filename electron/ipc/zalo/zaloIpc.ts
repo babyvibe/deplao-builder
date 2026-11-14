@@ -8,9 +8,10 @@ import WorkspaceManager from '../../../src/utils/app/WorkspaceManager';
 import Logger from '../../../src/utils/Logger';
 import EventBroadcaster from '../../../src/services/event/EventBroadcaster';
 import FileStorageService from '../../../src/services/file/FileStorageService';
-// Upload file của máy nhân viên lên Boss trước khi proxy — dùng chung với Facebook / Telegram (cùng danh sách trường Boss kiểm tra)
+// Upload the employee machine's files to Boss before proxying: shared with Facebook / Telegram (same list of fields Boss checks)
 import { prepareLocalFilesForProxy } from '../network/proxyHelper';
 import type { ContactsInfoRefreshResult } from '../../../src/models/chat/contact';
+import { tr } from '../../../src/shared/i18n';
 
 /**
  * Registry of IPC handler functions.
@@ -23,7 +24,7 @@ async function getService(auth: any, isReconnection = false): Promise<ZaloServic
     return await ZaloService.getInstance(auth, isReconnection);
 }
 
-/** Lấy zaloId từ auth.cookies qua ConnectionManager */
+/** Get the zaloId from auth.cookies via ConnectionManager */
 function resolveZaloId(auth: any, allowSingleConnectionFallback = true): string {
     try {
         const authObj = typeof auth === 'string' ? JSON.parse(auth) : auth;
@@ -39,7 +40,7 @@ function resolveZaloId(auth: any, allowSingleConnectionFallback = true): string 
 
             // Fallback: look up zaloId from DB by cookies, then check if connection exists
             // (handles case where cookies in DB are stale but the account IS connected).
-            // So trên bản đã giải mã: accounts.cookies lưu mã hoá (ngẫu nhiên) nên WHERE cookies = ? không bao giờ khớp.
+            // Compared on the decrypted value: accounts.cookies is stored encrypted (random), so WHERE cookies = ? never matches.
             try {
                 const dbZaloId = DatabaseService.getInstance().getAccounts().find(a => a.cookies === cookies)?.zalo_id;
                 if (dbZaloId && ConnectionManager.isConnected(dbZaloId)) {
@@ -52,8 +53,8 @@ function resolveZaloId(auth: any, allowSingleConnectionFallback = true): string 
         // Sensitive profile lookups can opt out: a stale renderer auth must
         // never be silently redirected to whichever Zalo account is online.
         // (handles both: cookies mismatch AND cookies missing from auth object)
-        // Trường hợp auth không có cookies (VD: gửi tin nhắn nhanh), vẫn gửi được
-        // nếu chỉ có 1 tài khoản Zalo đang kết nối.
+        // When the auth has no cookies (e.g. sending a quick message), it can still be sent
+        // if there is only 1 connected Zalo account.
         const allConns = ConnectionManager.getAllConnections();
         if (allowSingleConnectionFallback && allConns.size === 1) {
             const [onlyId] = allConns.keys();
@@ -65,12 +66,12 @@ function resolveZaloId(auth: any, allowSingleConnectionFallback = true): string 
 }
 
 /**
- * Khi IPC đã resolve được một connection Zalo đang active, connection đó là
- * nguồn auth đáng tin cậy nhất. Cookie lưu trong renderer/DB có thể đã được
- * mã hóa theo phiên cũ hoặc đã stale, dù listener hiện tại vẫn đang sống.
- * Không thay auth trong trường hợp cookie thực sự trùng khớp để giữ nguyên
- * luồng thông thường; còn thiếu hoặc lệch cookie thì tái sử dụng auth của
- * connection, tránh tạo một ZaloService mới với dữ liệu không hợp lệ.
+ * When IPC has resolved an active Zalo connection, that connection is
+ * the most trustworthy auth source. The cookie stored in the renderer/DB may have been
+ * encrypted with an old session or be stale, even though the current listener is still alive.
+ * Do not replace the auth when the cookie really matches, so the normal flow stays unchanged;
+ * if cookies are missing or mismatched, reuse the connection's auth,
+ * to avoid creating a new ZaloService with invalid data.
  */
 function resolveAuthFromConnection(auth: any, zaloId: string): any {
     if (!zaloId) return auth;
@@ -95,21 +96,21 @@ function getExplicitAccountId(auth: any): string {
     }
 }
 
-// ─── Làm mới tên/avatar liên hệ hàng loạt theo UID ──────────────────────────
+// ─── Bulk refresh contact names/avatars by UID ──────────────────────────
 const CONTACT_REFRESH_BATCH_SIZE = 50;
 const CONTACT_REFRESH_BATCH_DELAY_MS = 300;
 const CONTACT_REFRESH_MAX_IDS = 500;
 
-/** Lỗi khiến gọi tiếp là vô ích (hết phiên, cookie sai, bị giới hạn tần suất, mất mạng). */
+/** Errors that make further calls pointless (session expired, wrong cookie, rate limited, network lost). */
 function isContactRefreshStopError(err: any): boolean {
     const msg = String(err?.message || err || '').toLowerCase();
     return /rate.?limit|too many|quá nhiều|spam|session|expired|hết hạn|đăng nhập|login|unauthor|forbidden|cookie|not initialized|chưa kết nối|fetch failed|network|econn|timeout|\b(401|403|429)\b/.test(msg);
 }
 
 /**
- * zalo:refreshContactsInfo — gọi getUserInfo theo lô 50 (tuần tự, nghỉ 300 ms giữa các lô) rồi ghi
- * tên/avatar vào contacts + friends theo UID của tài khoản đang đăng nhập (chỉ UPDATE dòng đã có).
- * Gặp lỗi hết phiên / giới hạn tần suất (hoặc 2 lô lỗi liên tiếp) thì dừng và trả kết quả một phần.
+ * zalo:refreshContactsInfo: calls getUserInfo in batches of 50 (sequential, waits 300 ms between batches), then writes
+ * the name/avatar into contacts + friends by the UID of the signed-in account (UPDATE existing rows only).
+ * On a session-expired / rate-limit error (or 2 failed batches in a row), it stops and returns a partial result.
  */
 async function refreshContactsInfo(service: ZaloService, params: any): Promise<ContactsInfoRefreshResult> {
     const ownerZaloId = service.getZaloId() || '';
@@ -121,7 +122,7 @@ async function refreshContactsInfo(service: ZaloService, params: any): Promise<C
     if (ids.length === 0) return result;
     if (!ownerZaloId) {
         result.failed = ids;
-        result.error = 'Không xác định được tài khoản Zalo.';
+        result.error = tr('Không xác định được tài khoản Zalo.');
         return result;
     }
 
@@ -150,7 +151,7 @@ async function refreshContactsInfo(service: ZaloService, params: any): Promise<C
         const changed: Record<string, any> = response?.changed_profiles || {};
         const profiles: ContactsInfoRefreshResult['profiles'] = [];
         for (const id of batch) {
-            // zca-js gửi "<uid>_0"; key trả về có thể kèm hoặc không kèm hậu tố.
+            // zca-js sends "<uid>_0"; the returned key may or may not include the suffix.
             const profile = changed[id] ?? changed[`${id}_0`] ?? null;
             const displayName = String(profile?.displayName || profile?.zaloName || '').trim();
             const avatarUrl = String(profile?.avatar || '').trim();
@@ -204,19 +205,19 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
                     }
                     if (zaloId && zaloId !== explicitAccountId) {
                         Logger.warn(`[zaloIpc] Blocked ${channel}: auth resolves to ${zaloId}, not explicit account ${explicitAccountId}`);
-                        return { success: false, error: 'Thông tin xác thực không khớp tài khoản Zalo.' };
+                        return { success: false, error: tr('Thông tin xác thực không khớp tài khoản Zalo.') };
                     }
                     zaloId = explicitAccountId;
                 } else if (!zaloId) {
                     Logger.warn(`[zaloIpc] Blocked ${channel}: no exact active account match; refusing single-connection fallback`);
-                    return { success: false, error: 'Không xác định được tài khoản Zalo hợp lệ.' };
+                    return { success: false, error: tr('Không xác định được tài khoản Zalo hợp lệ.') };
                 }
             }
 
-            // ─── Fallback: suy luận zaloId từ cookies-less auth + activeAccountId ──
-            // Khi có nhiều connection và cookies rỗng, resolveZaloId không match được.
-            // Thử dùng zaloId từ auth object (nếu UI truyền activeAccountId) hoặc
-            // từ cookies lookup trong DB.
+            // ─── Fallback: infer the zaloId from cookie-less auth + activeAccountId ──
+            // When there are several connections and the cookies are empty, resolveZaloId cannot match.
+            // Try the zaloId from the auth object (if the UI passes activeAccountId) or
+            // from a cookies lookup in the DB.
             if (!zaloId) {
                 const authObj = typeof auth === 'string' ? JSON.parse(auth) : auth;
                 const candidateId = authObj?.zaloId || authObj?.zalo_id || authObj?.accountId || '';
@@ -226,7 +227,7 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
                 }
             }
 
-            // ─── Chặn tài khoản không có connection (đã ngắt kết nối) ──
+            // ─── Block accounts with no connection (disconnected) ──
             if (!isReconnection && !zaloId) {
                 const authObj = typeof auth === 'string' ? JSON.parse(auth) : auth;
                 const hasCookies = !!(authObj?.cookies);
@@ -236,7 +237,7 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
             }
             // ────────────────────────────────────────────────────────────
 
-            // ─── Fallback auth: nếu cookies rỗng nhưng đã có connection → dùng auth của connection
+            // ─── Auth fallback: if cookies are empty but there is a connection → use the connection's auth
             auth = resolveAuthFromConnection(auth, zaloId);
             // ──────────────────────────────────────────────────────────────
 
@@ -246,8 +247,8 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
         } catch (error: any) {
             const errorMsg = error?.message || error?.toString() || 'Unknown error';
             Logger.error(`[zaloIpc] ${channel} error:`, error);
-            // Mã lỗi Zalo (ZaloApiError.code — vd joinGroupLink: 178 đã là thành viên, 172 nhóm đầy) để UI phân loại;
-            // trước đây bị bỏ nên các màn kiểm tra `res.errorCode` không bao giờ khớp
+            // Zalo error code (ZaloApiError.code, e.g. joinGroupLink: 178 already a member, 172 group full) so the UI can classify it;
+            // previously it was dropped, so the checks on `res.errorCode` never matched
             const errorCode = typeof error?.code === 'number' ? error.code : undefined;
             return { success: false, error: errorMsg, ...(errorCode !== undefined ? { errorCode } : {}) };
         }
@@ -259,7 +260,7 @@ function wrap(channel: string, fn: (service: ZaloService, params: any) => Promis
 }
 
 export function registerZaloIpc() {
-    // ─── Tin nhắn ────────────────────────────────────────────────────────
+    // ─── Messages ────────────────────────────────────────────────────────
     wrap('zalo:sendMessage', (s, p) =>
         s.sendMessage(p.message, p.threadId, p.type, p.typeMessage, p.quote, p.mentions, p.styles)
     );
@@ -295,7 +296,7 @@ export function registerZaloIpc() {
         s.sendVideo(p.options, p.threadId, p.type, p.quote)
     );
 
-    // Đường dẫn tương đối lưu trong DB (media/…) như sendImage/sendFile — chuyển tiếp video đã tải về dùng dạng này.
+    // The relative path stored in the DB (media/…) as in sendImage/sendFile: forwarding a downloaded video uses this form.
     wrap('zalo:uploadVideoThumb', (s, p) =>
         s.uploadVideoThumb(FileStorageService.resolveAbsolutePath(p.thumbPath), p.threadId, p.type)
     );
@@ -336,7 +337,7 @@ export function registerZaloIpc() {
         s.forwardMessage(p.payload, p.threadIds, p.type)
     );
 
-    // ─── Lịch sử tin nhắn ────────────────────────────────────────────────
+    // ─── Message history ────────────────────────────────────────────────
     wrap('zalo:getMessageHistory', (s, p) =>
         s.getMessageHistory(p.threadId, p.type, p.lastMsgId, p.count)
     );
@@ -350,8 +351,8 @@ export function registerZaloIpc() {
             return { groupMsgsCount: 0, error: apiErr.message };
         }
         Logger.info(`[zaloIpc] getGroupChatHistory raw result keys: ${Object.keys(result || {}).join(', ')}`);
-        // zca-js trả về { groupMsgs: GroupMessage[] }
-        // Mỗi GroupMessage đã được wrap thành object có { data, threadId, type, isSelf, ... }
+        // zca-js returns { groupMsgs: GroupMessage[] }
+        // Each GroupMessage has been wrapped into an object with { data, threadId, type, isSelf, ... }
         const zaloId = s.getZaloId();
         const rawMsgs = result?.groupMsgs || result?.data;
         const msgs = Array.isArray(rawMsgs) ? rawMsgs : [];
@@ -372,7 +373,7 @@ export function registerZaloIpc() {
         return { groupMsgsCount: msgs.length };
     });
 
-    // ─── Bạn bè ───────────────────────────────────────────────────────────
+    // ─── Friends ───────────────────────────────────────────────────────────
     wrap('zalo:getFriends', (s) => s.getAllFriends());
 
     wrap('zalo:findUser', (s, p) =>
@@ -383,10 +384,10 @@ export function registerZaloIpc() {
         s.getUserInfo(p.userId)
     );
 
-    // Làm mới tên/avatar hàng loạt cho liên hệ đã có trong DB (theo UID) — xem refreshContactsInfo().
+    // Bulk refresh names/avatars for contacts already in the DB (by UID): see refreshContactsInfo().
     wrap('zalo:refreshContactsInfo', (s, p) => refreshContactsInfo(s, p));
 
-    // Lấy context của phiên đăng nhập (uid, phone, loginInfo, ...)
+    // Get the session context of the login (uid, phone, loginInfo, ...)
     {
         const handler = async (_event: any, params: any) => {
             try {
@@ -401,7 +402,7 @@ export function registerZaloIpc() {
             const service = await getService(typeof auth === 'string' ? auth : JSON.stringify(auth));
             const context = service.getContext();
 
-            // Serialize cookie thành plain object để tránh lỗi "object could not be cloned"
+            // Serialize the cookie into a plain object to avoid the "object could not be cloned" error
             let cookieSerialized: any = null;
             try {
                 cookieSerialized = context.cookie?.serializeSync
@@ -410,7 +411,7 @@ export function registerZaloIpc() {
                     ?? null;
             } catch (_) {}
 
-            // Chỉ trả về các field serializable (bỏ CookieJar object)
+            // Return only the serializable fields (drop the CookieJar object)
             const safeContext = {
                 uid: context.uid,
                 imei: context.imei,
@@ -426,7 +427,7 @@ export function registerZaloIpc() {
                 API_VERSION: context.API_VERSION,
             };
 
-            // Log đầy đủ để debug
+            // Full log for debugging
             Logger.info('[zaloIpc] getContext safeContext:\n' + JSON.stringify(safeContext, null, 2));
 
             return { success: true, response: safeContext };
@@ -477,7 +478,7 @@ export function registerZaloIpc() {
 
     wrap('zalo:getRelatedFriendGroup', (s, p) => s.getRelatedFriendGroup(p.userId));
 
-    // ─── Nhóm ────────────────────────────────────────────────────────────
+    // ─── Groups ────────────────────────────────────────────────────────────
     wrap('zalo:getGroups', (s) => s.getAllGroups());
 
     wrap('zalo:getGroupInfo', (s, p) => s.getGroupInfo(p.groupId));
@@ -581,27 +582,27 @@ export function registerZaloIpc() {
         s.reviewPendingMemberRequest(p.payload, p.groupId)
     );
 
-    // ─── Hội thoại ────────────────────────────────────────────────────────
+    // ─── Conversations ────────────────────────────────────────────────────
     wrap('zalo:getPinConversations', (s) => s.getPinConversations());
 
-    // ─── Trạng thái truy cập (ZL-01) / tự xoá tin nhắn (ZL-05) — SRS Deplao ───
+    // ─── Access status (ZL-01) / self-deleting messages (ZL-05): Deplao SRS ───
     wrap('zalo:getPresence', (s, p) => s.getPresence(String(p.userId || ''), !!p.force));
     wrap('zalo:getFriendOnlines', (s, p) => s.getFriendOnlineIds(!!p.force));
     wrap('zalo:getAutoDeleteChats', (s) => s.syncAutoDeleteChats());
     wrap('zalo:setAutoDeleteChat', (s, p) => s.setAutoDeleteChat(Number(p.ttl), String(p.threadId || ''), p.type ?? p.threadType));
 
-    // ─── Cài đặt quyền riêng tư (ZL-02) — máy nhân viên cần quyền settings_accounts (proxyActionPolicy) ───
+    // ─── Privacy settings (ZL-02): employee machines need the settings_accounts permission (proxyActionPolicy) ───
     wrap('zalo:getAccountSettings', (s) => s.getAccountSettings());
     wrap('zalo:updateAccountSetting', (s, p) => s.updateAccountSetting(String(p.key || ''), Number(p.value), p.previous));
 
-    // ─── Hội thoại ẩn bằng PIN (ZL-03): PIN so ở main của Boss, MD5 không rời main; đổi PIN cần settings_accounts ───
+    // ─── Conversations hidden by PIN (ZL-03): the PIN is checked in Boss's main process, MD5 never leaves main; changing the PIN needs settings_accounts ───
     wrap('zalo:hiddenStatus', (s, p) => s.hiddenConversationStatus(!!p.force));
     wrap('zalo:hiddenUnlock', (s, p) => s.unlockHiddenConversations(String(p.pin || '')));
     wrap('zalo:setConversationHidden', (s, p) => s.setConversationHidden(String(p.threadId || ''), p.type ?? p.threadType, !!p.hidden));
     wrap('zalo:hiddenSetPin', (s, p) => s.setHiddenConversationPin(String(p.pin || ''), p.oldPin ? String(p.oldPin) : undefined));
     wrap('zalo:hiddenResetPin', (s) => s.resetHiddenConversationPin());
 
-    // ─── Danh mục sản phẩm Zalo Business (ZL-04): đọc = quyền Chat, ghi = quyền CRM (proxyActionPolicy, Q7) ───
+    // ─── Zalo Business product catalog (ZL-04): reading = Chat permission, writing = CRM permission (proxyActionPolicy, Q7) ───
     wrap('zalo:getCatalogs', (s, p) => s.getCatalogs(Number(p.page) || 0, Number(p.limit) || 20));
     wrap('zalo:createCatalog', (s, p) => s.createCatalog(String(p.name || '')));
     wrap('zalo:updateCatalog', (s, p) => s.updateCatalog(String(p.catalogId || ''), String(p.name || '')));
@@ -622,15 +623,15 @@ export function registerZaloIpc() {
     );
 
     // ─── Labels ───────────────────────────────────────────────────────────
-    // getLabels dùng HTTP thuần, không cần WS connection active
-    // → không dùng wrap() để tránh bị block bởi !zaloId guard
+    // getLabels uses plain HTTP and does not need an active WS connection
+    // → does not use wrap() so it is not blocked by the !zaloId guard
     {
         const handler = async (_event: any, params: any) => {
             try {
                 const activeWs = WorkspaceManager.getInstance().getActiveWorkspace();
                 if (activeWs?.type === 'remote' && !params?._fromRelay) {
                     if (!HttpConnectionManager.getInstance().isConnected(activeWs.id)) {
-                        return { success: false, error: 'Chưa kết nối tới BOSS', response: { labelData: [] } };
+                        return { success: false, error: tr('Chưa kết nối tới BOSS'), response: { labelData: [] } };
                     }
                     return await HttpConnectionManager.getInstance().proxyAction(activeWs.id, 'zalo:getLabels', params);
                 }
@@ -658,7 +659,7 @@ export function registerZaloIpc() {
                 const activeWs = WorkspaceManager.getInstance().getActiveWorkspace();
                 if (activeWs?.type === 'remote' && !params?._fromRelay) {
                     if (!HttpConnectionManager.getInstance().isConnected(activeWs.id)) {
-                        return { success: false, error: 'Chưa kết nối tới BOSS' };
+                        return { success: false, error: tr('Chưa kết nối tới BOSS') };
                     }
                     return await HttpConnectionManager.getInstance().proxyAction(activeWs.id, 'zalo:updateLabels', params);
                 }
@@ -759,7 +760,7 @@ export function registerZaloIpc() {
         s.addPollOption(Number(p.pollId), p.option as string)
     );
 
-    // ─── Tin nhắn nhanh ───────────────────────────────────────────────────────
+    // ─── Quick messages ───────────────────────────────────────────────────────
     wrap('zalo:getQuickMessageList', (s) => s.getQuickMessageList());
 
     wrap('zalo:addQuickMessage', (s, p) =>
@@ -774,7 +775,7 @@ export function registerZaloIpc() {
         s.removeQuickMessage(p.itemIds)
     );
 
-    // ─── Ghi chú nhóm ─────────────────────────────────────────────────────────
+    // ─── Group notes ─────────────────────────────────────────────────────────
     wrap('zalo:createNote', (s, p) =>
         s.createNote({ title: p.title, pinAct: p.pinAct }, p.groupId)
     );
@@ -783,7 +784,7 @@ export function registerZaloIpc() {
         s.editNote({ title: p.title, topicId: p.topicId, pinAct: p.pinAct }, p.groupId)
     );
 
-    // ─── Nhắc hẹn ─────────────────────────────────────────────────────────────
+    // ─── Reminders ─────────────────────────────────────────────────────────
     wrap('zalo:createReminder', (s, p) => {
         Logger.info('[zaloIpc] createReminder params:', JSON.stringify(p, null, 2));
         return s.createReminder(p.options, p.threadId, p.type);
@@ -805,17 +806,17 @@ export function registerZaloIpc() {
         s.getReminder(p.reminderId)
     );
 
-    // ─── Sự kiện đã đọc ────────────────────────────────────────────────────
+    // ─── Read events ────────────────────────────────────────────────────
     wrap('zalo:sendSeenEvent', (s, p) =>
         s.sendSeenEvent(p.messages, p.type)
     );
 
-    // Trạng thái "đang gõ" — dùng chung cho UI, Public API v1 và plugin.
+    // "đang gõ" (typing) status: shared by the UI, Public API v1 and plugins.
     wrap('zalo:sendTyping', (s, p) =>
         s.sendTypingEvent(p.threadId, p.type ?? p.threadType)
     );
 
-    // ─── Gửi thẻ ngân hàng ─────────────────────────────────────────────────
+    // ─── Send bank card ─────────────────────────────────────────────────────
     wrap('zalo:sendBankCard', (s, p) =>
         s.sendBankCard(p.payload, p.threadId, p.type)
     );

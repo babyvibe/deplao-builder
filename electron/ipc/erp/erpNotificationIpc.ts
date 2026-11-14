@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import ErpNotificationService from '../../../src/services/erp/ErpNotificationService';
 import { withErpAuth, erpValidate } from './erpIpcMiddleware';
+import { tr } from '../../../src/shared/i18n';
 
 export function registerErpNotificationIpc(): void {
   const svc = () => ErpNotificationService.getInstance();
@@ -12,7 +13,7 @@ export function registerErpNotificationIpc(): void {
     }),
   })));
 
-  // Chỉ thông báo của người gọi (id thông báo của người khác bị bỏ qua)
+  // Only the caller's notifications (notification ids of other people are ignored)
   ipcMain.handle('erp:notify:markRead', withErpAuth('erp.access', async (input: any, ctx) => {
     const ids: number[] = Array.isArray(input?.ids) ? input.ids.map(Number).filter(Number.isFinite) : [];
     svc().markRead(ids, ctx.employeeId);
@@ -39,22 +40,22 @@ export function registerErpNotificationIpc(): void {
     return {};
   }));
 
-  // ── Thông báo qua Zalo (Quản lý công việc → Cài đặt): owner / admin ──
-  // `zalo` (không phải `status`): khoá `status` trong kết quả REST bị hiểu là mã HTTP
+  // ── Notifications via Zalo (Task management → Settings): owner / admin ──
+  // `zalo` (not `status`): the `status` key in the REST result was read as an HTTP status code
   ipcMain.handle('erp:notify:zaloStatus', withErpAuth('settings.erp', async () => ({
     zalo: svc().getZaloStatus(),
   })));
 
-  // Chỉ trường có gửi: { enabled?, accountId?, types? }
+  // Only the fields that are sent: { enabled?, accountId?, types? }
   ipcMain.handle('erp:notify:setZaloSettings', withErpAuth('settings.erp', async (input: any) => ({
     settings: svc().setZaloSettings(input?.settings ?? {}),
   })));
 
-  // Gửi thử tới một nhân viên; gửi không được → lỗi (chữ cho người dùng)
+  // Send a test to one employee; if it fails → error (text shown to the user)
   ipcMain.handle('erp:notify:testZalo', withErpAuth('settings.erp', async (input: any) => {
     const employeeId = erpValidate.string(input?.employeeId, 'employeeId', { max: 200 });
     const result = await svc().sendZaloTest(employeeId);
-    if (!result.ok) throw new Error(result.error || 'Gửi thử không được');
+    if (!result.ok) throw new Error(result.error || tr('Gửi thử không được'));
     return { sent: true };
   }));
 }

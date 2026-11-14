@@ -1,14 +1,14 @@
 /**
- * PluginManager — vòng đời plugin: kiểm tra gói, duyệt quyền, cài, bật/tắt, cập nhật, gỡ.
+ * PluginManager: plugin lifecycle: checks the package, approves permissions, installs, enables / disables, updates, uninstalls.
  *
- * Bố cục trên đĩa (tách theo workspace để không workspace nào ghi đè plugin của workspace khác):
- *   <userData>/plugins/<ws>/<id>/        mã plugin cài từ zip
- *   <userData>/plugins-tmp/<token>/      gói đang chờ duyệt
- *   <userData>/plugin-data/<ws>/<id>/    file riêng của plugin (deplao.storage.dataDir)
- * Thư mục dev chạy tại chỗ, không bao giờ bị xoá.
+ * Layout on disk (split by workspace so no workspace overwrites another workspace's plugins):
+ *   <userData>/plugins/<ws>/<id>/        plugin code installed from a zip
+ *   <userData>/plugins-tmp/<token>/      package waiting for approval
+ *   <userData>/plugin-data/<ws>/<id>/    the plugin's own files (deplao.storage.dataDir)
+ * Dev folders run in place and are never deleted.
  *
- * Bản ghi nằm ở bảng `plugins` của workspace đang mở. Phần chạy (sandbox local / client remote)
- * do `createRuntime` tạo — main.ts truyền bản Electron, test truyền bản giả.
+ * The records live in the `plugins` table of the open workspace. The runtime (local sandbox / remote client)
+ * is created by `createRuntime`: main.ts passes the Electron version, tests pass a fake one.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -26,12 +26,13 @@ import { extractZip, ZipError } from './zip';
 import { compareSemver } from './semver';
 import { PluginLogStore, PluginStorage } from './PluginStorage';
 import { mimeFor, resolvePluginFile } from './PluginProtocol';
+import { tr } from '../../shared/i18n';
 
 const ICON_MAX_BYTES = 256 * 1024;
 const ICON_TYPES = /\.(png|jpe?g|gif|webp|svg)$/i;
 const iconCache = new Map<string, string | null>();
 
-/** Biểu tượng plugin (manifest.icon) dạng data URL để hiện ở danh sách — null nếu không có/không hợp lệ. */
+/** Plugin icon (manifest.icon) as a data URL for the list: null if missing or invalid. */
 export function pluginIconDataUrl(rec: PluginRecord): string | null {
     const rel = rec.manifest?.icon;
     if (!rel || !ICON_TYPES.test(rel)) return null;
@@ -43,7 +44,7 @@ export function pluginIconDataUrl(rec: PluginRecord): string | null {
         if (file && fs.statSync(file).size <= ICON_MAX_BYTES) {
             out = `data:${mimeFor(file).split(';')[0]};base64,${fs.readFileSync(file).toString('base64')}`;
         }
-    } catch { /* không có biểu tượng */ }
+    } catch { /* no icon */ }
     if (rec.source_type !== 'dev') iconCache.set(key, out);
     return out;
 }
@@ -74,11 +75,11 @@ export interface RuntimeStats {
     startedAt?: number;
     memoryMb?: number;
     lastError?: string;
-    /** Chỉ runtime remote: server plugin và lần gọi gần nhất có thành công không (null = chưa gọi). */
+    /** Remote runtime only: whether the plugin server and the latest call succeeded (null = not called yet). */
     remote?: { baseUrl: string; connected: boolean | null; lastOkAt?: number; calls: number };
 }
 
-/** Phần chạy của plugin đang bật (local: utilityProcess, remote: HTTP có chữ ký). */
+/** The running part of an enabled plugin (local: utilityProcess, remote: signed HTTP). */
 export interface PluginRuntimeHandle {
     start(init: { settings: Record<string, any>; prevVersion?: string }): Promise<void>;
     stop(): Promise<void>;
@@ -87,7 +88,7 @@ export interface PluginRuntimeHandle {
     stats(): RuntimeStats;
 }
 
-/** Plugin → host (deplao.* phía backend). PluginApiBridge thực hiện. */
+/** Plugin → host (deplao.* on the backend side). Implemented by PluginApiBridge. */
 export type PluginRequestHandler = (pluginId: string, method: string, params: any, origin: 'ui' | 'backend') => Promise<any>;
 
 export interface RuntimeContext {
@@ -95,7 +96,7 @@ export interface RuntimeContext {
     dataDir: string;
     onRequest: (method: string, params: any) => Promise<any>;
     onLog: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => void;
-    /** Hỏng hẳn (crash quá số lần) → manager tắt plugin. */
+    /** Failed for good (too many crashes) → the manager disables the plugin. */
     onFatal: (reason: string) => void;
     remoteSecret: () => string;
 }
@@ -105,10 +106,10 @@ export interface PluginManagerDeps {
     appVersion: () => string;
     workspaceKey: () => string;
     createRuntime: (ctx: RuntimeContext) => PluginRuntimeHandle | null;
-    /** Đăng ký/huỷ node, trigger, route, lịch, sự kiện khi plugin bật/tắt. */
+    /** Registers / unregisters nodes, triggers, routes, schedules and events when the plugin is enabled / disabled. */
     onActivated?: (record: PluginRecord) => void;
     onDeactivated?: (record: PluginRecord) => void;
-    /** Danh sách/contribution đổi → báo renderer vẽ lại sidebar, palette. */
+    /** List / contributions changed → tell the renderer to redraw the sidebar and palette. */
     onChanged?: () => void;
     logError?: (msg: string) => void;
 }
@@ -128,7 +129,7 @@ export interface InstallPreview {
 
 export interface InstallResult {
     record: PluginRecord;
-    /** Plugin remote: key + secret chỉ hiện một lần để cấu hình service bên ngoài. */
+    /** Remote plugin: the key + secret are shown only once, to configure the external service. */
     remoteCredentials?: { apiKey: string; secret: string; baseUrl: string };
 }
 
@@ -189,15 +190,15 @@ function readReadme(dir: string): string | null {
     return null;
 }
 
-/** Gốc plugin trong thư mục giải nén: chính nó, hoặc thư mục con duy nhất chứa manifest. */
+/** Plugin root in the extracted folder: itself, or the only subfolder that contains the manifest. */
 function findPluginRoot(dir: string): string {
     if (fs.existsSync(path.join(dir, MANIFEST_FILE))) return dir;
     const subs = fs.readdirSync(dir, { withFileTypes: true }).filter(d => d.isDirectory());
     if (subs.length === 1 && fs.existsSync(path.join(dir, subs[0].name, MANIFEST_FILE))) return path.join(dir, subs[0].name);
-    throw new ApiError(400, 'VALIDATION_ERROR', `Gói ứng dụng không có ${MANIFEST_FILE} ở thư mục gốc`);
+    throw new ApiError(400, 'VALIDATION_ERROR', tr('Gói ứng dụng không có {{MANIFEST_FILE}} ở thư mục gốc', { MANIFEST_FILE }));
 }
 
-/** Kiểm tra + chuẩn hoá giá trị cài đặt theo schema. Trả lỗi đọc được. */
+/** Checks and normalizes setting values against the schema. Returns readable errors. */
 export function validateSettings(schema: SettingsSchema | undefined, input: Record<string, any>): { ok: true; values: Record<string, any>; errors?: undefined } | { ok: false; errors: string[]; values?: undefined } {
     const props = schema?.properties || {};
     const out: Record<string, any> = {};
@@ -205,7 +206,7 @@ export function validateSettings(schema: SettingsSchema | undefined, input: Reco
     for (const [key, field] of Object.entries(props) as Array<[string, SettingsField]>) {
         let v = input[key];
         if (v === undefined || v === null || v === '') {
-            if (schema?.required?.includes(key) && field.default === undefined) errors.push(`${field.title || key}: bắt buộc`);
+            if (schema?.required?.includes(key) && field.default === undefined) errors.push(tr('{{v1}}: bắt buộc', { v1: field.title || key }));
             if (field.default !== undefined) out[key] = field.default;
             continue;
         }
@@ -213,15 +214,15 @@ export function validateSettings(schema: SettingsSchema | undefined, input: Reco
             v = v === true || v === 'true' || v === 1 || v === '1';
         } else if (field.type === 'number' || field.type === 'integer') {
             const n = Number(v);
-            if (!Number.isFinite(n) || (field.type === 'integer' && !Number.isInteger(n))) { errors.push(`${field.title || key}: phải là số${field.type === 'integer' ? ' nguyên' : ''}`); continue; }
-            if (field.minimum !== undefined && n < field.minimum) { errors.push(`${field.title || key}: tối thiểu ${field.minimum}`); continue; }
-            if (field.maximum !== undefined && n > field.maximum) { errors.push(`${field.title || key}: tối đa ${field.maximum}`); continue; }
+            if (!Number.isFinite(n) || (field.type === 'integer' && !Number.isInteger(n))) { errors.push(tr('{{v1}}: phải là số{{v2}}', { v1: field.title || key, v2: field.type === 'integer' ? tr(' nguyên') : '' })); continue; }
+            if (field.minimum !== undefined && n < field.minimum) { errors.push(tr('{{v1}}: tối thiểu {{minimum}}', { v1: field.title || key, minimum: field.minimum })); continue; }
+            if (field.maximum !== undefined && n > field.maximum) { errors.push(tr('{{v1}}: tối đa {{maximum}}', { v1: field.title || key, maximum: field.maximum })); continue; }
             v = n;
         } else {
             v = String(v);
-            if (v.length > (field.maxLength ?? 10_000)) { errors.push(`${field.title || key}: tối đa ${field.maxLength ?? 10_000} ký tự`); continue; }
+            if (v.length > (field.maxLength ?? 10_000)) { errors.push(tr('{{v1}}: tối đa {{v2}} ký tự', { v1: field.title || key, v2: field.maxLength ?? 10_000 })); continue; }
         }
-        if (field.enum && !field.enum.some(e => e === v || String(e) === String(v))) { errors.push(`${field.title || key}: không nằm trong danh sách cho phép`); continue; }
+        if (field.enum && !field.enum.some(e => e === v || String(e) === String(v))) { errors.push(tr('{{v1}}: không nằm trong danh sách cho phép', { v1: field.title || key })); continue; }
         out[key] = v;
     }
     return errors.length ? { ok: false, errors } : { ok: true, values: out };
@@ -269,7 +270,7 @@ class PluginManager {
         this.deps = { ...this.deps, ...deps };
     }
 
-    // ─── Đường dẫn ───────────────────────────────────────────────────────
+    // ─── Paths ───────────────────────────────────────────────────────────
 
     pluginsRoot(): string {
         return path.join(this.deps.userDataDir(), 'plugins', this.deps.workspaceKey());
@@ -291,7 +292,7 @@ class PluginManager {
         try { this.deps.onChanged?.(); } catch { /* ignore */ }
     }
 
-    // ─── Đọc ─────────────────────────────────────────────────────────────
+    // ─── Reads ───────────────────────────────────────────────────────────
 
     private rows(): Row[] {
         if (!apiTablesExist()) return [];
@@ -306,7 +307,7 @@ class PluginManager {
 
     private require(id: string): PluginRecord {
         const rec = this.get(id);
-        if (!rec) throw new ApiError(404, 'NOT_FOUND', `Không có ứng dụng ${id}`);
+        if (!rec) throw new ApiError(404, 'NOT_FOUND', tr('Không có ứng dụng {{id}}', { id }));
         return rec;
     }
 
@@ -335,7 +336,7 @@ class PluginManager {
         return this.active.get(id)?.runtime || null;
     }
 
-    /** Principal plugin:<id> với scope đã duyệt — null nếu plugin không bật. */
+    /** Principal plugin:<id> with the approved scopes; null if the plugin is not enabled. */
     principalFor(id: string): Principal | null {
         const act = this.active.get(id);
         if (!act) return null;
@@ -343,7 +344,7 @@ class PluginManager {
         return pluginPrincipal(rec.id, rec.name, apiScopesOf(rec.granted_permissions), rec.account_ids);
     }
 
-    // ─── Cài đặt ─────────────────────────────────────────────────────────
+    // ─── Install ─────────────────────────────────────────────────────────
 
     private cleanupPending(): void {
         const now = Date.now();
@@ -368,7 +369,7 @@ class PluginManager {
         };
     }
 
-    /** Giải nén zip vào thư mục tạm và kiểm tra — chưa cài gì. */
+    /** Extracts the zip into a temporary folder and checks it, installs nothing yet. */
     inspectZip(zipPath: string): InstallPreview {
         this.cleanupPending();
         const token = crypto.randomUUID();
@@ -384,10 +385,10 @@ class PluginManager {
         try {
             const root = findPluginRoot(dir);
             const res = readManifest(root, this.deps.appVersion());
-            if (!res.ok) throw new ApiError(400, 'VALIDATION_ERROR', `Manifest không hợp lệ:\n${res.errors.join('\n')}`, { errors: res.errors });
+            if (!res.ok) throw new ApiError(400, 'VALIDATION_ERROR', tr('Manifest không hợp lệ:\n{{v1}}', { v1: res.errors.join('\n') }), { errors: res.errors });
             const existing = this.get(res.manifest.id);
             if (existing && existing.source_type === 'zip' && compareSemver(res.manifest.version, existing.version) <= 0) {
-                throw new ApiError(409, 'CONFLICT', `Đã cài ${existing.name} ${existing.version}; gói này là ${res.manifest.version} (cần bản mới hơn)`);
+                throw new ApiError(409, 'CONFLICT', tr('Đã cài {{name}} {{version}}; gói này là {{version1}} (cần bản mới hơn)', { name: existing.name, version: existing.version, version1: res.manifest.version }));
             }
             this.pending.set(token, { token, source: 'zip', dir: root, manifest: res.manifest, createdAt: Date.now() });
             return this.preview(token, 'zip', root, res.manifest, stats);
@@ -397,13 +398,13 @@ class PluginManager {
         }
     }
 
-    /** Kiểm tra thư mục dev (chạy tại chỗ, không copy). */
+    /** Checks a dev folder (runs in place, not copied). */
     inspectDevFolder(dirInput: string): InstallPreview {
         this.cleanupPending();
         const dir = path.resolve(String(dirInput || ''));
-        if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new ApiError(400, 'VALIDATION_ERROR', 'Thư mục không tồn tại');
+        if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new ApiError(400, 'VALIDATION_ERROR', tr('Thư mục không tồn tại'));
         const res = readManifest(dir, this.deps.appVersion());
-        if (!res.ok) throw new ApiError(400, 'VALIDATION_ERROR', `Manifest không hợp lệ:\n${res.errors.join('\n')}`, { errors: res.errors });
+        if (!res.ok) throw new ApiError(400, 'VALIDATION_ERROR', tr('Manifest không hợp lệ:\n{{v1}}', { v1: res.errors.join('\n') }), { errors: res.errors });
         const token = crypto.randomUUID();
         this.pending.set(token, { token, source: 'dev', dir, manifest: res.manifest, createdAt: Date.now() });
         return this.preview(token, 'dev', dir, res.manifest);
@@ -416,10 +417,10 @@ class PluginManager {
         if (p.source === 'zip') fs.rmSync(path.join(this.tmpRoot(), token), { recursive: true, force: true });
     }
 
-    /** Người dùng đã duyệt quyền → cài (hoặc cập nhật). */
+    /** The user has approved the permissions → install (or update). */
     async confirmInstall(token: string, opts: { accountIds?: string[] | null; enable?: boolean } = {}): Promise<InstallResult> {
         const p = this.pending.get(token);
-        if (!p) throw new ApiError(404, 'NOT_FOUND', 'Phiên cài đặt đã hết hạn, hãy chọn lại gói ứng dụng');
+        if (!p) throw new ApiError(404, 'NOT_FOUND', tr('Phiên cài đặt đã hết hạn, hãy chọn lại gói ứng dụng'));
         this.pending.delete(token);
         const m = p.manifest;
         const existing = this.get(m.id);
@@ -440,14 +441,14 @@ class PluginManager {
                 if (hadOld && !fs.existsSync(finalDir) && fs.existsSync(backup)) fs.renameSync(backup, finalDir);
                 fs.rmSync(path.join(this.tmpRoot(), token), { recursive: true, force: true });
                 if (wasEnabled) await this.enable(m.id).catch(() => undefined);
-                throw new ApiError(500, 'INTERNAL_ERROR', `Không chép được ứng dụng vào thư mục cài: ${err?.message || err}`);
+                throw new ApiError(500, 'INTERNAL_ERROR', tr('Không chép được ứng dụng vào thư mục cài: {{v1}}', { v1: err?.message || err }));
             }
             if (hadOld) fs.rmSync(backup, { recursive: true, force: true });
             fs.rmSync(path.join(this.tmpRoot(), token), { recursive: true, force: true });
             installPath = finalDir;
         }
 
-        // Chuyển từ bản zip sang thư mục dev → dọn mã zip cũ.
+        // Switching from a zip build to a dev folder → clean up the old zip code.
         if (p.source === 'dev' && existing?.source_type === 'zip') {
             const root = path.resolve(this.pluginsRoot());
             const old = path.resolve(existing.install_path);
@@ -467,7 +468,7 @@ class PluginManager {
             const keys = require('../api/auth/ApiKeyService').default.getInstance();
             keys.revokeByPlugin(m.id);
             const scopes = apiScopesOf(m.permissions);
-            // Plugin remote không xin scope API nào (chỉ node/route) → không cần key gọi ngược.
+            // A remote plugin requests no API scope (only nodes / routes) → no callback key is needed.
             const created = scopes.length
                 ? keys.create({
                     name: `Plugin ${m.name}`,
@@ -475,7 +476,7 @@ class PluginManager {
                     accountIds,
                     pluginId: m.id,
                     createdBy: 'plugin-install',
-                    note: `Tự tạo khi cài ứng dụng ${m.id}`,
+                    note: tr('Tự tạo khi cài ứng dụng {{id}}', { id: m.id }),
                 })
                 : null;
             remoteCredentials = { apiKey: created?.key || '', secret: newSecret, baseUrl: m.remote!.baseUrl };
@@ -507,7 +508,7 @@ class PluginManager {
         return { record, remoteCredentials };
     }
 
-    // ─── Bật / tắt ───────────────────────────────────────────────────────
+    // ─── Enable / disable ─────────────────────────────────────────────────
 
     private setStatus(id: string, status: PluginStatus, reason: string | null): void {
         apiDb().run('UPDATE plugins SET status = ?, status_reason = ?, updated_at = ? WHERE id = ?', [status, reason, Date.now(), id]);
@@ -525,22 +526,22 @@ class PluginManager {
         const rec = this.require(id);
         if (this.active.has(id)) return rec;
 
-        // Đọc lại manifest trên đĩa (dev sửa file, zip bị xoá tay…).
-        const res = fs.existsSync(rec.install_path) ? readManifest(rec.install_path, this.deps.appVersion()) : { ok: false as const, errors: ['Thư mục ứng dụng không còn trên máy'] };
+        // Re-read the manifest from disk (the dev edited the file, the zip was deleted by hand...).
+        const res = fs.existsSync(rec.install_path) ? readManifest(rec.install_path, this.deps.appVersion()) : { ok: false as const, errors: [tr('Thư mục ứng dụng không còn trên máy')] };
         if (!res.ok) {
             this.setStatus(id, 'invalid', res.errors.join('; ').slice(0, 1000));
             this.changed();
-            throw new ApiError(400, 'VALIDATION_ERROR', `Ứng dụng không hợp lệ: ${res.errors[0]}`);
+            throw new ApiError(400, 'VALIDATION_ERROR', tr('Ứng dụng không hợp lệ: {{v1}}', { v1: res.errors[0] }));
         }
         if (res.manifest.id !== id) {
-            this.setStatus(id, 'invalid', `id trong manifest đã đổi thành ${res.manifest.id}`);
-            throw new ApiError(400, 'VALIDATION_ERROR', 'id trong manifest đã đổi; cài lại ứng dụng');
+            this.setStatus(id, 'invalid', tr('id trong manifest đã đổi thành {{id}}', { id: res.manifest.id }));
+            throw new ApiError(400, 'VALIDATION_ERROR', tr('id trong manifest đã đổi; cài lại ứng dụng'));
         }
         const added = res.manifest.permissions.filter(p => !rec.granted_permissions.includes(p));
         if (added.length) {
-            this.setStatus(id, 'disabled', `Bản mới xin thêm quyền: ${added.join(', ')} — cài lại để duyệt`);
+            this.setStatus(id, 'disabled', tr('Bản mới xin thêm quyền: {{v1}} — cài lại để duyệt', { v1: added.join(', ') }));
             this.changed();
-            throw new ApiError(403, 'FORBIDDEN_SCOPE', `Ứng dụng xin thêm quyền chưa duyệt: ${added.join(', ')}`);
+            throw new ApiError(403, 'FORBIDDEN_SCOPE', tr('Ứng dụng xin thêm quyền chưa duyệt: {{v1}}', { v1: added.join(', ') }));
         }
         if (rec.source_type === 'dev') {
             apiDb().run('UPDATE plugins SET manifest_json = ?, version = ?, name = ? WHERE id = ?', [JSON.stringify(res.manifest), res.manifest.version, res.manifest.name, id]);
@@ -548,14 +549,14 @@ class PluginManager {
         const record: PluginRecord = { ...rec, manifest: res.manifest, version: res.manifest.version, name: res.manifest.name };
 
         const max = getApiSettingNumber('plugins_max_enabled') || 10;
-        if (this.active.size >= max) throw new ApiError(409, 'CONFLICT', `Đã bật tối đa ${max} ứng dụng (đổi ở Công cụ → Ứng dụng, API & Webhook → Giới hạn chung)`);
+        if (this.active.size >= max) throw new ApiError(409, 'CONFLICT', tr('Đã bật tối đa {{max}} ứng dụng (đổi ở Công cụ → Ứng dụng, API & Webhook → Giới hạn chung)', { max }));
 
         const runtime = this.deps.createRuntime({
             record,
             dataDir: this.storage.dataDir(id),
             onRequest: (method, params) => (this.requestHandler
                 ? this.requestHandler(id, method, params, 'backend')
-                : Promise.reject(new ApiError(503, 'NOT_IMPLEMENTED', 'Cầu API plugin chưa sẵn sàng'))),
+                : Promise.reject(new ApiError(503, 'NOT_IMPLEMENTED', tr('Cầu API plugin chưa sẵn sàng')))),
             onLog: (level, message) => this.log(id, level, message),
             onFatal: reason => { void this.disable(id, { status: 'disabled_crash', reason }); },
             remoteSecret: () => decryptSecret(this.rawSettings(id)[REMOTE_SECRET_KEY] || ''),
@@ -568,7 +569,7 @@ class PluginManager {
         } catch (err: any) {
             this.active.delete(id);
             await runtime?.stop().catch(() => undefined);
-            const reason = `Không khởi động được: ${err?.message || err}`;
+            const reason = tr('Không khởi động được: {{v1}}', { v1: err?.message || err });
             this.setStatus(id, 'disabled', reason.slice(0, 1000));
             this.log(id, 'error', reason);
             this.changed();
@@ -581,7 +582,7 @@ class PluginManager {
         return this.require(id);
     }
 
-    /** Dừng phần chạy + huỷ đăng ký (không đổi trạng thái trong DB). */
+    /** Stops the running part and unregisters (does not change the state in the DB). */
     private async deactivate(id: string): Promise<void> {
         const act = this.active.get(id);
         if (!act) return;
@@ -628,7 +629,7 @@ class PluginManager {
         this.changed();
     }
 
-    /** Khởi động plugin đang bật (mở app, đổi workspace). Không tạo bảng nếu chưa dùng plugin. */
+    /** Starts the enabled plugins (app launch, workspace switch). Does not create tables if plugins were never used. */
     async startEnabled(): Promise<void> {
         for (const row of this.rows()) {
             if (row.status !== 'enabled' || this.active.has(row.id)) continue;
@@ -660,21 +661,21 @@ class PluginManager {
                     this.reload(rec.id).catch(err => this.log(rec.id, 'error', `Tải lại lỗi: ${err?.message || err}`));
                 }, 500);
             });
-            watcher.on('error', () => { /* thư mục bị xoá */ });
+            watcher.on('error', () => { /* folder deleted */ });
             return watcher;
         } catch {
             return null;
         }
     }
 
-    // ─── Cài đặt của plugin ──────────────────────────────────────────────
+    // ─── Plugin settings ──────────────────────────────────────────────────
 
     private rawSettings(id: string): Record<string, any> {
         const row = apiTablesExist() ? apiDb().queryOne<{ settings_json: string }>('SELECT settings_json FROM plugins WHERE id = ?', [id]) : null;
         return parseJson<Record<string, any>>(row?.settings_json, {});
     }
 
-    /** Giá trị thật (đã giải mã secret) cho chính plugin. */
+    /** Real values (secrets decrypted) for the plugin itself. */
     settingsFor(id: string): Record<string, any> {
         const rec = this.get(id);
         const props = rec?.manifest.contributes?.settings?.schema?.properties || {};
@@ -690,7 +691,7 @@ class PluginManager {
         return out;
     }
 
-    /** Cho form trong UI: secret chỉ báo đã đặt hay chưa. */
+    /** For the UI form: a secret only shows whether it has been set. */
     getSettings(id: string): { schema: SettingsSchema | null; values: Record<string, any> } {
         const rec = this.require(id);
         const schema = rec.manifest.contributes?.settings?.schema || null;
@@ -726,7 +727,7 @@ class PluginManager {
         return this.getSettings(id).values;
     }
 
-    /** Gắn cầu plugin → host (PluginApiBridge) dùng cho mọi runtime. */
+    /** Attaches the plugin → host bridge (PluginApiBridge), used by every runtime. */
     setRequestHandler(handler: PluginRequestHandler | null): void {
         this.requestHandler = handler;
     }

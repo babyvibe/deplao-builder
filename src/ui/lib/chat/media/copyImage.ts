@@ -6,6 +6,7 @@
  * (the only image type the Clipboard API accepts) and writes it.
  */
 import ipc from '@/lib/ipc';
+import { tr } from '../../../../shared/i18n';
 
 export interface CopyImageSource {
   /** Local file (absolute or storage-relative). */
@@ -29,11 +30,11 @@ async function toPng(blob: Blob): Promise<Blob> {
   canvas.width = bitmap.width;
   canvas.height = bitmap.height;
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas không khả dụng');
+  if (!ctx) throw new Error(tr('Canvas không khả dụng'));
   ctx.drawImage(bitmap, 0, 0);
   bitmap.close?.();
   return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(png => (png ? resolve(png) : reject(new Error('Không chuyển được ảnh sang PNG'))), 'image/png');
+    canvas.toBlob(png => (png ? resolve(png) : reject(new Error(tr('Không chuyển được ảnh sang PNG')))), 'image/png');
   });
 }
 
@@ -52,7 +53,7 @@ export async function copyImageToClipboard(source: CopyImageSource): Promise<voi
     const response = await fetch(source.fallbackSrc);
     if (response.ok) blob = await response.blob();
   }
-  if (!blob) throw new Error('Không tải được ảnh');
+  if (!blob) throw new Error(tr('Không tải được ảnh'));
   const png = blob.type === 'image/png' ? blob : await toPng(blob);
   await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
 }

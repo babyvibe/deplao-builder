@@ -8,6 +8,7 @@
  */
 import { isFileType, isMediaType, isStickerType, isVideoType, isVoiceType, isLocationType } from './messageTypeUtils';
 import { parseContent } from './messageParser';
+import { tr } from '../../../../shared/i18n';
 
 /** Snapshot stored with a star (sender / conversation resolved by the renderer at star time). */
 export interface StarredSnapshot {
@@ -200,7 +201,7 @@ export function resolveStarredSender(item: StarredItem, account?: StarredAccount
   if (isOwnStarredMessage(item, account)) {
     return {
       own: true,
-      name: starredAccountName(account) || item.senderName || 'Bạn',
+      name: starredAccountName(account) || item.senderName || tr('Bạn'),
       avatars: uniqueNonEmpty([account?.avatar_url, item.senderAvatar]),
     };
   }
@@ -276,16 +277,16 @@ function remoteMediaUrl(item: StarredItem, preferThumb = false): string {
 function fileName(item: StarredItem): string {
   const content = parseObject(item.content);
   const attachment = firstAttachment(item.attachments);
-  return str(content?.title || attachment?.file_name || attachment?.fileName || attachment?.name) || 'Tệp đính kèm';
+  return str(content?.title || attachment?.file_name || attachment?.fileName || attachment?.name) || tr('Tệp đính kèm');
 }
 
 /** What the panel shows for a starred message (text, or a thumbnail + label). */
 export function buildStarredPreview(item: StarredItem, toMediaUrl: (path: string) => string = path => path): StarredPreview {
-  if (item.isRecalled) return { kind: 'recalled', text: 'Tin nhắn đã bị thu hồi' };
+  if (item.isRecalled) return { kind: 'recalled', text: tr('Tin nhắn đã bị thu hồi') };
   const type = item.msgType;
   if (isStickerType(type)) return { kind: 'sticker', text: '[Sticker]' };
-  if (isVoiceType(type)) return { kind: 'voice', text: '[Tin nhắn thoại]' };
-  if (isLocationType(type)) return { kind: 'location', text: parseContent(item.content, type) || '📍 [Vị trí]' };
+  if (isVoiceType(type)) return { kind: 'voice', text: tr('[Tin nhắn thoại]') };
+  if (isLocationType(type)) return { kind: 'location', text: parseContent(item.content, type) || tr('📍 [Vị trí]') };
   if (isVideoType(type)) {
     const local = localMediaPath(item, true);
     return { kind: 'video', text: '[Video]', thumb: (local && !/\.(mp4|mov|webm|mkv)$/i.test(local) ? toMediaUrl(local) : '') || remoteMediaUrl(item, true) || undefined };
@@ -299,7 +300,7 @@ export function buildStarredPreview(item: StarredItem, toMediaUrl: (path: string
   }
   if (isFileType(type, item.content, item.attachments)) return { kind: 'file', text: fileName(item) };
   const text = parseContent(item.content, type).trim();
-  return { kind: 'text', text: text || '[Tin nhắn]' };
+  return { kind: 'text', text: text || tr('[Tin nhắn]') };
 }
 
 // ─── Dates ────────────────────────────────────────────────────────────────────
@@ -324,8 +325,8 @@ function dateLabel(ts: number): string {
 /** Group header like Zalo: "Hôm nay", "Hôm qua", then dd/MM/yyyy. */
 export function starredDayLabel(ts: number, now: number = Date.now()): string {
   const diff = dayDiff(ts, now);
-  if (diff <= 0) return 'Hôm nay';
-  if (diff === 1) return 'Hôm qua';
+  if (diff <= 0) return tr('Hôm nay');
+  if (diff === 1) return tr('Hôm qua');
   return dateLabel(ts);
 }
 
@@ -336,7 +337,7 @@ export function formatStarredMessageTime(ts: number, now: number = Date.now()): 
   const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   const diff = dayDiff(ts, now);
   if (diff <= 0) return time;
-  if (diff === 1) return `${time} Hôm qua`;
+  if (diff === 1) return tr('{{time}} Hôm qua', { time });
   return `${time} ${dateLabel(ts)}`;
 }
 

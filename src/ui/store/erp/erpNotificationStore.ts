@@ -3,9 +3,9 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import type { ErpNotification } from '../../../models/erp';
 import { isErpModuleOff, withErpDeniedNotice } from './erpStoreHelpers';
 
-// Hộp thư là của người đang đăng nhập: Boss lấy người nhận từ danh tính (IPC: Boss; nhân viên: token REST) —
-// `recipientId` của các hàm dưới chỉ giữ cho người gọi cũ, không gửi đi. Nhân viên đọc / ghi qua DataAccessor (REST →
-// Boss); trước đây gọi IPC trên máy nhân viên → hộp thư cục bộ trống, đánh dấu đã đọc không tới Boss.
+// The inbox belongs to the logged-in user: the owner's machine takes the recipient from the identity (IPC: owner's machine; employee: REST token)
+// `recipientId` in the functions below is only kept for old callers and is not sent. Employees read / write via DataAccessor (REST →
+// the owner's machine); previously an IPC call on the employee machine → the local inbox was empty and "mark as read" never reached the owner's machine.
 
 interface ErpNotificationState {
   inbox: ErpNotification[];
@@ -23,7 +23,7 @@ export const useErpNotificationStore = create<ErpNotificationState>((set, get) =
   inbox: [],
   unreadCount: 0,
 
-  // Đọc lỗi (mất kết nối, Boss từ chối) → giữ danh sách / số đang hiện
+  // Read error (lost connection, owner's machine refused) → keep the list / count currently shown
   loadInbox: async () => {
     if (isErpModuleOff()) return;
     const res: any = await DataAccessor.erpNotifications();
@@ -69,7 +69,7 @@ export const useErpNotificationStore = create<ErpNotificationState>((set, get) =
     set({ inbox: [], unreadCount: 0 });
   },
 
-  // Idempotent: catch-up phát lại / event trùng không được thêm lần nữa và cộng chưa đọc hai lần
+  // Idempotent: a replayed catch-up / duplicate event must not be added again or count unread twice
   _onNewNotification: (n) => set(s => {
     if (!n || s.inbox.some(item => item?.id === n.id)) return s;
     return { inbox: [n, ...s.inbox], unreadCount: s.unreadCount + 1 };

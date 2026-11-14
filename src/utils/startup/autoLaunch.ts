@@ -1,30 +1,31 @@
 /**
- * Tự mở Deplao khi bật máy (đăng nhập hệ điều hành). Nhiều khách khởi động lại máy rồi quên mở app → lỡ tin, trang coi
- * như không dùng. Bật mặc định (cả máy cập nhật từ bản cũ), tắt / đổi ở Cài đặt → Thông báo → Khởi động cùng máy.
+ * Launch Deplao automatically when the computer starts (OS login). Many users restart the computer and forget to open the app → they miss messages, and they look
+ * like they have stopped using it. On by default (including machines updated from an older version); turn it off / change it in Settings → Notifications → Launch at startup.
  *
- * - Windows / macOS: app.setLoginItemSettings. Windows ghi khoá Run (HKCU) kèm `--autostart`; không đè lựa chọn "Tắt"
- *   của Task Manager khi tự đồng bộ lúc mở app (chỉ khi người dùng bật lại trong Deplao).
- * - Linux: Electron không hỗ trợ → file XDG `~/.config/autostart/deplao.desktop` (AppImage: đường dẫn file .AppImage).
- * - Lựa chọn lưu theo máy (userData/deplao-config.json: autoLaunch, autoLaunchHidden), không theo workspace / DB.
- * - Linux / macOS: mục do Deplao tạo bị gỡ ở hệ điều hành (Ứng dụng khởi động, Mục đăng nhập) → coi như tắt, không tự
- *   tạo lại. Windows luôn tạo lại khi thiếu (đổi thư mục cài làm khoá cũ không còn khớp, không phân biệt được).
- * - Bản dev (chưa đóng gói) không bao giờ đăng ký: sẽ đăng ký electron.exe của node_modules.
+ * - Windows / macOS: app.setLoginItemSettings. Windows writes the Run key (HKCU) with `--autostart`; it does not override a "Tắt" (Off) choice made in
+ *   Task Manager when syncing at app start (only when the user turns it on again in Deplao).
+ * - Linux: Electron does not support it → an XDG file `~/.config/autostart/deplao.desktop` (AppImage: the path of the .AppImage file).
+ * - The choice is saved per machine (userData/deplao-config.json: autoLaunch, autoLaunchHidden), not per workspace / DB.
+ * - Linux / macOS: an entry created by Deplao that was removed in the OS (Startup Applications, Login Items) → treated as off, not recreated automatically.
+ *   Windows always recreates it when missing (a changed install folder makes the old key no longer match, and the two cases cannot be told apart).
+ * - Dev builds (not packaged) never register: they would register node_modules' electron.exe.
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { tr } from '../../shared/i18n';
 
-/** Tham số dòng lệnh khi hệ điều hành tự mở Deplao (Windows / Linux). */
+/** Command-line arguments when the OS launches Deplao automatically (Windows / Linux). */
 export const AUTOSTART_ARG = '--autostart';
 const LINUX_DESKTOP_FILE = 'deplao.desktop';
 
 export interface AutoLaunchStatus {
-  /** Bản cài đặt trên Windows / macOS / Linux (bản dev: false) */
+  /** Installed build on Windows / macOS / Linux (dev build: false) */
   supported: boolean;
-  /** Lựa chọn của người dùng (mặc định bật) */
+  /** The user's choice (on by default) */
   enabled: boolean;
-  /** Tự mở thì chạy ngầm ở khay (mặc định bật) */
+  /** When launched automatically, run in the background in the tray (on by default) */
   hidden: boolean;
-  /** Hệ điều hành đang chặn: Task Manager tắt (Windows), chờ cho phép (macOS), tắt trong Ứng dụng khởi động (Linux) */
+  /** The OS is blocking it: disabled in Task Manager (Windows), waiting for permission (macOS), turned off in Startup Applications (Linux) */
   blocked: boolean;
   platform: NodeJS.Platform;
 }
@@ -34,7 +35,7 @@ type FsLike = Pick<typeof fs, 'existsSync' | 'readFileSync' | 'writeFileSync' | 
 export interface AutoLaunchEnv {
   platform: NodeJS.Platform;
   packaged: boolean;
-  /** Lệnh mở app: AppImage = file .AppImage (process.execPath nằm trong thư mục mount tạm) */
+  /** Launch command: AppImage = the .AppImage file (process.execPath is inside the temporary mount folder) */
   launchPath: string;
   homeDir: string;
   xdgConfigHome?: string;
@@ -48,11 +49,11 @@ export interface AutoLaunchEnv {
 interface StoredChoice {
   autoLaunch?: boolean;
   autoLaunchHidden?: boolean;
-  /** Deplao đã tạo mục tự mở (để biết người dùng gỡ nó ở hệ điều hành) */
+  /** Deplao created the auto-launch entry (so it can tell whether the user removed it in the OS) */
   autoLaunchApplied?: boolean;
 }
 
-/** Dòng Exec của file .desktop: đường dẫn trong ngoặc kép, thoát " ` $ \ theo chuẩn Desktop Entry. */
+/** Exec line of the .desktop file: the path in double quotes, escaping " ` $ \ per the Desktop Entry standard. */
 export function desktopExecLine(launchPath: string): string {
   const escaped = launchPath.replace(/(["`$\\])/g, '\\$1');
   return `"${escaped}" ${AUTOSTART_ARG}`;
@@ -64,7 +65,7 @@ export function linuxDesktopEntry(launchPath: string): string {
     'Type=Application',
     'Version=1.0',
     'Name=Deplao',
-    'Comment=Tự mở Deplao khi bật máy để không lỡ tin nhắn',
+    tr('Comment=Tự mở Deplao khi bật máy để không lỡ tin nhắn'),
     `Exec=${desktopExecLine(launchPath)}`,
     'Icon=deplao',
     'Terminal=false',
@@ -73,7 +74,7 @@ export function linuxDesktopEntry(launchPath: string): string {
   ].join('\n');
 }
 
-/** Mục tự mở bị tắt trong công cụ của hệ điều hành mà vẫn giữ file (Hidden / X-GNOME-Autostart-enabled=false). */
+/** An autostart entry that was disabled in the OS tool but still has its file (Hidden / X-GNOME-Autostart-enabled=false). */
 function desktopEntryDisabled(content: string): boolean {
   return /^\s*Hidden\s*=\s*true\s*$/mi.test(content) || /^\s*X-GNOME-Autostart-enabled\s*=\s*false\s*$/mi.test(content);
 }
@@ -93,7 +94,7 @@ export function createAutoLaunch(env: AutoLaunchEnv) {
     }
   };
   const writeChoice = (patch: StoredChoice) => {
-    // Giữ các khoá khác của deplao-config.json (dbFolder…)
+    // Keep the other keys of deplao-config.json (dbFolder…)
     let current: Record<string, unknown> = {};
     try {
       if (files.existsSync(env.configPath)) current = JSON.parse(String(files.readFileSync(env.configPath, 'utf-8')) || '{}');
@@ -113,7 +114,7 @@ export function createAutoLaunch(env: AutoLaunchEnv) {
     }
   };
 
-  /** Mục tự mở đang có ở hệ điều hành (kể cả bị tắt trong công cụ của hệ điều hành) */
+  /** An autostart entry that exists in the OS (including one disabled in the OS tool) */
   const registered = (): boolean => {
     if (env.platform === 'linux') return readDesktopEntry() !== null;
     try {
@@ -137,11 +138,11 @@ export function createAutoLaunch(env: AutoLaunchEnv) {
     }
   };
 
-  /** explicit = người dùng vừa bật trong Deplao: được bật lại cả khi hệ điều hành đang tắt mục này. */
+  /** explicit = the user just turned it on in Deplao: it is turned on again even if the OS has this entry disabled. */
   const register = (explicit: boolean) => {
     if (env.platform === 'linux') {
       const content = readDesktopEntry();
-      // Đang bị tắt ở hệ điều hành, không phải người dùng bật lại → giữ nguyên lựa chọn đó
+      // Disabled in the OS, and the user did not just turn it on again → keep that choice
       if (!explicit && content !== null && desktopEntryDisabled(content)) return;
       const next = linuxDesktopEntry(env.launchPath);
       if (content === next) return;
@@ -178,7 +179,7 @@ export function createAutoLaunch(env: AutoLaunchEnv) {
   return {
     status,
 
-    /** Mỗi lần mở app: bật mặc định, giữ đúng đường dẫn, tôn trọng việc người dùng gỡ ở hệ điều hành. */
+    /** Every time the app opens: on by default, keeps the correct path, respects the user removing it in the OS. */
     syncAtStartup(): AutoLaunchStatus {
       if (!supported) return status();
       const stored = readChoice();
@@ -197,7 +198,7 @@ export function createAutoLaunch(env: AutoLaunchEnv) {
       return status();
     },
 
-    /** Cài đặt → Khởi động cùng máy. */
+    /** Settings → Notifications → Launch at startup. */
     update(patch: { enabled?: boolean; hidden?: boolean }): AutoLaunchStatus {
       const next: StoredChoice = {};
       if (typeof patch.hidden === 'boolean') next.autoLaunchHidden = patch.hidden;
@@ -213,7 +214,7 @@ export function createAutoLaunch(env: AutoLaunchEnv) {
       return status();
     },
 
-    /** Hệ điều hành tự mở app (đăng nhập) và người dùng muốn chạy ngầm → không hiện cửa sổ lúc mở. */
+    /** The OS auto-opens the app (login) and the user wants it to run in the background → do not show the window on open. */
     startHidden(argv: readonly string[]): boolean {
       if (!supported || !choiceOf(readChoice()).hidden) return false;
       if (argv.includes(AUTOSTART_ARG)) return true;

@@ -1,11 +1,14 @@
 import axios, { AxiosRequestConfig } from 'axios';
 import { IntegrationAdapter, IntegrationConfig, TestResult } from '../IntegrationAdapter';
 import Logger from '../../../utils/Logger';
+import { keepPhoneOrders } from '../posOrderOwnership';
+import { tr } from '../../../shared/i18n';
 
 /**
  * Pancake POS/OMS adapter.
  * Credentials required: api_key (or accessToken), shopId
  * Base URL is fixed: https://pos.pages.fm/api/v1
+ * Docs: https://pos.pancake.vn/developers/api/en (markdown: append .md to a page URL)
  */
 export class PancakeAdapter extends IntegrationAdapter {
   readonly type = 'pancake';
@@ -25,7 +28,7 @@ export class PancakeAdapter extends IntegrationAdapter {
 
   private getShopId(): string {
     const shopId = this.config.credentials.shopId || this.config.settings?.shopId;
-    if (!shopId) throw new Error('Thiếu Shop ID Pancake');
+    if (!shopId) throw new Error(tr('Thiếu Shop ID Pancake'));
     return String(shopId);
   }
 
@@ -35,7 +38,7 @@ export class PancakeAdapter extends IntegrationAdapter {
       this.config.credentials.apiKey ||
       this.config.credentials.accessToken ||
       this.config.credentials.token;
-    if (!key) throw new Error('Thiếu api_key Pancake');
+    if (!key) throw new Error(tr('Thiếu api_key Pancake'));
     return String(key);
   }
 
@@ -362,9 +365,9 @@ export class PancakeAdapter extends IntegrationAdapter {
         data?.data?.shop_name ||
         `Shop #${shopId}`;
 
-      return { success: true, message: `Kết nối Pancake thành công - shop: ${shopName}` };
+      return { success: true, message: tr('Kết nối Pancake thành công - shop: {{shopName}}', { shopName }) };
     } catch (e: any) {
-      return { success: false, message: `Lỗi kết nối Pancake: ${this.formatError(e)}` };
+      return { success: false, message: tr('Lỗi kết nối Pancake: {{v1}}', { v1: this.formatError(e) }) };
     }
   }
 
@@ -428,12 +431,26 @@ export class PancakeAdapter extends IntegrationAdapter {
         );
         this.logActionRaw('lookupOrder', { ...params, search: searchText }, data);
         this.assertApiSuccess(data, 'Pancake lookupOrder failed');
-        const orders = this.unwrapList(data);
+        let orders = this.unwrapList(data);
+        const meta = this.buildPagedMeta(data, page, pageSize);
+        if (params.phone) {
+          // `search` also matches customer names and order notes: keep only the orders that carry this phone number
+          const owned = keepPhoneOrders<any>(orders, params.phone, (o) => [
+            o?.bill_phone_number,
+            o?.shipping_address?.phone_number,
+            ...(Array.isArray(o?.customer?.phone_numbers) ? o.customer.phone_numbers : []),
+          ]);
+          if (owned.dropped > 0) {
+            Logger.warn(`[PancakeAdapter] lookupOrder: ${owned.dropped} order(s) matched the search but not the phone number, removed`);
+            meta.total = undefined;
+          }
+          orders = owned.orders;
+        }
         return {
           orders,
           order: orders[0] || null,
           found: orders.length > 0,
-          ...this.buildPagedMeta(data, page, pageSize),
+          ...meta,
         };
       }
 
@@ -518,7 +535,7 @@ export class PancakeAdapter extends IntegrationAdapter {
       }
 
       default:
-        throw new Error(`Pancake không hỗ trợ action: ${action}`);
+        throw new Error(tr('Pancake không hỗ trợ action: {{action}}', { action }));
     }
   }
 }

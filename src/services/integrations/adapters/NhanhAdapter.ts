@@ -1,10 +1,11 @@
 import axios from 'axios';
 import { IntegrationAdapter, IntegrationConfig, TestResult } from '../IntegrationAdapter';
+import { tr } from '../../../shared/i18n';
 
 /**
  * Nhanh.vn Open API v3 adapter.
  * Credentials required: appId, businessId, accessToken (from open.nhanh.vn)
- * Docs: https://open.nhanh.vn/
+ * Docs: https://apidocs.nhanh.vn/v3 (moving to https://developers.nhanh.group from 23/09/2026)
  * NOTE: v3.0 uses the POS domain, versioned paths, raw Authorization header,
  * and appId/businessId in the query string.
  */
@@ -24,7 +25,7 @@ export class NhanhAdapter extends IntegrationAdapter {
 
   private getHeaders() {
     const accessToken = String(this.config.credentials.accessToken || '').trim();
-    if (!accessToken) throw new Error('Thiếu Access Token Nhanh.vn');
+    if (!accessToken) throw new Error(tr('Thiếu Access Token Nhanh.vn'));
     return {
       Authorization: accessToken.replace(/^Bearer\s+/i, ''),
       'Content-Type': 'application/json',
@@ -38,8 +39,8 @@ export class NhanhAdapter extends IntegrationAdapter {
   private buildUrl(endpoint: string): string {
     const appId = this.getAppId();
     const businessId = this.getBusinessId();
-    if (!appId) throw new Error('Thiếu App ID Nhanh.vn');
-    if (!businessId) throw new Error('Thiếu Business ID Nhanh.vn');
+    if (!appId) throw new Error(tr('Thiếu App ID Nhanh.vn'));
+    if (!businessId) throw new Error(tr('Thiếu Business ID Nhanh.vn'));
 
     const query = new URLSearchParams({
       appId,
@@ -100,11 +101,11 @@ export class NhanhAdapter extends IntegrationAdapter {
       if (res?.code === 1) {
         const products = this.unwrapList(res?.data);
         const name = products[0]?.name || `Business ${this.getBusinessId()}`;
-        return { success: true, message: `Kết nối Nhanh.vn (API v3) thành công - cửa hàng: ${name}` };
+        return { success: true, message: tr('Kết nối Nhanh.vn (API v3) thành công - cửa hàng: {{name}}', { name }) };
       }
-      return { success: false, message: this.formatApiError(res?.messages, 'Kết nối Nhanh.vn thất bại') };
+      return { success: false, message: this.formatApiError(res?.messages, tr('Kết nối Nhanh.vn thất bại')) };
     } catch (e: any) {
-      return { success: false, message: `Lỗi kết nối Nhanh.vn: ${e.response?.data?.messages || e.message}` };
+      return { success: false, message: tr('Lỗi kết nối Nhanh.vn: {{v1}}', { v1: e.response?.data?.messages || e.message }) };
     }
   }
 
@@ -119,7 +120,7 @@ export class NhanhAdapter extends IntegrationAdapter {
             size: 5,
           },
         });
-        this.assertSuccess(res, 'Tra cứu khách hàng Nhanh.vn thất bại');
+        this.assertSuccess(res, tr('Tra cứu khách hàng Nhanh.vn thất bại'));
         const customers = this.unwrapList(res?.data);
         return { customers, found: customers.length > 0, firstCustomer: customers[0] || null };
       }
@@ -133,16 +134,21 @@ export class NhanhAdapter extends IntegrationAdapter {
         if (params.orderId) filters.ids = [params.orderId];
         if (params.phone) filters.shippingAddress = { mobile: params.phone };
 
-        const res = await this.apiPost('order/list', {
-          filters,
-          paginator: {
-            size: 10,
-            page: params.page || 1,
-          },
-        });
-        this.assertSuccess(res, 'Tra cứu đơn hàng Nhanh.vn thất bại');
+        // v3 pages with a cursor (paginator.next), not page numbers: page N = follow `next` N-1 times
+        const page = Math.max(1, Number(params.page) || 1);
+        let next: any = params.next;
+        let res: any = null;
+        for (let current = next ? page : 1; current <= page; current++) {
+          res = await this.apiPost('order/list', {
+            filters,
+            paginator: { size: 10, ...(next ? { next } : {}) },
+          });
+          this.assertSuccess(res, tr('Tra cứu đơn hàng Nhanh.vn thất bại'));
+          next = res?.paginator?.next ?? null;
+          if (current < page && !next) return { orders: [], order: null, found: false, page, hasNext: false };
+        }
         const orders = this.unwrapList(res?.data);
-        return { orders, order: orders[0] || null, found: orders.length > 0 };
+        return { orders, order: orders[0] || null, found: orders.length > 0, page, hasNext: !!next, next: next || undefined };
       }
 
       case 'createOrder': {
@@ -156,14 +162,15 @@ export class NhanhAdapter extends IntegrationAdapter {
         if (res.code === 1) {
           return { order: res.data, orderId: res.data?.id, success: true };
         }
-        throw new Error(this.formatApiError(res.messages ?? res.message, 'Tạo đơn hàng Nhanh.vn thất bại'));
+        throw new Error(this.formatApiError(res.messages ?? res.message, tr('Tạo đơn hàng Nhanh.vn thất bại')));
       }
 
       case 'getProducts':
       case 'lookupProduct': {
+        // v3 product/list has no `code` filter: `name` searches name, code and barcode
         const filters: Record<string, any> = {};
-        if (params.keyword) filters.name = params.keyword;
-        if (params.code) filters.code = params.code;
+        const term = String(params.code || params.keyword || '').trim();
+        if (term) filters.name = term;
 
         const res = await this.apiPost('product/list', {
           filters,
@@ -171,21 +178,24 @@ export class NhanhAdapter extends IntegrationAdapter {
             size: params.limit || 10,
           },
         });
-        this.assertSuccess(res, 'Tra cứu sản phẩm Nhanh.vn thất bại');
+        this.assertSuccess(res, tr('Tra cứu sản phẩm Nhanh.vn thất bại'));
         const products = this.unwrapList(res?.data);
         return { products, found: products.length > 0 };
       }
 
       case 'updateOrderStatus': {
+        // order/edit takes `status` (int, Order Status in the v3 model constants); statusCode kept as an alias
+        const status = Number(params.status ?? params.statusCode);
+        if (!Number.isFinite(status)) throw new Error(tr('Thiếu trạng thái đơn (status) Nhanh.vn'));
         const res = await this.apiPost('order/edit', {
-          id: params.orderId,
-          statusCode: params.statusCode,
+          id: Number(params.orderId) || params.orderId,
+          status,
         });
         return { success: res.code === 1, message: this.formatApiError(res.messages, '') };
       }
 
       default:
-        throw new Error(`Nhanh.vn không hỗ trợ action: ${action}`);
+        throw new Error(tr('Nhanh.vn không hỗ trợ action: {{action}}', { action }));
     }
   }
 }

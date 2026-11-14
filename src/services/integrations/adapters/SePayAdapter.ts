@@ -4,12 +4,13 @@ import {
   ParsedPayment, WebhookAuthResult, WebhookCapableAdapter, WebhookRequest, parseSePayPayload, parseWebhookBody,
   verifySePayWebhook,
 } from '../paymentWebhook';
+import { tr } from '../../../shared/i18n';
 
 /**
  * SePay payment webhook adapter.
  * Credentials required: apiKey
- * Optional: webhookSecretKey = Secret Key (HMAC-SHA256, khuyên dùng) hoặc API Key chọn ở bước Bảo mật của webhook SePay.
- * Có khoá → webhook phải có chữ ký / khoá hợp lệ.
+ * Optional: webhookSecretKey = Secret Key (HMAC-SHA256, recommended) or the API Key chosen in the Security step of the SePay webhook.
+ * With a key → the webhook must carry a valid signature / key.
  * Docs: https://developer.sepay.vn/vi/sepay-webhooks/xac-thuc
  */
 export class SePayAdapter extends IntegrationAdapter implements WebhookCapableAdapter {
@@ -43,11 +44,11 @@ export class SePayAdapter extends IntegrationAdapter implements WebhookCapableAd
       });
       if (res.data?.status === 200) {
         const name = res.data?.data?.fullname || 'SePay';
-        return { success: true, message: `Kết nối SePay thành công - ${name}` };
+        return { success: true, message: tr('Kết nối SePay thành công - {{name}}', { name }) };
       }
-      return { success: false, message: res.data?.messages || 'Không thể kết nối SePay' };
+      return { success: false, message: res.data?.messages || tr('Không thể kết nối SePay') };
     } catch (e: any) {
-      return { success: false, message: `Lỗi kết nối SePay: ${e.response?.data?.messages || e.message}` };
+      return { success: false, message: tr('Lỗi kết nối SePay: {{v1}}', { v1: e.response?.data?.messages || e.message }) };
     }
   }
 
@@ -74,16 +75,16 @@ export class SePayAdapter extends IntegrationAdapter implements WebhookCapableAd
       }
 
       case 'handleWebhook': {
-        // Như webhook server: params.headers + params.rawBody (chuỗi body gốc — chữ ký HMAC tính trên đúng bytes này).
+        // Same as the webhook server: params.headers + params.rawBody (the original body string; the HMAC signature is computed over exactly these bytes).
         const rawBody = Buffer.from(typeof params.rawBody === 'string' ? params.rawBody : JSON.stringify(params.body ?? {}), 'utf8');
         const body = parseWebhookBody(rawBody);
         const auth = this.verifyWebhook({ headers: params.headers || {}, rawBody, body });
-        if (auth.ok === false) throw new Error(`Webhook SePay không hợp lệ: ${auth.message}`);
+        if (auth.ok === false) throw new Error(tr('Webhook SePay không hợp lệ: {{message}}', { message: auth.message }));
         return { valid: true, verified: auth.method !== 'none', transaction: body };
       }
 
       default:
-        throw new Error(`SePay không hỗ trợ action: ${action}`);
+        throw new Error(tr('SePay không hỗ trợ action: {{action}}', { action }));
     }
   }
 }

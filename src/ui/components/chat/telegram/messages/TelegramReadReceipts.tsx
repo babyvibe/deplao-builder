@@ -1,12 +1,14 @@
 /**
- * TelegramReadReceipts — dòng "Đã xem" cuối menu chuột phải của tin Telegram mình gửi (như Telegram Desktop):
- *  - nhóm: "✓✓ 10 đã xem" + 3 avatar; rê chuột / bấm → danh sách người xem kèm thời điểm
- *  - chat riêng: "✓✓ Đã xem hôm nay lúc 10:13" (nếu người kia không ẩn thời gian đã xem)
- * Nhóm quá đông / tin quá 7 ngày / lỗi → không hiện gì (như Telegram). Kết quả giữ 30 s để mở lại menu không gọi lại.
+ * TelegramReadReceipts: the "Đã xem" (Seen) row at the bottom of the right-click menu of a Telegram message I sent (like Telegram Desktop):
+ *  - group: "✓✓ 10 đã xem" (10 seen) + 3 avatars; hover / click → list of viewers with their times
+ *  - private chat: "✓✓ Đã xem hôm nay lúc 10:13" (seen today at 10:13) (if the other person has not hidden their last-seen time)
+ * A very large group / message older than 7 days / error → nothing is shown (as in Telegram). The result is kept for 30 s so reopening the menu does not call again.
  */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
 import { formatReadTime } from '@/lib/chat/read/readReceipts';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export interface ReadReceiptPerson { name: string; avatar?: string }
 
@@ -49,7 +51,7 @@ function PersonAvatar({ name, avatar, size }: { name: string; avatar?: string; s
 export default function TelegramReadReceipts({ accountId, msg, resolvePerson }: {
   accountId: string;
   msg: any;
-  /** Tên / avatar từ liên hệ & thành viên nhóm đang mở (null = không biết). */
+  /** Name / avatar from the contacts and group members of the open group (null = unknown). */
   resolvePerson: (userId: string) => ReadReceiptPerson | null;
 }) {
   const key = `${accountId}:${msg.thread_id}:${msg.msg_id}`;
@@ -76,7 +78,7 @@ export default function TelegramReadReceipts({ accountId, msg, resolvePerson }: 
     return () => { alive = false; };
   }, [key, result, accountId, msg.thread_id, msg.msg_id]);
 
-  // Danh sách mở về phía còn chỗ (phải / trái menu, trên / dưới dòng)
+  // Open the list toward the side with room (right / left of the menu, above / below the row)
   useLayoutEffect(() => {
     if (!listOpen || !rowRef.current) return;
     const rect = rowRef.current.getBoundingClientRect();
@@ -92,18 +94,18 @@ export default function TelegramReadReceipts({ accountId, msg, resolvePerson }: 
     return (
       <div className={`${rowBase} text-muted-foreground`}>
         <DoubleCheckIcon className="w-4 h-4 shrink-0" />
-        <span className="text-[13px]">Đang tải người đã xem…</span>
+        <span className="text-[13px]">{tr('Đang tải người đã xem…')}</span>
       </div>
     );
   }
 
   if (!result.success) {
-    // Nhóm quá đông / tin quá 7 ngày / lỗi: Telegram không có dữ liệu → không hiện dòng
+    // Very large group / message older than 7 days / error: Telegram has no data → no row shown
     if (result.reason !== 'not_read' && result.reason !== 'privacy') return null;
     return (
       <div className={`${rowBase} text-muted-foreground`} title={result.error || ''}>
         <DoubleCheckIcon className="w-4 h-4 shrink-0" />
-        <span className="text-[13px]">{result.reason === 'not_read' ? 'Chưa xem' : 'Đã ẩn thời gian xem'}</span>
+        <span className="text-[13px]">{result.reason === 'not_read' ? tr('Chưa xem') : tr('Đã ẩn thời gian xem')}</span>
       </div>
     );
   }
@@ -112,7 +114,7 @@ export default function TelegramReadReceipts({ accountId, msg, resolvePerson }: 
     return (
       <div className={`${rowBase} text-foreground`}>
         <DoubleCheckIcon className="w-4 h-4 shrink-0 text-primary" />
-        <span className="text-[13px]">{result.readAt ? `Đã xem ${formatReadTime(result.readAt)}` : 'Đã xem'}</span>
+        <span className="text-[13px]">{result.readAt ? tr('Đã xem {{v1}}', { v1: formatReadTime(result.readAt) }) : tr('Đã xem')}</span>
       </div>
     );
   }
@@ -127,7 +129,7 @@ export default function TelegramReadReceipts({ accountId, msg, resolvePerson }: 
     return (
       <div className={`${rowBase} text-muted-foreground`}>
         <DoubleCheckIcon className="w-4 h-4 shrink-0" />
-        <span className="text-[13px]">Chưa ai xem</span>
+        <span className="text-[13px]">{tr('Chưa ai xem')}</span>
       </div>
     );
   }
@@ -137,7 +139,7 @@ export default function TelegramReadReceipts({ accountId, msg, resolvePerson }: 
       <button type="button" onClick={() => setListOpen((v) => !v)}
         className={`${rowBase} hover:bg-muted transition-colors text-foreground`}>
         <DoubleCheckIcon className="w-4 h-4 shrink-0 text-primary" />
-        <span className="flex-1 text-[13px]">{readers.length} đã xem</span>
+        <span className="flex-1 text-[13px]">{trx('{{count}} đã xem', { count: readers.length })}</span>
         <span className="flex -space-x-1.5">
           {readers.slice(0, 3).map((r) => <PersonAvatar key={r.userId} name={r.name} avatar={r.avatar} size={20} />)}
         </span>
@@ -153,7 +155,7 @@ export default function TelegramReadReceipts({ accountId, msg, resolvePerson }: 
                 <p className="text-[13px] text-foreground truncate">{r.name}</p>
                 <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
                   <DoubleCheckIcon className="w-3 h-3 shrink-0" />
-                  {formatReadTime(r.date) || 'đã xem'}
+                  {formatReadTime(r.date) || tr('đã xem')}
                 </p>
               </div>
             </div>

@@ -3,6 +3,8 @@ import { Handle, Position, NodeProps, useReactFlow, BaseEdge, EdgeLabelRenderer,
 import { LightningIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channels/channelHelper';
 import { CHANNEL_NAME, NodeIconTile, VarText, accentStyle, getNodeVisual } from './nodeVisuals';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 // ─── Custom deletable edge ────────────────────────────────────────────────────
@@ -52,7 +54,7 @@ export const CustomDeletableEdge = memo((props: EdgeProps) => {
         >
           <button
             onClick={() => setEdges(es => es.filter(e => e.id !== id))}
-            title="Xóa liên kết này"
+            title={tr('Xóa liên kết này')}
             className="wf-edge-delete"
             data-selected={selected ? 'true' : 'false'}
           >
@@ -88,9 +90,9 @@ function NodeCard({ data, selected, children, handles }: {
     <div>
       <div className="wf-node" data-selected={selected ? 'true' : 'false'} style={accentStyle(visual.accent)}>
         {visual.family === 'trigger' && (
-          <span className="wf-node__start"><LightningIcon className="w-3 h-3" /> Bắt đầu</span>
+          <span className="wf-node__start">{trx('<0/> Bắt đầu', { 0: <LightningIcon className="w-3 h-3" /> })}</span>
         )}
-        <button type="button" onClick={handleDelete} className="wf-node__delete nodrag" title="Xóa node">
+        <button type="button" onClick={handleDelete} className="wf-node__delete nodrag" title={tr('Xóa node')}>
           <CloseGlyph size={9} />
         </button>
 
@@ -144,17 +146,17 @@ export const LogicNode = memo(({ data, selected }: NodeProps) => {
   const cases: any[] = data.config?.cases || [];
   const compact = cases.length > 2;
 
-  // Lặp qua danh sách: cổng "default" (như cạnh cũ) = thân vòng lặp, "done" = chạy một lần sau khi lặp xong
+  // Loop over list: the "default" handle (same as the old edge) = loop body, "done" = runs once after the loop finishes
   const handles = isForEach ? (
     <>
       {targetHandle}
       <Handle type="source" position={Position.Bottom} id="default"
         className="wf-handle wf-handle--source" style={{ left: '30%' }}>
-        <span className="wf-branch-label">Mỗi phần tử</span>
+        <span className="wf-branch-label">{tr('Mỗi phần tử')}</span>
       </Handle>
       <Handle type="source" position={Position.Bottom} id="done"
         className="wf-handle wf-handle--source wf-handle--fallback" style={{ left: '70%' }}>
-        <span className="wf-branch-label">Xong</span>
+        <span className="wf-branch-label">{tr('Xong')}</span>
       </Handle>
     </>
   ) : isIf ? (
@@ -162,11 +164,11 @@ export const LogicNode = memo(({ data, selected }: NodeProps) => {
       {targetHandle}
       <Handle type="source" position={Position.Bottom} id="true"
         className="wf-handle wf-handle--source wf-handle--true" style={{ left: '30%' }}>
-        <span className="wf-branch-label">Đúng</span>
+        <span className="wf-branch-label">{tr('Đúng')}</span>
       </Handle>
       <Handle type="source" position={Position.Bottom} id="false"
         className="wf-handle wf-handle--source wf-handle--false" style={{ left: '70%' }}>
-        <span className="wf-branch-label">Sai</span>
+        <span className="wf-branch-label">{tr('Sai')}</span>
       </Handle>
     </>
   ) : isSwitch ? (
@@ -177,13 +179,13 @@ export const LogicNode = memo(({ data, selected }: NodeProps) => {
           className="wf-handle wf-handle--source"
           style={{ left: `${((i + 1) / ((data.config.cases.length || 1) + 2)) * 100}%` }}>
           <span className={`wf-branch-label${compact ? ' wf-branch-label--compact' : ''}`}>
-            {c?.label || (Array.isArray(c) ? c[1] : '') || `Nhánh ${i + 1}`}
+            {c?.label || (Array.isArray(c) ? c[1] : '') || tr('Nhánh {{v1}}', { v1: i + 1 })}
           </span>
         </Handle>
       ))}
       <Handle type="source" position={Position.Bottom} id={data.config?.defaultLabel || 'default'}
         className="wf-handle wf-handle--source wf-handle--fallback" style={{ right: '1rem', left: 'auto' }}>
-        <span className={`wf-branch-label${compact ? ' wf-branch-label--compact' : ''}`}>Mặc định</span>
+        <span className={`wf-branch-label${compact ? ' wf-branch-label--compact' : ''}`}>{tr('Mặc định')}</span>
       </Handle>
     </>
   ) : (
@@ -218,18 +220,18 @@ export const OutputNode = memo(({ data, selected }: NodeProps) => {
       <div className="wf-node__summary--row">
         <span className="wf-badge" data-tone={METHOD_TONE[cfg.method] || 'blue'}>{cfg.method || 'POST'}</span>
         <span className="wf-node__summary-text">
-          {cfg.url ? (() => { try { return new URL(cfg.url.replace(/\{\{.*?}}/g,'')).hostname || cfg.url; } catch { return truncate(cfg.url, 22); } })() : 'URL chưa đặt'}
+          {cfg.url ? (() => { try { return new URL(cfg.url.replace(/\{\{.*?}}/g,'')).hostname || cfg.url; } catch { return truncate(cfg.url, 22); } })() : tr('URL chưa đặt')}
         </span>
       </div>
       {cfg.body && (
-        <div className="wf-node__summary-sub">body: {truncate(String(cfg.body), 24)}</div>
+        <div className="wf-node__summary-sub">{trx('body: {{v1}}', { v1: truncate(String(cfg.body), 24) })}</div>
       )}
     </div>
   ) : isLog ? (
     <div className="wf-node__summary wf-node__summary--rich">
       <div className="wf-node__summary--row">
         <span className="wf-badge" data-tone={LEVEL_TONE[cfg.level] || 'gray'}>{(cfg.level || 'info').toUpperCase()}</span>
-        <span className="wf-node__summary-text"><VarText text={truncate(cfg.message, 26) || 'Nội dung log...'} /></span>
+        <span className="wf-node__summary-text"><VarText text={truncate(cfg.message, 26) || tr('Nội dung log...')} /></span>
       </div>
     </div>
   ) : (
@@ -237,7 +239,7 @@ export const OutputNode = memo(({ data, selected }: NodeProps) => {
   );
 
   return (
-    // httpRequest có source handle vì output có thể dùng ở bước sau
+    // httpRequest has a source handle because its output can be used in a later step
     <NodeCard data={data} selected={selected} handles={<>{targetHandle}{isHttp && sourceHandle}</>}>
       {body}
     </NodeCard>
@@ -265,25 +267,25 @@ function fallbackSummary(data: any): string {
 }
 
 const POS_PLATFORM_LABELS: Record<string, string> = { kiotviet: 'KiotViet', haravan: 'Haravan', sapo: 'Sapo', nhanh: 'Nhanh.vn', pancake: 'Pancake POS' };
-const POS_ENTITY_LABELS: Record<string, string> = { order: 'đơn hàng', invoice: 'hoá đơn', customer: 'khách hàng', product: 'sản phẩm', inventory: 'tồn kho' };
+const POS_ENTITY_LABELS: Record<string, string> = { order: tr('đơn hàng'), invoice: tr('hoá đơn'), customer: tr('khách hàng'), product: tr('sản phẩm'), inventory: tr('tồn kho') };
 
 function getTriggerSummary(data: any): string {
   const cfg = data.config || {};
   switch (data.type) {
-    case 'trigger.message': return cfg.keyword ? `"${cfg.keyword}"` : 'Tất cả tin nhắn';
-    case 'trigger.friendRequest': return 'Lời mời kết bạn';
-    case 'trigger.groupEvent': return cfg.eventType !== 'all' ? cfg.eventType : 'Sự kiện nhóm';
+    case 'trigger.message': return cfg.keyword ? `"${cfg.keyword}"` : tr('Tất cả tin nhắn');
+    case 'trigger.friendRequest': return tr('Lời mời kết bạn');
+    case 'trigger.groupEvent': return cfg.eventType !== 'all' ? cfg.eventType : tr('Sự kiện nhóm');
     case 'trigger.labelAssigned': {
-      const action = cfg.action === 'assigned' ? 'Gán' : cfg.action === 'removed' ? 'Gỡ' : 'Gán/gỡ';
+      const action = cfg.action === 'assigned' ? tr('Gán') : cfg.action === 'removed' ? tr('Gỡ') : tr('Gán/gỡ');
       const count = Array.isArray(cfg.labelIds) && cfg.labelIds.length;
-      const labelPart = count ? ` ${count} nhãn` : ' nhãn bất kỳ';
+      const labelPart = count ? tr(' {{count}} nhãn', { count }) : tr(' nhãn bất kỳ');
       return `${action}${labelPart}`;
     }
     case 'trigger.schedule': return cfg.cronExpression || 'Cron';
-    case 'trigger.manual': return 'Chạy thủ công';
+    case 'trigger.manual': return tr('Chạy thủ công');
     case 'trigger.posWebhook': {
-      const platform = POS_PLATFORM_LABELS[cfg.integrationType] || 'Phần mềm bán hàng';
-      const entity = POS_ENTITY_LABELS[cfg.entity] || 'mọi dữ liệu';
+      const platform = POS_PLATFORM_LABELS[cfg.integrationType] || tr('Phần mềm bán hàng');
+      const entity = POS_ENTITY_LABELS[cfg.entity] || tr('mọi dữ liệu');
       return `${platform}: ${entity}${cfg.eventContains ? ` · ${truncate(String(cfg.eventContains), 20)}` : ''}`;
     }
     default: return '';
@@ -293,76 +295,76 @@ function getTriggerSummary(data: any): string {
 function getActionSummary(data: any): string {
   const cfg = data.config || {};
   switch (data.type) {
-    case 'zalo.sendMessage':         return truncate(cfg.message, 30) || 'Gửi tin nhắn';
-    case 'zalo.sendTyping':          return `Đang gõ… rồi chờ ${cfg.delaySeconds || 3}s`;
-    case 'zalo.sendImage':           return cfg.filePath ? `Ảnh: ${truncate(cfg.filePath, 26)}` : 'Gửi ảnh';
-    case 'zalo.sendFile':            return cfg.filePath ? `File: ${truncate(cfg.filePath, 26)}` : 'Gửi file';
-    case 'zalo.sendVoice':           return cfg.filePath ? `Voice: ${truncate(cfg.filePath, 26)}` : 'Gửi tin thoại';
-    case 'zalo.sendVideo':           return cfg.filePath ? `Video: ${truncate(cfg.filePath, 26)}` : 'Gửi video';
-    case 'zalo.sendSticker':         return cfg.stickerId ? `Sticker: ${truncate(String(cfg.stickerId), 24)}` : 'Gửi sticker';
-    case 'zalo.findUser':            return `Tìm: ${cfg.phone || '...'}`;
+    case 'zalo.sendMessage':         return truncate(cfg.message, 30) || tr('Gửi tin nhắn');
+    case 'zalo.sendTyping':          return tr('Đang gõ… rồi chờ {{v1}}s', { v1: cfg.delaySeconds || 3 });
+    case 'zalo.sendImage':           return cfg.filePath ? tr('Ảnh: {{v1}}', { v1: truncate(cfg.filePath, 26) }) : tr('Gửi ảnh');
+    case 'zalo.sendFile':            return cfg.filePath ? `File: ${truncate(cfg.filePath, 26)}` : tr('Gửi file');
+    case 'zalo.sendVoice':           return cfg.filePath ? `Voice: ${truncate(cfg.filePath, 26)}` : tr('Gửi tin thoại');
+    case 'zalo.sendVideo':           return cfg.filePath ? `Video: ${truncate(cfg.filePath, 26)}` : tr('Gửi video');
+    case 'zalo.sendSticker':         return cfg.stickerId ? `Sticker: ${truncate(String(cfg.stickerId), 24)}` : tr('Gửi sticker');
+    case 'zalo.findUser':            return tr('Tìm: {{v1}}', { v1: cfg.phone || '...' });
     case 'zalo.getUserInfo':         return `User: ${cfg.userId || '{{ $trigger.fromId }}'}`;
-    case 'zalo.acceptFriendRequest': return 'Chấp nhận kết bạn';
-    case 'zalo.rejectFriendRequest': return 'Từ chối kết bạn';
-    case 'zalo.sendFriendRequest':   return `Kết bạn: ${cfg.userId || '...'}`;
-    case 'zalo.addToGroup':          return `Thêm: ${cfg.userId || '...'}`;
-    case 'zalo.removeFromGroup':     return `Xóa: ${cfg.userId || '...'}`;
-    case 'zalo.setMute':             return cfg.action === 'unmute' ? 'Bật thông báo' : 'Tắt thông báo';
-    case 'zalo.forwardMessage':      return `Chuyển → ${cfg.toThreadId || '...'}`;
-    case 'zalo.undoMessage':         return 'Thu hồi tin nhắn';
-    case 'zalo.createPoll':          return `Poll: ${truncate(cfg.question, 24) || 'Tạo bình chọn'}`;
-    case 'zalo.getMessageHistory':   return `Lấy ${cfg.count || 20} tin nhắn`;
-    case 'zalo.addReaction':         return 'React tin nhắn';
+    case 'zalo.acceptFriendRequest': return tr('Chấp nhận kết bạn');
+    case 'zalo.rejectFriendRequest': return tr('Từ chối kết bạn');
+    case 'zalo.sendFriendRequest':   return tr('Kết bạn: {{v1}}', { v1: cfg.userId || '...' });
+    case 'zalo.addToGroup':          return tr('Thêm: {{v1}}', { v1: cfg.userId || '...' });
+    case 'zalo.removeFromGroup':     return tr('Xóa: {{v1}}', { v1: cfg.userId || '...' });
+    case 'zalo.setMute':             return cfg.action === 'unmute' ? tr('Bật thông báo') : tr('Tắt thông báo');
+    case 'zalo.forwardMessage':      return tr('Chuyển → {{v1}}', { v1: cfg.toThreadId || '...' });
+    case 'zalo.undoMessage':         return tr('Thu hồi tin nhắn');
+    case 'zalo.createPoll':          return `Poll: ${truncate(cfg.question, 24) || tr('Tạo bình chọn')}`;
+    case 'zalo.getMessageHistory':   return tr('Lấy {{v1}} tin nhắn', { v1: cfg.count || 20 });
+    case 'zalo.addReaction':         return tr('React tin nhắn');
     case 'zalo.assignLabel': {
       const cnt = Array.isArray(cfg.labelIds) && cfg.labelIds.length;
-      return `Gắn ${cnt ? `${cnt} nhãn` : 'nhãn'} (${cfg.labelSource === CHANNEL.ZALO ? 'Zalo' : 'Local'})`;
+      return tr('Gắn {{v1}} ({{v2}})', { v1: cnt ? tr('{{cnt}} nhãn', { cnt }) : tr('nhãn'), v2: cfg.labelSource === CHANNEL.ZALO ? 'Zalo' : 'Local' });
     }
     case 'zalo.removeLabel': {
       const cnt = Array.isArray(cfg.labelIds) && cfg.labelIds.length;
-      return `Gỡ ${cnt ? `${cnt} nhãn` : 'nhãn'} (${cfg.labelSource === CHANNEL.ZALO ? 'Zalo' : 'Local'})`;
+      return tr('Gỡ {{v1}} ({{v2}})', { v1: cnt ? tr('{{cnt}} nhãn', { cnt }) : tr('nhãn'), v2: cfg.labelSource === CHANNEL.ZALO ? 'Zalo' : 'Local' });
     }
-    case 'tgbot.action.sendSticker': return cfg.stickerPath ? `Sticker: ${truncate(cfg.stickerPath, 24)}` : 'Gửi sticker';
-    case 'tgbot.action.sendAudio':   return cfg.audioPath ? `Audio: ${truncate(cfg.audioPath, 24)}` : 'Gửi audio';
-    case 'tgbot.action.sendVoice':   return cfg.voicePath ? `Voice: ${truncate(cfg.voicePath, 24)}` : 'Gửi tin thoại';
-    case 'tgbot.action.leaveChat':   return 'Rời khỏi chat';
-    case 'tgbot.action.sendMenu':    return cfg.text ? `Menu: ${truncate(cfg.text, 24)}` : 'Gửi menu nút bấm';
-    case 'tgbot.action.sendForm':    return cfg.text ? `Form: ${truncate(cfg.text, 24)}` : 'Gửi form nhập liệu';
-    case 'tgbot.action.answerCallback': return 'Trả lời nút bấm';
-    case 'tg.sendVideo':             return cfg.filePath ? `Video: ${truncate(cfg.filePath, 26)}` : 'Gửi video';
-    case 'tg.sendVoice':             return cfg.filePath ? `Voice: ${truncate(cfg.filePath, 26)}` : 'Gửi tin thoại';
-    case 'fb.action.sendVideo':      return cfg.filePath ? `Video: ${truncate(cfg.filePath, 26)}` : 'Gửi video';
-    case 'fb.action.sendFile':       return cfg.filePath ? `File: ${truncate(cfg.filePath, 26)}` : 'Gửi file';
-    case 'fb.action.sendAudio':      return cfg.filePath ? `Audio: ${truncate(cfg.filePath, 26)}` : 'Gửi audio';
+    case 'tgbot.action.sendSticker': return cfg.stickerPath ? `Sticker: ${truncate(cfg.stickerPath, 24)}` : tr('Gửi sticker');
+    case 'tgbot.action.sendAudio':   return cfg.audioPath ? `Audio: ${truncate(cfg.audioPath, 24)}` : tr('Gửi audio');
+    case 'tgbot.action.sendVoice':   return cfg.voicePath ? `Voice: ${truncate(cfg.voicePath, 24)}` : tr('Gửi tin thoại');
+    case 'tgbot.action.leaveChat':   return tr('Rời khỏi chat');
+    case 'tgbot.action.sendMenu':    return cfg.text ? `Menu: ${truncate(cfg.text, 24)}` : tr('Gửi menu nút bấm');
+    case 'tgbot.action.sendForm':    return cfg.text ? `Form: ${truncate(cfg.text, 24)}` : tr('Gửi form nhập liệu');
+    case 'tgbot.action.answerCallback': return tr('Trả lời nút bấm');
+    case 'tg.sendVideo':             return cfg.filePath ? `Video: ${truncate(cfg.filePath, 26)}` : tr('Gửi video');
+    case 'tg.sendVoice':             return cfg.filePath ? `Voice: ${truncate(cfg.filePath, 26)}` : tr('Gửi tin thoại');
+    case 'fb.action.sendVideo':      return cfg.filePath ? `Video: ${truncate(cfg.filePath, 26)}` : tr('Gửi video');
+    case 'fb.action.sendFile':       return cfg.filePath ? `File: ${truncate(cfg.filePath, 26)}` : tr('Gửi file');
+    case 'fb.action.sendAudio':      return cfg.filePath ? `Audio: ${truncate(cfg.filePath, 26)}` : tr('Gửi audio');
     default: return '';
   }
 }
 
 const OP_LABEL: Record<string, string> = {
-  contains: 'chứa', not_contains: 'không chứa', equals: '=', not_equals: '≠',
-  starts_with: 'bắt đầu bằng', ends_with: 'kết thúc bằng', greater_than: '>', less_than: '<',
-  is_empty: 'rỗng', not_empty: 'không rỗng', regex: 'khớp regex',
+  contains: tr('chứa'), not_contains: tr('không chứa'), equals: '=', not_equals: '≠',
+  starts_with: tr('bắt đầu bằng'), ends_with: tr('kết thúc bằng'), greater_than: '>', less_than: '<',
+  is_empty: tr('rỗng'), not_empty: tr('không rỗng'), regex: 'khớp regex',
 };
 
 function getLogicSummary(data: any): string {
   const cfg = data.config || {};
   switch (data.type) {
-    case 'logic.if': return `Nếu ${truncate(String(cfg.left ?? ''), 20) || '...'} ${OP_LABEL[cfg.operator] || cfg.operator || '='} ${truncate(String(cfg.right ?? ''), 20) || '...'}`;
-    case 'logic.wait': return `Chờ ${cfg.delaySeconds || 1}s`;
-    case 'logic.setVariable': return cfg.name ? `${cfg.name} = ${truncate(String(cfg.value ?? ''), 20)}` : 'Lưu biến';
-    case 'logic.stopIf': return `Dừng nếu ${OP_LABEL[cfg.operator] || cfg.operator || '='} ${truncate(String(cfg.right ?? ''), 20) || '...'}`;
+    case 'logic.if': return tr('Nếu {{v1}} {{v2}} {{v3}}', { v1: truncate(String(cfg.left ?? ''), 20) || '...', v2: OP_LABEL[cfg.operator] || cfg.operator || '=', v3: truncate(String(cfg.right ?? ''), 20) || '...' });
+    case 'logic.wait': return tr('Chờ {{v1}}s', { v1: cfg.delaySeconds || 1 });
+    case 'logic.setVariable': return cfg.name ? `${cfg.name} = ${truncate(String(cfg.value ?? ''), 20)}` : tr('Lưu biến');
+    case 'logic.stopIf': return tr('Dừng nếu {{v1}} {{v2}}', { v1: OP_LABEL[cfg.operator] || cfg.operator || '=', v2: truncate(String(cfg.right ?? ''), 20) || '...' });
     case 'logic.switch': {
       const cases = Array.isArray(cfg.cases) ? cfg.cases : [];
       const labels = cases.map((c: any) => c?.label).filter(Boolean);
-      return labels.length ? `Phân ${labels.length} nhánh: ${labels.join(', ')}` : `Phân nhánh: ${truncate(String(cfg.value ?? ''), 20) || '...'}`;
+      return labels.length ? tr('Phân {{count}} nhánh: {{v1}}', { count: labels.length, v1: labels.join(', ') }) : tr('Phân nhánh: {{v1}}', { v1: truncate(String(cfg.value ?? ''), 20) || '...' });
     }
     case 'logic.forEachContact': {
-      const srcMap: Record<string, string> = { friends: 'Bạn bè', group_members: 'Thành viên nhóm', labels: 'Nhãn Local', crm_contacts: 'CRM liên hệ' };
-      return `Gửi tới: ${srcMap[cfg.source] || cfg.source || 'Bạn bè'} (tối đa ${cfg.limit || 500})`;
+      const srcMap: Record<string, string> = { friends: tr('Bạn bè'), group_members: tr('Thành viên nhóm'), labels: tr('Nhãn Local'), crm_contacts: tr('CRM liên hệ') };
+      return tr('Gửi tới: {{v1}} (tối đa {{v2}})', { v1: srcMap[cfg.source] || cfg.source || tr('Bạn bè'), v2: cfg.limit || 500 });
     }
     case 'logic.forEach': {
       const list = truncate(String(cfg.array ?? '').trim(), 24);
       const max = Math.min(Math.max(1, Math.floor(Number(cfg.maxItems)) || 100), 100);
-      return list ? `Lặp ${list} (tối đa ${max})` : 'Chưa chọn danh sách';
+      return list ? tr('Lặp {{list}} (tối đa {{max}})', { list, max }) : tr('Chưa chọn danh sách');
     }
     default: return '';
   }
@@ -372,7 +374,7 @@ function getDataSummary(data: any): string {
   const cfg = data.config || {};
   switch (data.type) {
     case 'data.textFormat': return truncate(cfg.template, 30) || 'Format text';
-    case 'data.randomPick': return 'Chọn ngẫu nhiên';
+    case 'data.randomPick': return tr('Chọn ngẫu nhiên');
     case 'data.dateFormat': return `Format: ${cfg.format || 'datetime'}`;
     case 'data.jsonParse': return 'Parse JSON';
     default: return '';
@@ -392,18 +394,18 @@ function getIntegrationSummary(data: any): string {
   const cfg = data.config || {};
   switch (data.type) {
     case 'sheets.appendRow':  return `Ghi → ${truncate(cfg.sheetName || cfg.spreadsheetId, 22) || 'Sheet'}`;
-    case 'sheets.readValues': return `Đọc ${truncate(cfg.range, 22) || 'range...'}`;
-    case 'sheets.updateCell': return `Cập nhật ${cfg.range || '...'}`;
+    case 'sheets.readValues': return tr('Đọc {{v1}}', { v1: truncate(cfg.range, 22) || 'range...' });
+    case 'sheets.updateCell': return tr('Cập nhật {{v1}}', { v1: cfg.range || '...' });
     case 'ai.generateText':   {
       const platformName = cfg.platform ? cfg.platform.toUpperCase() : 'AI';
-      return `${platformName}: ${truncate(cfg.prompt, 28) || 'Sinh nội dung'}`;
+      return `${platformName}: ${truncate(cfg.prompt, 28) || tr('Sinh nội dung')}`;
     }
     case 'ai.classify':       {
       const platformName = cfg.platform ? cfg.platform.toUpperCase() : 'AI';
-      return `${platformName} Phân loại: ${truncate(cfg.categories, 20) || '...'}`;
+      return tr('{{platformName}} Phân loại: {{v1}}', { platformName, v1: truncate(cfg.categories, 20) || '...' });
     }
     case 'notify.telegram':   return `Telegram → ${truncate(cfg.chatId, 18) || 'Chat ID...'}`;
-    case 'notify.discord':    return `${truncate(cfg.webhookUrl ? 'Discord webhook' : 'Chưa có webhook', 28)}`;
+    case 'notify.discord':    return `${truncate(cfg.webhookUrl ? 'Discord webhook' : tr('Chưa có webhook'), 28)}`;
     case 'notify.email':      return `Email → ${truncate(cfg.to, 24) || 'Email...'}`;
     case 'notify.notion':     return `Notion ${truncate(cfg.databaseId, 16) || 'DB...'}`;
     default: return '';

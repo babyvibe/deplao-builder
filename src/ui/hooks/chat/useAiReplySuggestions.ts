@@ -9,26 +9,26 @@ import {
 } from '@/lib/chat/composer/aiReplySuggestions';
 
 export interface AiReplySuggestionsView {
-  /** Gợi ý để hiện; rỗng = không hiện thanh. */
+  /** Suggestions to show; empty = do not show the bar. */
   suggestions: string[];
-  /** Đang gọi AI → xoay nhỏ ở nút AI (không hiện thanh "Đang gợi ý…"). */
+  /** AI call in progress → small spinner on the AI button (the "Đang gợi ý…" (Suggesting…) bar is not shown). */
   loading: boolean;
-  /** Đang gọi lại khi vẫn hiện gợi ý cũ (làm mờ gợi ý cũ). */
+  /** Calling again while the old suggestions are still shown (the old suggestions are dimmed). */
   refreshing: boolean;
-  /** Lỗi lần gọi AI gần nhất ('' = không). */
+  /** Error from the latest AI call ('' = none). */
   error: string;
-  /** Ẩn gợi ý (✕ / đã chọn): không hiện lại tới khi có tin mới. */
+  /** Suggestions hidden (✕ / picked): not shown again until a new message arrives. */
   dismiss: () => void;
-  /** Gọi lại ngay (vừa đổi trợ lý gợi ý). */
+  /** Call again right away (the suggestion assistant was just changed). */
   refresh: () => void;
 }
 
 const NONE: string[] = [];
 
 /**
- * Gợi ý trả lời AI của ô soạn tin (lib/chat/composer/aiReplySuggestions): thanh chỉ hiện khi đã có gợi ý từ trợ lý
- * "Gợi ý" của tài khoản. `enabled` = không ở phần bình luận, có hội thoại, chưa tắt (toàn bộ / tài khoản / hội thoại),
- * loại hội thoại được chọn ở menu Gợi ý AI. `topicId` = chủ đề diễn đàn Telegram đang mở (ngữ cảnh là tin của chủ đề).
+ * AI reply suggestions for the composer (lib/chat/composer/aiReplySuggestions): the bar only shows when the account's
+ * "Gợi ý" (Suggest) assistant has returned suggestions. `enabled` = not in the comments area, a conversation is open, not turned off (all / account / conversation),
+ * and the conversation type is selected in the AI suggestions menu. `topicId` = the open Telegram forum topic (the context is that topic's messages).
  */
 export function useAiReplySuggestions({ accountId, threadId, topicId, enabled, count }: {
   accountId: string | null | undefined;
@@ -55,7 +55,7 @@ export function useAiReplySuggestions({ accountId, threadId, topicId, enabled, c
     return () => suggester.close();
   }, [suggester, accountId, threadId, key, enabled, count]);
 
-  // Tin mới của người khác (useZaloEvents phát 'ai:newMessage')
+  // New messages from others (useZaloEvents emits 'ai:newMessage')
   useEffect(() => {
     const onNewMessage = (event: Event) => {
       const detail = (event as CustomEvent).detail;
@@ -69,7 +69,7 @@ export function useAiReplySuggestions({ accountId, threadId, topicId, enabled, c
   const suggestions = current ? state.suggestions : NONE;
   const visible = suggestions.length > 0;
 
-  // Thanh hiện / mất → ô soạn đổi chiều cao: khung chat đang ở cuối thì cuộn theo (useScrollFollow)
+  // Bar shows / hides → composer changes height: if the chat is at the bottom, it scrolls along (useScrollFollow)
   const visibleRef = useRef(false);
   useEffect(() => {
     if (visibleRef.current === visible) return;

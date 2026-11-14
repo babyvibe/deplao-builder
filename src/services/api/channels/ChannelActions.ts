@@ -1,11 +1,12 @@
 /**
- * ChannelActions — luồng thao tác chat theo kênh, MIRROR đúng cách UI đang làm
+ * ChannelActions: per-channel chat action flows, MIRRORING what the UI does
  * (src/ui/components/chat/window/, src/ui/lib/chat/forward/forwardSend.ts, MessageInput.tsx, src/ui/lib/channels/adapters/*).
  *
- * Chỉ gọi kênh IPC qua ctx.call — không gọi service/DB trực tiếp. Khi UI đổi luồng,
- * cập nhật file này theo (test chatAdapters.test.ts khoá tên kênh + tham số).
+ * Only calls IPC channels through ctx.call, never the service / DB directly. When the UI changes its flow,
+ * update this file too (the test chatAdapters.test.ts locks the channel names + parameters).
  */
 import { AccountInfo, ApiContext, ApiError } from '../types';
+import { tr } from '../../../shared/i18n';
 
 export type ThreadType = 'user' | 'group';
 
@@ -26,18 +27,18 @@ export function threadTypeName(n: any): ThreadType {
 }
 
 /**
- * Zalo IPC cần `auth` đúng như UI truyền (buildZaloAuth): cookies + imei + userAgent + accountId.
- * Lấy qua ctx.zaloAuth (cookies chỉ ở trong process). Không dùng auth rỗng: một số handler
- * (vd. zalo:getLabels) không có fallback theo accountId và có thể chọn nhầm tài khoản.
+ * Zalo IPC needs `auth` exactly as the UI passes it (buildZaloAuth): cookies + imei + userAgent + accountId.
+ * Obtained through ctx.zaloAuth (cookies only live inside the process). Do not use an empty auth: some handlers
+ * (e.g. zalo:getLabels) have no fallback by accountId and may pick the wrong account.
  */
 export function zaloAuth(ctx: ApiContext, accountId: string): Promise<Record<string, string>> {
     return ctx.zaloAuth(accountId);
 }
 
 /**
- * Chặn trước khi vào IPC: tài khoản phải online. Với Zalo, zaloIpc có fallback
- * "dùng connection duy nhất" khi không khớp tài khoản → bắt buộc kiểm tra ở đây để
- * không gửi nhầm từ tài khoản khác.
+ * Blocked before reaching IPC: the account must be online. For Zalo, zaloIpc has a fallback
+ * "use the only connection" when the account does not match, so the check must happen here so that
+ * a message is not sent from the wrong account.
  */
 export function requireOnline(acc: AccountInfo): void {
     if (!acc.online) {
@@ -46,15 +47,15 @@ export function requireOnline(acc: AccountInfo): void {
 }
 
 export function unsupported(acc: AccountInfo, action: string): never {
-    throw new ApiError(422, 'CHANNEL_UNSUPPORTED', `Kênh ${acc.channel} không hỗ trợ ${action}`);
+    throw new ApiError(422, 'CHANNEL_UNSUPPORTED', tr('Kênh {{channel}} không hỗ trợ {{action}}', { channel: acc.channel, action }));
 }
 
-/** Bản sao buildQuotePayload (MessageInput.tsx) — quote Zalo cần object gốc của tin. */
+/** Copy of buildQuotePayload (MessageInput.tsx): a Zalo quote needs the original message object. */
 export function buildQuotePayload(msg: any): string | null {
     if (!msg) return null;
     let content = msg.content || '';
     if (content && typeof content === 'string' && content.trim().startsWith('{')) {
-        try { content = JSON.parse(content); } catch { /* giữ chuỗi */ }
+        try { content = JSON.parse(content); } catch { /* keep the string */ }
     }
     return JSON.stringify({
         content,
@@ -79,7 +80,7 @@ function toUidMentions(mentions?: Mention[]): Array<{ uid: string; pos: number; 
     return mentions.map(m => ({ uid: String(m.user_id), pos: Number(m.offset) || 0, len: Number(m.length) || 0 }));
 }
 
-/** Lấy msgId từ kết quả gửi (mirror extractMsgIdFromResponse của UI). */
+/** Gets the msgId from the send result (mirrors the UI's extractMsgIdFromResponse). */
 export function extractSentId(res: any): { msg_id: string | null; cli_msg_id: string | null } {
     const r = res?.response ?? res;
     const msgId = r?.message?.msgId ?? r?.msgId ?? r?.messageId ?? res?.messageId ?? res?.msgId
@@ -88,7 +89,7 @@ export function extractSentId(res: any): { msg_id: string | null; cli_msg_id: st
     return { msg_id: msgId !== null && msgId !== undefined ? String(msgId) : null, cli_msg_id: cli !== null && cli !== undefined ? String(cli) : null };
 }
 
-// ─── Gửi ─────────────────────────────────────────────────────────────────────
+// ─── Send ─────────────────────────────────────────────────────────────────────
 
 export interface SendTextInput {
     threadId: string;
@@ -148,7 +149,7 @@ export type FileKind = 'image' | 'video' | 'audio' | 'file';
 export interface SendFileInput {
     threadId: string;
     threadType: ThreadType;
-    /** Đường dẫn tuyệt đối do server tạo (upload/thư viện) — không bao giờ nhận path từ client. */
+    /** Absolute path created by the server (upload / library): never accepts a path from the client. */
     filePath: string;
     kind: FileKind;
     caption?: string;
@@ -228,7 +229,7 @@ async function sendZaloVideo(ctx: ApiContext, acc: AccountInfo, input: SendFileI
     }
     const upVideo = await ctx.call('zalo:uploadVideoFile', { auth, videoPath: input.filePath, threadId: input.threadId, type }, { timeoutMs: 600_000 });
     const videoUrl: string = upVideo?.response?.fileUrl || '';
-    if (!videoUrl) throw new ApiError(502, 'UPSTREAM_ERROR', 'Upload video lên Zalo thất bại');
+    if (!videoUrl) throw new ApiError(502, 'UPSTREAM_ERROR', tr('Upload video lên Zalo thất bại'));
     const duration = Number(meta?.duration) || 0;
     const res = await ctx.call('zalo:sendVideo', {
         auth,
@@ -265,13 +266,13 @@ export async function sendLink(ctx: ApiContext, acc: AccountInfo, threadId: stri
     if (acc.channel === CHANNELS.ZALO) {
         return ctx.call('zalo:sendLink', { auth: await zaloAuth(ctx, acc.id), url, threadId, type: threadTypeNum(threadType), message: text || '' });
     }
-    // Kênh khác: link là tin nhắn văn bản.
+    // Other channels: the link is a plain text message.
     return sendText(ctx, acc, { threadId, threadType, text: text ? `${text}\n${url}` : url });
 }
 
-// ─── Thao tác trên tin đã có ────────────────────────────────────────────────
+// ─── Actions on existing messages ────────────────────────────────────────────────
 
-/** Mirror ChatWindow.handleUndo: thu hồi trên kênh rồi đánh dấu trong DB. */
+/** Mirrors ChatWindow.handleUndo: unsend on the channel, then mark it in the DB. */
 export async function recall(ctx: ApiContext, acc: AccountInfo, row: any): Promise<void> {
     requireOnline(acc);
     const threadId = String(row.thread_id);
@@ -305,7 +306,7 @@ export async function recall(ctx: ApiContext, acc: AccountInfo, row: any): Promi
     await ctx.call('db:markMessageRecalled', { zaloId: acc.id, msgId: String(row.msg_id), threadId });
 }
 
-/** Mirror ChatWindow reaction: Zalo dùng mã reactionType; 'NONE' = gỡ. */
+/** Mirrors the ChatWindow reaction: Zalo uses a reactionType code; 'NONE' = remove. */
 export async function react(ctx: ApiContext, acc: AccountInfo, row: any, emoji: string | null): Promise<void> {
     requireOnline(acc);
     const threadId = String(row.thread_id);
@@ -334,7 +335,7 @@ export async function react(ctx: ApiContext, acc: AccountInfo, row: any, emoji: 
     }
 }
 
-/** Bản sao EMOJI_TO_REACTION (src/ui/lib/chat/messages/emojiUtils.ts) — mã reaction Zalo theo emoji. */
+/** Copy of EMOJI_TO_REACTION (src/ui/lib/chat/messages/emojiUtils.ts): the Zalo reaction code per emoji. */
 export const EMOJI_TO_REACTION: Record<string, string> = {
     '❤️': 'HEART', '👍': 'LIKE', '😄': 'HAHA', '😮': 'WOW', '😢': 'CRY', '😡': 'ANGRY',
     '😘': 'KISS', '😂': 'TEARS_OF_JOY', '💩': 'SHIT', '🌹': 'ROSE', '💔': 'BROKEN_HEART',
@@ -350,8 +351,8 @@ export function zaloReactionKey(emoji: string): string {
 }
 
 /**
- * Mirror ChatWindow + sendSeenHelper.ts: đánh dấu đã đọc trong DB rồi báo "đã xem"
- * cho tin cuối cùng (Zalo) hoặc gọi kênh tương ứng (FB/TG).
+ * Mirrors ChatWindow + sendSeenHelper.ts: marks the message as read in the DB, then reports "đã xem" (seen)
+ * for the last message (Zalo) or calls the matching channel (FB/TG).
  */
 export async function markRead(ctx: ApiContext, acc: AccountInfo, threadId: string, threadType: ThreadType, lastRow: any | null): Promise<void> {
     await ctx.call('db:markAsRead', { zaloId: acc.id, contactId: threadId });
@@ -384,7 +385,7 @@ export async function markRead(ctx: ApiContext, acc: AccountInfo, threadId: stri
                 return;
         }
     } catch {
-        // Báo "đã xem" lên kênh là phụ: DB đã đánh dấu, không làm hỏng request.
+        // Reporting "đã xem" (seen) to the channel is secondary: the DB is already marked, and the request is not broken.
     }
 }
 
@@ -420,8 +421,8 @@ const BLOCKED_TYPES = ['chat.ecard', 'group.poll', 'chat.poll', 'chat.todo', 'ch
     'chat.recommended', 'chat.recommend', 'chat.location.new'];
 
 /**
- * Phân loại tin cho API forward — tập con của getForwardPlan (src/ui/lib/chat/forward/forwardSupport.ts).
- * Loại UI làm được nhưng API chưa (sticker, danh thiếp, link thẻ, tin thoại, rtf) → 'unsupported'.
+ * Classifies messages for the API forward: a subset of getForwardPlan (src/ui/lib/chat/forward/forwardSupport.ts).
+ * Types the UI can do but the API cannot yet (sticker, contact card, link card, voice message, rtf) → 'unsupported'.
  */
 export function forwardKind(row: any): ForwardKind {
     if (!row || row.is_recalled === 1 || row.status === 'recalled') return 'unsupported';
@@ -433,7 +434,7 @@ export function forwardKind(row: any): ForwardKind {
     try {
         const obj = typeof row.content === 'string' && row.content.trim().startsWith('{') ? JSON.parse(row.content) : null;
         if (obj && obj.action === 'rtf') return 'unsupported';
-    } catch { /* văn bản thường */ }
+    } catch { /* plain text */ }
     return messageText(row) ? 'text' : 'unsupported';
 }
 
@@ -447,16 +448,16 @@ function localMediaPath(row: any): string {
 }
 
 /**
- * Chuyển tiếp — mirror sendOneForward (src/ui/lib/chat/forward/forwardSend.ts) ở các nhánh chính:
- *  - văn bản → gửi lại văn bản (zca-js forwardMessage chỉ hỗ trợ text),
- *  - ảnh/video/file → gửi lại từ file local (tải về qua file:downloadMessageMedia nếu chưa có),
- *  - không có file: Facebook/Telegram dùng forward gốc của kênh.
+ * Forward: mirrors sendOneForward (src/ui/lib/chat/forward/forwardSend.ts) in its main branches:
+ *  - text → resend the text (zca-js forwardMessage only supports text),
+ *  - image/video/file → resend from the local file (downloaded first via file:downloadMessageMedia if not yet on the machine),
+ *  - no file: Facebook/Telegram use the channel's own forward.
  */
 export async function forward(ctx: ApiContext, acc: AccountInfo, row: any, targets: ForwardTarget[]): Promise<any[]> {
     requireOnline(acc);
     const kind = forwardKind(row);
     if (kind === 'unsupported') {
-        throw new ApiError(422, 'CHANNEL_UNSUPPORTED', 'Loại tin này chưa chuyển tiếp được qua API (chỉ văn bản, ảnh, video, file)');
+        throw new ApiError(422, 'CHANNEL_UNSUPPORTED', tr('Loại tin này chưa chuyển tiếp được qua API (chỉ văn bản, ảnh, video, file)'));
     }
     const results: any[] = [];
     if (kind === 'text') {
@@ -495,7 +496,7 @@ export async function forward(ctx: ApiContext, acc: AccountInfo, row: any, targe
             }
             return results;
         default:
-            throw new ApiError(502, 'UPSTREAM_ERROR', 'Không tải được tệp của tin nhắn (link đã hết hạn?) nên không chuyển tiếp được');
+            throw new ApiError(502, 'UPSTREAM_ERROR', tr('Không tải được tệp của tin nhắn (link đã hết hạn?) nên không chuyển tiếp được'));
     }
 }
 
@@ -513,7 +514,7 @@ export async function editMessage(ctx: ApiContext, acc: AccountInfo, row: any, t
     }
 }
 
-/** Text thuần của một tin (content có thể là JSON object với msg/title). */
+/** Plain text of a message (content may be a JSON object with msg/title). */
 export function messageText(row: any): string {
     const raw = row?.content;
     if (typeof raw !== 'string') return '';

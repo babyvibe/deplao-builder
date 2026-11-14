@@ -1,5 +1,5 @@
 /**
- * Thanh mời kết bạn: chỉ chat 1-1 (không nhóm, không My Documents của Zalo).
+ * Friend request bar: only for 1-1 chats (not groups, not Zalo My Documents).
  */
 import { isMyDocumentsThread } from '@/lib/chat/zalo/myDocuments';
 import FriendRequestBar from './FriendRequestBar';
@@ -15,7 +15,7 @@ export function FriendRequestArea({ activeAccountId, activeThreadId, allAccounts
   const contact = contactMap.get(activeThreadId);
   const isGroup = contact?.contact_type === 'group' || contact?.contact_type === '1';
   if (isGroup) return null;
-  // My Documents của Zalo không phải một người → không mời kết bạn
+  // Zalo My Documents is not a person → no friend request
   if (isMyDocumentsThread(allAccounts.find(a => a.zalo_id === activeAccountId), activeThreadId, contact?.avatar_url)) return null;
   return (
     <FriendRequestBar
@@ -24,8 +24,8 @@ export function FriendRequestArea({ activeAccountId, activeThreadId, allAccounts
       contact={contact}
       getAuth={getAuth}
       onReady={() => {
-        // Khi FriendRequestBar xuất hiện (async check xong) → thanh bar chiếm thêm chiều cao
-        // → cần scroll xuống bottom để không bị đẩy lên
+        // When FriendRequestBar appears (async check finished) → the bar takes up more height
+        // → needs to scroll to the bottom so it does not get pushed up
         requestAnimationFrame(() => {
           const el = messagesContainerRef.current;
           if (el) el.scrollTop = el.scrollHeight;

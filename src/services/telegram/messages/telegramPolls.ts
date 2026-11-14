@@ -1,14 +1,16 @@
 /**
- * Bình chọn Telegram (MessageMediaPoll): attachment `poll` lưu cùng tin (câu hỏi, lựa chọn, số người chọn) và cập nhật
- * kết quả về sau (UpdateMessagePoll Telegram đẩy về, messages.getPollResults khi hội thoại đang mở — như app Telegram).
- * Trước đây kết quả chỉ chụp lúc tin về nên Deplao hiện "0 lượt bình chọn" mãi trong khi Telegram đã có người chọn.
+ * Telegram poll (MessageMediaPoll): a `poll` attachment saved with the message (question, options, number of voters), and the results are updated
+ * afterwards (Telegram pushes UpdateMessagePoll, messages.getPollResults while the conversation is open, as in the Telegram app).
+ * Previously the results were only captured when the message arrived, so Deplao showed "0 lượt bình chọn" (0 votes) forever while Telegram already had voters.
  */
+
+import { tr } from '../../../shared/i18n';
 
 const optionKey = (option: unknown): string => Buffer.from((option as any) || []).toString('base64');
 
-/** attachment `poll` (dạng lưu trong messages.attachments) từ poll + results của Telegram. */
+/** `poll` attachment (saved form in messages.attachments) from the Telegram poll + results. */
 export function telegramPollAttachment(poll: any, results: any): Record<string, any> {
-  const question = String(poll?.question?.text || poll?.question || 'Bình chọn');
+  const question = String(poll?.question?.text || poll?.question || tr('Bình chọn'));
   const resultByOption = new Map<string, any>();
   for (const result of results?.results || []) resultByOption.set(optionKey(result?.option), result);
   return {
@@ -28,9 +30,9 @@ export function telegramPollAttachment(poll: any, results: any): Record<string, 
 }
 
 /**
- * Áp một cập nhật (`poll` khi bản thân bình chọn đổi, vd đóng / thêm lựa chọn; `results` = kết quả) lên attachments đã
- * lưu. Kết quả `min` không mang lựa chọn của chính mình → giữ "đã chọn" cũ; lựa chọn không kèm số người (Telegram ẩn
- * tới khi bỏ phiếu / đóng) → giữ số cũ. null = không phải tin bình chọn hoặc không đổi gì.
+ * Applies an update (`poll` when the poll itself changes, e.g. closed / option added; `results` = the results) to the saved attachments.
+ * A `min` result does not carry my own choice, so keep the old "đã chọn" (chosen) state; an option without a voter count (Telegram hides it
+ * until you vote or the poll closes) keeps the old count. null = not a poll message, or nothing changed.
  */
 export function mergeTelegramPollUpdate(attachments: unknown, update: { poll?: any; results?: any }): string | null {
   let list: any[];

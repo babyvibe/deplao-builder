@@ -1,6 +1,6 @@
 /**
- * Vòng đời hội thoại trong khung chat: đổi hội thoại → đặt lại mọi trạng thái (trước khi vẽ), cổng "sẵn sàng" (tin +
- * ghim đã tải), dự phòng khi tải lâu, cuộn xuống đáy lần đầu khi chiều cao đã ổn định, tắt lớp "Đang tải...".
+ * Conversation lifecycle in the chat window: switching conversation → reset every state (before painting), the "sẵn sàng" (ready) gate (messages +
+ * pins loaded), a fallback when loading is slow, scroll to the bottom on the first load once the height is stable, turn off the "Đang tải..." (Loading...) layer.
  */
 import { useEffect, useLayoutEffect } from 'react';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -13,7 +13,7 @@ export function useThreadLifecycle(list: MessageListState, deps: {
   msgs: any[];
   messagesLoading: boolean;
   pinsReady: boolean;
-  /** Đổi hội thoại: phần ngoài danh sách cần đặt lại (chọn nhiều tin, thanh chọn reaction) */
+  /** Switching conversation: the parts outside the list need resetting (multi-select, the reaction bar) */
   onThreadSwitch: () => void;
 }) {
   const {
@@ -25,15 +25,15 @@ export function useThreadLifecycle(list: MessageListState, deps: {
   } = list;
   const { activeAccountId, activeThreadId, threadKey, msgs, messagesLoading, pinsReady, onThreadSwitch } = deps;
 
-  // Reset khi đổi thread — DÙNG useLayoutEffect (chạy trước paint) để tránh
-  // "double flash": nếu dùng useEffect, first render vẫn giữ threadReady=true
-  // → messages container hiện ra với empty state (spinner) trước khi reset.
-  // useLayoutEffect đảm bảo reset state trước khi browser paint frame đầu tiên.
+  // Reset when switching threads. USES useLayoutEffect (runs before paint) to avoid
+  // "double flash": with useEffect, the first render would still keep threadReady=true
+  // → the messages container shows up with the empty state (spinner) before the reset.
+  // useLayoutEffect makes sure the state is reset before the browser paints the first frame.
   useLayoutEffect(() => {
     setHasMore(true);
     setOlderKnown(false);
     setLoadError(false);
-    // Lần tải tin cũ của hội thoại trước (nếu còn đang chạy) không được chặn / ghi đè hội thoại này
+    // An older-message load of the previous conversation (if still running) must not block or overwrite this conversation
     loadSeqRef.current++;
     loadingMoreRef.current = false;
     setLoadingMore(false);
@@ -41,10 +41,10 @@ export function useThreadLifecycle(list: MessageListState, deps: {
     setInitialScrollDone(false);
     setAtBottom(true);
     setIsViewingHistory(false);
-    prevLastMsgIdRef.current = '';      // reset để luôn trigger scroll khi load messages
+    prevLastMsgIdRef.current = '';      // reset so the scroll always triggers when the messages load
     shouldRestoreScrollRef.current = false;
     isInitialThreadLoadRef.current = true;
-    // Reset thread ready gate - ẩn UI cho đến khi data load xong
+    // Reset the thread ready gate: hide the UI until the data has loaded
     setThreadReady(false);
     setMessagesReady(false);
     setInitialLoading(true);
@@ -52,13 +52,13 @@ export function useThreadLifecycle(list: MessageListState, deps: {
     setInitialScrollDone(false);
     lastScrolledThreadRef.current = null;
     prevPinnedBarHeightRef.current = 0;
-    nearBottomRef.current = true; // hội thoại mới mở ở đáy (giá trị cũ có thể là của hội thoại trước)
-    // Phần ngoài danh sách (chế độ chọn nhiều tin, thanh chọn reaction của hội thoại trước)
+    nearBottomRef.current = true; // a newly opened conversation starts at the bottom (the old value may belong to the previous conversation)
+    // Outside the list (multi-select mode, the reaction bar of the previous conversation)
     onThreadSwitch();
     setLoadingSpinner(true);
   }, [activeAccountId, activeThreadId]);
 
-  // ─── Thread ready gate: set true khi messages đã có data trong store ────────
+  // ─── Thread ready gate: set to true when messages already have data in the store ────────
   useEffect(() => {
     if (!activeThreadId) {
       setMessagesReady(false);
@@ -76,10 +76,10 @@ export function useThreadLifecycle(list: MessageListState, deps: {
   useEffect(() => {
     if (!activeThreadId) return;
     setThreadReady(pinsReady && messagesReady);
-    // setInitialLoading(false); // chờ messages load
+    // setInitialLoading(false); // wait for the messages to load
   }, [pinsReady, messagesReady, activeThreadId]);
 
-  // ─── Safety fallback: nếu loading quá 3s mà vẫn chưa ready → force hiển thị ───
+  // ─── Safety fallback: if loading takes more than 3s and it is still not ready → force display ───
   useEffect(() => {
     if (!activeThreadId) return;
     const fallback = setTimeout(() => {
@@ -92,7 +92,7 @@ export function useThreadLifecycle(list: MessageListState, deps: {
     return () => clearTimeout(fallback);
   }, [activeThreadId]);
 
-  // ─── Clear initial loading khi messages thực sự có data ────────────────
+  // ─── Clear initial loading when the messages really have data ────────────────
   useEffect(() => {
     if (threadReady && messagesReady && initialLoading) {
       setInitialLoading(false);

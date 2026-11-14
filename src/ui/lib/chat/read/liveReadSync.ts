@@ -1,15 +1,15 @@
 /**
- * Báo "đã đọc" lên nền tảng cho hội thoại người dùng đang xem (Zalo "đã xem", Telegram ReadHistory / ReadDiscussion,
- * Facebook read receipt). Một chỗ chung cho mọi đường mở hội thoại và cho tin mới khi đang chat liên tục:
+ * Reports "read" to the platform for the conversation the user is viewing (Zalo "đã xem" (seen), Telegram ReadHistory / ReadDiscussion,
+ * Facebook read receipt). One shared place for every way a conversation is opened and for new messages while chatting continuously:
  *
- *  - Mở hội thoại chủ động (bấm danh sách, thông báo, Tab, QuickChat, nhắc hẹn) → báo ngay (`syncOpenedThread`).
- *  - Tin mới vào hội thoại đang hiện (trang Chat, cửa sổ đang focus) khi người dùng có thao tác chuột / phím trong 60 s →
- *    báo sau 0,8 s, gom cả loạt tin; mỗi hội thoại tối đa 1 lần / 1,5–3 s (`noteIncoming`). Không thao tác (bỏ máy đi)
- *    → ghi nhớ, báo khi người dùng thao tác lại (`noteUserActivity`).
- *  - Focus lại cửa sổ khi hội thoại đang mở → báo khi người dùng thao tác (`noteThreadShown`): lúc mở app, chưa động vào
- *    thì chưa báo.
- * Trước đây (từ 26.8.1) Telegram / Facebook chỉ báo khi bấm vào hội thoại: đang chat thì điện thoại vẫn hiện chưa đọc,
- * khách không thấy "đã xem"; Zalo báo theo tin mới nhất kể cả tin của mình / tin hệ thống nên Zalo không nhận.
+ *  - Opening a conversation on purpose (tapping the list, a notification, Tab, QuickChat, a reminder) → reports at once (`syncOpenedThread`).
+ *  - A new message arrives in the conversation on screen (Chat page, focused window) while the user has used the mouse / keyboard within 60 s →
+ *    reports after 0.8 s, grouping the whole batch; each conversation at most once per 1.5–3 s (`noteIncoming`). No activity (user walked away)
+ *    → remembered, reported when the user acts again (`noteUserActivity`).
+ *  - The window regains focus while a conversation is open → reported when the user acts (`noteThreadShown`): on app start, nothing is
+ *    reported until the user touches it.
+ * Before (from 26.8.1) Telegram / Facebook only reported when a conversation was tapped: while chatting, the phone still showed unread,
+ * and the customer did not see "đã xem"; Zalo reported based on the newest message even if it was the user's own / a system message, so Zalo did not receive it.
  */
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
@@ -26,19 +26,19 @@ import {
 
 export type { IncomingRef, ReadRow, ReadThreadRef } from './readSyncRules';
 
-/** Kết quả IPC `{ success: false }` = nền tảng từ chối → không ghi nhớ mốc, lần sau báo lại. */
+/** IPC result `{ success: false }` = the platform refused → the mark is not remembered, reported again next time. */
 type IpcResult = { success?: boolean } | null | undefined | void;
 
 export interface LiveReadEnv {
   now(): number;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(handle: unknown): void;
-  /** Hội thoại đang hiện trên màn hình: trang Chat, khung chat hiện, cửa sổ focus, đúng tài khoản / hội thoại / topic. */
+  /** Conversation shown on screen: Chat page, chat window visible, window focused, the right account / conversation / topic. */
   isThreadOnScreen(ref: ReadThreadRef): boolean;
   channelOf(accountId: string): string | undefined;
-  /** Tin đang có trong bộ nhớ của hội thoại (store), nếu có. */
+  /** Messages of the conversation already in memory (store), if any. */
   storeRows(ref: ReadThreadRef): ReadonlyArray<ReadRow> | undefined;
-  /** Tin mới nhất trong DB (Zalo cần tin thật của khách làm mốc khi bộ nhớ chưa có). */
+  /** Newest message in the DB (Zalo needs a real message from the customer as the mark when memory has none). */
   dbRows(ref: ReadThreadRef): Promise<ReadonlyArray<ReadRow>>;
   zaloSeen(ref: ReadThreadRef, payload: ReturnType<typeof zaloSeenPayload>): Promise<IpcResult>;
   telegramRead(ref: ReadThreadRef, opts: { historyOnly: boolean }): Promise<IpcResult>;
@@ -48,9 +48,9 @@ export interface LiveReadEnv {
 
 interface PendingRead {
   ref: ReadThreadRef;
-  /** Tin nhận mới nhất chưa báo (null = chưa biết → lấy từ bộ nhớ lúc báo). */
+  /** Newest received message not yet reported (null = unknown → taken from memory when reporting). */
   latest: IncomingRef | null;
-  /** Telegram: đọc cả @ / reaction (mở hội thoại, focus lại, có tin nhắc tới mình) thay vì chỉ ReadHistory. */
+  /** Telegram: also reads @ mentions / reactions (opening a conversation, refocusing, a message mentioning me) instead of only ReadHistory. */
   full: boolean;
 }
 
@@ -60,7 +60,7 @@ export function createLiveReadSync(env: LiveReadEnv) {
   let pending: PendingRead | null = null;
   let timer: unknown = null;
   let lastInputAt = 0;
-  /** Mốc đã báo của từng hội thoại: lúc báo + id tin nhận mới nhất đã báo. */
+  /** Mark already reported for each conversation: the time it was reported + the id of the newest received message reported. */
   const synced = new Map<string, { at: number; marker: string }>();
   const busy = new Set<string>();
 
@@ -100,7 +100,7 @@ export function createLiveReadSync(env: LiveReadEnv) {
     const key = keyOf(ref);
     let target = read.latest || newestIncoming(opts.rows ?? env.storeRows(ref), ref.accountId);
     if (!target && channel === 'zalo') target = newestIncoming(await env.dbRows(ref).catch(() => []), ref.accountId);
-    // Không có tin nhận nào: Zalo không có gì để "xem"; Telegram / Facebook chỉ báo khi mở hội thoại chủ động
+    // No received message: Zalo has nothing to "xem" (view); Telegram / Facebook only report when a conversation is opened on purpose
     if (!target && (channel === 'zalo' || !opts.force)) return;
     const marker = target ? target.msgId : `open:${env.now()}`;
     if (!opts.force && synced.get(key)?.marker === marker) return;
@@ -119,7 +119,7 @@ export function createLiveReadSync(env: LiveReadEnv) {
       }
       if (!result || result.success !== false) remember(key, marker);
     } catch {
-      // best effort — lần tin / thao tác sau báo lại
+      // best effort: reported again on the next message / action
     } finally {
       busy.delete(key);
     }
@@ -128,7 +128,7 @@ export function createLiveReadSync(env: LiveReadEnv) {
   async function flushPending(): Promise<void> {
     const read = pending;
     if (!read) return;
-    // Không còn hiện / người dùng không ở máy → giữ lại, báo khi họ xem lại (focus + thao tác)
+    // No longer shown / the user is away from the machine → keep it, report when they look again (focus + action)
     if (!env.isThreadOnScreen(read.ref) || !isUserPresent(env.now(), lastInputAt)) return;
     if (busy.has(keyOf(read.ref))) {
       schedule(LIVE_READ_DELAY_MS);
@@ -142,8 +142,8 @@ export function createLiveReadSync(env: LiveReadEnv) {
 
   return {
     /**
-     * Tin của người khác vào hội thoại đang hiện trên màn hình (cửa sổ đang focus) — người gọi đã kiểm. `msg` null khi
-     * tin không có id (lấy tin mới nhất trong bộ nhớ lúc báo).
+     * A message from someone else arrives in the conversation on screen (focused window): the caller has already checked. `msg` is null when
+     * the message has no id (the newest message in memory is used when reporting).
      */
     noteIncoming(ref: ReadThreadRef, msg: IncomingRef | null, opts: { mention?: boolean } = {}): void {
       if (!supported(ref)) return;
@@ -153,7 +153,7 @@ export function createLiveReadSync(env: LiveReadEnv) {
       if (isUserPresent(env.now(), lastInputAt)) schedule(LIVE_READ_DELAY_MS);
     },
 
-    /** Cửa sổ vừa focus lại khi hội thoại đang mở: báo khi người dùng có thao tác. */
+    /** The window just regained focus while a conversation is open: reported when the user acts. */
     noteThreadShown(ref: ReadThreadRef): void {
       if (!supported(ref)) return;
       if (!pending || keyOf(pending.ref) !== keyOf(ref)) pending = { ref, latest: null, full: true };
@@ -161,21 +161,21 @@ export function createLiveReadSync(env: LiveReadEnv) {
       if (isUserPresent(env.now(), lastInputAt)) schedule(PRESENCE_RESUME_DELAY_MS);
     },
 
-    /** Chuột / phím / cuộn trong cửa sổ. */
+    /** Mouse / keyboard / scroll in the window. */
     noteUserActivity(): void {
       lastInputAt = env.now();
       if (pending && timer === null && env.isThreadOnScreen(pending.ref)) schedule(PRESENCE_RESUME_DELAY_MS);
     },
 
     /**
-     * Người dùng chủ động mở hội thoại → báo ngay (không chờ, không bỏ qua dù đã báo tới cùng tin). `rows` = tin vừa tải
-     * (Zalo chọn tin nhận mới nhất làm mốc; không có thì đọc bộ nhớ / DB).
+     * The user opens a conversation on purpose → reports at once (no waiting, no skipping even if it was already reported up to the same message). `rows` = the messages just loaded
+     * (Zalo picks the newest received message as the mark; if there is none, memory / DB is read).
      */
     async syncOpenedThread(ref: ReadThreadRef, rows?: ReadonlyArray<ReadRow>): Promise<void> {
       if (!supported(ref)) return;
       let latest: IncomingRef | null = null;
       if (pending) {
-        // Mở hội thoại khác: tin chưa báo của hội thoại cũ giữ nguyên chưa đọc trên nền tảng (người dùng đã rời đi)
+        // Another conversation is opened: unreported messages of the old conversation stay unread on the platform (the user has left it)
         if (keyOf(pending.ref) === keyOf(ref)) latest = pending.latest;
         pending = null;
         stopTimer();
@@ -183,14 +183,14 @@ export function createLiveReadSync(env: LiveReadEnv) {
       await send({ ref, latest, full: true }, { force: true, rows });
     },
 
-    /** Test: trạng thái nội bộ. */
+    /** Test: internal state. */
     _debug: () => ({ pending: pending ? { ...pending } : null, hasTimer: timer !== null, lastInputAt }),
   };
 }
 
 export type LiveReadSync = ReturnType<typeof createLiveReadSync>;
 
-/** Khung chat đang hiện: trang Chat (màn hẹp thì phải đang ở màn chat, không phải danh sách). */
+/** The chat window is visible: Chat page (on a narrow screen it must be on the chat view, not the list). */
 export function isChatPaneVisible(): boolean {
   const app = useAppStore.getState();
   if (app.view !== 'chat') return false;
@@ -206,7 +206,7 @@ const browserEnv: LiveReadEnv = {
   clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   isThreadOnScreen(ref) {
     if (typeof document !== 'undefined' && (document.visibilityState === 'hidden' || !document.hasFocus())) return false;
-    // Popup Nhắn tin nhanh đang hiện hội thoại này (ở trang nào cũng được)
+    // The Quick Message popup shows this conversation (any page)
     const quick = useAppStore.getState().quickChatThread;
     if (quick && quick.zaloId === ref.accountId && quick.threadId === ref.threadId && !ref.topicId) return true;
     if (!isChatPaneVisible()) return false;
@@ -242,7 +242,7 @@ const browserEnv: LiveReadEnv = {
 
 export const liveReadSync = createLiveReadSync(browserEnv);
 
-/** Theo dõi người dùng có đang thao tác trong cửa sổ không (chuột di chuyển: tối đa 1 lần / giây). Trả hàm gỡ. */
+/** Tracks whether the user is acting in the window (mouse move: at most once per second). Returns an unsubscribe function. */
 export function installLiveReadPresence(sync: Pick<LiveReadSync, 'noteUserActivity'> = liveReadSync): () => void {
   if (typeof window === 'undefined') return () => undefined;
   let lastMove = 0;

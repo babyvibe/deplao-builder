@@ -1,16 +1,18 @@
 /**
- * Tin mẫu Facebook (Page / bot: generic, button, media, thẻ sản phẩm, xin đồng ý nhận "Ưu đãi và thông báo"…).
- * Facebook gửi dạng XMA (LightSpeed, qua Go bridge) hoặc `extensible_attachment.story_attachment` (MQTT / GraphQL).
- * Trước đây cả 3 đường đều bỏ phần chữ + nút → lưu tin `text` rỗng (bong bóng chỉ còn giờ).
+ * Facebook template messages (Page / bot: generic, button, media, product cards, asking consent to receive "Ưu đãi và thông báo" (Offers and notifications)…).
+ * Facebook sends them as XMA (LightSpeed, via the Go bridge) or as `extensible_attachment.story_attachment` (MQTT / GraphQL).
+ * Previously all 3 paths dropped the text + buttons → the message was saved with empty `text` (the bubble only showed the time).
  *
- * Mô hình chung cho main + renderer: chuẩn hoá về `FbTemplate` (lưu trong cột `attachments`, msg_type `fb.template`),
- * sinh chữ thay thế cho nội dung / xem trước / tìm kiếm, phân loại nút (mở link / gọi điện / postback).
- * Thuần — test ở src/__tests__/facebook/facebookTemplate.test.ts.
+ * Shared model for main + renderer: normalizes to `FbTemplate` (stored in the `attachments` column, msg_type `fb.template`),
+ * builds fallback text for content / preview / search, and classifies buttons (open link / call / postback).
+ * Pure functions: test in src/__tests__/facebook/facebookTemplate.test.ts.
  */
+
+import { tr } from '../i18n';
 
 export const FB_TEMPLATE_MSG_TYPE = 'fb.template';
 
-/** url: mở link · phone: số điện thoại · postback: nút của Page / bot (gửi lại tên nút cho Page) */
+/** url: open link · phone: phone number · postback: button of the Page / bot (sends the button title back to the Page) */
 export type FbTemplateButtonKind = 'url' | 'phone' | 'postback';
 
 export interface FbTemplateButton {
@@ -18,7 +20,7 @@ export interface FbTemplateButton {
   kind: FbTemplateButtonKind;
   url?: string;
   phone?: string;
-  /** Loại CTA gốc của Facebook (xma_web_url…), giữ để chẩn đoán. */
+  /** Facebook's original CTA type (xma_web_url…), kept for diagnosis. */
   rawType?: string;
 }
 
@@ -37,13 +39,13 @@ export interface FbTemplate {
   subtitle?: string;
   body?: string;
   footer?: string;
-  /** Tên miền / nguồn (link chia sẻ). */
+  /** Domain / source (shared link). */
   source?: string;
   imageUrl?: string;
-  /** Bấm vào thẻ mở link này. */
+  /** Tapping the card opens this link. */
   url?: string;
   buttons?: FbTemplateButton[];
-  /** Carousel (generic template nhiều thẻ). */
+  /** Carousel (generic template with several cards). */
   items?: FbTemplateItem[];
 }
 
@@ -57,7 +59,7 @@ function clean(value: unknown): string | undefined {
   return text ? text.slice(0, MAX_TEXT) : undefined;
 }
 
-/** l.php?u=… (link qua Facebook) → link thật; đường dẫn Facebook tương đối → tuyệt đối. */
+/** l.php?u=… (link through Facebook) → real link; relative Facebook paths → absolute. */
 export function unwrapFacebookRedirect(raw: unknown): string {
   const url = String(raw ?? '').trim();
   if (!url) return '';
@@ -66,7 +68,7 @@ export function unwrapFacebookRedirect(raw: unknown): string {
     try {
       const target = new URLSearchParams(redirect[1]).get('u');
       if (target) return target;
-    } catch { /* giữ nguyên */ }
+    } catch { /* keep as is */ }
   }
   if (url.startsWith('/') && !url.startsWith('//')) return `https://www.facebook.com${url}`;
   return url;
@@ -84,7 +86,7 @@ function phoneOf(raw: unknown): string | undefined {
   return candidate.replace(/\D/g, '').length >= 6 ? candidate : undefined;
 }
 
-/** Phân loại một nút: có link web → mở link; tel:/loại "phone|call" → số điện thoại; còn lại → postback. */
+/** Classify a button: has a web link → open link; tel: / type "phone|call" → phone number; otherwise → postback. */
 export function classifyFbButton(input: {
   title?: unknown; type?: unknown; url?: unknown; nativeUrl?: unknown;
 } | null | undefined): FbTemplateButton | null {
@@ -137,7 +139,7 @@ const bridgeButton = (raw: any) => classifyFbButton({
   title: raw?.title, type: raw?.type, url: raw?.url, nativeUrl: raw?.nativeUrl,
 });
 
-/** Thẻ từ Go bridge (Attachment type "template"; "link" cũng đọc được: fileName = tiêu đề, description = mô tả). */
+/** Card from the Go bridge (Attachment type "template"; "link" is also read: fileName = title, description = description). */
 export function templateFromBridgeAttachment(att: any): FbTemplate | null {
   if (!att || typeof att !== 'object') return null;
   return compactTemplate({
@@ -189,7 +191,7 @@ export function templateFromStoryAttachment(ext: any): FbTemplate | null {
   });
 }
 
-/** Thẻ đã lưu trong cột `attachments` (sau khi qua các hàm trên) — kiểm tra lại từng trường. */
+/** Card as stored in the `attachments` column (after the functions above) - check each field again. */
 export function normalizeStoredTemplate(raw: any): FbTemplate | null {
   if (!raw || typeof raw !== 'object') return null;
   const storedButton = (b: any): FbTemplateButton | null => {
@@ -220,7 +222,7 @@ export function normalizeStoredTemplate(raw: any): FbTemplate | null {
   });
 }
 
-/** Thẻ đầu tiên trong cột `attachments` của tin (JSON hoặc mảng). */
+/** First card in the message's `attachments` column (JSON or array). */
 export function fbTemplateFromAttachments(raw: unknown): FbTemplate | null {
   let list: unknown = raw;
   if (typeof raw === 'string') {
@@ -231,7 +233,7 @@ export function fbTemplateFromAttachments(raw: unknown): FbTemplate | null {
   return found ? normalizeStoredTemplate(found) : null;
 }
 
-/** Chữ thay thế của thẻ: nội dung tin, xem trước trong danh sách, tìm kiếm. Không bao giờ rỗng nếu thẻ có gì đó. */
+/** Fallback text for the card: message content, preview in the list, search. Never empty if the card has anything. */
 export function fbTemplateText(t: FbTemplate | null | undefined): string {
   if (!t) return '';
   const lines: string[] = [];
@@ -254,18 +256,18 @@ export function fbTemplateText(t: FbTemplate | null | undefined): string {
   return lines.join('\n');
 }
 
-/** Một dòng cho danh sách hội thoại (Facebook hiện "Tiêu đề - Mô tả"). */
+/** One line for the conversation list (Facebook shows "Tiêu đề - Mô tả" (Title - Description)). */
 export function fbTemplatePreview(t: FbTemplate | null | undefined): string {
   return fbTemplateText(t).split('\n').slice(0, 2).join(' - ');
 }
 
-/** Có nút postback (chỉ bấm chính xác được trên Messenger) → hiện thêm "Mở trên Messenger". */
+/** Has a postback button (can only be tapped correctly on Messenger) → also shows "Mở trên Messenger" (Open on Messenger). */
 export function fbTemplateHasPostback(t: FbTemplate | null | undefined): boolean {
   if (!t) return false;
   return !!(t.buttons?.some(b => b.kind === 'postback') || t.items?.some(i => i.buttons?.some(b => b.kind === 'postback')));
 }
 
-/** Nút + thẻ con (kèm nút của thẻ con) + link + ảnh. Thẻ chỉ có chữ = 0. */
+/** Buttons + child cards (with the child card's buttons) + link + image. A card with text only = 0. */
 export function fbTemplateRichness(t: FbTemplate | null | undefined): number {
   if (!t) return 0;
   const items = t.items || [];
@@ -277,8 +279,8 @@ const UNAVAILABLE_TITLE = /^(file đính kèm không hiển thị|attachment una
 const UNAVAILABLE_SUBTITLE = /^(file đính kèm này có thể đã bị gỡ|this attachment may have been removed)/i;
 
 /**
- * Thẻ thay thế "File đính kèm không hiển thị" (Attachment Unavailable): Facebook gửi bản này cho kênh MQTT cũ khi kênh
- * đó không vẽ được loại tin (vd tin có nút của Page). Bridge LightSpeed thường nhận đủ thẻ thật của cùng tin đó.
+ * Replacement card "File đính kèm không hiển thị" (Attachment Unavailable): Facebook sends this version to the old MQTT channel when that channel
+ * cannot draw the message type (e.g. a message with a Page button). The LightSpeed bridge usually receives all the real cards of the same message.
  */
 export function isFbUnavailableTemplate(t: FbTemplate | null | undefined): boolean {
   if (!t || fbTemplateRichness(t) > 0) return false;
@@ -286,9 +288,9 @@ export function isFbUnavailableTemplate(t: FbTemplate | null | undefined): boole
 }
 
 /**
- * MQTT và bridge cùng nhận một tin, bên ghi trước thắng: bản tới sau thay bản đã lưu khi bản đã lưu là thẻ thay thế
- * "File đính kèm không hiển thị" hoặc chỉ có chữ, còn bản tới sau có nút / thẻ con / link / ảnh. Không bao giờ thay bản
- * đầy đủ bằng bản nghèo hơn.
+ * MQTT and the bridge both receive the same message; whichever writes first wins: a later copy replaces the saved one when the saved one is the replacement card
+ * "File đính kèm không hiển thị" or text only, and the later copy has buttons / child cards / a link / an image. Never replace a complete
+ * copy with a poorer one.
  */
 export function shouldUpgradeFbTemplate(stored: FbTemplate | null | undefined, incoming: FbTemplate | null | undefined): boolean {
   if (!incoming || isFbUnavailableTemplate(incoming)) return false;
@@ -297,9 +299,9 @@ export function shouldUpgradeFbTemplate(stored: FbTemplate | null | undefined, i
 }
 
 /**
- * Tin "chữ + nút" của Trang (button template, vd "Hãy chọn dịch vụ…" + "Tư vấn sản phẩm"): bridge gửi chữ là nội dung
- * tin, nút là thẻ không có chữ. Ghép chữ của tin vào thẻ để thẻ tự vẽ đủ chữ + nút, xem trước / tìm kiếm có chữ.
- * Thẻ đã có chữ riêng giữ nguyên.
+ * A Page "text + button" message (button template, e.g. "Hãy chọn dịch vụ…" + "Tư vấn sản phẩm"): the bridge sends the text as the message
+ * content and the button as a card with no text. Merge the message text into the card so the card draws the full text + button, and preview / search include the text.
+ * A card that already has its own text keeps it.
  */
 export function withTemplateText(t: FbTemplate | null, text: unknown): FbTemplate | null {
   if (!t) return t;
@@ -308,21 +310,21 @@ export function withTemplateText(t: FbTemplate | null, text: unknown): FbTemplat
   return { ...t, body };
 }
 
-/** Tin bridge không đọc được nội dung (E2EE xem một lần, thanh toán…): chữ thay thế thay vì bong bóng rỗng. */
+/** Bridge message whose content cannot be read (E2EE view-once, payments…): fallback text instead of an empty bubble. */
 export function fbUnsupportedText(kind: unknown): string {
   switch (String(kind || '')) {
-    case 'view_once': return '[Ảnh / video xem một lần — mở trên Messenger để xem]';
-    case 'payment': return '[Giao dịch thanh toán — mở trên Messenger để xem]';
-    case 'live_location': return '[Đang chia sẻ vị trí trực tiếp]';
-    case 'contact': return '[Danh thiếp — mở trên Messenger để xem]';
-    case 'group_invite': return '[Lời mời tham gia nhóm — mở trên Messenger để xem]';
-    case 'poll': return '[Bình chọn — mở trên Messenger để xem]';
-    case 'note_reply': return '[Trả lời ghi chú]';
-    default: return '[Tin nhắn chưa hỗ trợ — mở trên Messenger để xem]';
+    case 'view_once': return tr('[Ảnh / video xem một lần — mở trên Messenger để xem]');
+    case 'payment': return tr('[Giao dịch thanh toán — mở trên Messenger để xem]');
+    case 'live_location': return tr('[Đang chia sẻ vị trí trực tiếp]');
+    case 'contact': return tr('[Danh thiếp — mở trên Messenger để xem]');
+    case 'group_invite': return tr('[Lời mời tham gia nhóm — mở trên Messenger để xem]');
+    case 'poll': return tr('[Bình chọn — mở trên Messenger để xem]');
+    case 'note_reply': return tr('[Trả lời ghi chú]');
+    default: return tr('[Tin nhắn chưa hỗ trợ — mở trên Messenger để xem]');
   }
 }
 
-/** Mở hội thoại trên Messenger web (nút postback / tin chưa hỗ trợ cần thao tác chính xác). */
+/** Open the conversation on Messenger web (for postback buttons / unsupported messages that need an exact action). */
 export function messengerThreadUrl(threadId: string | number | null | undefined): string {
   const id = String(threadId ?? '').replace(/@.*$/, '').trim();
   return /^\d+$/.test(id) ? `https://www.facebook.com/messages/t/${id}` : 'https://www.facebook.com/messages';

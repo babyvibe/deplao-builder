@@ -1,9 +1,9 @@
 /**
- * messageTypeUtils.ts - Các helper xác định loại tin nhắn (message type detection)
- * Dùng chung cho ChatWindow, MessageBubbles, và các component khác.
+ * messageTypeUtils.ts - Helpers that determine the message type (message type detection)
+ * Shared by ChatWindow, MessageBubbles, and other components.
  */
 
-/** Kiểm tra tin nhắn danh thiếp (chat.recommended) */
+/** Checks whether the message is a contact card (chat.recommended) */
 export function isCardType(msgType: string, content: string): boolean {
   if (['chat.recommended', 'chat.recommend'].includes(msgType)) return true;
   if (isOaListType(msgType)) return true;
@@ -14,17 +14,17 @@ export function isCardType(msgType: string, content: string): boolean {
   return false;
 }
 
-/** Bản tin của Official Account Zalo (content là mảng bài viết) — hiển thị bằng OaListBubble */
+/** Zalo Official Account news (content is an array of articles), shown with OaListBubble */
 export function isOaListType(msgType: string): boolean {
   return msgType === 'chat.list.action';
 }
 
-/** Kiểm tra tin nhắn ecard (thông báo hệ thống dạng thẻ, vd: trở thành phó nhóm) */
+/** Checks whether the message is an ecard (a system notice shown as a card, e.g. became a deputy group admin) */
 export function isEcardType(msgType: string): boolean {
   return msgType === 'chat.ecard';
 }
 
-/** Kiểm tra tin nhắn có phải file đính kèm không (không phải ảnh, không phải card) */
+/** Checks whether the message is a file attachment (not a photo, not a card) */
 export function isFileType(msgType: string, content: string, attachmentsStr?: string): boolean {
   if (isCardType(msgType, content)) return false;
   if (['share.file', 'share.link'].includes(msgType)) return true;
@@ -41,12 +41,12 @@ export function isFileType(msgType: string, content: string, attachmentsStr?: st
   return false;
 }
 
-/** Kiểm tra tin nhắn là sticker */
+/** Checks whether the message is a sticker */
 export function isStickerType(msgType: string): boolean {
   return msgType === 'chat.sticker' || msgType === 'sticker';
 }
 
-/** Kiểm tra tin nhắn webchat với action=rtf (tin nhắn có định dạng rich text) */
+/** Checks whether the message is a webchat message with action=rtf (a message with rich text formatting) */
 export function isRtfMsg(msgType: string, content: string): boolean {
   if (msgType !== 'webchat') return false;
   try {
@@ -56,13 +56,13 @@ export function isRtfMsg(msgType: string, content: string): boolean {
   return false;
 }
 
-/** Kiểm tra tin nhắn có phải media (ảnh) không - loại trừ file và card */
+/** Checks whether the message is media (a photo), excluding files and cards */
 export function isMediaType(msgType: string, content: string, attachmentsStr?: string): boolean {
   if (isCardType(msgType, content)) return false;
   if (isBankCardType(msgType, content)) return false;
   if (['share.file', 'share.link'].includes(msgType)) return false;
-  if (msgType === 'chat.video.msg') return false; // video được xử lý riêng
-  if (msgType === 'chat.voice' || msgType === 'audio' || msgType === 'voice') return false; // voice được xử lý riêng
+  if (msgType === 'chat.video.msg') return false; // video is handled separately
+  if (msgType === 'chat.voice' || msgType === 'audio' || msgType === 'voice') return false; // voice is handled separately
   if (msgType === 'photo' || msgType === 'image' || msgType === 'chat.photo') return true;
 
   // Telegram/Facebook: file with image MIME type or image extension → treat as media.
@@ -88,7 +88,7 @@ export function isMediaType(msgType: string, content: string, attachmentsStr?: s
   try {
     const parsed = JSON.parse(content);
     if (parsed && typeof parsed === 'object') {
-      // params có thể là string JSON hoặc object
+      // params can be a JSON string or an object
       let paramsObj: any = parsed.params;
       if (typeof paramsObj === 'string') {
         try { paramsObj = JSON.parse(paramsObj); } catch { paramsObj = null; }
@@ -101,31 +101,31 @@ export function isMediaType(msgType: string, content: string, attachmentsStr?: s
   return false;
 }
 
-/** Kiểm tra tin nhắn video (bao gồm video_note của Telegram) */
+/** Checks whether the message is a video (including Telegram's video_note) */
 export function isVideoType(msgType: string): boolean {
   return msgType === 'chat.video.msg' || msgType === 'video' || msgType === 'video_note';
 }
 
-/** Kiểm tra tin nhắn voice */
+/** Checks whether the message is a voice message */
 export function isVoiceType(msgType: string): boolean {
   return msgType === 'chat.voice' || msgType === 'audio' || msgType === 'voice';
 }
 
-/** Kiểm tra tin nhắn vị trí */
+/** Checks whether the message is a location */
 export function isLocationType(msgType: string): boolean {
   return msgType === 'chat.location.new';
 }
 
-/** Kiểm tra tin nhắn thẻ ngân hàng (chat.webcontent + zinstant.bankcard) */
+/** Checks whether the message is a bank card (chat.webcontent + zinstant.bankcard) */
 export function isBankCardType(msgType: string, content: string): boolean {
-  // Ưu tiên check msgType trước
+  // Check msgType first
   if (msgType === 'chat.webcontent' || msgType === 'webchat') {
     try {
       const parsed = JSON.parse(content);
       if (parsed?.action === 'zinstant.bankcard') return true;
     } catch {}
   }
-  // Fallback: kiểm tra content bất kể msgType (phòng trường hợp Zalo đổi msgType)
+  // Fallback: check the content regardless of msgType (in case Zalo changes msgType)
   if (content && content.includes('zinstant.bankcard')) {
     try {
       const parsed = JSON.parse(content);

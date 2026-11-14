@@ -1,16 +1,17 @@
 /**
- * Facebook trong khung chat: DB hết tin cũ → một trang cũ hơn qua bridge (LightSpeed FetchMessagesTask, lưu DB). Thành
- * viên nhóm / người gửi: chỉ dữ liệu đã lưu.
+ * Facebook in the chat window: when the DB has no older messages → fetch one older page through the bridge (LightSpeed FetchMessagesTask, saved to the DB). Group
+ * members / senders: saved data only.
  */
 import { useAppStore } from '@/store/app/appStore';
 import ipc from '@/lib/ipc';
 import type { ChatWindowChannel, OlderFromServerArgs, OlderFromServerResult } from '../types';
+import { tr } from '../../../../../../shared/i18n';
 
-/** Mã lỗi "dừng tải, không báo lỗi" (mở / cuộn lại sau sẽ thử lại) */
+/** Error code "dừng tải, không báo lỗi" (stop loading, show no error) (opening / scrolling again later will retry) */
 const FACEBOOK_OLDER_STOP_CODES = ['E2EE', 'BRIDGE_OLD', 'BRIDGE_DOWN', 'NOT_CONNECTED', 'BUSY', 'COOLDOWN', 'RISK', 'CANCELLED'];
 
 async function fetchOlderFromServer({ accountId, threadId, oldest, before }: OlderFromServerArgs): Promise<OlderFromServerResult> {
-  // DB đã hết → một trang tin cũ hơn qua bridge (LightSpeed FetchMessagesTask, lưu DB) rồi đọc lại DB
+  // DB has no more → fetch one older page through the bridge (LightSpeed FetchMessagesTask, saved to the DB), then read the DB again
   const fbRes: any = await ipc.fb?.fetchOlderMessages({
     accountId,
     threadId,
@@ -21,12 +22,12 @@ async function fetchOlderFromServer({ accountId, threadId, oldest, before }: Old
     return { stored: fbRes.stored || 0, hasMore: !!fbRes.hasMoreBefore };
   }
   if (FACEBOOK_OLDER_STOP_CODES.includes(fbRes?.code)) {
-    // Mã hoá đầu cuối / bridge cũ / bridge đang kết nối lại / đang tải nhiều (nhịp người dùng thật) / Facebook có
-    // dấu hiệu hạn chế: dừng, không báo lỗi mỗi lần mở hội thoại (mở / cuộn lại sau sẽ thử lại)
-    if (fbRes?.code === 'RISK') useAppStore.getState().showNotification(fbRes.error || 'Facebook có dấu hiệu hạn chế — tạm dừng tải tin cũ', 'warning');
+    // End-to-end encryption / old bridge / bridge reconnecting / loading many pages (at a real user's pace) / Facebook shows
+    // signs of restriction: stop, show no error on each conversation open (opening / scrolling again later will retry)
+    if (fbRes?.code === 'RISK') useAppStore.getState().showNotification(fbRes.error || tr('Facebook có dấu hiệu hạn chế — tạm dừng tải tin cũ'), 'warning');
     return { stored: 0, hasMore: false };
   }
-  // Facebook chậm trả lời → "Lỗi - Thử lại", giữ hasMore
+  // Facebook is slow to respond → "Lỗi - Thử lại" (Error - Retry), keep hasMore
   throw new Error(fbRes?.error || 'Facebook fetchOlderMessages failed');
 }
 

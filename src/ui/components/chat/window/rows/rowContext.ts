@@ -1,7 +1,7 @@
 /**
- * Dữ liệu một hàng tin cần từ khung chat (hội thoại, gom tin, người gửi, chọn nhiều tin, popup, thao tác…). Khung chat
- * dựng 1 lần / lần vẽ rồi truyền cho renderMessageRow; hàng tin không tự subscribe store (vẽ lại cùng khung như trước).
- * Thêm thứ hàng tin cần: thêm tên vào nhóm tương ứng ở đây + chỗ dựng ở window/ChatWindow.tsx.
+ * Data one message row needs from the chat window (conversation, message grouping, sender, multi-select, popups, actions…). The chat window
+ * builds it once per render and passes it to renderMessageRow; a message row does not subscribe to the store itself (it redraws with the window, as before).
+ * To add something a row needs: add the name to the matching group here + the build step in window/ChatWindow.tsx.
  */
 import type React from 'react';
 import type { useQuickErpAccess } from '@/hooks/erp/useQuickErpAccess';
@@ -39,55 +39,55 @@ interface RowErp {
 }
 
 export type MessageRowContext =
-  // Hội thoại đang mở (useOpenThread)
+  // Open conversation (useOpenThread)
   Pick<OpenThread, 'activeAccountId' | 'activeThreadId' | 'activeContact' | 'channelCap' | 'msgs' | 'contactList' | 'threadReceipt' | 'telegramGroupAdmins' | 'postReplierPeers' | 'searchHighlightQuery' | 'updateContact' | 'removeMessage' | 'setReplyTo'>
   // Gom tin (useMessageGrouping)
   & Pick<MessageGrouping, 'groupedFirstMsgs' | 'groupedSkipIds' | 'pollSkipIds' | 'groupedStickerFirstMsgs' | 'groupedStickerSkipIds' | 'dayStartIds' | 'msgIndexById' | 'findMsgById' | 'msgTypeCache' | 'getRowMsgIds'>
-  // Người gửi (useSenderDirectory)
+  // Sender (useSenderDirectory)
   & Pick<SenderDirectory, 'getContact' | 'getGroupMember' | 'groupMembers' | 'isGroupAdmin' | 'resolveQuoteAuthor'>
-  // Trạng thái hiển thị hàng (useRowDisplayState)
+  // Row display state (useRowDisplayState)
   & Pick<RowDisplayState, 'failedMsgAvatars' | 'setFailedMsgAvatars' | 'avatarRefreshAttempted' | 'revealedRecallIds' | 'setRevealedRecallIds' | 'revealedEditIds' | 'setRevealedEditIds'>
-  // Chọn nhiều tin (useMessageSelection)
+  // Multi-select (useMessageSelection)
   & Pick<MessageSelection, 'isSelecting' | 'selectedMsgIds' | 'setSelectedMsgIds' | 'dragSelectRef' | 'clickSuppressUntilRef'>
   // Menu / popup (useChatWindowDialogs)
   & Pick<ChatWindowDialogs, 'setContextMenu' | 'setErpDraft' | 'setManageGroupOpen' | 'setReactionPopup' | 'setUserProfilePopup'>
-  // Xem ảnh / video (useMediaViewers)
+  // Photo / video viewer (useMediaViewers)
   & Pick<MediaViewers, 'openViewer' | 'openImageList' | 'openVideoPlayer'>
-  // Thao tác trên tin (useMessageActions / useJumpToMessage)
+  // Message actions (useMessageActions / useJumpToMessage)
   & Pick<RowActions, 'handleReact' | 'handleCancelReaction' | 'handleScrollToMsg'>
-  // Cảm xúc: thanh chọn khi rê chuột + reaction dùng được của hội thoại Telegram
+  // Reactions: the hover reaction bar + the reactions usable in the Telegram conversation
   & Pick<RowReactions, 'telegramReactions' | 'reactionPickerMsgId' | 'openReactionPicker' | 'armReactionPicker' | 'scheduleCloseReactionPicker' | 'closeReactionPicker'>
-  // Quản lý công việc (lịch hẹn / ghi chú từ tin)
+  // Task management (calendar appointment / note from a message)
   & Pick<RowErp, 'erpAccess'>;
 
-/** Giá trị renderMessageRow tính cho một hàng, truyền xuống các phần của hàng (Pick<RowLocals, …>) */
+/** Value that renderMessageRow computes for one row, passed down to the parts of the row (Pick<RowLocals, …>) */
 export interface RowLocals {
   msg: any;
   idx: number;
   isSent: boolean;
-  /** Mốc ngày trước hàng (tin hiển thị đầu tiên của ngày) hoặc null */
+  /** Date marker before the row (the first displayed message of the day), or null */
   daySeparator: React.ReactNode;
-  /** Hàng Telegram cũ lưu nhầm sự kiện ghim thành tin "đã xoá" → dòng thông báo */
+  /** Old Telegram row that saved a pin event as a "đã xoá" (deleted) message → notice line */
   isTelegramPinnedNotice: boolean;
-  /** Tin cuối của lượt cùng người gửi → hiện ảnh đại diện */
+  /** Last message of a run from the same sender → show the avatar */
   isLastInRun: boolean;
   displayName: string;
   avatarUrl: string;
-  /** Ảnh đại diện chữ (màu theo người gửi) khi không có / lỗi ảnh */
+  /** Letter avatar (color by sender) when there is no photo or the photo fails */
   senderAvatarFallback: React.ReactNode;
-  /** Ảnh / album / file / thẻ / sticker…: không có bong bóng chữ */
+  /** Photo / album / file / card / sticker…: no text bubble */
   isNoBubbleMsg: boolean;
-  /** Tin trả lời loại ảnh / file: một khung bao cả trích dẫn lẫn nội dung */
+  /** Reply message of a photo / file type: one frame wrapping both the quote and the content */
   quoteShell: boolean;
-  /** Bài đăng kênh Telegram: ảnh / album / video sát mép khung bài */
+  /** Telegram channel post: photo / album / video flush with the post frame */
   postEdgeMedia: boolean;
   telegramPostMeta: ReturnType<typeof getTelegramPostMeta>;
   postStats: ReturnType<typeof pickTelegramPostStats> | null;
-  /** Tin định dạng phong phú Telegram (tiêu đề, danh sách, bảng…) */
+  /** Telegram rich-format message (headings, lists, tables…) */
   richBlocks: ReturnType<typeof getRichMessageBlocks>;
-  /** Nội dung chữ đã parse (rỗng với tin media / thẻ…) */
+  /** Parsed text content (empty for media / card messages…) */
   content: string;
-  /** Giờ gửi chung dòng chữ cuối (tin chữ thường) */
+  /** Send time on the same line as the last text (plain text messages) */
   inlineTime: boolean;
   outgoingStatus: ReturnType<typeof outgoingMessageStatus>;
   reactionCounts: ReturnType<typeof parseReactions>;

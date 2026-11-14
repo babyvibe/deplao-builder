@@ -18,6 +18,7 @@ import { Spinner } from '@/components/common/PageLoading';
 import type { Channel } from '@/../configs/channels/channelConfig';
 import { channelSupports, resolveAccountChannel, getChannelLabel } from '@/../configs/channels/channelConfig';
 import * as channelIpc from '@/lib/channels/channelIpc';
+import { tr } from '../../../shared/i18n';
 
 interface AccountCardProps {
   account: AccountInfo;
@@ -47,17 +48,17 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
 
-  // listenerActive: undefined = chưa biết, true = OK, false = chết
+  // listenerActive: undefined = unknown, true = OK, false = dead
   const listenerDead = acc.listenerActive === false;
 
   const handleReconnect = async () => {
     if (onReconnect && isZaloAcc) { onReconnect(acc); return; }
-    showNotification(`Đang kết nối ${acc.full_name || acc.zalo_id}...`, 'info');
+    showNotification(tr('Đang kết nối {{v1}}...', { v1: acc.full_name || acc.zalo_id }), 'info');
     try {
       if (!isZaloAcc) {
-        // Truyền auth phù hợp cho từng loại Telegram
-        // Telegram User: stringSession (lưu trong cookies column)
-        // Telegram Bot: botToken (lưu trong cookies column)
+        // Pass the right auth for each Telegram type
+        // Telegram User: stringSession (stored in the cookies column)
+        // Telegram Bot: botToken (stored in the cookies column)
         const auth = isTelegramUser(accountChannel)
           ? { stringSession: acc.cookies }
           : isTelegramBot(accountChannel)
@@ -67,10 +68,10 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
         if (res?.success) {
           updateAccountStatus(acc.zalo_id, true, true);
           updateListenerActive(acc.zalo_id, true);
-          showNotification(`Kết nối ${getChannelLabel(accountChannel)} thành công!`, 'success');
+          showNotification(tr('Kết nối {{v1}} thành công!', { v1: getChannelLabel(accountChannel) }), 'success');
         } else {
           updateListenerActive(acc.zalo_id, false);
-          showNotification(res?.error || `Kết nối ${getChannelLabel(accountChannel)} thất bại`, 'error');
+          showNotification(res?.error || tr('Kết nối {{v1}} thất bại', { v1: getChannelLabel(accountChannel) }), 'error');
         }
         return;
       }
@@ -79,10 +80,10 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
       if (res?.success) {
         updateAccountStatus(acc.zalo_id, true, true);
         updateListenerActive(acc.zalo_id, true);
-        showNotification('Kết nối thành công!', 'success');
+        showNotification(tr('Kết nối thành công!'), 'success');
       } else {
         updateListenerActive(acc.zalo_id, false);
-        showNotification(res?.error || 'Kết nối thất bại', 'error');
+        showNotification(res?.error || tr('Kết nối thất bại'), 'error');
       }
     } catch (err: any) {
       updateListenerActive(acc.zalo_id, false);
@@ -98,7 +99,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
         await ipc.login?.disconnectAccount(acc.zalo_id);
       }
       updateAccountStatus(acc.zalo_id, false, false);
-      showNotification('Đã ngắt kết nối', 'info');
+      showNotification(tr('Đã ngắt kết nối'), 'info');
     } catch (err: any) {
       showNotification(err.message, 'error');
     }
@@ -107,10 +108,10 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
   const handleDeleteAccount = async () => {
     setMenuOpen(false);
     const ok = await showConfirm({
-      title: 'Xóa tài khoản này?',
-      // Mọi kênh (cả Facebook) giữ dữ liệu; xoá cả dữ liệu chỉ ở Cài đặt → Tài khoản
-      message: `Tài khoản "${acc.full_name || acc.zalo_id}" sẽ bị xóa khỏi ứng dụng. Tin nhắn, hội thoại và dữ liệu CRM vẫn được giữ — đăng nhập lại đúng tài khoản này để dùng tiếp. Muốn xóa cả dữ liệu, dùng Cài đặt → Tài khoản → "Xoá tất cả dữ liệu".`,
-      confirmText: 'Xóa',
+      title: tr('Xóa tài khoản này?'),
+      // All channels (including Facebook) keep their data; delete the data too only in Settings → Accounts
+      message: tr('Tài khoản "{{v1}}" sẽ bị xóa khỏi ứng dụng. Tin nhắn, hội thoại và dữ liệu CRM vẫn được giữ — đăng nhập lại đúng tài khoản này để dùng tiếp. Muốn xóa cả dữ liệu, dùng Cài đặt → Tài khoản → "Xoá tất cả dữ liệu".', { v1: acc.full_name || acc.zalo_id }),
+      confirmText: tr('Xóa'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -118,18 +119,18 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
       const res = await ipc.fb?.removeAccount({ accountId: acc.zalo_id });
       if (res?.success) {
         useAccountStore.getState().removeAccount(acc.zalo_id);
-        showNotification('Đã xóa tài khoản Facebook', 'success');
+        showNotification(tr('Đã xóa tài khoản Facebook'), 'success');
       } else {
-        showNotification(res?.error || 'Xóa tài khoản thất bại', 'error');
+        showNotification(res?.error || tr('Xóa tài khoản thất bại'), 'error');
       }
       return;
     }
     const res = await ipc.login?.removeAccount(acc.zalo_id);
     if (res?.success) {
       useAccountStore.getState().removeAccount(acc.zalo_id);
-      showNotification('Đã xóa tài khoản', 'success');
+      showNotification(tr('Đã xóa tài khoản'), 'success');
     } else {
-      showNotification(extractApiError(res, 'Xóa tài khoản thất bại'), 'error');
+      showNotification(extractApiError(res, tr('Xóa tài khoản thất bại')), 'error');
     }
   };
 
@@ -140,7 +141,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
       const channel = accountChannel;
 
       if (isTelegram(channel)) {
-        // Telegram: reset avatar cache và fetch lại avatar
+        // Telegram: reset the avatar cache and fetch the avatar again
         try {
           const { resetAvatarCache } = await import('../../../utils/telegram/avatarFetchCache');
           resetAvatarCache(acc.zalo_id, acc.zalo_id);
@@ -152,16 +153,16 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
             const res = await ipc.telegramUser?.fetchSelfAvatar?.(acc.zalo_id);
             if (res?.success && res.avatarUrl) {
               useAccountStore.getState().updateAccount(acc.zalo_id, { avatar_url: res.avatarUrl });
-              showNotification('Đã cập nhật avatar Telegram!', 'success');
+              showNotification(tr('Đã cập nhật avatar Telegram!'), 'success');
             } else {
-              showNotification(res?.error || 'Không thể tải avatar. Đảm bảo Telegram đang kết nối.', 'info');
+              showNotification(res?.error || tr('Không thể tải avatar. Đảm bảo Telegram đang kết nối.'), 'info');
             }
           } catch {
-            showNotification('Đảm bảo Telegram đang kết nối để cập nhật avatar.', 'info');
+            showNotification(tr('Đảm bảo Telegram đang kết nối để cập nhật avatar.'), 'info');
           }
         } else {
-          // Telegram Bot: bot không có avatar riêng
-          showNotification('Bot không có avatar. Thông tin được cập nhật tự động khi có tin nhắn mới.', 'info');
+          // Telegram Bot: the bot has no avatar of its own
+          showNotification(tr('Bot không có avatar. Thông tin được cập nhật tự động khi có tin nhắn mới.'), 'info');
         }
       } else {
         // Zalo: existing logic
@@ -187,16 +188,16 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
             await DataAccessor.updateContactProfile({ zaloId: uid, contactId: uid, displayName, avatarUrl, phone });
             await DataAccessor.updateAccountPhone({ zaloId: uid, phone });
             useAccountStore.getState().updateAccount(uid, { phone });
-            showNotification('Đã cập nhật số điện thoại: ' + phone, 'success');
+            showNotification(tr('Đã cập nhật số điện thoại: {{phone}}', { phone }), 'success');
           } else {
-            showNotification('Thông tin đã cập nhật (SĐT không đổi)', 'info');
+            showNotification(tr('Thông tin đã cập nhật (SĐT không đổi)'), 'info');
           }
         } else {
-          showNotification('Không thể tải thông tin: ' + (res?.error || 'Lỗi không xác định'), 'error');
+          showNotification(tr('Không thể tải thông tin: {{v1}}', { v1: (res?.error || tr('Lỗi không xác định')) }), 'error');
         }
       }
     } catch (err: any) {
-      showNotification('Lỗi cập nhật: ' + err.message, 'error');
+      showNotification(tr('Lỗi cập nhật: {{message}}', { message: err.message }), 'error');
     } finally {
       setUpdatingInfo(false);
     }
@@ -215,29 +216,29 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
         if (Object.keys(updates).length > 0) {
           useAccountStore.getState().updateAccount(acc.zalo_id, updates);
         }
-        showNotification(`Đã cập nhật: ${res.name || acc.full_name}`, 'success');
+        showNotification(tr('Đã cập nhật: {{v1}}', { v1: res.name || acc.full_name }), 'success');
       } else {
-        showNotification(res?.error || 'Cập nhật thông tin FB thất bại', 'error');
+        showNotification(res?.error || tr('Cập nhật thông tin FB thất bại'), 'error');
       }
     } catch (err: any) {
-      showNotification('Lỗi cập nhật: ' + err.message, 'error');
+      showNotification(tr('Lỗi cập nhật: {{message}}', { message: err.message }), 'error');
     } finally {
       setUpdatingInfo(false);
     }
   };
 
-  // Trạng thái badge
+  // Badge status
   const statusBadge = (() => {
     if (listenerDead) {
-      return { label: '⚠ Listener chết', cls: 'bg-red-900/40 text-red-400 border border-red-700/50', dot: 'bg-red-400 animate-pulse' };
+      return { label: tr('⚠ Listener chết'), cls: 'bg-red-900/40 text-red-400 border border-red-700/50', dot: 'bg-red-400 animate-pulse' };
     }
     if (acc.isOnline) {
-      return { label: 'Online', cls: 'bg-green-900/40 text-green-400 border border-green-700/50', dot: 'bg-green-400' };
+      return { label: tr('Online'), cls: 'bg-green-900/40 text-green-400 border border-green-700/50', dot: 'bg-green-400' };
     }
     if (acc.isConnected) {
-      return { label: 'Đang kết nối', cls: 'bg-yellow-900/40 text-yellow-400 border border-yellow-700/50', dot: 'bg-yellow-400 animate-pulse' };
+      return { label: tr('Đang kết nối'), cls: 'bg-yellow-900/40 text-yellow-400 border border-yellow-700/50', dot: 'bg-yellow-400 animate-pulse' };
     }
-    return { label: 'Offline', cls: 'bg-muted/50 text-muted-foreground border border-input/50', dot: 'bg-accent' };
+    return { label: tr('Offline'), cls: 'bg-muted/50 text-muted-foreground border border-input/50', dot: 'bg-accent' };
   })();
 
   return (
@@ -250,7 +251,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
             <img src={toLocalMediaUrl(acc.avatar_url)} alt="" className="w-12 h-12 rounded-full object-cover"
               onError={() => {
                 setAvatarFailed(true);
-                // Retry: gọi API refresh avatar
+                // Retry: call the refresh avatar API
                 if (!avatarRetryDone.current) {
                   avatarRetryDone.current = true;
                   handleAvatarError({ ownerId: acc.zalo_id, contactId: acc.zalo_id, channel: acc.channel || CHANNEL.ZALO })
@@ -280,7 +281,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-foreground truncate flex items-center gap-1.5">
-            {acc.full_name || `${getChannelLabel(accountChannel)} Account`}
+            {acc.full_name || tr('{{v1}} Account', { v1: getChannelLabel(accountChannel) })}
             {listenerDead && (
               <span className="relative group flex-shrink-0">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-red-400">
@@ -288,13 +289,13 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                   <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
                 </svg>
                 <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-card border border-input rounded-lg text-[10px] text-red-300 whitespace-nowrap z-50 hidden group-hover:block shadow-lg">
-                  Listener bị ngắt - Thử kết nối lại hoặc quét QR mới
+                  {tr('Listener bị ngắt - Thử kết nối lại hoặc quét QR mới')}
                 </span>
               </span>
             )}
           </p>
           <p className="text-xs text-muted-foreground truncate">
-            <CopyableText value={isFacebookAcc ? `${acc.facebook_id || acc.zalo_id}` : acc.zalo_id} title="Click để copy UID" />
+            <CopyableText value={isFacebookAcc ? `${acc.facebook_id || acc.zalo_id}` : acc.zalo_id} title={tr('Click để copy UID')} />
           </p>
           {acc.phone ? (
             <p className="text-xs text-muted-foreground truncate mt-0.5">
@@ -311,7 +312,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
           <button
             onClick={() => setMenuOpen(v => !v)}
             className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            title="Tùy chọn"
+            title={tr('Tùy chọn')}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
               <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
@@ -333,7 +334,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                       <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
                     </svg>
                   )}
-                  {updatingInfo ? 'Đang cập nhật...' : 'Cập nhật thông tin'}
+                  {updatingInfo ? tr('Đang cập nhật...') : tr('Cập nhật thông tin')}
                 </button>
               ) : (
               <button
@@ -348,7 +349,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                     <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
                   </svg>
                 )}
-                {updatingInfo ? 'Đang cập nhật...' : 'Cập nhật thông tin'}
+                {updatingInfo ? tr('Đang cập nhật...') : tr('Cập nhật thông tin')}
               </button>
               )}
 
@@ -361,7 +362,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
                 </svg>
-                Mở Chat
+                {tr('Mở Chat')}
               </button>
 
               <button
@@ -369,9 +370,9 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                   setMenuOpen(false);
                   const uid = isFacebookAcc ? (acc.facebook_id || acc.zalo_id) : acc.zalo_id;
                   navigator.clipboard.writeText(uid).then(() => {
-                    showNotification('Đã sao chép UID: ' + uid, 'success');
+                    showNotification(tr('Đã sao chép UID: {{uid}}', { uid }), 'success');
                   }).catch(() => {
-                    showNotification('Không thể sao chép UID', 'error');
+                    showNotification(tr('Không thể sao chép UID'), 'error');
                   });
                 }}
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors"
@@ -380,7 +381,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                   <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                 </svg>
-                Copy UID
+                {tr('Copy UID')}
               </button>
 
               <div className="border-t border-border my-1" />
@@ -393,7 +394,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                   <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
                   <path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
                 </svg>
-                Xóa tài khoản
+                {tr('Xóa tài khoản')}
               </button>
             </div>
           )}
@@ -403,38 +404,38 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
 
       {/* Actions */}
       <div className="flex flex-col gap-2">
-        {/* Row 1: Chat + Connect/Disconnect - ẩn Chat khi listener chết */}
+        {/* Row 1: Chat + Connect/Disconnect - hide Chat when the listener is dead */}
         <div className="flex gap-2">
           {!listenerDead && (
             <button
               onClick={() => { setActiveAccount(acc.zalo_id); setView('chat'); }}
               className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs py-1.5 rounded-lg transition-colors font-medium"
             >
-              Chat
+              {tr('Chat')}
             </button>
           )}
 
-          {/* Chỉ hiện nút connect/disconnect khi listener KHÔNG chết */}
+          {/* Show the connect/disconnect button only when the listener is NOT dead */}
           {!employeeChatOnly && !listenerDead && (acc.isConnected ? (
             <button
-              title="Ngắt kết nối sẽ dừng nghe tin nhắn và đánh dấu tài khoản offline."
+              title={tr('Ngắt kết nối sẽ dừng nghe tin nhắn và đánh dấu tài khoản offline.')}
               onClick={handleDisconnect}
               className="flex-1 bg-muted hover:bg-accent text-foreground/80 text-xs py-1.5 rounded-lg transition-colors font-medium"
             >
-              Ngắt kết nối
+              {tr('Ngắt kết nối')}
             </button>
           ) : (
             <button
-              title="Kết nối lại để tiếp tục nhận tin nhắn."
+              title={tr('Kết nối lại để tiếp tục nhận tin nhắn.')}
               onClick={handleReconnect}
               className="flex-1 bg-orange-700 text-white-important hover:bg-accent text-foreground/80 text-xs py-1.5 rounded-lg transition-colors font-medium"
             >
-              Kết nối lại
+              {tr('Kết nối lại')}
             </button>
           ))}
         </div>
 
-        {/* Row 2: chỉ hiện khi listener chết - 2 nút Reconnect + Quét QR mới (Zalo) / Đăng nhập lại (FB, Telegram) */}
+        {/* Row 2: shown only when the listener is dead - 2 buttons: Reconnect + Scan new QR (Zalo) / Log in again (FB, Telegram) */}
         {!employeeChatOnly && listenerDead && (
           <div className="flex gap-2">
             <button
@@ -445,15 +446,15 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                 <polyline points="23 4 23 10 17 10" />
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
               </svg>
-              Reconnect
+              {tr('Reconnect')}
             </button>
             <button
               onClick={() => {
                 if (isZaloAcc) {
                   setAddAccountModalOpen(true);
                 } else {
-                  // Facebook / Telegram hết phiên: mở popup đăng nhập lại từ đầu (như thêm tài khoản mới).
-                  // Facebook chọn sẵn proxy đang dùng; đăng nhập đúng tài khoản cũ thì hội thoại/tin nhắn được giữ.
+                  // Facebook / Telegram session expired: open the login popup from scratch (like adding a new account).
+                  // Facebook preselects the proxy in use; logging in to the same old account keeps the conversations and messages.
                   setAddAccountModalOpen(true, accountChannel, isFacebookAcc ? acc.proxy_id ?? null : null);
                 }
               }}
@@ -466,7 +467,7 @@ export default function AccountCard({ account: acc, onReconnect, employeeChatOnl
                   <><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></>
                 )}
               </svg>
-              {isZaloAcc ? 'Quét QR mới' : 'Đăng nhập lại'}
+              {isZaloAcc ? tr('Quét QR mới') : tr('Đăng nhập lại')}
             </button>
           </div>
         )}

@@ -1,25 +1,27 @@
 /**
- * zaloZinstant.ts — tin "zinstant" của Zalo Official Account (msgType `chat.webcontent` / `chat.webcontent.v2`): bản tin,
- * thông báo ZNS, khuyến mãi. Zalo PC vẽ từ template HTML ở `data_url`; app dựng thẻ từ dữ liệu có sẵn trong tin:
- *   - chat.webcontent: params.customMsg.msg (chữ xem trước) + params.item.bundle_data.post (ảnh, tiêu đề, mô tả, link bài).
- *   - chat.webcontent.v2: zinstant_msg.customMsg + zinstant_data.data — JSON nén gzip + base64 ({ item, bundle_data:
- *     { sections: slider / title / p / cta } }), renderer giải nén rồi `applyZinstantData`.
- * Thẻ tài khoản ngân hàng (action `zinstant.bankcard`) KHÔNG thuộc đây (BankCardBubble).
+ * zaloZinstant.ts: Zalo Official Account "zinstant" messages (msgType `chat.webcontent` / `chat.webcontent.v2`): news posts,
+ * ZNS notifications, promotions. Zalo PC draws them from the HTML template at `data_url`; the app builds the card from the data already in the message:
+ *   - chat.webcontent: params.customMsg.msg (preview text) + params.item.bundle_data.post (image, title, description, post link).
+ *   - chat.webcontent.v2: zinstant_msg.customMsg + zinstant_data.data: gzip-compressed + base64 JSON ({ item, bundle_data:
+ *     { sections: slider / title / p / cta } }); the renderer decompresses it, then `applyZinstantData`.
+ * The bank account card (action `zinstant.bankcard`) is NOT covered here (BankCardBubble).
  */
+
+import { tr } from '../i18n';
 
 export interface ZinstantButton { text: string; url?: string; primary?: boolean }
 
 export interface ZinstantCard {
-  /** Chữ xem trước của OA (customMsg) — hiện khi thẻ không có tiêu đề / nội dung. */
+  /** The OA's preview text (customMsg), shown when the card has no title / content. */
   text: string;
   title?: string;
   description?: string;
   imageUrl?: string;
-  /** Link khi bấm ảnh / tiêu đề. */
+  /** Link opened when the image / title is clicked. */
   url?: string;
   paragraphs: string[];
   buttons: ZinstantButton[];
-  /** v2: dữ liệu thẻ còn nén (gzip + base64). */
+  /** v2: card data still compressed (gzip + base64). */
   packedData?: string;
 }
 
@@ -43,7 +45,7 @@ function customText(customMsg: any): string {
   return clean(msg?.vi) || clean(msg?.en);
 }
 
-/** Bỏ thẻ HTML đơn giản của template (<span class="param">…</span>), giải mã vài thực thể phổ biến. */
+/** Strips the template's simple HTML tags (<span class="param">…</span>) and decodes a few common entities. */
 export function stripZinstantHtml(text: string): string {
   return String(text || '')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -57,7 +59,7 @@ export function stripZinstantHtml(text: string): string {
     .trim();
 }
 
-/** Tin zinstant của OA (không tính thẻ ngân hàng). */
+/** An OA zinstant message (not counting the bank card). */
 export function isZinstantMsgType(msgType: string | null | undefined, content?: unknown): boolean {
   if (msgType === 'chat.webcontent.v2') return true;
   if (msgType !== 'chat.webcontent') return false;
@@ -76,7 +78,7 @@ function applyBundle(card: ZinstantCard, rawBundle: unknown): void {
     card.imageUrl = card.imageUrl || httpUrl(post.thumbnail);
     card.url = card.url || httpUrl(post.url);
     if (card.url && !card.buttons.some((button) => button.url === card.url)) {
-      card.buttons.push({ text: 'Xem chi tiết', url: card.url, primary: true });
+      card.buttons.push({ text: tr('Xem chi tiết'), url: card.url, primary: true });
     }
   }
 
@@ -109,7 +111,7 @@ function applyBundle(card: ZinstantCard, rawBundle: unknown): void {
   }
 }
 
-/** Dựng thẻ từ content của tin (chuỗi JSON hoặc object). `null` nếu không phải tin zinstant của OA. */
+/** Builds the card from the message's content (JSON string or object). `null` if it is not an OA zinstant message. */
 export function parseZinstantCard(content: unknown, msgType: string | null | undefined): ZinstantCard | null {
   if (!isZinstantMsgType(msgType, content)) return null;
   const parsed = parseJson(content);
@@ -130,17 +132,17 @@ export function parseZinstantCard(content: unknown, msgType: string | null | und
   return card;
 }
 
-/** Gắn dữ liệu đã giải nén của chat.webcontent.v2 ({ item, bundle_data }) vào thẻ (sửa tại chỗ, trả lại thẻ). */
+/** Attaches the decompressed data of chat.webcontent.v2 ({ item, bundle_data }) to the card (edits it in place, returns the card). */
 export function applyZinstantData(card: ZinstantCard, data: any): ZinstantCard {
   applyBundle(card, data?.bundle_data ?? data);
   card.packedData = undefined;
   return card;
 }
 
-/** Chữ xem trước (danh sách hội thoại, trích dẫn, thông báo). '' nếu không phải tin zinstant của OA. */
+/** Preview text (conversation list, quotes, notifications). '' if it is not an OA zinstant message. */
 export function zinstantPreviewText(content: unknown, msgType: string | null | undefined): string {
   const card = parseZinstantCard(content, msgType);
   if (!card) return '';
   const line = (card.title || card.text || card.description || '').split('\n').map((part) => part.trim()).find(Boolean) || '';
-  return line ? `📢 ${line}` : '📢 Tin từ Official Account';
+  return line ? `📢 ${line}` : tr('📢 Tin từ Official Account');
 }

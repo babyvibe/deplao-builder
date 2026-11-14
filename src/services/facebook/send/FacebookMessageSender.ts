@@ -1,7 +1,7 @@
 /**
  * FacebookMessageSender.ts
- * Port từ Python _messaging/_send.py + _unsend.py + _reactions.py
- * Gửi tin nhắn, thu hồi, reaction
+ * Ported from Python _messaging/_send.py + _unsend.py + _reactions.py
+ * Send messages, unsend, reactions
  */
 
 import axios from 'axios';
@@ -16,7 +16,7 @@ const SEND_URL = 'https://www.facebook.com/messaging/send/';
 const UNSEND_URL = 'https://www.facebook.com/messaging/unsend_message/';
 const GRAPHQL_URL = 'https://www.facebook.com/webgraphql/mutation/';
 
-// Properties bắt buộc phải có trong payload
+// Properties that must be present in the payload
 const MESSAGE_PROPERTIES = [
   'is_unread', 'is_cleared', 'is_forward', 'is_filtered_content',
   'is_filtered_content_bh', 'is_filtered_content_account',
@@ -32,7 +32,7 @@ const ATTACHMENT_TYPE_MAP: Record<string, string> = {
 };
 
 /**
- * Gửi tin nhắn đến thread (group) hoặc user
+ * Send a message to a thread (group) or user
  */
 export async function sendMessage(
   dataFB: FBSessionData,
@@ -148,7 +148,7 @@ export async function sendMessage(
 }
 
 /**
- * Thu hồi tin nhắn
+ * Unsend a message
  */
 export async function unsendMessage(
   dataFB: FBSessionData,
@@ -182,8 +182,8 @@ export async function unsendMessage(
 }
 
 /**
- * Thả/xóa reaction trên tin nhắn
- * action: 'add' hoặc 'remove'
+ * Add/remove a reaction on a message
+ * action: 'add' or 'remove'
  */
 export async function addReaction(
   dataFB: FBSessionData,
@@ -242,8 +242,8 @@ export async function addReaction(
 }
 
 /**
- * Chỉnh sửa nội dung tin nhắn đã gửi (I1)
- * Sử dụng GraphQL mutation với docId.
+ * Edit the content of a message already sent (I1)
+ * Uses a GraphQL mutation with a docId.
  */
 export async function editMessage(
   dataFB: FBSessionData,
@@ -301,8 +301,8 @@ export async function editMessage(
 }
 
 /**
- * Chuyển tiếp tin nhắn đến thread khác (I2)
- * Sử dụng GraphQL mutation với doc_id fbchat-v2: 1870626626883803
+ * Forward a message to another thread (I2)
+ * Uses a GraphQL mutation with doc_id fbchat-v2: 1870626626883803
  */
 export async function forwardMessage(
   dataFB: FBSessionData,
@@ -361,8 +361,8 @@ export async function forwardMessage(
 }
 
 /**
- * Ghim tin nhắn (I3)
- * Sử dụng GraphQL mutation với doc_id fbchat-v2: 3140537590685980
+ * Pin a message (I3)
+ * Uses a GraphQL mutation with doc_id fbchat-v2: 3140537590685980
  */
 export async function pinMessage(
   dataFB: FBSessionData,
@@ -419,7 +419,7 @@ export async function pinMessage(
 }
 
 /**
- * Bỏ ghim tin nhắn (I3)
+ * Unpin a message (I3)
  */
 export async function unpinMessage(
   dataFB: FBSessionData,
@@ -476,7 +476,7 @@ export async function unpinMessage(
 }
 
 /**
- * Tạo poll trong thread (I6)
+ * Create a poll in a thread (I6)
  */
 export async function createPoll(
   dataFB: FBSessionData,
@@ -536,7 +536,7 @@ export async function createPoll(
 }
 
 /**
- * Bỏ phiếu trong poll (I6)
+ * Vote in a poll (I6)
  */
 export async function votePoll(
   dataFB: FBSessionData,

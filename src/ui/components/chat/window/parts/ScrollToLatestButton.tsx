@@ -1,9 +1,10 @@
 /**
- * Nút nổi góc dưới: cuộn xuống tin mới nhất, hoặc "Về tin nhắn mới nhất" khi đang xem tin cũ (nhảy tới tin).
+ * Floating button at the bottom corner: scrolls down to the newest message, or "Về tin nhắn mới nhất" (Back to latest message) when viewing old messages (jumps to the message).
  */
 import { Spinner } from '@/components/common/PageLoading';
 import type { MessageListState } from '../hooks/useMessageListState';
 import type { JumpToMessage } from '../hooks/useJumpToMessage';
+import { tr } from '../../../../../shared/i18n';
 
 type ScrollToLatestButtonProps = Pick<MessageListState, 'bottomRef' | 'isViewingHistory' | 'loadingLatest'> & Pick<JumpToMessage, 'handleReturnToLatest'>;
 
@@ -13,8 +14,8 @@ export function ScrollToLatestButton({ bottomRef, handleReturnToLatest, isViewin
       <button
         onClick={isViewingHistory ? handleReturnToLatest : () => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }}
         disabled={loadingLatest}
-        title={isViewingHistory ? 'Về tin nhắn mới nhất' : 'Cuộn xuống tin mới nhất'}
-        aria-label={isViewingHistory ? 'Về tin nhắn mới nhất' : 'Cuộn xuống tin mới nhất'}
+        title={isViewingHistory ? tr('Về tin nhắn mới nhất') : tr('Cuộn xuống tin mới nhất')}
+        aria-label={isViewingHistory ? tr('Về tin nhắn mới nhất') : tr('Cuộn xuống tin mới nhất')}
         className={`pointer-events-auto flex items-center justify-center rounded-full transition-[color,background-color,box-shadow,transform] duration-150 active:scale-95 disabled:opacity-60 ${
           isViewingHistory
             ? 'h-9 gap-1.5 pl-3 pr-3.5 bg-primary hover:bg-primary-hover text-primary-foreground text-[13px] font-medium shadow-[0_6px_16px_-4px_rgba(31,107,242,0.55),0_1px_3px_rgba(15,31,61,0.15)] dark:shadow-[0_6px_18px_-4px_rgba(0,0,0,0.65),0_1px_3px_rgba(0,0,0,0.5)]'
@@ -29,7 +30,7 @@ export function ScrollToLatestButton({ bottomRef, handleReturnToLatest, isViewin
               <line x1="12" y1="4" x2="12" y2="18"/>
               <polyline points="6 12 12 18 18 12"/>
             </svg>
-            <span>Về tin nhắn mới nhất</span>
+            <span>{tr('Về tin nhắn mới nhất')}</span>
           </>
         ) : (
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">

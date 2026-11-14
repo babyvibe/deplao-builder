@@ -1,5 +1,5 @@
 /**
- * ip.ts — chuẩn hoá IP và so khớp allowlist (IP đơn hoặc CIDR IPv4).
+ * ip.ts: normalizes IPs and matches allowlists (a single IP or IPv4 CIDR).
  */
 import * as net from 'net';
 import type { IncomingMessage } from 'http';
@@ -23,7 +23,7 @@ function ipv4ToInt(ip: string): number | null {
     return ((parts[0] << 24) >>> 0) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
 }
 
-/** Hợp lệ: "1.2.3.4", "10.0.0.0/8", "2001:db8::1". */
+/** Valid: "1.2.3.4", "10.0.0.0/8", "2001:db8::1". */
 export function isValidIpRule(rule: string): boolean {
     const v = String(rule || '').trim();
     if (!v) return false;
@@ -56,8 +56,8 @@ export function ipAllowed(ip: string, rules: string[] | null | undefined): boole
 }
 
 /**
- * IP của client. Khi request đến từ loopback (tunnel agent chạy trên máy) và cho phép
- * tin proxy header, lấy IP thật từ CF-Connecting-IP / X-Forwarded-For.
+ * Client IP. When the request comes from loopback (the tunnel agent running on the machine) and proxy
+ * headers are trusted, take the real IP from CF-Connecting-IP / X-Forwarded-For.
  */
 export function clientIp(req: IncomingMessage, trustProxyHeaders: boolean): { ip: string; viaProxy: boolean } {
     const socketIp = normalizeIp(req.socket?.remoteAddress || '');
@@ -71,7 +71,7 @@ export function clientIp(req: IncomingMessage, trustProxyHeaders: boolean): { ip
     return { ip: socketIp, viaProxy: false };
 }
 
-/** Request được coi là "local" khi đến từ loopback và không mang header của tunnel. */
+/** A request counts as "local" when it comes from loopback and carries no tunnel header. */
 export function isLocalRequest(req: IncomingMessage): boolean {
     const socketIp = normalizeIp(req.socket?.remoteAddress || '');
     if (!isLoopback(socketIp)) return false;

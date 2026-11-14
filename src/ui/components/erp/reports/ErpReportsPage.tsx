@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import type { ErpCalendarEvent, ErpTask } from '../../../../models/erp';
 import PageLoading from '@/components/common/PageLoading';
+import { tr, appLocale } from '../../../../shared/i18n';
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 
@@ -65,7 +66,7 @@ export default function ErpReportsPage() {
     setLoading(true);
     await Promise.all([loadEmployees(), loadProfiles(), loadDepartments(), loadPendingLeaves()]);
 
-    // DataAccessor: nhân viên (admin) đọc trên Boss qua REST. Lỗi đọc → giữ số liệu đang hiện
+    // DataAccessor: employees (admin) read from the owner via REST. On read error → keep the numbers currently shown
     const [taskRes, eventRes, attendanceRes]: any[] = await Promise.all([
       DataAccessor.erpTasks({ archived: false }),
       DataAccessor.erpCalendarEvents({ from: rangeStart, to: forecastEnd }),
@@ -102,25 +103,25 @@ export default function ErpReportsPage() {
     const upcomingEvents = events.filter(event => event.start_at >= Date.now()).sort((a, b) => a.start_at - b.start_at);
 
     const taskStatusData = [
-      { name: 'Cần làm', value: windowTasks.filter(task => task.status === 'todo').length },
-      { name: 'Đang làm', value: windowTasks.filter(task => task.status === 'doing').length },
-      { name: 'Xem xét', value: windowTasks.filter(task => task.status === 'review').length },
-      { name: 'Hoàn thành', value: windowTasks.filter(task => task.status === 'done').length },
-      { name: 'Huỷ', value: windowTasks.filter(task => task.status === 'cancelled').length },
+      { name: tr('Cần làm'), value: windowTasks.filter(task => task.status === 'todo').length },
+      { name: tr('Đang làm'), value: windowTasks.filter(task => task.status === 'doing').length },
+      { name: tr('Xem xét'), value: windowTasks.filter(task => task.status === 'review').length },
+      { name: tr('Hoàn thành'), value: windowTasks.filter(task => task.status === 'done').length },
+      { name: tr('Huỷ'), value: windowTasks.filter(task => task.status === 'cancelled').length },
     ];
 
     const taskPriorityData = [
-      { name: 'Thấp', value: windowTasks.filter(task => task.priority === 'low').length },
-      { name: 'Bình thường', value: windowTasks.filter(task => task.priority === 'normal').length },
+      { name: tr('Thấp'), value: windowTasks.filter(task => task.priority === 'low').length },
+      { name: tr('Bình thường'), value: windowTasks.filter(task => task.priority === 'normal').length },
       { name: 'Cao', value: windowTasks.filter(task => task.priority === 'high').length },
-      { name: 'Khẩn cấp', value: windowTasks.filter(task => task.priority === 'urgent').length },
+      { name: tr('Khẩn cấp'), value: windowTasks.filter(task => task.priority === 'urgent').length },
     ].filter(item => item.value > 0);
 
     const dailyTrendData = Array.from({ length: periodDays }, (_, index) => {
       const dayTs = startOfDay(rangeStart + index * 86400_000);
       const dayEnd = endOfDay(dayTs);
       return {
-        day: new Date(dayTs).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }),
+        day: new Date(dayTs).toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit' }),
         taskMoi: tasks.filter(task => task.created_at >= dayTs && task.created_at <= dayEnd).length,
         taskXong: tasks.filter(task => (task.completed_at ?? 0) >= dayTs && (task.completed_at ?? 0) <= dayEnd).length,
         suKien: events.filter(event => event.start_at >= dayTs && event.start_at <= dayEnd).length,
@@ -131,7 +132,7 @@ export default function ErpReportsPage() {
       const dayTs = startOfDay(rangeStart + index * 86400_000);
       const dayKey = new Date(dayTs).toISOString().slice(0, 10);
       return {
-        day: new Date(dayTs).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }),
+        day: new Date(dayTs).toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit' }),
         checkIn: attendance.filter(item => item.date === dayKey && item.check_in_at).length,
       };
     });
@@ -153,24 +154,24 @@ export default function ErpReportsPage() {
 
   const sections = [
     {
-      title: 'Task cần theo dõi',
-      empty: 'Không có task nổi bật cần theo dõi',
+      title: tr('Task cần theo dõi'),
+      empty: tr('Không có task nổi bật cần theo dõi'),
       items: [
-        ...summary.overdueTasks.slice(0, 5).map(task => ({ key: `overdue-${task.id}`, title: task.title, meta: 'Quá hạn', tone: 'text-red-600' })),
-        ...summary.unassignedTasks.slice(0, 5).map(task => ({ key: `unassigned-${task.id}`, title: task.title, meta: 'Chưa có người thực hiện', tone: 'text-yellow-600' })),
+        ...summary.overdueTasks.slice(0, 5).map(task => ({ key: `overdue-${task.id}`, title: task.title, meta: tr('Quá hạn'), tone: 'text-red-600' })),
+        ...summary.unassignedTasks.slice(0, 5).map(task => ({ key: `unassigned-${task.id}`, title: task.title, meta: tr('Chưa có người thực hiện'), tone: 'text-yellow-600' })),
       ],
     },
     {
-      title: 'Nhân sự cần xử lý',
-      empty: 'Nhân sự đã đồng bộ ổn',
+      title: tr('Nhân sự cần xử lý'),
+      empty: tr('Nhân sự đã đồng bộ ổn'),
       items: [
-        ...summary.missingCheckIn.slice(0, 5).map((employee: any) => ({ key: `attendance-${employee.employee_id}`, title: employee.display_name, meta: 'Chưa check-in hôm nay', tone: 'text-red-600' })),
-        ...summary.employeesWithoutProfile.slice(0, 5).map((employee: any) => ({ key: `profile-${employee.employee_id}`, title: employee.display_name, meta: 'Thiếu hồ sơ ERP', tone: 'text-violet-600' })),
+        ...summary.missingCheckIn.slice(0, 5).map((employee: any) => ({ key: `attendance-${employee.employee_id}`, title: employee.display_name, meta: tr('Chưa check-in hôm nay'), tone: 'text-red-600' })),
+        ...summary.employeesWithoutProfile.slice(0, 5).map((employee: any) => ({ key: `profile-${employee.employee_id}`, title: employee.display_name, meta: tr('Thiếu hồ sơ ERP'), tone: 'text-violet-600' })),
       ],
     },
     {
-      title: 'Nghỉ phép chờ duyệt',
-      empty: 'Không có đơn nghỉ cần duyệt',
+      title: tr('Nghỉ phép chờ duyệt'),
+      empty: tr('Không có đơn nghỉ cần duyệt'),
       items: pendingLeaves.slice(0, 6).map((leave: any) => ({
         key: `leave-${leave.id}`,
         title: employeeName(leave.requester_id),
@@ -184,7 +185,7 @@ export default function ErpReportsPage() {
     <div className="h-full overflow-auto p-4 space-y-4 bg-background">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Báo cáo ERP trực quan</h2>
+          <h2 className="text-sm font-semibold text-foreground">{tr('Báo cáo ERP trực quan')}</h2>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -214,22 +215,22 @@ export default function ErpReportsPage() {
             onClick={reload}
             className="px-3 py-1.5 text-xs rounded-lg bg-muted hover:bg-accent text-foreground"
           >
-            Làm mới
+            {tr('Làm mới')}
           </button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        <MetricCard label="Task quá hạn" value={summary.overdueTasks.length} tone="text-red-600" />
-        <MetricCard label="Task chưa phân công" value={summary.unassignedTasks.length} tone="text-yellow-600" />
-        <MetricCard label="Task đến hạn sắp tới" value={summary.tasksDueSoon.length} tone="text-blue-600" />
-        <MetricCard label="Đơn nghỉ chờ duyệt" value={pendingLeaves.length} tone="text-orange-600" />
-        <MetricCard label="Chưa check-in hôm nay" value={summary.missingCheckIn.length} tone="text-red-600" />
-        <MetricCard label="Thiếu hồ sơ ERP" value={summary.employeesWithoutProfile.length} tone="text-violet-600" />
+        <MetricCard label={tr('Task quá hạn')} value={summary.overdueTasks.length} tone="text-red-600" />
+        <MetricCard label={tr('Task chưa phân công')} value={summary.unassignedTasks.length} tone="text-yellow-600" />
+        <MetricCard label={tr('Task đến hạn sắp tới')} value={summary.tasksDueSoon.length} tone="text-blue-600" />
+        <MetricCard label={tr('Đơn nghỉ chờ duyệt')} value={pendingLeaves.length} tone="text-orange-600" />
+        <MetricCard label={tr('Chưa check-in hôm nay')} value={summary.missingCheckIn.length} tone="text-red-600" />
+        <MetricCard label={tr('Thiếu hồ sơ ERP')} value={summary.employeesWithoutProfile.length} tone="text-violet-600" />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <ChartCard title="Phân bổ trạng thái task">
+        <ChartCard title={tr('Phân bổ trạng thái task')}>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={summary.taskStatusData}>
@@ -237,13 +238,13 @@ export default function ErpReportsPage() {
                 <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} />
                 <YAxis stroke="#94a3b8" fontSize={11} allowDecimals={false} />
                 <Tooltip content={<ReportTooltip />} />
-                <Bar dataKey="value" name="Số task" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="value" name={tr('Số task')} fill="#3b82f6" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </ChartCard>
 
-        <ChartCard title="Tỷ trọng độ ưu tiên">
+        <ChartCard title={tr('Tỷ trọng độ ưu tiên')}>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -257,7 +258,7 @@ export default function ErpReportsPage() {
           </div>
         </ChartCard>
 
-        <ChartCard title="Xu hướng task và lịch theo ngày">
+        <ChartCard title={tr('Xu hướng task và lịch theo ngày')}>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={summary.dailyTrendData}>
@@ -266,15 +267,15 @@ export default function ErpReportsPage() {
                 <YAxis stroke="#94a3b8" fontSize={11} allowDecimals={false} />
                 <Tooltip content={<ReportTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Area type="monotone" dataKey="taskMoi" name="Task mới" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.25} />
-                <Area type="monotone" dataKey="taskXong" name="Task hoàn thành" stroke="#10b981" fill="#10b981" fillOpacity={0.25} />
-                <Area type="monotone" dataKey="suKien" name="Sự kiện" stroke="#a855f7" fill="#a855f7" fillOpacity={0.2} />
+                <Area type="monotone" dataKey="taskMoi" name={tr('Task mới')} stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.25} />
+                <Area type="monotone" dataKey="taskXong" name={tr('Task hoàn thành')} stroke="#10b981" fill="#10b981" fillOpacity={0.25} />
+                <Area type="monotone" dataKey="suKien" name={tr('Sự kiện')} stroke="#a855f7" fill="#a855f7" fillOpacity={0.2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </ChartCard>
 
-        <ChartCard title="Chấm công theo ngày">
+        <ChartCard title={tr('Chấm công theo ngày')}>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={summary.attendanceByDay}>
@@ -282,7 +283,7 @@ export default function ErpReportsPage() {
                 <XAxis dataKey="day" stroke="#94a3b8" fontSize={11} />
                 <YAxis stroke="#94a3b8" fontSize={11} allowDecimals={false} />
                 <Tooltip content={<ReportTooltip />} />
-                <Bar dataKey="checkIn" name="Số người check-in" fill="#06b6d4" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="checkIn" name={tr('Số người check-in')} fill="#06b6d4" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -294,7 +295,7 @@ export default function ErpReportsPage() {
           <div key={section.title} className="rounded-xl border border-border/60 bg-card p-4">
             <h3 className="text-sm font-semibold text-foreground mb-3">{section.title}</h3>
             {loading ? (
-              <PageLoading variant="inline" text="Đang tải báo cáo..." />
+              <PageLoading variant="inline" text={tr('Đang tải báo cáo...')} />
             ) : section.items.length === 0 ? (
               <div className="text-sm text-muted-foreground">{section.empty}</div>
             ) : (

@@ -1,11 +1,12 @@
 /**
- * PluginNodeRegistry — node và trigger workflow do plugin đóng góp (contributes.workflowNodes/triggers).
+ * PluginNodeRegistry: workflow nodes and triggers contributed by plugins (contributes.workflowNodes/triggers).
  *
- * Engine chỉ gọi vào đây cho node mà editor đã gắn `__plugin` (thêm từ palette plugin) hoặc type
- * đang đăng ký → node nội bộ và workflow cũ không đổi hành vi.
+ * The engine only calls in here for a node that the editor tagged with `__plugin` (added from the plugin palette), or for a type
+ * that is registered → built-in nodes and existing workflows keep their behavior.
  */
 import type { ConfigSchema, OutputDef } from './manifest';
 import type { PluginRecord } from './PluginManager';
+import { tr } from '../../shared/i18n';
 
 export interface PluginNodeDef {
     pluginId: string;
@@ -34,7 +35,7 @@ export type PluginNodeExecutor = (pluginId: string, type: string, cfg: Record<st
 
 export const NODE_TIMEOUT_MS = 60_000;
 
-/** Bỏ khoá nội bộ (__plugin, __kind…) trước khi gửi cấu hình cho plugin. */
+/** Drops the internal keys (__plugin, __kind...) before sending the config to the plugin. */
 export function publicConfig(cfg: Record<string, any> | undefined): Record<string, any> {
     const out: Record<string, any> = {};
     for (const [k, v] of Object.entries(cfg || {})) {
@@ -103,17 +104,17 @@ class PluginNodeRegistry {
     async execute(type: string, cfg: Record<string, any>, run: PluginNodeRun): Promise<Record<string, any>> {
         const def = this.defs.get(type);
         if (!def || def.kind !== 'node') {
-            throw new Error(`[PLUGIN_NODE_MISSING] Node "${type}" thuộc ứng dụng chưa cài hoặc đang tắt`);
+            throw new Error(tr('[PLUGIN_NODE_MISSING] Node "{{type}}" thuộc ứng dụng chưa cài hoặc đang tắt', { type }));
         }
-        if (!this.executor) throw new Error('[PLUGIN_NODE_MISSING] Phần chạy ứng dụng chưa sẵn sàng');
+        if (!this.executor) throw new Error(tr('[PLUGIN_NODE_MISSING] Phần chạy ứng dụng chưa sẵn sàng'));
         const result = await this.executor(def.pluginId, type, publicConfig(cfg), run);
         if (result && typeof result === 'object' && !Array.isArray(result)) return result;
         return result === undefined ? {} : { result };
     }
 
     /**
-     * Lọc trigger plugin: mọi trường cấu hình không rỗng phải khớp payload
-     * (=== hoặc payload chứa chuỗi cấu hình, không phân biệt hoa thường).
+     * Filters plugin triggers: every non-empty config field must match the payload
+     * (=== or the payload contains the config string, case-insensitive).
      */
     matchesTrigger(cfg: Record<string, any> | undefined, payload: any): boolean {
         for (const [key, want] of Object.entries(publicConfig(cfg))) {

@@ -1,24 +1,24 @@
 /**
- * Dialog — modal overlay portaled into `document.body`.
+ * Dialog: modal overlay portaled into `document.body`.
  *
  * ```tsx
  * <Dialog open={open} onOpenChange={setOpen} size="md">
  *   <DialogHeader>
  *     <div className="min-w-0">
- *       <DialogTitle>Tiêu đề</DialogTitle>
- *       <DialogDescription>Mô tả ngắn</DialogDescription>
+ *       <DialogTitle>Title</DialogTitle>
+ *       <DialogDescription>Short description</DialogDescription>
  *     </div>
  *     <DialogClose />
  *   </DialogHeader>
  *   <DialogBody>…</DialogBody>
  *   <DialogFooter>
- *     <Button variant="outline" onClick={() => setOpen(false)}>Huỷ</Button>
- *     <Button autoFocus>Lưu</Button>
+ *     <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+ *     <Button autoFocus>Save</Button>
  *   </DialogFooter>
  * </Dialog>
  * ```
  *
- * Behaviour: Escape closes only the topmost open dialog; a click on the backdrop closes unless the
+ * Behavior: Escape closes only the topmost open dialog; a click on the backdrop closes unless the
  * press started inside the panel; body scroll is locked while any dialog is open; on open focus
  * moves to a child with `autoFocus` / `[data-autofocus]` or else to the panel; on close focus is
  * returned to the previously focused element; Tab is trapped inside the panel.
@@ -38,6 +38,7 @@ import React, {
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/cn';
 import { CloseIcon } from '@/components/common/icons';
+import { tr } from '../../../shared/i18n';
 
 export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 
@@ -393,7 +394,7 @@ export const DialogClose = forwardRef<HTMLButtonElement, React.ButtonHTMLAttribu
       <button
         ref={ref}
         type="button"
-        aria-label="Đóng"
+        aria-label={tr('Đóng')}
         className={cn(
           'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           className,

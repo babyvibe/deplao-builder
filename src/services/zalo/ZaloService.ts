@@ -92,6 +92,7 @@ import {
     hiddenStatus, resetZaloHiddenPin, setZaloConversationHidden, setZaloHiddenPin, syncZaloHidden, unlockZaloHidden, zaloHiddenApiOf,
     type HiddenStatus, type UnlockResult,
 } from "./zaloHiddenConversations";
+import { tr } from '../../shared/i18n';
 
 
 interface Auth {
@@ -109,16 +110,16 @@ export default class ZaloService {
     private zaloId: string | null = null;
 
     /**
-     * Khởi tạo một đối tượng ZaloService mới
-     * @param auth ID Zalo của người dùng
+     * Initialize a new ZaloService object
+     * @param auth Zalo ID of the user
      */
     constructor(auth: Auth) {
         this.auth = auth;
     }
     
     /**
-     * Lấy hoặc tạo một instance của ZaloService
-     * @returns Promise<ZaloService> Instance của ZaloService
+     * Get or create an instance of ZaloService
+     * @returns Promise<ZaloService> Instance of ZaloService
      * @param auth
      * @param isReconnection Whether this is a reconnection (force delete old connection and create new)
      */
@@ -127,7 +128,7 @@ export default class ZaloService {
         const key = Buffer.from(parsedAuth.cookies).toString('base64');
 
         // If reconnection, remove existing instance to force recreation
-        // Nếu reconnection, xóa instance hiện có để buộc tạo lại
+        // If reconnection, delete the existing instance to force a new one
         if (isReconnection && this.instances.has(key)) {
             Logger.log(`[${new Date().toISOString()}] [ZaloService] 🔄 Reconnection: Removing existing ZaloService instance`);
             this.instances.delete(key);
@@ -156,9 +157,9 @@ export default class ZaloService {
     }
 
     /**
-     * Khởi tạo API Zalo cho instance hiện tại
-     * SỬ DỤNG ConnectionManager làm single source of truth
-     * API-only mode: không start listener (chỉ dùng cho gọi API)
+     * Initialize the Zalo API for the current instance
+     * USES ConnectionManager as the single source of truth
+     * API-only mode: does not start the listener (only for API calls)
      * @param isReconnection Whether this is a reconnection (force delete old connection and create new)
      */
     private async initialize(isReconnection: boolean = false): Promise<void> {
@@ -187,15 +188,15 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy Zalo ID của người dùng hiện tại
+     * Get the Zalo ID of the current user
      */
     public getZaloId(): string | null {
         return this.zaloId;
     }
 
     /**
-     * Gửi trạng thái "đang gõ". Giống node workflow zalo.sendTyping:
-     * threadType 0 = DM (destType = 3), 1 = nhóm (không cần destType).
+     * Send the "đang gõ" (typing) status. Same as the zalo.sendTyping workflow node:
+     * threadType 0 = DM (destType = 3), 1 = group (no destType needed).
      */
     public async sendTypingEvent(threadId: string, type?: ThreadType | number): Promise<any> {
         if (!this.api) {
@@ -208,15 +209,15 @@ export default class ZaloService {
 
 
     /**
-     * Gửi tin nhắn
-     * @param message Nội dung tin nhắn (chuỗi hoặc đối tượng MessageContent)
-     * @param threadId ID của cuộc trò chuyện
-     * @param type Loại tin nhắn (tùy chọn)
-     * @param typeMessage Loại tin nhắn đặc biệt (tùy chọn, ví dụ: 'file',...)
-     * @param quote Tin nhắn trích dẫn (tùy chọn)
-     * @param mentions Tag all hoặc tag member trong 1 group
-     * @param styles định dạng văn bản
-     * @returns Promise chứa kết quả gửi tin nhắn và tệp đính kèm
+     * Send a message
+     * @param message Message content (a string or a MessageContent object)
+     * @param threadId ID of the conversation
+     * @param type Message type (optional)
+     * @param typeMessage Special message type (optional, e.g. 'file',...)
+     * @param quote Quoted message (optional)
+     * @param mentions Tag all or tag members in 1 group
+     * @param styles Text formatting
+     * @returns Promise with the result of sending the message and the attachments
      */
     public async sendMessage(
         message: string | { msg: string, attachments?: any[], quote?: any, mentions?: any },
@@ -236,7 +237,7 @@ export default class ZaloService {
             let messageContent: MessageContent;
 
             // ALWAYS use API from ConnectionManager for consistency
-            // LUÔN sử dụng API từ ConnectionManager để đảm bảo tính nhất quán
+            // ALWAYS use the API from ConnectionManager to keep things consistent
             const zaloId = this.api.getOwnId();
             const connection = ConnectionManager.getConnection(zaloId);
             const apiSending = connection?.api || this.api;
@@ -254,8 +255,8 @@ export default class ZaloService {
 
                     filesPath = await this.handleDownloadAttachments(message.attachments);
 
-                    // Đọc metadata nếu là ảnh
-                    // nếu không phải ảnh thì gửi thẳng file url
+                    // Read the metadata if it is an image
+                    // if not an image, send the file URL directly
                     message.attachments = filesPath.map(filePath => {
                         let attachment: any;
 
@@ -303,27 +304,27 @@ export default class ZaloService {
                 let quoteContent = quoteData.content;
                 let quoteMsgType: string = quoteData.msgType || 'webchat';
 
-                // ── Chuẩn hoá msgType cho từng loại ────────────────────────────────
-                // chat.recommended / chat.link = link được share (Facebook, web, ...)
-                // Real Zalo dùng cliMsgType=1 (webchat) + qmsg=JSON string content
-                // Nếu để nguyên 'chat.recommended' → getClientMessageType() = 38
-                // → Zalo hiển thị "[danh thiếp] undefined" vì 38 = card type
+                // ── Normalize msgType for each type ────────────────────────────────
+                // chat.recommended / chat.link = shared link (Facebook, web, ...)
+                // Real Zalo uses cliMsgType=1 (webchat) + qmsg=JSON string content
+                // If 'chat.recommended' is left as is → getClientMessageType() = 38
+                // → Zalo shows "[danh thiếp] undefined" (a broken contact card) because 38 = card type
                 if (quoteMsgType === 'chat.recommended' || quoteMsgType === 'chat.link') {
                     quoteMsgType = 'webchat';
                 }
 
                 // ── Stringify content cho individual chat ───────────────────────────
                 // zca-js:  qmsg = typeof content == "string" ? content : prepareQMSG(content)
-                // prepareQMSG() trả về "" cho mọi loại trừ chat.todo
-                // → Nếu content là object, qmsg="" → Zalo không hiển thị được quote
+                // prepareQMSG() returns "" for every type except chat.todo
+                // → if content is an object, qmsg="" → Zalo cannot show the quote
                 //
-                // Real Zalo (evidence từ webhook log):
+                // Real Zalo (evidence from the webhook log):
                 //   text  : cliMsgType=1,  qmsg="the text"
                 //   link  : cliMsgType=1,  qmsg=JSON string of TAttachmentContent
                 //   file  : cliMsgType=46, qmsg=JSON string of TAttachmentContent
                 //
-                // → Individual: stringify để qmsg nhận được JSON string ✓
-                // → Group: giữ object để prepareQMSGAttach() build qmsgAttach đúng ✓
+                // → Individual: stringify so qmsg receives a JSON string ✓
+                // → Group: keep the object so prepareQMSGAttach() builds qmsgAttach correctly ✓
                 if (!isGroupThread && typeof quoteContent === 'object' && quoteContent !== null) {
                     quoteContent = JSON.stringify(quoteContent);
                 }
@@ -348,7 +349,7 @@ export default class ZaloService {
         } catch (error: any) {
             throw new Error("Error sending message: " + error.message || error);
         } finally {
-            // Xóa các file tạm thời sau khi gửi
+            // Delete the temporary files after sending
             if (filesPath.length > 0) {
                 await this.deleteTemporaryFiles(filesPath);
             }
@@ -356,11 +357,11 @@ export default class ZaloService {
     }
 
     /**
-     * Gửi sticker
-     * @param stickerId ID của sticker cần gửi
-     * @param threadId ID của người/nhóm cần gửi
-     * @param type Loại thread: người dùng/nhóm (mặc định là người dùng)
-     * @returns Promise chứa kết quả gửi sticker
+     * Send a sticker
+     * @param stickerId ID of the sticker to send
+     * @param threadId ID of the user/group to send to
+     * @param type Thread type: user/group (default is user)
+     * @returns Promise with the result of sending the sticker
      */
     public async sendSticker(stickerId: number, threadId: string, type: ThreadType = ThreadType.User): Promise<SendMessageResult> {
         if (!this.api) {
@@ -368,13 +369,13 @@ export default class ZaloService {
         }
 
         try {
-            // Lấy chi tiết sticker
+            // Get the sticker details
             const stickersDetail = await this.api.getStickersDetail(stickerId);
             if (stickersDetail.length === 0) {
                 throw new Error("Sticker not found");
             }
 
-            // Gửi sticker
+            // Send the sticker
             return await this.api.sendSticker(stickersDetail[0], threadId, type);
         } catch (error: any) {
             throw new Error("Error sending sticker: " + error.message || error);
@@ -382,9 +383,9 @@ export default class ZaloService {
     }
 
     /**
-     * Thêm biểu tượng cảm xúc (reaction) vào tin nhắn
-     * @param reaction Biểu tượng cảm xúc cần thêm (thuộc enum Reactions)
-     * @param message Đối tượng Message cần thêm biểu tượng cảm xúc
+     * Add a reaction (emoji) to a message
+     * @param reaction Reaction to add (from the Reactions enum)
+     * @param message Message object to add the reaction to
      * @returns Promise<AddReactionResponse>
      */
     public async addReaction(reaction: keyof typeof Reactions, message: string): Promise<AddReactionResponse> {
@@ -413,15 +414,15 @@ export default class ZaloService {
     }
 
     /**
-     * Xử lý tải xuống các tệp đính kèm
-     * @param attachments Mảng các URL của tệp đính kèm
-     * @returns Promise<string[]> Mảng đường dẫn của các tệp đã tải xuống
+     * Download the attachments
+     * @param attachments Array of attachment URLs
+     * @returns Promise<string[]> Array of paths of the downloaded files
      */
     private async handleDownloadAttachments(attachments: string[]): Promise<string[]> {
         const downloadedFiles: string[] = [];
         const imageDir = path.join(__dirname, '..', '..', 'data', 'image_message');
 
-        // Đảm bảo thư mục tồn tại
+        // Make sure the folder exists
         if (!fs.existsSync(imageDir)) {
             fs.mkdirSync(imageDir, {recursive: true});
         }
@@ -434,9 +435,9 @@ export default class ZaloService {
                 const randomString = this.generateRandomString(5);
                 const fileName = this.getFileNameFromUrl(fileUrl);
 
-                //  TH gửi file, tạo hẳn folder tạm để giữ tên file nguyên bản
+                //  For file sends, create a temporary folder to keep the original file name
                 if (u.searchParams.get("name")) {
-                    // Tạo folder tạm
+                    // Create a temporary folder
                     const folderPathCreated = path.join(imageDir, `${timestamp}_${randomString}`);
                     fs.mkdirSync(folderPathCreated, {recursive: true});
                     filePath = path.join(folderPathCreated, `${fileName}`);
@@ -473,9 +474,9 @@ export default class ZaloService {
     }
 
     /**
-     * Tạo chuỗi ngẫu nhiên
-     * @param length Độ dài của chuỗi cần tạo
-     * @returns string Chuỗi ngẫu nhiên
+     * Generate a random string
+     * @param length Length of the string to generate
+     * @returns string Random string
      */
     private generateRandomString(length: number): string {
         const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -487,9 +488,9 @@ export default class ZaloService {
     }
 
     /**
-     * Xóa các tệp tạm thời
-     * @param filePaths Mảng đường dẫn của các tệp cần xóa
-     * xóa cả folder tạm với trường hợp gửi file
+     * Delete the temporary files
+     * @param filePaths Array of paths of the files to delete
+     * also deletes the temporary folder when a file was sent
      */
     private async deleteTemporaryFiles(filePaths: string[]): Promise<void> {
         const baseFolder = path.join(__dirname, "..", "..", "data", "image_message");
@@ -501,9 +502,9 @@ export default class ZaloService {
                 const relative = path.relative(baseFolder, folderPath);
 
                 if (relative === "") {
-                    // file nằm trực tiếp trong image_message -> chỉ xoá file
+                    // file sits directly in image_message -> delete only the file
                 } else if (!relative.startsWith("..") && !path.isAbsolute(relative)) {
-                    // folderPath là con của baseFolder -> xoá luôn folder
+                    // folderPath is a child of baseFolder -> delete the folder too
                     await fs.promises.rmdir(folderPath, {recursive: true});
                 }
 
@@ -514,8 +515,8 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy danh sách sticker dựa trên từ khóa
-     * @param keyword Từ khóa tìm kiếm sticker
+     * Get a list of stickers by keyword
+     * @param keyword Keyword to search stickers with
      */
     public async getStickers(keyword: string): Promise<number[]> {
         if (!this.api) {
@@ -530,8 +531,8 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy chi tiết của các sticker dựa trên ID
-     * @param stickerIds ID của sticker hoặc mảng các ID sticker cần lấy chi tiết
+     * Get the details of stickers by ID
+     * @param stickerIds ID of a sticker or an array of sticker IDs to get details for
      */
     public async getStickersDetail(stickerIds: number | number[]): Promise<StickerDetailResponse> {
         if (!this.api) {
@@ -546,8 +547,8 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy tất cả sticker trong một category/pack
-     * @param cateId ID category sticker
+     * Get all stickers in a category/pack
+     * @param cateId Sticker category ID
      */
     public async getStickerCategoryDetail(cateId: number): Promise<StickerDetailResponse> {
         if (!this.api) {
@@ -562,8 +563,8 @@ export default class ZaloService {
     }
 
     /**
-     * Thu hồi tin nhắn
-     * @param message Đối tượng Message cần thu hồi
+     * Unsend a message
+     * @param message Message object to unsend
      * @returns Promise<UndoResponse>
      */
     public async undoMessage(message: any): Promise<UndoResponse> {
@@ -578,13 +579,13 @@ export default class ZaloService {
                 cliMsgId: parsedMessage.data.cliMsgId,
             };
 
-            // Dùng convertThreadType để đảm bảo group dùng ThreadType.Group (1), user dùng ThreadType.User (0)
+            // Use convertThreadType so groups use ThreadType.Group (1) and users use ThreadType.User (0)
             const threadType = convertThreadType(parsedMessage.type);
             const uidFrom: string | undefined = parsedMessage.data?.uidFrom;
 
             Logger.log(`[ZaloService] undoMessage: msgId=${parsedMessage.data.msgId} threadId=${parsedMessage.threadId} type=${threadType}(raw=${parsedMessage.type})${uidFrom ? ` uidFrom=${uidFrom}` : ''}`);
 
-            // Trưởng/phó nhóm thu hồi tin nhắn của thành viên - cần gửi uidFrom
+            // Group owner/deputy unsends a member's message - uidFrom must be sent
             if (uidFrom && threadType === ThreadType.Group) {
                 return await this.adminRecallGroupMessage(undoOptions, parsedMessage.threadId, uidFrom);
             }
@@ -596,9 +597,9 @@ export default class ZaloService {
     }
 
     /**
-     * Admin (trưởng/phó nhóm) thu hồi tin nhắn của thành viên khác trong nhóm.
-     * Dùng deleteMessage(onlyMe=false) → xóa cho tất cả thành viên.
-     * Endpoint /api/group/undomsg chỉ hỗ trợ người gửi tự thu hồi, không hỗ trợ admin thu hồi của người khác.
+     * Admin (group owner/deputy) unsends another member's message in the group.
+     * Uses deleteMessage(onlyMe=false) → deletes it for all members.
+     * The /api/group/undomsg endpoint only supports the sender unsending their own message, not an admin unsending someone else's.
      */
     private async adminRecallGroupMessage(
         payload: UndoPayload,
@@ -609,8 +610,8 @@ export default class ZaloService {
 
         Logger.log(`[ZaloService] adminRecallGroupMessage: msgId=${payload.msgId} threadId=${threadId} uidFrom=${uidFrom}`);
 
-        // deleteMessage với onlyMe=false xóa tin nhắn cho tất cả thành viên nhóm
-        // Điều kiện: isSelf=false (admin != sender) nên không bị reject bởi zca-js
+        // deleteMessage with onlyMe=false deletes the message for all group members
+        // Condition: isSelf=false (admin != sender) so zca-js does not reject it
         return await this.api.deleteMessage(
             {
                 threadId,
@@ -621,14 +622,14 @@ export default class ZaloService {
                     uidFrom: String(uidFrom),
                 },
             },
-            false, // onlyMe = false → xóa cho tất cả
+            false, // onlyMe = false → delete for everyone
         );
     }
 
     /**
-     * Xóa một hoặc nhiều thành viên khỏi nhóm
-     * @param memberId ID của thành viên hoặc mảng các ID thành viên cần xóa khỏi nhóm
-     * @param groupId ID của nhóm
+     * Remove one or more members from the group
+     * @param memberId ID of a member or an array of member IDs to remove from the group
+     * @param groupId ID of the group
      */
     public async removeUserFromGroup(memberId: string | string[], groupId: string): Promise<RemoveUserFromGroupResponse> {
         if (!this.api) {
@@ -643,9 +644,9 @@ export default class ZaloService {
     }
 
     /**
-     * Thay đổi ảnh đại diện của nhóm
-     * @param avatarPath Đường dẫn đến file ảnh đại diện mới
-     * @param groupId ID của nhóm cần thay đổi ảnh đại diện
+     * Change the group avatar
+     * @param avatarPath Path to the new avatar image file
+     * @param groupId ID of the group whose avatar to change
      */
     public async changeGroupAvatar(avatarPath: string, groupId: string): Promise<ChangeGroupAvatarResponse> {
         if (!this.api) {
@@ -660,9 +661,9 @@ export default class ZaloService {
     }
 
     /**
-     * Thay đổi tên nhóm
-     * @param name Tên mới của nhóm
-     * @param groupId ID của nhóm cần đổi tên
+     * Rename the group
+     * @param name New name of the group
+     * @param groupId ID of the group to rename
      */
     public async changeGroupName(name: string, groupId: string): Promise<ChangeGroupNameResponse> {
         if (!this.api) {
@@ -677,9 +678,9 @@ export default class ZaloService {
     }
 
     /**
-     * Gửi yêu cầu kết bạn đến một người dùng Zalo
-     * @param msg Nội dung tin nhắn kèm theo yêu cầu kết bạn
-     * @param userId ID của người dùng mà bạn muốn gửi yêu cầu kết bạn
+     * Send a friend request to a Zalo user
+     * @param msg Message content sent with the friend request
+     * @param userId ID of the user you want to send the friend request to
      */
     public async sendFriendRequest(msg: string, userId: string): Promise<SendFriendRequestResponse> {
         if (!this.api) {
@@ -694,8 +695,8 @@ export default class ZaloService {
     }
 
     /**
-     * Tìm kiếm người dùng Zalo dựa trên số điện thoại
-     * @param phoneNumber Số điện thoại của người dùng cần tìm kiếm
+     * Search for a Zalo user by phone number
+     * @param phoneNumber Phone number of the user to search for
      */
     public async findUser(phoneNumber: string): Promise<FindUserResponse> {
         if (!this.api) {
@@ -711,7 +712,7 @@ export default class ZaloService {
 
 
     /**
-     * Lấy danh sách tất cả bạn bè của người dùng hiện tại
+     * Get the list of all friends of the current user
      */
     public async getAllFriends(): Promise<GetAllFriendsResponse> {
         if (!this.api) {
@@ -726,7 +727,7 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy danh sách tất cả các nhóm mà người dùng hiện tại tham gia
+     * Get the list of all groups the current user has joined
      */
     public async getAllGroups(): Promise<GetAllGroupsResponse> {
         if (!this.api) {
@@ -741,9 +742,9 @@ export default class ZaloService {
     }
 
     /**
-     * Xóa tin nhắn
-     * @param message Đối tượng Message cần xóa
-     * @param onlyMe Chỉ xóa tin nhắn cho bản thân (mặc định là true)
+     * Delete a message
+     * @param message Message object to delete
+     * @param onlyMe Delete the message only for yourself (default is true)
      */
     public async deleteMessage(message: any, onlyMe: boolean = true): Promise<DeleteMessageResponse> {
         if (!this.api) {
@@ -775,10 +776,10 @@ export default class ZaloService {
     }
 
     /**
-     * Xóa đoạn chat (ẩn hội thoại phía server)
-     * @param lastMessage Thông tin tin nhắn cuối cùng trong hội thoại
-     * @param threadId ID của hội thoại
-     * @param type Loại hội thoại (User/Group)
+     * Delete the chat (hides the conversation on the server)
+     * @param lastMessage Info of the last message in the conversation
+     * @param threadId ID of the conversation
+     * @param type Conversation type (User/Group)
      */
     public async deleteChat(lastMessage: DeleteChatLastMessage, threadId: string, type: ThreadType = ThreadType.User): Promise<DeleteChatResponse> {
         if (!this.api) {
@@ -792,8 +793,8 @@ export default class ZaloService {
     }
 
     /**
-     * Tạo một nhóm mới trên Zalo
-     * @param options Các tùy chọn để tạo nhóm, bao gồm thông tin như tên nhóm, danh sách thành viên, v.v.
+     * Create a new group on Zalo
+     * @param options Options for creating the group, including info such as the group name, member list, etc.
      */
     public async createGroup(options: any): Promise<CreateGroupResponse> {
         if (!this.api) {
@@ -818,7 +819,7 @@ export default class ZaloService {
         } catch (error) {
             throw error;
         } finally {
-            // Xóa các file tạm thời sau khi gửi
+            // Delete the temporary files after sending
             if (filesPath.length > 0) {
                 await this.deleteTemporaryFiles(filesPath);
             }
@@ -838,8 +839,8 @@ export default class ZaloService {
     }
 
     /**
-     * Chặn một người dùng Zalo
-     * @param userId ID của người dùng cần chặn
+     * Block a Zalo user
+     * @param userId ID of the user to block
      */
     public async blockUser(userId: string): Promise<BlockUserResponse> {
         if (!this.api) {
@@ -853,8 +854,8 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy danh sách nhóm chung với một người dùng
-     * @param userId ID của người dùng cần xem nhóm chung
+     * Get the groups shared with a user
+     * @param userId ID of the user to look up shared groups for
      */
     public async getRelatedFriendGroup(userId: string): Promise<any> {
         if (!this.api) {
@@ -868,9 +869,9 @@ export default class ZaloService {
     }
 
     /**
-     * Thêm một hoặc nhiều người dùng vào nhóm
-     * @param memberId ID của thành viên hoặc mảng các ID thành viên cần thêm vào nhóm
-     * @param groupId ID của nhóm
+     * Add one or more users to the group
+     * @param memberId ID of a member or an array of member IDs to add to the group
+     * @param groupId ID of the group
      */
     public async addUserToGroup(memberId: string | string[], groupId: string): Promise<AddUserToGroupResponse> {
         if (!this.api) {
@@ -885,8 +886,8 @@ export default class ZaloService {
     }
 
     /**
-     * Chấp nhận lời mời kết bạn từ một người dùng Zalo
-     * @param userId ID của người dùng đã gửi lời mời kết bạn
+     * Accept a friend request from a Zalo user
+     * @param userId ID of the user who sent the friend request
      */
     public async acceptFriendRequest(userId: string): Promise<AcceptFriendRequestResponse> {
         if (!this.api) {
@@ -901,8 +902,8 @@ export default class ZaloService {
     }
 
     /**
-     * Bỏ chặn một người dùng Zalo
-     * @param userId ID của người dùng cần bỏ chặn
+     * Unblock a Zalo user
+     * @param userId ID of the user to unblock
      */
     public async unblockUser(userId: string): Promise<UnBlockUserResponse> {
         if (!this.api) {
@@ -918,7 +919,7 @@ export default class ZaloService {
 
 
     /**
-     * Lấy context của phiên đăng nhập hiện tại (uid, phone, loginInfo, ...)
+     * Get the context of the current login session (uid, phone, loginInfo, ...)
      */
     public getContext(): any {
         if (!this.api) {
@@ -928,8 +929,8 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy thông tin của người dùng Zalo
-     * @param userId ID của người dùng cần lấy thông tin
+     * Get info about a Zalo user
+     * @param userId ID of the user to get info for
      */
     public async getUserInfo(userId: string | string[]): Promise<UserInfoResponse> {
         if (!this.api) {
@@ -939,7 +940,7 @@ export default class ZaloService {
         try {
             return await this.api.getUserInfo(userId);
         } catch (error: any) {
-            // Giữ mã lỗi Zalo (ZaloApiError.code) để caller phân loại hết phiên / giới hạn tần suất.
+            // Keep the Zalo error code (ZaloApiError.code) so the caller can classify session expiry / rate limits.
             const wrapped: any = new Error(error?.message || error);
             if (error?.code !== undefined && error?.code !== null) wrapped.code = error.code;
             throw wrapped;
@@ -959,8 +960,8 @@ export default class ZaloService {
     }
 
     /**
-     * Gửi nhiều danh thiếp (cards) đến một hoặc nhiều người dùng hoặc nhóm
-     * @param cardsInfo Mảng chứa thông tin về các danh thiếp cần gửi
+     * Send multiple contact cards to one or more users or groups
+     * @param cardsInfo Array with the info of the contact cards to send
      * @returns Promise<SendCardResponse[]>
      */
     public async sendCard(cardsInfo: Array<{
@@ -990,7 +991,7 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy thông tin chi tiết của một nhóm hoặc nhiều nhóm
+     * Get the detailed info of one or more groups
      * */
     public async getGroupInfo(groupId: string | string[]): Promise<GroupInfoResponse> {
         if (!this.api) {
@@ -1018,7 +1019,7 @@ export default class ZaloService {
         } catch (error: any) {
             throw new Error("Error sending video: " + error.message || error);
         } finally {
-            // Xóa các file tạm thời sau khi gửi
+            // Delete the temporary files after sending
             if (filesPath.length > 0) {
                 await this.deleteTemporaryFiles(filesPath);
             }
@@ -1095,11 +1096,11 @@ export default class ZaloService {
     }
 
     /**
-     * Tắt/bật âm cuộc trò chuyện qua Zalo API
-     * @param threadId ID hội thoại
-     * @param threadType 0=User (mặc định), 1=Group
-     * @param duration MuteDuration hoặc giây; undefined = unmute
-     * @param action MuteAction.MUTE (1) hoặc MuteAction.UNMUTE (3)
+     * Mute / unmute a conversation through the Zalo API
+     * @param threadId Conversation ID
+     * @param threadType 0=User (default), 1=Group
+     * @param duration MuteDuration or seconds; undefined = unmute
+     * @param action MuteAction.MUTE (1) or MuteAction.UNMUTE (3)
      */
     public async setMute(
         threadId: string,
@@ -1152,7 +1153,7 @@ export default class ZaloService {
         } catch (error: any) {
             // error code 240 = "Waiting for approve" — join request sent, needs admin approval
             if (error?.code === 240 || error?.message?.includes('Waiting for approve')) {
-                return { success: true, pendingApproval: true, errorCode: 240, message: 'Yêu cầu tham gia đã gửi, chờ admin duyệt' };
+                return { success: true, pendingApproval: true, errorCode: 240, message: tr('Yêu cầu tham gia đã gửi, chờ admin duyệt') };
             }
             throw error;
         }
@@ -1320,8 +1321,8 @@ export default class ZaloService {
     }
 
     /**
-     * Upload file âm thanh lên server Zalo
-     * Trả về fileUrl để dùng trong sendVoice.voiceUrl
+     * Upload an audio file to the Zalo server
+     * Returns the fileUrl to use in sendVoice.voiceUrl
      */
     public async uploadVoiceFile(voicePath: string, threadId: string, type?: ThreadType): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
@@ -1451,7 +1452,7 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy URL proxy đang được sử dụng cho kết nối Zalo hiện tại
+     * Get the proxy URL currently used for the current Zalo connection
      * @returns The proxy URL or null if not assigned
      */
     public getProxyUrl(): string | null {
@@ -1459,23 +1460,23 @@ export default class ZaloService {
     }
 
     /**
-     * Gửi ảnh từ local file path
+     * Send an image from a local file path
      */
     public async sendImage(filePath: string, threadId: string, type: ThreadType = ThreadType.User, caption?: string, quote: any = null): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
         try {
             if (!filePath || !fs.existsSync(filePath)) {
-                throw new Error('Không tìm thấy tệp ảnh để gửi');
+                throw new Error(tr('Không tìm thấy tệp ảnh để gửi'));
             }
             const threadType = convertThreadType(type);
             const normalizedThreadId = String(threadId || '');
-            if (!normalizedThreadId) throw new Error('Thiếu hội thoại nhận ảnh');
+            if (!normalizedThreadId) throw new Error(tr('Thiếu hội thoại nhận ảnh'));
 
             const buffer = fs.readFileSync(filePath);
             const baseName = path.basename(filePath);
             const extension = path.extname(baseName).toLowerCase();
             if (!['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(extension)) {
-                throw new Error(`Định dạng ${extension || 'không có phần mở rộng'} không được Zalo gửi dưới dạng ảnh`);
+                throw new Error(tr('Định dạng {{v1}} không được Zalo gửi dưới dạng ảnh', { v1: extension || tr('không có phần mở rộng') }));
             }
 
             // zca-js treats GIF separately. Supplying it as an image Buffer
@@ -1503,8 +1504,8 @@ export default class ZaloService {
     }
 
     /**
-     * Upload thumbnail ảnh đại diện của video lên server Zalo
-     * Trả về URL để dùng trong sendVideo.thumbnailUrl
+     * Upload the video's thumbnail image to the Zalo server
+     * Returns the URL to use in sendVideo.thumbnailUrl
      */
     public async uploadVideoThumb(thumbPath: string, threadId: string, type?: ThreadType): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
@@ -1520,8 +1521,8 @@ export default class ZaloService {
     }
 
     /**
-     * Upload file video lên server Zalo
-     * Trả về fileUrl để dùng trong sendVideo.videoUrl
+     * Upload a video file to the Zalo server
+     * Returns the fileUrl to use in sendVideo.videoUrl
      */
     public async uploadVideoFile(videoPath: string, threadId: string, type?: ThreadType): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
@@ -1537,19 +1538,19 @@ export default class ZaloService {
     }
 
     /**
-     * Gửi nhiều ảnh trong một tin nhắn (dùng groupLayoutId của zca-js)
+     * Send multiple images in one message (uses the groupLayoutId of zca-js)
      */
     public async sendImages(filePaths: string[], threadId: string, type: ThreadType = ThreadType.User, quote: any = null): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
         if (!filePaths.length) return [];
         const threadType = convertThreadType(type);
         const normalizedThreadId = String(threadId || '');
-        if (!normalizedThreadId) throw new Error('Thiếu hội thoại nhận ảnh');
-        // Nếu chỉ 1 ảnh, dùng sendImage thông thường
+        if (!normalizedThreadId) throw new Error(tr('Thiếu hội thoại nhận ảnh'));
+        // If there is only 1 image, use the normal sendImage
         if (filePaths.length === 1) return this.sendImage(filePaths[0], normalizedThreadId, threadType, undefined, quote);
         try {
-            // Các lỗi kiểm tra file dưới đây (trước khi upload) được chuyển tiếp album nhận diện để gửi lại
-            // từng ảnh — đổi câu chữ thì sửa cả FORWARD_ALBUM_PRECHECK_ERROR_RE trong src/ui/lib/chat/forward/forwardSend.ts.
+            // The file-check errors below (raised before upload) are recognized by album forwarding, which then resends
+            // each image one by one; if you change the wording, also update FORWARD_ALBUM_PRECHECK_ERROR_RE in src/ui/lib/chat/forward/forwardSend.ts.
             const attachments = filePaths.map(filePath => {
                 if (!filePath || !fs.existsSync(filePath)) throw new Error('Không tìm thấy một trong các tệp ảnh để gửi');
                 const buffer = fs.readFileSync(filePath);
@@ -1577,7 +1578,7 @@ export default class ZaloService {
     }
 
     /**
-     * Gửi file từ local path
+     * Send a file from a local path
      */
     public async sendFile(filePath: string, threadId: string, type: ThreadType = ThreadType.User, quote: any = null): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
@@ -1590,7 +1591,7 @@ export default class ZaloService {
     }
 
     /**
-     * Lấy lịch sử tin nhắn (group) hoặc trả về rỗng (user - không hỗ trợ trong API)
+     * Get the message history (group), or return empty (user - not supported in the API)
      */
     public async getMessageHistory(threadId: string, type: number, lastMsgId?: string, count?: number): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
@@ -1598,9 +1599,9 @@ export default class ZaloService {
             try {
                 return await this.api.getGroupChatHistory(threadId, count ?? 500);
             } catch (error: any) {
-                // zca-js có thể throw SyntaxError khi response JSON bị truncated
+                // zca-js can throw a SyntaxError when the JSON response is truncated
                 if (error instanceof SyntaxError) {
-                    throw new Error(`Không thể tải tin nhắn nhóm (lỗi phản hồi từ Zalo): ${error.message}`);
+                    throw new Error(tr('Không thể tải tin nhắn nhóm (lỗi phản hồi từ Zalo): {{message}}', { message: error.message }));
                 }
                 throw error;
             }
@@ -1640,7 +1641,7 @@ export default class ZaloService {
             return await this.api.getGroupChatHistory(groupId, count);
         } catch (error: any) {
             if (error instanceof SyntaxError) {
-                throw new Error(`Không thể tải tin nhắn nhóm (lỗi phản hồi từ Zalo): ${error.message}`);
+                throw new Error(tr('Không thể tải tin nhắn nhóm (lỗi phản hồi từ Zalo): {{message}}', { message: error.message }));
             }
             throw error;
         }
@@ -1694,7 +1695,7 @@ export default class ZaloService {
     }
 
     /**
-     * Gửi sự kiện đã đọc tin nhắn (seen event) cho Zalo
+     * Send the message-read event (seen event) to Zalo
      */
     public async sendSeenEvent(messages: any[], type: any = ThreadType.User): Promise<SendSeenEventResponse> {
         if (!this.api) {
@@ -1801,7 +1802,7 @@ export default class ZaloService {
         } catch (error) { throw error; }
     }
 
-    // ─── Tin nhắn nhanh ──────────────────────────────────────────────────────
+    // ─── Quick messages ──────────────────────────────────────────────────────
     public async getQuickMessageList(): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
         try { return await (this.api as any).getQuickMessageList(); } catch (error) { throw error; }
@@ -1830,7 +1831,7 @@ export default class ZaloService {
         try { return await (this.api as any).removeQuickMessage(itemIds); } catch (error) { throw error; }
     }
 
-    // ─── Ghi chú nhóm ────────────────────────────────────────────────────────
+    // ─── Group notes ────────────────────────────────────────────────────────
     public async createNote(options: { title: string; pinAct?: boolean }, groupId: string): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
         try { return await (this.api as any).createNote(options, groupId); } catch (error) { throw error; }
@@ -1841,17 +1842,17 @@ export default class ZaloService {
         try { return await (this.api as any).editNote(options, groupId); } catch (error) { throw error; }
     }
 
-    // ─── Phê duyệt thành viên nhóm ───────────────────────────────────────────
+    // ─── Group member approval ───────────────────────────────────────────
     public async reviewPendingMemberRequest(payload: any, groupId: string): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
         try { return await (this.api as any).reviewPendingMemberRequest(payload, groupId); } catch (error) { throw error; }
     }
 
-    // ─── Trạng thái truy cập (ZL-01) ─────────────────────────────────────
-    /** Trạng thái truy cập của một người (lastOnline + bạn đang online; đệm 60 s, gộp lời gọi trùng — zaloPresenceCache). */
+    // ─── Access status (ZL-01) ─────────────────────────────────────
+    /** Access status of a person (lastOnline + whether the friend is online; cached for 60 s, duplicate calls merged: zaloPresenceCache). */
     public async getPresence(userId: string, force: boolean = false): Promise<ZaloPresence> {
         if (!this.api) throw new Error("API not initialized");
-        if (!userId) throw new Error("Thiếu userId");
+        if (!userId) throw new Error(tr('Thiếu userId'));
         const api = this.api as any;
         return getZaloPresence(this.zaloId || '', String(userId), {
             lastOnline: (uid: string) => api.lastOnline(uid),
@@ -1860,8 +1861,8 @@ export default class ZaloService {
     }
 
     /**
-     * Bạn bè đang online (getFriendOnlines, đệm 60 s) — chấm xanh trong danh sách hội thoại (ZL-01 giai đoạn 2).
-     * Zalo trả 404 cho đường này → { supported: false } (giao diện thôi hỏi), không ném lỗi.
+     * Friends who are online (getFriendOnlines, cached 60 s): the green dot in the conversation list (ZL-01 phase 2).
+     * Zalo returns 404 for this route → { supported: false } (the UI stops asking), no error is thrown.
      */
     public async getFriendOnlineIds(force: boolean = false): Promise<{ supported: boolean; userIds: string[] }> {
         if (!this.api) throw new Error("API not initialized");
@@ -1869,8 +1870,8 @@ export default class ZaloService {
         return getZaloFriendOnlines(this.zaloId || '', { getFriendOnlines: () => api.getFriendOnlines() }, { force });
     }
 
-    // ─── Tự xoá tin nhắn (ZL-05) ─────────────────────────────────────────
-    /** Đọc danh sách hội thoại đang bật tự xoá trên Zalo, ghi vào DB (thay cả tập) → [{ threadId, ttl }]. */
+    // ─── Auto-delete messages (ZL-05) ─────────────────────────────────────────
+    /** Read the list of conversations with auto-delete turned on in Zalo, save it to the DB (replaces the whole set) → [{ threadId, ttl }]. */
     public async syncAutoDeleteChats(): Promise<Array<{ threadId: string; ttl: number }>> {
         if (!this.api) throw new Error("API not initialized");
         const res = await (this.api as any).getAutoDeleteChat();
@@ -1878,34 +1879,34 @@ export default class ZaloService {
         return Array.from(ttls, ([threadId, ttl]) => ({ threadId, ttl }));
     }
 
-    /** Bật / tắt tự xoá tin nhắn của một hội thoại trên Zalo (ttl ms: 0 | 1 | 7 | 14 ngày); Deplao vẫn giữ tin. */
+    /** Turn auto-delete of messages in one conversation on or off in Zalo (ttl ms: 0 | 1 | 7 | 14 days); Deplao still keeps the messages. */
     public async setAutoDeleteChat(ttl: number, threadId: string, type?: ThreadType | number): Promise<{ ttl: number }> {
         if (!this.api) throw new Error("API not initialized");
-        if (!threadId) throw new Error("Thiếu threadId");
-        if (!isZaloAutoDeleteTtl(ttl)) throw new Error("Thời gian tự xoá không hợp lệ (Tắt / 1 / 7 / 14 ngày)");
+        if (!threadId) throw new Error(tr('Thiếu threadId'));
+        if (!isZaloAutoDeleteTtl(ttl)) throw new Error(tr('Thời gian tự xoá không hợp lệ (Tắt / 1 / 7 / 14 ngày)'));
         await (this.api as any).updateAutoDeleteChat(ttl, threadId, convertThreadType(type as any));
         applyZaloAutoDeleteOne(this.zaloId || '', String(threadId), ttl);
         return { ttl };
     }
 
-    // ─── Cài đặt quyền riêng tư (ZL-02) ──────────────────────────────────
-    /** Cài đặt tài khoản Zalo (getSettings) — đọc mới mỗi lần, không đệm. */
+    // ─── Privacy settings (ZL-02) ──────────────────────────────────
+    /** Zalo account settings (getSettings): read fresh every time, not cached. */
     public async getAccountSettings(): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
         return await (this.api as any).getSettings();
     }
 
-    /** Đổi một cài đặt (updateSettings) — chỉ khoá / giá trị trong shared/zalo/zaloPrivacySettings. Ghi log cũ → mới. */
+    /** Change one setting (updateSettings): only keys / values from shared/zalo/zaloPrivacySettings. Logs old → new. */
     public async updateAccountSetting(key: string, value: number, previous?: unknown): Promise<{ key: string; value: number }> {
         if (!this.api) throw new Error("API not initialized");
-        if (!isValidZaloSettingValue(key, value)) throw new Error(`Cài đặt không hợp lệ: ${key} = ${value}`);
+        if (!isValidZaloSettingValue(key, value)) throw new Error(tr('Cài đặt không hợp lệ: {{key}} = {{value}}', { key, value }));
         await (this.api as any).updateSettings(key, value);
         Logger.log(`[ZaloSettings] ${this.zaloId}: ${key} ${previous ?? '?'} → ${value}`);
         return { key, value };
     }
 
-    // ─── Hội thoại ẩn bằng PIN (ZL-03) — MD5 của PIN không rời main ──────
-    /** Có PIN / số hội thoại đang ẩn; chưa đọc trong phiên hoặc `force` → đọc từ Zalo. */
+    // ─── PIN-hidden conversations (ZL-03): the MD5 of the PIN never leaves main ──────
+    /** Whether a PIN is set / number of hidden conversations; not read yet in this session or `force` → read from Zalo. */
     public async hiddenConversationStatus(force: boolean = false): Promise<HiddenStatus> {
         if (!this.api) throw new Error("API not initialized");
         const zaloId = this.zaloId || '';
@@ -1914,32 +1915,32 @@ export default class ZaloService {
         return syncZaloHidden(zaloId, zaloHiddenApiOf(this.api));
     }
 
-    /** So 4 chữ số gõ vào ô tìm kiếm với PIN (sai 5 lần / phút → ngừng 30 s). */
+    /** Compare the 4 digits typed in the search box with the PIN (5 wrong tries per minute → paused for 30 s). */
     public async unlockHiddenConversations(pin: string): Promise<UnlockResult> {
         if (!this.api) throw new Error("API not initialized");
         return unlockZaloHidden(this.zaloId || '', String(pin || ''), zaloHiddenApiOf(this.api));
     }
 
-    /** Ẩn / bỏ ẩn một hội thoại trên Zalo (type 1 = nhóm). */
+    /** Hide / unhide a conversation on Zalo (type 1 = group). */
     public async setConversationHidden(threadId: string, type: any, hidden: boolean): Promise<HiddenStatus> {
         if (!this.api) throw new Error("API not initialized");
         return setZaloConversationHidden(this.zaloId || '', String(threadId || ''), Number(type) === 1, !!hidden, zaloHiddenApiOf(this.api));
     }
 
-    /** Đặt / đổi PIN (đã có PIN → phải đúng PIN cũ). */
+    /** Set / change the PIN (if a PIN exists, the old PIN must be correct). */
     public async setHiddenConversationPin(pin: string, oldPin?: string): Promise<HiddenStatus> {
         if (!this.api) throw new Error("API not initialized");
         return setZaloHiddenPin(this.zaloId || '', String(pin || ''), oldPin ? String(oldPin) : undefined, zaloHiddenApiOf(this.api));
     }
 
-    /** Quên PIN → đặt lại trên Zalo (Zalo có thể xoá tin của hội thoại đang ẩn trên thiết bị Zalo; Deplao giữ tin). */
+    /** Forgot PIN → reset it on Zalo (Zalo may delete the messages of the hidden conversations on the Zalo device; Deplao keeps the messages). */
     public async resetHiddenConversationPin(): Promise<HiddenStatus> {
         if (!this.api) throw new Error("API not initialized");
         return resetZaloHiddenPin(this.zaloId || '', zaloHiddenApiOf(this.api));
     }
 
-    // ─── Danh mục sản phẩm Zalo Business (ZL-04) ─────────────────────────
-    /** Một trang danh mục (getCatalogList). */
+    // ─── Zalo Business product catalog (ZL-04) ─────────────────────────
+    /** One page of the catalog (getCatalogList). */
     public async getCatalogs(page: number = 0, limit: number = 20): Promise<{ items: ZaloCatalog[]; hasMore: boolean }> {
         if (!this.api) throw new Error("API not initialized");
         const res = await (this.api as any).getCatalogList({ limit: Math.min(50, Math.max(1, limit)), page: Math.max(0, page) });
@@ -1949,7 +1950,7 @@ export default class ZaloService {
     public async createCatalog(name: string): Promise<ZaloCatalog> {
         if (!this.api) throw new Error("API not initialized");
         const clean = String(name || '').trim();
-        if (!clean) throw new Error("Nhập tên danh mục");
+        if (!clean) throw new Error(tr('Nhập tên danh mục'));
         const res = await (this.api as any).createCatalog(clean);
         return mapZaloCatalog(res?.item);
     }
@@ -1957,30 +1958,30 @@ export default class ZaloService {
     public async updateCatalog(catalogId: string, name: string): Promise<ZaloCatalog> {
         if (!this.api) throw new Error("API not initialized");
         const clean = String(name || '').trim();
-        if (!catalogId || !clean) throw new Error("Thiếu danh mục hoặc tên");
+        if (!catalogId || !clean) throw new Error(tr('Thiếu danh mục hoặc tên'));
         const res = await (this.api as any).updateCatalog({ catalogId, catalogName: clean });
         return mapZaloCatalog(res?.item);
     }
 
     public async deleteCatalog(catalogId: string): Promise<{ deleted: true }> {
         if (!this.api) throw new Error("API not initialized");
-        if (!catalogId) throw new Error("Thiếu danh mục");
+        if (!catalogId) throw new Error(tr('Thiếu danh mục'));
         await (this.api as any).deleteCatalog(catalogId);
         return { deleted: true };
     }
 
-    /** Một trang sản phẩm của danh mục (getProductCatalogList). */
+    /** One page of products in the catalog (getProductCatalogList). */
     public async getCatalogProducts(catalogId: string, page: number = 0, limit: number = 100): Promise<{ items: ZaloProduct[]; hasMore: boolean }> {
         if (!this.api) throw new Error("API not initialized");
-        if (!catalogId) throw new Error("Thiếu danh mục");
+        if (!catalogId) throw new Error(tr('Thiếu danh mục'));
         const res = await (this.api as any).getProductCatalogList({ catalogId, limit: Math.min(100, Math.max(1, limit)), page: Math.max(0, page) });
         return { items: (Array.isArray(res?.items) ? res.items : []).map(mapZaloProduct), hasMore: Number(res?.has_more) === 1 };
     }
 
-    /** Tạo sản phẩm: ảnh là URL đã tải bằng uploadProductPhoto (zca-js 2.2.0 bỏ qua `files`). */
+    /** Create a product: the photo is a URL already uploaded with uploadProductPhoto (zca-js 2.2.0 ignores `files`). */
     public async createCatalogProduct(input: { catalogId: string; name: string; price: string; description?: string; photos?: string[] }): Promise<ZaloProduct> {
         if (!this.api) throw new Error("API not initialized");
-        const problem = !input?.catalogId ? "Thiếu danh mục" : validateZaloProduct(input);
+        const problem = !input?.catalogId ? tr('Thiếu danh mục') : validateZaloProduct(input);
         if (problem) throw new Error(problem);
         const res = await (this.api as any).createProductCatalog({
             catalogId: String(input.catalogId), productName: String(input.name).trim(), price: normalizeProductPrice(input.price),
@@ -1989,10 +1990,10 @@ export default class ZaloService {
         return mapZaloProduct(res?.item);
     }
 
-    /** Sửa sản phẩm: phải gửi lại createTime gốc. */
+    /** Edit a product: the original createTime must be sent again. */
     public async updateCatalogProduct(input: { catalogId: string; productId: string; name: string; price: string; description?: string; photos?: string[]; createTime?: number }): Promise<ZaloProduct> {
         if (!this.api) throw new Error("API not initialized");
-        const problem = !input?.catalogId || !input?.productId ? "Thiếu danh mục hoặc sản phẩm" : validateZaloProduct(input);
+        const problem = !input?.catalogId || !input?.productId ? tr('Thiếu danh mục hoặc sản phẩm') : validateZaloProduct(input);
         if (problem) throw new Error(problem);
         const res = await (this.api as any).updateProductCatalog({
             catalogId: String(input.catalogId), productId: String(input.productId), productName: String(input.name).trim(),
@@ -2005,18 +2006,18 @@ export default class ZaloService {
     public async deleteCatalogProducts(catalogId: string, productIds: string[]): Promise<{ deleted: number }> {
         if (!this.api) throw new Error("API not initialized");
         const ids = (productIds || []).map(String).filter(Boolean);
-        if (!catalogId || ids.length === 0) throw new Error("Thiếu danh mục hoặc sản phẩm");
+        if (!catalogId || ids.length === 0) throw new Error(tr('Thiếu danh mục hoặc sản phẩm'));
         await (this.api as any).deleteProductCatalog({ catalogId, productIds: ids });
         return { deleted: ids.length };
     }
 
-    /** Tải một ảnh sản phẩm lên Zalo → URL dùng cho product_photos. */
+    /** Upload one product photo to Zalo → URL used for product_photos. */
     public async uploadProductPhoto(photoPath: string): Promise<{ url: string; thumbUrl: string }> {
         if (!this.api) throw new Error("API not initialized");
-        if (!photoPath) throw new Error("Thiếu ảnh");
+        if (!photoPath) throw new Error(tr('Thiếu ảnh'));
         const res = await (this.api as any).uploadProductPhoto({ file: photoPath });
         const url = res?.normalUrl || res?.hdUrl || '';
-        if (!url) throw new Error("Zalo không trả link ảnh");
+        if (!url) throw new Error(tr('Zalo không trả link ảnh'));
         return { url, thumbUrl: res?.thumbUrl || url };
     }
 }

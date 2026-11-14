@@ -1,7 +1,7 @@
 /**
- * CRM: khách hàng, ghi chú, chiến dịch gửi tin hàng loạt.
- * Phân loại khách dùng Nhãn (xem nhóm "Nhãn & tin nhanh") — giống UI.
- * Kênh IPC: crm:getContacts, crm:getContactStats, crm:getNotes, crm:saveNote, crm:deleteNote,
+ * CRM: customers, notes, bulk messaging campaigns.
+ * Customer classification uses Labels (see the "Nhãn & tin nhanh" (Labels & quick messages) group), same as the UI.
+ * IPC channels: crm:getContacts, crm:getContactStats, crm:getNotes, crm:saveNote, crm:deleteNote,
  * crm:getCampaigns, crm:saveCampaign, crm:deleteCampaign, crm:cloneCampaign, crm:updateCampaignStatus,
  * crm:addCampaignContacts, crm:getCampaignContacts, crm:deleteCampaignContacts, crm:deleteAllCampaignContacts,
  * crm:getSendLog, crm:getCampaignStats, crm:getActivityStats, crm:getQueueStatus, db:getBankCards, db:upsertBankCard, db:deleteBankCard,
@@ -10,6 +10,7 @@
 import { s } from '../schema';
 import { ApiContext, ApiError, route, RouteDef } from '../types';
 import { accountParams, mapConversation, mapMessage, notFound, offsetPage, pageShape } from './common';
+import { tr } from '../../../shared/i18n';
 
 const contactParams = s.object({ accountId: s.id(), contactId: s.id() });
 const campaignParams = s.object({ accountId: s.id(), campaignId: s.int().min(1) });
@@ -18,7 +19,7 @@ const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'done'] as const;
 
 const bankCardBody = s.object({
     bank_name: s.string().min(1).max(100),
-    bin_bank: s.int().min(100000).max(999999).describe('Mã BIN ngân hàng (6 số, vd 970436 = Vietcombank)'),
+    bin_bank: s.int().min(100000).max(999999).describe(tr('Mã BIN ngân hàng (6 số, vd 970436 = Vietcombank)')),
     account_number: s.string().min(4).max(40),
     account_name: s.string().min(1).max(100),
     is_default: s.boolean().default(false),
@@ -27,10 +28,10 @@ const bankCardBody = s.object({
 const campaignBody = s.object({
     name: s.string().min(1).max(200),
     campaign_type: s.enum(['message', 'friend_request', 'mixed'] as const).default('message'),
-    template_message: s.union(s.string().max(20000), s.any('object')).default('').describe('Nội dung gửi; hỗ trợ biến như UI ({name}...) hoặc JSON blocks của trình soạn'),
+    template_message: s.union(s.string().max(20000), s.any('object')).default('').describe(tr('Nội dung gửi; hỗ trợ biến như UI ({name}...) hoặc JSON blocks của trình soạn')),
     friend_request_message: s.string().max(500).default(''),
     mixed_config: s.union(s.string(), s.any('object')).optional(),
-    delay_seconds: s.int().min(5).max(86400).default(60).describe('Giãn cách giữa 2 liên hệ (giây); hàng đợi luôn chờ tối thiểu 30 giây'),
+    delay_seconds: s.int().min(5).max(86400).default(60).describe(tr('Giãn cách giữa 2 liên hệ (giây); hàng đợi luôn chờ tối thiểu 30 giây')),
 });
 
 async function findCampaign(ctx: ApiContext, accountId: string, campaignId: number): Promise<any> {
@@ -61,7 +62,7 @@ export function crmRoutes(): RouteDef[] {
     return [
         route({
             method: 'GET', path: '/accounts/:accountId/crm/contacts', scope: 'crm:read', tags, operationId: 'listCrmContacts',
-            summary: 'Khách hàng (bạn bè, người lạ, nhóm) với bộ lọc như trang CRM',
+            summary: tr('Khách hàng (bạn bè, người lạ, nhóm) với bộ lọc như trang CRM'),
             params: accountParams,
             query: s.object({
                 ...pageShape,
@@ -83,7 +84,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/crm/contacts/stats', scope: 'crm:read', tags, operationId: 'getCrmContactStats',
-            summary: 'Thống kê khách hàng (tổng, bạn bè, ghi chú)',
+            summary: tr('Thống kê khách hàng (tổng, bạn bè, ghi chú)'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -93,7 +94,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/crm/contacts/:contactId', scope: 'crm:read', tags, operationId: 'getCrmContact',
-            summary: 'Hồ sơ khách: thông tin, nhãn, ghi chú, 5 tin gần nhất',
+            summary: tr('Hồ sơ khách: thông tin, nhãn, ghi chú, 5 tin gần nhất'),
             params: contactParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -115,7 +116,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/crm/contacts/:contactId', scope: 'crm:write', tags, operationId: 'updateCrmContact',
-            summary: 'Cập nhật số điện thoại / tên hiển thị / biệt danh (lưu trên Deplao)',
+            summary: tr('Cập nhật số điện thoại / tên hiển thị / biệt danh (lưu trên Deplao)'),
             params: contactParams,
             body: s.object({
                 phone: s.string().max(30).optional(),
@@ -143,10 +144,10 @@ export function crmRoutes(): RouteDef[] {
             },
         }),
 
-        // ── Ghi chú ───────────────────────────────────────────────────────
+        // ── Notes ───────────────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/crm/contacts/:contactId/notes', scope: 'crm:read', tags, operationId: 'listCrmNotes',
-            summary: 'Ghi chú của khách',
+            summary: tr('Ghi chú của khách'),
             params: contactParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -155,7 +156,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/crm/contacts/:contactId/notes', scope: 'crm:write', tags, operationId: 'createCrmNote',
-            summary: 'Thêm ghi chú',
+            summary: tr('Thêm ghi chú'),
             params: contactParams,
             body: s.object({ content: s.string().min(1).max(10000), topic_id: s.string().optional() }),
             handler: async ctx => {
@@ -175,7 +176,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/crm/notes/:noteId', scope: 'crm:write', tags, operationId: 'updateCrmNote',
-            summary: 'Sửa ghi chú',
+            summary: tr('Sửa ghi chú'),
             params: s.object({ accountId: s.id(), noteId: s.int().min(1) }),
             body: s.object({ contact_id: s.id(), content: s.string().min(1).max(10000) }),
             handler: async ctx => {
@@ -189,7 +190,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/crm/notes/:noteId', scope: 'crm:write', tags, operationId: 'deleteCrmNote',
-            summary: 'Xoá ghi chú',
+            summary: tr('Xoá ghi chú'),
             params: s.object({ accountId: s.id(), noteId: s.int().min(1) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -198,10 +199,10 @@ export function crmRoutes(): RouteDef[] {
             },
         }),
 
-        // ── Chiến dịch ────────────────────────────────────────────────────
+        // ── Campaigns ────────────────────────────────────────────────────
         route({
             method: 'GET', path: '/accounts/:accountId/campaigns', scope: 'crm:read', tags: ctags, operationId: 'listCampaigns',
-            summary: 'Chiến dịch của tài khoản',
+            summary: tr('Chiến dịch của tài khoản'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -210,7 +211,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/campaigns', scope: 'crm:write', tags: ctags, operationId: 'createCampaign',
-            summary: 'Tạo chiến dịch (trạng thái draft)',
+            summary: tr('Tạo chiến dịch (trạng thái draft)'),
             params: accountParams,
             body: campaignBody,
             handler: async ctx => {
@@ -221,7 +222,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/campaigns/:campaignId', scope: 'crm:read', tags: ctags, operationId: 'getCampaign',
-            summary: 'Một chiến dịch',
+            summary: tr('Một chiến dịch'),
             params: campaignParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -230,7 +231,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/campaigns/:campaignId', scope: 'crm:write', tags: ctags, operationId: 'updateCampaign',
-            summary: 'Sửa chiến dịch',
+            summary: tr('Sửa chiến dịch'),
             params: campaignParams,
             body: campaignBody.partial(),
             handler: async ctx => {
@@ -242,7 +243,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/campaigns/:campaignId', scope: 'crm:write', tags: ctags, operationId: 'deleteCampaign',
-            summary: 'Xoá chiến dịch',
+            summary: tr('Xoá chiến dịch'),
             params: campaignParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -253,7 +254,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/campaigns/:campaignId/clone', scope: 'crm:write', tags: ctags, operationId: 'cloneCampaign',
-            summary: 'Nhân bản chiến dịch',
+            summary: tr('Nhân bản chiến dịch'),
             params: campaignParams,
             body: s.object({ name: s.string().max(200).optional(), include_contacts: s.boolean().default(false) }).optional(),
             handler: async ctx => {
@@ -268,8 +269,8 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/campaigns/:campaignId/status', scope: 'campaigns:run', tags: ctags, operationId: 'setCampaignStatus',
-            summary: 'Chạy / tạm dừng / kết thúc chiến dịch',
-            description: '`active` bắt đầu hàng đợi gửi theo tài khoản (giãn cách như cấu hình), `paused` tạm dừng, `done` kết thúc.',
+            summary: tr('Chạy / tạm dừng / kết thúc chiến dịch'),
+            description: tr('`active` bắt đầu hàng đợi gửi theo tài khoản (giãn cách như cấu hình), `paused` tạm dừng, `done` kết thúc.'),
             params: campaignParams,
             body: s.object({ status: s.enum(CAMPAIGN_STATUSES) }),
             handler: async ctx => {
@@ -281,7 +282,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/campaigns/:campaignId/contacts', scope: 'crm:read', tags: ctags, operationId: 'listCampaignContacts',
-            summary: 'Người nhận của chiến dịch và trạng thái gửi',
+            summary: tr('Người nhận của chiến dịch và trạng thái gửi'),
             params: campaignParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -291,7 +292,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/campaigns/:campaignId/contacts', scope: 'crm:write', tags: ctags, operationId: 'addCampaignContacts',
-            summary: 'Thêm người nhận vào chiến dịch',
+            summary: tr('Thêm người nhận vào chiến dịch'),
             params: campaignParams,
             body: s.object({
                 contacts: s.array(s.object({
@@ -313,9 +314,9 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/campaigns/:campaignId/contacts/from-label', scope: 'crm:write', tags: ctags, operationId: 'addCampaignContactsFromLabel',
-            summary: 'Thêm mọi hội thoại đang gắn một nhãn vào chiến dịch',
+            summary: tr('Thêm mọi hội thoại đang gắn một nhãn vào chiến dịch'),
             params: campaignParams,
-            body: s.object({ label_id: s.int().min(1), only_users: s.boolean().default(true).describe('Bỏ qua nhóm chat') }),
+            body: s.object({ label_id: s.int().min(1), only_users: s.boolean().default(true).describe(tr('Bỏ qua nhóm chat')) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 await findCampaign(ctx, acc.id, ctx.params.campaignId);
@@ -332,8 +333,8 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/campaigns/:campaignId/contacts/from-group', scope: 'crm:write', tags: ctags, operationId: 'addCampaignContactsFromGroup',
-            summary: 'Thêm thành viên một nhóm (đã quét/lưu) vào chiến dịch',
-            description: 'Như "Thêm vào chiến dịch" ở tab Thành viên nhóm. Thành viên lấy từ danh sách đã lưu (quét nhóm trong app trước nếu trống).',
+            summary: tr('Thêm thành viên một nhóm (đã quét/lưu) vào chiến dịch'),
+            description: tr('Như "Thêm vào chiến dịch" ở tab Thành viên nhóm. Thành viên lấy từ danh sách đã lưu (quét nhóm trong app trước nếu trống).'),
             params: campaignParams,
             body: s.object({ group_id: s.id(), exclude_ids: s.array(s.id()).max(5000).default([]) }),
             handler: async ctx => {
@@ -351,7 +352,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/campaigns/:campaignId/contacts', scope: 'crm:write', tags: ctags, operationId: 'removeCampaignContacts',
-            summary: 'Xoá người nhận (theo danh sách hoặc tất cả)',
+            summary: tr('Xoá người nhận (theo danh sách hoặc tất cả)'),
             params: campaignParams,
             body: s.object({ contact_ids: s.array(s.id()).max(5000).optional(), all: s.boolean().default(false) }),
             handler: async ctx => {
@@ -361,14 +362,14 @@ export function crmRoutes(): RouteDef[] {
                     await ctx.call('crm:deleteAllCampaignContacts', { campaignId: ctx.params.campaignId });
                     return { removed: 'all' };
                 }
-                if (!ctx.body.contact_ids?.length) throw new ApiError(400, 'VALIDATION_ERROR', 'Cần contact_ids hoặc all=true');
+                if (!ctx.body.contact_ids?.length) throw new ApiError(400, 'VALIDATION_ERROR', tr('Cần contact_ids hoặc all=true'));
                 await ctx.call('crm:deleteCampaignContacts', { campaignId: ctx.params.campaignId, contactIds: ctx.body.contact_ids });
                 return { removed: ctx.body.contact_ids.length };
             },
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/campaigns/:campaignId/send-log', scope: 'crm:read', tags: ctags, operationId: 'getCampaignSendLog',
-            summary: 'Nhật ký gửi của chiến dịch',
+            summary: tr('Nhật ký gửi của chiến dịch'),
             params: campaignParams,
             query: s.object({ limit: s.int().min(1).max(1000).default(200) }),
             handler: async ctx => {
@@ -379,7 +380,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/campaigns-stats', scope: 'crm:read', tags: ctags, operationId: 'getCampaignStats',
-            summary: 'Thống kê chiến dịch nổi bật',
+            summary: tr('Thống kê chiến dịch nổi bật'),
             params: accountParams,
             query: s.object({ limit: s.int().min(1).max(100).default(10) }),
             handler: async ctx => {
@@ -389,7 +390,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/campaigns-queue', scope: 'crm:read', tags: ctags, operationId: 'getCampaignQueueStatus',
-            summary: 'Trạng thái hàng đợi gửi chiến dịch',
+            summary: tr('Trạng thái hàng đợi gửi chiến dịch'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -398,7 +399,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/crm/activity', scope: 'crm:read', tags, operationId: 'getCrmActivityStats',
-            summary: 'Hoạt động CRM trong khoảng thời gian',
+            summary: tr('Hoạt động CRM trong khoảng thời gian'),
             params: accountParams,
             query: s.object({ since: s.timestamp().describe('Epoch ms'), until: s.timestamp().optional() }),
             handler: async ctx => {
@@ -409,7 +410,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/accounts/:accountId/bank-cards', scope: 'crm:read', tags, operationId: 'listBankCards',
-            summary: 'Thẻ ngân hàng đã lưu để gửi cho khách',
+            summary: tr('Thẻ ngân hàng đã lưu để gửi cho khách'),
             params: accountParams,
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
@@ -418,7 +419,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'POST', path: '/accounts/:accountId/bank-cards', scope: 'crm:write', tags, operationId: 'createBankCard',
-            summary: 'Lưu thẻ ngân hàng (để gửi nhanh cho khách)',
+            summary: tr('Lưu thẻ ngân hàng (để gửi nhanh cho khách)'),
             params: accountParams,
             body: bankCardBody,
             examples: { request: { bank_name: 'Vietcombank', bin_bank: 970436, account_number: '0011001234567', account_name: 'NGUYEN VAN A', is_default: true } },
@@ -434,7 +435,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'PATCH', path: '/accounts/:accountId/bank-cards/:cardId', scope: 'crm:write', tags, operationId: 'updateBankCard',
-            summary: 'Sửa thẻ ngân hàng',
+            summary: tr('Sửa thẻ ngân hàng'),
             params: s.object({ accountId: s.id(), cardId: s.int().min(1) }),
             body: s.object({
                 bank_name: s.string().min(1).max(100).optional(),
@@ -464,7 +465,7 @@ export function crmRoutes(): RouteDef[] {
         }),
         route({
             method: 'DELETE', path: '/accounts/:accountId/bank-cards/:cardId', scope: 'crm:write', tags, operationId: 'deleteBankCard',
-            summary: 'Xoá thẻ ngân hàng đã lưu',
+            summary: tr('Xoá thẻ ngân hàng đã lưu'),
             params: s.object({ accountId: s.id(), cardId: s.int().min(1) }),
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);

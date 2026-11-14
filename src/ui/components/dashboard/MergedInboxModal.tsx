@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
 import { FolderIcon } from '@/components/common/icons';
+import { tr } from '../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 interface Props {
@@ -52,8 +54,8 @@ export default function MergedInboxModal({ onClose }: Props) {
               </svg>
             </div>
             <div>
-              <h2 className="text-base font-semibold text-foreground">Chế độ Gộp tài khoản</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">Xem tất cả hội thoại từ nhiều tài khoản trong 1 nơi</p>
+              <h2 className="text-base font-semibold text-foreground">{tr('Chế độ Gộp tài khoản')}</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">{tr('Xem tất cả hội thoại từ nhiều tài khoản trong 1 nơi')}</p>
             </div>
             <button onClick={onClose} className="ml-auto text-muted-foreground hover:text-foreground/80 transition-colors">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -66,9 +68,9 @@ export default function MergedInboxModal({ onClose }: Props) {
         {/* Account list */}
         <div className="px-6 py-4">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs text-muted-foreground font-medium">Chọn tài khoản ({selected.length}/{accounts.length})</span>
+            <span className="text-xs text-muted-foreground font-medium">{trx('Chọn tài khoản ({{count}}/{{count1}})', { count: selected.length, count1: accounts.length })}</span>
             <button onClick={toggleAll} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-              {allSelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+              {allSelected ? tr('Bỏ chọn tất cả') : tr('Chọn tất cả')}
             </button>
           </div>
 
@@ -104,14 +106,14 @@ export default function MergedInboxModal({ onClose }: Props) {
                     <p className="text-sm font-medium text-foreground truncate">{acc.full_name || acc.zalo_id}</p>
                     <p className="text-[11px] text-muted-foreground truncate">
                       {acc.phone || acc.zalo_id}
-                      {acc.is_business ? ' • 💼 Business' : ''}
+                      {acc.is_business ? tr(' • 💼 Business') : ''}
                     </p>
                   </div>
                   {/* Connected status */}
                   <span className={`text-[11px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${
                     acc.isConnected ? 'bg-green-900/50 text-green-400' : 'bg-muted text-muted-foreground'
                   }`}>
-                    {acc.isConnected ? 'Online' : 'Offline'}
+                    {acc.isConnected ? tr('Online') : tr('Offline')}
                   </span>
                 </label>
               );
@@ -125,7 +127,7 @@ export default function MergedInboxModal({ onClose }: Props) {
                 <line x1="12" y1="8" x2="12" y2="12"/>
                 <line x1="12" y1="16" x2="12.01" y2="16"/>
               </svg>
-              Chọn ít nhất 2 tài khoản để gộp
+              {tr('Chọn ít nhất 2 tài khoản để gộp')}
             </p>
           )}
         </div>
@@ -136,7 +138,7 @@ export default function MergedInboxModal({ onClose }: Props) {
             onClick={onClose}
             className="flex-1 px-4 py-2.5 text-sm rounded-xl bg-muted text-foreground/80 hover:bg-accent transition-colors font-medium"
           >
-            Huỷ
+            {tr('Huỷ')}
           </button>
           <button
             onClick={handleEnter}
@@ -149,7 +151,7 @@ export default function MergedInboxModal({ onClose }: Props) {
               <path d="M23 21v-2a4 4 0 00-3-3.87"/>
               <path d="M16 3.13a4 4 0 010 7.75"/>
             </svg>
-            Vào chế độ gộp ({selected.length})
+            {trx('Vào chế độ gộp ({{count}})', { count: selected.length })}
           </button>
         </div>
       </div>

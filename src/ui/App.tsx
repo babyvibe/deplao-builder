@@ -63,6 +63,7 @@ import LockScreen from './components/auth/lock/LockScreen';
 import { Spinner } from '@/components/common/PageLoading';
 import { GlobeIcon } from '@/components/common/icons';
 import { CHANNEL, isZalo, isNonZalo, isFacebook } from '@/lib/channels/channelHelper';
+import { tr } from '../shared/i18n';
 
 // These pages pull in editors, charts, React Flow and large ERP modules. They
 // are not needed for the first chat frame, so defer them until their view opens.
@@ -74,8 +75,8 @@ const IntegrationPage = React.lazy(() => import('./components/integration/Integr
 const AnalyticsPage = React.lazy(() => import('./components/analytics/AnalyticsPage'));
 const ErpPage = React.lazy(() => import('./components/erp/ErpPage'));
 
-const HEALTH_CHECK_INTERVAL_MS = 60 * 1000; // 1 phút
-const NETWORK_RECONNECT_COOLDOWN_MS = 15 * 1000; // 15 giây
+const HEALTH_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
+const NETWORK_RECONNECT_COOLDOWN_MS = 15 * 1000; // 15 seconds
 
 type WorkspacePermissionCache = { module: string; can_access: boolean };
 type WorkspaceAccountCache = {
@@ -86,7 +87,7 @@ type WorkspaceAccountCache = {
   is_business?: number;
   is_active?: number;
   listener_active?: number;
-  /** zalo | facebook | telegram_user | telegram_bot — Boss gửi trong snapshot (bản Boss cũ không có → Zalo) */
+  /** zalo | facebook | telegram_user | telegram_bot. Boss sends it in the snapshot (an older Boss build does not send it → Zalo) */
   channel?: string;
 };
 
@@ -102,8 +103,8 @@ function normalizeWorkspaceAccounts(accounts?: WorkspaceAccountCache[]) {
   return (accounts || []).map((account: any) => {
     const listenerState = account.listener_active ?? account.listenerActive ?? (account.isConnected ? 1 : 0);
     const fullName = account.full_name || account.display_name || account.zalo_id;
-    // Kênh của tài khoản (snapshot Boss): thiếu thì tài khoản Facebook / Telegram bị coi là Zalo (sai adapter, không có
-    // nút đồng bộ…). Trạng thái (listener_active) Boss tính theo kênh — không hỏi phiên cục bộ của máy nhân viên.
+    // Account channel (Boss snapshot): if missing, Facebook / Telegram accounts are treated as Zalo (wrong adapter, no
+    // sync button…). Status (listener_active) is computed by Boss per channel, not from a local session on the employee's machine.
     const channel = typeof account.channel === 'string' && account.channel ? account.channel : undefined;
     return {
     zalo_id: account.zalo_id,
@@ -133,7 +134,7 @@ function buildCurrentEmployeeFromWorkspace(ws: any) {
   return {
     employee_id: ws.employeeId || '',
     username: cachedEmployee?.username || ws.employeeUsername || '',
-    display_name: cachedEmployee?.display_name || ws.employeeName || ws.name || 'Nhân viên',
+    display_name: cachedEmployee?.display_name || ws.employeeName || ws.name || tr('Nhân viên'),
     avatar_url: cachedEmployee?.avatar_url || '',
     role: 'employee' as const,
     is_active: cachedEmployee?.is_active ?? 1,
@@ -153,9 +154,9 @@ function ensureActiveAccount(accounts: Array<{ zalo_id: string }>) {
 }
 
 /**
- * Init REST client của nhân viên bằng Boss URL + token LẤY TỪ CẤU HÌNH WORKSPACE Ở MAIN (nguồn sự thật
- * duy nhất): getActive() lúc mở app, payload workspace:switched, sự kiện employee:credentials.
- * Không bao giờ init từ kết quả đăng nhập ở renderer. RestQueryService.init idempotent (cùng giá trị → giữ nguyên).
+ * Init the employee REST client with the Boss URL + token TAKEN FROM THE WORKSPACE CONFIG IN MAIN (the single
+ * source of truth): getActive() when the app opens, the workspace:switched payload, the employee:credentials event.
+ * Never init from a login result in the renderer. RestQueryService.init is idempotent (same value → kept as is).
  */
 function applyEmployeeCredentials(bossUrl: string | undefined, token: string | undefined, source: string): void {
   const url = normalizeBossUrl(bossUrl);
@@ -170,8 +171,8 @@ function applyEmployeeCredentials(bossUrl: string | undefined, token: string | u
 const snapshotRefreshGate = createThrottleGate(SNAPSHOT_REFRESH_THROTTLE_MS);
 
 /**
- * Làm mới snapshot nhân viên (quyền + tài khoản được giao) qua đường boot/snapshot của main
- * (/api/sync/snapshot → workspace:initialState { forced }) — tối đa 1 lần / 10 s / workspace.
+ * Refresh the employee snapshot (permissions + assigned accounts) through the main process boot/snapshot path
+ * (/api/sync/snapshot → workspace:initialState { forced }), at most once per 10 s per workspace.
  */
 function refreshEmployeeSnapshot(reason: string): void {
   const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
@@ -245,7 +246,7 @@ export default function App() {
   })));
   const activePluginPanel = useAppStore(s => s.activePluginPanel);
   const setActivePluginPanel = useAppStore(s => s.setActivePluginPanel);
-  // Plugin: trang sidebar, panel chat, nút soạn tin của plugin đang bật (rỗng nếu không có plugin).
+  // Plugin: sidebar pages, chat panel, composer buttons of enabled plugins (empty if there is no plugin).
   useEffect(() => initPluginStore(), []);
   const { setAccounts, updateListenerActive, accounts } = useAccountStore(useShallow(s => ({
     setAccounts: s.setAccounts, updateListenerActive: s.updateListenerActive, accounts: s.accounts,
@@ -253,12 +254,12 @@ export default function App() {
   const { activeAccountId } = useAccountStore(useShallow(s => ({
     activeAccountId: s.activeAccountId,
   })));
-  // App là gốc cả giao diện: subscribe cả store (hay cả map contacts — đổi theo mọi tin nhắn đến) làm MỌI component
-  // render lại theo mọi tin nhắn / đang gõ / đã xem của mọi tài khoản. Chỉ lấy hội thoại đang mở.
+  // App is the root of the whole UI: subscribing to the whole store (or the whole contacts map, which changes with every incoming message) makes EVERY component
+  // re-render on every message / typing / seen event from every account. Only take the open conversation.
   const { setContacts, activeThreadId, activeThreadType } = useChatStore(useShallow(s => ({
     setContacts: s.setContacts, activeThreadId: s.activeThreadId, activeThreadType: s.activeThreadType,
   })));
-  // Đang mở phần bình luận của một bài trong kênh đang xem (TelegramPostDiscussionHost)
+  // Opening the comments of a post in the channel being viewed (TelegramPostDiscussionHost)
   const postDiscussionOpen = useChatStore(s => (
     !!s.postDiscussion && s.postDiscussion.accountId === activeAccountId && s.postDiscussion.channelId === activeThreadId
   ));
@@ -268,9 +269,9 @@ export default function App() {
   const [initializing, setInitializing] = useState(true);
   const [lockEnabled, setLockEnabled] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
-  // Khoá app → ẩn lại hội thoại Zalo đã mở bằng PIN (ZL-03)
+  // App locked → hide the Zalo conversations that were opened with a PIN again (ZL-03)
   useEffect(() => { if (isLocked) useAppStore.getState().lockAllHidden(); }, [isLocked]);
-  // Khoá app → không hiện thông báo tin nhắn trong app (lộ nội dung trên màn khoá), bỏ thẻ đang hiện
+  // App locked → do not show message notifications in the app (would reveal content on the lock screen), remove the card on screen
   useEffect(() => { useInAppNotifyStore.getState().setSuspended(lockEnabled && isLocked); }, [lockEnabled, isLocked]);
   const startupInitStartedRef = useRef(false);
   const isMobile = useIsMobile();
@@ -348,10 +349,10 @@ export default function App() {
     });
   }, []);
 
-  // ─── Early init RestQueryService (employee mode) — trước workspace:switched ──
-  // UI components mount và gọi REST API ngay lập tức, nhưng workspace:switched
-  // event có độ trễ → RestQueryService chưa init → request bị "blocked".
-  // Fix: init ngay từ mount effect với thông tin workspace hiện tại (cùng cấu hình ở main).
+  // ─── Early init RestQueryService (employee mode): before workspace:switched ──
+  // UI components mount and call the REST API right away, but the workspace:switched
+  // event is delayed → RestQueryService is not init yet → the request is "blocked".
+  // Fix: init right in the mount effect with the current workspace info (same config as in main).
   useEffect(() => {
     (async () => {
       try {
@@ -364,27 +365,27 @@ export default function App() {
     })();
   }, []);
 
-  // ─── Employee ↔ Boss: URL/token từ main, badge kết hợp, resync, 403 ACCOUNT_FORBIDDEN ──
+  // ─── Employee ↔ Boss: URL/token from main, combined badge, resync, 403 ACCOUNT_FORBIDDEN ──
   useEffect(() => {
     const rest = RestQueryService.getInstance();
-    // Nửa REST của badge: bị chặn (lỗi transport liên tiếp) hoặc chưa có URL/token → "đang khôi phục"
+    // REST half of the badge: blocked (repeated transport errors) or no URL/token yet → "đang khôi phục" (recovering)
     const syncRestBlocked = () => {
       useEmployeeStore.getState().setRestBlocked(rest.isBlocked() || !rest.getBaseUrl() || !rest.getToken());
     };
     syncRestBlocked();
     const offRestStatus = rest.addStatusListener(() => syncRestBlocked());
 
-    // Main vừa kết nối / đổi URL-token → REST client theo đúng cấu hình đó
+    // Main just connected / changed the URL-token → the REST client follows that config
     const offCredentials = window.electronAPI?.on('employee:credentials', (data) => {
       if (!data?.workspaceId || !data.bossUrl || !data.token) return;
       const rendererActive = useWorkspaceStore.getState().activeWorkspaceId;
-      // Đang chuyển workspace (renderer còn ở workspace cũ) → bỏ qua; workspace:switched init đúng thời điểm
+      // Switching workspace (renderer still on the old workspace) → skip; workspace:switched does the init at the right time
       const isActive = rendererActive ? data.workspaceId === rendererActive : data.active;
       if (!isActive) return;
       applyEmployeeCredentials(data.bossUrl, data.token, `main:${data.reason}`);
     });
 
-    // Kết nối hồi phục sau khoảng mất > 10 s / máy ngủ dậy → data loader tải lại (window 'employee:resync')
+    // Connection recovered after a gap > 10 s / machine woke from sleep → data loader reloads (window 'employee:resync')
     const offResync = window.electronAPI?.on('employee:resync', (data) => {
       if (!data?.workspaceId) return;
       const activeId = useWorkspaceStore.getState().activeWorkspaceId;
@@ -394,7 +395,7 @@ export default function App() {
       refreshEmployeeSnapshot(`resync:${data.reason}`);
     });
 
-    // REST gặp 403 ACCOUNT_FORBIDDEN → quyền / tài khoản được giao đã đổi → lấy lại snapshot (≤ 1 lần / 10 s)
+    // REST gets 403 ACCOUNT_FORBIDDEN → permissions / assigned accounts changed → fetch the snapshot again (≤ 1 time / 10 s)
     const onAccountForbidden = () => refreshEmployeeSnapshot('accountForbidden');
     window.addEventListener('employee:accountForbidden', onAccountForbidden);
 
@@ -428,8 +429,8 @@ export default function App() {
   useEffect(() => {
     const handleChanged = (e: Event) => {
       const enabled = (e as CustomEvent).detail?.enabled ?? false;
-      // Vừa bật trong Cài đặt: chỉ bật phím tắt Ctrl+Shift+L / nút khoá, KHÔNG khoá ngay — khoá ngay gỡ cả Cài đặt nên màn
-      // "Lưu recovery key" hiện một lần sau khi bật (LockScreenSettings) không bao giờ thấy. Lần mở app sau sẽ hỏi mật khẩu.
+      // Just turned on in Settings: only enable the Ctrl+Shift+L shortcut / lock button, do NOT lock now: locking now would close Settings, so the screen
+      // "Lưu recovery key" (Save recovery key) shown once after enabling (LockScreenSettings) is never seen. The next app launch will ask for the password.
       setLockEnabled(enabled);
     };
     window.addEventListener('lockScreen:changed', handleChanged);
@@ -512,7 +513,7 @@ export default function App() {
     if (!isMobile) setMobileShowChat(false);
   }, [isMobile]);
 
-  // Popup nhắc hẹn (Zalo chat.ecard + lịch Quản lý công việc): hàng đợi, hiện lần lượt từng cái
+  // Appointment reminder popup (Zalo chat.ecard + Task management calendar): queue, shown one by one
   const [reminderQueue, setReminderQueue] = useState<Array<ReminderData & { key: string; kind: 'zalo' | 'erp'; msgId?: string }>>([]);
   const reminderNotification = reminderQueue[0] || null;
   const healthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -618,7 +619,7 @@ export default function App() {
     if (!candidates.length) return;
 
     useAppStore.getState().showNotification(
-      `🌐 Mạng đã khôi phục - đang kết nối lại ${candidates.length} tài khoản`,
+      tr('🌐 Mạng đã khôi phục - đang kết nối lại {{count}} tài khoản', { count: candidates.length }),
       'info',
     );
 
@@ -647,7 +648,7 @@ export default function App() {
     await ipc.zalo?.acceptFriendRequest({ auth, userId });
     await DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
     await DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
-      if (isReadFailure(res)) return; // đọc lỗi → giữ số đếm và chấm "mới" như cũ
+      if (isReadFailure(res)) return; // read error → keep the count and the "new" dot as before
       const count = res?.requests?.length ?? 0;
       if (useAccountStore.getState().activeAccountId === zaloId) {
         useCRMStore.getState().setRequestCount(count);
@@ -656,7 +657,7 @@ export default function App() {
         useAppStore.getState().clearCRMRequestUnseen(zaloId);
       }
     }).catch(() => {});
-    useAppStore.getState().showNotification('Đã chấp nhận lời mời kết bạn!', 'success');
+    useAppStore.getState().showNotification(tr('Đã chấp nhận lời mời kết bạn!'), 'success');
   };
 
   const handleFriendRequestReject = async (zaloId: string, userId: string) => {
@@ -666,7 +667,7 @@ export default function App() {
     await ipc.zalo?.rejectFriendRequest({ auth, userId });
     await DataAccessor.removeFriendRequest({ zaloId, userId, direction: 'received' }).catch(() => {});
     await DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
-      if (isReadFailure(res)) return; // đọc lỗi → giữ số đếm và chấm "mới" như cũ
+      if (isReadFailure(res)) return; // read error → keep the count and the "new" dot as before
       const count = res?.requests?.length ?? 0;
       if (useAccountStore.getState().activeAccountId === zaloId) {
         useCRMStore.getState().setRequestCount(count);
@@ -675,7 +676,7 @@ export default function App() {
         useAppStore.getState().clearCRMRequestUnseen(zaloId);
       }
     }).catch(() => {});
-    useAppStore.getState().showNotification('Đã từ chối lời mời kết bạn', 'info');
+    useAppStore.getState().showNotification(tr('Đã từ chối lời mời kết bạn'), 'info');
   };
 
   const handleFriendRequestOpenAll = (zaloId: string) => {
@@ -763,12 +764,12 @@ export default function App() {
         empStore.setAssignedAccounts(ws.cachedAssignedAccounts || []);
         empStore.setEmployees(ws.cachedEmployeesData || []);
 
-        // Init RestQueryService để employee có thể gọi REST API — URL/token trong payload là cấu hình
-        // workspace ở main (cùng nguồn với employee:credentials), init SAU khi đã reset store cũ.
+        // Init RestQueryService so the employee can call the REST API: the URL/token in the payload is the workspace config
+        // in main (same source as employee:credentials), init AFTER the old store has been reset.
         applyEmployeeCredentials(ws.bossUrl, ws.token, 'workspace:switched');
 
         // Use snapshot from event payload (merged by main process) - no IPC needed
-        // Snapshot chỉ là dữ liệu cache, KHÔNG đồng nghĩa đang connected
+        // The snapshot is only cached data, it does NOT mean connected right now
         const snapshot = ws._snapshot;
         empStore.setHeartbeatConnected(!!ws._connected);
         empStore.setAuthExpired(!!ws._authExpired);
@@ -779,7 +780,7 @@ export default function App() {
         }
       } else {
         empStore.reset();
-        // Rời chế độ nhân viên → REST client ngừng gọi Boss (DataAccessor dùng IPC cho workspace local)
+        // Leaving employee mode → the REST client stops calling Boss (DataAccessor uses IPC for the local workspace)
         RestQueryService.getInstance().reset();
       }
 
@@ -805,7 +806,7 @@ export default function App() {
           useAccountStore.getState().setActiveAccount(nextAccounts[0].zalo_id);
         }
 
-        // Load contacts: local workspace → từ DB; remote workspace → từ REST (để DataAccessor/ConversationList tự load)
+        // Load contacts: local workspace → from the DB; remote workspace → from REST (so DataAccessor / ConversationList load on their own)
         if (ws.type !== 'remote') {
           for (const acc of nextAccounts) {
             try {
@@ -850,14 +851,14 @@ export default function App() {
 
   // ─── Handle relay:initialState forwarded from SocketConnectionManager ────────
   // Fired when employee successfully connects to boss - contains permissions + assignedAccounts.
-  // NOTE: SSE watchdog reconnect cũng fire event này → throttle 30s tránh redundant REST calls
+  // NOTE: the SSE watchdog reconnect also fires this event → 30 s throttle avoids redundant REST calls
   const lastInitialStateTs = useRef<Record<string, number>>({});
   useEffect(() => {
     const unsub = window.electronAPI?.on('workspace:initialState', async (data: any) => {
       if (!data?.workspaceId) return;
 
-      // Throttle: bỏ qua nếu đã xử lý trong 60s gần nhất (SSE reconnect loop).
-      // forced = làm mới chủ động (403 ACCOUNT_FORBIDDEN / resync, đã throttle 10 s) → áp dụng ngay.
+      // Throttle: skip if it was already handled within the last 60 s (SSE reconnect loop).
+      // forced = an explicit refresh (403 ACCOUNT_FORBIDDEN / resync, already throttled to 10 s) → apply immediately.
       const now = Date.now();
       const lastTs = lastInitialStateTs.current[data.workspaceId] || 0;
       if (!data.forced && now - lastTs < 60_000) {
@@ -923,7 +924,7 @@ export default function App() {
       const permsMap = buildPermissionsMap(permissions);
       empStore.setPermissions(permsMap);
       empStore.setAssignedAccounts(assignedAccounts);
-      // Trạng thái kết nối KHÔNG ghi ở đây: badge chỉ theo heartbeat (workspace:connectionStatus) + REST
+      // Connection status is NOT written here: the badge follows only the heartbeat (workspace:connectionStatus) + REST
       empStore.setEmployees(employeesData);
       empStore.setCurrentEmployee(buildCurrentEmployeeFromWorkspace({
         ...useWorkspaceStore.getState().activeWorkspace(),
@@ -938,7 +939,7 @@ export default function App() {
         ensureActiveAccount(cachedAccounts);
         console.log(`[App] Accounts set from initialState: ${cachedAccounts.length} accounts`, cachedAccounts.map(a => ({ zalo_id: a.zalo_id, full_name: a.full_name })));
 
-        // Load conversations từ Boss qua REST API (chỉ khi chưa có)
+        // Load conversations from Boss via the REST API (only when there are none yet)
         const existingContacts = useChatStore.getState().contacts;
         const needsLoad = cachedAccounts.some((acc: any) => !existingContacts[acc.zalo_id]?.length);
         if (needsLoad) {
@@ -1071,7 +1072,7 @@ export default function App() {
     return () => unsub?.();
   }, []);
 
-  // ─── Track remote workspace connection status (heartbeat của main) ───────────
+  // ─── Track remote workspace connection status (main's heartbeat) ───────────
   useEffect(() => {
     const unsub = window.electronAPI?.on('workspace:connectionStatus', (data) => {
       if (!data?.workspaceId) return;
@@ -1079,7 +1080,7 @@ export default function App() {
         connected: !!data.connected,
         latency: data.latency ?? 0,
       });
-      // Nửa heartbeat của badge — chỉ cho workspace đang active
+      // Heartbeat half of the badge: only for the active workspace
       const activeWsId = useWorkspaceStore.getState().activeWorkspaceId;
       if (data.workspaceId !== activeWsId) return;
       const empStore = useEmployeeStore.getState();
@@ -1094,15 +1095,15 @@ export default function App() {
           useAppStore.getState().showNotification(AUTH_EXPIRED_MESSAGE, 'warning');
         }
         if (data.kicked) {
-          useAppStore.getState().showNotification(data.reason || 'Bị ngắt kết nối bởi quản lý', 'warning');
+          useAppStore.getState().showNotification(data.reason || tr('Bị ngắt kết nối bởi quản lý'), 'warning');
         }
       }
 
       if (data.reason === 'user-disconnect' || data.kicked) {
-        // Người dùng ngắt / bị Boss kick → REST cũng dừng: badge giữ Offline, không gọi Boss nữa
+        // User disconnected / kicked by Boss → REST stops too: the badge stays Offline, no more calls to Boss
         RestQueryService.getInstance().reset();
       } else if (data.connected) {
-        // Lưới an toàn: main đã nối mà REST chưa có URL/token → lấy từ cấu hình workspace ở main
+        // Safety net: main is connected but REST has no URL/token → take it from the workspace config in main
         const rest = RestQueryService.getInstance();
         if (!rest.getBaseUrl() || !rest.getToken()) {
           ipc.workspace?.getActive?.().then((res) => {
@@ -1143,8 +1144,8 @@ export default function App() {
 
       console.log(`[App] workspace:syncComplete received: type=${data.syncType} workspace=${data.workspaceId}`);
 
-      // Reload contacts for all assigned accounts — nhân viên đọc từ BOSS (ipc.db.getContacts ở máy nhân viên chỉ là
-      // stub `{ success: true }` → trước đây không nạp gì); lỗi đọc giữ danh sách (reloadAccountContacts)
+      // Reload contacts for all assigned accounts: the employee reads from BOSS (ipc.db.getContacts on the employee machine is only a
+      // stub `{ success: true }` → previously loaded nothing); a read error keeps the list (reloadAccountContacts)
       const empStore = useEmployeeStore.getState();
       const accounts = empStore.assignedAccounts || [];
       if (accounts.length > 0) {
@@ -1200,8 +1201,8 @@ export default function App() {
         const threadId = data?.message?.threadId || '';
         const isSelf = !!data?.message?.isSelf;
         const suppressNotification = data?.message?._silentNotification === true
-          || data?.message?._commentOnly === true; // bình luận ở nhóm thảo luận chưa tham gia
-        // Không flash cho tin nhắn của chính mình, hội thoại muted hoặc trong thư mục "Khác"
+          || data?.message?._commentOnly === true; // comment in a discussion group not joined yet
+        // No flash for my own messages, muted conversations or ones in the "Khác" (Other) folder
         if (isSelf || suppressNotification) return;
         const { isMuted, isInOthers, isZaloHidden } = useAppStore.getState();
         if (isMuted(zaloId, threadId) || isInOthers(zaloId, threadId) || isZaloHidden(zaloId, threadId)) return;
@@ -1212,12 +1213,12 @@ export default function App() {
   }, []);
 
   // ─── Facebook: flash taskbar on new message when window not focused ─────────
-  // Âm thanh, thông báo trong app và popup hệ điều hành của tin FB: hooks/chat/useChatEvents (trước đây báo ở cả hai nơi →
-  // mỗi tin kêu 2 lần, 2 popup).
+  // Sound, in-app notifications and OS popups for FB messages: hooks/chat/useChatEvents (previously alerted in both places →
+  // each message rang twice, 2 popups).
   useEffect(() => {
     const unsub = window.electronAPI?.on('fb:onMessage', (data: any) => {
       if (isWindowFocusedRef.current) return;
-      // Bản phát lại của tin đã báo (MQTT và bridge cùng nhận): không nháy lần nữa
+      // Replay of an already-alerted message (MQTT and the bridge both receive it): do not flash again
       if (data?.message?.repeat === true) return;
       const threadId = data?.message?.replyToID || '';
       const accountId = data?.fbAccountId || '';
@@ -1233,7 +1234,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // e.code: Caps Lock bật thì e.key là 'n'
+      // e.code: when Caps Lock is on, e.key is 'n'
       if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'KeyN' || e.key.toLowerCase() === 'n')) {
         e.preventDefault();
         openQuickChat();
@@ -1249,11 +1250,11 @@ export default function App() {
       const { detail } = event;
       if (!detail) return;
 
-      // Parse reminder data từ webhook
+      // Parse reminder data from the webhook
       try {
         const { zaloId, threadId, msgType, content } = detail;
 
-        // Kiểm tra xem có phải reminder không
+        // Check whether it is a reminder
         if (msgType !== 'chat.ecard' || !content?.params) return;
 
         const params = typeof content.params === 'string' ? JSON.parse(content.params) : content.params;
@@ -1265,21 +1266,21 @@ export default function App() {
 
         const reminderData = typeof actionData.data === 'string' ? JSON.parse(actionData.data) : actionData.data;
 
-        // Lấy thông tin account
+        // Get account info
         const account = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
-        const accountName = account?.display_name || account?.phone || 'Tài khoản';
+        const accountName = account?.display_name || account?.phone || tr('Tài khoản');
 
-        // Lấy thông tin conversation
+        // Get conversation info
         const contactList = useChatStore.getState().contacts[zaloId] || [];
         const contact = contactList.find(c => c.contact_id === threadId);
-        const conversationName = contact?.display_name || 'Hội thoại';
+        const conversationName = contact?.display_name || tr('Hội thoại');
 
-        // Hiển thị notification
+        // Show notification
         setReminderQueue(queue => [...queue, {
           key: `zalo:${zaloId}:${threadId}:${Date.now()}`,
           kind: 'zalo',
           emoji: reminderData.emoji || '⏰',
-          title: reminderData.params?.title || content.title || 'Nhắc hẹn',
+          title: reminderData.params?.title || content.title || tr('Nhắc hẹn'),
           description: content.description || '',
           accountName,
           conversationName,
@@ -1297,20 +1298,20 @@ export default function App() {
     return () => window.removeEventListener('zalo:reminder', handleReminderEvent);
   }, []);
 
-  // ─── Chiến dịch CRM tự dừng vì lỗi liên tiếp: báo ở mọi màn (chiến dịch chạy nền) ─────────
+  // ─── CRM campaign stopped automatically after consecutive errors: shown on every screen (campaigns run in the background) ─────────
   useCampaignAutoStopNotice(isWindowFocusedRef);
 
-  // ─── Nhắc lịch Quản lý công việc (ERP): popup như nhắc hẹn Zalo ──────────────
-  // Main (ErpCalendarService) phát 'erp:event:reminder' tới giờ nhắc; trước đây chỉ trang ERP nghe và không hiện gì.
-  // Đúng giờ → popup; nhắc trước (mốc "Nhắc trước" của từng lịch) → thông báo thường trong chuông (main tạo) + chuông rung
-  // "15 phút nữa tới lịch hẹn" + thông báo nổi khi đang dùng app.
+  // ─── Task management reminders (ERP): popup like Zalo appointment reminders ──────────────
+  // Main (ErpCalendarService) emits 'erp:event:reminder' at the reminder time; previously only the ERP page listened and showed nothing.
+  // At the exact time → popup; advance reminder (the "Nhắc trước" (Advance reminder) time of each event) → a normal notification in the bell (main creates it) + the bell shakes
+  // "15 phút nữa tới lịch hẹn" (15 minutes until the appointment) + a floating notification while the app is in use.
   useEffect(() => {
     const handleErpReminder = (payload: any) => {
       const event = payload?.event;
       if (!event?.id) return;
       const employee = useEmployeeStore.getState();
       const myId = employee.mode === 'employee' ? String(employee.currentEmployee?.employee_id || '') : 'boss';
-      // Máy Boss nhận nhắc lịch của cả workspace: chỉ hiện lịch mình tổ chức / được mời
+      // The Boss machine receives reminders for the whole workspace: only show events it organizes / was invited to
       if (!isErpReminderForMe(event, myId)) return;
       const now = Date.now();
       const when = erpReminderWhen(event, new Date(now));
@@ -1320,7 +1321,7 @@ export default function App() {
         useErpReminderAttention.getState().raise({ eventId: String(event.id), title: String(event.title || ''), startAt });
         const { notifSettings } = useAppStore.getState();
         if (notifSettings.soundEnabled) playNotificationSound(notifSettings.volume);
-        // Cửa sổ đang ở nền: popup hệ điều hành + nháy taskbar
+        // Window in the background: OS popup + taskbar flash
         if (!isWindowFocusedRef.current) {
           if (notifSettings.desktopEnabled) {
             showDesktopNotification(
@@ -1330,16 +1331,16 @@ export default function App() {
           }
           window.electronAPI?.app?.flashFrame?.(true);
         } else {
-          // Đang dùng app: thông báo nổi để không lỡ (chuông trên thanh tiêu đề rung + đếm ngược tới giờ hẹn)
+          // App in use: floating notification so it is not missed (the bell in the title bar shakes + countdown to the appointment time)
           useAppStore.getState().showNotification(`⏰ ${erpReminderLeadText(startAt - now)}: ${event.title}`, 'info');
         }
         return;
       }
-      // Tới giờ: popup đúng giờ thay chữ đếm ngược trên thanh tiêu đề
+      // At the time: exact-time popup replaces the countdown text in the title bar
       useErpReminderAttention.getState().dismiss([String(event.id)]);
       if (isMissedErpReminder(event, now)) {
-        // Máy tắt lúc tới giờ, mở lại mới nhắc bù → báo nhẹ, không bật popup có nhạc
-        useAppStore.getState().showNotification(`Đã lỡ lịch "${event.title}" (${when})`, 'info');
+        // Machine was off at the time, reopened later → catch-up reminder: a quiet notice, no popup with sound
+        useAppStore.getState().showNotification(tr('Đã lỡ lịch "{{title}}" ({{when}})', { title: event.title, when }), 'info');
         return;
       }
       const accountId = String(event.linked_account_id || '');
@@ -1364,11 +1365,11 @@ export default function App() {
           threadId,
           threadType: contact?.contact_type === 'group' ? 1 : 0,
           accountName: account.full_name || accountId,
-          conversationName: contact?.alias || contact?.display_name || 'Hội thoại',
+          conversationName: contact?.alias || contact?.display_name || tr('Hội thoại'),
           msgId: event.linked_msg_id ? String(event.linked_msg_id) : undefined,
         } : {
           secondaryAction: {
-            label: 'Xem lịch',
+            label: tr('Xem lịch'),
             onClick: () => {
               window.dispatchEvent(new CustomEvent('nav:view', { detail: { view: 'erp' } }));
               window.setTimeout(() => window.dispatchEvent(new CustomEvent('nav:erp', { detail: { subView: 'calendar' } })), 80);
@@ -1376,7 +1377,7 @@ export default function App() {
           },
         }),
       }]);
-      // Cửa sổ đang ở nền: thêm popup hệ điều hành + nháy taskbar để không lỡ
+      // Window in the background: add an OS popup + taskbar flash so it is not missed
       if (!isWindowFocusedRef.current) {
         if (useAppStore.getState().notifSettings.desktopEnabled) {
           showDesktopNotification(
@@ -1404,15 +1405,14 @@ export default function App() {
     // expensive channel recovery. A large contact table must not hold the
     // window blank while startup hydration is still running.
     ipc.app?.rendererReady?.();
-    // Danh sách hội thoại tải xong + trình duyệt rảnh → báo main bắt đầu việc nền nặng (đồng bộ bù tin cũ Telegram…)
+    // Conversation list finished loading + the browser is idle → tell main to start heavy background work (Telegram catch-up sync of old messages…)
     reportUiSettledWhenReady();
     setInitializing(false);
-    // Chạy bằng "Run as administrator": Windows chặn kéo-thả file từ File Explorer vào app → báo người dùng một lần
+    // Running as "Run as administrator": Windows blocks dragging files from File Explorer into the app → tell the user once
     ipc.app?.isElevated?.().then((elevated) => {
       if (elevated) {
         useAppStore.getState().showNotification(
-          'Deplao đang chạy bằng quyền quản trị — Windows chặn kéo-thả ảnh / file từ File Explorer vào app. '
-          + 'Đóng và mở lại Deplao bình thường (không chọn "Run as administrator") để kéo-thả được.',
+          tr('Deplao đang chạy bằng quyền quản trị — Windows chặn kéo-thả ảnh / file từ File Explorer vào app. Đóng và mở lại Deplao bình thường (không chọn "Run as administrator") để kéo-thả được.', {  }),
           'warning',
         );
       }
@@ -1455,7 +1455,7 @@ export default function App() {
               (async () => {
                 try {
                   const ch = tgAcc.channel || 'telegram_user';
-                  // Đợi 2s để main process reconnect xong
+                  // Wait 2 s for the main process to finish reconnecting
                   await new Promise(r => setTimeout(r, 2000));
                   if (ch === 'telegram_user') {
                     const health = await ipc.telegramUser?.isConnected(tgAcc.zalo_id);
@@ -1474,6 +1474,31 @@ export default function App() {
                 } catch {}
               })();
             }
+          }
+
+          // 3c. Conversation lists of the other accounts (sidebar unread badges). They normally arrive with each listener's
+          //     event:connected (useZaloEvents → reloadAccountContacts). After a renderer reload (changing the UI
+          //     language, Ctrl+R) the accounts are still connected in main, nothing is sent again, and every account
+          //     except the open one lost its badge. Load the missing lists after first paint, one account at a time
+          //     when the browser is idle (one DB read each, like event:connected).
+          if (!isEmployeeMode) {
+            const accountIds: string[] = accountsRes.accounts.map((acc: any) => acc.zalo_id).filter(Boolean);
+            const idle = (fn: () => void) => {
+              const w = window as any;
+              if (typeof w.requestIdleCallback === 'function') w.requestIdleCallback(fn, { timeout: 1500 });
+              else setTimeout(fn, 200);
+            };
+            setTimeout(() => {
+              void (async () => {
+                for (const id of accountIds) {
+                  if ((useChatStore.getState().contacts[id] || []).length > 0) continue;
+                  await new Promise<void>((resolve) => idle(() => resolve()));
+                  if ((useChatStore.getState().contacts[id] || []).length > 0) continue;
+                  await reloadAccountContacts(id).catch(() => null);
+                }
+                ipc.app?.setBadge(getFilteredUnreadCount());
+              })();
+            }, 1500);
           }
 
           // 4. Check + refresh avatar URLs for connected Zalo accounts
@@ -1497,8 +1522,8 @@ export default function App() {
           // 4b. Sync FB account connection status from main process
           //     (reconnectAllFBAccounts runs in main process before renderer is ready,
           //      so the fb:onConnectionStatus event may have been missed)
-          //     Nhân viên: phiên Facebook chạy trên Boss — trạng thái lấy từ snapshot + fb:onConnectionStatus (relay),
-          //     fb:checkHealth ở máy nhân viên là thao tác chỉ Boss.
+          //     Employee: the Facebook session runs on Boss, the status is taken from the snapshot + fb:onConnectionStatus (relay),
+          //     fb:checkHealth on the employee machine is a Boss-only action.
           const fbAccounts = accountsRes.accounts.filter((a: any) => (a.channel || CHANNEL.ZALO) === 'facebook');
           if (fbAccounts.length > 0 && !isEmployeeMode) {
             setTimeout(async () => {
@@ -1529,8 +1554,8 @@ export default function App() {
             empStore.setBossUrl(normalizeBossUrl(activeWs.bossUrl));
             empStore.setToken(activeWs.token || '');
             console.log(`[App] 🪙 Recovery token: ${activeWs.token ? activeWs.token.slice(0, 20) + '...' : 'EMPTY!'}`);
-            // RestQueryService: đã init ở effect "Early init" từ CÙNG cấu hình workspace, sau đó theo
-            // employee:credentials của main (kết nối / đổi URL-token). Status listener đăng ký 1 lần ở effect riêng.
+            // RestQueryService: already init in the "Early init" effect from the SAME workspace config, then follows
+            // main's employee:credentials (connect / change URL-token). The status listener is registered once, in its own effect.
             if (!activeWs.bossUrl || !activeWs.token) {
               console.warn(`[App] ⚠️ Remote workspace thiếu cấu hình: bossUrl=${!!activeWs.bossUrl} token=${!!activeWs.token}`);
             }
@@ -1604,8 +1629,8 @@ export default function App() {
             const bot = botStates.get(acc.zalo_id);
             const isActive = !!bot;
             if (bot && !bot.polling) {
-              // Đã đăng ký nhưng tạm dừng (nơi khác nhận tin của bot / token lỗi): hiện đúng là chưa kết nối, không tự
-              // kết nối lại (giành tin với nơi kia) — người dùng bấm Kết nối lại, token lỗi thì main tự thử mỗi phút
+              // Registered but paused (another place receives the bot's messages / token error): shows as truly not connected, does not auto-
+              // reconnect (it would compete with the other place for messages): the user clicks Reconnect; on a token error, main retries itself every minute
               if (acc.isConnected) useAccountStore.getState().updateAccountStatus(acc.zalo_id, false, false);
             } else if (!isActive && acc.isConnected) {
               console.warn(`[HealthCheck] Telegram Bot ${acc.zalo_id} disconnected, reconnecting...`);
@@ -1632,7 +1657,7 @@ export default function App() {
       }
     };
 
-    // Chạy ngay lần đầu sau 10s, sau đó mỗi 1 phút
+    // Run once first after 10 s, then every 1 minute
     const initialTimer = setTimeout(() => {
       runHealthCheck();
       healthTimerRef.current = setInterval(runHealthCheck, HEALTH_CHECK_INTERVAL_MS);
@@ -1648,7 +1673,7 @@ export default function App() {
   useEffect(() => {
     const handleOffline = () => {
       useAppStore.getState().showNotification(
-        '🌐 Mất kết nối internet - ứng dụng sẽ thử kết nối lại khi mạng trở lại',
+        tr('🌐 Mất kết nối internet - ứng dụng sẽ thử kết nối lại khi mạng trở lại'),
         'warning',
       );
     };
@@ -1657,7 +1682,7 @@ export default function App() {
       // Telegram User connections live in the main process; let them skip the
       // reconnect backoff. Independent of the Zalo reconnect below.
       ipc.telegramUser?.networkOnline?.().catch(() => {});
-      // Remote workspace (nhân viên ↔ Boss): main thử lại / heartbeat ngay thay vì chờ backoff
+      // Remote workspace (employee ↔ Boss): main retries / heartbeats right away instead of waiting for backoff
       ipc.workspace?.networkOnline?.().catch(() => {});
       reconnectAfterNetworkRestore().catch((err) => {
         console.warn('[NetworkReconnect] error:', err);
@@ -1697,7 +1722,7 @@ export default function App() {
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <Spinner size={10} className="mx-auto mb-3" />
-            <p className="text-muted-foreground text-sm">Đang khởi động...</p>
+            <p className="text-muted-foreground text-sm">{tr('Đang khởi động...')}</p>
           </div>
         </div>
       </div>
@@ -1713,7 +1738,7 @@ export default function App() {
         {/* Left sidebar: account list + nav */}
         <Sidebar onAddAccount={() => setAddAccountModalOpen(true)} />
 
-        {/* Account panel (sidebar expanded) - chỉ hiện ở chat view */}
+        {/* Account panel (sidebar expanded): only shown in the chat view */}
         {view === 'chat' && sidebarExpanded && (
           <AccountPanel onAddAccount={() => setAddAccountModalOpen(true)} />
         )}
@@ -1733,7 +1758,7 @@ export default function App() {
                     <div
                       onMouseDown={handleSidebarResizeStart}
                       className={`w-1 flex-shrink-0 cursor-col-resize border-r border-border hover:bg-primary/40 transition-colors z-10 ${sidebarResizing ? 'bg-primary/60' : 'bg-card'}`}
-                      title="Kéo để thay đổi chiều rộng"
+                      title={tr('Kéo để thay đổi chiều rộng')}
                     />
                   )}
                 </>
@@ -1749,13 +1774,13 @@ export default function App() {
                            if (rightInfoOverlayOpen) closeRightInfoOverlay();
                          }}>
                       <ChatWindow />
-                      {/* Đang mở phần bình luận bài đăng kênh: phần đó có ô soạn tin riêng (gửi vào nhóm thảo luận) → bỏ ô
-                          của kênh để chỉ một ô nhận dán / kéo thả / trích dẫn; tin nháp vẫn giữ trong store */}
+                      {/* Channel post comments are open: that section has its own composer (sends to the discussion group) → hide the channel's
+                          composer so only one input accepts paste / drag and drop / quotes; the draft is still kept in the store */}
                       {!postDiscussionOpen && <MessageInput />}
-                      {/* Bình luận bài đăng kênh Telegram: phủ lên kênh + ô soạn tin (kênh giữ nguyên vị trí cuộn bên dưới) */}
+                      {/* Telegram channel post comments: overlay on the channel + composer (the channel keeps its scroll position below) */}
                       <TelegramPostDiscussionHost activeAccountId={activeAccountId} activeThreadId={activeThreadId} />
                     </div>
-                    {/* Bảng tin nhóm panel */}
+                    {/* Group board panel */}
                     {showGroupBoard && activeThreadId && activeAccountId && (() => {
                       const contact = activeContact;
                       const isGroupThread = activeThreadType === 1 || contact?.contact_type === 'group';
@@ -1848,7 +1873,7 @@ export default function App() {
             {view === 'analytics' && <div className="flex-1 h-full overflow-hidden"><AnalyticsPage /></div>}
             {view === 'erp' && <div className="flex-1 h-full overflow-hidden"><ErpPage /></div>}
             {view === 'dashboard' && <Dashboard />}
-            {/* Trang plugin: giữ iframe đã mở khi chuyển view (ẩn bằng CSS) */}
+            {/* Plugin page: keep the opened iframe when switching views (hidden with CSS) */}
             <PluginPagesHost />
           </Suspense>
         </div>
@@ -1898,10 +1923,10 @@ export default function App() {
               : notification.type === 'error'   ? 'text-red-500'
               : notification.type === 'warning' ? 'text-amber-500'
               : 'text-blue-500'}`}>
-              {notification.type === 'success' ? 'Thành công'
-              : notification.type === 'error'   ? 'Lỗi'
-              : notification.type === 'warning' ? 'Cảnh báo'
-              : 'Thông báo'}
+              {notification.type === 'success' ? tr('Thành công')
+              : notification.type === 'error'   ? tr('Lỗi')
+              : notification.type === 'warning' ? tr('Cảnh báo')
+              : tr('Thông báo')}
             </p>
             <p className={`text-sm leading-snug font-medium break-words
               ${theme === 'light' ? 'text-gray-800' : 'text-foreground'}`}>
@@ -1935,7 +1960,7 @@ export default function App() {
                   <div className="w-10 h-10 rounded-xl bg-red-500/15 text-red-500 flex items-center justify-center text-xl font-bold flex-shrink-0">!</div>
                   <div className="min-w-0">
                     <p className={`text-sm font-semibold ${theme === 'light' ? 'text-gray-900' : 'text-foreground'}`}>{erpPermissionDialog.title}</p>
-                    <p className={`text-xs mt-1 ${theme === 'light' ? 'text-red-700' : 'text-red-300'}`}>Hệ thống đã chặn thao tác vì tài khoản hiện tại không đủ quyền.</p>
+                    <p className={`text-xs mt-1 ${theme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{tr('Hệ thống đã chặn thao tác vì tài khoản hiện tại không đủ quyền.')}</p>
                   </div>
                 </div>
                 <button
@@ -1953,7 +1978,7 @@ export default function App() {
               </p>
               {erpPermissionDialog.details && (
                 <div className={`rounded-xl border px-3 py-2 ${theme === 'light' ? 'border-gray-200 bg-gray-50' : 'border-border bg-card'}`}>
-                  <p className={`text-[11px] uppercase tracking-wider mb-1 ${theme === 'light' ? 'text-muted-foreground' : 'text-muted-foreground'}`}>Chi tiết</p>
+                  <p className={`text-[11px] uppercase tracking-wider mb-1 ${theme === 'light' ? 'text-muted-foreground' : 'text-muted-foreground'}`}>{tr('Chi tiết')}</p>
                   <p className={`text-xs break-words ${theme === 'light' ? 'text-muted-foreground' : 'text-foreground/80'}`}>{erpPermissionDialog.details}</p>
                 </div>
               )}
@@ -1962,7 +1987,7 @@ export default function App() {
                   onClick={hideErpPermissionDialog}
                   className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-medium transition-colors"
                 >
-                  Đã hiểu
+                  {tr('Đã hiểu')}
                 </button>
               </div>
             </div>
@@ -1970,7 +1995,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Reminder Notification (hàng đợi: nhắc hẹn Zalo + lịch Quản lý công việc) */}
+      {/* Reminder Notification (queue: Zalo appointment reminders + Task management calendar) */}
       {reminderNotification && (
         <ReminderNotification
           key={reminderNotification.key}
@@ -1980,7 +2005,7 @@ export default function App() {
             const current = reminderNotification;
             setReminderQueue(queue => queue.slice(1));
             if (current.kind === 'erp') {
-              // Lịch từ tin nhắn: mở hội thoại như bấm thông báo (đổi tài khoản, báo đã đọc) rồi nhảy tới tin đã thêm vào lịch
+              // Calendar from a message: open the conversation like clicking a notification (switch account, report as read), then jump to the message that was added to the calendar
               openLinkedConversation({ linked_account_id: zaloId, linked_contact_id: threadId, linked_msg_id: current.msgId });
               return;
             }
@@ -1992,7 +2017,7 @@ export default function App() {
             clearUnread(zaloId, threadId);
             // Load messages
             DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
-            // Chủ động mở hội thoại từ nhắc hẹn → báo đã đọc lên nền tảng như khi bấm trong danh sách
+            // Opening the conversation from a reminder on purpose → report as read to the platform, as when clicking in the list
             void liveReadSync.syncOpenedThread({ accountId: zaloId, threadId, threadType });
             DataAccessor.getMessages({ zaloId, threadId, limit: 50, offset: 0 }).then((res: any) => {
               const msgs = res?.messages || [];
@@ -2000,19 +2025,19 @@ export default function App() {
                 setMessages(zaloId, threadId, [...msgs].reverse());
               }
             }).catch(() => {});
-            // Chuyển sang view chat nếu đang ở view khác
+            // Switch to the chat view if currently on another view
             const { setView } = useAppStore.getState();
             setView('chat');
           }}
         />
       )}
 
-      {/* Thông báo tin nhắn mới trong app (góc trên bên phải, dưới thanh tiêu đề) */}
+      {/* New message notification inside the app (top right corner, below the title bar) */}
       <InAppMessageToasts belowFriendRequest={friendRequestQueue.length > 0} />
 
-      {/* Mini App của bot Telegram (chạy trong app) + hộp đăng nhập bằng Telegram của nút bot */}
+      {/* Telegram bot Mini App (runs inside the app) + the Telegram login box of the bot button */}
       <TelegramMiniAppHost />
-      {/* Link nhóm Zalo / Telegram, link bot ?start bấm trong tin: hộp Tham gia / Bắt đầu (lib/chat/links/chatLinks) */}
+      {/* Zalo / Telegram group links and bot ?start links tapped in a message: Join / Start box (lib/chat/links/chatLinks) */}
       <ChatLinkHost />
 
       {/* Friend Request In-App Notification - show one at a time from queue */}
@@ -2041,7 +2066,7 @@ export default function App() {
       {/* Auto-update notification - bottom-right corner */}
       <UpdateNotification />
       <AccountSwitcherOverlay />
-      {/* Cuộc gọi Telegram đến: từ chối / mở chat (Deplao chưa nghe máy được) */}
+      {/* Incoming Telegram call: decline / open chat (Deplao cannot answer the call yet) */}
       <TelegramIncomingCall />
     </div>
   );

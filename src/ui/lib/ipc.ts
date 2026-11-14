@@ -1,5 +1,5 @@
 // Typed wrappers quanh window.electronAPI
-// Dùng trong React components thay vì gọi trực tiếp
+// Used in React components instead of calling directly
 
 import type { FbHistorySyncStatus } from '../../shared/facebook/facebookHistorySync';
 import type { ErpZaloNotifySettings, ErpZaloNotifyStatus } from '../../shared/erp/erpZaloNotify';
@@ -13,6 +13,7 @@ import type {
 import type { TelegramCoveredStickerSet, TelegramStickerFileKind, TelegramStickerItem, TelegramStickerSetInfo } from '../../shared/telegram/telegramStickers';
 import type { UrlAuthInfo } from '../../shared/telegram/telegramMiniApp';
 import type { CampaignEngagementResponse, OutreachStats } from '../../shared/analytics/messageEngagement';
+import type { CampaignCloneParams, CampaignCloneResponse } from '../../shared/crm/campaignCopy';
 import type {
   EmployeeCredentialsEvent,
   EmployeeResyncEvent,
@@ -34,30 +35,31 @@ import type {
   CLOUD_CLEANUP_PROGRESS_EVENT,
   CLOUD_RESTORE_PROGRESS_EVENT,
 } from '../../shared/cloud/cloudContracts';
+import { tr } from '../../shared/i18n';
 
 export type { EmployeeCredentialsEvent, EmployeeResyncEvent, WorkspaceConnectionStatusEvent };
 export type { EmployeeBossUrlChangedPayload, RelayTunnelStatus };
 
-/** relay:probeBossAddress — thăm dò địa chỉ Boss (DNS + GET /api/health, không gửi token). */
+/** relay:probeBossAddress: probes the owner's machine address (DNS + GET /api/health, sends no token). */
 export interface BossAddressProbeResponse {
   success: boolean;
   url?: string;
   info?: BossAddressInfo;
   verdict?: BossProbeVerdict;
-  /** Lý do tiếng Việt (describeBossProbe). */
+  /** Reason message in Vietnamese (describeBossProbe). */
   reason?: string;
   evidence?: BossProbeEvidence;
   elapsedMs?: number;
   error?: string;
 }
 
-/** Trạng thái phiên "Đồng bộ tin nhắn từ điện thoại" (khớp MobileSyncStatus ở main process). */
+/** Session status of "Đồng bộ tin nhắn từ điện thoại" (matches MobileSyncStatus in the main process). */
 export type MobileSyncStage =
   | 'idle' | 'requesting' | 'waiting_confirm' | 'waiting_backup' | 'mobile_idle'
   | 'downloading' | 'decrypting' | 'resolving_ids' | 'importing'
   | 'completed' | 'failed' | 'cancelled';
 
-/** Khoảng thời gian đồng bộ (TimeStamp ms); null = không giới hạn phía đó. */
+/** Sync time range (TimeStamp ms); null = no limit on that side. */
 export interface MobileSyncRange {
   fromTs: number | null;
   toTs: number | null;
@@ -78,7 +80,7 @@ export interface MobileSyncStatus {
     messagesRead: number;
     messagesImported: number;
     messagesSkipped: number;
-    /** Tin có trong bản sao lưu nhưng ngoài khoảng thời gian đã chọn. */
+    /** Messages that are in the backup but outside the selected time range. */
     messagesOutOfRange?: number;
     durationMs: number;
   };
@@ -105,7 +107,7 @@ export interface NativeLoginIpcStep {
   user_input?: {
     fields: NativeLoginIpcField[];
     attachments?: Array<{ content?: string; info?: { mimetype?: string } }>;
-    /** "Thử cách khác" is available (backMessengerLiteLogin). */
+    /** "Thử cách khác" (Try another way) is available (backMessengerLiteLogin). */
     can_cancel?: boolean;
   };
   display_and_wait?: { type?: string; data?: string; can_cancel?: boolean };
@@ -119,7 +121,7 @@ export interface NativeLoginIpcResult {
   step?: NativeLoginIpcStep;
   /** The approval on another device is still pending: wait again. */
   waiting?: boolean;
-  /** The wait was interrupted by "Thử cách khác" or cancel. */
+  /** The wait was interrupted by "Thử cách khác" (Try another way) or cancel. */
   cancelled?: boolean;
   account?: any;
   facebookId?: string;
@@ -129,7 +131,7 @@ export interface NativeLoginIpcResult {
 }
 
 
-// ─── Public API & Plugin (Công cụ → Ứng dụng, API & Webhook) ─────────────────────
+// ─── Public API & Plugin (Tools → Apps, API & Webhook) ─────────────────────
 export interface ApiScopeInfo { id: string; group: string; label: string }
 export interface ApiScopePreset { label: string; scopes: string[] }
 export interface ApiKeyRecord {
@@ -234,7 +236,7 @@ export interface ApiIpc {
   purgeKey: (id: string) => ApiResult;
   keyUsage: (id: string, hours?: number) => ApiResult<{ usage: { total: number; errors: number; last_at: number | null; by_status: Record<string, number> } }>;
   listLogs: (limit?: number, principalId?: string) => ApiResult<{ logs: ApiRequestLogRow[] }>;
-  /** Mở /docs trong trình duyệt (tự bật API server). hash: mục cần mở, vd '#guide/plugins'. */
+  /** Open /docs in the browser (also starts the API server). hash: the section to open, e.g. '#guide/plugins'. */
   openDocs: (hash?: string) => ApiResult<{ started: boolean; port: number }>;
   listWebhooks: () => ApiResult<{ webhooks: ApiWebhookRecord[] }>;
   createWebhook: (input: { name?: string; url: string; events?: string[]; accountIds?: string[] | null }) => ApiResult<{ webhook: ApiWebhookRecord; secret: string }>;
@@ -294,7 +296,7 @@ export interface PluginInfo {
     remote?: { baseUrl: string; connected: boolean | null; lastOkAt?: number; calls: number };
   } | null;
   permissions: PluginPermissionInfo[];
-  /** Biểu tượng (data URL) từ manifest.icon, null nếu không có. */
+  /** Icon (data URL) from manifest.icon, null if none. */
   icon: string | null;
 }
 export interface PluginInstallPreview {
@@ -355,7 +357,7 @@ declare global {
     electronAPI: {
       api: ApiIpc;
       plugins: PluginsIpc;
-      /** Internet & Cloud (Cloudflare) — chỉ máy chủ; token / mật khẩu sao lưu không bao giờ quay về renderer. */
+      /** Internet & Cloud (Cloudflare): main process only; backup tokens / passwords never go back to the renderer. */
       cloudflare?: CloudflareIpc;
       window: {
         minimize: () => void;
@@ -411,7 +413,7 @@ declare global {
         getFriends: (auth: any) => Promise<any>;
         getGroups: (auth: any) => Promise<any>;
         getUserInfo: (params: any) => Promise<any>;
-        /** Làm mới tên/avatar hàng loạt theo UID (getUserInfo lô 50, tuần tự). Kết quả nằm trong `response`. */
+        /** Refresh names/avatars in bulk by UID (getUserInfo in batches of 50, sequentially). The result is in `response`. */
         refreshContactsInfo: (params: { auth: any; userIds: string[] }) => Promise<{
           success: boolean;
           response?: ContactsInfoRefreshResult;
@@ -490,26 +492,26 @@ declare global {
         getReminder: (params: any) => Promise<any>;
         sendSeenEvent: (params: any) => Promise<any>;
         sendBankCard: (params: any) => Promise<any>;
-        /** Trạng thái truy cập (ZL-01): main đệm 60 s, `force` = hỏi lại ngay. */
+        /** Access status (ZL-01): main caches for 60 s, `force` = ask again right away. */
         getPresence: (params: { auth: any; userId: string; force?: boolean }) => Promise<{
           success: boolean; error?: string;
           response?: { status: 'online' | 'offline' | 'hidden' | 'unknown'; lastSeenAt?: number; showOnlineStatus: boolean };
         }>;
-        /** Id bạn bè đang online (ZL-01 giai đoạn 2, chấm xanh): main đệm 60 s; giao diện tự giới hạn 1 lần / 2 phút. */
+        /** IDs of friends currently online (ZL-01 phase 2, green dot): main caches for 60 s; the UI limits itself to 1 call per 2 minutes. */
         getFriendOnlines: (params: { auth: any; force?: boolean }) => Promise<{
           success: boolean; error?: string; response?: { supported?: boolean; userIds: string[] };
         }>;
-        /** Hội thoại đang bật tự xoá tin nhắn trên Zalo (ZL-05) — main ghi luôn vào DB. */
+        /** Conversations with message auto-delete turned on in Zalo (ZL-05): main writes this straight to the DB. */
         getAutoDeleteChats: (params: { auth: any }) => Promise<{ success: boolean; error?: string; response?: Array<{ threadId: string; ttl: number }> }>;
         setAutoDeleteChat: (params: { auth: any; threadId: string; type: number; ttl: number }) => Promise<{
           success: boolean; error?: string; errorCode?: number; response?: { ttl: number };
         }>;
-        /** Cài đặt quyền riêng tư Zalo (ZL-02): getSettings / updateSettings — mỗi lần một mục. */
+        /** Zalo privacy settings (ZL-02): getSettings / updateSettings, one item at a time. */
         getAccountSettings: (params: { auth: any }) => Promise<{ success: boolean; error?: string; response?: Record<string, any> }>;
         updateAccountSetting: (params: { auth: any; key: string; value: number; previous?: number | null }) => Promise<{
           success: boolean; error?: string; errorCode?: number; response?: { key: string; value: number };
         }>;
-        /** Hội thoại ẩn bằng PIN (ZL-03) — không IPC nào trả MD5 của PIN. */
+        /** PIN-hidden conversations (ZL-03): no IPC returns the MD5 of the PIN. */
         hiddenStatus: (params: { auth: any; force?: boolean }) => Promise<{
           success: boolean; error?: string; response?: { known: boolean; hasPin: boolean; hiddenCount: number };
         }>;
@@ -523,11 +525,11 @@ declare global {
         hiddenSetPin: (params: { auth: any; pin: string; oldPin?: string }) => Promise<{
           success: boolean; error?: string; response?: { known: boolean; hasPin: boolean; hiddenCount: number };
         }>;
-        /** Quên PIN → đặt lại trên Zalo (Zalo có thể xoá tin của hội thoại đang ẩn trên thiết bị Zalo). */
+        /** Forgot PIN → reset it on Zalo (Zalo may delete messages of the hidden conversation on Zalo devices). */
         hiddenResetPin: (params: { auth: any }) => Promise<{
           success: boolean; error?: string; response?: { known: boolean; hasPin: boolean; hiddenCount: number };
         }>;
-        /** Danh mục sản phẩm Zalo Business (ZL-04) — dữ liệu đã chuẩn hoá theo shared/zalo/zaloCatalog. */
+        /** Zalo Business product catalog (ZL-04): data normalized per shared/zalo/zaloCatalog. */
         getCatalogs: (params: { auth: any; page?: number; limit?: number }) => Promise<{ success: boolean; error?: string; response?: { items: any[]; hasMore: boolean } }>;
         createCatalog: (params: { auth: any; name: string }) => Promise<{ success: boolean; error?: string; response?: any }>;
         updateCatalog: (params: { auth: any; catalogId: string; name: string }) => Promise<{ success: boolean; error?: string; response?: any }>;
@@ -543,7 +545,7 @@ declare global {
         getMessagesAround: (params: { zaloId: string; threadId: string; timestamp: number; limit?: number }) => Promise<any>;
         getContacts: (zaloId: string) => Promise<any>;
         getContactsFiltered: (params: { zaloId: string; channel?: string; search?: string; othersOnly?: boolean; excludeOthers?: boolean; unreadOnly?: boolean; unrepliedOnly?: boolean; fromTs?: number; toTs?: number; contactIds?: string[]; limit?: number; offset?: number }) => Promise<{ success: boolean; contacts: any[] }>;
-        /** Ô chọn liên hệ workflow: tìm không dấu + lọc loại + phân trang ở main process */
+        /** Workflow contact picker: accent-insensitive search + type filter + paging in the main process */
         searchContactsForPicker: (params: { zaloId: string; search?: string; type?: 'user' | 'group' | 'all'; limit?: number; offset?: number; ids?: string[] }) => Promise<{
           success: boolean;
           error?: string;
@@ -555,8 +557,8 @@ declare global {
         searchContactByPhone: (params: { zaloId: string; phone: string }) => Promise<{ success: boolean; contact: any | null }>;
         searchMessages: (params: any) => Promise<any>;
         /**
-         * Ảnh/video của hội thoại, mới → cũ. `offset`: trang cũ. `beforeTs`/`afterTs` (+ `beforeMsgId`/`afterMsgId`):
-         * trang keyset theo (timestamp, msg_id) — chặt (không gồm mốc) khi có msgId; khi có cursor thì bỏ qua `offset`.
+         * Photos/videos of the conversation, newest → oldest. `offset`: an older page. `beforeTs`/`afterTs` (+ `beforeMsgId`/`afterMsgId`):
+         * a keyset page by (timestamp, msg_id): strict (excludes the boundary) when msgId is given; when a cursor is given, `offset` is ignored.
          */
         getMediaMessages: (params: {
           zaloId: string; threadId?: string; limit?: number; offset?: number;
@@ -565,7 +567,7 @@ declare global {
         getFileMessages: (params: { zaloId: string; threadId: string; limit?: number; offset?: number }) => Promise<any>;
         getUnreadCount: (zaloId: string) => Promise<any>;
         markAsRead: (params: any) => Promise<any>;
-        /** Đánh dấu đã trả lời / bỏ đánh dấu (không gửi tin); trả trạng thái mới từng hội thoại. */
+        /** Mark as replied / unmark (does not send a message); returns the new state of each conversation. */
         markConversationsReplied: (params: { zaloId: string; contactIds: string[]; replied?: boolean }) => Promise<{ success: boolean; items: Array<{ contact_id: string; is_replied: number | null; reply_marked_at: number }>; error?: string }>;
         markMessageRecalled: (params: any) => Promise<any>;
         deleteMessages: (params: { zaloId: string; msgIds: string[] }) => Promise<{ success: boolean; error?: string }>;
@@ -591,7 +593,7 @@ declare global {
         getLinks: (params: { zaloId: string; threadId: string; limit?: number; offset?: number }) => Promise<{ success: boolean; links: any[] }>;
         saveLink: (params: any) => Promise<{ success: boolean }>;
         getGroupMembers: (params: { zaloId: string; groupId: string }) => Promise<{ success: boolean; members: Array<{ member_id: string; display_name: string; avatar: string; role: number; username?: string; updated_at: number }> }>;
-        /** Một trang thành viên nhóm + tổng (lọc theo `query`, không phân biệt dấu); `ownerRole` = role chủ nhóm của kênh. */
+        /** One page of group members + the total (filtered by `query`, accent-insensitive); `ownerRole` = the channel's group owner role. */
         getGroupMembersPage: (params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number; namedOnly?: boolean }) => Promise<{ success: boolean; members: Array<{ member_id: string; display_name: string; avatar: string; role: number; username?: string; updated_at: number }>; total: number; error?: string }>;
         getAllGroupMembers: (params: { zaloId: string }) => Promise<{ success: boolean; rows: Array<{ group_id: string; member_id: string; display_name: string; avatar: string; role: number; updated_at: number }> }>;
         saveGroupMembers: (params: { zaloId: string; groupId: string; members: Array<{ memberId: string; displayName: string; avatar: string; role: number }> }) => Promise<{ success: boolean }>;
@@ -611,8 +613,8 @@ declare global {
         getAllCachedPackSummaries: (params?: any) => Promise<{ success: boolean; packs: { catId: number; count: number; thumbUrl: string }[] }>;
         getPinnedMessages: (params: { zaloId: string; threadId: string }) => Promise<{ success: boolean; pins: any[] }>;
         getMessagesByType: (params: { zaloId: string; threadId: string; msgType: string; limit?: number }) => Promise<{ success: boolean; messages: any[] }>;
-        pinMessage: (params: { zaloId: string; threadId: string; pin: any }) => Promise<{ success: boolean }>;
-        unpinMessage: (params: { zaloId: string; threadId: string; msgId: string }) => Promise<{ success: boolean }>;
+        pinMessage: (params: { zaloId: string; threadId: string; pin: any; localOnly?: boolean }) => Promise<{ success: boolean; error?: string }>;
+        unpinMessage: (params: { zaloId: string; threadId: string; msgId: string }) => Promise<{ success: boolean; error?: string }>;
         bringPinnedToTop: (params: { zaloId: string; threadId: string; msgId: string }) => Promise<{ success: boolean }>;
         getLocalQuickMessages: (params: { zaloId: string }) => Promise<{ success: boolean; items: any[] }>;
         getAllLocalQuickMessages: () => Promise<{ success: boolean; items: any[] }>;
@@ -638,7 +640,7 @@ declare global {
         // Local Pinned Conversations
         getLocalPinnedConversations: (params: { zaloId: string }) => Promise<{ success: boolean; threadIds: string[] }>;
         setLocalPinnedConversation: (params: { zaloId: string; threadId: string; isPinned: boolean }) => Promise<{ success: boolean }>;
-        // Tự động đánh dấu đã đọc: hội thoại chưa đọc (lọc thời gian tin cuối)
+        // Auto mark as read: unread conversations (filtered by the time of the last message)
         getUnreadConversations: (params: { zaloId: string; from?: number; to?: number; includeOthers?: boolean; channel?: string }) => Promise<{ success: boolean; conversations: Array<{ contact_id: string; contact_type: string; channel: string; display_name: string; alias: string; unread_count: number; has_mention: number; last_message_time: number; is_in_others: number; telegram_membership_state: string | null }>; error?: string }>;
         // Starred messages ("Tin đánh dấu")
         getStarredMessageKeys: (params: { zaloId: string }) => Promise<{ success: boolean; keys: Array<{ thread_id: string; msg_id: string }>; error?: string }>;
@@ -666,12 +668,12 @@ declare global {
         getCampaigns: (params: { zaloId: string }) => Promise<{ success: boolean; campaigns: any[] }>;
         saveCampaign: (params: { zaloId: string; campaign: any }) => Promise<{ success: boolean; id: number; error?: string }>;
         deleteCampaign: (params: { zaloId: string; campaignId: number }) => Promise<{ success: boolean }>;
-        /** contactIds: chỉ chép những liên hệ này (bỏ trống = tất cả khi includeContacts). */
-        cloneCampaign: (params: { zaloId: string; campaignId: number; includeContacts: boolean; newName?: string; contactIds?: string[] }) => Promise<{ success: boolean; id: number; error?: string }>;
-        updateCampaignStatus: (params: { campaignId: number; status: string }) => Promise<{ success: boolean }>;
+        /** contactIds: copy only these contacts (empty = all when includeContacts). targetZaloIds: accounts that get a copy (missing = the owner). */
+        cloneCampaign: (params: CampaignCloneParams) => Promise<CampaignCloneResponse>;
+        updateCampaignStatus: (params: { campaignId: number; status: string }) => Promise<{ success: boolean; error?: string }>;
         addCampaignContacts: (params: { zaloId: string; campaignId: number; contacts: any[] }) => Promise<{ success: boolean; error?: string }>;
         getCampaignContacts: (params: { campaignId: number }) => Promise<{ success: boolean; contacts: any[] }>;
-        /** Liên hệ đã gửi → đã nhận / đã xem / đã phản hồi (shared/analytics/messageEngagement). */
+        /** Contacts sent to → received / seen / replied (shared/analytics/messageEngagement). */
         getCampaignEngagement: (params: { campaignId: number }) => Promise<CampaignEngagementResponse>;
         deleteCampaignContacts: (params: { campaignId: number; contactIds: string[] }) => Promise<{ success: boolean }>;
         deleteAllCampaignContacts: (params: { campaignId: number }) => Promise<{ success: boolean }>;
@@ -709,7 +711,7 @@ declare global {
             receivedRate: number | null; seenRate: number; sendsMessage: boolean; channel: string;
           }>;
         }>;
-        /** Tin gửi đi 1:1 trong khoảng: người nhận → đã nhận / đã xem / đã phản hồi. */
+        /** 1:1 messages sent in the range: recipient → received / seen / replied. */
         outreach: (params: { zaloId: string; sinceTs: number; untilTs: number; granularity?: 'hour' | 'day' }) => Promise<{ success: boolean; error?: string } & Partial<OutreachStats>>;
         friendRequests: (params: { zaloId: string; sinceTs: number; untilTs: number }) => Promise<{
           success: boolean; totalSent: number; totalReceived: number;
@@ -753,11 +755,11 @@ declare global {
         getVideoMeta: (params: { filePath: string }) => Promise<{ success: boolean; thumbPath: string; duration: number; width: number; height: number; error?: string }>;
         readImageAsBase64: (params: { localPath?: string; remoteUrl?: string }) => Promise<{ success: boolean; base64?: string; mimeType?: string; error?: string }>;
         repairImage: (params: { zaloId: string; msgId: string; threadId?: string; localPath?: string; remoteUrl?: string; force?: boolean }) => Promise<{ success: boolean; newLocalPath?: string; expired?: boolean; cached?: boolean; error?: string }>;
-        /** Ảnh tin Zalo phải có trên máy Boss (máy nhân viên: Boss tải); cached = đã có sẵn */
+        /** Zalo message photos must exist on the owner's machine (employee machines: the owner's machine downloads them); cached = already present */
         ensureMessageImage: (params: { zaloId: string; msgId: string; threadId?: string; force?: boolean }) => Promise<{ success: boolean; newLocalPath?: string; expired?: boolean; cached?: boolean; error?: string; code?: string }>;
-        /** Kiểm tra media Zalo còn trên CDN không (video / ảnh trong album). expired=true → đã lưu cờ media_expired. */
+        /** Check whether Zalo media is still on the CDN (video / photos in an album). expired=true → the media_expired flag is saved. */
         checkMediaExpired: (params: { zaloId: string; msgId: string; urls: string[]; force?: boolean }) => Promise<{ success: boolean; expired: boolean; unknown?: boolean; error?: string }>;
-        /** Tải media của 1 tin Zalo về máy (chuyển tiếp tin chưa tải), cập nhật local_paths */
+        /** Download the media of one Zalo message to this machine (relays the message when it is not downloaded yet), update local_paths */
         downloadMessageMedia: (params: { zaloId: string; msgId: string; threadId?: string; kind: 'image' | 'gif' | 'file' | 'voice' | 'video' }) => Promise<{ success: boolean; localPath?: string; localPaths?: Record<string, string>; error?: string }>;
         ensureFaststart: (params: { filePath: string }) => Promise<{ success: boolean; fixed?: boolean; reason?: string; error?: string }>;
         validateLocalImages: (items: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string }>) => Promise<{ success: boolean; corrupted: Array<{ zaloId: string; msgId: string; threadId?: string; localPath: string; remoteUrl?: string; reason: string }> }>;
@@ -771,17 +773,19 @@ declare global {
       app: {
         setBadge: (count: number) => void;
         rendererReady: () => void;
-        /** Giao diện đã tải xong danh sách hội thoại — main mới chạy việc nền nặng (đồng bộ bù Telegram…) */
+        /** The UI has finished loading the conversation list: only then does main start the heavy background work (Telegram catch-up sync…) */
         uiSettled: () => void;
         openThread: (params: { zaloId: string; threadId: string; threadType: number }) => void;
         sendBadgeImage: (params: { dataUrl: string; count: number }) => void;
         flashFrame: (active: boolean) => void;
-        /** Windows: app đang chạy bằng quyền quản trị (kéo-thả từ File Explorer bị chặn) */
+        /** Windows: the app is running with admin rights (drag-and-drop from File Explorer is blocked) */
         isElevated?: () => Promise<boolean>;
-        /** Tự mở Deplao khi bật máy (lưu theo máy, src/utils/startup/autoLaunch.ts) */
+        /** Launch Deplao when the computer starts (saved per machine, src/utils/startup/autoLaunch.ts) */
         getAutoLaunch?: () => Promise<AutoLaunchStatus>;
         setAutoLaunch?: (patch: { enabled?: boolean; hidden?: boolean }) => Promise<AutoLaunchStatus & { success: boolean; error?: string }>;
       };
+      /** UI language (main: electron/ipc/i18n/i18nIpc.ts, catalogs in resources/locales) */
+      i18n?: { getLanguages: () => Promise<{ current: string; languages: Array<{ code: string; name: string; english: string; coverage: number }> }>; setLanguage: (lang: string) => Promise<{ success: boolean; lang?: string; error?: string }> };
       lockScreen: {
         status: () => Promise<{ success: boolean; enabled?: boolean; biometricEnabled?: boolean; biometricAvailable?: boolean; failedAttempts?: number; isCoolingDown?: boolean; remainingCooldown?: number; error?: string }>;
         setup: (params: { password: string }) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
@@ -806,11 +810,11 @@ declare global {
       };
 
       on: {
-        // Sự kiện vòng đời kết nối nhân viên ↔ Boss (payload: src/shared/employee/employeeConnection.ts)
+        // Employee ↔ owner's machine connection lifecycle events (payload: src/shared/employee/employeeConnection.ts)
         (channel: 'employee:credentials', callback: (data: EmployeeCredentialsEvent) => void): () => void;
         (channel: 'employee:resync', callback: (data: EmployeeResyncEvent) => void): () => void;
         (channel: 'workspace:connectionStatus', callback: (data: WorkspaceConnectionStatusEvent) => void): () => void;
-        // Địa chỉ WAN của Boss (payload: src/shared/cloud/tunnelAddress.ts)
+        // WAN address of the owner's machine (payload: src/shared/cloud/tunnelAddress.ts)
         (channel: 'employee:bossUrlChanged', callback: (data: EmployeeBossUrlChangedPayload) => void): () => void;
         (channel: 'relay:tunnelStatusUpdate', callback: (data: RelayTunnelStatus) => void): () => void;
         // Cloudflare (payload: src/shared/cloud/cloudContracts.ts)
@@ -828,8 +832,8 @@ declare global {
         getBuffer: () => Promise<{ ts: number; level: string; msg: string }[]>;
         clear:     () => Promise<boolean>;
         /**
-         * Ghi 1 dòng log renderer vào Nhật ký của main (IPC 'log:append', prefix [renderer]).
-         * Thường không gọi trực tiếp — Logger (src/utils/Logger) tự gửi warn/error/notice.
+         * Write one renderer log line to the main process log (IPC 'log:append', prefix [renderer]).
+         * Usually not called directly: Logger (src/utils/Logger) sends warn/error/notice by itself.
          */
         append:    (level: 'log' | 'info' | 'warn' | 'error' | 'debug', msg: string) => void;
       };
@@ -863,7 +867,7 @@ declare global {
         execute:        (id: string, action: string, params?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
         executeByType:  (type: string, action: string, params?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
         getWebhookPort: () => Promise<{ success: boolean; port?: number }>;
-        /** Đăng ký webhook tự động KiotViet / Sapo (services/integrations/posWebhookRegistration.ts). */
+        /** Automatic webhook registration for KiotViet / Sapo (services/integrations/posWebhookRegistration.ts). */
         listWebhooks?: (id: string) => Promise<PosWebhookListResponse>;
         registerWebhooks?: (id: string, events: string[]) => Promise<PosWebhookListResponse & {
           created?: string[]; updated?: string[]; kept?: string[]; removed?: number;
@@ -883,7 +887,7 @@ declare global {
         removeFile:      (fileId: number) => Promise<{ success: boolean; error?: string }>;
         suggest:         (assistantId: string, chatHistory: any[], count?: number) => Promise<{ success: boolean; suggestions: string[]; error?: string }>;
         chat:            (assistantId: string, messages: any[], structured?: boolean, maxTokens?: number) => Promise<{ success: boolean; result?: string; totalTokens?: number; promptTokens?: number; completionTokens?: number; error?: string }>;
-        /** Chỉ dùng messages của caller (không chèn persona / kiến thức của trợ lý) - AI Workflow Builder */
+        /** Use only the caller's messages (no persona / assistant knowledge inserted) - AI Workflow Builder */
         chatRaw?:        (params: { assistantId: string; messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>; maxTokens?: number; temperature?: number }) => Promise<{ success: boolean; result?: string; totalTokens?: number; promptTokens?: number; completionTokens?: number; error?: string }>;
         getAccountAssistant:  (zaloId: string, role: string) => Promise<{ success: boolean; assistant?: any | null; error?: string }>;
         setAccountAssistant:  (zaloId: string, role: string, assistantId: string | null) => Promise<{ success: boolean; error?: string }>;
@@ -909,7 +913,7 @@ declare global {
         create: (params: { username: string; password: string; display_name: string; avatar_url?: string; role?: string }) => Promise<{ success: boolean; employee?: any; error?: string }>;
         update: (employeeId: string, updates: { display_name?: string; avatar_url?: string; password?: string; is_active?: number; role?: string; group_id?: string | null }) => Promise<{ success: boolean; error?: string }>;
         delete: (employeeId: string) => Promise<{ success: boolean; error?: string }>;
-        /** Boss: đổi khoá ký token → mọi nhân viên phải đăng nhập lại; `notified` = số nhân viên đang nối được báo. */
+        /** Owner's machine: changing the token signing key → all employees must log in again; `notified` = number of currently connected employees who were notified. */
         logoutAll: () => Promise<{ success: boolean; notified?: number; error?: string }>;
         setPermissions: (employeeId: string, permissions: Array<{ module: string; can_access: boolean }>) => Promise<{ success: boolean; error?: string }>;
         getPermissions: (employeeId: string) => Promise<{ success: boolean; permissions?: Record<string, boolean>; error?: string }>;
@@ -945,28 +949,28 @@ declare global {
         switch: (id: string) => Promise<{ success: boolean; workspace?: any; error?: string }>;
         isMulti: () => Promise<{ isMulti: boolean }>;
         getDbPath: (id: string) => Promise<{ success: boolean; dbPath?: string; error?: string }>;
-        /** Lưu CẢ URL + token vào cấu hình workspace rồi kết nối qua main (main phát employee:credentials). */
+        /** Save BOTH the URL and the token in the workspace config, then connect through main (main emits employee:credentials). */
         connectRemote: (id: string, bossUrl: string, token: string) => Promise<{ success: boolean; error?: string; authExpired?: boolean }>;
-        /** Dừng heartbeat + Socket.IO + lịch thử lại của workspace (người dùng ngắt). */
+        /** Stop the workspace heartbeat, Socket.IO and retry schedule (user disconnected). */
         disconnectRemote: (id: string) => Promise<{ success: boolean; error?: string }>;
         getConnectionStatus: (id: string) => Promise<{ success: boolean; connected: boolean; bossUrl: string; latency: number; authExpired?: boolean; retrying?: boolean; connecting?: boolean; error?: string }>;
         getAllStatuses: () => Promise<{ success: boolean; statuses: Record<string, { connected: boolean; bossUrl: string; latency: number; authExpired?: boolean; retrying?: boolean; connecting?: boolean }>; error?: string }>;
         loginRemote: (bossUrl: string, username: string, password: string) => Promise<{ success: boolean; token?: string; employee?: any; error?: string; code?: string }>;
         /**
-         * Lưu mật khẩu nhân viên cho remote workspace — main mã hoá bằng safeStorage (Windows DPAPI), không bao giờ trả
-         * lại renderer. `saved: false` khi máy không mã hoá được (không lưu).
+         * Save the employee password for a remote workspace: main encrypts it with safeStorage (Windows DPAPI) and never returns it
+         * to the renderer. `saved: false` when the machine cannot encrypt (nothing is saved).
          */
         rememberPassword: (id: string, password: string) => Promise<{ success: boolean; saved?: boolean; error?: string }>;
         hasSavedPassword: (id: string) => Promise<{ success: boolean; saved: boolean; error?: string }>;
         /**
-         * Đăng nhập bằng mật khẩu đã lưu (main giải mã, cùng kết quả với loginRemote). Boss báo sai mật khẩu → main quên
-         * mật khẩu đã lưu (`savedPasswordCleared`). `code: 'NO_SAVED_PASSWORD'` = không dùng được mật khẩu đã lưu.
+         * Log in with the saved password (main decrypts it, same result as loginRemote). If the owner's machine reports a wrong password, main forgets
+         * the saved password (`savedPasswordCleared`). `code: 'NO_SAVED_PASSWORD'` = the saved password cannot be used.
          */
         loginRemoteSaved: (id: string, bossUrl: string, username: string) => Promise<{ success: boolean; token?: string; employee?: any; error?: string; code?: string; savedPasswordCleared?: boolean }>;
         forgetPassword: (id: string) => Promise<{ success: boolean; error?: string }>;
-        /** window 'online' → main kiểm tra kết nối Boss ngay (thử lại workspace lỗi, heartbeat ngay). */
+        /** window 'online' → main checks the owner's machine connection right away (retries failed workspaces, heartbeat now). */
         networkOnline: () => Promise<{ success: boolean; error?: string }>;
-        /** Lấy lại snapshot quyền / tài khoản được giao → 'workspace:initialState' { forced: true }. */
+        /** Fetch the permissions / assigned-accounts snapshot again → 'workspace:initialState' { forced: true }. */
         refreshSnapshot: (id: string, reason?: string) => Promise<{ success: boolean; error?: string }>;
       };
       relay: {
@@ -976,13 +980,13 @@ declare global {
         kickEmployee: (employeeId: string) => Promise<{ success: boolean; error?: string }>;
         startTunnel: () => Promise<{ success: boolean; tunnelUrl?: string; error?: string }>;
         stopTunnel: () => Promise<{ success: boolean; error?: string }>;
-        /** Áp dụng cấu hình tunnel mới khi đang chạy, không ngắt nhân viên (make-before-break). */
+        /** Apply the new tunnel config while running, without disconnecting employees (make-before-break). */
         restartTunnel: () => Promise<{ success: boolean; tunnelUrl?: string; error?: string }>;
         getTunnelStatus: () => Promise<{ success: boolean; error?: string } & Partial<RelayTunnelStatus>>;
-        /** Token ngrok / Cloudflare không trả về renderer — chỉ báo đã lưu hay chưa. */
+        /** ngrok / Cloudflare tokens are never returned to the renderer; it only reports whether they are saved. */
         getTunnelConfig: () => Promise<{ success: boolean; provider?: string; ngrokTokenSet?: boolean; domain?: string; cfTokenSet?: boolean; cfPublicUrl?: string; autoStart?: boolean; error?: string }>;
         setTunnelConfig: (cfg: { provider?: string; authtoken?: string; domain?: string; cfToken?: string; cfPublicUrl?: string; autoStart?: boolean }) => Promise<{ success: boolean; error?: string }>;
-        /** Nhân viên: thăm dò địa chỉ Boss (url, hoặc địa chỉ đã lưu của workspace). */
+        /** Employee: probe the owner's machine address (url, or the workspace's saved address). */
         probeBossAddress: (params: { url?: string; workspaceId?: string }) => Promise<BossAddressProbeResponse>;
       };
       // ─── Facebook ─────────────────────────────────────────────────────
@@ -1016,13 +1020,13 @@ declare global {
         loginWithCredentials: (params: { username: string; password: string; twoFASecret?: string }) => Promise<{ success: boolean; result?: any; error?: string }>;
         fetchThreadMessages: (params: { accountId: string; threadId: string; limit?: number; beforeCursor?: string | null }) => Promise<{ success: boolean; messages?: any[]; cursor?: { before: string | null; hasMore: boolean } | null; error?: string }>;
         /**
-         * Một trang tin cũ hơn mốc, đã lưu DB: qua bridge (FetchMessagesTask, neo vào tin Messenger có thật) hoặc — hội thoại
-         * chưa có tin nào làm mốc — trang mới nhất qua GraphQL (`source`). code: BRIDGE_DOWN / BRIDGE_OLD / E2EE / FETCH / NOT_CONNECTED
+         * A page of messages older than the anchor, saved to the DB: via the bridge (FetchMessagesTask, anchored on a real Messenger message) or, if
+         * the conversation has no message to use as an anchor, the newest page via GraphQL (`source`). code: BRIDGE_DOWN / BRIDGE_OLD / E2EE / FETCH / NOT_CONNECTED
          */
         fetchOlderMessages: (params: { accountId: string; threadId: string; beforeTimestampMs?: number; beforeMessageId?: string }) => Promise<
           | { success: true; saved: number; received: number; stored: number; count: number; hasMoreBefore: boolean; minTimestampMs: number; minMessageId?: string; source: 'lightspeed' | 'graphql' }
           | { success: false; code?: string; error?: string; source?: 'lightspeed' | 'graphql' }>;
-        /** Đồng bộ tin nhắn Facebook theo khoảng thời gian (chạy nền, tiến độ qua event:fbHistorySync) */
+        /** Sync Facebook messages by time range (runs in the background, progress via event:fbHistorySync) */
         startHistorySync: (params: { accountId: string; fromTs: number | null; toTs: number | null }) => Promise<{ success: boolean; status?: FbHistorySyncStatus | null; error?: string }>;
         cancelHistorySync: (params: { accountId: string }) => Promise<{ success: boolean; status?: FbHistorySyncStatus | null }>;
         getHistorySyncStatus: (params: { accountId: string }) => Promise<{ success: boolean; status?: FbHistorySyncStatus | null }>;
@@ -1127,9 +1131,9 @@ declare global {
         sendTopicFile:  (params: TelegramForumTopicContext & { filePath: string; caption?: string; fileType?: string; replyToMsgId?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendTyping:     (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; error?: string }>;
         sendReaction:   (params: { accountId: string; chatId: string; messageId: string; emoji?: string }) => Promise<{ success: boolean; error?: string }>;
-        /** Reaction dùng được trong hội thoại, hay dùng trước (chuỗi đúng như Telegram, không U+FE0F) */
+        /** Reactions usable in a conversation, most used first (strings exactly as in Telegram, without U+FE0F) */
         getAvailableReactions?: (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; reactions?: string[]; error?: string }>;
-        /** Lấy lại reaction chính thức (GetMessagesReactions) và lưu đè */
+        /** Fetch the official reactions again (GetMessagesReactions) and overwrite the saved ones */
         refreshReactions?: (params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{ success: boolean; applied?: number; error?: string }>;
         // Group management
         getGroupInfo:      (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; info?: any; error?: string }>;
@@ -1155,16 +1159,16 @@ declare global {
         getCallHistory:    (params: { accountId: string; missed?: boolean; offsetId?: number; limit?: number }) => Promise<{ success: boolean; items?: TelegramCallHistoryItem[]; nextOffsetId?: number; hasMore?: boolean; error?: string }>;
         declineCall:       (params: { accountId: string; callId: string; accessHash: string; video?: boolean }) => Promise<{ success: boolean; error?: string }>;
         getGroupMembers:   (params: { accountId: string; chatId: string; limit?: number }) => Promise<{ success: boolean; members?: any[]; error?: string }>;
-        /** Quản trị viên + chức vụ tự đặt của nhóm (role 1 = người tạo, 2 = quản trị viên); bản lưu < 6 giờ không gọi mạng. */
+        /** Group admins + custom titles (role 1 = creator, 2 = admin); a saved copy under 6 hours old makes no network call. */
         getGroupAdmins:    (params: { accountId: string; chatId: string; refresh?: boolean }) => Promise<{ success: boolean; admins?: Array<{ memberId: string; role: number; rank: string }>; error?: string }>;
-        /** Ô @nhắc đến: tìm thành viên nhóm lớn trên Telegram (tên / @username) và lưu DB; complete = đã đủ người khớp. */
+        /** @mention picker: search members of a large Telegram group (name / @username) and save to the DB; complete = all matching people have been found. */
         searchGroupMembers: (params: { accountId: string; chatId: string; query: string; limit?: number }) => Promise<{ success: boolean; found?: number; complete?: boolean; error?: string }>;
         hydrateMessageSenders: (params: { accountId: string; chatId: string; messageIds: string[]; senderIds?: string[] }) => Promise<{ success: boolean; members?: any[]; error?: string }>;
         setDialogMute:     (params: { accountId: string; chatId: string; muteUntil: number }) => Promise<{ success: boolean; muteUntil?: number; error?: string }>;
         setDialogArchived: (params: { accountId: string; chatId: string; archived: boolean }) => Promise<{ success: boolean; folderId?: number; error?: string }>;
         setDialogPin:      (params: { accountId: string; chatId: string; pinned: boolean }) => Promise<{ success: boolean; error?: string }>;
         getMessageReactions: (params: { accountId: string; chatId: string; messageId: string; reaction?: string; offset?: string; limit?: number }) => Promise<{ success: boolean; reactions?: Array<{ userId: string; emoji: string; date: number }>; count?: number; nextOffset?: string; error?: string }>;
-        /** "Đã xem" của tin mình gửi: nhóm → danh sách người xem; chat riêng → readAt (ms). */
+        /** "Đã xem" (seen) status of my sent message: group → list of viewers; direct chat → readAt (ms). */
         getMessageReadParticipants?: (params: { accountId: string; chatId: string; messageId: string }) => Promise<{
           success: boolean;
           kind?: 'group' | 'private';
@@ -1182,15 +1186,15 @@ declare global {
         blockUser:         (params: { accountId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
         unblockUser:       (params: { accountId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
         exportChatInvite:  (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; link?: string; error?: string }>;
-        /** historyOnly: chỉ ReadHistory (tin mới khi đang chat), không đọc @ / reaction — mặc định đọc cả hai */
+        /** historyOnly: only ReadHistory (new messages while chatting), does not read @ / reactions; by default both are read */
         readChatHistory:   (params: { accountId: string; chatId: string; historyOnly?: boolean }) => Promise<{ success: boolean; error?: string }>;
         readForumTopic:    (params: { accountId: string; chatId: string; topMsgId: string; readMaxId?: string }) => Promise<{ success: boolean; error?: string }>;
         getMessages:       (params: { accountId: string; chatId: string; limit?: number; offsetId?: number; topicRootMessageId?: string; returnMessages?: boolean }) => Promise<{ success: boolean; messages?: any[]; count?: number; error?: string }>;
-        /** urgent = người dùng bấm tải / thử lại (lên đầu hàng tải) */
+        /** urgent = the user clicked download / retry (moves to the top of the download queue) */
         repairMessageMedia:(params: { accountId: string; chatId: string; messageId: string; urgent?: boolean }) => Promise<{ success: boolean; localPaths?: Record<string, string>; attachments?: any[]; msgType?: string; error?: string }>;
-        /** Hội thoại Telegram đang mở → hàng tải file ưu tiên hội thoại này (null = không mở hội thoại Telegram nào) */
+        /** Open Telegram conversation → the file download queue prioritizes this conversation (null = no Telegram conversation is open) */
         setDownloadFocus?: (params: { accountId: string | null; threadId: string | null }) => Promise<{ success: boolean }>;
-        /** Bình luận bài đăng kênh (nhóm thảo luận): quyền bình luận + bình luận cũ → mới */
+        /** Channel post comments (discussion group): comment permission + comments, old → new */
         getPostDiscussion?: (params: { accountId: string; channelId: string; postId: string; mode?: 'initial' | 'older' | 'newer' | 'latest'; offsetId?: number; limit?: number }) => Promise<{
           success: boolean; error?: string;
           discussion?: {
@@ -1198,21 +1202,21 @@ declare global {
             total: number; unreadCount: number; readInboxMaxId: number; maxId: number;
           };
           comments?: any[];
-          /** null = trang này không xét phía đó */
+          /** null = this page does not check that side */
           hasOlder?: boolean | null; hasNewer?: boolean | null;
           anchor?: 'top' | 'unread' | 'bottom' | null;
         }>;
-        /** Đã đọc bình luận tới readMaxId (messages.readDiscussion); có channelId / postId → attachments mới của bài kênh */
+        /** Read comments up to readMaxId (messages.readDiscussion); with channelId / postId → new attachments of the channel post */
         readPostDiscussion?: (params: { accountId: string; chatId: string; rootId: string; readMaxId: number; channelId?: string; postId?: string }) => Promise<{ success: boolean; attachments?: string; error?: string }>;
         refreshPostStats?: (params: { accountId: string; chatId: string; messageIds: string[]; increment?: boolean }) => Promise<{
           success: boolean; error?: string; updates?: Array<{ msgId: string; attachments: string }>; peers?: Record<string, { name: string; avatar: string }>;
         }>;
-        /** Kết quả các bình chọn đang hiện (messages.getPollResults); updates = attachments mới của tin đã đổi */
+        /** Results of the polls currently shown (messages.getPollResults); updates = new attachments of changed messages */
         refreshPollResults?: (params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{
           success: boolean; error?: string; updates?: Array<{ msgId: string; attachments: string }>;
         }>;
         downloadRichMedia?: (params: { accountId: string; chatId: string; messageId: string; mediaId?: string }) => Promise<{ success: boolean; localPaths?: Record<string, string>; error?: string }>;
-        /** Thẻ link của bản ghi cũ: lấy lại attachments theo lô (≤ 100 tin / hội thoại), không tải media */
+        /** Link cards of old records: fetch attachments again in batches (≤ 100 messages / conversation), without downloading media */
         refreshMessageAttachments?: (params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{
           success: boolean; messages?: Array<{ messageId: string; attachments: any[] }>; error?: string;
         }>;
@@ -1221,7 +1225,7 @@ declare global {
         getFullChat:       (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; info?: any; error?: string }>;
         getUserProfile:    (params: { accountId: string; userId: string; chatId?: string }) => Promise<{ success: boolean; profile?: any; error?: string }>;
         resolveUsername:   (params: { accountId: string; username: string }) => Promise<{ success: boolean; peer?: any; error?: string }>;
-        // Mini App của bot (lib/chat/telegram/telegramMiniApp) + nút đăng nhập (keyboardButtonUrlAuth)
+        // Bot Mini App (lib/chat/telegram/telegramMiniApp) + login button (keyboardButtonUrlAuth)
         requestWebView?:   (params: { accountId: string; botId: string; url: string; fromBotMenu?: boolean; peerId?: string; themeParams?: Record<string, string> }) => Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }>;
         requestMainWebView?: (params: { accountId: string; botId: string; startParam?: string; peerId?: string; themeParams?: Record<string, string> }) => Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }>;
         prolongWebView?:   (params: { accountId: string; botId: string; queryId: string; peerId?: string }) => Promise<{ success: boolean; expired?: boolean; error?: string }>;
@@ -1230,12 +1234,12 @@ declare global {
         miniAppSharePhone?: (params: { accountId: string; botId: string }) => Promise<{ success: boolean; error?: string }>;
         requestUrlAuth?:   (params: { accountId: string; peerId: string; msgId: number; buttonId: number }) => Promise<{ success: boolean; info?: UrlAuthInfo; error?: string }>;
         acceptUrlAuth?:    (params: { accountId: string; peerId: string; msgId: number; buttonId: number; writeAllowed?: boolean; sharePhone?: boolean }) => Promise<{ success: boolean; url?: string | null; error?: string }>;
-        // Link Telegram mở trong app (lib/chat/links/chatLinks)
+        // Telegram links opened in the app (lib/chat/links/chatLinks)
         resolvePhone?:     (params: { accountId: string; phone: string }) => Promise<{ success: boolean; peer?: any; error?: string }>;
         getBotApp?:        (params: { accountId: string; botId: string; shortName: string }) => Promise<{ success: boolean; app?: { id: string; accessHash: string; title: string; description: string; inactive: boolean; requestWriteAccess: boolean }; error?: string }>;
         requestAppWebView?: (params: { accountId: string; botId: string; appId: string; accessHash: string; startParam?: string; writeAllowed?: boolean; peerId?: string; themeParams?: Record<string, string> }) => Promise<{ success: boolean; webViewUrl?: string; queryId?: string; error?: string }>;
         startBot?:         (params: { accountId: string; botId: string; startParam: string }) => Promise<{ success: boolean; error?: string }>;
-        /** Nút callback / trò chơi / sao chép / hồ sơ của tin bot: main đọc lại nút [hàng][cột] từ tin rồi trả việc cần làm */
+        /** Callback / game / copy / profile buttons of a bot message: main re-reads the [row][column] button from the message, then returns the action to take */
         pressInlineButton?: (params: { accountId: string; chatId: string; msgId: number; row: number; col: number }) => Promise<{
           success: boolean;
           action?:
@@ -1259,21 +1263,21 @@ declare global {
         getStickerSets:       (params: { accountId: string }) => Promise<{ success: boolean; sets?: any[]; error?: string }>;
         getStickerSetStickers:(params: { accountId: string; setId: string; accessHash?: string; shortName?: string }) => Promise<{ success: boolean; stickers?: any[]; error?: string }>;
         getRecentStickers:    (params: { accountId: string }) => Promise<{ success: boolean; stickers?: any[]; error?: string }>;
-        /** GIF đã lưu của tài khoản. */
+        /** The account's saved GIFs. */
         getGifs:              (params: { accountId: string }) => Promise<{ success: boolean; gifs?: TelegramStickerItem[]; error?: string }>;
-        /** Tìm GIF qua @gif (query rỗng = thịnh hành); nextOffset rỗng = hết. */
+        /** Search GIFs via @gif (empty query = trending); empty nextOffset = no more results. */
         searchGifs:           (params: { accountId: string; query: string; offset?: string }) => Promise<{ success: boolean; gifs?: TelegramStickerItem[]; nextOffset?: string; error?: string }>;
         sendSticker:          (params: { accountId: string; chatId: string; stickerId: string; accessHash?: string; replyToMsgId?: string; topicRootMessageId?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendGif:              (params: { accountId: string; chatId: string; documentId: string; replyToMsgId?: string; topicRootMessageId?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         downloadSticker:      (params: { accountId: string; stickerId: string; accessHash?: string }) => Promise<{ success: boolean; localPath?: string; error?: string }>;
-        /** Bảng sticker đồng bộ tài khoản: bộ đã cài + gần đây + yêu thích. */
+        /** Account-synced sticker table: installed sets + recent + favorites. */
         getStickerPanel:      (params: { accountId: string }) => Promise<{ success: boolean; sets?: TelegramStickerSetInfo[]; recent?: TelegramStickerItem[]; faved?: TelegramStickerItem[]; error?: string }>;
         getStickerSet:        (params: { accountId: string; setId?: string; accessHash?: string; shortName?: string }) => Promise<{ success: boolean; set?: TelegramStickerSetInfo; stickers?: TelegramStickerItem[]; error?: string }>;
         getStickerSetOfMessage:(params: { accountId: string; chatId: string; messageId: string }) => Promise<{ success: boolean; set?: TelegramStickerSetInfo; stickers?: TelegramStickerItem[]; error?: string }>;
         setStickerSetInstalled:(params: { accountId: string; setId?: string; accessHash?: string; shortName?: string; installed: boolean }) => Promise<{ success: boolean; installed?: boolean; error?: string }>;
         getStickerFile:       (params: { accountId: string; docId: string; variant?: 'thumb' | 'full' }) => Promise<{ success: boolean; localPath?: string; kind?: TelegramStickerFileKind; error?: string }>;
         saveGif:              (params: { accountId: string; docId: string; saved?: boolean }) => Promise<{ success: boolean; saved?: boolean; error?: string }>;
-        /** Tìm bộ sticker; query rỗng = bộ thịnh hành. */
+        /** Search sticker sets; empty query = trending sets. */
         searchStickerSets:    (params: { accountId: string; query?: string }) => Promise<{ success: boolean; sets?: TelegramCoveredStickerSet[]; error?: string }>;
       };
       // ─── Proxy ───────────────────────────────────────────────────────────
@@ -1283,7 +1287,7 @@ declare global {
         update:        (id: number, proxy: any) => Promise<{ success: boolean; proxy?: any; error?: string }>;
         delete:        (id: number) => Promise<{ success: boolean; error?: string }>;
         setAccount:    (zaloId: string, proxyId: number | null) => Promise<{ success: boolean; error?: string }>;
-        /** Thêm / đổi / bỏ proxy của tài khoản Zalo, Facebook rồi kết nối lại ngay; connected=false: đã lưu nhưng chưa kết nối lại được */
+        /** Add / change / remove the proxy of a Zalo or Facebook account, then reconnect right away; connected=false: saved, but could not reconnect yet */
         applyToAccount: (accountId: string, proxyId: number | null, opts?: { force?: boolean }) => Promise<{ success: boolean; proxyId?: number | null; changed?: boolean; connected?: boolean; reconnectError?: string; error?: string }>;
         getForAccount: (zaloId: string) => Promise<{ success: boolean; proxy?: any; error?: string }>;
         test:          (proxy: any) => Promise<{ success: boolean; ms?: number; status?: number; error?: string }>;
@@ -1370,7 +1374,7 @@ declare global {
 }
 }
 
-/** Kết quả ERP bị từ chối quyền (IPC withErpAuth hoặc REST nhân viên → Boss: `code: 'permission_denied'`). */
+/** ERP result denied for lack of permission (IPC withErpAuth, or employee REST → owner's machine: `code: 'permission_denied'`). */
 export function isErpPermissionDeniedResponse(result: any): boolean {
   if (!result || result.success !== false) return false;
   const errorText = String(result.error || '');
@@ -1380,27 +1384,27 @@ export function isErpPermissionDeniedResponse(result: any): boolean {
 function normalizeErpPermissionMessage(rawError?: string): string {
   const message = String(rawError || '').trim();
   if (!message) {
-    return 'Tài khoản hiện tại không có quyền thực hiện thao tác ERP này. Vui lòng liên hệ quản trị viên để được cấp quyền phù hợp.';
+    return tr('Tài khoản hiện tại không có quyền thực hiện thao tác ERP này. Vui lòng liên hệ quản trị viên để được cấp quyền phù hợp.');
   }
 
   const actionMatch = message.match(/action="([^"]+)"/i);
   if (actionMatch?.[1]) {
-    return `Bạn không có quyền thực hiện thao tác ERP: ${actionMatch[1]}. Vui lòng liên hệ quản trị viên để được cấp quyền.`;
+    return tr('Bạn không có quyền thực hiện thao tác ERP: {{v1}}. Vui lòng liên hệ quản trị viên để được cấp quyền.', { v1: actionMatch[1] });
   }
 
   const plainMatch = message.match(/permission denied:?\s*(.+)$/i);
   if (plainMatch?.[1]) {
-    return `Bạn không có quyền thực hiện thao tác ERP: ${plainMatch[1]}. Vui lòng liên hệ quản trị viên để được cấp quyền.`;
+    return tr('Bạn không có quyền thực hiện thao tác ERP: {{v1}}. Vui lòng liên hệ quản trị viên để được cấp quyền.', { v1: plainMatch[1] });
   }
 
-  return 'Tài khoản hiện tại không có quyền thực hiện thao tác ERP này. Vui lòng liên hệ quản trị viên để được cấp quyền phù hợp.';
+  return tr('Tài khoản hiện tại không có quyền thực hiện thao tác ERP này. Vui lòng liên hệ quản trị viên để được cấp quyền phù hợp.');
 }
 
-/** Hộp thoại "không có quyền ERP" (dùng chung cho ipc.erp và lệnh ERP qua DataAccessor ở chế độ nhân viên). */
+/** "không có quyền ERP" (no ERP permission) dialog, shared by ipc.erp and ERP commands via DataAccessor in employee mode. */
 export function reportErpPermissionDenied(result: any) {
   const state = useAppStore.getState();
   state.showErpPermissionDialog({
-    title: 'Bạn không có quyền thao tác ERP',
+    title: tr('Bạn không có quyền thao tác ERP'),
     message: normalizeErpPermissionMessage(result?.error),
     details: result?.error,
   });
@@ -1425,7 +1429,7 @@ function wrapErpApi<T extends Record<string, any> | undefined>(api: T): T {
   return wrapped as T;
 }
 
-/** Cài đặt → Thông báo → Khởi động cùng máy (main: src/utils/startup/autoLaunch.ts). */
+/** Settings → Notifications → Launch at startup (main: src/utils/startup/autoLaunch.ts). */
 export interface AutoLaunchStatus {
   supported: boolean;
   enabled: boolean;
@@ -1443,6 +1447,7 @@ export const ipc = {
   db: window.electronAPI?.db,
   file: window.electronAPI?.file,
   app: window.electronAPI?.app,
+  i18n: window.electronAPI?.i18n,
   window: window.electronAPI?.window,
   shell: window.electronAPI?.shell,
   util: window.electronAPI?.util,
@@ -1472,10 +1477,10 @@ export const ipc = {
 };
 
 /**
- * Build auth object cho Zalo IPC calls, luôn kèm accountId để resolveZaloId
- * fallback đúng khi cookies rỗng + có nhiều connections active.
+ * Build the auth object for Zalo IPC calls; always includes accountId so that resolveZaloId
+ * falls back correctly when cookies are empty and several connections are active.
  *
- * Dùng thay vì `{ cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent }`
+ * Use this instead of `{ cookies: acc.cookies, imei: acc.imei, userAgent: acc.user_agent }`
  */
 export function buildZaloAuth(acc: { cookies?: string; imei?: string; user_agent?: string; zalo_id?: string }, accountId?: string) {
   return {

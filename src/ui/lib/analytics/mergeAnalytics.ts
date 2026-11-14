@@ -1,6 +1,6 @@
 /**
  * Multi-account Reports (AnalyticsPage): merge the per-account results of the analytics
- * DataAccessor methods into one report. Pure — covered by src/__tests__/analytics/analyticsMerge.test.ts.
+ * DataAccessor methods into one report. Pure: covered by src/__tests__/analytics/analyticsMerge.test.ts.
  *
  * Merge rules:
  *  - counters are summed (contacts / friends / groups / campaigns are per-account relationships,
@@ -13,8 +13,8 @@
  *    (averages weighted by their sample count), never averaged across accounts;
  *  - "today vs yesterday" sums both sides over the same accounts before comparing.
  *
- * Tin gửi đi (đã nhận / đã xem / đã phản hồi, shared/analytics/messageEngagement): bộ đếm cộng theo tài khoản (mỗi
- * tài khoản tự có người nhận), tỷ lệ tính lại từ tổng; "đã nhận" chỉ trên mẫu số của kênh có báo (deliveredBase).
+ * Outgoing messages ("đã nhận" (received) / "đã xem" (seen) / "đã phản hồi" (replied), shared/analytics/messageEngagement): counters are summed per account (each
+ * account has its own recipients), rates are recomputed from the totals; "đã nhận" only counts on the denominator of a channel that reports it (deliveredBase).
  *
  * Metrics that cannot be merged here are computed by the multi-account data-layer variants
  * (DataAccessor.getWorkflowAnalyticsForAccounts / getResponseTimeForAccounts): the response-time
@@ -62,11 +62,11 @@ export interface ContactSegmentation {
 export interface CampaignRow {
   id: number; name: string; type: string; status: string; created_at: number;
   total: number; sent: number; failed: number; pending: number; replied: number;
-  /** Gửi thành công: sent / total, % */
+  /** Successful sends: sent / total, % */
   deliveryRate: number; replyRate: number;
-  /** Hiệu quả tin (máy chủ cũ không trả → undefined): đã nhận / mẫu số đã nhận / đã xem */
+  /** Message effectiveness (older server does not return it → undefined): received / received base / seen */
   delivered?: number; deliveredBase?: number; seen?: number;
-  /** delivered / deliveredBase, % — null: kênh không báo đã nhận */
+  /** delivered / deliveredBase, %; null: the channel does not report delivery */
   receivedRate?: number | null; seenRate?: number;
   sendsMessage?: boolean;
   channel?: string;
@@ -307,19 +307,19 @@ export function campaignTotals(rows: ReadonlyArray<CampaignRow>): CampaignTotals
   };
 }
 
-// ── Tin gửi đi ─────────────────────────────────────────────────────────────────
+// ── Outgoing messages ─────────────────────────────────────────────────────────────────
 
 export type OutreachPoint = EngagementCounts & { bucket: string };
 
 export interface OutreachReport extends EngagementCounts {
   timeline: OutreachPoint[];
-  /** Kênh của các tài khoản có trong số liệu (ghi chú theo kênh). */
+  /** Channels of the accounts in the data (notes per channel). */
   channels: string[];
 }
 
 const OUTREACH_FIELDS: ReadonlyArray<keyof OutreachPoint> = ['sent', 'delivered', 'deliveredBase', 'seen', 'replied'];
 
-/** Tin gửi đi của nhiều tài khoản: cộng bộ đếm và từng điểm thời gian; null khi không tài khoản nào có số liệu. */
+/** Outgoing messages of several accounts: adds up the counters and each time point; null when no account has data. */
 export function mergeOutreach(list: ReadonlyArray<Maybe<Partial<OutreachStats>>>): OutreachReport | null {
   const items = present(list);
   if (items.length === 0) return null;

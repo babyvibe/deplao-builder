@@ -1,15 +1,15 @@
 /**
- * Mini App của bot Telegram chạy trong app, như Telegram (Web / Desktop):
- *  - Link lấy từ Telegram (requestWebView / requestMainWebView) đã kèm initData của tài khoản → Mini App tự đăng nhập.
- *  - Iframe + postMessage như Telegram Web (SDK telegram-web-app.js tự nhận ra), cầu sự kiện ở
- *    lib/chat/telegram/telegramMiniAppBridge: nút chính / nút phụ, quay lại, cài đặt, popup, màu đầu / nền, CloudStorage
- *    (bots.invokeWebViewCustomMethod), xin quyền nhắn tin, chia sẻ số điện thoại; link mở bằng trình duyệt của máy.
- *    Tính năng chưa có (toàn màn hình, sinh trắc, quét QR, thanh toán…) trả "không hỗ trợ" ngay để Mini App không treo.
- *  - Mini App là trang web khác origin: không chạm được giao diện hay electronAPI; popup / link mở ở trình duyệt máy.
- *  - Mở từ nút trong tin / menu bot: gia hạn phiên (prolongWebView) mỗi 60 s, hết phiên thì đóng.
- *  - Link t.me trong Mini App mở ngay trong app (lib/chat/links/chatLinks) và Mini App tự thu gọn xuống góc (vẫn chạy),
- *    bấm để mở lại. Mini App theo tên (t.me/<bot>/<app>): bot mới / xin quyền nhắn tin thì hỏi trước khi mở.
- * Đặt 1 lần ở App (TelegramMiniAppHost), mở bằng openTelegramMiniApp() / openTelegramUrlAuth().
+ * Telegram bot Mini App running inside the app, as in Telegram (Web / Desktop):
+ *  - Links from Telegram (requestWebView / requestMainWebView) already include the account's initData → the Mini App logs in by itself.
+ *  - Iframe + postMessage as in Telegram Web (the telegram-web-app.js SDK detects it), events bridged in
+ *    lib/chat/telegram/telegramMiniAppBridge: main / secondary button, back, settings, popup, header / background colors, CloudStorage
+ *    (bots.invokeWebViewCustomMethod), message permission request, share phone number; links open in the machine's browser.
+ *    Features not supported yet (fullscreen, biometrics, QR scan, payments…) answer "không hỗ trợ" (not supported) right away so the Mini App does not hang.
+ *  - The Mini App is a web page on another origin: it cannot touch the UI or electronAPI; popups / links open in the machine's browser.
+ *  - Opened from a button in a message / bot menu: session renewal (prolongWebView) every 60 s, closed when the session ends.
+ *  - t.me links inside the Mini App open in the app (lib/chat/links/chatLinks), and the Mini App minimizes to a corner (still running),
+ *    click it to reopen. A named Mini App (t.me/<bot>/<app>): a new bot / message permission request asks first before opening.
+ * Mounted once in App (TelegramMiniAppHost), opened with openTelegramMiniApp() / openTelegramUrlAuth().
  */
 import React from 'react';
 import {
@@ -30,6 +30,8 @@ import {
   unsupportedReply, type MiniAppButton, type MiniAppEvent, type MiniAppPopup,
 } from '@/lib/chat/telegram/telegramMiniAppBridge';
 import TelegramUrlAuthDialog from './TelegramUrlAuthDialog';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export function TelegramMiniAppHost() {
   const miniApp = useTelegramMiniAppRequest();
@@ -49,7 +51,7 @@ type Prompt =
   | { kind: 'close' };
 
 const PROLONG_MS = 60_000;
-/** Iframe: script + origin riêng của Mini App (cookie / bộ nhớ của nó), form, popup (main mở bằng trình duyệt máy). */
+/** Iframe: the Mini App's own script + origin (its cookies / storage), form, popup (main opens them in the machine's browser). */
 const FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-popups allow-modals';
 
 interface BotAppInfo { id: string; accessHash: string; title: string; description: string; requestWriteAccess: boolean }
@@ -75,14 +77,14 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
   const [bgColor, setBgColor] = React.useState<string | null>(null);
   const [bottomBarColor, setBottomBarColor] = React.useState<string | null>(null);
   const [prompt, setPrompt] = React.useState<Prompt | null>(null);
-  /** Thu gọn xuống góc (Mini App vẫn chạy): tự thu gọn khi link t.me trong Mini App mở hội thoại / hộp trong app. */
+  /** Minimize to a corner (the Mini App keeps running): auto-minimize when a t.me link inside the Mini App opens a conversation / dialog in the app. */
   const [minimized, setMinimized] = React.useState(false);
-  /** Mini App theo tên cần hỏi trước khi mở (bot mới / xin quyền nhắn tin). */
+  /** A named Mini App needs to ask before opening (new bot / requests message permission). */
   const [appConfirm, setAppConfirm] = React.useState<{ app: BotAppInfo; allowWrite: boolean } | null>(null);
 
   const iframeRef = React.useRef<HTMLIFrameElement>(null);
   const bodyRef = React.useRef<HTMLDivElement>(null);
-  /** Origin trang đang mở trong khung: chỉ gửi sự kiện cho đúng trang đó. */
+  /** Origin of the page in the frame: only send events to that exact page. */
   const originRef = React.useRef('');
   const confirmCloseRef = React.useRef(false);
   const themeRef = React.useRef(theme);
@@ -102,26 +104,26 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
     if (!frame || !originRef.current) return;
     try {
       frame.postMessage(JSON.stringify({ eventType, eventData: eventData ?? null }), originRef.current);
-    } catch { /* khung đã đóng */ }
+    } catch { /* frame closed */ }
   }, []);
 
   const postViewport = React.useCallback(() => {
     const body = bodyRef.current;
-    // Đang thu gọn (khung ẩn, cao 0): không báo, mở lại sẽ báo đúng cỡ
+    // Minimized (frame hidden, height 0): report nothing; when reopened, it reports the right size
     if (!body || !body.clientHeight) return;
     post('viewport_changed', { height: body.clientHeight, width: body.clientWidth, is_state_stable: true, is_expanded: true });
   }, [post]);
 
-  /** Link Telegram trả về (đã kèm initData) → khung; chỉ https. */
+  /** Telegram link returned (already includes initData) → the frame; https only. */
   const applyWebView = React.useCallback((res: WebViewResult) => {
     const url = res?.success ? String(res.webViewUrl || '') : '';
     let origin = '';
     try {
       const parsed = new URL(url);
       if (parsed.protocol === 'https:') origin = parsed.origin;
-    } catch { /* không có link */ }
+    } catch { /* no link */ }
     if (!origin) {
-      setError(res?.error ? `Không mở được Mini App: ${res.error}` : 'Không mở được Mini App');
+      setError(res?.error ? tr('Không mở được Mini App: {{error}}', { error: res.error }) : tr('Không mở được Mini App'));
       return;
     }
     originRef.current = origin;
@@ -134,7 +136,7 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
     ...(request.startParam ? { startParam: request.startParam } : {}),
   }), [accountId, botId, peerId, request.startParam]);
 
-  // ── Link Mini App (Telegram gắn initData của tài khoản) ──
+  // ── Mini App link (Telegram attaches the account's initData) ──
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -145,10 +147,10 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
         const found = await api?.getBotApp?.({ accountId, botId, shortName: request.appName || '' });
         if (cancelled) return;
         if (!found?.success || !found.app) {
-          setError(found?.error ? `Không mở được Mini App: ${found.error}` : 'Không mở được Mini App');
+          setError(found?.error ? tr('Không mở được Mini App: {{error}}', { error: found.error }) : tr('Không mở được Mini App'));
           return;
         }
-        // Bot mới / xin quyền nhắn tin: hỏi trước (https://core.telegram.org/api/bots/webapps#direct-link-mini-apps)
+        // New bot / requests message permission: ask first (https://core.telegram.org/api/bots/webapps#direct-link-mini-apps)
         if (found.app.inactive || found.app.requestWriteAccess) {
           setAppConfirm({ app: found.app, allowWrite: false });
           return;
@@ -161,7 +163,7 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
       }
       if (!cancelled) applyWebView(res);
     })().catch((err) => {
-      if (!cancelled) setError(`Không mở được Mini App: ${err?.message || err}`);
+      if (!cancelled) setError(tr('Không mở được Mini App: {{v1}}', { v1: err?.message || err }));
     });
     return () => { cancelled = true; };
   }, [request, accountId, botId, peerId, applyWebView, requestDirectApp]);
@@ -172,10 +174,10 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
     setAppConfirm(null);
     requestDirectApp(pending.app, pending.app.requestWriteAccess && pending.allowWrite)
       ?.then(applyWebView)
-      .catch((err) => setError(`Không mở được Mini App: ${err?.message || err}`));
+      .catch((err) => setError(tr('Không mở được Mini App: {{v1}}', { v1: err?.message || err })));
   };
 
-  // ── Gia hạn phiên (Mini App mở từ nút / menu có query_id) ──
+  // ── Session renewal (Mini App opened from a button / menu with query_id) ──
   React.useEffect(() => {
     const queryId = webView?.queryId;
     if (!queryId) return;
@@ -183,7 +185,7 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
       ipc.telegramUser?.prolongWebView?.({ accountId, botId, queryId, peerId })
         .then((res) => {
           if (!res?.expired) return;
-          notify('Phiên Mini App đã hết, hãy mở lại', 'info');
+          notify(tr('Phiên Mini App đã hết, hãy mở lại'), 'info');
           onClose();
         })
         .catch(() => {});
@@ -191,12 +193,12 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
     return () => clearInterval(timer);
   }, [webView?.queryId, accountId, botId, peerId, notify, onClose]);
 
-  // ── Theme Deplao đổi → báo Mini App ──
+  // ── Deplao theme changed → notify the Mini App ──
   React.useEffect(() => {
     post('theme_changed', { theme_params: theme });
   }, [theme, post]);
 
-  // ── Kích thước khung đổi (phóng to / thu nhỏ, đổi cỡ cửa sổ) ──
+  // ── Frame size changed (zoom in / out, window resized) ──
   React.useEffect(() => {
     const body = bodyRef.current;
     if (!body || typeof ResizeObserver === 'undefined') return;
@@ -253,7 +255,7 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
       ipc.telegramUser?.miniAppSharePhone?.({ accountId, botId })
         .then((res) => {
           post('phone_requested', { status: res?.success ? 'sent' : 'cancelled' });
-          if (!res?.success) notify(`Không gửi được số điện thoại${res?.error ? `: ${res.error}` : ''}`, 'error');
+          if (!res?.success) notify(tr('Không gửi được số điện thoại{{v1}}', { v1: res?.error ? `: ${res.error}` : '' }), 'error');
         })
         .catch(() => post('phone_requested', { status: 'cancelled' }));
     } else if (buttonId === 'close') {
@@ -320,7 +322,7 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
         return;
       }
       case 'web_app_open_tg_link': {
-        // Link t.me: mở trong app (hội thoại, hộp tham gia, Mini App khác…), Mini App thu gọn để thấy hội thoại
+        // t.me link: opens in the app (conversation, join dialog, another Mini App…); the Mini App minimizes so the conversation is visible
         const url = miniAppTgLink(data);
         if (url && limits.link() && openChatLink(url, { accountId })) setMinimized(true);
         return;
@@ -347,7 +349,7 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
   const handleEventRef = React.useRef(handleEvent);
   handleEventRef.current = handleEvent;
 
-  // ── Sự kiện từ Mini App: chỉ khung của nó, đúng dạng SDK Telegram ──
+  // ── Events from the Mini App: only its own frame, in the Telegram SDK format ──
   React.useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
       const frame = iframeRef.current?.contentWindow;
@@ -361,7 +363,7 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
-  // ── Esc: đóng popup → nút quay lại của Mini App → đóng Mini App ──
+  // ── Esc: close the popup → the Mini App's back button → close the Mini App ──
   const answerPromptRef = React.useRef(answerPrompt);
   answerPromptRef.current = answerPrompt;
   const minimizedRef = React.useRef(minimized);
@@ -384,7 +386,7 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
 
   return (
     <>
-    {/* Thu gọn: khung ẩn nhưng vẫn giữ (iframe chạy tiếp), viên nhỏ ở góc để mở lại */}
+    {/* Minimized: the frame is hidden but kept (the iframe keeps running), a small bubble in the corner to reopen it */}
     <div className={`fixed inset-0 z-50 items-center justify-center bg-black/60 ${minimized ? 'hidden' : 'flex'}`} role="dialog" aria-modal="true" aria-label={title}>
       <div
         className="relative flex flex-col overflow-hidden rounded-2xl border border-border shadow-2xl transition-[width,height] duration-150"
@@ -399,18 +401,18 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
           style={{ background: headerBg, ...(headerFg ? { color: headerFg } : {}) }}
         >
           {backVisible && (
-            <HeaderButton label="Quay lại" onClick={() => post('back_button_pressed')}><ArrowLeftIcon size={4} /></HeaderButton>
+            <HeaderButton label={tr('Quay lại')} onClick={() => post('back_button_pressed')}><ArrowLeftIcon size={4} /></HeaderButton>
           )}
           <span className="min-w-0 flex-1 truncate px-2 text-sm font-semibold">{title}</span>
           {settingsVisible && (
-            <HeaderButton label="Cài đặt" onClick={() => post('settings_button_pressed')}><SettingsIcon size={4} /></HeaderButton>
+            <HeaderButton label={tr('Cài đặt')} onClick={() => post('settings_button_pressed')}><SettingsIcon size={4} /></HeaderButton>
           )}
-          <HeaderButton label="Tải lại" onClick={reload} disabled={!webView}><RefreshIcon size={4} /></HeaderButton>
-          <HeaderButton label={large ? 'Thu nhỏ' : 'Phóng to'} onClick={() => setLarge((v) => !v)}>
+          <HeaderButton label={tr('Tải lại')} onClick={reload} disabled={!webView}><RefreshIcon size={4} /></HeaderButton>
+          <HeaderButton label={large ? tr('Thu nhỏ') : tr('Phóng to')} onClick={() => setLarge((v) => !v)}>
             {large ? <MinimizeIcon size={4} /> : <MaximizeIcon size={4} />}
           </HeaderButton>
-          <HeaderButton label="Thu gọn" onClick={() => setMinimized(true)}><MinusIcon size={4} /></HeaderButton>
-          <HeaderButton label="Đóng" onClick={requestClose}><CloseIcon size={4} /></HeaderButton>
+          <HeaderButton label={tr('Thu gọn')} onClick={() => setMinimized(true)}><MinusIcon size={4} /></HeaderButton>
+          <HeaderButton label={tr('Đóng')} onClick={requestClose}><CloseIcon size={4} /></HeaderButton>
         </div>
 
         <div ref={bodyRef} className="relative min-h-0 flex-1">
@@ -429,8 +431,8 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
           {appConfirm && !webView && (
             <div className="absolute inset-0 flex items-center justify-center p-6" style={{ background: bgColor || theme.bg_color }}>
               <div className="w-full max-w-[340px] rounded-xl border border-border bg-popover p-4 shadow-xl">
-                <p className="text-sm font-semibold text-foreground">Mở {appConfirm.app.title}?</p>
-                <p className="mt-1 text-xs text-muted-foreground">Mini App của {title}</p>
+                <p className="text-sm font-semibold text-foreground">{trx('Mở {{title}}?', { title: appConfirm.app.title })}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{trx('Mini App của {{title}}', { title })}</p>
                 {appConfirm.app.description && (
                   <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-xs text-foreground/80">{appConfirm.app.description}</p>
                 )}
@@ -439,12 +441,12 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
                     className="mt-3"
                     checked={appConfirm.allowWrite}
                     onCheckedChange={(allowWrite) => setAppConfirm((current) => (current ? { ...current, allowWrite } : current))}
-                    label={`Cho ${title} nhắn tin cho bạn`}
+                    label={tr('Cho {{title}} nhắn tin cho bạn', { title })}
                   />
                 )}
                 <div className="mt-4 flex justify-end gap-2">
-                  <Button size="sm" variant="ghost" onClick={onClose}>Huỷ</Button>
-                  <Button size="sm" onClick={confirmDirectApp}>Mở</Button>
+                  <Button size="sm" variant="ghost" onClick={onClose}>{tr('Huỷ')}</Button>
+                  <Button size="sm" onClick={confirmDirectApp}>{tr('Mở')}</Button>
                 </div>
               </div>
             </div>
@@ -452,13 +454,13 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
           {!ready && !error && !appConfirm && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ background: bgColor || theme.bg_color }}>
               <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <span className="text-sm text-muted-foreground">Đang mở {title}…</span>
+              <span className="text-sm text-muted-foreground">{trx('Đang mở {{title}}…', { title })}</span>
             </div>
           )}
           {error && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background px-6 text-center">
               <p className="text-sm text-muted-foreground">{error}</p>
-              <Button size="sm" variant="secondary" onClick={onClose}>Đóng</Button>
+              <Button size="sm" variant="secondary" onClick={onClose}>{tr('Đóng')}</Button>
             </div>
           )}
           {prompt && <MiniAppPrompt prompt={prompt} botName={title} onAnswer={answerPrompt} />}
@@ -481,13 +483,13 @@ function TelegramMiniApp({ request, onClose }: { request: MiniAppRequest; onClos
         <button
           type="button"
           className="min-w-0 flex-1 truncate text-left text-sm font-medium hover:underline"
-          title={`Mở lại ${title}`}
+          title={tr('Mở lại {{title}}', { title })}
           onClick={() => setMinimized(false)}
         >
           {title}
         </button>
-        <HeaderButton label="Mở lại" onClick={() => setMinimized(false)}><MaximizeIcon size={4} /></HeaderButton>
-        <HeaderButton label="Đóng" onClick={() => { setMinimized(false); requestClose(); }}><CloseIcon size={4} /></HeaderButton>
+        <HeaderButton label={tr('Mở lại')} onClick={() => setMinimized(false)}><MaximizeIcon size={4} /></HeaderButton>
+        <HeaderButton label={tr('Đóng')} onClick={() => { setMinimized(false); requestClose(); }}><CloseIcon size={4} /></HeaderButton>
       </div>
     )}
     </>
@@ -522,7 +524,7 @@ function MiniAppBottomBar({ main, secondary, theme, background, onMain, onSecond
   const both = main.visible && secondary.visible;
   const vertical = both && (secondary.position === 'top' || secondary.position === 'bottom');
   const secondaryFirst = secondary.position === 'left' || secondary.position === 'top';
-  // Màu mặc định như Telegram: nút chính = button_color / button_text_color; nút phụ = bottom_bar_bg_color / button_color
+  // Default colors as in Telegram: main button = button_color / button_text_color; secondary button = bottom_bar_bg_color / button_color
   const mainEl = main.visible ? (
     <MiniAppActionButton key="main" button={main} background={main.color || theme.button_color} color={main.textColor || theme.button_text_color} onClick={onMain} />
   ) : null;
@@ -562,19 +564,19 @@ function MiniAppPrompt({ prompt, botName, onAnswer }: {
     : prompt.kind === 'write_access'
       ? {
         title: botName,
-        message: `${botName} muốn được gửi tin nhắn cho bạn trên Telegram.`,
-        buttons: [{ id: 'cancel', type: 'cancel', text: 'Không' }, { id: 'allow', type: 'default', text: 'Cho phép' }],
+        message: tr('{{botName}} muốn được gửi tin nhắn cho bạn trên Telegram.', { botName }),
+        buttons: [{ id: 'cancel', type: 'cancel', text: tr('Không') }, { id: 'allow', type: 'default', text: tr('Cho phép') }],
       }
       : prompt.kind === 'phone'
         ? {
           title: botName,
-          message: `${botName} muốn biết số điện thoại của bạn. Deplao sẽ gửi số của tài khoản Telegram này cho bot.`,
-          buttons: [{ id: 'cancel', type: 'cancel', text: 'Không' }, { id: 'share', type: 'default', text: 'Chia sẻ' }],
+          message: tr('{{botName}} muốn biết số điện thoại của bạn. Deplao sẽ gửi số của tài khoản Telegram này cho bot.', { botName }),
+          buttons: [{ id: 'cancel', type: 'cancel', text: tr('Không') }, { id: 'share', type: 'default', text: tr('Chia sẻ') }],
         }
         : {
-          title: 'Đóng Mini App?',
-          message: 'Thay đổi bạn vừa làm có thể chưa được lưu.',
-          buttons: [{ id: 'cancel', type: 'cancel', text: 'Huỷ' }, { id: 'close', type: 'destructive', text: 'Vẫn đóng' }],
+          title: tr('Đóng Mini App?'),
+          message: tr('Thay đổi bạn vừa làm có thể chưa được lưu.'),
+          buttons: [{ id: 'cancel', type: 'cancel', text: tr('Huỷ') }, { id: 'close', type: 'destructive', text: tr('Vẫn đóng') }],
         };
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-6" onClick={() => onAnswer(null)}>

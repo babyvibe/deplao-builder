@@ -5,6 +5,8 @@ import type { ErpNote, ErpNoteVersion } from '../../../../models/erp';
 import { EmployeeAvatar } from '../shared/ErpBadges';
 import { ConfirmDialog } from '../shared/ErpDialogs';
 import PageLoading from '@/components/common/PageLoading';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface Props {
   note: ErpNote;
@@ -48,7 +50,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
            onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-border/60">
           <div>
-            <h3 className="text-base font-semibold text-foreground">Lịch sử phiên bản</h3>
+            <h3 className="text-base font-semibold text-foreground">{tr('Lịch sử phiên bản')}</h3>
             <p className="text-xs text-muted-foreground truncate max-w-[600px]">"{note.title}"</p>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg">×</button>
@@ -59,7 +61,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
           <div className="w-60 border-r border-border/60 overflow-y-auto bg-background/40">
             {loading && <PageLoading variant="inline" size="sm" />}
             {!loading && versions.length === 0 && (
-              <p className="text-xs text-muted-foreground p-3 text-center">Chưa có phiên bản nào.</p>
+              <p className="text-xs text-muted-foreground p-3 text-center">{tr('Chưa có phiên bản nào.')}</p>
             )}
             {versions.map(v => {
               const isActive = active?.id === v.id;
@@ -76,7 +78,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
                     <span className="text-[11px] text-foreground/80 truncate">{v.editor_id}</span>
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    {new Date(v.created_at).toLocaleString('vi-VN')}
+                    {new Date(v.created_at).toLocaleString(appLocale())}
                   </p>
                 </button>
               );
@@ -89,13 +91,13 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
               <>
                 <div className="px-5 py-2 border-b border-border/40 flex items-center justify-between flex-shrink-0">
                   <p className="text-xs text-muted-foreground">
-                    {new Date(active.created_at).toLocaleString('vi-VN')} · {active.content_snapshot.length} ký tự
+                    {trx('{{v1}} · {{count}} ký tự', { v1: new Date(active.created_at).toLocaleString(appLocale()), count: active.content_snapshot.length })}
                   </p>
                   <button
                     onClick={() => setRestoreTarget(active)}
                     className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg"
                   >
-                    ↩ Khôi phục phiên bản này
+                    {tr('↩ Khôi phục phiên bản này')}
                   </button>
                 </div>
                 <pre className="flex-1 overflow-auto px-5 py-4 text-xs text-foreground/80 whitespace-pre-wrap font-mono leading-relaxed">
@@ -104,7 +106,7 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
               </>
             ) : (
               <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-                Chọn phiên bản ở cột trái để xem
+                {tr('Chọn phiên bản ở cột trái để xem')}
               </div>
             )}
           </div>
@@ -113,8 +115,8 @@ export default function NoteVersionHistory({ note, onClose, onRestored }: Props)
 
       {restoreTarget && (
         <ConfirmDialog
-          message={`Khôi phục note về phiên bản lúc ${new Date(restoreTarget.created_at).toLocaleString('vi-VN')}? Nội dung hiện tại sẽ được snapshot trước khi ghi đè.`}
-          confirmLabel={restoring ? 'Đang khôi phục...' : 'Khôi phục'}
+          message={tr('Khôi phục note về phiên bản lúc {{v1}}? Nội dung hiện tại sẽ được snapshot trước khi ghi đè.', { v1: new Date(restoreTarget.created_at).toLocaleString(appLocale()) })}
+          confirmLabel={restoring ? tr('Đang khôi phục...') : tr('Khôi phục')}
           danger={false}
           onConfirm={doRestore}
           onCancel={() => setRestoreTarget(null)}

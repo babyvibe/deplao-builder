@@ -1,6 +1,6 @@
 /**
- * Chọn tài khoản cho thao tác nhanh: nút hiện tài khoản đang chọn, bấm mở danh sách ngay bên dưới
- * (gộp trang: tài khoản của trang gộp trước). Tài khoản không làm được thao tác hiện mờ kèm lý do.
+ * Account picker for quick actions: the button shows the selected account, clicking opens the list right below it
+ * (merged inbox: the merged inbox's account first). An account that cannot do the action is shown dimmed with the reason.
  */
 import React, { useState } from 'react';
 import { cn } from '@/lib/cn';
@@ -15,6 +15,7 @@ import {
   type QuickAccountEntry,
   type QuickAccountLike,
 } from './quickActions';
+import { tr } from '../../../../shared/i18n';
 
 export function QuickAccountAvatar({ account, size = 28, className }: { account: QuickAccountLike; size?: number; className?: string }) {
   const [failed, setFailed] = useState(false);
@@ -29,7 +30,7 @@ export function QuickAccountAvatar({ account, size = 28, className }: { account:
           {(accountLabel(account) || '?').charAt(0).toUpperCase()}
         </span>
       )}
-      {/* Avatar nhỏ (24–28px): thu nhỏ huy hiệu kênh, đẩy ra góc để không che chữ cái đầu */}
+      {/* Small avatar (24-28px): shrink the channel badge and push it into the corner so it does not cover the first letter */}
       <span className="absolute -bottom-1 -right-1 flex origin-bottom-right scale-[0.8] rounded-full ring-2 ring-popover">
         <ChannelBadge channel={channel} size="xs" />
       </span>
@@ -41,14 +42,14 @@ export interface QuickAccountPickerProps<T extends QuickAccountLike> {
   entries: QuickAccountEntry<T>[];
   value: string | null;
   onChange: (account: T) => void;
-  /** Lý do không chọn được (null = chọn được). */
+  /** Reason it cannot be selected (null = selectable). */
   disabledReason?: (account: T) => string | null;
   label?: string;
   className?: string;
 }
 
 export function QuickAccountPicker<T extends QuickAccountLike>({
-  entries, value, onChange, disabledReason, label = 'Tài khoản', className,
+  entries, value, onChange, disabledReason, label = tr('Tài khoản'), className,
 }: QuickAccountPickerProps<T>) {
   const [open, setOpen] = useState(false);
   const selected = entries.find(entry => entry.account.zalo_id === value)?.account || null;
@@ -62,7 +63,7 @@ export function QuickAccountPicker<T extends QuickAccountLike>({
         <span className="min-w-0 flex-1">
           <span className="block text-[10px] uppercase tracking-wide text-subtle-foreground">{label}</span>
           <span className="block truncate text-[13px] font-medium text-foreground">
-            {selected ? accountLabel(selected) : 'Chọn tài khoản'}
+            {selected ? accountLabel(selected) : tr('Chọn tài khoản')}
             {selected && <span className="font-normal text-muted-foreground"> · {CHANNEL_SHORT_LABEL[accountChannel(selected)] || accountChannel(selected)}</span>}
           </span>
         </span>
@@ -77,8 +78,8 @@ export function QuickAccountPicker<T extends QuickAccountLike>({
             const showOthersHeader = hasMergedSection && !entry.inMerged && (index === 0 || entries[index - 1].inMerged);
             return (
               <React.Fragment key={entry.account.zalo_id}>
-                {showMergedHeader && <p className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-subtle-foreground">Trang gộp</p>}
-                {showOthersHeader && <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-subtle-foreground">Tài khoản khác</p>}
+                {showMergedHeader && <p className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-subtle-foreground">{tr('Trang gộp')}</p>}
+                {showOthersHeader && <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-subtle-foreground">{tr('Tài khoản khác')}</p>}
                 <button type="button" role="option" aria-selected={active} aria-disabled={!!reason}
                   title={reason || undefined}
                   onClick={() => { if (reason) return; onChange(entry.account); setOpen(false); }}
@@ -92,7 +93,7 @@ export function QuickAccountPicker<T extends QuickAccountLike>({
                     <span className="block truncate text-[13px] text-foreground">{accountLabel(entry.account)}</span>
                     <span className="block truncate text-[11px] text-muted-foreground">
                       {reason || (CHANNEL_SHORT_LABEL[accountChannel(entry.account)] || accountChannel(entry.account))}
-                      {!reason && entry.isActive && ' · đang mở'}
+                      {!reason && entry.isActive && tr(' · đang mở')}
                     </span>
                   </span>
                   {active && <CheckIcon className="h-4 w-4 shrink-0 text-primary" />}

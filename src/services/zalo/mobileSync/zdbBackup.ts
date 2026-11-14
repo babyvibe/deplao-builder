@@ -1,22 +1,23 @@
 /**
- * Giải mã file sao lưu tin nhắn Zalo mobile (`*.db.crypt`, định dạng ZDB4.0 — db_format = 1).
+ * Decrypt a Zalo mobile message backup file (`*.db.crypt`, ZDB4.0 format - db_format = 1).
  *
- * Quy trình (tương đương `decompressAndDecryptDb_V2` của Zalo PC, đã đối chiếu bản dịch ngược
- * db-cross-v4 và tài liệu docs-decrypt-db-zalo):
- *   1. RSA PKCS#1 v1.5 giải `encrypted_key` → khoá dạng hex. Khoá AES = 32 ký tự HEX VIẾT HOA đầu
- *      tiên lấy nguyên byte ASCII (không hex-decode).
- *   2. AES-256-CBC, IV = 0, giải độc lập từng khối 64KB (IV reset mỗi khối).
- *   3. Plaintext: "ZDB4.0" | ... | u32 BE số file @14 | [u32 BE nameLen][name][u32 BE size]... | XZ stream
- *   4. Giải nén XZ (LZMA2) → nối tiếp nội dung các file theo thứ tự bảng trên. Mỗi file là 1 SQLite:
- *      `<uid>.db` (chat 1-1) hoặc `group_<gid>.db` (nhóm), bảng chính `ChatContent`.
+ * Flow (same as `decompressAndDecryptDb_V2` in Zalo PC, checked against the reverse-engineered
+ * db-cross-v4 and the docs-decrypt-db-zalo notes):
+ *   1. RSA PKCS#1 v1.5 decrypts `encrypted_key` → a hex key. The AES key = the first 32 UPPERCASE HEX characters,
+ *      taken as raw ASCII bytes (not hex-decoded).
+ *   2. AES-256-CBC, IV = 0, each 64KB block is decrypted independently (IV reset per block).
+ *   3. Plaintext: "ZDB4.0" | ... | u32 BE file count @14 | [u32 BE nameLen][name][u32 BE size]... | XZ stream
+ *   4. Decompress XZ (LZMA2) → the contents of the files in table order. Each file is 1 SQLite file:
+ *      `<uid>.db` (1-1 chat) or `group_<gid>.db` (group), main table `ChatContent`.
  *
- * Phần đuôi file có footer TLV không mã hoá → sau khi giải sẽ thành rác nằm sau XZ stream, nên phải
- * xác định chính xác điểm kết thúc XZ (footer "YZ") trước khi đưa vào bộ giải nén.
+ * The file tail has an unencrypted TLV footer → after decryption it becomes junk after the XZ stream, so the exact
+ * end of the XZ stream (footer "YZ") must be found before it is passed to the decompressor.
  */
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { XzReadableStream } from 'xz-decompress';
+import { tr } from '../../../shared/i18n';
 
 export const ZDB_MAGIC = Buffer.from('ZDB4.0', 'ascii');
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
@@ -27,16 +28,16 @@ const MAX_ENTRIES = 200000;
 const MAX_NAME_LEN = 1024;
 const SAFE_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,200}$/;
 
-// ─── RSA / khoá AES ──────────────────────────────────────────────────────────
+// ─── RSA / AES key ──────────────────────────────────────────────────────────
 
 export interface SyncKeyPair {
-    /** SPKI DER base64 — gửi lên server trong pull_mobile_msg. */
+    /** SPKI DER base64: sent to the server in pull_mobile_msg. */
     publicKey: string;
-    /** PKCS#1 PEM — giữ lại để giải `encrypted_key`. */
+    /** PKCS#1 PEM: kept to decrypt `encrypted_key`. */
     privateKey: string;
 }
 
-/** Sinh cặp khoá giống Zalo PC: RSA 2048, public SPKI/DER (base64), private PKCS#1/PEM. */
+/** Generate a key pair like Zalo PC: RSA 2048, public SPKI/DER (base64), private PKCS#1/PEM. */
 export function generateSyncKeyPair(): SyncKeyPair {
     const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
         modulusLength: 2048,
@@ -62,8 +63,8 @@ function modPow(base: bigint, exp: bigint, mod: bigint): bigint {
 }
 
 /**
- * RSA PKCS#1 v1.5 thuần BigInt (CRT) — dự phòng khi runtime chặn RSA_PKCS1_PADDING cho
- * privateDecrypt (CVE-2023-46809). Không có oracle nên không chịu rủi ro Marvin.
+ * Pure BigInt RSA PKCS#1 v1.5 (CRT): a fallback for when the runtime blocks RSA_PKCS1_PADDING for
+ * privateDecrypt (CVE-2023-46809). It has no padding oracle, so it is not exposed to the Marvin attack.
  */
 export function rsaDecryptPkcs1Manual(privateKeyPem: string, cipher: Buffer): Buffer {
     const jwk = crypto.createPrivateKey(privateKeyPem).export({ format: 'jwk' }) as any;
@@ -81,9 +82,9 @@ export function rsaDecryptPkcs1Manual(privateKeyPem: string, cipher: Buffer): Bu
 
     const k = Math.ceil(n.toString(16).length / 2);
     const em = Buffer.from(m.toString(16).padStart(k * 2, '0'), 'hex');
-    if (em[0] !== 0x00 || em[1] !== 0x02) throw new Error('RSA: padding PKCS#1 không hợp lệ');
+    if (em[0] !== 0x00 || em[1] !== 0x02) throw new Error(tr('RSA: padding PKCS#1 không hợp lệ'));
     const sep = em.indexOf(0x00, 2);
-    if (sep < 10) throw new Error('RSA: padding PKCS#1 không hợp lệ');
+    if (sep < 10) throw new Error(tr('RSA: padding PKCS#1 không hợp lệ'));
     return em.subarray(sep + 1);
 }
 
@@ -100,21 +101,21 @@ export function rsaDecryptPkcs1(privateKeyPem: string, cipher: Buffer): Buffer {
     }
 }
 
-/** Khoá AES thực dùng cho ZDB4.0: ASCII của 32 ký tự hex viết hoa đầu tiên. */
+/** The AES key actually used for ZDB4.0: the ASCII of the first 32 uppercase hex characters. */
 export function deriveAesKey(keyHex: string): Buffer {
     const upper = keyHex.toUpperCase();
-    if (upper.length < 32) throw new Error('Khoá giải mã quá ngắn');
+    if (upper.length < 32) throw new Error(tr('Khoá giải mã quá ngắn'));
     return Buffer.from(upper.slice(0, 32), 'ascii');
 }
 
-/** Giải `encrypted_key` của sự kiện syncmsg_info (db_format = 1 → khoá xuất dạng hex). */
+/** Decrypt the `encrypted_key` of the syncmsg_info event (db_format = 1 → the key comes out as hex). */
 export function decryptBackupKey(privateKeyPem: string, encryptedKeyB64: string): { keyHex: string; aesKey: Buffer } {
     const raw = rsaDecryptPkcs1(privateKeyPem, Buffer.from(encryptedKeyB64, 'base64'));
     const keyHex = raw.toString('hex');
     return { keyHex, aesKey: deriveAesKey(keyHex) };
 }
 
-// ─── CRC32 (kiểm tra footer XZ) ──────────────────────────────────────────────
+// ─── CRC32 (checks the XZ footer) ──────────────────────────────────────────────
 
 let CRC_TABLE: Uint32Array | null = null;
 function crc32(buf: Buffer): number {
@@ -132,8 +133,8 @@ function crc32(buf: Buffer): number {
 }
 
 /**
- * Tìm vị trí kết thúc XZ stream trong `tail` (một đoạn plaintext bắt đầu tại `tailOffset`).
- * Footer XZ = CRC32(4, LE) | Backward Size(4) | Stream Flags(2) | "YZ"; CRC32 tính trên 6 byte giữa.
+ * Find where the XZ stream ends inside `tail` (a piece of plaintext that starts at `tailOffset`).
+ * XZ footer = CRC32(4, LE) | Backward Size(4) | Stream Flags(2) | "YZ"; the CRC32 is computed over the 6 bytes in the middle.
  */
 export function findXzStreamEnd(tail: Buffer, tailOffset: number, xzStart: number, streamFlags: Buffer): number {
     for (let i = tail.length - 2; i >= 10; i--) {
@@ -149,7 +150,7 @@ export function findXzStreamEnd(tail: Buffer, tailOffset: number, xzStart: numbe
     return -1;
 }
 
-// ─── Giải mã + giải nén ──────────────────────────────────────────────────────
+// ─── Decrypt + decompress ──────────────────────────────────────────────────────
 
 export interface ZdbEntry {
     name: string;
@@ -190,7 +191,7 @@ class AbortedError extends Error {
     }
 }
 
-/** Đọc + giải mã ngẫu nhiên từng khối 64KB (mỗi khối độc lập, IV = 0). */
+/** Read + decrypt individual 64KB blocks at any position (each block is independent, IV = 0). */
 class ChunkReader {
     readonly chunkCount: number;
     private readonly zeroIv = Buffer.alloc(16);
@@ -209,14 +210,14 @@ class ChunkReader {
         const length = Math.min(ZDB_CHUNK_SIZE, this.encryptedLength - offset);
         const cipherText = Buffer.alloc(length);
         const { bytesRead } = await this.fh.read(cipherText, 0, length, this.start + offset);
-        if (bytesRead !== length) throw new Error('Đọc file sao lưu thiếu dữ liệu');
+        if (bytesRead !== length) throw new Error(tr('Đọc file sao lưu thiếu dữ liệu'));
         const decipher = crypto.createDecipheriv('aes-256-cbc', this.key, this.zeroIv);
         decipher.setAutoPadding(false);
         return Buffer.concat([decipher.update(cipherText), decipher.final()]);
     }
 }
 
-/** Thử các bố cục đã gặp: ciphertext bắt đầu ở byte 0 hoặc có 4 byte tiền tố. */
+/** Try the layouts seen so far: the ciphertext starts at byte 0 or after a 4-byte prefix. */
 async function openChunkReader(fh: fs.promises.FileHandle, fileSize: number, key: Buffer): Promise<ChunkReader> {
     for (const start of [0, 4]) {
         const encryptedLength = Math.floor((fileSize - start) / 16) * 16;
@@ -225,20 +226,20 @@ async function openChunkReader(fh: fs.promises.FileHandle, fileSize: number, key
         const first = await reader.plainChunk(0);
         if (first.subarray(0, ZDB_MAGIC.length).equals(ZDB_MAGIC)) return reader;
     }
-    throw new Error('Sai khoá giải mã hoặc file không phải ZDB4.0 (không thấy magic "ZDB4.0")');
+    throw new Error(tr('Sai khoá giải mã hoặc file không phải ZDB4.0 (không thấy magic "ZDB4.0")'));
 }
 
 export function parseZdbHeader(head: Buffer): { entries: ZdbEntry[]; tocEnd: number } | 'need-more' {
     if (head.length < ZDB_COUNT_OFFSET + 4) return 'need-more';
-    if (!head.subarray(0, ZDB_MAGIC.length).equals(ZDB_MAGIC)) throw new Error('Không phải định dạng ZDB4.0');
+    if (!head.subarray(0, ZDB_MAGIC.length).equals(ZDB_MAGIC)) throw new Error(tr('Không phải định dạng ZDB4.0'));
     const count = head.readUInt32BE(ZDB_COUNT_OFFSET);
-    if (count > MAX_ENTRIES) throw new Error(`Bảng file ZDB4.0 không hợp lệ (${count} mục)`);
+    if (count > MAX_ENTRIES) throw new Error(tr('Bảng file ZDB4.0 không hợp lệ ({{count}} mục)', { count }));
     let off = ZDB_COUNT_OFFSET + 4;
     const entries: ZdbEntry[] = [];
     for (let i = 0; i < count; i++) {
         if (off + 4 > head.length) return 'need-more';
         const nameLen = head.readUInt32BE(off);
-        if (nameLen === 0 || nameLen > MAX_NAME_LEN) throw new Error('Tên file trong ZDB4.0 không hợp lệ');
+        if (nameLen === 0 || nameLen > MAX_NAME_LEN) throw new Error(tr('Tên file trong ZDB4.0 không hợp lệ'));
         if (off + 4 + nameLen + 4 > head.length) return 'need-more';
         let name = head.toString('utf8', off + 4, off + 4 + nameLen);
         name = name.replace(/\0+$/, '');
@@ -254,8 +255,8 @@ export function isSafeEntryName(name: string): boolean {
 }
 
 /**
- * Giải mã + giải nén file `.db.crypt` vào `outDir`. Chỉ ghi các file có tên an toàn;
- * dữ liệu của mục tên lạ vẫn được đọc qua (để giữ đúng vị trí) nhưng bỏ đi.
+ * Decrypt + decompress a `.db.crypt` file into `outDir`. Only files with safe names are written;
+ * data of entries with unknown names is still read through (to keep the positions right) but then discarded.
  */
 export async function extractZdbBackup(opts: ExtractOptions): Promise<ExtractResult> {
     const { cryptPath, outDir, aesKey, onProgress, shouldAbort } = opts;
@@ -267,18 +268,18 @@ export async function extractZdbBackup(opts: ExtractOptions): Promise<ExtractRes
             if (shouldAbort?.()) throw new AbortedError();
         };
 
-        // 1. Header + bảng file (có thể trải qua nhiều khối 64KB)
+        // 1. Header + file table (may span several 64KB blocks)
         let head = await reader.plainChunk(0);
         let headChunks = 1;
         let header = parseZdbHeader(head);
         while (header === 'need-more') {
-            if (headChunks >= reader.chunkCount) throw new Error('Bảng file ZDB4.0 bị cắt cụt');
+            if (headChunks >= reader.chunkCount) throw new Error(tr('Bảng file ZDB4.0 bị cắt cụt'));
             head = Buffer.concat([head, await reader.plainChunk(headChunks++)]);
             header = parseZdbHeader(head);
         }
         const { entries, tocEnd } = header;
 
-        // 2. Đầu XZ stream (ngay sau bảng file; dò thêm vài byte cho chắc)
+        // 2. Start of the XZ stream (right after the file table; scan a few more bytes to be safe)
         let xzStart = -1;
         const probeEnd = Math.min(head.length - XZ_MAGIC.length, tocEnd + 64);
         for (let i = tocEnd; i <= probeEnd; i++) {
@@ -287,20 +288,20 @@ export async function extractZdbBackup(opts: ExtractOptions): Promise<ExtractRes
                 break;
             }
         }
-        if (xzStart < 0) throw new Error('Không tìm thấy dữ liệu nén XZ trong bản sao lưu');
+        if (xzStart < 0) throw new Error(tr('Không tìm thấy dữ liệu nén XZ trong bản sao lưu'));
         if (head.length < xzStart + 12) head = Buffer.concat([head, await reader.plainChunk(headChunks++)]);
         const streamFlags = head.subarray(xzStart + 6, xzStart + 8);
 
-        // 3. Cuối XZ stream: giải riêng 1-2 khối cuối rồi dò footer
+        // 3. End of the XZ stream: decrypt the last 1-2 blocks separately, then scan for the footer
         const lastIdx = reader.chunkCount - 1;
         const tailStartIdx = Math.max(0, lastIdx - 1);
         const tailParts: Buffer[] = [];
         for (let i = tailStartIdx; i <= lastIdx; i++) tailParts.push(await reader.plainChunk(i));
         const tail = Buffer.concat(tailParts);
         let xzEnd = findXzStreamEnd(tail, tailStartIdx * ZDB_CHUNK_SIZE, xzStart, streamFlags);
-        if (xzEnd < 0) xzEnd = reader.encryptedLength; // không thấy footer → giao cho bộ giải nén tự xử lý
+        if (xzEnd < 0) xzEnd = reader.encryptedLength; // footer not found → leave it to the decompressor to handle
 
-        // 4. Stream: giải mã từng khối → cắt đúng [xzStart, xzEnd) → XZ → tách file
+        // 4. Stream: decrypt each block → cut exactly [xzStart, xzEnd) → XZ → split into files
         await fs.promises.mkdir(outDir, { recursive: true });
         const firstChunk = Math.floor(xzStart / ZDB_CHUNK_SIZE);
         const lastChunk = Math.floor((xzEnd - 1) / ZDB_CHUNK_SIZE);
@@ -362,7 +363,7 @@ export async function extractZdbBackup(opts: ExtractOptions): Promise<ExtractRes
         };
 
         await openNext();
-        // Đọc tới khi stream tự kết thúc (không cancel giữa chừng: tránh dispose context WASM 2 lần).
+        // Read until the stream ends by itself (do not cancel midway: avoids disposing the WASM context twice).
         const xzReader = new XzReadableStream(source).getReader();
         let streamFinished = false;
         try {
@@ -371,8 +372,8 @@ export async function extractZdbBackup(opts: ExtractOptions): Promise<ExtractRes
                 try {
                     chunk = await xzReader.read();
                 } catch (err) {
-                    streamFinished = true; // stream lỗi → xz-decompress đã tự giải phóng context
-                    // Rác sau XZ stream (khi không dò được footer) chỉ gây lỗi SAU khi đã đủ dữ liệu.
+                    streamFinished = true; // stream error → xz-decompress has already freed its context
+                    // Junk after the XZ stream (when the footer cannot be found) only causes an error AFTER the data is complete.
                     if (entryIdx >= entries.length && !(err instanceof AbortedError)) break;
                     throw err;
                 }
@@ -393,13 +394,13 @@ export async function extractZdbBackup(opts: ExtractOptions): Promise<ExtractRes
                 }
             }
         } finally {
-            // Dừng giữa chừng (huỷ / lỗi ghi file) → cancel để xz-decompress nhả mutex toàn cục.
+            // Stopped midway (cancelled / file write error) → cancel so xz-decompress releases the global mutex.
             if (!streamFinished) await xzReader.cancel().catch(() => {});
             if (current) await (current as fs.promises.FileHandle).close().catch(() => {});
         }
 
         if (entryIdx < entries.length) {
-            throw new Error(`Giải nén không đủ dữ liệu (${entryIdx}/${entries.length} file)`);
+            throw new Error(tr('Giải nén không đủ dữ liệu ({{entryIdx}}/{{count}} file)', { entryIdx, count: entries.length }));
         }
         onProgress?.({ processedBytes: totalBytes, totalBytes, filesDone: entries.length, filesTotal: entries.length });
         return { entries, files, skippedEntries };
@@ -419,7 +420,7 @@ export async function isSqliteFile(filePath: string): Promise<boolean> {
     }
 }
 
-/** So khớp checksum_code của sự kiện với file đã tải (md5 hoặc sha256, không phân biệt hoa thường). */
+/** Match the checksum_code of the event against the downloaded file (md5 or sha256, case-insensitive). */
 export async function verifyChecksum(filePath: string, checksum: string | undefined): Promise<boolean | null> {
     const expected = String(checksum || '').trim().toLowerCase();
     if (!expected) return null;

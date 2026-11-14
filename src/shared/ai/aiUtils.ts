@@ -1,6 +1,6 @@
 /**
  * aiUtils.ts
- * Helpers dùng chung cho AI Assistant - parsing structured JSON, validation, ...
+ * Shared helpers for the AI Assistant - parsing structured JSON, validation, ...
  */
 
 export interface AIStructuredSegment {
@@ -9,13 +9,13 @@ export interface AIStructuredSegment {
 }
 
 /**
- * Parse structured AI response dạng JSON array:
+ * Parse a structured AI response in JSON array form:
  *   [{type:"text",content:"..."}, {type:"image",content:["url",...]}]
  *
- * Xử lý 3 trường hợp:
- *  1. JSON hoàn chỉnh - JSON.parse trực tiếp
- *  2. JSON bị wrap trong markdown / khoảng trắng - extract bằng regex
- *  3. JSON bị truncate / cắt ngang - dùng state machine trích object hoàn chỉnh
+ * Handles 3 cases:
+ *  1. Complete JSON: JSON.parse directly
+ *  2. JSON wrapped in markdown / whitespace: extract it with a regex
+ *  3. JSON truncated / cut off midway: use a state machine to extract the complete objects
  */
 export function parseStructuredResponse(
   raw: string
@@ -44,9 +44,9 @@ export function parseStructuredResponse(
   }
 
   // ── Attempt 3: Truncated JSON - extract individual complete {..} objects ──
-  // Khi AI bị cắt ngang giữa chừng, VD:
+  // When the AI is cut off midway, e.g.:
   //   [{"type":"text","content":"Chào bạn"}, {"type
-  // Ta dùng state machine để vớt các object hoàn chỉnh còn được.
+  // We use a state machine to salvage the complete objects that remain.
   try {
     const objects: AIStructuredSegment[] = [];
     let depth = 0;
@@ -63,7 +63,7 @@ export function parseStructuredResponse(
 
       // Toggle string mode
       if (ch === '"') { inString = !inString; continue; }
-      if (inString) continue; // bỏ qua mọi thứ bên trong string
+      if (inString) continue; // skip everything inside a string
 
       // Brace tracking
       if (ch === '{') {
@@ -95,7 +95,7 @@ export function parseStructuredResponse(
 }
 
 /**
- * Validate structured response có đúng format không
+ * Validate that the structured response has the right format
  */
 export function isValidStructuredResponse(parsed: any): parsed is AIStructuredSegment[] {
   if (!Array.isArray(parsed) || parsed.length === 0) return false;

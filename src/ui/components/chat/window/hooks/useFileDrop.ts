@@ -1,6 +1,6 @@
 /**
- * Kéo thả file / ảnh / link ảnh vào khung chat: lớp phủ khi đang kéo, thả → `chat:dragDropFiles` (MessageInput tải ảnh
- * từ link, phân loại ảnh / video / file, gửi qua hàng đợi).
+ * Drag & drop files / photos / photo links into the chat window: overlay while dragging, drop → `chat:dragDropFiles` (MessageInput downloads photos
+ * from links, sorts them into photos / videos / files, and sends them through the queue).
  */
 import React, { useRef, useState } from 'react';
 import { readDropPayload } from '@/lib/chat/media/dropFiles';
@@ -43,8 +43,8 @@ export function useFileDrop(activeThreadId: string | null) {
     dragCounterRef.current = 0;
 
     if (!activeThreadId) return;
-    // Đọc ngay trong sự kiện (sau đó dữ liệu kéo bị khoá): file thật, hoặc link ảnh khi kéo từ trang web / app khác.
-    // MessageInput xử lý (tải ảnh từ link, phân loại ảnh / video / file, gửi qua hàng đợi)
+    // Read right inside the event (the drag data is locked afterwards): real files, or a photo link when dragged from a website or another app.
+    // MessageInput handles it (downloads photos from links, sorts photos / videos / files, sends through the queue)
     window.dispatchEvent(new CustomEvent('chat:dragDropFiles', { detail: readDropPayload(e.dataTransfer) }));
   }, [activeThreadId]);
 

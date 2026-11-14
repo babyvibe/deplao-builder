@@ -1,7 +1,7 @@
 /**
- * settings.ts — cài đặt của Public API & Plugin (lưu trong app_settings của workspace).
+ * settings.ts: settings of the Public API & Plugin (stored in the workspace's app_settings).
  *
- * Mọi giới hạn đều do khách tự đặt; mặc định KHÔNG rate limit.
+ * Every limit is set by the customer; by default there is NO rate limit.
  */
 
 export interface SettingsStore {
@@ -10,40 +10,40 @@ export interface SettingsStore {
 }
 
 export const API_SETTING_DEFAULTS = {
-    /** '0' = /api/v1 trả 503 ngay, không ghi log/event, không hook. Công tắc khẩn cấp. */
+    /** '0' = /api/v1 returns 503 right away, no logs/events, no hooks. Emergency switch. */
     api_enabled: '1',
-    /** Tự bật API server (relay port) khi mở app. */
+    /** Automatically start the API server (relay port) when the app opens. */
     api_server_autostart: '0',
-    /** '1' = trang /docs và openapi.json ai cũng xem được, kể cả từ xa không cần key (mặc định). '0' = từ xa phải có key. */
+    /** '1' = anyone can view the /docs page and openapi.json, including remotely without a key (default). '0' = remote access requires a key. */
     api_docs_public: '1',
-    /** Giới hạn mặc định request/phút cho mỗi API key. 0 = không giới hạn. */
+    /** Default request/minute limit per API key. 0 = no limit. */
     api_default_rate_limit: '0',
-    /** Giới hạn request/phút cho mỗi plugin. 0 = không giới hạn. */
+    /** Request/minute limit per plugin. 0 = no limit. */
     plugins_rate_limit_per_min: '0',
-    /** Số lời gọi IPC chạy đồng thời từ API/plugin (còn lại xếp hàng). 0 = không giới hạn. */
+    /** Number of IPC calls from the API/plugins that run at the same time (the rest queue up). 0 = no limit. */
     api_ipc_concurrency: '4',
-    /** Thời gian tối đa một lời gọi IPC (ms). */
+    /** Maximum time for one IPC call (ms). */
     api_ipc_timeout_ms: '30000',
-    /** Tạm chặn IP gửi quá nhiều key sai (key hợp lệ không bị ảnh hưởng). */
+    /** Temporarily block IPs that send too many wrong keys (valid keys are not affected). */
     api_auth_bruteforce_guard: '1',
-    /** Lấy IP thật từ X-Forwarded-For / CF-Connecting-IP khi request đi qua tunnel chạy trên máy. */
+    /** Take the real IP from X-Forwarded-For / CF-Connecting-IP when the request goes through a tunnel running on the machine. */
     api_trust_proxy_headers: '1',
-    /** Relay chỉ lắng nghe 127.0.0.1 (máy không có nhân viên LAN). */
+    /** Relay only listens on 127.0.0.1 (machines with no LAN employees). */
     api_bind_localhost_only: '0',
-    /** Số ngày giữ nhật ký request. */
+    /** Number of days to keep the request log. */
     api_request_log_days: '7',
-    /** Số event tối đa lưu để catch-up. */
+    /** Maximum number of events stored for catch-up. */
     api_events_max: '50000',
-    /** Số ngày giữ event. */
+    /** Number of days to keep events. */
     api_events_days: '7',
-    /** '1' = cho phép tải URL / gửi webhook tới mạng nội bộ (10.x, 192.168.x, 127.x) cả với request từ xa.
-     *  Mặc định chỉ request gọi từ chính máy (không qua tunnel) mới được trỏ vào mạng nội bộ. */
+    /** '1' = allow downloading URLs / sending webhooks to the private network (10.x, 192.168.x, 127.x), including for remote requests.
+     *  By default only requests made from the machine itself (not through the tunnel) may point to the private network. */
     api_allow_private_urls: '0',
-    /** Giới hạn body JSON (MB). */
+    /** JSON body limit (MB). */
     api_max_body_mb: '10',
-    /** Giới hạn file upload (MB). */
+    /** File upload limit (MB). */
     api_upload_max_mb: '100',
-    /** Tối đa số plugin bật cùng lúc. */
+    /** Maximum number of plugins enabled at the same time. */
     plugins_max_enabled: '10',
 } as const;
 
@@ -53,7 +53,7 @@ export const API_SETTING_KEYS = Object.keys(API_SETTING_DEFAULTS) as ApiSettingK
 
 let store: SettingsStore | null = null;
 
-/** Mặc định đọc DatabaseService; test có thể thay bằng store giả. */
+/** Reads from DatabaseService by default; tests can replace it with a fake store. */
 export function setSettingsStore(next: SettingsStore | null): void {
     store = next;
     cache.clear();
@@ -61,7 +61,7 @@ export function setSettingsStore(next: SettingsStore | null): void {
 
 function getStore(): SettingsStore {
     if (store) return store;
-    // Lazy require: giữ module import được trong test không có Electron.
+    // Lazy require: keeps the module importable in tests without Electron.
     const DatabaseService = require('../database/DatabaseService').default;
     return {
         get: (key: string) => DatabaseService.getInstance().getSetting(key),
@@ -69,7 +69,7 @@ function getStore(): SettingsStore {
     };
 }
 
-/** Cache 2 giây: settings được đọc ở mọi request, không cần query DB mỗi lần. */
+/** 2-second cache: settings are read on every request, so there is no DB query each time. */
 const cache = new Map<string, { value: string; at: number }>();
 const CACHE_MS = 2000;
 

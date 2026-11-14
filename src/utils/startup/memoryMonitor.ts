@@ -1,13 +1,14 @@
 /**
- * RAM của Deplao theo từng tiến trình (app.getAppMetrics: main, cửa sổ, GPU, tiện ích) ghi vào Nhật ký "[Hiệu năng]"
- * mỗi 30 phút và khi cửa sổ ẩn / hiện lại: lần sau máy chậm biết ngay tiến trình nào giữ RAM. Đo 11/2026 (bản dev chạy
- * 6 giờ): GPU 1.015 MB riêng nhưng chỉ 28 MB trong RAM, cửa sổ chính 937 MB (378 MB trong RAM), main 293 MB.
+ * Deplao RAM per process (app.getAppMetrics: main, windows, GPU, utility) is written to Logs as "[Hiệu năng]" (Performance)
+ * every 30 minutes and when a window is hidden / shown again, so the next time the machine is slow you can see right away which process holds the RAM. Measured in 11/2026 (dev build running for
+ * 6 hours): GPU 1,015 MB private but only 28 MB in RAM, main window 937 MB (378 MB in RAM), main 293 MB.
  *
- * Cửa sổ ẩn / thu nhỏ từ 2 phút: preload gọi webFrame.clearCache() (app:trimMemory) để Chromium bỏ bộ đệm ảnh, tài
- * nguyên không còn trên màn hình (ảnh của các hội thoại đã đóng…). Ảnh đang hiển thị giữ nguyên; ảnh cũ mở lại thì đọc
- * lại từ ổ đĩa. Không đổi dữ liệu hay trạng thái nào của giao diện.
+ * A window hidden / minimized for 2 minutes: the preload calls webFrame.clearCache() (app:trimMemory) so Chromium drops the image cache and resources that are no longer on screen
+ * (images of conversations that were closed…). Images currently shown stay; old images that are opened again are read
+ * from disk again. No UI data or state is changed.
  */
 import Logger from '../Logger';
+import { appLocale } from '../../shared/i18n';
 
 export interface AppProcessMetric {
     type: string;
@@ -26,9 +27,9 @@ export const MEMORY_LOG_INTERVAL_MS = 30 * 60_000;
 export const TRIM_AFTER_HIDDEN_MS = 2 * 60_000;
 
 const MB = (kb: number) => Math.round(kb / 1024);
-const fmt = (mb: number) => mb.toLocaleString('vi-VN');
+const fmt = (mb: number) => mb.toLocaleString(appLocale());
 
-/** Một dòng tóm tắt: tổng riêng (private) + từng nhóm tiến trình; GPU kèm phần đang nằm trong RAM. */
+/** A one-line summary: total private + each process group; GPU includes the part held in RAM. */
 export function describeAppMemory(metrics: AppProcessMetric[]): string {
     const priv = (m: AppProcessMetric) => MB(m.memory.privateBytes ?? m.memory.workingSetSize);
     let total = 0;
@@ -62,10 +63,10 @@ function logMemory(reason: string): void {
     if (!metricsFn) return;
     try {
         Logger.log(`[Hiệu năng] RAM Deplao (${reason}): ${describeAppMemory(metricsFn())}`);
-    } catch { /* đo lỗi không ảnh hưởng app */ }
+    } catch { /* a failed measurement does not affect the app */ }
 }
 
-/** main.ts (sau app ready): ghi RAM theo tiến trình mỗi 30 phút. */
+/** main.ts (after app ready): writes RAM per process every 30 minutes. */
 export function startMemoryMonitor(metrics: () => AppProcessMetric[]): void {
     if (started) return;
     started = true;
@@ -75,7 +76,7 @@ export function startMemoryMonitor(metrics: () => AppProcessMetric[]): void {
     (timer as any).unref?.();
 }
 
-/** Cửa sổ chính vừa ẩn / thu nhỏ: 2 phút sau mà vẫn ẩn thì nhả bộ đệm của cửa sổ. */
+/** The main window was just hidden / minimized: 2 minutes later, if it is still hidden, release the window's cache. */
 export function noteWindowHidden(win: WindowLike): void {
     if (trimTimer) return;
     hiddenSince = Date.now();
@@ -85,12 +86,12 @@ export function noteWindowHidden(win: WindowLike): void {
             if (win.isDestroyed() || (win.isVisible() && !win.isMinimized())) return;
             logMemory('cửa sổ ẩn 2 phút, nhả bộ đệm');
             win.webContents.send('app:trimMemory');
-        } catch { /* cửa sổ vừa đóng */ }
+        } catch { /* the window was just closed */ }
     }, TRIM_AFTER_HIDDEN_MS);
     (trimTimer as any).unref?.();
 }
 
-/** Cửa sổ chính hiện lại. */
+/** The main window is shown again. */
 export function noteWindowShown(): void {
     if (trimTimer) {
         clearTimeout(trimTimer);

@@ -1,12 +1,11 @@
 /**
- * uploadCoordinator — điều phối đường truyền tải lên R2 giữa các module Cloudflare.
+ * uploadCoordinator: coordinates the upload path to R2 between the Cloudflare modules.
  *
- * Bản gốc DB là một file lớn (vài trăm MB) cần lên trọn vẹn; nếu lưu media cùng lúc tải nhiều file thì cả hai tranh băng
- * thông, phần của bản gốc dễ hết thời gian chờ và phải gửi lại. Trong lúc đang tải bản gốc DB, lưu media chỉ chạy 1 file.
+ * The DB base snapshot is one big file (several hundred MB) that must go up in full. If media storage uploads several files at the same time, both compete for bandwidth, and the base snapshot's parts easily time out and have to be sent again. While the DB base snapshot is uploading, media storage runs 1 file only.
  */
 let dbBaseUploads = 0;
 
-/** Gọi khi bắt đầu tải bản gốc DB; trả hàm kết thúc (gọi nhiều lần cũng chỉ tính một). */
+/** Called when a DB base snapshot upload starts; returns an end function (calling it several times still counts once). */
 export function beginDbBaseUpload(): () => void {
     dbBaseUploads++;
     let ended = false;
@@ -17,7 +16,7 @@ export function beginDbBaseUpload(): () => void {
     };
 }
 
-/** Đang có bản gốc DB tải lên R2. */
+/** A DB base snapshot is being uploaded to R2. */
 export function dbBaseUploadActive(): boolean {
     return dbBaseUploads > 0;
 }

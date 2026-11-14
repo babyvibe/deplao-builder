@@ -1,11 +1,11 @@
 /**
- * EventHub — nguồn sự kiện công khai DUY NHẤT cho Socket.IO, SSE, polling, webhook và plugin.
+ * EventHub: the ONLY public event source for Socket.IO, SSE, polling, webhook and plugins.
  *
- *  - Hook EventBroadcaster.onBeforeSend (cùng cơ chế workflow/relay dùng). Callback chỉ làm
- *    `setImmediate` khi đang "capture" → không kéo dài đường xử lý tin nhắn.
- *  - Chỉ capture khi API bật VÀ có người dùng event (key có events/webhooks, subscription,
- *    socket/SSE/plugin đang nghe). Người không dùng API: không ghi gì.
- *  - Lưu api_events để catch-up/polling (có trần số dòng + số ngày), trừ sự kiện ephemeral.
+ *  - Hooks EventBroadcaster.onBeforeSend (the same mechanism the workflow/relay uses). The callback only does
+ *    `setImmediate` while "capture" is on → does not lengthen the message processing path.
+ *  - Captures only when the API is ON AND someone uses events (a key with events/webhooks, a subscription,
+ *    a socket/SSE/plugin listening). People who do not use the API: nothing is written.
+ *  - Stores api_events for catch-up/polling (capped by row count + days), except ephemeral events.
  */
 import { randomUUID } from 'crypto';
 import { apiDb, apiTablesExist } from '../dbSchema';
@@ -26,7 +26,7 @@ export interface ApiEvent {
 }
 
 export interface EventListener {
-    /** Người nhận — dùng để lọc theo tài khoản được phép. null = nội bộ (thấy tất cả). */
+    /** Recipient, used to filter by the allowed accounts. null = internal (sees everything). */
     principal: Principal | null;
     types?: string[] | null;
     accountIds?: string[] | null;
@@ -50,7 +50,7 @@ export function canReceive(listener: Pick<EventListener, 'principal' | 'types' |
         if (p && !accountAllowed(p, event.account_id)) return false;
         if (listener.accountIds && listener.accountIds.length && !listener.accountIds.includes(event.account_id)) return false;
     } else if (p && p.accountIds !== null) {
-        // Sự kiện toàn hệ thống (thanh toán, plugin...) chỉ cho key không giới hạn tài khoản.
+        // System-wide events (payments, plugins...) are only for keys that are not limited to accounts.
         return false;
     }
     return true;
@@ -76,7 +76,7 @@ export class EventHub {
 
     constructor(private readonly deps: EventHubDeps) {}
 
-    /** Đăng ký (lại) hook. Gọi khi khởi động và sau khi đổi workspace (clearBeforeSendHooks). */
+    /** Register (or re-register) the hook. Called at startup and after switching workspace (clearBeforeSendHooks). */
     hook(): void {
         for (const u of this.unsubscribers) { try { u(); } catch { /* ignore */ } }
         this.unsubscribers = [];
@@ -108,7 +108,7 @@ export class EventHub {
         this.consumerCache = null;
     }
 
-    /** Có ai dùng event không (rẻ, cache 30 giây, không tạo bảng). */
+    /** Whether anyone uses events (cheap, cached for 30 seconds, does not create tables). */
     isCapturing(): boolean {
         if (!getApiSettingBool('api_enabled')) return false;
         if (this.listeners.size > 0) return true;
@@ -132,7 +132,7 @@ export class EventHub {
         return value;
     }
 
-    /** Callback của hook: tuyệt đối không ném lỗi, không làm việc nặng đồng bộ. */
+    /** Hook callback: must never throw, and must not do heavy synchronous work. */
     ingest(source: string, data: any): void {
         try {
             if (!this.isCapturing()) return;
@@ -149,7 +149,7 @@ export class EventHub {
         return partials.map(p => this.publish(p));
     }
 
-    /** Phát một sự kiện đã chuẩn hoá (dùng cho plugin, webhook ping, test). */
+    /** Emit a normalized event (used for plugins, webhook pings, tests). */
     publish(partial: PartialEvent): ApiEvent {
         const info = eventInfo(partial.type);
         const { data, truncated } = truncate(partial.data);
@@ -191,13 +191,13 @@ export class EventHub {
         }
     }
 
-    /** Event sau `since` (seq) mà listener được phép nhận. */
+    /** Events after `since` (seq) that the listener is allowed to receive. */
     replay(since: number, filter: Pick<EventListener, 'principal' | 'types' | 'accountIds'>, limit = 500): ApiEvent[] {
         if (!apiTablesExist()) return [];
         const lim = Math.min(Math.max(1, limit), 5000);
         const out: ApiEvent[] = [];
         let cursor = Math.max(0, Number(since) || 0);
-        // Đọc theo lô để lọc quyền mà vẫn trả đủ `limit` (giới hạn 20 lô / lần gọi).
+        // Read in batches so that permission filtering still returns a full `limit` (max 20 batches per call).
         for (let round = 0; round < 20 && out.length < lim; round++) {
             const rows = apiDb().query<{ seq: number; payload_json: string }>(
                 'SELECT seq, payload_json FROM api_events WHERE seq > ? ORDER BY seq ASC LIMIT ?',

@@ -12,6 +12,7 @@ import ipc from '@/lib/ipc';
 import { useWorkspaceStore } from '@/store/app/workspaceStore';
 import { useChatStore } from '@/store/chat/chatStore';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
+import { tr } from '../../../shared/i18n';
 
 // ── Public types (compatible with zaloInitUtils) ──────────────────────────────
 
@@ -76,8 +77,8 @@ export function markFBAccountInitDone(accountId: string): void {
 // ── Needs check ───────────────────────────────────────────────────────────────
 
 export async function checkFBAccountInitNeeds(accountId: string): Promise<FBInitNeeds> {
-  // Nhân viên không giữ phiên Facebook (Boss giữ) — đồng bộ hội thoại là việc của Boss. Trước đây máy nhân viên mới
-  // (chưa có cờ "đã init" trong localStorage) mở bảng đồng bộ và gọi fb:getThreads không có phiên.
+  // Employees do not keep a Facebook session (the owner's machine does), so syncing conversations is the owner's machine's job. Previously an employee machine that
+  // (no "đã init" flag in localStorage yet) opened the sync panel and called fb:getThreads without a session.
   if (useEmployeeStore.getState().mode === 'employee') return { threads: false, any: false };
   if (!isFBAccountInitDone(accountId)) {
     return { threads: true, any: true };
@@ -103,7 +104,7 @@ async function _syncFBThreads(
   accountId: string,
   onProgress: (u: FBInitTaskProgress) => void,
 ): Promise<void> {
-  onProgress({ task: 'threads', status: 'running', detail: 'Đang tải danh sách hội thoại Facebook...' });
+  onProgress({ task: 'threads', status: 'running', detail: tr('Đang tải danh sách hội thoại Facebook...') });
   try {
     const res = await ipc.fb?.getThreads({ accountId, forceRefresh: true });
     if (res?.success) {
@@ -121,13 +122,13 @@ async function _syncFBThreads(
       onProgress({
         task: 'threads', status: 'done',
         total: count, current: count,
-        detail: `${count} hội thoại Facebook`,
+        detail: tr('{{count}} hội thoại Facebook', { count }),
       });
     } else {
-      onProgress({ task: 'threads', status: 'error', detail: res?.error || 'Lỗi tải hội thoại' });
+      onProgress({ task: 'threads', status: 'error', detail: res?.error || tr('Lỗi tải hội thoại') });
     }
   } catch (err: any) {
-    onProgress({ task: 'threads', status: 'error', detail: err?.message || 'Lỗi tải hội thoại' });
+    onProgress({ task: 'threads', status: 'error', detail: err?.message || tr('Lỗi tải hội thoại') });
   }
 }
 

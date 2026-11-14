@@ -1,7 +1,7 @@
 /**
- * Reaction vừa bấm trong app (đã lưu DB ngay ở handleReact). Zalo gửi lại bản echo (isSelf) của chính reaction đó
- * về phiên này; trước đây echo cũng được lưu → mỗi lần bấm bị +2 trong DB (mở lại hội thoại thấy gấp đôi).
- * Đếm theo số lần bấm để bấm nhanh nhiều lần vẫn khớp từng echo.
+ * A reaction tapped in the app (already saved to the DB in handleReact). Zalo sends back an echo (isSelf) of that same reaction
+ * to this session; before, the echo was saved too → every tap was counted +2 in the DB (reopening the conversation showed it doubled).
+ * Counted per tap, so tapping quickly several times still matches each echo.
  */
 const pending = new Map<string, { count: number; at: number }>();
 const TTL_MS = 60_000;
@@ -16,7 +16,7 @@ export function markLocalReaction(accountId: string, msgId: string, emoji: strin
   pending.set(key, { count: (entry && now - entry.at < TTL_MS ? entry.count : 0) + 1, at: now });
 }
 
-/** true nếu echo này ứng với 1 lần bấm trong app (đã lưu) → không lưu lại. */
+/** true if this echo matches one tap in the app (already saved) → do not save it again. */
 export function consumeLocalReaction(accountId: string, msgId: string, emoji: string): boolean {
   const key = keyOf(accountId, String(msgId), emoji);
   const entry = pending.get(key);

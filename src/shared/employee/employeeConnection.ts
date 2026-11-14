@@ -1,42 +1,44 @@
 /**
- * Vòng đời kết nối nhân viên ↔ Boss — phần thuần (không phụ thuộc Electron / React / DOM),
- * dùng chung cho main process (HttpConnectionManager, HttpClientService, SocketIOClient)
- * và renderer (App, TopBar, employeeStore). Test: src/__tests__/employee/employeeConnection.test.ts.
+ * Employee ↔ Boss connection lifecycle: the pure part (no dependency on Electron / React / DOM),
+ * shared by the main process (HttpConnectionManager, HttpClientService, SocketIOClient)
+ * and the renderer (App, TopBar, employeeStore). Test: src/__tests__/employee/employeeConnection.test.ts.
  *
- * Nguồn sự thật DUY NHẤT cho Boss URL + token là cấu hình workspace ở main process.
- * Main phát các sự kiện IPC dưới đây; renderer chỉ làm theo (không tự giữ bản URL/token riêng).
+ * The ONLY source of truth for the Boss URL + token is the workspace config in the main process.
+ * Main emits the IPC events below; the renderer only follows them (it keeps no URL/token copy of its own).
  */
 
-// ── Lịch backoff ────────────────────────────────────────────────────
+// ── Backoff schedule ────────────────────────────────────────────────────
 
 /**
- * Socket.IO bị Boss TỪ CHỐI (middleware) hoặc Boss chủ động ngắt ('io server disconnect'):
- * Socket.IO không tự thử lại → tự lên lịch 1 s, 2 s, 5 s, 10 s, 30 s rồi giữ 30 s.
+ * Socket.IO is REJECTED by Boss (middleware) or Boss disconnects it on purpose ('io server disconnect'):
+ * Socket.IO does not retry by itself, so we schedule our own retries at 1 s, 2 s, 5 s, 10 s, 30 s, then hold at 30 s.
  */
+import { tr } from '../i18n';
+
 export const SOCKET_RECONNECT_BACKOFF_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000];
 
-/** Workspace kết nối thất bại (Boss tắt / mạng hỏng): thử lại sau 15 s, 30 s rồi giữ 60 s. */
+/** Workspace connection failed (Boss off / network down): retry after 15 s, then 30 s, then hold at 60 s. */
 export const WORKSPACE_RETRY_BACKOFF_MS: readonly number[] = [15_000, 30_000, 60_000];
 
-/** Mất kết nối lâu hơn ngưỡng này → khi có lại phải tải lại dữ liệu (employee:resync). */
+/** Losing the connection for longer than this threshold → data must be reloaded when it comes back (employee:resync). */
 export const RESYNC_GAP_MS = 10_000;
 
-/** Heartbeat phải hỏng ít nhất ngần này lần liên tiếp mới tính là "mất kết nối" cần resync. */
+/** The heartbeat must fail at least this many times in a row before it counts as "lost connection" that needs a resync. */
 export const HEARTBEAT_FAILURES_FOR_RESYNC = 2;
 
 /**
- * Socket + heartbeat cùng hồi phục sau MỘT lần mất mạng (cách nhau tối đa 1 chu kỳ heartbeat 15 s)
- * → chỉ phát 1 employee:resync trong cửa sổ này.
+ * Socket and heartbeat recover together after ONE network drop (at most 1 heartbeat cycle of 15 s apart)
+ * → emit only 1 employee:resync within this window.
  */
 export const RESYNC_COALESCE_MS = 15_000;
 
-/** Làm mới snapshot nhân viên (quyền / tài khoản được giao) tối đa 1 lần mỗi 10 s. */
+/** Refresh the employee snapshot (permissions / assigned accounts) at most once every 10 s. */
 export const SNAPSHOT_REFRESH_THROTTLE_MS = 10_000;
 
-/** Thông báo hiển thị khi token hết hạn / bị Boss từ chối. */
-export const AUTH_EXPIRED_MESSAGE = 'Phiên đăng nhập hết hạn — đăng nhập lại';
+/** Message shown when the token expires / Boss rejects it. */
+export const AUTH_EXPIRED_MESSAGE = tr('Phiên đăng nhập hết hạn — đăng nhập lại');
 
-/** Delay cho lần thử thứ `attempt` (0-based); quá cuối lịch thì giữ giá trị cuối. */
+/** Delay for retry number `attempt` (0-based); past the end of the schedule, keep the last value. */
 export function backoffDelay(attempt: number, schedule: readonly number[]): number {
   if (!schedule.length) return 0;
   const index = Number.isFinite(attempt) && attempt > 0 ? Math.floor(attempt) : 0;
@@ -46,8 +48,8 @@ export function backoffDelay(attempt: number, schedule: readonly number[]): numb
 // ── Boss URL + token ────────────────────────────────────────────────
 
 /**
- * Chuẩn hoá Boss URL giống RestQueryService.normalizeBossUrl: thêm http:// nếu thiếu,
- * bỏ query/hash và '/' cuối, GIỮ sub-path. Rỗng → ''.
+ * Normalize the Boss URL the same way as RestQueryService.normalizeBossUrl: add http:// if missing,
+ * drop the query/hash and the trailing '/', KEEP the sub-path. Empty → ''.
  */
 export function normalizeBossUrl(raw: string | null | undefined): string {
   let url = String(raw ?? '').trim();
@@ -66,18 +68,18 @@ export interface BossCredentials {
   token?: string | null;
 }
 
-/** true khi URL (sau chuẩn hoá) hoặc token khác nhau — chỉ khác cách viết URL thì KHÔNG tính là đổi. */
+/** true when the URL (after normalizing) or the token differs. A URL that is only written differently does NOT count as a change. */
 export function credentialsChanged(prev: BossCredentials | null | undefined, next: BossCredentials | null | undefined): boolean {
   return normalizeBossUrl(prev?.bossUrl) !== normalizeBossUrl(next?.bossUrl)
     || String(prev?.token ?? '') !== String(next?.token ?? '');
 }
 
-// ── Phân loại lỗi Socket.IO ─────────────────────────────────────────
+// ── Socket.IO error classification ─────────────────────────────────────────
 
 /**
- * Thông điệp từ middleware xác thực của Boss (SocketIOService) mà đăng nhập lại mới hết:
- * token sai/hết hạn/thiếu, nhân viên bị xoá/khoá. 'Authentication failed' (lỗi phía Boss,
- * vd DB chưa sẵn sàng) KHÔNG nằm trong danh sách → được thử lại theo backoff.
+ * Messages from Boss's auth middleware (SocketIOService) that only a new login fixes:
+ * wrong/expired/missing token, employee deleted/locked. 'Authentication failed' (a Boss-side error,
+ * e.g. DB not ready yet) is NOT in the list → it is retried with backoff.
  */
 const AUTH_REJECTION_PATTERNS: readonly RegExp[] = [
   /invalid token/i,
@@ -94,26 +96,26 @@ export function isAuthRejectionMessage(message: string | null | undefined): bool
   return AUTH_REJECTION_PATTERNS.some(pattern => pattern.test(text));
 }
 
-// ── Đăng nhập ───────────────────────────────────────────────────────
+// ── Login ───────────────────────────────────────────────────────
 
-/** `code` Boss trả khi sai mật khẩu (EmployeeService.authenticate). Boss bản cũ chỉ có thông điệp 'Mật khẩu không đúng'. */
+/** `code` that Boss returns for a wrong password (EmployeeService.authenticate). Older Boss builds only send the message 'Mật khẩu không đúng' (Wrong password). */
 export const LOGIN_WRONG_PASSWORD_CODE = 'WRONG_PASSWORD';
 
-/** Phản hồi đăng nhập là "sai mật khẩu" (không phải lỗi mạng / tài khoản bị khoá) → bỏ mật khẩu đã lưu. */
+/** Login response is "sai mật khẩu" (wrong password), not a network error or a locked account → drop the saved password. */
 export function isWrongPasswordLogin(res: { success?: boolean; code?: unknown; error?: unknown } | null | undefined): boolean {
   if (!res || res.success) return false;
   if (res.code === LOGIN_WRONG_PASSWORD_CODE) return true;
   return /mật khẩu không đúng/i.test(String(res.error ?? ''));
 }
 
-// ── Resync sau khi mất kết nối ──────────────────────────────────────
+// ── Resync after losing the connection ──────────────────────────────────────
 
 /**
- * - socket-reconnect / heartbeat-recovered / system-resume / reconnect — kết nối hồi phục (xem các hàm bên dưới);
- * - boss-restart — catch-up Socket.IO: Boss đã khởi động lại (bootId khác) → event lúc mất kết nối không phát lại được;
- * - catchup-gap — catch-up Socket.IO: buffer của Boss không còn phủ vị trí của nhân viên (hoặc quá nhiều event);
- * - catchup-unverified — Boss bản cũ (không có bootId / không trả ack catch-up): không kiểm chứng được phần đã lỡ
- *   khi kết nối lại → tải lại cho chắc.
+ * - socket-reconnect / heartbeat-recovered / system-resume / reconnect: the connection recovered (see the functions below);
+ * - boss-restart: Socket.IO catch-up, Boss restarted (different bootId) → events from the disconnect time cannot be replayed;
+ * - catchup-gap: Socket.IO catch-up, Boss's buffer no longer covers the employee's position (or too many events);
+ * - catchup-unverified: old Boss build (no bootId / no catch-up ack): cannot verify what was missed
+ *   during the reconnect → reload to be safe.
  */
 export type EmployeeResyncReason =
   | 'socket-reconnect'
@@ -125,10 +127,10 @@ export type EmployeeResyncReason =
   | 'catchup-unverified';
 
 /**
- * Lý do resync khi heartbeat thành công trở lại (null = không cần):
- * - vừa máy ngủ dậy (resume) → luôn resync, sau khi đã xác nhận Boss trả lời;
- * - heartbeat hỏng >= HEARTBEAT_FAILURES_FOR_RESYNC lần liên tiếp và mất kết nối > RESYNC_GAP_MS.
- * Một lần hỏng lẻ (Socket.IO vẫn nối) không cần resync — socket tự đo khoảng mất của nó.
+ * Reason to resync when the heartbeat succeeds again (null = no resync needed):
+ * - the machine just woke from sleep (resume) → always resync, after confirming that Boss responds;
+ * - the heartbeat failed >= HEARTBEAT_FAILURES_FOR_RESYNC times in a row and the connection was lost > RESYNC_GAP_MS.
+ * A single isolated failure (Socket.IO still connected) does not need a resync, since the socket measures its own gap.
  */
 export function heartbeatResyncReason(input: {
   failuresBefore: number;
@@ -140,22 +142,22 @@ export function heartbeatResyncReason(input: {
   return null;
 }
 
-/** Socket.IO kết nối lại: chỉ resync khi trước đó đã từng nối và mất lâu hơn RESYNC_GAP_MS. */
+/** Socket.IO reconnected: resync only if it had connected before and was down for longer than RESYNC_GAP_MS. */
 export function socketResyncNeeded(gapMs: number | null | undefined): boolean {
   return typeof gapMs === 'number' && Number.isFinite(gapMs) && gapMs > RESYNC_GAP_MS;
 }
 
 // ── Throttle ────────────────────────────────────────────────────────
 
-/** true nếu đã chạy trong `intervalMs` gần nhất (nên bỏ qua lần này). */
+/** true if it already ran within the last `intervalMs` (so skip this time). */
 export function isThrottled(lastRunAt: number | null | undefined, now: number, intervalMs: number): boolean {
   if (!lastRunAt) return false;
   return now - lastRunAt < intervalMs;
 }
 
 /**
- * Cổng throttle theo key: trả true (và ghi nhận) nếu được phép chạy, false nếu còn trong cửa sổ.
- * `now` tiêm được để test.
+ * Throttle gate per key: returns true (and records the run) if it may run, false if it is still inside the window.
+ * `now` can be injected for tests.
  */
 export function createThrottleGate(intervalMs: number, now: () => number = Date.now): (key?: string) => boolean {
   const lastRun = new Map<string, number>();
@@ -167,13 +169,13 @@ export function createThrottleGate(intervalMs: number, now: () => number = Date.
   };
 }
 
-// ── Badge trạng thái ở TopBar ───────────────────────────────────────
+// ── Status badge in TopBar ───────────────────────────────────────
 
 /**
- * online     — heartbeat main OK và REST không bị chặn (xanh)
- * recovering — heartbeat OK nhưng REST đang bị chặn / chưa có cấu hình, đang tự hồi phục (vàng)
- * offline    — heartbeat không tới được Boss (đỏ, hiện nút "Kết nối lại")
- * expired    — Boss từ chối token: phải đăng nhập lại (đỏ, hiện nút "Kết nối lại")
+ * online     - main heartbeat OK and REST is not blocked (green)
+ * recovering - heartbeat OK but REST is blocked / not configured yet, recovering on its own (yellow)
+ * offline    - the heartbeat cannot reach Boss (red, shows the "Kết nối lại" (Reconnect) button)
+ * expired    - Boss rejects the token: must log in again (red, shows the "Kết nối lại" (Reconnect) button)
  */
 export type EmployeeBadgeState = 'online' | 'recovering' | 'offline' | 'expired';
 
@@ -187,45 +189,45 @@ export function computeEmployeeBadgeState(input: {
   return input.restBlocked ? 'recovering' : 'online';
 }
 
-// ── Payload sự kiện IPC main → renderer ─────────────────────────────
+// ── IPC event payloads, main → renderer ─────────────────────────────
 
 export type EmployeeCredentialsReason = 'connected' | 'updated';
 
-/** 'employee:credentials' — main vừa kết nối / đổi URL-token của một remote workspace. */
+/** 'employee:credentials': main just connected to / changed the URL + token of a remote workspace. */
 export interface EmployeeCredentialsEvent {
   workspaceId: string;
-  /** Đã chuẩn hoá bằng normalizeBossUrl. */
+  /** Normalized with normalizeBossUrl. */
   bossUrl: string;
   token: string;
-  /** Workspace này đang active ở main lúc phát. */
+  /** This workspace was active in main when the event was emitted. */
   active: boolean;
   reason: EmployeeCredentialsReason;
 }
 
 /**
- * 'employee:resync' — kết nối vừa hồi phục sau khoảng mất > RESYNC_GAP_MS, máy vừa ngủ dậy, hoặc catch-up Socket.IO
- * không phát lại được phần đã lỡ (Boss khởi động lại / buffer không đủ / Boss bản cũ).
+ * 'employee:resync': the connection just recovered after a gap > RESYNC_GAP_MS, the machine just woke from sleep, or the Socket.IO catch-up
+ * could not replay what was missed (Boss restarted / buffer too small / old Boss build).
  */
 export interface EmployeeResyncEvent {
   workspaceId: string;
   reason: EmployeeResyncReason;
-  /** ms mất kết nối ước lượng (0 nếu không đo được). */
+  /** Estimated disconnect time in ms (0 if it cannot be measured). */
   gapMs: number;
-  /** Date.now() lúc phát. */
+  /** Date.now() at emit time. */
   at: number;
 }
 
-/** 'workspace:connectionStatus' — trạng thái heartbeat/kết nối main của một remote workspace. */
+/** 'workspace:connectionStatus': heartbeat / main connection status of a remote workspace. */
 export interface WorkspaceConnectionStatusEvent {
   workspaceId: string;
   connected: boolean;
   latency: number;
-  /** Boss từ chối token → cần đăng nhập lại; main ngừng tự thử lại. */
+  /** Boss rejected the token → must log in again; main stops retrying on its own. */
   authExpired?: boolean;
-  /** Đang nằm trong danh sách tự thử lại (backoff 15 s → 60 s). */
+  /** In the auto-retry list (backoff 15 s → 60 s). */
   retrying?: boolean;
-  /** Bị Boss ngắt (relay:kicked). */
+  /** Kicked out by Boss (relay:kicked). */
   kicked?: boolean;
-  /** 'user-disconnect' khi người dùng bấm Ngắt kết nối; hoặc thông điệp lỗi / lý do kick. */
+  /** 'user-disconnect' when the user clicks Disconnect; or an error message / kick reason. */
   reason?: string;
 }

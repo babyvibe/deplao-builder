@@ -2,10 +2,10 @@ import { useChatStore } from '@/store/chat/chatStore';
 import { useAppStore } from '@/store/app/appStore';
 
 /**
- * Tính tổng unread cho badge taskbar.
- * Chỉ tính hội thoại:
- *   - KHÔNG nằm trong thư mục "Khác" (Others)
- *   - KHÔNG bị tắt thông báo (muted)
+ * Total unread count for the taskbar badge.
+ * Counts only conversations that:
+ *   - are NOT in the "Khác" folder (Others)
+ *   - do NOT have notifications turned off (muted)
  */
 export function getFilteredUnreadCount(): number {
   const allContacts = useChatStore.getState().contacts;
@@ -26,8 +26,8 @@ export function getFilteredUnreadCount(): number {
 
 let badgeRefreshQueued = false;
 /**
- * Badge taskbar cho loạt tin xử lý trong cùng một task (tin bù sau khi offline): đếm lại một lần ở cuối task thay vì mỗi
- * tin đếm lại mọi hội thoại + một IPC.
+ * Taskbar badge for a batch of messages handled in one task (catch-up messages after going offline): recounts once at the end of the task instead of
+ * every message recounting all conversations + one IPC.
  */
 export function queueBadgeRefresh(apply: (count: number) => void): void {
   if (badgeRefreshQueued) return;

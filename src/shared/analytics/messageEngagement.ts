@@ -1,32 +1,24 @@
 /**
- * Hiệu quả tin MÌNH gửi đi: Đã gửi → Đã nhận → Đã xem → Đã phản hồi. Dùng chung main (DatabaseService: chiến dịch CRM,
- * Báo cáo → Tin nhắn / Chiến dịch / Workflow) và renderer (lọc liên hệ của chiến dịch, gộp báo cáo nhiều tài khoản).
+ * Effectiveness of the messages I SEND: Sent → Delivered → Read → Replied. Shared by main (DatabaseService: CRM campaigns, Reports → Messages / Campaigns / Workflow) and the renderer (filtering the contacts of a campaign, merging reports of several accounts).
  *
- * Không thêm trạng thái gửi mới (crm_campaign_contacts.status giữ pending / sent / failed): mọi chỉ số tính lúc đọc từ dữ
- * liệu sẵn có, so với MỐC (anchor) = thời điểm tin đầu tiên mình gửi cho người đó trong lần gửi đang xét (tin của chiến
- * dịch; tin đầu tiên trong khoảng báo cáo; tin workflow gửi):
- *  - Đã nhận: mốc đã nhận của hội thoại contacts.peer_delivered_ts ≥ anchor. Chỉ Zalo, Facebook báo "đã nhận"; Telegram
- *    không có khái niệm này → không tính (deliveredBase = 0, giao diện hiện "—").
- *  - Đã xem: contacts.peer_read_ts ≥ anchor (Zalo, Facebook, Telegram cá nhân) HOẶC đã phản hồi.
- *  - Đã phản hồi: người nhận có tin THẬT đến SAU anchor (lúc nào cũng được, kể cả sau khoảng báo cáo); tin hệ thống, bản
- *    tin OA, tin mẫu của Trang, tin đã xoá không tính (REPLY_STATE_IGNORED_MSG_TYPES, như trạng thái "đã trả lời").
- * Quy tắc như dấu ✓✓ trong khung chat (ui/lib/chat/messages/messageStatus.ts): đã phản hồi ⇒ đã xem ⇒ đã nhận.
+ * No new send status is added (crm_campaign_contacts.status keeps pending / sent / failed). Every metric is computed at read time from existing data, compared with the ANCHOR = the time of the first message I sent to that person in the send being checked (the campaign's message; the first message in the report range; the message sent by the workflow):
+ *  - Delivered: the conversation's delivered mark contacts.peer_delivered_ts ≥ anchor. Only Zalo and Facebook report "đã nhận"; Telegram has no such concept, so it is not counted (deliveredBase = 0, the UI shows a dash).
+ *  - Read: contacts.peer_read_ts ≥ anchor (Zalo, Facebook, personal Telegram) OR replied.
+ *  - Replied: the recipient has a REAL message that arrives AFTER the anchor (at any time, even after the report range). System messages, OA broadcasts, Page template messages and deleted messages are not counted (REPLY_STATE_IGNORED_MSG_TYPES, like the "đã trả lời" (replied) state).
+ * Same rule as the ✓✓ marks in the chat frame (ui/lib/chat/messages/messageStatus.ts): replied ⇒ read ⇒ delivered.
  *
- * Giới hạn (giao diện có ghi chú): mốc đã nhận / đã xem chỉ được ghi khi Deplao đang mở lúc nền tảng báo
- * (services/receipts/peerReceipts.ts); Zalo chỉ báo "đã xem" khi người nhận (và tài khoản mình) bật "Hiện trạng thái
- * Đã xem" → với Zalo, "đã xem" phần lớn đến từ việc khách trả lời. Mốc là của cả hội thoại, nên "đã xem" nghĩa là đã xem
- * tới (ít nhất) tin đó, tính tới lúc xem báo cáo.
+ * Limits (the UI shows a note): the delivered / read marks are only recorded while Deplao is open when the platform reports them (services/receipts/peerReceipts.ts). Zalo only reports "đã xem" when the recipient (and my account) turn on "Hiện trạng thái Đã xem", so on Zalo most "đã xem" comes from the customer replying. The mark belongs to the whole conversation, so "đã xem" means read up to (at least) that message, as of when the report is viewed.
  */
 import { REPLY_STATE_IGNORED_MSG_TYPES } from '../chat/replyState';
 
 export interface EngagementSupport {
-  /** Nền tảng báo "đã nhận" (Zalo, Facebook). */
+  /** Platforms that report "đã nhận" (delivered): Zalo, Facebook. */
   delivered: boolean;
-  /** Nền tảng báo "đã xem" (Zalo, Facebook, Telegram cá nhân). Không có thì đã xem = đã phản hồi. */
+  /** Platforms that report "đã xem" (read): Zalo, Facebook, personal Telegram. Without it, read = replied. */
   seen: boolean;
 }
 
-/** Kênh báo được gì (cùng bảng với receiptSupport của khung chat). */
+/** What each channel reports (same table as receiptSupport of the chat frame). */
 export function engagementSupport(channel: string | null | undefined): EngagementSupport {
   const ch = String(channel || 'zalo');
   if (ch === 'zalo' || ch === 'facebook') return { delivered: true, seen: true };
@@ -34,24 +26,24 @@ export function engagementSupport(channel: string | null | undefined): Engagemen
   return { delivered: false, seen: false };
 }
 
-/** Danh sách loại tin không tính là "phản hồi", dạng SQL: ('system', 'chat.webcontent', …). */
+/** List of message types that do not count as "phản hồi" (replied), in SQL form: ('system', 'chat.webcontent', …). */
 export const ENGAGEMENT_IGNORED_TYPES_SQL = `(${REPLY_STATE_IGNORED_MSG_TYPES.map((type) => `'${type}'`).join(', ')})`;
 
 /**
- * Chiến dịch: tin của chiến dịch là tin mình gửi sớm nhất trong [sent_at − LOOKBACK, sent_at + LOOKAHEAD] (sent_at ghi
- * SAU khi gửi xong mọi bước, giờ máy; giờ tin là giờ máy chủ nền tảng nên lệch vài giây). Không thấy tin trong máy (vd
- * chiến dịch chỉ kết bạn) → anchor = sent_at − CLOCK_SKEW.
+ * Campaign: the campaign's message is the earliest message I sent within [sent_at − LOOKBACK, sent_at + LOOKAHEAD] (sent_at is recorded AFTER every step
+ * finishes, in local machine time; message times use the platform server's clock, so they differ by a few seconds). If no message is found on the machine (e.g.
+ * a campaign that only sends friend requests) → anchor = sent_at − CLOCK_SKEW.
  */
 export const CAMPAIGN_ANCHOR_LOOKBACK_MS = 5 * 60_000;
 export const CAMPAIGN_ANCHOR_LOOKAHEAD_MS = 60_000;
 export const ENGAGEMENT_CLOCK_SKEW_MS = 60_000;
 
-/** Tín hiệu đọc từ DB cho một người nhận (ms; 0 = không có). */
+/** Read signals from the DB for one recipient (ms; 0 = none). */
 export interface EngagementSignals {
   anchorTs: number;
   deliveredTs: number;
   readTs: number;
-  /** Tin thật đầu tiên của người nhận sau anchor. */
+  /** The recipient's first real message after the anchor. */
   replyTs: number;
 }
 
@@ -70,8 +62,7 @@ export function engagementState(signals: EngagementSignals, support: EngagementS
 }
 
 /**
- * Bộ đếm (cộng được giữa chiến dịch / tài khoản). `deliveredBase`: số người nhận trên kênh có báo "đã nhận" — mẫu số của
- * tỷ lệ đã nhận (0 → không có số liệu, hiện "—").
+ * Counter (can be summed across campaigns / accounts). `deliveredBase`: the number of recipients on channels that report "đã nhận" (delivered), the denominator of the delivered rate (0 → no data, shown as "-").
  */
 export interface EngagementCounts {
   sent: number;
@@ -85,7 +76,7 @@ export function emptyEngagement(): EngagementCounts {
   return { sent: 0, delivered: 0, deliveredBase: 0, seen: 0, replied: 0 };
 }
 
-/** Thêm một người nhận vào bộ đếm. */
+/** Add one recipient to the counter. */
 export function addEngagement(counts: EngagementCounts, state: EngagementState, support: EngagementSupport): EngagementCounts {
   counts.sent += 1;
   if (support.delivered) {
@@ -115,7 +106,7 @@ export function mergeEngagementCounts(list: ReadonlyArray<Partial<EngagementCoun
   return out;
 }
 
-/** % làm tròn như các báo cáo khác; null = không có mẫu số (kênh không báo / chưa gửi). */
+/** Percentage rounded like the other reports; null = no denominator (channel does not report it / nothing sent yet). */
 export interface EngagementRates {
   deliveredRate: number | null;
   seenRate: number | null;
@@ -133,17 +124,17 @@ export function engagementRates(counts: Partial<EngagementCounts> | null | undef
   };
 }
 
-/** Một liên hệ đã gửi của chiến dịch (crm:getCampaignEngagement). */
+/** One sent contact of a campaign (crm:getCampaignEngagement). */
 export interface CampaignEngagementItem extends EngagementState {
   contactId: string;
-  /** Giờ tin trả lời đầu tiên (0 = chưa). */
+  /** Time of the first reply message (0 = none yet). */
   replyTs: number;
 }
 
 export interface CampaignEngagementReport {
   campaignId: number;
   channel: string;
-  /** Chiến dịch có bước gửi tin (chỉ kết bạn / mời nhóm: chỉ có "đã phản hồi"). */
+  /** A campaign with a message-sending step (friend request / group invite only: only "đã phản hồi" (replied) is available). */
   sendsMessage: boolean;
   support: EngagementSupport;
   counts: EngagementCounts;
@@ -152,14 +143,14 @@ export interface CampaignEngagementReport {
 
 export type CampaignEngagementResponse = ({ success: true } & CampaignEngagementReport) | { success: false; error?: string };
 
-/** Báo cáo → Tin nhắn: người nhận 1:1 trong khoảng (analytics:outreach). */
+/** Report → Messages: 1:1 recipients in the range (analytics:outreach). */
 export interface OutreachStats extends EngagementCounts {
   channel: string;
   support: EngagementSupport;
   timeline: Array<EngagementCounts & { bucket: string }>;
 }
 
-/** Bộ lọc liên hệ theo hiệu quả (chỉ liên hệ đã gửi). */
+/** Contact filter by effectiveness (only contacts that were sent to). */
 export type EngagementFilter = 'replied' | 'seen_no_reply' | 'not_seen' | 'not_delivered';
 
 export function matchesEngagementFilter(state: EngagementState | null | undefined, filter: EngagementFilter, support: EngagementSupport): boolean {
@@ -173,14 +164,14 @@ export function matchesEngagementFilter(state: EngagementState | null | undefine
   }
 }
 
-/** Chiến dịch có bước gửi tin nhắn không (chỉ kết bạn / mời vào nhóm: không có tin để xem / phản hồi). */
+/** Whether the campaign has a message-sending step (friend request / group invite only: there is no message to view / reply to). */
 export function campaignSendsMessage(campaignType: string | null | undefined, mixedConfig: string | null | undefined): boolean {
   const type = String(campaignType || 'message');
   if (type === 'friend_request' || type === 'invite_to_group') return false;
   if (type !== 'mixed') return true;
   try {
     const actions = JSON.parse(mixedConfig || '{}')?.actions;
-    // Hỗn hợp kiểu cũ (không có actions): gửi tin, chỉ kết bạn khi người nhận chặn người lạ
+    // Legacy mixed kind (no actions): send a message, send a friend request only when the recipient blocks strangers
     if (!Array.isArray(actions) || actions.length === 0) return true;
     return actions.includes('message');
   } catch {

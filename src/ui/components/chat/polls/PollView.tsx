@@ -1,15 +1,17 @@
 /**
- * PollView - shared poll UI dùng chung cho ChatWindow (PollBubble) và GroupBoardPanel (PollBoardCard)
+ * PollView: shared poll UI used by ChatWindow (PollBubble) and GroupBoardPanel (PollBoardCard)
  *
  * Logic:
- * - pendingIds = null  → chưa chạm gì, hiển thị serverVotedIds từ API
- * - Click option toggle → pendingIds được set, cho phép toggle tự do
- * - isDirty → hiện nút "Lưu bình chọn" / "Huỷ bình chọn"
- * - Sau khi save → onRefresh() và pendingIds reset về null
+ * - pendingIds = null → nothing touched yet, shows serverVotedIds from the API
+ * - Clicking an option toggles it → pendingIds is set, toggling is free
+ * - isDirty → shows the "Lưu bình chọn" (Save vote) / "Huỷ bình chọn" (Cancel vote) buttons
+ * - After save → onRefresh() and pendingIds resets to null
  */
 import React from 'react';
 import { Spinner } from '@/components/common/PageLoading';
 import ipc from '@/lib/ipc';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export interface PollDetailData {
   creator: string;
@@ -35,20 +37,20 @@ export interface PollOptionData {
 
 interface Props {
   detail: PollDetailData;
-  /** ID tài khoản đang dùng - để xác định đã vote chưa */
+  /** ID of the account in use, to check whether it has voted */
   activeAccountId: string;
   pollId: string;
-  /** Hàm lấy auth token */
+  /** Function that gets the auth token */
   getAuth: () => Promise<{ cookies: string; imei: string; userAgent: string }>;
-  /** Gọi sau khi vote/lock thành công để reload detail */
+  /** Called after a successful vote / lock to reload the detail */
   onRefresh: () => void;
-  /** Màu theme: 'blue' (tin nhắn mình gửi) | 'dark' (mặc định) */
+  /** Theme color: 'blue' (messages I sent) | 'dark' (default) */
   theme?: 'blue' | 'dark';
-  /** Hiển thị voter avatars - cần contacts list */
+  /** Show voter avatars (needs the contacts list) */
   contacts?: any[];
-  /** Hiển thị nút Khoá bình chọn nếu là creator */
+  /** Show the Lock poll button if the user is the creator */
   showLockButton?: boolean;
-  /** Hiển thị nút Thêm lựa chọn */
+  /** Show the Add option button */
   showAddOption?: boolean;
   onNotify?: (msg: string, type?: 'success' | 'error') => void;
 }
@@ -95,7 +97,7 @@ export function VoterListModal({ option, contacts, onClose }: {
         <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
           <div className="flex-1 min-w-0 pr-2">
             <p className="text-sm font-semibold text-foreground truncate">{option.content}</p>
-            <p className="text-xs text-muted-foreground">{voters.length} người bình chọn</p>
+            <p className="text-xs text-muted-foreground">{trx('{{count}} người bình chọn', { count: voters.length })}</p>
           </div>
           <button onClick={onClose}
             className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
@@ -106,7 +108,7 @@ export function VoterListModal({ option, contacts, onClose }: {
         </div>
         <div className="overflow-y-auto flex-1">
           {voters.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-6">Chưa có ai bình chọn</p>
+            <p className="text-xs text-muted-foreground text-center py-6">{tr('Chưa có ai bình chọn')}</p>
           ) : voters.map(uid => {
             const c = contacts.find((x: any) => String(x.contact_id) === String(uid));
             const name: string = c?.alias || c?.display_name || '';
@@ -159,12 +161,12 @@ export function PollDetailView({
   const canVote = !isClosed && !isExpired;
   const isCreator = String(detail.creator || '') === String(activeAccountId);
 
-  // IDs đã vote từ server
+  // IDs already voted, from the server
   const serverVotedIds: number[] = options
     .filter(o => o.voted || (o.voters || []).some(v => String(v) === String(activeAccountId)))
     .map(o => o.option_id);
 
-  // pendingIds = null → chưa thay đổi, dùng serverVotedIds để hiển thị
+  // pendingIds = null → unchanged, use serverVotedIds for display
   const [pendingIds, setPendingIds] = React.useState<number[] | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [locking, setLocking] = React.useState(false);
@@ -172,7 +174,7 @@ export function PollDetailView({
   const [addingOption, setAddingOption] = React.useState(false);
   const [voterListOpt, setVoterListOpt] = React.useState<PollOptionData | null>(null);
 
-  // Reset pendingIds khi detail reload (pollId đổi hoặc sau khi save)
+  // Reset pendingIds when the detail reloads (pollId changes or after save)
   const prevPollIdRef = React.useRef(pollId);
   React.useEffect(() => {
     if (prevPollIdRef.current !== pollId) {
@@ -207,13 +209,13 @@ export function PollDetailView({
         auth, pollId: Number(pollId), optionIds: pendingIds!,
       });
       if (res?.success !== false) {
-        onNotify?.(pendingIds!.length === 0 ? 'Đã huỷ bình chọn' : 'Đã lưu bình chọn', 'success');
+        onNotify?.(pendingIds!.length === 0 ? tr('Đã huỷ bình chọn') : tr('Đã lưu bình chọn'), 'success');
         setPendingIds(null);
         setTimeout(onRefresh, 400);
       } else {
-        onNotify?.('Lưu bình chọn thất bại', 'error');
+        onNotify?.(tr('Lưu bình chọn thất bại'), 'error');
       }
-    } catch { onNotify?.('Lỗi khi lưu bình chọn', 'error'); }
+    } catch { onNotify?.(tr('Lỗi khi lưu bình chọn'), 'error'); }
     finally { setSaving(false); }
   };
 
@@ -224,12 +226,12 @@ export function PollDetailView({
       const auth = await getAuth();
       const res = await ipc.zalo?.lockPoll({ auth, pollId: Number(pollId) });
       if (res?.success !== false) {
-        onNotify?.('Đã khoá bình chọn', 'success');
+        onNotify?.(tr('Đã khoá bình chọn'), 'success');
         setTimeout(onRefresh, 400);
       } else {
-        onNotify?.('Khoá bình chọn thất bại', 'error');
+        onNotify?.(tr('Khoá bình chọn thất bại'), 'error');
       }
-    } catch { onNotify?.('Lỗi khi khoá bình chọn', 'error'); }
+    } catch { onNotify?.(tr('Lỗi khi khoá bình chọn'), 'error'); }
     finally { setLocking(false); }
   };
 
@@ -241,13 +243,13 @@ export function PollDetailView({
       const auth = await getAuth();
       const res = await ipc.zalo?.addPollOption?.({ auth, pollId: Number(pollId), option: text });
       if (res?.success !== false) {
-        onNotify?.('Đã thêm lựa chọn', 'success');
+        onNotify?.(tr('Đã thêm lựa chọn'), 'success');
         setNewOptionText('');
         setTimeout(onRefresh, 400);
       } else {
-        onNotify?.('Thêm lựa chọn thất bại', 'error');
+        onNotify?.(tr('Thêm lựa chọn thất bại'), 'error');
       }
-    } catch { onNotify?.('Lỗi khi thêm lựa chọn', 'error'); }
+    } catch { onNotify?.(tr('Lỗi khi thêm lựa chọn'), 'error'); }
     finally { setAddingOption(false); }
   };
 
@@ -274,16 +276,16 @@ export function PollDetailView({
     <div className={`px-3 py-3 space-y-2 border-t ${clr.border}`}>
       {/* Meta */}
       <div className={`text-xs flex items-center gap-2 flex-wrap ${clr.subtext}`}>
-        {allowMulti && <span>Chọn nhiều phương án</span>}
-        {isAnon && <span>Ẩn danh</span>}
+        {allowMulti && <span>{tr('Chọn nhiều phương án')}</span>}
+        {isAnon && <span>{tr('Ẩn danh')}</span>}
         {(isClosed || isExpired) && (
           <span className={`px-1.5 py-0.5 rounded text-[11px] font-semibold ${clr.badge}`}>
-            {isClosed ? 'Đã khoá' : 'Hết hạn'}
+            {isClosed ? tr('Đã khoá') : tr('Hết hạn')}
           </span>
         )}
       </div>
 
-      {numVote > 0 && <p className={`text-xs font-semibold ${clr.voteCount}`}>{numVote} lượt bình chọn</p>}
+      {numVote > 0 && <p className={`text-xs font-semibold ${clr.voteCount}`}>{trx('{{numVote}} lượt bình chọn', { numVote })}</p>}
 
       {/* Options */}
       <div className="space-y-1.5">
@@ -311,7 +313,7 @@ export function PollDetailView({
                     {isChecked && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
                   </div>
                 )}
-                <span className={`flex-1 text-sm truncate ${clr.text}`}>{opt.content || `Lựa chọn ${i + 1}`}</span>
+                <span className={`flex-1 text-sm truncate ${clr.text}`}>{opt.content || tr('Lựa chọn {{v1}}', { v1: i + 1 })}</span>
 
                 {/* Voter mini avatars */}
                 {!isAnon && voters.length > 0 && contacts.length > 0 && (
@@ -336,14 +338,14 @@ export function PollDetailView({
                   style={{ width: `${pct}%` }} />
               </div>
 
-              {/* Voter list link (nếu có contacts) */}
+              {/* Voter list link (if contacts exist) */}
               {!isAnon && voters.length > 0 && contacts.length > 0 && (
                 <div className="flex items-center gap-1.5 px-1 pt-1">
                   <button
                     onClick={e => { e.stopPropagation(); setVoterListOpt(opt); }}
                     className={`text-[11px] hover:text-blue-400 transition-colors ${clr.subtext}`}
                   >
-                    Xem danh sách ({voters.length})
+                    {trx('Xem danh sách ({{count}})', { count: voters.length })}
                   </button>
                 </div>
               )}
@@ -352,26 +354,26 @@ export function PollDetailView({
         })}
       </div>
 
-      {/* Thêm lựa chọn */}
+      {/* Add option */}
       {showAddOption && allowAddNew && !isClosed && !isExpired && (
         <div className="flex items-center gap-1.5 mt-1">
           <input
             value={newOptionText}
             onChange={e => setNewOptionText(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleAddOption()}
-            placeholder="+ Thêm lựa chọn..."
+            placeholder={tr('+ Thêm lựa chọn...')}
             className={`flex-1 text-xs px-2.5 py-1.5 rounded-lg bg-transparent border focus:outline-none ${clr.inputBorder}`}
           />
           {newOptionText.trim() && (
             <button onClick={handleAddOption} disabled={addingOption}
               className={`text-xs px-2 py-1.5 rounded-lg font-semibold transition-colors ${clr.addBtn}`}>
-              Thêm
+              {tr('Thêm')}
             </button>
           )}
         </div>
       )}
 
-      {/* Nút Lưu - chỉ hiện khi có thay đổi */}
+      {/* Save button: shown only when something changed */}
       {canVote && isDirty && (
         <button
           onClick={handleSave}
@@ -379,11 +381,11 @@ export function PollDetailView({
           className={`w-full py-2 rounded-xl text-sm font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5 ${clr.saveBtn}`}
         >
           {saving && <Spinner size={3} />}
-          {pendingIds?.length === 0 ? 'Huỷ bình chọn' : 'Lưu bình chọn'}
+          {pendingIds?.length === 0 ? tr('Huỷ bình chọn') : tr('Lưu bình chọn')}
         </button>
       )}
 
-      {/* Khoá bình chọn - creator only */}
+      {/* Lock poll: creator only */}
       {showLockButton && isCreator && !isClosed && (
         <button
           onClick={handleLock}
@@ -396,7 +398,7 @@ export function PollDetailView({
                 <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
               </svg>
           }
-          Khoá bình chọn
+          {tr('Khoá bình chọn')}
         </button>
       )}
 

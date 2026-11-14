@@ -1,8 +1,9 @@
 /**
- * Gom đăng ký sự kiện của mọi khung (trang, panel) cùng một plugin: main chỉ giữ một đăng ký
- * mỗi plugin với hợp các loại sự kiện; renderer lọc lại theo từng khung trước khi chuyển vào iframe.
+ * Groups the event subscriptions of all frames (pages, panels) of the same plugin: main keeps only one subscription
+ * per plugin with the union of event types; the renderer filters again per frame before passing events into the iframe.
  */
 import ipc from '@/lib/ipc';
+import { tr } from '../../../../shared/i18n';
 
 type Deliver = (event: any) => void;
 
@@ -32,7 +33,7 @@ function ensureListener(): void {
   });
 }
 
-/** Đặt (hoặc đổi) loại sự kiện một khung muốn nhận. Trả kết quả từ main (lỗi quyền → reject). */
+/** Sets (or changes) the event types a frame wants to receive. Returns the result from main (permission error → reject). */
 export async function setFrameEventTypes(pluginId: string, key: symbol, types: string[], deliver: Deliver): Promise<void> {
   let map = frames.get(pluginId);
   if (!map) {
@@ -43,7 +44,7 @@ export async function setFrameEventTypes(pluginId: string, key: symbol, types: s
   else map.delete(key);
   ensureListener();
   const res: any = await sync(pluginId);
-  if (res && res.success === false) throw Object.assign(new Error(res.error || 'Không đăng ký được sự kiện'), { code: res.code });
+  if (res && res.success === false) throw Object.assign(new Error(res.error || tr('Không đăng ký được sự kiện')), { code: res.code });
 }
 
 export function removeFrame(pluginId: string, key: symbol): void {

@@ -1,6 +1,6 @@
 /**
- * Danh sách khi đang xem hội thoại ẩn Zalo (ZL-03, gõ đúng PIN): CHỈ các hội thoại ẩn của tài khoản đã mở khoá, mới nhất
- * trước, không trộn hội thoại thường. Nguồn: trang đã tải (trạng thái sống) ghi đè bản tải bù theo id.
+ * The list shown when viewing Zalo's hidden conversations (ZL-03, after typing the right PIN): ONLY the hidden conversations of the unlocked account, newest
+ * first, not mixed with normal conversations. Source: the pages already loaded (live state) overwrite the catch-up copies by id.
  */
 import type { ContactItem } from '@/store/chat/chatStore';
 

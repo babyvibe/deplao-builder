@@ -1,7 +1,7 @@
 /**
- * Chuẩn hoá chữ để tìm kiếm không phân biệt hoa / thường và dấu tiếng Việt: "Đào Vũ" → "dao vu".
- * SQLite LIKE chỉ bỏ qua hoa / thường với ký tự ASCII ("Đ" ≠ "đ") — DatabaseService đăng ký hàm này thành hàm SQL
- * `deplao_fold` để lọc trong DB.
+ * Normalize text for search, case-insensitive and ignoring Vietnamese diacritics: "Đào Vũ" → "dao vu".
+ * SQLite LIKE only ignores case for ASCII characters ("Đ" ≠ "đ"). DatabaseService registers this function as the SQL function
+ * `deplao_fold` to filter in the DB.
  */
 export function foldSearchText(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -14,7 +14,7 @@ export function foldSearchText(value: unknown): string {
     .trim();
 }
 
-/** Thoát ký tự đặc biệt của LIKE (dùng kèm `ESCAPE '\'`). */
+/** Escape the special characters of LIKE (used with `ESCAPE '\'`). */
 export function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }

@@ -1,6 +1,6 @@
 /**
- * Lịch hẹn + ghi chú nhanh (module Quản lý công việc / ERP) từ nút thao tác nhanh.
- * Không theo tài khoản chat: lưu vào lịch / ghi chú của người đang dùng app.
+ * Quick appointment + quick note (Task management / ERP module) from the quick action button.
+ * Not tied to a chat account: saved to the calendar / notes of the person using the app.
  */
 import React, { useState } from 'react';
 import { useAppStore } from '@/store/app/appStore';
@@ -16,6 +16,7 @@ import {
 import ReminderChips from '@/components/erp/shared/ReminderChips';
 import type { ErpEventType } from '../../../../models/erp/CalendarEvent';
 import { DEFAULT_ERP_REMINDERS } from '../../../../shared/erp/erpReminderText';
+import { tr } from '../../../../shared/i18n';
 
 function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
   return (
@@ -30,24 +31,24 @@ const pad2 = (value: number) => String(value).padStart(2, '0');
 const formatWhen = (ts: number, allDay: boolean) => {
   const d = new Date(ts);
   const day = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`;
-  return allDay ? `ngày ${day}` : `${pad2(d.getHours())}:${pad2(d.getMinutes())} ${day}`;
+  return allDay ? tr('ngày {{day}}', { day }) : `${pad2(d.getHours())}:${pad2(d.getMinutes())} ${day}`;
 };
 
-/** Giá trị điền sẵn (vd "Thêm vào lịch" từ tin nhắn: lib/chat/erp/messageToErp). */
+/** Prefilled values (e.g. "Thêm vào lịch" (Add to calendar) from a message: lib/chat/erp/messageToErp). */
 export interface QuickEventInitial {
   title?: string;
-  /** Thời điểm bắt đầu (ms); không có → nửa giờ tròn kế tiếp. */
+  /** Start time (ms); if missing → the next half-hour mark. */
   start?: number | null;
-  /** Tin chỉ có ngày, không có giờ: ô giờ để trống cho người dùng chọn. */
+  /** Message with a date only and no time: the time field is left empty for the user to pick. */
   dateOnly?: boolean;
   type?: ErpEventType;
-  /** Mốc nhắc (phút trước giờ hẹn, 0 = đúng giờ); không có → 15 phút + đúng giờ. */
+  /** Reminder offset (minutes before the appointment, 0 = at the time); if missing → 15 min + at the time. */
   reminders?: number[];
   description?: string;
 }
 
-/** Thêm lịch hẹn; có hội thoại đang mở thì cho gắn lịch với hội thoại đó (từ tin nhắn: gắn cả tin để nhắc lịch nhảy tới). */
-export function QuickEventDialog({ activeThread, initial, heading = 'Thêm lịch hẹn', onClose }: {
+/** Add an appointment; if a conversation is open, the appointment can be linked to it (from a message: the message is linked too, so the reminder jumps to it). */
+export function QuickEventDialog({ activeThread, initial, heading = tr('Thêm lịch hẹn'), onClose }: {
   activeThread?: { id: string; name: string; accountId?: string; msgId?: string } | null;
   initial?: QuickEventInitial;
   heading?: string;
@@ -68,7 +69,7 @@ export function QuickEventDialog({ activeThread, initial, heading = 'Thêm lịc
 
   const save = async () => {
     const linked = linkThread && activeThread ? activeThread : null;
-    // Lịch chưa hiển thị linked_contact_id → ghi thêm tên hội thoại vào ghi chú để mở lịch là biết hẹn với ai.
+    // The calendar does not display linked_contact_id yet → also write the conversation name into the note, so opening the appointment shows who it is with.
     const threadLine = linked ? `Hội thoại: ${linked.name}` : '';
     const built = buildQuickEventInput({
       title, date, time, duration, type, reminders, location,
@@ -82,11 +83,11 @@ export function QuickEventDialog({ activeThread, initial, heading = 'Thêm lịc
     setError('');
     try {
       const event = await useErpCalendarStore.getState().createEvent(built.input);
-      if (!event) { setError('Không lưu được lịch hẹn: kiểm tra quyền Quản lý công việc'); return; }
-      useAppStore.getState().showNotification(`Đã thêm lịch "${built.input.title}" lúc ${formatWhen(built.input.start_at, duration === 'all_day')}`, 'success');
+      if (!event) { setError(tr('Không lưu được lịch hẹn: kiểm tra quyền Quản lý công việc')); return; }
+      useAppStore.getState().showNotification(tr('Đã thêm lịch "{{title}}" lúc {{v1}}', { title: built.input.title, v1: formatWhen(built.input.start_at, duration === 'all_day') }), 'success');
       onClose();
     } catch (err: any) {
-      setError(err?.message || 'Không lưu được lịch hẹn');
+      setError(err?.message || tr('Không lưu được lịch hẹn'));
     } finally {
       setSaving(false);
     }
@@ -97,62 +98,62 @@ export function QuickEventDialog({ activeThread, initial, heading = 'Thêm lịc
       <DialogHeader>
         <div className="min-w-0">
           <DialogTitle>{heading}</DialogTitle>
-          <DialogDescription>Lưu vào lịch của bạn trong Quản lý công việc, tới giờ nhắc sẽ hiện thông báo</DialogDescription>
+          <DialogDescription>{tr('Lưu vào lịch của bạn trong Quản lý công việc, tới giờ nhắc sẽ hiện thông báo')}</DialogDescription>
         </div>
         <DialogClose />
       </DialogHeader>
       <DialogBody className="space-y-3">
-        <Field label="Tiêu đề" htmlFor="quick-event-title">
+        <Field label={tr('Tiêu đề')} htmlFor="quick-event-title">
           <Input id="quick-event-title" autoFocus value={title} maxLength={300} onChange={e => setTitle(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') void save(); }} placeholder="Ví dụ: Gọi lại cho khách chốt đơn" />
+            onKeyDown={e => { if (e.key === 'Enter') void save(); }} placeholder={tr('Ví dụ: Gọi lại cho khách chốt đơn')} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Ngày" htmlFor="quick-event-date">
+          <Field label={tr('Ngày')} htmlFor="quick-event-date">
             <Input id="quick-event-date" type="date" value={date} onChange={e => setDate(e.target.value)} />
           </Field>
-          <Field label={!time && duration !== 'all_day' ? 'Chọn giờ' : 'Giờ'} htmlFor="quick-event-time">
+          <Field label={!time && duration !== 'all_day' ? tr('Chọn giờ') : tr('Giờ')} htmlFor="quick-event-time">
             <Input id="quick-event-time" type="time" value={time} disabled={duration === 'all_day'} onChange={e => setTime(e.target.value)}
               className={!time && duration !== 'all_day' ? 'ring-1 ring-amber-500' : undefined} />
           </Field>
-          <Field label="Thời lượng" htmlFor="quick-event-duration">
+          <Field label={tr('Thời lượng')} htmlFor="quick-event-duration">
             <Select id="quick-event-duration" value={duration} onChange={e => setDuration(e.target.value as QuickEventDuration)}>
               {QUICK_EVENT_DURATIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </Select>
           </Field>
-          <Field label="Loại" htmlFor="quick-event-type">
+          <Field label={tr('Loại')} htmlFor="quick-event-type">
             <Select id="quick-event-type" value={type} onChange={e => setType(e.target.value as ErpEventType)}>
               {QUICK_EVENT_TYPES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </Select>
           </Field>
         </div>
-        <Field label="Địa điểm" htmlFor="quick-event-location">
-          <Input id="quick-event-location" value={location} onChange={e => setLocation(e.target.value)} placeholder="Không bắt buộc" />
+        <Field label={tr('Địa điểm')} htmlFor="quick-event-location">
+          <Input id="quick-event-location" value={location} onChange={e => setLocation(e.target.value)} placeholder={tr('Không bắt buộc')} />
         </Field>
         <div className="space-y-1.5">
-          <span id="quick-event-reminders" className="text-xs font-medium text-muted-foreground">Nhắc trước</span>
+          <span id="quick-event-reminders" className="text-xs font-medium text-muted-foreground">{tr('Nhắc trước')}</span>
           <ReminderChips value={reminders} onChange={setReminders} labelledBy="quick-event-reminders" />
         </div>
-        <Field label="Ghi chú" htmlFor="quick-event-description">
+        <Field label={tr('Ghi chú')} htmlFor="quick-event-description">
           <Textarea id="quick-event-description" value={description} onChange={e => setDescription(e.target.value)}
-            className={initial?.description ? 'min-h-[96px]' : 'min-h-[64px]'} placeholder="Không bắt buộc" />
+            className={initial?.description ? 'min-h-[96px]' : 'min-h-[64px]'} placeholder={tr('Không bắt buộc')} />
         </Field>
         {activeThread && (
           <Checkbox checked={linkThread} onCheckedChange={setLinkThread}
             label={<span className="text-xs">
-              {activeThread.msgId ? 'Gắn với tin nhắn trong hội thoại' : 'Gắn với hội thoại đang mở'}: <span className="font-medium">{activeThread.name}</span>
+              {activeThread.msgId ? tr('Gắn với tin nhắn trong hội thoại') : tr('Gắn với hội thoại đang mở')}: <span className="font-medium">{activeThread.name}</span>
             </span>} />
         )}
         {error && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
       </DialogBody>
       <DialogFooter>
-        <Button variant="outline" onClick={onClose} disabled={saving}>Huỷ</Button>
-        <Button onClick={() => void save()} loading={saving} disabled={!title.trim()}>Lưu lịch</Button>
+        <Button variant="outline" onClick={onClose} disabled={saving}>{tr('Huỷ')}</Button>
+        <Button onClick={() => void save()} loading={saving} disabled={!title.trim()}>{tr('Lưu lịch')}</Button>
       </DialogFooter>
     </Dialog>
   );
 }
 
-/** Ghi chú nhanh: tiêu đề tự lấy dòng đầu nếu bỏ trống. Từ tin nhắn: điền sẵn tiêu đề + nội dung tin. */
+/** Quick note: the title is the first line when left empty. From a message: prefills the title + message content. */
 export function QuickNoteDialog({ initial, onClose }: { initial?: { title?: string; content?: string }; onClose: () => void }) {
   const [title, setTitle] = useState(initial?.title || '');
   const [content, setContent] = useState(initial?.content || '');
@@ -160,17 +161,17 @@ export function QuickNoteDialog({ initial, onClose }: { initial?: { title?: stri
   const [error, setError] = useState('');
 
   const save = async () => {
-    if (!title.trim() && !content.trim()) { setError('Ghi chú đang trống'); return; }
+    if (!title.trim() && !content.trim()) { setError(tr('Ghi chú đang trống')); return; }
     setSaving(true);
     setError('');
     try {
       const noteTitle = quickNoteTitle(title, content);
       const note = await useErpNoteStore.getState().createNote({ title: noteTitle, content: content.trim() });
-      if (!note) { setError('Không lưu được ghi chú — kiểm tra quyền Quản lý công việc'); return; }
-      useAppStore.getState().showNotification(`Đã lưu ghi chú "${noteTitle}"`, 'success');
+      if (!note) { setError(tr('Không lưu được ghi chú — kiểm tra quyền Quản lý công việc')); return; }
+      useAppStore.getState().showNotification(tr('Đã lưu ghi chú "{{noteTitle}}"', { noteTitle }), 'success');
       onClose();
     } catch (err: any) {
-      setError(err?.message || 'Không lưu được ghi chú');
+      setError(err?.message || tr('Không lưu được ghi chú'));
     } finally {
       setSaving(false);
     }
@@ -180,21 +181,21 @@ export function QuickNoteDialog({ initial, onClose }: { initial?: { title?: stri
     <Dialog open onOpenChange={next => { if (!next && !saving) onClose(); }} size="md">
       <DialogHeader>
         <div className="min-w-0">
-          <DialogTitle>Ghi chú nhanh</DialogTitle>
-          <DialogDescription>Lưu vào Ghi chú trong Quản lý công việc · Ctrl+Enter để lưu</DialogDescription>
+          <DialogTitle>{tr('Ghi chú nhanh')}</DialogTitle>
+          <DialogDescription>{tr('Lưu vào Ghi chú trong Quản lý công việc · Ctrl+Enter để lưu')}</DialogDescription>
         </div>
         <DialogClose />
       </DialogHeader>
       <DialogBody className="space-y-3">
-        <Input value={title} maxLength={300} onChange={e => setTitle(e.target.value)} placeholder="Tiêu đề (bỏ trống: lấy dòng đầu)" aria-label="Tiêu đề ghi chú" />
+        <Input value={title} maxLength={300} onChange={e => setTitle(e.target.value)} placeholder={tr('Tiêu đề (bỏ trống: lấy dòng đầu)')} aria-label={tr('Tiêu đề ghi chú')} />
         <Textarea autoFocus value={content} onChange={e => setContent(e.target.value)} className="min-h-[160px]"
           onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void save(); } }}
-          placeholder="Nội dung ghi chú…" aria-label="Nội dung ghi chú" />
+          placeholder={tr('Nội dung ghi chú…')} aria-label={tr('Nội dung ghi chú')} />
         {error && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
       </DialogBody>
       <DialogFooter>
-        <Button variant="outline" onClick={onClose} disabled={saving}>Huỷ</Button>
-        <Button onClick={() => void save()} loading={saving} disabled={!title.trim() && !content.trim()}>Lưu ghi chú</Button>
+        <Button variant="outline" onClick={onClose} disabled={saving}>{tr('Huỷ')}</Button>
+        <Button onClick={() => void save()} loading={saving} disabled={!title.trim() && !content.trim()}>{tr('Lưu ghi chú')}</Button>
       </DialogFooter>
     </Dialog>
   );

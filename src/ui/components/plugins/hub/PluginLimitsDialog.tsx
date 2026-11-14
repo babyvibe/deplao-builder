@@ -1,6 +1,6 @@
 /**
- * Giới hạn chung cho mọi ứng dụng (trước nằm ở Cài đặt → API → Nâng cao): số ứng dụng bật cùng lúc,
- * request/phút cho mỗi ứng dụng. Lưu qua api:settings như các cài đặt API khác.
+ * Shared limits for all apps (previously under Settings → API → Advanced): number of apps enabled at the same time,
+ * requests/minute per app. Saved through api:settings like the other API settings.
  */
 import React, { useEffect, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -8,10 +8,11 @@ import { useAppStore } from '@/store/app/appStore';
 import { Spinner } from '@/components/common/PageLoading';
 import { CloseIcon } from '@/components/common/icons';
 import { inputCls } from '@/components/settings/api/apiUi';
+import { tr } from '../../../../shared/i18n';
 
 export const PLUGIN_LIMITS: Array<{ key: string; label: string; hint: string; min: number; unit?: string }> = [
-  { key: 'plugins_max_enabled', label: 'Số ứng dụng bật cùng lúc tối đa', hint: 'Ứng dụng có phần chạy nền dùng tiến trình riêng, tốn RAM.', min: 1 },
-  { key: 'plugins_rate_limit_per_min', label: 'Request/phút cho mỗi ứng dụng', hint: 'Chặn ứng dụng lỗi gọi API liên tục. 0 = không giới hạn.', min: 0, unit: '/phút' },
+  { key: 'plugins_max_enabled', label: tr('Số ứng dụng bật cùng lúc tối đa'), hint: tr('Ứng dụng có phần chạy nền dùng tiến trình riêng, tốn RAM.'), min: 1 },
+  { key: 'plugins_rate_limit_per_min', label: tr('Request/phút cho mỗi ứng dụng'), hint: tr('Chặn ứng dụng lỗi gọi API liên tục. 0 = không giới hạn.'), min: 0, unit: tr('/phút') },
 ];
 
 export default function PluginLimitsDialog({ onClose }: { onClose: () => void }) {
@@ -34,7 +35,7 @@ export default function PluginLimitsDialog({ onClose }: { onClose: () => void })
     if (!values) return;
     const n = Math.floor(Number(values[key]));
     if (!Number.isFinite(n) || n < min) {
-      showNotification(`Tối thiểu ${min}`, 'error');
+      showNotification(tr('Tối thiểu {{min}}', { min }), 'error');
       setValues(prev => ({ ...prev!, [key]: saved[key] }));
       return;
     }
@@ -42,9 +43,9 @@ export default function PluginLimitsDialog({ onClose }: { onClose: () => void })
     setSaving(key);
     try {
       const res = await ipc.api!.setSetting(key, String(n));
-      if (!res.success) { showNotification(res.error || 'Lưu thất bại', 'error'); return; }
+      if (!res.success) { showNotification(res.error || tr('Lưu thất bại'), 'error'); return; }
       setSaved(prev => ({ ...prev, [key]: String(n) }));
-      showNotification('Đã lưu', 'success');
+      showNotification(tr('Đã lưu'), 'success');
     } finally {
       setSaving(null);
     }
@@ -54,7 +55,7 @@ export default function PluginLimitsDialog({ onClose }: { onClose: () => void })
     <div className="fixed inset-0 z-[45] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl bg-popover border border-border shadow-2xl p-5 space-y-4" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <p className="text-base font-semibold text-foreground">Giới hạn chung cho ứng dụng</p>
+          <p className="text-base font-semibold text-foreground">{tr('Giới hạn chung cho ứng dụng')}</p>
           <button type="button" onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-card hover:text-foreground">
             <CloseIcon className="w-4 h-4" />
           </button>

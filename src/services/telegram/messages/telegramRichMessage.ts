@@ -1,17 +1,18 @@
 /**
- * Tin "định dạng phong phú" của Telegram (rich message, layer 23x): nội dung là các khối như Instant View — tiêu đề nhiều
- * cấp, đoạn văn, danh sách (cả ô đánh dấu), trích dẫn, bảng, công thức, hàng nút… — trong `message.richMessage`, còn phần
- * chữ `message` để trống. Layer cũ nhận các tin này thành `messageMediaUnsupported` rỗng ("Loại tin nhắn Telegram chưa
- * được hỗ trợ").
+ * Telegram "rich format" message (rich message, layer 23x): the content is blocks like Instant View (headings at several
+ * levels, paragraphs, lists (including checkboxes), quotes, tables, formulas, button rows…) in `message.richMessage`, and the plain
+ * `message` text is left empty. The old layer receives these as an empty `messageMediaUnsupported` ("Loại tin nhắn Telegram chưa được hỗ trợ" (Telegram message type not supported yet)).
  *
- * Deplao hiển thị / tìm kiếm / xem trước tin Telegram dạng chữ → chuyển các khối thành chữ thường: mỗi khối một đoạn
- * (cách nhau một dòng trống), danh sách có "•" / "1." / "☐ ☑", trích dẫn có "│ ", bảng nối ô bằng " | ", nút "[…]",
- * link giữ địa chỉ khi chữ hiện khác địa chỉ. Ảnh / video / tệp trong khối chỉ còn nhãn + chú thích.
+ * Deplao shows / searches / previews a Telegram message as plain text, so the blocks are converted to plain text: each block is one paragraph
+ * (separated by a blank line), lists use "•" / "1." / "☐ ☑", quotes use "│ ", tables join cells with " | ", buttons become "[…]",
+ * and links keep their address when the shown text differs from it. Images / videos / files in a block are only a label + caption.
  */
+
+import { appLocale, tr } from '../../../shared/i18n';
 
 export interface RichMessageText {
   text: string;
-  /** Telegram chỉ gửi một phần (tin dài) — lấy đủ bằng messages.getRichMessage. */
+  /** Telegram sends only part of it (long message): get the full text with messages.getRichMessage. */
   part: boolean;
 }
 
@@ -21,7 +22,7 @@ function cls(node: any): string {
   return String(node?.className || '');
 }
 
-/** RichText (textPlain / textBold / textConcat / textUrl …) → chữ thường. */
+/** RichText (textPlain / textBold / textConcat / textUrl …) → plain text. */
 export function richTextToPlain(node: any, depth = 0): string {
   if (node == null || depth > MAX_DEPTH) return '';
   if (typeof node === 'string') return node;
@@ -57,7 +58,7 @@ export function richTextToPlain(node: any, depth = 0): string {
     }
     default:
       // textBold / Italic / Underline / Strike / Fixed / Sub / Superscript / Marked / Spoiler / Mention / Hashtag /
-      // BotCommand / Cashtag / Auto* / BankCard / TonAddress / MentionName / Anchor / Date / Diff (chữ hiện = text mới)
+      // BotCommand / Cashtag / Auto* / BankCard / TonAddress / MentionName / Anchor / Date / Diff (the shown text is the new text)
       if (node.text !== undefined) return richTextToPlain(node.text, depth + 1);
       return '';
   }
@@ -118,7 +119,7 @@ function blockLines(block: any, depth: number): string[] {
     case 'PageBlockAuthorDate': {
       const author = text(block.author).trim();
       const date = Number(block.publishedDate || 0);
-      const day = date > 0 ? new Date(date * 1000).toLocaleDateString('vi-VN') : '';
+      const day = date > 0 ? new Date(date * 1000).toLocaleDateString(appLocale()) : '';
       return [[author, day].filter(Boolean).join(' · ')].filter(Boolean);
     }
     case 'PageBlockList':
@@ -141,18 +142,18 @@ function blockLines(block: any, depth: number): string[] {
       return [...prefixLines(body, '│ '), ...(caption ? [`│ — ${caption}`] : [])].map(line => line.trimEnd());
     }
     case 'PageBlockPhoto':
-      return ['🖼 Ảnh', ...captionLines(block.caption, depth)];
+      return [tr('🖼 Ảnh'), ...captionLines(block.caption, depth)];
     case 'PageBlockVideo':
       return ['🎬 Video', ...captionLines(block.caption, depth)];
     case 'PageBlockAudio':
-      return ['🎵 Âm thanh', ...captionLines(block.caption, depth)];
+      return [tr('🎵 Âm thanh'), ...captionLines(block.caption, depth)];
     case 'PageBlockDocument':
-      return ['📄 Tệp', ...captionLines(block.caption, depth)];
+      return [tr('📄 Tệp'), ...captionLines(block.caption, depth)];
     case 'PageBlockMap':
     case 'InputPageBlockMap':
-      return ['📍 Bản đồ', ...captionLines(block.caption, depth)];
+      return [tr('📍 Bản đồ'), ...captionLines(block.caption, depth)];
     case 'PageBlockEmbed':
-      return [block.url ? `🔗 ${block.url}` : '🔗 Nội dung nhúng', ...captionLines(block.caption, depth)];
+      return [block.url ? `🔗 ${block.url}` : tr('🔗 Nội dung nhúng'), ...captionLines(block.caption, depth)];
     case 'PageBlockEmbedPost':
       return [
         [block.author, block.url].filter(Boolean).join(' · '),
@@ -185,14 +186,14 @@ function blockLines(block: any, depth: number): string[] {
       return buttons.length ? [buttons.map((label: string) => `[${label}]`).join('  ')] : [];
     }
     default:
-      // Khối mới hơn schema này: lấy chữ nếu có
+      // Block newer than this schema: take the text if there is any
       if (block.text !== undefined) return text(block.text).split('\n');
       if (Array.isArray(block.blocks)) return blocksToLines(block.blocks, depth + 1);
       return [];
   }
 }
 
-/** Danh sách khối → các dòng; giữa hai khối có nội dung là một dòng trống. */
+/** List of blocks → lines; a blank line between two blocks that have content. */
 function blocksToLines(blocks: any[], depth: number): string[] {
   const out: string[] = [];
   for (const block of blocks || []) {
@@ -206,7 +207,7 @@ function blocksToLines(blocks: any[], depth: number): string[] {
   return out;
 }
 
-/** `message.richMessage` → chữ thường để lưu / hiển thị như tin chữ. null = không phải tin định dạng phong phú. */
+/** `message.richMessage` → plain text to save / display like a text message. null = not a rich-format message. */
 export function richMessageToText(rich: any): RichMessageText | null {
   if (!rich || cls(rich) !== 'RichMessage' || !Array.isArray(rich.blocks)) return null;
   const text = blocksToLines(rich.blocks, 0)
@@ -217,9 +218,9 @@ export function richMessageToText(rich: any): RichMessageText | null {
   return { text, part: !!rich.part };
 }
 
-// ─── Khối có cấu trúc để vẽ như Telegram (ảnh thật, tiêu đề, danh sách, bảng…) ───────────────────────────────
+// ─── Structured blocks drawn like Telegram (real images, headings, lists, tables…) ───────────────────────────────
 
-/** Một khối của tin định dạng phong phú — dạng gọn, lưu trong attachment `rich_message` (JSON). */
+/** One block of a rich-format message, compact form, saved in the `rich_message` attachment (JSON). */
 export type RichBlock =
   | { t: 'h1' | 'h2' | 'h3' | 'p' | 'kicker' | 'footer' | 'meta' | 'thinking'; text: string }
   | { t: 'code' | 'math'; text: string }
@@ -249,7 +250,7 @@ function photoSize(photo: any): { w?: number; h?: number } {
   for (const size of sizes) {
     const w = Number(size?.w || 0);
     const h = Number(size?.h || 0);
-    // photoSize / photoSizeProgressive / photoCachedSize đều có w, h — lấy cỡ lớn nhất
+    // photoSize / photoSizeProgressive / photoCachedSize all have w and h: take the largest size
     if (w > 0 && h > 0 && (!best || w * h > best.w * best.h)) best = { w, h };
   }
   return best ? { w: best.w, h: best.h } : {};
@@ -327,7 +328,7 @@ function toBlocks(blocks: any[], rich: any, depth: number, out: RichBlock[]): vo
         break;
       case 'PageBlockAuthorDate': {
         const date = Number(block.publishedDate || 0);
-        const line = [text(block.author), date > 0 ? new Date(date * 1000).toLocaleDateString('vi-VN') : ''].filter(Boolean).join(' · ');
+        const line = [text(block.author), date > 0 ? new Date(date * 1000).toLocaleDateString(appLocale()) : ''].filter(Boolean).join(' · ');
         if (line) out.push({ t: 'meta', text: line });
         break;
       }
@@ -408,7 +409,7 @@ function toBlocks(blocks: any[], rich: any, depth: number, out: RichBlock[]): vo
       case 'PageBlockMap':
       case 'InputPageBlockMap': {
         const caption = captionText(block.caption, depth);
-        out.push({ t: 'p', text: caption ? `📍 ${caption}` : '📍 Bản đồ' });
+        out.push({ t: 'p', text: caption ? `📍 ${caption}` : tr('📍 Bản đồ') });
         break;
       }
       case 'PageBlockRelatedArticles': {
@@ -425,7 +426,7 @@ function toBlocks(blocks: any[], rich: any, depth: number, out: RichBlock[]): vo
   }
 }
 
-/** `message.richMessage` → khối để vẽ (null = không phải tin định dạng phong phú). */
+/** `message.richMessage` → blocks to draw (null = not a rich-format message). */
 export function richMessageToBlocks(rich: any): RichBlock[] | null {
   if (!rich || cls(rich) !== 'RichMessage' || !Array.isArray(rich.blocks)) return null;
   const out: RichBlock[] = [];
@@ -433,7 +434,7 @@ export function richMessageToBlocks(rich: any): RichBlock[] | null {
   return out;
 }
 
-/** Ảnh / video / tệp các khối dùng (id trong richMessage.photos / documents). */
+/** Images / videos / files used by the blocks (ids in richMessage.photos / documents). */
 export function richMediaRefs(blocks: RichBlock[] | null | undefined): RichMediaRef[] {
   const refs: RichMediaRef[] = [];
   const seen = new Set<string>();
@@ -446,7 +447,7 @@ export function richMediaRefs(blocks: RichBlock[] | null | undefined): RichMedia
   return refs;
 }
 
-/** Danh sách việc cần làm (messageMediaToDo) → chữ: tiêu đề + "☐ / ☑ việc". */
+/** Checklist (messageMediaToDo) → text: title + "☐ / ☑ việc" (☐ / ☑ item). */
 export function todoListToText(media: any): { title: string; text: string; items: Array<{ id: number; text: string; done: boolean }> } {
   const todo = media?.todo || {};
   const done = new Set<number>((media?.completions || []).map((completion: any) => Number(completion?.id)));
@@ -456,7 +457,7 @@ export function todoListToText(media: any): { title: string; text: string; items
     text: String(item?.title?.text ?? item?.title ?? '').trim(),
     done: done.has(Number(item?.id)),
   }));
-  const text = [title || 'Danh sách việc cần làm', ...items.map((item: { text: string; done: boolean }) => `${item.done ? '☑' : '☐'} ${item.text}`)]
+  const text = [title || tr('Danh sách việc cần làm'), ...items.map((item: { text: string; done: boolean }) => `${item.done ? '☑' : '☐'} ${item.text}`)]
     .join('\n');
   return { title, text, items };
 }

@@ -1,8 +1,8 @@
 /**
- * useChannelInfo.ts — Hook cung cấp channel info cho component hiện tại.
+ * useChannelInfo.ts: Hook that provides the channel info for the current component.
  *
- * Thay vì mỗi component tự resolve channel từ contact/account,
- * dùng hook này để có consistent channel detection.
+ * Instead of each component resolving the channel from contact/account itself,
+ * use this hook for consistent channel detection.
  *
  * Usage:
  *   const { channel, isZalo, isTelegram, cap, supports } = useChannelInfo();
@@ -57,8 +57,8 @@ export function useChannelInfo(): ChannelInfo {
 }
 
 /**
- * Phiên bản lightweight — chỉ cần channel string, không cần full hook.
- * Dùng trong utility functions hoặc khi channel đã được resolve sẵn.
+ * Lightweight version: only needs the channel string, not the full hook.
+ * Use it in utility functions or when the channel has already been resolved.
  */
 export function getChannelInfo(ch: Channel) {
   return {

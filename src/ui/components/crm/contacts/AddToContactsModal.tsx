@@ -11,6 +11,8 @@ import type { LocalLabelItem } from '@/components/common/inputs/LocalLabelSelect
 import { extractUserProfile } from '../../../../utils/zalo/profileUtils';
 import { CloudIcon, CloseIcon, HardDriveIcon, SearchIcon } from '@/components/common/icons';
 import { CHANNEL } from '@/lib/channels/channelHelper';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,12 +27,12 @@ type InputMode = 'list' | 'phones';
 type TagTab = 'none' | 'local' | 'zalo';
 
 interface AddToContactsModalProps {
-  /** Danh sách liên hệ cần thêm (từ group members, v.v.) - nếu null thì dùng mode nhập SĐT */
+  /** Contacts to add (from group members, etc.); if null, use the phone-number entry mode */
   contacts?: ContactToAdd[];
-  /** Override account (nếu không truyền dùng activeAccountId) */
+  /** Account override (if not passed, use activeAccountId) */
   zaloId?: string;
   onClose: () => void;
-  /** Callback sau khi thêm xong */
+  /** Callback after adding is finished */
   onDone?: (addedCount: number) => void;
 }
 
@@ -66,10 +68,10 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
   // ── Labels data ──────────────────────────────────────────────────────────
   const [localLabels, setLocalLabels] = useState<LocalLabelItem[]>([]);
   const zaloLabels: LabelData[] = allLabelsMap[accountId] || [];
-  // Lần tải Nhãn Local gần nhất lỗi (employee: mất kết nối BOSS) — giữ nhãn đang có, hiện "Không tải được — Thử lại"
+  // The last Local label load failed (employee: lost connection to BOSS): keep the labels on screen, show "Không tải được - Thử lại" (Failed to load - Retry)
   const [localLabelsFailed, setLocalLabelsFailed] = useState(false);
   const [localLabelsLoading, setLocalLabelsLoading] = useState(false);
-  /** Tài khoản của `localLabels` đang hiện: lỗi chỉ giữ nhãn cũ khi chúng thuộc đúng tài khoản này. */
+  /** Account of the `localLabels` on screen: an error only keeps the old labels when they belong to this account. */
   const localLabelsOwnerRef = useRef<string | null>(null);
   const localLabelsSeqRef = useRef(0);
 
@@ -90,11 +92,11 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
     } catch (err: any) {
       res = { success: false, error: err?.message };
     }
-    if (seq !== localLabelsSeqRef.current) return; // đã có lần tải mới hơn
+    if (seq !== localLabelsSeqRef.current) return; // a newer load has already finished
     setLocalLabelsLoading(false);
     const changedOwner = localLabelsOwnerRef.current !== null && localLabelsOwnerRef.current !== owner;
     if (isReadFailure(res)) {
-      // Lỗi → giữ nhãn của đúng tài khoản; nhãn của tài khoản khác thì bỏ (kể cả nhãn đã chọn)
+      // Error → keep the labels of the exact account; labels of another account are dropped (including the selected ones)
       if (readOutcome(true, localLabelsOwnerRef.current, owner) === 'clear') {
         localLabelsOwnerRef.current = owner;
         setLocalLabels([]);
@@ -113,7 +115,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
 
   useEffect(() => { loadLocalLabels(); }, [loadLocalLabels]);
 
-  // Chế độ nhân viên: kết nối BOSS phục hồi → tải lại Nhãn Local
+  // Employee mode: BOSS connection restored → reload the Local labels
   useEmployeeResync(loadLocalLabels);
 
   // ── Contact list to process ──────────────────────────────────────────────
@@ -131,7 +133,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
   const handleResolvePhones = useCallback(async () => {
     const phones = parsePhones();
     if (phones.length === 0) {
-      showNotification('Không tìm thấy SĐT hợp lệ nào', 'info');
+      showNotification(tr('Không tìm thấy SĐT hợp lệ nào'), 'info');
       return;
     }
     const acc = getActiveAccount();
@@ -195,7 +197,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
     setResolving(false);
     setResolveProgress(null);
     if (results.length === 0) {
-      showNotification('Không tìm thấy người dùng nào từ danh sách SĐT', 'info');
+      showNotification(tr('Không tìm thấy người dùng nào từ danh sách SĐT'), 'info');
     }
   }, [parsePhones, getActiveAccount, showNotification]);
 
@@ -281,19 +283,19 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
             }
           }
         } catch (err: any) {
-          showNotification('Cảnh báo: Gán nhãn Zalo thất bại - ' + (err?.message || ''), 'error');
+          showNotification(tr('Cảnh báo: Gán nhãn Zalo thất bại - {{v1}}', { v1: (err?.message || '') }), 'error');
         }
       }
 
       // Note: Workflow events are emitted by backend (databaseIpc.ts and zaloIpc.ts) to avoid duplicates
 
-      showNotification(`Đã thêm ${finalContacts.length} liên hệ vào CRM`, 'success');
+      showNotification(tr('Đã thêm {{count}} liên hệ vào CRM', { count: finalContacts.length }), 'success');
       // Trigger contacts list refresh in CRMPage
       window.dispatchEvent(new CustomEvent('crm-contacts-changed', { detail: { zaloId: accountId } }));
       onDone?.(finalContacts.length);
       onClose();
     } catch (err: any) {
-      showNotification('Lỗi: ' + (err?.message || 'Không rõ'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (err?.message || tr('Không rõ')) }), 'error');
     } finally {
       setProcessing(false);
       setProcessProgress(null);
@@ -317,11 +319,11 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
               </svg>
             </div>
             <div>
-              <h3 className="font-semibold text-foreground text-sm">Thêm vào Liên hệ CRM</h3>
+              <h3 className="font-semibold text-foreground text-sm">{tr('Thêm vào Liên hệ CRM')}</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {inputMode === 'list'
-                  ? `${finalContacts.length} liên hệ đã chọn`
-                  : 'Nhập danh sách SĐT để tra cứu & thêm vào liên hệ'}
+                  ? tr('{{count}} liên hệ đã chọn', { count: finalContacts.length })
+                  : tr('Nhập danh sách SĐT để tra cứu & thêm vào liên hệ')}
               </p>
             </div>
           </div>
@@ -333,9 +335,9 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
           {/* ── Phone input mode ───────────────────────────────────────────── */}
           {inputMode === 'phones' && resolvedContacts.length === 0 && (
             <div>
-              <div className="text-red-400 text-xs">Zalo hạn chế bạn tìm kiếm SĐT theo ngày để tránh trục lợi từ tính năng tìm kiếm, nên nhập tối đa 30 số 1 giờ và không quá 100-200 số 1 ngày để hoạt động an toàn.</div>
+              <div className="text-red-400 text-xs">{tr('Zalo hạn chế bạn tìm kiếm SĐT theo ngày để tránh trục lợi từ tính năng tìm kiếm, nên nhập tối đa 30 số 1 giờ và không quá 100-200 số 1 ngày để hoạt động an toàn.')}</div>
               <label className="text-xs text-muted-foreground mb-1.5 block mt-2">
-                Nhập danh sách SĐT <span className="text-muted-foreground">(mỗi dòng 1 số, hoặc cách nhau bởi dấu phẩy)</span>
+                {trx('Nhập danh sách SĐT <0>(mỗi dòng 1 số, hoặc cách nhau bởi dấu phẩy)</0>', { 0: <span className="text-muted-foreground" /> })}
               </label>
               <textarea
                 value={phoneInput}
@@ -347,7 +349,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
               />
               {phoneInput.trim() && (
                 <p className="text-xs text-muted-foreground mt-1.5">
-                  Phát hiện <span className="text-green-400 font-medium">{phoneCount}</span> SĐT hợp lệ
+                  {trx('Phát hiện <0>{{phoneCount}}</0> SĐT hợp lệ', { 0: <span className="text-green-400 font-medium" />, phoneCount })}
                 </p>
               )}
 
@@ -357,7 +359,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                   <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
                     <span className="flex items-center gap-1.5">
                       {SpinIcon}
-                      <span>Đang tra cứu: <span className="text-foreground font-medium">{resolveProgress.current}</span>/{resolveProgress.total}</span>
+                      <span>{trx('Đang tra cứu: <0>{{current}}</0>/{{total}}', { 0: <span className="text-foreground font-medium" />, current: resolveProgress.current, total: resolveProgress.total })}</span>
                     </span>
                     <span className="text-green-400 font-medium">
                       {Math.round((resolveProgress.current / resolveProgress.total) * 100)}%
@@ -369,7 +371,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                   </div>
                   <button onClick={() => { stopRef.current = true; }}
                     className="mt-2 text-xs text-red-400 hover:text-red-300 transition-colors">
-                    Dừng tra cứu
+                    {tr('Dừng tra cứu')}
                   </button>
                 </div>
               )}
@@ -381,12 +383,12 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-muted-foreground">
-                  Tìm thấy <span className="text-green-400 font-medium">{resolvedContacts.length}</span> người dùng
+                  {trx('Tìm thấy <0>{{count}}</0> người dùng', { 0: <span className="text-green-400 font-medium" />, count: resolvedContacts.length })}
                 </span>
                 <button
                   onClick={() => { setResolvedContacts([]); }}
                   className="text-xs text-muted-foreground hover:text-foreground/80 transition-colors">
-                  ← Nhập lại
+                  {tr('← Nhập lại')}
                 </button>
               </div>
               <div className="max-h-48 overflow-y-auto border border-border rounded-xl divide-y divide-border/50">
@@ -414,7 +416,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
           {/* ── List mode: preview contacts ────────────────────────────────── */}
           {inputMode === 'list' && finalContacts.length > 0 && (
             <div>
-              <span className="text-xs text-muted-foreground mb-1.5 block">Danh sách liên hệ</span>
+              <span className="text-xs text-muted-foreground mb-1.5 block">{tr('Danh sách liên hệ')}</span>
               <div className="max-h-40 overflow-y-auto border border-border rounded-xl divide-y divide-border/50">
                 {finalContacts.slice(0, 50).map(c => (
                   <div key={c.contactId} className="flex items-center gap-2.5 px-3 py-2">
@@ -429,7 +431,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                 ))}
                 {finalContacts.length > 50 && (
                   <p className="text-xs text-muted-foreground px-3 py-2 text-center">
-                    ... và {finalContacts.length - 50} liên hệ khác
+                    {trx('... và {{v1}} liên hệ khác', { v1: finalContacts.length - 50 })}
                   </p>
                 )}
               </div>
@@ -440,7 +442,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
           {(inputMode === 'list' || resolvedContacts.length > 0) && (
             <div className="border border-border rounded-xl overflow-hidden">
               <div className="px-4 py-2.5 bg-muted border-b border-border">
-                <p className="text-xs text-foreground/80 font-medium">Gắn nhãn <span className="text-muted-foreground">(tuỳ chọn)</span></p>
+                <p className="text-xs text-foreground/80 font-medium">{trx('Gắn nhãn <0>(tuỳ chọn)</0>', { 0: <span className="text-muted-foreground" /> })}</p>
               </div>
 
               {/* Tag mode tabs */}
@@ -448,15 +450,15 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
                 <div className="flex bg-muted/60 rounded-lg p-0.5 gap-0.5">
                   <button onClick={() => setTagTab('none')}
                     className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === 'none' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-                    <CloseIcon className="w-4 h-4 inline" /> Không gắn
+                    {trx('<0/> Không gắn', { 0: <CloseIcon className="w-4 h-4 inline" /> })}
                   </button>
                   <button onClick={() => setTagTab('local')}
-                    className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === 'local' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}><HardDriveIcon className="w-4 h-4 inline" /> Nhãn Local
+                    className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === 'local' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>{trx('<0/> Nhãn Local', { 0: <HardDriveIcon className="w-4 h-4 inline" /> })}
                   </button>
                   {isZaloAccount && (
                     <button onClick={() => setTagTab('zalo')}
                       className={`flex-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${tagTab === CHANNEL.ZALO ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>
-                      <CloudIcon className="w-4 h-4 inline" /> Nhãn Zalo
+                      {trx('<0/> Nhãn Zalo', { 0: <CloudIcon className="w-4 h-4 inline" /> })}
                     </button>
                   )}
                 </div>
@@ -466,9 +468,9 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
               {tagTab === 'local' && (
                 <div className="px-3 pb-3 max-h-36 overflow-y-auto">
                   {localLabels.length === 0 && localLabelsFailed ? (
-                    <LoadFailedNotice text="Không tải được Nhãn Local" onRetry={loadLocalLabels} busy={localLabelsLoading} />
+                    <LoadFailedNotice text={tr('Không tải được Nhãn Local')} onRetry={loadLocalLabels} busy={localLabelsLoading} />
                   ) : localLabels.length === 0 ? (
-                    <p className="text-xs text-muted-foreground py-2 text-center">Chưa có Nhãn Local nào</p>
+                    <p className="text-xs text-muted-foreground py-2 text-center">{tr('Chưa có Nhãn Local nào')}</p>
                   ) : (
                     <div className="space-y-1">
                       {localLabels.map(label => {
@@ -498,9 +500,9 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
               {/* Zalo labels list */}
               {tagTab === CHANNEL.ZALO && (
                 <div className="px-3 pb-3 max-h-36 overflow-y-auto">
-                  <p className="text-[10px] text-muted-foreground mb-1.5">Zalo chỉ cho phép 1 nhãn / hội thoại</p>
+                  <p className="text-[10px] text-muted-foreground mb-1.5">{tr('Zalo chỉ cho phép 1 nhãn / hội thoại')}</p>
                   {zaloLabels.length === 0 ? (
-                    <p className="text-xs text-muted-foreground py-2 text-center">Chưa có nhãn Zalo nào</p>
+                    <p className="text-xs text-muted-foreground py-2 text-center">{tr('Chưa có nhãn Zalo nào')}</p>
                   ) : (
                     <div className="space-y-1">
                       {zaloLabels.map(label => {
@@ -534,7 +536,7 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
                 <span className="flex items-center gap-1.5">
                   {SpinIcon}
-                  <span>Đang thêm liên hệ: <span className="text-foreground font-medium">{processProgress.current}</span>/{processProgress.total}</span>
+                  <span>{trx('Đang thêm liên hệ: <0>{{current}}</0>/{{total}}', { 0: <span className="text-foreground font-medium" />, current: processProgress.current, total: processProgress.total })}</span>
                 </span>
                 <span className="text-green-400 font-medium">
                   {Math.round((processProgress.current / processProgress.total) * 100)}%
@@ -554,16 +556,16 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
             onClick={onClose}
             disabled={processing}
             className="flex-1 py-2.5 rounded-xl bg-muted text-foreground/80 text-sm hover:bg-accent disabled:opacity-40 transition-colors">
-            Hủy
+            {tr('Hủy')}
           </button>
 
-          {/* Phone mode: "Tra cứu" button */}
+          {/* Phone mode: "Tra cứu" (Look up) button */}
           {inputMode === 'phones' && resolvedContacts.length === 0 && (
             <button
               onClick={handleResolvePhones}
               disabled={resolving || phoneCount === 0}
               className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40 transition-colors flex items-center justify-center gap-1.5">
-              {resolving ? <>{SpinIcon} Đang tra cứu...</> : <><SearchIcon className="w-4 h-4 inline" /> Tra cứu {phoneCount > 0 ? phoneCount + ' SĐT' : ''}</>}
+              {resolving ? <>{trx('{{SpinIcon}} Đang tra cứu...', { SpinIcon })}</> : <>{trx('<0/> Tra cứu {{v1}}', { 0: <SearchIcon className="w-4 h-4 inline" />, v1: phoneCount > 0 ? tr('{{v1}} SĐT', { v1: (phoneCount) }) : '' })}</>}
             </button>
           )}
 
@@ -574,13 +576,13 @@ export default function AddToContactsModal({ contacts, zaloId: overrideZaloId, o
               disabled={processing || finalContacts.length === 0}
               className="flex-1 py-2.5 rounded-xl bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-40 transition-colors flex items-center justify-center gap-1.5">
               {processing
-                ? <>{SpinIcon} Đang xử lý...</>
+                ? <>{trx('{{SpinIcon}} Đang xử lý...', { SpinIcon })}</>
                 : <>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/>
                       <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
                     </svg>
-                    Thêm {finalContacts.length} liên hệ
+                    {trx('Thêm {{count}} liên hệ', { count: finalContacts.length })}
                   </>
               }
             </button>

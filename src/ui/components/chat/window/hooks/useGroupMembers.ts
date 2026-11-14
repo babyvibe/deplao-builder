@@ -1,7 +1,7 @@
 /**
- * Thành viên nhóm của hội thoại đang mở: bộ đệm còn mới (5 phút) thì thôi; không thì DB trước, chưa có (hoặc kênh thấy
- * thiếu tên / ảnh) thì hỏi server của kênh. Người gửi chưa có tên / ảnh: kênh tự hỏi server rồi lưu DB + danh bạ + bộ
- * đệm nhóm. Phần riêng từng kênh (Telegram, Zalo) ở channels/.
+ * Group members of the open conversation: if the cache is fresh (5 minutes), stop there; otherwise the DB first, and if it has none (or the channel sees
+ * missing names / photos), ask the channel's server. Senders without a name / photo: the channel asks the server itself, then saves to the DB + contacts + group
+ * cache. Per-channel parts (Telegram, Zalo) are in channels/.
  */
 import { useEffect, useRef } from 'react';
 import { GROUP_INFO_CACHE_TTL_MS } from '@/lib/chat/constants';
@@ -24,23 +24,23 @@ export function useGroupMembers(deps: {
   // Track which group member info requests have been made (avoid duplicate IPC calls)
   const requestedMemberInfoRef = useRef<Set<string>>(new Set());
 
-  // OPTIMIZATION: Load group members với cache TTL - chỉ reload nếu cache cũ hơn 5 phút
+  // OPTIMIZATION: load group members with a cache TTL, reload only if the cache is older than 5 minutes
   useEffect(() => {
     if (!activeAccountId || !activeThreadId) return;
 
-    // Detect group từ contact list
+    // Detect the group from the contact list
     const contactList = useChatStore.getState().contacts[activeAccountId] || [];
     const contact = contactList.find(c => c.contact_id === activeThreadId);
     const isGroup = contact?.contact_type === 'group' || contact?.contact_type === '1';
     if (!isGroup) return;
 
-    // Check cache còn mới (< 5 phút) và có members → skip load
+    // Check that the cache is still fresh (< 5 minutes) and has members → skip loading
     const existingCache = useAppStore.getState().groupInfoCache?.[activeAccountId]?.[activeThreadId];
     const CACHE_TTL = GROUP_INFO_CACHE_TTL_MS;
     if (existingCache?.members?.length > 0 &&
         existingCache.fetchedAt &&
         Date.now() - existingCache.fetchedAt < CACHE_TTL) {
-      return; // Cache còn mới → SKIP load, giảm ~80% IPC calls
+      return; // Cache still fresh → SKIP loading, cuts ~80% of IPC calls
     }
 
     const { setGroupInfo } = useAppStore.getState();
@@ -88,13 +88,13 @@ export function useGroupMembers(deps: {
       });
     };
 
-    // 1. Tải từ DB trước
+    // 1. Load from the DB first
     DataAccessor.getGroupMembers({ zaloId: accountId, groupId })
       .then(async (res: any) => {
         if (res?.members?.length) {
-          // DB có members → dùng luôn
+          // DB has members → use them
           buildAndSetGroupInfo(res.members);
-          // Kênh thấy thành viên lưu DB còn thiếu tên / ảnh (Telegram) → lấy lại từ server
+          // Channel sees that saved members in the DB still lack names / photos (Telegram) → fetch again from the server
           const acc = useAccountStore.getState().accounts.find(a => a.zalo_id === accountId);
           const channel = chatWindowChannel(acc?.channel);
           if (channel.fetchGroupMembers && channel.membersNeedRefresh?.(res.members)) {
@@ -105,7 +105,7 @@ export function useGroupMembers(deps: {
             }
           }
         } else {
-          // DB không có members → hỏi server của kênh (Telegram: danh sách thành viên, Zalo: getGroupInfo)
+          // DB has no members → ask the channel's server (Telegram: member list, Zalo: getGroupInfo)
           try {
             const acc = useAccountStore.getState().accounts.find(a => a.zalo_id === accountId);
             if (!acc) return;
@@ -114,11 +114,11 @@ export function useGroupMembers(deps: {
             const fresh = await fetchGroupMembers({ account: acc, accountId, groupId });
             if (!fresh) return;
 
-            // Lưu vào DB
+            // Save to DB
             if (fresh.members.length) {
               DataAccessor.saveGroupMembers({ zaloId: accountId, groupId, members: fresh.members }).catch(() => {});
             }
-            // Cập nhật tên/avatar nhóm nếu có
+            // Update the group name / avatar if present
             if (fresh.name) {
               DataAccessor.updateContactProfile({ zaloId: accountId, contactId: groupId, displayName: fresh.name, avatarUrl: fresh.avatar, phone: '' }).catch(() => {});
               useChatStore.getState().updateContact(accountId, { contact_id: groupId, display_name: fresh.name, avatar_url: fresh.avatar });
@@ -131,9 +131,9 @@ export function useGroupMembers(deps: {
       .catch(() => {});
   }, [activeThreadId, activeAccountId]);
 
-  // ─── Fetch thông tin thành viên nhóm chưa biết - xử lý messages đã có ─────
-  // Khi messages load từ DB hoặc nhóm có thành viên mới chưa có tên/avatar,
-  // tự động hỏi kênh để enrich thông tin cho các sender_id lạ.
+  // ─── Fetch info for unknown group members: handle messages already loaded ─────
+  // When messages load from the DB, or the group has new members without a name / avatar,
+  // the channel is asked automatically to enrich the info for unknown sender_ids.
   useEffect(() => {
     if (!activeAccountId || !activeThreadId) return;
     const contactList = useChatStore.getState().contacts[activeAccountId] || [];
@@ -164,7 +164,7 @@ export function useGroupMembers(deps: {
 
     if (unknownSenders.size === 0) return;
 
-    // Telegram: hỏi theo lô; Zalo: getUserInfo từng người (channels/)
+    // Telegram: ask in batches; Zalo: getUserInfo one person at a time (channels/)
     const acc = useAccountStore.getState().accounts.find(a => a.zalo_id === activeAccountId);
     chatWindowChannel(acc?.channel).resolveUnknownSenders?.({
       activeAccountId, activeThreadId, activeContact, msgs, unknownSenders, requestedMemberInfoRef,

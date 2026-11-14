@@ -1,48 +1,49 @@
 /**
- * employeeChannelRoutes.ts — handler IPC Facebook (electron/ipc/facebook/facebookIpc.ts) và Telegram cá nhân
- * (electron/ipc/telegram/telegramUserIpc.ts) ở chế độ nhân viên. Phần thuần, dùng chung: máy nhân viên định tuyến
- * (proxyHelper.employeeRoutedIpcMain), Boss kiểm tra (proxyActionPolicy: danh sách kênh, module quyền, tài khoản,
- * "nhân viên nào đã gửi") và test (proxyActionPolicy.test.ts quét hai file IPC).
+ * employeeChannelRoutes.ts: the Facebook IPC handlers (electron/ipc/facebook/facebookIpc.ts) and personal Telegram
+ * (electron/ipc/telegram/telegramUserIpc.ts) in employee mode. Shared pure logic: the employee machine routes calls
+ * (proxyHelper.employeeRoutedIpcMain), Boss checks them (proxyActionPolicy: channel list, module permissions, accounts,
+ * "nhân viên nào đã gửi" (which employee sent it)), and the tests (proxyActionPolicy.test.ts scans the two IPC files).
  *
- * Phiên Facebook (cookie, MQTT, E2EE) và Telegram (MTProto) chỉ chạy trên máy Boss. Trước đây hai file IPC không biết chế
- * độ nhân viên: gửi tin, cảm xúc, thu hồi, sửa, đã đọc, đang gõ, chuyển tiếp, ghim, bình chọn, thao tác nhóm… của nhân
- * viên chạy ngay trên máy nhân viên (không có phiên) → lỗi hết. Mỗi handler thuộc ĐÚNG một nhóm (handler mới chưa phân
- * loại → test đỏ):
- *   - proxy: thao tác chat theo tài khoản + đọc cần phiên / DB Boss → gửi Boss (/api/proxy/action), chờ và trả KẾT QUẢ
- *     THẬT của handler trên Boss. Tài khoản = `params.accountId` (Boss bắt buộc + phải được giao); file trong tham số
- *     được upload lên Boss trước (cùng danh sách trường PROXY_FILE_PATH_FIELDS mà Boss kiểm tra).
- *   - boss_only: thêm / xoá / đăng nhập / kết nối tài khoản, cookie, E2EE, trạng thái phiên → máy nhân viên trả lỗi rõ
- *     ràng, không chạy cục bộ (máy nhân viên không có phiên; trạng thái tài khoản lấy từ snapshot + event relay của Boss).
- *   - local: tiện ích của chính máy đang dùng (huỷ trình đăng nhập, tab / lịch sử quét lưu cục bộ, báo có mạng lại).
+ * Facebook sessions (cookies, MQTT, E2EE) and Telegram (MTProto) run only on the Boss machine. Previously the two IPC files were unaware of
+ * employee mode: sending, reactions, unsend, edit, read, typing, forward, pin, polls, group actions… from an employee ran on the employee machine itself
+ * (no session there), so everything failed. Every handler belongs to EXACTLY one group (a new unclassified handler turns the test red):
+ *   - proxy: per-account chat actions + reads that need the session / Boss DB → sent to Boss (/api/proxy/action), which waits and returns the REAL
+ *     result of the handler on Boss. Account = `params.accountId` (Boss requires it, and it must be assigned); files in the params are uploaded
+ *     to Boss first (the same PROXY_FILE_PATH_FIELDS list that Boss checks).
+ *   - boss_only: add / delete / log in / connect accounts, cookies, E2EE, session status → the employee machine returns a clear error
+ *     and does not run locally (the employee machine has no session; account status comes from the snapshot + Boss relay events).
+ *   - local: utilities of the machine in use (cancel the login window, scan tabs / history stored locally, report that the network is back).
  */
+
+import { tr } from '../../shared/i18n';
 
 export type EmployeeChannelRoute = 'proxy' | 'boss_only' | 'local';
 
 export interface EmployeeChannelSpec {
   route: EmployeeChannelRoute;
-  /** Kênh proxy: nhân viên cần MỘT trong các module quyền này (EmployeeService ALL_MODULES). */
+  /** Proxy channels: the employee needs ONE of these module permissions (EmployeeService ALL_MODULES). */
   modules?: readonly string[];
-  /** Kênh proxy: thời gian chờ Boss trả lời (ms). Không có → PROXY_DEFAULT_TIMEOUT_MS. */
+  /** Proxy channels: how long to wait for Boss to reply (ms). If not set → PROXY_DEFAULT_TIMEOUT_MS. */
   timeoutMs?: number;
-  /** Kênh proxy gửi MỘT tin mới vào hội thoại → Boss ghi "nhân viên nào đã gửi" (relay:messageSentByEmployee). */
+  /** A proxy channel that sends ONE new message into a conversation → Boss records "nhân viên nào đã gửi" (which employee sent it) (relay:messageSentByEmployee). */
   send?: boolean;
 }
 
-/** Thời gian chờ mặc định của /api/proxy/action (như trước). */
+/** Default timeout for /api/proxy/action (unchanged). */
 export const PROXY_DEFAULT_TIMEOUT_MS = 30_000;
-/** Gửi tin chữ, tải lịch sử: Boss có thể chờ Facebook / Telegram tới ~60 s. */
+/** Text messages and loading history: Boss may wait up to ~60 s for Facebook / Telegram. */
 export const PROXY_MEDIUM_TIMEOUT_MS = 60_000;
-/** Gửi file, đồng bộ lại hội thoại, quét dữ liệu — dưới giới hạn 100 s của Cloudflare tunnel. */
+/** Sending files, re-syncing conversations, data scanning: under the 100 s limit of the Cloudflare tunnel. */
 export const PROXY_SLOW_TIMEOUT_MS = 90_000;
 
-/** Lỗi trả về khi nhân viên gọi thao tác chỉ Boss được làm (không chạy cục bộ). */
+/** Error returned when an employee calls an action that only Boss can perform (not run locally). */
 export const BOSS_ONLY_CHANNEL_ERROR =
-  'Thao tác này chỉ thực hiện trên máy Boss — thêm / xoá, đăng nhập và kết nối tài khoản Facebook / Telegram do Boss quản lý.';
+  tr('Thao tác này chỉ thực hiện trên máy Boss — thêm / xoá, đăng nhập và kết nối tài khoản Facebook / Telegram do Boss quản lý.');
 export const BOSS_ONLY_CHANNEL_CODE = 'BOSS_ONLY';
 
 const CHAT = ['chat'] as const;
 const CRM = ['crm'] as const;
-/** Chặn / thêm liên hệ: gọi từ khung chat (hồ sơ, thao tác nhanh) và cũng là quản lý danh bạ (trang Bạn bè). */
+/** Block / add a contact: called from the chat window (profile, quick actions) and also used for contact management (the Friends page). */
 const FRIENDS_OR_CHAT = ['friends', 'chat'] as const;
 
 const BOSS_ONLY: EmployeeChannelSpec = Object.freeze<EmployeeChannelSpec>({ route: 'boss_only' });
@@ -51,7 +52,7 @@ const proxy = (modules: readonly string[] = CHAT, extra: Omit<EmployeeChannelSpe
   Object.freeze<EmployeeChannelSpec>({ route: 'proxy', modules, ...extra });
 
 export const FACEBOOK_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChannelSpec>> = Object.freeze({
-  // ── Tài khoản / đăng nhập / phiên: chỉ Boss ─────────────────────────────
+  // ── Accounts / login / session: Boss only ─────────────────────────────
   'fb:addAccount': BOSS_ONLY,
   'fb:addAccountWithCredentials': BOSS_ONLY,
   'fb:loginWithCredentials': BOSS_ONLY,
@@ -62,17 +63,17 @@ export const FACEBOOK_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChannelSpe
   'fb:runMessengerLiteWebStep': BOSS_ONLY,
   'fb:removeAccount': BOSS_ONLY,
   'fb:updateCookie': BOSS_ONLY,
-  'fb:refreshProfile': BOSS_ONLY, // tên / ảnh CỦA tài khoản (thẻ tài khoản trên Boss)
-  'fb:getAccounts': BOSS_ONLY, // bản ghi fb_accounts kèm cookie — nhân viên nhận danh sách tài khoản qua snapshot
+  'fb:refreshProfile': BOSS_ONLY, // account name / avatar (the account card on Boss)
+  'fb:getAccounts': BOSS_ONLY, // fb_accounts record with cookies: employees get the account list through the snapshot
   'fb:connect': BOSS_ONLY,
   'fb:disconnect': BOSS_ONLY,
-  'fb:checkHealth': BOSS_ONLY, // trạng thái: snapshot (listener_active) + fb:onConnectionStatus relay
+  'fb:checkHealth': BOSS_ONLY, // status: snapshot (listener_active) + fb:onConnectionStatus relay
   'fb:getE2EEStatus': BOSS_ONLY,
   'fb:toggleE2EE': BOSS_ONLY,
-  'fb:createNote': BOSS_ONLY, // Messenger Note = đăng lên hồ sơ tài khoản, không phải thao tác hội thoại
-  // ── Cục bộ ──────────────────────────────────────────────────────────────
-  'fb:cancelMessengerLiteLogin': LOCAL, // huỷ trình đăng nhập của máy này (nhân viên không mở được → không có gì)
-  // Tab / lịch sử quét lưu ở máy đang dùng (FacebookScanTabService / FacebookScanLogService); chỉ lệnh quét cần phiên
+  'fb:createNote': BOSS_ONLY, // A Messenger Note = posted to the account profile, not a conversation action
+  // ── Local ──────────────────────────────────────────────────────────────
+  'fb:cancelMessengerLiteLogin': LOCAL, // cancel this machine's login window (an employee cannot open one, so there is nothing to cancel)
+  // Scan tabs / history stored on the machine in use (FacebookScanTabService / FacebookScanLogService); only scan commands need a session
   'fb:saveScanLog': LOCAL,
   'fb:getScanLogs': LOCAL,
   'fb:scanResetCache': LOCAL,
@@ -87,12 +88,12 @@ export const FACEBOOK_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChannelSpe
   'fb:scanSaveRequestLog': LOCAL,
   'fb:scanGetRequestLogs': LOCAL,
   'fb:scanGetStats': LOCAL,
-  // ── Gửi tin ─────────────────────────────────────────────────────────────
+  // ── Sending messages ─────────────────────────────────────────────────────
   'fb:sendMessage': proxy(CHAT, { send: true, timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'fb:sendE2EEMessage': proxy(CHAT, { send: true, timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'fb:sendAttachment': proxy(CHAT, { send: true, timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
   'fb:sendAttachments': proxy(CHAT, { send: true, timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
-  // ── Tin nhắn / hội thoại ────────────────────────────────────────────────
+  // ── Messages / conversations ────────────────────────────────────────────
   'fb:unsendMessage': proxy(),
   'fb:addReaction': proxy(),
   'fb:editMessage': proxy(),
@@ -108,7 +109,7 @@ export const FACEBOOK_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChannelSpe
   'fb:changeThreadEmoji': proxy(),
   'fb:changeThreadTheme': proxy(),
   'fb:changeNickname': proxy(),
-  // ── Nhóm ────────────────────────────────────────────────────────────────
+  // ── Groups ────────────────────────────────────────────────────────────
   'fb:createGroup': proxy(),
   'fb:addGroupAdmin': proxy(),
   'fb:removeGroupAdmin': proxy(),
@@ -116,21 +117,21 @@ export const FACEBOOK_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChannelSpe
   'fb:approvePendingMember': proxy(),
   'fb:getGroupLink': proxy(),
   'fb:setGroupLink': proxy(),
-  // ── Chặn người dùng ─────────────────────────────────────────────────────
+  // ── Blocking users ─────────────────────────────────────────────────────
   'fb:blockUser': proxy(FRIENDS_OR_CHAT),
   'fb:unblockUser': proxy(FRIENDS_OR_CHAT),
-  // ── Đọc cần phiên / DB Boss ─────────────────────────────────────────────
-  'fb:getThreads': proxy(CHAT, { timeoutMs: PROXY_SLOW_TIMEOUT_MS }), // forceRefresh = đồng bộ lại (TopBar)
+  // ── Reads that need a session / Boss DB ─────────────────────────────────
+  'fb:getThreads': proxy(CHAT, { timeoutMs: PROXY_SLOW_TIMEOUT_MS }), // forceRefresh = re-sync (TopBar)
   'fb:getMessages': proxy(),
   'fb:fetchThreadMessages': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
-  'fb:fetchOlderMessages': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }), // cuộn lên: một trang lịch sử qua bridge của Boss
-  'fb:startHistorySync': BOSS_ONLY, // đồng bộ cả tài khoản chạy nền trên máy Boss (như đồng bộ từ điện thoại của Zalo)
+  'fb:fetchOlderMessages': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }), // scroll up: one page of history through Boss's bridge
+  'fb:startHistorySync': BOSS_ONLY, // sync the whole account in the background on the Boss machine (like syncing from the Zalo phone)
   'fb:cancelHistorySync': BOSS_ONLY,
   'fb:getHistorySyncStatus': BOSS_ONLY,
   'fb:getUserInfoFacebook': proxy(),
-  'fb:getUserInfoFacebookHtml': proxy(), // tên cũ của fb:getUserInfoFacebook (bản renderer cũ)
+  'fb:getUserInfoFacebookHtml': proxy(), // old name of fb:getUserInfoFacebook (old renderer version)
   'fb:refreshContactAvatar': proxy(),
-  // ── Quét dữ liệu (CRM → Quét dữ liệu): dùng phiên của tài khoản trên Boss ──
+  // ── Data scanning (CRM → Data scanning): uses the account's session on Boss ──
   'fb:scanGroupMembers': proxy(CRM, { timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
   'fb:scanGroupKeyword': proxy(CRM, { timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
   'fb:scanFanpageKeyword': proxy(CRM, { timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
@@ -142,29 +143,29 @@ export const FACEBOOK_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChannelSpe
 });
 
 export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChannelSpec>> = Object.freeze({
-  // ── Đăng nhập / phiên: chỉ Boss ─────────────────────────────────────────
+  // ── Login / session: Boss only ─────────────────────────────────────────
   'telegramUser:sendCode': BOSS_ONLY,
   'telegramUser:signIn': BOSS_ONLY,
   'telegramUser:signIn2FA': BOSS_ONLY,
   'telegramUser:startListener': BOSS_ONLY,
   'telegramUser:stopListener': BOSS_ONLY,
-  'telegramUser:isConnected': BOSS_ONLY, // trạng thái: snapshot + event:connected / event:disconnected relay
+  'telegramUser:isConnected': BOSS_ONLY, // status: snapshot + relayed event:connected / event:disconnected
   'telegramUser:getActive': BOSS_ONLY,
-  'telegramUser:fetchSelfAvatar': BOSS_ONLY, // ảnh CỦA tài khoản (thẻ tài khoản trên Boss)
-  'telegramUser:checkForumForNewGroups': BOSS_ONLY, // quét nền toàn tài khoản
-  // ── Cục bộ ──────────────────────────────────────────────────────────────
-  'telegramUser:networkOnline': LOCAL, // máy này có mạng lại: chỉ dựng lại phiên MTProto CỦA máy này (nhân viên không có)
-  // Hội thoại đang mở của máy này → hàng tải file của máy này. Máy nhân viên không có phiên (không tải gì); Boss không nhận
-  // để hội thoại nhân viên đang mở không giành ưu tiên của Boss — file nhân viên xin vẫn là "giao diện xin" (repairMessageMedia).
+  'telegramUser:fetchSelfAvatar': BOSS_ONLY, // account image (the account card on Boss)
+  'telegramUser:checkForumForNewGroups': BOSS_ONLY, // background scan of all accounts
+  // ── Local ──────────────────────────────────────────────────────────────
+  'telegramUser:networkOnline': LOCAL, // this machine's network is back: rebuild only THIS machine's MTProto session (employees have none)
+  // The conversation open on this machine → the file-download queue of this machine. An employee machine has no session (it downloads nothing); Boss does not accept
+  // so an employee's open conversation does not take priority over Boss; the file an employee asks for is still a "request from the UI" (repairMessageMedia).
   'telegramUser:setDownloadFocus': LOCAL,
-  // ── Gửi tin ─────────────────────────────────────────────────────────────
+  // ── Sending messages ─────────────────────────────────────────────────────
   'telegramUser:sendMessage': proxy(CHAT, { send: true, timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:sendTopicMessage': proxy(CHAT, { send: true, timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:sendFile': proxy(CHAT, { send: true, timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
   'telegramUser:sendTopicFile': proxy(CHAT, { send: true, timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
   'telegramUser:sendSticker': proxy(CHAT, { send: true }),
   'telegramUser:sendGif': proxy(CHAT, { send: true }),
-  // ── Tin nhắn ────────────────────────────────────────────────────────────
+  // ── Messages ────────────────────────────────────────────────────────────
   'telegramUser:editMessage': proxy(),
   'telegramUser:deleteMessages': proxy(),
   'telegramUser:forwardMessages': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
@@ -175,16 +176,16 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:sendTyping': proxy(),
   'telegramUser:readChatHistory': proxy(),
   'telegramUser:readForumTopic': proxy(),
-  // ── Hội thoại ───────────────────────────────────────────────────────────
+  // ── Conversations ───────────────────────────────────────────────────────
   'telegramUser:setDialogMute': proxy(),
   'telegramUser:setDialogArchived': proxy(),
   'telegramUser:setDialogPin': proxy(),
-  'telegramUser:refreshMessages': proxy(), // Boss chạy đồng bộ nền (TopBar "Đồng bộ"), trả lời ngay
-  // ── Nhóm / forum ────────────────────────────────────────────────────────
+  'telegramUser:refreshMessages': proxy(), // Boss runs the background sync (TopBar "Đồng bộ" / Sync), then replies right away
+  // ── Groups / forum ────────────────────────────────────────────────────
   'telegramUser:getGroupInfo': proxy(),
   'telegramUser:getGroupMembers': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
-  'telegramUser:getGroupAdmins': proxy(CHAT), // chức vụ cạnh tên người gửi (đọc)
-  'telegramUser:searchGroupMembers': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }), // ô @nhắc đến: tìm trên Telegram + lưu DB Boss
+  'telegramUser:getGroupAdmins': proxy(CHAT), // the role shown next to the sender's name (read)
+  'telegramUser:searchGroupMembers': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }), // the @mention box: search on Telegram + save to Boss's DB
   'telegramUser:getFullChat': proxy(),
   'telegramUser:addChatUser': proxy(),
   'telegramUser:deleteChatUser': proxy(),
@@ -216,13 +217,13 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:getForumTopicMessages': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:createForumTopic': proxy(),
   'telegramUser:editForumTopic': proxy(),
-  // ── Danh bạ / chặn ──────────────────────────────────────────────────────
+  // ── Contacts / blocking ──────────────────────────────────────────────────
   'telegramUser:addContact': proxy(FRIENDS_OR_CHAT),
   'telegramUser:getContacts': proxy(FRIENDS_OR_CHAT),
   'telegramUser:deleteContacts': proxy(FRIENDS_OR_CHAT),
   'telegramUser:blockUser': proxy(FRIENDS_OR_CHAT),
   'telegramUser:unblockUser': proxy(FRIENDS_OR_CHAT),
-  // ── Đọc cần phiên / DB Boss ─────────────────────────────────────────────
+  // ── Reads that need a session / Boss DB ─────────────────────────────────
   'telegramUser:getMessages': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:ensureMessageAvailable': proxy(),
   'telegramUser:hydrateMessageSenders': proxy(),
@@ -231,7 +232,7 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:getMessageReadParticipants': proxy(),
   'telegramUser:repairMessageMedia': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:downloadRichMedia': proxy(CHAT, { timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
-  // Bình luận bài đăng kênh (nhóm thảo luận) + số liệu bài
+  // Comments on channel posts (discussion group) + post statistics
   'telegramUser:getPostDiscussion': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:readPostDiscussion': proxy(),
   'telegramUser:refreshPostStats': proxy(),
@@ -245,22 +246,22 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:getPeers': proxy(),
   'telegramUser:refreshContactAvatar': proxy(),
   'telegramUser:getBotCommands': proxy(),
-  // ── Mini App của bot ────────────────────────────────────────────────────
+  // ── Bot Mini App ────────────────────────────────────────────────────────
   'telegramUser:requestWebView': proxy(),
   'telegramUser:requestMainWebView': proxy(),
   'telegramUser:prolongWebView': proxy(),
   'telegramUser:miniAppCustomMethod': proxy(),
   'telegramUser:miniAppWriteAccess': proxy(),
   'telegramUser:miniAppSharePhone': proxy(),
-  // Nút đăng nhập của bot (keyboardButtonUrlAuth)
+  // The bot's login button (keyboardButtonUrlAuth)
   'telegramUser:requestUrlAuth': proxy(),
   'telegramUser:acceptUrlAuth': proxy(),
-  // Link Telegram mở trong app: số điện thoại, Mini App theo tên, link bot ?start
+  // Telegram links opened inside the app: phone number, Mini App by name, bot ?start link
   'telegramUser:resolvePhone': proxy(),
   'telegramUser:getBotApp': proxy(),
   'telegramUser:requestAppWebView': proxy(),
   'telegramUser:startBot': proxy(),
-  // Nút callback / sao chép / hồ sơ của tin bot
+  // Callback / copy / profile buttons of a bot message
   'telegramUser:pressInlineButton': proxy(),
   // ── Sticker / GIF ───────────────────────────────────────────────────────
   'telegramUser:getStickerSets': proxy(),
@@ -272,9 +273,9 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:getStickerPanel': proxy(),
   'telegramUser:getStickerSet': proxy(),
   'telegramUser:getStickerSetOfMessage': proxy(),
-  'telegramUser:getStickerFile': proxy(), // file nằm dưới media/ của Boss → nhân viên xem qua /api/media
+  'telegramUser:getStickerFile': proxy(), // files under Boss's media/ folder: employees view them via /api/media
   'telegramUser:searchStickerSets': proxy(),
-  // Thêm / gỡ bộ sticker, lưu GIF: dữ liệu của tài khoản Telegram (như ghim / lưu trữ hội thoại), dùng từ khung chat
+  // Add / remove a sticker set, save GIFs: the Telegram account's data (like pinning / archiving a conversation), used from the chat window
   'telegramUser:setStickerSetInstalled': proxy(),
   'telegramUser:saveGif': proxy(),
 });
@@ -284,18 +285,18 @@ const ALL_ROUTES: Readonly<Record<string, EmployeeChannelSpec>> = Object.freeze(
   ...TELEGRAM_USER_CHANNEL_ROUTES,
 });
 
-/** Cách xử lý một kênh Facebook / Telegram cá nhân ở chế độ nhân viên; null = kênh không thuộc bảng (giữ nguyên). */
+/** How a personal Facebook / Telegram channel is handled in employee mode; null = channel not in the table (unchanged). */
 export function employeeChannelSpec(channel: string): EmployeeChannelSpec | null {
   const name = String(channel || '');
   return Object.prototype.hasOwnProperty.call(ALL_ROUTES, name) ? ALL_ROUTES[name] : null;
 }
 
-/** Kênh Facebook / Telegram nhân viên được gửi lên Boss (tài khoản = `params.accountId`, Boss bắt buộc + kiểm tra). */
+/** Facebook / Telegram channels that employees send up to Boss (account = `params.accountId`, Boss requires it and checks it). */
 export function isAccountChannelProxy(channel: string): boolean {
   return employeeChannelSpec(channel)?.route === 'proxy';
 }
 
-/** Tên các kênh proxy Facebook / Telegram — Boss thêm vào danh sách đóng EMPLOYEE_PROXY_IPC_CHANNELS. */
+/** Names of the Facebook / Telegram proxy channels: Boss adds them to the EMPLOYEE_PROXY_IPC_CHANNELS closed list. */
 export const ACCOUNT_CHANNEL_PROXY_NAMES: readonly string[] = Object.freeze(
   Object.keys(ALL_ROUTES).filter((name) => ALL_ROUTES[name].route === 'proxy'),
 );

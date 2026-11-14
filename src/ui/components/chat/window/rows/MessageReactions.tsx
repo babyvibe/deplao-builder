@@ -1,6 +1,6 @@
 /**
- * Cảm xúc ở góc dưới tin (phía trong khung chat): chip / tóm tắt số cảm xúc + nút 👍 mở thanh chọn khi rê chuột.
- * Telegram: danh sách cảm xúc của hội thoại; bài đăng kênh: chỉ còn nút (cảm xúc đã vẽ trong khung bài).
+ * Reactions at the bottom corner of the message (inside the chat window): a chip / summary of the reaction count + a 👍 button that opens the picker on hover.
+ * Telegram: the conversation's reaction list; channel posts: only the button is left (the reactions are drawn inside the post frame).
  */
 import { isTelegram as isTelegramCh } from '@/lib/channels/channelHelper';
 import { parseReactionsFull } from '../../messages/reactions/ReactionComponents';
@@ -25,7 +25,7 @@ export function MessageReactions({ ctx, msg, isSent, reactionCounts, telegramPos
       counts={reactionCounts}
       myEmoji={myEmoji}
       variant={isTelegramCh(msg.channel) ? 'chips' : 'summary'}
-      // Bài đăng kênh: cảm xúc đã vẽ trong khung bài → ở đây chỉ còn nút 👍 khi rê chuột
+      // Channel post: reactions are drawn inside the post frame → only the 👍 button is left here, on hover
       hideCounts={!!telegramPostMeta}
       pickerOpen={reactionPickerMsgId === msg.msg_id}
       pickerEmojis={getReactionChoices(msg.channel, telegramReactions.reactions).all}

@@ -13,6 +13,7 @@ import { BrowserWindow, session as electronSession, type Session } from 'electro
 import { v4 as uuid } from 'uuid';
 import type { NativeLoginCookieField, NativeLoginStep } from '../../../src/services/facebook/e2ee/FacebookE2EEBridge';
 import Logger from '../../../src/utils/Logger';
+import { tr } from '../../../src/shared/i18n';
 
 const WEB_STEP_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_VALUE_LENGTH = 16 * 1024;
@@ -21,7 +22,7 @@ const ERR_ABORTED = -3;
 
 export class NativeLoginWebStepClosedError extends Error {
   constructor() {
-    super('Cửa sổ xác minh đã đóng trước khi hoàn tất.');
+    super(tr('Cửa sổ xác minh đã đóng trước khi hoàn tất.'));
     this.name = 'NativeLoginWebStepClosedError';
   }
 }
@@ -34,16 +35,16 @@ function parseProxy(proxyUrl?: string): WebStepProxy | null {
   try {
     parsed = new URL(proxyUrl);
   } catch {
-    throw new Error('Proxy của phiên đăng nhập không hợp lệ.');
+    throw new Error(tr('Proxy của phiên đăng nhập không hợp lệ.'));
   }
   const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
   if (!['http', 'https', 'socks4', 'socks5', 'socks5h'].includes(scheme)) {
-    throw new Error(`Cửa sổ xác minh không hỗ trợ proxy ${scheme}.`);
+    throw new Error(tr('Cửa sổ xác minh không hỗ trợ proxy {{scheme}}.', { scheme }));
   }
   const username = parsed.username ? decodeURIComponent(parsed.username) : undefined;
   if (username && scheme.startsWith('socks')) {
     // Chromium cannot authenticate to SOCKS proxies.
-    throw new Error('Cửa sổ xác minh không hỗ trợ proxy SOCKS có mật khẩu. Hãy dùng proxy HTTP hoặc đăng nhập bằng Cookie.');
+    throw new Error(tr('Cửa sổ xác minh không hỗ trợ proxy SOCKS có mật khẩu. Hãy dùng proxy HTTP hoặc đăng nhập bằng Cookie.'));
   }
   return {
     rules: `${scheme === 'socks5h' ? 'socks5' : scheme}://${parsed.host}`,
@@ -94,14 +95,14 @@ export async function runNativeLoginWebStep(
   opts: { proxyUrl?: string; parent?: BrowserWindow | null },
 ): Promise<Record<string, string>> {
   const params = step.cookies;
-  if (!params?.url) throw new Error('Bước xác minh không có địa chỉ trang.');
+  if (!params?.url) throw new Error(tr('Bước xác minh không có địa chỉ trang.'));
   let target: URL;
   try {
     target = new URL(params.url);
   } catch {
-    throw new Error('Địa chỉ trang xác minh không hợp lệ.');
+    throw new Error(tr('Địa chỉ trang xác minh không hợp lệ.'));
   }
-  if (target.protocol !== 'https:') throw new Error('Trang xác minh phải dùng HTTPS.');
+  if (target.protocol !== 'https:') throw new Error(tr('Trang xác minh phải dùng HTTPS.'));
 
   const fields = params.fields || [];
   const fieldIds = new Set(fields.map((field) => field.id).filter(Boolean));
@@ -137,7 +138,7 @@ export async function runNativeLoginWebStep(
     height: 720,
     parent,
     show: !params.hidden,
-    title: 'Xác minh Facebook',
+    title: tr('Xác minh Facebook'),
     autoHideMenuBar: true,
     webPreferences: {
       partition,
@@ -162,7 +163,7 @@ export async function runNativeLoginWebStep(
       else resolve(outcome);
     };
     const timer = setTimeout(
-      () => finish(new Error('Hết thời gian xác minh (5 phút). Vui lòng thử lại.')),
+      () => finish(new Error(tr('Hết thời gian xác minh (5 phút). Vui lòng thử lại.'))),
       WEB_STEP_TIMEOUT_MS,
     );
 
@@ -207,7 +208,7 @@ export async function runNativeLoginWebStep(
     win.webContents.on('did-navigate-in-page', maybeFinish);
     win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _url, isMainFrame) => {
       if (isMainFrame && errorCode !== ERR_ABORTED) {
-        finish(new Error(`Không mở được trang xác minh (${errorDescription || errorCode}).`));
+        finish(new Error(tr('Không mở được trang xác minh ({{v1}}).', { v1: errorDescription || errorCode })));
       }
     });
     // Closing after the values arrived still counts (the URL wait is optional).

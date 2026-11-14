@@ -1,17 +1,17 @@
 /**
- * secretBox.ts — mã hoá bí mật lưu trong DB bằng safeStorage của Electron (DPAPI trên Windows).
- * Không có safeStorage (test, trước app ready) → lưu dạng "plain:" để vẫn chạy được.
+ * secretBox.ts: encrypts secrets stored in the DB with Electron's safeStorage (DPAPI on Windows).
+ * Without safeStorage (tests, before app ready) → stored as "plain:" so it still works.
  */
 
 export function encryptSecret(secret: string): string {
     try {
         const { safeStorage } = require('electron');
         if (safeStorage?.isEncryptionAvailable?.()) return 'enc:' + safeStorage.encryptString(secret).toString('base64');
-    } catch { /* test hoặc chưa sẵn sàng */ }
+    } catch { /* test or not ready yet */ }
     return 'plain:' + secret;
 }
 
-/** Trả '' nếu không giải mã được (đổi máy / hồ sơ Windows). */
+/** Returns '' if it cannot be decrypted (machine / Windows profile changed). */
 export function decryptSecret(stored: string): string {
     if (!stored) return '';
     if (stored.startsWith('plain:')) return stored.slice(6);

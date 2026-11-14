@@ -21,6 +21,7 @@ import { PolicyPanel } from './PolicyPanel';
 import { BugReportPanel } from './BugReportPanel';
 import { DonateCoffeePanel } from './DonateCoffeePanel';
 import { SettingsPage } from '../settingsUi';
+import { tr } from '../../../../shared/i18n';
 
 type FeatureId =
   | 'overview'
@@ -51,26 +52,26 @@ interface Feature {
 }
 
 const FEATURES: Feature[] = [
-  { id: 'overview',     icon: <HomeIcon className="w-4 h-4" />, label: 'Tổng quan' },
-  { id: 'dashboard',    icon: <ChartIcon className="w-4 h-4" />, label: 'Dashboard' },
-  { id: 'multiAccount', icon: <UserIcon className="w-4 h-4" />, label: 'Đa tài khoản' },
-  { id: 'messaging',    icon: <ChatIcon className="w-4 h-4" />, label: 'Quản lý tin nhắn' },
-  { id: 'history-sync', icon: <SmartphoneIcon className="w-4 h-4" />, label: 'Đồng bộ tin nhắn cũ' },
-  { id: 'crm',          icon: <UsersIcon className="w-4 h-4" />, label: 'CRM & Khách hàng' },
-  { id: 'workflow',     icon: <LightningIcon className="w-4 h-4" />, label: 'Workflow tự động' },
-  { id: 'integration-pos', icon: <ShoppingCartIcon className="w-4 h-4" />, label: 'Tích hợp POS' },
-  { id: 'integration-payment', icon: <CreditCardIcon className="w-4 h-4" />, label: 'Tích hợp thanh toán' },
-  { id: 'integration-shipping', icon: <PackageIcon className="w-4 h-4" />, label: 'Tích hợp vận chuyển' },
-  { id: 'apps-api',     icon: <PluginIcon className="w-4 h-4" />, label: 'Ứng dụng, API & Webhook' },
-  { id: 'ai-assistant', icon: <BotIcon className="w-4 h-4" />, label: 'Trợ lý AI' },
-  { id: 'analytics',    icon: <TrendingUpIcon className="w-4 h-4" />, label: 'Báo cáo & Phân tích' },
-  { id: 'erp',          icon: <FolderIcon className="w-4 h-4" />, label: 'ERP quản trị nội bộ' },
-  { id: 'employees',    icon: <UserIcon className="w-4 h-4" />, label: 'Cài đặt nhân viên & workspace' },
-  { id: 'cloud',        icon: <CloudIcon className="w-4 h-4" />, label: 'Internet & Cloud' },
-  { id: 'security',     icon: <LockIcon className="w-4 h-4" />, label: 'Bảo mật & Dữ liệu' },
-  { id: 'policy',       icon: <FileTextIcon className="w-4 h-4" />, label: 'Chính sách pháp lý' },
-  { id: 'bugreport',    icon: <BugIcon className="w-4 h-4" />, label: 'Hướng dẫn báo lỗi' },
-  { id: 'donate',       icon: <CoffeeIcon className="w-4 h-4" />, label: 'Donate & Ủng hộ' },
+  { id: 'overview',     icon: <HomeIcon className="w-4 h-4" />, label: tr('Tổng quan') },
+  { id: 'dashboard',    icon: <ChartIcon className="w-4 h-4" />, label: tr('Dashboard') },
+  { id: 'multiAccount', icon: <UserIcon className="w-4 h-4" />, label: tr('Đa tài khoản') },
+  { id: 'messaging',    icon: <ChatIcon className="w-4 h-4" />, label: tr('Quản lý tin nhắn') },
+  { id: 'history-sync', icon: <SmartphoneIcon className="w-4 h-4" />, label: tr('Đồng bộ tin nhắn cũ') },
+  { id: 'crm',          icon: <UsersIcon className="w-4 h-4" />, label: tr('CRM & Khách hàng') },
+  { id: 'workflow',     icon: <LightningIcon className="w-4 h-4" />, label: tr('Workflow tự động') },
+  { id: 'integration-pos', icon: <ShoppingCartIcon className="w-4 h-4" />, label: tr('Tích hợp POS') },
+  { id: 'integration-payment', icon: <CreditCardIcon className="w-4 h-4" />, label: tr('Tích hợp thanh toán') },
+  { id: 'integration-shipping', icon: <PackageIcon className="w-4 h-4" />, label: tr('Tích hợp vận chuyển') },
+  { id: 'apps-api',     icon: <PluginIcon className="w-4 h-4" />, label: tr('Ứng dụng, API & Webhook') },
+  { id: 'ai-assistant', icon: <BotIcon className="w-4 h-4" />, label: tr('Trợ lý AI') },
+  { id: 'analytics',    icon: <TrendingUpIcon className="w-4 h-4" />, label: tr('Báo cáo & Phân tích') },
+  { id: 'erp',          icon: <FolderIcon className="w-4 h-4" />, label: tr('ERP quản trị nội bộ') },
+  { id: 'employees',    icon: <UserIcon className="w-4 h-4" />, label: tr('Cài đặt nhân viên & workspace') },
+  { id: 'cloud',        icon: <CloudIcon className="w-4 h-4" />, label: tr('Internet & Cloud') },
+  { id: 'security',     icon: <LockIcon className="w-4 h-4" />, label: tr('Bảo mật & Dữ liệu') },
+  { id: 'policy',       icon: <FileTextIcon className="w-4 h-4" />, label: tr('Chính sách pháp lý') },
+  { id: 'bugreport',    icon: <BugIcon className="w-4 h-4" />, label: tr('Hướng dẫn báo lỗi') },
+  { id: 'donate',       icon: <CoffeeIcon className="w-4 h-4" />, label: tr('Donate & Ủng hộ') },
 ];
 
 const PANEL_MAP = {
@@ -126,10 +127,10 @@ export default function IntroductionSettings({ initialSubtab }: IntroductionSett
   }, [initialSubtab]);
 
   return (
-    <SettingsPage title="Giới thiệu & Hướng dẫn sử dụng" description="Deplao làm được gì và cách dùng từng tính năng." width="full" fill>
+    <SettingsPage title={tr('Giới thiệu & Hướng dẫn sử dụng')} description={tr('Deplao làm được gì và cách dùng từng tính năng.')} width="full" fill>
       <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-card">
-        {/* Trái: danh sách mục */}
-        <nav aria-label="Mục hướng dẫn" className="flex w-52 flex-shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-border/60 py-2">
+        {/* Left: list of items */}
+        <nav aria-label={tr('Mục hướng dẫn')} className="flex w-52 flex-shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-border/60 py-2">
           {FEATURES.map(f => {
             const active = activeFeature === f.id;
             return (
@@ -150,7 +151,7 @@ export default function IntroductionSettings({ initialSubtab }: IntroductionSett
           })}
         </nav>
 
-        {/* Phải: nội dung (tự cuộn, danh sách mục đứng yên) */}
+        {/* Right: content (scrolls by itself, the item list stays still) */}
         <div className="min-w-0 flex-1 overflow-y-auto px-6 py-5">
           <div className="max-w-4xl">
             <Panel />

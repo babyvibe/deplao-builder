@@ -1,13 +1,14 @@
 /**
- * Node/trigger workflow của plugin trong editor: palette động, giá trị mặc định khi kéo vào sơ đồ,
- * nhãn, và form cấu hình — configSchema của plugin được chuyển sang Field của NodeConfigPanel
- * để dùng lại mọi widget có sẵn (chèn biến, chọn tài khoản, chọn hội thoại, chọn nhãn…).
+ * Plugin workflow nodes/triggers in the editor: dynamic palette, default values when dragged onto the canvas,
+ * labels, and the config form. The plugin's configSchema becomes NodeConfigPanel Fields,
+ * so every existing widget is reused (insert variable, pick account, pick conversation, pick label…).
  */
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import ipc from '@/lib/ipc';
 import { PLUGIN_NODE_LABELS } from './workflowConfig';
 import type { Field } from '../editor/NodeConfigPanel';
+import { tr } from '../../../../shared/i18n';
 
 export interface PluginConfigField {
   type: 'string' | 'number' | 'integer' | 'boolean' | 'array';
@@ -20,8 +21,8 @@ export interface PluginConfigField {
   'x-widget'?: 'account' | 'thread' | 'label' | 'assistant';
 }
 
-/** Nhãn lựa chọn "không chọn trợ lý" của node ứng dụng (giá trị '' — ứng dụng tự dùng trợ lý theo cài đặt của nó). */
-export const PLUGIN_ASSISTANT_EMPTY_LABEL = 'Mặc định — theo cài đặt của ứng dụng';
+/** Label of the "không chọn trợ lý" (no assistant) option for app nodes (value '': the app uses an assistant based on its own settings). */
+export const PLUGIN_ASSISTANT_EMPTY_LABEL = tr('Mặc định — theo cài đặt của ứng dụng');
 
 export interface PluginNodeDefUi {
   pluginId: string;
@@ -56,7 +57,7 @@ export const usePluginNodeStore = create<PluginNodeStore>((set) => ({
 
 let listening = false;
 
-/** Gọi trong editor: tải node plugin, tải lại khi plugin bật/tắt. */
+/** Called in the editor: loads plugin nodes, reloads when a plugin is turned on or off. */
 export function useLoadPluginNodes(): void {
   useEffect(() => {
     if (!ipc.plugins) return;
@@ -72,7 +73,7 @@ export function pluginDefFor(type: string): PluginNodeDefUi | undefined {
   return usePluginNodeStore.getState().defs.find(d => d.type === type);
 }
 
-/** Cấu hình mặc định khi kéo node plugin vào sơ đồ (gắn __plugin để engine biết gọi plugin). */
+/** Default config when a plugin node is dragged onto the canvas (adds __plugin so the engine knows to call the plugin). */
 export function pluginDefaultConfig(type: string): Record<string, any> | null {
   const d = pluginDefFor(type);
   if (!d) return null;
@@ -101,7 +102,7 @@ export function toPanelField(key: string, f: PluginConfigField, required: boolea
   };
 }
 
-/** Field cho NodeConfigPanel; null nếu không phải node plugin. */
+/** Field for NodeConfigPanel; null if this is not a plugin node. */
 export function pluginFieldsFor(type: string): Field[] | null {
   const d = pluginDefFor(type);
   if (!d) return null;
@@ -109,13 +110,13 @@ export function pluginFieldsFor(type: string): Field[] | null {
   return Object.entries(d.configSchema?.properties || {}).map(([key, f]) => toPanelField(key, f, req.has(key)));
 }
 
-/** Nhóm palette cho node plugin (sau các nhóm có sẵn). */
+/** Palette group for plugin nodes (after the built-in groups). */
 export function pluginPaletteGroups(defs: PluginNodeDefUi[]): Array<{ label: string; color: string; items: Array<{ type: string; label: string; desc: string; channel?: string }> }> {
   const groups = new Map<string, Array<{ type: string; label: string; desc: string; channel?: string }>>();
   for (const d of defs) {
-    const name = `Ứng dụng · ${d.group || d.pluginName}`;
+    const name = tr('Ứng dụng · {{v1}}', { v1: d.group || d.pluginName });
     const list = groups.get(name) || [];
-    list.push({ type: d.type, label: d.label, desc: d.description || `${d.kind === 'trigger' ? 'Trigger' : 'Node'} của ${d.pluginName}` });
+    list.push({ type: d.type, label: d.label, desc: d.description || tr('{{v1}} của {{pluginName}}', { v1: d.kind === 'trigger' ? 'Trigger' : 'Node', pluginName: d.pluginName }) });
     groups.set(name, list);
   }
   return Array.from(groups.entries()).map(([label, items]) => ({ label, color: 'bg-emerald-600', items }));

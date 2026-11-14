@@ -1,16 +1,16 @@
 /**
  * telegram.config.ts - Telegram API credentials
  *
- * Đăng ký tại: https://my.telegram.org
- * 1. Đăng nhập bằng SĐT
+ * Register at: https://my.telegram.org
+ * 1. Sign in with your phone number
  * 2. API development tools
- * 3. Tạo application mới
- * 4. Copy api_id và api_hash vào đây
+ * 3. Create a new application
+ * 4. Copy api_id and api_hash here
  *
- * Lưu ý: API_ID/API_HASH là "tên app", không phải secret.
- * Telegram Desktop, Unigram đều công khai. Không có rủi ro bảo mật.
- * APP_ID hiện tại là của Deplao, bạn có thể tạo app riêng nếu muốn..
+ * Note: API_ID/API_HASH are an "app name", not a secret.
+ * Telegram Desktop and Unigram publish theirs too. There is no security risk.
+ * The current APP_ID belongs to Deplao; you can create your own app if you want..
  */
 
-export const API_ID = 35191552;       // Điền api_id (số) - VD: 12345678
-export const API_HASH = 'dc2e0af7dce5823a2a15784a289580bf';     // Điền api_hash (chuỗi 32 ký tự hex)
+export const API_ID = 35191552;       // Fill in api_id (number) - e.g. 12345678
+export const API_HASH = 'dc2e0af7dce5823a2a15784a289580bf';     // Fill in api_hash (32-character hex string)

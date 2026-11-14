@@ -1,11 +1,11 @@
 /**
- * PluginFrame — iframe của UI plugin + cầu postMessage (JSON-RPC 2.0).
+ * PluginFrame - the plugin UI iframe + postMessage bridge (JSON-RPC 2.0).
  *
- * An toàn:
- *  - sandbox không có allow-popups / allow-top-navigation / allow-modals; origin iframe là
- *    deplao-plugin://<id> (khác app) nên không chạm được DOM, store hay electronAPI;
- *  - chỉ nhận message có event.source là đúng iframe này VÀ origin đúng plugin;
- *  - pluginId lấy từ prop (iframe nào gửi), không tin giá trị trong message.
+ * Security:
+ *  - the sandbox has no allow-popups / allow-top-navigation / allow-modals; the iframe origin is
+ *    deplao-plugin://<id> (different from the app), so it cannot touch the DOM, store or electronAPI;
+ *  - only accepts messages whose event.source is this exact iframe AND whose origin is the right plugin;
+ *  - pluginId comes from the prop (whichever iframe sent it), the value inside the message is not trusted.
  */
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { PluginUiContribution } from '@/lib/ipc';
@@ -18,7 +18,7 @@ import { appActions, handleUiRequest, mainInvoker, UiBridgeEnv } from './pluginB
 interface Props {
   contribution: PluginUiContribution;
   kind: 'page' | 'panel';
-  /** Ngữ cảnh hội thoại đang mở (panel chat). */
+  /** Context of the open conversation (chat panel). */
   context?: any;
   className?: string;
 }
@@ -45,7 +45,7 @@ export default function PluginFrame({ contribution, kind, context, className }: 
   const post = useCallback((msg: any) => {
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
-    // Custom scheme: origin không dùng làm targetOrigin được ổn định → '*' (main chặn iframe điều hướng sang origin khác).
+    // Custom scheme: the origin cannot be used as a stable targetOrigin → '*' (main blocks the iframe from navigating to another origin).
     win.postMessage(msg, /^https?:/i.test(origin) ? origin : '*');
   }, [origin]);
 
@@ -96,7 +96,7 @@ export default function PluginFrame({ contribution, kind, context, className }: 
     };
   }, [pluginId, origin, post]);
 
-  // Huỷ đăng ký sự kiện chỉ khi khung bị gỡ (không phải mỗi lần danh sách plugin tải lại).
+  // Unsubscribe from events only when the frame is removed (not every time the plugin list reloads).
   useEffect(() => {
     const key = keyRef.current;
     return () => removeFrame(pluginId, key);
@@ -111,7 +111,7 @@ export default function PluginFrame({ contribution, kind, context, className }: 
     if (kind === 'panel') post({ jsonrpc: '2.0', method: 'context.changed', params: contextRef.current ?? null });
   }, [kind, contextKey, post]);
 
-  // Micro chỉ cho ứng dụng đã được duyệt quyền ui:microphone (khung khác origin bị chặn nếu thiếu allow).
+  // Microphone only for apps granted the ui:microphone permission (a cross-origin frame is blocked if the allow attribute is missing).
   const allow = contribution.permissions?.includes('ui:microphone') ? 'microphone' : undefined;
 
   return (

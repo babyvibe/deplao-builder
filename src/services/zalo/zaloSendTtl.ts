@@ -1,23 +1,22 @@
 /**
- * zaloSendTtl.ts — FR-ZL05.7 (SRS Deplao ZL-05): hội thoại Zalo đang bật tự xoá → tin gửi từ Deplao mang ttl của hội thoại
- * như app Zalo (mỗi tin tự gắn ttl). Cài một lần lên đối tượng api zca-js trong ConnectionManager nên mọi lối gửi đều có:
- * giao diện, máy nhân viên (Boss gửi hộ), Public API, workflow, chiến dịch CRM, Ứng dụng.
+ * zaloSendTtl.ts: FR-ZL05.7 (Deplao SRS ZL-05). When auto-delete is on for a Zalo conversation, messages sent from Deplao carry the conversation's ttl
+ * like the Zalo app does (each message sets its own ttl). It is installed once on the zca-js api object in ConnectionManager, so every send path has it: the UI, employee machines (Boss sends on their behalf), Public API, workflows, CRM campaigns, Apps.
  *
- * - Người gọi đã truyền ttl → giữ nguyên. Hội thoại tắt tự xoá (hoặc tra DB lỗi) → gọi như cũ, không đổi tham số.
- * - Máy chủ Zalo có tự áp ttl của hội thoại hay không chưa kiểm: gắn đúng giá trị đó nên vô hại cả hai trường hợp.
- * - zca-js 2.2.0 nhận ttl (ms) ở sendMessage (chữ, ảnh, file, GIF), sendLink, sendVideo, sendVoice, sendCard, forwardMessage;
- *   sendSticker không nhận → sticker không tự xoá.
+ * - The caller already passed a ttl → kept as is. Conversation with auto-delete off (or a DB lookup error) → called as before, parameters unchanged.
+ * - It is not yet checked whether the Zalo server applies the conversation's ttl by itself: setting the same value is harmless in both cases.
+ * - zca-js 2.2.0 accepts ttl (ms) in sendMessage (text, images, files, GIF), sendLink, sendVideo, sendVoice, sendCard, forwardMessage;
+ *   sendSticker does not accept it, so stickers do not auto-delete.
  */
 import EventBroadcaster from '../event/EventBroadcaster';
 import Logger from '../../utils/Logger';
 
-/** threadId → ttl (ms) của hội thoại; 0 = không tự xoá. */
+/** threadId → ttl (ms) of the conversation; 0 = no auto-delete. */
 export type ZaloTtlLookup = (threadId: string) => number;
 
 const INSTALLED = Symbol.for('deplao.zaloSendTtl');
 const SINGLE_THREAD_SENDS = ['sendMessage', 'sendLink', 'sendVideo', 'sendVoice', 'sendCard'] as const;
 
-/** ttl đang bật của hội thoại trong DB của Boss (đúng DB cả khi Boss đang xem workspace nhân viên). */
+/** The conversation's ttl that is on in Boss's DB (the right DB even when Boss is viewing an employee workspace). */
 export function zaloTtlLookupFor(zaloId: string): ZaloTtlLookup {
   return (threadId) => EventBroadcaster.withBossDb((db) => db.getContactAutoDeleteTtl(zaloId, threadId));
 }
@@ -37,7 +36,7 @@ function hasTtl(content: any): boolean {
   return content?.ttl !== undefined && content?.ttl !== null;
 }
 
-/** Nội dung gửi kèm ttl; chuỗi → { msg, ttl } như zca-js tự làm. Đã có ttl / không phải nội dung → giữ nguyên. */
+/** Content sent with a ttl: a string → { msg, ttl } the way zca-js does it itself. Already has a ttl / is not message content → kept as is. */
 export function withZaloTtl<T>(content: T, ttl: number): T {
   if (!(ttl > 0)) return content;
   if (typeof content === 'string') return { msg: content, ttl } as any;
@@ -60,7 +59,7 @@ function forwardWithTtl(original: (...args: any[]) => Promise<any>, lookup: Zalo
       const [ttl] = groups.keys();
       return original(withZaloTtl(payload, ttl), threadIds, ...rest);
     }
-    // Đích có mức tự xoá khác nhau: zca-js chỉ nhận một ttl cho cả lượt → mỗi mức một lượt, gộp kết quả
+    // Targets have different auto-delete levels: zca-js accepts only one ttl per call → one call per level, then merge the results
     const merged: { success: any[]; fail: any[] } = { success: [], fail: [] };
     for (const [ttl, groupIds] of groups) {
       const res = await original(withZaloTtl(payload, ttl), groupIds, ...rest);
@@ -71,7 +70,7 @@ function forwardWithTtl(original: (...args: any[]) => Promise<any>, lookup: Zalo
   };
 }
 
-/** Bọc các hàm gửi của một api zca-js (một lần cho mỗi đối tượng api). */
+/** Wraps the send functions of a zca-js api (once per api object). */
 export function installZaloSendTtl(api: any, lookup: ZaloTtlLookup): void {
   if (!api || typeof api !== 'object' || api[INSTALLED]) return;
   for (const name of SINGLE_THREAD_SENDS) {

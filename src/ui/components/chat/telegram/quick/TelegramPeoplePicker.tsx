@@ -1,6 +1,6 @@
 /**
- * Chọn người từ danh bạ Telegram + hội thoại gần đây (Nhóm mới: thành viên; Kênh mới: người theo dõi).
- * Không tìm: "Gần đây" rồi "Danh bạ" (đang trực tuyến trước, như Telegram); có tìm: một danh sách theo tên, @tên, số.
+ * Pick people from Telegram contacts + recent conversations (New group: members; New channel: followers).
+ * Without a search: "Gần đây" (Recent) then "Danh bạ" (Contacts) (online first, like Telegram). With a search: one list by name, @username, or number.
  */
 import React, { useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
@@ -9,6 +9,8 @@ import { CloseIcon, RefreshIcon, SearchIcon } from '@/components/common/icons';
 import { foldText } from '../../quick/quickActions';
 import { mergeTelegramPeople, useRecentTelegramPeople, useTelegramContacts, type PickerPerson } from './telegramPeople';
 import { RoundCheck, TelegramAvatar } from './TelegramUi';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const RECENT_LIMIT = 6;
 const RENDER_LIMIT = 300;
@@ -73,9 +75,9 @@ export default function TelegramPeoplePicker({ accountId, selected, onChange, li
       .filter(person => !person.isContact && !recentIds.has(person.id))
       .sort((a, b) => b.recentTime - a.recentTime);
     return [
-      { key: 'recent', title: 'Gần đây', items: recentItems },
-      { key: 'contacts', title: `Danh bạ${contacts.contacts ? ` · ${contacts.contacts.length}` : ''}`, items: contactItems },
-      { key: 'others', title: 'Đã nhắn tin', items: others },
+      { key: 'recent', title: tr('Gần đây'), items: recentItems },
+      { key: 'contacts', title: tr('Danh bạ{{v1}}', { v1: contacts.contacts ? ` · ${contacts.contacts.length}` : '' }), items: contactItems },
+      { key: 'others', title: tr('Đã nhắn tin'), items: others },
     ].filter(section => section.items.length > 0);
   }, [people, needle, contacts.contacts]);
 
@@ -96,7 +98,7 @@ export default function TelegramPeoplePicker({ accountId, selected, onChange, li
               <TelegramAvatar id={person.id} name={person.name} src={person.avatar} size={20} />
               <span className="truncate">{person.name}</span>
               <button type="button" onClick={() => onChange(selected.filter(item => item.id !== person.id))}
-                aria-label={`Bỏ ${person.name}`} className="rounded-full p-0.5 hover:bg-primary/15">
+                aria-label={tr('Bỏ {{name}}', { name: person.name })} className="rounded-full p-0.5 hover:bg-primary/15">
                 <CloseIcon className="h-3 w-3" />
               </button>
             </span>
@@ -105,22 +107,22 @@ export default function TelegramPeoplePicker({ accountId, selected, onChange, li
       )}
       <div className="relative">
         <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle-foreground" />
-        <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Tìm theo tên, @tên người dùng, số điện thoại…"
-          aria-label="Tìm người" className="h-9 pl-8 pr-9 text-[13px]" />
-        <button type="button" onClick={() => void contacts.reload()} title="Tải lại danh bạ" aria-label="Tải lại danh bạ"
+        <Input value={query} onChange={e => setQuery(e.target.value)} placeholder={tr('Tìm theo tên, @tên người dùng, số điện thoại…')}
+          aria-label={tr('Tìm người')} className="h-9 pl-8 pr-9 text-[13px]" />
+        <button type="button" onClick={() => void contacts.reload()} title={tr('Tải lại danh bạ')} aria-label={tr('Tải lại danh bạ')}
           className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-subtle-foreground hover:bg-muted hover:text-foreground">
           <RefreshIcon className={cn('h-3.5 w-3.5', contacts.loading && 'animate-spin')} />
         </button>
       </div>
       {contacts.error && (
-        <p className="text-[11px] text-warning">{contacts.error} — vẫn chọn được người đã nhắn tin.</p>
+        <p className="text-[11px] text-warning">{trx('{{error}} — vẫn chọn được người đã nhắn tin.', { error: contacts.error })}</p>
       )}
       <div className={cn('max-h-72 overflow-y-auto rounded-xl border border-border p-1', listClassName)}>
         {loading ? (
-          <p className="px-3 py-8 text-center text-xs text-muted-foreground">Đang tải danh bạ…</p>
+          <p className="px-3 py-8 text-center text-xs text-muted-foreground">{tr('Đang tải danh bạ…')}</p>
         ) : sections.length === 0 ? (
           <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-            {needle ? 'Không có ai khớp' : (emptyHint || 'Chưa có liên hệ hay hội thoại 1-1 nào')}
+            {needle ? tr('Không có ai khớp') : (emptyHint || tr('Chưa có liên hệ hay hội thoại 1-1 nào'))}
           </p>
         ) : (
           sections.map(section => {
@@ -142,7 +144,7 @@ export default function TelegramPeoplePicker({ accountId, selected, onChange, li
           })
         )}
         {rendered >= RENDER_LIMIT && (
-          <p className="px-3 py-2 text-center text-[11px] text-subtle-foreground">Gõ để tìm thêm người</p>
+          <p className="px-3 py-2 text-center text-[11px] text-subtle-foreground">{tr('Gõ để tìm thêm người')}</p>
         )}
       </div>
     </div>

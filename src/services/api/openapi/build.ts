@@ -1,8 +1,9 @@
 /**
- * build.ts — dựng OpenAPI 3.1 từ chính RouteDef đã đăng ký (docs không thể lệch code).
+ * build.ts: builds OpenAPI 3.1 from the RouteDefs that are registered (so the docs cannot drift from the code).
  */
 import { API_SCOPES, ERROR_CODES, RouteDef } from '../types';
 import { GUIDES, TAG_DESCRIPTIONS, OVERVIEW_MARKDOWN } from './guides';
+import { tr } from '../../../shared/i18n';
 
 export interface BuildOptions {
     version: string;
@@ -16,15 +17,15 @@ interface ListedRoute {
 }
 
 const ERROR_RESPONSE_CODES: Array<[string, string]> = [
-    ['400', 'Tham số không hợp lệ (VALIDATION_ERROR, INVALID_JSON)'],
-    ['401', 'Thiếu hoặc sai API key (UNAUTHORIZED)'],
-    ['403', 'Thiếu scope / không được cấp tài khoản / IP bị chặn'],
-    ['404', 'Không tìm thấy (NOT_FOUND)'],
-    ['409', 'Tài khoản chưa kết nối (ACCOUNT_OFFLINE) hoặc xung đột'],
-    ['422', 'Kênh không hỗ trợ thao tác (CHANNEL_UNSUPPORTED)'],
-    ['429', 'Vượt giới hạn tốc độ bạn đã đặt (RATE_LIMITED)'],
-    ['502', 'Zalo/Facebook/Telegram trả lỗi (UPSTREAM_ERROR)'],
-    ['503', 'API đang tắt hoặc workspace không khả dụng'],
+    ['400', tr('Tham số không hợp lệ (VALIDATION_ERROR, INVALID_JSON)')],
+    ['401', tr('Thiếu hoặc sai API key (UNAUTHORIZED)')],
+    ['403', tr('Thiếu scope / không được cấp tài khoản / IP bị chặn')],
+    ['404', tr('Không tìm thấy (NOT_FOUND)')],
+    ['409', tr('Tài khoản chưa kết nối (ACCOUNT_OFFLINE) hoặc xung đột')],
+    ['422', tr('Kênh không hỗ trợ thao tác (CHANNEL_UNSUPPORTED)')],
+    ['429', tr('Vượt giới hạn tốc độ bạn đã đặt (RATE_LIMITED)')],
+    ['502', tr('Zalo/Facebook/Telegram trả lỗi (UPSTREAM_ERROR)')],
+    ['503', tr('API đang tắt hoặc workspace không khả dụng')],
 ];
 
 function pathParameters(def: RouteDef, template: string): any[] {
@@ -67,8 +68,8 @@ function successSchema(def: RouteDef): any {
 function describe(def: RouteDef): string {
     const parts: string[] = [];
     if (def.description) parts.push(def.description);
-    if (def.scope === null) parts.push('**Không cần API key.**');
-    else if (def.scope === 'any') parts.push('**Cần API key** (scope bất kỳ).');
+    if (def.scope === null) parts.push(tr('**Không cần API key.**'));
+    else if (def.scope === 'any') parts.push(tr('**Cần API key** (scope bất kỳ).'));
     else parts.push(`**Scope:** \`${def.scope}\``);
     return parts.join('\n\n');
 }
@@ -128,7 +129,7 @@ export function buildOpenApi(routes: ListedRoute[], opts: BuildOptions): any {
                 ? { success: true, data: def.examples.response, request_id: '3f0c0b6e-6d0a-4b8e-9d1a-1d2f3a4b5c6d' }
                 : undefined;
             op.responses['200'] = {
-                description: 'Thành công',
+                description: tr('Thành công'),
                 content: { 'application/json': { schema: successSchema(def), ...(example ? { example } : {}) } },
             };
         }
@@ -183,8 +184,8 @@ export function buildOpenApi(routes: ListedRoute[], opts: BuildOptions): any {
                         total: { type: 'integer' },
                         has_more: { type: 'boolean' },
                         next_offset: { type: ['integer', 'null'] },
-                        next_before: { type: ['integer', 'null'], description: 'Truyền vào `before` để lấy trang tin cũ hơn' },
-                        next_since: { type: ['integer', 'null'], description: 'Polling sự kiện: truyền vào `since` lần sau' },
+                        next_before: { type: ['integer', 'null'], description: tr('Truyền vào `before` để lấy trang tin cũ hơn') },
+                        next_since: { type: ['integer', 'null'], description: tr('Polling sự kiện: truyền vào `since` lần sau') },
                     },
                 },
             },

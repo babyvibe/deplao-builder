@@ -16,6 +16,7 @@ import {
   WebhookIcon,
 } from '@/components/common/icons';
 import { FacebookIcon, TelegramIcon, ZaloIcon } from '@/components/common/avatars/ChannelBadge';
+import { tr } from '../../../../shared/i18n';
 
 type IconComponent = (props: { className?: string }) => JSX.Element;
 
@@ -76,32 +77,35 @@ export type NodeFamily =
   | 'pos' | 'payment' | 'shipping';
 
 export const FAMILY_META: Record<NodeFamily, { label: string; accent: string }> = {
-  trigger:  { label: 'Kích hoạt',     accent: '#7c3aed' },
-  action:   { label: 'Hành động',     accent: '#2563eb' },
-  logic:    { label: 'Logic',         accent: '#d97706' },
-  data:     { label: 'Dữ liệu',       accent: '#0d9488' },
+  trigger:  { label: tr('Kích hoạt'),     accent: '#7c3aed' },
+  action:   { label: tr('Hành động'),     accent: '#2563eb' },
+  logic:    { label: tr('Logic'),         accent: '#d97706' },
+  data:     { label: tr('Dữ liệu'),       accent: '#0d9488' },
   sheets:   { label: 'Google Sheets', accent: '#16a34a' },
   ai:       { label: 'AI',            accent: '#c026d3' },
-  notify:   { label: 'Thông báo',     accent: '#ea580c' },
-  output:   { label: 'Đầu ra',        accent: '#e11d48' },
-  pos:      { label: 'Bán hàng',      accent: '#4f46e5' },
-  payment:  { label: 'Thanh toán',    accent: '#059669' },
-  shipping: { label: 'Vận chuyển',    accent: '#0891b2' },
+  notify:   { label: tr('Thông báo'),     accent: '#ea580c' },
+  output:   { label: tr('Đầu ra'),        accent: '#e11d48' },
+  pos:      { label: tr('Bán hàng'),      accent: '#4f46e5' },
+  payment:  { label: tr('Thanh toán'),    accent: '#059669' },
+  shipping: { label: tr('Vận chuyển'),    accent: '#0891b2' },
 };
 
-/** Palette group label → family, so palette dots match the canvas colours. */
+/**
+ * Palette group label → family, so palette dots match the canvas colours. Keys are the translated labels, exactly like
+ * NODE_GROUPS[].label in workflowConfig.ts, so the lookup works in every UI language.
+ */
 export const PALETTE_GROUP_FAMILY: Record<string, NodeFamily> = {
-  'Kích hoạt': 'trigger',
-  'Hành động': 'action',
-  'Điều kiện & Logic': 'logic',
-  'Xử lý dữ liệu': 'data',
+  [tr('Kích hoạt')]: 'trigger',
+  [tr('Hành động')]: 'action',
+  [tr('Điều kiện & Logic')]: 'logic',
+  [tr('Xử lý dữ liệu')]: 'data',
   'Google Sheets': 'sheets',
-  'Trí tuệ nhân tạo (AI)': 'ai',
-  'Gửi thông báo': 'notify',
-  'Đầu ra & API': 'output',
-  'POS / Bán hàng': 'pos',
-  'Thanh toán': 'payment',
-  'Vận chuyển': 'shipping',
+  [tr('Trí tuệ nhân tạo (AI)')]: 'ai',
+  [tr('Gửi thông báo')]: 'notify',
+  [tr('Đầu ra & API')]: 'output',
+  [tr('POS / Bán hàng')]: 'pos',
+  [tr('Thanh toán')]: 'payment',
+  [tr('Vận chuyển')]: 'shipping',
 };
 
 const POS_PREFIXES = ['kiotviet.', 'haravan.', 'sapo.', 'nhanh.', 'pancake.'];

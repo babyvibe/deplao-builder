@@ -4,15 +4,10 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import { useWorkspaceStore } from '@/store/app/workspaceStore';
 import AIAssistantDetailPage from './AIAssistantDetailPage';
 import AccountAssignmentPopup from '@/components/chat/composer/AccountAssignmentPopup';
-import { AlertIcon, BotIcon, LightningIcon, SparklesIcon, TargetIcon, UserIcon } from '@/components/common/icons';
-
-const PLATFORM_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  openai:   { label: 'OpenAI',   color: 'bg-green-600',   icon: <BotIcon className="w-4 h-4" /> },
-  gemini:   { label: 'Gemini',   color: 'bg-blue-600',    icon: <SparklesIcon className="w-4 h-4" /> },
-  claude:   { label: 'Claude',   color: 'bg-amber-600',   icon: <AlertIcon className="w-4 h-4" /> },
-  deepseek: { label: 'DeepSeek', color: 'bg-purple-600',  icon: <TargetIcon className="w-4 h-4" /> },
-  grok:     { label: 'Grok',     color: 'bg-orange-600',  icon: <LightningIcon className="w-4 h-4" /> },
-};
+import { BotIcon, UserIcon } from '@/components/common/icons';
+import { getAIPlatformMeta } from './aiPlatformMeta';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface AIAssistantSummary {
   id: string;
@@ -42,7 +37,7 @@ export default function AIAssistantPage() {
       if (res?.success) setAssistants(res.assistants || []);
     } catch {}
     setLoading(false);
-  }, [workspaceId]); // ← re-fetch khi chuyển workspace
+  }, [workspaceId]); // ← re-fetch when switching workspace
 
   useEffect(() => { loadList(); }, [loadList]);
 
@@ -61,17 +56,17 @@ export default function AIAssistantPage() {
       <div className="px-6 py-4 border-b border-border flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="flex-1">
-            <h1 className="text-lg font-semibold text-foreground"><BotIcon className="w-4 h-4 inline" /> Trợ lý AI</h1>
+            <h1 className="text-lg font-semibold text-foreground">{trx('<0/> Trợ lý AI', { 0: <BotIcon className="w-4 h-4 inline" /> })}</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Tạo và quản lý trợ lý AI - tùy chỉnh prompt, nạp dữ liệu sản phẩm, file kiến thức
+              {tr('Tạo và quản lý trợ lý AI - tùy chỉnh prompt, nạp dữ liệu sản phẩm, file kiến thức')}
             </p>
           </div>
           <button onClick={() => setShowAccountPopup(true)}
-            className="px-3 py-2 text-sm rounded-lg transition-colors border text-muted-foreground hover:text-foreground border-input hover:border-border-strong"><UserIcon className="w-4 h-4 inline" /> Gán theo tài khoản
+            className="px-3 py-2 text-sm rounded-lg transition-colors border text-muted-foreground hover:text-foreground border-input hover:border-border-strong">{trx('<0/> Gán theo tài khoản', { 0: <UserIcon className="w-4 h-4 inline" /> })}
           </button>
           <button onClick={() => setCreating(true)}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">
-            + Tạo trợ lý
+            {tr('+ Tạo trợ lý')}
           </button>
         </div>
       </div>
@@ -79,22 +74,22 @@ export default function AIAssistantPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {loading ? (
-          <PageLoading variant="inline" text="Đang tải trợ lý AI..." />
+          <PageLoading variant="inline" text={tr('Đang tải trợ lý AI...')} />
         ) : assistants.length === 0 ? (
           <div className="text-center py-20">
-            <h3 className="text-lg font-medium text-foreground mb-2">Chưa có trợ lý AI nào</h3>
+            <h3 className="text-lg font-medium text-foreground mb-2">{tr('Chưa có trợ lý AI nào')}</h3>
             <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-              Tạo trợ lý AI để tự động gợi ý câu trả lời trong chat, hỏi đáp trực tiếp và nhiều hơn nữa
+              {tr('Tạo trợ lý AI để tự động gợi ý câu trả lời trong chat, hỏi đáp trực tiếp và nhiều hơn nữa')}
             </p>
             <button onClick={() => setCreating(true)}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">
-              + Tạo trợ lý đầu tiên
+              {tr('+ Tạo trợ lý đầu tiên')}
             </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {assistants.map(a => {
-              const meta = PLATFORM_META[a.platform] || PLATFORM_META.openai;
+              const meta = getAIPlatformMeta(a.platform);
               return (
                 <button key={a.id}
                   onClick={() => setEditingId(a.id)}
@@ -109,7 +104,7 @@ export default function AIAssistantPage() {
                         <span className="font-medium text-foreground text-sm truncate">{a.name}</span>
                         {a.isDefault && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-400 font-bold flex-shrink-0">
-                            MẶC ĐỊNH
+                            {tr('MẶC ĐỊNH')}
                           </span>
                         )}
                       </div>
@@ -119,10 +114,10 @@ export default function AIAssistantPage() {
                   <div className="mt-3 flex items-center justify-between">
                     <span className={`text-xs flex items-center gap-1 ${a.enabled ? 'text-green-400' : 'text-muted-foreground'}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${a.enabled ? 'bg-green-400' : 'bg-accent'}`}/>
-                      {a.enabled ? 'Đang bật' : 'Đã tắt'}
+                      {a.enabled ? tr('Đang bật') : tr('Đã tắt')}
                     </span>
                     <span className="text-xs text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                      Cấu hình →
+                      {tr('Cấu hình →')}
                     </span>
                   </div>
                 </button>

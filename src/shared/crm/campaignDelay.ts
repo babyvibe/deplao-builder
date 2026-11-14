@@ -1,13 +1,13 @@
 /**
- * Giãn cách giữa hai liên hệ của chiến dịch CRM.
+ * Spacing between two contacts of a CRM campaign.
  *
- * CRMQueueService không bao giờ gửi hai liên hệ cách nhau dưới `CAMPAIGN_MIN_CONTACT_DELAY_SECONDS` (chống spam).
- * Màn tạo / sửa chiến dịch và màn chi tiết dùng cùng hằng số: trước đây ô "Tùy chỉnh khoảng" cho chọn từ 5 giây
- * trong khi queue vẫn chờ 30 giây.
+ * CRMQueueService never sends two contacts closer together than `CAMPAIGN_MIN_CONTACT_DELAY_SECONDS` (anti-spam).
+ * The create / edit campaign screen and the detail screen use the same constant. Before, the "Tùy chỉnh khoảng" (custom range) field let you pick from 5 seconds,
+ * while the queue still waited 30 seconds.
  */
 export const CAMPAIGN_MIN_CONTACT_DELAY_SECONDS = 30;
 
-/** Khoảng [min, max] giây queue thực sự dùng: min ≥ mức tối thiểu, max ≥ min. */
+/** The [min, max] seconds range the queue actually uses: min ≥ the minimum, max ≥ min. */
 export function effectiveContactDelayRange(minSeconds: number, maxSeconds: number): [number, number] {
   const min = Math.max(CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, Number(minSeconds) || 0);
   const max = Math.max(min, Number(maxSeconds) || 0);

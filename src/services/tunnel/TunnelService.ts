@@ -1,40 +1,40 @@
 /**
- * TunnelService — mở cổng local ra Internet qua tunnel. Nhiều tunnel cùng lúc, mỗi cổng một tunnel.
+ * TunnelService: exposes a local port to the Internet through a tunnel. Several tunnels at once, one tunnel per port.
  *
- * Nhà cung cấp:
- *  - 'cloudflare'        Cloudflare Quick Tunnel (trycloudflare.com), không cần tài khoản — ĐỊA CHỈ TẠM:
- *                         mỗi lần cloudflared chạy lại là một URL ngẫu nhiên mới.
- *  - 'cloudflare_named'  Cloudflare Tunnel có tài khoản — ĐỊA CHỈ CỐ ĐỊNH. Chạy
- *                         `cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:0 run`, token qua biến môi trường
- *                         TUNNEL_TOKEN (không lộ trong danh sách tiến trình như --token). Cổng metrics (OS chọn, đọc từ
- *                         dòng log "Starting metrics server on …") + Connector ID + phiên bản có trong getState() để đọc
- *                         /ready. Public Hostname + service (http://localhost:<port>) cấu hình trên dashboard; cloudflared
- *                         không in URL nên dùng opts.publicUrl; cấu hình ingress nhận về được đối chiếu và cảnh báo
- *                         (trừ opts.managedIngress — "Cloudflare tự động" tự quản lý ingress qua API).
- *  - 'ngrok'             @ngrok/ngrok — cố định khi có domain tĩnh (opts.domain), không có thì coi là tạm.
+ * Providers:
+ *  - 'cloudflare'        Cloudflare Quick Tunnel (trycloudflare.com), no account needed: TEMPORARY ADDRESS:
+ *                         each time cloudflared runs again it gets a new random URL.
+ *  - 'cloudflare_named'  Cloudflare Tunnel with an account: FIXED ADDRESS. Runs
+ *                         `cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:0 run`, token through the environment variable
+ *                         TUNNEL_TOKEN (not visible in the process list like --token). The metrics port (chosen by the OS, read from the log line
+ *                         "Starting metrics server on …") + Connector ID + version are in getState() for reading
+ *                         /ready. The Public Hostname + service (http://localhost:<port>) are configured on the dashboard; cloudflared
+ *                         does not print the URL, so opts.publicUrl is used; the ingress config received is checked and warned about
+ *                         (except opts.managedIngress: "Cloudflare tự động" (Cloudflare automatic) manages the ingress itself through the API).
+ *  - 'ngrok'             @ngrok/ngrok: fixed when a static domain is given (opts.domain), otherwise treated as temporary.
  *
- * Binary cloudflared: gói npm `cloudflared` tải bản "latest" lúc npm install (bin/ trong app.asar.unpacked); máy chưa có
- * binary thì cài bản CLOUDFLARED_PINNED_VERSION (ghi đè bằng biến môi trường CLOUDFLARED_VERSION) thay vì "latest".
+ * cloudflared binary: the `cloudflared` npm package downloads the "latest" build at npm install (bin/ in app.asar.unpacked); a machine with no
+ * binary installs CLOUDFLARED_PINNED_VERSION (override with the CLOUDFLARED_VERSION environment variable) instead of "latest".
  *
- * Giám sát: tunnel đã chạy mà tiến trình cloudflared thoát ngoài ý muốn → tự chạy lại theo
- * TUNNEL_RESTART_BACKOFF_MS (2 s, 5 s, 15 s, 30 s rồi 60 s; chạy ổn >= 2 phút thì tính lại từ đầu) cho tới khi
- * stop(). ngrok tự kết nối lại trong SDK nên chỉ ghi log. opts.keepAlive (tự bật khi mở app): lần bật đầu lỗi
- * (vd chưa có mạng) cũng thử lại theo lịch đó thay vì bỏ cuộc.
+ * Watchdog: a tunnel that was running whose cloudflared process exits unexpectedly → runs again on its own by
+ * TUNNEL_RESTART_BACKOFF_MS (2 s, 5 s, 15 s, 30 s, then 60 s; a run that stays up >= 2 minutes starts the count again) until
+ * stop(). ngrok reconnects by itself inside the SDK, so it only logs. opts.keepAlive (turned on automatically when the app opens): a first start that fails
+ * (e.g. no network yet) also retries on that schedule instead of giving up.
  *
- * replace(): đổi cấu hình khi đang chạy kiểu make-before-break — bật tunnel mới trước (lỗi thì giữ nguyên
- * tunnel cũ), báo listener địa chỉ mới (Boss báo nhân viên qua tunnel cũ còn sống), giữ tunnel cũ thêm
- * TUNNEL_SWITCH_GRACE_MS rồi mới tắt.
+ * replace(): changes the config of a running tunnel make-before-break style: starts the new tunnel first (if that fails, the old one stays),
+ * tells the listeners the new address (the Boss tells employees through the old tunnel while it is still alive), keeps the old tunnel for
+ * TUNNEL_SWITCH_GRACE_MS more, and only then shuts it down.
  *
- * Listener:
- *  - onChange(port, cb) — theo PHIÊN như trước: bị xoá khi stop()/start() tường minh, giữ qua các lần tự chạy
- *    lại và replace(). Đăng ký trước start() thì start() nhận luôn.
- *  - watch(port, cb)    — bền, nhận MỌI thay đổi của cổng (bật, chết, chạy lại, đổi, thử lại lỗi, tắt).
- *  cb(url, info): url = địa chỉ đang dùng được (null khi đang chết / đã tắt). Cả hai trả hàm huỷ.
+ * Listeners:
+ *  - onChange(port, cb): per SESSION as before: removed by an explicit stop()/start(), kept across automatic restarts
+ *    and replace(). Registered before start() → start() receives it right away.
+ *  - watch(port, cb): durable, receives EVERY change of the port (started, died, restarted, changed, retry failed, stopped).
+ *  cb(url, info): url = the address currently in use (null when dead / stopped). Both return an unsubscribe function.
  *
  * Usage:
  *   const url = await TunnelService.start(9900, 'Employee Relay', { provider: 'cloudflare_named', token, publicUrl });
  *   const off = TunnelService.watch(9900, (url, info) => …);
- *   await TunnelService.replace(9900, 'Employee Relay', newOpts);   // đổi cấu hình, không ngắt nhân viên
+ *   await TunnelService.replace(9900, 'Employee Relay', newOpts);   // change the config, the employees are not cut off
  *   await TunnelService.stop(9900);
  */
 
@@ -49,6 +49,7 @@ import {
   tunnelRestartDelay,
   type TunnelAddressKind,
 } from '../../shared/cloud/tunnelAddress';
+import { tr } from '../../shared/i18n';
 
 let Tunnel: any = null;
 let bin: string | null = null;
@@ -56,12 +57,12 @@ let install: ((to: string, version?: string) => Promise<string>) | null = null;
 let ConfigHandler: any = null;
 
 /**
- * Bản cloudflared cài khi máy chưa có binary (gói npm mặc định "latest" → mỗi máy một bản khác nhau). Đây là bản
- * đang đóng gói kèm app lúc viết (2026.7.3). Ghi đè: biến môi trường CLOUDFLARED_VERSION.
+ * The cloudflared version installed when the machine has no binary (the npm package default "latest" → each machine gets a different version). This is the
+ * version bundled with the app when this was written (2026.7.3). Override: the CLOUDFLARED_VERSION environment variable.
  */
 export const CLOUDFLARED_PINNED_VERSION = '2026.7.3';
 
-/** Tham số chạy Tunnel có tài khoản (token đi qua TUNNEL_TOKEN). Metrics :0 → OS chọn cổng trống, đọc lại từ log. */
+/** Run parameters for a tunnel with an account (the token is passed through TUNNEL_TOKEN). Metrics :0 → the OS picks a free port, read back from the log. */
 const NAMED_TUNNEL_ARGS: readonly string[] = ['tunnel', '--no-autoupdate', '--metrics', '127.0.0.1:0', 'run'];
 
 try {
@@ -84,7 +85,7 @@ try {
   Logger.warn('[TunnelService] cloudflared package not found');
 }
 
-// ngrok provider (optional). Cấp static domain cố định — dùng cho relay nhân viên.
+// ngrok provider (optional). Gives a fixed static domain; used for the employee relay.
 let ngrok: any = null;
 try {
   ngrok = require('@ngrok/ngrok');
@@ -98,23 +99,23 @@ export interface TunnelOptions {
   provider?: TunnelProvider;
   authtoken?: string;
   domain?: string;
-  /** cloudflare_named: token của Cloudflare Tunnel (Zero Trust → Networks → Tunnels). */
+  /** cloudflare_named: the Cloudflare Tunnel token (Zero Trust → Networks → Tunnels). */
   token?: string;
-  /** cloudflare_named: địa chỉ công khai đã gắn với tunnel (Public Hostname), vd https://shop.example.com */
+  /** cloudflare_named: the public address attached to the tunnel (Public Hostname), e.g. https://shop.example.com */
   publicUrl?: string;
-  /** Lần bật đầu lỗi (vd chưa có mạng lúc mở app) → giữ phiên và tự thử lại theo backoff thay vì bỏ cuộc. */
+  /** A first start that fails (e.g. no network when the app opens) → keep the session and retry on the backoff schedule instead of giving up. */
   keepAlive?: boolean;
-  /** cloudflare_named: ingress do Deplao quản lý qua API (Cloudflare tự động) → không đối chiếu Public Hostname / cổng. */
+  /** cloudflare_named: ingress managed by Deplao through the API (Cloudflare automatic) → do not check the Public Hostname / port. */
   managedIngress?: boolean;
 }
 
 /**
- * started    — start() thành công
- * restarted  — tự chạy lại sau khi chết / sau lần bật đầu lỗi (keepAlive)
- * switched   — replace() đã chuyển sang cấu hình mới
- * down       — tunnel chết ngoài ý muốn, sẽ tự chạy lại (url = null)
- * retry-failed — một lần thử chạy lại thất bại, sẽ thử tiếp (url = null; chỉ watch() nhận)
- * stopped    — stop() tường minh (url = null)
+ * started - start() succeeded
+ * restarted - ran again automatically after it died / after a first start that failed (keepAlive)
+ * switched - replace() moved to the new config
+ * down - the tunnel died unexpectedly; it will run again on its own (url = null)
+ * retry-failed - one attempt to run again failed; it will keep trying (url = null; only watch() receives it)
+ * stopped - explicit stop() (url = null)
  */
 export type TunnelChangeReason = 'started' | 'restarted' | 'switched' | 'down' | 'retry-failed' | 'stopped';
 
@@ -124,7 +125,7 @@ export interface TunnelChangeInfo {
   reason: TunnelChangeReason;
   provider: TunnelProvider;
   kind: TunnelAddressKind;
-  /** Địa chỉ dùng được gần nhất TRƯỚC thay đổi này (null nếu phiên chưa từng có). */
+  /** The last usable address BEFORE this change (null if the session never had one). */
   previousUrl: string | null;
   error?: string;
 }
@@ -139,9 +140,9 @@ export interface TunnelStateSnapshot {
   provider: TunnelProvider;
   kind: TunnelAddressKind;
   state: TunnelState;
-  /** Địa chỉ đang dùng được (null khi đang khởi động / chạy lại). */
+  /** The address currently usable (null while starting / restarting). */
   url: string | null;
-  /** Địa chỉ dùng được gần nhất trong phiên. */
+  /** The last usable address in the session. */
   lastUrl: string | null;
   restarts: number;
   attempt: number;
@@ -149,26 +150,26 @@ export interface TunnelStateSnapshot {
   nextRetryAt: number | null;
   activeSince: number | null;
   warning: string | null;
-  /** cloudflared có tài khoản: cổng metrics trên 127.0.0.1 (/ready, /metrics) — null khi chưa biết / không phải cloudflared. */
+  /** cloudflared with an account: metrics port on 127.0.0.1 (/ready, /metrics). null when unknown / not cloudflared. */
   metricsPort: number | null;
-  /** Connector ID của tiến trình cloudflared (log "Generated Connector ID"). */
+  /** Connector ID of the cloudflared process (log "Generated Connector ID"). */
   connectorId: string | null;
-  /** Phiên bản cloudflared đang chạy (log "Version …"). */
+  /** Version of the running cloudflared (log "Version …"). */
   cloudflaredVersion: string | null;
 }
 
-/** Một tunnel đang chạy (một tiến trình cloudflared hoặc một listener ngrok). */
+/** One running tunnel (one cloudflared process or one ngrok listener). */
 interface TunnelHandle {
   provider: TunnelProvider;
   url: string;
-  /** Cảnh báo cấu hình phát hiện sau khi chạy (Public Hostname không khớp…). */
+  /** Config warning found after start (Public Hostname mismatch…). */
   warning: string | null;
-  /** Đọc từ log cloudflared khi chạy (null với ngrok / chưa in). */
+  /** Read from the cloudflared log while running (null for ngrok / not printed yet). */
   metricsPort: number | null;
   connectorId: string | null;
   version: string | null;
   close(): Promise<void>;
-  /** Báo tunnel chết ngoài ý muốn (gọi tối đa 1 lần; đăng ký sau khi đã chết thì gọi ngay). */
+  /** Report that a tunnel died unexpectedly (called at most once; if registered after it died, called immediately). */
   onDeath(cb: (reason: string) => void): void;
 }
 
@@ -190,18 +191,18 @@ interface Session {
   lastError: string | null;
   stopped: boolean;
   stopping: Promise<void> | null;
-  /** onChange() — theo phiên. */
+  /** onChange() - per session. */
   listeners: Set<TunnelListener>;
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const sessions = new Map<number, Session>();
-/** onChange() đăng ký khi cổng chưa có phiên → phiên start() kế tiếp nhận. */
+/** onChange() registered while the port has no session → the next start() session receives it. */
 const pendingListeners = new Map<number, Set<TunnelListener>>();
-/** watch() — bền theo cổng. */
+/** watch() - durable per port. */
 const watchers = new Map<number, Set<TunnelListener>>();
-/** Tunnel cũ đang chờ tắt sau replace(). */
+/** Old tunnel waiting to be shut down after replace(). */
 const retiring = new Set<TunnelHandle>();
 let shuttingDown = false;
 let quitHookInstalled = false;
@@ -215,7 +216,7 @@ function providerOf(opts?: TunnelOptions | null): TunnelProvider {
 }
 
 function providerName(provider: TunnelProvider): string {
-  if (provider === 'cloudflare_named') return 'Cloudflare Tunnel (có tài khoản)';
+  if (provider === 'cloudflare_named') return tr('Cloudflare Tunnel (có tài khoản)');
   if (provider === 'ngrok') return 'ngrok';
   return 'Cloudflare Quick Tunnel';
 }
@@ -224,7 +225,7 @@ function errorMessage(err: unknown): string {
   return (err as any)?.message || String(err);
 }
 
-/** Bỏ chuỗi dài giống token / secret khỏi dòng log trước khi đưa vào thông báo lỗi. */
+/** Strip long strings that look like a token / secret from log lines before they go into error messages. */
 function redact(text: string): string {
   return text.replace(/[A-Za-z0-9+/=_-]{40,}/g, '***');
 }
@@ -244,7 +245,7 @@ function addListener(map: Map<number, Set<TunnelListener>>, port: number, cb: Tu
   };
 }
 
-/** Phát thay đổi cho listener theo phiên (trừ retry-failed) và watcher bền của cổng. */
+/** Emit changes to the per-session listeners (except retry-failed) and to the port's durable watchers. */
 function emit(session: Session, reason: TunnelChangeReason, previousUrl: string | null, error?: string): void {
   const info: TunnelChangeInfo = {
     port: session.port,
@@ -263,21 +264,21 @@ function emit(session: Session, reason: TunnelChangeReason, previousUrl: string 
   if (portWatchers) for (const cb of Array.from(portWatchers)) safeCall(cb, url, info);
 }
 
-/** Tắt tunnel khi app thoát (không để cloudflared mồ côi) và chặn tự chạy lại trong lúc thoát. */
+/** Stop tunnels when the app quits (so no cloudflared is left orphaned) and block automatic restarts while quitting. */
 function installQuitHook(): void {
   if (quitHookInstalled) return;
   quitHookInstalled = true;
   try {
     const { app } = require('electron');
     if (app && typeof app.on === 'function') app.on('before-quit', () => TunnelService.shutdown());
-  } catch { /* ngoài Electron (test) */ }
+  } catch { /* outside Electron (tests) */ }
 }
 
 // ─── Providers ───────────────────────────────────────────────────────────────
 
 async function ensureCloudflared(): Promise<void> {
   if (!Tunnel || !bin || !install) {
-    throw new Error('Chưa cài gói cloudflared. Chạy: npm install cloudflared');
+    throw new Error(tr('Chưa cài gói cloudflared. Chạy: npm install cloudflared'));
   }
   // Auto-install the cloudflared binary on first run
   const fs = require('fs');
@@ -290,9 +291,9 @@ async function ensureCloudflared(): Promise<void> {
 }
 
 /**
- * Tunnel có tài khoản: token qua biến môi trường TUNNEL_TOKEN thay vì --token (argv ai cũng đọc được trong danh sách
- * tiến trình). Gói `cloudflared` spawn không nhận env riêng → đặt tạm process.env quanh lúc spawn: spawn chép env ĐỒNG BỘ,
- * không đoạn mã nào chen vào giữa, rồi trả lại giá trị cũ ngay.
+ * Tunnel with an account: the token goes through the TUNNEL_TOKEN environment variable instead of --token (anyone can read argv in the process
+ * list). The `cloudflared` package's spawn does not accept a separate env, so process.env is set temporarily around the spawn: spawn copies the env SYNCHRONOUSLY,
+ * with no code running in between, then the old value is restored at once.
  */
 function spawnNamedTunnel(token: string): any {
   const previous = process.env.TUNNEL_TOKEN;
@@ -314,8 +315,7 @@ function cleanPublicUrl(raw: string | undefined): string {
 }
 
 /**
- * Chạy cloudflared (quick hoặc named). Resolve khi sẵn sàng: quick = có URL trycloudflare, named = có kết nối
- * đầu tiên tới Cloudflare. Thoát / lỗi / quá 30 s trước đó → reject (kèm dòng lỗi cuối của cloudflared).
+ * Runs cloudflared (quick or named). Resolves when ready: quick = a trycloudflare URL has appeared; named = the first connection to Cloudflare exists. Exit / error / over 30 s before that → reject (with cloudflared's last error line).
  */
 async function launchCloudflared(port: number, opts: TunnelOptions, provider: 'cloudflare' | 'cloudflare_named'): Promise<TunnelHandle> {
   await ensureCloudflared();
@@ -323,8 +323,8 @@ async function launchCloudflared(port: number, opts: TunnelOptions, provider: 'c
   const token = String(opts.token || '').trim();
   const publicUrl = cleanPublicUrl(opts.publicUrl);
   if (named) {
-    if (!token) throw new Error('Thiếu Cloudflare Tunnel token');
-    if (!/^https:\/\/[^/\s]+$/i.test(publicUrl)) throw new Error('Nhập địa chỉ công khai dạng https://ten-mien (Public Hostname của tunnel)');
+    if (!token) throw new Error(tr('Thiếu Cloudflare Tunnel token'));
+    if (!/^https:\/\/[^/\s]+$/i.test(publicUrl)) throw new Error(tr('Nhập địa chỉ công khai dạng https://ten-mien (Public Hostname của tunnel)'));
   }
 
   return new Promise<TunnelHandle>((resolve, reject) => {
@@ -345,7 +345,7 @@ async function launchCloudflared(port: number, opts: TunnelOptions, provider: 'c
       version: null,
       close: async () => {
         closing = true;
-        try { tunnel.stop(); } catch { /* đã thoát */ }
+        try { tunnel.stop(); } catch { /* already exited */ }
       },
       onDeath: (cb) => {
         deathCb = cb;
@@ -359,7 +359,7 @@ async function launchCloudflared(port: number, opts: TunnelOptions, provider: 'c
       deathCb?.(reason);
     };
 
-    // Nhớ dòng lỗi gần nhất của cloudflared để báo lý do khi nó thoát / không lên; đọc cổng metrics / Connector ID / phiên bản
+    // Remember the most recent cloudflared error line to report the reason when it exits / does not come up; read the metrics port / Connector ID / version
     const onOutput = (chunk: string) => {
       for (const line of String(chunk || '').split(/\r?\n/)) {
         if (/\bERR\b|error=|failed/i.test(line)) {
@@ -382,7 +382,7 @@ async function launchCloudflared(port: number, opts: TunnelOptions, provider: 'c
       settled = true;
       if (timer) clearTimeout(timer);
       closing = true;
-      try { tunnel.stop(); } catch { /* đã thoát */ }
+      try { tunnel.stop(); } catch { /* already exited */ }
       reject(err);
     };
 
@@ -397,17 +397,17 @@ async function launchCloudflared(port: number, opts: TunnelOptions, provider: 'c
     timer = setTimeout(() => {
       const detail = lastErrorLine ? ` (${lastErrorLine})` : '';
       fail(new Error(named
-        ? `Cloudflare tunnel không kết nối được sau 30 giây — kiểm tra token và mạng${detail}`
-        : `Cloudflare tunnel timeout (port ${port}) - kiểm tra kết nối mạng${detail}`));
+        ? tr('Cloudflare tunnel không kết nối được sau 30 giây — kiểm tra token và mạng{{detail}}', { detail })
+        : tr('Cloudflare tunnel timeout (port {{port}}) - kiểm tra kết nối mạng{{detail}}', { port, detail })));
     }, START_TIMEOUT_MS);
 
     if (named) {
       tunnel.on('connected', () => ready(publicUrl));
-      // Đối chiếu cấu hình ingress nhận từ dashboard với địa chỉ đã nhập + cổng relay (ingress tự quản lý thì bỏ qua)
+      // Check the ingress config received from the dashboard against the address entered + the relay port (self-managed ingress: skip)
       if (ConfigHandler && !opts.managedIngress) {
         try {
           const configHandler = new ConfigHandler(tunnel);
-          configHandler.on('error', () => { /* cấu hình lạ — bỏ qua */ });
+          configHandler.on('error', () => { /* unknown config: skip */ });
           configHandler.on('config', ({ config }: { config: unknown }) => {
             const warning = checkNamedTunnelIngress(config, publicUrl, port);
             if (warning !== handle.warning) {
@@ -415,7 +415,7 @@ async function launchCloudflared(port: number, opts: TunnelOptions, provider: 'c
               if (warning) Logger.warn(`[TunnelService] ⚠️ Named tunnel [${port}]: ${warning}`);
             }
           });
-        } catch { /* gói cloudflared cũ không có ConfigHandler */ }
+        } catch { /* old cloudflared package without a ConfigHandler */ }
       }
     } else {
       tunnel.on('url', (url: string) => {
@@ -424,11 +424,11 @@ async function launchCloudflared(port: number, opts: TunnelOptions, provider: 'c
     }
 
     tunnel.on('exit', (code: number | null, signal: string | null) => {
-      const reason = `cloudflared thoát (code ${code ?? '-'}${signal ? `, ${signal}` : ''})${lastErrorLine ? ` — ${lastErrorLine}` : ''}`;
+      const reason = tr('cloudflared thoát (code {{v1}}{{v2}}){{v3}}', { v1: code ?? '-', v2: signal ? `, ${signal}` : '', v3: lastErrorLine ? ` — ${lastErrorLine}` : '' });
       if (!settled) {
         settled = true;
         if (timer) clearTimeout(timer);
-        reject(new Error(named ? `${reason}. Token sai hoặc tunnel đã bị xoá?` : reason));
+        reject(new Error(named ? tr('{{reason}}. Token sai hoặc tunnel đã bị xoá?', { reason }) : reason));
         return;
       }
       fireDeath(reason);
@@ -441,26 +441,26 @@ async function launchCloudflared(port: number, opts: TunnelOptions, provider: 'c
         return;
       }
       Logger.warn(`[TunnelService] cloudflared [${port}] báo lỗi: ${msg}`);
-      // Tiến trình đã chết mà không có 'exit' (vd spawn lỗi) → coi như chết
+      // The process died without 'exit' (e.g. a spawn error) → treat it as dead
       const proc = tunnel.process;
-      if (proc && proc.exitCode !== null && proc.exitCode !== undefined) fireDeath(`cloudflared lỗi: ${msg}`);
+      if (proc && proc.exitCode !== null && proc.exitCode !== undefined) fireDeath(tr('cloudflared lỗi: {{msg}}', { msg }));
     });
   });
 }
 
 async function launchNgrok(port: number, opts: TunnelOptions): Promise<TunnelHandle> {
   if (!ngrok) {
-    throw new Error('Chưa cài gói @ngrok/ngrok. Chạy: npm install @ngrok/ngrok');
+    throw new Error(tr('Chưa cài gói @ngrok/ngrok. Chạy: npm install @ngrok/ngrok'));
   }
   if (!opts.authtoken) {
-    throw new Error('Thiếu ngrok authtoken. Nhập trong Cài đặt → Nhân viên → Kết nối.');
+    throw new Error(tr('Thiếu ngrok authtoken. Nhập trong Cài đặt → Nhân viên → Kết nối.'));
   }
   const domain = String(opts.domain || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
   const listener = await ngrok.forward({
     addr: port,
     authtoken: opts.authtoken,
     ...(domain ? { domain } : {}),
-    // SDK tự kết nối lại phiên ngrok khi mất mạng — chỉ ghi log
+    // The SDK reconnects the ngrok session by itself when the network drops: only log it
     onStatusChange: (status: string) => {
       Logger.log(`[TunnelService] ngrok [${port}] trạng thái: ${status}${status === 'closed' ? ' — SDK đang tự kết nối lại' : ''}`);
     },
@@ -473,9 +473,9 @@ async function launchNgrok(port: number, opts: TunnelOptions): Promise<TunnelHan
     connectorId: null,
     version: null,
     close: async () => {
-      try { await listener.close(); } catch { /* đã đóng */ }
+      try { await listener.close(); } catch { /* already closed */ }
     },
-    onDeath: () => { /* ngrok tự kết nối lại */ },
+    onDeath: () => { /* ngrok reconnects by itself */ },
   };
 }
 
@@ -517,7 +517,7 @@ function activate(session: Session, handle: TunnelHandle, reason: 'started' | 'r
   emit(session, reason, previousUrl);
 }
 
-/** Lên lịch chạy lại theo backoff; trả delay (ms) và số thứ tự lần thử. */
+/** Schedule a restart on the backoff; returns the delay (ms) and the attempt number. */
 function scheduleRestart(session: Session): { delay: number; attemptNo: number } {
   if (session.timer) clearTimeout(session.timer);
   const delay = tunnelRestartDelay(session.attempt);
@@ -552,12 +552,12 @@ async function relaunch(session: Session): Promise<void> {
   Logger.log(`[TunnelService] 🔁 Đang chạy lại tunnel [${session.port}] (${session.label}, lần ${session.attempt})...`);
   try {
     const handle = await launch(session.port, session.opts);
-    // Đã tắt, hoặc replace() đã gắn tunnel khác trong lúc chờ → bỏ tunnel vừa bật
+    // Stopped, or replace() attached another tunnel while waiting → discard the one that just started
     if (!isCurrent(session) || shuttingDown || session.handle) {
       await handle.close();
       return;
     }
-    // Phiên keepAlive chưa từng lên (vd mở app lúc chưa có mạng) → đây là lần bật đầu, không phải "chạy lại"
+    // The keepAlive session never came up (e.g. the app opened with no network) → this is the first start, not a "chạy lại" (restart)
     activate(session, handle, session.lastUrl === null ? 'started' : 'restarted');
   } catch (err) {
     if (!isCurrent(session) || shuttingDown || session.handle) return;
@@ -594,13 +594,13 @@ function snapshotOf(session: Session): TunnelStateSnapshot {
 
 export const TunnelService = {
   /**
-   * Bật tunnel cho một cổng (tunnel cũ của cổng đó bị tắt trước). Mặc định Cloudflare Quick Tunnel (URL tạm);
-   * opts.provider = 'cloudflare_named' / 'ngrok' cho địa chỉ cố định. Trả URL công khai.
-   * Lỗi → reject; nếu opts.keepAlive thì phiên vẫn giữ và tự thử lại (listener nhận URL khi lên).
+   * Turns on the tunnel for one port (the old tunnel of that port is shut down first). Default is a Cloudflare Quick Tunnel (a temporary URL);
+   * opts.provider = 'cloudflare_named' / 'ngrok' for a fixed address. Returns the public URL.
+   * Error → reject; if opts.keepAlive, the session is kept and retried automatically (listeners receive the URL when it comes up).
    */
   async start(port: number, label?: string, opts?: TunnelOptions): Promise<string> {
     installQuitHook();
-    if (shuttingDown) throw new Error('Ứng dụng đang thoát');
+    if (shuttingDown) throw new Error(tr('Ứng dụng đang thoát'));
 
     const existing = sessions.get(port);
     if (existing) await this.stop(port);
@@ -636,7 +636,7 @@ export const TunnelService = {
       const handle = await launch(port, sessionOpts);
       if (!isCurrent(session) || shuttingDown) {
         await handle.close();
-        throw new Error('Tunnel đã bị tắt trong lúc khởi động');
+        throw new Error(tr('Tunnel đã bị tắt trong lúc khởi động'));
       }
       activate(session, handle, 'started');
       return handle.url;
@@ -649,7 +649,7 @@ export const TunnelService = {
           Logger.warn(`[TunnelService] ⚠️ Không bật được tunnel [${port}] (${session.label}): ${msg} — tự thử lại sau ${Math.round(delay / 1000)}s (lần ${attemptNo})`);
           emit(session, 'retry-failed', null, msg);
         } else {
-          // Không giữ phiên (nơi gọi tự báo lỗi). Listener đăng ký trước start() để lại cho lần start() sau.
+          // Session not kept (the caller reports the error itself). Listeners registered before start() are kept for the next start() call.
           sessions.delete(port);
           if (session.listeners.size) pendingListeners.set(port, session.listeners);
         }
@@ -659,13 +659,13 @@ export const TunnelService = {
   },
 
   /**
-   * Đổi cấu hình tunnel đang chạy mà không ngắt người đang dùng (make-before-break). Không có tunnel đang
-   * chạy → như start(). Tunnel mới lỗi → reject, tunnel cũ giữ nguyên. Hai phiên ngrok không chạy song song
-   * được (giới hạn phiên / trùng domain) → ngrok sang ngrok thì tắt rồi bật lại.
+   * Changes the config of a running tunnel without cutting off the people using it (make-before-break). If no tunnel is
+   * running → same as start(). If the new tunnel fails → reject, the old tunnel stays as it is. Two ngrok sessions cannot run in parallel
+   * (session limit / duplicate domain), so ngrok → ngrok shuts the old one down first, then starts the new one.
    */
   async replace(port: number, label?: string, opts?: TunnelOptions, graceMs: number = TUNNEL_SWITCH_GRACE_MS): Promise<string> {
     installQuitHook();
-    if (shuttingDown) throw new Error('Ứng dụng đang thoát');
+    if (shuttingDown) throw new Error(tr('Ứng dụng đang thoát'));
     const session = sessions.get(port);
     const nextOpts: TunnelOptions = { ...(opts || {}) };
     const provider = providerOf(nextOpts);
@@ -685,13 +685,13 @@ export const TunnelService = {
     }
 
     Logger.log(`[TunnelService] Đổi tunnel [${port}] (${session.label}) sang ${providerName(provider)} — giữ tunnel cũ tới khi tunnel mới sẵn sàng...`);
-    const handle = await launch(port, nextOpts); // lỗi → tunnel cũ giữ nguyên
+    const handle = await launch(port, nextOpts); // error → the old tunnel stays as it is
     if (!isCurrent(session) || shuttingDown) {
       await handle.close();
-      throw new Error('Tunnel đã bị tắt trong lúc chuyển');
+      throw new Error(tr('Tunnel đã bị tắt trong lúc chuyển'));
     }
     const old = session.handle;
-    // Tunnel cũ có thể đã chết trong lúc chờ tunnel mới → huỷ lịch tự chạy lại của nó
+    // The old tunnel may have died while the new one was waiting → cancel its own automatic restart schedule
     if (session.timer) { clearTimeout(session.timer); session.timer = null; }
     session.opts = nextOpts;
     session.provider = provider;
@@ -712,7 +712,7 @@ export const TunnelService = {
     return handle.url;
   },
 
-  /** Tắt tunnel của một cổng (huỷ lịch tự chạy lại). Listener theo phiên nhận null rồi bị xoá. */
+  /** Stop the tunnel of one port (cancels its automatic restart schedule). The per-session listeners receive null, then are removed. */
   async stop(port: number): Promise<void> {
     const session = sessions.get(port);
     if (!session) return;
@@ -746,7 +746,7 @@ export const TunnelService = {
     Logger.log(`[TunnelService] All tunnels stopped (${ports.length} total)`);
   },
 
-  /** App đang thoát: tắt mọi tunnel ngay, không tự chạy lại, không phát sự kiện (DB/cửa sổ đang đóng). */
+  /** The app is quitting: stop every tunnel now, no automatic restart, no events emitted (DB / windows are closing). */
   shutdown(): void {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -772,13 +772,13 @@ export const TunnelService = {
   },
 
   /**
-   * Check if a specific tunnel is currently active (có địa chỉ dùng được).
+   * Check whether a specific tunnel is currently active (has a usable address).
    */
   isActive(port: number): boolean {
     return !!sessions.get(port)?.url;
   },
 
-  /** Trạng thái chi tiết (null = cổng không có tunnel, kể cả đang chờ chạy lại thì vẫn có). */
+  /** Detailed state (null = the port has no tunnel; a tunnel waiting to restart still counts). */
   getState(port: number): TunnelStateSnapshot | null {
     const session = sessions.get(port);
     return session ? snapshotOf(session) : null;
@@ -799,8 +799,8 @@ export const TunnelService = {
   },
 
   /**
-   * Listener theo phiên: gọi với URL mới (hoặc null khi tunnel chết / tắt). Bị xoá khi stop()/start() tường
-   * minh; đăng ký khi cổng chưa có tunnel thì start() kế tiếp nhận. Trả hàm huỷ.
+   * Per-session listener: called with the new URL (or null when the tunnel dies / is stopped). Removed when stop()/start() is called
+   * explicitly; registered while the port has no tunnel, so the next start() receives it. Returns an unsubscribe function.
    */
   onChange(port: number, cb: TunnelListener): () => void {
     const session = sessions.get(port);
@@ -811,7 +811,7 @@ export const TunnelService = {
     return addListener(pendingListeners, port, cb);
   },
 
-  /** Listener bền của cổng: mọi thay đổi (bật, chết, chạy lại, đổi, thử lại lỗi, tắt). Trả hàm huỷ. */
+  /** Durable listener for the port: every change (started, died, restarted, changed, retry failed, stopped). Returns an unsubscribe function. */
   watch(port: number, cb: TunnelListener): () => void {
     return addListener(watchers, port, cb);
   },

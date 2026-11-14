@@ -1,8 +1,8 @@
 /**
- * Popup / hộp thoại của khung chat: trình xem ảnh + video, menu chuột phải của tin, chuyển tiếp, lịch hẹn / ghi chú từ
- * tin, menu + danh sách cảm xúc, hồ sơ người gửi, quản lý nhóm, ghi chú nhóm, bộ sticker Telegram (Mini App của bot:
- * TelegramMiniAppHost ở App).
- * Trạng thái mở / đóng ở useChatWindowDialogs (+ useMediaViewers); thao tác ở useMessageActions.
+ * Popups / dialogs of the chat window: photo + video viewer, message right-click menu, forward, appointment / note from a
+ * message, reaction menu + list, sender profile, group management, group notes, Telegram sticker set (bot Mini App:
+ * TelegramMiniAppHost in App).
+ * Open / close state lives in useChatWindowDialogs (+ useMediaViewers); actions live in useMessageActions.
  */
 import MediaGalleryViewer from '../../media/MediaGalleryViewer';
 import MessageContextMenu from '../../messages/MessageContextMenu';
@@ -34,6 +34,7 @@ import type { ChatWindowDialogs } from '../hooks/useChatWindowDialogs';
 import type { MessageSelection } from '../hooks/useMessageSelection';
 import type { MediaViewers } from '../hooks/useMediaViewers';
 import type { MessageActions } from '../hooks/useMessageActions';
+import { tr } from '../../../../../shared/i18n';
 
 type PinnedData = ReturnType<typeof usePinnedData>;
 
@@ -43,26 +44,26 @@ interface ModalExtras {
 }
 
 export type ChatWindowModalsProps =
-  // Hội thoại đang mở
+  // Open conversation
   Pick<OpenThread, 'activeAccountId' | 'activeThreadId' | 'activeContact' | 'allAccounts' | 'channelCap' | 'contactList' | 'threadGroupInfo' | 'setReplyTo' | 'setEditingMsg' | 'showNotification'>
   // Gom tin
   & Pick<MessageGrouping, 'groupedFirstMsgs'>
-  // Người gửi
+  // Sender
   & Pick<SenderDirectory, 'contactMap' | 'getContact' | 'getGroupMember' | 'groupMembers' | 'erpSourceOf'>
-  // Menu / popup đang mở
+  // Open menus / popups
   & Pick<ChatWindowDialogs, 'contextMenu' | 'setContextMenu' | 'forwardMsgs' | 'setForwardMsgs' | 'erpDraft' | 'setErpDraft' | 'reactionPopup' | 'setReactionPopup' | 'reactionContextMenu' | 'setReactionContextMenu' | 'userProfilePopup' | 'setUserProfilePopup' | 'manageGroupOpen' | 'setManageGroupOpen' | 'noteModal' | 'setNoteModal'>
-  // Chọn nhiều tin
+  // Multi-select
   & Pick<MessageSelection, 'setIsSelecting' | 'setSelectedMsgIds'>
-  // Xem ảnh / video
+  // Photo / video viewer
   & Pick<MediaViewers, 'mediaGalleryRef' | 'buildImageEntry' | 'videoPlayerState' | 'setVideoPlayerState'>
-  // Thao tác trên tin
+  // Message actions
   & Pick<MessageActions, 'handleUndo' | 'handleDelete' | 'handleDeleteFromDb' | 'handleReact' | 'handleCancelReaction' | 'handleForward' | 'runForward' | 'handleSaveToMyDocuments' | 'contextTargetStarred' | 'handleToggleStar' | 'handlePin'>
-  // Ghi chú đã ghim (usePinnedData)
+  // Pinned notes (usePinnedData)
   & Pick<PinnedData, 'setPinnedNotes'>
-  // Reaction dùng được của hội thoại Telegram + quyền Quản lý công việc
+  // Reactions available in the Telegram conversation + Task management rights
   & Pick<ModalExtras, 'telegramReactions' | 'erpAccess'>;
 
-/** "Lưu vào My Documents": Zalo và Telegram (Tin nhắn đã lưu); ẩn khi đang ở chính hội thoại đó. */
+/** "Lưu vào My Documents" (Save to My Documents): Zalo and Telegram (Saved Messages); hidden when already in that same conversation. */
 const SAVE_TO_MY_DOCUMENTS_CHANNELS = new Set<string>([CHANNEL.ZALO, CHANNEL.TELEGRAM_USER]);
 
 export function ChatWindowModals(props: ChatWindowModalsProps) {
@@ -145,7 +146,7 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
             recalled: contextMenu.recalled,
           }) ? {
             accountId: activeAccountId,
-            // Tên / avatar người xem: liên hệ của tài khoản → thành viên nhóm đang mở (main có tên dự phòng)
+            // Viewer name / avatar: the account's contact → the members of the open group (main has a fallback name)
             resolvePerson: (userId: string) => {
               const contact = getContact(userId) as any;
               const member = getGroupMember(userId) as any;
@@ -169,8 +170,8 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
         />
       )}
 
-      {/* Quản lý công việc: lịch hẹn / ghi chú / task từ tin (điền sẵn tiêu đề, ngày giờ đọc trong tin, nội dung tin; task
-          kèm ảnh của tin) */}
+      {/* Task management: calendar appointment / note / task from a message (pre-fills the title, the date and time read from the message, and the message content; the task
+          includes the message's photo) */}
       {erpDraft && activeAccountId && activeThreadId && (() => {
         const conversation = activeContact?.alias || activeContact?.display_name || activeThreadId;
         const account = allAccounts.find(a => a.zalo_id === activeAccountId);
@@ -191,7 +192,7 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
         const msgId = linkedMsg && !/^(temp|retry)_/.test(String(linkedMsg.msg_id)) ? String(linkedMsg.msg_id) : undefined;
         return (
           <QuickEventDialog
-            heading="Thêm vào lịch"
+            heading={tr('Thêm vào lịch')}
             activeThread={{ id: activeThreadId, name: conversation, accountId: activeAccountId, msgId }}
             initial={draft}
             onClose={() => setErpDraft(null)}
@@ -212,7 +213,7 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
         />
       )}
 
-      {/* Reaction popup: xem ai thả cảm xúc */}
+      {/* Reaction popup: see who reacted */}
       {channelCap.supportsReaction && reactionPopup && (
         <ReactionPopup
           msg={reactionPopup.msg}
@@ -238,7 +239,7 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
         />
       )}
 
-      {/* Manage group modal - mở từ nút "Quản lý nhóm" trong EcardBubble */}
+      {/* Manage group modal: opened from the "Quản lý nhóm" (Manage group) button in EcardBubble */}
       {manageGroupOpen && activeThreadId && activeAccountId && (
         <div
           className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
@@ -256,7 +257,7 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
         </div>
       )}
 
-      {/* Note view modal - mở khi click vào ghi chú đã ghim */}
+      {/* Note view modal: opens when clicking a pinned note */}
       {noteModal && activeThreadId && activeAccountId && (
         <NoteViewModal
           topicId={noteModal.topicId}
@@ -291,7 +292,7 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
         />
       )}
 
-      {/* Popup bộ sticker Telegram (bấm sticker trong chat / bảng sticker của ô nhập) */}
+      {/* Telegram sticker set popup (click a sticker in the chat / the sticker panel of the input box) */}
       <TelegramStickerSetHost />
     </>
   );

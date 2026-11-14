@@ -1,15 +1,16 @@
 /**
- * Ô sticker / GIF Telegram trong lưới (bảng ô nhập, popup bộ sticker). Chỉ tải khi ô hiện ra: ảnh tĩnh nhỏ (thumbnail
- * Telegram) cho lưới; rê chuột vào sticker động / video / GIF thì tải cả file và phát (như Telegram, nhưng không phát
- * cả lưới cùng lúc — vài chục Lottie / video chạy song song làm khung chat giật).
+ * Telegram sticker / GIF tile in the grid (input box panel, sticker set popup). Loads only when the tile is shown: a small static image (Telegram
+ * thumbnail) for the grid; hovering over an animated / video / GIF sticker loads the whole file and plays it (like Telegram, but not
+ * the whole grid at once: dozens of Lottie / video playing in parallel makes the chat window stutter).
  */
 import React from 'react';
 import { cn } from '@/lib/cn';
 import { useInView } from '@/lib/media/inView';
 import { loadTgsJson } from '@/lib/media/tgs';
 import { useStickerFile, type TelegramStickerItem } from '@/lib/chat/telegram/telegramStickerStore';
+import { tr } from '../../../../../shared/i18n';
 
-/** Lottie (.tgs). `playing` = false → đứng ở khung đầu. `onReady`: đã vẽ khung đầu. */
+/** Lottie (.tgs). `playing` = false → stays on the first frame. `onReady`: the first frame has been drawn. */
 export function TgsAnimation({ url, playing, className, onReady, onError }: {
   url: string;
   playing: boolean;
@@ -38,7 +39,7 @@ export function TgsAnimation({ url, playing, className, onReady, onError }: {
         animationData: JSON.parse(json),
       });
       animationRef.current = animation;
-      // animationData không có ảnh ngoài: lottie có thể đã vẽ xong ngay trong loadAnimation (trước khi kịp nghe sự kiện)
+      // animationData has no external images: lottie may finish drawing right inside loadAnimation (before the event listener can be attached)
       if ((animation as any).isLoaded) callbacksRef.current.onReady?.();
       else animation.addEventListener('DOMLoaded', () => { if (!cancelled) callbacksRef.current.onReady?.(); });
     })().catch(() => { if (!cancelled) callbacksRef.current.onError?.(); });
@@ -62,27 +63,27 @@ export function TgsAnimation({ url, playing, className, onReady, onError }: {
 export function TelegramStickerTile({ accountId, item, size = 64, cover = false, title, onClick, onContextMenu, className, children }: {
   accountId: string;
   item: TelegramStickerItem;
-  /** Cạnh ô (px). `cover` (GIF): chiều cao ô, rộng theo cột, ảnh phủ kín. */
+  /** Tile edge (px). `cover` (GIF): the tile height, width follows the column, image covers fully. */
   size?: number;
   cover?: boolean;
   title?: string;
   onClick?: (item: TelegramStickerItem) => void;
   onContextMenu?: (event: React.MouseEvent, item: TelegramStickerItem) => void;
   className?: string;
-  /** Lớp phủ thêm (vd. nút bỏ GIF đã lưu) — không đặt <button> bên trong (ô đã là button). */
+  /** Extra overlay (e.g. the remove button for a saved GIF): do not put a <button> inside (the tile is already a button). */
   children?: React.ReactNode;
 }) {
   const ref = React.useRef<HTMLButtonElement>(null);
   const visible = useInView(ref, { rootMargin: '160px' });
   const [hover, setHover] = React.useState(false);
   const [broken, setBroken] = React.useState(false);
-  // Bản động đã vẽ được khung đầu → ẩn ảnh tĩnh phía sau (sticker nền trong suốt, để cả hai thì thấy 2 hình chồng nhau)
+  // The animated version has drawn its first frame → hide the static image behind it (a transparent-background sticker would show two images stacked on top of each other)
   const [overlayReady, setOverlayReady] = React.useState(false);
   React.useEffect(() => { if (!hover) setOverlayReady(false); }, [hover]);
 
   const animated = item.format === 'tgs' || item.format === 'webm' || item.format === 'gif';
   const thumb = useStickerFile(accountId, item.id, 'thumb', visible);
-  // Không có ảnh tĩnh → "thumb" đã là cả file (tgs nhỏ / video), phát luôn bản đó khi rê chuột
+  // No static image → the "thumb" is already the whole file (small tgs / video), play that copy on hover
   const thumbIsFull = !!thumb && thumb.kind !== 'image';
   const full = useStickerFile(accountId, item.id, 'full', visible && hover && animated && !thumbIsFull);
   const fit = cover ? 'h-full w-full object-cover' : 'h-full w-full object-contain';
@@ -98,7 +99,7 @@ export function TelegramStickerTile({ accountId, item, size = 64, cover = false,
     }
   }
 
-  // Phủ đúng vùng ảnh tĩnh (ô sticker có đệm p-1)
+  // Cover exactly the static image area (the sticker tile has p-1 padding)
   const box = cover ? 'absolute inset-0' : 'absolute inset-1';
   let overlay: React.ReactNode = null;
   if (hover && animated && full && !thumbIsFull && !broken) {
@@ -117,7 +118,7 @@ export function TelegramStickerTile({ accountId, item, size = 64, cover = false,
       ref={ref}
       type="button"
       title={title ?? item.emoji}
-      aria-label={title ?? (item.emoji ? `Sticker ${item.emoji}` : item.format === 'gif' ? 'GIF' : 'Sticker')}
+      aria-label={title ?? (item.emoji ? tr('Sticker {{emoji}}', { emoji: item.emoji }) : item.format === 'gif' ? tr('GIF') : tr('Sticker'))}
       onClick={() => onClick?.(item)}
       onContextMenu={onContextMenu ? (event) => onContextMenu(event, item) : undefined}
       onMouseEnter={() => setHover(true)}
@@ -133,7 +134,7 @@ export function TelegramStickerTile({ accountId, item, size = 64, cover = false,
     >
       {base ?? (
         <span className={cn('select-none leading-none', cover ? 'text-xs font-semibold' : 'text-2xl', thumb === undefined && visible ? 'animate-pulse opacity-50' : 'opacity-40')}>
-          {item.format === 'gif' ? 'GIF' : item.emoji || '🙂'}
+          {item.format === 'gif' ? tr('GIF') : item.emoji || '🙂'}
         </span>
       )}
       {overlay}
@@ -142,7 +143,7 @@ export function TelegramStickerTile({ accountId, item, size = 64, cover = false,
   );
 }
 
-/** Ảnh tĩnh của sticker (biểu tượng bộ ở thanh chọn bộ) — không bấm được, không phát. */
+/** Static image of a sticker (the set icon in the set picker bar): not clickable, does not play. */
 export function StickerThumb({ accountId, item, className }: { accountId: string; item: TelegramStickerItem; className?: string }) {
   const ref = React.useRef<HTMLSpanElement>(null);
   const visible = useInView(ref, { rootMargin: '80px' });
@@ -157,7 +158,7 @@ export function StickerThumb({ accountId, item, className }: { accountId: string
   return <span ref={ref} aria-hidden className={cn('flex items-center justify-center overflow-hidden', className)}>{content}</span>;
 }
 
-/** Video không có ảnh tĩnh: đứng ở khung đầu, phát khi rê chuột. */
+/** Video without a static image: stays on the first frame, plays on hover. */
 function HoverVideo({ src, playing, className, onError }: { src: string; playing: boolean; className?: string; onError?: () => void }) {
   const ref = React.useRef<HTMLVideoElement>(null);
   React.useEffect(() => {

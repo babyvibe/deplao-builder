@@ -1,7 +1,7 @@
 /**
  * registry.ts - Adapter Registry
- * 1 nơi duy nhất map channel → adapter instance.
- * Thêm channel mới = thêm 1 entry ở đây + 1 class adapter mới.
+ * The one and only place that maps channel → adapter instance.
+ * To add a channel: add one entry here + one new adapter class.
  */
 
 import { Channel } from '../../../../configs/channels/channelConfig';
@@ -10,6 +10,7 @@ import { ZaloAdapter } from './ZaloAdapter';
 import { FacebookAdapter } from './FacebookAdapter';
 import { TelegramBotAdapter } from './TelegramBotAdapter';
 import { TelegramUserAdapter } from './TelegramUserAdapter';
+import { tr } from '../../../../shared/i18n';
 
 const registry: Record<Channel, ChannelAdapter> = {
   zalo: new ZaloAdapter(),
@@ -20,6 +21,6 @@ const registry: Record<Channel, ChannelAdapter> = {
 
 export function getAdapter(channel: Channel): ChannelAdapter {
   const adapter = registry[channel];
-  if (!adapter) throw new Error(`Không có adapter cho channel: ${channel}`);
+  if (!adapter) throw new Error(tr('Không có adapter cho channel: {{channel}}', { channel }));
   return adapter;
 }

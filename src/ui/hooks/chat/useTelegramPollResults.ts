@@ -1,15 +1,15 @@
 /**
- * Kết quả bình chọn Telegram như app Telegram: khi mở hội thoại và mỗi 30 s (cửa sổ đang hiện), hỏi lại kết quả các bình
- * chọn mới nhất đang tải (messages.getPollResults, main: telegramUser:refreshPollResults) rồi vá attachments trong store.
- * Trước đây kết quả chỉ chụp lúc tin về nên Deplao hiện "0 lượt bình chọn" mãi. Bình chọn đã đóng không hỏi nữa (kết
- * quả không đổi); Telegram đẩy kết quả mới (UpdateMessagePoll) thì main tự vá qua event:messagesRepaired.
+ * Telegram poll results like the Telegram app: when a conversation is opened and every 30 s (while the window is shown), asks again for the results of the
+ * latest polls being loaded (messages.getPollResults, main: telegramUser:refreshPollResults) and patches the attachments in the store.
+ * Before, the results were only captured when the message arrived, so Deplao showed "0 lượt bình chọn" (0 votes) forever. Closed polls are not asked again (the
+ * results do not change); when Telegram pushes new results (UpdateMessagePoll) main patches them itself via event:messagesRepaired.
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
 import { useChatStore } from '@/store/chat/chatStore';
 
 const REFRESH_INTERVAL_MS = 30_000;
-/** Số bình chọn mới nhất hỏi mỗi lần (mỗi bình chọn một lệnh Telegram). */
+/** Number of the latest polls asked each time (one Telegram request per poll). */
 const MAX_POLLS = 10;
 
 function isOpenPoll(msg: any): boolean {
@@ -31,7 +31,7 @@ export function useTelegramPollResults(
 ): void {
   const enabled = channel === 'telegram_user' && !!accountId && !!threadId;
 
-  // id các bình chọn còn mở đang tải (mới nhất trước) — ref để interval luôn đọc danh sách mới mà không tạo lại timer
+  // ids of the open polls being loaded (latest first): ref so the interval always reads the new list without recreating the timer
   const pollIdsRef = React.useRef<string[]>([]);
   pollIdsRef.current = React.useMemo(() => {
     if (!enabled) return [];
@@ -60,14 +60,14 @@ export function useTelegramPollResults(
           store.patchMessage(accountId!, threadId!, update.msgId, { attachments: update.attachments } as any);
         }
       } catch {
-        // Mất kết nối / lỗi tạm: lần sau thử lại
+        // Connection lost / temporary error: try again next time
       } finally {
         running = false;
       }
     };
     void refresh();
     const timer = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
-    // Quay lại cửa sổ sau khi ẩn: hỏi ngay thay vì chờ lượt kế
+    // Back to the window after it was hidden: ask right away instead of waiting for the next round
     const onVisible = () => { if (!document.hidden) void refresh(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {

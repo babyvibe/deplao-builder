@@ -1,19 +1,20 @@
 import React, { useState } from 'react';
 import { formatPhone } from '@/lib/contacts/phoneUtils';
 import { PhoneIcon } from '../icons';
+import { tr } from '../../../../shared/i18n';
 
 interface PhoneDisplayProps {
   phone: string | undefined | null;
-  /** Hiển thị "**********" thay vì ẩn hoàn toàn khi không có SĐT */
+  /** Shows "**********" instead of hiding completely when there is no phone number */
   maskIfEmpty?: boolean;
   className?: string;
-  /** Thêm icon 📞 trước số */
+  /** Adds a 📞 icon before the number */
   showIcon?: boolean;
 }
 
 /**
- * Hiển thị số điện thoại đã format (84→0 cho VN) với nút copy khi hover.
- * Click vào bất kỳ đâu trong component để copy.
+ * Shows a formatted phone number (84→0 for Vietnam) with a copy button on hover.
+ * Click anywhere in the component to copy.
  */
 export default function PhoneDisplay({ phone, maskIfEmpty = false, className = '', showIcon = false }: PhoneDisplayProps) {
   const [copied, setCopied] = useState(false);
@@ -34,14 +35,14 @@ export default function PhoneDisplay({ phone, maskIfEmpty = false, className = '
   return (
     <span
       className={`inline-flex items-center gap-1 group relative ${formatted ? 'cursor-pointer' : 'cursor-default'} ${className}`}
-      title={formatted ? 'Click để copy SĐT' : ''}
+      title={formatted ? tr('Click để copy SĐT') : ''}
       onClick={handleCopy}
     >
       {showIcon && <PhoneIcon className="w-3 h-3" />}
       <span className={`${formatted ? 'group-hover:text-blue-400 transition-colors' : 'text-muted-foreground'}`}>
         {display}
       </span>
-      {/* Clipboard icon – hiện khi hover */}
+      {/* Clipboard icon: shown on hover */}
       {formatted && (
         <svg
           className="opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0"
@@ -51,10 +52,10 @@ export default function PhoneDisplay({ phone, maskIfEmpty = false, className = '
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
         </svg>
       )}
-      {/* Tooltip "Đã copy" */}
+      {/* Tooltip "Đã copy" (Copied) */}
       {copied && (
         <span className="absolute -top-7 left-1/2 -translate-x-1/2 bg-card text-green-400 text-[11px] px-2 py-0.5 rounded shadow whitespace-nowrap z-50 pointer-events-none">
-          ✓ Đã copy
+          {tr('✓ Đã copy')}
         </span>
       )}
     </span>

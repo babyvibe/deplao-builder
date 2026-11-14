@@ -4,8 +4,9 @@ import { useAppStore } from '@/store/app/appStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
 import { cacheSentBankCard } from '@/lib/chat/zalo/bankCardCache';
+import { tr } from '../../../../shared/i18n';
 
-// Danh sách ngân hàng phổ biến Việt Nam (BinBankCard enum values)
+// List of popular banks in Vietnam (BinBankCard enum values)
 const BANK_LIST: { name: string; bin: number }[] = [
   { name: 'Vietcombank', bin: 970436 },
   { name: 'VietinBank', bin: 970415 },
@@ -83,7 +84,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
     if (!activeAccountId) return;
     setLoading(true);
     try {
-      // DataAccessor: chế độ nhân viên đọc thẻ từ Boss (IPC trả stub rỗng → danh sách thẻ trống); lỗi giữ danh sách cũ
+      // DataAccessor: employee mode reads the cards from Boss (IPC returns an empty stub → the card list is empty); an error keeps the old list
       const res = await DataAccessor.getBankCards({ zaloId: activeAccountId });
       if (res?.success) setCards(res.cards || []);
     } catch { }
@@ -95,7 +96,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
   const handleSave = async () => {
     if (!activeAccountId || !editCard) return;
     if (!editCard.bin_bank || !editCard.account_number) {
-      showNotification('Vui lòng chọn ngân hàng và nhập số tài khoản', 'error');
+      showNotification(tr('Vui lòng chọn ngân hàng và nhập số tài khoản'), 'error');
       return;
     }
     try {
@@ -112,16 +113,16 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
         }
       });
       if (res?.success) {
-        showNotification(editCard.id ? 'Đã cập nhật thẻ ngân hàng' : 'Đã thêm thẻ ngân hàng', 'success');
+        showNotification(editCard.id ? tr('Đã cập nhật thẻ ngân hàng') : tr('Đã thêm thẻ ngân hàng'), 'success');
         setEditMode('list');
         setEditCard(null);
         loadCards();
       } else {
-        // Nhân viên: thẻ lưu trên Boss — Boss từ chối / mất kết nối thì báo (trước đây im lặng)
-        showNotification('Lỗi lưu thẻ: ' + ((res as any)?.error || 'không lưu được'), 'error');
+        // Employee: the card is saved on Boss. If Boss rejects it or the connection is lost, show an error (previously silent)
+        showNotification(tr('Lỗi lưu thẻ: {{v1}}', { v1: ((res as any)?.error || tr('không lưu được')) }), 'error');
       }
     } catch (e: any) {
-      showNotification('Lỗi lưu thẻ: ' + (e.message || ''), 'error');
+      showNotification(tr('Lỗi lưu thẻ: {{v1}}', { v1: (e.message || '') }), 'error');
     }
   };
 
@@ -130,10 +131,10 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
     try {
       const res: any = await ipc.db?.deleteBankCard({ zaloId: activeAccountId, id });
       if (res?.success === false) {
-        showNotification('Lỗi xóa thẻ: ' + (res.error || 'không xóa được'), 'error');
+        showNotification(tr('Lỗi xóa thẻ: {{v1}}', { v1: (res.error || tr('không xóa được')) }), 'error');
         return;
       }
-      showNotification('Đã xóa thẻ ngân hàng', 'success');
+      showNotification(tr('Đã xóa thẻ ngân hàng'), 'success');
       loadCards();
     } catch { }
   };
@@ -145,7 +146,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
     const auth = buildZaloAuth(accObj);
     setSending(card.id ?? -1);
     try {
-      // Cache bank data trước khi gửi → BankCardBubble dùng để render UI
+      // Cache the bank data before sending → BankCardBubble uses it to render the UI
       const bankName = BANK_LIST.find(b => b.bin === card.bin_bank)?.name || `Bank (${card.bin_bank})`;
       cacheSentBankCard(activeAccountId, threadId, {
         binBank: card.bin_bank,
@@ -165,13 +166,13 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
         type: threadType,
       });
       if (res?.success) {
-        showNotification('Đã gửi thẻ ngân hàng thành công!', 'success');
+        showNotification(tr('Đã gửi thẻ ngân hàng thành công!'), 'success');
         onClose();
       } else {
-        showNotification('Lỗi gửi thẻ: ' + (res?.error || 'Unknown'), 'error');
+        showNotification(tr('Lỗi gửi thẻ: {{v1}}', { v1: (res?.error || 'Unknown') }), 'error');
       }
     } catch (e: any) {
-      showNotification('Lỗi gửi thẻ: ' + (e.message || ''), 'error');
+      showNotification(tr('Lỗi gửi thẻ: {{v1}}', { v1: (e.message || '') }), 'error');
     }
     setSending(null);
   };
@@ -196,7 +197,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
               <rect x="2" y="4" width="20" height="16" rx="2" /><line x1="2" y1="10" x2="22" y2="10" />
               <line x1="6" y1="14" x2="10" y2="14" /><line x1="6" y1="17" x2="14" y2="17" />
             </svg>
-            {editMode === 'form' ? (editCard?.id ? 'Sửa thẻ ngân hàng' : 'Thêm thẻ ngân hàng') : 'Gửi thẻ ngân hàng'}
+            {editMode === 'form' ? (editCard?.id ? tr('Sửa thẻ ngân hàng') : tr('Thêm thẻ ngân hàng')) : tr('Gửi thẻ ngân hàng')}
           </h3>
           <div className="flex items-center gap-1">
             {editMode === 'list' && (
@@ -204,7 +205,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                 onClick={() => { setEditCard({ bin_bank: 0, account_number: '', account_name: '', is_default: 0 }); setEditMode('form'); }}
                 className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-md transition-colors"
               >
-                + Thêm thẻ
+                {tr('+ Thêm thẻ')}
               </button>
             )}
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors">
@@ -218,11 +219,11 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4">
           {editMode === 'form' && editCard ? (
-            /* ─── Form thêm/sửa ───────────────────────── */
+            /* ─── Add / edit form ───────────────────────── */
             <div className="space-y-3">
-              {/* Ngân hàng */}
+              {/* Bank */}
               <div className="space-y-1">
-                <label className="text-muted-foreground text-xs">Ngân hàng *</label>
+                <label className="text-muted-foreground text-xs">{tr('Ngân hàng *')}</label>
                 <select
                   value={editCard.bin_bank || 0}
                   onChange={(e) => {
@@ -232,38 +233,38 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                   }}
                   className="w-full bg-muted border border-input rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"
                 >
-                  <option value={0}>-- Chọn ngân hàng --</option>
+                  <option value={0}>{tr('-- Chọn ngân hàng --')}</option>
                   {BANK_LIST.map(b => (
                     <option key={b.bin} value={b.bin}>{b.name}</option>
                   ))}
                 </select>
               </div>
 
-              {/* Số tài khoản */}
+              {/* Account number */}
               <div className="space-y-1">
-                <label className="text-muted-foreground text-xs">Số tài khoản *</label>
+                <label className="text-muted-foreground text-xs">{tr('Số tài khoản *')}</label>
                 <input
                   type="text"
                   value={editCard.account_number || ''}
                   onChange={(e) => setEditCard({ ...editCard, account_number: e.target.value })}
-                  placeholder="Nhập số tài khoản"
+                  placeholder={tr('Nhập số tài khoản')}
                   className="w-full bg-muted border border-input rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"
                 />
               </div>
 
-              {/* Tên chủ tài khoản */}
+              {/* Account holder name */}
               <div className="space-y-1">
-                <label className="text-muted-foreground text-xs">Tên chủ tài khoản</label>
+                <label className="text-muted-foreground text-xs">{tr('Tên chủ tài khoản')}</label>
                 <input
                   type="text"
                   value={editCard.account_name || ''}
                   onChange={(e) => setEditCard({ ...editCard, account_name: e.target.value.toUpperCase() })}
-                  placeholder="VD: NGUYEN VAN A"
+                  placeholder={tr('VD: NGUYEN VAN A')}
                   className="w-full bg-muted border border-input rounded-md px-3 py-2 text-sm text-foreground uppercase focus:outline-none focus:border-blue-500"
                 />
               </div>
 
-              {/* Mặc định */}
+              {/* Default */}
               <label className="flex items-center gap-2 text-sm text-foreground/80 cursor-pointer">
                 <input
                   type="checkbox"
@@ -271,7 +272,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                   onChange={(e) => setEditCard({ ...editCard, is_default: e.target.checked ? 1 : 0 })}
                   className="accent-blue-500"
                 />
-                Đặt làm thẻ mặc định
+                {tr('Đặt làm thẻ mặc định')}
               </label>
 
               {/* Buttons */}
@@ -281,29 +282,29 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                   disabled={!editCard.bin_bank || !editCard.account_number}
                   className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm py-2 rounded-md transition-colors"
                 >
-                  {editCard.id ? 'Cập nhật' : 'Thêm thẻ'}
+                  {editCard.id ? tr('Cập nhật') : tr('Thêm thẻ')}
                 </button>
                 <button
                   onClick={() => { setEditMode('list'); setEditCard(null); }}
                   className="px-4 bg-accent hover:bg-accent text-foreground text-sm py-2 rounded-md transition-colors"
                 >
-                  Hủy
+                  {tr('Hủy')}
                 </button>
               </div>
             </div>
           ) : (
-            /* ─── Danh sách thẻ ───────────────────────── */
+            /* ─── Card list ───────────────────────── */
             <>
               {loading ? (
-                <div className="text-center text-muted-foreground py-8 text-sm">Đang tải...</div>
+                <div className="text-center text-muted-foreground py-8 text-sm">{tr('Đang tải...')}</div>
               ) : cards.length === 0 ? (
                 <div className="text-center py-8">
-                  <div className="text-muted-foreground text-sm mb-3">Chưa có thẻ ngân hàng nào</div>
+                  <div className="text-muted-foreground text-sm mb-3">{tr('Chưa có thẻ ngân hàng nào')}</div>
                   <button
                     onClick={() => { setEditCard({ bin_bank: 0, account_number: '', account_name: '', is_default: 0 }); setEditMode('form'); }}
                     className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-md transition-colors"
                   >
-                    + Thêm thẻ mới
+                    {tr('+ Thêm thẻ mới')}
                   </button>
                 </div>
               ) : (
@@ -318,7 +319,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                           <div className="flex items-center gap-2 mb-1">
                             <span className="font-semibold text-foreground text-sm">{card.bank_name}</span>
                             {card.is_default === 1 && (
-                              <span className="text-[10px] bg-blue-600/30 text-blue-300 px-1.5 py-0.5 rounded">Mặc định</span>
+                              <span className="text-[10px] bg-blue-600/30 text-blue-300 px-1.5 py-0.5 rounded">{tr('Mặc định')}</span>
                             )}
                           </div>
                           <div className="text-foreground/80 text-sm font-mono">{card.account_number}</div>
@@ -331,7 +332,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                             onClick={() => handleSend(card)}
                             disabled={sending !== null}
                             className="bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white text-xs px-3 py-1.5 rounded-md transition-colors flex items-center gap-1"
-                            title="Gửi thẻ này"
+                            title={tr('Gửi thẻ này')}
                           >
                             {sending === card.id ? (
                               <span className="animate-spin">⏳</span>
@@ -340,14 +341,14 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                                   <path d="M22 2L11 13" /><path d="M22 2L15 22l-4-9-9-4z" />
                                 </svg>
-                                Gửi
+                                {tr('Gửi')}
                               </>
                             )}
                           </button>
                           <button
                             onClick={() => { setEditCard(card); setEditMode('form'); }}
                             className="text-muted-foreground hover:text-blue-400 p-1.5 rounded transition-colors"
-                            title="Sửa"
+                            title={tr('Sửa')}
                           >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
@@ -357,7 +358,7 @@ export default function BankCardModal({ threadId, threadType, onClose }: Props) 
                           <button
                             onClick={() => card.id && handleDelete(card.id)}
                             className="text-muted-foreground hover:text-red-400 p-1.5 rounded transition-colors"
-                            title="Xóa"
+                            title={tr('Xóa')}
                           >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M3 6h18" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />

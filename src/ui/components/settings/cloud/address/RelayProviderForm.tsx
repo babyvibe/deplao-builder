@@ -1,13 +1,13 @@
 /**
- * Cài đặt → Internet & Cloud → Địa chỉ Internet: cấu hình nhà cung cấp tunnel của "Nhân viên và API" (relay, cổng 9900)
- * cho hai cách tạo địa chỉ ngrok và Cloudflare thủ công (trước nằm ở Cài đặt → Nhân viên → Kết nối).
- *  - Đọc / lưu qua IPC có sẵn relay:getTunnelConfig / relay:setTunnelConfig: token lưu mã hoá ở main, renderer chỉ biết
- *    "đã lưu" (ô nhập hiện "Đã lưu … (dán để thay)", không bao giờ hiện token).
- *  - Lưu khi rời ô; trước khi bật relay / bấm "Áp dụng" thì lưu nốt ô đang gõ dở (flush).
- *  - Tunnel relay đang chạy mà đổi cấu hình / cách tạo địa chỉ → AddressSection hiện "Áp dụng" (relay:restartTunnel,
- *    make-before-break). Nhà cung cấp đang chạy đọc từ relay:getTunnelStatus + 'relay:tunnelStatusUpdate'.
- * Thanh toán và webhook workflow không dùng các nhà cung cấp này: ở mọi chế độ khác Cloudflare tự động chúng dùng Cloudflare
- * Quick Tunnel riêng (địa chỉ tạm).
+ * Settings → Internet & Cloud → Internet address: configures the tunnel provider of "Nhân viên và API" (Employees and API) (relay, port 9900)
+ * for the two ways of creating an address, ngrok and Cloudflare manual (previously under Settings → Employees → Connection).
+ *  - Read / save through the existing IPC relay:getTunnelConfig / relay:setTunnelConfig: the token is stored encrypted in main, the renderer only knows
+ *    "đã lưu" (saved) (the input shows "Đã lưu … (dán để thay)" (Saved … (paste to replace)), it never shows the token).
+ *  - Saved when the field loses focus; before turning the relay on / clicking "Áp dụng" (Apply), the half-typed field is saved too (flush).
+ *  - The running relay tunnel with a changed config / address mode → AddressSection shows "Áp dụng" (Apply) (relay:restartTunnel,
+ *    make-before-break). The running provider is read from relay:getTunnelStatus + 'relay:tunnelStatusUpdate'.
+ * Payments and workflow webhooks do not use these providers: in every mode other than Cloudflare automatic they use a separate Cloudflare
+ * Quick Tunnel (temporary address).
  */
 import React, { useCallback, useEffect, useId, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -16,18 +16,20 @@ import { FormField, Input } from '@/components/ui';
 import type { TunnelMode } from '../../../../../shared/cloud/cloudContracts';
 import { tunnelAddressKind, type TunnelProviderId } from '../../../../../shared/cloud/tunnelAddress';
 import { cleanIpcError, Notice, SERVICE_META } from '../cloudUi';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export type LegacyTunnelMode = Exclude<TunnelMode, 'cloudflare_auto'>;
 export type RelayProviderMode = Extract<TunnelMode, 'ngrok' | 'cloudflare_manual'>;
 
-/** Nhà cung cấp tunnel của relay (relay_tunnel_provider) theo cách tạo địa chỉ. */
+/** The relay's tunnel provider (relay_tunnel_provider) for the address creation mode. */
 export const RELAY_PROVIDER: Record<LegacyTunnelMode, TunnelProviderId> = {
   quick: 'cloudflare',
   ngrok: 'ngrok',
   cloudflare_manual: 'cloudflare_named',
 };
 
-/** Cấu hình đã lưu của relay — không có token, chỉ biết đã lưu hay chưa. */
+/** Saved relay config: no token, only knows whether one is saved. */
 export interface RelayTunnelConfig {
   ngrokTokenSet: boolean;
   domain: string;
@@ -40,27 +42,27 @@ export const EMPTY_RELAY_CONFIG: RelayTunnelConfig = { ngrokTokenSet: false, dom
 type RelayConfigPatch = { authtoken?: string; domain?: string; cfToken?: string; cfPublicUrl?: string };
 export type RelayDraftField = 'ngrokToken' | 'ngrokDomain' | 'cfToken' | 'cfPublicUrl';
 
-/** Như relay:setTunnelConfig lưu: domain ngrok chỉ là hostname (bỏ https:// và "/" cuối). */
+/** Same as relay:setTunnelConfig saves it: an ngrok domain is only a hostname (https:// and the trailing "/" are removed). */
 export function normalizeNgrokDomain(raw: string): string {
   return String(raw || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
 }
 
-/** Như relay:setTunnelConfig lưu: địa chỉ công khai bỏ "/" cuối. */
+/** Same as relay:setTunnelConfig saves it: the public address without the trailing "/". */
 export function normalizePublicUrl(raw: string): string {
   return String(raw || '').trim().replace(/\/+$/, '');
 }
 
-/** Lỗi cấu hình của cách tạo địa chỉ (null = đủ để bật Nhân viên và API) — cùng kiểm tra với màn Nhân viên trước đây. */
+/** Config error for the address creation mode (null = enough to turn on Employees and API): the same check as the old Employees screen. */
 export function relayConfigProblem(
   mode: TunnelMode,
   saved: RelayTunnelConfig,
   draft: { ngrokToken: string; cfToken: string; cfPublicUrl: string },
 ): string | null {
   if (mode === 'cloudflare_manual') {
-    if (!saved.cfTokenSet && !draft.cfToken.trim()) return 'Dán Cloudflare Tunnel token.';
-    if (!/^https:\/\/[^/\s]+\/?$/i.test(draft.cfPublicUrl.trim())) return 'Nhập địa chỉ công khai dạng https://ten-mien-cua-ban.';
+    if (!saved.cfTokenSet && !draft.cfToken.trim()) return tr('Dán Cloudflare Tunnel token.');
+    if (!/^https:\/\/[^/\s]+\/?$/i.test(draft.cfPublicUrl.trim())) return tr('Nhập địa chỉ công khai dạng https://ten-mien-cua-ban.');
   }
-  if (mode === 'ngrok' && !saved.ngrokTokenSet && !draft.ngrokToken.trim()) return 'Dán ngrok authtoken.';
+  if (mode === 'ngrok' && !saved.ngrokTokenSet && !draft.ngrokToken.trim()) return tr('Dán ngrok authtoken.');
   return null;
 }
 
@@ -70,29 +72,29 @@ export interface RelayProviderConfig {
   ngrokDomain: string;
   cfToken: string;
   cfPublicUrl: string;
-  /** Gõ vào một ô (tunnel relay đang chạy → đánh dấu cần "Áp dụng"). */
+  /** Typing in a field (running relay tunnel → mark as needing "Áp dụng" (Apply)). */
   edit: (field: RelayDraftField, value: string) => void;
-  /** Rời ô: lưu nếu khác bản đã lưu (token: chỉ khi có dán). */
+  /** Leaving a field: save if it differs from the saved value (token: only when something was pasted). */
   commit: (field: RelayDraftField) => void;
   problem: (mode: TunnelMode) => string | null;
-  /** Lưu các ô đang gõ dở của cách tạo địa chỉ; false khi lưu lỗi (đã báo người dùng). */
+  /** Save the half-typed fields of the address creation mode; false on a save error (the user has been told). */
   flush: (mode: TunnelMode) => Promise<boolean>;
-  /** Đã đổi cấu hình khi tunnel relay đang chạy (chưa áp dụng). */
+  /** Config changed while the relay tunnel is running (not applied yet). */
   dirty: boolean;
   markDirty: () => void;
   clearDirty: () => void;
-  /** Nhà cung cấp của tunnel relay đang chạy (null khi tắt / chưa đọc được). */
+  /** Provider of the running relay tunnel (null when off / not read yet). */
   runningProvider: TunnelProviderId | null;
 }
 
 /**
- * Trạng thái cấu hình tunnel của relay cho trang Địa chỉ Internet. active = đang ở chế độ khác Cloudflare tự động (đọc
- * cấu hình + nghe trạng thái relay); relayOn = tunnel relay kiểu cũ đang bật.
+ * Relay tunnel config status for the Internet address page. active = in a mode other than Cloudflare automatic (reads the
+ * config + listens for relay status); relayOn = the old-style relay tunnel is on.
  */
 export function useRelayProviderConfig({ active, relayOn, initial, initialRunningProvider = null }: {
   active: boolean;
   relayOn: boolean;
-  /** Cấu hình đã đọc trước (test). */
+  /** Config read earlier (test). */
   initial?: Partial<RelayTunnelConfig> | null;
   initialRunningProvider?: TunnelProviderId | null;
 }): RelayProviderConfig {
@@ -119,7 +121,7 @@ export function useRelayProviderConfig({ active, relayOn, initial, initialRunnin
       setSaved(next);
       setNgrokDomain(next.domain);
       setCfPublicUrl(next.cfPublicUrl);
-    }).catch(() => { /* bản cũ / main chưa sẵn sàng */ });
+    }).catch(() => { /* old build / main not ready yet */ });
     return () => { alive = false; };
   }, [active]);
 
@@ -129,7 +131,7 @@ export function useRelayProviderConfig({ active, relayOn, initial, initialRunnin
     const read = (s: { state?: string; provider?: TunnelProviderId | null } | null | undefined) => {
       if (alive) setRunningProvider(s?.state && s.state !== 'stopped' && s.provider ? s.provider : null);
     };
-    ipc.relay?.getTunnelStatus?.().then(res => { if (res?.success) read(res); }).catch(() => { /* bản cũ */ });
+    ipc.relay?.getTunnelStatus?.().then(res => { if (res?.success) read(res); }).catch(() => { /* old build */ });
     const off = ipc.on?.('relay:tunnelStatusUpdate', read);
     return () => {
       alive = false;
@@ -137,7 +139,7 @@ export function useRelayProviderConfig({ active, relayOn, initial, initialRunnin
     };
   }, [active]);
 
-  // Tắt tunnel relay → không còn gì để "Áp dụng"
+  // Relay tunnel off → nothing left to "Áp dụng" (Apply)
   useEffect(() => {
     if (!relayOn) setDirty(false);
   }, [relayOn]);
@@ -146,11 +148,11 @@ export function useRelayProviderConfig({ active, relayOn, initial, initialRunnin
     try {
       const res = await ipc.relay?.setTunnelConfig?.(cfg);
       if (!res) {
-        notify('Bản app này chưa lưu được cấu hình tunnel. Hãy cập nhật Deplao.', 'warning');
+        notify(tr('Bản app này chưa lưu được cấu hình tunnel. Hãy cập nhật Deplao.'), 'warning');
         return false;
       }
       if (!res.success) {
-        notify(res.error || 'Không lưu được cấu hình tunnel', 'error');
+        notify(res.error || tr('Không lưu được cấu hình tunnel'), 'error');
         return false;
       }
       setSaved(prev => ({
@@ -159,7 +161,7 @@ export function useRelayProviderConfig({ active, relayOn, initial, initialRunnin
         cfTokenSet: prev.cfTokenSet || !!cfg.cfToken?.trim(),
         cfPublicUrl: cfg.cfPublicUrl !== undefined ? normalizePublicUrl(cfg.cfPublicUrl) : prev.cfPublicUrl,
       }));
-      // Token đã lưu mã hoá ở main — không giữ lại trong ô nhập
+      // Token is stored encrypted in main: not kept in the input field
       if (cfg.authtoken) setNgrokToken('');
       if (cfg.cfToken) setCfToken('');
       return true;
@@ -231,7 +233,7 @@ export function useRelayProviderConfig({ active, relayOn, initial, initialRunnin
 
 const CODE = 'rounded bg-muted px-1 font-mono text-[11px] text-foreground';
 
-/** Form ngrok / Cloudflare thủ công + hướng dẫn, dưới nút chọn cách tạo địa chỉ. */
+/** ngrok / manual Cloudflare form + guide, under the address creation mode buttons. */
 export function RelayProviderForm({ mode, config }: { mode: RelayProviderMode; config: RelayProviderConfig }) {
   const secretId = useId();
   const valueId = useId();
@@ -241,7 +243,7 @@ export function RelayProviderForm({ mode, config }: { mode: RelayProviderMode; c
     let alive = true;
     ipc.relay?.getServerStatus?.().then(res => {
       if (alive && res?.success && res.port) setRelayPort(res.port);
-    }).catch(() => { /* giữ cổng mặc định */ });
+    }).catch(() => { /* keep the default port */ });
     return () => { alive = false; };
   }, [mode]);
 
@@ -252,19 +254,19 @@ export function RelayProviderForm({ mode, config }: { mode: RelayProviderMode; c
   return (
     <div className="space-y-4 rounded-xl border border-border bg-card p-4">
       <div>
-        <p className="text-sm font-semibold text-foreground">{ngrok ? 'ngrok' : 'Cloudflare thủ công'}</p>
+        <p className="text-sm font-semibold text-foreground">{ngrok ? 'ngrok' : tr('Cloudflare thủ công')}</p>
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
           {ngrok
-            ? 'Dùng tài khoản ngrok của bạn (gói miễn phí có một domain tĩnh, dạng ten-ban.ngrok-free.app) cho Nhân viên và API.'
-            : 'Bạn tự tạo tunnel trong Cloudflare Zero Trust rồi dán token, dành cho người đã tự cấu hình tunnel. Dùng cho Nhân viên và API.'}
+            ? tr('Dùng tài khoản ngrok của bạn (gói miễn phí có một domain tĩnh, dạng ten-ban.ngrok-free.app) cho Nhân viên và API.')
+            : tr('Bạn tự tạo tunnel trong Cloudflare Zero Trust rồi dán token, dành cho người đã tự cấu hình tunnel. Dùng cho Nhân viên và API.')}
         </p>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
         <FormField
-          label={ngrok ? 'Authtoken' : 'Tunnel token'}
+          label={ngrok ? tr('Authtoken') : tr('Tunnel token')}
           htmlFor={secretId}
-          hint={(ngrok ? config.saved.ngrokTokenSet : config.saved.cfTokenSet) ? 'Đã lưu mã hoá trên máy này. Chỉ dán khi muốn thay.' : undefined}
+          hint={(ngrok ? config.saved.ngrokTokenSet : config.saved.cfTokenSet) ? tr('Đã lưu mã hoá trên máy này. Chỉ dán khi muốn thay.') : undefined}
         >
           <Input
             id={secretId}
@@ -273,13 +275,13 @@ export function RelayProviderForm({ mode, config }: { mode: RelayProviderMode; c
             spellCheck={false}
             value={ngrok ? config.ngrokToken : config.cfToken}
             placeholder={ngrok
-              ? (config.saved.ngrokTokenSet ? 'Đã lưu authtoken (dán để thay)' : 'ngrok authtoken')
-              : (config.saved.cfTokenSet ? 'Đã lưu token (dán để thay)' : 'Cloudflare Tunnel token')}
+              ? (config.saved.ngrokTokenSet ? tr('Đã lưu authtoken (dán để thay)') : tr('ngrok authtoken'))
+              : (config.saved.cfTokenSet ? tr('Đã lưu token (dán để thay)') : tr('Cloudflare Tunnel token'))}
             onChange={e => config.edit(ngrok ? 'ngrokToken' : 'cfToken', e.target.value)}
             onBlur={() => config.commit(ngrok ? 'ngrokToken' : 'cfToken')}
           />
         </FormField>
-        <FormField label={ngrok ? 'Domain tĩnh' : 'Địa chỉ công khai'} htmlFor={valueId}>
+        <FormField label={ngrok ? tr('Domain tĩnh') : tr('Địa chỉ công khai')} htmlFor={valueId}>
           <Input
             id={valueId}
             autoComplete="off"
@@ -294,30 +296,27 @@ export function RelayProviderForm({ mode, config }: { mode: RelayProviderMode; c
 
       {ngrok ? (
         <ol className="list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted-foreground">
-          <li>Đăng ký tại dashboard.ngrok.com → Your Authtoken → sao chép rồi dán vào ô Authtoken.</li>
-          <li>Mục Domains → lấy domain tĩnh miễn phí rồi dán vào ô Domain tĩnh.</li>
-          <li>Bật Nhân viên và API ở bảng bên dưới (đang chạy thì bấm Áp dụng).</li>
+          <li>{tr('Đăng ký tại dashboard.ngrok.com → Your Authtoken → sao chép rồi dán vào ô Authtoken.')}</li>
+          <li>{tr('Mục Domains → lấy domain tĩnh miễn phí rồi dán vào ô Domain tĩnh.')}</li>
+          <li>{tr('Bật Nhân viên và API ở bảng bên dưới (đang chạy thì bấm Áp dụng).')}</li>
         </ol>
       ) : (
         <ol className="list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted-foreground">
-          <li>Vào one.dash.cloudflare.com → Networks → Tunnels → Create a tunnel (Cloudflared), đặt tên.</li>
-          <li>Ở bước cài connector, sao chép token (chuỗi dài sau <code className={CODE}>--token</code>) rồi dán vào ô Tunnel token.</li>
+          <li>{tr('Vào one.dash.cloudflare.com → Networks → Tunnels → Create a tunnel (Cloudflared), đặt tên.')}</li>
+          <li>{trx('Ở bước cài connector, sao chép token (chuỗi dài sau <0>--token</0>) rồi dán vào ô Tunnel token.', { 0: <code className={CODE} /> })}</li>
           <li>
-            Thêm Public Hostname: tên miền con + tên miền của bạn, Service <code className={CODE}>HTTP</code> →{' '}
-            <code className={CODE}>localhost:{relayPort}</code>.
+            {trx('Thêm Public Hostname: tên miền con + tên miền của bạn, Service <0>HTTP</0> → <1>localhost:{{relayPort}}</1>.', { 0: <code className={CODE} />, 1: <code className={CODE} />, relayPort })}
           </li>
-          <li>Nhập địa chỉ công khai <code className={CODE}>https://…</code> rồi bật Nhân viên và API ở bảng bên dưới (đang chạy thì bấm Áp dụng).</li>
+          <li>{trx('Nhập địa chỉ công khai <0>https://…</0> rồi bật Nhân viên và API ở bảng bên dưới (đang chạy thì bấm Áp dụng).', { 0: <code className={CODE} /> })}</li>
         </ol>
       )}
 
-      {temporaryNgrok && <p className="text-xs text-warning">Chưa nhập domain tĩnh: địa chỉ có thể đổi khi khởi động lại.</p>}
+      {temporaryNgrok && <p className="text-xs text-warning">{tr('Chưa nhập domain tĩnh: địa chỉ có thể đổi khi khởi động lại.')}</p>}
       {problem && <p role="alert" className="text-xs text-warning">{problem}</p>}
 
       <Notice tone="info">
         <p>
-          Chỉ Nhân viên và API dùng {ngrok ? 'ngrok' : 'tunnel Cloudflare thủ công'}. Thanh toán, tích hợp và Webhook workflow
-          vẫn dùng Địa chỉ tạm (Cloudflare Quick Tunnel), đổi mỗi lần bật lại. Muốn cả ba có địa chỉ cố định, chọn Cloudflare
-          tự động.
+          {trx('Chỉ Nhân viên và API dùng {{v1}}. Thanh toán, tích hợp và Webhook workflow vẫn dùng Địa chỉ tạm (Cloudflare Quick Tunnel), đổi mỗi lần bật lại. Muốn cả ba có địa chỉ cố định, chọn Cloudflare tự động.', { v1: ngrok ? 'ngrok' : tr('tunnel Cloudflare thủ công') })}
         </p>
       </Notice>
     </div>

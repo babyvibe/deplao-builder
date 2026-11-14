@@ -12,6 +12,8 @@ import AppModeManager from '../../../src/utils/app/AppModeManager';
 import WorkspaceManager from '../../../src/utils/app/WorkspaceManager';
 import { clampMediaPageLimit, normalizeMediaCursor } from '../../../src/services/database/mediaMessagesQuery';
 import { contactAliasChanged, contactProfileChanged } from '../../../src/services/database/contactProfileChange';
+import { tr } from '../../../src/shared/i18n';
+import { pinOnZaloBeforeSaving, unpinOnZaloBeforeRemoving } from '../../../src/services/zalo/zaloMessagePins';
 
 function isEmployeeMode(): boolean {
     try {
@@ -22,8 +24,8 @@ function isEmployeeMode(): boolean {
 }
 
 /**
- * Tạm dừng đồng bộ DB lên Cloudflare quanh thao tác thay file DB (dbsync nhả file trước, kiểm tra lại DB sau).
- * Không nạp được module (hoặc đồng bộ đang tắt) → chạy thẳng.
+ * Pauses DB sync to Cloudflare around operations that replace the DB file (dbsync releases the file first, then checks the DB again).
+ * If the module cannot be loaded (or sync is off) → run directly.
  */
 function withCloudDbPaused<T>(reason: string, fn: () => Promise<T>): Promise<T> {
     let cloudDb: { pauseFor<R>(reason: string, fn: () => Promise<R> | R): Promise<R> } | null = null;
@@ -35,8 +37,8 @@ function withCloudDbPaused<T>(reason: string, fn: () => Promise<T>): Promise<T> 
     return cloudDb ? cloudDb.pauseFor(reason, fn) : fn();
 }
 
-// Copy toàn bộ thư mục src → dest (async, recursive).
-// opts.overwrite=true → ghi đè file đã tồn tại; opts.onFile → progress callback.
+// Copy the whole src folder → dest (async, recursive).
+// opts.overwrite=true → overwrite existing files; opts.onFile → progress callback.
 // Yield to event-loop every 20 files so IPC progress events can be delivered.
 async function copyDirRecursive(
     src: string,
@@ -57,7 +59,7 @@ async function copyDirRecursive(
                 await fs.promises.copyFile(srcPath, destPath);
                 _counter.n++;
                 opts?.onFile?.(_counter.n);
-                // Yield every 20 files → cho phép IPC events được gửi đi
+                // Yield every 20 files → lets IPC events go out
                 if (_counter.n % 20 === 0) {
                     await new Promise<void>(resolve => setImmediate(resolve));
                 }
@@ -67,7 +69,7 @@ async function copyDirRecursive(
     return _counter.n;
 }
 
-// Đếm tổng số file trong thư mục (recursive) - dùng để hiện tiến trình X / Y.
+// Count the total number of files in the folder (recursive) - used to show progress X / Y.
 async function countFiles(dir: string): Promise<number> {
     let count = 0;
     const entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -95,7 +97,7 @@ export function registerDatabaseIpc() {
             const safeLimit = Math.min(Math.max(Math.floor(Number(limit) || 50), 1), 200);
             const safeOffset = Math.max(Math.floor(Number(offset) || 0), 0);
             const safeBefore = Math.max(Math.floor(Number(before) || 0), 0);
-            // Đọc trong worker (DatabaseService.getMessagesAsync): ổ đĩa chậm không làm cả app đứng
+            // Read in a worker (DatabaseService.getMessagesAsync): a slow disk does not freeze the whole app
             const messages = await DatabaseService.getInstance().getMessagesAsync(zaloId, threadId, safeLimit, safeOffset, safeBefore || undefined, topicId);
             Logger.log(`[databaseIpc] db:getMessages → ${messages.length} msgs (limit=${safeLimit}, cursor=${safeBefore || '-'}, offset=${safeOffset})`);
             return { success: true, messages };
@@ -189,7 +191,7 @@ export function registerDatabaseIpc() {
             if (isEmployeeMode()) return { success: true };
             if (!threadId) return { success: true, messages: await DatabaseService.getInstance().getAllLocalMediaMessagesAsync(zaloId) };
             // beforeTs/afterTs (+ msgId): keyset page on (timestamp, msg_id) for the image viewer gallery, newest-first.
-            // No cursor → the old offset paging (panel Ảnh/Video, Public API), unchanged.
+            // No cursor → the old offset paging (Image/Video panel, Public API), unchanged.
             const cursor = normalizeMediaCursor({ beforeTs, beforeMsgId, afterTs, afterMsgId });
             const messages = cursor
                 ? await DatabaseService.getInstance().getMediaMessagesAsync(zaloId, threadId, clampMediaPageLimit(limit), 0, cursor)
@@ -220,13 +222,13 @@ export function registerDatabaseIpc() {
         }
     });
 
-    // Ghi trên Boss (UI Boss, proxy / REST của nhân viên) phát event như lệnh REST tương ứng → UI Boss + nhân viên được
-    // giao tài khoản cập nhật ngay. Nhân viên (isEmployeeMode) không phát: Boss phát sau khi ghi và relay về.
+    // Writes on Boss (Boss UI, employee proxy / REST) emit an event like the matching REST command → the Boss UI + employees
+    // assigned the account get the update at once. Employees (isEmployeeMode) do not emit: Boss emits after writing and relays it back.
     ipcMain.handle('db:markAsRead', async (_event, { zaloId, contactId }) => {
         try {
             if (isEmployeeMode()) proxyToBoss('db:markAsRead', { zaloId, contactId });
             DatabaseService.getInstance().markAsRead(zaloId, contactId);
-            // Đã đọc là dữ liệu chung → máy khác xoá số chưa đọc (trước đây Boss đọc không xoá được số của nhân viên)
+            // Read status is shared data → other machines clear the unread count (before, Boss reading could not clear the employee's count)
             if (!isEmployeeMode()) EventBroadcaster.emit('db:unreadChanged', { zaloId, contactId, unread: 0 });
             return { success: true };
         } catch (error: any) {
@@ -234,8 +236,8 @@ export function registerDatabaseIpc() {
         }
     });
 
-    // Đánh dấu đã trả lời / bỏ đánh dấu (không gửi tin) — hàng loạt hoặc một hội thoại. Máy khác (Boss / nhân viên) cập
-    // nhật qua db:replyStateChanged (relay); nhân viên gọi qua REST /api/command/conversations/replied
+    // Mark as replied / unmark (does not send a message): in bulk or for one conversation. Other machines (Boss / employees) update
+    // through db:replyStateChanged (relay); employees call it via REST /api/command/conversations/replied
     ipcMain.handle('db:markConversationsReplied', async (_event, params: { zaloId: string; contactIds: string[]; replied?: boolean }) => {
         try {
             const zaloId = String(params?.zaloId || '');
@@ -252,7 +254,7 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:markMessageRecalled', async (_event, { zaloId, msgId, threadId }) => {
         try {
             if (isEmployeeMode()) proxyToBoss('db:markMessageRecalled', { zaloId, msgId, threadId });
-            // threadId: msg_id Telegram chỉ duy nhất trong 1 hội thoại (xem DatabaseService.messageIdScope)
+            // threadId: a Telegram msg_id is unique only within one conversation (see DatabaseService.messageIdScope)
             DatabaseService.getInstance().markMessageRecalled(zaloId, msgId, threadId ? String(threadId) : undefined);
             return { success: true };
         } catch (error: any) {
@@ -264,8 +266,8 @@ export function registerDatabaseIpc() {
         try {
             if (isEmployeeMode()) proxyToBoss('db:deleteMessages', { zaloId, msgIds, threadId });
             DatabaseService.getInstance().deleteMessages(zaloId, msgIds, threadId ? String(threadId) : undefined);
-            // Xoá khỏi app: máy khác bỏ tin khỏi khung chat (cùng event lệnh REST messages/delete vẫn phát).
-            // scope 'app' ≠ chat.delete của Zalo (tin vẫn giữ, hiện "đã thu hồi"): bên nhận XOÁ tin, không đánh dấu thu hồi.
+            // Deleted from the app: other machines remove the message from the chat pane (the same event as the REST messages/delete command is still emitted).
+            // scope 'app' ≠ Zalo's chat.delete (the message is kept and shows "đã thu hồi" (unsent)): the recipient DELETES the message, does not mark it as unsent.
             if (!isEmployeeMode() && Array.isArray(msgIds) && msgIds.length > 0) {
                 EventBroadcaster.emit('event:delete', { zaloId, msgIds, scope: 'app', ...(threadId ? { threadId: String(threadId) } : {}) });
             }
@@ -279,7 +281,7 @@ export function registerDatabaseIpc() {
         try {
             if (isEmployeeMode()) proxyToBoss('db:updateContactProfile', { zaloId, contactId, displayName, avatarUrl, phone, contactType, gender, birthday, isBot, manualDetails });
             const db = DatabaseService.getInstance();
-            // Boss gọi cho gần như mọi tin nhắn đến → chỉ phát event khi hồ sơ THẬT SỰ đổi (so bản ghi trước / sau)
+            // Boss is called for almost every incoming message → emit the event only when the profile REALLY changed (compare the record before / after)
             const emit = !isEmployeeMode() && !!contactId;
             const before = emit ? db.getContactById(zaloId, String(contactId)) : undefined;
             db.updateContactProfile(zaloId, contactId, displayName || '', avatarUrl || '', phone || '', contactType || '', gender ?? null, birthday ?? null, isBot ?? null, Boolean(manualDetails));
@@ -312,7 +314,7 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:updateReaction', async (_event, { zaloId, msgId, userId, icon, emoji, threadId }) => {
         try {
             const iconValue = icon || emoji || '';
-            // threadId: chỉ sửa tin của đúng hội thoại (msg_id có thể trùng giữa các hội thoại)
+            // threadId: edit only the message in the right conversation (msg_id can repeat across conversations)
             if (isEmployeeMode()) proxyToBoss('db:updateReaction', { zaloId, msgId, userId, icon: iconValue, threadId });
             DatabaseService.getInstance().updateMessageReaction(zaloId, String(msgId), userId, iconValue, threadId ? String(threadId) : undefined);
             return { success: true };
@@ -354,7 +356,7 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:getStoragePath', async () => {
         try {
             if (isEmployeeMode()) {
-                // Employee mode: trả về thông tin local của Employee (không phải Boss)
+                // Employee mode: returns the local info of the Employee (not Boss)
                 const userDataPath = app.getPath('userData');
                 const cache = MediaCacheService.getInstance();
                 const cacheDir = cache['cacheDir'] || path.join(app.getPath('userData'), '.media-cache');
@@ -412,11 +414,11 @@ export function registerDatabaseIpc() {
             const newDbPath = path.join(newFolder, 'deplao-tool.db');
 
             if (oldDbPath === newDbPath) {
-                return { success: true, newPath: newDbPath, message: 'Thư mục không thay đổi.' };
+                return { success: true, newPath: newDbPath, message: tr('Thư mục không thay đổi.') };
             }
 
             if (useExisting) {
-                // ── Chế độ "dùng dữ liệu cũ": chỉ cập nhật config, không copy ──────────
+                // ── Mode "dùng dữ liệu cũ" (use existing data): only updates the config, no copy ──────────
                 let cfg: any = {};
                 if (fs.existsSync(configPath)) {
                     try { cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch {}
@@ -436,19 +438,19 @@ export function registerDatabaseIpc() {
                     }
                 } catch {}
 
-                return { success: true, newPath: newDbPath, message: 'Đã chuyển sang dữ liệu cũ thành công.' };
+                return { success: true, newPath: newDbPath, message: tr('Đã chuyển sang dữ liệu cũ thành công.') };
             }
 
-            // ── Bước 1: Force flush in-memory DB → disk ───────────────────────────────
+            // ── Step 1: Force flush in-memory DB → disk ───────────────────────────────
             DatabaseService.getInstance().forceFlush();
 
-            // ── Bước 2: Copy DB file ──────────────────────────────────────────────────
+            // ── Step 2: Copy DB file ──────────────────────────────────────────────────
             if (oldDbPath && fs.existsSync(oldDbPath)) {
                 fs.copyFileSync(oldDbPath, newDbPath);
             }
 
-            // ── Bước 3: Copy media folder ─────────────────────────────────────────────
-            // Tính oldMediaDir trực tiếp từ vị trí DB cũ (tránh dùng cache của FileStorageService)
+            // ── Step 3: Copy media folder ─────────────────────────────────────────────
+            // Compute oldMediaDir directly from the old DB location (avoids using FileStorageService's cache)
             const oldMediaDir = path.join(path.dirname(oldDbPath), 'media');
             const newMediaDir = path.join(newFolder, 'media');
             let mediaCopied = 0;
@@ -456,7 +458,7 @@ export function registerDatabaseIpc() {
             let mediaError: string | undefined;
 
             if (oldMediaDir !== newMediaDir && fs.existsSync(oldMediaDir)) {
-                // Đếm trước tổng số file để UI hiển thị tiến trình X/Y
+                // Count the total number of files first so the UI can show progress X/Y
                 try {
                     mediaTotal = await countFiles(oldMediaDir);
                     try { event.sender.send('db:copyProgress', { copied: 0, total: mediaTotal }); } catch {}
@@ -469,7 +471,7 @@ export function registerDatabaseIpc() {
                             try { event.sender.send('db:copyProgress', { copied: count, total: mediaTotal }); } catch {}
                         },
                     });
-                    // Emit hoàn tất
+                    // Emit completion
                     try { event.sender.send('db:copyProgress', { copied: mediaCopied, total: mediaTotal, done: true }); } catch {}
                 } catch (copyErr: any) {
                     mediaError = copyErr.message;
@@ -477,7 +479,7 @@ export function registerDatabaseIpc() {
                 }
             }
 
-            // ── Bước 4: Lưu config ────────────────────────────────────────────────────
+            // ── Step 4: Save config ────────────────────────────────────────────────────
             let cfg: any = {};
             if (fs.existsSync(configPath)) {
                 try { cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch {}
@@ -485,15 +487,15 @@ export function registerDatabaseIpc() {
             cfg.dbFolder = newFolder;
             fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
 
-            // ── Bước 5: Reinitialize DatabaseService từ path mới ─────────────────────
+            // ── Step 5: Reinitialize DatabaseService from the new path ─────────────────────
             await DatabaseService.getInstance().reinitialize();
 
-            // ── Bước 6: Reset FileStorageService cache ────────────────────────────────
+            // ── Step 6: Reset FileStorageService cache ────────────────────────────────
             FileStorageService.resetBaseDir();
 
-            // ── Bước 7: Cập nhật local_paths trong DB sang đường dẫn mới ─────────────
-            // Chạy ngay cả khi media copy có lỗi một phần (mediaError set) - DB đã được
-            // copy xong nên paths cần được rewrite để trỏ đúng vào vị trí mới.
+            // ── Step 7: Update local_paths in the DB to the new paths ─────────────
+            // Runs even if the media copy partly failed (mediaError set) - the DB has already been
+            // copied, so the paths must be rewritten to point to the new location.
             let pathsRewritten = 0;
             if (oldMediaDir !== newMediaDir) {
                 try {
@@ -503,10 +505,10 @@ export function registerDatabaseIpc() {
                 }
             }
 
-            // ── Bước 8: Chuyển tất cả absolute paths còn lại sang relative ────────────
-            // Sau bước 7, mọi path từ oldMediaDir đã được rewrite sang newMediaDir.
-            // Bước này parse JSON đúng cách và convert BẤT KỲ absolute path nào còn lại
-            // (kể cả path từ các lần đổi folder cũ hơn) → relative, folder-agnostic.
+            // ── Step 8: Convert all remaining absolute paths to relative ────────────
+            // After step 7, every path from oldMediaDir has been rewritten to newMediaDir.
+            // This step parses the JSON properly and converts ANY remaining absolute path
+            // (including paths from older folder changes) → relative, folder-agnostic.
             let pathsMigrated = 0;
             try {
                 pathsMigrated = DatabaseService.getInstance().migrateAllAbsolutePathsToRelative();
@@ -519,8 +521,8 @@ export function registerDatabaseIpc() {
             }
 
             const message = mediaCopied > 0
-                ? `Đã sao chép DB + ${mediaCopied.toLocaleString()} file media thành công.`
-                : 'Đã thay đổi thư mục lưu trữ thành công.';
+                ? tr('Đã sao chép DB + {{v1}} file media thành công.', { v1: mediaCopied.toLocaleString() })
+                : tr('Đã thay đổi thư mục lưu trữ thành công.');
 
             return { success: true, newPath: newDbPath, message, mediaCopied, mediaError, pathsRewritten, pathsMigrated };
         } catch (error: any) {
@@ -532,7 +534,7 @@ export function registerDatabaseIpc() {
         try {
             const result = await dialog.showOpenDialog({
                 properties: ['openDirectory', 'createDirectory'],
-                title: 'Chọn thư mục lưu trữ dữ liệu',
+                title: tr('Chọn thư mục lưu trữ dữ liệu'),
             });
             if (result.canceled || !result.filePaths.length) {
                 return { success: true, canceled: true };
@@ -582,7 +584,7 @@ export function registerDatabaseIpc() {
         try {
             if (isEmployeeMode()) proxyToBoss('db:deleteConversation', { zaloId, contactId });
             DatabaseService.getInstance().deleteConversation(zaloId, contactId);
-            // Máy khác bỏ hội thoại khỏi danh sách (trước đây chỉ lệnh REST phát, Boss xoá thì nhân viên không biết)
+            // Other machines remove the conversation from the list (before, only the REST command emitted this, so employees did not know when Boss deleted it)
             if (!isEmployeeMode()) EventBroadcaster.emit('db:conversationDeleted', { ownerZaloId: zaloId, contactId, threadId: contactId });
             return { success: true };
         } catch (error: any) {
@@ -620,7 +622,7 @@ export function registerDatabaseIpc() {
         }
     });
 
-    // Panel "Thành viên" của khung chat: phân trang + tìm trong DB (không tải cả nhóm vài nghìn người một lần)
+    // The "Thành viên" (Members) panel of the chat pane: paged + searched in the DB (does not load a group of thousands of people at once)
     ipcMain.handle('db:getGroupMembersPage', async (_event, params: { zaloId: string; groupId: string; query?: string; limit?: number; offset?: number; ownerRole?: number; namedOnly?: boolean }) => {
         try {
             const { zaloId, groupId, query, limit, offset, ownerRole, namedOnly } = params || ({} as any);
@@ -652,7 +654,7 @@ export function registerDatabaseIpc() {
 
     ipcMain.handle('db:upsertGroupMember', async (_event, { zaloId, groupId, member }: { zaloId: string; groupId: string; member: any }) => {
         try {
-            // Tên kênh phải có tiền tố db: — trước đây gửi "upsertGroupMember" → Boss không có handler, không bao giờ ghi
+            // The channel name must have the db: prefix. Before, it sent "upsertGroupMember" → Boss had no handler, so nothing was ever written
             if (isEmployeeMode()) proxyToBoss('db:upsertGroupMember', { zaloId, groupId, member });
             DatabaseService.getInstance().upsertGroupMember(zaloId, groupId, member);
             return { success: true };
@@ -676,7 +678,7 @@ export function registerDatabaseIpc() {
     // ─── Sticker Cache ────────────────────────────────────────────────────
     ipcMain.handle('db:saveStickers', async (_event, { stickers }: { stickers: any[] }) => {
         try {
-            // Cache sticker dùng chung trên Boss (không theo tài khoản) — đọc sticker của nhân viên đi REST tới Boss
+            // Sticker cache shared on Boss (not per account): an employee's sticker reads go over REST to Boss
             if (isEmployeeMode()) proxyToBoss('db:saveStickers', { stickers });
             DatabaseService.getInstance().saveStickers(stickers || []);
             return { success: true };
@@ -872,9 +874,9 @@ export function registerDatabaseIpc() {
 
     // ─── Pinned Messages ──────────────────────────────────────────────────────
 
-    // Nhân viên: ghim tin nhắn nằm trên DB Boss. Đọc qua proxy (trước đây trả rỗng → ghim xong ChatWindow tải lại thì
-    // bảng ghim trống); ghi CHỜ Boss xác nhận rồi mới ghi bản sao cục bộ + phát event cho UI của chính mình — Boss lỗi /
-    // từ chối thì trả lỗi để UI báo (trước đây fire-and-forget: UI báo "Đã ghim" dù Boss không ghi).
+    // Employee: pinned messages live in Boss's DB. Read via proxy (before, it returned empty → after pinning, when ChatWindow reloaded
+    // the pin table was empty); a write WAITS for Boss to confirm before writing the local copy + emitting the event for its own UI. If Boss errors /
+    // rejects, it returns the error so the UI can show it (before, it was fire-and-forget: the UI showed "Đã ghim" (pinned) even when Boss did not write).
     ipcMain.handle('db:getPinnedMessages', async (_event, { zaloId, threadId }: { zaloId: string; threadId: string }) => {
         try {
             if (isEmployeeMode()) {
@@ -888,11 +890,15 @@ export function registerDatabaseIpc() {
         }
     });
 
-    ipcMain.handle('db:pinMessage', async (_event, { zaloId, threadId, pin }: { zaloId: string; threadId: string; pin: any }) => {
+    ipcMain.handle('db:pinMessage', async (_event, { zaloId, threadId, pin, localOnly }: { zaloId: string; threadId: string; pin: any; localOnly?: boolean }) => {
         try {
             if (isEmployeeMode()) {
-                const res = await proxyToBossWithResult('db:pinMessage', { zaloId, threadId, pin });
+                const res = await proxyToBossWithResult('db:pinMessage', { zaloId, threadId, pin, localOnly });
                 if (res?.success === false) return res;
+            } else if (!localOnly) {
+                // Zalo: pin on Zalo itself so the phone sees it (Telegram / Facebook pin through their own IPC before this one).
+                // localOnly: over Zalo's pin limit, the pin stays in the app only.
+                await pinOnZaloBeforeSaving(zaloId, threadId, pin);
             }
             DatabaseService.getInstance().pinMessage(zaloId, threadId, pin);
             EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'pin', ownerZaloId: zaloId, threadId, pin });
@@ -907,6 +913,9 @@ export function registerDatabaseIpc() {
             if (isEmployeeMode()) {
                 const res = await proxyToBossWithResult('db:unpinMessage', { zaloId, threadId, msgId });
                 if (res?.success === false) return res;
+            } else {
+                // Zalo: unpin on Zalo first; a pin Zalo does not have (kept only in the app) is just removed here
+                await unpinOnZaloBeforeRemoving(zaloId, threadId, msgId);
             }
             DatabaseService.getInstance().unpinMessage(zaloId, threadId, msgId);
             EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'unpin', ownerZaloId: zaloId, threadId, msgId });
@@ -1090,8 +1099,8 @@ export function registerDatabaseIpc() {
         threadType?: number; labelText?: string; labelColor?: string; labelEmoji?: string;
     }) => {
         try {
-            // Nhân viên: chỉ proxy MỘT lần ở cuối (db:assignLocalLabelToThread, đủ tham số cho trigger workflow trên Boss).
-            // Bản cũ gửi thêm "assignLocalLabelToThread" (không tiền tố — Boss không có handler).
+            // Employee: proxy ONCE at the end only (db:assignLocalLabelToThread, with all parameters for the workflow trigger on Boss).
+            // Old builds also sent "assignLocalLabelToThread" (no prefix, Boss has no handler).
             DatabaseService.getInstance().assignLocalLabelToThread(zaloId, labelId, threadId);
             // Centralized workflow label event emission
             try {
@@ -1195,7 +1204,7 @@ export function registerDatabaseIpc() {
     ipcMain.handle('db:setContactAlias', async (_event, { zaloId, contactId, alias }: { zaloId: string; contactId: string; alias: string }) => {
         try {
             const db = DatabaseService.getInstance();
-            // Mỗi lần kết nối lại Zalo lưu lại bí danh của cả danh bạ → chỉ phát event khi bí danh thật sự đổi
+            // Each time Zalo reconnects it saves the aliases of the whole address book → emit the event only when an alias really changes
             const before = db.getContactById(zaloId, String(contactId || ''));
             db.setContactAlias(zaloId, contactId, alias);
             if (contactAliasChanged(before as any, alias)) {
@@ -1223,8 +1232,8 @@ export function registerDatabaseIpc() {
         } catch (error: any) { return { success: false, error: error.message }; }
     });
 
-    // Bản nháp là dữ liệu CỦA MÁY (như Zalo PC): nhân viên ghi vào DB cục bộ của workspace (upsertDraft/deleteDraft ở
-    // trên không proxy) nên cũng đọc từ đó. Trước đây chế độ nhân viên trả stub rỗng → nháp không bao giờ khôi phục.
+    // Drafts are the MACHINE's own data (like Zalo PC): employees write to the workspace's local DB (upsertDraft/deleteDraft at
+    // not proxied), so they also read from there. Before, employee mode returned an empty stub → drafts were never restored.
     ipcMain.handle('db:getDraft', async (_event, { zaloId, threadId }: { zaloId: string; threadId: string }) => {
         try {
             const draft = DatabaseService.getInstance().getDraft(zaloId, threadId);
@@ -1247,9 +1256,9 @@ export function registerDatabaseIpc() {
     });
 
     // ─── Bank Cards ─────────────────────────────────────────────────────
-    // Nhân viên: thẻ ngân hàng nằm trên DB Boss (id do Boss cấp) — đọc / ghi đều proxy chờ kết quả, không ghi bản sao
-    // cục bộ (id cục bộ khác id Boss → sửa / xoá theo id sẽ trúng thẻ khác). Trước đây proxy "upsertBankCard" (không
-    // tiền tố, Boss không có handler) và đọc trả rỗng → nhân viên không bao giờ thấy / lưu được thẻ.
+    // Employee: bank cards live in Boss's DB (ids assigned by Boss): reads and writes both proxy and wait for the result, with no local copy
+    // (a local id differs from Boss's id, so edit / delete by id would hit another card). Before, it proxied "upsertBankCard" (without
+    // prefix, Boss had no handler) and reads returned empty → the employee never saw or could save a card.
     ipcMain.handle('db:getBankCards', async (_event, { zaloId }: { zaloId: string }) => {
         try {
             if (isEmployeeMode()) {
@@ -1265,7 +1274,7 @@ export function registerDatabaseIpc() {
         try {
             if (isEmployeeMode()) return await proxyToBossWithResult('db:upsertBankCard', { zaloId, card });
             const id = DatabaseService.getInstance().upsertBankCard(zaloId, card);
-            if (!(id > 0)) return { success: false, error: 'Không lưu được thẻ ngân hàng' };
+            if (!(id > 0)) return { success: false, error: tr('Không lưu được thẻ ngân hàng') };
             return { success: true, id };
         } catch (error: any) { return { success: false, error: error.message }; }
     });
@@ -1296,7 +1305,7 @@ export function registerDatabaseIpc() {
         } catch (error: any) { return { success: false, error: error.message }; }
     });
 
-    // ─── Tự động đánh dấu đã đọc: hội thoại chưa đọc theo thời gian tin cuối ───
+    // ─── Auto mark as read: unread conversations based on the time of the last message ───
     ipcMain.handle('db:getUnreadConversations', async (_event, params: { zaloId: string; from?: number; to?: number; includeOthers?: boolean; channel?: string }) => {
         try {
             if (isEmployeeMode()) return { success: true, conversations: [] };

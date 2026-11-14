@@ -2,6 +2,8 @@
 import DOMPurify from 'dompurify';
 import { useAppStore } from '@/store/app/appStore';
 import { useUpdateStore, UpdateInfo, ProgressInfo, UpdateError } from '@/store/app/updateStore';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const DOWNLOAD_STALL_TIMEOUT_MS = 45_000;
 const APP_VERSION: string = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?';
@@ -21,7 +23,7 @@ async function fetchAggregatedNotes(currentVersion: string, targetVersion: strin
       // Include if v > currentVersion and v <= targetVersion
       if (compareVersions(v, currentVersion) > 0 && compareVersions(v, targetVersion) <= 0) {
         const body = (r.body || '').trim();
-        notes.push(`<h2>v${v}</h2>\n${body ? mdToHtml(body) : '<em>Không có ghi chú</em>'}`);
+        notes.push(`<h2>v${v}</h2>\n${body ? mdToHtml(body) : tr('<em>Không có ghi chú</em>')}`);
       }
     }
     return notes.length > 0 ? notes.join('\n<hr/>\n') : '';
@@ -77,7 +79,7 @@ export function UpdateNotification() {
     // If we already have releaseNotes from electron-updater, use that
     // Otherwise fetch from GitHub for all skipped versions
     if (updateInfo.releaseNotes) {
-      // releaseNotes có thể là string hoặc array (electron-updater)
+      // releaseNotes can be a string or an array (electron-updater)
       const notes = Array.isArray(updateInfo.releaseNotes)
         ? updateInfo.releaseNotes.map((n: any) => n.note || n).join('\n')
         : updateInfo.releaseNotes;
@@ -93,7 +95,7 @@ export function UpdateNotification() {
   const resetStallTimer = useCallback(() => {
     if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
     stallTimerRef.current = setTimeout(() => {
-      setError({ message: 'Tải bị gián đoạn', platform });
+      setError({ message: tr('Tải bị gián đoạn'), platform });
     }, DOWNLOAD_STALL_TIMEOUT_MS);
   }, [setError, platform]);
 
@@ -101,14 +103,14 @@ export function UpdateNotification() {
     const api = (window as any).electronAPI;
     if (!api?.on) return;
 
-    // Báo cho main process biết renderer đã sẵn sàng nhận update events
+    // Tell the main process the renderer is ready to receive update events
     try { api.update?.rendererReady?.(); } catch {}
 
     const offAvailable = api.on('update:available', (info: UpdateInfo) => {
       setUpdateInfo(info);
       setStatus('available');
       setError(null);
-      // Tự hiện popup thông báo có bản mới (giống như click nút TopBar)
+      // Automatically show the popup for a new version (same as clicking the TopBar button)
       setShowPopup(true);
     });
 
@@ -175,9 +177,9 @@ export function UpdateNotification() {
         <div className="flex items-start justify-between mb-4">
           <div>
             <h3 className="text-lg font-bold flex items-center gap-2">
-              Bản cập nhật mới
+              {tr('Bản cập nhật mới')}
             </h3>
-            <p className={`text-sm mt-0.5 ${isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}`}>Phiên bản {APP_VERSION} → <span className="font-semibold text-foreground">{updateInfo.version}</span></p>
+            <p className={`text-sm mt-0.5 ${isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}`}>{trx('Phiên bản {{APP_VERSION}} → <0>{{version}}</0>', { APP_VERSION, 0: <span className="font-semibold text-foreground" />, version: updateInfo.version })}</p>
           </div>
           {status !== 'downloading' && (
             <button onClick={dismiss} className={`w-7 h-7 flex items-center justify-center rounded-full transition-colors ${isLight ? 'text-muted-foreground hover:bg-gray-100' : 'text-muted-foreground hover:bg-muted'}`}>
@@ -189,7 +191,7 @@ export function UpdateNotification() {
         {/* Release notes - aggregated across skipped versions */}
         {notesLoading ? (
           <div className={`mb-4 p-3 rounded-xl text-xs ${isLight ? 'bg-gray-50 text-muted-foreground' : 'bg-card text-muted-foreground'}`}>
-            <span className="animate-pulse">Đang tải danh sách thay đổi...</span>
+            <span className="animate-pulse">{tr('Đang tải danh sách thay đổi...')}</span>
           </div>
         ) : aggregatedNotes ? (
           <div className={`release-notes mb-4 p-3 rounded-xl text-xs leading-relaxed max-h-48 overflow-y-auto ${isLight ? 'bg-gray-50 text-subtle-foreground' : 'bg-card text-foreground/80'}`}
@@ -201,7 +203,7 @@ export function UpdateNotification() {
             {isMac ? (
               <div className="space-y-3">
                 <p className={`text-xs ${isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}`}>
-                  macOS không hỗ trợ cập nhật tự động. Vui lòng tải bản mới nhất về cài đặt:
+                  {tr('macOS không hỗ trợ cập nhật tự động. Vui lòng tải bản mới nhất về cài đặt:')}
                 </p>
                 <div className="flex gap-2">
                   <a href={`https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-${updateInfo.version}-arm64.dmg`} target="_blank" rel="noopener noreferrer" onClick={dismiss}
@@ -215,22 +217,22 @@ export function UpdateNotification() {
                 </div>
                 <button onClick={() => { startDownload(); }}
                   className={`w-full py-2 rounded-xl text-xs transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-subtle-foreground' : 'bg-muted hover:bg-accent text-foreground/80'}`}>
-                  Thử cập nhật tự động (có thể không hoạt động)
+                  {tr('Thử cập nhật tự động (có thể không hoạt động)')}
                 </button>
               </div>
             ) : (
               <div className="space-y-3">
                 <p className={`text-xs ${isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}`}>
-                  Nhấn "Cập nhật ngay" để tải và cài đặt bản mới. Ứng dụng sẽ khởi động lại sau khi cài xong.
+                  {tr('Nhấn "Cập nhật ngay" để tải và cài đặt bản mới. Ứng dụng sẽ khởi động lại sau khi cài xong.')}
                 </p>
                 <div className="flex gap-2">
                   <button onClick={dismiss}
                     className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-subtle-foreground' : 'bg-muted hover:bg-accent text-foreground/80'}`}>
-                    Để sau
+                    {tr('Để sau')}
                   </button>
                   <button onClick={handleConfirmDownload}
                     className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors">
-                    Cập nhật ngay
+                    {tr('Cập nhật ngay')}
                   </button>
                 </div>
               </div>
@@ -241,7 +243,7 @@ export function UpdateNotification() {
         {status === 'downloading' && (
           <div className="space-y-3">
             <div className="flex justify-between text-xs">
-              <span className={isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}>Đang tải...</span>
+              <span className={isLight ? 'text-subtle-foreground' : 'text-muted-foreground'}>{tr('Đang tải...')}</span>
               <span className="text-blue-400 font-medium">{progress?.percent ?? 0}%</span>
             </div>
             <div className={`h-2 rounded-full overflow-hidden ${isLight ? 'bg-gray-200' : 'bg-muted'}`}>
@@ -259,11 +261,11 @@ export function UpdateNotification() {
         {status === 'downloaded' && (
           <div className="space-y-3">
             <p className={`text-sm ${isLight ? 'text-green-600' : 'text-green-400'}`}>
-              Đã tải xong! Nhấn "Khởi động lại" để cài đặt.
+              {tr('Đã tải xong! Nhấn "Khởi động lại" để cài đặt.')}
             </p>
             <button onClick={installUpdate}
               className="w-full py-2.5 rounded-xl bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors">
-              Khởi động lại & cài đặt
+              {tr('Khởi động lại & cài đặt')}
             </button>
           </div>
         )}
@@ -271,12 +273,12 @@ export function UpdateNotification() {
         {status === 'error' && (
           <div className="space-y-3">
             <p className={`text-xs ${isLight ? 'text-red-500' : 'text-red-400'}`}>
-              {error?.message || 'Không thể tải bản cập nhật'}
+              {error?.message || tr('Không thể tải bản cập nhật')}
             </p>
             <div className="flex gap-2">
               <button onClick={() => { setStatus('available'); setError(null); }}
                 className={`flex-1 py-2 rounded-xl text-xs font-medium transition-colors ${isLight ? 'bg-gray-100 hover:bg-gray-200 text-subtle-foreground' : 'bg-muted hover:bg-accent text-foreground/80'}`}>
-                Thử lại
+                {tr('Thử lại')}
               </button>
               {isMac ? (
                 <div className="flex-1 flex gap-1">
@@ -288,7 +290,7 @@ export function UpdateNotification() {
               ) : (
                 <a href={`https://github.com/babyvibe/deplao-builder/releases/tag/v${updateInfo.version}`} target="_blank" rel="noopener noreferrer"
                   className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium text-center no-underline">
-                  Tải thủ công
+                  {tr('Tải thủ công')}
                 </a>
               )}
             </div>

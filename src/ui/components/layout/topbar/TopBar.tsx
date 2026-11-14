@@ -26,6 +26,7 @@ import { AlertIcon, BellOffIcon, KeyIcon, MonitorIcon, PluginIcon, RefreshIcon, 
 import { useInAppNotifyStore } from '@/store/chat/inAppNotifyStore';
 import { summarizeInAppNotify } from '@/lib/chat/notifications/inAppNotify';
 import FeatureLauncherPanel from './FeatureLauncherPanel';
+import LanguagePicker from '@/components/common/i18n/LanguagePicker';
 import MobileSyncButton from './MobileSyncButton';
 import FacebookSyncButton from './FacebookSyncButton';
 import { isTelegram, isTelegramBot, isTelegramUser } from '@/lib/channels/channelHelper';
@@ -34,11 +35,13 @@ import { AUTH_EXPIRED_MESSAGE, isWrongPasswordLogin, normalizeBossUrl } from '..
 import { normalizePastedBossUrl } from '../../../../shared/cloud/tunnelAddress';
 import { erpReminderLeadText } from '../../../../shared/erp/erpReminderText';
 import { useBossAddressWatch } from './useBossAddressWatch';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 const APP_VERSION: string = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?';
 
-/** Khoá localStorage của bản cũ (mật khẩu base64) — chỉ còn đọc để chuyển sang main rồi xoá. */
+/** Old build's localStorage key (base64 password): read only, to move it to main and then delete it. */
 const LEGACY_PASSWORD_KEY = 'deplao_employee_password';
 
 /** Map scale factor to px value for display */
@@ -85,28 +88,28 @@ export default function TopBar() {
   const previewEmployee = useEmployeeStore(s => (
     s.previewEmployeeId ? s.employees.find((e: any) => e.employee_id === s.previewEmployeeId) ?? null : null
   ));
-  /** Heartbeat main còn nối (Online / Đang khôi phục) → nút Ngắt; Offline / hết phiên → nút Kết nối lại. */
+  /** Main heartbeat still connected (Online / Restoring) → Disconnect button; Offline / session expired → Reconnect button. */
   const bossLinked = connectionBadge === 'online' || connectionBadge === 'recovering';
 
   // Reconnect popup state
   const [reconnectOpen, setReconnectOpen] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectError, setReconnectError] = useState('');
-  /** Main đang giữ mật khẩu đã lưu (mã hoá safeStorage) cho workspace đang mở — renderer không bao giờ thấy mật khẩu. */
+  /** Main holds the saved password (encrypted with safeStorage) for the open workspace: the renderer never sees the password. */
   const [hasSavedPassword, setHasSavedPassword] = useState(false);
   const activeWorkspaceId = useWorkspaceStore(s => s.activeWorkspaceId);
   const bossUrlRef = useRef<HTMLInputElement>(null);
   const usernameRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
 
-  // Địa chỉ BOSS (tunnel tạm) đã đổi? — phát hiện khi mất kết nối > 30 s + gợi ý từ thông báo của BOSS
+  // Did the owner's address (temporary tunnel) change? Detected when the connection is lost for more than 30 s, plus a hint from the owner's notification
   const { deadAddress, announced } = useBossAddressWatch();
   const newAddrRef = useRef<HTMLInputElement>(null);
   const [switchingAddr, setSwitchingAddr] = useState(false);
   const [switchAddrError, setSwitchAddrError] = useState('');
   const autoOpenedForRef = useRef<string | null>(null);
 
-  // Địa chỉ chết → mở popup "Kết nối lại" một lần cho mỗi địa chỉ
+  // Dead address → open the "Kết nối lại" (Reconnect) popup once per address
   useEffect(() => {
     if (!deadAddress || autoOpenedForRef.current === deadAddress.url) return;
     autoOpenedForRef.current = deadAddress.url;
@@ -114,7 +117,7 @@ export default function TopBar() {
     setReconnectOpen(true);
   }, [deadAddress]);
 
-  // Kết nối tự hồi phục (vd BOSS chỉ mất mạng ngắn, địa chỉ không đổi) → đóng popup đã tự mở
+  // Connection recovers on its own (e.g. the owner only lost network briefly, address unchanged) → close the popup that was opened automatically
   useEffect(() => {
     if (bossLinked && autoOpenedForRef.current) {
       autoOpenedForRef.current = null;
@@ -122,24 +125,24 @@ export default function TopBar() {
     }
   }, [bossLinked]);
 
-  /** BOSS vừa báo địa chỉ mới nhưng workspace đang dùng địa chỉ khác (chưa tự chuyển) → gợi ý. */
+  /** The owner just reported a new address, but the workspace is using another address (not switched automatically) → show a hint. */
   const announcedHint = announced && !announced.applied && normalizeBossUrl(announced.newUrl) !== normalizeBossUrl(bossUrl)
     ? announced.newUrl
     : null;
 
   /**
-   * Dùng địa chỉ mới của BOSS: kiểm tra địa chỉ trước (sai thì không ghi đè cấu hình), rồi lưu + kết nối qua main
-   * (workspace:connectRemote) với token hiện tại — main phát employee:credentials, App init lại REST.
+   * Use the owner's new address: check the address first (if wrong, do not overwrite the config), then save + connect through main
+   * (workspace:connectRemote) with the current token: main emits employee:credentials, and App re-inits REST.
    */
   const handleUseNewAddress = useCallback(async (override?: string) => {
     setSwitchAddrError('');
     const url = normalizePastedBossUrl(override ?? newAddrRef.current?.value ?? '');
     if (!url) {
-      setSwitchAddrError('Dán địa chỉ mới của BOSS (vd https://ten-ngau-nhien.trycloudflare.com)');
+      setSwitchAddrError(tr('Dán địa chỉ mới của BOSS (vd https://ten-ngau-nhien.trycloudflare.com)'));
       return;
     }
     if (deadAddress && url === normalizeBossUrl(deadAddress.url)) {
-      setSwitchAddrError('Đây vẫn là địa chỉ cũ — hỏi BOSS địa chỉ mới.');
+      setSwitchAddrError(tr('Đây vẫn là địa chỉ cũ — hỏi BOSS địa chỉ mới.'));
       return;
     }
     const wsState = useWorkspaceStore.getState();
@@ -147,46 +150,46 @@ export default function TopBar() {
     const activeWs = wsState.activeWorkspace();
     const token = activeWs?.token || useEmployeeStore.getState().token;
     if (!workspaceId || activeWs?.type !== 'remote' || !token) {
-      // Không có phiên để dùng lại → đăng nhập bằng form bên dưới với địa chỉ mới
+      // No session to reuse → log in with the form below, using the new address
       if (bossUrlRef.current) bossUrlRef.current.value = url;
-      setSwitchAddrError('Nhập mật khẩu ở dưới rồi bấm "Kết nối lại" để đăng nhập với địa chỉ mới.');
+      setSwitchAddrError(tr('Nhập mật khẩu ở dưới rồi bấm "Kết nối lại" để đăng nhập với địa chỉ mới.'));
       return;
     }
     setSwitchingAddr(true);
     try {
       const probe = await ipc.relay?.probeBossAddress?.({ url });
       if (probe?.success && probe.verdict && probe.verdict !== 'reachable') {
-        setSwitchAddrError(`Không kết nối được tới địa chỉ này: ${probe.reason || 'BOSS không phản hồi'}.`);
+        setSwitchAddrError(tr('Không kết nối được tới địa chỉ này: {{v1}}.', { v1: probe.reason || tr('BOSS không phản hồi') }));
         return;
       }
       const res = await ipc.workspace?.connectRemote(workspaceId, url, token);
       if (res) {
-        // main đã lưu địa chỉ vào cấu hình workspace (kể cả khi lần kết nối này lỗi) → đồng bộ bản sao ở renderer
+        // main has saved the address into the workspace config (even if this connection attempt failed) → sync the renderer's copy
         const latest = useWorkspaceStore.getState();
         latest.setWorkspaces(latest.workspaces.map(ws => (ws.id === workspaceId ? { ...ws, bossUrl: url } : ws)));
       }
       if (res?.success) {
-        showNotification('Đã kết nối tới địa chỉ mới của BOSS', 'success');
+        showNotification(tr('Đã kết nối tới địa chỉ mới của BOSS'), 'success');
         setReconnectOpen(false);
         return;
       }
       if (res?.authExpired) {
         if (bossUrlRef.current) bossUrlRef.current.value = url;
         setSwitchAddrError(hasSavedPassword
-          ? 'Phiên đăng nhập hết hạn — bấm "Kết nối lại" ở dưới để đăng nhập lại bằng mật khẩu đã lưu.'
-          : 'Phiên đăng nhập hết hạn — nhập mật khẩu ở dưới rồi bấm "Kết nối lại".');
+          ? tr('Phiên đăng nhập hết hạn — bấm "Kết nối lại" ở dưới để đăng nhập lại bằng mật khẩu đã lưu.')
+          : tr('Phiên đăng nhập hết hạn — nhập mật khẩu ở dưới rồi bấm "Kết nối lại".'));
         return;
       }
-      setSwitchAddrError(res?.error || 'Không kết nối được tới BOSS');
+      setSwitchAddrError(res?.error || tr('Không kết nối được tới BOSS'));
     } catch (err: any) {
-      setSwitchAddrError(err?.message || 'Lỗi kết nối');
+      setSwitchAddrError(err?.message || tr('Lỗi kết nối'));
     } finally {
       setSwitchingAddr(false);
     }
   }, [deadAddress, hasSavedPassword, showNotification]);
 
-  // Bản cũ lưu mật khẩu base64 trong localStorage (ai mở DevTools / thư mục profile cũng đọc được) → chuyển sang main
-  // (mã hoá safeStorage) MỘT lần nếu workspace đang mở là remote, rồi luôn xoá khỏi localStorage
+  // The old build stored the password as base64 in localStorage (anyone who opens DevTools or the profile folder can read it) → move it to main
+  // (encrypted with safeStorage) ONCE if the open workspace is remote, then always delete it from localStorage
   useEffect(() => {
     let legacy: string | null = null;
     try { legacy = localStorage.getItem(LEGACY_PASSWORD_KEY); } catch { /* ignore */ }
@@ -208,7 +211,7 @@ export default function TopBar() {
     })();
   }, []);
 
-  // Workspace đang mở có mật khẩu đã lưu ở main không — hỏi lại khi đổi workspace / mở popup "Kết nối lại"
+  // Whether the open workspace has a saved password in main → ask again when switching workspace / opening the "Kết nối lại" (Reconnect) popup
   useEffect(() => {
     if (!activeWorkspaceId) { setHasSavedPassword(false); return; }
     let cancelled = false;
@@ -218,30 +221,30 @@ export default function TopBar() {
     return () => { cancelled = true; };
   }, [activeWorkspaceId, reconnectOpen]);
 
-  // ── Ngắt kết nối khỏi BOSS ──────────────────────────────────────────────
+  // ── Disconnect from the owner ──────────────────────────────────────────────
   const [disconnecting, setDisconnecting] = useState(false);
 
   const handleDisconnect = useCallback(async () => {
     if (disconnecting) return;
     setDisconnecting(true);
     try {
-      // Ngắt cả main: dừng heartbeat + Socket.IO + lịch tự thử lại — nếu chỉ reset REST,
-      // heartbeat của main sẽ bật badge Online trở lại.
+      // Disconnect main too: stop the heartbeat + Socket.IO + auto-retry schedule; if only REST is reset,
+      // main's heartbeat would turn the Online badge back on.
       const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
       if (workspaceId) {
         const res = await ipc.workspace?.disconnectRemote(workspaceId);
-        if (res && !res.success) throw new Error(res.error || 'Lỗi ngắt kết nối');
+        if (res && !res.success) throw new Error(res.error || tr('Lỗi ngắt kết nối'));
       }
-      // REST client dừng (App cũng reset khi main báo 'user-disconnect')
+      // REST client stops (App also resets when main reports 'user-disconnect')
       RestQueryService.getInstance().reset();
 
-      // Chỉ set disconnected, KHÔNG reset currentEmployee/mode
-      // => giữ nguyên badge + nút kết nối lại trên UI
+      // Only set disconnected, do NOT reset currentEmployee/mode
+      // => keep the badge + the reconnect button on the UI
       useEmployeeStore.getState().setHeartbeatConnected(false);
 
-      showNotification('Đã ngắt kết nối khỏi BOSS', 'success');
+      showNotification(tr('Đã ngắt kết nối khỏi BOSS'), 'success');
     } catch (err: any) {
-      showNotification(err.message || 'Lỗi ngắt kết nối', 'error');
+      showNotification(err.message || tr('Lỗi ngắt kết nối'), 'error');
     } finally {
       setDisconnecting(false);
     }
@@ -251,20 +254,20 @@ export default function TopBar() {
     setReconnectError('');
     const bossAddr = bossUrlRef.current?.value.trim();
     const username = usernameRef.current?.value.trim();
-    // Ô mật khẩu trống + main có mật khẩu đã lưu → main tự giải mã và đăng nhập (mật khẩu không đi qua renderer)
+    // Password field empty + main has a saved password → main decrypts it and logs in (the password never passes through the renderer)
     const typedPassword = passwordRef.current?.value || '';
     const useSaved = !typedPassword && hasSavedPassword;
 
-    if (!bossAddr) { setReconnectError('Vui lòng nhập địa chỉ BOSS'); return; }
-    if (!username) { setReconnectError('Vui lòng nhập tên đăng nhập'); return; }
-    if (!typedPassword && !useSaved) { setReconnectError('Vui lòng nhập mật khẩu'); return; }
+    if (!bossAddr) { setReconnectError(tr('Vui lòng nhập địa chỉ BOSS')); return; }
+    if (!username) { setReconnectError(tr('Vui lòng nhập tên đăng nhập')); return; }
+    if (!typedPassword && !useSaved) { setReconnectError(tr('Vui lòng nhập mật khẩu')); return; }
 
-    // Chỉ remote workspace mới kết nối được (đường "nhân viên cũ" kết nối dưới workspace bất kỳ đã bỏ)
+    // Only a remote workspace can connect (the old "nhân viên cũ" (old employee) path that connected under any workspace was removed)
     const wsState = useWorkspaceStore.getState();
     const workspaceId = wsState.activeWorkspaceId;
     const activeWs = wsState.activeWorkspace();
     if (!workspaceId || activeWs?.type !== 'remote') {
-      setReconnectError('Workspace đang mở không phải workspace nhân viên — vào Cài đặt → Workspace để kết nối tới BOSS.');
+      setReconnectError(tr('Workspace đang mở không phải workspace nhân viên — vào Cài đặt → Workspace để kết nối tới BOSS.'));
       return;
     }
 
@@ -274,40 +277,40 @@ export default function TopBar() {
         ? await ipc.workspace?.loginRemoteSaved(workspaceId, bossAddr, username)
         : await RestQueryService.login(bossAddr, username, typedPassword);
       if (!loginRes?.success) {
-        // Main đã quên mật khẩu đã lưu (quản lý đổi mật khẩu / không giải mã được) → hiện lại ô nhập trống
+        // Main has forgotten the saved password (the owner changed the password / it cannot be decrypted) → show the empty input again
         if (loginRes?.savedPasswordCleared) setHasSavedPassword(false);
         setReconnectError(useSaved && isWrongPasswordLogin(loginRes)
-          ? 'Mật khẩu đã lưu không còn đúng — vui lòng nhập mật khẩu mới'
-          : (loginRes?.error || 'Đăng nhập thất bại'));
+          ? tr('Mật khẩu đã lưu không còn đúng — vui lòng nhập mật khẩu mới')
+          : (loginRes?.error || tr('Đăng nhập thất bại')));
         setReconnecting(false);
         return;
       }
 
-      // Boss trả về {success, token, employee, snapshot} — KHÔNG có data wrapper
+      // The owner returns {success, token, employee, snapshot}: NO data wrapper
       const token = loginRes.token || loginRes.data?.token;
       const employee = loginRes.employee || loginRes.data?.employee;
       if (!token || !employee) {
-        setReconnectError('Phản hồi từ BOSS không hợp lệ');
+        setReconnectError(tr('Phản hồi từ BOSS không hợp lệ'));
         setReconnecting(false);
         return;
       }
 
-      // Lưu CẢ URL lẫn token mới (token hết hạn sau 7 ngày) vào cấu hình workspace ở main rồi kết nối
-      // qua main → main phát employee:credentials → App init RestQueryService. Không init REST ở đây.
+      // Save BOTH the new URL and the new token (the token expires after 7 days) into the workspace config in main, then connect
+      // via main → main emits employee:credentials → App inits RestQueryService. Do not init REST here.
       const newBossUrl = normalizeBossUrl(bossAddr);
       const employeeInfo = {
         employeeId: employee.employee_id || activeWs.employeeId || '',
         employeeName: employee.display_name || username,
         employeeUsername: username,
       };
-      // Chỉ thông tin nhân viên (không có URL/token) → không kích hoạt kết nối lại phía main
+      // Employee info only (no URL/token) → does not trigger a reconnect on the main side
       await ipc.workspace?.update(workspaceId, employeeInfo).catch(() => null);
       const connectRes = await ipc.workspace?.connectRemote(workspaceId, newBossUrl, token);
       wsState.setWorkspaces(useWorkspaceStore.getState().workspaces.map((ws) => (
         ws.id === workspaceId ? { ...ws, ...employeeInfo, bossUrl: newBossUrl, token } : ws
       )));
       if (!connectRes?.success) {
-        setReconnectError(connectRes?.error || 'Không kết nối được tới BOSS');
+        setReconnectError(connectRes?.error || tr('Không kết nối được tới BOSS'));
         setReconnecting(false);
         return;
       }
@@ -322,18 +325,18 @@ export default function TopBar() {
       empStore.setPermissions(permsMap);
       empStore.setAssignedAccounts(employee.assigned_accounts || []);
       empStore.setMode('employee');
-      // bossUrl/token của store + trạng thái badge do main phát (employee:credentials / workspace:connectionStatus)
+      // bossUrl/token of the store + badge status emitted by main (employee:credentials / workspace:connectionStatus)
 
-      showNotification(`Đã kết nối lại! Xin chào ${employee.display_name}`, 'success');
+      showNotification(tr('Đã kết nối lại! Xin chào {{display_name}}', { display_name: employee.display_name }), 'success');
       if (typedPassword) {
-        // Nhớ mật khẩu ở main (mã hoá bằng khoá hệ điều hành) cho lần "Kết nối lại" sau
+        // Remember the password in main (encrypted with the OS key) for the next "Kết nối lại" (Reconnect)
         const saved = await ipc.workspace?.rememberPassword(workspaceId, typedPassword).catch(() => null);
         if (saved?.success) setHasSavedPassword(!!saved.saved);
       }
       setReconnectOpen(false);
       setReconnecting(false);
     } catch (err: any) {
-      setReconnectError(err.message || 'Lỗi kết nối');
+      setReconnectError(err.message || tr('Lỗi kết nối'));
       setReconnecting(false);
     }
   }, [hasSavedPassword, showNotification]);
@@ -346,9 +349,9 @@ export default function TopBar() {
   const loadTodayAttendance = useErpEmployeeStore(s => s.loadTodayAttendance);
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
-  // Thông báo tin nhắn trong app đang tắt cho mọi tài khoản → chuông gạch chéo (trạng thái trên chính nút, không thêm icon)
+  // In-app message notifications are off for every account → the bell is crossed out (the state is shown on the button itself, no extra icon)
   const inAppNotifyAllOff = useInAppNotifyStore(s => summarizeInAppNotify(s.prefs, accounts.map(a => a.zalo_id)).allOff);
-  // Lịch sắp tới (nhắc trước): chuông rung + "15 phút nữa tới lịch hẹn" ngay trên nút chuông, đếm ngược tới giờ hẹn
+  // Upcoming event (early reminder): the bell rings + "15 phút nữa tới lịch hẹn" (15 minutes until the appointment) right on the bell button, counting down to the time
   const upcomingReminders = useErpReminderAttention(s => s.items);
   const reminderRinging = useErpReminderAttention(s => s.ringing);
   const [reminderClock, setReminderClock] = useState(() => Date.now());
@@ -365,7 +368,7 @@ export default function TopBar() {
   }, [upcomingReminders.length]);
   const nextReminder = upcomingReminders.find(item => item.startAt > reminderClock) ?? null;
   const reminderLead = nextReminder ? erpReminderLeadText(nextReminder.startAt - reminderClock) : '';
-  // Lịch sắp tới của mình (tab "Lịch sắp tới" trong chuông; nhắc vẫn theo mốc của từng lịch)
+  // The user's own upcoming events (the "Lịch sắp tới" (Upcoming) tab in the bell; reminders still follow each event's times)
   const { calendar: canSeeCalendar } = useQuickErpAccess();
   const reminderMyId = useEmployeeStore(s => (s.mode === 'employee' ? String(s.currentEmployee?.employee_id || '') : 'boss'));
   useUpcomingEvents(canSeeCalendar, reminderMyId);
@@ -384,8 +387,8 @@ export default function TopBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [erpEid]);
 
-  // Nhân viên kết nối lại sau khi mất kết nối: thông báo / chấm công lỡ trong lúc offline → tải lại chuông + chấm công
-  // hôm nay (trước đây chỉ tải lại khi trang ERP đang mở)
+  // Employee reconnects after losing the connection: notifications / attendance missed while offline → reload the bell + attendance
+  // for today (previously it only reloaded while the ERP page was open)
   useEmployeeResync(() => {
     if (!erpPerms.can('erp.access')) return;
     loadUnreadCount(erpEid);
@@ -401,7 +404,7 @@ export default function TopBar() {
     return () => document.removeEventListener('mousedown', handler);
   }, [bellOpen]);
 
-  // Đóng more dropdown khi click ra ngoài
+  // Close the more dropdown when clicking outside
   useEffect(() => {
     if (!moreOpen) return;
     const handler = (e: MouseEvent) => {
@@ -438,7 +441,7 @@ export default function TopBar() {
     return () => window.removeEventListener('lockScreen:changed', handleChanged);
   }, []);
 
-  // Đóng reconnect popup khi click ra ngoài
+  // Close the reconnect popup when clicking outside
   useEffect(() => {
     if (!reconnectOpen) return;
     const handler = (e: MouseEvent) => {
@@ -459,13 +462,13 @@ export default function TopBar() {
     return ipc.on('event:telegramSync', (data: any) => {
       if (!data?.zaloId || data.zaloId !== activeAccountId) return;
       if (data.status === 'failed') {
-        showNotification(data.error || 'Không thể đồng bộ tin nhắn Telegram', 'error');
+        showNotification(data.error || tr('Không thể đồng bộ tin nhắn Telegram'), 'error');
         return;
       }
       // Show progress while channels are being recovered in background
       if (data.status === 'syncing' && data.pending > 0) {
         showNotification(
-          `Đang tải nền ${data.pending} channel...`,
+          tr('Đang tải nền {{pending}} channel...', { pending: data.pending }),
           'info',
         );
         return;
@@ -474,7 +477,7 @@ export default function TopBar() {
 
       void (async () => {
         const conversationsRes = await DataAccessor.getConversations(data.zaloId, 500, 0);
-        // Đọc lỗi (Boss chập chờn) → giữ danh sách đang có, không xoá trắng
+        // Read error (the owner connection is flaky) → keep the current list, do not clear it
         const contacts = isReadFailure(conversationsRes) ? null : (conversationsRes?.items ?? []);
         if (contacts) useChatStore.getState().setContacts(data.zaloId, contacts);
 
@@ -501,20 +504,20 @@ export default function TopBar() {
           }
         }
 
-        const insertedText = data.inserted ? `, thêm ${data.inserted} tin nhắn` : '';
-        const pendingText = data.pending ? '. Phần còn lại đang tiếp tục tải nền' : '';
+        const insertedText = data.inserted ? tr(', thêm {{inserted}} tin nhắn', { inserted: data.inserted }) : '';
+        const pendingText = data.pending ? tr('. Phần còn lại đang tiếp tục tải nền') : '';
         showNotification(contacts
-          ? `Đã đồng bộ ${contacts.length} hội thoại${insertedText}${pendingText}`
-          : `Đã đồng bộ xong${insertedText}${pendingText}, nhưng chưa tải lại được danh sách — sẽ tự thử lại khi kết nối ổn định`,
+          ? tr('Đã đồng bộ {{count}} hội thoại{{insertedText}}{{pendingText}}', { count: contacts.length, insertedText, pendingText })
+          : tr('Đã đồng bộ xong{{insertedText}}{{pendingText}}, nhưng chưa tải lại được danh sách — sẽ tự thử lại khi kết nối ổn định', { insertedText, pendingText }),
           contacts ? 'success' : 'warning');
       })().catch(() => {
-        showNotification('Đã tải dữ liệu Telegram, nhưng không thể làm mới giao diện.', 'warning');
+        showNotification(tr('Đã tải dữ liệu Telegram, nhưng không thể làm mới giao diện.'), 'warning');
       });
     });
   }, [activeAccountId, showNotification]);
 
-  // ── Đồng bộ lại hội thoại Telegram ─────────────────────────────────────────
-  // Zalo: nút Đồng bộ tin nhắn từ điện thoại; Facebook: FacebookSyncButton (popup chọn tài khoản + khoảng thời gian).
+  // ── Re-sync Telegram conversations ─────────────────────────────────────────
+  // Zalo: the sync-messages-from-phone button; Facebook: FacebookSyncButton (popup to pick an account + time range).
   const activeAccountChannel = accounts.find(a => a.zalo_id === activeAccountId)?.channel;
   const canResync = isTelegram(activeAccountChannel);
 
@@ -532,23 +535,23 @@ export default function TopBar() {
         // process and completion refreshes the visible state via telegramSync.
         const syncRes = await ipc.telegramUser?.refreshMessages({ accountId: activeAccountId });
         if (!syncRes?.success) {
-          showNotification(syncRes?.error || 'Không thể đồng bộ tin nhắn Telegram', 'error');
+          showNotification(syncRes?.error || tr('Không thể đồng bộ tin nhắn Telegram'), 'error');
           return;
         }
         showNotification(
-          'Đang tải tin nhắn Telegram ở nền. Hội thoại sẽ tự cập nhật.',
+          tr('Đang tải tin nhắn Telegram ở nền. Hội thoại sẽ tự cập nhật.'),
           'info',
         );
       } else if (isTelegramBot(activeAccount?.channel)) {
         // Bot API only exposes queued getUpdates; it cannot request arbitrary
         // chat history like a Telegram User/MTProto account can.
         showNotification(
-          'Bot Telegram sẽ tự nhận các update còn trong hàng đợi. Telegram không hỗ trợ tải lại lịch sử tùy ý cho Bot.',
+          tr('Bot Telegram sẽ tự nhận các update còn trong hàng đợi. Telegram không hỗ trợ tải lại lịch sử tùy ý cho Bot.'),
           'info',
         );
       }
     } catch (e: any) {
-      showNotification('Lỗi: ' + (e.message || 'Không thể tải'), 'error');
+      showNotification(tr('Lỗi: {{v1}}', { v1: (e.message || tr('Không thể tải')) }), 'error');
     } finally {
       setResyncing(false);
     }
@@ -587,12 +590,12 @@ export default function TopBar() {
                 : 'bg-orange-500/15 border border-orange-500/30 text-orange-600 hover:bg-orange-500/25'
             }`}
             title={updateStatus === 'downloaded'
-              ? `Đã tải xong v${updateInfo.version} — nhấn để cài đặt`
+              ? tr('Đã tải xong v{{version}} — nhấn để cài đặt', { version: updateInfo.version })
               : updateStatus === 'downloading'
-              ? `Đang tải v${updateInfo.version}...`
-              : `Có bản mới v${updateInfo.version} - nhấn để cập nhật`}>
+              ? tr('Đang tải v{{version}}...', { version: updateInfo.version })
+              : tr('Có bản mới v{{version}} - nhấn để cập nhật', { version: updateInfo.version })}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2v13M5 12l7 7 7-7"/><line x1="3" y1="22" x2="21" y2="22"/></svg>
-            {updateStatus === 'downloaded' ? `Sẵn sàng v${updateInfo.version}` : `New v${updateInfo.version}`}
+            {updateStatus === 'downloaded' ? tr('Sẵn sàng v{{version}}', { version: updateInfo.version }) : tr('New v{{version}}', { version: updateInfo.version })}
           </button>
         )}
 
@@ -602,13 +605,13 @@ export default function TopBar() {
         {/* Employee mode indicator + reconnect popup */}
         {empMode === 'employee' && currentEmployee && (
           <div className="relative flex items-center gap-2">
-            {/* Status badge (không click được): heartbeat main + REST, xem connectionBadge */}
+            {/* Status badge (not clickable): main heartbeat + REST, see connectionBadge */}
             <div
               className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-card border border-input select-none"
               title={connectionBadge === 'recovering'
-                ? 'Vẫn kết nối tới BOSS nhưng tải dữ liệu đang bị gián đoạn — tự khôi phục'
+                ? tr('Vẫn kết nối tới BOSS nhưng tải dữ liệu đang bị gián đoạn — tự khôi phục')
                 : connectionBadge === 'expired'
-                ? 'BOSS từ chối phiên đăng nhập (token hết hạn) — bấm "Kết nối lại" để đăng nhập'
+                ? tr('BOSS từ chối phiên đăng nhập (token hết hạn) — bấm "Kết nối lại" để đăng nhập')
                 : undefined}
             >
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
@@ -621,21 +624,21 @@ export default function TopBar() {
                   : connectionBadge === 'expired' ? 'text-red-400'
                   : 'text-foreground/80'
               }`}>
-                {connectionBadge === 'online' ? (latency > 0 ? `Online - ${latency}ms` : 'Online')
-                  : connectionBadge === 'recovering' ? 'Đang khôi phục…'
+                {connectionBadge === 'online' ? (latency > 0 ? tr('Online - {{latency}}ms', { latency }) : tr('Online'))
+                  : connectionBadge === 'recovering' ? tr('Đang khôi phục…')
                   : connectionBadge === 'expired' ? AUTH_EXPIRED_MESSAGE
-                  : 'Offline'}
+                  : tr('Offline')}
               </span>
               <span className="text-[11px] text-foreground/80">- {currentEmployee.display_name}</span>
             </div>
 
-            {/* Nút Ngắt kết nối — khi heartbeat còn nối (Online / Đang khôi phục) */}
+            {/* Disconnect button - while the heartbeat is still connected (Online / Restoring) */}
             {bossLinked && (
               <button
                 onClick={handleDisconnect}
                 disabled={disconnecting}
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/80 text-muted-foreground text-[11px] font-medium transition-all duration-200 hover:bg-red-600/30 hover:text-red-300 hover:border-red-500/30 border border-input/50 disabled:opacity-50"
-                title="Ngắt kết nối khỏi BOSS"
+                title={tr('Ngắt kết nối khỏi BOSS')}
               >
                 {disconnecting ? (
                   <span className="w-3 h-3 border-2 border-border-strong border-t-gray-300 rounded-full animate-spin" />
@@ -650,24 +653,24 @@ export default function TopBar() {
                       <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
                       <line x1="12" y1="20" x2="12.01" y2="20" />
                     </svg>
-                    <span>Ngắt kết nối</span>
+                    <span>{tr('Ngắt kết nối')}</span>
                   </>
                 )}
               </button>
             )}
 
-            {/* Nút Kết nối lại riêng biệt — khi Offline / phiên hết hạn (đăng nhập lại) */}
+            {/* Separate Reconnect button - when Offline / session expired (log in again) */}
             {!bossLinked && (
               <button
                 onClick={() => setReconnectOpen(v => !v)}
-                title={deadAddress ? 'Địa chỉ BOSS có thể đã đổi — bấm để nhập địa chỉ mới' : undefined}
+                title={deadAddress ? tr('Địa chỉ BOSS có thể đã đổi — bấm để nhập địa chỉ mới') : undefined}
                 className="employee-badge reconnect-btn relative flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-700/90 text-white text-[11px] font-semibold transition-all duration-300 hover:bg-green-700 hover:shadow-green-400/50 overflow-hidden border border-green-500/40"
                 style={{ animation: 'reconnectShake 0.6s ease-in-out infinite' }}
               >
                 <span className="relative z-10 flex items-center gap-1.5 text-white-important">
                   <span className="drop-shadow-[0_0_4px_rgba(34,197,94,0.6)]"><PluginIcon className="w-4 h-4" /></span>
-                  <span className="drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">Kết nối lại</span>
-                  {deadAddress && <span className="w-1.5 h-1.5 rounded-full bg-warning" aria-label="Địa chỉ BOSS có thể đã đổi" />}
+                  <span className="drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">{tr('Kết nối lại')}</span>
+                  {deadAddress && <span className="w-1.5 h-1.5 rounded-full bg-warning" aria-label={tr('Địa chỉ BOSS có thể đã đổi')} />}
                 </span>
               </button>
             )}
@@ -675,28 +678,27 @@ export default function TopBar() {
             {/* Reconnect popup */}
             {reconnectOpen && (
               <div className={`reconnect-popup absolute left-0 top-full mt-2 ${deadAddress || announcedHint ? 'w-80' : 'w-72'} bg-card border border-input rounded-xl shadow-2xl z-[9999] p-4`}>
-                <p className="text-xs text-muted-foreground font-medium mb-2"><PluginIcon className="w-4 h-4 inline" /> Kết nối lại với BOSS</p>
+                <p className="text-xs text-muted-foreground font-medium mb-2">{trx('<0/> Kết nối lại với BOSS', { 0: <PluginIcon className="w-4 h-4 inline" /> })}</p>
 
-                {/* Địa chỉ tạm của BOSS đã chết / BOSS vừa báo địa chỉ mới → dán địa chỉ mới, giữ phiên đăng nhập */}
+                {/* The owner's temporary address is dead / the owner just reported a new address → paste the new address, keep the login session */}
                 {(deadAddress || announcedHint) && (
                   <div className="mb-3 space-y-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5">
                     {deadAddress && (
                       <>
                         <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                          <AlertIcon className="w-3.5 h-3.5 text-warning flex-shrink-0" /> Địa chỉ BOSS có thể đã đổi
+                          {trx('<0/> Địa chỉ BOSS có thể đã đổi', { 0: <AlertIcon className="w-3.5 h-3.5 text-warning flex-shrink-0" /> })}
                         </p>
                         <p className="text-[11px] leading-relaxed text-muted-foreground">
-                          Không kết nối được tới <span className="font-mono text-foreground break-all">{deadAddress.host}</span> — {deadAddress.reason}.
-                          Địa chỉ tạm ({deadAddress.providerLabel}) đổi mỗi khi máy BOSS khởi động lại.
+                          {trx('Không kết nối được tới <0>{{host}}</0> — {{reason}}. Địa chỉ tạm ({{providerLabel}}) đổi mỗi khi máy BOSS khởi động lại.', { 0: <span className="font-mono text-foreground break-all" />, host: deadAddress.host, reason: deadAddress.reason, providerLabel: deadAddress.providerLabel })}
                         </p>
                         <p className="text-[11px] leading-relaxed text-muted-foreground">
-                          Hỏi BOSS địa chỉ mới (Cài đặt → Nhân viên → Kết nối) rồi dán vào đây:
+                          {tr('Hỏi BOSS địa chỉ mới (Cài đặt → Nhân viên → Kết nối) rồi dán vào đây:')}
                         </p>
                       </>
                     )}
                     {announcedHint && (
                       <div className="space-y-1">
-                        <p className="text-[11px] text-muted-foreground">BOSS vừa báo địa chỉ mới:</p>
+                        <p className="text-[11px] text-muted-foreground">{tr('BOSS vừa báo địa chỉ mới:')}</p>
                         <div className="flex items-center gap-1.5">
                           <code className="flex-1 min-w-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground" title={announcedHint}>{announcedHint}</code>
                           <button
@@ -705,7 +707,7 @@ export default function TopBar() {
                             disabled={switchingAddr}
                             className="flex-shrink-0 rounded-md bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
                           >
-                            Dùng
+                            {tr('Dùng')}
                           </button>
                         </div>
                       </div>
@@ -727,11 +729,11 @@ export default function TopBar() {
                           {switchingAddr ? (
                             <>
                               <span className="w-3 h-3 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                              Đang kiểm tra địa chỉ…
+                              {tr('Đang kiểm tra địa chỉ…')}
                             </>
-                          ) : 'Kết nối địa chỉ mới'}
+                          ) : tr('Kết nối địa chỉ mới')}
                         </button>
-                        <p className="text-[10px] text-subtle-foreground">Không cần nhập lại mật khẩu — vẫn dùng phiên đăng nhập hiện tại.</p>
+                        <p className="text-[10px] text-subtle-foreground">{tr('Không cần nhập lại mật khẩu — vẫn dùng phiên đăng nhập hiện tại.')}</p>
                       </>
                     )}
                     {switchAddrError && (
@@ -744,25 +746,25 @@ export default function TopBar() {
                   <input
                     ref={bossUrlRef}
                     defaultValue={bossUrl}
-                    placeholder="Địa chỉ BOSS (IP:Port hoặc Tunnel URL)"
+                    placeholder={tr('Địa chỉ BOSS (IP:Port hoặc Tunnel URL)')}
                     className="w-full px-2.5 py-1.5 bg-muted border border-input rounded-lg text-xs text-foreground placeholder-subtle-foreground"
                   />
                   <input
                     ref={usernameRef}
                     defaultValue={currentEmployee?.username || ''}
-                    placeholder="Tên đăng nhập"
+                    placeholder={tr('Tên đăng nhập')}
                     className="w-full px-2.5 py-1.5 bg-muted border border-input rounded-lg text-xs text-foreground placeholder-subtle-foreground"
                   />
-                  {/* Có mật khẩu đã lưu (ở main): để trống = dùng mật khẩu đã lưu; gõ mật khẩu mới = đăng nhập + lưu lại */}
+                  {/* A saved password exists (in main): leave empty = use the saved password; type a new password = log in + save it again */}
                   <input
                     ref={passwordRef}
                     type="password"
-                    placeholder={hasSavedPassword ? '••••••••' : 'Mật khẩu'}
+                    placeholder={hasSavedPassword ? '••••••••' : tr('Mật khẩu')}
                     onKeyDown={e => e.key === 'Enter' && handleReconnect()}
                     className="w-full px-2.5 py-1.5 bg-muted border border-input rounded-lg text-xs text-foreground placeholder-subtle-foreground"
                   />
                   {hasSavedPassword && (
-                    <p className="text-[10px] text-muted-foreground text-right"><KeyIcon className="w-4 h-4 inline" /> Đã lưu mật khẩu</p>
+                    <p className="text-[10px] text-muted-foreground text-right">{trx('<0/> Đã lưu mật khẩu', { 0: <KeyIcon className="w-4 h-4 inline" /> })}</p>
                   )}
                   {reconnectError && (
                     <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1">
@@ -777,9 +779,9 @@ export default function TopBar() {
                     {reconnecting ? (
                       <>
                         <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Đang kết nối...
+                        {tr('Đang kết nối...')}
                       </>
-                    ) : '🔌 Kết nối lại'}
+                    ) : tr('🔌 Kết nối lại')}
                   </button>
                 </div>
               </div>
@@ -790,7 +792,7 @@ export default function TopBar() {
         {/* Boss preview mode indicator */}
         {empMode !== 'employee' && previewEmployee && (
           <div className="flex items-center gap-1.5 ml-2 px-2 py-0.5 rounded-full bg-amber-900/40 border border-amber-600/40">
-            <span className="text-[11px] text-amber-300">👁 Đang xem: {previewEmployee.display_name}</span>
+            <span className="text-[11px] text-amber-300">{trx('👁 Đang xem: {{display_name}}', { display_name: previewEmployee.display_name })}</span>
           </div>
         )}
       </div>
@@ -800,13 +802,13 @@ export default function TopBar() {
         className="flex items-center"
         style={{ WebkitAppRegion: 'no-drag' } as any}
       >
-        {/* Đồng bộ lại hội thoại Facebook / Telegram - ẩn với nhân viên (Zalo dùng nút điện thoại bên cạnh) */}
+        {/* Re-sync Facebook / Telegram conversations - hidden for employees (Zalo uses the phone button next to it) */}
         {activeAccountId && empMode !== 'employee' && canResync && (
           <button
             onClick={handleResync}
             disabled={resyncing}
             className={`w-9 h-9 flex items-center justify-center transition-colors ${resyncing ? 'text-blue-400 bg-muted' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-            title="Đồng bộ hội thoại và tin nhắn Telegram"
+            title={tr('Đồng bộ hội thoại và tin nhắn Telegram')}
           >
             {resyncing ? (
               <Spinner size={3} />
@@ -819,7 +821,7 @@ export default function TopBar() {
           </button>
         )}
 
-        {/* Đồng bộ tin nhắn từ điện thoại (Zalo) - ẩn với nhân viên */}
+        {/* Sync messages from phone (Zalo) - hidden for employees */}
         {empMode !== 'employee' && <FacebookSyncButton />}
         {empMode !== 'employee' && <MobileSyncButton />}
 
@@ -827,8 +829,8 @@ export default function TopBar() {
         <button
           onClick={() => setFeaturePanelOpen(value => !value)}
           className={`w-9 h-9 flex items-center justify-center transition-colors ${featurePanelOpen ? 'text-blue-400 bg-muted' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-          title="Tất cả tính năng"
-          aria-label="Tất cả tính năng"
+          title={tr('Tất cả tính năng')}
+          aria-label={tr('Tất cả tính năng')}
           aria-expanded={featurePanelOpen}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -866,7 +868,7 @@ export default function TopBar() {
         {/*  </button>*/}
         {/*)}*/}
 
-        {/* ── Chuông thông báo: cập nhật, ERP (khi có quyền), ⚙ cài đặt thông báo tin nhắn trong app ── */}
+        {/* ── Notification bell: updates, ERP (if permitted), ⚙ in-app message notification settings ── */}
         <div className="relative" ref={bellRef}>
           <button
             onClick={() => { setBellOpen(v => !v); useErpReminderAttention.getState().acknowledge(); }}
@@ -875,8 +877,8 @@ export default function TopBar() {
               : `w-9 hover:bg-muted hover:text-foreground ${bellOpen ? 'bg-muted text-foreground' : 'text-muted-foreground'}`}`}
             title={nextReminder
               ? `${reminderLead}: ${nextReminder.title}`
-              : inAppNotifyAllOff ? 'Thông báo (thông báo tin nhắn trong app đang tắt)' : 'Thông báo'}
-            aria-label={nextReminder ? `Thông báo: ${reminderLead}` : 'Thông báo'}
+              : inAppNotifyAllOff ? tr('Thông báo (thông báo tin nhắn trong app đang tắt)') : tr('Thông báo')}
+            aria-label={nextReminder ? tr('Thông báo: {{reminderLead}}', { reminderLead }) : tr('Thông báo')}
             aria-expanded={bellOpen}
           >
             <span className="relative inline-flex">
@@ -905,48 +907,11 @@ export default function TopBar() {
           )}
         </div>
 
-        {/* GitHub Star button */}
-        <button
-          onClick={() => ipc.shell?.openExternal(SUPPORT_GITHUB_URL)}
-          className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-yellow-400 transition-colors relative group/gh"
-          title={"Star Deplao trên GitHub\nDự án mã nguồn mở - Ủng hộ team bằng cách ghé thăm và thả sao nhé!"}
-        >
-          <span className="relative">
-            {/* GitHub icon */}
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
-            </svg>
-            {/* Golden star overlay */}
-            <svg
-              width="10" height="10" viewBox="0 0 24 24" fill="#facc15"
-              className="absolute -top-1.5 -right-2 drop-shadow-sm"
-            >
-              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
-          </span>
-        </button>
-
-
-
-        {/* Lock screen button - only visible when lock screen is enabled */}
-        {lockScreenEnabled && (
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('lockScreen:lock'))}
-            className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-amber-400 transition-colors"
-            title="Khoá ứng dụng (Ctrl+Shift+L)"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-          </button>
-        )}
-
         {/* Theme toggle */}
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          title={theme === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối'}
+          title={theme === 'dark' ? tr('Chuyển sang giao diện sáng') : tr('Chuyển sang giao diện tối')}
         >
           {theme === 'dark' ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -967,12 +932,49 @@ export default function TopBar() {
           )}
         </button>
 
+        {/* Lock screen button - only visible when lock screen is enabled */}
+        {lockScreenEnabled && (
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('lockScreen:lock'))}
+            className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-amber-400 transition-colors"
+            title={tr('Khoá ứng dụng (Ctrl+Shift+L)')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </button>
+        )}
+
+        {/* GitHub Star button */}
+        <button
+          onClick={() => ipc.shell?.openExternal(SUPPORT_GITHUB_URL)}
+          className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-yellow-400 transition-colors relative group/gh"
+          title={tr('Star Deplao trên GitHub\nDự án mã nguồn mở - Ủng hộ team bằng cách ghé thăm và thả sao nhé!')}
+        >
+          <span className="relative">
+            {/* GitHub icon */}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+            </svg>
+            {/* Golden star overlay */}
+            <svg
+              width="10" height="10" viewBox="0 0 24 24" fill="#facc15"
+              className="absolute -top-1.5 -right-2 drop-shadow-sm"
+            >
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+            </svg>
+          </span>
+        </button>
+
         {/* ── More dropdown (guide + bug report + font size) ── */}
         <div className="relative" ref={moreRef}>
           <button
             onClick={() => setMoreOpen(v => !v)}
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
             className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors relative"
-            title="Thêm (cỡ chữ, hướng dẫn, báo lỗi)"
+            title={tr('Thêm (cỡ chữ, ngôn ngữ, hướng dẫn, báo lỗi)')}
           >
             {hasNewAffiliate && (
               <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse z-10" />
@@ -989,7 +991,7 @@ export default function TopBar() {
               {/* Font size slider */}
               <div className="px-4 py-3 border-b border-border">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-muted-foreground font-medium">Cỡ chữ</span>
+                  <span className="text-xs text-muted-foreground font-medium">{tr('Cỡ chữ')}</span>
                   <span className="text-xs text-foreground font-semibold min-w-[2.5rem] text-right">
                     {scaleToPx(fontTemp)}px
                   </span>
@@ -1016,7 +1018,10 @@ export default function TopBar() {
                 </div>
               </div>
 
-              {/* Hướng dẫn sử dụng */}
+              {/* UI language (display settings, next to the font size); picking one reloads the window */}
+              <LanguagePicker variant="menu" heading onPicked={() => setMoreOpen(false)} />
+
+              {/* User guide */}
               <button
                 onClick={() => {
                   setMoreOpen(false);
@@ -1030,12 +1035,12 @@ export default function TopBar() {
                   <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
                 </svg>
                 <div>
-                  <p className="text-xs font-medium">Hướng dẫn sử dụng</p>
-                  <p className="text-[10px] text-muted-foreground">Tính năng & thao tác cơ bản</p>
+                  <p className="text-xs font-medium">{tr('Hướng dẫn sử dụng')}</p>
+                  <p className="text-[10px] text-muted-foreground">{tr('Tính năng & thao tác cơ bản')}</p>
                 </div>
               </button>
 
-              {/* Báo lỗi */}
+              {/* Report a bug */}
               <button
                 onClick={() => {
                   setMoreOpen(false);
@@ -1050,12 +1055,12 @@ export default function TopBar() {
                   <path d="M12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M6 17H2M18 13h4M17.47 9c1.93-.2 3.53-1.9 3.53-4M18 17h4"/>
                 </svg>
                 <div>
-                  <p className="text-xs font-medium">Báo lỗi</p>
-                  <p className="text-[10px] text-muted-foreground">Gửi phản hồi & báo cáo lỗi</p>
+                  <p className="text-xs font-medium">{tr('Báo lỗi')}</p>
+                  <p className="text-[10px] text-muted-foreground">{tr('Gửi phản hồi & báo cáo lỗi')}</p>
                 </div>
               </button>
 
-              {/* Hỗ trợ */}
+              {/* Support */}
               <button
                 onClick={() => {
                   setMoreOpen(false);
@@ -1067,8 +1072,8 @@ export default function TopBar() {
                   <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
                 </svg>
                 <div>
-                  <p className="text-xs font-medium">Hỗ trợ</p>
-                  <p className="text-[10px] text-muted-foreground">Liên hệ Facebook khi gặp vấn đề</p>
+                  <p className="text-xs font-medium">{tr('Hỗ trợ')}</p>
+                  <p className="text-[10px] text-muted-foreground">{tr('Liên hệ Facebook khi gặp vấn đề')}</p>
                 </div>
               </button>
 
@@ -1089,8 +1094,8 @@ export default function TopBar() {
                   <line x1="14" y1="1" x2="14" y2="4"/>
                 </svg>
                 <div>
-                  <p className="text-xs font-medium">Donate Coffee</p>
-                  <p className="text-[10px] text-muted-foreground">Các bạn thấy hữu ích có thể ủng hộ dự án nhé!</p>
+                  <p className="text-xs font-medium">{tr('Donate Coffee')}</p>
+                  <p className="text-[10px] text-muted-foreground">{tr('Các bạn thấy hữu ích có thể ủng hộ dự án nhé!')}</p>
                 </div>
               </button>
             </div>
@@ -1102,7 +1107,7 @@ export default function TopBar() {
             <button
               onClick={() => ipc.window?.minimize()}
               className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              title="Thu nhỏ"
+              title={tr('Thu nhỏ')}
             >
               <svg width="10" height="1" viewBox="0 0 10 1" fill="currentColor">
                 <rect width="10" height="1" />
@@ -1114,7 +1119,7 @@ export default function TopBar() {
                 setIsMaximized(!isMaximized);
               }}
               className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              title={isMaximized ? 'Phục hồi' : 'Phóng to'}
+              title={isMaximized ? tr('Phục hồi') : tr('Phóng to')}
             >
               {isMaximized ? (
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
@@ -1130,7 +1135,7 @@ export default function TopBar() {
             <button
               onClick={() => ipc.window?.close()}
               className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:bg-red-600 hover:text-white transition-colors"
-              title="Đóng"
+              title={tr('Đóng')}
             >
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2">
                 <line x1="0" y1="0" x2="10" y2="10" />

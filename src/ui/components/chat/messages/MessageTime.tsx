@@ -1,25 +1,26 @@
 /**
- * Giờ gửi hiển thị trong tin nhắn — dùng chung cho mọi loại tin để đồng nhất.
- *  - BubbleTime: dòng giờ nhỏ ở cuối bong bóng / caption / thẻ (file, link, danh thiếp…).
- *  - MediaTimeBadge: giờ nổi góc dưới phải trên ảnh/album/video/sticker KHÔNG có caption
- *    (đặt trong một phần tử `relative`).
- *  - TextWithInlineTime: chữ + giờ ở góc dưới phải, chung dòng chữ cuối nếu đủ chỗ (như Telegram).
- * Tin mình gửi: dấu trạng thái cạnh giờ (✓ đã gửi, ✓✓ đã nhận, ✓✓ màu nhấn = đã xem) theo MessageStatusContext mà
- * ChatWindow cấp cho từng tin (lib/chat/messages/messageStatus.ts). Rê chuột vào giờ: ngày giờ đầy đủ (như Telegram).
+ * Sent time shown in a message, shared by all message types for consistency.
+ *  - BubbleTime: small time line at the bottom of a bubble / caption / card (file, link, contact card…).
+ *  - MediaTimeBadge: time floating at the bottom right of images/album/video/sticker WITHOUT a caption
+ *    (placed in a `relative` element).
+ *  - TextWithInlineTime: text + time at the bottom right, on the last text line if there is room (as in Telegram).
+ * Own messages: a status tick next to the time (✓ sent, ✓✓ received, ✓✓ in accent color = seen), from the MessageStatusContext that
+ * ChatWindow provides for each message (lib/chat/messages/messageStatus.ts). Hover over the time: full date and time (as in Telegram).
  */
 import React from 'react';
 import { outgoingStatusLabel, type OutgoingStatus } from '@/lib/chat/messages/messageStatus';
 import { ZALO_TTL_EXPIRED_LABEL, isZaloTtlExpired, zaloAutoDeleteLabel, zaloTtlExpiresAt } from '../../../../shared/zalo/zaloAutoDelete';
+import { tr, appLocale } from '../../../../shared/i18n';
 
-/** Trạng thái tin MÌNH gửi đang vẽ (ChatWindow cấp theo từng tin); null = không vẽ dấu (tin nhận / kênh không hỗ trợ). */
+/** Status of MY sent message being drawn (ChatWindow provides it per message); null = no tick drawn (received messages / channel does not support it). */
 export const MessageStatusContext = React.createContext<OutgoingStatus | null>(null);
 
-/** Thời gian tự xoá Zalo gắn cho tin đang vẽ (ms, ZL-05); 0 = không. Deplao không xoá tin theo TTL — chỉ hiện đồng hồ. */
+/** Zalo self-delete timer for the message being drawn (ms, ZL-05); 0 = none. Deplao does not delete messages by TTL, it only shows the clock. */
 export const MessageTtlContext = React.createContext<number>(0);
 
 const MAX_TIMER_MS = 2_147_000_000;
 
-/** Tin đã quá hạn tự xoá trên Zalo chưa (giờ gửi + ttl); tự đổi khi tới hạn lúc đang mở hội thoại. */
+/** Whether the message is past its Zalo self-delete time (sent time + ttl); updates itself when due while the conversation is open. */
 export function useZaloTtlExpired(sentAt?: number | string | null, ttl?: number | null): boolean {
   const expiresAt = zaloTtlExpiresAt(sentAt, ttl);
   const [expired, setExpired] = React.useState(() => isZaloTtlExpired(sentAt, ttl));
@@ -34,16 +35,16 @@ export function useZaloTtlExpired(sentAt?: number | string | null, ttl?: number 
 }
 
 /**
- * Đồng hồ nhỏ cạnh giờ gửi khi tin có hẹn tự xoá trên Zalo; quá hạn → đồng hồ gạch chéo "Đã tự xoá trên Zalo"
- * (Deplao vẫn giữ nội dung — FR-ZL05.6). `sentAt` = giờ gửi (ms).
+ * Small clock next to the sent time when the message has a Zalo self-delete timer; once expired → a crossed-out clock with "Đã tự xoá trên Zalo" (Deleted on Zalo)
+ * (Deplao still keeps the content, FR-ZL05.6). `sentAt` = sent time (ms).
  */
 export function TtlMark({ ttl, sentAt, className = '' }: { ttl?: number | null; sentAt?: number | string | null; className?: string }) {
   const value = Number(ttl) || 0;
   const expired = useZaloTtlExpired(sentAt, value);
   if (value <= 0) return null;
   const label = expired
-    ? `${ZALO_TTL_EXPIRED_LABEL} (sau ${zaloAutoDeleteLabel(value)}) — Deplao vẫn giữ tin này trên máy`
-    : `Zalo tự xoá tin này sau ${zaloAutoDeleteLabel(value)} — Deplao vẫn giữ trên máy này`;
+    ? tr('{{ZALO_TTL_EXPIRED_LABEL}} (sau {{v1}}) — Deplao vẫn giữ tin này trên máy', { ZALO_TTL_EXPIRED_LABEL, v1: zaloAutoDeleteLabel(value) })
+    : tr('Zalo tự xoá tin này sau {{v1}} — Deplao vẫn giữ trên máy này', { v1: zaloAutoDeleteLabel(value) });
   return (
     <svg viewBox="0 0 12 12" width="10" height="10" aria-label={label} className={`inline-block flex-shrink-0 ${className}`}
       fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
@@ -55,19 +56,19 @@ export function TtlMark({ ttl, sentAt, className = '' }: { ttl?: number | null; 
   );
 }
 
-/** "(đã tự xoá trên Zalo)" sau chữ của tin đã quá hạn tự xoá, như "(đã chỉnh sửa)". */
+/** "(đã tự xoá trên Zalo)" (deleted on Zalo) after the text of a message past its self-delete time, like "(đã chỉnh sửa)" (edited). */
 export function TtlExpiredNote({ ttl, sentAt }: { ttl?: number | null; sentAt?: number | string | null }) {
   const expired = useZaloTtlExpired(sentAt, ttl);
   if (!expired) return null;
   return (
     <span className="ml-1 text-[10px] opacity-60 select-none font-normal"
-      title="Zalo đã xoá tin này trên điện thoại và Zalo PC theo hẹn tự xoá; Deplao vẫn giữ trên máy này">
+      title={tr('Zalo đã xoá tin này trên điện thoại và Zalo PC theo hẹn tự xoá; Deplao vẫn giữ trên máy này')}>
       ({ZALO_TTL_EXPIRED_LABEL.charAt(0).toLowerCase() + ZALO_TTL_EXPIRED_LABEL.slice(1)})
     </span>
   );
 }
 
-/** Chỗ chừa cuối dòng chữ cho giờ gửi nổi ở góc (thêm chỗ cho dấu ✓ và đồng hồ tự xoá). */
+/** Space reserved at the end of the text line for the time floating in the corner (room for the ✓ tick and the self-delete clock). */
 export function inlineTimeSpacerClass(hasStatus: boolean, ttl?: number | null): string {
   const timer = (Number(ttl) || 0) > 0;
   if (hasStatus) return timer ? 'w-[4rem]' : 'w-[3.25rem]';
@@ -77,21 +78,23 @@ export function inlineTimeSpacerClass(hasStatus: boolean, ttl?: number | null): 
 export function formatBubbleTime(timestamp?: number | string | null): string {
   const n = Number(timestamp);
   if (!n || !Number.isFinite(n)) return '';
-  return new Date(n).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  // 24-hour in every language: the space kept for the time at the end of the last text line (inlineTimeSpacerClass)
+  // fits "15:50", a 12-hour "03:50 PM" would overlap the text
+  return new Date(n).toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 }
 
-/** Ngày giờ đầy đủ cho tooltip khi rê chuột vào giờ gửi (vd "Thứ Ba, 20 tháng 10, 2026 lúc 11:11:27"). */
+/** Full date and time for the tooltip when hovering over the sent time (e.g. "Thứ Ba, 20 tháng 10, 2026 lúc 11:11:27" (Tuesday, 20 October 2026, 11:11:27)). */
 export function formatFullDateTime(timestamp?: number | string | null): string {
   const n = Number(timestamp);
   if (!n || !Number.isFinite(n)) return '';
-  return new Date(n).toLocaleString('vi-VN', {
+  return new Date(n).toLocaleString(appLocale(), {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
   });
 }
 
 /**
- * Dấu trạng thái tin gửi: đồng hồ (đang gửi), ! đỏ (lỗi), ✓ (đã gửi), ✓✓ (đã nhận), ✓✓ màu nhấn (đã xem).
- * `mono`: trên nền ảnh (huy hiệu giờ) — giữ màu chữ của huy hiệu, không đổi màu "đã xem".
+ * Status tick on sent messages: clock (sending), red ! (error), ✓ (sent), ✓✓ (received), accent-colored ✓✓ (seen).
+ * `mono`: on an image background (the time badge): keeps the badge's text color, does not change the "seen" color.
  */
 export function StatusTicks({ status, mono = false, className = '' }: {
   status: OutgoingStatus | null | undefined; mono?: boolean; className?: string;
@@ -152,8 +155,8 @@ export function BubbleTime({ timestamp, className = '' }: { timestamp?: number |
 }
 
 /**
- * Chữ (caption) + giờ gửi ở góc dưới phải, chung dòng chữ cuối nếu đủ chỗ (như Telegram; cùng kiểu tin chữ trong
- * ChatWindow): khoảng trống cuối dòng giữ chỗ, giờ nổi ở góc. `children` phải là nội dung inline (TextWithMentions).
+ * Text (caption) + sent time at the bottom right, on the last text line if there is room (as in Telegram; same style as text messages in
+ * ChatWindow): space at the end of the line reserves room, the time floats in the corner. `children` must be inline content (TextWithMentions).
  */
 export function TextWithInlineTime({ timestamp, children, className = '' }: {
   timestamp?: number | string | null; children: React.ReactNode; className?: string;

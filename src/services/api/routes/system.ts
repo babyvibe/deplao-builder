@@ -1,23 +1,24 @@
 /**
- * Nhóm Hệ thống: health, me, thông tin máy chủ, danh mục scope.
+ * System group: health, me, server info, scope catalog.
  */
 import { s } from '../schema';
 import { API_SCOPES, SCOPE_PRESETS, route, RouteDef } from '../types';
 import { principalSummary } from '../auth/ApiAuth';
 import { activeWorkspace, appMode, appVersion, startedAt } from '../runtime';
+import { tr } from '../../../shared/i18n';
 
 export function systemRoutes(): RouteDef[] {
     return [
         route({
             method: 'GET', path: '/health', scope: null, tags: ['Hệ thống'], operationId: 'health',
-            summary: 'Kiểm tra API còn sống',
-            description: 'Không cần key. Dùng cho uptime monitor.',
+            summary: tr('Kiểm tra API còn sống'),
+            description: tr('Không cần key. Dùng cho uptime monitor.'),
             response: s.object({ status: s.string(), version: s.string(), uptime_ms: s.int(), time: s.int() }),
             handler: () => ({ status: 'ok', version: appVersion(), uptime_ms: Date.now() - startedAt, time: Date.now() }),
         }),
         route({
             method: 'GET', path: '/me', scope: 'any', tags: ['Hệ thống'], operationId: 'getMe',
-            summary: 'Thông tin key đang dùng (scope, tài khoản được phép)',
+            summary: tr('Thông tin key đang dùng (scope, tài khoản được phép)'),
             response: s.object({
                 kind: s.string(), id: s.string(), name: s.string(), scopes: s.array(s.string()),
                 account_ids: s.array(s.string()).nullable(), rate_limit_per_min: s.int(), erp_role: s.string(),
@@ -33,7 +34,7 @@ export function systemRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/system/info', scope: 'settings:read', tags: ['Hệ thống'], operationId: 'getSystemInfo',
-            summary: 'Phiên bản, chế độ, workspace, trạng thái server/tunnel',
+            summary: tr('Phiên bản, chế độ, workspace, trạng thái server/tunnel'),
             handler: async ctx => {
                 let relay: any = null;
                 try { relay = await ctx.call('relay:getServerStatus'); } catch { relay = null; }
@@ -55,7 +56,7 @@ export function systemRoutes(): RouteDef[] {
         }),
         route({
             method: 'GET', path: '/scopes', scope: null, tags: ['Hệ thống'], operationId: 'listScopes',
-            summary: 'Danh mục scope và preset',
+            summary: tr('Danh mục scope và preset'),
             handler: () => ({
                 scopes: API_SCOPES.map(sc => ({ id: sc.id, group: sc.group, label: sc.label })),
                 presets: Object.entries(SCOPE_PRESETS).map(([id, p]) => ({ id, label: p.label, scopes: p.scopes })),

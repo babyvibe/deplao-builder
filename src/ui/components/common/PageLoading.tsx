@@ -1,14 +1,14 @@
 /**
- * PageLoading - Skeleton loading component dùng chung cho toàn bộ app.
+ * PageLoading - Shared skeleton loading component for the whole app.
  *
- * Khi có delay từ REST API (employee mode qua Boss), component này
- * hiển thị skeleton animation thay vì màn hình trắng.
+ * When the REST API responds with a delay (employee mode through Boss), this component
+ * shows a skeleton animation instead of a blank screen.
  *
  * Variants:
- *   - full (default): Spinner + text + skeleton bars, dùng cho toàn page
- *   - inline: Spinner nhỏ + text, dùng cho 1 section của page
- *   - skeleton: Chỉ skeleton bars, không spinner (dùng khi có nhiều section cùng load)
- *   - overlay: Overlay trên content cũ (dùng khi refresh data)
+ *   - full (default): Spinner + text + skeleton bars, used for the whole page
+ *   - inline: Small spinner + text, used for one section of the page
+ *   - skeleton: Only skeleton bars, no spinner (used when many sections load together)
+ *   - overlay: Overlay on top of the old content (used when refreshing data)
  *
  * Usage:
  *   {loading && <PageLoading />}
@@ -17,6 +17,8 @@
  */
 
 // ── Config ────────────────────────────────────────────────────────────
+
+import { tr } from '../../../shared/i18n';
 
 const SKELETON_VARIANTS = {
   bars: [
@@ -59,7 +61,7 @@ export interface PageLoadingProps {
 
 // ── Spinner ───────────────────────────────────────────────────────────
 
-/** Spinner component dùng chung cho mọi nơi cần loading nhỏ (nút, icon) */
+/** Shared spinner component for any place that needs a small loading indicator (button, icon) */
 export function Spinner({ size = 5, className = '' }: { size?: number; className?: string }) {
   return (
     <svg
@@ -94,7 +96,7 @@ function SkeletonBars({ variant }: { variant: SkeletonVariant }) {
 // ── PageLoading ───────────────────────────────────────────────────────
 
 export default function PageLoading({
-  text = 'Đang tải...',
+  text = tr('Đang tải...'),
   variant = 'full',
   skeletonVariant = 'bars',
   size = 'md',

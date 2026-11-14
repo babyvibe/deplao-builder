@@ -1,42 +1,43 @@
 /**
- * Ảnh Zalo chỉ có link (máy Boss chưa lưu): nhờ máy Boss tải về bằng phiên của tài khoản (file:ensureMessageImage — máy
- * nhân viên chuyển lên Boss) rồi đổi sang bản đã lưu, để link Zalo hết hạn vẫn còn ảnh. Máy nhân viên không có cookie
- * Zalo nên chỉ đọc được ảnh qua Boss (/api/media).
+ * Zalo photos that only have a link (the owner's machine has not saved them): ask the owner's machine to download them with the account's session (file:ensureMessageImage, the employee machine hands the request over to the owner's machine)
+ * and then switch to the saved copy, so the photos survive when the Zalo link expires. Employee machines have no Zalo cookie,
+ * so they can only read photos through the owner's machine (/api/media).
  *
- * Boss chỉ tự tải ảnh lúc nhận tin; tin đồng bộ lịch sử (Boss tắt máy lúc nhận), đồng bộ từ điện thoại, lần tải lỗi thì
- * không có bản trên máy. Trước đây máy nhân viên hiện thẳng link Zalo cho các ảnh đó, link hết hạn là mất ảnh.
+ * The owner's machine only downloads a photo itself when the message arrives. Messages synced from history (the owner's machine was off when they arrived), synced from the phone, or failed downloads
+ * have no copy on the machine. Previously employee machines showed the Zalo link directly for those photos, and when the link expired the photo was lost.
  *
- * - Hàng đợi chung: tối đa ENSURE_CONCURRENCY yêu cầu cùng lúc (mở hội thoại nhiều ảnh không dồn cả loạt lên Boss / CDN).
- * - Mỗi tin một lần mỗi phiên (thành công / hết hạn / không phải ảnh); lỗi tạm (mất kết nối Boss, mạng) thử lại sau
- *   ENSURE_RETRY_AFTER_MS. `force` (bấm Thử tải lại) hỏi lại ngay.
- * - Có đường dẫn mới → ghi vào store: bong bóng của tin vẽ lại bằng bản đã lưu.
+ * - Shared queue: at most ENSURE_CONCURRENCY requests at once (opening a conversation with many photos does not flood the owner's machine / CDN).
+ * - One attempt per message per session (success / expired / not a photo); temporary errors (lost connection to the owner's machine, network) retry after
+ *   ENSURE_RETRY_AFTER_MS. `force` (the user clicks Retry download) asks again right away.
+ * - When there is a new path → saved to the store: the message bubble redraws with the saved copy.
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
 import { useChatStore } from '@/store/chat/chatStore';
+import { tr } from '../../../shared/i18n';
 
 export interface EnsureImageResult {
   success: boolean;
-  /** Đường dẫn trên máy Boss (local_paths.main) */
+  /** Path on the owner's machine (local_paths.main) */
   newLocalPath?: string;
   expired?: boolean;
-  /** Boss đã có sẵn file, không tải lại */
+  /** The owner's machine already has the file, do not download it again */
   cached?: boolean;
   error?: string;
   code?: string;
 }
 
 export const ENSURE_CONCURRENCY = 2;
-/** Tin vừa nhận: Boss đang tự tải ảnh (lúc nhận tin, thử lại sau 20 s) — chờ chừng này rồi mới nhờ tải. */
+/** Message just received: the owner's machine is downloading the photo itself (at receive time, retry after 20 s); wait this long before asking for a download. */
 export const ENSURE_MIN_AGE_MS = 90_000;
-/** Lỗi tạm (mất kết nối Boss, CDN chập chờn): sau chừng này mới hỏi lại cho cùng tin. */
+/** Temporary error (lost connection to the owner's machine, unstable CDN): wait this long before asking again for the same message. */
 export const ENSURE_RETRY_AFTER_MS = 60_000;
-/** Vừa mở hội thoại: nhường việc tải tin / vẽ khung chat trước. */
+/** Conversation just opened: yield to loading messages / drawing the chat frame first. */
 export const ENSURE_OPEN_DELAY_MS = 1_500;
 
 /**
- * Lỗi không đổi khi hỏi lại — nhớ cả phiên như thành công: tin không phải ảnh Zalo / không có link (imageRepair), Boss từ
- * chối (không được giao tài khoản, không có quyền chat, Boss bản cũ chưa có kênh này — proxyActionPolicy).
+ * Errors that do not change when asked again: remembered for the whole session, like a success: the message is not a Zalo photo / has no link (imageRepair), the owner's machine
+ * refuses (account not assigned, no chat permission, the owner's machine version is too old and does not have this channel yet: proxyActionPolicy).
  */
 const PERMANENT_CODES: ReadonlySet<string> = new Set([
   'NOT_FOUND', 'NOT_ZALO_IMAGE', 'NO_IMAGE_URL', 'ACCOUNT_FORBIDDEN', 'MODULE_FORBIDDEN', 'CHANNEL_FORBIDDEN',
@@ -78,14 +79,14 @@ function remembered(key: string, now: number): EnsureImageResult | null {
 }
 
 /**
- * Ảnh của tin `msg` (Zalo) phải có trên máy Boss. Trả đường dẫn của Boss (`newLocalPath`) khi đã có / vừa tải xong,
- * `expired` khi Zalo không còn lưu ảnh. Đường dẫn khác bản đang có trong tin → cập nhật store.
+ * The photo of message `msg` (Zalo) must exist on the owner's machine. Returns the owner's path (`newLocalPath`) when it already exists / has just been downloaded,
+ * `expired` when Zalo no longer keeps the photo. A path different from the one already on the message → updates the store.
  */
 export function ensureMessageImage(msg: any, opts: { force?: boolean } = {}): Promise<EnsureImageResult> {
   const zaloId = String(msg?.owner_zalo_id || '');
   const msgId = String(msg?.msg_id || '');
   const threadId = String(msg?.thread_id || '');
-  if (!zaloId || !msgId) return Promise.resolve({ success: false, error: 'Thiếu thông tin tin nhắn' });
+  if (!zaloId || !msgId) return Promise.resolve({ success: false, error: tr('Thiếu thông tin tin nhắn') });
   const key = `${zaloId}:${msgId}`;
   if (!opts.force) {
     const done = remembered(key, Date.now());
@@ -100,7 +101,7 @@ export function ensureMessageImage(msg: any, opts: { force?: boolean } = {}): Pr
       try {
         result = (await ipc.file?.ensureMessageImage?.({
           zaloId, msgId, threadId: threadId || undefined, force: !!opts.force,
-        })) || { success: false, error: 'Không gọi được tiến trình chính' };
+        })) || { success: false, error: tr('Không gọi được tiến trình chính') };
       } catch (err: any) {
         result = { success: false, error: err?.message || String(err) };
       }
@@ -120,8 +121,8 @@ export function ensureMessageImage(msg: any, opts: { force?: boolean } = {}): Pr
 }
 
 /**
- * Bong bóng ảnh: ảnh chỉ có link Zalo (`enabled`) → ensureMessageImage sau ENSURE_OPEN_DELAY_MS, tin vừa nhận thì đợi đủ
- * ENSURE_MIN_AGE_MS (Boss đang tự tải lúc nhận tin). Tin đã có bản lưu / bong bóng gỡ khỏi màn hình → huỷ hẹn giờ.
+ * Photo bubble: a photo that only has a Zalo link (`enabled`) → ensureMessageImage after ENSURE_OPEN_DELAY_MS; a message just received waits the full
+ * ENSURE_MIN_AGE_MS (the owner's machine downloads it itself when the message arrives). If the message already has a saved copy or the bubble leaves the screen → cancel the timer.
  */
 export function useEnsureMessageImage(msg: any, enabled: boolean): void {
   const msgRef = React.useRef(msg);
@@ -136,7 +137,7 @@ export function useEnsureMessageImage(msg: any, enabled: boolean): void {
   }, [enabled, msgId, receivedAt]);
 }
 
-/** Chỉ dùng trong test. */
+/** Test only. */
 export function __resetEnsureMessageImage(): void {
   settled.clear();
   inFlight.clear();

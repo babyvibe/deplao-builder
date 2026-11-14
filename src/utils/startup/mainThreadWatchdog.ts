@@ -1,13 +1,13 @@
 /**
- * Phát hiện luồng chính của main process bị chặn. Windows báo "Not Responding" khi luồng này bận liền ≥ 5 s
- * (SQLite đồng bộ, vòng lặp dài…). Chỉ ghi Nhật ký khi có chặn thật — lúc bình thường gần như không tốn gì — để lần
- * sau app đứng biết ngay do đâu (Cài đặt → Nhật ký, lọc "Hiệu năng"):
- *  - startMainThreadWatchdog(): đồng hồ 1 s; trễ ≥ BLOCK_LOG_MS → "Luồng chính bị chặn ~X s (N s sau khi mở app)".
- *  - timeIpc(): đo phần chạy đồng bộ của một IPC handler (handlerRegistry bọc mọi ipcMain.handle) → ghi tên kênh.
+ * Detects when the main thread of the main process is blocked. Windows reports "Not Responding" when this thread stays busy for ≥ 5 s
+ * (synchronous SQLite, long loops…). It only writes to Logs when there is a real block, so it costs almost nothing normally, and so that
+ * the next time the app freezes you can see right away what caused it (Settings → Logs, filter "Hiệu năng" (Performance)):
+ *  - startMainThreadWatchdog(): a 1 s timer; a delay ≥ BLOCK_LOG_MS → "Luồng chính bị chặn ~X s (N s sau khi mở app)" (main thread blocked ~X s, N s after app start).
+ *  - timeIpc(): measures the synchronous part of an IPC handler (handlerRegistry wraps every ipcMain.handle) → writes the channel name.
  */
 import Logger from '../Logger';
 
-/** Từ mức này mới ghi (dưới 1 s là giật nhẹ, không làm "Not Responding"). */
+/** Only log from this level up (under 1 s is a minor stutter that does not make the app "Not Responding"). */
 export const BLOCK_LOG_MS = 1000;
 const TICK_MS = 1000;
 
@@ -31,7 +31,7 @@ export function startMainThreadWatchdog(): void {
     (timer as any).unref?.();
 }
 
-/** Chạy handler và đo phần đồng bộ (tới lần await đầu tiên); ≥ BLOCK_LOG_MS → ghi kênh IPC đã chặn luồng chính. */
+/** Run the handler and measure the synchronous part (up to the first await); ≥ BLOCK_LOG_MS → log the IPC channel that blocked the main thread. */
 export function timeIpc<T>(channel: string, run: () => T): T {
     const t0 = Date.now();
     try {

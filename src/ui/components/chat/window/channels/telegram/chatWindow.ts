@@ -1,6 +1,6 @@
 /**
- * Telegram trong khung chat: tải lịch sử cũ hơn từ Telegram khi DB hết, tải tin chưa có để nhảy tới (tin ghim / trích
- * dẫn), thành viên nhóm từ Telegram, tên + ảnh người gửi chưa biết (hỏi theo lô bằng hydrateMessageSenders).
+ * Telegram in the chat window: load older history from Telegram when the DB runs out, load messages not yet stored to jump to (pinned / quoted
+ * messages), group members from Telegram, names + avatars of unknown senders (requested in batches via hydrateMessageSenders).
  */
 import { GROUP_MEMBER_LIMIT, MESSAGE_LOAD_LIMIT } from '@/lib/chat/constants';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -11,11 +11,12 @@ import type {
   ChatWindowChannel, EnsureMessageArgs, EnsureMessageResult, FetchGroupMembersArgs, OlderFromServerArgs,
   OlderFromServerResult, ResolveUnknownSendersArgs, ServerGroupInfo,
 } from '../types';
+import { tr } from '../../../../../../shared/i18n';
 
 async function fetchOlderFromServer(
   { accountId, threadId, topicId, oldest }: OlderFromServerArgs,
 ): Promise<OlderFromServerResult> {
-  // DB đã hết → xin Telegram lịch sử cũ hơn (được lưu vào DB) rồi đọc lại DB
+  // DB has no more → ask Telegram for older history (saved to the DB), then read the DB again
   const tgRes: any = await ipc.telegramUser?.getMessages({
     accountId,
     chatId: threadId,
@@ -23,15 +24,15 @@ async function fetchOlderFromServer(
     limit: MESSAGE_LOAD_LIMIT,
     topicRootMessageId: topicId || undefined,
   });
-  // Lỗi (mất kết nối, FLOOD_WAIT…) → "Lỗi - Thử lại", giữ hasMore để còn thử lại
+  // Error (connection lost, FLOOD_WAIT…) → "Lỗi - Thử lại" (Error - Retry), keep hasMore so it can retry
   if (!tgRes?.success) throw new Error(tgRes?.error || 'Telegram getMessages failed');
   const fetched = tgRes.messages?.length || 0;
-  // Telegram trả đủ trang → có thể còn; trả thiếu / rỗng → đã tới đầu lịch sử
+  // Telegram returns a full page → there may be more; a short / empty page → reached the start of the history
   return { stored: fetched, hasMore: fetched >= MESSAGE_LOAD_LIMIT };
 }
 
 async function ensureMessage({ accountId, threadId, messageId, notify }: EnsureMessageArgs): Promise<EnsureMessageResult> {
-  notify('Đang tải tin nhắn từ Telegram...', 'info');
+  notify(tr('Đang tải tin nhắn từ Telegram...'), 'info');
   const ensured = await ipc.telegramUser?.ensureMessageAvailable({
     accountId,
     chatId: threadId,
@@ -40,9 +41,9 @@ async function ensureMessage({ accountId, threadId, messageId, notify }: EnsureM
   if (!ensured?.success) {
     const err = ensured?.error || '';
     if (err.includes('CHANNEL_PRIVATE') || err.includes('USER_BANNED_IN_CHANNEL')) {
-      notify('Kênh này không cho phép tải tin nhắn', 'info');
+      notify(tr('Kênh này không cho phép tải tin nhắn'), 'info');
     } else {
-      notify(err || 'Không tải được tin nhắn đã ghim', 'error');
+      notify(err || tr('Không tải được tin nhắn đã ghim'), 'error');
     }
     return { ok: false };
   }
@@ -67,7 +68,7 @@ async function fetchGroupMembers({ accountId, groupId }: FetchGroupMembersArgs):
   return { members };
 }
 
-/** Thành viên lưu DB thiếu ảnh / tên (hoặc tên = UID) → lấy lại từ Telegram */
+/** Members saved in the DB missing a photo / name (or the name is a UID) → fetch again from Telegram */
 function membersNeedRefresh(dbMembers: any[]): boolean {
   return dbMembers.some((member: any) =>
     !member?.avatar
@@ -157,7 +158,7 @@ function resolveUnknownSenders(
   })();
 }
 
-/** Tài khoản Telegram cá nhân (MTProto) */
+/** Personal Telegram account (MTProto) */
 export const telegramUserChatWindow: ChatWindowChannel = {
   fetchOlderFromServer,
   ensureMessage,
@@ -167,8 +168,8 @@ export const telegramUserChatWindow: ChatWindowChannel = {
 };
 
 /**
- * Bot Telegram: như tài khoản cá nhân trừ tải lịch sử cũ (bot không đọc được lịch sử, chỉ DB). Nhảy tới tin / thành
- * viên nhóm / người gửi đi cùng đường với Telegram cá nhân như trước khi tách.
+ * Telegram bot: same as a personal account, except loading old history (bots cannot read history, DB only). Jumping to a message, group
+ * members and senders take the same route as the personal Telegram account did before the split.
  */
 export const telegramBotChatWindow: ChatWindowChannel = {
   ensureMessage,

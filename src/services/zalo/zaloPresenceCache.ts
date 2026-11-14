@@ -1,16 +1,15 @@
 /**
- * zaloPresenceCache.ts — trạng thái truy cập Zalo (ZL-01) ở main process: chỉ hỏi Zalo khi người dùng mở hồ sơ / chi tiết
- * hội thoại, và danh sách bạn đang online cho chấm xanh của danh sách hội thoại (giai đoạn 2 — giao diện tự giới hạn
- * 1 lần / 2 phút khi cửa sổ đang focus). Đệm 60 s cho mỗi người và cho danh sách bạn đang online của mỗi tài khoản, gộp
- * các lời gọi trùng đang chạy — Boss, máy nhân viên (qua proxy) và Public API dùng chung. Không ghi DB: không giữ lịch sử
- * online của người khác.
+ * zaloPresenceCache.ts: Zalo access status (ZL-01) in the main process. It asks Zalo only when the user opens a profile / conversation details,
+ * and it fetches the list of online friends for the green dot in the conversation list (phase 2; the UI limits itself to one call per 2 minutes while the window is focused). It caches for 60 s per person and per account's online-friends list, and merges
+ * duplicate calls that are in flight: the Boss machine, employee machines (through the proxy) and the Public API share it. No DB writes: it does not keep the
+ * online history of other people.
  *
- * getFriendOnlines (/api/social/friend/onlines) trả HTTP 404 — gặp trên tài khoản thật ngày 22/10/2026, zca-js 2.2.0 mới
- * nhất vẫn gọi đường này → tạm tắt hẳn bằng ZALO_FRIEND_ONLINES_ENABLED (shared/zalo/zaloPresence). Khi bật lại mà vẫn gặp 404
- * → tài khoản đó không hỏi lại trong phiên app: chấm xanh tắt, trạng thái truy cập chỉ dựa vào lastOnline.
+ * getFriendOnlines (/api/social/friend/onlines) returns HTTP 404: seen on a real account on 22/10/2026, and the latest zca-js 2.2.0 still calls this route, so it is temporarily turned off with ZALO_FRIEND_ONLINES_ENABLED (shared/zalo/zaloPresence). When it is turned back on and a 404 still comes back,
+ * that account is not asked again in this app session: the green dot is off, and the access status relies on lastOnline only.
  */
 import Logger from '../../utils/Logger';
 import { type ZaloPresence, ZALO_FRIEND_ONLINES_ENABLED, zaloOnlineIds, zaloPresenceFrom } from '../../shared/zalo/zaloPresence';
+import { tr } from '../../shared/i18n';
 
 export const ZALO_PRESENCE_TTL_MS = 60_000;
 const CALL_TIMEOUT_MS = 15_000;
@@ -24,7 +23,7 @@ export interface ZaloPresenceApi {
 const presenceCache = new Map<string, { value: ZaloPresence; at: number }>();
 const onlineCache = new Map<string, { ids: Set<string>; at: number }>();
 const onlineInflight = new Map<string, Promise<Set<string>>>();
-/** Tài khoản mà Zalo trả 404 cho getFriendOnlines trong phiên này. */
+/** Accounts for which Zalo returned 404 for getFriendOnlines in this session. */
 const onlinesUnsupported = new Set<string>();
 const inflight = new Map<string, Promise<ZaloPresence>>();
 
@@ -32,7 +31,7 @@ function withTimeout<T>(task: Promise<T>, ms: number = CALL_TIMEOUT_MS): Promise
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     task,
-    new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Zalo không phản hồi')), ms); }),
+    new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(tr('Zalo không phản hồi'))), ms); }),
   ]).finally(() => { if (timer) clearTimeout(timer); });
 }
 
@@ -45,7 +44,7 @@ function remember(key: string, value: ZaloPresence, at: number): void {
   }
 }
 
-/** Zalo không còn đường này (HTTP 404), khác lỗi mạng / hết giờ (thử lại được). */
+/** Zalo no longer has this route (HTTP 404). This is different from network errors / timeouts, which can be retried. */
 export function isZaloEndpointMissing(err: any): boolean {
   if (Number(err?.status) === 404 || Number(err?.response?.status) === 404) return true;
   return /status code 404/i.test(String(err?.message || ''));
@@ -77,8 +76,8 @@ function friendOnlineIds(
 }
 
 /**
- * Id bạn bè đang online của tài khoản `zaloId` (chấm xanh trong danh sách hội thoại). `force` = bỏ qua đệm. Đang tắt
- * (ZALO_FRIEND_ONLINES_ENABLED) hoặc Zalo trả 404 → { supported: false }, không gọi Zalo. `enabled` chỉ để test.
+ * Ids of the online friends of account `zaloId` (the green dot in the conversation list). `force` = skip the cache. While it is off
+ * (ZALO_FRIEND_ONLINES_ENABLED) or Zalo returns 404 → { supported: false }, without calling Zalo. `enabled` is only for tests.
  */
 export async function getZaloFriendOnlines(
   zaloId: string,
@@ -95,8 +94,8 @@ export async function getZaloFriendOnlines(
 }
 
 /**
- * Trạng thái truy cập của `userId` nhìn từ tài khoản `zaloId`. `force` = bỏ qua đệm (nút làm mới). Danh sách bạn đang
- * online chỉ được hỏi khi ZALO_FRIEND_ONLINES_ENABLED (`friendOnlines` chỉ để test).
+ * Access status of `userId` as seen from account `zaloId`. `force` = skip the cache (the refresh button). The online-friends list is only asked for when
+ * ZALO_FRIEND_ONLINES_ENABLED is on (`friendOnlines` is only for tests).
  */
 export function getZaloPresence(
   zaloId: string,
@@ -128,7 +127,7 @@ export function getZaloPresence(
   return task;
 }
 
-/** Chỉ dùng trong test. */
+/** Only used in tests. */
 export function resetZaloPresenceCache(): void {
   presenceCache.clear();
   onlineCache.clear();

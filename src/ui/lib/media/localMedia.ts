@@ -1,8 +1,8 @@
 /**
- * Convert absolute local file path → local-media:// URL or boss REST URL.
+ * Convert an absolute local file path → local-media:// URL or owner's machine REST URL.
  *
- * - Standalone/Boss mode: dùng local-media:// (Electron custom protocol)
- * - Employee mode: dùng boss /api/media/ URL
+ * - Standalone / owner's machine mode: uses local-media:// (Electron custom protocol)
+ * - Employee mode: uses the owner's machine /api/media/ URL
  *
  * Usage:
  *   <img src={toLocalMediaUrl(filePath, zaloId)} />
@@ -82,9 +82,9 @@ function toBossMediaUrl(localPath: string, bossUrl: string, zaloId?: string): st
 }
 
 /**
- * Mã hoá từng đoạn đường dẫn file của Boss (đường dẫn trên đĩa, chưa mã hoá) cho URL: tên file khách gửi có "#", "%",
- * "&"… ("Báo giá #3.xlsx", "Giảm 10%.xls") — để nguyên thì "#…" thành phần đuôi URL, Boss nhận sai tên → không tải /
- * mở được file đó. Boss giải mã đúng một lần (bossFileAccess.parseMediaRelPath).
+ * Encode each segment of the owner's machine file path (the on-disk path, not yet encoded) for the URL: file names sent by customers can contain "#", "%",
+ * "&"… ("Báo giá #3.xlsx", "Giảm 10%.xls"). If left as is, "#…" becomes the URL fragment, so the owner's machine gets the wrong name → the file cannot be downloaded /
+ * opened. The owner's machine decodes exactly once (bossFileAccess.parseMediaRelPath).
  */
 export function encodeUrlPath(relPath: string): string {
   return relPath.split('/').map(segment => encodeURIComponent(segment)).join('/');
@@ -98,15 +98,15 @@ function getMode(): string {
   }
 }
 
-/** Thêm tham số vào URL (dùng & khi đã có ?). */
+/** Add a parameter to the URL (uses & when ? is already present). */
 export function appendUrlParam(url: string, key: string, value: string): string {
   if (!url) return url;
   return url + (url.includes('?') ? '&' : '?') + encodeURIComponent(key) + '=' + encodeURIComponent(value);
 }
 
 /**
- * local-media:// khi file có thể phải lấy lại từ Cloudflare R2 mà KHÔNG còn nguồn nào khác (link CDN của kênh đã hết
- * hạn / không có): báo main chờ R2 lâu hơn (`cw=long`) thay vì trả 404 sau vài giây. URL khác giữ nguyên.
+ * local-media:// when the file may have to be fetched again from Cloudflare R2 and there is NO other source left (the channel's CDN link has expired or is missing):
+ * tells main to wait longer for R2 (`cw=long`) instead of returning 404 after a few seconds. Other URLs stay unchanged.
  */
 export function withCloudWaitHint(url: string): string {
   return url.startsWith('local-media://') ? appendUrlParam(url, 'cw', 'long') : url;

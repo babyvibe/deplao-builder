@@ -1,9 +1,9 @@
 /**
- * normalize.ts — đổi event nội bộ (EventBroadcaster) sang event công khai.
+ * normalize.ts: converts internal events (EventBroadcaster) into public events.
  *
- * Tin nhắn: đọc lại dòng đã lưu trong DB (broadcastMessage lưu trước khi phát) để event có
- * CÙNG shape với GET /messages. Không đọc được thì dựng tối thiểu từ payload.
- * Tin cũ hơn 5 phút (đồng bộ lịch sử) không phát event.
+ * Messages: re-read the row saved in the DB (broadcastMessage saves it before emitting) so the event has
+ * the SAME shape as GET /messages. If it cannot be read, build a minimal one from the payload.
+ * Messages older than 5 minutes (history sync) do not emit an event.
  */
 import { mapConversation, mapMessage } from '../routes/common';
 import { threadTypeName } from '../channels/ChannelActions';
@@ -24,7 +24,7 @@ export interface NormalizeHelpers {
 
 export const HISTORY_CUTOFF_MS = 5 * 60_000;
 
-/** Kênh nội bộ được hook. */
+/** The internal channel that is hooked. */
 export const SOURCE_CHANNELS = [
     'event:message', 'fb:onMessage', 'event:reaction', 'fb:onReaction', 'event:undo', 'fb:onUnsend',
     'event:delete', 'event:seen', 'event:typing', 'event:groupEvent', 'event:groupInfoUpdate',
@@ -189,7 +189,7 @@ export async function normalizeEvent(source: string, data: any, h: NormalizeHelp
                 data: { action: str(data.action), campaign_id: data.campaignId ?? data.id ?? null, status: data.status ?? null },
             }];
         case 'integration:payment':
-            // data.payment = giao dịch đã chuẩn hoá (IntegrationRegistry): SePay dùng transferAmount/content chứ không phải amount
+            // data.payment = normalized transaction (IntegrationRegistry): SePay uses transferAmount/content, not amount
             return [{
                 type: 'payment.received', account_id: '', channel: '',
                 data: {

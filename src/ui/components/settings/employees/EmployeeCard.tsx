@@ -1,6 +1,6 @@
 /**
- * Một nhân viên trên Cài đặt → Nhân viên: tên, trạng thái online, rồi bốn dòng chỉnh ngay tại chỗ (tài khoản chat kèm ảnh
- * tài khoản, quyền dùng, nhóm, hồ sơ & mật khẩu). Việc ít dùng (giả lập, đăng xuất, khoá, xoá) nằm trong menu ⋯.
+ * One employee on Settings → Employees: name, online status, then four rows edited right in place (chat accounts with account images,
+ * usage permissions, groups, profile & password). Rarely used actions (impersonate, log out, lock, delete) are in the ⋯ menu.
  */
 import React, { useEffect, useId, useMemo, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -24,8 +24,9 @@ import { SettingLine } from '../settingsUi';
 import EmployeeGroupPicker from './EmployeeGroupPicker';
 import { AccountChecklist, PermissionChecklist } from './EmployeePickers';
 import { copyWithToast } from './RelayAddressNotice';
+import { tr } from '../../../../shared/i18n';
 
-/** Địa chỉ máy chủ ghi trong tin gửi nhân viên (đăng nhập / đổi mật khẩu). */
+/** Server address written in the message sent to the employee (sign-in / password change). */
 export interface EmployeeLoginTarget {
   lanHost: string | null;
   port: number;
@@ -53,7 +54,7 @@ export function EmployeeAvatar({ name, url, size = 40, className }: { name: stri
   );
 }
 
-function EditorActions({ dirty, saving, onCancel, onSave, saveLabel = 'Lưu' }: {
+function EditorActions({ dirty, saving, onCancel, onSave, saveLabel = tr('Lưu') }: {
   dirty: boolean;
   saving: boolean;
   onCancel: () => void;
@@ -62,7 +63,7 @@ function EditorActions({ dirty, saving, onCancel, onSave, saveLabel = 'Lưu' }: 
 }) {
   return (
     <div className="flex justify-end gap-2 pt-1">
-      <Button variant="ghost" size="sm" onClick={onCancel} disabled={saving}>Huỷ</Button>
+      <Button variant="ghost" size="sm" onClick={onCancel} disabled={saving}>{tr('Huỷ')}</Button>
       <Button size="sm" onClick={onSave} disabled={!dirty} loading={saving}>{saveLabel}</Button>
     </div>
   );
@@ -85,14 +86,14 @@ function AccountsEditor({ employee, accounts, onSaved, onClose }: EditorProps & 
     try {
       const res = await ipc.employee?.assignAccounts(employee.employee_id, Array.from(draft));
       if (res?.success) {
-        showNotification('Đã lưu tài khoản được giao', 'success');
+        showNotification(tr('Đã lưu tài khoản được giao'), 'success');
         onSaved();
         onClose();
       } else {
-        showNotification(res?.error || 'Không lưu được tài khoản được giao', 'error');
+        showNotification(res?.error || tr('Không lưu được tài khoản được giao'), 'error');
       }
     } catch (err: any) {
-      showNotification(err?.message || 'Không lưu được tài khoản được giao', 'error');
+      showNotification(err?.message || tr('Không lưu được tài khoản được giao'), 'error');
     } finally {
       setSaving(false);
     }
@@ -100,7 +101,7 @@ function AccountsEditor({ employee, accounts, onSaved, onClose }: EditorProps & 
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-muted-foreground">Nhân viên chỉ thấy tin nhắn, khách hàng của các tài khoản được chọn.</p>
+      <p className="text-xs text-muted-foreground">{tr('Nhân viên chỉ thấy tin nhắn, khách hàng của các tài khoản được chọn.')}</p>
       <AccountChecklist accounts={accounts} value={draft} onChange={setDraft} disabled={saving} />
       <EditorActions dirty={dirty} saving={saving} onCancel={onClose} onSave={save} />
     </div>
@@ -119,14 +120,14 @@ function ModulesEditor({ employee, onSaved, onClose }: EditorProps) {
     try {
       const res = await ipc.employee?.setPermissions(employee.employee_id, permissionRows(draft, employee.permissions));
       if (res?.success) {
-        showNotification('Đã lưu quyền dùng', 'success');
+        showNotification(tr('Đã lưu quyền dùng'), 'success');
         onSaved();
         onClose();
       } else {
-        showNotification(res?.error || 'Không lưu được quyền dùng', 'error');
+        showNotification(res?.error || tr('Không lưu được quyền dùng'), 'error');
       }
     } catch (err: any) {
-      showNotification(err?.message || 'Không lưu được quyền dùng', 'error');
+      showNotification(err?.message || tr('Không lưu được quyền dùng'), 'error');
     } finally {
       setSaving(false);
     }
@@ -140,7 +141,7 @@ function ModulesEditor({ employee, onSaved, onClose }: EditorProps) {
   );
 }
 
-/** Dòng "Nhóm": bấm nhóm là chuyển ngay, "Không có nhóm" để gỡ, tạo nhóm mới / đổi tên / xoá nhóm ngay tại đây. */
+/** The "Nhóm" (Group) row: click a group to move right away; "Không có nhóm" (No group) to remove, create / rename / delete groups right here. */
 function GroupEditor({ employee, groups, memberCount, onSaved }: {
   employee: EmployeeRecord;
   groups: readonly EmployeeGroupRecord[];
@@ -160,15 +161,15 @@ function GroupEditor({ employee, groups, memberCount, onSaved }: {
     try {
       const res = await ipc.employee?.update(employee.employee_id, { group_id: groupId || null });
       if (res?.success) {
-        showNotification(groupId ? 'Đã đổi nhóm' : 'Đã bỏ khỏi nhóm', 'success');
+        showNotification(groupId ? tr('Đã đổi nhóm') : tr('Đã bỏ khỏi nhóm'), 'success');
         onSaved();
       } else {
         setValue(saved);
-        showNotification(res?.error || 'Không đổi được nhóm', 'error');
+        showNotification(res?.error || tr('Không đổi được nhóm'), 'error');
       }
     } catch (err: any) {
       setValue(saved);
-      showNotification(err?.message || 'Không đổi được nhóm', 'error');
+      showNotification(err?.message || tr('Không đổi được nhóm'), 'error');
     } finally {
       setSaving(false);
     }
@@ -178,7 +179,7 @@ function GroupEditor({ employee, groups, memberCount, onSaved }: {
     <div className="space-y-2">
       <EmployeeGroupPicker groups={groups} value={value} onChange={(groupId) => { void change(groupId); }}
         onGroupsChanged={onSaved} manage memberCount={memberCount} disabled={saving} />
-      <p className="text-[11px] text-muted-foreground">Nhóm chỉ để chia danh sách (vd CSKH, Kho), không đổi quyền.</p>
+      <p className="text-[11px] text-muted-foreground">{tr('Nhóm chỉ để chia danh sách (vd CSKH, Kho), không đổi quyền.')}</p>
     </div>
   );
 }
@@ -193,12 +194,12 @@ function ProfileEditor({ employee, loginTarget, onSaved, onClose }: EditorProps 
   const [role, setRole] = useState(employee.role === 'boss' ? 'boss' : 'employee');
   const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
-  /** Vừa đổi mật khẩu: nội dung gửi lại cho nhân viên. */
+  /** Just changed the password: the content to send back to the employee. */
   const [sentText, setSentText] = useState<string | null>(null);
 
   const name = displayName.trim();
-  const nameError = name ? '' : 'Nhập tên hiển thị';
-  const pwError = password && password.length < 4 ? 'Ít nhất 4 ký tự' : '';
+  const nameError = name ? '' : tr('Nhập tên hiển thị');
+  const pwError = password && password.length < 4 ? tr('Ít nhất 4 ký tự') : '';
   const dirty = name !== (employee.display_name || '')
     || avatarUrl !== (employee.avatar_url || '')
     || role !== (employee.role === 'boss' ? 'boss' : 'employee')
@@ -207,14 +208,14 @@ function ProfileEditor({ employee, loginTarget, onSaved, onClose }: EditorProps 
   const pickAvatar = async () => {
     try {
       const result = await ipc.file?.openDialog({
-        title: 'Chọn ảnh đại diện',
-        filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] }],
+        title: tr('Chọn ảnh đại diện'),
+        filters: [{ name: tr('Ảnh'), extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] }],
         properties: ['openFile'],
       });
       if (!result || result.canceled || !result.filePaths?.length) return;
       setAvatarUrl(toLocalMediaUrl(result.filePaths[0]));
     } catch (err: any) {
-      showNotification(`Không chọn được ảnh: ${err?.message || ''}`, 'error');
+      showNotification(tr('Không chọn được ảnh: {{v1}}', { v1: err?.message || '' }), 'error');
     }
   };
 
@@ -226,20 +227,20 @@ function ProfileEditor({ employee, loginTarget, onSaved, onClose }: EditorProps 
       if (password) updates.password = password;
       const res = await ipc.employee?.update(employee.employee_id, updates);
       if (!res?.success) {
-        showNotification(res?.error || 'Không lưu được hồ sơ', 'error');
+        showNotification(res?.error || tr('Không lưu được hồ sơ'), 'error');
         return;
       }
       onSaved();
       if (password) {
-        showNotification('Đã đổi mật khẩu, nhân viên cần đăng nhập lại', 'success');
+        showNotification(tr('Đã đổi mật khẩu, nhân viên cần đăng nhập lại'), 'success');
         setSentText(employeeLoginText({ displayName: name, username: employee.username, password, ...loginTarget }));
         setPassword('');
       } else {
-        showNotification('Đã lưu hồ sơ', 'success');
+        showNotification(tr('Đã lưu hồ sơ'), 'success');
         onClose();
       }
     } catch (err: any) {
-      showNotification(err?.message || 'Không lưu được hồ sơ', 'error');
+      showNotification(err?.message || tr('Không lưu được hồ sơ'), 'error');
     } finally {
       setSaving(false);
     }
@@ -248,11 +249,11 @@ function ProfileEditor({ employee, loginTarget, onSaved, onClose }: EditorProps 
   if (sentText) {
     return (
       <div className="space-y-2">
-        <p className="text-xs text-muted-foreground">Gửi cho nhân viên thông tin đăng nhập mới:</p>
+        <p className="text-xs text-muted-foreground">{tr('Gửi cho nhân viên thông tin đăng nhập mới:')}</p>
         <pre className="whitespace-pre-wrap break-words rounded-lg bg-muted px-3 py-2 font-sans text-xs leading-relaxed text-foreground">{sentText}</pre>
         <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={() => copyWithToast(sentText, 'Đã sao chép thông tin đăng nhập')}>Sao chép</Button>
-          <Button size="sm" onClick={onClose}>Xong</Button>
+          <Button variant="outline" size="sm" onClick={() => copyWithToast(sentText, tr('Đã sao chép thông tin đăng nhập'))}>{tr('Sao chép')}</Button>
+          <Button size="sm" onClick={onClose}>{tr('Xong')}</Button>
         </div>
       </div>
     );
@@ -263,31 +264,31 @@ function ProfileEditor({ employee, loginTarget, onSaved, onClose }: EditorProps 
       <div className="flex items-center gap-3">
         <EmployeeAvatar name={name || employee.username} url={avatarUrl} size={48} />
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" leftIcon={<ImageIcon className="h-4 w-4" />} onClick={pickAvatar} disabled={saving}>Chọn ảnh</Button>
-          {avatarUrl && <Button variant="ghost" size="sm" onClick={() => setAvatarUrl('')} disabled={saving}>Bỏ ảnh</Button>}
+          <Button variant="outline" size="sm" leftIcon={<ImageIcon className="h-4 w-4" />} onClick={pickAvatar} disabled={saving}>{tr('Chọn ảnh')}</Button>
+          {avatarUrl && <Button variant="ghost" size="sm" onClick={() => setAvatarUrl('')} disabled={saving}>{tr('Bỏ ảnh')}</Button>}
         </div>
       </div>
-      <FormField label="Tên hiển thị" htmlFor={`${id}-name`} error={nameError || undefined}>
+      <FormField label={tr('Tên hiển thị')} htmlFor={`${id}-name`} error={nameError || undefined}>
         <Input id={`${id}-name`} value={displayName} onChange={(e) => setDisplayName(e.target.value)} invalid={!!nameError} disabled={saving} />
       </FormField>
-      <FormField label="Vai trò" htmlFor={`${id}-role`} hint={role === 'boss' ? 'Toàn quyền ở mục Công việc.' : undefined}>
+      <FormField label={tr('Vai trò')} htmlFor={`${id}-role`} hint={role === 'boss' ? tr('Toàn quyền ở mục Công việc.') : undefined}>
         <Select id={`${id}-role`} value={role} onChange={(e) => setRole(e.target.value === 'boss' ? 'boss' : 'employee')} disabled={saving}
           wrapperClassName="sm:max-w-[50%]">
-          <option value="employee">Nhân viên</option>
+          <option value="employee">{tr('Nhân viên')}</option>
           <option value="boss">Boss</option>
         </Select>
       </FormField>
       <FormField
-        label="Mật khẩu mới"
+        label={tr('Mật khẩu mới')}
         htmlFor={`${id}-pw`}
         error={pwError || undefined}
-        hint={`Bỏ trống nếu không đổi. Tên đăng nhập: ${employee.username}`}
+        hint={tr('Bỏ trống nếu không đổi. Tên đăng nhập: {{username}}', { username: employee.username })}
       >
         <div className="flex gap-2">
           <Input id={`${id}-pw`} value={password} onChange={(e) => setPassword(e.target.value)} invalid={!!pwError}
             autoComplete="new-password" spellCheck={false} disabled={saving} className="font-mono" />
           <Button variant="outline" size="sm" className="h-9 flex-shrink-0" onClick={() => setPassword(generatePassword(8))} disabled={saving}>
-            Tạo ngẫu nhiên
+            {tr('Tạo ngẫu nhiên')}
           </Button>
         </div>
       </FormField>
@@ -303,11 +304,11 @@ export interface EmployeeCardProps {
   presence: { online: boolean; text: string };
   previewing: boolean;
   loginTarget: EmployeeLoginTarget;
-  /** Số nhân viên trong một nhóm (hỏi trước khi xoá nhóm). */
+  /** Number of employees in a group (asks before deleting the group). */
   memberCount: (groupId: string) => number;
-  /** Đọc lại danh sách nhân viên sau khi sửa. */
+  /** Re-read the employee list after an edit. */
   onChanged: () => void;
-  /** Bật / tắt giả lập nhân viên này. */
+  /** Turn this employee's impersonation on / off. */
   onTogglePreview: () => void;
 }
 
@@ -334,7 +335,7 @@ export default function EmployeeCard({
   const accountSummary = summarizeAccounts(employee.assigned_accounts, accounts);
   const moduleSummary = summarizeModules(permissionMap(employee.permissions));
   const groupSummary = summarizeGroup(employee, groups);
-  // Ảnh các tài khoản được giao (tối đa 3) trước tên trong dòng "Tài khoản chat"
+  // Images of the assigned accounts (up to 3) before the name in the "Tài khoản chat" (Chat accounts) row
   const assignedAccounts = useMemo(() => {
     const byId = new Map(accounts.map((account) => [account.zalo_id, account]));
     return (employee.assigned_accounts || []).map((accountId) => byId.get(accountId)).filter((account): account is AccountInfo => !!account);
@@ -352,27 +353,27 @@ export default function EmployeeCard({
 
   const logout = async () => {
     const ok = await showConfirm({
-      title: `Đăng xuất ${name}?`,
-      message: 'Máy nhân viên bị ngắt ngay, phải đăng nhập lại bằng mật khẩu.',
-      confirmText: 'Đăng xuất',
+      title: tr('Đăng xuất {{name}}?', { name }),
+      message: tr('Máy nhân viên bị ngắt ngay, phải đăng nhập lại bằng mật khẩu.'),
+      confirmText: tr('Đăng xuất'),
       variant: 'warning',
     });
     if (!ok) return;
     try {
       const res = await ipc.relay?.kickEmployee(employee.employee_id);
-      if (res?.success) showNotification(`Đã đăng xuất ${name}`, 'success');
-      else showNotification(res?.error || 'Không đăng xuất được', 'error');
+      if (res?.success) showNotification(tr('Đã đăng xuất {{name}}', { name }), 'success');
+      else showNotification(res?.error || tr('Không đăng xuất được'), 'error');
     } catch (err: any) {
-      showNotification(err?.message || 'Không đăng xuất được', 'error');
+      showNotification(err?.message || tr('Không đăng xuất được'), 'error');
     }
   };
 
   const toggleActive = async () => {
     if (active) {
       const ok = await showConfirm({
-        title: `Khoá ${name}?`,
-        message: 'Nhân viên bị đăng xuất và không vào được cho tới khi mở khoá. Dữ liệu vẫn giữ.',
-        confirmText: 'Khoá',
+        title: tr('Khoá {{name}}?', { name }),
+        message: tr('Nhân viên bị đăng xuất và không vào được cho tới khi mở khoá. Dữ liệu vẫn giữ.'),
+        confirmText: tr('Khoá'),
         variant: 'danger',
       });
       if (!ok) return;
@@ -380,34 +381,34 @@ export default function EmployeeCard({
     try {
       const res = await ipc.employee?.update(employee.employee_id, { is_active: active ? 0 : 1 });
       if (res?.success) {
-        showNotification(active ? `Đã khoá ${name}` : `Đã mở khoá ${name}`, 'success');
+        showNotification(active ? tr('Đã khoá {{name}}', { name }) : tr('Đã mở khoá {{name}}', { name }), 'success');
         onChanged();
       } else {
-        showNotification(res?.error || 'Không đổi được trạng thái', 'error');
+        showNotification(res?.error || tr('Không đổi được trạng thái'), 'error');
       }
     } catch (err: any) {
-      showNotification(err?.message || 'Không đổi được trạng thái', 'error');
+      showNotification(err?.message || tr('Không đổi được trạng thái'), 'error');
     }
   };
 
   const remove = async () => {
     const ok = await showConfirm({
-      title: `Xoá ${name}?`,
-      message: 'Xoá tài khoản, quyền và nhật ký của nhân viên này. Không hoàn tác được.',
-      confirmText: 'Xoá',
+      title: tr('Xoá {{name}}?', { name }),
+      message: tr('Xoá tài khoản, quyền và nhật ký của nhân viên này. Không hoàn tác được.'),
+      confirmText: tr('Xoá'),
       variant: 'danger',
     });
     if (!ok) return;
     try {
       const res = await ipc.employee?.delete(employee.employee_id);
       if (res?.success) {
-        showNotification(`Đã xoá ${name}`, 'success');
+        showNotification(tr('Đã xoá {{name}}', { name }), 'success');
         onChanged();
       } else {
-        showNotification(res?.error || 'Không xoá được nhân viên', 'error');
+        showNotification(res?.error || tr('Không xoá được nhân viên'), 'error');
       }
     } catch (err: any) {
-      showNotification(err?.message || 'Không xoá được nhân viên', 'error');
+      showNotification(err?.message || tr('Không xoá được nhân viên'), 'error');
     }
   };
 
@@ -419,8 +420,8 @@ export default function EmployeeCard({
           <div className="flex min-w-0 items-center gap-2">
             <p className={cn('truncate text-sm font-medium', active ? 'text-foreground' : 'text-muted-foreground')}>{name}</p>
             {employee.role === 'boss' && <Badge size="sm" variant="warning">Boss</Badge>}
-            {!active && <Badge size="sm" variant="destructive">Đã khoá</Badge>}
-            {previewing && <Badge size="sm" variant="warning">Đang giả lập</Badge>}
+            {!active && <Badge size="sm" variant="destructive">{tr('Đã khoá')}</Badge>}
+            {previewing && <Badge size="sm" variant="warning">{tr('Đang giả lập')}</Badge>}
           </div>
           <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <span className="flex-shrink-0">@{employee.username}</span>
@@ -438,39 +439,39 @@ export default function EmployeeCard({
         <DropdownMenu
           align="end"
           trigger={(
-            <Button variant="ghost" size="icon" aria-label={`Thao tác khác với ${name}`} title="Thao tác khác"
+            <Button variant="ghost" size="icon" aria-label={tr('Thao tác khác với {{name}}', { name })} title={tr('Thao tác khác')}
               className="h-8 w-8 flex-shrink-0 text-muted-foreground">
               <MoreHorizontalIcon className="h-4 w-4" />
             </Button>
           )}
         >
           <DropdownMenuItem icon={<EyeIcon />} onSelect={onTogglePreview}>
-            {previewing ? 'Thoát giả lập' : 'Giả lập nhân viên này'}
+            {previewing ? tr('Thoát giả lập') : tr('Giả lập nhân viên này')}
           </DropdownMenuItem>
-          <DropdownMenuItem icon={<RefreshIcon />} onSelect={() => { void logout(); }}>Đăng xuất khỏi máy nhân viên</DropdownMenuItem>
-          <DropdownMenuItem icon={<LockIcon />} onSelect={() => { void toggleActive(); }}>{active ? 'Khoá tài khoản' : 'Mở khoá'}</DropdownMenuItem>
+          <DropdownMenuItem icon={<RefreshIcon />} onSelect={() => { void logout(); }}>{tr('Đăng xuất khỏi máy nhân viên')}</DropdownMenuItem>
+          <DropdownMenuItem icon={<LockIcon />} onSelect={() => { void toggleActive(); }}>{active ? tr('Khoá tài khoản') : tr('Mở khoá')}</DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem icon={<TrashIcon />} destructive onSelect={() => { void remove(); }}>Xoá nhân viên</DropdownMenuItem>
+          <DropdownMenuItem icon={<TrashIcon />} destructive onSelect={() => { void remove(); }}>{tr('Xoá nhân viên')}</DropdownMenuItem>
         </DropdownMenu>
       </div>
 
       <div className="border-t border-border/60 px-1.5 py-1">
-        <SettingLine panelId={`${baseId}-accounts`} icon={<SmartphoneIcon className="h-4 w-4" />} title="Tài khoản chat"
+        <SettingLine panelId={`${baseId}-accounts`} icon={<SmartphoneIcon className="h-4 w-4" />} title={tr('Tài khoản chat')}
           summary={accountSummaryView} summaryTone={accountSummary.count === 0 ? 'warning' : undefined}
           open={open.has('accounts')} onToggle={() => toggle('accounts')}>
           <AccountsEditor employee={employee} accounts={accounts} onSaved={onChanged} onClose={() => close('accounts')} />
         </SettingLine>
-        <SettingLine panelId={`${baseId}-modules`} icon={<KeyIcon className="h-4 w-4" />} title="Quyền dùng"
+        <SettingLine panelId={`${baseId}-modules`} icon={<KeyIcon className="h-4 w-4" />} title={tr('Quyền dùng')}
           summary={moduleSummary.text} summaryTone={moduleSummary.count === 0 ? 'warning' : undefined}
           open={open.has('modules')} onToggle={() => toggle('modules')}>
           <ModulesEditor employee={employee} onSaved={onChanged} onClose={() => close('modules')} />
         </SettingLine>
-        <SettingLine panelId={`${baseId}-group`} icon={<FolderIcon className="h-4 w-4" />} title="Nhóm"
+        <SettingLine panelId={`${baseId}-group`} icon={<FolderIcon className="h-4 w-4" />} title={tr('Nhóm')}
           summary={groupSummary.text} open={open.has('group')} onToggle={() => toggle('group')}>
           <GroupEditor employee={employee} groups={groups} memberCount={memberCount} onSaved={onChanged} />
         </SettingLine>
-        <SettingLine panelId={`${baseId}-profile`} icon={<UserIcon className="h-4 w-4" />} title="Hồ sơ & mật khẩu"
-          summary="Tên, ảnh, mật khẩu" open={open.has('profile')} onToggle={() => toggle('profile')}>
+        <SettingLine panelId={`${baseId}-profile`} icon={<UserIcon className="h-4 w-4" />} title={tr('Hồ sơ & mật khẩu')}
+          summary={tr('Tên, ảnh, mật khẩu')} open={open.has('profile')} onToggle={() => toggle('profile')}>
           <ProfileEditor employee={employee} loginTarget={loginTarget} onSaved={onChanged} onClose={() => close('profile')} />
         </SettingLine>
       </div>

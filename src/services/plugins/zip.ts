@@ -1,16 +1,17 @@
 /**
- * zip.ts — đọc / giải nén / tạo ZIP cho gói plugin, không thêm dependency.
+ * zip.ts: reads / extracts / creates ZIP files for plugin packages, no extra dependency.
  *
- * An toàn khi giải nén file do người khác gửi:
- *  - giới hạn dung lượng zip, tổng dung lượng giải nén, số entry, dung lượng mỗi entry
- *    (inflate có maxOutputLength → zip bomb khai man kích thước cũng bị chặn);
- *  - từ chối đường dẫn tuyệt đối, "..", ký tự ":" (ADS Windows), tên thiết bị Windows,
- *    symlink, entry mã hoá, ZIP64, phương thức nén lạ, tên trùng (không phân biệt hoa thường);
- *  - kiểm tra CRC32 và đích ghi nằm trong thư mục giải nén.
+ * Safe when extracting files sent by others:
+ *  - limits on zip size, total extracted size, number of entries, size of each entry
+ *    (inflate with maxOutputLength → a zip bomb that lies about its size is also blocked);
+ *  - rejects absolute paths, "..", the ":" character (Windows ADS), Windows device names,
+ *    symlinks, encrypted entries, ZIP64, unusual compression methods, duplicate names (case-insensitive);
+ *  - checks the CRC32 and that the write target stays inside the extraction folder.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as zlib from 'zlib';
+import { tr } from '../../shared/i18n';
 
 export interface ZipLimits {
     maxZipBytes: number;
@@ -34,7 +35,7 @@ export class ZipError extends Error {
 }
 
 export interface ZipEntry {
-    /** Tên đã chuẩn hoá: dùng "/", không có "..", thư mục kết thúc bằng "/". */
+    /** Normalized name: uses "/", no "..", folders end with "/". */
     name: string;
     isDirectory: boolean;
     method: number;
@@ -65,21 +66,21 @@ export function crc32(data: Buffer): number {
     return (crc ^ 0xffffffff) >>> 0;
 }
 
-/** Chuẩn hoá tên entry; ném ZipError nếu không an toàn. */
+/** Normalizes the entry name; throws ZipError if it is not safe. */
 export function normalizeEntryName(raw: string): string {
     const name = String(raw || '').replace(/\\/g, '/');
-    if (!name || name.includes('\0')) throw new ZipError('Tên file trong zip không hợp lệ');
-    if (name.startsWith('/') || /^[a-zA-Z]:/.test(name)) throw new ZipError(`Đường dẫn tuyệt đối trong zip: ${raw}`);
+    if (!name || name.includes('\0')) throw new ZipError(tr('Tên file trong zip không hợp lệ'));
+    if (name.startsWith('/') || /^[a-zA-Z]:/.test(name)) throw new ZipError(tr('Đường dẫn tuyệt đối trong zip: {{raw}}', { raw }));
     const isDir = name.endsWith('/');
     const parts: string[] = [];
     for (const seg of name.split('/')) {
         if (!seg || seg === '.') continue;
-        if (seg === '..') throw new ZipError(`Đường dẫn "..": ${raw}`);
-        if (seg.includes(':')) throw new ZipError(`Ký tự ":" trong tên file: ${raw}`);
-        if (WINDOWS_RESERVED.test(seg) || /[. ]$/.test(seg)) throw new ZipError(`Tên file không dùng được trên Windows: ${raw}`);
+        if (seg === '..') throw new ZipError(tr('Đường dẫn "..": {{raw}}', { raw }));
+        if (seg.includes(':')) throw new ZipError(tr('Ký tự ":" trong tên file: {{raw}}', { raw }));
+        if (WINDOWS_RESERVED.test(seg) || /[. ]$/.test(seg)) throw new ZipError(tr('Tên file không dùng được trên Windows: {{raw}}', { raw }));
         parts.push(seg);
     }
-    if (!parts.length) throw new ZipError('Tên file trong zip không hợp lệ');
+    if (!parts.length) throw new ZipError(tr('Tên file trong zip không hợp lệ'));
     return parts.join('/') + (isDir ? '/' : '');
 }
 
@@ -92,22 +93,22 @@ function findEocd(buf: Buffer): number {
 }
 
 export function readZipEntries(buf: Buffer, limits: ZipLimits = DEFAULT_ZIP_LIMITS): ZipEntry[] {
-    if (buf.length < 22) throw new ZipError('File không phải zip');
+    if (buf.length < 22) throw new ZipError(tr('File không phải zip'));
     const eocd = findEocd(buf);
-    if (eocd < 0) throw new ZipError('File không phải zip (thiếu end of central directory)');
+    if (eocd < 0) throw new ZipError(tr('File không phải zip (thiếu end of central directory)'));
     const total = buf.readUInt16LE(eocd + 10);
     const cdSize = buf.readUInt32LE(eocd + 12);
     const cdOffset = buf.readUInt32LE(eocd + 16);
-    if (total === 0xffff || cdOffset === 0xffffffff || cdSize === 0xffffffff) throw new ZipError('ZIP64 không được hỗ trợ (gói ứng dụng quá lớn)');
-    if (total > limits.maxEntries) throw new ZipError(`Zip có quá nhiều file (${total} > ${limits.maxEntries})`);
-    if (cdOffset + cdSize > buf.length) throw new ZipError('Zip bị hỏng (central directory)');
+    if (total === 0xffff || cdOffset === 0xffffffff || cdSize === 0xffffffff) throw new ZipError(tr('ZIP64 không được hỗ trợ (gói ứng dụng quá lớn)'));
+    if (total > limits.maxEntries) throw new ZipError(tr('Zip có quá nhiều file ({{total}} > {{maxEntries}})', { total, maxEntries: limits.maxEntries }));
+    if (cdOffset + cdSize > buf.length) throw new ZipError(tr('Zip bị hỏng (central directory)'));
 
     const entries: ZipEntry[] = [];
     const seen = new Set<string>();
     let totalSize = 0;
     let p = cdOffset;
     for (let i = 0; i < total; i++) {
-        if (p + 46 > buf.length || buf.readUInt32LE(p) !== SIG_CEN) throw new ZipError('Zip bị hỏng (entry)');
+        if (p + 46 > buf.length || buf.readUInt32LE(p) !== SIG_CEN) throw new ZipError(tr('Zip bị hỏng (entry)'));
         const madeBy = buf.readUInt16LE(p + 4);
         const flags = buf.readUInt16LE(p + 8);
         const method = buf.readUInt16LE(p + 10);
@@ -122,19 +123,19 @@ export function readZipEntries(buf: Buffer, limits: ZipLimits = DEFAULT_ZIP_LIMI
         const rawName = buf.subarray(p + 46, p + 46 + nameLen).toString(flags & 0x800 ? 'utf8' : 'latin1');
         p += 46 + nameLen + extraLen + commentLen;
 
-        if (flags & 0x1) throw new ZipError(`File bị mã hoá trong zip: ${rawName}`);
-        if (method !== 0 && method !== 8) throw new ZipError(`Kiểu nén không hỗ trợ (${method}): ${rawName}`);
-        if ((madeBy >> 8) === 3 && ((extAttr >>> 16) & 0o170000) === 0o120000) throw new ZipError(`Symlink trong zip bị từ chối: ${rawName}`);
-        if (compressedSize === 0xffffffff || size === 0xffffffff || localHeaderOffset === 0xffffffff) throw new ZipError('ZIP64 không được hỗ trợ');
+        if (flags & 0x1) throw new ZipError(tr('File bị mã hoá trong zip: {{rawName}}', { rawName }));
+        if (method !== 0 && method !== 8) throw new ZipError(tr('Kiểu nén không hỗ trợ ({{method}}): {{rawName}}', { method, rawName }));
+        if ((madeBy >> 8) === 3 && ((extAttr >>> 16) & 0o170000) === 0o120000) throw new ZipError(tr('Symlink trong zip bị từ chối: {{rawName}}', { rawName }));
+        if (compressedSize === 0xffffffff || size === 0xffffffff || localHeaderOffset === 0xffffffff) throw new ZipError(tr('ZIP64 không được hỗ trợ'));
 
         const name = normalizeEntryName(rawName);
         const key = name.toLowerCase();
-        if (seen.has(key)) throw new ZipError(`Tên file trùng trong zip: ${name}`);
+        if (seen.has(key)) throw new ZipError(tr('Tên file trùng trong zip: {{name}}', { name }));
         seen.add(key);
         const isDirectory = name.endsWith('/');
-        if (size > limits.maxEntryBytes) throw new ZipError(`File quá lớn trong zip: ${name}`);
+        if (size > limits.maxEntryBytes) throw new ZipError(tr('File quá lớn trong zip: {{name}}', { name }));
         totalSize += size;
-        if (totalSize > limits.maxTotalBytes) throw new ZipError(`Giải nén vượt ${Math.round(limits.maxTotalBytes / 1024 / 1024)} MB`);
+        if (totalSize > limits.maxTotalBytes) throw new ZipError(tr('Giải nén vượt {{v1}} MB', { v1: Math.round(limits.maxTotalBytes / 1024 / 1024) }));
         entries.push({ name, isDirectory, method, compressedSize, size, crc32: crc, localHeaderOffset });
     }
     return entries;
@@ -142,10 +143,10 @@ export function readZipEntries(buf: Buffer, limits: ZipLimits = DEFAULT_ZIP_LIMI
 
 export function readEntryData(buf: Buffer, entry: ZipEntry): Buffer {
     const off = entry.localHeaderOffset;
-    if (off + 30 > buf.length || buf.readUInt32LE(off) !== SIG_LOC) throw new ZipError(`Zip bị hỏng (local header): ${entry.name}`);
+    if (off + 30 > buf.length || buf.readUInt32LE(off) !== SIG_LOC) throw new ZipError(tr('Zip bị hỏng (local header): {{name}}', { name: entry.name }));
     const start = off + 30 + buf.readUInt16LE(off + 26) + buf.readUInt16LE(off + 28);
     const end = start + entry.compressedSize;
-    if (end > buf.length) throw new ZipError(`Zip bị hỏng (dữ liệu): ${entry.name}`);
+    if (end > buf.length) throw new ZipError(tr('Zip bị hỏng (dữ liệu): {{name}}', { name: entry.name }));
     const data = buf.subarray(start, end);
     let out: Buffer;
     if (entry.method === 0) {
@@ -154,18 +155,18 @@ export function readEntryData(buf: Buffer, entry: ZipEntry): Buffer {
         try {
             out = zlib.inflateRawSync(data, { maxOutputLength: Math.max(1, entry.size) });
         } catch {
-            throw new ZipError(`Không giải nén được (dữ liệu hỏng hoặc khai sai kích thước): ${entry.name}`);
+            throw new ZipError(tr('Không giải nén được (dữ liệu hỏng hoặc khai sai kích thước): {{name}}', { name: entry.name }));
         }
     }
-    if (out.length !== entry.size) throw new ZipError(`Sai kích thước sau giải nén: ${entry.name}`);
+    if (out.length !== entry.size) throw new ZipError(tr('Sai kích thước sau giải nén: {{name}}', { name: entry.name }));
     if (crc32(out) !== entry.crc32) throw new ZipError(`Sai CRC: ${entry.name}`);
     return out;
 }
 
-/** Giải nén vào destDir (tạo nếu chưa có). Trả số file và tổng byte. */
+/** Extracts into destDir (created if missing). Returns the file count and total bytes. */
 export function extractZip(zipPath: string, destDir: string, limits: ZipLimits = DEFAULT_ZIP_LIMITS): { files: number; bytes: number } {
     const st = fs.statSync(zipPath);
-    if (st.size > limits.maxZipBytes) throw new ZipError(`File zip vượt ${Math.round(limits.maxZipBytes / 1024 / 1024)} MB`);
+    if (st.size > limits.maxZipBytes) throw new ZipError(tr('File zip vượt {{v1}} MB', { v1: Math.round(limits.maxZipBytes / 1024 / 1024) }));
     const buf = fs.readFileSync(zipPath);
     const entries = readZipEntries(buf, limits);
     fs.mkdirSync(destDir, { recursive: true });
@@ -174,7 +175,7 @@ export function extractZip(zipPath: string, destDir: string, limits: ZipLimits =
     let bytes = 0;
     for (const entry of entries) {
         const target = path.resolve(root, ...entry.name.split('/').filter(Boolean));
-        if (target !== root && !target.startsWith(root + path.sep)) throw new ZipError(`Đường dẫn ra ngoài thư mục: ${entry.name}`);
+        if (target !== root && !target.startsWith(root + path.sep)) throw new ZipError(tr('Đường dẫn ra ngoài thư mục: {{name}}', { name: entry.name }));
         if (entry.isDirectory) {
             fs.mkdirSync(target, { recursive: true });
             continue;
@@ -188,7 +189,7 @@ export function extractZip(zipPath: string, destDir: string, limits: ZipLimits =
     return { files, bytes };
 }
 
-/** Tạo zip (deflate) trong bộ nhớ — dùng cho đóng gói plugin và test. */
+/** Creates a zip (deflate) in memory, used for packaging plugins and for tests. */
 export function createZip(files: Array<{ name: string; data: Buffer | string }>, opts: { compress?: boolean } = {}): Buffer {
     const locals: Buffer[] = [];
     const centrals: Buffer[] = [];

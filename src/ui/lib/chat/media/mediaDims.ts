@@ -1,11 +1,11 @@
 /**
- * mediaDims.ts — kích thước ảnh trong tin nhắn để vẽ khung đúng tỉ lệ NGAY từ đầu (như Telegram):
- * không cần khung soạn sẵn cố định, ảnh tải xong không làm nhảy layout → cuộn không giật.
+ * mediaDims.ts: image sizes in messages, to draw the frame at the right ratio RIGHT from the start (like Telegram):
+ * no fixed placeholder frame is needed, and the layout does not jump when an image finishes loading → scrolling does not stutter.
  *
- * Nguồn kích thước, theo thứ tự:
- *   1. Đã đo lần trước (naturalWidth/Height sau khi ảnh tải) — cache LRU, lưu localStorage.
- *   2. Metadata của tin: Telegram/Facebook `attachments[i].width/height`, Zalo `content.params.width/height`.
- * Không có cả hai → component dùng khung tạm, đo khi ảnh tải xong rồi nhớ lại cho lần sau (chỉ lệch 1 lần).
+ * Sources of the size, in order:
+ *   1. Measured last time (naturalWidth/Height after the image loaded): LRU cache, saved to localStorage.
+ *   2. The message metadata: Telegram/Facebook `attachments[i].width/height`, Zalo `content.params.width/height`.
+ * If neither exists → the component uses a temporary frame, measures it when the image loads and remembers it for next time (it is off only once).
  */
 
 export interface MediaDims {
@@ -38,7 +38,7 @@ function ensureCache(): Map<string, MediaDims> {
       }
     }
   } catch {
-    /* localStorage hỏng / bị chặn → chỉ dùng cache trong phiên */
+    /* localStorage broken / blocked → use the in-session cache only */
   }
   return cache;
 }
@@ -51,12 +51,12 @@ function scheduleSave(): void {
       const rows = [...ensureCache().entries()].slice(-MAX_ENTRIES).map(([k, d]) => [k, d.w, d.h]);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
     } catch {
-      /* quota → bỏ qua */
+      /* quota exceeded → skip */
     }
   }, 1500);
 }
 
-/** msg_id Telegram không duy nhất theo tài khoản → khoá gồm cả thread. */
+/** Telegram msg_id is not unique per account → the key includes the thread too. */
 function keyOf(msg: any, index: number): string {
   return `${msg?.owner_zalo_id || ''}:${msg?.thread_id || ''}:${msg?.msg_id || ''}:${index}`;
 }
@@ -77,7 +77,7 @@ function parseObj(value: unknown): any {
   }
 }
 
-/** Kích thước lấy từ metadata của tin (không đo). */
+/** Size taken from the message metadata (not measured). */
 export function getMetaDims(msg: any, index = 0): MediaDims | null {
   const atts = parseObj(msg?.attachments);
   if (Array.isArray(atts) && atts[index]) {
@@ -96,39 +96,39 @@ export function getMetaDims(msg: any, index = 0): MediaDims | null {
   return null;
 }
 
-/** Kích thước đã biết: đo trước đó (chính xác nhất) hoặc từ metadata. */
+/** Known size: measured earlier (most accurate) or from the metadata. */
 export function getKnownDims(msg: any, index = 0): MediaDims | null {
   if (!msg) return null;
   return ensureCache().get(keyOf(msg, index)) || getMetaDims(msg, index);
 }
 
-/** Ghi lại kích thước thật sau khi ảnh tải xong (onLoad). */
+/** Records the real size after the image has loaded (onLoad). */
 export function rememberDims(msg: any, w: number, h: number, index = 0): void {
   if (!(w > 0 && h > 0) || !msg?.msg_id) return;
   const c = ensureCache();
   const key = keyOf(msg, index);
   const prev = c.get(key);
   if (prev && prev.w === w && prev.h === h) return;
-  c.delete(key); // đưa xuống cuối = mới dùng gần nhất
+  c.delete(key); // move to the end = most recently used
   c.set(key, { w, h });
   scheduleSave();
 }
 
-/** Tỉ lệ khác nhau đáng kể (> 2%)? */
+/** Is the ratio noticeably different (> 2%)? */
 export function ratioDiffers(a: MediaDims | null | undefined, b: MediaDims): boolean {
   if (!a) return true;
   return Math.abs(a.w / a.h - b.w / b.h) > 0.02 * (b.w / b.h);
 }
 
 /**
- * Khung hiển thị: thu vào tối đa maxW × maxH giữ tỉ lệ, ảnh nhỏ phóng tối đa 2 lần,
- * ảnh quá dẹt / quá cao được kẹp min (phần thừa cắt bằng object-cover, xem đầy đủ trong viewer).
+ * Display frame: fit inside at most maxW × maxH keeping the ratio, small images are enlarged up to 2 times,
+ * images that are too flat / too tall are clamped to the min (the excess is cropped with object-cover; see the full image in the viewer).
  */
 export function fitMediaBox(
   d: MediaDims,
   opts: { maxW?: number; maxH?: number; minW?: number; minH?: number } = {},
 ): MediaBox {
-  const maxW = opts.maxW ?? 320;
+  const maxW = opts.maxW ?? MEDIA_MAX_WIDTH;
   const maxH = opts.maxH ?? 360;
   const minW = opts.minW ?? 96;
   const minH = opts.minH ?? 64;
@@ -136,5 +136,49 @@ export function fitMediaBox(
   return {
     width: Math.max(minW, Math.min(maxW, Math.round(d.w * scale))),
     height: Math.max(minH, Math.min(maxH, Math.round(d.h * scale))),
+  };
+}
+
+/** Maximum image width in the chat (px, does not scale with the font size). */
+export const MEDIA_MAX_WIDTH = 320;
+
+/**
+ * A photo bubble with a caption is at most as wide as the largest image (20rem = 320px at the default font size), as in Telegram (the same 430px);
+ * it follows the font size the user chose but never exceeds 4/3 of the largest image, so a wide image still fills the bubble when the text is very large.
+ */
+export const CAPTION_BUBBLE_MAX_WIDTH = `min(20rem, ${Math.round((MEDIA_MAX_WIDTH * 4) / 3)}px)`;
+/** Narrowest photo bubble with a caption (Telegram historyPhotoBubbleMinWidth). */
+export const CAPTION_BUBBLE_MIN_WIDTH = 200;
+
+export interface CaptionMediaLayout {
+  /** Height of the image frame. */
+  areaHeight: string;
+  /** Image width, centered in the frame. */
+  photoWidth: string;
+  /** Width of the blurred image layer filling both sides: 0 when the image covers the whole frame. */
+  fillWidth: string;
+}
+
+const round4 = (n: number) => Math.round(n * 10000) / 10000;
+
+/**
+ * Photo frame with a caption, like Telegram Desktop (history_view_photo.cpp: adjustHeightForLessCrop + DecideFrameResize):
+ * the bubble is as wide as the caption and does not shrink to a narrow image. The bubble is up to 4/3 of the image (enlarging the image crops no more than 1/4
+ * of its height) → the image is enlarged to fill the bubble, and its height follows the ratio; wider than that → the image keeps its size, centered, and the two sides are the image itself
+ * blurred.
+ *
+ * The bubble width is measured by the browser from the text (not measured with JS → no jumping frame), so every value is written in CSS as
+ * 100cqw = the bubble width (the frame around the image is the container). "Nếu" (if) is written in CSS: max(0px, (a - b) * 1e6) is 0 when
+ * a ≤ b, very large when a > b. The threshold is 0.3px off the browser's 1/64px grid so the width never lands exactly on the threshold.
+ */
+export function captionMediaLayout(box: MediaBox): CaptionMediaLayout {
+  const { width: w, height: h } = box;
+  const limit = Math.round((w * 4) / 3) + 0.3;
+  const grows = `max(0px, (${limit}px - 100cqw) * 1000000)`;
+  const sides = `max(0px, (100cqw - ${limit}px) * 1000000)`;
+  return {
+    areaHeight: `min(100cqw * ${round4(h / w)}, ${h}px + ${grows})`,
+    photoWidth: `min(100cqw, ${w}px + ${grows})`,
+    fillWidth: `min(100cqw, ${sides})`,
   };
 }

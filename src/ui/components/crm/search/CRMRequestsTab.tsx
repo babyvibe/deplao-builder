@@ -8,10 +8,12 @@ import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { extractApiError } from '@/lib/app/apiError';
 import { UserProfilePopup } from '../../common/profile/UserProfilePopup';
 import {InboxIcon, SendIcon, UsersIcon} from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 /**
- * CRM Requests Tab - quản lý lời mời kết bạn (nhận được + đã gửi).
- * Tách từ FriendList để dùng trong CRMPage.
+ * CRM Requests Tab - manages friend requests (received + sent).
+ * Split out of FriendList to be used in CRMPage.
  */
 export default function CRMRequestsTab() {
   const [requestSubTab, setRequestSubTab] = useState<'received' | 'sent'>('received');
@@ -43,7 +45,7 @@ export default function CRMRequestsTab() {
         DataAccessor.getFriendRequests({ zaloId: activeAccountId, direction: 'received' }),
         DataAccessor.getFriendRequests({ zaloId: activeAccountId, direction: 'sent' }),
       ]);
-      // Lỗi đọc (employee: mất kết nối BOSS) ≠ 0 lời mời: giữ danh sách + số + chấm đỏ đang hiện
+      // Read error (employee: lost connection to the owner) ≠ 0 requests: keep the list + count + red dot currently shown
       if (recRes?.requests && !isReadFailure(recRes)) {
         setRequests(recRes.requests);
         setRequestCount(recRes.requests.length);
@@ -95,9 +97,9 @@ export default function CRMRequestsTab() {
       setSentRequests(normalizedSent);
       await ipc.db?.saveFriendRequests({ zaloId: activeAccountId, requests: normalizedSent, direction: 'sent' });
 
-      showNotification('Đã cập nhật lời mời kết bạn', 'success');
+      showNotification(tr('Đã cập nhật lời mời kết bạn'), 'success');
     } catch (err: any) {
-      showNotification(extractApiError(err, 'Lỗi tải lời mời kết bạn'), 'error');
+      showNotification(extractApiError(err, tr('Lỗi tải lời mời kết bạn')), 'error');
     }
     setRequestsRefreshing(false);
   };
@@ -108,7 +110,7 @@ export default function CRMRequestsTab() {
     if (!auth || !activeAccountId) return;
     try {
       await ipc.zalo?.acceptFriendRequest({ auth, userId });
-      showNotification('Đã chấp nhận lời mời!', 'success');
+      showNotification(tr('Đã chấp nhận lời mời!'), 'success');
       await DataAccessor.removeFriendRequest({ zaloId: activeAccountId, userId, direction: 'received' });
       setRequests(prev => {
         const next = prev.filter(r => r.userId !== userId);
@@ -116,7 +118,7 @@ export default function CRMRequestsTab() {
         if (next.length === 0) clearCRMRequestUnseen(activeAccountId);
         return next;
       });
-    } catch (err: any) { showNotification(extractApiError(err, 'Chấp nhận lời mời thất bại'), 'error'); }
+    } catch (err: any) { showNotification(extractApiError(err, tr('Chấp nhận lời mời thất bại')), 'error'); }
   };
 
   const handleRejectRequest = async (userId: string) => {
@@ -124,7 +126,7 @@ export default function CRMRequestsTab() {
     if (!auth || !activeAccountId) return;
     try {
       await ipc.zalo?.rejectFriendRequest({ auth, userId });
-      showNotification('Đã từ chối lời mời', 'info');
+      showNotification(tr('Đã từ chối lời mời'), 'info');
       await DataAccessor.removeFriendRequest({ zaloId: activeAccountId, userId, direction: 'received' });
       setRequests(prev => {
         const next = prev.filter(r => r.userId !== userId);
@@ -132,7 +134,7 @@ export default function CRMRequestsTab() {
         if (next.length === 0) clearCRMRequestUnseen(activeAccountId);
         return next;
       });
-    } catch (err: any) { showNotification(extractApiError(err, 'Từ chối lời mời thất bại'), 'error'); }
+    } catch (err: any) { showNotification(extractApiError(err, tr('Từ chối lời mời thất bại')), 'error'); }
   };
 
   const handleCancelSentRequest = async (userId: string) => {
@@ -140,10 +142,10 @@ export default function CRMRequestsTab() {
     if (!auth || !activeAccountId) return;
     try {
       await ipc.zalo?.undoFriendRequest({ auth, userId });
-      showNotification('Đã hủy lời mời kết bạn', 'info');
+      showNotification(tr('Đã hủy lời mời kết bạn'), 'info');
       await DataAccessor.removeFriendRequest({ zaloId: activeAccountId, userId, direction: 'sent' });
       setSentRequests(prev => prev.filter(r => (r.userId || r.uid) !== userId));
-    } catch (err: any) { showNotification(extractApiError(err, 'Hủy lời mời thất bại'), 'error'); }
+    } catch (err: any) { showNotification(extractApiError(err, tr('Hủy lời mời thất bại')), 'error'); }
   };
 
   // ─── Mount: load from DB ─────────────────────────────────────────────
@@ -162,7 +164,7 @@ export default function CRMRequestsTab() {
     setSentRequests([]);
   }, [activeAccountId]);
 
-  // ─── Real-time: lắng nghe lời mời kết bạn mới ────────────────────────
+  // ─── Real-time: listen for new friend requests ────────────────────────
   useEffect(() => {
     const normalizeRequest = (req: any) => {
       const userId = req.userId || req.uid || req.actorId || '';
@@ -219,7 +221,7 @@ export default function CRMRequestsTab() {
       }
     });
 
-    // Đã thành bạn bè (chấp nhận ở máy khác / trên điện thoại): Boss xoá cả lời mời gửi + nhận của người này
+    // Became friends (accepted on another machine / on the phone): the owner deletes both the sent and received requests of this person
     const unsubAccepted = ipc.on?.('event:friendAccepted', (data: any) => {
       if (!activeAccountId || data?.zaloId !== activeAccountId) return;
       const userId = String(data?.userId || '');
@@ -242,10 +244,10 @@ export default function CRMRequestsTab() {
     };
   }, [activeAccountId]);
 
-  // Chế độ nhân viên: kết nối BOSS phục hồi → đọc lại lời mời (đổi trong lúc mất kết nối không có event)
+  // Employee mode: when the connection to the owner recovers → re-read the requests (changes made while disconnected produce no event)
   useEmployeeResync(() => (initialLoaded ? loadRequestsFromDb() : undefined));
 
-  // ─── Nav event: click desktop notification → chuyển sang tab Lời mời ─
+  // ─── Nav event: clicking a desktop notification → switch to the Requests tab ─
   useEffect(() => {
     const handler = () => { setRequestSubTab('received'); };
     window.addEventListener('nav:friendRequests', handler);
@@ -260,10 +262,10 @@ export default function CRMRequestsTab() {
         {/* Sub-tabs */}
         <div className="flex bg-card rounded-lg p-0.5 mb-3">
           <button onClick={() => setRequestSubTab('received')}
-            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'received' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}><InboxIcon className="w-4 h-4 inline" /> Nhận được{requests.length > 0 ? ` (${requests.length})` : ''}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'received' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>{trx('<0/> Nhận được{{v1}}', { 0: <InboxIcon className="w-4 h-4 inline" />, v1: requests.length > 0 ? ` (${requests.length})` : '' })}
           </button>
           <button onClick={() => setRequestSubTab('sent')}
-            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'sent' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}><SendIcon className="w-4 h-4 inline" /> Đã gửi{sentRequests.length > 0 ? ` (${sentRequests.length})` : ''}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${requestSubTab === 'sent' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>{trx('<0/> Đã gửi{{v1}}', { 0: <SendIcon className="w-4 h-4 inline" />, v1: sentRequests.length > 0 ? ` (${sentRequests.length})` : '' })}
           </button>
         </div>
 
@@ -275,14 +277,14 @@ export default function CRMRequestsTab() {
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
             <input type="text" value={requestSearch} onChange={e => setRequestSearch(e.target.value)}
-              placeholder="Tên, SĐT, UID..."
+              placeholder={tr('Tên, SĐT, UID...')}
               className="w-full bg-muted border border-input rounded-full pl-7 pr-3 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500" />
           </div>
           <span className="text-xs text-muted-foreground flex-shrink-0">
-            {requestsLoading ? '...' : (requestSubTab === 'received' ? requests.length : sentRequests.length)} lời mời
+            {trx('{{v1}} lời mời', { v1: requestsLoading ? '...' : (requestSubTab === 'received' ? requests.length : sentRequests.length) })}
           </span>
           <button onClick={refreshRequestsFromApi} disabled={requestsRefreshing}
-            title="Cập nhật từ Zalo"
+            title={tr('Cập nhật từ Zalo')}
             className="w-7 h-7 rounded-full flex items-center justify-center text-blue-400 hover:text-blue-300 hover:bg-muted disabled:opacity-40 transition-colors flex-shrink-0">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
               className={requestsRefreshing ? 'animate-spin' : ''}>
@@ -295,15 +297,15 @@ export default function CRMRequestsTab() {
       {/* ── Scrollable list ───────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5">
         {requestsLoading ? (
-          <div className="text-center text-muted-foreground py-10 text-sm">Đang tải...</div>
+          <div className="text-center text-muted-foreground py-10 text-sm">{tr('Đang tải...')}</div>
         ) : requestSubTab === 'received' ? (
           requests.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-3xl mb-2 justify-items-center"><UsersIcon className="w-4 h-4" /></p>
-              <p className="text-muted-foreground text-sm mb-3">Không có lời mời nào</p>
+              <p className="text-muted-foreground text-sm mb-3">{tr('Không có lời mời nào')}</p>
               <button onClick={refreshRequestsFromApi} disabled={requestsRefreshing}
                 className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
-                {requestsRefreshing ? 'Đang tải...' : 'Tải từ Zalo'}
+                {requestsRefreshing ? tr('Đang tải...') : tr('Tải từ Zalo')}
               </button>
             </div>
           ) : (
@@ -326,7 +328,7 @@ export default function CRMRequestsTab() {
                     <button
                       onClick={(e) => setProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })}
                       className="flex-shrink-0 focus:outline-none"
-                      title="Xem thông tin"
+                      title={tr('Xem thông tin')}
                     >
                       {req.avatar
                         ? <img src={req.avatar} alt="" className="w-10 h-10 rounded-full object-cover hover:ring-2 hover:ring-blue-400 transition-all" />
@@ -339,17 +341,17 @@ export default function CRMRequestsTab() {
                       <p className="text-sm font-medium text-foreground truncate">{name}</p>
                       {msgText
                         ? <p className="text-[11px] text-muted-foreground italic truncate mt-0.5">"{msgText}"</p>
-                        : <p className="text-[11px] text-muted-foreground mt-0.5">Muốn kết bạn với bạn</p>}
+                        : <p className="text-[11px] text-muted-foreground mt-0.5">{tr('Muốn kết bạn với bạn')}</p>}
                     </div>
                     {/* Actions */}
                     <div className="flex gap-1.5 flex-shrink-0">
                       <button onClick={() => handleAcceptRequest(uid)}
                         className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors font-medium">
-                        Đồng ý
+                        {tr('Đồng ý')}
                       </button>
                       <button onClick={() => handleRejectRequest(uid)}
                         className="bg-muted hover:bg-accent text-foreground/80 text-xs px-3 py-1.5 rounded-lg transition-colors">
-                        Từ chối
+                        {tr('Từ chối')}
                       </button>
                     </div>
                   </div>
@@ -360,10 +362,10 @@ export default function CRMRequestsTab() {
           sentRequests.length === 0 ? (
             <div className="text-center py-10">
               <p className="text-3xl mb-2"><SendIcon className="w-4 h-4" /></p>
-              <p className="text-muted-foreground text-sm mb-3">Chưa gửi lời mời nào</p>
+              <p className="text-muted-foreground text-sm mb-3">{tr('Chưa gửi lời mời nào')}</p>
               <button onClick={refreshRequestsFromApi} disabled={requestsRefreshing}
                 className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors">
-                {requestsRefreshing ? 'Đang tải...' : 'Tải từ Zalo'}
+                {requestsRefreshing ? tr('Đang tải...') : tr('Tải từ Zalo')}
               </button>
             </div>
           ) : (
@@ -386,7 +388,7 @@ export default function CRMRequestsTab() {
                     <button
                       onClick={(e) => setProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })}
                       className="flex-shrink-0 focus:outline-none"
-                      title="Xem thông tin"
+                      title={tr('Xem thông tin')}
                     >
                       {req.avatar
                         ? <img src={req.avatar} alt="" className="w-10 h-10 rounded-full object-cover hover:ring-2 hover:ring-blue-400 transition-all" />
@@ -398,14 +400,14 @@ export default function CRMRequestsTab() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground truncate">{name}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[11px] text-yellow-500">⏳ Chờ chấp nhận</span>
+                        <span className="text-[11px] text-yellow-500">{tr('⏳ Chờ chấp nhận')}</span>
                         {msgText && <span className="text-[11px] text-muted-foreground italic truncate">· "{msgText}"</span>}
                       </div>
                     </div>
                     {/* Action */}
                     <button onClick={() => handleCancelSentRequest(uid)}
                       className="flex-shrink-0 bg-muted hover:bg-red-700 text-foreground/80 hover:text-white text-xs px-3 py-1.5 rounded-lg transition-colors">
-                      Hủy
+                      {tr('Hủy')}
                     </button>
                   </div>
                 );

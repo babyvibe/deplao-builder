@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useErpTaskStore } from '@/store/erp/erpTaskStore';
 import type { ErpTaskStatus } from '../../../../models/erp';
+import { tr } from '../../../../shared/i18n';
 
 interface Props {
   status: ErpTaskStatus;
@@ -26,15 +27,15 @@ export default function TaskQuickAdd({ status, projectId, onClose }: Props) {
         value={title}
         onChange={e => setTitle(e.target.value)}
         onKeyDown={e => e.key === 'Escape' && onClose()}
-        placeholder="Tên task..."
+        placeholder={tr('Tên task...')}
         className="w-full bg-card border border-input rounded px-2 py-1.5 text-xs text-foreground placeholder-subtle-foreground outline-none focus:border-blue-500"
       />
       <div className="flex gap-1 mt-1.5">
         <button type="submit" className="flex-1 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors">
-          Thêm
+          {tr('Thêm')}
         </button>
         <button type="button" onClick={onClose} className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors">
-          Huỷ
+          {tr('Huỷ')}
         </button>
       </div>
     </form>

@@ -11,17 +11,17 @@ import { getUiRemoteWorkspace, inUiRemoteScope } from '../database/dbScope';
 
 class FileStorageService {
     private static baseDir: string = '';
-    /** Thư mục media của workspace remote đã tạo (không kiểm tra lại mỗi lần gọi). */
+    /** Media folder of the remote workspace that has been created (not checked again on each call). */
     private static ensuredRemoteDirs = new Set<string>();
 
     /**
-     * Resolve thư mục media gốc dựa theo workspace hiện tại.
+     * Resolve the root media folder based on the current workspace.
      * - Default workspace: dbFolder/media/
      * - Additional workspaces: dbFolder/workspace-{id}/media/
-     * Gọi lần đầu sẽ đọc config, sau đó cache vào static field.
+     * The first call reads the config, then caches it in a static field.
      *
-     * Theo luồng chạy (dbScope): lệnh từ giao diện đang mở workspace remote → media của workspace đó; còn lại (Zalo,
-     * Telegram, Facebook… chạy nền) → media của workspace local đang chạy, dù giao diện đang mở workspace nào.
+     * By execution flow (dbScope): commands from the UI showing a remote workspace → that workspace's media; everything else (Zalo,
+     * Telegram, Facebook… running in the background) → the media of the local workspace that is running, whichever workspace the UI is showing.
      */
     public static getBaseDir(): string {
         if (inUiRemoteScope()) {
@@ -67,7 +67,7 @@ class FileStorageService {
     }
 
     /**
-     * Reset cache khi người dùng thay đổi storage path (gọi sau khi lưu config mới).
+     * Reset the cache when the user changes the storage path (called after saving the new config).
      */
     public static resetBaseDir(): void {
         this.baseDir = '';
@@ -75,13 +75,13 @@ class FileStorageService {
     }
 
     /**
-     * Lưu media lên R2 (Cloudflare): báo file vừa ghi xong để sao lưu (chỉ đưa vào bộ đệm; tắt đồng bộ → không làm gì).
-     * require lười — không kéo module Cloudflare vào lúc nạp file này; lỗi không bao giờ ảnh hưởng việc lưu file.
+     * Store media to R2 (Cloudflare): reports the file that was just written for backup (it is only queued; sync off → does nothing).
+     * Lazy require: does not pull the Cloudflare module in when this file loads; errors never affect saving the file.
      */
     private static noteCloudMediaWrite(absPath: string): void {
         try {
             require('../cloudflare/media').cloudMedia.noteFileWritten(absPath);
-        } catch { /* tính năng R2 chưa sẵn sàng → bỏ qua */ }
+        } catch { /* R2 feature not ready yet → skip */ }
     }
 
     /**
@@ -131,9 +131,9 @@ class FileStorageService {
     }
 
     /**
-     * Kiểm tra tính hợp lệ của file ảnh trên đĩa.
-     * Đọc ~20 bytes đầu/cuối file - rất nhanh, không decode ảnh.
-     * @returns `{ valid: true }` nếu file hợp lệ, `{ valid: false, reason }` nếu lỗi.
+     * Check the validity of an image file on disk.
+     * Reads ~20 bytes at the start and end of the file: very fast, does not decode the image.
+     * @returns `{ valid: true }` if the file is valid, `{ valid: false, reason }` if there is an error.
      */
     public static validateImageFile(filePath: string): { valid: boolean; reason?: string } {
         try {
@@ -142,7 +142,7 @@ class FileStorageService {
             const stat = fs.statSync(filePath);
             if (stat.size === 0) return { valid: false, reason: 'empty' };
 
-            // 12 bytes đầu (magic bytes) + 12 bytes cuối (dấu kết thúc), một lần mở file
+            // First 12 bytes (magic bytes) + last 12 bytes (end marker), one file open
             const headBuf = Buffer.alloc(12);
             const tailBuf = Buffer.alloc(12);
             const fd = fs.openSync(filePath, 'r');
@@ -156,14 +156,14 @@ class FileStorageService {
             }
             return this.checkImageBytes(filePath, stat.size, headBuf, bytesRead, tailBuf, tailBytesRead);
         } catch {
-            // Nếu không đọc được file → coi như invalid
+            // If the file cannot be read → treat it as invalid
             return { valid: false, reason: 'read_error' };
         }
     }
 
     /**
-     * validateImageFile với I/O bất đồng bộ: kiểm tra hàng loạt (file:validateLocalImages khi mở hội thoại) không chặn
-     * main — bản đồng bộ mở/đọc từng file trên luồng chính, mọi IPC khác (kể cả tải tin) phải chờ.
+     * validateImageFile with async I/O: bulk checks (file:validateLocalImages when opening a conversation) do not block
+     * main. The sync version opens and reads each file on the main thread, so every other IPC (including loading messages) has to wait.
      */
     public static async validateImageFileAsync(filePath: string): Promise<{ valid: boolean; reason?: string }> {
         let handle: fs.promises.FileHandle;
@@ -187,19 +187,19 @@ class FileStorageService {
         }
     }
 
-    /** Phần kiểm tra nội dung của validateImageFile / validateImageFileAsync (đã đọc 12 bytes đầu + 12 bytes cuối). */
+    /** The content-check part of validateImageFile / validateImageFileAsync (the first 12 bytes + last 12 bytes have already been read). */
     private static checkImageBytes(
         filePath: string, size: number, headBuf: Buffer, bytesRead: number, tailBuf: Buffer, tailBytesRead: number,
     ): { valid: boolean; reason?: string } {
         if (bytesRead < 2) return { valid: false, reason: 'not_image_content' };
 
-        // Detect HTML error page (CDN trả 200 nhưng nội dung là HTML)
+        // Detect an HTML error page (the CDN returns 200 but the content is HTML)
         const headStr = headBuf.slice(0, Math.min(bytesRead, 6)).toString('ascii').toLowerCase();
         if (headStr.startsWith('<html') || headStr.startsWith('<!doc')) {
             return { valid: false, reason: 'not_image_content' };
         }
 
-        // Check magic bytes cho các định dạng ảnh phổ biến
+        // Check the magic bytes for the common image formats
         const isJpeg = headBuf[0] === 0xFF && headBuf[1] === 0xD8 && headBuf[2] === 0xFF;
         const isPng = headBuf[0] === 0x89 && headBuf[1] === 0x50 && headBuf[2] === 0x4E && headBuf[3] === 0x47;
         const isGif = headBuf.slice(0, 6).toString('ascii') === 'GIF87a'
@@ -222,10 +222,10 @@ class FileStorageService {
             return { valid: false, reason: 'not_image_content' };
         }
 
-        // Tier 3: Kiểm tra end marker (bắt file bị cắt cụt)
+        // Tier 3: check the end marker (catches truncated files)
         if (size >= 2) {
             if (isJpeg) {
-                // JPEG phải kết thúc bằng FF D9
+                // A JPEG must end with FF D9
                 if (tailBytesRead >= 2) {
                     const last = tailBuf[tailBytesRead - 2];
                     const last2 = tailBuf[tailBytesRead - 1];
@@ -234,10 +234,10 @@ class FileStorageService {
                     }
                 }
             } else if (isPng) {
-                // PNG phải có IEND chunk ở cuối cùng
-                // Cấu trúc 12 bytes cuối: [len:4][type:4][crc:4]
+                // A PNG must have an IEND chunk at the very end
+                // Structure of the last 12 bytes: [len:4][type:4][crc:4]
                 //   len=0x00000000, type="IEND", crc=CRC32("IEND")
-                // Cần check 8 bytes cuối: type("IEND") + CRC
+                // Need to check the last 8 bytes: type ("IEND") + CRC
                 if (tailBytesRead >= 8) {
                     const iendSig = Buffer.from([0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82]);
                     const tailSlice = tailBuf.slice(tailBytesRead - 8);
@@ -252,7 +252,7 @@ class FileStorageService {
     }
 
     /**
-     * Lấy đường dẫn thư mục media cho một tài khoản
+     * Get the media folder path for one account
      */
     public static getAccountDir(zaloId: string): string {
         const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
@@ -330,10 +330,10 @@ class FileStorageService {
     }
 
     /**
-     * Download và lưu file đính kèm với tên file đúng (không dùng img_ prefix)
-     * @param cookiesJson - cookies JSON string từ auth (tough-cookie SerializedCookieJar)
-     * @param userAgent   - User-Agent string của account
-     * @param subDir      - thư mục con riêng (vd theo msgId): giữ đúng tên file gốc mà không lấy nhầm file trùng tên của tin khác
+     * Download and save an attachment with the correct file name (no img_ prefix)
+     * @param cookiesJson - cookies JSON string from auth (tough-cookie SerializedCookieJar)
+     * @param userAgent   - the account's User-Agent string
+     * @param subDir      - a dedicated subfolder (e.g. by msgId): keeps the original file name without picking up a file with the same name from another message
      */
     public static async downloadFile(
         zaloId: string,
@@ -351,7 +351,7 @@ class FileStorageService {
             const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_').replace(/[. ]+$/, '').trim() || `file_${Date.now()}`;
             const localPath = path.join(dir, safeFilename);
 
-            // I/O bất đồng bộ (ổ đĩa bận thì không chặn main) — xem writeMediaFile
+            // Async I/O (a busy disk does not block main): see writeMediaFile
             const existing = await fs.promises.stat(localPath).catch(() => null);
             if (existing) {
                 if (existing.size > 0) return this.toRelativePath(localPath);
@@ -364,7 +364,7 @@ class FileStorageService {
                 'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 // Facebook CDN can require facebook.com Referer (403 without it)
                 'Referer': cookiesJson ? 'https://www.facebook.com/' : 'https://chat.zalo.me/',
-                // File của Boss (máy nhân viên) cần token phiên nhân viên; URL khác không gắn gì
+                // Boss's files (the employee machine) need the employee session token; other URLs get nothing attached
                 ...bossAuthHeaders(url),
             };
             if (cookiesJson) {
@@ -393,7 +393,7 @@ class FileStorageService {
     }
 
     /**
-     * Chuyển đổi cookies JSON (tough-cookie SerializedCookieJar) sang header Cookie string
+     * Convert the cookies JSON (tough-cookie SerializedCookieJar) to a Cookie header string
      */
     public static buildCookieHeader(cookiesJson: string): string {
         try {
@@ -412,9 +412,9 @@ class FileStorageService {
     }
 
     /**
-     * Download và lưu ảnh từ URL
-     * @param cookiesJson - cookies JSON string từ auth (tough-cookie SerializedCookieJar)
-     * @param userAgent   - User-Agent string của account
+     * Download and save an image from a URL
+     * @param cookiesJson - cookies JSON string from auth (tough-cookie SerializedCookieJar)
+     * @param userAgent   - the account's User-Agent string
      */
     public static async downloadImage(
         zaloId: string,
@@ -425,11 +425,11 @@ class FileStorageService {
         referer?: string,
     ): Promise<string> {
         try {
-            // Ảnh JPEG XL của Zalo → tải bản JPG (Chromium không hiển thị được JXL)
+            // Zalo's JPEG XL images → download the JPG version (Chromium cannot display JXL)
             imageUrl = toZaloJpgUrl(imageUrl);
             const dir = this.getAccountDir(zaloId);
             const ext = this.getExtFromUrl(imageUrl) || '.jpg';
-            // Tên do nơi gọi truyền vào chỉ được là tên file (không thư mục, không "..")
+            // The name passed in by the caller must only be a file name (no folder, no "..")
             const fname = filename ? toSafeFileName(filename, `img_${Date.now()}${ext}`, { decodeUri: false }) : `img_${Date.now()}${ext}`;
             const localPath = path.join(dir, fname);
 
@@ -444,7 +444,7 @@ class FileStorageService {
             const headers: Record<string, string> = {
                 'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Referer': referer || 'https://chat.zalo.me/',
-                // Ảnh của Boss (máy nhân viên lưu ảnh từ MediaViewer) cần token phiên nhân viên
+                // Boss's images (the employee machine saved them from MediaViewer) need the employee session token
                 ...bossAuthHeaders(imageUrl),
             };
             if (cookiesJson) {
@@ -475,7 +475,7 @@ class FileStorageService {
     }
 
     /**
-     * Download tất cả attachments của một message
+     * Download all attachments of a message
      */
     public static async downloadAttachments(zaloId: string, attachments: any[]): Promise<Record<string, string>> {
         const localPaths: Record<string, string> = {};
@@ -496,7 +496,7 @@ class FileStorageService {
     }
 
     /**
-     * Lưu file từ buffer
+     * Save a file from a buffer
      */
     public static async saveBuffer(zaloId: string, buffer: Buffer, filename: string): Promise<string> {
         const dir = this.getAccountDir(zaloId);
@@ -507,7 +507,7 @@ class FileStorageService {
     }
 
     /**
-     * Lấy extension từ URL
+     * Get the extension from the URL
      */
     private static getExtFromUrl(url: string): string {
         try {
@@ -521,7 +521,7 @@ class FileStorageService {
     }
 
     /**
-     * Lấy danh sách file trong thư mục của account
+     * Get the list of files in the account's folder
      */
     public static getAccountFiles(zaloId: string): string[] {
         const baseDir = path.join(this.getBaseDir(), zaloId);
@@ -540,7 +540,7 @@ class FileStorageService {
     }
 
     /**
-     * Download video từ URL, lưu với đúng extension
+     * Download a video from a URL, saving it with the correct extension
      */
     public static async downloadVideo(
         zaloId: string,
@@ -548,12 +548,12 @@ class FileStorageService {
         filename?: string,
         cookiesJson?: string,
         userAgent?: string,
-        /** Tiến độ (byte đã nhận, tổng — 0 khi máy chủ không báo) → vòng tiến độ trên bong bóng video (media/mediaProgress). */
+        /** Progress (bytes received, total; 0 when the server does not report it) → the progress ring on the video bubble (media/mediaProgress). */
         onProgress?: (received: number, total: number) => void,
     ): Promise<string> {
         try {
             const dir = this.getAccountDir(zaloId);
-            // Xác định extension: cố gắng lấy từ URL, fallback mp4
+            // Determine the extension: try the URL first, fall back to mp4
             const urlPath = (() => { try { return new URL(videoUrl).pathname; } catch { return videoUrl; } })();
             const urlExt = path.extname(urlPath) || '';
             const ext = ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v', '.3gp'].includes(urlExt.toLowerCase())
@@ -572,7 +572,7 @@ class FileStorageService {
             const headers: Record<string, string> = {
                 'User-Agent': userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Referer': 'https://chat.zalo.me/',
-                // Video của Boss (máy nhân viên) cần token phiên nhân viên
+                // Boss's videos (the employee machine) need the employee session token
                 ...bossAuthHeaders(videoUrl),
             };
             if (cookiesJson) {
@@ -608,7 +608,7 @@ class FileStorageService {
     }
 
     /**
-     * Xoá toàn bộ thư mục media của một tài khoản (bao gồm tất cả file con).
+     * Delete the entire media folder of one account (including all its child files).
      */
     public static deleteAccountMedia(zaloId: string): void {
         const accountDir = path.join(this.getBaseDir(), zaloId);
@@ -625,17 +625,17 @@ class FileStorageService {
     }
 
     /**
-     * Xoá các thư mục ngày cũ hơn `olderThanDays` ngày trong thư mục media của tài khoản.
-     * Cấu trúc: {baseDir}/{zaloId}/{YYYY-MM-DD}/files
-     * @returns số lượng thư mục ngày đã xoá
+     * Delete the day folders older than `olderThanDays` days in the account's media folder.
+     * Structure: {baseDir}/{zaloId}/{YYYY-MM-DD}/files
+     * @returns number of day folders deleted
      */
     public static cleanupOldMedia(zaloId: string, olderThanDays: number): number {
-        // Lưu media lên R2 đang bật VÀ bật "giải phóng ổ đĩa" VÀ tài khoản trong phạm vi lưu: chỉ dọn file đã xác minh có
-        // trên R2 (chạy nền, HEAD trước khi xoá) — file chưa sao lưu được giữ lại, không xoá cả thư mục ngày như cũ. Trả 0
-        // vì lúc này chưa xoá gì. Còn lại (R2 tắt, giữ file trên máy — mặc định, tài khoản ngoài phạm vi) → dọn như trước.
+        // Media is stored to R2, AND "free up disk space" is on, AND the account is within the storage scope: only delete files that are verified
+        // on R2 (runs in the background, HEAD before deleting). Files not yet backed up are kept, instead of deleting the whole day folder as before. Returns 0
+        // because nothing is deleted at this point. Otherwise (R2 off, files kept on the machine: the default, or the account is out of scope) → clean up as before.
         try {
             if (require('../cloudflare/media').evictOldAccountMedia(zaloId, olderThanDays)) return 0;
-        } catch { /* module R2 lỗi → dọn như cũ */ }
+        } catch { /* R2 module error → clean up as before */ }
         const accountDir = path.join(this.getBaseDir(), zaloId);
         if (!fs.existsSync(accountDir)) return 0;
 
@@ -650,7 +650,7 @@ class FileStorageService {
                     const stat = fs.statSync(fullPath);
                     if (!stat.isDirectory()) continue;
 
-                    // Tên thư mục theo format YYYY-MM-DD
+                    // Folder name in the YYYY-MM-DD format
                     const dirDate = new Date(entry + 'T00:00:00');
                     if (isNaN(dirDate.getTime())) continue;
 
@@ -674,7 +674,7 @@ class FileStorageService {
     }
 
     /**
-     * Xóa file local
+     * Delete a local file
      */
     public static deleteFile(filePath: string): void {
         try {

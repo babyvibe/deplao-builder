@@ -46,22 +46,22 @@ interface EmployeeStore {
     setAssignedAccounts: (ids: string[]) => void;
 
     // ─── Connection status (when mode === 'employee') ─────────────
-    // Hai nguồn: heartbeat của main ('workspace:connectionStatus') + REST client của renderer
-    // (RestQueryService status listener). Badge = kết hợp, xem computeEmployeeBadgeState.
-    /** Online tổng hợp (= connectionBadge === 'online'): heartbeat OK && REST không bị chặn && phiên còn hạn. */
+    // Two sources: the main heartbeat ('workspace:connectionStatus') + the renderer's REST client
+    // (RestQueryService status listener). Badge = combined, see computeEmployeeBadgeState.
+    /** Overall online (= connectionBadge === 'online'): heartbeat OK && REST not blocked && session still valid. */
     bossConnected: boolean;
-    /** Badge TopBar: online | recovering (REST đang hồi phục) | offline | expired (cần đăng nhập lại). */
+    /** TopBar badge: online | recovering (REST is recovering) | offline | expired (needs login again). */
     connectionBadge: EmployeeBadgeState;
-    /** Heartbeat main → Boss OK (chỉ ghi từ trạng thái của main). */
+    /** Heartbeat main → owner's machine OK (only written from the main process state). */
     heartbeatConnected: boolean;
-    /** REST client đang bị chặn / chưa có URL-token (chỉ ghi từ RestQueryService). */
+    /** REST client is blocked / has no URL-token yet (only written by RestQueryService). */
     restBlocked: boolean;
-    /** Boss từ chối token → phải đăng nhập lại. */
+    /** The owner's machine rejected the token → must log in again. */
     authExpired: boolean;
     setHeartbeatConnected: (v: boolean) => void;
     setRestBlocked: (v: boolean) => void;
     setAuthExpired: (v: boolean) => void;
-    /** @deprecated Dùng setHeartbeatConnected — giữ để tương thích, chỉ ghi phần heartbeat. */
+    /** @deprecated Use setHeartbeatConnected: kept for compatibility, only writes the heartbeat part. */
     setBossConnected: (v: boolean) => void;
     bossUrl: string;
     setBossUrl: (url: string) => void;
@@ -108,7 +108,7 @@ interface EmployeeStore {
 
 type ConnectionParts = { heartbeatConnected: boolean; restBlocked: boolean; authExpired: boolean };
 
-/** Trường suy ra (bossConnected, connectionBadge) từ 3 nguồn trạng thái. */
+/** Derived fields (bossConnected, connectionBadge) computed from the 3 state sources. */
 function deriveConnection(parts: ConnectionParts): { bossConnected: boolean; connectionBadge: EmployeeBadgeState } {
     const connectionBadge = computeEmployeeBadgeState({
         heartbeatOk: parts.heartbeatConnected,
@@ -188,8 +188,8 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
                 return cachedEmployees;
             }
 
-            // Hồ sơ ERP trên Boss (REST qua DataAccessor) — trước đây IPC ở máy nhân viên (DB cục bộ, thường trống).
-            // Import động: DataAccessor import store này. Đọc lỗi → giữ danh sách đang có
+            // ERP profiles on the owner's machine (REST via DataAccessor): previously an IPC on the employee machine (local DB, usually empty).
+            // Dynamic import: DataAccessor imports this store. Read error → keep the current list
             const { default: DataAccessor } = await import('@/lib/data/DataAccessor');
             const profileRes: any = await DataAccessor.erpProfiles();
             if (!profileRes?.success) return get().employees;
@@ -223,8 +223,8 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
         ...(avatarUrl ? { employeeAvatarMap: { ...s.employeeAvatarMap, [employeeId]: avatarUrl } } : {}),
     })),
     setPreviewEmployeeId: (id) => set({ previewEmployeeId: id }),
-    // restBlocked phản ánh RestQueryService (singleton dùng chung mọi workspace) → reset không xoá,
-    // chỉ được ghi lại bởi status listener của REST.
+    // restBlocked reflects RestQueryService (a singleton shared by all workspaces) → reset does not clear it,
+    // it is only written by the REST status listener.
     reset: () => set((s) => {
         const parts: ConnectionParts = {
             heartbeatConnected: initialState.heartbeatConnected,

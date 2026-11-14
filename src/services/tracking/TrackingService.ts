@@ -1,19 +1,19 @@
 /**
- * TrackingService - Gửi dữ liệu tracking page lên API deplaoapp.com.
+ * TrackingService: sends page tracking data to the deplaoapp.com API.
  *
- * - Chỉ hoạt động khi build production (GitHub Actions / NODE_ENV=production).
- * - Cache local: mỗi ngày push 1 lần. Nếu có page mới tích hợp → track lại ngay trong ngày.
- * - Gửi pageId (UID Zalo / UID Facebook / telegram:<id>), machineId, lastTrackedAt lên Google Sheets.
- * - Không gửi các field nhạy cảm khác (name, phone,...).
- * - Tính năng phục vụ gia hạn tính năng premium, không thu thập thông tin cá nhân.
+ * - Only runs in the production build (GitHub Actions / NODE_ENV=production).
+ * - Local cache: pushes once per day. If a new integrated page appears → track again the same day.
+ * - Sends pageId (Zalo UID / Facebook UID / telegram:<id>), machineId, lastTrackedAt to Google Sheets.
+ * - Does not send other sensitive fields (name, phone, ...).
+ * - The purpose is to support renewing premium features; no personal information is collected.
  *
- * Chỉ gửi trang đã tích hợp có UID thật (trackedPageIds): tài khoản đang dùng của các workspace trên máy này (không
- * đọc workspace nhân viên — đó là trang của Boss). Không có trang nào → không gửi gì. Trước 23/10/2026 máy chưa có
- * trang (hoặc chỉ có Telegram — kênh bị lọc sai) gửi "machine:<id>", và machineId sinh lại ở mỗi chỗ dùng nên một máy
- * mới tạo 2 dòng rác trong cùng ngày.
+ * Only sends integrated pages with a real UID (trackedPageIds): the accounts in use across the workspaces on this machine (does not
+ * read employee workspaces, those pages belong to the Boss). No page → nothing is sent. Before 23/10/2026 the machine had no
+ * page (or only Telegram, which was filtered wrongly) and sent "machine:<id>", and the machineId was regenerated at each use, so a new machine
+ * created 2 junk rows on the same day.
  *
  * API: POST https://deplaoapp.com/api/tracking/page
- * Rate limit: 10 req/giờ/IP - trả về 429 nếu vượt quá.
+ * Rate limit: 10 req/hour/IP; returns 429 when exceeded.
  */
 
 import { IS_DEV_BUILD } from '../../configs/app/BuildConfig';
@@ -38,7 +38,7 @@ interface TrackingCache {
   machineId: string;
   lastTrackedDate: string;       // ISO date string "YYYY-MM-DD"
   lastTrackedAt: string;         // ISO datetime string
-  trackedPageIds: string[];      // Danh sách pageId đã track lần gần nhất
+  trackedPageIds: string[];      // List of pageIds tracked most recently
 }
 
 interface TrackingApiResponse {
@@ -49,14 +49,14 @@ interface TrackingApiResponse {
   retryAfterSec?: number;
 }
 
-/** Hàng bảng accounts (Zalo, Facebook, Telegram cá nhân / bot). */
+/** A row of the accounts table (Zalo, Facebook, personal Telegram / bot). */
 export interface TrackedAccountRow {
   zalo_id?: string | null;
   channel?: string | null;
   is_active?: number | null;
 }
 
-/** Hàng bảng fb_accounts (Facebook). */
+/** A row of the fb_accounts table (Facebook). */
 export interface TrackedFacebookRow {
   facebook_id?: string | null;
   status?: string | null;
@@ -66,16 +66,16 @@ export interface TrackedFacebookRow {
 
 const API_URL = 'https://deplaoapp.com/api/tracking/page';
 const CACHE_FILENAME = 'tracking-cache.json';
-const CHECK_INTERVAL_MS = 60 * 60 * 1000; // 60 phút
+const CHECK_INTERVAL_MS = 60 * 60 * 1000; // 60 minutes
 const DEFAULT_DB_NAME = 'deplao-tool.db';
 
-/** UID của nền tảng (Zalo, Facebook, Telegram) là dãy số. ID nội bộ (UUID), "9", rỗng… không phải trang tích hợp. */
+/** Platform UIDs (Zalo, Facebook, Telegram) are numeric. The internal ID (UUID), "9", empty… are not integrated pages. */
 const PLATFORM_UID = /^\d{5,20}$/;
 
 /**
- * Trang gửi lên tracking: tài khoản đang dùng (accounts.is_active = 1) có UID thật — Zalo / Facebook: UID,
- * Telegram cá nhân + bot: "telegram:<id>"; thêm Facebook đang kết nối trong fb_accounts (bản cũ có thể thiếu hàng
- * accounts). Kênh lạ / ID không phải UID bị bỏ. Không có trang nào → [] (không gửi gì).
+ * Pages sent to tracking: the accounts in use (accounts.is_active = 1) with a real UID: Zalo / Facebook: the UID;
+ * personal Telegram + bot: "telegram:<id>"; plus the connected Facebook accounts in fb_accounts (an older version may lack the accounts
+ * row). Unknown channels / IDs that are not UIDs are dropped. No page → [] (nothing is sent).
  */
 export function trackedPageIds(accounts: TrackedAccountRow[], facebookAccounts: TrackedFacebookRow[]): string[] {
   const ids = new Set<string>();
@@ -102,7 +102,7 @@ class TrackingService {
   private cachePath = '';
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
-  /** Lần trước đã ghi "chưa có trang" — không ghi lại mỗi giờ. */
+  /** Last time "chưa có trang" (no page) was recorded: do not record it again every hour. */
   private loggedNoPages = false;
 
   public static getInstance(): TrackingService {
@@ -113,11 +113,11 @@ class TrackingService {
   }
 
   /**
-   * Khởi động tracking service.
-   * Chỉ hoạt động trong production build.
+   * Start the tracking service.
+   * Only works in the production build.
    */
   public start(): void {
-    // ── Guard: chỉ chạy trong production ────────────────────────────────
+    // ── Guard: only runs in production ────────────────────────────────
     if (IS_DEV_BUILD) {
       Logger.log('[TrackingService] 🔇 Bỏ qua - đang chạy ở môi trường development');
       return;
@@ -137,10 +137,10 @@ class TrackingService {
 
       Logger.log(`[TrackingService] ✅ Khởi động - machineId=${this.cache?.machineId?.slice(0, 8)}... lastTracked=${this.cache?.lastTrackedDate || 'never'}`);
 
-      // Chạy lần đầu sau 10s (đợi DB sẵn sàng)
+      // First run 10 s after start (wait for the DB to be ready)
       setTimeout(() => this.tick(), 10_000);
 
-      // Lặp mỗi 60 phút
+      // Repeat every 60 minutes
       this.timer = setInterval(() => this.tick(), CHECK_INTERVAL_MS);
     } catch (err: any) {
       Logger.error(`[TrackingService] ❌ Lỗi khởi động: ${err.message}`);
@@ -148,7 +148,7 @@ class TrackingService {
   }
 
   /**
-   * Dừng tracking service.
+   * Stop the tracking service.
    */
   public stop(): void {
     if (this.timer) {
@@ -162,8 +162,8 @@ class TrackingService {
   // ── Core logic ──────────────────────────────────────────────────────────
 
   /**
-   * Trang đã tích hợp trên máy này: mọi workspace local (mặc định + workspace local khác), không gồm workspace nhân
-   * viên (remote — bản sao trang của Boss, máy Boss tự gửi). Dùng chung cho so sánh với cache và payload gửi đi.
+   * Pages integrated on this machine: every local workspace (the default one + other local workspaces), excluding employee
+   * workspaces (remote: a copy of the Boss's pages, which the Boss's machine sends itself). Shared for comparing with the cache and the outgoing payload.
    */
   private collectCurrentPageIds(): string[] {
     const db = DatabaseService.getInstance();
@@ -174,7 +174,7 @@ class TrackingService {
       localDbPaths = wm.listWorkspaces()
         .filter((ws) => ws.type === 'local')
         .map((ws) => wm.resolveDbPath(ws.dbPath || DEFAULT_DB_NAME));
-    } catch { /* WorkspaceManager chưa sẵn sàng → chỉ đọc DB đang mở */ }
+    } catch { /* WorkspaceManager not ready → only read the DB that is open */ }
     if (localDbPaths.length === 0) return read();
 
     const ids = new Set<string>();
@@ -189,7 +189,7 @@ class TrackingService {
   }
 
   /**
-   * So sánh 2 danh sách pageId (thứ tự đã sort).
+   * Compare two pageId lists (sorted order).
    */
   private areSameIds(a: string[] | undefined, b: string[]): boolean {
     if (!a || a.length !== b.length) return false;
@@ -204,7 +204,7 @@ class TrackingService {
       const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
       const currentIds = this.collectCurrentPageIds();
 
-      // Chưa tích hợp trang nào có UID → không gửi gì (không còn dòng "machine:<id>")
+      // No integrated page has a UID → send nothing (no more "machine:<id>" rows)
       if (currentIds.length === 0) {
         if (!this.loggedNoPages) Logger.log('[TrackingService] ℹ️ Chưa có trang tích hợp có UID - không gửi tracking');
         this.loggedNoPages = true;
@@ -212,11 +212,11 @@ class TrackingService {
       }
       this.loggedNoPages = false;
 
-      // Nếu đã track hôm nay và danh sách page không đổi → bỏ qua
+      // If already tracked today and the page list has not changed → skip
       if (this.cache?.lastTrackedDate === today) {
         const sameIds = this.areSameIds(this.cache.trackedPageIds, currentIds);
         if (sameIds) {
-          return; // Đã track rồi, không có page mới
+          return; // Already tracked, no new page
         }
         Logger.log('[TrackingService] 🔄 Phát hiện page mới tích hợp - track lại ngay');
       } else {
@@ -229,7 +229,7 @@ class TrackingService {
       Logger.log(`[TrackingService] 📤 Gửi ${payload.length} page(s) lên API...`);
       await this.postTracking(payload);
 
-      // Cập nhật cache sau khi gửi thành công
+      // Update the cache after a successful send
       this.cache = {
         machineId,
         lastTrackedDate: today,
@@ -241,12 +241,12 @@ class TrackingService {
       Logger.log('[TrackingService] ✅ Tracking đã gửi thành công');
     } catch (err: any) {
       Logger.warn(`[TrackingService] ⚠️ Gửi tracking thất bại: ${err.message}`);
-      // Không crash app - thử lại vào lần tick sau (60 phút)
+      // Do not crash the app: retry on the next tick (60 minutes)
     }
   }
 
   /**
-   * POST dữ liệu lên API tracking.
+   * POST data to the tracking API.
    */
   private async postTracking(payload: TrackingPayload[]): Promise<void> {
     const response = await axios.post<TrackingApiResponse>(
@@ -254,7 +254,7 @@ class TrackingService {
       { pages: payload },
       {
         headers: { 'Content-Type': 'application/json' },
-        timeout: 15_000, // 15 giây timeout
+        timeout: 15_000, // 15-second timeout
       },
     );
 
@@ -279,7 +279,7 @@ class TrackingService {
       if (fs.existsSync(this.cachePath)) {
         const raw = fs.readFileSync(this.cachePath, 'utf-8');
         const parsed = JSON.parse(raw);
-        // Migrate: cache cũ không có trackedPageIds → reset để track lại
+        // Migrate: an old cache without trackedPageIds → reset so it tracks again
         if (!Array.isArray(parsed.trackedPageIds)) {
           parsed.trackedPageIds = [];
         }
@@ -304,8 +304,8 @@ class TrackingService {
   }
 
   /**
-   * machineId cố định cho máy này: lấy từ cache, chưa có thì tạo MỘT lần và lưu ngay (trước đây mỗi chỗ dùng tự sinh
-   * UUID mới khi chưa có cache → một lần gửi mang machineId khác với cái được lưu).
+   * Fixed machineId for this machine: taken from the cache, or created ONCE and saved at once when there is none (previously each use generated its own
+   * UUID when there was no cache, so one send carried a different machineId from the one saved).
    */
   private ensureMachineId(): string {
     if (this.cache?.machineId) return this.cache.machineId;
@@ -317,7 +317,7 @@ class TrackingService {
   }
 
   /**
-   * Format date theo định dạng DD/MM/YYYY HH:mm (Google Sheets format).
+   * Format a date as DD/MM/YYYY HH:mm (Google Sheets format).
    */
   private formatDate(date: Date): string {
     const dd = String(date.getDate()).padStart(2, '0');

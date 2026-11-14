@@ -1,12 +1,12 @@
 /**
- * Khung dùng chung của mọi trang Cài đặt, để các trang trông và đọc như nhau:
- * - SettingsPage: tiêu đề + 1 dòng mô tả + nút bên phải; độ rộng `form` (trang chỉnh, dễ đọc), `wide` (danh sách, bảng)
- *   hoặc `full`; `fill` cho trang tự chia vùng cuộn (Hội thoại, Nhật ký…).
- * - SettingsSection: một khối có tiêu đề nhỏ phía trên, nội dung trong thẻ; các dòng bên trong có vạch ngăn.
- * - SettingsRow: tên + mô tả ngắn bên trái, điều khiển bên phải; `children` = phần mở rộng ngay dưới dòng.
- * - SettingLine: dòng cài đặt dưới một mục (tài khoản, nhân viên…) kèm trạng thái hiện tại, bấm mở phần chỉnh tại chỗ.
- * - Notice: dải thông báo (dùng chung với Internet & Cloud).
- * Chỉ dùng token màu (bg-card, text-foreground, primary…) nên đúng cả giao diện sáng và tối.
+ * Shared frame for every Settings page, so they look and read the same:
+ * - SettingsPage: title + 1 description line + a button on the right; width `form` (editing pages, easy to read), `wide` (lists, tables)
+ *   or `full`; `fill` for pages that split the scroll area themselves (Conversations, Logs…).
+ * - SettingsSection: a block with a small heading above, content inside a card; the rows inside are separated by dividers.
+ * - SettingsRow: name + short description on the left, control on the right; `children` = the expansion right under the row.
+ * - SettingLine: a settings line under an item (account, employee…) showing the current status, click to open the inline editor.
+ * - Notice: notification strip (shared with Internet & Cloud).
+ * Only color tokens are used (bg-card, text-foreground, primary…), so it looks right in both light and dark mode.
  */
 import React from 'react';
 import { cn } from '@/lib/cn';
@@ -27,7 +27,7 @@ export function SettingsPage({ title, description, actions, width = 'form', fill
   description?: React.ReactNode;
   actions?: React.ReactNode;
   width?: PageWidth;
-  /** Trang cao đúng khung (vùng cuộn nằm bên trong trang). */
+  /** Page that fills the frame height (the scroll area sits inside the page). */
   fill?: boolean;
   className?: string;
   children?: React.ReactNode;
@@ -52,11 +52,11 @@ export function SettingsSection({ title, description, action, footer, flush, pla
   title?: React.ReactNode;
   description?: React.ReactNode;
   action?: React.ReactNode;
-  /** Ghi chú nhỏ ngay dưới thẻ. */
+  /** Small note right under the card. */
   footer?: React.ReactNode;
-  /** Không tự chia dòng / không lề trong: nội dung tự trình bày (danh sách, bảng…). */
+  /** No automatic row split and no inner padding: the content lays itself out (lists, tables…). */
   flush?: boolean;
-  /** Không bọc thẻ: nội dung tự là các thẻ xếp dọc (vd danh sách nhân viên). */
+  /** No card wrapper: the content is itself a vertical stack of cards (e.g. the employee list). */
   plain?: boolean;
   className?: string;
   bodyClassName?: string;
@@ -92,7 +92,7 @@ export function SettingsRow({ title, description, control, className, children }
   description?: React.ReactNode;
   control?: React.ReactNode;
   className?: string;
-  /** Phần mở rộng ngay dưới dòng (thanh trượt, ô nhập…). */
+  /** Expansion right under the row (sliders, inputs…). */
   children?: React.ReactNode;
 }) {
   return (
@@ -110,8 +110,8 @@ export function SettingsRow({ title, description, control, className, children }
 }
 
 /**
- * Một dòng cài đặt dưới một mục (tài khoản, nhân viên…): tên + trạng thái hiện tại; bấm để mở / đóng phần chỉnh ngay
- * bên dưới (không giấu sau bánh răng → hộp thoại). `summaryTone="warning"` khi trạng thái cần người dùng để ý.
+ * A settings line under an item (account, employee…): name + current status; click to open / close the editor right below
+ * (not hidden behind a gear icon → dialog). `summaryTone="warning"` when the status needs the user's attention.
  */
 export function SettingLine({ panelId, icon, title, summary, summaryTone, open, onToggle, children }: {
   panelId: string;
@@ -139,7 +139,7 @@ export function SettingLine({ panelId, icon, title, summary, summaryTone, open, 
   );
 }
 
-/** Đường dẫn / địa chỉ dạng mã, cắt gọn một dòng (di chuột xem đủ). */
+/** Path / address shown as code, cut to one line (hover to see the full text). */
 export function PathText({ value, className }: { value: string; className?: string }) {
   return (
     <code title={value} className={cn('block truncate rounded-md bg-muted px-2.5 py-1.5 font-mono text-xs text-foreground', className)}>
@@ -148,7 +148,7 @@ export function PathText({ value, className }: { value: string; className?: stri
   );
 }
 
-/** Nhóm nút chọn một dạng viên (tab nhỏ trong trang). */
+/** Group of pill-style choice buttons (small tabs inside a page). */
 export function SegmentedControl<T extends string>({ value, options, onChange, label, className }: {
   value: T;
   options: { value: NoInfer<T>; label: React.ReactNode; count?: number }[];

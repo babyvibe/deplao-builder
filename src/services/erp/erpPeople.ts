@@ -1,8 +1,8 @@
 import DatabaseService from '../database/DatabaseService';
 
 /**
- * Tên người trong chữ thông báo ERP ("Giao bởi …", "Lan xin nghỉ…"): 'boss' → "Boss" (như trang Nhân sự), nhân viên →
- * tên hiển thị; không tìm thấy / lỗi DB → id. Trước đây thông báo in thẳng id nhân viên.
+ * Person names in ERP notification text ("Giao bởi …" (Assigned by …), "Lan xin nghỉ…" (Lan asks for leave…)): 'boss' → "Boss" (as on the HR page), an employee →
+ * their display name; not found / DB error → the id. Before, notifications printed the employee id directly.
  */
 export function erpPersonName(employeeId: string | null | undefined): string {
   const id = String(employeeId ?? '').trim();

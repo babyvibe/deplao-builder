@@ -1,7 +1,7 @@
 /**
- * Token màu cho UI plugin. Giá trị bám theo bảng token của app (src/ui/index.css:
- * --background/--card/--muted/--border/--foreground/--muted-foreground) nhưng được cấp cho
- * plugin dưới dạng bộ biến cố định --dp-* theo theme hiện tại; plugin chỉ nên dùng các biến này.
+ * Color tokens for plugin UI. The values follow the app's token table (src/ui/index.css:
+ * --background/--card/--muted/--border/--foreground/--muted-foreground) but are given to the
+ * plugin as a fixed set of --dp-* variables for the current theme; plugins should only use these variables.
  */
 import type { AppTheme } from '@/store/app/appStore';
 

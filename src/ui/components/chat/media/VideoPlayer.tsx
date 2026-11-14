@@ -1,17 +1,18 @@
 /**
- * VideoPlayer.tsx - Modal overlay cho播放 video inline (giống Telegram).
+ * VideoPlayer.tsx - Modal overlay for inline video playback (like Telegram).
  *
- * Hỗ trợ:
+ * Supports:
  *   - Local file (local-media:// protocol)
  *   - Remote CDN URL (http/https)
- *   - Keyboard shortcuts: Space (play/pause), Esc (close), F (fullscreen), Arrow keys (seek/volume)
+ *   - Keyboard shortcuts: Space (play/pause), Esc (close), F (fullscreen), arrow keys (seek/volume)
  *   - Toolbar: play/pause, volume, progress, time, fullscreen, download, open folder, close
- *   - Gate: chỉ decode video đang play, release khi close
+ *   - Gate: only decode the video being played; release on close
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl, withCloudWaitHint } from '@/lib/media/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
+import { tr } from '../../../../shared/i18n';
 
 export interface VideoPlayerProps {
   /** Local filesystem path (absolute) */
@@ -62,7 +63,7 @@ export default function VideoPlayer({
   const [repairing, setRepairing] = useState(false);
 
   // Resolve video source
-  // Không có link CDN của kênh → nếu file đã được dọn lên Cloudflare R2 thì chờ R2 tải về (không trả lỗi sớm).
+  // The channel has no CDN link → if the file was already moved to Cloudflare R2, wait for R2 to download it (do not return an early error).
   const localMediaUrl = localPath ? (remoteUrl ? toLocalMediaUrl(localPath) : withCloudWaitHint(toLocalMediaUrl(localPath))) : '';
   const videoSrc = localMediaUrl || remoteUrl || '';
 
@@ -351,7 +352,7 @@ export default function VideoPlayer({
       {repairing && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 pointer-events-none">
           <div className="w-12 h-12 rounded-full border-3 border-blue-400/30 border-t-blue-400 animate-spin" />
-          <p className="text-sm text-blue-300">Đang sửa file video...</p>
+          <p className="text-sm text-blue-300">{tr('Đang sửa file video...')}</p>
         </div>
       )}
 
@@ -363,13 +364,13 @@ export default function VideoPlayer({
             <line x1="15" y1="9" x2="9" y2="15"/>
             <line x1="9" y1="9" x2="15" y2="15"/>
           </svg>
-          <p className="text-sm">Không thể phát video</p>
+          <p className="text-sm">{tr('Không thể phát video')}</p>
           {localPath && (
             <button
               onClick={() => ipc.file?.openPath(localPath)}
               className="text-xs text-blue-400 hover:text-blue-300 underline"
             >
-              Mở bằng app bên ngoài
+              {tr('Mở bằng app bên ngoài')}
             </button>
           )}
           {remoteUrl && (
@@ -377,7 +378,7 @@ export default function VideoPlayer({
               onClick={() => ipc.shell?.openExternal(remoteUrl)}
               className="text-xs text-blue-400 hover:text-blue-300 underline"
             >
-              Mở trong trình duyệt
+              {tr('Mở trong trình duyệt')}
             </button>
           )}
         </div>
@@ -394,7 +395,7 @@ export default function VideoPlayer({
           {localPath && (
             <button
               onClick={handleOpenFolder}
-              title="Mở thư mục"
+              title={tr('Mở thư mục')}
               className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/80 hover:text-white transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -405,7 +406,7 @@ export default function VideoPlayer({
           <button
             onClick={handleSaveAs}
             disabled={saving}
-            title="Lưu về máy"
+            title={tr('Lưu về máy')}
             className="w-8 h-8 rounded-lg bg-foreground/10 hover:bg-foreground/20 flex items-center justify-center text-foreground/80 hover:text-foreground transition-colors disabled:opacity-40"
           >
             {saving ? (
@@ -420,7 +421,7 @@ export default function VideoPlayer({
           </button>
           <button
             onClick={onClose}
-            title="Đóng (Esc)"
+            title={tr('Đóng (Esc)')}
             className="w-8 h-8 rounded-lg bg-white/10 hover:bg-red-600/70 flex items-center justify-center text-white/80 hover:text-white transition-colors"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -455,7 +456,7 @@ export default function VideoPlayer({
           <button
             onClick={togglePlay}
             className="w-9 h-9 flex items-center justify-center text-foreground hover:text-blue-400 transition-colors"
-            title={isPlaying ? 'Tạm dừng (Space)' : 'Phát (Space)'}
+            title={isPlaying ? tr('Tạm dừng (Space)') : tr('Phát (Space)')}
           >
             {isPlaying ? (
               <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
@@ -473,7 +474,7 @@ export default function VideoPlayer({
           <button
             onClick={toggleMute}
             className="w-8 h-8 flex items-center justify-center text-foreground/70 hover:text-foreground transition-colors"
-            title={isMuted ? 'Bật tiếng (M)' : 'Tắt tiếng (M)'}
+            title={isMuted ? tr('Bật tiếng (M)') : tr('Tắt tiếng (M)')}
           >
             {isMuted || volume === 0 ? (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -505,7 +506,7 @@ export default function VideoPlayer({
           <button
             onClick={toggleFullscreen}
             className="w-8 h-8 flex items-center justify-center text-foreground/70 hover:text-foreground transition-colors"
-            title={isFullscreen ? 'Thoát fullscreen (F)' : 'Fullscreen (F)'}
+            title={isFullscreen ? tr('Thoát fullscreen (F)') : tr('Fullscreen (F)')}
           >
             {isFullscreen ? (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

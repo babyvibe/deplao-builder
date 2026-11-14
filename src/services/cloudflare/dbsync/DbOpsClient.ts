@@ -1,9 +1,9 @@
 /**
- * DbOpsClient — phía main gọi bộ xử lý SQLite của đồng bộ DB.
- *  - createWorkerOps(): worker_threads (sản phẩm). Worker tạo lười ở lần gọi đầu, tự tạo lại nếu chết; terminate()
- *    khi tắt đồng bộ / thoát app → không còn luồng nào khi tắt.
- *  - createInProcessOps(): gọi thẳng trong tiến trình (test jest với node:sqlite). KHÔNG dùng ở main của app vì
- *    chụp gốc / kiểm tra toàn vẹn là thao tác đồng bộ dài.
+ * DbOpsClient: the main-process side that calls the DB sync's SQLite handler.
+ *  - createWorkerOps(): worker_threads (production). The worker is created lazily on the first call and recreated if it dies; terminate()
+ *    when sync is turned off / the app quits → no threads are left running after shutdown.
+ *  - createInProcessOps(): calls directly in the process (jest tests with node:sqlite). NOT used in the app's main process, because
+ *    taking the base snapshot / integrity checks are long synchronous operations.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -13,16 +13,16 @@ import type { OpenSqlConn } from './sqlConn';
 export interface DbOps {
     call<T = any>(op: string, args?: any): Promise<T>;
     onEvent(cb: (ev: DbOpsEvent) => void): () => void;
-    /** Đóng mọi connection + dừng luồng nền (chờ đóng gọn tối đa graceMs). Gọi lại call() sau đó sẽ tạo luồng mới. */
+    /** Close all connections + stop the background thread (waits for a clean close, at most graceMs). Calling call() afterwards creates a new thread. */
     terminate(graceMs?: number): Promise<void>;
-    /** Đang có luồng nền / connection (false = chưa tạo hoặc đã dừng — khỏi tạo worker chỉ để đóng). */
+    /** Whether a background thread / connection exists (false = not created yet or already stopped; no need to create a worker just to close it). */
     isActive(): boolean;
     readonly kind: 'worker' | 'inprocess';
 }
 
 export function createInProcessOps(openConn: OpenSqlConn): DbOps {
     const listeners = new Set<(ev: DbOpsEvent) => void>();
-    let handler = createOpsHandler(openConn, ev => listeners.forEach(l => { try { l(ev); } catch { /* bỏ qua */ } }));
+    let handler = createOpsHandler(openConn, ev => listeners.forEach(l => { try { l(ev); } catch { /* ignore */ } }));
     return {
         kind: 'inprocess',
         call: (op, args) => handler.handle(op, args || {}),
@@ -32,25 +32,25 @@ export function createInProcessOps(openConn: OpenSqlConn): DbOps {
         },
         terminate: async () => {
             handler.closeAll();
-            handler = createOpsHandler(openConn, ev => listeners.forEach(l => { try { l(ev); } catch { /* bỏ qua */ } }));
+            handler = createOpsHandler(openConn, ev => listeners.forEach(l => { try { l(ev); } catch { /* ignore */ } }));
         },
         isActive: () => true,
     };
 }
 
-/** Đường dẫn worker.js (ưu tiên bản unpack khỏi app.asar nếu có). */
+/** Path to worker.js (prefers the copy unpacked from app.asar, if there is one). */
 export function resolveWorkerPath(dir: string = __dirname): string | null {
     const candidates: string[] = [];
     const p = path.join(dir, 'worker.js');
     if (p.includes('app.asar') && !p.includes('app.asar.unpacked')) candidates.push(p.replace('app.asar', 'app.asar.unpacked'));
     candidates.push(p);
     for (const c of candidates) {
-        try { if (fs.existsSync(c)) return c; } catch { /* bỏ qua */ }
+        try { if (fs.existsSync(c)) return c; } catch { /* ignore */ }
     }
     return null;
 }
 
-/** better_sqlite3.node thật trên đĩa (worker không cần gói 'bindings' nằm trong app.asar). */
+/** The real better_sqlite3.node on disk (the worker does not need the 'bindings' package inside app.asar). */
 export function resolveNativeBinding(): string | null {
     try {
         const pkg = require.resolve('better-sqlite3/package.json');
@@ -102,7 +102,7 @@ class WorkerOps implements DbOps {
             if (this.worker === w) this.worker = null;
             if (this.pending.size) this.failAll(new WorkerStartError(`Worker đồng bộ DB đã dừng (mã ${code})`));
         });
-        // Không giữ tiến trình sống chỉ vì worker (thoát app không phải chờ).
+        // Do not keep the process alive just for the worker (quitting the app does not have to wait).
         w.unref();
         this.worker = w;
         return w;
@@ -110,7 +110,7 @@ class WorkerOps implements DbOps {
 
     private onMessage(m: any): void {
         if (m && m.event) {
-            for (const l of this.listeners) { try { l(m.event); } catch { /* bỏ qua */ } }
+            for (const l of this.listeners) { try { l(m.event); } catch { /* ignore */ } }
             return;
         }
         const p = m && typeof m.id === 'number' ? this.pending.get(m.id) : undefined;
@@ -161,14 +161,14 @@ class WorkerOps implements DbOps {
     async terminate(graceMs = 5000): Promise<void> {
         const w = this.worker;
         if (!w) return;
-        // Đóng connection gọn (thao tác đang chạy dở trong worker phải xong trước — tối đa graceMs), rồi dừng luồng.
+        // Close connections cleanly (an operation half-done in the worker must finish first, at most graceMs), then stop the thread.
         await new Promise<void>(resolve => {
             const timer = setTimeout(resolve, Math.max(0, graceMs));
             this.call('closeAll').then(() => { clearTimeout(timer); resolve(); }, () => { clearTimeout(timer); resolve(); });
         });
         if (this.worker === w) this.worker = null;
         this.failAll(new WorkerStartError('Worker đồng bộ DB đã dừng'));
-        try { await w.terminate(); } catch { /* đã dừng */ }
+        try { await w.terminate(); } catch { /* already stopped */ }
     }
 }
 
@@ -176,7 +176,7 @@ export function createWorkerOps(opts: { workerPath?: string | null; nativeBindin
     return new WorkerOps(opts);
 }
 
-/** Buffer từ kết quả worker (structured clone biến Buffer thành Uint8Array). */
+/** Buffer from a worker result (structured clone turns a Buffer into a Uint8Array). */
 export function asBuffer(v: unknown): Buffer {
     if (Buffer.isBuffer(v)) return v;
     if (v instanceof Uint8Array) return Buffer.from(v.buffer, v.byteOffset, v.byteLength);

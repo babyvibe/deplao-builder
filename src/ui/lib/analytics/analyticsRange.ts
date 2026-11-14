@@ -34,8 +34,8 @@ export function parseLocalDateInput(value: string): number | null {
 }
 
 /**
- * "7 ngày" = today + the 6 days before (7 chart points, today included) from local midnight to now;
- * "Hôm qua" = the whole previous day; "Tuỳ chọn" = whole days from..to (swapped if reversed).
+ * "7 ngày" (7 days) = today + the 6 days before (7 chart points, today included) from local midnight to now;
+ * "Hôm qua" (Yesterday) = the whole previous day; "Tuỳ chọn" (Custom) = whole days from..to (swapped if reversed).
  */
 export function resolveAnalyticsRange(
   period: AnalyticsPeriod,

@@ -1,12 +1,12 @@
 /**
- * RemotePluginClient — runtime "remote": logic plugin chạy trên server của bên thứ ba.
+ * RemotePluginClient: the "remote" runtime: plugin logic that runs on a third party's server.
  *
  * Deplao → plugin: POST {remote.baseUrl}/rpc   body { id, method, params }
- *   X-Deplao-Plugin: <id>   X-Deplao-Timestamp: <giây>   X-Deplao-Signature: v1=<HMAC-SHA256(secret, ts + "." + body)>
- *   Trả về HTTP 200 { result } hoặc { error: { code, message } }.
- * Plugin → Deplao: gọi API v1 bằng API key tạo tự động lúc cài (gắn plugin_id, thu hồi khi gỡ).
+ *   X-Deplao-Plugin: <id>   X-Deplao-Timestamp: <seconds>   X-Deplao-Signature: v1=<HMAC-SHA256(secret, ts + "." + body)>
+ *   Returns HTTP 200 { result } or { error: { code, message } }.
+ * Plugin → Deplao: calls API v1 with an API key created automatically at install (tied to plugin_id, revoked on uninstall).
  *
- * Server remote tạm không chạy khi bật app → chỉ ghi cảnh báo, không tắt plugin.
+ * A remote server that is temporarily down when the app starts → only logs a warning, does not disable the plugin.
  */
 import { randomUUID } from 'crypto';
 import { guardedRequest } from '../api/http/netGuard';
@@ -14,6 +14,7 @@ import { getApiSettingBool } from '../api/settings';
 import { signPayload } from '../api/events/WebhookOutboundService';
 import type { PluginRuntimeHandle, RuntimeContext, RuntimeStats } from './PluginManager';
 import { TIMEOUTS } from './PluginSandbox';
+import { tr } from '../../shared/i18n';
 
 function isLoopbackUrl(url: string): boolean {
     try {
@@ -42,7 +43,7 @@ export class RemotePluginClient implements PluginRuntimeHandle {
 
     async call(method: string, params: any, timeoutMs = TIMEOUTS.default): Promise<any> {
         const secret = this.ctx.remoteSecret();
-        if (!secret) throw new Error('Thiếu secret của ứng dụng (server ngoài) — cài lại ứng dụng');
+        if (!secret) throw new Error(tr('Thiếu secret của ứng dụng (server ngoài) — cài lại ứng dụng'));
         const body = JSON.stringify({ id: randomUUID(), method, params: params ?? {} });
         const ts = Math.floor(Date.now() / 1000);
         const url = this.endpoint();
@@ -63,19 +64,19 @@ export class RemotePluginClient implements PluginRuntimeHandle {
             maxBytes: 5 * 1024 * 1024,
         }).catch((err: any) => {
             this.lastError = err?.message || String(err);
-            throw Object.assign(new Error(`Không gọi được server của ứng dụng: ${this.lastError}`), { code: err?.code === 'TIMEOUT' ? 'TIMEOUT' : 'UPSTREAM_ERROR' });
+            throw Object.assign(new Error(tr('Không gọi được server của ứng dụng: {{lastError}}', { lastError: this.lastError })), { code: err?.code === 'TIMEOUT' ? 'TIMEOUT' : 'UPSTREAM_ERROR' });
         });
         let json: any = null;
-        try { json = JSON.parse(res.body.toString('utf8') || 'null'); } catch { /* xử lý dưới */ }
+        try { json = JSON.parse(res.body.toString('utf8') || 'null'); } catch { /* handled below */ }
         if (res.status < 200 || res.status >= 300 || !json || typeof json !== 'object') {
             this.lastError = `HTTP ${res.status}`;
-            throw Object.assign(new Error(`Server của ứng dụng trả HTTP ${res.status}`), { code: 'UPSTREAM_ERROR', status: 502 });
+            throw Object.assign(new Error(tr('Server của ứng dụng trả HTTP {{status}}', { status: res.status })), { code: 'UPSTREAM_ERROR', status: 502 });
         }
-        // Server trả lời đúng giao thức → kết nối tốt (lỗi nghiệp vụ của plugin không tính là mất kết nối).
+        // The server answered with the right protocol → the connection is good (a plugin business error does not count as a lost connection).
         this.lastError = undefined;
         this.lastOkAt = Date.now();
         if (json.error) {
-            throw Object.assign(new Error(String(json.error.message || 'Server của ứng dụng báo lỗi')), { code: json.error.code || 'PLUGIN_ERROR' });
+            throw Object.assign(new Error(String(json.error.message || tr('Server của ứng dụng báo lỗi'))), { code: json.error.code || 'PLUGIN_ERROR' });
         }
         return json.result;
     }
@@ -90,7 +91,7 @@ export class RemotePluginClient implements PluginRuntimeHandle {
     }
 
     async stop(): Promise<void> {
-        try { await this.call('deactivate', {}, TIMEOUTS.deactivate); } catch { /* server không chạy */ }
+        try { await this.call('deactivate', {}, TIMEOUTS.deactivate); } catch { /* server not running */ }
     }
 
     notify(method: string, params: any): void {

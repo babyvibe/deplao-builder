@@ -1,7 +1,7 @@
 /**
- * Ảnh nhóm của một hàng trong danh sách hội thoại. Tự đọc thông tin nhóm của mình trong cache (chỉ hàng này dựng lại
- * khi nhóm tải xong) và chỉ xin tải ảnh khi hàng vào vùng nhìn thấy (observer dùng chung của danh sách →
- * groupAvatarLoader). Nhóm đã có ảnh / đủ ảnh thành viên thì không theo dõi gì.
+ * Group avatar for a row in the conversation list. Reads its own group info from the cache (only this row re-renders
+ * when the group finishes loading) and only asks to load the image when the row enters the viewport (the list's shared observer →
+ * groupAvatarLoader). A group that already has an image / enough member avatars does not watch anything.
  */
 import React, { useEffect, useRef } from 'react';
 import { useAppStore } from '@/store/app/appStore';
@@ -13,7 +13,7 @@ function ConversationGroupAvatar({ accountId, groupId, avatarUrl, name, observer
   groupId: string;
   avatarUrl?: string;
   name: string;
-  /** IntersectionObserver của danh sách (null khi chưa dựng xong). */
+  /** The list's IntersectionObserver (null until it is built). */
   observer: IntersectionObserver | null;
 }) {
   const groupInfo = useAppStore(s => s.groupInfoCache[accountId]?.[groupId]);

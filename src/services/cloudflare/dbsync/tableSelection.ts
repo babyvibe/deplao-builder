@@ -1,27 +1,27 @@
 /**
- * tableSelection — bảng nào của DB workspace được theo dõi thay đổi (trigger → _cloud_dirty → đoạn thay đổi).
+ * tableSelection: which tables of the workspace DB are tracked for changes (trigger → _cloud_dirty → changed segments).
  *
- * Mặc định: MỌI bảng thường, trừ danh sách dưới đây. Bảng bị loại vẫn nằm trong bản gốc (bản gốc chép nguyên trang),
- * chỉ không có cập nhật theo đoạn → sau khi khôi phục, bảng bị loại mang dữ liệu tại thời điểm chụp gốc.
+ * Default: ALL regular tables except the list below. Excluded tables are still in the base snapshot (the base snapshot copies all pages),
+ * they just get no per-segment updates → after a restore, excluded tables hold the data as of the time the base snapshot was taken.
  *
- * Ghi chú cho người sửa danh sách:
- *  - Đổi danh sách = đổi dấu vân tay schema (fingerprint) → máy tự chụp gốc mới ở lần đồng bộ sau.
- *  - Bảng WITHOUT ROWID không theo dõi được (trigger ghi rowid) → báo "unsupported" trong log, vẫn có trong bản gốc.
+ * Notes for whoever edits the list:
+ *  - Changing the list = changing the schema fingerprint → the machine takes a new base snapshot by itself at the next sync.
+ *  - WITHOUT ROWID tables cannot be tracked (the trigger writes the rowid) → reported as "unsupported" in the log, but still in the base snapshot.
  */
 import { createHash } from 'crypto';
 import { SqlConn, canonicalTableName, quoteLiteral } from './sqlConn';
 
-/** Phiên bản định dạng đồng bộ — tăng khi đổi cách gói/áp đoạn để mọi máy tự chụp gốc mới. */
+/** Sync format version: bump it when the way segments are packed / applied changes, so every machine takes a new base snapshot. */
 export const DBSYNC_FORMAT_VERSION = 1;
 
-/** Loại theo tên chính xác (so khớp chữ thường). */
+/** Excluded by exact name (case-insensitive match). */
 export const EXCLUDED_TABLES: ReadonlySet<string> = new Set([
-    // Nhật ký đồng bộ của chính module này (mỗi lần đẩy ghi một dòng → tự kích hoạt đồng bộ vô tận).
+    // This module's own sync log (every push writes one row → would trigger another sync endlessly).
     'cloud_sync_log',
-    // Public API: hàng đợi sự kiện + lượt gửi webhook — đổi liên tục, chỉ có ý nghĩa trên máy đang chạy.
+    // Public API: event queue + webhook deliveries; they change constantly and only matter on the machine that is running.
     'api_events',
     'webhook_deliveries',
-    // Cache sticker Zalo (tải lại được từ Zalo bất cứ lúc nào).
+    // Zalo sticker cache (can be downloaded again from Zalo at any time).
     'stickers',
     'sticker_packs',
     'keyword_stickers',
@@ -30,13 +30,13 @@ export const EXCLUDED_TABLES: ReadonlySet<string> = new Set([
 
 export type TableExclusionReason = 'internal' | 'module' | 'fts' | 'fb_scan' | 'listed' | 'virtual' | 'view';
 
-/** Lý do loại một bảng theo tên (null = không loại theo tên). */
+/** Reason a table is excluded by name (null = not excluded by name). */
 export function exclusionByName(name: string): TableExclusionReason | null {
     const n = String(name).toLowerCase();
     if (n.startsWith('sqlite_')) return 'internal';                    // sqlite_sequence, sqlite_stat1…
     if (n.startsWith('_cloud_')) return 'module';                      // _cloud_dirty, _cloud_meta
-    if (n.endsWith('_fts') || n.includes('_fts_')) return 'fts';       // messages_fts + bảng bóng messages_fts_data…
-    if (n.startsWith('fb_scan_')) return 'fb_scan';                    // công cụ quét Facebook: log/cache tạm
+    if (n.endsWith('_fts') || n.includes('_fts_')) return 'fts';       // messages_fts + its shadow tables messages_fts_data…
+    if (n.startsWith('fb_scan_')) return 'fb_scan';                    // Facebook scanner tool: temporary log / cache
     if (EXCLUDED_TABLES.has(n)) return 'listed';
     return null;
 }
@@ -45,19 +45,19 @@ export type RowidAlias = 'rowid' | '_rowid_' | 'oid';
 const ROWID_ALIASES: RowidAlias[] = ['rowid', '_rowid_', 'oid'];
 
 export interface TrackedTable {
-    /** Tên đúng như sqlite_master. */
+    /** Name exactly as in sqlite_master. */
     name: string;
-    /** Cột thường (bỏ cột sinh tự động GENERATED — không INSERT được). Thứ tự như khai báo. */
+    /** Regular columns (GENERATED columns are skipped, since they cannot be INSERTed). In declaration order. */
     columns: string[];
-    /** Tên dùng để chỉ rowid thật (cái đầu tiên không trùng tên cột nào). */
+    /** Name used to refer to the real rowid (the first one that does not clash with any column name). */
     rowidAlias: RowidAlias;
 }
 
 export interface TableSelection {
     included: TrackedTable[];
-    /** Khoá: tên chữ thường. */
+    /** Key: the lowercase name. */
     byName: Map<string, TrackedTable>;
-    /** Không theo dõi được (WITHOUT ROWID / mọi tên rowid đều trùng cột). */
+    /** Cannot be tracked (WITHOUT ROWID, or every rowid name clashes with a column). */
     unsupported: string[];
     excluded: Array<{ name: string; reason: TableExclusionReason }>;
 }
@@ -70,7 +70,7 @@ interface ListedTable {
 
 function listTables(conn: SqlConn): ListedTable[] {
     try {
-        // SQLite ≥ 3.37: phân biệt sẵn bảng ảo / bảng bóng (FTS) / WITHOUT ROWID.
+        // SQLite ≥ 3.37: tells virtual tables / shadow tables (FTS) / WITHOUT ROWID apart already.
         const rows = conn.prepare("SELECT name, type, wr FROM pragma_table_list WHERE schema = 'main'").all();
         return rows.map((r: any) => ({ name: String(r.name), type: String(r.type), withoutRowid: Number(r.wr) === 1 }));
     } catch {
@@ -93,7 +93,7 @@ export function tableColumns(conn: SqlConn, table: string): { all: string[]; ins
     for (const r of rows) {
         const name = String(r.name);
         all.push(name);
-        // hidden: 0 = cột thường, 1 = cột ẩn của bảng ảo, 2/3 = cột GENERATED (VIRTUAL/STORED)
+        // hidden: 0 = regular column, 1 = hidden column of a virtual table, 2/3 = GENERATED column (VIRTUAL/STORED)
         if (Number(r.hidden) === 0) insertable.push(name);
     }
     return { all, insertable };
@@ -105,7 +105,7 @@ export function pickRowidAlias(allColumns: string[]): RowidAlias | null {
     return null;
 }
 
-/** Mô tả một bảng thường (dùng cả khi áp đoạn lên bản sao). null khi không có / không theo dõi được. */
+/** Describes one regular table (also used when applying segments to the copy). null when it is missing or cannot be tracked. */
 export function describeTable(conn: SqlConn, name: string): TrackedTable | null {
     const cols = tableColumns(conn, name);
     if (!cols.all.length) return null;
@@ -137,8 +137,8 @@ export function selectTables(conn: SqlConn): TableSelection {
 }
 
 /**
- * Dấu vân tay schema: CREATE TABLE (sqlite_master.sql) của các bảng được theo dõi + phiên bản định dạng.
- * Đổi (cập nhật app thêm cột/bảng, đổi tên bảng, đổi danh sách loại trừ) → cài lại trigger + chụp gốc mới.
+ * Schema fingerprint: CREATE TABLE (sqlite_master.sql) of the tracked tables + the format version.
+ * Changing it (an app update that adds a column / table, renames a table, or changes the exclusion list) → reinstall the triggers + take a new base snapshot.
  */
 export function schemaFingerprint(conn: SqlConn, sel: TableSelection): string {
     const rows = conn.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table'").all();
@@ -155,16 +155,16 @@ export function schemaFingerprint(conn: SqlConn, sel: TableSelection): string {
     return h.digest('hex').slice(0, 24);
 }
 
-// ─── Phạm vi đồng bộ (tài khoản + từ ngày) ──────────────────────────────────
+// ─── Sync scope (accounts + from date) ──────────────────────────────────
 
 /**
- * Cách một bảng chỉ ra tài khoản sở hữu dòng:
- *  - 'account'  : cột chứa accounts.zalo_id (id chung của mọi kênh: Zalo uid, Facebook uid, Telegram user/bot id).
- *  - 'fbAccount': cột chứa fb_accounts.id (UUID) → tài khoản = fb_accounts.facebook_id. Không có dòng fb_accounts
- *                 tương ứng → coi chính giá trị là accounts.zalo_id (dữ liệu Facebook kiểu cũ dùng UUID làm id).
- *  - 'parent'   : bảng con không có cột tài khoản — cột chứa khoá dòng cha, theo phạm vi của dòng cha
- *                 (không còn dòng cha → không biết chủ → giữ).
- * Dòng có cột tài khoản NULL / '' (dữ liệu chung của bảng) luôn được giữ.
+ * How a table says which account owns a row:
+ *  - 'account'  : a column holding accounts.zalo_id (the shared id of every channel: Zalo uid, Facebook uid, Telegram user/bot id).
+ *  - 'fbAccount': a column holding fb_accounts.id (UUID) → account = fb_accounts.facebook_id. If there is no matching fb_accounts row,
+ *                 the value itself is treated as accounts.zalo_id (old Facebook data used the UUID as the id).
+ *  - 'parent'   : a child table with no account column: a column holding the key of the parent row, scoped by the parent row
+ *                 (no parent row left → owner unknown → keep).
+ * Rows whose account column is NULL / '' (data shared by the table) are always kept.
  */
 export type ScopeAccountRef =
     | { kind: 'account'; column: string }
@@ -174,11 +174,11 @@ export type ScopeAccountRef =
 export interface ScopedTablePolicy {
     table: string;
     account: ScopeAccountRef;
-    /** Bảng lịch sử: cột thời gian (ms) để áp "từ ngày". Không có = giữ đủ dòng của tài khoản được chọn. */
+    /** History table: the time column (ms) used to apply "từ ngày" (from date). Without one = keep all rows of the selected account. */
     time?: string;
 }
 
-/** Tăng khi đổi SCOPED_TABLES → máy đang dùng phạm vi giới hạn tự chụp gốc mới theo quy tắc mới. */
+/** Bump when SCOPED_TABLES changes → machines using a scoped sync take a new base snapshot under the new rules. */
 export const SCOPE_POLICY_VERSION = 1;
 
 const own = (table: string, time?: string): ScopedTablePolicy => ({ table, account: { kind: 'account', column: 'owner_zalo_id' }, time });
@@ -187,17 +187,17 @@ const byFbAccount = (table: string, column: string, time?: string): ScopedTableP
 const childOf = (table: string, column: string, parent: string, parentKey = 'id'): ScopedTablePolicy => ({ table, account: { kind: 'parent', column, parent, parentKey } });
 
 /**
- * CHÍNH SÁCH PHẠM VI — mọi bảng có dữ liệu riêng của từng tài khoản, ở MỘT chỗ (bản gốc lẫn đoạn thay đổi đều đọc từ đây).
- * Bảng KHÔNG có trong danh sách = dữ liệu chung (app_settings, workflows, nhân viên, erp_*, tích hợp, trợ lý AI, sticker,
- * proxy, plugin, cloud_media…) → luôn đồng bộ đủ.
+ * SCOPE POLICY: every table that holds per-account data, in ONE place (both the base snapshot and the segment changes read from here).
+ * A table NOT in the list = shared data (app_settings, workflows, employees, erp_*, integrations, AI assistant, stickers,
+ * proxy, plugins, cloud_media…) → always fully synced.
  *
- * !!! Thêm bảng mới có dữ liệu theo tài khoản (cột owner_zalo_id / zalo_id / account_id…) hoặc bảng con của một bảng
- * dưới đây → PHẢI thêm vào danh sách này (và tăng SCOPE_POLICY_VERSION). Thiếu = bản sao giới hạn phạm vi vẫn mang dữ liệu
- * của tài khoản không được chọn lên R2.
+ * !!! Adding a new table with per-account data (a column owner_zalo_id / zalo_id / account_id…) or a child table of a table
+ * below → it MUST be added to this list (and SCOPE_POLICY_VERSION bumped). Forgetting it = a scoped copy would still carry the data
+ * of unselected accounts up to R2.
  *
- * `time` chỉ đặt cho bảng lịch sử tin (tin nhắn, ghim, link, nhật ký gửi…, đơn vị ms); danh bạ / nhóm / peer / cài đặt của
- * tài khoản được chọn luôn giữ đủ. Bảng / cột không có trong DB (bản cũ) → dòng chính sách đó bị bỏ qua (coi như dữ liệu chung).
- * Đối chiếu với DB thật 2.6 GB (10/2026): mọi cột thời gian dưới đây là ms.
+ * `time` is only set for message-history tables (messages, pins, links, send logs…, unit ms); contacts / groups / peers / settings of the
+ * selected account are always kept in full. Tables / columns missing from the DB (old versions) → that policy row is skipped (treated as shared data).
+ * Checked against a real 2.6 GB DB (10/2026): every time column below is in ms.
  */
 export const SCOPED_TABLES: ReadonlyArray<ScopedTablePolicy> = [
     // ── Theo owner_zalo_id ──
@@ -235,16 +235,16 @@ export const SCOPED_TABLES: ReadonlyArray<ScopedTablePolicy> = [
     byAccount('ai_conversations', 'zalo_id'),
     byAccount('employee_account_access', 'zalo_id'),
     byAccount('employee_message_log', 'zalo_id', 'timestamp'),
-    // Public API: hàng đợi sự kiện (payload chứa nội dung tin) — không theo dõi theo đoạn nhưng nằm trong bản gốc.
+    // Public API: event queue (payloads contain message content): not tracked per segment, but included in the base snapshot.
     byAccount('api_events', 'account_id', 'created_at'),
-    // ── Facebook: fb_accounts.facebook_id = accounts.zalo_id; bảng còn lại trỏ fb_accounts.id ──
+    // ── Facebook: fb_accounts.facebook_id = accounts.zalo_id; the other tables point to fb_accounts.id ──
     byAccount('fb_accounts', 'facebook_id'),
     byFbAccount('fb_threads', 'account_id'),
     byFbAccount('fb_messages', 'account_id', 'timestamp'),
     byFbAccount('fb_crm_contacts', 'fb_account_id'),
     byFbAccount('fb_scan_history', 'account_id'),
     byFbAccount('fb_scan_tabs', 'account_id'),
-    // ── Bảng con không có cột tài khoản → theo dòng cha ──
+    // ── Child tables with no account column → follow the parent row ──
     childOf('ai_conversation_messages', 'conversation_id', 'ai_conversations'),
     childOf('tg_bot_rules', 'project_id', 'tg_bot_projects'),
     childOf('tg_bot_rule_logs', 'project_id', 'tg_bot_projects'),
@@ -254,18 +254,18 @@ export const SCOPED_TABLES: ReadonlyArray<ScopedTablePolicy> = [
     childOf('webhook_deliveries', 'event_seq', 'api_events', 'seq'),
 ];
 
-/** Chính sách đã đối chiếu với schema của MỘT DB (tên bảng / cột đúng như khai báo). */
+/** Policy checked against the schema of ONE DB (table / column names exactly as declared). */
 export interface ResolvedScopePolicy {
     table: string;
     kind: ScopeAccountRef['kind'];
-    /** Cột tài khoản ('account' / 'fbAccount') hoặc cột khoá dòng cha ('parent'). */
+    /** Account column ('account' / 'fbAccount') or parent-key column ('parent'). */
     column: string;
     time: string | null;
-    /** 'parent': chính sách bảng cha; 'fbAccount': chính sách fb_accounts (null = DB không có fb_accounts). */
+    /** 'parent': the parent table's policy; 'fbAccount': the fb_accounts policy (null = the DB has no fb_accounts). */
     parent: ResolvedScopePolicy | null;
-    /** Cột khoá của bảng cha mà `column` trỏ tới. */
+    /** Key column of the parent table that `column` points to. */
     parentKey: string | null;
-    /** Số bậc tới bảng gốc — xoá bảng sâu nhất trước (bảng con trước bảng cha). */
+    /** Number of levels up to the root table; delete the deepest table first (child tables before parent tables). */
     depth: number;
 }
 
@@ -274,7 +274,7 @@ function findColumn(columns: string[], name: string): string | null {
     return columns.find(c => c.toLowerCase() === n) ?? null;
 }
 
-/** Chính sách áp được cho DB này. Khoá: tên bảng chữ thường. Bảng / cột thiếu → không có trong kết quả. */
+/** Policies that apply to this DB. Key: lowercase table name. Tables / columns that are missing are left out of the result. */
 export function resolveScopePolicies(conn: SqlConn): Map<string, ResolvedScopePolicy> {
     const byName = new Map(SCOPED_TABLES.map(p => [p.table.toLowerCase(), p] as const));
     const done = new Map<string, ResolvedScopePolicy | null>();
@@ -305,7 +305,7 @@ export function resolveScopePolicies(conn: SqlConn): Map<string, ResolvedScopePo
             } else {
                 const par = resolve(ref.parent, stack);
                 const pk = par ? findColumn(tableColumns(conn, par.table).all, ref.parentKey) : null;
-                // Không có bảng cha / chính sách cha → không biết chủ dòng → coi như dữ liệu chung.
+                // No parent table / parent policy → owner unknown → treated as shared data.
                 if (par && pk) out = { table: actual, kind: 'parent', column, time, parent: par, parentKey: pk, depth: par.depth + 1 };
             }
         }

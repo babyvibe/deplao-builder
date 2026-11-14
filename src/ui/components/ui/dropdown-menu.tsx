@@ -1,14 +1,14 @@
 /**
- * DropdownMenu — click-to-open menu portaled into `document.body` and positioned next to its
+ * DropdownMenu: click-to-open menu portaled into `document.body` and positioned next to its
  * trigger with `getBoundingClientRect` (flips above when there is no room below, clamped to the
  * viewport, re-positioned on scroll/resize in a rAF).
  *
  * ```tsx
  * <DropdownMenu align="end" trigger={<Button variant="ghost" size="icon"><MoreIcon className="w-4 h-4" /></Button>}>
- *   <DropdownMenuLabel>Hội thoại</DropdownMenuLabel>
- *   <DropdownMenuItem icon={<EditIcon />} shortcut="F2" onSelect={rename}>Đổi tên</DropdownMenuItem>
+ *   <DropdownMenuLabel>Conversation</DropdownMenuLabel>
+ *   <DropdownMenuItem icon={<EditIcon />} shortcut="F2" onSelect={rename}>Rename</DropdownMenuItem>
  *   <DropdownMenuSeparator />
- *   <DropdownMenuItem destructive onSelect={remove}>Xoá</DropdownMenuItem>
+ *   <DropdownMenuItem destructive onSelect={remove}>Delete</DropdownMenuItem>
  * </DropdownMenu>
  * ```
  *

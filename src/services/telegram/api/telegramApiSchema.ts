@@ -1,11 +1,11 @@
 /**
- * Schema API Telegram (TL) layer 232 cho GramJS — Deplao nạp thay schema layer 198 đi kèm GramJS 2.26.22 (bản mới
- * nhất trên npm), xem telegramApiLayer.ts.
+ * Telegram API schema (TL) layer 232 for GramJS: Deplao loads it in place of the layer 198 schema that ships with GramJS 2.26.22 (the newest
+ * on npm), see telegramApiLayer.ts.
  *
- * Nguồn: Telegram Desktop v7.3.3 (tag phát hành 21/10/2026), Telegram/SourceFiles/mtproto/scheme/api.tl ("// LAYER 232"),
- * đã bỏ dòng chú thích / dòng trống. Tệp sinh tự động — không sửa tay. Nâng layer: tải api.tl
- * của bản Telegram Desktop mới, sinh lại tệp này, chạy test telegramApiLayer + telegramRichMessage, rà các method / kiểu
- * Deplao dùng bị đổi hoặc bị bỏ (forum topics, nút inline, kết quả tham gia nhóm, Community…).
+ * Source: Telegram Desktop v7.3.3 (release tag 21/10/2026), Telegram/SourceFiles/mtproto/scheme/api.tl ("// LAYER 232"),
+ * with the comment lines and blank lines removed. Auto-generated file: do not edit by hand. To bump the layer: download the api.tl
+ * of the new Telegram Desktop release, regenerate this file, run the telegramApiLayer + telegramRichMessage tests, and check the methods / types
+ * Deplao uses that changed or were removed (forum topics, inline buttons, group join results, Community…).
  */
 /* eslint-disable */
 

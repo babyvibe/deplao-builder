@@ -10,6 +10,8 @@ import { showConfirm } from '../../common/ConfirmDialog';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { CHANNEL, isZalo } from '@/lib/channels/channelHelper';
 import { ImageIcon, PlayIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -56,7 +58,7 @@ export async function fetchZaloQuickMessages(auth: any, accountId: string, force
     zaloCache[accountId] = { data: items, ts: now };
     return items;
   }
-  const errMsg = extractApiError(res, 'Không thể lấy danh sách tin nhắn nhanh từ Zalo');
+  const errMsg = extractApiError(res, tr('Không thể lấy danh sách tin nhắn nhanh từ Zalo'));
   if (zaloCache[accountId]?.data?.length) {
     console.warn('[QuickMessage] Dùng cache cũ:', errMsg);
     return zaloCache[accountId].data;
@@ -71,8 +73,8 @@ export function invalidateZaloQuickMessageCache(accountId: string) {
 // ─── Local DB helpers ─────────────────────────────────────────────────────────
 async function fetchLocalQuickMessages(zaloId: string): Promise<QuickMessage[]> {
   const res = await DataAccessor.getLocalQuickMessages({ zaloId });
-  // Lỗi đọc (nhân viên mất kết nối BOSS) ≠ "không có tin nhắn nhanh": ném lỗi → người gọi giữ danh sách đang có
-  // (trước đây trả [] → lần tải lại do event / kết nối lại xoá trắng danh sách trong ô soạn tin)
+  // A read error (employee mode: BOSS connection lost) ≠ "không có tin nhắn nhanh" (no quick messages): throws → the caller keeps the current list
+  // (previously returned [] → a reload triggered by an event / reconnect wiped the list in the composer)
   if (isReadFailure(res)) throw new Error(readFailureMessage(res));
   if (!res?.success) return [];
   return (res.items || []).map((r: any) => {
@@ -193,7 +195,7 @@ function QuickMessageDialog({
       await onSave(keyword.trim(), title.trim(), mediaPath, localMediaFiles.length > 0 ? localMediaFiles : undefined);
       onClose();
     } catch (e: any) {
-      const msg = extractApiError(e, e?.message || 'Lưu thất bại');
+      const msg = extractApiError(e, e?.message || tr('Lưu thất bại'));
       setSaveError(msg);
       showNotification(msg, 'error');
     } finally {
@@ -209,7 +211,7 @@ function QuickMessageDialog({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
           <h2 className="text-foreground font-semibold text-base">
-            {initial ? 'Chỉnh sửa tin nhắn nhanh' : 'Tạo tin nhắn nhanh'}
+            {initial ? tr('Chỉnh sửa tin nhắn nhanh') : tr('Tạo tin nhắn nhanh')}
           </h2>
           <button onClick={onClose}
             className="text-muted-foreground hover:text-foreground w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-lg">✕</button>
@@ -227,14 +229,14 @@ function QuickMessageDialog({
           </div>
           {/* Title */}
           <textarea value={title} onChange={e => setTitle(e.target.value)}
-            placeholder="Nội dung tin nhắn nhanh..." rows={4}
+            placeholder={tr('Nội dung tin nhắn nhanh...')} rows={4}
             className="w-full bg-muted border border-input focus:border-blue-500 rounded-xl px-4 py-3 text-sm text-foreground placeholder-subtle-foreground resize-none focus:outline-none transition-colors" />
 
           {/* ── Zalo mode: single image ── */}
           {mode === CHANNEL.ZALO && (
             mediaPreview ? (
               <div className="relative inline-block">
-                <img src={mediaPreview} alt="preview" className="w-24 h-24 rounded-xl object-cover border border-input" />
+                <img src={mediaPreview} alt={tr('preview')} className="w-24 h-24 rounded-xl object-cover border border-input" />
                 <button onClick={handleRemoveImage}
                   className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white text-xs font-bold shadow transition-colors">✕</button>
               </div>
@@ -244,7 +246,7 @@ function QuickMessageDialog({
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
                 </svg>
-                Thêm ảnh
+                {tr('Thêm ảnh')}
               </button>
             )
           )}
@@ -253,8 +255,8 @@ function QuickMessageDialog({
           {mode === 'local' && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground font-medium">Media đính kèm</span>
-                <span className="text-xs text-muted-foreground">({localMediaFiles.length} file)</span>
+                <span className="text-xs text-muted-foreground font-medium">{tr('Media đính kèm')}</span>
+                <span className="text-xs text-muted-foreground">{trx('({{count}} file)', { count: localMediaFiles.length })}</span>
               </div>
               {/* Previews grid */}
               {localMediaFiles.length > 0 && (
@@ -278,7 +280,7 @@ function QuickMessageDialog({
                         )}
                         {/* Type badge */}
                         <span className="absolute bottom-1 left-1 text-[9px] bg-black/70 text-white px-1 py-0.5 rounded font-medium z-10">
-                          {f.type === 'video' ? <><PlayIcon className="w-3 h-3 inline" /> Video</> : <><ImageIcon className="w-3 h-3 inline" /> Ảnh</>}
+                          {f.type === 'video' ? <>{trx('<0/> Video', { 0: <PlayIcon className="w-3 h-3 inline" /> })}</> : <>{trx('<0/> Ảnh', { 0: <ImageIcon className="w-3 h-3 inline" /> })}</>}
                         </span>
                         {/* Remove button */}
                         <button
@@ -296,26 +298,24 @@ function QuickMessageDialog({
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
                   </svg>
-                  Thêm ảnh
+                  {tr('Thêm ảnh')}
                 </button>
                 <button onClick={handlePickLocalVideos}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-accent border border-input rounded-lg text-xs text-foreground/80 hover:text-foreground transition-colors">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
                   </svg>
-                  Thêm video
+                  {tr('Thêm video')}
                 </button>
                 {localMediaFiles.length > 0 && (
                   <button onClick={() => setLocalMediaFiles([])}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-red-900/40 hover:bg-red-900/60 border border-red-700/40 rounded-lg text-xs text-red-400 hover:text-red-300 transition-colors ml-auto">
-                    Xóa tất cả
+                    {tr('Xóa tất cả')}
                   </button>
                 )}
               </div>
               <p className="text-[11px] text-muted-foreground leading-relaxed">
-                Khi chọn tin nhắn nhanh này, ảnh/video sẽ được gửi tự động kèm theo nội dung.
-                <br/>
-                Thứ tự: Ảnh/video sẽ được gửi trước text
+                {trx('Khi chọn tin nhắn nhanh này, ảnh/video sẽ được gửi tự động kèm theo nội dung.<0/>Thứ tự: Ảnh/video sẽ được gửi trước text', { 0: <br/> })}
               </p>
             </div>
           )}
@@ -329,11 +329,11 @@ function QuickMessageDialog({
           )}
           <div className="flex items-center justify-end gap-3">
             <button onClick={onClose}
-              className="px-5 py-2 rounded-xl text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-muted transition-colors">Hủy</button>
+              className="px-5 py-2 rounded-xl text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-muted transition-colors">{tr('Hủy')}</button>
             <button onClick={handleSave} disabled={saving || !keyword.trim() || !title.trim()}
               className="px-6 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors flex items-center gap-2">
               {saving && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              Lưu
+              {tr('Lưu')}
             </button>
           </div>
         </div>
@@ -369,7 +369,7 @@ function SyncDropdown({ onSync, syncing, anchorRef }: {
         ref={anchorRef}
         disabled={syncing}
         onClick={() => setOpen(p => !p)}
-        title="Đồng bộ từ Zalo về Local"
+        title={tr('Đồng bộ từ Zalo về Local')}
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-foreground/80 hover:text-foreground bg-muted hover:bg-accent border border-input/60 transition-colors disabled:opacity-50"
       >
         {syncing
@@ -378,7 +378,7 @@ function SyncDropdown({ onSync, syncing, anchorRef }: {
               <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
             </svg>
         }
-        Đồng bộ
+        {tr('Đồng bộ')}
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
@@ -387,7 +387,7 @@ function SyncDropdown({ onSync, syncing, anchorRef }: {
         <div className="absolute top-full left-0 mb-1.5 bg-card border border-input rounded-xl shadow-2xl overflow-hidden min-w-[200px]"
           style={{ zIndex: 10001 }}>
           <div className="px-3 py-2 border-b border-border">
-            <p className="text-xs text-muted-foreground font-medium">Đồng bộ từ Zalo → Local</p>
+            <p className="text-xs text-muted-foreground font-medium">{tr('Đồng bộ từ Zalo → Local')}</p>
           </div>
           <button
             onClick={() => { setOpen(false); onSync('replace'); }}
@@ -398,8 +398,8 @@ function SyncDropdown({ onSync, syncing, anchorRef }: {
               <path d="M10 11v6"/><path d="M14 11v6"/>
             </svg>
             <div>
-              <p className="text-xs text-foreground font-medium">Thay thế</p>
-              <p className="text-[11px] text-muted-foreground leading-snug">Xóa local cũ, dùng dữ liệu Zalo</p>
+              <p className="text-xs text-foreground font-medium">{tr('Thay thế')}</p>
+              <p className="text-[11px] text-muted-foreground leading-snug">{tr('Xóa local cũ, dùng dữ liệu Zalo')}</p>
             </div>
           </button>
           <button
@@ -410,8 +410,8 @@ function SyncDropdown({ onSync, syncing, anchorRef }: {
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
             <div>
-              <p className="text-xs text-foreground font-medium">Thêm vào</p>
-              <p className="text-[11px] text-muted-foreground leading-snug">Giữ local, bổ sung từ Zalo</p>
+              <p className="text-xs text-foreground font-medium">{tr('Thêm vào')}</p>
+              <p className="text-[11px] text-muted-foreground leading-snug">{tr('Giữ local, bổ sung từ Zalo')}</p>
             </div>
           </button>
         </div>
@@ -479,7 +479,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
       const data = await fetchQuickMessages(auth, activeAccountId, mode, force);
       setItems(data);
     } catch (e: any) {
-      showNotification(extractApiError(e, 'Lỗi tải tin nhắn nhanh'), 'error');
+      showNotification(extractApiError(e, tr('Lỗi tải tin nhắn nhanh')), 'error');
     } finally {
       setLoading(false);
     }
@@ -487,14 +487,14 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
 
   useEffect(() => { load(); }, [load]);
 
-  // Tải lại lặng lẽ (không spinner, lỗi giữ danh sách) khi Boss / nhân viên khác đổi tin nhắn nhanh (relay
-  // db:localQuickMessageChanged → 'ui:quickMessagesChanged') hoặc kết nối BOSS phục hồi. Chế độ Zalo: danh sách lấy
-  // từ Zalo, không theo event local.
+  // Silent reload (no spinner, an error keeps the list) when the Boss / another employee changes quick messages (relay
+  // db:localQuickMessageChanged → 'ui:quickMessagesChanged') or the BOSS connection recovers. Zalo mode: the list comes
+  // from Zalo, not from a local event.
   const refreshLocalSilently = useCallback(async () => {
     if (!activeAccountId || mode !== 'local') return;
     try {
       setItems(await fetchQuickMessages(null, activeAccountId, 'local'));
-    } catch { /* giữ danh sách đang có */ }
+    } catch { /* keep the current list */ }
   }, [activeAccountId, mode]);
   useEffect(() => {
     const handler = (e: Event) => {
@@ -521,24 +521,24 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
     try {
       const zaloItems = await fetchZaloQuickMessages(auth, activeAccountId, true);
       if (zaloItems.length === 0) {
-        showNotification('Không có tin nhắn nhanh nào trên Zalo để đồng bộ', 'warning');
+        showNotification(tr('Không có tin nhắn nhanh nào trên Zalo để đồng bộ'), 'warning');
         return;
       }
       const mapped = zaloItems.map(i => ({ keyword: i.keyword, title: i.message.title, media: i.media || undefined }));
       if (syncMode === 'replace') {
         await DataAccessor.bulkReplaceLocalQuickMessages({ zaloId: activeAccountId, items: mapped });
-        showNotification(`Đã thay thế bằng ${zaloItems.length} tin nhắn từ Zalo!`, 'success');
+        showNotification(tr('Đã thay thế bằng {{count}} tin nhắn từ Zalo!', { count: zaloItems.length }), 'success');
       } else {
-        // merge: upsert từng item, giữ local không bị xóa
+        // merge: upsert each item, keep local items that were not deleted
         for (const item of mapped) {
           await DataAccessor.upsertLocalQuickMessage({ zaloId: activeAccountId, item });
         }
-        showNotification(`Đã thêm ${zaloItems.length} tin nhắn từ Zalo vào Local!`, 'success');
+        showNotification(tr('Đã thêm {{count}} tin nhắn từ Zalo vào Local!', { count: zaloItems.length }), 'success');
       }
       // Switch to local tab to show result
       switchMode('local');
     } catch (e: any) {
-      showNotification(extractApiError(e, 'Lỗi đồng bộ'), 'error');
+      showNotification(extractApiError(e, tr('Lỗi đồng bộ')), 'error');
     } finally {
       setSyncing(false);
     }
@@ -550,21 +550,21 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
     if (mode === CHANNEL.ZALO && canUseZaloQuickMessages) {
       await callApi(
         () => ipc.zalo?.addQuickMessage({ auth, keyword, title, mediaPath }),
-        'Tạo tin nhắn nhanh thất bại'
+        tr('Tạo tin nhắn nhanh thất bại')
       );
       invalidateZaloQuickMessageCache(activeAccountId);
       await load(true);
-      showNotification('Đã tạo tin nhắn nhanh!', 'success');
+      showNotification(tr('Đã tạo tin nhắn nhanh!'), 'success');
     } else {
       const mediaObj = localMediaFiles && localMediaFiles.length > 0
         ? { localFiles: localMediaFiles }
         : undefined;
       await callApi(
         () => DataAccessor.upsertLocalQuickMessage({ zaloId: activeAccountId, item: { keyword, title, media: mediaObj } }),
-        'Tạo tin nhắn nhanh local thất bại'
+        tr('Tạo tin nhắn nhanh local thất bại')
       );
       await load(true);
-      showNotification('Đã tạo tin nhắn nhanh local!', 'success');
+      showNotification(tr('Đã tạo tin nhắn nhanh local!'), 'success');
     }
   };
 
@@ -575,30 +575,30 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
     if (mode === CHANNEL.ZALO && canUseZaloQuickMessages) {
       await callApi(
         () => ipc.zalo?.updateQuickMessage({ auth, keyword, title, mediaPath, itemId: editItem.id }),
-        'Cập nhật tin nhắn nhanh thất bại'
+        tr('Cập nhật tin nhắn nhanh thất bại')
       );
       invalidateZaloQuickMessageCache(activeAccountId);
       await load(true);
-      showNotification('Đã cập nhật!', 'success');
+      showNotification(tr('Đã cập nhật!'), 'success');
     } else {
       const mediaObj = localMediaFiles && localMediaFiles.length > 0
         ? { localFiles: localMediaFiles }
         : undefined;
       await callApi(
         () => DataAccessor.upsertLocalQuickMessage({ zaloId: activeAccountId, item: { keyword, title, media: mediaObj } }),
-        'Cập nhật tin nhắn nhanh local thất bại'
+        tr('Cập nhật tin nhắn nhanh local thất bại')
       );
       await load(true);
-      showNotification('Đã cập nhật tin nhắn nhanh local!', 'success');
+      showNotification(tr('Đã cập nhật tin nhắn nhanh local!'), 'success');
     }
   };
 
   const handleDelete = async (item: QuickMessage) => {
     if (!activeAccountId) return;
     const ok = await showConfirm({
-      title: `Xóa tin nhắn nhanh "/${item.keyword}"?`,
-      message: 'Hành động này không thể hoàn tác.',
-      confirmText: 'Xóa',
+      title: tr('Xóa tin nhắn nhanh "/{{keyword}}"?', { keyword: item.keyword }),
+      message: tr('Hành động này không thể hoàn tác.'),
+      confirmText: tr('Xóa'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -608,19 +608,19 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
         if (!auth) return;
         await callApi(
           () => ipc.zalo?.removeQuickMessage({ auth, itemIds: [item.id] }),
-          'Xóa tin nhắn nhanh thất bại'
+          tr('Xóa tin nhắn nhanh thất bại')
         );
         invalidateZaloQuickMessageCache(activeAccountId);
       } else {
         await callApi(
           () => DataAccessor.deleteLocalQuickMessage({ zaloId: activeAccountId, id: item.id }),
-          'Xóa tin nhắn nhanh local thất bại'
+          tr('Xóa tin nhắn nhanh local thất bại')
         );
       }
       await load(true);
-      showNotification('Đã xóa!', 'success');
+      showNotification(tr('Đã xóa!'), 'success');
     } catch (e: any) {
-      showNotification(extractApiError(e, 'Xóa thất bại'), 'error');
+      showNotification(extractApiError(e, tr('Xóa thất bại')), 'error');
     }
   };
 
@@ -643,20 +643,20 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
-          <span className="text-sm font-semibold text-foreground">Tin nhắn nhanh</span>
+          <span className="text-sm font-semibold text-foreground">{tr('Tin nhắn nhanh')}</span>
           <div className="flex items-center gap-2">
             {/* Mode toggle - hide Zalo tab for Facebook channel */}
             {canUseZaloQuickMessages && (
             <div className="flex items-center gap-0.5 p-0.5 bg-muted rounded-lg">
               <button
                 onClick={() => switchMode('local')}
-                title="Local (không bị chặn)"
+                title={tr('Local (không bị chặn)')}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${mode === 'local' ? 'bg-green-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
                 </svg>
-                Local
+                {tr('Local')}
               </button>
               <button
                 onClick={() => switchMode('zalo')}
@@ -682,7 +682,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
             {mode === CHANNEL.ZALO && canUseZaloQuickMessages && (
               <SyncDropdown onSync={handleSync} syncing={syncing} anchorRef={syncBtnRef} />
             )}
-            <button onClick={() => load(true)} disabled={loading} title="Làm mới"
+            <button onClick={() => load(true)} disabled={loading} title={tr('Làm mới')}
               className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={loading ? 'animate-spin' : ''}>
                 <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
@@ -697,7 +697,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
-            Tạo mới
+            {tr('Tạo mới')}
           </button>
         </div>
 
@@ -712,10 +712,10 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground">
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
               </svg>
-              Chưa có tin nhắn nhanh nào.
+              {tr('Chưa có tin nhắn nhanh nào.')}
               {mode === 'local' && canUseZaloQuickMessages && (
                 <span className="text-muted-foreground">
-                  Chuyển sang tab <strong className="text-muted-foreground">Zalo</strong> và nhấn <strong className="text-muted-foreground">Đồng bộ</strong> để import
+                  {trx('Chuyển sang tab <0>Zalo</0> và nhấn <1>Đồng bộ</1> để import', { 0: <strong className="text-muted-foreground" />, 1: <strong className="text-muted-foreground" /> })}
                 </span>
               )}
             </div>
@@ -764,7 +764,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
                   <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity pt-0.5">
                     <button
                       onClick={(e) => { e.stopPropagation(); setEditItem(item); setShowDialog(true); }}
-                      title="Chỉnh sửa"
+                      title={tr('Chỉnh sửa')}
                       className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
@@ -773,7 +773,7 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
-                      title="Xóa"
+                      title={tr('Xóa')}
                       className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-red-400 hover:bg-muted transition-colors">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
@@ -790,10 +790,10 @@ export function QuickMessageManagerPanel({ onClose, onSelect }: { onClose: () =>
         {/* Mode hint footer */}
         <div className={`px-4 py-2.5 border-t border-border/60 flex-shrink-0 text-xs ${mode === 'local' ? 'text-green-400/70' : 'text-yellow-400/70'}`}>
           {!canUseZaloQuickMessages
-            ? '✓ Local - tin nhắn nhanh nội bộ cho kênh này'
+            ? tr('✓ Local - tin nhắn nhanh nội bộ cho kênh này')
             : mode === 'local'
-            ? '✓ Local - không bị Zalo chặn số lượng tin nhắn nhanh'
-            : '⚠ Zalo API - có thể bị giới hạn nếu bạn không dùng gói trả phí của Zalo'}
+            ? tr('✓ Local - không bị Zalo chặn số lượng tin nhắn nhanh')
+            : tr('⚠ Zalo API - có thể bị giới hạn nếu bạn không dùng gói trả phí của Zalo')}
         </div>
       </div>
 
@@ -850,15 +850,15 @@ export function QuickMessageDropdown({
       style={{ maxHeight: '20rem', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border flex-shrink-0">
-        <span className="text-xs font-semibold text-foreground">Tin nhắn nhanh ({filtered.length})</span>
+        <span className="text-xs font-semibold text-foreground">{trx('Tin nhắn nhanh ({{count}})', { count: filtered.length })}</span>
         <button onMouseDown={e => { e.preventDefault(); onManage(); }}
-          className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors">Quản lý</button>
+          className="text-xs text-blue-400 hover:text-blue-300 font-semibold transition-colors">{tr('Quản lý')}</button>
       </div>
 
       {/* Items */}
       <div className="overflow-y-auto flex-1">
         {filtered.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-4">Không tìm thấy tin nhắn nhanh</p>
+          <p className="text-xs text-muted-foreground text-center py-4">{tr('Không tìm thấy tin nhắn nhanh')}</p>
         ) : (
           filtered.map((item, idx) => (
             <button key={item.id} onMouseDown={e => { e.preventDefault(); onSelect(item); }}
@@ -875,7 +875,7 @@ export function QuickMessageDropdown({
                           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
                           </svg>
-                          {item._localMedia.filter(f => f.type === 'image').length} ảnh
+                          {item._localMedia.filter(f => f.type === 'image').length} {tr('ảnh')}
                         </span>
                       )}
                       {item._localMedia.filter(f => f.type === 'video').length > 0 && (
@@ -883,7 +883,7 @@ export function QuickMessageDropdown({
                           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
                           </svg>
-                          {item._localMedia.filter(f => f.type === 'video').length} video
+                          {item._localMedia.filter(f => f.type === 'video').length} {tr('video')}
                         </span>
                       )}
                     </div>
@@ -915,7 +915,7 @@ export function QuickMessageDropdown({
       {/* Hint */}
       <div className="px-4 py-2 border-t border-border flex-shrink-0 bg-card/80">
         <p className="text-xs text-muted-foreground">
-          Gợi ý: Nhập <kbd className="bg-muted text-foreground/80 text-xs px-1.5 py-0.5 rounded">/</kbd> ở đầu ô chat để hiển thị danh sách tin nhắn nhanh.
+          {trx('Gợi ý: Nhập <0>/</0> ở đầu ô chat để hiển thị danh sách tin nhắn nhanh.', { 0: <kbd className="bg-muted text-foreground/80 text-xs px-1.5 py-0.5 rounded" /> })}
         </p>
       </div>
     </div>

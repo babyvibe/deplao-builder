@@ -1,11 +1,11 @@
 /**
- * markConversationRead - "Đánh dấu đã đọc" for one conversation: the app (DB + store: unread count
+ * markConversationRead - "Đánh dấu đã đọc" (Mark as read) for one conversation: the app first (DB + store: unread count
  * and the @ flag), then the platform when it has an API:
  *  - Zalo: removeUnreadMark (manual "unread" mark) + sendSeenEvent for the newest RECEIVED message
  *  - Telegram: ReadHistory + unread @-mentions / reactions (telegramUser:readChatHistory)
  *  - Facebook: read receipt (fb:markAsRead)
  *  - Telegram Bot: no read state on the platform → app only
- * Shared by the conversation context menu and "Tự động đánh dấu đã đọc".
+ * Shared by the conversation context menu and "Tự động đánh dấu đã đọc" (Auto mark as read).
  */
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import DataAccessor from '@/lib/data/DataAccessor';
@@ -15,6 +15,7 @@ import { useAccountStore } from '@/store/accounts/accountStore';
 import { useChatStore } from '@/store/chat/chatStore';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { newestIncoming, zaloSeenPayload } from './readSyncRules';
+import { tr } from '../../../../shared/i18n';
 
 /** synced = sent to the platform; unsupported = platform has no API / nothing to send; failed = API error. */
 export type ReadSyncResult = 'synced' | 'unsupported' | 'failed';
@@ -39,7 +40,7 @@ function zaloCall(method: string, accountId: string, params: any): Promise<any> 
 async function syncZaloRead(account: any, threadId: string, threadType: number): Promise<{ sync: ReadSyncResult; error?: string }> {
   const auth = buildZaloAuth(account);
   await zaloCall('removeUnreadMark', account.zalo_id, { auth, threadId, type: threadType }).catch(() => null);
-  // Mốc "đã xem" = tin nhận mới nhất (không phải tin của mình / tin hệ thống — Zalo không nhận các tin đó)
+  // "đã xem" (seen) mark = newest received message (not my own / system message: Zalo does not receive those)
   const res: any = await DataAccessor.getMessages({ zaloId: account.zalo_id, threadId, limit: 20, offset: 0 }).catch(() => null);
   const target = newestIncoming(res?.messages, account.zalo_id);
   if (!target) return { sync: 'unsupported' };
@@ -66,7 +67,7 @@ export async function markConversationRead(opts: MarkConversationReadOptions): P
   const channel = account?.channel || CHANNEL.ZALO;
   try {
     if (channel === CHANNEL.ZALO) {
-      return account ? await syncZaloRead(account, threadId, threadType) : { sync: 'failed', error: 'Không tìm thấy tài khoản' };
+      return account ? await syncZaloRead(account, threadId, threadType) : { sync: 'failed', error: tr('Không tìm thấy tài khoản') };
     }
     if (channel === CHANNEL.TELEGRAM_USER || channel === CHANNEL.FACEBOOK) {
       const res = await getAdapter(channel).markAsRead({ accountId, threadId });

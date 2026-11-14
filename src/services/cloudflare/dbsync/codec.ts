@@ -1,13 +1,13 @@
 /**
- * codec — mã hoá giá trị SQLite thành JSON (một dòng JSONL của đoạn thay đổi) và ngược lại, giữ đúng kiểu lưu trữ.
+ * codec: encodes SQLite values as JSON (one JSONL line of a change segment) and back, keeping the exact storage class.
  *
- * Đọc dòng nguồn ở chế độ BigInt (SqlConn.prepare(…, { bigInts: true })) nên:
- *   INTEGER  → bigint  → số JSON thường (trong khoảng ±2^53) hoặc {"$big": "…"}
- *   REAL     → number  → số JSON thường khi có phần lẻ; {"$r": n} khi tròn (1.0) để áp lại vẫn là REAL; ±Inf → {"$inf": ±1}
+ * Source rows are read in BigInt mode (SqlConn.prepare(…, { bigInts: true })), so:
+ *   INTEGER  → bigint  → a plain JSON number (within ±2^53) or {"$big": "…"}
+ *   REAL     → number  → a plain JSON number when it has a fraction; {"$r": n} when whole (1.0), so it is still REAL after applying; ±Inf → {"$inf": ±1}
  *   TEXT     → string
  *   BLOB     → {"$b64": "…"}
  *   NULL     → null
- * Khi áp: số JSON nguyên → bind BigInt (lưu INTEGER), số lẻ / $r → bind double (lưu REAL).
+ * When applying: a whole JSON number → bind as BigInt (stored as INTEGER), a fractional number / $r → bind as double (stored as REAL).
  */
 
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
@@ -28,7 +28,7 @@ export function encodeValue(v: unknown): EncodedValue {
     if (v === null || v === undefined) return null;
     if (typeof v === 'bigint') return v <= MAX_SAFE && v >= MIN_SAFE ? Number(v) : { $big: v.toString() };
     if (typeof v === 'number') {
-        if (Number.isNaN(v)) return null; // SQLite lưu NaN thành NULL
+        if (Number.isNaN(v)) return null; // SQLite stores NaN as NULL
         if (!Number.isFinite(v)) return { $inf: v > 0 ? 1 : -1 };
         return Number.isInteger(v) ? { $r: v } : v;
     }
@@ -53,14 +53,14 @@ export function decodeValue(v: unknown): BindValue {
     throw new Error('Giá trị không hợp lệ trong đoạn thay đổi');
 }
 
-/** Dòng đọc ở chế độ BigInt → object {cột: giá trị đã mã hoá} theo đúng danh sách cột. */
+/** A row read in BigInt mode → object {column: encoded value}, in the exact column list order. */
 export function encodeRow(row: Record<string, unknown>, columns: string[]): Record<string, EncodedValue> {
     const out: Record<string, EncodedValue> = {};
     for (const c of columns) out[c] = encodeValue(row[c]);
     return out;
 }
 
-/** rowid/id dạng số JS khi an toàn (phần lớn trường hợp) — dùng cho header, mốc _cloud_dirty… */
+/** rowid/id as a JS number when it is safe (most cases): used for the header, the _cloud_dirty marks… */
 export function safeInt(v: unknown): number {
     if (typeof v === 'bigint') {
         if (v > MAX_SAFE || v < MIN_SAFE) throw new Error('Số nguyên vượt giới hạn an toàn');

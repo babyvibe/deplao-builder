@@ -1,22 +1,22 @@
 /**
- * MediaEvictor — dọn file media khỏi máy khi đã chắc chắn có bản trên R2.
+ * MediaEvictor: removes media files from the machine once a copy is certain to exist on R2.
  *
- * Quy tắc an toàn (mọi đường dọn đều qua evictOne):
- *  0. Chỉ khi người dùng bật "giải phóng ổ đĩa" (evictEnabled; mặc định TẮT = giữ nguyên file trên máy) — kiểm tra ở
- *     đầu mỗi lượt, trước mỗi file và ngay trước khi xoá (tắt giữa chừng → dừng ngay).
- *  1. Chỉ dòng chỉ mục 'uploaded' (đọc lại ngay trước khi xoá). File chưa có trong chỉ mục / pending / missing → giữ.
- *  2. File trên máy phải đúng kích thước + mtime lúc tải lên; khác → tải lên lại, giữ file.
- *  3. HEAD object trên R2: phải có, đúng kích thước (và ETag nếu có) → mới xoá file trên máy; sai → tải lên lại, giữ file.
- *  4. state → 'evicted'. Không bao giờ xoá gì trên R2.
+ * Safety rules (every removal path goes through evictOne):
+ *  0. Only when the user turns on "giải phóng ổ đĩa" (free disk space; evictEnabled, default OFF = the files stay on the machine): checked at the
+ *     start of each pass, before each file, and right before deleting (turned off midway → stop at once).
+ *  1. Only index rows in state 'uploaded' (re-read right before deleting). A file that is not in the index / pending / missing → kept.
+ *  2. The file on the machine must match the size + mtime from upload time; if different → upload again, keep the file.
+ *  3. HEAD the object on R2: it must exist, with the right size (and the ETag if present) → only then delete the file on the machine; wrong → upload again, keep the file.
+ *  4. state → 'evicted'. Never deletes anything on R2.
  *
- * Hai đường:
- *  - runSpaceEviction (tuỳ chọn evictEnabled; hằng ngày ~03:00 và sau các lô tải lên lớn): ứng viên = uploaded, cũ hơn
- *    evictKeepDays (theo mtime) và không mở trong evictKeepDays; cũ nhất trước; dừng khi ổ trống ≥ evictMinFreeGb.
- *    Không đọc được dung lượng trống (fs.statfs lỗi) → dọn hết ứng viên (đều cũ, đã xác minh trên R2).
- *  - evictAccountOlderThan (thay "tự xoá media cũ sau N ngày" của từng tài khoản khi đồng bộ media bật VÀ bật giải
- *    phóng ổ đĩa, tài khoản trong phạm vi lưu): các thư mục ngày YYYY-MM-DD cũ hơn N ngày của tài khoản → chỉ dọn file
- *    đã xác minh trên R2; file chưa sao lưu được giữ lại (file trong phạm vi lưu được đưa vào chỉ mục để tải lên trước,
- *    lần dọn sau sẽ dọn). Thư mục được giữ (rỗng cũng không xoá).
+ * Two paths:
+ *  - runSpaceEviction (optional, evictEnabled; daily at ~03:00 and after large upload batches): candidates = uploaded, older than
+ *    evictKeepDays (by mtime) and not opened within evictKeepDays; oldest first; stops once free space ≥ evictMinFreeGb.
+ *    If free space cannot be read (fs.statfs fails) → clean all candidates (they are all old and verified on R2).
+ *  - evictAccountOlderThan (replaces the per-account "tự xoá media cũ sau N ngày" (auto-delete old media after N days) when media sync is on AND
+ *    free disk space is on, for accounts in the storage scope): the account's day folders YYYY-MM-DD older than N days → only removes files
+ *    verified on R2; files that could not be backed up are kept (files in the storage scope are added to the index so they upload first;
+ *    the next cleanup will remove them). Folders are kept (even empty ones are not deleted).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -42,9 +42,9 @@ export interface EvictorDeps {
     options(): MediaSyncOptions;
     isBackingOff(): boolean;
     onBusy(retryAfterMs?: number): void;
-    /** Có file vừa được đưa vào chỉ mục (đánh thức hàng đợi tải lên). */
+    /** Files were just added to the index (wakes the upload queue). */
     onIndexed?(count: number): void;
-    /** Phạm vi lưu đang áp (file chưa có trong chỉ mục chỉ được đưa vào nếu trong phạm vi); null = mọi file. */
+    /** Storage scope in effect (a file not yet in the index is only added if it is in scope); null = every file. */
     scope?(ctx: MediaContext): MediaScopeFilter | null;
     now?(): number;
     fs?: EvictorFs;
@@ -78,7 +78,7 @@ export class MediaEvictor {
         return this.deps.now ? this.deps.now() : Date.now();
     }
 
-    /** Các lượt dọn chạy lần lượt (dọn theo dung lượng và dọn theo tài khoản không chồng nhau). */
+    /** Cleanup runs take turns (space-based cleanup and account-based cleanup never overlap). */
     private serial<T>(fn: () => Promise<T>): Promise<T> {
         const next = this.chain.then(fn, fn);
         this.chain = next.catch(() => undefined);
@@ -93,12 +93,12 @@ export class MediaEvictor {
         return this.serial(() => this.accountEviction(accountDir, olderThanDays, isCurrent));
     }
 
-    /** Chạy fn khi không có lượt dọn nào khác (công cụ dọn R2 không chồng với dọn file trên máy). */
+    /** Runs fn when no other cleanup run is active (the R2 cleanup tool does not overlap with cleaning files on the machine). */
     runExclusive<T>(fn: () => Promise<T>): Promise<T> {
         return this.serial(fn);
     }
 
-    /** "Giải phóng ổ đĩa" đang bật (mặc định tắt = không bao giờ xoá file trên máy). */
+    /** "Giải phóng ổ đĩa" (free disk space) is on (default off = never delete files on the machine). */
     private evictAllowed(): boolean {
         try {
             return this.deps.options().evictEnabled === true;
@@ -107,7 +107,7 @@ export class MediaEvictor {
         }
     }
 
-    // ─── Một file ──────────────────────────────────────────────────────
+    // ─── One file ──────────────────────────────────────────────────────
 
     private async statOrNull(p: string): Promise<fs.Stats | null> {
         try { return await this.fs.stat(p); } catch { return null; }
@@ -121,27 +121,27 @@ export class MediaEvictor {
         const abs = absPathFor(ctx.realRoot, rel);
         const st = await this.statOrNull(abs);
         if (st && (!st.isFile() || st.size !== size || Math.floor(st.mtimeMs) !== mtime)) {
-            // File trên máy đã khác bản đã tải lên → tải lên lại, không xoá
+            // The file on the machine differs from the uploaded copy → upload again, do not delete
             if (alive()) ctx.index.requeueUploaded(rel, st.isFile() ? { size: st.size, mtimeMs: Math.floor(st.mtimeMs) } : {});
             return 'requeued';
         }
         const head = await this.deps.r2(ctx.bucket).headObject(objectKeyFor(ctx.workspaceUid, rel));
         const etagMismatch = !!(head && row.etag && head.etag && normEtag(head.etag) !== normEtag(row.etag));
         if (!head || Number(head.size) !== size || etagMismatch) {
-            // R2 không có / không khớp → tải lên lại, giữ file trên máy
+            // R2 has no copy / it does not match → upload again, keep the file on the machine
             if (alive()) ctx.index.requeueUploaded(rel);
             this.log('warn', `[CloudMedia] Bản trên R2 không khớp, giữ file và tải lên lại: ${rel}`);
             return 'requeued';
         }
         if (!alive()) return 'kept';
-        // Đọc lại ngay trước khi xoá (bộ tải lên / quét có thể vừa đổi dòng này)
+        // Re-read right before deleting (the uploader / scanner may have just changed this row)
         const again = ctx.index.getRow(rel);
         if (!again || again.state !== 'uploaded' || Number(again.size) !== size || Number(again.mtime_ms) !== mtime) return 'kept';
         if (st) {
             const st2 = await this.statOrNull(abs);
             if (st2) {
                 if (!st2.isFile() || st2.size !== size || Math.floor(st2.mtimeMs) !== mtime) return 'kept';
-                // Chốt cuối: người dùng vừa tắt "giải phóng ổ đĩa" / đổi workspace → không xoá
+                // Final check: the user just turned off "giải phóng ổ đĩa" (free disk space) / changed workspace → do not delete
                 if (!alive() || !this.evictAllowed()) return 'kept';
                 await this.fs.unlink(abs);
             }
@@ -167,7 +167,7 @@ export class MediaEvictor {
                     return false;
                 }
                 this.log('warn', `[CloudMedia] Dọn file lỗi (${rel}): ${errorText(err)}`);
-                // Token / quyền / bucket hỏng: các file sau cũng lỗi y hệt → dừng lượt dọn (không xoá gì)
+                // Token / permission / bucket broken: the following files would fail the same way → stop the cleanup run (delete nothing)
                 if (kind === 'auth' || kind === 'bucket') { result.stopped = 'aborted'; return false; }
                 continue;
             }
@@ -178,7 +178,7 @@ export class MediaEvictor {
         return true;
     }
 
-    // ─── Theo dung lượng ───────────────────────────────────────────────
+    // ─── By disk space ───────────────────────────────────────────────
 
     private async spaceEviction(isCurrent: () => boolean): Promise<EvictResult> {
         const result: EvictResult = { evicted: 0, freedBytes: 0, requeued: 0 };
@@ -219,13 +219,13 @@ export class MediaEvictor {
         return result;
     }
 
-    // ─── Theo tài khoản (thay cleanupOldMedia khi đồng bộ bật) ─────────
+    // ─── By account (replaces cleanupOldMedia when sync is on) ─────────
 
     private async accountEviction(accountDir: string, olderThanDays: number, isCurrent: () => boolean): Promise<EvictResult> {
         const result: EvictResult = { evicted: 0, freedBytes: 0, requeued: 0 };
         const name = String(accountDir || '');
         if (!name || /[\\/]/.test(name) || name === '.' || name === '..' || !(olderThanDays > 0)) return result;
-        // Giữ file trên máy (mặc định): không bao giờ xoá — "tự xoá media cũ" khi đó chạy như trước ở FileStorageService
+        // Keep files on the machine (default): never delete. The "tự xoá media cũ" (auto-delete old media) setting then runs as before in FileStorageService
         if (!this.evictAllowed()) { result.stopped = 'disabled'; return result; }
         const ctx = await this.deps.ctx.get();
         if (!ctx) { result.stopped = 'no_context'; return result; }
@@ -233,7 +233,7 @@ export class MediaEvictor {
         let filter: MediaScopeFilter | null = null;
         try { filter = this.deps.scope ? this.deps.scope(ctx) : null; } catch { filter = null; }
 
-        // Tên thư mục đúng hoa/thường trên đĩa (rel trong chỉ mục giữ đúng tên)
+        // The folder name with the correct case on disk (the rel in the index keeps the exact name)
         let accountRel: string | null = null;
         try { accountRel = relPathInRoot(ctx.realRoot, await this.fs.realpath(path.join(ctx.realRoot, name))); } catch { accountRel = null; }
         if (!accountRel || accountRel.includes('/')) return result;
@@ -244,7 +244,7 @@ export class MediaEvictor {
         try { entries = await this.fs.readdir(absPathFor(ctx.realRoot, accountRel), { withFileTypes: true }); } catch { return result; }
         for (const entry of entries) {
             if (!entry.isDirectory()) continue;
-            // Cùng quy tắc với cleanupOldMedia cũ: chỉ thư mục ngày YYYY-MM-DD cũ hơn N ngày
+            // Same rule as the old cleanupOldMedia: only YYYY-MM-DD day folders older than N days
             const dirDate = new Date(`${entry.name}T00:00:00`);
             if (isNaN(dirDate.getTime()) || dirDate.getTime() >= cutoff) continue;
             const files = await this.listFiles(ctx, `${accountRel}/${entry.name}`, alive);
@@ -252,7 +252,7 @@ export class MediaEvictor {
                 if (!alive()) { result.stopped = 'aborted'; return result; }
                 const chunk = files.slice(i, i + 200);
                 const rows = ctx.index.getRows(chunk.map((f) => f.rel));
-                // File chưa có trong chỉ mục: KHÔNG xoá — đưa vào hàng đợi tải lên (chỉ file trong phạm vi lưu)
+                // File not in the index: do NOT delete it → add it to the upload queue (only files in the storage scope)
                 const unknown = chunk.filter((f) => !rows.has(f.rel) && relInScope(f.rel, f.mtimeMs, filter));
                 if (unknown.length && alive()) {
                     const r = ctx.index.upsertScanned(unknown);
@@ -273,7 +273,7 @@ export class MediaEvictor {
         return result;
     }
 
-    /** Mọi file (đệ quy, không theo symlink) dưới thư mục rel. */
+    /** Every file (recursive, does not follow symlinks) under the rel folder. */
     private async listFiles(ctx: MediaContext, dirRel: string, alive: () => boolean): Promise<ScannedFile[]> {
         const out: ScannedFile[] = [];
         const stack = [dirRel];

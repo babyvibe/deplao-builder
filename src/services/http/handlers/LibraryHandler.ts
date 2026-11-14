@@ -1,6 +1,6 @@
 /**
- * LibraryHandler - REST API cho thư viện media.
- * Các endpoint /api/library/* được HttpRelayService gọi.
+ * LibraryHandler: REST API for the media library.
+ * The /api/library/* endpoints are called by HttpRelayService.
  */
 
 import * as http from 'http';
@@ -10,10 +10,11 @@ import DatabaseService from '../../database/DatabaseService';
 import Logger from '../../../utils/Logger';
 import { canAccessLibraryOwner, checkLibraryAccess, type FileAccessEmployee } from '../bossFileAccess';
 import { sendFileError, sendLocalFile } from './MediaHandler';
+import { tr } from '../../../shared/i18n';
 
 const lib = () => LibraryService.getInstance();
 
-/** true = nhân viên được tải item; false = đã trả 401 / 404 / 403. */
+/** true = the employee may download the item; false = 401 / 404 / 403 already sent. */
 function authorizeLibraryItem(res: http.ServerResponse, uuid: string, employee?: FileAccessEmployee | null): boolean {
   if (!employee) {
     sendFileError(res, 401, 'Unauthorized');
@@ -33,7 +34,7 @@ function authorizeLibraryItem(res: http.ServerResponse, uuid: string, employee?:
   return true;
 }
 
-/** Content-Disposition inline: tên ASCII dự phòng + filename* UTF-8 (tên có dấu làm writeHead ném lỗi, '"' làm hỏng header). */
+/** Content-Disposition inline: ASCII fallback name + UTF-8 filename* (an accented name makes writeHead throw, '"' breaks the header). */
 function inlineDisposition(fileName: string): string {
   const name = String(fileName || 'file').replace(/[\r\n\t]/g, ' ');
   const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
@@ -52,12 +53,12 @@ function parseOwnerZaloIds(value: unknown): string[] {
 }
 
 /**
- * Thân request upload tối đa (multipart / JSON base64 — cả file nằm trong RAM). Trước đây không giới hạn: một nhân viên
- * gửi body vài GB làm Boss hết RAM. Base64 nở ~4/3 → file thực tế tối đa ~150 MB.
+ * Maximum upload request body (multipart / base64 JSON: the whole file sits in RAM). Previously unlimited: one employee
+ * sending a body of several GB could run Boss out of RAM. Base64 grows by ~4/3, so the real file limit is ~150 MB.
  */
 export const MAX_LIBRARY_UPLOAD_BODY_BYTES = 200 * 1024 * 1024;
 
-/** Gom body upload có giới hạn; vượt giới hạn → 413 + bỏ phần còn lại (onDone không được gọi). */
+/** Collects the upload body up to a limit; over the limit → 413 and the rest is discarded (onDone is not called). */
 function readUploadBody(req: http.IncomingMessage, res: http.ServerResponse, onDone: (raw: Buffer) => void): void {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -70,7 +71,7 @@ function readUploadBody(req: http.IncomingMessage, res: http.ServerResponse, onD
       chunks.length = 0;
       if (!res.headersSent) {
         res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' });
-        res.end(JSON.stringify({ success: false, error: `File tối đa ${Math.round(MAX_LIBRARY_UPLOAD_BODY_BYTES / 1024 / 1024 * 3 / 4)} MB`, code: 'PAYLOAD_TOO_LARGE' }));
+        res.end(JSON.stringify({ success: false, error: tr('File tối đa {{v1}} MB', { v1: Math.round(MAX_LIBRARY_UPLOAD_BODY_BYTES / 1024 / 1024 * 3 / 4) }), code: 'PAYLOAD_TOO_LARGE' }));
       }
       req.resume();
       return;
@@ -82,31 +83,31 @@ function readUploadBody(req: http.IncomingMessage, res: http.ServerResponse, onD
   });
 }
 
-/** Trang mặc định khi request không gửi zaloId: chỉ khi nhân viên được giao đúng một trang (không lấy trang đầu tiên). */
+/** Default page when the request does not send zaloId: only when the employee is assigned exactly one page (the first page is never picked). */
 function defaultLibraryOwner(employee: any): string {
   const assigned = [...new Set<string>((employee?.assigned_accounts || []).map(String).filter(Boolean))];
   return assigned.length === 1 ? assigned[0] : '';
 }
 
-/** Trang (tài khoản) nhân viên được ghi thư viện vào: có tài khoản được giao thì phải là một trong số đó. */
+/** Page (account) the employee writes the library to: if accounts are assigned, it must be one of them. */
 function uploadOwnerError(employee: any, zaloId: string): string | null {
   if (!zaloId) return 'Missing zaloId';
-  return canAccessLibraryOwner(employee, zaloId) ? null : 'Không có quyền ghi thư viện của trang này';
+  return canAccessLibraryOwner(employee, zaloId) ? null : tr('Không có quyền ghi thư viện của trang này');
 }
 
-/** Item thư viện nhân viên được sửa / xoá: thuộc trang được giao (cùng quy tắc tải file — checkLibraryAccess). */
+/** Library item an employee may edit / delete: must belong to an assigned page (same rule as file download: checkLibraryAccess). */
 function itemWriteError(employee: any, uuid: string): string | null {
   const item = lib().getItem(uuid);
   if (!item) return 'Item not found';
-  return checkLibraryAccess(employee, String(item.owner_zalo_id || '')) ? 'Không có quyền với item thư viện này' : null;
+  return checkLibraryAccess(employee, String(item.owner_zalo_id || '')) ? tr('Không có quyền với item thư viện này') : null;
 }
 
-/** Thư mục thư viện nhân viên được đổi tên / xoá: thuộc trang được giao. */
+/** Library folder an employee may rename / delete: must belong to an assigned page. */
 function folderWriteError(employee: any, folderId: number): string | null {
   const row = DatabaseService.getInstance().queryOne<{ owner_zalo_id: string }>(
     'SELECT owner_zalo_id FROM media_library_folders WHERE id = ?', [folderId]);
   if (!row) return 'Folder not found';
-  return canAccessLibraryOwner(employee, String(row.owner_zalo_id || '')) ? null : 'Không có quyền với thư mục này';
+  return canAccessLibraryOwner(employee, String(row.owner_zalo_id || '')) ? null : tr('Không có quyền với thư mục này');
 }
 
 function resolveAccessibleOwners(employee: any, zaloId: string, requested: string[]): string[] | null {
@@ -137,7 +138,7 @@ function error(msg: string): JsonResponse {
 
 export const libraryHandlers = {
   // ── Upload (multipart) ──────────────────────────────────────────
-  // Boss nhận multipart từ employee (gửi qua curl, HTTP client, ...)
+  // Boss accepts multipart from an employee (sent via curl, an HTTP client, ...)
 
   handleUpload(req: http.IncomingMessage, res: http.ServerResponse, employee: any): void {
     const contentType = req.headers['content-type'] || '';
@@ -168,7 +169,7 @@ export const libraryHandlers = {
         }
 
         const zaloId = parsed.fields?.zaloId || defaultLibraryOwner(employee);
-        // Trước đây zaloId trong form không được kiểm tra: ghi được vào thư viện của trang không được giao
+        // Previously the zaloId in the form was not checked: it could write into the library of a page that was not assigned
         const ownerDenied = uploadOwnerError(employee, zaloId);
         if (ownerDenied) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -211,7 +212,7 @@ export const libraryHandlers = {
   },
 
   // ── Upload (JSON base64 - employee mode) ────────────────────────
-  // Employee gửi POST /api/library/upload/json với JSON body:
+  // Employee sends POST /api/library/upload/json with a JSON body:
   // { zaloId, fileName, mimeType, base64, tags?, folderId? }
   handleUploadJson(req: http.IncomingMessage, res: http.ServerResponse, employee: any): void {
     // ⚠️ Capture pinned DB path BEFORE async callback. handleRestApi wraps this in
@@ -230,7 +231,7 @@ export const libraryHandlers = {
         }
 
         const empZaloId = zaloId || defaultLibraryOwner(employee);
-        // Trước đây zaloId trong body không được kiểm tra: ghi được vào thư viện của trang không được giao
+        // Previously the zaloId in the body was not checked: it could write into the library of a page that was not assigned
         const ownerDenied = uploadOwnerError(employee, empZaloId);
         if (ownerDenied) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -245,8 +246,8 @@ export const libraryHandlers = {
           return;
         }
 
-        // ⚠️ Dùng withDbPathAsync vì lib().upload() là async (có await sharp bên trong).
-        // withDbPath (sync) sẽ restore db BEFORE async ops complete → INSERT vào sai DB!
+        // ⚠️ Use withDbPathAsync because lib().upload() is async (it awaits sharp internally).
+        // withDbPath (sync) would restore the db BEFORE the async ops complete → INSERT into the wrong DB!
         const item = await DatabaseService.getInstance().withDbPathAsync(pinnedDbPath, () => lib().upload({
           zaloId: empZaloId,
           buffer,
@@ -283,7 +284,7 @@ export const libraryHandlers = {
     if (!zaloId) return error('Missing zaloId');
     const requestedOwners = parseOwnerZaloIds(params.ownerZaloIds);
     const ownerZaloIds = resolveAccessibleOwners(employee, zaloId, requestedOwners);
-    if (!ownerZaloIds) return error('Không có quyền xem thư viện của trang này');
+    if (!ownerZaloIds) return error(tr('Không có quyền xem thư viện của trang này'));
 
     const page = parseInt(params.page) || 1;
     const limit = Math.min(parseInt(params.limit) || 50, 200);
@@ -320,7 +321,7 @@ export const libraryHandlers = {
   getItem(employee: any, params: any): JsonResponse {
     if (!params.uuid) return error('Missing uuid');
     const item = lib().getItem(params.uuid);
-    // Cùng quy tắc chủ item với tải file (checkLibraryAccess): item của trang không được giao = "không có"
+    // Same item owner rule as file download (checkLibraryAccess): an item of a page that is not assigned = "not found"
     if (!item || checkLibraryAccess(employee, String(item.owner_zalo_id || ''))) return error('Item not found');
     const bossUrl = params._bossUrl || '';
     return success({
@@ -340,14 +341,14 @@ export const libraryHandlers = {
     });
   },
 
-  // Ghi (sửa / xoá item, tạo / đổi tên / xoá thư mục): chỉ trên trang được giao — trước đây theo uuid / id là sửa được
-  // thư viện của mọi trang (PATCH còn không bao giờ chạy: router trả 404 và uuid không được lấy từ đường dẫn).
+  // Writes (edit / delete item, create / rename / delete folder): only on an assigned page. Previously an item could be edited by uuid / id alone
+  // the library of every page (PATCH never ran either: the router returned 404 and the uuid was not taken from the path).
 
   updateItem(employee: any, params: any): JsonResponse {
     if (!params.uuid) return error('Missing uuid');
     const denied = itemWriteError(employee, params.uuid);
     if (denied) return error(denied);
-    // Chỉ các trường được sửa (không đẩy cả query / tham số khác vào event library:itemUpdated)
+    // Only the edited fields (do not push the whole query / other params into the library:itemUpdated event)
     const patch: any = {};
     for (const key of ['name', 'tags', 'folderId', 'isFavorite', 'altText']) {
       if (params[key] !== undefined) patch[key] = params[key];
@@ -355,7 +356,7 @@ export const libraryHandlers = {
     if (patch.folderId !== undefined && patch.folderId !== null) patch.folderId = parseInt(patch.folderId) || null;
     if (patch.isFavorite !== undefined) patch.isFavorite = patch.isFavorite ? 1 : 0;
     const updated = lib().updateItem(params.uuid, patch);
-    if (!updated) return error('Không có thay đổi nào');
+    if (!updated) return error(tr('Không có thay đổi nào'));
     return success({ uuid: params.uuid });
   },
 
@@ -390,7 +391,7 @@ export const libraryHandlers = {
     if (!zaloId) return error('Missing zaloId');
     const requestedOwners = parseOwnerZaloIds(params.ownerZaloIds);
     const ownerZaloIds = resolveAccessibleOwners(employee, zaloId, requestedOwners);
-    if (!ownerZaloIds) return error('Không có quyền xem thư viện của trang này');
+    if (!ownerZaloIds) return error(tr('Không có quyền xem thư viện của trang này'));
     const folders = lib().getFolders(zaloId, params.type, ownerZaloIds);
     return success({ items: folders });
   },
@@ -404,7 +405,7 @@ export const libraryHandlers = {
     return success({ id });
   },
 
-  /** Đổi tên thư mục (PATCH /api/library/folders/:id) — cùng câu lệnh với library:renameFolder của Boss. */
+  /** Rename a folder (PATCH /api/library/folders/:id): same statement as library:renameFolder on Boss. */
   renameFolder(employee: any, params: any): JsonResponse {
     const id = parseInt(params.id);
     if (!id) return error('Missing id');
@@ -416,9 +417,9 @@ export const libraryHandlers = {
     return success({ id, name });
   },
 
-  // ── Serve file (không phải JSON) ────────────────────────────────
-  // HttpRelayService đã xác thực phiên nhân viên; ở đây kiểm tra chủ item (checkLibraryAccess — cùng quy tắc với
-  // resolveAccessibleOwners). Không truyền nhân viên → 401 (an toàn mặc định cho mọi chỗ gọi).
+  // ── Serve file (not JSON) ────────────────────────────────
+  // HttpRelayService has already authenticated the employee session; here the item owner is checked (checkLibraryAccess: same rule as
+  // resolveAccessibleOwners). No employee passed → 401 (safe default for every caller).
 
   serveFile(req: http.IncomingMessage, res: http.ServerResponse, uuid: string, employee?: FileAccessEmployee | null): void {
     try {

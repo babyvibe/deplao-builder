@@ -1,11 +1,12 @@
 /**
- * "… đang nhập..." trên ô soạn tin (người gõ trong 5 giây gần nhất, useTypingTicker vẽ lại mỗi 500 ms).
+ * "… đang nhập..." (… typing...) in the composer (the person typing in the last 5 seconds, useTypingTicker redraws every 500 ms).
  */
 import { useChatStore } from '@/store/chat/chatStore';
 import { useAppStore } from '@/store/app/appStore';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import type { OpenThread } from '../hooks/useOpenThread';
+import { tr } from '../../../../../shared/i18n';
 
 type TypingIndicatorProps = Pick<OpenThread, 'activeAccountId' | 'activeThreadId' | 'contactList'>;
 
@@ -31,10 +32,10 @@ export function TypingIndicator({ activeAccountId, activeThreadId, contactList }
   const typingUids = typingEntries.map(([k]) => k.replace(prefix, ''));
   const names = typingUids.map(resolveName);
   const nameText = names.length === 1
-    ? `${names[0]} đang nhập...`
+    ? tr('{{v1}} đang nhập...', { v1: names[0] })
     : names.length === 2
-      ? `${names[0]}, ${names[1]} đang nhập...`
-      : `${names[0]}, ${names[1]} và ${names.length - 2} người khác đang nhập...`;
+      ? tr('{{v1}}, {{v2}} đang nhập...', { v1: names[0], v2: names[1] })
+      : tr('{{v1}}, {{v2}} và {{v3}} người khác đang nhập...', { v1: names[0], v2: names[1], v3: names.length - 2 });
 
   const firstUid = typingUids[0];
   const firstContact = contactList.find(c => c.contact_id === firstUid);

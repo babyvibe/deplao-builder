@@ -1,29 +1,29 @@
 /**
- * Thông báo tin nhắn mới ngay trong app (thẻ ở góc trên bên phải, dưới thanh tiêu đề): quy tắc thuần, dùng chung cho
- * Zalo / Telegram (event:message, hooks/chat/useZaloEvents) và Facebook (fb:onMessage, hooks/chat/useChatEvents).
+ * In-app notification for new messages (a card at the top right, under the title bar): pure rules, shared by
+ * Zalo / Telegram (event:message, hooks/chat/useZaloEvents) and Facebook (fb:onMessage, hooks/chat/useChatEvents).
  *
- * - Bật / tắt theo từng tài khoản; "Tất cả tài khoản" là mặc định cho mọi tài khoản chưa chỉnh riêng, kể cả tài khoản
- *   thêm sau. Lưu trên máy (localStorage): máy Boss và máy nhân viên chỉnh riêng.
- * - Chỉ tin nhắn thật, mới nhận: không phải tin của mình, tin tải lại / đồng bộ bù (cờ _silent / _silentNotification,
- *   hoặc cũ hơn IN_APP_TOAST_FRESH_MS), thông báo hệ thống; hội thoại không tắt thông báo, không ở thư mục Khác, không
- *   ẩn; không phải hội thoại đang mở trên màn hình; cửa sổ đang hiện; app không khoá.
- * - Mỗi hội thoại một thẻ (tin mới của cùng hội thoại cập nhật thẻ đang hiện), tối đa IN_APP_TOAST_MAX thẻ: thẻ mới
- *   đẩy thẻ cũ nhất ra ngay. Mỗi thẻ hiện IN_APP_TOAST_MS kể từ tin mới nhất của nó.
+ * - On / off per account; "Tất cả tài khoản" (All accounts) is the default for every account without its own setting, including accounts
+ *   added later. Saved on this machine (localStorage): the Boss machine and an employee machine are set separately.
+ * - Only real, new messages: not my own, not reloaded / catch-up sync (flags _silent / _silentNotification,
+ *   or older than IN_APP_TOAST_FRESH_MS), not system notices; the conversation has notifications on, is not in the "Khác" (Other) folder, is not
+ *   hidden; not the conversation open on screen; the window is visible; the app is not locked.
+ * - One card per conversation (a new message in the same conversation updates the card on screen), at most IN_APP_TOAST_MAX cards: a new card
+ *   pushes the oldest card out at once. Each card shows for IN_APP_TOAST_MS from its newest message.
  */
 
 export const IN_APP_TOAST_MS = 2_000;
 export const IN_APP_TOAST_MAX = 3;
-/** Tin cũ hơn mốc này (so với giờ máy) không bật thông báo: tin tải bù sau khi mất mạng / mở app, đồng bộ lại. */
+/** Messages older than this mark (compared with the machine clock) do not trigger a notification: messages loaded to catch up after losing the network / opening the app, re-synced. */
 export const IN_APP_TOAST_FRESH_MS = 3 * 60_000;
-/** Thời gian mờ dần khi thẻ hết giờ / bấm ✕. */
+/** Fade-out time when the card expires / is closed with ✕. */
 export const IN_APP_TOAST_LEAVE_MS = 160;
-/** Rê chuột vào thẻ thì dừng đếm giờ; rời chuột còn ít nhất chừng này mới ẩn. */
+/** Hovering over a card pauses the timer; after the mouse leaves it stays for at least this long before hiding. */
 export const IN_APP_TOAST_RESUME_MS = 1_200;
 
 export interface InAppNotifyPrefs {
-  /** Mặc định cho mọi tài khoản chưa chỉnh riêng (cả tài khoản thêm sau). */
+  /** Default for every account without its own setting (including accounts added later). */
   all: boolean;
-  /** Tài khoản chỉnh khác mặc định. */
+  /** Account set differently from the default. */
   accounts: Record<string, boolean>;
 }
 
@@ -47,12 +47,12 @@ export function isInAppNotifyEnabled(prefs: InAppNotifyPrefs, accountId: string)
   return typeof own === 'boolean' ? own : prefs.all;
 }
 
-/** Bật / tắt cho tất cả: mọi tài khoản (cả tài khoản thêm sau) theo một giá trị, bỏ chỉnh riêng. */
+/** On / off for all: every account (including accounts added later) gets the same value, own settings are removed. */
 export function withAllAccounts(on: boolean): InAppNotifyPrefs {
   return { all: on, accounts: {} };
 }
 
-/** Chỉnh một tài khoản: trùng mặc định thì bỏ chỉnh riêng (đổi "Tất cả" sau này vẫn áp cho tài khoản đó). */
+/** Change one account: if it equals the default, its own setting is removed (a later change to "Tất cả" (All) still applies to that account). */
 export function withAccount(prefs: InAppNotifyPrefs, accountId: string, on: boolean): InAppNotifyPrefs {
   const accounts = { ...prefs.accounts };
   if (on === prefs.all) delete accounts[accountId];
@@ -63,7 +63,7 @@ export function withAccount(prefs: InAppNotifyPrefs, accountId: string, on: bool
 export interface InAppNotifySummary {
   enabled: number;
   total: number;
-  /** Công tắc "Tất cả tài khoản": bật khi mọi tài khoản đang bật (chưa có tài khoản: theo mặc định). */
+  /** The "Tất cả tài khoản" (All accounts) switch: on when every account is on (no accounts yet: follows the default). */
   allOn: boolean;
   allOff: boolean;
 }
@@ -75,27 +75,27 @@ export function summarizeInAppNotify(prefs: InAppNotifyPrefs, accountIds: readon
   return { enabled, total, allOn: enabled === total, allOff: enabled === 0 };
 }
 
-/** Loại tin không phải tin nhắn của người (thông báo hệ thống, tin đã xoá). */
+/** Message types that are not messages from a person (system notices, deleted messages). */
 const NOT_A_MESSAGE = new Set(['system', 'deleted']);
 
 export interface InAppToastCheck {
-  /** Cài đặt của tài khoản nhận tin. */
+  /** Settings of the account that receives the message. */
   enabled: boolean;
-  /** App đang khoá màn hình. */
+  /** The app is locked. */
   suspended?: boolean;
-  /** Cửa sổ app đang hiện (không thu nhỏ / ẩn). */
+  /** The app window is visible (not minimised / hidden). */
   windowVisible: boolean;
   isSelf?: boolean;
-  /** Tin tải lại / đồng bộ bù / lịch sử (cờ _silent, _silentNotification, _commentOnly). */
+  /** Reloaded / catch-up sync / history messages (flags _silent, _silentNotification, _commentOnly). */
   silent?: boolean;
   muted?: boolean;
   inOthers?: boolean;
-  /** Hội thoại ẩn (mã PIN). */
+  /** Hidden conversation (PIN code). */
   hidden?: boolean;
-  /** Hội thoại đang mở trên màn hình (trang Chat, đúng tài khoản / hội thoại / chủ đề). */
+  /** Conversation open on screen (Chat page, the right account / conversation / topic). */
   onScreen: boolean;
   msgType?: string | null;
-  /** Giờ của tin (ms). */
+  /** Time of the message (ms). */
   timestamp?: number | null;
   now: number;
 }
@@ -109,30 +109,30 @@ export function shouldShowInAppToast(check: InAppToastCheck): boolean {
   return true;
 }
 
-/** Một tin cần thông báo (người gọi đã lọc bằng shouldShowInAppToast). */
+/** One message to notify about (the caller has already filtered it with shouldShowInAppToast). */
 export interface InAppToastInput {
-  /** ID tài khoản như trong sự kiện (Facebook: facebook_id) — dùng để mở hội thoại. */
+  /** Account ID as in the event (Facebook: facebook_id), used to open the conversation. */
   accountId: string;
   threadId: string;
   threadType: number;
   msgId?: string;
-  /** Tên hội thoại. */
+  /** Conversation name. */
   conversation: string;
-  /** Người gửi (tin nhóm). */
+  /** Sender (group message). */
   sender?: string;
-  /** Nội dung xem trước của tin. */
+  /** Preview text of the message. */
   text: string;
 }
 
 export interface InAppToast extends InAppToastInput {
-  /** React key: giữ nguyên khi thẻ được cập nhật bằng tin mới của cùng hội thoại (không chạy lại hiệu ứng). */
+  /** React key: stays the same when the card is updated with a new message from the same conversation (the animation does not run again). */
   id: string;
   key: string;
-  /** Số tin của hội thoại từ lúc thẻ hiện. */
+  /** Number of messages in the conversation since the card appeared. */
   count: number;
   updatedAt: number;
   expiresAt: number;
-  /** Đang mờ dần (hết giờ / bấm ✕). */
+  /** Fading out (expired / ✕ pressed). */
   leavingAt?: number;
 }
 
@@ -140,7 +140,7 @@ export const inAppToastKey = (accountId: string, threadId: string): string => `$
 
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
-/** Dòng nội dung: "Hội thoại: Người gửi: tin" (tin 1:1 / kênh không lặp tên). */
+/** Content line: "Hội thoại: Người gửi: tin" (Conversation: Sender: message) (1:1 messages / channels do not repeat the name). */
 export function inAppToastBody(toast: Pick<InAppToastInput, 'conversation' | 'sender' | 'text'>): { conversation: string; rest: string } {
   const conversation = toast.conversation.trim();
   const sender = (toast.sender || '').trim();
@@ -150,9 +150,9 @@ export function inAppToastBody(toast: Pick<InAppToastInput, 'conversation' | 'se
 }
 
 /**
- * Gộp các tin mới vào danh sách thẻ đang hiện (cũ → mới theo thứ tự xuất hiện): cùng hội thoại thì cập nhật thẻ đó
- * (giữ chỗ, giữ id, đếm thêm nếu là tin khác), hội thoại mới thì thêm thẻ; quá `max` thì bỏ ngay thẻ lâu không có tin
- * mới nhất (thẻ đang mờ dần bỏ trước).
+ * Merges new messages into the list of cards on screen (old → new in order of arrival): same conversation → update that card
+ * (keeps its place and id, counts up if it is a different message); new conversation → add a card; above `max` → drop at once the card whose newest
+ * message is oldest (a card already fading out goes first).
  */
 export function mergeInAppToasts(
   current: readonly InAppToast[],

@@ -1,6 +1,6 @@
 /**
- * state — trạng thái cục bộ của đồng bộ DB trên máy này: userData/cloud-dbsync-state.json.
- * Không chứa bí mật (mật khẩu theo dõi nếu có được mã hoá safeStorage trước khi ghi). Ghi gộp + atomic (tmp + rename).
+ * state: local state of the DB sync on this machine: userData/cloud-dbsync-state.json.
+ * Contains no secrets (the tracking password, if any, is encrypted with safeStorage before it is written). Writes are batched and atomic (tmp + rename).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -12,19 +12,19 @@ export interface WorkspaceSyncState {
     dbPath: string | null;
     dbUid: string | null;
     fingerprint: string | null;
-    /** Mốc id _cloud_dirty đã xác nhận cao nhất — DB có AUTOINCREMENT thấp hơn = file cũ hơn chuỗi đã đẩy. */
+    /** Highest _cloud_dirty id confirmed so far. A DB whose AUTOINCREMENT is lower means the file is older than the chain already pushed. */
     lastAckedId: number;
     manifest: DbManifest | null;
     lastSyncAt: number | null;
     lastChanges: number;
     lastError: string | null;
-    /** Đã cài trigger trên DB này (để dọn khi tắt đồng bộ mà lần trước dọn dở). */
+    /** Triggers are installed on this DB (so they can be removed when sync is turned off, if the last cleanup was left unfinished). */
     trackingInstalled: boolean;
-    /** Kho chứa manifest / bản gốc đang nhớ (thiếu = 'r2' — bản cũ chỉ có R2). Đổi kho → chụp gốc mới trên kho mới. */
+    /** Store that holds the remembered manifest / base snapshot (missing = 'r2', since old versions only had R2). Changing the store → take a new base snapshot on the new store. */
     provider?: CloudStorageProvider;
-    /** Lúc bắt đầu cần tự chụp gốc mà còn chờ máy rảnh (0 / thiếu = không chờ) — mức chờ tối đa tính qua các lần mở app. */
+    /** When a base snapshot must start but is still waiting for the machine to be idle (0 / missing = do not wait). The maximum wait is counted across app launches. */
     baseDueSince?: number;
-    /** Gốc bắt buộc đang hoãn chờ máy rảnh (vd 'tracking': chu kỳ sau không còn dấu hiệu nên phải nhớ). */
+    /** Required base snapshot currently deferred until the machine is idle (e.g. 'tracking': the next cycle shows no sign of change, so it must be remembered). */
     pendingBase?: string | null;
 }
 
@@ -34,19 +34,19 @@ export interface FollowState {
     workspaceUid: string;
     sourceMachine: string;
     baseKey: string | null;
-    /** Số đoạn (theo thứ tự trong manifest) đã áp lên bản sao theo dõi. */
+    /** Number of segments (in manifest order) already applied to the tracked copy. */
     appliedCount: number;
     lastAppliedKey: string | null;
-    /** Thời điểm (at) của đoạn/bản gốc mới nhất đã áp. */
+    /** Time (at) of the latest applied segment / base snapshot. */
     appliedUpTo: number | null;
     lastCheckAt: number | null;
     lastHeartbeatAt: number | null;
     lagMs: number | null;
-    /** at của đoạn đầu tiên chưa áp (null = đã theo kịp manifest lúc kiểm tra gần nhất). */
+    /** at of the first segment not yet applied (null = caught up with the manifest at the last check). */
     pendingSince: number | null;
-    /** Id âm tăng dần cho dòng nhật ký 'follow' (không trùng id nhật ký trong DB). */
+    /** Increasing negative ids for 'follow' log rows (they do not collide with log ids in the DB). */
     logSeq: number;
-    /** Mật khẩu theo dõi mã hoá safeStorage (base64) khi khác mật khẩu đồng bộ của máy này. */
+    /** Tracking password encrypted with safeStorage (base64) when it differs from this machine's sync password. */
     passEnc: string | null;
     lastError: string | null;
     log: SyncLogEntry[];
@@ -84,7 +84,7 @@ export class StateStore {
         let parsed: any = null;
         try {
             parsed = JSON.parse(fs.readFileSync(this.filePath(), 'utf8'));
-        } catch { /* chưa có / hỏng → làm lại */ }
+        } catch { /* missing / corrupt → recreate */ }
         const ws: Record<string, WorkspaceSyncState> = {};
         if (parsed && parsed.workspaces && typeof parsed.workspaces === 'object') {
             for (const [id, v] of Object.entries<any>(parsed.workspaces)) ws[id] = { ...emptyWorkspaceState(), ...(v || {}) };
@@ -121,7 +121,7 @@ export class StateStore {
         this.save();
     }
 
-    /** Ghi gộp (500 ms). */
+    /** Batched write (500 ms). */
     save(): void {
         if (this.timer) return;
         this.timer = setTimeout(() => {
@@ -143,6 +143,6 @@ export class StateStore {
             const tmp = `${file}.tmp-${process.pid}`;
             fs.writeFileSync(tmp, JSON.stringify(this.data), 'utf8');
             fs.renameSync(tmp, file);
-        } catch { /* lần ghi sau thử lại */ }
+        } catch { /* retry on the next write */ }
     }
 }

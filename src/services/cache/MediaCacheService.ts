@@ -1,13 +1,13 @@
 /**
- * MediaCacheService - Employee-side disk cache cho media files.
+ * MediaCacheService - Employee-side disk cache for media files.
  *
- * Khi employee xem ảnh lần đầu → download từ boss → lưu vào cache
- * Lần sau → dùng từ cache (không cần mạng)
+ * When an employee views an image for the first time → download from the boss → save to the cache
+ * Next time → use the cache (no network needed)
  *
  * Cache location: app.getPath('cache')/media-cache/
- * LRU eviction khi vượt quá dung lượng cho phép.
+ * LRU eviction when the allowed size is exceeded.
  *
- * Chỉ hoạt động trong employee mode.
+ * Only works in employee mode.
  */
 
 import * as fs from 'fs';
@@ -24,7 +24,7 @@ interface CacheEntry {
   size: number;
   accessedAt: number;
   createdAt: number;
-  url: string;         // Boss URL gốc
+  url: string;         // Original boss URL
   mimeType: string;
 }
 
@@ -40,7 +40,7 @@ class MediaCacheService {
   private maxConcurrent = 3;
   private activeCount = 0;
   private pendingQueue: Array<() => void> = [];
-  // Track failed URLs để không retry liên tục
+  // Track failed URLs so they are not retried over and over
   private failedUrls = new Map<string, number>(); // url → timestamp
 
   public static getInstance(): MediaCacheService {
@@ -50,13 +50,13 @@ class MediaCacheService {
     return MediaCacheService.instance;
   }
 
-  /** Khởi tạo cache folder và load index */
+  /** Initialize the cache folder and load the index */
   public init(customCacheDir?: string): void {
     try {
       this.cacheDir = customCacheDir || this.getDefaultCacheDir();
       this.indexPath = path.join(this.cacheDir, 'index.json');
 
-      // Tạo folder nếu chưa có
+      // Create the folder if it does not exist yet
       if (!fs.existsSync(this.cacheDir)) {
         fs.mkdirSync(this.cacheDir, { recursive: true });
       }
@@ -72,9 +72,9 @@ class MediaCacheService {
   }
 
   /**
-   * Lấy URL để hiển thị media:
-   * - Có trong cache → trả về file:// URL
-   * - Không có → trả về boss URL để fetch, đồng thời download background
+   * Get the URL to display media:
+   * - In the cache → returns a file:// URL
+   * - Not in the cache → returns the boss URL to fetch, and downloads in the background at the same time
    */
   public async resolveUrl(bossUrl: string, mediaType: 'avatar' | 'image' | 'file' = 'image'): Promise<{
     displayUrl: string;
@@ -97,7 +97,7 @@ class MediaCacheService {
       };
     }
 
-    // Cache miss → kiểm tra structured media folder (có thể đã download từ lần trước)
+    // Cache miss → check the structured media folder (it may have been downloaded last time)
     try {
       const structuredPath = this.getLocalCopyPath(bossUrl);
       if (structuredPath) {
@@ -111,8 +111,8 @@ class MediaCacheService {
   }
 
   /**
-   * Resolve URL với cache-first, nhưng CHỜ download hoàn tất nếu cache miss.
-   * Dùng khi user chủ động click mở file/media (cần file local ngay).
+   * Resolve the URL cache-first, but WAIT for the download to finish on a cache miss.
+   * Used when the user clicks to open a file/media (a local file is needed right away).
    */
   public async resolveUrlSync(bossUrl: string, mediaType: 'avatar' | 'image' | 'file' = 'image'): Promise<{
     displayUrl: string;
@@ -135,10 +135,10 @@ class MediaCacheService {
       };
     }
 
-    // Cache miss → download SYNCHRONOUS (chờ hoàn tất)
+    // Cache miss → download SYNCHRONOUSLY (wait until it finishes)
     try {
       await this.downloadToCache(bossUrl, cacheKey, mediaType);
-      // Kiểm tra lại sau khi download
+      // Check again after the download
       const entry = this.index.get(cacheKey);
       if (entry && fs.existsSync(this.getCacheFilePath(cacheKey))) {
         return {
@@ -153,7 +153,7 @@ class MediaCacheService {
     return { displayUrl: bossUrl, fromCache: false };
   }
 
-  /** Check xem có cache không (sync, nhanh) */
+  /** Check whether the cache exists (sync, fast) */
   public hasCache(bossUrl: string): boolean {
     const key = this.hashUrl(bossUrl);
     const entry = this.index.get(key);
@@ -179,18 +179,18 @@ class MediaCacheService {
     }
   }
 
-  /** Download file từ boss vào cache + lưu đúng folder media/ */
+  /** Download the file from the boss into the cache + save it in the right media/ folder */
   private async downloadToCache(bossUrl: string, cacheKey: string, mediaType: string): Promise<void> {
     await this.acquireSlot();
     try {
-      // Skip nếu đã thất bại trong 5 phút qua
+      // Skip if it failed within the last 5 minutes
       const lastFail = this.failedUrls.get(bossUrl);
       if (lastFail && Date.now() - lastFail < 5 * 60 * 1000) return;
 
       Logger.log(`[MediaCacheService] Downloading: ${bossUrl.slice(0, 80)}...`);
 
-      // Boss bắt buộc phiên nhân viên cho /api/media, /api/library (bossSessionAuth: Boss URL → token).
-      // Video / file: người dùng bấm mở → tải hết rồi mở (không mở URL Boss bằng trình duyệt ngoài được) → cho lâu hơn.
+      // The boss requires an employee session for /api/media and /api/library (bossSessionAuth: Boss URL → token).
+      // Video / file: when the user clicks to open → download everything, then open it (the boss URL cannot be opened in an external browser) → allow more time.
       const response = await fetch(bossUrl, {
         headers: bossAuthHeaders(bossUrl),
         signal: AbortSignal.timeout(mediaType === 'video' || mediaType === 'file' ? 10 * 60_000 : 30_000),
@@ -198,7 +198,7 @@ class MediaCacheService {
 
       if (!response.ok) {
         Logger.warn(`[MediaCacheService] Download failed: HTTP ${response.status}`);
-        // 401 = chưa có / hết phiên (đang kết nối, đăng nhập lại) → thử lại được ngay khi có token, không ghim 5 phút
+        // 401 = no session yet / session expired (connecting, logging in again) → can retry as soon as a token exists, not pinned for 5 minutes
         if (response.status !== 401) this.failedUrls.set(bossUrl, Date.now());
         return;
       }
@@ -207,7 +207,7 @@ class MediaCacheService {
       const mimeType = response.headers.get('content-type') || this.guessMimeFromUrl(bossUrl);
       const filePath = this.getCacheFilePath(cacheKey);
 
-      // Lưu cache hash-based
+      // Save the hash-based cache
       const dir = path.dirname(filePath);
       await fs.promises.mkdir(dir, { recursive: true });
       await writeMediaFile(filePath, buffer);
@@ -224,7 +224,7 @@ class MediaCacheService {
       this.saveIndex();
       this.evictIfNeeded();
 
-      // Đồng thời lưu vào structured media folder nếu boss URL chứa đường dẫn đúng
+      // Also save to the structured media folder if the boss URL contains the correct path
       // VD: https://boss/api/media/zaloId/2024-06-27/video.mp4
       try {
         const structuredPath = this.structuredPathFor(bossUrl);
@@ -239,14 +239,14 @@ class MediaCacheService {
 
       Logger.log(`[MediaCacheService] Cached: ${(buffer.length / 1024).toFixed(1)}KB`);
     } catch (err: any) {
-      // Timeout/network error — không track failed để có thể retry sau
+      // Timeout/network error: do not track as failed, so it can be retried later
       Logger.warn(`[MediaCacheService] Download error: ${err.message}`);
     } finally {
       this.releaseSlot();
     }
   }
 
-  /** Xoá cache cũ nếu vượt quá dung lượng */
+  /** Delete old cache entries when the size limit is exceeded */
   private evictIfNeeded(): void {
     let totalSize = 0;
     const entries: CacheEntry[] = [];
@@ -280,7 +280,7 @@ class MediaCacheService {
     Logger.log(`[MediaCacheService] Evicted ${toDelete.length} files, freed ${(totalSize / 1024 / 1024).toFixed(0)}MB`);
   }
 
-  /** Xoá cache cũ hơn N ngày (gọi định kỳ) */
+  /** Delete cache entries older than N days (called periodically) */
   public cleanOldCache(maxAgeDays = 7): void {
     const now = Date.now();
     const maxAge = maxAgeDays * 24 * 60 * 60 * 1000;
@@ -306,7 +306,7 @@ class MediaCacheService {
     }
   }
 
-  /** Reset hoàn toàn cache */
+  /** Fully reset the cache */
   public clear(): void {
     try {
       for (const key of this.index.keys()) {
@@ -332,7 +332,7 @@ class MediaCacheService {
 
   private getCacheFileUrl(key: string, mimeType: string): string {
     const fp = this.getCacheFilePath(key);
-    // Dùng file:// protocol, Electron CSP cho phép
+    // Uses the file:// protocol, which the Electron CSP allows
     const normalized = fp.replace(/\\/g, '/');
     return `file:///${normalized.startsWith('/') ? '' : '/'}${normalized}`;
   }
@@ -348,8 +348,8 @@ class MediaCacheService {
   }
 
   /**
-   * Bản sao giữ đúng tên + đuôi file trong thư mục media của workspace (downloadToCache ghi song song với cache hash)
-   * — đã có trên máy thì trả đường dẫn, không thì ''. Dùng khi mở / hiện file trong thư mục (file cache hash không đuôi).
+   * A copy that keeps the exact name + extension in the workspace's media folder (downloadToCache writes it in parallel with the hash cache):
+   * if it is already on the machine, returns the path, otherwise ''. Used when opening / showing the file in its folder (the hash cache file has no extension).
    */
   public getLocalCopyPath(bossUrl: string): string {
     try {
@@ -361,8 +361,8 @@ class MediaCacheService {
   }
 
   /**
-   * Bản sao đúng tên + đuôi trong thư mục media từ file cache (cache đặt tên theo hash, không đuôi → mở bằng app mặc định
-   * không được). Dùng khi cache có sẵn nhưng bản sao chưa có (tải trước khi có bản sao, thư mục media bị dọn…).
+   * A copy with the exact name + extension in the media folder, made from the cache file. The cache is named by hash with no extension,
+   * so the default app cannot open it. Used when the cache exists but the copy does not (downloaded before the copy existed, the media folder was cleared…).
    */
   public ensureLocalCopy(bossUrl: string, sourcePath: string): string {
     try {
@@ -378,7 +378,7 @@ class MediaCacheService {
     }
   }
 
-  /** Đường dẫn trong thư mục media của workspace ứng với boss URL ('' nếu không suy ra được / thoát khỏi thư mục media). */
+  /** Path in the workspace's media folder for the boss URL ('' if it cannot be derived / would leave the media folder). */
   private structuredPathFor(bossUrl: string): string {
     const mediaRelPath = this.extractMediaRelPath(bossUrl);
     if (!mediaRelPath) return '';
@@ -388,24 +388,24 @@ class MediaCacheService {
       mediaBaseDir = path.join(app.getPath('userData'), 'media');
     }
     const structuredPath = path.resolve(mediaBaseDir, mediaRelPath);
-    // URL lạ (../, đường dẫn tuyệt đối) không được ghi / đọc ra ngoài thư mục media
+    // Odd URLs (../, absolute paths) must not be written to or read from outside the media folder
     return isPathInside(path.resolve(mediaBaseDir), structuredPath) && structuredPath !== path.resolve(mediaBaseDir)
       ? structuredPath
       : '';
   }
 
-  /** Trích xuất relative path từ boss URL để lưu đúng folder media/zaloId/date/
-   *  VD: https://boss/api/media/2231125334791940537/2024/06/27/video.mp4
+  /** Extract the relative path from the boss URL to save it in the right media/zaloId/date/ folder
+   *  e.g.: https://boss/api/media/2231125334791940537/2024/06/27/video.mp4
    *    → 2231125334791940537/2024/06/27/video.mp4
-   *  VD: https://boss/api/media/thumb/2231125334791940537/2024/06/27/thumb.jpg
+   *  e.g.: https://boss/api/media/thumb/2231125334791940537/2024/06/27/thumb.jpg
    *    → thumb/2231125334791940537/2024/06/27/thumb.jpg
    */
   private extractMediaRelPath(bossUrl: string): string {
     try {
-      // Match /api/media/ hoặc /api/avatar/... — bỏ ?query/#hash, giải mã tên file (URL mã hoá từng đoạn: "#", "%"…)
+      // Match /api/media/ or /api/avatar/... → drop ?query/#hash, decode the file name (the URL is encoded per segment: "#", "%"…)
       const match = bossUrl.split(/[?#]/)[0].match(/\/api\/(?:media|avatar|_uploads)\/(.+)/);
       if (match) return decodeUrlPath(match[1]);
-      // Fallback: lấy pathname từ URL
+      // Fallback: take the pathname from the URL
       const urlObj = new URL(bossUrl);
       const pathname = urlObj.pathname.replace(/^\/api\//, '');
       return pathname || '';
@@ -417,7 +417,7 @@ class MediaCacheService {
       const { app } = require('electron');
       return path.join(app.getPath('cache'), 'media-cache');
     } catch {
-      // Fallback khi không ở trong Electron (dev/test)
+      // Fallback when not running inside Electron (dev/test)
       return path.join(process.cwd(), '.cache', 'media');
     }
   }

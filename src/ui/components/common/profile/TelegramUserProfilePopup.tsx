@@ -3,6 +3,8 @@ import { useChatStore } from '@/store/chat/chatStore';
 import { useAppStore } from '@/store/app/appStore';
 import { getAdapter } from '@/lib/channels/adapters/registry';
 import PeerInitials from '../avatars/PeerInitials';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface TelegramUserProfilePopupProps {
   userId: string;
@@ -19,7 +21,7 @@ export function TelegramUserProfilePopup({
   userId, anchorX, anchorY, contacts, activeAccountId, activeThreadId, onClose,
 }: TelegramUserProfilePopupProps) {
   const showNotification = useAppStore((state) => state.showNotification);
-  // Chỉ vẽ lại khi trạng thái của người này đổi (không theo mọi thay đổi của store)
+  // Only redraw when this person's status changes (not on every store change)
   useChatStore((state) => state.userPresence[`${activeAccountId}_${userId}`]);
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const contact = contacts.find(contactItem => String(contactItem.contact_id) === String(userId));
@@ -35,18 +37,18 @@ export function TelegramUserProfilePopup({
   const username = profile?.username ? `@${profile.username}` : '';
   const bio = profile?.bio || '';
   const presence = useChatStore.getState().getPresence(activeAccountId, userId);
-  const presenceText = presence?.status === 'online' ? '🟢 Trực tuyến'
+  const presenceText = presence?.status === 'online' ? tr('🟢 Trực tuyến')
     : presence?.status === 'offline' && presence?.lastSeen
-      ? `⚫ Hoạt động ${new Date(presence.lastSeen * 1000).toLocaleString('vi-VN')}`
-    : presence?.status === 'recently' ? '⚫ Hoạt động gần đây'
-    : presence?.status === 'last_week' ? '⚫ Hoạt động tuần trước'
-    : presence?.status === 'last_month' ? '⚫ Hoạt động tháng trước'
+      ? tr('⚫ Hoạt động {{v1}}', { v1: new Date(presence.lastSeen * 1000).toLocaleString(appLocale()) })
+    : presence?.status === 'recently' ? tr('⚫ Hoạt động gần đây')
+    : presence?.status === 'last_week' ? tr('⚫ Hoạt động tuần trước')
+    : presence?.status === 'last_month' ? tr('⚫ Hoạt động tháng trước')
     : '';
   const flags = [
-    profile?.isVerified ? 'Đã xác minh' : '',
+    profile?.isVerified ? tr('Đã xác minh') : '',
     profile?.isPremium ? 'Premium' : '',
     profile?.isBot ? 'Bot' : '',
-    profile?.isMutualContact ? 'Liên hệ hai chiều' : '',
+    profile?.isMutualContact ? tr('Liên hệ hai chiều') : '',
   ].filter(Boolean);
 
   React.useEffect(() => {
@@ -78,9 +80,9 @@ export function TelegramUserProfilePopup({
   const copyUserName = async () => {
     try {
       await navigator.clipboard.writeText(String(username));
-      showNotification('Đã sao chép', 'success');
+      showNotification(tr('Đã sao chép'), 'success');
     } catch {
-      showNotification('Không thể sao chép', 'error');
+      showNotification(tr('Không thể sao chép'), 'error');
     }
   };
 
@@ -94,7 +96,7 @@ export function TelegramUserProfilePopup({
         onClick={event => event.stopPropagation()}
       >
         <div className="h-16 bg-gradient-to-br from-sky-600 to-blue-800" />
-        <button onClick={onClose} className="absolute right-2 top-2 rounded-full bg-black/35 p-1.5 text-white-important hover:bg-black/55" title="Đóng">
+        <button onClick={onClose} className="absolute right-2 top-2 rounded-full bg-black/35 p-1.5 text-white-important hover:bg-black/55" title={tr('Đóng')}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
@@ -115,32 +117,32 @@ export function TelegramUserProfilePopup({
           <div className="mt-5 overflow-hidden rounded-xl border border-border/70 text-sm">
             <div className="flex items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground">Username</p>
+                <p className="text-[11px] text-muted-foreground">{tr('Username')}</p>
                 <p className="truncate font-mono text-xs text-foreground">{username}</p>
               </div>
-              <button onClick={copyUserName} className="rounded-lg bg-muted px-2 py-1 text-xs text-foreground hover:bg-accent">Sao chép</button>
+              <button onClick={copyUserName} className="rounded-lg bg-muted px-2 py-1 text-xs text-foreground hover:bg-accent">{tr('Sao chép')}</button>
             </div>
             <div className="flex items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0">
-                <p className="text-[11px] text-muted-foreground">Telegram ID</p>
+                <p className="text-[11px] text-muted-foreground">{tr('Telegram ID')}</p>
                 <p className="truncate font-mono text-xs text-foreground">{userId}</p>
               </div>
             </div>
             {phone && (
               <div className="border-t border-border/70 px-3 py-2.5">
-                <p className="text-[11px] text-muted-foreground">Số điện thoại</p>
+                <p className="text-[11px] text-muted-foreground">{tr('Số điện thoại')}</p>
                 <p className="text-sm text-foreground">{phone}</p>
               </div>
             )}
             {bio && (
               <div className="border-t border-border/70 px-3 py-2.5">
-                <p className="text-[11px] text-muted-foreground">Giới thiệu</p>
+                <p className="text-[11px] text-muted-foreground">{tr('Giới thiệu')}</p>
                 <p className="mt-0.5 whitespace-pre-wrap text-sm text-foreground">{bio}</p>
               </div>
             )}
             {profile?.commonChatsCount > 0 && (
               <div className="border-t border-border/70 px-3 py-2.5 text-sm text-foreground">
-                {profile.commonChatsCount} nhóm chung
+                {trx('{{commonChatsCount}} nhóm chung', { commonChatsCount: profile.commonChatsCount })}
               </div>
             )}
             {flags.length > 0 && (
@@ -149,13 +151,13 @@ export function TelegramUserProfilePopup({
               </div>
             )}
           </div>
-          {loading && <p className="mt-2 text-center text-[11px] text-subtle-foreground">Đang tải hồ sơ Telegram…</p>}
+          {loading && <p className="mt-2 text-center text-[11px] text-subtle-foreground">{tr('Đang tải hồ sơ Telegram…')}</p>}
 
           {!isMe && (
             <button
               onClick={() => {
-                // Nhắn ngay trong popup Nhắn tin nhanh (không rời bài đăng / hội thoại đang xem); trong popup có nút mở
-                // hội thoại đầy đủ
+                // Message right away in the quick message popup (without leaving the post / conversation being viewed); the popup has a button to open
+                // the full conversation
                 useAppStore.getState().openQuickChat({
                   zaloId: activeAccountId,
                   target: { userId, displayName, avatarUrl: avatarUrl || '', threadType: 0, phone },
@@ -164,7 +166,7 @@ export function TelegramUserProfilePopup({
               }}
               className="mt-3 w-full rounded-xl bg-sky-600 py-2 text-sm font-medium text-white hover:bg-sky-500"
             >
-              Nhắn tin
+              {tr('Nhắn tin')}
             </button>
           )}
         </div>

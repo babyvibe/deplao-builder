@@ -1,13 +1,13 @@
 /**
- * Đồng bộ tin nhắn Facebook theo khoảng thời gian cho cả tài khoản (popup "Đồng bộ tin nhắn Facebook", giống đồng bộ
- * từ điện thoại của Zalo). Chạy nền trên máy giữ kết nối Facebook, báo tiến độ qua `event:fbHistorySync`:
- *  1. Lấy danh sách hội thoại: trang hộp thư của bridge + danh sách GraphQL theo trang (đi tới hết khoảng thời gian,
- *     trước đây chỉ 50 hội thoại mới nhất).
- *  2. Từng hội thoại có hoạt động trong khoảng (mới nhất trước): tải lịch sử lùi từng trang qua bridge
- *     (FacebookService.syncThreadHistory) tới khi phủ hết khoảng — không giới hạn số tin, mỗi trang lưu ngay.
- *  Hội thoại mã hoá đầu cuối bỏ qua (Facebook không cho thiết bị mới đọc tin cũ). Huỷ được giữa chừng.
- *  Mọi yêu cầu đi theo nhịp người dùng thật (FacebookHumanPacer của tài khoản: nghỉ ngẫu nhiên, nghỉ giải lao, trần
- *  theo phút / giờ, giãn thêm khi Facebook chậm); dấu hiệu bị chặn / phiên hết hạn → dừng hẳn để bảo vệ tài khoản.
+ * Syncs Facebook messages over a time range for the whole account (popup "Đồng bộ tin nhắn Facebook", similar to syncing from the Zalo phone
+ * app). Runs in the background on the machine that keeps the Facebook connection and reports progress via `event:fbHistorySync`:
+ *  1. Get the conversation list: the bridge inbox page + the GraphQL list page by page (keeps going until the whole time range is covered,
+ *     previously only the 50 most recent conversations).
+ *  2. For each conversation with activity in the range (newest first): load its history backwards page by page through the bridge
+ *     (FacebookService.syncThreadHistory) until the whole range is covered; no message limit, each page is saved immediately.
+ *  End-to-end encrypted conversations are skipped (Facebook does not let a new device read old messages). Can be cancelled midway.
+ *  All requests follow a real user's pace (the account's FacebookHumanPacer: random pauses, break time, per-minute / per-hour caps,
+ *  slowing down when Facebook is slow); signs of blocking / an expired session stop everything to protect the account.
  */
 import EventBroadcaster from '../../event/EventBroadcaster';
 import DatabaseService from '../../database/DatabaseService';
@@ -23,6 +23,7 @@ import {
   type FbHistorySyncRange,
   type FbHistorySyncStatus,
 } from '../../../shared/facebook/facebookHistorySync';
+import { tr, appLocale } from '../../../shared/i18n';
 
 interface SyncThread {
   id: string;
@@ -34,20 +35,20 @@ interface SyncThread {
 interface Job {
   status: FbHistorySyncStatus;
   cancelled: boolean;
-  /** Facebook có dấu hiệu hạn chế khi lấy danh sách hội thoại → dừng trước khi tải tin. */
+  /** Facebook shows signs of restriction when listing conversations → stop before loading messages. */
   riskError?: string;
 }
 
-/** Trang danh sách hội thoại tối đa khi đồng bộ "toàn bộ" (50 hội thoại / trang) — chặn vòng lặp nếu Facebook lặp trang. */
+/** Maximum number of conversation-list pages for a sync of "toàn bộ" (all) (50 conversations per page): stops a loop if Facebook keeps returning the same page. */
 const MAX_THREAD_PAGES = 400;
-const LIGHTSPEED_DOWN_MESSAGE = 'Kết nối Messenger thường của bridge (dùng để tải lịch sử, khác kết nối E2EE) không lên được — Facebook không trả lời bước đồng bộ ban đầu. Tin nhắn và E2EE vẫn hoạt động; cần cập nhật bridge để tải lịch sử.';
+const LIGHTSPEED_DOWN_MESSAGE = tr('Kết nối Messenger thường của bridge (dùng để tải lịch sử, khác kết nối E2EE) không lên được — Facebook không trả lời bước đồng bộ ban đầu. Tin nhắn và E2EE vẫn hoạt động; cần cập nhật bridge để tải lịch sử.');
 const EMIT_INTERVAL_MS = 400;
-/** Nghỉ ngắn hơn mức này không hiện lên popup (chỉ là nhịp giữa hai trang). */
+/** Pauses shorter than this are not shown in the popup (just the rhythm between two pages). */
 const SHOW_PAUSE_FROM_MS = 4_000;
-/** Chờ socket LightSpeed của bridge kết nối lại (messagix tự thử lại 2 s, 4 s, 8 s…) trước khi báo lỗi. */
+/** Wait for the bridge's LightSpeed socket to reconnect (messagix retries after 2 s, 4 s, 8 s…) before reporting an error. */
 const LIGHTSPEED_WAIT_MS = 3 * 60_000;
 const LIGHTSPEED_POLL_MS = 10_000;
-/** Lỗi cần dừng cả lượt đồng bộ (không hội thoại nào tải tiếp được / phải bảo vệ tài khoản). */
+/** Errors that stop the whole sync run (no conversation can load further / the account must be protected). */
 const STOP_CODES = new Set(['BRIDGE_DOWN', 'BRIDGE_OLD', 'RISK', 'COOLDOWN']);
 
 export default class FacebookHistorySyncService {
@@ -65,8 +66,8 @@ export default class FacebookHistorySyncService {
   }
 
   /**
-   * Bắt đầu đồng bộ. `accountId` = facebook_id (khoá phía renderer); `getService` trả phiên Facebook đã kết nối.
-   * Đang chạy → trả trạng thái hiện tại.
+   * Start the sync. `accountId` = facebook_id (the key on the renderer side); `getService` returns the connected Facebook session.
+   * If already running → returns the current status.
    */
   start(
     accountId: string,
@@ -75,7 +76,7 @@ export default class FacebookHistorySyncService {
   ): { success: boolean; status: FbHistorySyncStatus; error?: string } {
     const running = this.jobs.get(accountId);
     if (running && isFbHistorySyncActive(running.status)) {
-      return { success: false, status: running.status, error: 'Đang đồng bộ tài khoản này' };
+      return { success: false, status: running.status, error: tr('Đang đồng bộ tài khoản này') };
     }
     const normalized: FbHistorySyncRange = {
       fromTs: range?.fromTs != null && Number(range.fromTs) > 0 ? Number(range.fromTs) : null,
@@ -86,7 +87,7 @@ export default class FacebookHistorySyncService {
       status: {
         ...emptyFbHistorySyncStatus(accountId, normalized),
         stage: 'listing',
-        message: 'Đang lấy danh sách hội thoại…',
+        message: tr('Đang lấy danh sách hội thoại…'),
         startedAt: Date.now(),
       },
     };
@@ -102,7 +103,7 @@ export default class FacebookHistorySyncService {
     const job = this.jobs.get(accountId);
     if (!job || !isFbHistorySyncActive(job.status)) return { success: false, status: job?.status ?? null };
     job.cancelled = true;
-    job.status.message = 'Đang dừng…';
+    job.status.message = tr('Đang dừng…');
     this.emit(job, true);
     return { success: true, status: job.status };
   }
@@ -115,7 +116,7 @@ export default class FacebookHistorySyncService {
     EventBroadcaster.emit(FB_HISTORY_SYNC_EVENT, { ...job.status });
   }
 
-  /** Đang nghỉ theo nhịp người dùng thật: hiện trên popup khi đủ lâu. */
+  /** Pausing at the user's pace: shown in the popup when long enough. */
   private pause(job: Job, wait: PacerWait): void {
     if (wait.ms < SHOW_PAUSE_FROM_MS) return;
     job.status.pausedUntil = Date.now() + wait.ms;
@@ -131,7 +132,7 @@ export default class FacebookHistorySyncService {
   }
 
   /**
-   * Đợi socket LightSpeed (Messenger thường) của bridge sẵn sàng — tải lịch sử cần nó, E2EE thì không. true = sẵn sàng.
+   * Wait for the bridge's LightSpeed socket (regular Messenger) to be ready: loading history needs it, E2EE does not. true = ready.
    */
   private async waitForLightSpeed(job: Job, service: FacebookService): Promise<boolean> {
     if (typeof service.isBridgeLightSpeedReady !== 'function') return true;
@@ -144,7 +145,7 @@ export default class FacebookHistorySyncService {
       }
       if (Date.now() >= deadline) return false;
       if (first) {
-        job.status.message = 'Đang chờ kết nối Messenger của bridge (Facebook chưa trả lời bước đồng bộ ban đầu)…';
+        job.status.message = tr('Đang chờ kết nối Messenger của bridge (Facebook chưa trả lời bước đồng bộ ban đầu)…');
         first = false;
       }
       this.pause(job, { ms: Math.min(LIGHTSPEED_POLL_MS, Math.max(0, deadline - Date.now())), reason: 'bridge' as any });
@@ -153,11 +154,11 @@ export default class FacebookHistorySyncService {
     return false;
   }
 
-  /** Phiên Facebook còn dùng được: hết hạn / cần xác minh / mất kết nối → lý do dừng. */
+  /** Whether the Facebook session is still usable: expired / needs verification / connection lost → the reason for stopping. */
   private healthProblem(service: FacebookService): string | null {
     const state = typeof service.getStatus === 'function' ? service.getStatus() : 'connected';
-    if (state === 'cookie_expired') return 'Phiên Facebook hết hạn hoặc cần xác minh — đã dừng đồng bộ để bảo vệ tài khoản';
-    if (!service.isConnected()) return 'Tài khoản Facebook mất kết nối — đã dừng đồng bộ';
+    if (state === 'cookie_expired') return tr('Phiên Facebook hết hạn hoặc cần xác minh — đã dừng đồng bộ để bảo vệ tài khoản');
+    if (!service.isConnected()) return tr('Tài khoản Facebook mất kết nối — đã dừng đồng bộ');
     return null;
   }
 
@@ -169,12 +170,12 @@ export default class FacebookHistorySyncService {
     s.pausedUntil = undefined;
     s.pauseReason = undefined;
     if (error) s.error = error;
-    const saved = s.messagesSaved.toLocaleString('vi-VN');
+    const saved = s.messagesSaved.toLocaleString(appLocale());
     s.message = stage === 'completed'
-      ? `Đã đồng bộ ${s.threadsDone.toLocaleString('vi-VN')} hội thoại, ${saved} tin mới`
+      ? tr('Đã đồng bộ {{v1}} hội thoại, {{saved}} tin mới', { v1: s.threadsDone.toLocaleString(appLocale()), saved })
       : stage === 'cancelled'
-        ? `Đã dừng — đã lưu ${saved} tin mới`
-        : error || 'Đồng bộ thất bại';
+        ? tr('Đã dừng — đã lưu {{saved}} tin mới', { saved })
+        : error || tr('Đồng bộ thất bại');
     Logger.log(`[FBHistorySync:${s.accountId}] ${stage}: threads=${s.threadsDone}/${s.threadsTotal} received=${s.messagesReceived} saved=${s.messagesSaved} e2ee=${s.skippedE2EE} failed=${s.failedThreads}${error ? ` error=${error}` : ''}`);
     this.emit(job, true);
   }
@@ -183,28 +184,28 @@ export default class FacebookHistorySyncService {
     const status = job.status;
     const service = await getService();
     if (!service || !service.isConnected()) {
-      this.finish(job, 'failed', 'Tài khoản Facebook chưa kết nối — kết nối lại rồi đồng bộ');
+      this.finish(job, 'failed', tr('Tài khoản Facebook chưa kết nối — kết nối lại rồi đồng bộ'));
       return;
     }
 
-    // 1. Danh sách hội thoại trong khoảng thời gian
+    // 1. Conversation list within the time range
     const threads = await this.listThreads(job, service);
     if (job.cancelled) {
       this.finish(job, 'cancelled');
       return;
     }
     if (job.riskError) {
-      this.finish(job, 'failed', 'Facebook có dấu hiệu hạn chế / yêu cầu xác minh — đã dừng đồng bộ để bảo vệ tài khoản');
+      this.finish(job, 'failed', tr('Facebook có dấu hiệu hạn chế / yêu cầu xác minh — đã dừng đồng bộ để bảo vệ tài khoản'));
       return;
     }
     status.threadsTotal = threads.length;
     status.stage = 'syncing';
     status.message = threads.length
-      ? `Đang tải tin nhắn ${threads.length.toLocaleString('vi-VN')} hội thoại…`
-      : 'Không có hội thoại nào trong khoảng thời gian này';
+      ? tr('Đang tải tin nhắn {{v1}} hội thoại…', { v1: threads.length.toLocaleString(appLocale()) })
+      : tr('Không có hội thoại nào trong khoảng thời gian này');
     this.emit(job, true);
 
-    // 2. Lịch sử từng hội thoại (nghỉ như người mở hội thoại khác giữa hai hội thoại)
+    // 2. History of each conversation (pause as if opening another conversation between two conversations)
     if (threads.length && !(await this.waitForLightSpeed(job, service))) {
       if (job.cancelled) this.finish(job, 'cancelled');
       else this.finish(job, 'failed', LIGHTSPEED_DOWN_MESSAGE);
@@ -235,7 +236,7 @@ export default class FacebookHistorySyncService {
       this.emit(job, true);
       const syncThread = () => service.syncThreadHistory(thread.id, status.range, {
         shouldStop: () => job.cancelled,
-        // Hoạt động mới nhất theo danh sách hội thoại: máy thiếu tin ở đầu hội thoại thì trang đầu lấy qua GraphQL
+        // The latest activity from the conversation list: if the machine is missing messages at the start of a conversation, the first page is fetched via GraphQL
         latestKnownMs: thread.lastActivityMs,
         onWait: wait => this.pause(job, wait),
         onPage: page => {
@@ -246,15 +247,15 @@ export default class FacebookHistorySyncService {
         },
       });
       let result = await syncThread();
-      // Socket LightSpeed rớt giữa chừng: đợi nó kết nối lại rồi thử lại hội thoại này một lần
+      // The LightSpeed socket dropped midway: wait for it to reconnect, then retry this conversation once
       if (result.code === 'BRIDGE_DOWN' && await this.waitForLightSpeed(job, service)) {
-        status.message = `Đang tải tin nhắn ${status.threadsTotal.toLocaleString('vi-VN')} hội thoại…`;
+        status.message = tr('Đang tải tin nhắn {{v1}} hội thoại…', { v1: status.threadsTotal.toLocaleString(appLocale()) });
         result = await syncThread();
       }
       this.resume(job);
       Logger.log(`[FBHistorySync:${status.accountId}] thread ${thread.id}: pages=${result.pages} received=${result.received} saved=${result.saved}${result.code ? ` code=${result.code}` : ''}`);
       if (result.code && STOP_CODES.has(result.code)) {
-        // Bridge không chạy / có dấu hiệu Facebook hạn chế: dừng cả lượt, báo lý do
+        // The bridge is not running / signs that Facebook is restricting: stop the whole run and report the reason
         this.finish(job, 'failed', result.error);
         return;
       }
@@ -268,7 +269,7 @@ export default class FacebookHistorySyncService {
     this.finish(job, job.cancelled ? 'cancelled' : 'completed');
   }
 
-  /** Hội thoại có hoạt động trong khoảng, mới nhất trước: bridge + GraphQL theo trang + hội thoại đã có trong máy. */
+  /** Conversations with activity in the range, newest first: bridge + GraphQL page by page + conversations already on this machine. */
   private async listThreads(job: Job, service: FacebookService): Promise<SyncThread[]> {
     const status = job.status;
     const range = status.range;
@@ -286,7 +287,7 @@ export default class FacebookHistorySyncService {
       });
     };
 
-    // Trang hộp thư của bridge: có cả hội thoại mã hoá / riêng tư mà GraphQL không trả
+    // The bridge inbox page: includes E2EE / private conversations that GraphQL does not return
     await service.syncBridgeHistory().catch(() => ({ threads: 0, messages: 0 }));
 
     const db = DatabaseService.getInstance();
@@ -325,14 +326,14 @@ export default class FacebookHistorySyncService {
         }
       }
       for (const thread of result.threads) add(thread.id, thread.name, thread.lastActivityMs);
-      status.message = `Đang lấy danh sách hội thoại… (${byId.size.toLocaleString('vi-VN')})`;
+      status.message = tr('Đang lấy danh sách hội thoại… ({{v1}})', { v1: byId.size.toLocaleString(appLocale()) });
       this.emit(job);
       const oldest = result.threads.length ? Math.min(...result.threads.map(t => t.lastActivityMs || Infinity)) : 0;
       if (!result.nextBefore || (range.fromTs != null && oldest > 0 && oldest < range.fromTs)) break;
       before = result.nextBefore;
     }
 
-    // Hội thoại đã biết trong máy (bridge, realtime) — gồm mã hoá đầu cuối
+    // Conversations already known on this machine (bridge, realtime), including end-to-end encrypted ones
     try {
       const internalId = service.getAccountId();
       const rows = db.query<any>(`SELECT id, name, last_message_at, is_e2ee FROM fb_threads WHERE account_id = ?`, [internalId]);

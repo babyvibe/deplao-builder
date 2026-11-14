@@ -1,12 +1,12 @@
 /**
- * Restore — dựng lại file DB từ bản sao trên R2 (hoặc từ bản sao theo dõi của máy dự phòng).
+ * Restore: rebuilds the DB file from the copy on R2 (or from the followed copy of a standby machine).
  *
- *  tải manifest → kiểm mật khẩu (header DPLC1 trong manifest, chưa tải gì) → tải + giải mã + giải nén bản gốc
- *  → áp lần lượt các đoạn (≤ untilTs nếu có; xoá trước, upsert sau) → dựng lại FTS → PRAGMA integrity_check
- *  + so số dòng với manifest → an toàn sau khôi phục (postRestore) → file sẵn sàng thay vào chỗ DB thật.
+ *  download manifest → check the password (DPLC1 header in the manifest, nothing downloaded yet) → download + decrypt + decompress the base snapshot
+ *  → apply the segments in order (≤ untilTs if set; delete first, upsert after) → rebuild FTS → PRAGMA integrity_check
+ *  + compare row counts with the manifest → make safe after restore (postRestore) → file ready to put in place of the real DB.
  *
- * Phần thay file vào workspace (đóng/mở DB của app) nằm ở index.ts — file này không đụng Electron/DatabaseService
- * để test chạy được với R2 giả + mã hoá thật.
+ * Swapping the file into the workspace (closing/opening the app's DB) is in index.ts: this file does not touch Electron/DatabaseService
+ * so the tests can run with a fake R2 + real encryption.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -31,21 +31,21 @@ export interface BuildRestoreDeps {
     ops: DbOps;
     crypto: CloudCrypto;
     passphrase: string;
-    /** Thư mục làm việc (nên cùng ổ với DB đích để thay file bằng rename). */
+    /** Working folder (ideally on the same drive as the target DB, so the file can be replaced with a rename). */
     workDir: string;
-    /** workspaceId ghi vào dòng nhật ký 'restore' của bản khôi phục. */
+    /** workspaceId written to the 'restore' log row of the restored copy. */
     logWorkspaceId: string;
     onProgress?: (p: RestoreProgress) => void;
     now?: () => number;
     log?: (msg: string) => void;
-    /** Thông tin máy nguồn ghi vào app_settings.cloud_restore_source. */
+    /** Source machine info written to app_settings.cloud_restore_source. */
     sourceMachineId?: string;
 }
 
 export interface FollowCopyRef {
     path: string;
     baseKey: string;
-    /** Số đoạn đầu (theo thứ tự manifest) đã áp lên bản sao theo dõi. */
+    /** Number of first segments (in manifest order) already applied to the followed copy. */
     appliedCount: number;
 }
 
@@ -90,7 +90,7 @@ function fmtTime(ts: number): string {
     }
 }
 
-/** Mật khẩu đúng với chuỗi bản sao này không (đọc header DPLC1 lưu trong manifest — không tải dữ liệu). */
+/** Is the password correct for this copy chain? (reads the DPLC1 header stored in the manifest; no data is downloaded). */
 export async function checkPassphrase(crypto: CloudCrypto, m: DbManifest, passphrase: string): Promise<boolean | null> {
     if (!m.passCheck) return null;
     try {
@@ -173,7 +173,7 @@ export async function buildRestoredDb(src: RestoreSource, deps: BuildRestoreDeps
     progress('verify', 86, 'Đang kiểm tra toàn vẹn dữ liệu');
     const res = await deps.ops.call<{ fts: { warnings: string[] }; verify: VerifyResult }>('restoreVerify', {
         dbPath,
-        // Bản sao theo dõi: không biết đã áp bao nhiêu dòng mỗi bảng trước đó → chỉ kiểm tra toàn vẹn.
+        // Followed copy: it is not known how many rows per table were applied before → only the integrity check runs.
         expect: follow ? {} : { rowCounts: m.rowCounts, touched },
     });
     const verify = res.verify;
@@ -245,12 +245,12 @@ function moveFileSync(src: string, dst: string): void {
 }
 
 /**
- * Thay DB tại dbPath bằng restoredPath (đồng bộ — gọi giữa lúc đóng và mở lại DB của app, không có await xen giữa).
- * DB cũ đổi tên thành backupPath (kèm -wal/-shm nếu còn, để bản cũ mở lại được); lỗi giữa chừng → trả DB cũ về chỗ.
+ * Replace the DB at dbPath with restoredPath (synchronous: called between closing and reopening the app's DB, with no await in between).
+ * The old DB is renamed to backupPath (with -wal/-shm if they still exist, so the old copy can be reopened); if an error happens midway → put the old DB back in place.
  */
 export function swapFilesSync(dbPath: string, restoredPath: string, backupPath: string): void {
     const had = fs.existsSync(dbPath);
-    if (had) fs.renameSync(dbPath, backupPath); // Windows: còn connection mở → EBUSY/EPERM, chưa đổi gì
+    if (had) fs.renameSync(dbPath, backupPath); // Windows: a connection is still open → EBUSY/EPERM, nothing changed yet
     const movedSidecars: string[] = [];
     try {
         for (const sfx of SIDECARS) {
@@ -266,9 +266,9 @@ export function swapFilesSync(dbPath: string, restoredPath: string, backupPath: 
         moveFileSync(restoredPath, dbPath);
     } catch (err) {
         if (had && !fs.existsSync(dbPath)) {
-            try { fs.renameSync(backupPath, dbPath); } catch { /* giữ bản backup */ }
+            try { fs.renameSync(backupPath, dbPath); } catch { /* keep the backup */ }
             for (const sfx of movedSidecars) {
-                try { fs.renameSync(backupPath + sfx, dbPath + sfx); } catch { /* bỏ qua */ }
+                try { fs.renameSync(backupPath + sfx, dbPath + sfx); } catch { /* ignore */ }
             }
         }
         throw err;

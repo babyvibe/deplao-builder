@@ -1,8 +1,8 @@
 /**
  * mediaMessagesQuery.ts - SQL for the photos/videos of one conversation (db:getMediaMessages).
  *
- * - Offset pages (panel "Ảnh/Video", Public API): `ORDER BY timestamp DESC LIMIT ? OFFSET ?` - unchanged.
- * - Cursor pages (image viewer gallery "Bộ sưu tập"): keyset pages on (timestamp, msg_id), like the chat.
+ * - Offset pages (panel "Ảnh/Video" (Photos/Videos), Public API): `ORDER BY timestamp DESC LIMIT ? OFFSET ?` - unchanged.
+ * - Cursor pages (image viewer gallery "Bộ sưu tập" (Gallery)): keyset pages on (timestamp, msg_id), like the chat.
  *   SQLite answers them with a range seek on idx_messages_thread_cursor
  *   (owner_zalo_id, thread_id, timestamp DESC, msg_id DESC): no temp B-tree, cost proportional to the page
  *   instead of to OFFSET. Checked with EXPLAIN QUERY PLAN on the real schema without sqlite_stat1

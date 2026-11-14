@@ -1,8 +1,8 @@
 /**
  * AIQuickPanel.tsx
- * Side panel chat trực tiếp với AI - hiển thị bên phải khung chat.
- * Cho phép chọn trợ lý, chat hỏi đáp, insert câu trả lời vào MessageInput.
- * Tự động inject ngữ cảnh hội thoại Zalo hiện tại khi gửi câu hỏi.
+ * Side panel for chatting directly with the AI - shown on the right of the chat window.
+ * Lets you pick an assistant, ask questions, and insert an answer into MessageInput.
+ * Automatically injects the current Zalo conversation context when a question is sent.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -11,6 +11,8 @@ import { useAccountStore } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
 import { parseStructuredResponse } from '../../../../shared/ai/aiUtils';
 import { BotIcon, ClipboardListIcon, DiamondIcon, EditIcon, FileTextIcon, HelpCircleIcon, LightningIcon, SparklesIcon, StarIcon, TargetIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 interface ChatMsg {
@@ -151,7 +153,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
     setContextCountInput(String(effectiveContextMsgCount));
   }, [effectiveContextMsgCount]);
 
-  /** Lấy ngữ cảnh hội thoại Zalo hiện tại (trả về null nếu không có) */
+  /** Get the current Zalo conversation context (returns null if there is none) */
   const getRawZaloChatContext = useCallback((): string | null => {
     if (!activeAccountId || !activeThreadId) return null;
     const key = `${activeAccountId}_${activeThreadId}`;
@@ -201,7 +203,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
     try {
       const panelMsgs = [...messages, userMsg];
 
-      // Auto-inject Zalo chat context nếu có thread đang active
+      // Auto-inject the Zalo chat context if there is an active thread
       const msgsToSend: ChatMsg[] = [];
       const zaloContext = getZaloChatContext();
       if (zaloContext) {
@@ -227,7 +229,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
           }).catch(() => {});
         }
       } else {
-        const errorMsg: ChatMsg = { role: 'assistant', content: `Error: ${res?.error || 'Không có phản hồi'}` };
+        const errorMsg: ChatMsg = { role: 'assistant', content: `Error: ${res?.error || tr('Không có phản hồi')}` };
         setMessages(prev => [...prev, errorMsg]);
       }
     } catch (e: any) {
@@ -244,26 +246,26 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  /** Insert AI text vào MessageInput bằng cách dispatch custom event */
+  /** Insert AI text into MessageInput by dispatching a custom event */
   const insertToChat = (text: string) => {
     window.dispatchEvent(new CustomEvent('ai:insertToChat', { detail: { text } }));
   };
 
-  /** Tóm tắt hội thoại: lấy tin nhắn gần đây, gửi AI tóm tắt */
+  /** Summarize the conversation: fetch recent messages and send them to the AI to summarize */
   const handleSummarize = useCallback(async () => {
     if (!activeId || loading) return;
     const zaloContext = getRawZaloChatContext();
     if (!zaloContext) return;
     setLoading(true);
     const summaryPrompt = `Hãy tóm tắt cuộc hội thoại sau trong 3-5 dòng, nêu rõ: chủ đề chính, yêu cầu của khách, trạng thái hiện tại.\n\n${zaloContext}`;
-    const userMsg: ChatMsg = { role: 'user', content: 'Tóm tắt hội thoại' };
+    const userMsg: ChatMsg = { role: 'user', content: tr('Tóm tắt hội thoại') };
     setMessages(prev => [...prev, userMsg]);
     try {
       const res = await ipc.ai?.chat(activeId, [{ role: 'user', content: summaryPrompt }]);
       if (res?.success && res.result) {
         setMessages(prev => [...prev, { role: 'assistant', content: res.result! }]);
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${res?.error || 'Không có phản hồi'}` }]);
+        setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${res?.error || tr('Không có phản hồi')}` }]);
       }
     } catch (e: any) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.message}` }]);
@@ -296,7 +298,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex-shrink-0">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5"><BotIcon className="w-4 h-4 inline" /> Trợ lý AI
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">{trx('<0/> Trợ lý AI', { 0: <BotIcon className="w-4 h-4 inline" /> })}
           </h2>
           <button onClick={onClose}
             className="w-7 h-7 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">
@@ -308,12 +310,12 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
 
         {/* Assistant selector */}
         {loadingAssistants ? (
-          <div className="text-xs text-muted-foreground">Đang tải...</div>
+          <div className="text-xs text-muted-foreground">{tr('Đang tải...')}</div>
         ) : assistants.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-2">
             <div className="text-3xl"><BotIcon className="w-4 h-4" /></div>
             <p className="text-xs text-muted-foreground text-center leading-relaxed">
-              Chưa có trợ lý AI nào.<br/>Tạo trợ lý để bắt đầu hỗ trợ chat thông minh.
+              {trx('Chưa có trợ lý AI nào.<0/>Tạo trợ lý để bắt đầu hỗ trợ chat thông minh.', { 0: <br/> })}
             </p>
             <button
               onClick={() => {
@@ -324,10 +326,10 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
               }}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-lg shadow-blue-900/30"
             >
-              <SparklesIcon className="w-4 h-4" /> Tạo trợ lý AI ngay
+              {trx('<0/> Tạo trợ lý AI ngay', { 0: <SparklesIcon className="w-4 h-4" /> })}
             </button>
             <div className="w-full pt-1 border-t border-border/60">
-              <p className="text-[10px] text-muted-foreground text-center mb-2">Nền tảng hỗ trợ</p>
+              <p className="text-[10px] text-muted-foreground text-center mb-2">{tr('Nền tảng hỗ trợ')}</p>
               <div className="flex justify-center gap-3">
                 {[<BotIcon className="w-4 h-4" />,<SparklesIcon className="w-4 h-4" />,<HelpCircleIcon className="w-4 h-4" />,<LightningIcon className="w-4 h-4" />].map((icon, idx) => {
                   const names = ['OpenAI','Gemini','DeepSeek','Grok'];
@@ -347,7 +349,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
             {assistants.map(a => (
               <option key={a.id} value={a.id}>
                 {PLATFORM_ICON_TEXTS[a.platform] || '[AI]'} {a.name} - {a.model}
-                {a.isDefault ? ' [Mac dinh]' : ''}
+                {a.isDefault ? tr(' [Mac dinh]') : ''}
               </option>
             ))}
           </select>
@@ -359,14 +361,14 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
         <div className="px-3 py-2 border-b border-border/50 flex-shrink-0 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1 text-sm text-muted-foreground min-w-0">
-              <span>{hasZaloContext ? 'Ngữ cảnh bật' : 'Ngữ cảnh tắt'}</span>
+              <span>{hasZaloContext ? tr('Ngữ cảnh bật') : tr('Ngữ cảnh tắt')}</span>
               <button
                 type="button"
                 role="switch"
                 aria-checked={hasZaloContext}
                 onClick={() => setAiAutoInjectZaloContext(!aiAutoInjectZaloContext)}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 ${hasZaloContext ? 'bg-green-600' : 'bg-accent hover:bg-accent'}`}
-                title={hasZaloContext ? 'Tắt tự động gửi ngữ cảnh Zalo' : 'Bật tự động gửi ngữ cảnh Zalo'}
+                title={hasZaloContext ? tr('Tắt tự động gửi ngữ cảnh Zalo') : tr('Bật tự động gửi ngữ cảnh Zalo')}
               >
                 <span
                   className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${hasZaloContext ? 'translate-x-5' : 'translate-x-1'}`}
@@ -377,14 +379,14 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
               onClick={handleSummarize}
               disabled={loading}
               className="text-[12px] px-2 py-0.5 rounded bg-purple-900/60 text-purple-100 hover:bg-purple-800/50 disabled:opacity-40 transition-colors flex-shrink-0"
-              title="AI tóm tắt hội thoại hiện tại"
-            ><FileTextIcon className="w-4 h-4 inline" /> Tóm tắt
+              title={tr('AI tóm tắt hội thoại hiện tại')}
+            >{trx('<0/> Tóm tắt', { 0: <FileTextIcon className="w-4 h-4 inline" /> })}
             </button>
           </div>
 
           {hasZaloContext && (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Số ngữ cảnh</span>
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">{tr('Số ngữ cảnh')}</span>
               <input
                 type="number"
                 min={1}
@@ -400,9 +402,9 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                   }
                 }}
                 className="w-16 bg-card border border-input rounded-md px-2 py-1 text-[11px] text-foreground focus:outline-none focus:border-blue-500"
-                title="Số lượng tin nhắn dùng làm ngữ cảnh"
+                title={tr('Số lượng tin nhắn dùng làm ngữ cảnh')}
               />
-              <span className="text-[11px] text-muted-foreground">Tối đa 1000 tin</span>
+              <span className="text-[11px] text-muted-foreground">{tr('Tối đa 1000 tin')}</span>
             </div>
           )}
         </div>
@@ -415,9 +417,9 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
             <p className="text-xs text-muted-foreground">
               {canUseZaloContext
                 ? (hasZaloContext
-                    ? 'Hỏi bất kỳ điều gì - trợ lý AI sẽ tự động nắm ngữ cảnh hội thoại Zalo hiện tại'
-                    : 'Hỏi bất kỳ điều gì - đang chat với trợ lý AI nội bộ, không tự gửi lịch sử chat Zalo')
-                : 'Hỏi bất kỳ điều gì - AI sẽ trả lời dựa trên prompt và dữ liệu đã cấu hình'}
+                    ? tr('Hỏi bất kỳ điều gì - trợ lý AI sẽ tự động nắm ngữ cảnh hội thoại Zalo hiện tại')
+                    : tr('Hỏi bất kỳ điều gì - đang chat với trợ lý AI nội bộ, không tự gửi lịch sử chat Zalo'))
+                : tr('Hỏi bất kỳ điều gì - AI sẽ trả lời dựa trên prompt và dữ liệu đã cấu hình')}
             </p>
           </div>
         )}
@@ -456,8 +458,8 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                     insertToChat(textToInsert);
                   }}
                     className="text-[10px] px-2 py-0.5 rounded bg-blue-900/40 text-blue-400 hover:bg-blue-800/50 transition-colors"
-                    title="Chèn vào ô chat">
-                    <EditIcon className="w-4 h-4 inline" /> Chèn vào chat
+                    title={tr('Chèn vào ô chat')}>
+                    {trx('<0/> Chèn vào chat', { 0: <EditIcon className="w-4 h-4 inline" /> })}
                   </button>
                   <button onClick={() => {
                     const textToCopy = msg.segments
@@ -466,7 +468,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
                     navigator.clipboard.writeText(textToCopy);
                   }}
                     className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                    title="Copy"><ClipboardListIcon className="w-4 h-4 inline" /> Copy
+                    title={tr('Copy')}>{trx('<0/> Copy', { 0: <ClipboardListIcon className="w-4 h-4 inline" /> })}
                   </button>
                 </div>
               )}
@@ -494,7 +496,7 @@ export default function AIQuickPanel({ onClose }: { onClose: () => void }) {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Nhập câu hỏi..."
+              placeholder={tr('Nhập câu hỏi...')}
               rows={1}
               className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground resize-none outline-none max-h-24 overflow-y-auto"
               style={{ minHeight: '1.5rem' }}

@@ -1,9 +1,9 @@
 /**
- * Làm mới danh sách bạn bè Zalo đang online (SRS ZL-01 giai đoạn 2, FR-ZL01.6) cho chấm xanh trong danh sách hội thoại:
- * khi cửa sổ được focus và mỗi 2 phút lúc cửa sổ đang focus, tối đa 1 lần / 2 phút / tài khoản (kể cả khi danh sách mount
- * lại). Main đệm thêm 60 s và gộp lời gọi trùng (zaloPresenceCache); máy nhân viên đi qua Boss như mọi zalo:*.
- * Zalo không còn đường getFriendOnlines cho tài khoản đó (main trả supported: false) → thôi hỏi trong phiên này.
- * Đang tạm tắt (ZALO_FRIEND_ONLINES_ENABLED = false, Zalo trả 404 từ 22/10/2026) → hook không làm gì.
+ * Refreshes the list of Zalo friends who are online (SRS ZL-01 phase 2, FR-ZL01.6) for the green dot in the conversation list:
+ * when the window is focused and every 2 minutes while it is focused, at most once per 2 minutes per account (even if the list remounts).
+ * Main adds another 60 s buffer and merges duplicate calls (zaloPresenceCache); employee machines go through the Boss like every zalo:* call.
+ * Zalo no longer has a getFriendOnlines route for that account (main returns supported: false) → stop asking in this session.
+ * Temporarily off (ZALO_FRIEND_ONLINES_ENABLED = false, Zalo returns 404 since 22/10/2026) → the hook does nothing.
  */
 import React from 'react';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
@@ -14,7 +14,7 @@ import { ZALO_FRIEND_ONLINES_ENABLED } from '../../../shared/zalo/zaloPresence';
 
 export const ZALO_ONLINE_REFRESH_MS = 120_000;
 
-/** accountId → lần hỏi gần nhất (ms) trong phiên này; giữ cả khi lỗi để không dồn lời gọi. */
+/** accountId → last ask time (ms) in this session; kept even on error so calls do not pile up. */
 const lastFetchAt = new Map<string, number>();
 const inflight = new Set<string>();
 const unsupported = new Set<string>();
@@ -48,13 +48,13 @@ export async function refreshZaloFriendOnlines(accountId: string, now: number = 
     const userIds = res?.success ? res.response?.userIds : undefined;
     if (Array.isArray(userIds)) useZaloOnlineStore.getState().setOnline(accountId, userIds, Date.now());
   } catch {
-    // Lỗi mạng / tài khoản mất kết nối: lần focus sau (≥ 2 phút) thử lại; chấm cũ tự hết hạn sau 5 phút
+    // Network error / account disconnected: the next focus (≥ 2 minutes) retries; the old dot expires by itself after 5 minutes
   } finally {
     inflight.delete(accountId);
   }
 }
 
-/** Gắn ở danh sách hội thoại: `accountIds` = các tài khoản Zalo đang hiện. */
+/** Attached to the conversation list: `accountIds` = the Zalo accounts currently shown. */
 export function useZaloFriendOnlines(accountIds: readonly string[]): void {
   const key = ZALO_FRIEND_ONLINES_ENABLED ? accountIds.filter(Boolean).join(',') : '';
   React.useEffect(() => {
@@ -71,7 +71,7 @@ export function useZaloFriendOnlines(accountIds: readonly string[]): void {
   }, [key]);
 }
 
-/** Chỉ dùng trong test. */
+/** Test only. */
 export function resetZaloFriendOnlines(): void {
   lastFetchAt.clear();
   inflight.clear();

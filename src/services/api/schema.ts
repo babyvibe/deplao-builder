@@ -1,14 +1,16 @@
 /**
- * schema.ts — thư viện schema tối giản cho Public API v1.
+ * schema.ts: a minimal schema library for the Public API v1.
  *
- * Một schema làm hai việc:
- *  1. Validate + chuẩn hoá dữ liệu đầu vào (body, query, path param), bỏ key lạ.
- *  2. Sinh JSON Schema để build OpenAPI (docs luôn khớp code).
+ * One schema does two things:
+ *  1. Validates + normalizes input data (body, query, path param), drops unknown keys.
+ *  2. Generates a JSON Schema to build the OpenAPI (docs always match the code).
  *
- * Không dùng zod để tránh thêm dependency vào app Electron (xem docs/api/README.md,
- * mục "Quyết định kỹ thuật"). API cố tình nhỏ: string, number, boolean, array,
+ * Zod is not used, to avoid adding a dependency to the Electron app (see docs/api/README.md,
+ * section "Quyết định kỹ thuật" (Technical decisions)). The API is intentionally small: string, number, boolean, array,
  * object, record, any, enum, literal union.
  */
+
+import { tr } from '../../shared/i18n';
 
 export interface SchemaIssue {
     path: string;
@@ -16,7 +18,7 @@ export interface SchemaIssue {
 }
 
 export interface ParseOptions {
-    /** Ép kiểu từ chuỗi (query string, path param): "12" → 12, "true" → true, "a,b" → ['a','b']. */
+    /** Coerce from strings (query string, path param): "12" → 12, "true" → true, "a,b" → ['a','b']. */
     coerce?: boolean;
 }
 
@@ -34,8 +36,8 @@ export abstract class Schema<T = any> {
     /** @internal */ _deprecated = false;
 
     /**
-     * Builder BẤT BIẾN: mọi modifier trả bản sao, không sửa schema gốc
-     * (schema dùng chung giữa nhiều route không bị "lây" optional/default).
+     * IMMUTABLE builder: every modifier returns a copy and never changes the original schema
+     * (a schema shared by several routes does not "leak" optional/default to the others).
      */
     protected with(mutate: (copy: this) => void): this {
         const copy = Object.assign(Object.create(Object.getPrototypeOf(this)), this) as this;
@@ -71,7 +73,7 @@ export abstract class Schema<T = any> {
         return this.with(c => { c._deprecated = true; });
     }
 
-    /** Validate `value`. Trả bản đã chuẩn hoá (ép kiểu, bỏ key lạ, điền default). */
+    /** Validate `value`. Returns the normalized copy (coerced, unknown keys dropped, defaults filled in). */
     parse(value: unknown, opts: ParseOptions = {}): ParseResult<T> {
         const issues: SchemaIssue[] = [];
         const out = this._run(value, '', issues, opts);
@@ -79,18 +81,18 @@ export abstract class Schema<T = any> {
         return { ok: true, value: out as T };
     }
 
-    /** @internal Xử lý undefined/null/default rồi giao cho _check. */
+    /** @internal Handle undefined/null/default, then hand off to _check. */
     _run(value: unknown, path: string, issues: SchemaIssue[], opts: ParseOptions): any {
         if (value === undefined || (value === '' && opts.coerce && !(this instanceof StringSchema))) {
             if (this._hasDefault) return cloneDefault(this._default);
             if (this._optional) return undefined;
-            issues.push({ path: path || '(root)', message: 'Bắt buộc' });
+            issues.push({ path: path || '(root)', message: tr('Bắt buộc') });
             return undefined;
         }
         if (value === null) {
             if (this._nullable) return null;
             if (this._optional) return undefined;
-            issues.push({ path: path || '(root)', message: 'Không được null' });
+            issues.push({ path: path || '(root)', message: tr('Không được null') });
             return undefined;
         }
         return this._check(value, path, issues, opts);
@@ -149,21 +151,21 @@ export class StringSchema<T extends string = string> extends Schema<T> {
         if (typeof v === 'number' || typeof v === 'bigint') v = String(v);
         if (typeof v === 'boolean' && opts.coerce) v = String(v);
         if (typeof v !== 'string') {
-            issues.push({ path: path || '(root)', message: 'Phải là chuỗi' });
+            issues.push({ path: path || '(root)', message: tr('Phải là chuỗi') });
             return undefined;
         }
         if (this._trim) v = v.trim();
         if (this._min !== undefined && v.length < this._min) {
-            issues.push({ path: path || '(root)', message: `Tối thiểu ${this._min} ký tự` });
+            issues.push({ path: path || '(root)', message: tr('Tối thiểu {{_min}} ký tự', { _min: this._min }) });
         }
         if (this._max !== undefined && v.length > this._max) {
-            issues.push({ path: path || '(root)', message: `Tối đa ${this._max} ký tự` });
+            issues.push({ path: path || '(root)', message: tr('Tối đa {{_max}} ký tự', { _max: this._max }) });
         }
         if (this._pattern && !this._pattern.test(v)) {
-            issues.push({ path: path || '(root)', message: 'Sai định dạng' });
+            issues.push({ path: path || '(root)', message: tr('Sai định dạng') });
         }
         if (this._enum && !this._enum.includes(v)) {
-            issues.push({ path: path || '(root)', message: `Chỉ nhận: ${this._enum.join(', ')}` });
+            issues.push({ path: path || '(root)', message: tr('Chỉ nhận: {{v1}}', { v1: this._enum.join(', ') }) });
         }
         if (this._format === 'uri' && v) {
             try { new URL(v); } catch { issues.push({ path: path || '(root)', message: 'URL không hợp lệ' }); }
@@ -200,17 +202,17 @@ export class NumberSchema extends Schema<number> {
             if (v.trim() !== '' && Number.isFinite(n)) v = n;
         }
         if (typeof v !== 'number' || !Number.isFinite(v)) {
-            issues.push({ path: path || '(root)', message: 'Phải là số' });
+            issues.push({ path: path || '(root)', message: tr('Phải là số') });
             return undefined;
         }
         if (this._int && !Number.isInteger(v)) {
-            issues.push({ path: path || '(root)', message: 'Phải là số nguyên' });
+            issues.push({ path: path || '(root)', message: tr('Phải là số nguyên') });
         }
         if (this._min !== undefined && v < this._min) {
-            issues.push({ path: path || '(root)', message: `Tối thiểu ${this._min}` });
+            issues.push({ path: path || '(root)', message: tr('Tối thiểu {{_min}}', { _min: this._min }) });
         }
         if (this._max !== undefined && v > this._max) {
-            issues.push({ path: path || '(root)', message: `Tối đa ${this._max}` });
+            issues.push({ path: path || '(root)', message: tr('Tối đa {{_max}}', { _max: this._max }) });
         }
         return v;
     }
@@ -232,7 +234,7 @@ export class BooleanSchema extends Schema<boolean> {
             if (value === 'true' || value === '1' || value === 1) return true;
             if (value === 'false' || value === '0' || value === 0) return false;
         }
-        issues.push({ path: path || '(root)', message: 'Phải là true/false' });
+        issues.push({ path: path || '(root)', message: tr('Phải là true/false') });
         return undefined;
     }
 
@@ -259,20 +261,20 @@ export class ArraySchema<I = any> extends Schema<I[]> {
         if (typeof v === 'string' && opts.coerce) {
             const trimmed = v.trim();
             if (trimmed.startsWith('[')) {
-                try { v = JSON.parse(trimmed); } catch { /* giữ nguyên để báo lỗi */ }
+                try { v = JSON.parse(trimmed); } catch { /* keep as is so the error is reported */ }
             } else {
                 v = trimmed === '' ? [] : trimmed.split(',').map(s => s.trim()).filter(Boolean);
             }
         }
         if (!Array.isArray(v)) {
-            issues.push({ path: path || '(root)', message: 'Phải là mảng' });
+            issues.push({ path: path || '(root)', message: tr('Phải là mảng') });
             return undefined;
         }
         if (this._min !== undefined && v.length < this._min) {
-            issues.push({ path: path || '(root)', message: `Tối thiểu ${this._min} phần tử` });
+            issues.push({ path: path || '(root)', message: tr('Tối thiểu {{_min}} phần tử', { _min: this._min }) });
         }
         if (this._max !== undefined && v.length > this._max) {
-            issues.push({ path: path || '(root)', message: `Tối đa ${this._max} phần tử` });
+            issues.push({ path: path || '(root)', message: tr('Tối đa {{_max}} phần tử', { _max: this._max }) });
             return undefined;
         }
         return v.map((item: unknown, i: number) => this.item._run(item, joinPath(path, i), issues, opts));
@@ -297,7 +299,7 @@ export class ObjectSchema<S extends Shape = Shape> extends Schema<{ [K in keyof 
         super();
     }
 
-    /** Giữ lại key không khai báo (mặc định bỏ để không lọt tham số lạ vào IPC). */
+    /** Keep undeclared keys (dropped by default so unknown params do not leak into IPC). */
     passthrough(): this {
         return this.with(c => { c._passthrough = true; });
     }
@@ -305,10 +307,10 @@ export class ObjectSchema<S extends Shape = Shape> extends Schema<{ [K in keyof 
     _check(value: unknown, path: string, issues: SchemaIssue[], opts: ParseOptions): any {
         let v: any = value;
         if (typeof v === 'string' && opts.coerce && v.trim().startsWith('{')) {
-            try { v = JSON.parse(v); } catch { /* báo lỗi bên dưới */ }
+            try { v = JSON.parse(v); } catch { /* the error is reported below */ }
         }
         if (typeof v !== 'object' || v === null || Array.isArray(v)) {
-            issues.push({ path: path || '(root)', message: 'Phải là object' });
+            issues.push({ path: path || '(root)', message: tr('Phải là object') });
             return undefined;
         }
         const out: Record<string, any> = this._passthrough ? { ...v } : {};
@@ -337,7 +339,7 @@ export class ObjectSchema<S extends Shape = Shape> extends Schema<{ [K in keyof 
         return Object.keys(this.shape);
     }
 
-    /** Bản sao với một số key (dùng cho PATCH: mọi field optional). */
+    /** A copy with some keys (used for PATCH: every field is optional). */
     partial(): ObjectSchema<S> {
         const next: Shape = {};
         for (const [key, schema] of Object.entries(this.shape)) {
@@ -347,7 +349,7 @@ export class ObjectSchema<S extends Shape = Shape> extends Schema<{ [K in keyof 
     }
 }
 
-// ─── Record (map tuỳ ý key) ──────────────────────────────────────────────────
+// ─── Record (map with any keys) ──────────────────────────────────────────────────
 
 export class RecordSchema<V = any> extends Schema<Record<string, V>> {
     constructor(private readonly valueSchema: Schema<V>, private readonly maxKeys = 200) {
@@ -356,12 +358,12 @@ export class RecordSchema<V = any> extends Schema<Record<string, V>> {
 
     _check(value: unknown, path: string, issues: SchemaIssue[], opts: ParseOptions): any {
         if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-            issues.push({ path: path || '(root)', message: 'Phải là object' });
+            issues.push({ path: path || '(root)', message: tr('Phải là object') });
             return undefined;
         }
         const entries = Object.entries(value as Record<string, unknown>);
         if (entries.length > this.maxKeys) {
-            issues.push({ path: path || '(root)', message: `Tối đa ${this.maxKeys} key` });
+            issues.push({ path: path || '(root)', message: tr('Tối đa {{maxKeys}} key', { maxKeys: this.maxKeys }) });
             return undefined;
         }
         const out: Record<string, V> = {};
@@ -393,7 +395,7 @@ export class AnySchema extends Schema<any> {
     }
 }
 
-// ─── Union (chọn schema đầu tiên parse được) ─────────────────────────────────
+// ─── Union (the first schema that parses is chosen) ─────────────────────────────────
 
 export class UnionSchema extends Schema<any> {
     constructor(private readonly options: Schema<any>[]) {
@@ -408,7 +410,7 @@ export class UnionSchema extends Schema<any> {
             if (local.length === 0) return out;
             collected.push(local);
         }
-        issues.push({ path: path || '(root)', message: 'Không khớp kiểu nào được chấp nhận' });
+        issues.push({ path: path || '(root)', message: tr('Không khớp kiểu nào được chấp nhận') });
         return undefined;
     }
 
@@ -430,9 +432,9 @@ export const s = {
     any: (hint?: 'object' | 'string' | 'array') => new AnySchema(hint),
     enum: <T extends string>(values: readonly T[]) => new StringSchema<T>()._setEnum(values),
     union: (...options: Schema<any>[]) => new UnionSchema(options),
-    /** id dạng chuỗi (Zalo/FB/TG id có thể là số lớn → luôn nhận chuỗi). */
+    /** id as a string (Zalo/FB/TG ids can be large numbers → always accept a string). */
     id: () => new StringSchema().min(1).max(200),
-    /** Epoch mili giây. */
+    /** Epoch milliseconds. */
     timestamp: () => new NumberSchema().int().min(0),
 };
 

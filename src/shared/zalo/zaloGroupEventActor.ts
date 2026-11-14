@@ -1,13 +1,15 @@
 /**
- * zaloGroupEventActor.ts — nhóm Zalo ẩn danh sách thành viên: sự kiện vào / rời / xoá / chặn gửi `updateMembers` RỖNG
- * (không tên, không id) → trước đây hiện "Thành viên đã rời khỏi nhóm". Người thực hiện (`sourceId`) vẫn có trong sự
- * kiện: người rời / người vào, hoặc quản trị viên đã xoá / chặn. EventBroadcaster tra tên trong DB, không có thì gọi
- * getUserInfo rồi sửa dòng thông báo.
+ * zaloGroupEventActor.ts: Zalo groups hide the member list. Join / leave / remove / block events send an EMPTY `updateMembers`
+ * (no name, no id), so the line used to show "Thành viên đã rời khỏi nhóm" (A member left the group). The actor (`sourceId`) is still in the
+ * event: the person who left / joined, or the admin who removed / blocked. EventBroadcaster looks up the name in the DB, and if it is not there calls
+ * getUserInfo and fixes the notification line.
  */
+
+import { tr } from '../i18n';
 
 export const MEMBER_EVENT_TYPES: ReadonlySet<string> = new Set(['join', 'leave', 'remove_member', 'block_member']);
 
-/** id người thực hiện khi sự kiện thành viên không kèm thông tin thành viên; '' = không cần (đã có updateMembers). */
+/** Actor id when the member event does not include member info; '' = not needed (updateMembers is already there). */
 export function groupEventActorId(eventType: string, rawEvent: any): string {
   if (!MEMBER_EVENT_TYPES.has(eventType)) return '';
   const data = rawEvent?.data || rawEvent || {};
@@ -17,28 +19,28 @@ export function groupEventActorId(eventType: string, rawEvent: any): string {
   return /^\d+$/.test(id) ? id : '';
 }
 
-/** Dòng thông báo theo người thực hiện; chưa biết tên → "Thành viên" / "Quản trị viên" (xoá / chặn do quản trị làm). */
+/** Notification line by actor; name not known yet → "Thành viên" (Member) / "Quản trị viên" (Admin) (removed / blocked by an admin). */
 export function groupEventActorText(eventType: string, actorName: string, rawEvent: any): string {
   const data = rawEvent?.data || rawEvent || {};
   const name = String(actorName || '').trim();
   switch (eventType) {
     case 'join':
-      // isAdd = 1: người thực hiện thêm người khác vào (danh sách bị ẩn), 0: tự tham gia
+      // isAdd = 1: the actor added someone else (list hidden), 0: joined by themselves
       return Number(data.isAdd) === 1
-        ? `${name || 'Thành viên'} đã thêm thành viên vào nhóm`
-        : `${name || 'Thành viên'} đã tham gia nhóm`;
+        ? tr('{{v1}} đã thêm thành viên vào nhóm', { v1: name || tr('Thành viên') })
+        : tr('{{v1}} đã tham gia nhóm', { v1: name || tr('Thành viên') });
     case 'leave':
-      return `${name || 'Thành viên'} đã rời khỏi nhóm`;
+      return tr('{{v1}} đã rời khỏi nhóm', { v1: name || tr('Thành viên') });
     case 'remove_member':
-      return `${name || 'Quản trị viên'} đã xóa một thành viên khỏi nhóm`;
+      return tr('{{v1}} đã xóa một thành viên khỏi nhóm', { v1: name || tr('Quản trị viên') });
     case 'block_member':
-      return `${name || 'Quản trị viên'} đã chặn một thành viên khỏi nhóm`;
+      return tr('{{v1}} đã chặn một thành viên khỏi nhóm', { v1: name || tr('Quản trị viên') });
     default:
       return '';
   }
 }
 
-/** Hồ sơ trong phản hồi getUserInfo (zca-js gửi "<uid>_0", khoá trả về có thể kèm hậu tố). */
+/** Profile in the getUserInfo response (zca-js sends "<uid>_0", and the returned key may carry a suffix). */
 export function profileFromUserInfo(response: any, uid: string): { name: string; avatar: string } | null {
   const changed = response?.changed_profiles || response?.data || {};
   const profile = changed[uid] ?? changed[`${uid}_0`] ?? null;

@@ -1,21 +1,22 @@
 import React from 'react';
 import AccountSelectorDropdown, { AccountOption } from './AccountSelectorDropdown';import { HomeIcon, MailIcon, SearchIcon, UsersIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
 
 
 export type FriendTab = 'search' | 'friends' | 'groups' | 'requests';
 
 interface Props {
-  /** Tab hiện tại */
+  /** Current tab */
   tab: FriendTab;
   onTabChange: (tab: FriendTab) => void;
-  /** Số bạn bè để hiển thị trên tab */
+  /** Number of friends to show on the tab */
   friendsCount?: number;
-  /** Số nhóm để hiển thị trên tab */
+  /** Number of groups to show on the tab */
   groupsCount?: number;
-  /** Số lời mời nhận được để hiển thị badge */
+  /** Number of friend requests received, shown as a badge */
   requestsCount?: number;
 
-  /** Chế độ gộp trang - ẩn/hiện phần chọn tài khoản */
+  /** Merged inbox mode: show / hide the account picker */
   mergedInboxMode?: boolean;
   accounts: AccountOption[];
   activeAccountId: string | null;
@@ -23,13 +24,13 @@ interface Props {
 }
 
 const TABS: { key: FriendTab; label: string; icon: React.ReactNode }[] = [
-  { key: 'search',   label: 'Tìm kiếm', icon: <SearchIcon className="w-4 h-4" /> },
-  { key: 'friends',  label: 'Bạn bè',   icon: <UsersIcon className="w-4 h-4" /> },
-  { key: 'groups',   label: 'Nhóm',     icon: <HomeIcon className="w-4 h-4" /> },
-  { key: 'requests', label: 'Lời mời',  icon: <MailIcon className="w-4 h-4" /> },
+  { key: 'search',   label: tr('Tìm kiếm'), icon: <SearchIcon className="w-4 h-4" /> },
+  { key: 'friends',  label: tr('Bạn bè'),   icon: <UsersIcon className="w-4 h-4" /> },
+  { key: 'groups',   label: tr('Nhóm'),     icon: <HomeIcon className="w-4 h-4" /> },
+  { key: 'requests', label: tr('Lời mời'),  icon: <MailIcon className="w-4 h-4" /> },
 ];
 
-/** Header của FriendList - 3 tab bên trái, account selector bên phải (giống CRM) */
+/** Header of FriendList: 3 tabs on the left, account selector on the right (same as CRM) */
 export default function FriendListAccountSelector({
   tab,
   onTabChange,
@@ -42,7 +43,7 @@ export default function FriendListAccountSelector({
 }: Props) {
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border flex-shrink-0 bg-card">
-      {/* ── Tabs (trái) ── */}
+      {/* ── Tabs (left) ── */}
       <div className="flex bg-card rounded-lg p-0.5 gap-0.5">
         {TABS.map(({ key, label, icon }) => {
           const isActive = tab === key;
@@ -80,7 +81,7 @@ export default function FriendListAccountSelector({
 
       <div className="flex-1" />
 
-      {/* ── Account selector (phải) - chỉ hiện khi mergedInboxMode ── */}
+      {/* ── Account selector (right): only shown in mergedInboxMode ── */}
       {accounts.length > 0 && (
         <AccountSelectorDropdown
           options={accounts}

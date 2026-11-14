@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { execFile } from 'child_process';
 import DatabaseService from '../../../src/services/database/DatabaseService';
 import Logger from '../../../src/utils/Logger';
+import { tr } from '../../../src/shared/i18n';
 
 const BCRYPT_ROUNDS = 12;
 const MAX_ATTEMPTS = 5;
@@ -49,7 +50,7 @@ export function registerLockScreenIpc() {
     ipcMain.handle('lockScreen:setup', async (_event, { password }: { password: string }) => {
         try {
             if (!password || password.length < 4) {
-                return { success: false, error: 'Mật khẩu phải có ít nhất 4 ký tự' };
+                return { success: false, error: tr('Mật khẩu phải có ít nhất 4 ký tự') };
             }
             const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
             db().setSetting('lock_screen_hash', hash);
@@ -81,11 +82,11 @@ export function registerLockScreenIpc() {
             const now = Date.now();
             if (now < cooldownUntil) {
                 const remaining = Math.ceil((cooldownUntil - now) / 1000);
-                return { success: false, error: `Đã quá số lần thử. Vui lòng chờ ${remaining} giây.`, cooldownRemaining: remaining };
+                return { success: false, error: tr('Đã quá số lần thử. Vui lòng chờ {{remaining}} giây.', { remaining }), cooldownRemaining: remaining };
             }
 
             const hash = db().getSetting('lock_screen_hash');
-            if (!hash) return { success: false, error: 'Chưa đặt mật khẩu' };
+            if (!hash) return { success: false, error: tr('Chưa đặt mật khẩu') };
 
             const valid = await bcrypt.compare(password, hash);
             if (valid) {
@@ -99,10 +100,10 @@ export function registerLockScreenIpc() {
             if (failedAttempts >= MAX_ATTEMPTS) {
                 cooldownUntil = Date.now() + COOLDOWN_MS;
                 Logger.warn(`[LockScreen] Max attempts reached, cooling down for ${COOLDOWN_MS / 1000}s`);
-                return { success: false, error: `Sai mật khẩu ${MAX_ATTEMPTS} lần. Vui lòng chờ ${COOLDOWN_MS / 1000} giây.`, cooldownRemaining: COOLDOWN_MS / 1000 };
+                return { success: false, error: tr('Sai mật khẩu {{MAX_ATTEMPTS}} lần. Vui lòng chờ {{v1}} giây.', { MAX_ATTEMPTS, v1: COOLDOWN_MS / 1000 }), cooldownRemaining: COOLDOWN_MS / 1000 };
             }
 
-            return { success: false, error: `Sai mật khẩu. Còn ${MAX_ATTEMPTS - failedAttempts} lần thử.`, failedAttempts };
+            return { success: false, error: tr('Sai mật khẩu. Còn {{v1}} lần thử.', { v1: MAX_ATTEMPTS - failedAttempts }), failedAttempts };
         } catch (e: any) {
             return { success: false, error: e.message };
         }
@@ -112,7 +113,7 @@ export function registerLockScreenIpc() {
     ipcMain.handle('lockScreen:verifyRecovery', async (_event, { recoveryKey }: { recoveryKey: string }) => {
         try {
             const encrypted = db().getSetting('lock_screen_recovery');
-            if (!encrypted) return { success: false, error: 'Không có recovery key' };
+            if (!encrypted) return { success: false, error: tr('Không có recovery key') };
 
             let storedKey: string;
             if (safeStorage.isEncryptionAvailable()) {
@@ -128,7 +129,7 @@ export function registerLockScreenIpc() {
                 return { success: true };
             }
 
-            return { success: false, error: 'Recovery key không đúng' };
+            return { success: false, error: tr('Recovery key không đúng') };
         } catch (e: any) {
             Logger.error(`[LockScreen] verifyRecovery error: ${e.message}`);
             return { success: false, error: e.message };
@@ -139,13 +140,13 @@ export function registerLockScreenIpc() {
     ipcMain.handle('lockScreen:changePassword', async (_event, { oldPassword, newPassword }: { oldPassword: string; newPassword: string }) => {
         try {
             const hash = db().getSetting('lock_screen_hash');
-            if (!hash) return { success: false, error: 'Chưa đặt mật khẩu' };
+            if (!hash) return { success: false, error: tr('Chưa đặt mật khẩu') };
 
             const valid = await bcrypt.compare(oldPassword, hash);
-            if (!valid) return { success: false, error: 'Mật khẩu hiện tại không đúng' };
+            if (!valid) return { success: false, error: tr('Mật khẩu hiện tại không đúng') };
 
             if (!newPassword || newPassword.length < 4) {
-                return { success: false, error: 'Mật khẩu mới phải có ít nhất 4 ký tự' };
+                return { success: false, error: tr('Mật khẩu mới phải có ít nhất 4 ký tự') };
             }
 
             const newHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
@@ -162,7 +163,7 @@ export function registerLockScreenIpc() {
         try {
             // Verify recovery key first
             const encrypted = db().getSetting('lock_screen_recovery');
-            if (!encrypted) return { success: false, error: 'Không có recovery key' };
+            if (!encrypted) return { success: false, error: tr('Không có recovery key') };
 
             let storedKey: string;
             if (safeStorage.isEncryptionAvailable()) {
@@ -172,11 +173,11 @@ export function registerLockScreenIpc() {
             }
 
             if (recoveryKey.trim().toUpperCase() !== storedKey.toUpperCase()) {
-                return { success: false, error: 'Recovery key không đúng' };
+                return { success: false, error: tr('Recovery key không đúng') };
             }
 
             if (!newPassword || newPassword.length < 4) {
-                return { success: false, error: 'Mật khẩu mới phải có ít nhất 4 ký tự' };
+                return { success: false, error: tr('Mật khẩu mới phải có ít nhất 4 ký tự') };
             }
 
             const newHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
@@ -194,10 +195,10 @@ export function registerLockScreenIpc() {
     ipcMain.handle('lockScreen:disable', async (_event, { password }: { password: string }) => {
         try {
             const hash = db().getSetting('lock_screen_hash');
-            if (!hash) return { success: false, error: 'Chưa đặt mật khẩu' };
+            if (!hash) return { success: false, error: tr('Chưa đặt mật khẩu') };
 
             const valid = await bcrypt.compare(password, hash);
-            if (!valid) return { success: false, error: 'Mật khẩu không đúng' };
+            if (!valid) return { success: false, error: tr('Mật khẩu không đúng') };
 
             db().setSetting('lock_screen_enabled', '0');
             db().setSetting('lock_screen_biometric', '0');
@@ -214,13 +215,13 @@ export function registerLockScreenIpc() {
     ipcMain.handle('lockScreen:getRecoveryKey', async (_event, { password }: { password: string }) => {
         try {
             const hash = db().getSetting('lock_screen_hash');
-            if (!hash) return { success: false, error: 'Chưa đặt mật khẩu' };
+            if (!hash) return { success: false, error: tr('Chưa đặt mật khẩu') };
 
             const valid = await bcrypt.compare(password, hash);
-            if (!valid) return { success: false, error: 'Mật khẩu không đúng' };
+            if (!valid) return { success: false, error: tr('Mật khẩu không đúng') };
 
             const encrypted = db().getSetting('lock_screen_recovery');
-            if (!encrypted) return { success: false, error: 'Không có recovery key' };
+            if (!encrypted) return { success: false, error: tr('Không có recovery key') };
 
             let recoveryKey: string;
             if (safeStorage.isEncryptionAvailable()) {
@@ -239,7 +240,7 @@ export function registerLockScreenIpc() {
     ipcMain.handle('lockScreen:setBiometric', async (_event, { enabled }: { enabled: boolean }) => {
         try {
             if (enabled && !checkBiometricAvailable()) {
-                return { success: false, error: 'Thiết bị không hỗ trợ sinh trắc học' };
+                return { success: false, error: tr('Thiết bị không hỗ trợ sinh trắc học') };
             }
             db().setSetting('lock_screen_biometric', enabled ? '1' : '0');
             Logger.log(`[LockScreen] Biometric ${enabled ? 'enabled' : 'disabled'}`);
@@ -253,14 +254,14 @@ export function registerLockScreenIpc() {
     ipcMain.handle('lockScreen:biometricUnlock', async () => {
         try {
             if (!checkBiometricAvailable()) {
-                return { success: false, error: 'Thiết bị không hỗ trợ sinh trắc học' };
+                return { success: false, error: tr('Thiết bị không hỗ trợ sinh trắc học') };
             }
 
             if (process.platform === 'win32') {
                 // Windows: use Windows Hello (fingerprint / PIN / face)
                 const verified = await promptWindowsHello();
                 if (!verified) {
-                    return { success: false, error: 'Xác thực Windows Hello thất bại hoặc bị huỷ' };
+                    return { success: false, error: tr('Xác thực Windows Hello thất bại hoặc bị huỷ') };
                 }
                 failedAttempts = 0;
                 cooldownUntil = 0;
@@ -290,10 +291,10 @@ export function registerLockScreenIpc() {
                 return { success: true };
             }
 
-            return { success: false, error: 'Nền tảng không hỗ trợ' };
+            return { success: false, error: tr('Nền tảng không hỗ trợ') };
         } catch (e: any) {
             Logger.error(`[LockScreen] biometricUnlock error: ${e.message}`);
-            return { success: false, error: 'Xác thực sinh trắc học thất bại' };
+            return { success: false, error: tr('Xác thực sinh trắc học thất bại') };
         }
     });
 }

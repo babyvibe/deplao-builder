@@ -1,30 +1,40 @@
 /**
- * AccountMultiDropdown - dropdown chọn nhiều tài khoản với checkbox.
- * Dùng chung cho: header filter (ConversationSettings, Báo cáo) + modal (LabelModal, LocalMsgModal).
+ * AccountMultiDropdown - dropdown to pick several accounts with checkboxes.
+ * Shared by: the header filter (ConversationSettings, Reports) + the modal (LabelModal, LocalMsgModal).
  */
 import React, { useState, useEffect, useRef } from 'react';
 import { AccountInfo } from '@/store/accounts/accountStore';
+import { matchAccountSearch } from '@/lib/accounts/accountSearch';
+import { cn } from '@/lib/cn';
 import { AccountAvatar } from './AccountAvatar';
+import { tr } from '../../../../shared/i18n';
+
+/** A search box shows above the list from this many accounts (searchable). */
+const SEARCH_MIN_ACCOUNTS = 6;
 
 interface Props {
   accounts: AccountInfo[];
   selectedIds: string[];
   onChange: (ids: string[]) => void;
-  /** Hiện ở dưới (mặc định) hay trên */
+  /** Opens below (default) or above */
   dropPosition?: 'down' | 'up';
-  /** chiếm toàn chiều ngang container */
+  /** takes the full width of the container */
   fullWidth?: boolean;
-  /** text placeholder khi chưa chọn gì */
+  /** placeholder text when nothing is selected yet */
   placeholder?: string;
-  /** Nhãn dòng chọn tất cả (mặc định "Chọn tất cả") */
+  /** Label of the select-all row (default "Chọn tất cả" (Select all)) */
   selectAllLabel?: string;
-  /** Số tài khoản tối thiểu phải giữ (mặc định 0 = được bỏ hết); bỏ chọn dưới mức này bị bỏ qua */
+  /** Minimum number of accounts that must stay selected (default 0 = can clear all); unselecting below this level is ignored */
   minSelected?: number;
-  /** Nút "Chỉ chọn" khi rê chuột lên một dòng: chọn đúng tài khoản đó */
+  /** "Chỉ chọn" (Only select) button when hovering a row: selects only that account */
   showOnlyAction?: boolean;
+  /** Search box (name, @username, UID, phone) when there are many accounts; "Chọn tất cả" then acts on the matches */
+  searchable?: boolean;
+  /** Extra classes for the trigger button (e.g. the taller field of a form) */
+  triggerClassName?: string;
 }
 
-/** Ảnh tài khoản dùng chung (AccountAvatar): sm = 20px xếp chồng trên nút, md = 32px kèm huy hiệu kênh trong danh sách. */
+/** Shared account avatar (AccountAvatar): sm = 20px stacked on the button, md = 32px with the channel badge in the list. */
 function AvatarThumb({ acc, size = 'sm' }: { acc: AccountInfo; size?: 'sm' | 'md' }) {
   return <AccountAvatar account={acc} size={size === 'sm' ? 20 : 32} className={size === 'sm' ? 'ring-2 ring-card' : undefined} />;
 }
@@ -35,12 +45,15 @@ export default function AccountMultiDropdown({
   onChange,
   dropPosition = 'down',
   fullWidth = false,
-  placeholder = 'Chọn tài khoản...',
-  selectAllLabel = 'Chọn tất cả',
+  placeholder = tr('Chọn tài khoản...'),
+  selectAllLabel = tr('Chọn tất cả'),
   minSelected = 0,
   showOnlyAction = false,
+  searchable = false,
+  triggerClassName,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -51,10 +64,16 @@ export default function AccountMultiDropdown({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // A closed list opens again on the full list
+  useEffect(() => { if (!open) setQuery(''); }, [open]);
+
+  const showSearch = searchable && accounts.length >= SEARCH_MIN_ACCOUNTS;
+  const visible = showSearch && query.trim() ? accounts.filter(a => matchAccountSearch(a, query)) : accounts;
+
   const toggleOne = (id: string) => {
     const s = new Set(selectedIds);
     if (s.has(id)) {
-      if (s.size <= minSelected) return; // giữ tối thiểu minSelected tài khoản
+      if (s.size <= minSelected) return; // keep at least minSelected accounts
       s.delete(id);
     } else {
       s.add(id);
@@ -62,15 +81,20 @@ export default function AccountMultiDropdown({
     onChange(Array.from(s));
   };
 
-  const allChecked = accounts.length > 0 && accounts.every(a => selectedIds.includes(a.zalo_id));
-  const someChecked = !allChecked && accounts.some(a => selectedIds.includes(a.zalo_id));
+  // Select all / clear all acts on the rows shown (the search matches, or every account)
+  const allChecked = visible.length > 0 && visible.every(a => selectedIds.includes(a.zalo_id));
+  const someChecked = !allChecked && visible.some(a => selectedIds.includes(a.zalo_id));
 
   const toggleAll = () => {
+    // While searching, the accounts picked outside the matches stay picked
+    const filtering = visible !== accounts;
     if (allChecked) {
-      if (minSelected > 0) return; // không bỏ hết được: thu hẹp bằng từng dòng hoặc "Chỉ chọn"
-      onChange([]);
+      const shown = new Set(visible.map(a => a.zalo_id));
+      const rest = filtering ? selectedIds.filter(id => !shown.has(id)) : [];
+      if (rest.length < minSelected) return; // cannot clear everything: narrow it down row by row or with "Chỉ chọn" (Only select)
+      onChange(rest);
     } else {
-      onChange(accounts.map(a => a.zalo_id));
+      onChange(filtering ? [...new Set([...selectedIds, ...visible.map(a => a.zalo_id)])] : accounts.map(a => a.zalo_id));
     }
   };
 
@@ -79,10 +103,10 @@ export default function AccountMultiDropdown({
     selectedIds.length === 0
       ? placeholder
       : selectedIds.length === accounts.length
-        ? 'Tất cả tài khoản'
+        ? tr('Tất cả tài khoản')
         : selectedIds.length === 1
           ? (accounts.find(a => a.zalo_id === selectedIds[0])?.full_name || selectedIds[0])
-          : `${selectedIds.length} tài khoản`;
+          : tr('{{count}} tài khoản', { count: selectedIds.length });
 
   if (accounts.length === 0) return null;
 
@@ -96,7 +120,7 @@ export default function AccountMultiDropdown({
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border border-input hover:border-border-strong bg-card text-xs text-foreground transition-colors ${fullWidth ? 'w-full' : 'min-w-[160px]'}`}
+        className={cn('flex items-center gap-2 px-3 py-1.5 rounded-lg border border-input hover:border-border-strong bg-card text-xs text-foreground transition-colors', fullWidth ? 'w-full' : 'min-w-[160px]', triggerClassName)}
       >
         {/* Avatar stack */}
         <div className="flex -space-x-1 shrink-0">
@@ -126,6 +150,18 @@ export default function AccountMultiDropdown({
       {/* Dropdown panel */}
       {open && (
         <div className={`${panelClass} bg-card border border-border rounded-xl shadow-2xl z-[60] overflow-hidden ${fullWidth ? 'w-full' : 'w-[260px]'}`}>
+          {showSearch && (
+            <div className="px-2 pt-2 pb-1.5 border-b border-border/60">
+              <input
+                autoFocus
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Escape' && query) { e.stopPropagation(); setQuery(''); } }}
+                placeholder={tr('Tìm tên, SĐT, UID...')}
+                className="w-full bg-muted border border-input rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-subtle-foreground focus:outline-none focus:border-blue-500 transition-colors"
+              />
+            </div>
+          )}
           {/* Select All row */}
           <button
             type="button"
@@ -153,7 +189,10 @@ export default function AccountMultiDropdown({
 
           {/* Account rows */}
           <div className="max-h-[220px] overflow-y-auto">
-            {accounts.map(acc => {
+            {visible.length === 0 && (
+              <p className="px-3 py-3 text-xs text-muted-foreground">{tr('Không có tài khoản nào khớp')}</p>
+            )}
+            {visible.map(acc => {
               const checked = selectedIds.includes(acc.zalo_id);
               const locked = checked && selectedIds.length <= minSelected;
               return (
@@ -161,7 +200,7 @@ export default function AccountMultiDropdown({
                   <button
                     type="button"
                     onClick={() => toggleOne(acc.zalo_id)}
-                    title={locked ? `Cần chọn ít nhất ${minSelected} tài khoản` : undefined}
+                    title={locked ? tr('Cần chọn ít nhất {{minSelected}} tài khoản', { minSelected }) : undefined}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-left ${checked ? 'bg-blue-500/10' : ''}`}
                   >
                     {/* Custom checkbox */}
@@ -182,7 +221,7 @@ export default function AccountMultiDropdown({
                       onClick={() => onChange([acc.zalo_id])}
                       className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-border bg-card px-2 py-0.5 text-[11px] font-medium text-primary opacity-0 transition-opacity hover:bg-accent focus-visible:opacity-100 group-hover:opacity-100"
                     >
-                      Chỉ chọn
+                      {tr('Chỉ chọn')}
                     </button>
                   )}
                 </div>

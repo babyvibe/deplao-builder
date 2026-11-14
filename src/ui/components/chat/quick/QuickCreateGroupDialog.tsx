@@ -1,6 +1,6 @@
 /**
- * Tạo nhóm Telegram / Messenger từ thao tác nhanh (Zalo dùng CreateGroupModal có sẵn).
- * Thành viên chọn từ các hội thoại 1-1 của tài khoản.
+ * Create a Telegram / Messenger group from a quick action (Zalo uses the existing CreateGroupModal).
+ * Members are picked from the account's 1-1 conversations.
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -15,6 +15,8 @@ import {
 } from '@/components/ui';
 import { CheckIcon, CloseIcon, SearchIcon } from '@/components/common/icons';
 import { accountChannel, accountLabel, foldText, type OpenQuickConversation } from './quickActions';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const NO_CONTACTS: any[] = [];
 
@@ -47,7 +49,7 @@ export default function QuickCreateGroupDialog({ account, onClose, onOpenConvers
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
-  // Hộp thư chỉ nạp hội thoại của tài khoản đang xem → tài khoản khác đọc từ DB.
+  // The inbox only loads the conversations of the account being viewed → other accounts read from the DB.
   useEffect(() => {
     if (storeContacts.length > 0) return undefined;
     let cancelled = false;
@@ -65,7 +67,7 @@ export default function QuickCreateGroupDialog({ account, onClose, onOpenConvers
         id: String(c.contact_id),
         name: c.alias || c.display_name || String(c.contact_id),
         avatar: c.avatar_url || '',
-        // Chỉ hiện số điện thoại — id Telegram / Facebook không giúp nhận ra người (vẫn tìm được theo id)
+        // Show the phone number only: Telegram / Facebook ids do not help recognize the person (still searchable by id)
         sub: c.phone || '',
         time: Number(c.last_message_time || 0),
       }))
@@ -95,18 +97,18 @@ export default function QuickCreateGroupDialog({ account, onClose, onOpenConvers
         ? await ipc.fb?.createGroup({ accountId: account.zalo_id, participants: selected, name: title })
         : await ipc.telegramUser?.createGroup({ accountId: account.zalo_id, title, userIds: selected });
       if (!res?.success) {
-        setError(res?.error || 'Không tạo được nhóm');
+        setError(res?.error || tr('Không tạo được nhóm'));
         return;
       }
       const threadId = String((isFacebook ? res.threadId : res.chatId) || '');
-      const notes: string[] = [`Đã tạo nhóm "${title || 'mới'}"`];
-      if (!isFacebook && Number(res.missing) > 0) notes.push(`${res.missing} người không thêm được do cài đặt riêng tư`);
-      if (isFacebook && res.renameError) notes.push('chưa đặt được tên — đổi tên trong thông tin nhóm');
+      const notes: string[] = [tr('Đã tạo nhóm "{{v1}}"', { v1: title || tr('mới') })];
+      if (!isFacebook && Number(res.missing) > 0) notes.push(tr('{{missing}} người không thêm được do cài đặt riêng tư', { missing: res.missing }));
+      if (isFacebook && res.renameError) notes.push(tr('chưa đặt được tên — đổi tên trong thông tin nhóm'));
       useAppStore.getState().showNotification(notes.join(' · '), notes.length > 1 ? 'warning' : 'success');
       if (threadId) onOpenConversation(account.zalo_id, threadId, 1, { display_name: title, channel });
       onClose();
     } catch (err: any) {
-      setError(err?.message || 'Không tạo được nhóm');
+      setError(err?.message || tr('Không tạo được nhóm'));
     } finally {
       setCreating(false);
     }
@@ -116,26 +118,26 @@ export default function QuickCreateGroupDialog({ account, onClose, onOpenConvers
     <Dialog open onOpenChange={next => { if (!next && !creating) onClose(); }} size="md">
       <DialogHeader>
         <div className="min-w-0">
-          <DialogTitle>{isFacebook ? 'Tạo nhóm Messenger' : 'Tạo nhóm Telegram'}</DialogTitle>
-          <DialogDescription>Bằng tài khoản {accountLabel(account)}</DialogDescription>
+          <DialogTitle>{isFacebook ? tr('Tạo nhóm Messenger') : tr('Tạo nhóm Telegram')}</DialogTitle>
+          <DialogDescription>{trx('Bằng tài khoản {{v1}}', { v1: accountLabel(account) })}</DialogDescription>
         </div>
         <DialogClose />
       </DialogHeader>
       <DialogBody className="space-y-3">
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground" htmlFor="quick-group-name">
-            Tên nhóm{isFacebook ? ' (không bắt buộc)' : ''}
+            {trx('Tên nhóm{{v1}}', { v1: isFacebook ? tr(' (không bắt buộc)') : '' })}
           </label>
           <Input id="quick-group-name" autoFocus value={name} maxLength={128} onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') void create(); }}
-            placeholder={isFacebook ? 'Nhóm Messenger mới' : 'Ví dụ: Khách hàng VIP'} />
+            placeholder={isFacebook ? tr('Nhóm Messenger mới') : tr('Ví dụ: Khách hàng VIP')} />
         </div>
 
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Thành viên</span>
+            <span className="text-xs font-medium text-muted-foreground">{tr('Thành viên')}</span>
             <span className="text-[11px] text-subtle-foreground">
-              {selected.length > 0 ? `Đã chọn ${selected.length}` : isFacebook ? 'Chọn ít nhất 2 người' : 'Có thể để trống'}
+              {selected.length > 0 ? tr('Đã chọn {{count}}', { count: selected.length }) : isFacebook ? tr('Chọn ít nhất 2 người') : tr('Có thể để trống')}
             </span>
           </div>
           {selected.length > 0 && (
@@ -145,7 +147,7 @@ export default function QuickCreateGroupDialog({ account, onClose, onOpenConvers
                 return (
                   <span key={id} className="inline-flex max-w-[12rem] items-center gap-1 rounded-full bg-primary/10 py-0.5 pl-2.5 pr-1 text-xs text-primary">
                     <span className="truncate">{option?.name || id}</span>
-                    <button type="button" onClick={() => toggle(id)} aria-label={`Bỏ ${option?.name || id}`}
+                    <button type="button" onClick={() => toggle(id)} aria-label={tr('Bỏ {{v1}}', { v1: option?.name || id })}
                       className="rounded-full p-0.5 hover:bg-primary/15"><CloseIcon className="h-3 w-3" /></button>
                   </span>
                 );
@@ -154,14 +156,14 @@ export default function QuickCreateGroupDialog({ account, onClose, onOpenConvers
           )}
           <div className="relative">
             <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle-foreground" />
-            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Tìm theo tên, số điện thoại…" className="h-8 pl-8 text-[13px]" />
+            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder={tr('Tìm theo tên, số điện thoại…')} className="h-8 pl-8 text-[13px]" />
           </div>
           <div className="max-h-64 overflow-y-auto rounded-lg border border-border">
             {loading ? (
-              <p className="px-3 py-6 text-center text-xs text-muted-foreground">Đang tải danh sách…</p>
+              <p className="px-3 py-6 text-center text-xs text-muted-foreground">{tr('Đang tải danh sách…')}</p>
             ) : visible.length === 0 ? (
               <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                {options.length === 0 ? 'Tài khoản chưa có hội thoại 1-1 nào' : 'Không có ai khớp'}
+                {options.length === 0 ? tr('Tài khoản chưa có hội thoại 1-1 nào') : tr('Không có ai khớp')}
               </p>
             ) : (
               <ul className="divide-y divide-border/50">
@@ -191,15 +193,15 @@ export default function QuickCreateGroupDialog({ account, onClose, onOpenConvers
           </div>
           <p className="text-[11px] leading-4 text-subtle-foreground">
             {isFacebook
-              ? 'Nhóm Messenger cần từ 3 người trở lên (gồm bạn).'
-              : 'Không chọn ai: tạo siêu nhóm trống để mời sau. Người chặn được thêm vào nhóm sẽ bị bỏ qua.'}
+              ? tr('Nhóm Messenger cần từ 3 người trở lên (gồm bạn).')
+              : tr('Không chọn ai: tạo siêu nhóm trống để mời sau. Người chặn được thêm vào nhóm sẽ bị bỏ qua.')}
           </p>
         </div>
         {error && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
       </DialogBody>
       <DialogFooter>
-        <Button variant="outline" onClick={onClose} disabled={creating}>Huỷ</Button>
-        <Button onClick={() => void create()} loading={creating} disabled={!canCreate}>Tạo nhóm</Button>
+        <Button variant="outline" onClick={onClose} disabled={creating}>{tr('Huỷ')}</Button>
+        <Button onClick={() => void create()} loading={creating} disabled={!canCreate}>{tr('Tạo nhóm')}</Button>
       </DialogFooter>
     </Dialog>
   );

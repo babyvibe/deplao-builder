@@ -1,19 +1,19 @@
 /**
- * Tin bù sau khi offline (Telegram difference / lịch sử kênh, tin cũ tải lại) đổ về giao diện thành nghìn event:message
- * liền nhau: mỗi tin một lượt cập nhật store + vẽ lại danh sách hội thoại (log 28/10/2026: "Giao diện bận 14.3 s" lúc mở
- * app sau 1 ngày). Tin im lặng của hội thoại KHÔNG đang mở được gom lại, xử lý sau ≤ `delayMs`, mỗi task ≤ `sliceMs`
- * (React vẽ một lần cho cả phần, giữa các phần vẫn nhận thao tác của người dùng). Hội thoại đang mở và tin thường xử lý
- * ngay, sau khi xử lý hết tin đang chờ, nên thứ tự tin không đổi.
+ * Catch-up messages after being offline (Telegram difference / channel history, old messages reloaded) flood the UI as thousands of adjacent event:message
+ * events: each message triggers a store update + a redraw of the conversation list (log 28/10/2026: "Giao diện bận 14.3 s" (UI busy 14.3 s) when the app opened
+ * after 1 day). Silent messages of a conversation that is NOT open are batched and processed later, within ≤ `delayMs`, each task ≤ `sliceMs`
+ * (React draws once for the whole part, and between the parts the user's actions are still handled). The open conversation and normal messages are processed
+ * right away, after the pending messages have been handled, so the message order does not change.
  */
 export const CATCH_UP_DELAY_MS = 250;
 export const CATCH_UP_SLICE_MS = 8;
 
 export type CatchUpBatcher<T> = {
-  /** Xếp vào hàng chờ. */
+  /** Puts into the queue. */
   defer: (item: T) => void;
-  /** Xử lý ngay mọi tin đang chờ, đúng thứ tự (trước tin cần xử lý ngay, trước sự kiện sửa / xoá / cảm xúc). */
+  /** Processes every pending message right away, in order (before messages that must be handled now, before edit / delete / reaction events). */
   flush: () => void;
-  /** Xử lý nốt tin đang chờ rồi ngừng nhận. */
+  /** Processes the remaining pending messages, then stops accepting new ones. */
   close: () => void;
   size: () => number;
 };
@@ -89,7 +89,7 @@ export function createCatchUpBatcher<T>(process: (item: T) => void, options: Bat
   };
 }
 
-/** event:message gom được: tin im lặng (bù sau khi offline / tin cũ), không phải của mình, không thuộc hội thoại đang mở. */
+/** An event:message that can be batched: a silent message (catch-up after offline / old message), not my own, not in the open conversation. */
 export function isDeferrableCatchUpMessage(
   data: any,
   active: { accountId?: string | null; threadId?: string | null },

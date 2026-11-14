@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
 import { ClipboardListIcon, CloseIcon, InboxIcon, RefreshIcon, SendIcon } from '@/components/common/icons';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 interface Props {
@@ -37,7 +39,7 @@ export default function ScanHistoryPanel({ accountId, tabId, tabName, onClose, o
 
   const formatDate = (ts: number) => {
     const d = new Date(ts);
-    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
   const truncate = (str: string, len: number) => str?.length > len ? str.slice(0, len) + '...' : str;
@@ -52,10 +54,10 @@ export default function ScanHistoryPanel({ accountId, tabId, tabName, onClose, o
               <path d="M19 12H5M12 19l-7-7 7-7"/>
             </svg>
           </button>
-          <h3 className="text-sm font-semibold text-foreground"><ClipboardListIcon className="w-4 h-4 inline" /> {tabId ? `Lịch sử: ${tabName || 'Tab'}` : 'Lịch sử quét'}</h3>
-          <span className="text-[11px] text-muted-foreground">({total} bản ghi)</span>
+          <h3 className="text-sm font-semibold text-foreground"><ClipboardListIcon className="w-4 h-4 inline" /> {tabId ? tr('Lịch sử: {{v1}}', { v1: tabName || 'Tab' }) : tr('Lịch sử quét')}</h3>
+          <span className="text-[11px] text-muted-foreground">{trx('({{total}} bản ghi)', { total })}</span>
         </div>
-        <button onClick={loadLogs} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground" title="Làm mới">
+        <button onClick={loadLogs} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground" title={tr('Làm mới')}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 2v6h-6M3 12a9 9 0 0115.36-6.36L21 8M3 22v-6h6M21 12a9 9 0 01-15.36 6.36L3 16"/>
           </svg>
@@ -70,7 +72,7 @@ export default function ScanHistoryPanel({ accountId, tabId, tabName, onClose, o
           </div>
         ) : logs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            Chưa có lịch sử quét
+            {tr('Chưa có lịch sử quét')}
           </div>
         ) : (
           <div className="divide-y divide-border">
@@ -86,7 +88,7 @@ export default function ScanHistoryPanel({ accountId, tabId, tabName, onClose, o
                   <span className="text-xs font-medium text-foreground/80">{log.scanType}</span>
                   <span className="text-[10px] text-muted-foreground">{formatDate(log.createdAt)}</span>
                   {log.itemsCount > 0 && (
-                    <span className="text-[10px] text-blue-400 ml-auto">{log.itemsCount} items</span>
+                    <span className="text-[10px] text-blue-400 ml-auto">{trx('{{itemsCount}} items', { itemsCount: log.itemsCount })}</span>
                   )}
                 </div>
                 <div className="mt-1 text-[11px] text-muted-foreground truncate">{truncate(log.input, 80)}</div>
@@ -101,11 +103,11 @@ export default function ScanHistoryPanel({ accountId, tabId, tabName, onClose, o
                     )}
                     <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground">
                       <div><span className="text-muted-foreground">DocId:</span> {log.docId || '-'}</div>
-                      <div><span className="text-muted-foreground">Threads:</span> {log.threadCount}</div>
+                      <div><span className="text-muted-foreground">{tr('Threads:')}</span> {log.threadCount}</div>
                     </div>
                     {log.requestHeaders && (
                       <div>
-                        <div className="text-[10px] text-muted-foreground mb-1"><SendIcon className="w-4 h-4 inline" /> Request headers:</div>
+                        <div className="text-[10px] text-muted-foreground mb-1">{trx('<0/> Request headers:', { 0: <SendIcon className="w-4 h-4 inline" /> })}</div>
                         <pre className="text-[10px] text-muted-foreground bg-card rounded p-2 overflow-x-auto max-h-[120px] overflow-y-auto whitespace-pre-wrap break-word">
                           {log.requestHeaders}
                         </pre>
@@ -113,7 +115,7 @@ export default function ScanHistoryPanel({ accountId, tabId, tabName, onClose, o
                     )}
                     {log.responseHeaders && (
                       <div>
-                        <div className="text-[10px] text-muted-foreground mb-1"><InboxIcon className="w-4 h-4 inline" /> Response headers:</div>
+                        <div className="text-[10px] text-muted-foreground mb-1">{trx('<0/> Response headers:', { 0: <InboxIcon className="w-4 h-4 inline" /> })}</div>
                         <pre className="text-[10px] text-muted-foreground bg-card rounded p-2 overflow-x-auto max-h-[120px] overflow-y-auto whitespace-pre-wrap break-word">
                           {log.responseHeaders}
                         </pre>
@@ -121,12 +123,12 @@ export default function ScanHistoryPanel({ accountId, tabId, tabName, onClose, o
                     )}
                     {log.requestPayload && log.requestPayload !== '{}' && (
                       <div>
-                        <div className="text-[10px] text-muted-foreground mb-1"><SendIcon className="w-4 h-4 inline" /> Request payload:</div>
+                        <div className="text-[10px] text-muted-foreground mb-1">{trx('<0/> Request payload:', { 0: <SendIcon className="w-4 h-4 inline" /> })}</div>
                         <pre className="text-[10px] text-muted-foreground bg-card rounded p-2 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap break-word">
                           {(() => {
                             try {
                               const p = JSON.parse(log.requestPayload);
-                              // Che dấu sensitive fields
+                              // Mask sensitive fields
                               const sanitized = { ...p };
                               if (sanitized.fb_dtsg) sanitized.fb_dtsg = sanitized.fb_dtsg.slice(0, 8) + '...';
                               if (sanitized.cookie) sanitized.cookie = '(hidden)';
@@ -138,7 +140,7 @@ export default function ScanHistoryPanel({ accountId, tabId, tabName, onClose, o
                     )}
                     {log.responsePreview && (
                       <div>
-                        <div className="text-[10px] text-muted-foreground mb-1"><InboxIcon className="w-4 h-4 inline" /> Response preview:</div>
+                        <div className="text-[10px] text-muted-foreground mb-1">{trx('<0/> Response preview:', { 0: <InboxIcon className="w-4 h-4 inline" /> })}</div>
                         <pre className="text-[10px] text-muted-foreground bg-card rounded p-2 overflow-x-auto max-h-[100px] overflow-y-auto whitespace-pre-wrap break-word">
                           {log.responsePreview}
                         </pre>
@@ -148,7 +150,7 @@ export default function ScanHistoryPanel({ accountId, tabId, tabName, onClose, o
                       <button
                         onClick={(e) => { e.stopPropagation(); onRestoreInput(log); }}
                         className="text-[10px] text-blue-400 hover:text-blue-300 mt-1"
-                      ><RefreshIcon className="w-4 h-4 inline" /> Khôi phục input
+                      >{trx('<0/> Khôi phục input', { 0: <RefreshIcon className="w-4 h-4 inline" /> })}
                       </button>
                     )}
                   </div>

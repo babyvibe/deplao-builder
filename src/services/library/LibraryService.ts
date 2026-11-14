@@ -1,8 +1,8 @@
 /**
- * LibraryService - Quản lý thư viện media dùng chung (ảnh, file, video).
+ * LibraryService: manages the shared media library (images, files, videos).
  *
- * Lưu trên boss storage, employee truy cập qua REST API.
- * Upload qua multipart/form-data, thumbnail tự động gen.
+ * Stored on Boss storage; employees access it through the REST API.
+ * Uploads go through multipart/form-data, thumbnails are generated automatically.
  */
 
 import * as path from 'path';
@@ -80,7 +80,7 @@ class LibraryService {
   // ─── Upload ──────────────────────────────────────────────────────
 
   /**
-   * Upload file vào thư viện.
+   * Uploads a file to the library.
    * @returns LibraryItem info
    */
   public async upload(params: {
@@ -107,7 +107,7 @@ class LibraryService {
     const filePath = path.join(typeDir, `${uuid}${ext}`);
     fs.writeFileSync(filePath, buffer);
 
-    // Dimensions (chỉ cho ảnh)
+    // Dimensions (images only)
     let width = 0;
     let height = 0;
     let thumbPath: string | null = null;
@@ -178,7 +178,7 @@ class LibraryService {
 
   public getItems(params: {
     zaloId: string;
-    /** Một hoặc nhiều thư viện được phép xem. Rỗng = zaloId hiện tại. */
+    /** One or more libraries that may be viewed. Empty = the current zaloId. */
     ownerZaloIds?: string[];
     type?: string;
     search?: string;
@@ -251,8 +251,8 @@ class LibraryService {
     values.push(uuid);
 
     db.run(`UPDATE media_library_items SET ${sets.join(', ')} WHERE uuid = ?`, values);
-    // zaloId = trang sở hữu item → chỉ nhân viên được giao trang đó nhận (relayAudience); trước đây event không có id
-    // tài khoản nên đổi tên / gắn thẻ đi tới MỌI nhân viên. Chỉ gửi các trường vừa sửa (không đẩy cả tham số IPC).
+    // zaloId = the page that owns the item → only employees assigned to that page receive it (relayAudience); previously the event had no id
+    // an account change (rename / tag) went to EVERY employee. Only the edited fields are sent (the whole IPC parameter set is not pushed).
     const owner = db.queryOne<{ owner_zalo_id: string }>('SELECT owner_zalo_id FROM media_library_items WHERE uuid = ?', [uuid]);
     const { name, tags, folderId, isFavorite, altText } = params;
     EventBroadcaster.emit('library:itemUpdated', { uuid, name, tags, folderId, isFavorite, altText, zaloId: String(owner?.owner_zalo_id || '') });
@@ -264,7 +264,7 @@ class LibraryService {
     const item = this.getItem(uuid);
     if (!item) return false;
 
-    // Xoá file
+    // Delete file
     try { if (fs.existsSync(item.file_path)) fs.unlinkSync(item.file_path); } catch {}
     try { if (item.thumb_path && fs.existsSync(item.thumb_path)) fs.unlinkSync(item.thumb_path); } catch {}
 
@@ -294,7 +294,7 @@ class LibraryService {
     const conditions = [`f.owner_zalo_id IN (${effectiveOwners.map(() => '?').join(',')})`];
     const values: any[] = [...effectiveOwners];
     if (type && type !== 'all') {
-      // Chỉ load folder đúng type, bỏ qua folder cũ ko có type
+      // Load only folders of the right type, skip old folders without a type
       conditions.push('f.type = ?');
       values.push(type);
     }
@@ -380,7 +380,7 @@ class LibraryService {
           sort_order INTEGER DEFAULT 0
         )
       `);
-      // Thêm cột type nếu chưa có (migration)
+      // Add the type column if it does not exist yet (migration)
       try { db.exec(`ALTER TABLE media_library_folders ADD COLUMN type TEXT DEFAULT NULL`); } catch {}
       db.exec(`CREATE INDEX IF NOT EXISTS idx_library_owner ON media_library_items(owner_zalo_id, type, created_at)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_library_folder ON media_library_items(folder_id)`);

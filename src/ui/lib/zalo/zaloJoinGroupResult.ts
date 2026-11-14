@@ -1,21 +1,21 @@
 /**
- * Kết quả `ipc.zalo.joinGroupLink` → một trạng thái duy nhất, dùng chung cho CRM → Nhóm (Join theo link, tab Quét
- * thành viên) và "Tham gia nhóm bằng link" ở chat.
+ * Result of `ipc.zalo.joinGroupLink` → one single status, shared by CRM → Groups (Join via link, Member scan tab) and
+ * "Tham gia nhóm bằng link" (Join group by link) in the chat.
  *
- * zca-js ném ZaloApiError mã 178 (đã là thành viên) / 172 (nhóm đầy) / 240 (chờ duyệt); `zalo:` IPC trả
- * `{ success:false, error, errorCode }`, còn ZaloService đổi 240 thành `{ success:true, response:{ pendingApproval,
- * errorCode:240 } }`. Trước đây các màn chỉ đọc `res.errorCode` / `response.msg` (không bao giờ có) và thiếu `else`
- * giữa hai nhánh → "Đã tham gia nhóm thành công!" cho mọi trường hợp, nhánh nhóm đầy ghi vào state của modal khác.
- * Thuần — test: src/__tests__/zalo/zaloJoinGroupResult.test.ts.
+ * zca-js throws ZaloApiError code 178 (already a member) / 172 (group full) / 240 (pending approval); the `zalo:` IPC returns
+ * `{ success:false, error, errorCode }`, while ZaloService turns 240 into `{ success:true, response:{ pendingApproval,
+ * errorCode:240 } }`. Previously the screens only read `res.errorCode` / `response.msg` (which never existed) and had no `else`
+ * between the two branches → "Đã tham gia nhóm thành công!" (Joined the group successfully!) for every case, and the group-full branch wrote into another modal's state.
+ * Pure function. Test: src/__tests__/zalo/zaloJoinGroupResult.test.ts.
  */
 
 export type ZaloJoinOutcome = 'joined' | 'already' | 'pending' | 'full' | 'error';
 
 export interface ZaloJoinResult {
   outcome: ZaloJoinOutcome;
-  /** Mã lỗi Zalo (khác 0) nếu có. */
+  /** Zalo error code (non-zero), if any. */
   code?: number;
-  /** Thông báo lỗi gốc (chỉ khi outcome = 'error'). */
+  /** Original error message (only when outcome = 'error'). */
   error?: string;
 }
 

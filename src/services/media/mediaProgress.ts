@@ -1,9 +1,9 @@
 /**
- * Tiến độ tải media của một tin (video) → renderer vẽ vòng tiến độ + "2.1 / 5.0 MB" như Telegram và không mở trình phát
- * khi file chưa tải xong (event:mediaProgress; ui/lib/media/mediaProgress.ts).
+ * Download progress of a message's media (video) → the renderer draws a progress ring + "2.1 / 5.0 MB" like Telegram, and does not open the player
+ * until the file has finished downloading (event:mediaProgress; ui/lib/media/mediaProgress.ts).
  *
- * Chỉ gửi thẳng về renderer (sendDirect): không qua hook relay / workflow / sự kiện API — nhịp tiến độ không phải sự kiện
- * nghiệp vụ. Gom nhịp: tối đa ~4 lần / giây / tin; đổi trạng thái, đủ 100 %, xong hoặc lỗi thì gửi ngay.
+ * Sent straight to the renderer (sendDirect): it does not go through the relay / workflow / API event hooks, because progress ticks are not business events.
+ * Throttled: at most ~4 times / second / message; a state change, reaching 100 %, completion or an error is sent immediately.
  */
 import EventBroadcaster from '../event/EventBroadcaster';
 
@@ -46,14 +46,14 @@ export function reportMediaProgress(event: MediaProgressEvent, now = Date.now())
   try {
     EventBroadcaster.sendDirect('event:mediaProgress', { zaloId, threadId, msgId, state: event.state, received, total });
   } catch {
-    // Báo tiến độ không bao giờ được làm hỏng lượt tải
+    // Reporting progress must never break the download
   }
   return true;
 }
 
 /**
- * Báo tiến độ cho một lượt tải: `queued` lúc xếp hàng, `progress(received, total)` cho callback của axios / GramJS
- * (nhận số hoặc bigInt), `done` sau khi đã gửi event:localPath, `failed` khi tải hỏng.
+ * Reports progress for one download: `queued` when it joins the queue, `progress(received, total)` for the axios / GramJS callback
+ * (accepts a number or bigInt), `done` after event:localPath has been sent, `failed` when the download fails.
  */
 export function mediaProgressReporter(zaloId: string, threadId: string, msgId: string, knownTotal: unknown = 0) {
   let total = toBytes(knownTotal);
@@ -71,7 +71,7 @@ export function mediaProgressReporter(zaloId: string, threadId: string, msgId: s
   };
 }
 
-/** Quên trạng thái gom nhịp (test). */
+/** Forgets the throttle state (for tests). */
 export function resetMediaProgress(): void {
   lastSent.clear();
 }

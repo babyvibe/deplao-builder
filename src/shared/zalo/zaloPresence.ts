@@ -1,33 +1,34 @@
 /**
- * zaloPresence.ts — trạng thái truy cập Zalo (ZL-01, SRS Deplao): phần thuần dùng chung main + renderer.
+ * zaloPresence.ts: Zalo online status (ZL-01, SRS Deplao): pure part shared by main + renderer.
  *
- * Nguồn (zca-js 2.2.0): lastOnline(uid) → { settings: { show_online_status }, lastOnline } và getFriendOnlines() →
- * { onlines: [{ userId, status }] } (chỉ bạn bè đang online). Đơn vị của lastOnline chưa kiểm trên tài khoản thật nên
- * nhận cả giây lẫn ms.
+ * Source (zca-js 2.2.0): lastOnline(uid) → { settings: { show_online_status }, lastOnline } and getFriendOnlines() →
+ * { onlines: [{ userId, status }] } (only friends who are online). The unit of lastOnline has not been checked on a real account, so
+ * it accepts both seconds and ms.
  */
 import { describeLastSeen } from '../chat/presenceText';
+import { tr } from '../i18n';
 
 export type ZaloPresenceStatus = 'online' | 'offline' | 'hidden' | 'unknown';
 
 export interface ZaloPresence {
   status: ZaloPresenceStatus;
-  /** Mốc truy cập gần nhất (ms) nếu Zalo trả về. */
+  /** Most recent last-seen time (ms), if Zalo returns it. */
   lastSeenAt?: number;
-  /** Người đó có cho hiện trạng thái truy cập không. */
+  /** Whether that person allows their online status to be shown. */
   showOnlineStatus: boolean;
 }
 
 /**
- * Danh sách bạn đang online (getFriendOnlines — chấm xanh trong danh sách hội thoại, ZL-01 giai đoạn 2): TẠM TẮT từ
- * 22/10/2026 vì Zalo trả HTTP 404 cho /api/social/friend/onlines mà zca-js 2.2.0 (bản mới nhất) vẫn gọi. Tắt = không gọi
- * API này ở đâu cả: trạng thái truy cập chỉ dùng lastOnline, không vẽ chấm xanh. Bật lại (true) khi zca-js cập nhật hàm.
+ * List of online friends (getFriendOnlines: the green dot in the conversation list, ZL-01 phase 2): TEMPORARILY OFF since
+ * 22/10/2026 because Zalo returns HTTP 404 for /api/social/friend/onlines, which zca-js 2.2.0 (the latest version) still calls. Off = this
+ * API is not called anywhere: status uses lastOnline only, and no green dot is drawn. Turn it back on (true) when zca-js updates the function.
  */
 export const ZALO_FRIEND_ONLINES_ENABLED = false;
 
-/** Truy cập trong vòng 5 phút = đang hoạt động (cùng mốc hết hạn "online" của chatStore). */
+/** Active within the last 5 minutes = currently active (same expiry as "online" in chatStore). */
 export const ZALO_ONLINE_WINDOW_MS = 5 * 60_000;
 
-/** lastOnline của zca-js → ms. Số nhỏ hơn 1e12 coi là giây (1e12 ms = năm 2001). 0 / không hợp lệ → undefined. */
+/** zca-js lastOnline → ms. A number below 1e12 is treated as seconds (1e12 ms = year 2001). 0 / invalid → undefined. */
 export function lastOnlineMs(value: unknown): number | undefined {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return undefined;
@@ -39,7 +40,7 @@ function isHiddenSetting(value: unknown): boolean {
   return value === false || value === 0 || value === '0' || value === 'false';
 }
 
-/** Gộp kết quả lastOnline + danh sách bạn đang online thành một trạng thái. */
+/** Merges the lastOnline result + the list of online friends into one status. */
 export function zaloPresenceFrom(
   lastOnlineRes: any,
   onlineIds: ReadonlySet<string> | null,
@@ -54,16 +55,15 @@ export function zaloPresenceFrom(
   return { status: 'offline', showOnlineStatus: true, lastSeenAt };
 }
 
-/** Danh sách id bạn bè đang online từ getFriendOnlines (có trong danh sách = đang online). */
+/** List of friend IDs that are online, from getFriendOnlines (being in the list = online). */
 export function zaloOnlineIds(res: any): Set<string> {
   const list = Array.isArray(res?.onlines) ? res.onlines : [];
   return new Set(list.map((item: any) => String(item?.userId ?? '')).filter(Boolean));
 }
 
 /**
- * Trạng thái hiện được từ dữ liệu đã có, không hỏi Zalo (dòng dưới tên trên header — ZL-01 giai đoạn 2): bạn bè có trong
- * danh sách đang online, hoặc kết quả lần mở hồ sơ gần nhất (chatStore.userPresence: lastSeen tính bằng giây, "online"
- * hết hạn sau 5 phút). Không có gì → null.
+ * The status that can be shown from data already on hand, without asking Zalo (the line below the name in the header, ZL-01 phase 2): friends in the
+ * online list, or the result of the most recent profile open (chatStore.userPresence: lastSeen in seconds, "online" expires after 5 minutes). Nothing → null.
  */
 export function zaloCachedPresence(
   onlineFriend: boolean,
@@ -77,11 +77,11 @@ export function zaloCachedPresence(
   return lastSeenAt ? { status: 'offline', lastSeenAt, showOnlineStatus: true } : null;
 }
 
-/** "trực tuyến", "truy cập 14:05", "đã ẩn trạng thái truy cập"; không rõ → ''. */
+/** "trực tuyến" (online), "truy cập 14:05" (last seen 14:05), "đã ẩn trạng thái truy cập" (access status hidden); unknown → ''. */
 export function describeZaloPresence(presence: ZaloPresence | null | undefined, now: number = Date.now()): string {
   switch (presence?.status) {
-    case 'online': return 'trực tuyến';
-    case 'hidden': return 'đã ẩn trạng thái truy cập';
+    case 'online': return tr('trực tuyến');
+    case 'hidden': return tr('đã ẩn trạng thái truy cập');
     case 'offline': return describeLastSeen(presence.lastSeenAt, now);
     default: return '';
   }

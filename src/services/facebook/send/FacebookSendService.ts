@@ -1,9 +1,9 @@
 /**
  * FacebookSendService.ts
- * Shared service gửi tin nhắn Facebook - dùng chung cho IPC handler VÀ workflow engine.
+ * Shared Facebook message-sending service, used by both the IPC handler AND the workflow engine.
  *
- * Mục đích: tránh lặp logic giữa electron/ipc/facebook/facebookIpc.ts và WorkflowEngineService.ts.
- * Tất cả thao tác gửi + lưu DB + emit UI đều qua service này.
+ * Purpose: avoid duplicating logic between electron/ipc/facebook/facebookIpc.ts and WorkflowEngineService.ts.
+ * All sending + DB saving + UI emitting goes through this service.
  */
 
 import { FacebookService } from '../FacebookService';
@@ -13,17 +13,18 @@ import DatabaseService from '../../database/DatabaseService';
 import EventBroadcaster from '../../event/EventBroadcaster';
 import FileStorageService from '../../file/FileStorageService';
 import Logger from '../../../utils/Logger';
+import { tr } from '../../../shared/i18n';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface FBSendCommonParams {
-  /** Raw account ID (có thể là numeric FB UID hoặc internal UUID) */
+  /** Raw account ID (either a numeric FB UID or an internal UUID) */
   accountId: string;
   /** Thread/conversation ID */
   threadId: string;
   /** 'user' = 1:1, 'group' = group, undefined = auto-detect */
   typeChat?: 'user' | null;
-  /** ID của tin nhắn đang reply (nếu có) */
+  /** ID of the message being replied to (if any) */
   replyToMessageId?: string;
 }
 
@@ -46,8 +47,8 @@ const ATTACHMENT_KINDS: readonly FBAttachmentKind[] = ['image', 'video', 'audio'
 export class FacebookSendService {
 
   /**
-   * Resolve account ID: numeric FB UID → internal UUID.
-   * UUID (có dấu gạch ngang) giữ nguyên.
+   * Resolve the account ID: numeric FB UID → internal UUID.
+   * A UUID (containing hyphens) is kept as is.
    */
   static resolveAccountId(rawId: string): string {
     if (!rawId) return '';
@@ -62,8 +63,8 @@ export class FacebookSendService {
   }
 
   /**
-   * Lấy FacebookService instance đã được resolve account ID.
-   * Tự động resolve numeric → UUID trước khi lookup.
+   * Get the FacebookService instance for an account ID that has been resolved.
+   * Automatically resolves numeric → UUID before the lookup.
    */
   static async getService(accountId: string): Promise<FacebookService> {
     const resolved = FacebookSendService.resolveAccountId(accountId);
@@ -71,8 +72,8 @@ export class FacebookSendService {
   }
 
   /**
-   * Auto-detect 1:1 user chat từ threadId format.
-   * Facebook user ID là all digits, group ID chứa dấu '_'.
+   * Auto-detect a 1:1 user chat from the threadId format.
+   * A Facebook user ID is all digits; a group ID contains '_'.
    */
   static isUserThread(threadId: string): boolean {
     return /^\d+$/.test(String(threadId));
@@ -81,15 +82,15 @@ export class FacebookSendService {
   // ─── Send text message ──────────────────────────────────────────────────
 
   /**
-   * Gửi tin nhắn text + tự động save DB + emit UI.
-   * Dùng chung cho cả IPC handler và workflow engine.
+   * Send a text message + automatically save to the DB + emit to the UI.
+   * Shared by the IPC handler and the workflow engine.
    *
-   * Lưu ý routing:
-   * - 1:1 E2EE: FacebookService.sendMessage() tự động route qua bridge nếu thread
-   *   nằm trong danh sách e2eeThreads.
-   * - Group: bridge MQTT route, fallback REST.
-   * - KHÔNG auto-detect user/group từ thread ID format vì cả user và group Facebook
-   *   đều dùng numeric ID, không phân biệt được bằng regex.
+   * Routing notes:
+   * - 1:1 E2EE: FacebookService.sendMessage() automatically routes through the bridge if the thread
+   *   is in the e2eeThreads list.
+   * - Group: MQTT bridge route, REST fallback.
+   * - Do NOT auto-detect user/group from the thread ID format, because both Facebook users and groups
+   *   use numeric IDs, which a regex cannot tell apart.
    */
   static async sendTextMessage(params: FBSendTextParams): Promise<FBSendResult> {
     const accountId = FacebookSendService.resolveAccountId(params.accountId);
@@ -98,10 +99,10 @@ export class FacebookSendService {
     const body = String(params.body || '');
 
     // ── Delegate to FacebookService.sendMessage() ──────────────────────────
-    // FacebookService.sendMessage() đã có routing đúng:
-    //   - 1:1 E2EE → bridge E2EE (dựa trên e2eeThreads tracking)
+    // FacebookService.sendMessage() already has the correct routing:
+    //   - 1:1 E2EE → E2EE bridge (based on the e2eeThreads tracking)
     //   - Group → bridge MQTT (fallback REST)
-    // KHÔNG tự route ở đây vì isUserThread() không phân biệt được user vs group.
+    // Do NOT route here, because isUserThread() cannot tell a user from a group
     // Resolve once here so the type used to persist/emit matches the type used
     // to send. In particular, an omitted typeChat may resolve to a user in DB.
     const hasTypeChat = Object.prototype.hasOwnProperty.call(params, 'typeChat');
@@ -137,8 +138,8 @@ export class FacebookSendService {
 
     // ── Save DB + emit UI ──
     if (result?.success && result?.messageId) {
-      // Safety: mark as locally sent để ngăn self-echo duplicate
-      // (sendMessage đã gọi markMessageLocallySent internally, đây là double-safety)
+      // Safety: mark as locally sent to prevent a self-echo duplicate
+      // (sendMessage already called markMessageLocallySent internally; this is double safety)
       service.markMessageLocallySent(result.messageId);
       await FacebookSendService.persistSentMessage({
         accountId,
@@ -164,13 +165,13 @@ export class FacebookSendService {
   // ─── Send attachment (consolidated route matrix) ─────────────────────────
 
   /**
-   * Gửi attachment (image/video/audio/file) với route matrix đúng:
+   * Send an attachment (image/video/audio/file) with the correct route matrix:
    * - user → E2EE bridge (sendE2EEImage/Video/Audio/File)
    * - group → upload + REST send
    * - unknown → structured error
    *
-   * KHÔNG fallback giữa các route. Nếu E2EE fail → return error.
-   * Nếu REST fail → return error.
+   * NO fallback between routes. If E2EE fails → return an error.
+   * If REST fails → return an error.
    */
   static async sendAttachment(params: {
     accountId: string;
@@ -195,22 +196,22 @@ export class FacebookSendService {
     try {
       const stat = fs.statSync(filePath);
       if (!stat.isFile()) {
-        return { success: false, error: `Đường dẫn không phải là file: ${filePath}` };
+        return { success: false, error: tr('Đường dẫn không phải là file: {{filePath}}', { filePath }) };
       }
       if (stat.size === 0) {
-        return { success: false, error: 'File trống (0 bytes)' };
+        return { success: false, error: tr('File trống (0 bytes)') };
       }
       if (stat.size > MAX_ATTACHMENT_BYTES) {
         const sizeMB = (stat.size / (1024 * 1024)).toFixed(1);
-        return { success: false, error: `File quá lớn (${sizeMB} MiB). Giới hạn: 25 MiB.` };
+        return { success: false, error: tr('File quá lớn ({{sizeMB}} MiB). Giới hạn: 25 MiB.', { sizeMB }) };
       }
     } catch (err: any) {
-      return { success: false, error: `Không thể đọc file: ${err.message}` };
+      return { success: false, error: tr('Không thể đọc file: {{message}}', { message: err.message }) };
     }
 
     const fileName = require('path').basename(filePath);
     if (!ALLOWED_EXTENSIONS.test(fileName)) {
-      return { success: false, error: `Định dạng file không hỗ trợ: ${require('path').extname(fileName) || '(không có ext)'}` };
+      return { success: false, error: tr('Định dạng file không hỗ trợ: {{v1}}', { v1: require('path').extname(fileName) || tr('(không có ext)') }) };
     }
 
     // ── Route by thread kind ──────────────────────────────────────────────
@@ -224,7 +225,7 @@ export class FacebookSendService {
     const isUserMessage = route.kind === 'user';
     const inferredType = FacebookSendService.guessAttachmentType(fileName);
     if (params.fileType !== undefined && !ATTACHMENT_KINDS.includes(params.fileType)) {
-      return { success: false, error: `Loại file không hợp lệ: ${String(params.fileType)}` };
+      return { success: false, error: tr('Loại file không hợp lệ: {{v1}}', { v1: String(params.fileType) }) };
     }
     // `webm` can legally carry either audio or video. All other explicit UI
     // values must agree with the validated file extension so we never invoke
@@ -233,7 +234,7 @@ export class FacebookSendService {
     if (params.fileType && params.fileType !== inferredType && !isWebmAudio) {
       return {
         success: false,
-        error: `Loại file không khớp định dạng: ${params.fileType} không phù hợp với ${require('path').extname(fileName)}`,
+        error: tr('Loại file không khớp định dạng: {{fileType}} không phù hợp với {{v1}}', { fileType: params.fileType, v1: require('path').extname(fileName) }),
       };
     }
     const attachType: FBAttachmentKind = params.fileType || inferredType;
@@ -250,7 +251,7 @@ export class FacebookSendService {
       if (!service.isE2EEConnected()) {
         return {
           success: false,
-          error: 'Không thể gửi file 1:1: E2EE bridge chưa kết nối.',
+          error: tr('Không thể gửi file 1:1: E2EE bridge chưa kết nối.'),
         };
       }
 
@@ -315,7 +316,7 @@ export class FacebookSendService {
     // GROUP + known normal 1:1 ROUTING — REST ONLY
     // ═════════════════════════════════════════════════════════════════════
     const uploaded = await service.uploadAttachment(params.filePath);
-    if (!uploaded) return { success: false, error: 'Upload thất bại' };
+    if (!uploaded) return { success: false, error: tr('Upload thất bại') };
 
     const restAttachType = uploaded.attachmentType?.startsWith('image') ? 'image'
       : uploaded.attachmentType?.startsWith('video') ? 'video'
@@ -379,8 +380,8 @@ export class FacebookSendService {
   // ─── Persist sent message to DB + emit UI event ─────────────────────────
 
   /**
-   * Lưu tin nhắn đã gửi vào DB và broadcast cho UI.
-   * Dùng chung cho tất cả loại tin nhắn (text, image, video, file, audio).
+   * Save the sent message to the DB and broadcast it to the UI.
+   * Shared by all message types (text, image, video, file, audio).
    */
   static async persistSentMessage(params: {
     accountId: string;       // internal UUID
@@ -402,7 +403,7 @@ export class FacebookSendService {
       attachments, localPath,
     } = params;
 
-    // Resolve quote_data nếu là reply
+    // Resolve quote_data if this is a reply
     let broadcastQuoteData: string | undefined;
     if (replyToMessageId) {
       try {
@@ -454,7 +455,7 @@ export class FacebookSendService {
       Logger.warn(`[FacebookSendService] DB save error: ${dbErr.message}`);
     }
 
-    // Update local_paths nếu có file local
+    // Update local_paths if there is a local file
     if (localPath) {
       try {
         db.updateLocalPaths(fbSenderId, messageId, { main: localPath });
@@ -491,7 +492,7 @@ export class FacebookSendService {
         },
       });
 
-      // Emit localPath riêng cho media
+      // Emit localPath separately for media
       if (localPath) {
         EventBroadcaster.emit('event:localPath', {
           zaloId: fbSenderId,

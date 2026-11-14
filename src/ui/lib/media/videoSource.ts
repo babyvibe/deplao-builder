@@ -1,9 +1,9 @@
 /**
- * Nguồn của một thẻ <video> gắn / gỡ trong effect (không qua prop `src`): gỡ khi bỏ để trả trình phát của Chromium cho
- * video khác (mỗi trang có giới hạn trình phát), gắn lại mỗi lần effect chạy.
+ * Source of a <video> tag attached / removed in an effect (not through the `src` prop): removed on cleanup so Chromium's player is freed for
+ * other videos (each page has a player limit), and attached again each time the effect runs.
  *
- * StrictMode (bản dev) chạy dọn rồi chạy lại effect trên CÙNG thẻ <video>. Khi `src` đi qua prop, lượt dọn gỡ `src` mà
- * React không gắn lại (prop không đổi) → video trống: sticker động Telegram chỉ còn giờ gửi, không có hình.
+ * StrictMode (dev build) runs the cleanup and then re-runs the effect on the SAME <video> tag. When `src` is passed as a prop, the cleanup removes `src` and
+ * React does not set it again (the prop does not change) → empty video: an animated Telegram sticker shows only its send time, with no picture.
  */
 export function attachVideoSource(video: HTMLVideoElement, src: string): () => void {
   if (src && video.getAttribute('src') !== src) video.setAttribute('src', src);

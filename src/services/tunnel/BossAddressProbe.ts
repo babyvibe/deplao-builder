@@ -1,12 +1,12 @@
 /**
- * BossAddressProbe — main process, phía nhân viên: thăm dò một địa chỉ Boss để biết nó còn dùng được không.
+ * BossAddressProbe: main process, employee side: probes a Boss address to see whether it still works.
  *
- * Chỉ phân giải tên miền + GET <địa chỉ>/api/health KHÔNG kèm token (không gửi gì của nhân viên đi đâu), rồi
- * phân loại bằng classifyBossProbe (src/shared/cloud/tunnelAddress.ts):
- *  - tên miền tunnel không còn (ENOTFOUND) trong khi tên miền gốc của dịch vụ vẫn phân giải được → 'dead'
+ * Only resolves the domain + GET <address>/api/health WITHOUT a token (sends nothing of the employee's anywhere), then
+ * classifies the result with classifyBossProbe (src/shared/cloud/tunnelAddress.ts):
+ *  - the tunnel domain no longer exists (ENOTFOUND) while the service's root domain still resolves → 'dead'
  *  - Cloudflare 530 / 1033 (Quick Tunnel), ngrok ERR_NGROK_3200 → 'dead'
- *  - ECONNREFUSED → 'refused'; mất mạng / DNS không trả lời → 'no-network'
- * Dùng bởi IPC relay:probeBossAddress (TopBar: phát hiện địa chỉ tạm đã đổi, kiểm tra địa chỉ mới trước khi lưu).
+ *  - ECONNREFUSED → 'refused'; no network / DNS does not answer → 'no-network'
+ * Used by the IPC relay:probeBossAddress (TopBar: detects that the temporary address changed, checks the new address before saving it).
  */
 import * as dns from 'dns';
 import * as http from 'http';
@@ -29,13 +29,13 @@ export interface BossProbeResult {
   url: string;
   info: BossAddressInfo;
   verdict: BossProbeVerdict;
-  /** Lý do tiếng Việt (describeBossProbe). */
+  /** Reason text in Vietnamese (describeBossProbe). */
   reason: string;
   evidence: BossProbeEvidence;
   elapsedMs: number;
 }
 
-/** null = phân giải được; ngược lại là mã lỗi ('ENOTFOUND', 'EAI_AGAIN', 'ETIMEOUT'…). */
+/** null = resolved; otherwise an error code ('ENOTFOUND', 'EAI_AGAIN', 'ETIMEOUT'…). */
 function lookupHost(host: string): Promise<string | null> {
   return new Promise((resolve) => {
     let done = false;
@@ -94,7 +94,7 @@ function getHealth(baseUrl: string): Promise<HttpOutcome> {
         headers: {
           Accept: 'application/json',
           'User-Agent': 'Deplao-AddressProbe',
-          // Không để trang cảnh báo của ngrok / loca.lt che phản hồi thật
+          // Do not let the warning page of ngrok / loca.lt hide the real response
           'ngrok-skip-browser-warning': '1',
           'Bypass-Tunnel-Reminder': '1',
         },
@@ -145,7 +145,7 @@ function isBossHealth(outcome: HttpOutcome): boolean {
   return outcome.json.status === 'ok' || outcome.json.success === true;
 }
 
-/** Thăm dò địa chỉ Boss (đã lưu hoặc vừa nhập). Không bao giờ throw. */
+/** Probe the Boss address (saved or just typed). Never throws. */
 export async function probeBossAddress(rawUrl: string): Promise<BossProbeResult> {
   const startedAt = Date.now();
   const info = classifyBossUrl(rawUrl);

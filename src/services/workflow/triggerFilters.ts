@@ -1,20 +1,22 @@
 /**
  * triggerFilters.ts
  *
- * Pure helpers cho các bộ lọc trigger / audience mở rộng của Workflow Engine.
- * KHÔNG import Electron, DB hay zca-js → dùng được trong main process và unit-test trực tiếp
+ * Pure helpers for the extended trigger / audience filters of the Workflow Engine.
+ * Does NOT import Electron, DB or zca-js → can be used in the main process and unit-tested directly
  * (src/__tests__/workflow/workflowTriggerFilters.test.ts).
  *
- * Mọi khoá cấu hình đều tuỳ chọn: khi vắng / rỗng / ở giá trị trung tính, bộ lọc KHÔNG có tác dụng
- * → workflow cũ chạy y như trước.
+ * Every config key is optional: when it is missing / empty / at a neutral value, the filter has NO effect
+ * → old workflows run exactly as before.
  *
- *  - ID list (excludeSenderIds / excludeThreadIds / excludeIds): JSON array từ contact picker
- *    '["1","2"]', một id '1234', danh sách cách nhau bởi dấu phẩy / xuống dòng, hoặc array thật.
- *    Bộ lọc trigger đọc config THÔ (chưa render template) → mục chứa "{{" bị bỏ qua.
+ *  - ID list (excludeSenderIds / excludeThreadIds / includeThreadIds / excludeIds): a JSON array from the contact
+ *    picker '["1","2"]', a single id '1234', ids separated by commas / new lines, or a real array.
+ *    The trigger filter reads the RAW config (template not rendered yet) → items containing "{{" are ignored.
+ *  - Thread lists of the message triggers: includeThreadIds (empty = every chat, else only those chats) and
+ *    excludeThreadIds; an id in both lists is excluded (isThreadAllowed).
  *  - Active hours: { mode: 'always' | 'inside' | 'outside', start: 'HH:mm', end: 'HH:mm', days: number[] }
- *    tính theo giờ Việt Nam (UTC+7, không DST); days theo getDay(): 0 = Chủ nhật … 6 = Thứ 7.
+ *    computed in Vietnam time (UTC+7, no DST); days by getDay(): 0 = Sunday … 6 = Saturday.
  *  - senderRole: 'all' | 'owner' | 'deputy' | 'admins' | 'members'.
- *  - cooldownMinutes: số phút ≥ 0 (0 = tắt).
+ *  - cooldownMinutes: number of minutes ≥ 0 (0 = off).
  */
 
 export type ZaloGroupRole = 'owner' | 'deputy' | 'member';
@@ -28,7 +30,7 @@ export interface ActiveHoursConfig {
   days?: number[];
 }
 
-/** Các nhóm loại tin nhắn Zalo mà bộ lọc messageTypes hỗ trợ. */
+/** The Zalo message type groups supported by the messageTypes filter. */
 export const ZALO_MESSAGE_KINDS = ['text', 'image', 'sticker', 'file', 'voice', 'video', 'link', 'other'] as const;
 export type ZaloMessageKind = typeof ZALO_MESSAGE_KINDS[number];
 
@@ -42,7 +44,7 @@ function idFromEntry(entry: unknown): string {
   if (typeof entry === 'number') return Number.isFinite(entry) ? String(entry) : '';
   if (typeof entry === 'bigint') return entry.toString();
   if (entry && typeof entry === 'object') {
-    // Phòng hờ mảng object (vd items của logic.forEachContact): { id | threadId | userId | uid }
+    // Just in case: an array of objects (e.g. items of logic.forEachContact): { id | threadId | userId | uid }
     const obj = entry as Record<string, unknown>;
     const id = obj.id ?? obj.threadId ?? obj.userId ?? obj.uid;
     return typeof id === 'string' || typeof id === 'number' ? String(id).trim() : '';
@@ -52,10 +54,10 @@ function idFromEntry(entry: unknown): string {
 
 function splitIdText(text: string): string[] {
   return text
-    // Đoạn {{ ... }} có thể chứa dấu phẩy → giữ nguyên cả đoạn để mục đó bị bỏ qua trọn vẹn
+    // A {{ ... }} segment may contain commas → keep the whole segment so that the item is skipped entirely
     .replace(TEMPLATE_SEGMENT, segment => segment.replace(/[,;\r\n]/g, ' '))
     .split(ID_SEPARATORS)
-    // JSON hỏng / có số trần ('[1, "2"') → bỏ ngoặc vuông và dấu nháy bao quanh từng mục
+    // Broken JSON / has bare numbers ('[1, "2"') → strip the square brackets and the quotes around each item
     .map(token => token.trim().replace(/^[\s["']+|[\s\]"']+$/g, ''));
 }
 
@@ -66,24 +68,24 @@ function collectIdEntries(value: unknown, depth: number): string[] {
   if (typeof value !== 'string') return [];
   const text = value.trim();
   if (!text) return [];
-  // Chỉ JSON.parse khi trông như array / chuỗi JSON: uid Zalo ~19 chữ số sẽ mất chính xác
-  // nếu bị parse thành number ('8123456789012345678' → 8123456789012345000).
+  // Only JSON.parse when it looks like an array / JSON string: a Zalo uid of ~19 digits would lose precision
+  // if it were parsed into a number ('8123456789012345678' → 8123456789012345000).
   if (depth < 2 && (text.startsWith('[') || text.startsWith('"'))) {
     try {
       const parsed: unknown = JSON.parse(text);
       if (Array.isArray(parsed) && !parsed.some(item => typeof item === 'number')) return parsed.map(idFromEntry);
       if (typeof parsed === 'string') return collectIdEntries(parsed, depth + 1);
     } catch {
-      /* không phải JSON hợp lệ → tách theo dấu phân cách bên dưới */
+      /* not valid JSON → split by the separators below */
     }
   }
   return splitIdText(text);
 }
 
 /**
- * Chuẩn hoá một "ID list" về mảng id (chuỗi đã trim, không rỗng, không trùng, giữ thứ tự).
- * Nhận: JSON array '["1","2"]', một id '1234', '1, 2' / '1\n2', array thật, '' / undefined.
- * Mục chứa "{{" (template chưa render) bị bỏ qua.
+ * Normalize an "ID list" to an array of ids (trimmed non-empty strings, no duplicates, order kept).
+ * Accepts: a JSON array '["1","2"]', a single id '1234', '1, 2' / '1\n2', a real array, '' / undefined.
+ * Items containing "{{" (template not rendered yet) are ignored.
  */
 export function parseIdList(value: unknown): string[] {
   const seen = new Set<string>();
@@ -96,7 +98,7 @@ export function parseIdList(value: unknown): string[] {
   return ids;
 }
 
-/** true khi `id` (so sánh dạng chuỗi đã trim) nằm trong ID list `list`. id rỗng → false. */
+/** true when `id` (compared as a trimmed string) is in the ID list `list`. Empty id → false. */
 export function isExcludedId(list: unknown, id: unknown): boolean {
   if (id === null || id === undefined) return false;
   const needle = String(id).trim();
@@ -104,19 +106,37 @@ export function isExcludedId(list: unknown, id: unknown): boolean {
   return parseIdList(list).includes(needle);
 }
 
+/** true when the ID list has at least one entry, usable or not (a "{{ … }}" item counts): '' / '[]' / undefined → false. */
+export function hasIdListEntries(value: unknown): boolean {
+  return collectIdEntries(value, 0).some(entry => entry !== '');
+}
+
+/**
+ * Thread allow / deny lists of the message triggers (includeThreadIds / excludeThreadIds).
+ *  - excludeThreadIds: the listed threads never trigger; it wins, so an id in both lists is excluded.
+ *  - includeThreadIds: empty / missing = no effect; otherwise only the listed threads trigger. A list with entries
+ *    but no usable id (only "{{ … }}" templates) lets nothing through: an allow-list never turns into "everyone".
+ */
+export function isThreadAllowed(includeList: unknown, excludeList: unknown, threadId: unknown): boolean {
+  if (isExcludedId(excludeList, threadId)) return false;
+  if (!hasIdListEntries(includeList)) return true;
+  const needle = threadId === null || threadId === undefined ? '' : String(threadId).trim();
+  return needle !== '' && parseIdList(includeList).includes(needle);
+}
+
 // ─── Active hours ─────────────────────────────────────────────────────────────
 
 const VN_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 const STRICT_HH_MM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-/** 'HH:mm' (00:00–23:59, đúng 2 chữ số giờ) → số phút trong ngày; sai định dạng → null. */
+/** 'HH:mm' (00:00-23:59, exactly 2 digits for the hour) → minutes since midnight; wrong format → null. */
 function parseClockMinutes(value: unknown): number | null {
   if (typeof value !== 'string') return null;
   const match = STRICT_HH_MM.exec(value.trim());
   return match ? Number(match[1]) * 60 + Number(match[2]) : null;
 }
 
-/** days → tập 0..6; vắng / rỗng / không có giá trị hợp lệ → null (= mọi ngày). */
+/** days → set of 0..6; missing / empty / no valid value → null (= every day). */
 function parseActiveDays(value: unknown): Set<number> | null {
   if (!Array.isArray(value)) return null;
   const days = new Set<number>();
@@ -128,12 +148,12 @@ function parseActiveDays(value: unknown): Set<number> | null {
 }
 
 /**
- * true khi trigger ĐƯỢC PHÉP kích hoạt tại thời điểm `nowMs`.
- *  - cfg vắng / không hợp lệ / mode 'always' / giờ sai định dạng → true (không lọc).
- *  - 'inside'  → chỉ khi now ∈ [start, end) vào một ngày được chọn.
- *  - 'outside' → chỉ khi KHÔNG thuộc khung đó.
- * start > end: khung qua nửa đêm, thuộc về ngày bắt đầu (T2 22:00–06:00 = T2 22:00 → T3 06:00).
- * start === end: cả ngày.
+ * true when the trigger is ALLOWED to fire at the time `nowMs`.
+ *  - cfg missing / invalid / mode 'always' / wrong time format → true (no filtering).
+ *  - 'inside'  → only when now ∈ [start, end) on a selected day.
+ *  - 'outside' → only when NOT inside that window.
+ * start > end: the window crosses midnight and belongs to the start day (Mon 22:00-06:00 = Mon 22:00 → Tue 06:00).
+ * start === end: the whole day.
  */
 export function isWithinActiveHours(cfg: unknown, nowMs: number): boolean {
   let config: unknown = cfg;
@@ -151,7 +171,7 @@ export function isWithinActiveHours(cfg: unknown, nowMs: number): boolean {
   const allowedDays = parseActiveDays(days);
   const isDayAllowed = (day: number) => !allowedDays || allowedDays.has(day);
 
-  // Giờ Việt Nam tính số học từ epoch, không phụ thuộc timezone của máy
+  // Vietnam time is computed arithmetically from the epoch, independent of the machine's timezone
   const vnNow = new Date((Number.isFinite(nowMs) ? nowMs : Date.now()) + VN_UTC_OFFSET_MS);
   const today = vnNow.getUTCDay();
   const minuteOfDay = vnNow.getUTCHours() * 60 + vnNow.getUTCMinutes();
@@ -162,9 +182,9 @@ export function isWithinActiveHours(cfg: unknown, nowMs: number): boolean {
   } else if (startMin < endMin) {
     inWindow = isDayAllowed(today) && minuteOfDay >= startMin && minuteOfDay < endMin;
   } else if (minuteOfDay >= startMin) {
-    inWindow = isDayAllowed(today);                 // phần trước nửa đêm của khung hôm nay
+    inWindow = isDayAllowed(today);                 // the part before midnight of today's window
   } else if (minuteOfDay < endMin) {
-    inWindow = isDayAllowed((today + 6) % 7);       // phần sau nửa đêm của khung hôm qua
+    inWindow = isDayAllowed((today + 6) % 7);       // the part after midnight of yesterday's window
   } else {
     inWindow = false;
   }
@@ -183,7 +203,7 @@ const ZALO_MSG_TYPE_KIND = new Map<string, ZaloMessageKind>([
   ['share.link', 'link'], ['chat.link', 'link'],
 ]);
 
-/** content.action của tin chat.recommended (object hoặc chuỗi JSON). */
+/** content.action of a chat.recommended message (object or JSON string). */
 function recommendedAction(content: unknown): string {
   let value: unknown = content;
   if (typeof value === 'string') {
@@ -193,21 +213,36 @@ function recommendedAction(content: unknown): string {
   return typeof action === 'string' ? action.trim().toLowerCase() : '';
 }
 
-/** msgData.msgType của zca-js → text | image | sticker | file | voice | video | link | other. */
+/** zca-js msgData.msgType → text | image | sticker | file | voice | video | link | other. */
 export function classifyZaloMessageType(msgType: unknown, content: unknown): ZaloMessageKind {
   const type = msgType === null || msgType === undefined ? '' : String(msgType).trim().toLowerCase();
-  // chat.recommended chở cả liên kết, danh thiếp (recommened.user / .vip) và nhật ký cuộc gọi
-  // (recommened.calltime / .misscall) → chỉ là "link" khi action là link
+  // chat.recommended also carries links, contact cards (recommened.user / .vip) and call logs
+  // (recommened.calltime / .misscall) → only "link" when the action is link
   if (type === 'chat.recommended' || type === 'chat.recommend') {
     const action = recommendedAction(content);
     return action === 'recommened.link' || action === 'recommended.link' ? 'link' : 'other';
   }
   if (type) return ZALO_MSG_TYPE_KIND.get(type) ?? 'other';
-  // Payload không có msgType (sự kiện cũ / relay): nội dung dạng chuỗi = tin văn bản
+  // Payload has no msgType (old event / relay): string content = text message
   return typeof content === 'string' ? 'text' : 'other';
 }
 
-/** messageTypes của config → mảng loại (lowercase, không trùng); rỗng / 'all' = không lọc. */
+/**
+ * Text of a Zalo message for the keyword filter, read like flattenTriggerData ($trigger.content): content.msg, else
+ * content.title (a link card keeps the typed text there: "/lenh https://…"), else a link card's href.
+ */
+export function zaloMessageText(content: unknown, msgType?: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!content || typeof content !== 'object') return '';
+  const obj = content as Record<string, unknown>;
+  const pick = (value: unknown) => (typeof value === 'string' ? value : '');
+  const text = pick(obj.msg) || pick(obj.title);
+  if (text) return text;
+  const type = msgType === null || msgType === undefined ? '' : String(msgType).trim().toLowerCase();
+  return type === 'chat.recommended' || type === 'chat.link' ? pick(obj.href) : '';
+}
+
+/** messageTypes from the config → array of types (lowercase, no duplicates); empty / 'all' = no filtering. */
 export function normalizeMessageTypes(value: unknown): string[] {
   const types = parseIdList(value).map(type => type.toLowerCase());
   return types.includes('all') ? [] : [...new Set(types)];
@@ -216,8 +251,8 @@ export function normalizeMessageTypes(value: unknown): string[] {
 // ─── Mentions ─────────────────────────────────────────────────────────────────
 
 /**
- * true khi danh sách mentions (TMention[] của zca-js) @nhắc tài khoản `accountId`
- * hoặc @All (type === 1 hoặc uid === '-1').
+ * true when the mentions list (zca-js TMention[]) @mentions the account `accountId`
+ * or @All (type === 1 or uid === '-1').
  */
 export function mentionsAccount(mentions: unknown, accountId: string): boolean {
   let list: unknown = mentions;
@@ -241,19 +276,19 @@ function normalizeSenderRole(senderRole: unknown): string {
   return typeof senderRole === 'string' ? senderRole.trim().toLowerCase() : '';
 }
 
-/** true khi senderRole có tác dụng (khác vắng / rỗng / 'all') → cần tra vai trò, tin cá nhân bị loại. */
+/** true when senderRole takes effect (not missing / empty / 'all') → the role must be looked up, and personal messages are excluded. */
 export function hasSenderRoleFilter(senderRole: unknown): boolean {
   const role = normalizeSenderRole(senderRole);
   return role !== '' && role !== 'all';
 }
 
-/** Chuẩn hoá uid Zalo: trim + bỏ hậu tố phiên bản "_0" ("123_0" → "123") như getGroupInfo đôi khi trả về. */
+/** Normalize a Zalo uid: trim + remove the version suffix "_0" ("123_0" → "123"), as getGroupInfo sometimes returns it. */
 export function normalizeZaloUid(value: unknown): string {
   if (value === null || value === undefined) return '';
   return String(value).trim().replace(/_\d+$/, '');
 }
 
-/** Vai trò của người gửi trong nhóm: creatorId → owner, adminIds → deputy, còn lại → member. */
+/** Sender's role in the group: creatorId → owner, adminIds → deputy, everything else → member. */
 export function resolveZaloGroupRole(senderId: unknown, creatorId: unknown, adminIds: readonly unknown[] | null | undefined): ZaloGroupRole {
   const sender = normalizeZaloUid(senderId);
   if (!sender) return 'member';
@@ -262,8 +297,8 @@ export function resolveZaloGroupRole(senderId: unknown, creatorId: unknown, admi
 }
 
 /**
- * Ma trận vai trò: all → mọi vai trò; owner → trưởng nhóm; deputy → phó nhóm;
- * admins → trưởng hoặc phó; members → thành viên thường. Giá trị lạ → không khớp.
+ * Role matrix: all → every role; owner → group owner; deputy → group deputy;
+ * admins → owner or deputy; members → regular members. Unknown value → no match.
  */
 export function isRoleAllowed(role: ZaloGroupRole, senderRole: string): boolean {
   switch (normalizeSenderRole(senderRole)) {
@@ -279,7 +314,7 @@ export function isRoleAllowed(role: ZaloGroupRole, senderRole: string): boolean 
 
 // ─── Cooldown ─────────────────────────────────────────────────────────────────
 
-/** cooldownMinutes → mili giây; vắng / ≤ 0 / không phải số → 0 (tắt). */
+/** cooldownMinutes → milliseconds; missing / ≤ 0 / not a number → 0 (off). */
 export function parseCooldownMs(value: unknown): number {
   const minutes = typeof value === 'number'
     ? value
@@ -287,7 +322,7 @@ export function parseCooldownMs(value: unknown): number {
   return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60 * 1000) : 0;
 }
 
-/** true khi lần chạy gần nhất (`lastRunAt`) còn nằm trong cooldown tại `nowMs`. */
+/** true when the last run (`lastRunAt`) is still inside the cooldown at `nowMs`. */
 export function isCooldownActive(lastRunAt: number | undefined, nowMs: number, cooldownMs: number): boolean {
   if (lastRunAt === undefined || !(cooldownMs > 0)) return false;
   return nowMs - lastRunAt < cooldownMs;

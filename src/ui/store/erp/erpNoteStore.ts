@@ -3,8 +3,8 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import type { ErpNote, ErpNoteFolder, ErpNoteTag } from '../../../models/erp';
 import { withErpDeniedNotice } from './erpStoreHelpers';
 
-// Ghi chú nằm trên DB Boss: nhân viên đọc / ghi qua DataAccessor (REST → Boss lọc theo tác giả / chia sẻ / workspace).
-// Trước đây gọi IPC trên máy nhân viên → note chỉ có ở máy đó, chia sẻ cho người khác không tới ai.
+// Notes live in the owner's machine DB: employees read / write via DataAccessor (REST → the owner's machine filters by author / sharing / workspace).
+// Previously an IPC call on the employee machine → the note existed only on that machine, and sharing it reached nobody.
 
 interface ErpNoteState {
   folders: ErpNoteFolder[];
@@ -35,7 +35,7 @@ export const useErpNoteStore = create<ErpNoteState>((set, get) => ({
   loading: false,
   lastFilter: {},
 
-  // Đọc lỗi → giữ danh sách đang hiện (isReadFailure), chỉ tắt loading
+  // Read error → keep the list currently shown (isReadFailure), only turn off loading
   loadFolders: async () => {
     const res: any = await DataAccessor.erpNoteFolders();
     if (res?.success) set({ folders: normalizeFolders(res.folders) });
@@ -78,7 +78,7 @@ export const useErpNoteStore = create<ErpNoteState>((set, get) => ({
     return null;
   },
 
-  // Boss từ chối / mất kết nối → giữ note trong danh sách
+  // Owner's machine refused / connection lost → keep the note in the list
   deleteNote: async (id) => {
     const res: any = withErpDeniedNotice(await DataAccessor.erpDeleteNote(id));
     if (res && res.success === false) return;

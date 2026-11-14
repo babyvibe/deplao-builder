@@ -1,7 +1,7 @@
 /**
  * FacebookScanLogService.ts
- * Lưu lịch sử scan + full request payload để debug lỗi.
- * Tự quản lý table riêng, không phụ thuộc DatabaseService.
+ * Stores scan history + full request payload to debug errors.
+ * Manages its own table, independent of DatabaseService.
  */
 
 import DatabaseService from '../../database/DatabaseService';
@@ -17,8 +17,8 @@ export interface ScanLogEntry {
   status: 'success' | 'error';
   itemsCount: number;
   error: string;
-  requestPayload: string;   // JSON: params + variables đã gửi lên FB
-  responsePreview: string;  // JSON: response gốc (200 ký tự đầu)
+  requestPayload: string;   // JSON: params + variables sent to FB
+  responsePreview: string;  // JSON: original response (first 200 characters)
   requestHeaders?: string;  // JSON: request headers
   responseHeaders?: string; // JSON: response headers
   docId: string;
@@ -34,7 +34,7 @@ export class FacebookScanLogService {
     try {
       const db = DatabaseService.getInstance();
 
-      // Tạo table - dùng run() thay vì exec() để tránh transaction conflict
+      // Create the table: use run() instead of exec() to avoid transaction conflicts
       db.run(`
         CREATE TABLE IF NOT EXISTS fb_scan_history (
           id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,11 +54,11 @@ export class FacebookScanLogService {
         )
       `);
 
-      // Index riêng lẻ, không bao giờ trong transaction
+      // Individual indexes, never inside a transaction
       try { db.run('CREATE INDEX IF NOT EXISTS idx_scan_history_account ON fb_scan_history(account_id, created_at DESC)'); } catch {}
       try { db.run('CREATE INDEX IF NOT EXISTS idx_scan_history_tab ON fb_scan_history(tab_id, created_at DESC)'); } catch {}
 
-      // Migration: thêm columns nếu chưa có (cho DB cũ)
+      // Migration: add columns if missing (for old DBs)
       const tableInfo = db.query<any>('PRAGMA table_info(fb_scan_history)') || [];
       const existingColumns = new Set(tableInfo.map((r: any) => r.name));
 
@@ -118,7 +118,7 @@ export class FacebookScanLogService {
         entry.threadCount,
         entry.createdAt || Date.now(),
       ]);
-      // Lấy ID vừa insert
+      // Get the ID that was just inserted
       const row = db.queryOne<{ id: number }>('SELECT last_insert_rowid() as id');
       return row?.id ?? null;
     } catch (err: any) {
@@ -185,7 +185,7 @@ export class FacebookScanLogService {
     }
   }
 
-  /** Xóa toàn bộ lịch sử scan của 1 tab */
+  /** Delete the entire scan history of 1 tab */
   static deleteByTabId(tabId: string): void {
     try {
       this.init();

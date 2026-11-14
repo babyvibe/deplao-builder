@@ -3,8 +3,8 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import type { CreateTaskInput, ErpProject, ErpTask, ErpTaskPriority, ErpTaskStatus, TaskInboxFilter, UpdateTaskInput } from '../../../models/erp';
 import { withErpDeniedNotice } from './erpStoreHelpers';
 
-// Dự án / công việc: mọi lệnh qua DataAccessor (nhân viên → REST, Boss kiểm tra quyền ERP theo hồ sơ nhân viên).
-// Kết quả cùng hình dạng IPC ở cả hai chế độ; đọc lỗi → giữ dữ liệu đang hiện, ghi lỗi → không đổi state.
+// Projects / tasks: every command goes through DataAccessor (employee → REST; the owner's machine checks the ERP permission from the employee profile).
+// Same result shape as IPC in both modes; read error → keep the data currently shown, write error → state unchanged.
 
 type TaskListFilter = {
   projectId?: string;
@@ -36,7 +36,7 @@ interface ErpTaskState {
   setActiveProject: (id: string | null) => void;
   loadTasks: (filter?: TaskListFilter) => Promise<void>;
   createTask: (input: CreateTaskInput) => Promise<ErpTask | null>;
-  /** Kết quả lưu (Boss / handler từ chối → success:false + error) — người gọi báo lỗi thay vì "đã lưu". */
+  /** Save result (owner's machine / handler refused → success:false + error); the caller shows the error instead of "đã lưu" (saved). */
   updateTask: (id: string, patch: UpdateTaskInput) => Promise<{ success: boolean; error?: string; task?: ErpTask }>;
   updateTaskStatus: (id: string, status: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
@@ -126,7 +126,7 @@ export const useErpTaskStore = create<ErpTaskState>((set) => ({
     } catch {}
   },
 
-  // Boss từ chối / mất kết nối → giữ task trên bảng
+  // Owner's machine refused / connection lost → keep the task on the board
   deleteTask: async (id) => {
     try {
       const res: any = withErpDeniedNotice(await DataAccessor.erpDeleteTask(id));

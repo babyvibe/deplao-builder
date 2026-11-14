@@ -1,6 +1,6 @@
 /**
- * Thêm bạn nhanh. Zalo: tìm theo số điện thoại → gửi lời mời kết bạn. Telegram: thêm liên hệ theo
- * số điện thoại hoặc @tên người dùng. Xong có nút "Nhắn tin" mở hội thoại 1-1.
+ * Quick add friend. Zalo: search by phone number → send a friend request. Telegram: add a contact by
+ * phone number or @username. Afterwards a "Nhắn tin" (Message) button opens the 1-1 conversation.
  */
 import React, { useState } from 'react';
 import type { AccountInfo } from '@/store/accounts/accountStore';
@@ -11,14 +11,16 @@ import {
 } from '@/components/ui';
 import { SearchIcon } from '@/components/common/icons';
 import { accountChannel, accountLabel, type OpenQuickConversation } from './quickActions';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
-const DEFAULT_GREETING = 'Xin chào! Mình muốn kết bạn với bạn.';
+const DEFAULT_GREETING = tr('Xin chào! Mình muốn kết bạn với bạn.');
 
 interface FoundUser {
   id: string;
   name: string;
   avatar: string;
-  /** Zalo: 1 = đã là bạn bè. */
+  /** Zalo: 1 = already a friend. */
   isFriend?: boolean;
   requested?: boolean;
   sub?: string;
@@ -44,7 +46,7 @@ export default function QuickAddFriendDialog({ account, onClose, onOpenConversat
   account: AccountInfo;
   onClose: () => void;
   onOpenConversation: OpenQuickConversation;
-  /** Đã thêm liên hệ (Telegram) / gửi lời mời (Zalo) — danh bạ đang mở tải lại. */
+  /** Contact added (Telegram) / request sent (Zalo): the contacts list that is open reloads. */
   onAdded?: () => void;
 }) {
   const channel = accountChannel(account);
@@ -61,21 +63,21 @@ export default function QuickAddFriendDialog({ account, onClose, onOpenConversat
 
   const searchZalo = async () => {
     const phone = query.replace(/[^\d+]/g, '');
-    if (phone.replace(/\D/g, '').length < 9) { setError('Nhập số điện thoại Zalo'); return; }
+    if (phone.replace(/\D/g, '').length < 9) { setError(tr('Nhập số điện thoại Zalo')); return; }
     setBusy(true); setError(''); setFound(null); setDone('');
     try {
       const auth = buildZaloAuth(account, account.zalo_id);
       const res: any = await ipc.zalo?.findUser({ auth, phone });
       const user = res?.response;
-      if (!user?.uid) { setError('Không tìm thấy tài khoản Zalo với số này (hoặc họ tắt tìm theo số)'); return; }
+      if (!user?.uid) { setError(tr('Không tìm thấy tài khoản Zalo với số này (hoặc họ tắt tìm theo số)')); return; }
       let isFriend = false;
       try {
         const info: any = await ipc.zalo?.getUserInfo({ auth, userId: user.uid });
         isFriend = info?.response?.changed_profiles?.[user.uid]?.isFr === 1;
-      } catch { /* trạng thái bạn bè không bắt buộc */ }
+      } catch { /* friend status is optional */ }
       setFound({ id: String(user.uid), name: user.display_name || user.zalo_name || phone, avatar: user.avatar || '', isFriend, sub: phone });
     } catch (err: any) {
-      setError(err?.message || 'Không tìm được');
+      setError(err?.message || tr('Không tìm được'));
     } finally {
       setBusy(false);
     }
@@ -86,12 +88,12 @@ export default function QuickAddFriendDialog({ account, onClose, onOpenConversat
     setBusy(true); setError('');
     try {
       const res: any = await ipc.zalo?.sendFriendRequest({ auth: buildZaloAuth(account, account.zalo_id), userId: found.id, msg: greeting.trim() || DEFAULT_GREETING });
-      if (res && res.success === false) { setError(res.error || 'Gửi lời mời thất bại'); return; }
+      if (res && res.success === false) { setError(res.error || tr('Gửi lời mời thất bại')); return; }
       setFound({ ...found, requested: true });
-      setDone(`Đã gửi lời mời kết bạn tới ${found.name}`);
+      setDone(tr('Đã gửi lời mời kết bạn tới {{name}}', { name: found.name }));
       onAdded?.();
     } catch (err: any) {
-      setError(err?.message || 'Gửi lời mời thất bại');
+      setError(err?.message || tr('Gửi lời mời thất bại'));
     } finally {
       setBusy(false);
     }
@@ -100,7 +102,7 @@ export default function QuickAddFriendDialog({ account, onClose, onOpenConversat
   const addTelegram = async () => {
     const value = query.trim();
     const byUsername = value.startsWith('@') || /[a-zA-Z_]/.test(value);
-    if (!value) { setError('Nhập số điện thoại hoặc @tên người dùng'); return; }
+    if (!value) { setError(tr('Nhập số điện thoại hoặc @tên người dùng')); return; }
     setBusy(true); setError(''); setFound(null); setDone('');
     try {
       const res = await ipc.telegramUser?.addContact({
@@ -108,12 +110,12 @@ export default function QuickAddFriendDialog({ account, onClose, onOpenConversat
         ...(byUsername ? { username: value.replace(/^@/, '') } : { phone: value }),
         firstName: nickname.trim() || undefined,
       });
-      if (!res?.success || !res.userId) { setError(res?.error || 'Không thêm được liên hệ'); return; }
+      if (!res?.success || !res.userId) { setError(res?.error || tr('Không thêm được liên hệ')); return; }
       setFound({ id: res.userId, name: res.displayName || value, avatar: '', sub: res.username ? `@${res.username}` : (res.phone ? `+${res.phone.replace(/^\+/, '')}` : '') });
-      setDone(`Đã thêm ${res.displayName || value} vào danh bạ Telegram`);
+      setDone(tr('Đã thêm {{v1}} vào danh bạ Telegram', { v1: res.displayName || value }));
       onAdded?.();
     } catch (err: any) {
-      setError(err?.message || 'Không thêm được liên hệ');
+      setError(err?.message || tr('Không thêm được liên hệ'));
     } finally {
       setBusy(false);
     }
@@ -127,53 +129,53 @@ export default function QuickAddFriendDialog({ account, onClose, onOpenConversat
 
   const primary = isZalo
     ? (found && !found.isFriend && !found.requested
-      ? <Button onClick={() => void sendZaloRequest()} loading={busy}>Gửi lời mời kết bạn</Button>
-      : found ? <Button onClick={openChat}>Nhắn tin</Button>
-        : <Button onClick={() => void searchZalo()} loading={busy} disabled={!query.trim()}>Tìm</Button>)
+      ? <Button onClick={() => void sendZaloRequest()} loading={busy}>{tr('Gửi lời mời kết bạn')}</Button>
+      : found ? <Button onClick={openChat}>{tr('Nhắn tin')}</Button>
+        : <Button onClick={() => void searchZalo()} loading={busy} disabled={!query.trim()}>{tr('Tìm')}</Button>)
     : (found
-      ? <Button onClick={openChat}>Nhắn tin</Button>
-      : <Button onClick={() => void addTelegram()} loading={busy} disabled={!query.trim()}>Thêm liên hệ</Button>);
+      ? <Button onClick={openChat}>{tr('Nhắn tin')}</Button>
+      : <Button onClick={() => void addTelegram()} loading={busy} disabled={!query.trim()}>{tr('Thêm liên hệ')}</Button>);
 
   return (
     <Dialog open onOpenChange={next => { if (!next && !busy) onClose(); }} size="sm">
       <DialogHeader>
         <div className="min-w-0">
-          <DialogTitle>{isZalo ? 'Thêm bạn Zalo' : 'Thêm liên hệ Telegram'}</DialogTitle>
-          <DialogDescription>Bằng tài khoản {accountLabel(account)}</DialogDescription>
+          <DialogTitle>{isZalo ? tr('Thêm bạn Zalo') : tr('Thêm liên hệ Telegram')}</DialogTitle>
+          <DialogDescription>{trx('Bằng tài khoản {{v1}}', { v1: accountLabel(account) })}</DialogDescription>
         </div>
         <DialogClose />
       </DialogHeader>
       <DialogBody className="space-y-3">
         <div className="space-y-1.5">
           <label htmlFor="quick-friend-query" className="text-xs font-medium text-muted-foreground">
-            {isZalo ? 'Số điện thoại' : 'Số điện thoại hoặc @tên người dùng'}
+            {isZalo ? tr('Số điện thoại') : tr('Số điện thoại hoặc @tên người dùng')}
           </label>
           <div className="relative">
             <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-subtle-foreground" />
             <Input id="quick-friend-query" autoFocus value={query} onChange={e => reset(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !found) void (isZalo ? searchZalo() : addTelegram()); }}
-              placeholder={isZalo ? '0912 345 678' : '0912 345 678 hoặc @ten_nguoi_dung'} className="pl-8" inputMode={isZalo ? 'tel' : 'text'} />
+              placeholder={isZalo ? '0912 345 678' : tr('0912 345 678 hoặc @ten_nguoi_dung')} className="pl-8" inputMode={isZalo ? 'tel' : 'text'} />
           </div>
         </div>
 
         {!isZalo && !found && (
           <div className="space-y-1.5">
-            <label htmlFor="quick-friend-name" className="text-xs font-medium text-muted-foreground">Tên lưu trong danh bạ (không bắt buộc)</label>
-            <Input id="quick-friend-name" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="Ví dụ: Chị Lan - khách sỉ" />
+            <label htmlFor="quick-friend-name" className="text-xs font-medium text-muted-foreground">{tr('Tên lưu trong danh bạ (không bắt buộc)')}</label>
+            <Input id="quick-friend-name" value={nickname} onChange={e => setNickname(e.target.value)} placeholder={tr('Ví dụ: Chị Lan - khách sỉ')} />
           </div>
         )}
 
         {found && (
           <PersonCard user={found}>
             {isZalo && (found.isFriend
-              ? <Badge size="sm" variant="success" dot>Bạn bè</Badge>
-              : found.requested ? <Badge size="sm" variant="info" dot>Đã gửi lời mời</Badge> : null)}
+              ? <Badge size="sm" variant="success" dot>{tr('Bạn bè')}</Badge>
+              : found.requested ? <Badge size="sm" variant="info" dot>{tr('Đã gửi lời mời')}</Badge> : null)}
           </PersonCard>
         )}
 
         {isZalo && found && !found.isFriend && !found.requested && (
           <div className="space-y-1.5">
-            <label htmlFor="quick-friend-greeting" className="text-xs font-medium text-muted-foreground">Lời nhắn kèm lời mời</label>
+            <label htmlFor="quick-friend-greeting" className="text-xs font-medium text-muted-foreground">{tr('Lời nhắn kèm lời mời')}</label>
             <Textarea id="quick-friend-greeting" value={greeting} maxLength={150} onChange={e => setGreeting(e.target.value)} className="min-h-[72px]" />
           </div>
         )}
@@ -183,9 +185,9 @@ export default function QuickAddFriendDialog({ account, onClose, onOpenConversat
       </DialogBody>
       <DialogFooter>
         {isZalo && found && !found.isFriend && !found.requested && (
-          <Button variant="ghost" onClick={openChat} disabled={busy}>Nhắn tin</Button>
+          <Button variant="ghost" onClick={openChat} disabled={busy}>{tr('Nhắn tin')}</Button>
         )}
-        <Button variant="outline" onClick={onClose} disabled={busy}>Đóng</Button>
+        <Button variant="outline" onClick={onClose} disabled={busy}>{tr('Đóng')}</Button>
         {primary}
       </DialogFooter>
     </Dialog>

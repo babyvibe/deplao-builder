@@ -1,22 +1,22 @@
 /**
- * Phạm vi CSDL / workspace theo luồng chạy (AsyncLocalStorage).
+ * DB / workspace scope per running flow (AsyncLocalStorage).
  *
- * Một máy có workspace local (của chủ) và mở thêm workspace nhân viên (remote, vd thử tính năng nhân viên trên cùng
- * máy): mọi thứ chạy nền của workspace local (Zalo, Telegram, Facebook, workflow, API, ERP, Cloudflare, plugin…) phải
- * tiếp tục đọc / ghi CSDL + thư mục media của workspace local dù giao diện đang mở workspace nào. Trước đây đổi workspace
- * là đổi luôn CSDL dùng chung của main process: tin Telegram, sự kiện API, file tải về của chủ bị ghi vào workspace
- * nhân viên, và mở app khi đang ở workspace nhân viên thì Telegram / Facebook / workflow của chủ không chạy.
+ * One machine can have a local workspace (the owner's) and also open an employee workspace (remote, e.g. to try the employee features on the same
+ * machine): everything running in the background for the local workspace (Zalo, Telegram, Facebook, workflow, API, ERP, Cloudflare, plugins…) must
+ * keep reading / writing the DB + media folder of the local workspace, whichever workspace the UI has open. Before, switching the workspace
+ * also switched the DB shared by the main process: Telegram messages, API events and files downloaded by the owner were written into the employee
+ * workspace, and opening the app while on the employee workspace stopped the owner's Telegram / Facebook / workflows from running.
  *
- *  - CSDL chính (DatabaseService) = workspace local đang chạy ("runtime"), không bao giờ là workspace remote.
- *  - Lệnh từ giao diện (IPC, local-media://) khi giao diện đang mở workspace remote chạy trong phạm vi 'ui': dùng CSDL
- *    đệm + media của workspace remote đó như trước, và "workspace đang mở" / chế độ app = nhân viên.
- *  - withDbPath() = phạm vi 'path': một CSDL cụ thể cho đoạn code bên trong (kể cả phần async).
+ *  - The main DB (DatabaseService) = the local workspace that is running ("runtime"), never the remote workspace.
+ *  - Commands from the UI (IPC, local-media://) while the UI has a remote workspace open run in the 'ui' scope: they use the cache DB
+ *    + media of that remote workspace as before, and "open workspace" / app mode = employee.
+ *  - withDbPath() = the 'path' scope: one specific DB for the code inside (including the async parts).
  */
 import { AsyncLocalStorage } from 'async_hooks';
 
 export type DbScope = { kind: 'ui' } | { kind: 'path'; dbPath: string };
 
-/** Workspace remote đang mở trên giao diện. */
+/** The remote workspace open on the UI. */
 export interface UiRemoteWorkspace {
     workspaceId: string;
     dbPath: string;
@@ -31,20 +31,20 @@ export function currentDbScope(): DbScope | undefined {
     return storage.getStore();
 }
 
-/** Chạy `fn` (kể cả phần async bên trong) trên CSDL `dbPath`. */
+/** Run `fn` (including the async parts inside) on the DB `dbPath`. */
 export function runWithDbPath<T>(dbPath: string, fn: () => T): T {
     return storage.run({ kind: 'path', dbPath }, fn);
 }
 
-/** Chạy `fn` ngoài mọi phạm vi: CSDL / media / workspace local đang chạy. */
+/** Run `fn` outside every scope: the DB / media / the running local workspace. */
 export function runInRuntimeScope<T>(fn: () => T): T {
     return storage.exit(fn);
 }
 
 /**
- * Lệnh từ giao diện. Giao diện đang mở workspace remote → phạm vi 'ui' (CSDL + media của workspace remote đang mở lúc
- * dùng). Giao diện đang mở workspace local → chạy thẳng, không gắn phạm vi: việc chạy nền mà lệnh khởi động (kết nối
- * tài khoản, bật bot, lưu workflow…) luôn thuộc workspace local.
+ * Command from the UI. If the UI has a remote workspace open → the 'ui' scope (the DB + media of the remote workspace that is open at the time of the
+ * call). If the UI has a local workspace open → runs directly, with no scope attached: the background work started by the command (connecting an
+ * account, turning on the bot, saving a workflow…) always belongs to the local workspace.
  */
 export function runInUiScope<T>(fn: () => T): T {
     return uiRemote ? storage.run(UI_SCOPE, fn) : fn();
@@ -58,7 +58,7 @@ export function getUiRemoteWorkspace(): UiRemoteWorkspace | null {
     return uiRemote;
 }
 
-/** Đoạn code đang chạy là lệnh của giao diện workspace remote đang mở. */
+/** The running code is a command from the UI of the remote workspace that is open. */
 export function inUiRemoteScope(): boolean {
     return !!uiRemote && storage.getStore()?.kind === 'ui';
 }

@@ -1,6 +1,6 @@
 /**
- * Ô chọn dùng chung của trang Nhân viên (dòng dưới thẻ nhân viên + hộp "Thêm nhân viên"): tài khoản chat được giao (kèm
- * ảnh tài khoản) và các mục được dùng.
+ * Shared picker on the Employees page (the row under the employee card + the "Thêm nhân viên" (Add employee) box): assigned chat accounts (with
+ * account images) and the permitted sections.
  */
 import React from 'react';
 import { Button, Checkbox } from '@/components/ui';
@@ -8,13 +8,14 @@ import type { AccountInfo } from '@/store/accounts/accountStore';
 import { getChannelLabel, resolveAccountChannel } from '../../../../configs/channels/channelConfig';
 import { EMPLOYEE_MODULES } from '@/lib/employee/employeeSettingsView';
 import { MiniAccountAvatar } from '../notifications/InAppNotifySettings';
+import { tr } from '../../../../shared/i18n';
 
 function accountDetail(account: AccountInfo): string {
   const channel = getChannelLabel(resolveAccountChannel(account));
   return account.phone ? `${channel} · ${account.phone}` : channel;
 }
 
-/** Danh sách tài khoản chat có ô tick + "Chọn hết". */
+/** List of chat accounts with checkboxes + "Chọn hết" (Select all). */
 export function AccountChecklist({ accounts, value, onChange, disabled }: {
   accounts: readonly AccountInfo[];
   value: ReadonlySet<string>;
@@ -22,7 +23,7 @@ export function AccountChecklist({ accounts, value, onChange, disabled }: {
   disabled?: boolean;
 }) {
   if (accounts.length === 0) {
-    return <p className="text-xs text-muted-foreground">Chưa có tài khoản chat nào. Thêm ở Cài đặt → Tài khoản.</p>;
+    return <p className="text-xs text-muted-foreground">{tr('Chưa có tài khoản chat nào. Thêm ở Cài đặt → Tài khoản.')}</p>;
   }
   const all = accounts.every((account) => value.has(account.zalo_id));
   const toggle = (id: string, on: boolean) => {
@@ -36,7 +37,7 @@ export function AccountChecklist({ accounts, value, onChange, disabled }: {
         <div className="flex justify-end">
           <Button variant="link" size="sm" className="h-auto p-0 text-xs" disabled={disabled}
             onClick={() => onChange(all ? new Set() : new Set(accounts.map((account) => account.zalo_id)))}>
-            {all ? 'Bỏ chọn hết' : 'Chọn hết'}
+            {all ? tr('Bỏ chọn hết') : tr('Chọn hết')}
           </Button>
         </div>
       )}
@@ -67,7 +68,7 @@ export function AccountChecklist({ accounts, value, onChange, disabled }: {
 const WORK_MODULES = EMPLOYEE_MODULES.filter((module) => module.group === 'work');
 const SETTINGS_MODULES = EMPLOYEE_MODULES.filter((module) => module.group === 'settings');
 
-/** Các mục nhân viên được dùng: trang làm việc (có "Chọn hết") và phần Cài đặt chỉ giao cho người tin cậy. */
+/** Sections an employee may use: the work area (with "Chọn hết" (Select all)) and the Settings section, given only to trusted people. */
 export function PermissionChecklist({ value, onChange, disabled }: {
   value: Record<string, boolean>;
   onChange: (next: Record<string, boolean>) => void;
@@ -84,9 +85,9 @@ export function PermissionChecklist({ value, onChange, disabled }: {
     <div className="space-y-3">
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">Trang làm việc</p>
+          <p className="text-xs font-medium text-muted-foreground">{tr('Trang làm việc')}</p>
           <Button variant="link" size="sm" className="h-auto p-0 text-xs" disabled={disabled} onClick={() => setAllWork(!allWork)}>
-            {allWork ? 'Bỏ chọn hết' : 'Chọn hết'}
+            {allWork ? tr('Bỏ chọn hết') : tr('Chọn hết')}
           </Button>
         </div>
         <div className="grid grid-cols-1 gap-x-4 gap-y-2.5 sm:grid-cols-2">
@@ -97,7 +98,7 @@ export function PermissionChecklist({ value, onChange, disabled }: {
         </div>
       </div>
       <div className="border-t border-border/60 pt-3">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">Trong Cài đặt · chỉ giao cho người tin cậy</p>
+        <p className="mb-2 text-xs font-medium text-muted-foreground">{tr('Trong Cài đặt · chỉ giao cho người tin cậy')}</p>
         <div className="grid grid-cols-1 gap-x-4 gap-y-2.5 sm:grid-cols-2">
           {SETTINGS_MODULES.map((module) => (
             <Checkbox key={module.key} checked={!!value[module.key]} onCheckedChange={(on) => set(module.key, on)}

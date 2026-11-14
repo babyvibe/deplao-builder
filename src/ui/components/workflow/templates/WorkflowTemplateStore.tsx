@@ -11,12 +11,15 @@ import {
   TemplateCategory,
 } from './workflowTemplates';
 import { INTEGRATION_TEMPLATES } from './integrationTemplates';
+import { TELEGRAM_BOT_TEMPLATES } from './telegramBotTemplates';
 import { nodeTypeGroup, getNodeLabel, GROUP_COLORS } from '../nodes/workflowConfig';
 import { CHANNEL } from '@/lib/channels/channelHelper';
 import { TriggerNode, ActionNode, LogicNode, DataNode, OutputNode, IntegrationNode } from '../nodes/WorkflowNodes';
 import ipc from '../../../lib/ipc';
 import { useAppStore } from '@/store/app/appStore';
 import { PackageIcon, SearchIcon, SunIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 
 const nodeTypes = {
@@ -28,8 +31,8 @@ const nodeTypes = {
   integration: IntegrationNode,
 };
 
-// Merge templates: giữ nguyên template cũ + thêm template tích hợp mới
-const ALL_TEMPLATES = [...WORKFLOW_TEMPLATES, ...INTEGRATION_TEMPLATES];
+// Merge templates: keep the existing templates + add the new integration templates
+const ALL_TEMPLATES = [...WORKFLOW_TEMPLATES, ...INTEGRATION_TEMPLATES, ...TELEGRAM_BOT_TEMPLATES];
 
 interface PageAccount {
   zalo_id: string;
@@ -47,9 +50,9 @@ interface Props {
 // ── Difficulty badge ───────────────────────────────────────────────────────────
 function DifficultyBadge({ level }: { level: 'easy' | 'medium' | 'advanced' }) {
   const cfg = {
-    easy:     { label: 'Dễ',       color: 'bg-green-500/20 text-green-400 border-green-500/30' },
-    medium:   { label: 'Trung bình', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
-    advanced: { label: 'Nâng cao',  color: 'bg-red-500/20 text-red-400 border-red-500/30' },
+    easy:     { label: tr('Dễ'),       color: 'bg-green-500/20 text-green-400 border-green-500/30' },
+    medium:   { label: tr('Trung bình'), color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
+    advanced: { label: tr('Nâng cao'),  color: 'bg-red-500/20 text-red-400 border-red-500/30' },
   }[level];
   return (
     <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${cfg.color}`}>
@@ -82,7 +85,7 @@ function TemplateCard({
       {(tpl.channel === CHANNEL.TELEGRAM_USER || tpl.channel === CHANNEL.TELEGRAM_BOT) && (
         <div className="absolute top-3 right-3 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-[#0088CC]/10 border border-[#0088CC]/30 text-[#0088CC] font-medium">
           <span className="w-1 h-1 rounded-full bg-[#0088CC]" />
-          Telegram
+          {tpl.channel === CHANNEL.TELEGRAM_BOT ? 'Telegram Bot' : 'Telegram'}
         </div>
       )}
 
@@ -111,11 +114,11 @@ function TemplateCard({
       <div className="flex items-center gap-3 text-[11px] text-muted-foreground mb-4">
         <span className="flex items-center gap-1">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-          {tpl.nodes.length} bước
+          {trx('{{count}} bước', { count: tpl.nodes.length })}
         </span>
         <span className="flex items-center gap-1">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          {tpl.edges.length} kết nối
+          {trx('{{count}} kết nối', { count: tpl.edges.length })}
         </span>
       </div>
 
@@ -137,7 +140,7 @@ function TemplateCard({
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
           </svg>
-          Xem trước
+          {tr('Xem trước')}
         </button>
         <button
           onClick={onInstall}
@@ -146,7 +149,7 @@ function TemplateCard({
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-          Cài đặt
+          {tr('Cài đặt')}
         </button>
       </div>
     </div>
@@ -198,9 +201,9 @@ function PreviewModal({
     trigger: 'Kích hoạt',
     action: 'Thao tác',
     logic: 'Logic',
-    data: 'Dữ liệu',
-    integration: 'Tích hợp',
-    output: 'Đầu ra',
+    data: tr('Dữ liệu'),
+    integration: tr('Tích hợp'),
+    output: tr('Đầu ra'),
   };
 
   return (
@@ -221,7 +224,7 @@ function PreviewModal({
                 </span>
               )}
               <DifficultyBadge level={tpl.difficulty} />
-              <span className="text-[11px] text-muted-foreground">{tpl.nodes.length} bước · {tpl.edges.length} kết nối</span>
+              <span className="text-[11px] text-muted-foreground">{trx('{{count}} bước · {{count1}} kết nối', { count: tpl.nodes.length, count1: tpl.edges.length })}</span>
             </div>
           </div>
           <button
@@ -231,7 +234,7 @@ function PreviewModal({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
-            Cài đặt workflow này
+            {tr('Cài đặt workflow này')}
           </button>
           <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex-shrink-0">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -270,13 +273,13 @@ function PreviewModal({
           <div className="w-[280px] border-l border-border overflow-y-auto flex-shrink-0 p-5 space-y-5">
             {/* Description */}
             <div>
-              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">Mô tả</h4>
+              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">{tr('Mô tả')}</h4>
               <p className="text-foreground/80 text-xs leading-relaxed">{tpl.description}</p>
             </div>
 
             {/* Node breakdown */}
             <div>
-              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">Thành phần</h4>
+              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">{tr('Thành phần')}</h4>
               <div className="space-y-1.5">
                 {Object.entries(nodeGroups).map(([group, count]) => (
                   <div key={group} className="flex items-center gap-2">
@@ -290,7 +293,7 @@ function PreviewModal({
 
             {/* Steps */}
             <div>
-              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">Các bước</h4>
+              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">{tr('Các bước')}</h4>
               <div className="space-y-2">
                 {tpl.nodes.map((n, i) => {
                   const group = nodeTypeGroup(n.type);
@@ -312,7 +315,7 @@ function PreviewModal({
 
             {/* Tags */}
             <div>
-              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">Tags</h4>
+              <h4 className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wider mb-2">{tr('Tags')}</h4>
               <div className="flex flex-wrap gap-1.5">
                 {tpl.tags.map(tag => (
                   <span key={tag} className="text-[10px] px-2 py-0.5 rounded-md bg-card border border-border/60 text-muted-foreground">
@@ -346,12 +349,8 @@ function InstallModal({
   const filteredAccounts = (() => {
     const ch = channel;
     if (ch === CHANNEL.ZALO) return accounts.filter(a => (a as any).channel === CHANNEL.ZALO || !(a as any).channel);
-    if (ch === CHANNEL.FACEBOOK) return accounts.filter(a => (a as any).channel === CHANNEL.FACEBOOK);
-    // Telegram: both telegram_user and telegram_bot accounts
-    if (ch === CHANNEL.TELEGRAM_USER || ch === CHANNEL.TELEGRAM_BOT) {
-      return accounts.filter(a => (a as any).channel === CHANNEL.TELEGRAM_USER || (a as any).channel === CHANNEL.TELEGRAM_BOT);
-    }
-    return accounts;
+    // Facebook, Telegram User, Telegram Bot: exactly the template's channel (Telegram User nodes do not run on a Bot)
+    return accounts.filter(a => (a as any).channel === ch);
   })();
   const [selectedPages, setSelectedPages] = useState<string[]>([]);
   const [wfName, setWfName] = useState(tpl.name);
@@ -381,10 +380,10 @@ function InstallModal({
       });
 
       if (res?.success) {
-        showNotification(`Đã cài đặt "${wfName}" thành công!`, 'success');
+        showNotification(tr('Đã cài đặt "{{wfName}}" thành công!', { wfName }), 'success');
         onDone(openInEditor ? workflowId : '');
       } else {
-        showNotification(res?.error || 'Lỗi cài đặt workflow', 'error');
+        showNotification(res?.error || tr('Lỗi cài đặt workflow'), 'error');
       }
     } finally {
       setInstalling(false);
@@ -402,7 +401,7 @@ function InstallModal({
               {tpl.icon}
             </div>
             <div className="min-w-0">
-              <p className="text-foreground font-semibold text-sm truncate">Cài đặt workflow</p>
+              <p className="text-foreground font-semibold text-sm truncate">{tr('Cài đặt workflow')}</p>
               <p className="text-muted-foreground text-[11px] truncate">{tpl.name}</p>
             </div>
           </div>
@@ -418,24 +417,24 @@ function InstallModal({
           {/* Name */}
           <div>
             <label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wider block mb-1.5">
-              Tên workflow
+              {tr('Tên workflow')}
             </label>
             <input
               value={wfName}
               onChange={e => setWfName(e.target.value)}
               className="w-full px-3 py-2 bg-card border border-border rounded-xl text-foreground text-sm outline-none focus:border-blue-500 transition-colors"
-              placeholder="Nhập tên..."
+              placeholder={tr('Nhập tên...')}
             />
           </div>
 
           {/* Page selection */}
           <div>
             <label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wider block mb-1.5">
-              Áp dụng cho tài khoản {channelLabel}
+              {trx('Áp dụng cho tài khoản {{channelLabel}}', { channelLabel })}
             </label>
             {filteredAccounts.length === 0 ? (
               <div className="bg-card border border-border rounded-xl px-4 py-3 text-center">
-                <p className="text-muted-foreground text-xs">Chưa có tài khoản {channelLabel} nào. Workflow sẽ chạy cho tất cả tài khoản {channelLabel}.</p>
+                <p className="text-muted-foreground text-xs">{trx('Chưa có tài khoản {{channelLabel}} nào. Workflow sẽ chạy cho tất cả tài khoản {{channelLabel}}.', { channelLabel })}</p>
               </div>
             ) : (
               <div className="space-y-1.5 max-h-[160px] overflow-y-auto">
@@ -464,20 +463,20 @@ function InstallModal({
             )}
             <p className="text-muted-foreground text-[10px] mt-1.5">
               {selectedPages.length === 0
-                ? `⚠ Chưa chọn - workflow sẽ chạy cho TẤT CẢ tài khoản ${channelLabel}`
-                : `✓ Sẽ áp dụng cho ${selectedPages.length} tài khoản ${channelLabel}`}
+                ? tr('⚠ Chưa chọn - workflow sẽ chạy cho TẤT CẢ tài khoản {{channelLabel}}', { channelLabel })
+                : tr('✓ Sẽ áp dụng cho {{count}} tài khoản {{channelLabel}}', { count: selectedPages.length, channelLabel })}
             </p>
           </div>
 
           {/* Options */}
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={openInEditor} onChange={e => setOpenInEditor(e.target.checked)} className="accent-blue-500 w-3.5 h-3.5" />
-            <span className="text-foreground/80 text-xs">Mở trong trình chỉnh sửa sau khi cài đặt</span>
+            <span className="text-foreground/80 text-xs">{tr('Mở trong trình chỉnh sửa sau khi cài đặt')}</span>
           </label>
 
           {/* Info */}
           <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3">
-            <p className="text-blue-300 text-xs leading-relaxed"><SunIcon className="w-4 h-4 inline" /> Workflow sẽ được tạo ở trạng thái <strong>TẮT</strong>. Hãy kiểm tra cấu hình và bật khi sẵn sàng.
+            <p className="text-blue-300 text-xs leading-relaxed">{trx('<0/> Workflow sẽ được tạo ở trạng thái <1>TẮT</1>. Hãy kiểm tra cấu hình và bật khi sẵn sàng.', { 0: <SunIcon className="w-4 h-4 inline" />, 1: <strong /> })}
             </p>
           </div>
         </div>
@@ -485,12 +484,12 @@ function InstallModal({
         {/* Footer */}
         <div className="px-5 pb-5 flex gap-2">
           <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-card hover:bg-muted text-foreground/80 text-sm font-medium rounded-xl transition-colors">
-            Hủy
+            {tr('Hủy')}
           </button>
           <button onClick={handleInstall} disabled={installing || !wfName.trim()}
             className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2">
             {installing && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-            Cài đặt
+            {tr('Cài đặt')}
           </button>
         </div>
       </div>
@@ -531,17 +530,8 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
     }
 
     if (channelFilter !== 'all') {
-      list = list.filter(t => {
-        const tplChannel = t.channel || CHANNEL.ZALO;
-        if (tplChannel === channelFilter) return true;
-        // Telegram: both telegram_user and telegram_bot see tg.* templates
-        const isTelegramFilter = channelFilter === CHANNEL.TELEGRAM_USER || channelFilter === CHANNEL.TELEGRAM_BOT;
-        const isTelegramTemplate = tplChannel === CHANNEL.TELEGRAM_USER || tplChannel === CHANNEL.TELEGRAM_BOT;
-        if (isTelegramFilter && isTelegramTemplate) return true;
-        // Templates without channel restriction (both) are shown for all filters
-        if (!t.channel) return true;
-        return false;
-      });
+      // A template is installed on exactly one channel (no channel = Zalo), so it is listed under that channel only
+      list = list.filter(t => (t.channel || CHANNEL.ZALO) === channelFilter);
     }
 
     if (search.trim()) {
@@ -584,18 +574,18 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <polyline points="15 18 9 12 15 6"/>
               </svg>
-              Quay lại
+              {tr('Quay lại')}
             </button>
             <div className="w-px h-5 bg-muted" />
             <div>
               <h1 className="text-foreground text-xl font-bold flex items-center gap-2">
-                <span><PackageIcon className="w-4 h-4" /></span> Kho Workflow mẫu
+                {trx('<0><1/></0> Kho Workflow mẫu', { 0: <span />, 1: <PackageIcon className="w-4 h-4" /> })}
               </h1>
-              <p className="text-muted-foreground text-sm mt-0.5">Chọn workflow có sẵn, xem trước rồi cài đặt chỉ với 1 click</p>
+              <p className="text-muted-foreground text-sm mt-0.5">{tr('Chọn workflow có sẵn, xem trước rồi cài đặt chỉ với 1 click')}</p>
             </div>
           </div>
           <div className="text-muted-foreground text-xs">
-            {ALL_TEMPLATES.length} mẫu có sẵn
+            {trx('{{count}} mẫu có sẵn', { count: ALL_TEMPLATES.length })}
           </div>
         </div>
 
@@ -610,7 +600,7 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Tìm kiếm mẫu workflow..."
+              placeholder={tr('Tìm kiếm mẫu workflow...')}
               className="w-full pl-9 pr-3 py-2.5 bg-card border border-border rounded-xl text-foreground text-sm placeholder-subtle-foreground outline-none focus:border-blue-500 transition-colors"
             />
             {search && (
@@ -633,7 +623,7 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
                   : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
               }`}
             >
-              Tất cả <span className="text-muted-foreground ml-1">({ALL_TEMPLATES.length})</span>
+              {trx('Tất cả <0>({{count}})</0>', { 0: <span className="text-muted-foreground ml-1" />, count: ALL_TEMPLATES.length })}
             </button>
             {TEMPLATE_CATEGORIES.map(cat => (
               <button
@@ -661,7 +651,7 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
                 : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
             }`}
           >
-            Tất cả kênh
+            {tr('Tất cả kênh')}
           </button>
           <button
             onClick={() => setChannelFilter('zalo')}
@@ -688,13 +678,24 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
           <button
             onClick={() => setChannelFilter(CHANNEL.TELEGRAM_USER)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
-              channelFilter === CHANNEL.TELEGRAM_USER || channelFilter === CHANNEL.TELEGRAM_BOT
+              channelFilter === CHANNEL.TELEGRAM_USER
                 ? 'bg-cyan-600/20 border-cyan-500/50 text-cyan-300'
                 : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
             }`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-[#0088CC] inline-block mr-1" />
             Telegram
+          </button>
+          <button
+            onClick={() => setChannelFilter(CHANNEL.TELEGRAM_BOT)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+              channelFilter === CHANNEL.TELEGRAM_BOT
+                ? 'bg-cyan-600/20 border-cyan-500/50 text-cyan-300'
+                : 'bg-card border-border text-muted-foreground hover:border-input hover:text-foreground/80'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-[#229ED9] inline-block mr-1" />
+            Telegram Bot
           </button>
         </div>
       </div>
@@ -704,13 +705,13 @@ export default function WorkflowTemplateStore({ onBack, onEdit }: Props) {
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="w-16 h-16 rounded-2xl bg-card border border-border flex items-center justify-center mb-4 text-3xl"><SearchIcon className="w-4 h-4 inline" /> </div>
-            <p className="text-foreground/80 font-semibold mb-1">Không tìm thấy mẫu nào</p>
+            <p className="text-foreground/80 font-semibold mb-1">{tr('Không tìm thấy mẫu nào')}</p>
             <p className="text-muted-foreground text-sm mb-4 max-w-xs">
-              Thử tìm kiếm với từ khoá khác hoặc chọn danh mục khác.
+              {tr('Thử tìm kiếm với từ khoá khác hoặc chọn danh mục khác.')}
             </p>
             <button onClick={() => { setSearch(''); setActiveCategory('all'); }}
               className="text-blue-400 text-xs hover:text-blue-300 transition-colors">
-              Xóa bộ lọc
+              {tr('Xóa bộ lọc')}
             </button>
           </div>
         ) : (

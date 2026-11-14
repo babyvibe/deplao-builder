@@ -1,12 +1,14 @@
 /**
- * Trạng thái một liên hệ của chiến dịch Hỗn hợp (nhiều hành động: tin nhắn / kết bạn / mời vào nhóm).
+ * Status of one contact in a Mixed campaign (several actions: message / friend request / group invite).
  *
- * Trước đây liên hệ luôn thành "Đã gửi" khi có từ 2 hành động — kể cả khi MỌI hành động lỗi; lỗi chỉ thấy ở tab Lịch
- * sử. Giờ: tất cả lỗi → "Lỗi"; một phần lỗi → vẫn "Đã gửi" (đã có hành động tới khách, tính vào giới hạn / ngày như
- * trước) nhưng cột `error` ghi hành động nào lỗi → màn chiến dịch hiện "Lỗi một phần". Không thêm trạng thái mới nên
- * mọi bộ đếm sent / failed giữ nguyên ý nghĩa.
- * Ghi: CRMQueueService. Đọc: ui/lib/crm/campaignView. Test: src/__tests__/crm/campaignOutcome.test.ts.
+ * Before, a contact always became "Đã gửi" (Sent) when it had 2 or more actions, even when ALL actions failed. The error was only visible in the History
+ * tab. Now: all failed → "Lỗi" (Error); partly failed → still "Đã gửi" (Sent), since an action reached the customer and it counts toward the limit / day as
+ * before, but the `error` column records which action failed → the campaign screen shows "Lỗi một phần" (Partial error). No new status is added, so
+ * every sent / failed counter keeps its meaning.
+ * Written by: CRMQueueService. Read by: ui/lib/crm/campaignView. Test: src/__tests__/crm/campaignOutcome.test.ts.
  */
+
+import { tr } from '../i18n';
 
 export type MixedCampaignAction = 'message' | 'friend_request' | 'invite_to_groups';
 
@@ -17,19 +19,19 @@ export interface MixedActionOutcome {
 }
 
 export const MIXED_ACTION_LABEL: Record<MixedCampaignAction, string> = {
-  message: 'Tin nhắn',
-  friend_request: 'Kết bạn',
-  invite_to_groups: 'Mời vào nhóm',
+  message: tr('Tin nhắn'),
+  friend_request: tr('Kết bạn'),
+  invite_to_groups: tr('Mời vào nhóm'),
 };
 
-export const PARTIAL_FAILURE_PREFIX = 'Lỗi một phần';
+export const PARTIAL_FAILURE_PREFIX = tr('Lỗi một phần');
 
 function describeFailure(outcome: MixedActionOutcome): string {
   const label = MIXED_ACTION_LABEL[outcome.action as MixedCampaignAction] || outcome.action;
   return outcome.error ? `${label}: ${outcome.error}` : label;
 }
 
-/** Trạng thái + lỗi ghi vào crm_campaign_contacts sau khi chạy các hành động của một liên hệ. */
+/** Status + error written to crm_campaign_contacts after running the actions of one contact. */
 export function summarizeMixedOutcome(outcomes: readonly MixedActionOutcome[]): { status: 'sent' | 'failed'; error?: string } {
   const failures = outcomes.filter(outcome => !outcome.ok);
   if (failures.length === 0) return { status: 'sent' };
@@ -38,7 +40,7 @@ export function summarizeMixedOutcome(outcomes: readonly MixedActionOutcome[]): 
   return { status: 'sent', error: `${PARTIAL_FAILURE_PREFIX} — ${detail}` };
 }
 
-/** Liên hệ "Đã gửi" nhưng có hành động lỗi: các nhánh gửi khác không bao giờ ghi lỗi cho dòng "sent". */
+/** A contact "Đã gửi" (Sent) but with a failed action: the other send branches never write an error on the "sent" row. */
 export function partialFailureOf(contact: { status?: string | null; error?: string | null }): string | null {
   return contact.status === 'sent' && contact.error && contact.error.trim() ? contact.error : null;
 }

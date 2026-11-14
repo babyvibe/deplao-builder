@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { tr } from '../../../../shared/i18n';
 
 interface ErpOverlayProps {
   children: React.ReactNode;
@@ -98,7 +99,7 @@ interface ConfirmDialogProps {
   danger?: boolean;
 }
 
-export function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel = 'Xác nhận', danger = true }: ConfirmDialogProps) {
+export function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel = tr('Xác nhận'), danger = true }: ConfirmDialogProps) {
   return (
     <ErpModal
       onClose={onCancel}
@@ -109,7 +110,7 @@ export function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel = 'X�
       <div className="flex gap-2 justify-end">
         <button onClick={onCancel}
           className="px-4 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">
-          Huỷ
+          {tr('Huỷ')}
         </button>
         <button onClick={onConfirm}
           className={`px-4 py-1.5 text-sm text-white rounded-lg transition-colors ${danger ? 'bg-red-600 hover:bg-red-500' : 'bg-blue-600 hover:bg-blue-500'}`}>
@@ -159,7 +160,7 @@ export function PromptDialog({ title, placeholder = '', defaultValue = '', onCon
         <div className="flex gap-2 justify-end">
           <button onClick={onCancel}
             className="px-4 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">
-            Huỷ
+            {tr('Huỷ')}
           </button>
           <button onClick={handleSubmit} disabled={!value.trim()}
             className="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg transition-colors">

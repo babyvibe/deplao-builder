@@ -31,8 +31,9 @@ import { zaloReactionIconToEmoji } from '../../../shared/zalo/zaloReactions';
 import { replyStateForIncoming } from '../../../shared/chat/replyState';
 import { zinstantPreviewText } from '../../../shared/zalo/zaloZinstant';
 import { botDisconnectMessage } from '../../../shared/telegram/telegramBotStatus';
+import { tr } from '../../../shared/i18n';
 
-// ─── Contact fetch cache (7 ngày) ────────────────────────────────────────────
+// ─── Contact fetch cache (7 days) ────────────────────────────────────────────
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CACHE_KEY = 'contactFetchTimes';
 
@@ -49,7 +50,7 @@ function isContactCacheFresh(key: string): boolean {
   return !!t && (Date.now() - t) < CACHE_TTL_MS;
 }
 
-// ─── Alias refresh cache (24 giờ) ───────────────────────────────────────────
+// ─── Alias refresh cache (24 hours) ───────────────────────────────────────────
 const ALIAS_REFRESH_TTL_MS = 24 * 60 * 60 * 1000;
 const ALIAS_REFRESH_KEY = 'aliasLastRefreshTimes';
 
@@ -67,18 +68,18 @@ function isAliasRefreshFresh(key: string): boolean {
 }
 
 /**
- * Chế độ nhân viên: event realtime là tiếng vọng của thay đổi Boss ĐÃ ghi vào DB (Boss relay cho mọi nhân viên của tài
- * khoản). Handler không được ghi ngược lên Boss (cập nhật hồ sơ, đánh dấu đã đọc, cờ @, bí danh…): N máy × mỗi event
- * = N lệnh REST, mỗi lệnh lại phát một event relay cho mọi nhân viên.
+ * Employee mode: realtime events are echoes of Boss changes ALREADY written to the DB (the Boss relays them to every employee of the account).
+ * The handler must not write back to the Boss (profile updates, mark as read, @ flags, aliases…): N machines × each event
+ * = N REST calls, and each call emits a relay event to every employee again.
  */
 function isEmployeeMode(): boolean {
   return useEmployeeStore.getState().mode === 'employee';
 }
 
-/** Đọc lại số lời mời kết bạn nhận được của `zaloId` → số trên tab CRM + chấm đỏ (lỗi đọc: giữ nguyên). */
+/** Re-reads the number of friend requests received for `zaloId` → the number on the CRM tab + the red dot (on a read error: keep as is). */
 function syncReceivedFriendRequestBadge(zaloId: string): void {
   DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
-    if (isReadFailure(res)) return; // lỗi đọc ≠ 0 lời mời: không xoá chấm đỏ
+    if (isReadFailure(res)) return; // read error ≠ 0 requests: do not clear the red dot
     const count = res?.requests?.length ?? 0;
     if (useAccountStore.getState().activeAccountId === zaloId) {
       useCRMStore.getState().setRequestCount(count);
@@ -123,13 +124,13 @@ async function loadAliases(zaloId: string) {
           const aliasKey = `${zaloId}__${item.userId}`;
           const unchanged = aliasMap.get(aliasKey) === item.alias;
           aliasMap.set(aliasKey, item.alias);
-          // Push alias vào chatStore (field alias riêng, KHÔNG overwrite display_name)
+          // Push the alias into chatStore (its own alias field, does NOT overwrite display_name)
           useChatStore.getState().updateContact(zaloId, {
             contact_id: item.userId,
             alias: item.alias,
           });
-          // Lưu vào DB để bền vững qua restart — chỉ khi bí danh đổi: mỗi lần lưu phát db:contactAliasChanged (Boss relay
-          // cho mọi nhân viên của tài khoản) → trước đây mỗi lần kết nối = một event cho MỌI bí danh. Nhân viên không lưu.
+          // Save to the DB so it survives restarts, only when the alias changes: each save emits db:contactAliasChanged (the Boss relays
+          // it to every employee of the account), so previously each connection = one event for EVERY alias. Employees do not save.
           if (!unchanged && !isEmployeeMode()) {
             DataAccessor.setContactAlias({ zaloId, contactId: item.userId, alias: item.alias }).catch(() => {});
           }
@@ -149,8 +150,8 @@ async function loadAliases(zaloId: string) {
 }
 
 /**
- * Lấy tên hiển thị của account từ accountStore.
- * Dùng trong notification title để biết tin nhắn đến từ account nào.
+ * Gets the display name of the account from accountStore.
+ * Used in the notification title to show which account the message came in on.
  */
 function getAccountDisplayName(zaloId: string): string {
   const accounts = useAccountStore.getState().accounts;
@@ -159,8 +160,8 @@ function getAccountDisplayName(zaloId: string): string {
 }
 
 /**
- * Xây dựng chuỗi preview cho last_message / notification dựa trên loại tin nhắn.
- * Dùng chung cho cả updateContact (last_message) và showDesktopNotification (msgText).
+ * Builds the preview string for last_message / notifications based on the message type.
+ * Shared by updateContact (last_message) and showDesktopNotification (msgText).
  */
 function buildMessagePreview(
   contentRaw: any,
@@ -172,41 +173,41 @@ function buildMessagePreview(
   const action = typeof contentRaw === 'object' && contentRaw !== null ? String(contentRaw.action || '') : '';
 
   // ── chat.recommended call actions ───────────────────────────────────────
-  if (action === 'recommened.misscall') return '📵 Cuộc gọi nhỡ';
+  if (action === 'recommened.misscall') return tr('📵 Cuộc gọi nhỡ');
   if (action === 'recommened.calltime') {
     let params: any = {};
     try { const p = contentRaw?.params; params = typeof p === 'string' ? JSON.parse(p) : (p || {}); } catch {}
     const secs = params.duration || 0;
-    if (secs > 0) { const m = Math.floor(secs / 60), s = secs % 60; return `📞 Cuộc gọi (${m > 0 ? `${m}p ` : ''}${s}s)`; }
-    return '📞 Cuộc gọi';
+    if (secs > 0) { const m = Math.floor(secs / 60), s = secs % 60; return tr('📞 Cuộc gọi ({{v1}}{{s}}s)', { v1: m > 0 ? `${m}p ` : '', s }); }
+    return tr('📞 Cuộc gọi');
   }
 
-  // ── Link preview (action=recommened.link) - phải check trước heuristic ảnh ──
+  // ── Link preview (action=recommened.link): must be checked before the image heuristic ──
   if (action === 'recommened.link' || action === 'recommended.link') {
     if (typeof contentRaw === 'object' && contentRaw !== null && contentRaw.title && typeof contentRaw.title === 'string') return `🔗 ${contentRaw.title}`;
     return '🔗 Link';
   }
 
   // ── Bank card action ──────────────────────────────────────────────────────
-  if (action === 'zinstant.bankcard') return '🏦 Tài khoản ngân hàng';
+  if (action === 'zinstant.bankcard') return tr('🏦 Tài khoản ngân hàng');
 
   // ── Legacy/explicit call types ───────────────────────────────────────────
   if (mt.includes('call') || (typeof contentRaw === 'object' && contentRaw !== null && (contentRaw.call_id || contentRaw.callId || contentRaw.callType !== undefined))) {
     const missed = contentRaw?.missed || contentRaw?.status === 2;
     const secs = contentRaw?.duration || contentRaw?.call_duration;
-    if (missed) return '📵 Cuộc gọi nhỡ';
-    if (secs) { const m = Math.floor(secs / 60), s = secs % 60; return `📞 Cuộc gọi (${m > 0 ? `${m}p ` : ''}${s}s)`; }
-    return '📞 Cuộc gọi';
+    if (missed) return tr('📵 Cuộc gọi nhỡ');
+    if (secs) { const m = Math.floor(secs / 60), s = secs % 60; return tr('📞 Cuộc gọi ({{v1}}{{s}}s)', { v1: m > 0 ? `${m}p ` : '', s }); }
+    return tr('📞 Cuộc gọi');
   }
 
   // ── Voice / audio ────────────────────────────────────────────────────────
   if (mt.includes('voice') || mt.includes('audio')) {
     const secs = (typeof contentRaw === 'object' && contentRaw !== null) ? (contentRaw?.duration || 0) : 0;
-    return `🎙 Tin nhắn thoại${secs ? ` (${secs}s)` : ''}`;
+    return tr('🎙 Tin nhắn thoại{{v1}}', { v1: secs ? ` (${secs}s)` : '' });
   }
 
   // ── Sticker ──────────────────────────────────────────────────────────────
-  if (mt.includes('sticker') || (typeof contentRaw === 'object' && contentRaw !== null && (contentRaw.sticker_id || contentRaw.stickerId))) return '🎭 Nhãn dán';
+  if (mt.includes('sticker') || (typeof contentRaw === 'object' && contentRaw !== null && (contentRaw.sticker_id || contentRaw.stickerId))) return tr('🎭 Nhãn dán');
 
   // ── GIF ──────────────────────────────────────────────────────────────────
   if (mt.includes('gif')) return '🎬 GIF';
@@ -214,10 +215,10 @@ function buildMessagePreview(
   // ── Video ────────────────────────────────────────────────────────────────
   if (mt.includes('video')) return '🎥 Video';
 
-  // ── System card (chat.ecard): nhắc hẹn, thông báo nhóm ────────────────
+  // ── System card (chat.ecard): reminders, group notices ────────────────
   if (mt === 'chat.ecard') {
     if (typeof contentRaw === 'object' && contentRaw !== null && contentRaw.title) return `🔔 ${contentRaw.title}`;
-    return '🔔 Thông báo';
+    return tr('🔔 Thông báo');
   }
 
   // ── Link types (chat.recommended, chat.link, share.link) ───────────────
@@ -228,66 +229,66 @@ function buildMessagePreview(
 
   // ── Bank card (chat.webcontent) ────────────────────────────────────────
   if (mt === 'chat.webcontent') {
-    if (typeof contentRaw === 'object' && contentRaw !== null && contentRaw.action === 'zinstant.bankcard') return '🏦 Tài khoản ngân hàng';
+    if (typeof contentRaw === 'object' && contentRaw !== null && contentRaw.action === 'zinstant.bankcard') return tr('🏦 Tài khoản ngân hàng');
   }
-  // ── Bản tin / thông báo của Official Account (zinstant) ────────────────
+  // ── Official Account news / notices (zinstant) ────────────────
   if (mt === 'chat.webcontent' || mt === 'chat.webcontent.v2') {
     const zinstant = zinstantPreviewText(contentRaw, mt);
     if (zinstant) return zinstant;
   }
 
-  // ── Bản tin Official Account (chat.list.action): content là mảng bài viết ──
+  // ── Official Account news (chat.list.action): content is an array of articles ──
   if (mt === 'chat.list.action') {
     let list: any = contentRaw;
     if (typeof list === 'string') { try { list = JSON.parse(list); } catch { list = null; } }
     const items: any[] = Array.isArray(list) ? list : (list && typeof list === 'object' ? [list] : []);
     const first = items.find(it => it && typeof it === 'object' && typeof it.title === 'string' && it.title.trim());
-    return first ? `📰 ${first.title.trim()}` : '📰 Bản tin';
+    return first ? `📰 ${first.title.trim()}` : tr('📰 Bản tin');
   }
 
   // ── Poll ───────────────────────────────────────────────────────────────
-  if (mt === 'group.poll' || mt === 'telegram.poll') return '📊 Bình chọn';
+  if (mt === 'group.poll' || mt === 'telegram.poll') return tr('📊 Bình chọn');
 
   // ── Location ──────────────────────────────────────────────────────────
   if (mt === 'chat.location.new') {
     const desc = typeof contentRaw === 'object' && contentRaw !== null ? contentRaw.description : '';
-    return desc ? `📍 ${desc}` : '📍 [Vị trí]';
+    return desc ? `📍 ${desc}` : tr('📍 [Vị trí]');
   }
 
   // ── Todo ───────────────────────────────────────────────────────────────
-  if (mt === 'chat.todo') return '📝 Công việc';
+  if (mt === 'chat.todo') return tr('📝 Công việc');
 
   // ── Image (from type detection - Zalo) ──────────────────────────────────
-  if (isImage) return '🖼 Hình ảnh';
+  if (isImage) return tr('🖼 Hình ảnh');
 
   // ── Telegram-specific msgTypes ─────────────────────────────────────────
-  if (mt === 'photo') return '🖼 Hình ảnh';
+  if (mt === 'photo') return tr('🖼 Hình ảnh');
   if (mt === 'video_note') return '🎬 Video message';
   if (mt === 'audio') return '🎵 Audio';
 
   // ── File (explicit type) ─────────────────────────────────────────────────
   if (mt.includes('file') || mt === 'share.file') {
     const title = typeof contentRaw === 'object' && contentRaw !== null ? contentRaw?.title : null;
-    return title ? `📂 ${title}` : '📂 File đính kèm';
+    return title ? `📂 ${title}` : tr('📂 File đính kèm');
   }
 
   // ── Object content: heuristic detection ─────────────────────────────────
   if (typeof contentRaw === 'object' && contentRaw !== null) {
     // Bank card (webcontent + zinstant.bankcard)
-    if (contentRaw.action === 'zinstant.bankcard') return '🏦 Tài khoản ngân hàng';
+    if (contentRaw.action === 'zinstant.bankcard') return tr('🏦 Tài khoản ngân hàng');
     const params = (() => { try { const p = contentRaw.params; return typeof p === 'string' ? JSON.parse(p) : (p || {}); } catch { return {}; } })();
     // File heuristic: title + file-specific fields
     if (contentRaw.title && (params?.fileSize || params?.fileExt || params?.fileUrl || contentRaw.normalUrl || contentRaw.fileUrl)) return `📂 ${contentRaw.title}`;
     // Link heuristic: title + href without image params → link, not image
     if (contentRaw.title && contentRaw.href && !params?.rawUrl && !params?.hd) return `🔗 ${contentRaw.title}`;
     // Image heuristic: has rawUrl/hd, or href/thumb without title
-    if (params?.rawUrl || params?.hd) return '🖼 Hình ảnh';
-    if ((contentRaw.href || contentRaw.thumb) && !contentRaw.title) return '🖼 Hình ảnh';
+    if (params?.rawUrl || params?.hd) return tr('🖼 Hình ảnh');
+    if ((contentRaw.href || contentRaw.thumb) && !contentRaw.title) return tr('🖼 Hình ảnh');
     // title without file markers → plain text (reminder, link preview, etc.)
     if (contentRaw.title && typeof contentRaw.title === 'string') return contentRaw.title;
     if (contentRaw.msg && typeof contentRaw.msg === 'string') return contentRaw.msg;
     if (contentRaw.content && typeof contentRaw.content === 'string') return contentRaw.content;
-    return '[Đính kèm]';
+    return tr('[Đính kèm]');
   }
 
   return contentStr;
@@ -305,7 +306,7 @@ function detectImageContent(contentRaw: any, msgType?: string): boolean {
   return !!(contentRaw.href || contentRaw.thumb || params?.rawUrl || params?.hd);
 }
 
-/** Trích xuất URL ảnh từ quote data */
+/** Extracts the image URL from quote data */
 function extractQuoteImageUrl(rawQuote: any): string {
   if (!rawQuote) return '';
   const attach = rawQuote.attach;
@@ -318,14 +319,14 @@ function extractQuoteImageUrl(rawQuote: any): string {
     return p;
   };
 
-  // Helper: kiểm tra URL có phải ảnh CDN không (tránh trả về href web thông thường)
+  // Helper: checks whether a URL is a CDN image (avoids returning an ordinary web href)
   const isImageUrl = (url: string): boolean => {
     if (!url) return false;
     return /\.(jpe?g|png|gif|webp|bmp)(\?|$)/i.test(url) ||
       /zdn\.vn|zadn\.vn|zalo\.me\/[0-9]|cloudfront\.net|imgix/i.test(url);
   };
 
-  // 1. Thử attach
+  // 1. Try attach
   if (attach) {
     try {
       const parsed = typeof attach === 'string' ? JSON.parse(attach) : attach;
@@ -338,7 +339,7 @@ function extractQuoteImageUrl(rawQuote: any): string {
       }
     } catch {}
   }
-  // 2. Thử msg
+  // 2. Try msg
   const msgObj = (msg && typeof msg === 'string' && msg !== '' && msg !== 'null')
     ? (() => { try { return JSON.parse(msg); } catch { return null; } })()
     : (msg && typeof msg === 'object' ? msg : null);
@@ -346,13 +347,13 @@ function extractQuoteImageUrl(rawQuote: any): string {
   if (msgObj && typeof msgObj === 'object') {
     const action = String(msgObj.action || '');
     const p = parseParams(msgObj.params);
-    // Ảnh thực sự: có params.hd / params.rawUrl
+    // Real image: has params.hd / params.rawUrl
     if (p?.hd || p?.rawUrl) return p.hd || p.rawUrl;
-    // Link preview (recommened.link): chỉ dùng thumb (ảnh thumbnail), KHÔNG dùng href (URL trang web)
+    // Link preview (recommened.link): only use thumb (the thumbnail image), NOT href (the web page URL)
     if (action === 'recommened.link' || action === 'recommended.link') {
       return String(msgObj.thumb || '');
     }
-    // Các trường hợp khác: href chỉ được dùng nếu trông như URL ảnh
+    // Other cases: href is only used if it looks like an image URL
     const hrefUrl = String(msgObj.href || '');
     if (hrefUrl && isImageUrl(hrefUrl)) return hrefUrl;
     return String(msgObj.thumb || '');
@@ -360,12 +361,12 @@ function extractQuoteImageUrl(rawQuote: any): string {
   return '';
 }
 
-/** Trích xuất URL ảnh từ content của tin nhắn gốc (khi rawQuote không có ảnh) */
+/** Extracts the image URL from the content of the original message (when rawQuote has no image) */
 function extractQuoteImageFromContent(content: string, msgType: string): string {
   if (!content) return '';
-  // Chỉ trích xuất ảnh từ các loại tin nhắn là ảnh
+  // Only extract images from message types that are images
   if (!['photo', 'image', 'chat.photo'].includes(msgType)) {
-    // Kiểm tra nếu là JSON có chứa ảnh
+    // Check whether it is JSON containing an image
     try {
       const parsed = JSON.parse(content);
       if (parsed && typeof parsed === 'object') {
@@ -373,17 +374,17 @@ function extractQuoteImageFromContent(content: string, msgType: string): string 
         if (typeof params === 'string') {
           try { params = JSON.parse(params); } catch { params = null; }
         }
-        // Có title + href nhưng không có params ảnh → link/file, không phải ảnh
+        // Has title + href but no image params → a link/file, not an image
         if (parsed.title && parsed.href && !params?.hd && !params?.rawUrl) {
           return '';
         }
-        // Có params ảnh hoặc thumb → là ảnh
+        // Has image params or thumb → it is an image
         return params?.hd || params?.rawUrl || parsed.href || parsed.thumb || '';
       }
     } catch {}
     return '';
   }
-  // Là ảnh → trích xuất URL
+  // It is an image → extract the URL
   try {
     const parsed = JSON.parse(content);
     if (parsed && typeof parsed === 'object') {
@@ -413,7 +414,7 @@ function extractContent(contentRaw: any, fallbackMessage?: string, msgType?: str
   return JSON.stringify(contentRaw);
 }
 
-/** Background fetch thông tin contact, ưu tiên alias, cache 7 ngày */
+/** Background fetch of contact info, alias first, cached for 7 days */
 export async function fetchContactInfo(zaloId: string, contactId: string): Promise<void> {
   const cacheKey = `${zaloId}__${contactId}`;
   const contacts = useChatStore.getState().contacts[zaloId] || [];
@@ -428,7 +429,7 @@ export async function fetchContactInfo(zaloId: string, contactId: string): Promi
   try {
     const account = useAccountStore.getState().accounts.find((a) => a.zalo_id === zaloId);
     if (!account) return;
-    // Guard: chỉ Zalo mới dùng ipc.zalo.getUserInfo. FB dùng getUserInfoFacebook, Telegram dùng adapter.
+    // Guard: only Zalo uses ipc.zalo.getUserInfo. FB uses getUserInfoFacebook, Telegram uses the adapter.
     if (!isZalo(account.channel)) return;
     const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent, accountId: zaloId };
     const res = await ipc.zalo?.getUserInfo({ auth, userId: contactId });
@@ -440,27 +441,27 @@ export async function fetchContactInfo(zaloId: string, contactId: string): Promi
     // ── Centralized extraction ──────────────────────────────────────────
     const { displayName: realName, avatar: avatarUrl, phone, gender, birthday, alias: apiAlias } = extractUserProfile(rawProfile);
 
-    // Alias: từ getUserInfo HOẶC từ aliasMap đã load
+    // Alias: from getUserInfo OR from the alias map already loaded
     const cachedAlias = aliasMap.get(`${zaloId}__${contactId}`);
     const resolvedAlias = apiAlias || cachedAlias || '';
 
 
     if (!realName) return;
 
-    // Luôn cập nhật display_name = tên thật từ Zalo (không mix với alias)
+    // Always update display_name = the real name from Zalo (not mixed with the alias)
     useChatStore.getState().updateContact(zaloId, {
       contact_id: contactId,
       display_name: realName,
       ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
       ...(phone ? { phone } : {}),
-      // Alias riêng - chỉ set nếu có
+      // Separate alias - only set if present
       ...(resolvedAlias ? { alias: resolvedAlias } : {}),
     });
 
-    // Lưu tên thật + gender + birthday vào DB
+    // Save the real name + gender + birthday to the DB
     DataAccessor.updateContactProfile({ zaloId, contactId, displayName: realName, avatarUrl, phone, gender, birthday }).catch(() => {});
 
-    // Lưu alias vào DB nếu có (field riêng, không overwrite display_name)
+    // Save the alias to the DB if present (its own field, does not overwrite display_name)
     if (resolvedAlias) {
       aliasMap.set(`${zaloId}__${contactId}`, resolvedAlias);
       DataAccessor.setContactAlias({ zaloId, contactId, alias: resolvedAlias }).catch(() => {});
@@ -472,7 +473,7 @@ export async function fetchContactInfo(zaloId: string, contactId: string): Promi
   }
 }
 
-/** Background refresh alias only (not full profile). Cache 24 giờ, silent on failure. */
+/** Background refresh of the alias only (not the full profile). Cached for 24 hours, silent on failure. */
 export async function refreshContactAlias(zaloId: string, contactId: string): Promise<void> {
   const aliasCacheKey = `${zaloId}__${contactId}`;
   if (isAliasRefreshFresh(aliasCacheKey)) return;
@@ -480,7 +481,7 @@ export async function refreshContactAlias(zaloId: string, contactId: string): Pr
   try {
     const account = useAccountStore.getState().accounts.find((a) => a.zalo_id === zaloId);
     if (!account) return;
-    // Guard: chỉ Zalo mới dùng ipc.zalo.getUserInfo
+    // Guard: only Zalo uses ipc.zalo.getUserInfo
     if (!isZalo(account.channel)) return;
     const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent, accountId: zaloId };
     const res = await ipc.zalo?.getUserInfo({ auth, userId: contactId });
@@ -507,29 +508,29 @@ export async function refreshContactAlias(zaloId: string, contactId: string): Pr
   }
 }
 
-// Throttle set: tránh fetch group liên tục trong vòng 60s
+// Throttle set: avoid fetching the group again and again within 60s
 const fetchingGroups = new Set<string>();
 
-// ─── Throttle set: fetch thông tin cá nhân từng thành viên nhóm ──────────────
+// ─── Throttle set: fetch the personal info of each group member ──────────────
 const fetchingMemberInfo = new Set<string>();
 
 /**
  * Fetch individual group member's displayName + avatar using getUserInfo API.
- * Gọi khi phát hiện tin nhắn nhóm từ sender_id chưa có tên/avatar.
- * Cập nhật: contact store + groupInfoCache + DB.
- * Throttle: mỗi member chỉ fetch 1 lần / 60s.
+ * Called when a group message arrives from a sender_id that has no name/avatar yet.
+ * Updates: contact store + groupInfoCache + DB.
+ * Throttle: each member is fetched at most once per 60s.
  */
 async function fetchGroupMemberInfo(zaloId: string, memberId: string, groupId: string): Promise<void> {
   const key = `${zaloId}__${memberId}`;
   if (fetchingMemberInfo.has(key)) return;
   fetchingMemberInfo.add(key);
-  // Clear throttle sau 60s để cho phép refresh sau
+  // Clear the throttle after 60s to allow a refresh later
   setTimeout(() => fetchingMemberInfo.delete(key), 60_000);
 
   try {
     const account = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
-    // Chỉ Zalo: Telegram cũng "quản lý nhóm" được nên điều kiện theo năng lực cũ gọi nhầm zalo:getUserInfo cho tài
-    // khoản Telegram (main chặn — "explicit account … is not an active Zalo connection"), mỗi tin nhóm một lần IPC thừa
+    // Zalo only: Telegram can also "quản lý nhóm" (manage groups), so the old capability check wrongly called zalo:getUserInfo for the
+    // Telegram account (main blocks it: "explicit account … is not an active Zalo connection"), one wasted IPC per group message
     if (!account || !isZalo(account.channel)) return;
 
     const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent, accountId: zaloId };
@@ -543,7 +544,7 @@ async function fetchGroupMemberInfo(zaloId: string, memberId: string, groupId: s
     const avatar = profile.avatar || '';
     if (!displayName && !avatar) return;
 
-    // 1. Update contact store để ChatWindow render ngay
+    // 1. Update the contact store so ChatWindow renders right away
     if (displayName || avatar) {
       useChatStore.getState().updateContact(zaloId, {
         contact_id: memberId,
@@ -605,44 +606,44 @@ async function fetchGroupMemberInfo(zaloId: string, memberId: string, groupId: s
 }
 
 /**
- * Unified: fetch thông tin nhóm (tên, avatar) + danh sách thành viên từ 1 lần API call.
+ * Unified: fetch the group info (name, avatar) + member list from one API call.
  *
- * Thứ tự ưu tiên:
- *  1. Kiểm tra DB (contact + members) - dùng ipc.db thay vì in-memory store để luôn chính xác
- *  2. Nếu nhóm chưa có trong DB (lần đầu tiên) → gọi getGroupInfo ngay (bypass throttle)
- *  3. Nếu nhóm đã có contact nhưng chưa có members → gọi getGroupInfo
- *  4. Nếu đã có đủ thông tin → bỏ qua
+ * Priority:
+ *  1. Check the DB (contact + members): uses ipc.db instead of the in-memory store so it is always accurate
+ *  2. If the group is not in the DB yet (first time) → call getGroupInfo right away (bypass throttle)
+ *  3. If the group has a contact but no members yet → call getGroupInfo
+ *  4. If the info is complete → skip
  *
- * @param forceNotifUpdate  Khi true: sau khi fetch xong, push tên/avatar mới vào store
- *                          để notification sau dùng đúng tên (dùng khi nhận tin nhắn lần đầu)
+ * @param forceNotifUpdate  When true: after the fetch finishes, push the new name/avatar into the store
+ *                          so notifications afterwards use the right name (used when the first message arrives)
  */
 async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNotifUpdate = false): Promise<void> {
   const key = `${zaloId}__${groupId}`;
 
-  // Guard: chỉ fetch group info cho Zalo accounts
+  // Guard: only fetch group info for Zalo accounts
   const _acc = useAccountStore.getState().accounts.find((a) => a.zalo_id === zaloId);
   if (!_acc || !isZalo(_acc.channel)) return;
 
-  // Kiểm tra nhanh in-memory trước để tránh IPC round-trip không cần thiết
+  // Quick in-memory check first to avoid an unnecessary IPC round-trip
   const inMemory = useChatStore.getState().contacts[zaloId]?.find(c => c.contact_id === groupId);
   const inMemoryHasRealName = !!(inMemory?.display_name &&
     inMemory.display_name !== groupId &&
     !/^\d+$/.test(inMemory.display_name));
 
-  // Bypass throttle nếu chưa có tên thật (lần đầu gặp nhóm này)
+  // Bypass the throttle if there is no real name yet (first time seeing this group)
   const bypassThrottle = !inMemoryHasRealName;
   if (!bypassThrottle && fetchingGroups.has(key)) return;
 
   fetchingGroups.add(key);
-  // Giải phóng throttle sau 5 phút để cho phép refresh sau đó
+  // Release the throttle after 5 minutes to allow a refresh later
   setTimeout(() => fetchingGroups.delete(key), 5 * 60_000);
 
   try {
     const account = useAccountStore.getState().accounts.find((a) => a.zalo_id === zaloId);
     if (!account) { fetchingGroups.delete(key); return; }
 
-    // 1. Kiểm tra DB contact trực tiếp (không dùng in-memory store vì có thể chưa sync). DataAccessor: chế độ nhân viên
-    // đọc hội thoại trên BOSS (ipc.db.getContacts ở máy nhân viên chỉ là stub → luôn "chưa có tên" → gọi API Zalo thừa)
+    // 1. Check the DB contact directly (not the in-memory store, which may not be synced yet). DataAccessor: employee mode
+    // reads the conversations on the BOSS (ipc.db.getContacts on the employee machine is only a stub → always "chưa có tên" (no name yet) → an unnecessary Zalo API call)
     let hasRealName = inMemoryHasRealName;
     if (!hasRealName) {
       try {
@@ -651,25 +652,25 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
           existing.display_name !== groupId &&
           !/^\d+$/.test(existing.display_name));
       } catch {
-        // Fallback sang in-memory nếu DB query lỗi
+        // Fall back to in-memory if the DB query fails
         hasRealName = inMemoryHasRealName;
       }
     }
 
-    // 2. Kiểm tra members trong DB
+    // 2. Check the members in the DB
     let hasMembers = false;
     try {
       const membersRes = await DataAccessor.getGroupMembers({ zaloId, groupId });
       hasMembers = (membersRes?.members?.length || 0) > 0;
     } catch {}
 
-    // Nếu đã có đầy đủ thông tin và không cần force update → bỏ qua
+    // If the info is complete and no forced update is needed → skip
     if (hasRealName && hasMembers && !forceNotifUpdate) {
       fetchingGroups.delete(key);
       return;
     }
 
-    // 3. Gọi API getGroupInfo 1 lần duy nhất
+    // 3. Call the getGroupInfo API once
     const auth = { cookies: account.cookies, imei: account.imei, userAgent: account.user_agent };
     const res = await ipc.zalo?.getGroupInfo({ auth, groupId });
     const info = res?.response?.gridInfoMap?.[groupId] || res?.response;
@@ -680,7 +681,7 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
     const creatorId: string = info.creatorId || info.creator || '';
     const adminIds: string[] = info.adminIds || info.subAdmins || [];
 
-    // 4. Update contact nếu chưa có tên thật HOẶC forceNotifUpdate
+    // 4. Update the contact if there is no real name yet OR forceNotifUpdate
     if ((!hasRealName || forceNotifUpdate) && name) {
       useChatStore.getState().updateContact(zaloId, {
         contact_id: groupId,
@@ -698,11 +699,11 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
       }).catch(() => {});
     }
 
-    // 5. Parse và lưu members (chỉ nếu chưa có)
+    // 5. Parse and save the members (only if none saved yet)
     if (!hasMembers) {
       const rawMembers: any[] = info.memVerList || info.memberList || info.members || info.currentMems || [];
       if (rawMembers.length > 0) {
-        // memVerList có thể là array of strings "uid_version" hoặc array of objects
+        // memVerList can be an array of strings "uid_version" or an array of objects
         const members = rawMembers.map((m: any) => {
           let memberId: string;
           if (typeof m === 'string') {
@@ -714,7 +715,7 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
             memberId,
             displayName: (typeof m === 'object' ? (m.dName || m.displayName || m.name || '') : ''),
             avatar: (typeof m === 'object' ? (m.avt || m.avatar || '') : ''),
-            // Quy ước Zalo (như DB / CRM): trưởng nhóm = 2, phó nhóm = 1 — trước đây ghi ngược (1 / 2)
+            // Zalo convention (as in the DB / CRM): group leader = 2, deputy = 1 (previously these were written the other way round: 1 / 2)
             role: ((creatorId && memberId === String(creatorId).replace(/_0$/, '')) || (typeof m === 'object' && m.type === 1))
               ? groupOwnerRole('zalo')
               : (adminIds.includes(memberId) ? groupAdminRole('zalo') : 0),
@@ -745,7 +746,7 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
       }
     }
 
-    // 6. Update groupInfoCache (chỉ info, không có members mới)
+    // 6. Update groupInfoCache (info only, no new members)
     const cached = useAppStore.getState().groupInfoCache?.[zaloId]?.[groupId];
     useAppStore.getState().setGroupInfo(zaloId, groupId, {
       groupId,
@@ -759,7 +760,7 @@ async function fetchGroupInfoAndMembers(zaloId: string, groupId: string, forceNo
       fetchedAt: Date.now(),
     });
   } catch (err: any) {
-    // Nếu lỗi → xoá throttle ngay để thử lại sau
+    // On error → clear the throttle right away so it retries
     fetchingGroups.delete(key);
   }
 }
@@ -795,9 +796,9 @@ export function useZaloEvents() {
   // Request OS notification permission on mount
   useEffect(() => { requestNotificationPermission(); }, []);
 
-  // ── Đăng nhập QR xong khi cửa sổ Thêm tài khoản đã đóng ─────────
-  // Người dùng hay đóng cửa sổ khi điện thoại đã báo thành công mà Deplao còn đang lấy phiên: main vẫn lưu + kết nối
-  // tài khoản nhưng danh sách chỉ được nạp trong cửa sổ đó → tài khoản chỉ hiện sau khi mở lại app. Luôn nạp lại ở đây.
+  // ── QR login finished while the Add Account window was closed ─────────
+  // Users often close the window after the phone reports success while Deplao is still fetching the session: main still saves + connects the
+  // account, but the list is only loaded inside that window → the account only appears after reopening the app. Always reload it here.
   useEffect(() => {
     const unsub = ipc.on('qr:update', (data: any) => {
       if (data?.status !== 'success') return;
@@ -805,19 +806,19 @@ export function useZaloEvents() {
       ipc.login?.getAccounts().then((res: any) => {
         if (!Array.isArray(res?.accounts)) return;
         useAccountStore.getState().setAccounts(res.accounts);
-        if (!modalOpen) showNotification('Đã thêm tài khoản Zalo vào Deplao', 'success');
+        if (!modalOpen) showNotification(tr('Đã thêm tài khoản Zalo vào Deplao'), 'success');
       }).catch(() => {});
     });
     return unsub;
   }, [showNotification]);
 
-  // ── Handle notification click → mở đúng hội thoại ──────────────
+  // ── Handle notification click → open the right conversation ──────────────
   useEffect(() => {
     const unsub = ipc.on('app:openThread', (data: any) => {
       const { zaloId, threadId, threadType } = data;
       if (!zaloId || !threadId) return;
 
-      // Special case: click vào notification lời mời kết bạn
+      // Special case: click on a friend request notification
       if (threadId === '__friend_requests__') {
         const { activeAccountId, setActiveAccount } = useAccountStore.getState();
         if (activeAccountId !== zaloId) {
@@ -832,31 +833,31 @@ export function useZaloEvents() {
       const chatStore = useChatStore.getState();
       const { activeAccountId, setActiveAccount } = useAccountStore.getState();
 
-      // 1. Lưu thread notification vào perAccountThread TRƯỚC khi switch account
-      //    → ConversationList effect([activeAccountId]) sẽ restore đúng thread này
-      //    thay vì restore thread cũ của account
+      // 1. Save the thread notification to perAccountThread BEFORE switching account
+      //    → the ConversationList effect([activeAccountId]) will restore this exact thread
+      //    instead of the account's old thread
       chatStore.saveAccountThread(zaloId, threadId, threadType || 0);
 
-      // 2. Switch sang đúng account nếu cần (multi-account)
+      // 2. Switch to the right account if needed (multi-account)
       if (activeAccountId !== zaloId) {
         setActiveAccount(zaloId);
       }
 
-      // 3. Chuyển sang tab Chat
+      // 3. Switch to the Chat tab
       useAppStore.getState().setView('chat');
 
-      // 4. Trên mobile: hiện màn hình chat
+      // 4. On mobile: show the chat screen
       useAppStore.getState().setMobileShowChat(true);
 
-      // 5. Employee mode: không load contacts từ local DB, để REST/DataAccessor lo
-      // 6. Navigate đến đúng thread - dùng setTimeout ngắn để đảm bảo
-      //    ConversationList effect đã chạy xong (nếu có switch account)
+      // 5. Employee mode: do not load contacts from the local DB, let REST/DataAccessor handle it
+      // 6. Navigate to the right thread: use a short setTimeout to make sure
+      //    the ConversationList effect has finished running (if an account switch happened)
       const applyThread = () => {
         setActiveThread(threadId, threadType);
       };
 
       if (activeAccountId !== zaloId) {
-        // Delay khi switch account → chờ ConversationList effect chạy xong
+        // Delay when switching account → wait for the ConversationList effect to finish
         setTimeout(applyThread, 50);
       } else {
         applyThread();
@@ -868,13 +869,13 @@ export function useZaloEvents() {
       // Clear @mention flag when messages are read
       DataAccessor.setContactFlags?.({ zaloId, contactId: threadId, flags: { has_mention: 0 } }).catch(() => {});
       useChatStore.getState().updateContact(zaloId, { contact_id: threadId, has_mention: 0 } as any);
-      // Bấm thông báo = chủ động mở hội thoại → báo đã đọc lên nền tảng như khi bấm trong danh sách
-      // (Zalo: đã xem tin nhận mới nhất; Telegram: ReadHistory + @ + reaction; Facebook: read receipt)
+      // Clicking a notification = actively opening the conversation → report it as read to the platform, same as clicking in the list
+      // (Zalo: seen the latest incoming message; Telegram: ReadHistory + @ + reaction; Facebook: read receipt)
       void liveReadSync.syncOpenedThread({ accountId: zaloId, threadId, threadType: Number(threadType) === 1 ? 1 : 0 });
       ipc.app?.setBadge(Math.max(0, getFilteredUnreadCount()));
 
-      // 8. Auto-fetch user info cho thread nếu thiếu (sau khi contacts kịp load)
-      if (threadType !== 1) { // Không áp dụng cho group
+      // 8. Auto-fetch user info for the thread if missing (after the contacts have loaded)
+      if (threadType !== 1) { // Not applied to groups
         const accountInfo = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
         const channel = accountInfo?.channel || CHANNEL.ZALO;
         setTimeout(() => {
@@ -904,7 +905,7 @@ export function useZaloEvents() {
           } else if (isTelegram(channel)) {
             // Telegram: contact info comes from MTProto/Bot API during message sync
           }
-        }, 500); // Chờ contacts load từ DB
+        }, 500); // Wait for contacts to load from the DB
       }
     });
     return unsub;
@@ -916,7 +917,7 @@ export function useZaloEvents() {
       const { zaloId, requester } = data;
       if (!zaloId || !requester) return;
       const userId: string = requester.userId || '';
-      const displayName: string = requester.displayName || userId || 'Ai đó';
+      const displayName: string = requester.displayName || userId || tr('Ai đó');
       const avatar: string = requester.avatar || '';
       const msg: string = requester.msg || '';
 
@@ -937,17 +938,17 @@ export function useZaloEvents() {
 
       if (currentAccountState.activeAccountId === zaloId) {
         DataAccessor.getFriendRequests({ zaloId, direction: 'received' }).then((res: any) => {
-          if (isReadFailure(res)) return; // lỗi đọc ≠ 0 lời mời: giữ số đang hiện
+          if (isReadFailure(res)) return; // read error ≠ 0 requests: keep the number shown
           const count = res?.requests?.length ?? 0;
           useCRMStore.getState().setRequestCount(count);
         }).catch(() => {});
       }
 
-      // Notification.permission đồng bộ với macOS system notification authorization (Electron 20+)
-      // Khi user tắt notification trên macOS → permission = 'denied' → không phát âm thanh/hiện popup
+      // Notification.permission is kept in sync with the macOS system notification authorization (Electron 20+)
+      // When the user turns notifications off on macOS → permission = 'denied' → no sound / popup
       const notifAllowed = !('Notification' in window) || Notification.permission === 'granted';
 
-      // Sound - chỉ phát khi cả in-app soundEnabled VÀ macOS cho phép notification
+      // Sound: only plays when both the in-app soundEnabled AND macOS allow notifications
       if (notifSettings.soundEnabled && notifAllowed) {
         playNotificationSound(notifSettings.volume);
       }
@@ -962,12 +963,12 @@ export function useZaloEvents() {
         if (notifSettings.desktopEnabled && notifAllowed) {
           const accName = getAccountDisplayName(zaloId);
           showDesktopNotification(
-            `[${accName}] 🤝 Lời mời kết bạn`,
-            `${displayName}${msg ? `: "${msg}"` : ' muốn kết bạn với bạn'}`,
+            tr('[{{accName}}] 🤝 Lời mời kết bạn', { accName }),
+            `${displayName}${msg ? `: "${msg}"` : tr(' muốn kết bạn với bạn')}`,
             avatar || undefined,
             { zaloId, threadId: '__friend_requests__', threadType: 0 }
           );
-          // flashFrame (dock bounce trên Mac) phải nằm trong desktopEnabled để tắt cùng popup
+          // flashFrame (dock bounce on Mac) must sit inside desktopEnabled so it turns off with the popup
           ipc.app?.flashFrame?.(true);
         }
       }
@@ -986,14 +987,14 @@ export function useZaloEvents() {
     return unsub;
   }, []);
 
-  // ── event:friendRemoved → bỏ đánh dấu bạn bè (hủy kết bạn ở Zalo / máy khác) ──
+  // ── event:friendRemoved → clear the friend mark (unfriended on Zalo / another machine) ──
   useEffect(() => {
     const unsub = ipc.on('event:friendRemoved', (data: any) => {
       const zaloId = String(data?.zaloId || '');
       const userId = String(data?.userId || '');
       if (!zaloId || !userId) return;
       const contact = (useChatStore.getState().contacts[zaloId] || []).find(c => c.contact_id === userId);
-      // Chỉ sửa hội thoại đang có (không tạo hội thoại mới chỉ vì một event bạn bè)
+      // Only edit an existing conversation (do not create a new one just because of a friend event)
       if (contact && contact.is_friend !== 0) {
         useChatStore.getState().updateContact(zaloId, { contact_id: userId, is_friend: 0 });
       }
@@ -1001,16 +1002,16 @@ export function useZaloEvents() {
     return unsub;
   }, []);
 
-  // ── event:friendAccepted → thông báo + cập nhật contact store ──────────
+  // ── event:friendAccepted → notification + update the contact store ──────────
   useEffect(() => {
     const unsub = ipc.on('event:friendAccepted', (data: any) => {
       const { zaloId, userId, requester } = data || {};
       if (!zaloId || !userId) return;
 
-      // Cập nhật contact trong store: đánh dấu is_friend = 1
+      // Update the contact in the store: mark is_friend = 1
       const { updateContact } = useChatStore.getState();
       if (updateContact) updateContact(zaloId, { contact_id: userId, is_friend: 1 });
-      // Boss đã xoá lời mời (gửi / nhận) của người này → đồng bộ số lời mời + chấm đỏ
+      // The Boss deleted this person's request (sent / received) → sync the request count + red dot
       syncReceivedFriendRequestBadge(zaloId);
 
       const displayName = requester?.displayName || userId;
@@ -1020,8 +1021,8 @@ export function useZaloEvents() {
       if (notifForAccount.desktopEnabled) {
         const accName = getAccountDisplayName(zaloId);
         showDesktopNotification(
-          `[${accName}] ✅ Đã chấp nhận kết bạn`,
-          `${displayName} đã chấp nhận lời mời kết bạn của bạn`,
+          tr('[{{accName}}] ✅ Đã chấp nhận kết bạn', { accName }),
+          tr('{{displayName}} đã chấp nhận lời mời kết bạn của bạn', { displayName }),
           avatar || undefined,
           { zaloId, threadId: userId, threadType: 0 }
         );
@@ -1030,25 +1031,25 @@ export function useZaloEvents() {
     return unsub;
   }, []);
 
-  // ── Người dùng có đang thao tác không (chuột / phím) — báo đã đọc lên nền tảng chỉ khi đang ở máy ──
+  // ── Whether the user is active (mouse / keyboard): report as read to the platform only when they are at the machine ──
   useEffect(() => installLiveReadPresence(), []);
 
-  // ── Hội thoại Telegram đang mở → hàng tải file (ảnh / video) của tài khoản đó tải hội thoại này trước ──
+  // ── Telegram conversation open → the file (image / video) download queue of that account fetches this conversation first ──
   useEffect(() => installTelegramDownloadFocus(), []);
 
-  // ── Khi cửa sổ được focus lại → clear unread của thread đang active ──
+  // ── When the window regains focus → clear unread of the active thread ──
   useEffect(() => {
     const handleFocus = () => {
       windowFocusedRef.current = true;
       const { activeThreadId: tid, activeTopicId } = useChatStore.getState();
       const { activeAccountId } = useAccountStore.getState();
-      // Đang ở trang khác (Tổng quan, CRM, Cài đặt…): hội thoại nhớ lại không hiện trên màn hình → vẫn là chưa đọc
+      // On another page (Overview, CRM, Settings…): a remembered conversation is not shown on screen → it is still unread
       if (!tid || !activeAccountId || !isChatPaneVisible()) return;
       clearUnread(activeAccountId, tid);
       DataAccessor.markAsRead({ zaloId: activeAccountId, contactId: tid }).catch(() => {});
       const activeContact = (useChatStore.getState().contacts[activeAccountId] || []).find(c => c.contact_id === tid);
       const focusThreadType = activeContact?.contact_type === 'group' ? 1 : 0;
-      // Nền tảng (Zalo / Telegram / Facebook): báo khi người dùng thao tác — focus lúc mở app chưa phải là đã xem
+      // Platforms (Zalo / Telegram / Facebook): report when the user acts; focus when the app opens does not count as seen
       liveReadSync.noteThreadShown({ accountId: activeAccountId, threadId: tid, threadType: focusThreadType, topicId: activeTopicId });
       ipc.app?.setBadge(getFilteredUnreadCount());
     };
@@ -1165,7 +1166,7 @@ export function useZaloEvents() {
             ? JSON.stringify(contentRaw)
             : String(contentRaw);
 
-      // Ưu tiên rawMsgType (share.file, photo, etc.); fall back to image detection
+      // Prefer rawMsgType (share.file, photo, etc.); fall back to image detection
       const msgType = rawMsgType ? String(rawMsgType) : (isImage ? 'image' : 'text');
       const timestamp = parseInt(message.data?.ts) || Date.now();
       const rawAttachments = Array.isArray(message.data?.attachments)
@@ -1182,13 +1183,13 @@ export function useZaloEvents() {
         .filter((mention: any) => mention.user_id && mention.length > 0);
       const liveAttachments = [...rawAttachments, ...mentionAttachments];
 
-      // Trích dẫn (quote)
+      // Quote
       let quote_data: string | undefined = typeof message.data?.quoteData === 'string'
         ? message.data.quoteData
         : undefined;
       const rawQuote = message.data?.quote;
       if (rawQuote && rawQuote.globalMsgId) {
-        // Tìm tin nhắn gốc trong store để lấy đầy đủ thông tin (vì rawQuote thường rỗng)
+        // Find the original message in the store to get the full info (rawQuote is often empty)
         const allMessages = useChatStore.getState().messages[
           getMessageCacheKey(zaloId, threadId, cacheTopicId)
         ] || [];
@@ -1198,25 +1199,25 @@ export function useZaloEvents() {
         let quotedMsgType = rawQuote.msgType || '';
         let quotedAttach = rawQuote.attach ?? '';
 
-        // CRITICAL: Zalo platformType 2 (web) đặt content vào attach, platformType 1 (app) đặt vào msg
-        // Nếu msg rỗng và attach có data → lấy từ attach
+        // CRITICAL: Zalo platformType 2 (web) puts the content in attach, platformType 1 (app) puts it in msg
+        // If msg is empty and attach has data → take it from attach
         if ((!quotedMsg || quotedMsg === 'null' || quotedMsg === '') && quotedAttach && quotedAttach !== 'null') {
           quotedMsg = quotedAttach;
         }
 
-        // Nếu tìm thấy tin nhắn gốc, lấy thông tin từ đó
+        // If the original message was found, take the info from it
         if (origMsg) {
           quotedMsgType = origMsg.msg_type || '';
-          // Nếu rawQuote.msg vẫn rỗng (cả msg và attach đều rỗng), lấy từ origMsg.content
+          // If rawQuote.msg is still empty (both msg and attach are empty), take it from origMsg.content
           if (!quotedMsg || quotedMsg === 'null') {
             quotedMsg = origMsg.content || '';
           }
-          // Nếu rawQuote.attach rỗng, lấy từ origMsg.attachments
+          // If rawQuote.attach is empty, take it from origMsg.attachments
           if (!quotedAttach || quotedAttach === 'null') {
             quotedAttach = origMsg.attachments || '';
           }
         } else {
-          // Không tìm thấy origMsg → detect msgType từ quotedMsg (đã merge msg + attach)
+          // origMsg not found → detect msgType from quotedMsg (msg + attach merged)
           if (!quotedMsgType && quotedMsg) {
             try {
               const parsed = JSON.parse(quotedMsg);
@@ -1290,7 +1291,7 @@ export function useZaloEvents() {
       // Resolve a media download that won the IPC race with event:message.
       flushPendingLocalPath(localPathKey(zaloId, threadId, String(message.data?.msgId || '')));
 
-      // Forum Telegram đã mở danh sách chủ đề: dòng chủ đề của tin đổi ngay (tin mới nhất, giờ, chưa đọc) như Telegram
+      // Telegram forum has its topic list open: the topic row updates right away (latest message, time, unread) like Telegram
       if (messageChannel === CHANNEL.TELEGRAM_USER && isGroup && message.data?.msgId) {
         noteForumTopicMessage(zaloId, threadId, {
           topicId: incomingTopicId || null,
@@ -1303,7 +1304,7 @@ export function useZaloEvents() {
         });
       }
 
-      // Nếu là self-image → báo cho MessageQueue để đếm batch. Zalo photos
+      // If it is a self-image → report to MessageQueue to count the batch. Zalo photos
       // arrive as `chat.photo`; checking only image/photo meant the batch
       // never saw them and a sent preview stayed doubled for 30s.
       if (isSelf && (isImage || msgType === 'image' || msgType === 'photo' || msgType === 'chat.photo')) {
@@ -1323,8 +1324,8 @@ export function useZaloEvents() {
         if (cliMsgId && cliMsgId !== msgId) applyPendingEmployeeSender(zaloId, threadId, cliMsgId);
       }
 
-      // Bình luận trong nhóm thảo luận chưa tham gia: chỉ hiện trong phần bình luận của bài viết —
-      // không tạo hội thoại, không chưa đọc, không thông báo, không gợi ý AI.
+      // Comments in a discussion group not joined yet: only shown in the post's comment section:
+      // no conversation created, no unread, no notification, no AI suggestion.
       if (message._commentOnly === true) return;
 
       // Dispatch event for AI suggestions trigger
@@ -1332,7 +1333,7 @@ export function useZaloEvents() {
         window.dispatchEvent(new CustomEvent('ai:newMessage', { detail: { zaloId, threadId } }));
       }
 
-      // Clear typing indicator cho thread này khi nhận tin nhắn mới
+      // Clear the typing indicator for this thread when a new message arrives
       if (!isSelf) useChatStore.getState().clearTypingForThread(zaloId, threadId);
 
       const senderInfo = (message.data as any)?.senderInfo;
@@ -1358,14 +1359,14 @@ export function useZaloEvents() {
         });
       }
       const alias = aliasMap.get(`${zaloId}__${threadId}`);
-      // display_name = tên thật từ Zalo (không dùng alias). Alias lưu vào field riêng.
+      // display_name = the real name from Zalo (alias not used). The alias is saved in its own field.
       const realName =
         senderInfo?.displayName || senderInfo?.zaloName ||
         (!isSelf && !isGroup ? dName : '');
       const senderAvatar = senderInfo?.avatar || '';
 
-      // Nhân viên: Boss đã lưu hồ sơ từ chính tin này — không ghi lại (mỗi tin × N nhân viên = N lệnh REST + N event).
-      // Tin bù sau khi offline: tên / ảnh trong danh sách đã đúng thì không ghi lại (mỗi tin một lệnh ghi DB giống hệt)
+      // Employee: the Boss already saved the profile from this very message: do not write it again (each message × N employees = N REST calls + N events).
+      // Catch-up messages after being offline: if the name / avatar in the list is already correct, do not write again (each message would be an identical DB write)
       const catchUp = suppressNotification || isSilent;
       const knownProfile = catchUp
         ? (useChatStore.getState().contacts[zaloId] || []).find(c => c.contact_id === threadId)
@@ -1385,7 +1386,7 @@ export function useZaloEvents() {
       const msgChannel = (msgAccount?.channel || CHANNEL.ZALO) as string;
       const existingContact = (useChatStore.getState().contacts[zaloId] || []).find(c => c.contact_id === threadId);
       if (!catchUp) console.log(`[useZaloEvents] event:message zaloId=${zaloId} threadId=${threadId} isSelf=${isSelf} msgType=${rawMsgType} channel=${msgChannel} lastMsg="${lastMsgPreview}" contactExists=${!!existingContact} currentLastMsg="${existingContact?.last_message || ''}"`);
-      // Đã / chưa trả lời: chỉ tin thật, mới nhất (shared/chat/replyState) — tin cũ tải bù, thông báo hệ thống không đổi
+      // Replied / not replied: real, latest messages only (shared/chat/replyState). Catch-up of old messages, system notices do not change it
       const replyState = replyStateForIncoming(
         { msgType: rawMsgType, timestamp, isSelf, silent: isSilent },
         existingContact?.last_message_time,
@@ -1410,48 +1411,48 @@ export function useZaloEvents() {
       }
 
       if (isSelf) {
-        // Tin nhắn từ chính mình gửi (từ nền tảng khác đồng bộ sang)
-        // → đánh dấu đã trả lời + unread = 0 (không cộng unread). Tin cũ của mình tải bù: không đụng tới
+        // A message sent by myself (synced over from another platform)
+        // → mark as replied + unread = 0 (do not add unread). Catch-up of my old messages: do not touch
         if (replyState === 1) markReplied(zaloId, threadId);
-        // Nhân viên: renderer Boss đã đánh dấu đã đọc trên DB Boss cho chính tin này
+        // Employee: the Boss renderer already marked this very message as read in the Boss DB
         if (!isEmployeeMode()) DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
-        // Trả lời trong hội thoại đang hiện = đã đọc → báo nền tảng nếu còn tin nhận chưa báo (vd hội thoại tự mở lại lúc
-        // khởi động chưa từng báo); đã báo tới tin nhận mới nhất thì liveReadSync không gửi lại
-        // (không xét replyState: tin gửi từ Deplao đã cập nhật giờ tin cuối trước khi echo về → replyState thường undefined)
+        // A reply in the open conversation = read → report to the platform if there are still incoming messages not yet reported (e.g. a conversation reopened at
+        // startup that was never reported); if reported up to the latest incoming message, liveReadSync does not send it again
+        // (replyState is not checked: a message sent from Deplao already updated the last message time before the echo comes back → replyState is usually undefined)
         const chatNow = useChatStore.getState();
         if (!isSilent && windowFocusedRef.current && isChatPaneVisible()
           && chatNow.activeThreadId === threadId && useAccountStore.getState().activeAccountId === zaloId) {
           liveReadSync.noteThreadShown({ accountId: zaloId, threadId, threadType: isGroup ? 1 : 0, topicId: chatNow.activeTopicId });
         }
       } else if (isSilent) {
-        // Tin nhắn cũ (getGroupChatHistory) - KHÔNG cộng unread, KHÔNG bắn sound/notification
-        // Chỉ lưu message + update contact (đã xử lý ở trên)
+        // Old messages (getGroupChatHistory): do NOT add unread, do NOT play sound / notification
+        // Only save the message + update the contact (already handled above)
       } else {
         const { activeThreadId: currentActiveThread, activeThreadId, activeTopicId: currentActiveTopicId } = useChatStore.getState();
         const { activeAccountId: currentActiveAccount } = useAccountStore.getState();
-        // Forum topic: cùng channel NHƯNG khác topic → không phải active thread. Đang ở trang khác (Tổng quan, CRM,
-        // Cài đặt…) thì hội thoại nhớ lại không hiện trên màn hình → vẫn là tin chưa đọc (trước đây bị tính đã đọc im lặng)
+        // Forum topic: same channel BUT a different topic → not the active thread. On another page (Overview, CRM,
+        // Settings…) a remembered conversation is not shown on screen → it is still an unread message (previously it was silently counted as read)
         let isActiveThread = threadId === currentActiveThread && zaloId === currentActiveAccount && isChatPaneVisible();
         if (isActiveThread && incomingTopicId) {
-          // Tin nhắn thuộc topic → chỉ active nếu user đang xem đúng topic đó
+          // A message in a topic → only active if the user is viewing that topic
           const effectiveTopicId = currentActiveTopicId || '1'; // '1' = General (main timeline)
           isActiveThread = incomingTopicId === effectiveTopicId;
         }
-        // Hội thoại đang hiện trong popup Nhắn tin nhanh cũng là đang xem: không chuông / thẻ, đã đọc như khung chat
+        // A conversation shown in the quick-message popup is also being viewed: no bell / card, marked as read like the chat frame
         const quickChatThread = useAppStore.getState().quickChatThread;
         const inQuickChat = !isActiveThread && !incomingTopicId && !!quickChatThread
           && quickChatThread.zaloId === zaloId && quickChatThread.threadId === threadId;
         if (inQuickChat) isActiveThread = true;
         const isWindowFocused = windowFocusedRef.current;
 
-        // ─── Tin có nhắc tới mình (@) không ──────────────────────────────
+        // ─── Whether the message mentions me (@) ──────────────────────────────
         const msgText = String(content || '');
         const currentAccount = useAccountStore.getState().accounts.find(a => a.zalo_id === zaloId);
-        // Word boundary regex: chỉ match @all/@everyone đứng riêng, KHÔNG match @allStar
+        // Word boundary regex: only matches a standalone @all/@everyone, does NOT match @allStar
         const mentionAllRegex = /@(all|All|everyone)\b/;
         const hasMentionAll = mentionAllRegex.test(msgText);
-        // Check @username (Telegram) — KHÔNG check @displayName vì Zalo dùng @Tên
-        // nhưng displayName quá ngắn/generic → match nhầm tin nhắn tag người khác
+        // Check @username (Telegram): does NOT check @displayName because Zalo uses "@Tên"
+        // but a displayName that is too short / generic → matches a message tagging someone else by mistake
         const username = currentAccount?.username || '';
         const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const mentionUserRegex = username ? new RegExp(`@${escapeRegex(username)}\\b`) : null;
@@ -1462,34 +1463,34 @@ export function useZaloEvents() {
         const hasMention = hasNativeMention || hasMentionAll || hasMentionUser;
 
         if (!isActiveThread || !isWindowFocused) {
-        // Thread khác (hoặc account khác), HOẶC thread đang active nhưng cửa sổ bị thu nhỏ/ẩn/mất focus
-        // → vẫn tính là chưa đọc
+        // Other thread (or other account), OR the active thread but the window is minimized / hidden / lost focus
+        // → still counts as unread
         incrementUnread(zaloId, threadId);
 
         if (hasMention) {
-          // Nhân viên: renderer Boss đã ghi cờ @ cho chính tin này (ghi lại = N lệnh REST + N event relay)
+          // Employee: the Boss renderer already set the @ flag for this very message (writing it again = N REST calls + N relay events)
           if (!isEmployeeMode()) DataAccessor.setContactFlags?.({ zaloId, contactId: threadId, flags: { has_mention: 1 } }).catch(() => {});
           // Update store immediately
           useChatStore.getState().updateContact(zaloId, { contact_id: threadId, has_mention: 1 } as any);
         }
 
-        // ─── Badge taskbar - đọc sau khi incrementUnread đã cập nhật store (một lần cho cả loạt tin cùng task) ──
+        // ─── Taskbar badge: read after incrementUnread has updated the store (once for the whole batch of messages in the same task) ──
         queueBadgeRefresh((count) => ipc.app?.setBadge(count));
 
         // ─── Sound + Desktop notification ───────────────────────────────
         const appState = useAppStore.getState();
         const { isMuted, isInOthers, isZaloHidden, getNotifSettingsForAccount } = appState;
         const notifSettings = getNotifSettingsForAccount(zaloId);
-        // Notification.permission đồng bộ với macOS system notification authorization (Electron 20+)
-        // Khi user tắt notification trên macOS → permission = 'denied' → không phát âm thanh/hiện popup
+        // Notification.permission is kept in sync with the macOS system notification authorization (Electron 20+)
+        // When the user turns notifications off on macOS → permission = 'denied' → no sound / popup
         const notifAllowed = !('Notification' in window) || Notification.permission === 'granted';
         if (!suppressNotification && !isMuted(zaloId, threadId) && !isInOthers(zaloId, threadId) && !isZaloHidden(zaloId, threadId)) {
           if (notifSettings.soundEnabled && notifAllowed) {
             playNotificationSound(notifSettings.volume);
           }
-          // Thông báo trong app (thẻ góc trên): không cho hội thoại đang hiện trên màn hình, tin cũ tải bù, tin hệ thống
+          // In-app notification (corner card): not for the conversation shown on screen, catch-up of old messages, system messages
           const showToast = !isActiveThread && inAppToastAllowed({ accountId: zaloId, msgType, timestamp, onScreen: false });
-          // Đang dùng app và thẻ trong app đã hiện → không bật thêm popup của hệ điều hành cho cùng tin
+          // The app is in use and the in-app card is already shown → do not turn on another OS popup for the same message
           const showDesktop = notifSettings.desktopEnabled && notifAllowed && !(showToast && isWindowFocused);
           if (showToast || showDesktop) {
             const showNotif = (nameOverride?: string, avatarOverride?: string) => {
@@ -1500,7 +1501,7 @@ export function useZaloEvents() {
               const fullPreview = buildMessagePreview(contentRaw, rawMsgType, isImage, content);
               const msgPreview = fullPreview.slice(0, 120);
               if (showToast) {
-                // Người gửi trong nhóm: tên gợi nhớ mình đặt cho họ, tên trong tin, tên trong danh sách thành viên
+                // Group sender: the nickname you gave them, the name in the message, the name in the member list
                 const memberName = isGroup
                   ? useAppStore.getState().groupInfoCache?.[zaloId]?.[threadId]?.members?.find(m => String(m.userId) === uidFrom)?.displayName
                   : '';
@@ -1530,7 +1531,7 @@ export function useZaloEvents() {
             };
 
             if (isGroup) {
-              // Kiểm tra xem đã có tên thật chưa
+              // Check whether a real name is already known
               const ctactNow = useChatStore.getState().contacts[zaloId]?.find(c => c.contact_id === threadId);
               const hasRealNameNow = !!(ctactNow?.display_name &&
                 ctactNow.display_name !== threadId &&
@@ -1538,7 +1539,7 @@ export function useZaloEvents() {
               if (hasRealNameNow) {
                 showNotif();
               } else {
-                // Chờ fetch xong rồi mới bắn notification (lỗi thì vẫn báo với tên đang có)
+                // Wait for the fetch to finish before firing the notification (on error, still notify with the name we have)
                 fetchGroupInfoAndMembers(zaloId, threadId, true).then(() => {
                   const ctactAfter = useChatStore.getState().contacts[zaloId]?.find(c => c.contact_id === threadId);
                   showNotif(ctactAfter?.display_name, ctactAfter?.avatar_url);
@@ -1551,9 +1552,9 @@ export function useZaloEvents() {
         }
         // ────────────────────────────────────────────────────────────────
         } else {
-          // Tin nhắn từ người khác vào hội thoại đang hiện trên màn hình (cùng account, trang Chat, cửa sổ đang focus)
-          // → đã đọc trên máy ngay; báo nền tảng (Zalo đã xem / Telegram ReadHistory / Facebook read receipt) khi người
-          // dùng đang thao tác — gom loạt tin, bỏ máy đi thì báo khi họ quay lại (liveReadSync)
+          // A message from someone else into the conversation shown on screen (same account, Chat page, window in focus)
+          // → marked as read on this machine right away; report it to the platform (Zalo seen / Telegram ReadHistory / Facebook read receipt) when the person
+          // is active, batching the messages; if they leave the machine, report when they come back (liveReadSync)
           DataAccessor.markAsRead({ zaloId, contactId: threadId }).catch(() => {});
           clearUnread(zaloId, threadId);
           // Clear @mention flag when messages are read
@@ -1578,14 +1579,14 @@ export function useZaloEvents() {
         if (!hasRealName || !isContactCacheFresh(cacheKey)) {
           fetchContactInfo(zaloId, threadId);
         }
-        // Daily alias background refresh (riêng biệt với full contact fetch)
+        // Daily alias background refresh (separate from the full contact fetch)
         if (!isAliasRefreshFresh(`${zaloId}__${threadId}`)) {
           refreshContactAlias(zaloId, threadId);
         }
       } else {
-        // ─── Nhóm: fetch info + members ────────────────────────────────────
-        // setTimeout(0) để nhường control cho React render message trước,
-        // forceNotifUpdate=true đảm bảo store được cập nhật tên/avatar kịp thời
+        // ─── Group: fetch info + members ────────────────────────────────────
+        // setTimeout(0) to yield control so React renders the message first,
+        // forceNotifUpdate=true makes sure the store gets the new name/avatar in time
         const contacts = useChatStore.getState().contacts[zaloId] || [];
         const existing = contacts.find((c) => c.contact_id === threadId);
         const hasRealName = !!(existing?.display_name &&
@@ -1595,7 +1596,7 @@ export function useZaloEvents() {
           fetchGroupInfoAndMembers(zaloId, threadId, !hasRealName);
         }, 0);
 
-        // ─── Fetch individual sender info nếu chưa biết tên/avatar ────────────
+        // ─── Fetch individual sender info if the name/avatar is unknown ────────────
         if (!isSelf && uidFrom) {
           const senderContact = contacts.find(c => c.contact_id === uidFrom);
           const senderKnown = !!(senderContact?.display_name &&
@@ -1604,14 +1605,14 @@ export function useZaloEvents() {
           if (!senderKnown) {
             setTimeout(() => {
               fetchGroupMemberInfo(zaloId, uidFrom, threadId);
-            }, 200); // delay nhẹ để group fetch chạy trước
+            }, 200); // small delay so the group fetch runs first
           }
         }
       }
     };
 
-    // Tin bù sau khi offline (im lặng) của hội thoại KHÔNG đang mở: gom lại, xử lý theo phần nhỏ (catchUpEventBatcher.ts)
-    // thay vì mỗi tin một lượt vẽ lại. Tin thường và hội thoại đang mở xử lý ngay, sau khi xử lý hết tin đang chờ.
+    // Catch-up messages after being offline (silent) for a conversation that is NOT open: batched together and processed in small parts (catchUpEventBatcher.ts)
+    // instead of one redraw per message. Regular messages and the open conversation are handled right away, once the pending messages are done.
     const catchUpMessages = createCatchUpBatcher(handleIncomingMessage);
     const unsubMessage = ipc.on('event:message', (data: any) => {
       const chatNow = useChatStore.getState();
@@ -1623,7 +1624,7 @@ export function useZaloEvents() {
       catchUpMessages.flush();
       handleIncomingMessage(data);
     });
-    /** Sự kiện khác (sửa / xoá / cảm xúc / tải lại số chưa đọc...) chỉ chạy sau khi tin bù đang chờ đã vào store. */
+    /** Other events (edit / delete / reaction / reload unread count...) only run after the pending catch-up messages are in the store. */
     const afterCatchUp = {
       on: (channel: string, handler: (data: any) => void): (() => void) =>
         ipc.on(channel, (data: any) => {
@@ -1637,15 +1638,15 @@ export function useZaloEvents() {
       const { zaloId, reaction } = data;
       if (!reaction) return;
 
-      // Deep log để debug cấu trúc reaction
+      // Deep log to debug the reaction structure
       console.log('[useZaloEvents] 🎭 reaction raw:', JSON.stringify(reaction, null, 2));
 
-      // Cấu trúc từ log: reaction.data chứa toàn bộ info
+      // Structure from the log: reaction.data holds all the info
       const rData = reaction.data || {};
       const threadId = reaction.threadId || rData.idTo || rData.threadId || '';
       const userId = String(rData.uidFrom || reaction.uidFrom || '');
 
-      // TARGET msgId: trong rMsg[0].gMsgID - đây là ID tin nhắn được react, KHÔNG phải action ID
+      // TARGET msgId: in rMsg[0].gMsgID: this is the ID of the message being reacted to, NOT the action ID
       const rMsg = rData.content?.rMsg || reaction.content?.rMsg || [];
       const targetMsgId = rMsg.length > 0
         ? String(rMsg[0].gMsgID || rMsg[0].cMsgID || '')
@@ -1653,20 +1654,20 @@ export function useZaloEvents() {
 
       // rIcon: icon reaction (vd: ":>", "/-heart")
       const rawIcon = rData.content?.rIcon || reaction.content?.rIcon || reaction.rIcon || rData.rIcon || '';
-      // Cùng bảng với lúc gửi (shared/zalo/zaloReactions) → echo của reaction vừa thả khớp bản đã lưu, không bị tính 2 lần
+      // Same table as when sending (shared/zalo/zaloReactions): the echo of a reaction just sent matches the saved copy and is not counted twice
       const emoji = zaloReactionIconToEmoji(rawIcon);
 
       console.log(`[useZaloEvents] 🎭 reaction: thread=${threadId} targetMsg=${targetMsgId} user=${userId} icon=${rawIcon} → ${emoji}`);
 
       if (threadId && targetMsgId) {
-        // Echo của reaction vừa bấm trong app: handleReact() đã cập nhật UI + lưu DB → bỏ qua cả hai
-        // (trước đây echo vẫn được lưu → mỗi lần bấm +2 trong DB, mở lại hội thoại thấy gấp đôi).
+        // Echo of a reaction just clicked in the app: handleReact() already updated the UI + saved to the DB → skip both
+        // (previously the echo was still saved → each click added +2 in the DB, reopening the conversation showed double).
         const echoOfLocalReact = !!reaction.isSelf && !!emoji && consumeLocalReaction(zaloId, targetMsgId, emoji);
-        // UI: reaction người khác + reaction của mình bấm từ thiết bị khác (điện thoại)
+        // UI: other people's reactions + my own reactions clicked from another device (phone)
         if (!reaction.isSelf || (emoji && !echoOfLocalReact)) {
           updateMessageReaction(zaloId, threadId, targetMsgId, userId, emoji);
         }
-        // Nhân viên: Boss đã lưu reaction (renderer Boss / broadcastReaction); lệnh REST tương ứng là no-op
+        // Employee: the Boss already saved the reaction (Boss renderer / broadcastReaction); the matching REST call is a no-op
         if (!echoOfLocalReact && !isEmployeeMode()) {
           DataAccessor.updateReaction({ zaloId, msgId: targetMsgId, threadId, userId, emoji }).catch(() => {});
         }
@@ -1681,11 +1682,11 @@ export function useZaloEvents() {
     });
 
     // ─── Delete message events (chat.delete) ─────────────────────────────
-    // Đánh dấu recalled thay vì xoá - giữ lịch sử, hiển thị "Tin nhắn đã bị thu hồi"
+    // Mark as recalled instead of deleting: keeps the history, shows "Tin nhắn đã bị thu hồi" (message was recalled)
     const unsubDelete = afterCatchUp.on('event:delete', (data: any) => {
       const { zaloId, msgIds, threadId } = data;
       if (!Array.isArray(msgIds) || !msgIds.length) return;
-      // "Xoá khỏi app" (Boss / nhân viên khác): tin đã bị xoá khỏi DB → bỏ khỏi khung chat, không hiện "đã thu hồi"
+      // "Delete from app" (Boss / other employee): the message was deleted from the DB → remove it from the chat frame, do not show "đã thu hồi" (recalled)
       if (data.scope === 'app') {
         useChatStore.getState().removeMessagesById(zaloId, msgIds.map(String), threadId);
         return;
@@ -1700,7 +1701,7 @@ export function useZaloEvents() {
       const { zaloId, threadId, msgType, content } = data;
       if (!zaloId || !threadId) return;
 
-      // Dispatch custom event để App component xử lý
+      // Dispatch a custom event so the App component handles it
       window.dispatchEvent(new CustomEvent('zalo:reminder', {
         detail: { zaloId, threadId, msgType, content }
       }));
@@ -1710,21 +1711,21 @@ export function useZaloEvents() {
     const unsubUndo = afterCatchUp.on('event:undo', (data: any) => {
       const { zaloId, msgId, threadId } = data;
       if (!msgId) return;
-      // Đánh dấu tin nhắn là đã thu hồi (không xóa) - hiển thị "Tin nhắn đã thu hồi"
+      // Mark the message as recalled (not deleted): shows "Tin nhắn đã thu hồi" (message recalled)
       useChatStore.getState().recallMessage(zaloId, msgId, threadId);
 
-      // Nếu đây là tin nhắn cuối của conversation → cập nhật preview trong sidebar
+      // If this is the last message of the conversation → update the preview in the sidebar
       if (threadId) {
         const key = `${zaloId}_${threadId}`;
         const msgs = useChatStore.getState().messages[key] || [];
         const contact = (useChatStore.getState().contacts[zaloId] || []).find(c => c.contact_id === threadId);
-        // Kiểm tra xem tin nhắn bị thu hồi có phải là tin cuối không
+        // Check whether the recalled message is the last one
         if (contact && msgs.length > 0) {
           const lastMsg = msgs[msgs.length - 1];
           if (String(lastMsg?.msg_id) === String(msgId) || String(lastMsg?.cli_msg_id || '') === String(msgId)) {
             useChatStore.getState().updateContact(zaloId, {
               contact_id: threadId,
-              last_message: '↩ Tin nhắn đã thu hồi',
+              last_message: tr('↩ Tin nhắn đã thu hồi'),
             });
           }
         }
@@ -1740,12 +1741,12 @@ export function useZaloEvents() {
       useChatStore.getState().updateMessageEdit(zaloId, threadId, String(msgId), newText, 0, Date.now(), { silent: !!hidden });
     });
 
-    // ─── Tin Telegram lấy lại từ server: tin "chưa hỗ trợ" nay đọc được, bài kênh bỏ topic sai, tin định dạng đủ ───
+    // ─── Telegram messages fetched again from the server: "chưa hỗ trợ" (not supported yet) messages now readable, channel posts drop the wrong topic, messages get full formatting ───
     const unsubMessagesRepaired = afterCatchUp.on('event:messagesRepaired', (data: any) => {
       const { zaloId, threadId, items } = data || {};
       if (!zaloId || !threadId || !Array.isArray(items)) return;
       const store = useChatStore.getState();
-      // Bình luận lưu nhầm vào hội thoại kênh đã về nhóm thảo luận → bỏ khỏi khung chat của kênh
+      // Comments saved by mistake into a channel conversation that now belongs to the discussion group → removed from the channel's chat frame
       const removed = items.filter((item: any) => item?.removed && item?.msgId).map((item: any) => String(item.msgId));
       if (removed.length) store.removeMessagesById(String(zaloId), removed, String(threadId));
       for (const item of items) {
@@ -1763,7 +1764,7 @@ export function useZaloEvents() {
         store.patchMessage(String(zaloId), String(threadId), String(item.msgId), patch as any);
       }
     });
-    // Xem trước hội thoại đổi sau khi sửa tin cũ (trước đây còn "chưa được hỗ trợ" tới khi có tin mới)
+    // Conversation preview changes after editing an old message (previously it kept "chưa được hỗ trợ" (not supported) until a new message arrived)
     const unsubContactPreview = afterCatchUp.on('event:contactPreview', (data: any) => {
       const { zaloId, contactId, lastMessage } = data || {};
       if (!zaloId || !contactId || typeof lastMessage !== 'string') return;
@@ -1774,8 +1775,8 @@ export function useZaloEvents() {
     const unsubMessagesDeleted = afterCatchUp.on('event:messagesDeleted', (data: any) => {
       const { zaloId, messageIds, threadId } = data;
       if (!zaloId || !Array.isArray(messageIds) || !messageIds.length) return;
-      // Không có threadId (Boss bản cũ) = hộp tin chung: chat riêng / nhóm thường. Không dò sang kênh, siêu nhóm
-      // (-100…): cùng số ở đó là bài khác — trước đây bài kênh trùng số bị đánh dấu thu hồi nhầm.
+      // No threadId (old Boss version) = the general inbox: private chat / normal group. Does not look into channels or supergroups
+      // (-100…): the same number there is a different post; previously channel posts with the same number were wrongly marked as recalled.
       const prefix = `${zaloId}_`;
       const threadIds: string[] = threadId
         ? [String(threadId)]
@@ -1832,7 +1833,7 @@ export function useZaloEvents() {
       // });
     });
 
-    // Hồ sơ của chính tài khoản (cờ Zalo Business đọc lại khi đăng nhập / kết nối) — Boss và máy nhân viên (relay)
+    // The account's own profile (Zalo Business flag re-read at login / connect): Boss and employee machine (relay)
     const unsubAccountProfile = afterCatchUp.on('event:accountProfile', (data: any) => {
       const zaloId = data?.zaloId ? String(data.zaloId) : '';
       if (!zaloId || (data.is_business !== 0 && data.is_business !== 1)) return;
@@ -1846,22 +1847,22 @@ export function useZaloEvents() {
       if (!data?.zaloId) return;
       updateAccountStatus(data.zaloId, true, true);
       updateListenerActive(data.zaloId, true);
-      // Zalo My Documents: ID hội thoại có sẵn trong phiên đăng nhập → danh sách ghim đúng hội thoại đó
+      // Zalo My Documents: the conversation ID is already in the login session → the pinned list pins exactly that conversation
       const send2meId = data.accountInfo?.send2meId ? String(data.accountInfo.send2meId) : '';
       if (send2meId) {
         const acc = useAccountStore.getState().accounts.find((a) => a.zalo_id === data.zaloId);
         if (acc && acc.send2me_id !== send2meId) useAccountStore.getState().updateAccount(data.zaloId, { send2me_id: send2meId });
       }
-      // Refresh contacts so @ mention list is always up to date — Boss: DB; nhân viên: BOSS REST (ipc.db.getContacts ở
-      // máy nhân viên chỉ là stub → trước đây không nạp gì, bí danh / danh sách nhắc tên không bao giờ có)
+      // Refresh contacts so the @ mention list is always up to date. Boss: DB; employee: BOSS REST (ipc.db.getContacts on
+      // the employee machine is only a stub → previously nothing was loaded, so aliases / the name-mention list were never available)
       reloadAccountContacts(data.zaloId).catch(() => null).then((contacts) => {
-        // Populate aliasMap từ DB để fetchContactInfo không overwrite alias
+        // Populate aliasMap from the DB so fetchContactInfo does not overwrite the alias
         for (const c of contacts || []) {
           if (c.alias) {
             aliasMap.set(`${data.zaloId}__${c.contact_id}`, c.alias);
           }
         }
-        // Bí danh từ Zalo SAU khi có aliasMap: loadAliases chỉ ghi DB bí danh thật sự đổi
+        // Aliases from Zalo AFTER aliasMap is ready: loadAliases only writes to the DB the aliases that really changed
         void loadAliases(data.zaloId);
         // After contacts loaded, bulk-load group members from DB → populate groupInfoCache
         // so GroupAvatarSmall renders immediately without needing an API call
@@ -1937,7 +1938,7 @@ export function useZaloEvents() {
     };
 
     // ─── Local path update (after image download) ─────────────────────────
-    // Đánh dấu đã trả lời / bỏ đánh dấu ở máy khác (Boss / nhân viên): trạng thái mới từ DB của Boss
+    // Replied / un-replied changed on another machine (Boss / employee): the new state comes from the Boss's DB
     const unsubReplyStateChanged = afterCatchUp.on('db:replyStateChanged', (data: any) => {
       const zaloId = String(data?.zaloId || '');
       if (zaloId && Array.isArray(data?.items)) useChatStore.getState().applyReplyStates(zaloId, data.items);
@@ -1945,8 +1946,8 @@ export function useZaloEvents() {
 
     const unsubUnreadChanged = afterCatchUp.on('db:unreadChanged', (data: any) => {
       const zaloId = data?.zaloId;
-      // Đã đọc ở máy khác (lệnh REST mark-read của nhân viên phát { zaloId, contactId, unread: 0 }): số chưa đọc là
-      // dữ liệu chung trên DB Boss → xoá ở đây luôn. Chỉ đổi state khi đang có số chưa đọc (không render lại thừa).
+      // Read on another machine (the employee's REST mark-read call emits { zaloId, contactId, unread: 0 }): the unread count is
+      // shared data on the Boss DB → clear it here too. Only change state when there is an unread count (no extra re-render).
       if (zaloId && data?.contactId && Number(data?.unread) === 0) {
         const contactId = String(data.contactId);
         const contact = (useChatStore.getState().contacts[zaloId] || []).find((item) => item.contact_id === contactId);
@@ -1956,7 +1957,7 @@ export function useZaloEvents() {
         }
         return;
       }
-      // Zalo đọc ở máy khác tới một tin, sau đó có tin mới (main services/zalo/zaloReadElsewhere): còn đúng số tin mới
+      // Zalo read on another machine up to one message, then a new message arrived (main services/zalo/zaloReadElsewhere): the new message count is still correct
       if (zaloId && data?.contactId && data?.source === 'zalo_read_elsewhere' && Number(data?.unread) > 0) {
         const contactId = String(data.contactId);
         const unread = Number(data.unread);
@@ -1987,7 +1988,7 @@ export function useZaloEvents() {
         contactRefreshTimers.delete(zaloId);
         DataAccessor.getConversations(zaloId, 500, 0)
           .then((result) => {
-            // Lỗi đọc (employee: mất kết nối BOSS) → giữ danh sách, không thay bằng rỗng
+            // Read error (employee: BOSS connection lost) → keep the list, do not replace it with an empty one
             if (!isReadFailure(result) && Array.isArray(result?.items)) {
               useChatStore.getState().setContacts(zaloId, result.items);
               useAppStore.getState().loadFlags(zaloId).catch(() => {});
@@ -2024,31 +2025,31 @@ export function useZaloEvents() {
         // reconnecting cannot help, only a new login can.
         updateListenerActive(data.zaloId, false);
         showNotification(
-          data.message || `Phiên đăng nhập của tài khoản ${data.zaloId} đã hết hiệu lực. Vui lòng đăng nhập lại.`,
+          data.message || tr('Phiên đăng nhập của tài khoản {{zaloId}} đã hết hiệu lực. Vui lòng đăng nhập lại.', { zaloId: data.zaloId }),
           'error',
         );
         return;
       }
-      // Zalo tự nối lại trong vài giây như Zalo Web (Zalo PC đăng nhập / đăng xuất): chỉ đổi trạng thái, không báo. Không
-      // nối lại được thì main báo lần nữa (closed / hết thời gian chờ) và lúc đó mới hiện thông báo
+      // Zalo reconnects by itself within a few seconds like Zalo Web (Zalo PC logs in / out): only the status changes, no notice. If it
+      // cannot reconnect, main reports again (closed / timed out), and only then is the notice shown
       if (String(data?.reason || '').startsWith('reconnecting')) return;
-      // Bot Telegram dừng nhận tin (nơi khác đang nhận tin của bot, token lỗi): nói rõ lý do + cách sửa
+      // Telegram bot stopped receiving messages (another place is receiving the bot's messages, bad token): state the reason and the fix
       const account = useAccountStore.getState().accounts.find(a => a.zalo_id === data.zaloId);
       const botMessage = botDisconnectMessage(data?.reason, account?.full_name || '');
       if (botMessage) {
         showNotification(botMessage, 'warning');
         return;
       }
-      showNotification(`Tài khoản ${data.zaloId} bị ngắt kết nối`, 'warning');
+      showNotification(tr('Tài khoản {{zaloId}} bị ngắt kết nối', { zaloId: data.zaloId }), 'warning');
     });
 
-    // ─── Listener dead (max retries hoặc fatal token error) ──────────────
+    // ─── Listener dead (max retries or fatal token error) ──────────────
     const unsubListenerDead = afterCatchUp.on('event:listenerDead', (data: any) => {
       const { zaloId, reason } = data;
       updateAccountStatus(zaloId, false, false);
       updateListenerActive(zaloId, false);
-      const reasonText = reason === 'max_retries' ? 'Không thể tự kết nối lại' : `Lỗi: ${reason}`;
-      showNotification(`⚠️ Tài khoản ${zaloId} mất kết nối. ${reasonText}. Vui lòng kết nối lại thủ công.`, 'error');
+      const reasonText = reason === 'max_retries' ? tr('Không thể tự kết nối lại') : tr('Lỗi: {{reason}}', { reason });
+      showNotification(tr('⚠️ Tài khoản {{zaloId}} mất kết nối. {{reasonText}}. Vui lòng kết nối lại thủ công.', { zaloId, reasonText }), 'error');
     });
 
     // ─── Typing events ────────────────────────────────────────────────────
@@ -2065,7 +2066,7 @@ export function useZaloEvents() {
         setSeen(zaloId, threadId, seenUids || [], msgId || '', !!isGroup);
       }
     });
-    // Mốc đã nhận / đã xem tin mình gửi (main services/receipts/peerReceipts) → dấu ✓ / ✓✓ cạnh giờ, mọi kênh
+    // Read / seen marks for messages I sent (main services/receipts/peerReceipts) → ✓ / ✓✓ mark next to the time, all channels
     const unsubReceipt = afterCatchUp.on('event:receipt', (data: any) => {
       const { zaloId, threadId, deliveredTs, readTs, readMaxId } = data || {};
       if (zaloId && threadId) {
@@ -2086,7 +2087,7 @@ export function useZaloEvents() {
       });
       // Build cached group info if raw data available
       if (rawData) {
-        // memberIds có thể là string[] hoặc object[] tùy API response
+        // memberIds can be string[] or object[] depending on the API response
         const rawMemberIds: any[] = rawData.memberIds || rawData.members || [];
         const subAdmins: string[] = rawData.subAdmins || rawData.adminIds || [];
         const members = rawMemberIds.map((m: any) => {
@@ -2165,8 +2166,8 @@ export function useZaloEvents() {
       const { zaloId, groupId, eventType, data: eventData, systemText, msgId, timestamp } = data;
       if (!zaloId || !groupId) return;
 
-      // Nhóm ẩn thành viên: Boss vừa tra được tên người thực hiện → sửa dòng thông báo đã hiện (không thêm dòng mới,
-      // không chạy lại phần cập nhật cấu trúc nhóm bên dưới — sự kiện gốc đã xử lý)
+      // Group that hides members: the Boss just looked up the name of the person who acted → fix the notice line that is already shown (do not add a new line,
+      // do not re-run the group structure update below, since the original event is already handled)
       if (data.update && msgId && systemText) {
         const members = Array.isArray(data.systemMembers) ? data.systemMembers : [];
         useChatStore.getState().patchMessage(zaloId, groupId, msgId, { content: systemText, attachments: JSON.stringify(members) });
@@ -2182,7 +2183,7 @@ export function useZaloEvents() {
         const contacts = useChatStore.getState().contacts[zaloId] || [];
         const threadContact = contacts.find(c => c.contact_id === groupId);
         const threadType = threadContact?.contact_type === 'group' ? 1 : (eventType === 'webchat_info' ? 0 : 1);
-        // Lưu updateMembers vào attachments để ChatWindow render avatar/tên (nhóm ẩn thành viên: người thực hiện)
+        // Save updateMembers into attachments so ChatWindow can render the avatar/name (group hides members: the person who acted)
         const d0 = eventData?.data || eventData || {};
         const updateMembers: any[] = d0.updateMembers || [];
         const sysMembers: any[] = updateMembers.length > 0
@@ -2230,7 +2231,7 @@ export function useZaloEvents() {
               ...(newAvt ? { avatar_url: newAvt } : {}),
               contact_type: 'group',
             });
-            // Nhân viên: renderer Boss đã lưu tên / ảnh nhóm từ chính event này
+            // Employee: the Boss renderer already saved the group name / photo from this same event
             if ((newName || newAvt) && !isEmployeeMode()) {
               DataAccessor.updateContactProfile({
                 zaloId, contactId: groupId,
@@ -2250,7 +2251,7 @@ export function useZaloEvents() {
           const appState = useAppStore.getState();
           const cachedGroup = (appState.groupInfoCache[zaloId] || {})[groupId];
           if (!cachedGroup) {
-            // Chưa có cache → fetch đầy đủ từ API (bypass throttle vì chưa có thông tin)
+            // No cache yet → fetch everything from the API (bypass the throttle since there is no info yet)
             fetchGroupInfoAndMembers(zaloId, groupId, true);
             break;
           }
@@ -2291,7 +2292,7 @@ export function useZaloEvents() {
                 if (members.length < before) memberCountDelta--;
                 break;
               }
-              // Sự kiện nhóm Zalo: phó nhóm = 1, trưởng nhóm = 2 (shared/chat/groupMemberRoles, như DB)
+              // Zalo group event: deputy = 1, group leader = 2 (shared/chat/groupMemberRoles, as in the DB)
               case 'add_admin': {
                 const deputyRole = groupAdminRole('zalo');
                 if (members.find(m => m.userId === uid)) {
@@ -2424,9 +2425,9 @@ export function useZaloEvents() {
   // These events arrive when the remote side mutates labels, pins, QMs, campaigns, notes.
   // We dispatch CustomEvents so individual components can re-fetch their data.
   // Separate useEffect([]) so they are NOT torn down on every activeThreadId change.
-  // Cùng một handler cho cả hai chiều: Boss nhận emit của chính mình (thay đổi do nhân viên làm qua REST / proxy),
-  // nhân viên nhận bản relay — kể cả tiếng vọng thay đổi của chính mình → handler phải idempotent (áp payload /
-  // tải lại, không cộng dồn). Payload: IPC Boss phát `ownerZaloId`, vài lệnh REST phát `zaloId` → đọc cả hai.
+  // The same handler for both directions: the Boss receives its own emit (changes made by an employee via REST / proxy),
+  // employees receive the relay copy, including the echo of their own change → the handler must be idempotent (apply the payload /
+  // reload, do not accumulate). Payload: the Boss IPC emits `ownerZaloId`, some REST calls emit `zaloId` → read both.
   useEffect(() => {
     if (!ipc.on) return;
     const unsubs: (() => void)[] = [];
@@ -2435,7 +2436,7 @@ export function useZaloEvents() {
     unsubs.push(ipc.on('db:localLabelChanged', (data: any) => {
       window.dispatchEvent(new CustomEvent('local-labels-changed', { detail: data }));
     }));
-    // Gán / bỏ nhãn: ConversationList, ChatHeader, MessageInput, CRM tải lại nhãn của đúng tài khoản (detail.ownerZaloId;
+    // Assign / remove a label: ConversationList, ChatHeader, MessageInput, CRM reload the labels of the right account (detail.ownerZaloId;
     // bulkAssign mang labelIds / threadIds)
     unsubs.push(ipc.on('db:localLabelThreadChanged', (data: any) => {
       window.dispatchEvent(new CustomEvent(THREAD_LABELS_CHANGED_EVENT, { detail: data }));
@@ -2452,8 +2453,8 @@ export function useZaloEvents() {
     unsubs.push(ipc.on('crm:noteChanged', (data: any) => {
       window.dispatchEvent(new CustomEvent('ui:noteChanged', { detail: data }));
     }));
-    // Ghim trong app: ConversationList / ConversationInfo / GroupInfoPanel nghe 'local-pin-changed' (trước đây phát
-    // 'ui:pinnedConversationChanged' mà không ai nghe → ghim của người khác không hiện tới khi tải lại)
+    // In-app pin: ConversationList / ConversationInfo / GroupInfoPanel listen for 'local-pin-changed' (previously it emitted
+    // 'ui:pinnedConversationChanged' that nobody listened to → other people's pins did not show until reload)
     unsubs.push(ipc.on('db:pinnedConversationChanged', (data: any) => {
       const zaloId = accountOf(data);
       if (!zaloId) return;
@@ -2470,8 +2471,8 @@ export function useZaloEvents() {
       if (!zaloId || !data?.threadId || !data?.msgId) return;
       useStarredStore.getState().applyChange(zaloId, String(data.threadId), String(data.msgId), !!data.starred);
     }));
-    // Tắt tiếng / "Khác" / cờ @ (trước đây chỉ phát window event 'ui:contactFlagsChanged' không ai nghe → mute / Khác
-    // không đồng bộ giữa Boss và nhân viên)
+    // Mute / "Khác" (Other) / @ flags (previously only the window event 'ui:contactFlagsChanged' was emitted, which nobody listened to → mute / Other
+    // were not synced between the Boss and employees)
     unsubs.push(ipc.on('db:contactFlagsChanged', (data: any) => {
       const zaloId = accountOf(data);
       const contactId = String(data?.contactId || '');
@@ -2494,7 +2495,7 @@ export function useZaloEvents() {
       }
     }));
     unsubs.push(ipc.on('db:contactAliasChanged', (data: any) => {
-      // Cập nhật Zustand store ngay lập tức - quan trọng cho employee nhận từ relay
+      // Update the Zustand store right away: important for an employee receiving from the relay
       const zaloId = accountOf(data);
       const contactId = String(data?.contactId || '');
       if (!zaloId || !contactId || data?.alias === undefined) return;
@@ -2502,13 +2503,13 @@ export function useZaloEvents() {
       const aliasKey = `${zaloId}__${contactId}`;
       if (alias) aliasMap.set(aliasKey, alias);
       else aliasMap.delete(aliasKey);
-      // Chỉ hội thoại đang có: Boss lưu bí danh của cả danh bạ → không tạo hội thoại "ma" ở máy nhân viên
+      // Only conversations that already exist: the Boss stores aliases for the whole address book → does not create "ghost" conversations on the employee machine
       const contact = (useChatStore.getState().contacts[zaloId] || []).find((item) => item.contact_id === contactId);
       if (contact && (contact.alias || '') !== alias) {
         useChatStore.getState().updateContact(zaloId, { contact_id: contactId, alias });
       }
     }));
-    // Hồ sơ liên hệ sửa ở máy khác (lệnh REST update-profile) → tên / ảnh / SĐT của hội thoại đang có
+    // A contact profile edited on another machine (REST update-profile call) → name / photo / phone of the existing conversation
     unsubs.push(ipc.on('db:contactProfileUpdated', (data: any) => {
       const zaloId = accountOf(data);
       const contactId = String(data?.contactId || '');
@@ -2521,7 +2522,7 @@ export function useZaloEvents() {
       if (data.phone && data.phone !== (contact as any).phone) patch.phone = String(data.phone);
       if (Object.keys(patch).length > 0) useChatStore.getState().updateContact(zaloId, { contact_id: contactId, ...patch });
     }));
-    // Xoá hội thoại ở máy khác → bỏ khỏi danh sách + bộ nhớ tin nhắn; đang mở thì đóng (như khi tự xoá)
+    // Conversation deleted on another machine → removed from the list + message memory; if open, it is closed (as when deleting it yourself)
     unsubs.push(ipc.on('db:conversationDeleted', (data: any) => {
       const zaloId = accountOf(data);
       const contactId = String(data?.contactId || data?.threadId || '');
@@ -2529,14 +2530,14 @@ export function useZaloEvents() {
       const chat = useChatStore.getState();
       const known = (chat.contacts[zaloId] || []).some((item) => item.contact_id === contactId)
         || getMessageCacheKeysForThread(chat.messages, zaloId, contactId).length > 0;
-      if (!known) return; // tiếng vọng lần xoá của chính mình — đã bỏ rồi
+      if (!known) return; // echo of my own delete: already removed
       chat.removeContact(zaloId, contactId);
       if (chat.activeThreadId === contactId && useAccountStore.getState().activeAccountId === zaloId) {
         useChatStore.getState().setActiveThread(null);
       }
       ipc.app?.setBadge(getFilteredUnreadCount());
     }));
-    // Thư viện media: bỏ cache 30 phút (nhân viên) + báo cửa sổ thư viện đang mở tải lại ('library:changed')
+    // Media library: drop the 30-minute cache (employee) + tell the open library window to reload ('library:changed')
     const libraryChanged = (action: 'added' | 'updated' | 'deleted') => (data: any) => {
       refreshLibraryCache();
       window.dispatchEvent(new CustomEvent(LIBRARY_CHANGED_EVENT, {
@@ -2550,9 +2551,9 @@ export function useZaloEvents() {
     return () => { unsubs.forEach(u => u?.()); };
   }, []);
 
-  // ─── Chế độ nhân viên: kết nối BOSS phục hồi / Boss khởi động lại (employee:resync, catch-up không phát lại được) ──
-  // Store dùng chung không thuộc màn hình nào: tin đánh dấu, cache thư viện. Danh sách hội thoại, tin của hội thoại
-  // đang mở, nhãn, ghim, cờ, tin nhắn nhanh, CRM: từng màn hình tự tải lại qua useEmployeeResync.
+  // ─── Employee mode: BOSS connection restored / Boss restarted (employee:resync, catch-up cannot be replayed) ──
+  // Shared store that does not belong to any one screen: marked messages, library cache. The conversation list, the messages of the open conversation,
+  // labels, pins, flags, quick messages, CRM: each screen reloads itself through useEmployeeResync.
   useEmployeeResync(() => {
     refreshLibraryCache();
     window.dispatchEvent(new CustomEvent(LIBRARY_CHANGED_EVENT, { detail: { action: 'resync' } }));

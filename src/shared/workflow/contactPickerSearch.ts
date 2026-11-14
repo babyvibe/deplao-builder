@@ -6,6 +6,8 @@
  * counts per type follow the search, and only one page crosses IPC.
  */
 
+import { tr } from '../i18n';
+
 export type PickerContactType = 'user' | 'group';
 
 export interface PickerContactRow {
@@ -21,7 +23,7 @@ export interface PickerContactRow {
 
 export interface PickerContact {
   id: string;
-  /** Alias (tên gợi nhớ) when set, else the display name. */
+  /** Alias (a memorable name) when set, else the display name. */
   name: string;
   /** Display name when it differs from the alias shown as `name`. */
   originalName?: string;
@@ -53,7 +55,7 @@ export interface PickerSearchResult {
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
-/** Lowercase, without Vietnamese accents (đ → d), trimmed. */
+/** Lowercase, without Vietnamese accents ("đ" → "d"), trimmed. */
 export function foldVietnamese(text: unknown): string {
   return String(text ?? '')
     .normalize('NFD')
@@ -71,7 +73,7 @@ export function toPickerContact(row: PickerContactRow): PickerContact {
   const display = String(row.display_name ?? '').trim();
   return {
     id,
-    name: alias || display || (isGroup ? `Nhóm ${id}` : `Người dùng ${id}`),
+    name: alias || display || (isGroup ? tr('Nhóm {{id}}', { id }) : tr('Người dùng {{id}}', { id })),
     originalName: alias && display && alias !== display ? display : undefined,
     avatar: row.avatar_url || undefined,
     phone: row.phone || undefined,

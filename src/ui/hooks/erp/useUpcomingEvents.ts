@@ -1,7 +1,7 @@
 /**
- * Mount một lần (TopBar, cạnh chuông thông báo): tải lịch sắp tới của mình cho tab "Lịch sắp tới"
- * (store/erp/erpUpcomingStore) và tải lại khi lịch đổi (event realtime), 5 phút một lần, khi nhân viên kết nối lại Boss.
- * Nhắc trước / đúng giờ vẫn do mốc nhắc của từng lịch (main) — hook này không báo gì.
+ * Mounted once (TopBar, next to the notification bell): loads my upcoming calendar for the "Lịch sắp tới" (Upcoming) tab
+ * (store/erp/erpUpcomingStore) and reloads when the calendar changes (realtime event), every 5 minutes, and when the employee reconnects to the Boss.
+ * Reminders just before / on time are still handled by each event's reminder times (main); this hook reports nothing.
  */
 import { useEffect } from 'react';
 import ipc from '@/lib/ipc';
@@ -33,7 +33,7 @@ export function useUpcomingEvents(enabled: boolean, myId: string): void {
     };
   }, [enabled, myId]);
 
-  // Nhân viên: mất kết nối Boss rồi nối lại → lịch đổi trong lúc đó không có event, tải lại
+  // Employee: the Boss connection dropped and came back → calendar changes during that time have no event, so reload
   useEmployeeResync(() => {
     if (enabled) void useErpUpcomingStore.getState().load();
   });

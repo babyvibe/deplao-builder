@@ -1,19 +1,19 @@
 /**
- * PublicAddressCard — một component cho mọi chỗ hiện địa chỉ Internet của máy chủ (Nhân viên → Kết nối,
- * API → Truy cập từ xa, Webhook → Nhận dữ liệu vào, Tích hợp Casso/SePay, node Webhook workflow), đọc cùng một
- * trạng thái (cloudflare.tunnel.addresses()) nên chữ và trạng thái luôn khớp nhau.
+ * PublicAddressCard: one component for every place that shows the server's Internet address (Employees → Connection,
+ * API → Remote access, Webhook → Receive data, Casso / SePay integrations, the Webhook workflow node). It reads the same
+ * state (cloudflare.tunnel.addresses()), so the text and the status always match.
  *
- * Thẻ CHỈ ĐỂ XEM: bật / tắt / đổi địa chỉ nằm ở một chỗ — Cài đặt → Internet & Cloud → Địa chỉ Internet
- * (link "Cấu hình địa chỉ →"; chưa bật hoặc chưa có địa chỉ → "Chưa bật" + "Bật ở Cài đặt →").
- *  - Máy nhân viên / workspace từ xa: "Địa chỉ Internet do máy chủ quản lý", không có link.
- *  - Bản app không có module Cloudflare, chưa đọc xong hoặc đọc lỗi: không hiện gì (không link sang trang Cloudflare).
- *  - Mặc định chỉ hiện khi cách tạo địa chỉ là "Cloudflare tự động"; `anyMode` hiện mọi cách (địa chỉ tạm, ngrok,
- *    Cloudflare thủ công). `usePublicAddresses()` cho chỗ gọi tự quyết.
+ * The card is VIEW ONLY: turning it on / off / changing the address is done in one place: Settings → Internet & Cloud → Internet address
+ * (link "Cấu hình địa chỉ →" (Configure address →); not enabled or no address yet → "Chưa bật" (Not enabled) + "Bật ở Cài đặt →" (Enable in Settings →)).
+ *  - Employee machine / remote workspace: "Địa chỉ Internet do máy chủ quản lý" (Internet address managed by the server), no link.
+ *  - App build without the Cloudflare module, not read yet, or read error: shows nothing (no link to the Cloudflare page).
+ *  - By default it only shows when the address creation mode is "Cloudflare tự động" (Cloudflare automatic); `anyMode` shows every mode (temporary address, ngrok,
+ *    manual Cloudflare). `usePublicAddresses()` is for callers that decide for themselves.
  *
- * Trạng thái dùng chung ở mức module (một lần đọc + một lắng nghe cho mọi thẻ đang mở: CLOUD_CHANGED_EVENT và sự kiện
- * tunnel kiểu cũ 'tunnel:changed' / 'relay:tunnelStatusUpdate'; đọc lại 15 s/lần khi cửa sổ đang hiện). Chỗ nào vừa
- * nhận danh sách địa chỉ mới (configureAuto, setServiceEnabled, moveHere) gọi publishPublicAddresses() để mọi thẻ
- * cập nhật ngay.
+ * The state is shared at module level (one read + one listener for every open card: CLOUD_CHANGED_EVENT and the old-style tunnel
+ * events 'tunnel:changed' / 'relay:tunnelStatusUpdate'; re-reads every 15 s while the window is visible). Wherever a new
+ * address list is received (configureAuto, setServiceEnabled, moveHere) it calls publishPublicAddresses() so every card
+ * updates at once.
  */
 import React, { useEffect, useSyncExternalStore } from 'react';
 import ipc from '@/lib/ipc';
@@ -36,13 +36,14 @@ import {
   navigateSettings,
   SERVICE_META,
 } from '../../settings/cloud/cloudUi';
+import { tr } from '../../../../shared/i18n';
 
-// ─── Trạng thái dùng chung (module) ─────────────────────────────────────────────────────
+// ─── Shared state (module) ─────────────────────────────────────────────────────
 
 interface AddressSnapshot {
   loaded: boolean;
   addresses: PublicAddress[];
-  /** Mã lỗi của lần đọc gần nhất (vd 'EMPLOYEE_MACHINE', 'UNAVAILABLE'); null khi đọc được. */
+  /** Error code of the latest read (e.g. 'EMPLOYEE_MACHINE', 'UNAVAILABLE'); null when the read worked. */
   failure: string | null;
 }
 
@@ -62,21 +63,21 @@ function getSnapshot(): AddressSnapshot {
   return snapshot;
 }
 
-/** Main từ chối vì máy này không tự quản lý địa chỉ Internet (máy nhân viên, workspace từ xa). */
+/** Main refused because this machine does not manage its own Internet address (employee machine, remote workspace). */
 const SERVER_MANAGED_CODES = new Set(['EMPLOYEE_MACHINE', 'REMOTE_WORKSPACE']);
 
 export function isServerManagedFailure(code: string | null | undefined): boolean {
   return !!code && SERVER_MANAGED_CODES.has(code);
 }
 
-/** Cập nhật danh sách địa chỉ cho mọi thẻ đang mở (sau configureAuto / setServiceEnabled / moveHere…). */
+/** Update the address list for every open card (after configureAuto / setServiceEnabled / moveHere…). */
 export function publishPublicAddresses(addresses: PublicAddress[] | null | undefined): void {
   if (!Array.isArray(addresses)) return;
   snapshot = { loaded: true, addresses, failure: null };
   emit();
 }
 
-/** Đọc lỗi: máy do máy chủ quản lý thì bỏ địa chỉ cũ; lỗi khác giữ địa chỉ đã biết (thẻ ẩn link cấu hình). */
+/** Read error: if the machine is managed by the server, drop the old address; other errors keep the known address (the card hides the configure link). */
 function markFailed(code: string): void {
   const managed = isServerManagedFailure(code);
   if (snapshot.loaded && snapshot.failure === code && (!managed || snapshot.addresses.length === 0)) return;
@@ -86,7 +87,7 @@ function markFailed(code: string): void {
 
 let inflight: Promise<void> | null = null;
 
-/** Đọc lại địa chỉ từ main (gộp các lần gọi trùng nhau). */
+/** Read the addresses again from main (merges duplicate calls). */
 export function refreshPublicAddresses(): Promise<void> {
   if (inflight) return inflight;
   const api = cloudApi();
@@ -124,7 +125,7 @@ function startWatch(): void {
     ipc.on?.(CLOUD_CHANGED_EVENT, (payload: CloudChangedPayload) => {
       if (!payload?.area || payload.area === 'tunnel' || payload.area === 'connection') schedule();
     }),
-    // Tunnel kiểu cũ (địa chỉ tạm, ngrok, Cloudflare thủ công) không phát CLOUD_CHANGED_EVENT
+    // Old-style tunnels (temporary address, ngrok, manual Cloudflare) do not emit CLOUD_CHANGED_EVENT
     ipc.on?.('tunnel:changed', schedule),
     ipc.on?.('relay:tunnelStatusUpdate', schedule),
   ];
@@ -148,24 +149,24 @@ function endWatch(): void {
 }
 
 export interface PublicAddressesState {
-  /** Bản app có module Cloudflare. */
+  /** This app build has the Cloudflare module. */
   available: boolean;
-  /** Đã đọc ít nhất một lần (kể cả đọc lỗi). */
+  /** Read at least once (including a read that failed). */
   loaded: boolean;
-  /** Máy nhân viên / workspace từ xa: địa chỉ Internet do máy chủ quản lý, không cấu hình ở máy này. */
+  /** Employee machine / remote workspace: the Internet address is managed by the server, not configured on this machine. */
   serverManaged: boolean;
-  /** Được mở Cài đặt → Internet & Cloud (máy chủ, có module Cloudflare, lần đọc gần nhất không lỗi). */
+  /** Can open Settings → Internet & Cloud (server, has the Cloudflare module, the latest read had no error). */
   canConfigure: boolean;
-  /** Cách tạo địa chỉ đang dùng (theo địa chỉ của dịch vụ relay). */
+  /** The address creation mode in use (from the relay service's address). */
   mode: TunnelMode | null;
-  /** Đang dùng "Cloudflare tự động". */
+  /** Using "Cloudflare tự động" (Cloudflare automatic). */
   isAuto: boolean;
   addresses: PublicAddress[];
   get: (service: TunnelServiceId) => PublicAddress | null;
   refresh: () => Promise<void>;
 }
 
-/** Địa chỉ Internet của ba dịch vụ (relay 9900, payments 9888, workflow 9889), tự cập nhật khi main báo đổi. */
+/** Internet addresses of the three services (relay 9900, payments 9888, workflow 9889), updated automatically when main reports a change. */
 export function usePublicAddresses(): PublicAddressesState {
   const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const employeeMachine = useEmployeeStore(s => s.mode) === 'employee';
@@ -174,7 +175,7 @@ export function usePublicAddresses(): PublicAddressesState {
     return endWatch;
   }, []);
   const available = !!cloudApi();
-  // Không có module Cloudflare: không dùng địa chỉ đã nhớ (chỗ gọi tự lấy địa chỉ tunnel kiểu cũ nếu cần)
+  // No Cloudflare module: do not use the remembered address (the caller fetches the old-style tunnel address itself if needed)
   const addresses = available ? snap.addresses : [];
   const relay = addresses.find(a => a.service === 'relay') ?? null;
   const mode = relay?.mode ?? addresses[0]?.mode ?? null;
@@ -191,30 +192,30 @@ export function usePublicAddresses(): PublicAddressesState {
   };
 }
 
-// ─── Thẻ địa chỉ (chỉ xem) ──────────────────────────────────────────────────────────────
+// ─── Address card (view only) ──────────────────────────────────────────────────────────────
 
 export interface PublicAddressCardProps {
   service: TunnelServiceId;
   title: string;
-  /** Đuôi đường dẫn nối sau địa chỉ gốc, vd '/api/v1', '/webhook/casso'. Có '…' hoặc '<' thì chỉ sao chép phần gốc. */
+  /** Path suffix appended after the base address, e.g. '/api/v1', '/webhook/casso'. If it contains '…' or '<', only the base part is copied. */
   pathSuffix?: string;
-  /** @deprecated Bỏ qua — thẻ chỉ để xem; bật / tắt ở Cài đặt → Internet & Cloud → Địa chỉ Internet. */
+  /** @deprecated Ignored: the card is for viewing only; turn it on / off in Settings → Internet & Cloud → Internet address. */
   showSwitch?: boolean;
-  /** Gọn: ít khoảng trắng, trạng thái và link cùng một dòng. */
+  /** Compact: less spacing, status and link on one line. */
   compact?: boolean;
-  /** Hiện cả khi không phải Cloudflare tự động (địa chỉ tạm, ngrok, thủ công). Mặc định chỉ Cloudflare tự động. */
+  /** Also shown when it is not Cloudflare automatic (temporary address, ngrok, manual). Default: Cloudflare automatic only. */
   anyMode?: boolean;
-  /** Chữ sau trạng thái, vd "dùng chung với nhân viên". Mặc định là cách tạo địa chỉ. */
+  /** Text after the status, e.g. "dùng chung với nhân viên" (shared with employees). Default is the address creation mode. */
   statusNote?: string;
   className?: string;
 }
 
-/** Máy nhân viên / workspace từ xa: chỉ báo địa chỉ do máy chủ quản lý (không link sang trang cấu hình). */
+/** Employee machine / remote workspace: only reports the address managed by the server (no link to the configuration page). */
 function ServerManagedNote({ title, compact, className }: { title: string; compact: boolean; className?: string }) {
   return (
     <div className={cn('rounded-xl border border-border bg-card', compact ? 'space-y-0.5 px-3 py-2' : 'space-y-1 p-3', className)}>
       <p className="truncate text-sm font-semibold text-foreground">{title}</p>
-      <p className="text-xs text-muted-foreground">Địa chỉ Internet do máy chủ quản lý.</p>
+      <p className="text-xs text-muted-foreground">{tr('Địa chỉ Internet do máy chủ quản lý.')}</p>
     </div>
   );
 }
@@ -236,16 +237,16 @@ export default function PublicAddressCard({
   const base = addr.enabled && addr.url ? addr.url.replace(/\/+$/, '') : null;
   const fullUrl = base ? `${base}${pathSuffix}` : null;
   const copyValue = base && (pathSuffix.includes('…') || pathSuffix.includes('<')) ? base : fullUrl;
-  // Đang bật nhưng địa chỉ chưa lên (tunnel tạm vừa bật / đang chạy lại) — chưa phải "Chưa bật"
+  // Enabled but the address is not up yet (the temporary tunnel just started / is restarting) → not yet "Chưa bật" (Not enabled)
   const pending = !fullUrl && addr.enabled && (addr.state === 'starting' || addr.state === 'restarting');
   const off = !fullUrl && !pending;
   const temporary = !!fullUrl && addr.kind === 'temporary';
-  const status = off ? { label: 'Chưa bật', dot: 'bg-accent' } : addressStatus(addr, SERVICE_META[service].activeLabel);
+  const status = off ? { label: tr('Chưa bật'), dot: 'bg-accent' } : addressStatus(addr, SERVICE_META[service].activeLabel);
   const statusLine = (off ? [status.label, statusNote] : [status.label, statusNote || MODE_LABEL[addr.mode]]).filter(Boolean).join(' · ');
 
   const link = pub.canConfigure ? (
     <Button variant="link" size="sm" className="text-xs" onClick={() => navigateSettings('cloud', 'address')}>
-      {off ? 'Bật ở Cài đặt →' : temporary ? 'Dùng địa chỉ cố định →' : 'Cấu hình địa chỉ →'}
+      {off ? tr('Bật ở Cài đặt →') : temporary ? tr('Dùng địa chỉ cố định →') : tr('Cấu hình địa chỉ →')}
     </Button>
   ) : null;
 
@@ -261,7 +262,7 @@ export default function PublicAddressCard({
       <div className="flex items-center gap-2">
         <p className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{title}</p>
         {fullUrl && (
-          <Badge size="sm" variant={temporary ? 'warning' : 'success'}>{temporary ? 'Địa chỉ tạm, sẽ đổi' : 'Cố định'}</Badge>
+          <Badge size="sm" variant={temporary ? 'warning' : 'success'}>{temporary ? tr('Địa chỉ tạm, sẽ đổi') : tr('Cố định')}</Badge>
         )}
       </div>
 
@@ -270,16 +271,16 @@ export default function PublicAddressCard({
           <code className="min-w-0 flex-1 select-all truncate font-mono text-xs text-foreground" title={fullUrl}>{fullUrl}</code>
           <button
             type="button"
-            onClick={() => copyWithToast(copyValue || fullUrl, 'Đã sao chép địa chỉ')}
-            title={copyValue === base && copyValue !== fullUrl ? 'Sao chép địa chỉ gốc' : 'Sao chép'}
-            aria-label={`Sao chép địa chỉ ${title}`}
+            onClick={() => copyWithToast(copyValue || fullUrl, tr('Đã sao chép địa chỉ'))}
+            title={copyValue === base && copyValue !== fullUrl ? tr('Sao chép địa chỉ gốc') : tr('Sao chép')}
+            aria-label={tr('Sao chép địa chỉ {{title}}', { title })}
             className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <CopyIcon className="h-3.5 w-3.5" />
           </button>
         </div>
       ) : pending ? (
-        <p className="text-xs text-subtle-foreground">{addr.state === 'restarting' ? 'Đang chạy lại…' : 'Đang tạo địa chỉ…'}</p>
+        <p className="text-xs text-subtle-foreground">{addr.state === 'restarting' ? tr('Đang chạy lại…') : tr('Đang tạo địa chỉ…')}</p>
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -290,7 +291,7 @@ export default function PublicAddressCard({
         {(compact || off) && link}
       </div>
       {addr.enabled && addr.state === 'error' && addr.error && <p className="text-xs text-destructive">{addr.error}</p>}
-      {temporary && <p className="text-xs text-muted-foreground">Đổi mỗi lần khởi động lại; phải gửi lại cho nhân viên và đối tác.</p>}
+      {temporary && <p className="text-xs text-muted-foreground">{tr('Đổi mỗi lần khởi động lại; phải gửi lại cho nhân viên và đối tác.')}</p>}
       {!compact && !off && link && <div className="flex justify-end">{link}</div>}
     </div>
   );

@@ -1,6 +1,6 @@
 /**
- * TelegramUserAdapter.ts - Adapter cho kênh Telegram cá nhân (MTProto)
- * Gọi IPC telegramUser:* để gửi tin nhắn, kết nối, etc.
+ * TelegramUserAdapter.ts - Adapter for the personal Telegram channel (MTProto)
+ * Calls the telegramUser:* IPC to send messages, connect, etc.
  */
 
 import { BaseChannelAdapter } from './BaseChannelAdapter';
@@ -10,6 +10,7 @@ import {
   UnsendParams, ForwardParams, EditParams, TypingParams, ReactionParams,
 } from './ChannelAdapter';
 import ipc from '../../ipc';
+import { tr } from '../../../../shared/i18n';
 
 export class TelegramUserAdapter extends BaseChannelAdapter {
   readonly channel = 'telegram_user' as const;
@@ -39,11 +40,11 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
 
   async connectAccount(params: ConnectParams): Promise<ActionResult> {
     try {
-      // Lấy stringSession từ auth params (đã decrypt từ AccountCard)
-      // hoặc từ IPC getAccounts() nếu không có
+      // Get the stringSession from the auth params (already decrypted by AccountCard)
+      // or from the getAccounts() IPC if not present
       let stringSession = params.auth?.stringSession || '';
       if (!stringSession) {
-        // Fallback: query accounts qua IPC (đã decrypt ở main process)
+        // Fallback: query accounts via IPC (already decrypted in the main process)
         try {
           const accountsRes = await (await import('../../ipc')).default.login?.getAccounts();
           const tgAccount = accountsRes?.accounts?.find((a: any) =>
@@ -52,7 +53,7 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
           stringSession = tgAccount?.cookies || '';
         } catch {}
       }
-      if (!stringSession) return { success: false, error: 'Session không tồn tại. Vui lòng đăng nhập lại.' };
+      if (!stringSession) return { success: false, error: tr('Session không tồn tại. Vui lòng đăng nhập lại.') };
       const res = await ipc.telegramUser?.startListener({
         accountId: params.accountId,
         phoneNumber: '',
@@ -176,7 +177,7 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
 
   async sendAttachment(params: SendAttachmentParams): Promise<ActionResult> {
     try {
-      // Nhân viên gửi item thư viện: không có file trên máy → filePath rỗng + uuid, Boss tự đổi ra đường dẫn
+      // Employee sends a library item: no file on the machine → filePath empty + uuid, the Boss converts it to the file path itself
       const filePath = params.filePath || '';
       const library = params.libraryUuid ? { _libraryUuid: params.libraryUuid } : {};
       const caption = params.body;
@@ -192,7 +193,7 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
       const fileType = params.fileType || (isImage ? 'image' : isVideo ? 'video' : isAudio ? 'audio' : 'file');
       console.log(`[TG:adapter] sendAttachment filePath=${filePath} fileType=${fileType} topicId=${topicId || 'none'}`);
 
-      // Tin được trả lời (trích dẫn): cả trong chủ đề forum / chuỗi bình luận bài đăng kênh
+      // Replied-to message (quote): also inside a forum topic / channel post comment thread
       let replyToMsgId: string | undefined = params.replyToMsgId;
       if (!replyToMsgId && params.quote) {
         try {
@@ -335,7 +336,7 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
     }
   }
 
-  /** Đánh dấu đã đọc 1 forum topic cụ thể (dùng messages.ReadDiscussion) */
+  /** Marks one specific forum topic as read (uses messages.ReadDiscussion) */
   async markTopicAsRead(params: { accountId: string; threadId: string; topicId: string; topMessageId?: string }): Promise<ActionResult> {
     try {
       const res = await ipc.telegramUser?.readForumTopic({
@@ -397,7 +398,7 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
     }
   }
 
-  /** Tin chữ vào chủ đề forum / chuỗi bình luận bài đăng kênh; replyToMsgId = trả lời một tin cụ thể trong đó. */
+  /** Text message into a forum topic / channel post comment thread; replyToMsgId = reply to one specific message in it. */
   async sendTopicMessage(params: { accountId: string; threadId: string; topicId: string; text: string; replyToMsgId?: string; mentions?: Array<{ uid: string; pos: number; len: number }> }): Promise<ActionResult> {
     try {
       const res = await ipc.telegramUser?.sendTopicMessage({

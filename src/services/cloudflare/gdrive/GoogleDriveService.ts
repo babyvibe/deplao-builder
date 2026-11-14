@@ -1,16 +1,16 @@
 /**
- * GoogleDriveService — Google Drive làm kho lưu (thay R2) cho ảnh/file + bản sao DB.
+ * GoogleDriveService: Google Drive as the storage (instead of R2) for images / files + the DB copies.
  *
- *  - Đăng nhập: OAuth "Desktop app" (PKCE + loopback 127.0.0.1, quyền drive.file) trên trình duyệt của máy. Client chung
- *    của Deplao (googleOAuthClient) hoặc client riêng người dùng nhập (client_id lưu thường, secret qua safeStorage).
- *    Mỗi lúc một lượt đăng nhập (connecting hiện trên giao diện, huỷ được).
- *  - Refresh token lưu bằng safeStorage (cloudSettings); access token chỉ nhớ trong RAM, làm mới trước hạn 60 s, một
- *    lượt làm mới cho cả app. invalid_grant = phiên chết → xoá refresh token, ghi lastError, báo giao diện.
- *  - Thư mục gốc "Deplao" trong My Drive: id lưu settings.google.rootFolderId, kiểm lại một lần mỗi phiên (mất / trong
- *    thùng rác → tìm lại theo tên, bản tạo sớm nhất; không có → tạo). "Bucket" = thư mục con Deplao/<bucket>; client
- *    kiểu R2Client = DriveStore (cache theo tên bucket, quên khi đăng nhập / ngắt kết nối).
- *  - status() không gọi mạng; refresh() đọc lại email + dung lượng (about.get).
- *  - Không đụng Electron / mạng / đĩa lúc khởi tạo (CloudflareService tạo trong constructor, kể cả khi test).
+ *  - Sign-in: OAuth "Desktop app" (PKCE + loopback 127.0.0.1, drive.file scope) in the machine's browser. The shared client
+ *    of Deplao (googleOAuthClient) or a private client entered by the user (client_id stored normally, secret via safeStorage).
+ *    Only one sign-in at a time (connecting shows in the UI, and it can be cancelled).
+ *  - Refresh token stored with safeStorage (cloudSettings); the access token is kept only in RAM, refreshed 60 s before it expires, with one
+ *    refresh shared by the whole app. invalid_grant = the session is dead → delete the refresh token, write lastError, notify the UI.
+ *  - Root folder "Deplao" in My Drive: id stored in settings.google.rootFolderId, re-checked once per session (missing / in the
+ *    trash → look it up by name again, the earliest-created one; none found → create it). "Bucket" = subfolder Deplao/<bucket>; a client
+ *    of the R2Client kind = DriveStore (cache per bucket name, forgotten on sign-in / disconnect).
+ *  - status() makes no network calls; refresh() reloads the email + quota (about.get).
+ *  - Touches neither Electron / network / disk at startup (CloudflareService creates it in its constructor, even in tests).
  */
 import {
     CloudError, CloudSettingsData, CloudSettingsStore, CloudUsageRecorder, GoogleDriveCore, GoogleSettingsData, R2Client,
@@ -24,38 +24,39 @@ import {
     LOGIN_TIMEOUT_MS, LoopbackLogin, MSG_CANCELLED, MSG_SESSION_EXPIRED, OAuthClient, buildAuthorizeUrl, createOAuthState,
     createPkcePair, exchangeAuthCode, refreshAccessToken, revokeToken, startLoopbackLogin,
 } from './googleOAuth';
+import { tr } from '../../../shared/i18n';
 
 export const ROOT_FOLDER_NAME = 'Deplao';
-/** Làm mới access token trước khi hết hạn bấy nhiêu ms. */
+/** Refresh the access token this many ms before it expires. */
 const TOKEN_SKEW_MS = 60_000;
 const ABOUT_FIELDS = 'user(emailAddress,displayName),storageQuota(limit,usage,usageInDrive,usageInDriveTrash)';
 const CLIENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.apps\.googleusercontent\.com$/;
 
-export const MSG_NOT_CONNECTED = 'Chưa đăng nhập Google Drive — đăng nhập Google ở phần Kho lưu.';
-export const MSG_CLIENT_REQUIRED = 'Bản app này chưa có sẵn client Google của Deplao — nhập client OAuth riêng (mục Nâng cao) rồi đăng nhập.';
-export const MSG_BAD_CLIENT_ID = 'Client ID Google không hợp lệ (dạng …apps.googleusercontent.com)';
+export const MSG_NOT_CONNECTED = tr('Chưa đăng nhập Google Drive — đăng nhập Google ở phần Kho lưu.');
+export const MSG_CLIENT_REQUIRED = tr('Bản app này chưa có sẵn client Google của Deplao — nhập client OAuth riêng (mục Nâng cao) rồi đăng nhập.');
+export const MSG_BAD_CLIENT_ID = tr('Client ID Google không hợp lệ (dạng …apps.googleusercontent.com)');
 
 export interface GoogleDriveDeps {
     settings: CloudSettingsStore & { peek?(): Readonly<CloudSettingsData>; assertSecretsAvailable?(): void };
-    /** Gọi recordGoogle(units, { up, down }) sau mỗi request Drive tới được Google. */
+    /** Calls recordGoogle(units, { up, down }) after every Drive request that reaches Google. */
     usage: CloudUsageRecorder;
-    /** Trạng thái đổi → core báo giao diện. */
+    /** State changed → core notifies the UI. */
     notify: () => void;
-    /** Mặc định require('electron').shell.openExternal (require muộn). */
+    /** Default: require('electron').shell.openExternal (late require). */
     openExternal?: (url: string) => Promise<void>;
-    /** Mặc định globalThis.fetch; tải xuống cần body (web stream) như R2Client. */
+    /** Default: globalThis.fetch; downloads need a body (web stream) like R2Client. */
     fetchImpl?: (url: string, init: any) => Promise<DriveFetchResponse>;
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
-    /** Mặc định Logger. */
+    /** Default: Logger. */
     log?: (level: 'log' | 'warn', msg: string) => void;
-    /** Thay client OAuth chung (test). Mặc định BUILTIN_GOOGLE_CLIENT. */
+    /** Replaces the shared OAuth client (for tests). Default BUILTIN_GOOGLE_CLIENT. */
     builtinClient?: { clientId: string; clientSecret?: string | null } | null;
-    /** Hạn chờ đăng nhập trên trình duyệt (mặc định 5 phút). */
+    /** Timeout for waiting for sign-in in the browser (default 5 minutes). */
     loginTimeoutMs?: number;
-    /** Tuỳ chọn DriveStore (test: đoạn resumable nhỏ, ngưỡng multipart nhỏ). */
+    /** DriveStore options (for tests: small resumable chunks, small multipart threshold). */
     storeOptions?: Partial<Pick<DriveStoreOptions, 'simpleUploadMax' | 'chunkSize' | 'chunkRetries' | 'fileCacheMax' | 'deleteConcurrency'>>;
-    /** Tuỳ chọn hạn chót DriveApi (test). */
+    /** DriveApi deadline options (for tests). */
     apiOptions?: Partial<Pick<DriveApiOptions, 'timeoutMs' | 'idleTimeoutMs'>>;
 }
 
@@ -65,15 +66,15 @@ function defaultLog(level: 'log' | 'warn', msg: string): void {
     try {
         if (level === 'warn') Logger.warn(msg);
         else Logger.log(msg);
-    } catch { /* log lỗi không làm hỏng việc chính */ }
+    } catch { /* a logging error does not break the main work */ }
 }
 
 function errMessage(err: unknown): string {
     if (err instanceof CloudError) return err.message;
-    return String((err as Error)?.message || err || 'Lỗi không xác định');
+    return String((err as Error)?.message || err || tr('Lỗi không xác định'));
 }
 
-/** 'nguyenvana@gmail.com' → 'ng***@gmail.com' (log không lộ địa chỉ đầy đủ). */
+/** 'nguyenvana@gmail.com' → 'ng***@gmail.com' (the log does not reveal the full address). */
 function maskEmail(email: string | null): string {
     if (!email) return '(không rõ email)';
     const at = email.indexOf('@');
@@ -92,7 +93,7 @@ function strOrNull(v: unknown): string | null {
     return typeof v === 'string' && v ? v : null;
 }
 
-/** about.storageQuota (số int64 dạng chuỗi) → số; thiếu limit = không giới hạn (null). */
+/** about.storageQuota (int64 as a string) → number; a missing limit = unlimited (null). */
 export function parseQuota(q: any): GoogleDriveQuota | null {
     if (!q || typeof q !== 'object') return null;
     const num = (v: unknown) => {
@@ -118,7 +119,7 @@ export class GoogleDriveService implements GoogleDriveCore {
     private readonly logFn: (level: 'log' | 'warn', msg: string) => void;
     private readonly builtin: { clientId: string; clientSecret: string | null };
     private readonly stores = new Map<string, DriveStore>();
-    /** Tăng khi đăng nhập / ngắt kết nối / thư mục gốc đổi → mọi DriveStore quên cache. */
+    /** Bumped when signing in / disconnecting / the root folder changes → every DriveStore forgets its cache. */
     private generation = 0;
     private access: { token: string; expiresAt: number; refreshToken: string } | null = null;
     private refreshing: Promise<string> | null = null;
@@ -128,7 +129,7 @@ export class GoogleDriveService implements GoogleDriveCore {
     private connecting = false;
     private cancelRequested = false;
     private abortLogin: (() => void) | null = null;
-    /** id thư mục "Deplao" đã kiểm trong phiên này. */
+    /** id of the "Deplao" folder, checked in this session. */
     private rootVerified: string | null = null;
     private rootJob: { create: boolean; promise: Promise<string | null> } | null = null;
 
@@ -153,7 +154,7 @@ export class GoogleDriveService implements GoogleDriveCore {
         });
     }
 
-    // ── Trạng thái (không gọi mạng) ──
+    // ── Status (no network calls) ──
 
     status(): GoogleDriveStatus {
         let g: GoogleSettingsData = { email: null, displayName: null, rootFolderId: null, customClientId: null, connectedAt: null };
@@ -188,12 +189,12 @@ export class GoogleDriveService implements GoogleDriveCore {
         }
     }
 
-    // ── Đăng nhập / ngắt kết nối ──
+    // ── Sign in / disconnect ──
 
     async connect(client?: GoogleClientInput | null): Promise<GoogleDriveStatus> {
-        if (this.connecting) throw new CloudError('BUSY', 'Đang chờ đăng nhập Google trên trình duyệt — hoàn tất hoặc bấm Huỷ trước.');
+        if (this.connecting) throw new CloudError('BUSY', tr('Đang chờ đăng nhập Google trên trình duyệt — hoàn tất hoặc bấm Huỷ trước.'));
         const choice = this.pickClient(client);
-        // Không lưu được refresh token thì dừng trước khi mở trình duyệt
+        // If the refresh token cannot be saved, stop before opening the browser
         this.settings.assertSecretsAvailable?.();
         this.connecting = true;
         this.cancelRequested = false;
@@ -211,13 +212,13 @@ export class GoogleDriveService implements GoogleDriveCore {
             try {
                 await this.openExternal(url);
             } catch {
-                throw new CloudError('GOOGLE_BROWSER', 'Không mở được trình duyệt để đăng nhập Google — kiểm tra trình duyệt mặc định của máy.');
+                throw new CloudError('GOOGLE_BROWSER', tr('Không mở được trình duyệt để đăng nhập Google — kiểm tra trình duyệt mặc định của máy.'));
             }
             const { code } = await login.result;
             this.throwIfCancelled();
             const tokens = await exchangeAuthCode(this.fetchImpl, choice.client, { code, codeVerifier: pkce.verifier, redirectUri: login.redirectUri }, this.now);
             this.throwIfCancelled();
-            // Refresh token chưa lưu → đọc email / dung lượng bằng access token vừa nhận
+            // Refresh token not saved yet → read the email / quota with the access token just received
             const about = await this.api.withToken(tokens.accessToken).about(ABOUT_FIELDS);
             this.throwIfCancelled();
             this.saveLogin(choice, tokens, about);
@@ -232,7 +233,7 @@ export class GoogleDriveService implements GoogleDriveCore {
         } finally {
             this.connecting = false;
             this.abortLogin = null;
-            login?.cancel(); // đóng máy chủ loopback nếu còn mở (đã xong thì không làm gì)
+            login?.cancel(); // close the loopback server if it is still open (if already done, do nothing)
             this.safeNotify();
         }
         return this.status();
@@ -241,7 +242,7 @@ export class GoogleDriveService implements GoogleDriveCore {
     cancelConnect(): void {
         if (!this.connecting) return;
         this.cancelRequested = true;
-        try { this.abortLogin?.(); } catch { /* bỏ qua */ }
+        try { this.abortLogin?.(); } catch { /* ignore */ }
     }
 
     async disconnect(): Promise<void> {
@@ -249,7 +250,7 @@ export class GoogleDriveService implements GoogleDriveCore {
         let token: string | null = null;
         try { token = this.settings.getGoogleRefreshToken(); } catch { token = null; }
         if (token) {
-            // Thu hồi cả quyền Deplao trên tài khoản Google (best effort — lỗi vẫn xoá phiên trên máy)
+            // Also revoke Deplao's permission on the Google account (best effort: an error still deletes the session on this machine)
             const ok = await revokeToken(this.fetchImpl, token).catch(() => false);
             if (!ok) this.log('warn', '[GoogleDrive] Không thu hồi được quyền trên Google (bỏ qua) — vẫn xoá phiên trên máy');
         }
@@ -260,7 +261,7 @@ export class GoogleDriveService implements GoogleDriveCore {
             g.displayName = null;
             g.rootFolderId = null;
             g.connectedAt = null;
-            // customClientId + client secret giữ lại để đăng nhập lại cho nhanh
+            // keep customClientId + client secret so that signing in again is faster
         });
         this.access = null;
         this.quota = null;
@@ -291,7 +292,7 @@ export class GoogleDriveService implements GoogleDriveCore {
 
     store(bucket: string): R2Client {
         const name = String(bucket ?? '').trim();
-        if (!name || name.includes('/')) throw new CloudError('BAD_BUCKET', 'Tên thư mục lưu không hợp lệ');
+        if (!name || name.includes('/')) throw new CloudError('BAD_BUCKET', tr('Tên thư mục lưu không hợp lệ'));
         let s = this.stores.get(name);
         if (!s) {
             s = new DriveStore({
@@ -340,8 +341,8 @@ export class GoogleDriveService implements GoogleDriveCore {
     // ── Token ──
 
     /**
-     * Access token còn hạn (≥ 60 s) hoặc làm mới (một lượt cho cả app). force + rejected: token đó vừa bị Google từ
-     * chối (401) — đã có token khác mới hơn thì dùng luôn, không làm mới lại.
+     * An access token still valid (≥ 60 s), or refresh it (one refresh for the whole app). force + rejected: that token was just refused by Google
+     * (401). If a newer token already exists, use it directly without refreshing again.
      */
     async accessToken(opts: { force?: boolean; rejected?: string } = {}): Promise<string> {
         const refreshToken = this.settings.getGoogleRefreshToken();
@@ -367,11 +368,11 @@ export class GoogleDriveService implements GoogleDriveCore {
         if (!client) throw new CloudError('GOOGLE_CLIENT_REQUIRED', MSG_CLIENT_REQUIRED);
         try {
             const t = await refreshAccessToken(this.fetchImpl, client, refreshToken, this.now);
-            // Phiên bị thay giữa chừng (ngắt kết nối / đăng nhập lại) → bỏ kết quả
+            // Session replaced midway (disconnected / signed in again) → discard the result
             if (this.settings.getGoogleRefreshToken() !== refreshToken) throw new CloudError('NOT_CONNECTED', MSG_NOT_CONNECTED);
             let rt = refreshToken;
             if (t.refreshToken && t.refreshToken !== refreshToken) {
-                // Google hiếm khi xoay refresh token; có thì lưu bản mới
+                // Google rarely rotates the refresh token; if it does, save the new one
                 try {
                     this.settings.setGoogleRefreshToken(t.refreshToken);
                     rt = t.refreshToken;
@@ -390,7 +391,7 @@ export class GoogleDriveService implements GoogleDriveCore {
         }
     }
 
-    /** Refresh token bị Google từ chối (hết hạn / thu hồi / đổi mật khẩu…) → xoá trên máy, báo đăng nhập lại. */
+    /** Refresh token refused by Google (expired / revoked / password changed…) → delete it on this machine and ask the user to sign in again. */
     private onSessionDead(refreshToken: string): void {
         let current: string | null = null;
         try { current = this.settings.getGoogleRefreshToken(); } catch { current = null; }
@@ -407,9 +408,9 @@ export class GoogleDriveService implements GoogleDriveCore {
         this.safeNotify();
     }
 
-    // ── Thư mục gốc "Deplao" ──
+    // ── Root folder "Deplao" ──
 
-    /** id thư mục "Deplao" (kiểm một lần mỗi phiên; create=false: không tạo, null nếu chưa có). */
+    /** id of the "Deplao" folder (checked once per session; create=false: do not create, null if it does not exist yet). */
     rootId(create: boolean): Promise<string | null> {
         if (this.rootVerified) return Promise.resolve(this.rootVerified);
         const job = this.rootJob;
@@ -437,7 +438,7 @@ export class GoogleDriveService implements GoogleDriveCore {
                 const f = await this.api.getFile(saved, 'id,trashed,mimeType');
                 alive = !!f && !f.trashed && (!f.mimeType || f.mimeType === FOLDER_MIME);
             } catch (err) {
-                // 404: đã xoá hẳn, hoặc do client OAuth khác tạo (drive.file không thấy) → tìm lại
+                // 404: permanently deleted, or created by another OAuth client (drive.file cannot see it) → search again
                 if (!isNotFound(err)) throw err;
             }
             if (alive) return this.acceptRoot(saved, gen);
@@ -459,7 +460,7 @@ export class GoogleDriveService implements GoogleDriveCore {
     }
 
     private acceptRoot(id: string, gen: number): string {
-        // Đăng nhập lại / ngắt kết nối giữa chừng → không ghi đè cấu hình của phiên mới
+        // Signed in again / disconnected midway → do not overwrite the configuration of the new session
         if (gen !== this.generation) return id;
         const saved = this.googleSettings().rootFolderId;
         if (saved !== id) {
@@ -468,22 +469,22 @@ export class GoogleDriveService implements GoogleDriveCore {
             } catch (err) {
                 this.log('warn', `[GoogleDrive] Không lưu được id thư mục "${ROOT_FOLDER_NAME}": ${errMessage(err)}`);
             }
-            // Gốc đổi → id thư mục con đã nhớ trong các store không còn đúng
+            // Root changed → the subfolder ids remembered in the stores are no longer valid
             if (saved) this.generation++;
         }
         this.rootVerified = id;
         return id;
     }
 
-    // ── Nội bộ ──
+    // ── Internal ──
 
     private pickClient(input: GoogleClientInput | null | undefined): ClientChoice {
         if (input) {
             const clientId = String(input.clientId ?? '').trim();
             if (!clientId || clientId.length > 256 || !CLIENT_ID_RE.test(clientId)) throw new CloudError('BAD_INPUT', MSG_BAD_CLIENT_ID);
             let secret = String(input.clientSecret ?? '').trim();
-            if (secret && (secret.length > 256 || !/^[\x21-\x7e]+$/.test(secret))) throw new CloudError('BAD_INPUT', 'Client secret Google không hợp lệ');
-            // Đăng nhập lại bằng client riêng đã lưu (giao diện chỉ gửi Client ID) → dùng lại secret đã lưu, không xoá mất
+            if (secret && (secret.length > 256 || !/^[\x21-\x7e]+$/.test(secret))) throw new CloudError('BAD_INPUT', tr('Client secret Google không hợp lệ'));
+            // Signing in again with the saved private client (the UI only sends the Client ID) → reuse the saved secret, do not lose it
             if (!secret && clientId === this.googleSettings().customClientId) secret = String(this.settings.getGoogleClientSecret() || '');
             return { client: { clientId, clientSecret: secret || null }, kind: 'custom' };
         }
@@ -493,7 +494,7 @@ export class GoogleDriveService implements GoogleDriveCore {
         throw new CloudError('GOOGLE_CLIENT_REQUIRED', MSG_CLIENT_REQUIRED);
     }
 
-    /** Client đã cấp refresh token đang lưu: client riêng nếu có, không thì client chung. */
+    /** The client that issued the saved refresh token: the private client if there is one, otherwise the shared client. */
     private activeClient(): OAuthClient | null {
         const custom = this.googleSettings().customClientId;
         if (custom) return { clientId: custom, clientSecret: this.settings.getGoogleClientSecret() };
@@ -515,7 +516,7 @@ export class GoogleDriveService implements GoogleDriveCore {
             g.connectedAt = this.now();
             if (choice.kind === 'custom') g.customClientId = choice.client.clientId;
             else if (choice.kind === 'builtin') g.customClientId = null;
-            // Tài khoản khác → thư mục "Deplao" của tài khoản cũ không dùng được
+            // Different account → the old account's "Deplao" folder cannot be used
             if (!sameAccount) g.rootFolderId = null;
         });
         this.access = { token: tokens.accessToken, expiresAt: tokens.expiresAt, refreshToken: tokens.refreshToken };
@@ -577,7 +578,7 @@ export class GoogleDriveService implements GoogleDriveCore {
     private recordUsage(units: number, bytes: { up?: number; down?: number }): void {
         try {
             this.deps.usage?.recordGoogle(units, bytes);
-        } catch { /* bộ đếm lỗi không làm hỏng request */ }
+        } catch { /* a failing counter does not break the request */ }
     }
 
     private safeNotify(): void {
@@ -589,6 +590,6 @@ export class GoogleDriveService implements GoogleDriveCore {
     }
 
     private log(level: 'log' | 'warn', msg: string): void {
-        try { this.logFn(level, msg); } catch { /* bỏ qua */ }
+        try { this.logFn(level, msg); } catch { /* ignore */ }
     }
 }

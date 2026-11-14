@@ -1,24 +1,24 @@
 /**
- * Ô @nhắc đến trong nhóm — phần thuần (hook: hooks/chat/useMentionMembers.ts; test: src/__tests__/chat/composer/mentionMembers.test.ts).
+ * The @mention box in a group: the pure part (hook: hooks/chat/useMentionMembers.ts; test: src/__tests__/chat/composer/mentionMembers.test.ts).
  *
- * Như Telegram: danh sách đọc ngay từ DB (page_group_member, có @username đã lưu), chỉ hỏi Telegram khi cần và NHỚ lượt
- * đã hỏi. Trước đây mỗi lần gõ @ lại hỏi @username TỪNG người qua API (nhóm lớn: vài phút) mà không lưu gì, và danh
- * sách chỉ có 50 người đầu của cache nhóm.
+ * As in Telegram: the list is read straight from the DB (page_group_member, with the saved @username), Telegram is only asked when needed, and the
+ * past queries are REMEMBERED. Before, every @ keypress asked for the @username of EACH person through the API (large group: several minutes) without saving anything, and the
+ * list only had the first 50 people of the group cache.
  */
 import type { GroupMember } from '@/store/app/appStore';
 import { foldSearchText } from '../../../../shared/chat/searchFold';
 
 export const MENTION_PAGE_SIZE = 50;
-/** Lấy lại ~200 thành viên gần đây của nhóm Telegram qua API sau chừng này (người vào / rời nhóm dần dần). */
+/** Re-fetch about 200 recent members of a Telegram group through the API after this long (people joining / leaving gradually). */
 export const MENTION_MEMBERS_SYNC_TTL_MS = 24 * 60 * 60 * 1000;
-/** Nhớ một lượt tìm trên Telegram chừng này: gõ lại đúng chữ đó không hỏi lại (kết quả đã nằm trong DB). */
+/** Remember a Telegram search for this long: typing the same text again does not ask again (the results are already in the DB). */
 export const MENTION_REMOTE_SEARCH_TTL_MS = 10 * 60 * 1000;
-/** Ngừng gõ chừng này mới tìm trên Telegram. */
+/** Search Telegram only after typing has paused this long. */
 export const MENTION_REMOTE_SEARCH_DELAY_MS = 350;
 
 const SYNC_PREFIX = 'deplao:mentionMembersSync:';
 
-/** Lần lấy thành viên gần đây qua API cho ô @nhắc đến gần nhất (0 = chưa bao giờ). */
+/** Time of the most recent API fetch of recent members for the @mention box (0 = never). */
 export function mentionMembersSyncedAt(accountId: string, groupId: string): number {
   try {
     return Number(localStorage.getItem(`${SYNC_PREFIX}${accountId}:${groupId}`)) || 0;
@@ -31,25 +31,25 @@ export function markMentionMembersSynced(accountId: string, groupId: string, at 
   try {
     localStorage.setItem(`${SYNC_PREFIX}${accountId}:${groupId}`, String(at));
   } catch {
-    // localStorage đầy / bị chặn: lần sau gõ @ lấy lại, không sao
+    // localStorage full / blocked: the next @ will fetch again, which is fine
   }
 }
 
-/** Cần lấy lại thành viên gần đây: chưa từng lấy (cả ở panel Thành viên) hoặc đã quá TTL. */
+/** Recent members need fetching again: never fetched (including from the "Thành viên" panel) or the TTL has passed. */
 export function mentionMembersNeedSync(lastSyncedAt: number, now = Date.now()): boolean {
   return !lastSyncedAt || now - lastSyncedAt > MENTION_MEMBERS_SYNC_TTL_MS;
 }
 
 type RemoteSearch = { at: number; complete: boolean };
-/** Theo nhóm (`accountId:groupId`): chữ đã tìm (chữ thường) → lúc tìm + đã đủ người khớp chưa. Sống suốt phiên. */
+/** Per group (`accountId:groupId`): the text searched (lowercase) → when it was searched + whether enough matches were found. Lasts the whole session. */
 const remoteSearches = new Map<string, Map<string, RemoteSearch>>();
 
 const searchKey = (query: string) => String(query || '').trim().toLowerCase();
 
 /**
- * Có cần tìm trên Telegram không. Không, nếu: vừa tìm đúng chữ này; hoặc một lượt tìm trước là tiền tố của chữ này và đã
- * trả đủ người khớp (Telegram tìm theo đầu từ: "ka" đủ thì người khớp "kae" đều đã có trong DB). So khớp có dấu (không
- * gộp "le" với "lê") để không bỏ sót lượt cần hỏi.
+ * Whether a search on Telegram is needed. It is not, if: the same text was just searched; or an earlier search is a prefix of this text and already
+ * returned enough matches (Telegram searches by word start: if "ka" returns enough, the matches for "kae" are already in the DB). Matching keeps diacritics (does not
+ * merge "le" with "lê") so that no search that needs asking is missed.
  */
 export function shouldSearchMentionRemote(groupKey: string, query: string, now = Date.now()): boolean {
   const key = searchKey(query);
@@ -75,20 +75,20 @@ export function rememberMentionRemoteSearch(groupKey: string, query: string, com
   entries.set(key, { at: now, complete });
 }
 
-/** Quên mọi lượt tìm (test). */
+/** Forget all searches (test). */
 export function resetMentionRemoteSearches(): void {
   remoteSearches.clear();
 }
 
-/** Có tên để nhắc đến (người chỉ có id thì không hiện — nhãn "@123456" vô nghĩa). */
+/** Has a name to mention (people with only an id are not shown, since a label like "@123456" is meaningless). */
 export function isNamedMember(member: Pick<GroupMember, 'userId' | 'displayName'>): boolean {
   const name = String(member?.displayName || '').trim();
   return !!name && name !== member.userId;
 }
 
 /**
- * Dự phòng khi DB không có ai khớp (nhóm chưa lưu thành viên vào DB, tên mới chỉ có trong cache nhóm): lọc cache nhóm
- * theo tên / @username / id, không phân biệt dấu.
+ * Fallback when the DB has no match (the group's members are not saved in the DB yet, or the new name is only in the group cache): filter the group cache
+ * by name / @username / id, ignoring diacritics.
  */
 export function filterCachedMentionMembers(members: GroupMember[] | undefined, query: string, limit = MENTION_PAGE_SIZE * 4): GroupMember[] {
   const needle = foldSearchText(query);
@@ -105,7 +105,7 @@ export function filterCachedMentionMembers(members: GroupMember[] | undefined, q
   return result;
 }
 
-/** Nhóm đã có đủ mọi thành viên trong DB (nhóm nhỏ / nhóm thường) → không cần tìm thêm trên Telegram. */
+/** The group already has every member in the DB (small / regular group) → no more searching on Telegram is needed. */
 export function mentionMembersComplete(dbTotal: number | null | undefined, memberCount: number | null | undefined): boolean {
   const total = Number(dbTotal) || 0;
   const count = Number(memberCount) || 0;

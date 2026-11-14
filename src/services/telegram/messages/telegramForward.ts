@@ -1,13 +1,13 @@
 /**
- * telegramForward.ts — thẻ "Chuyển tiếp từ …" của tin Telegram (MessageFwdHeader).
- * Lưu trong attachments (type telegram_forward) như các thông tin trình bày khác: không đổi schema DB, đi qua REST /
- * realtime của nhân viên nguyên vẹn. Renderer: getTelegramForwardMeta (ui/lib/media/mediaResolver).
+ * telegramForward.ts: the "Chuyển tiếp từ …" (Forwarded from …) card of a Telegram message (MessageFwdHeader).
+ * Stored in attachments (type telegram_forward) like the other display info: no DB schema change, passes through the employee's REST /
+ * realtime intact. Renderer: getTelegramForwardMeta (ui/lib/media/mediaResolver).
  */
 import { getPeerId } from 'telegram/Utils';
 
 export type TelegramForwardSource = 'user' | 'channel' | 'chat' | 'hidden';
 
-/** Tên hiển thị của User / Channel / Chat GramJS. */
+/** Display name of a GramJS User / Channel / Chat. */
 export function telegramEntityName(entity: any): string {
   if (!entity) return '';
   const title = String(entity.title || '').trim();
@@ -17,8 +17,8 @@ export function telegramEntityName(entity: any): string {
 }
 
 /**
- * fwdFrom → thẻ chuyển tiếp. Tên người gửi / kênh gốc lấy từ `message.forward` (GramJS Forward: entity có sẵn trong update
- * / lịch sử + cache, KHÔNG gọi mạng); người ẩn tài khoản khi chuyển tiếp chỉ có `fromName`. Không có fwdFrom → null.
+ * fwdFrom → the forward card. The original sender / channel name comes from `message.forward` (GramJS Forward: the entity is already in the update
+ * / history + cache, NO network call); an account that hides itself when forwarding only has `fromName`. No fwdFrom → null.
  */
 export function getTelegramForwardAttachment(message: any): Record<string, any> | null {
   const header = message?.fwdFrom;

@@ -1,42 +1,42 @@
 /**
- * Hàng tải file Telegram theo tài khoản (ảnh, video, file, sticker, ảnh đại diện).
+ * Telegram file download queue per account (images, videos, files, stickers, avatars).
  *
- * Mỗi tài khoản tải LẦN LƯỢT một file: GramJS mượn sender của DC chứa file — cho đường ảnh đại diện và đường media tải
- * song song từng gây bão "Not connected" ở các forum nhiều media. Nhưng không còn theo thứ tự xếp hàng: trước đây
- * (chuỗi promise FIFO) lúc mở app phần bắt kịp xếp hàng trăm ảnh / video cũ của mọi hội thoại trước, video của hội thoại
- * đang mở phải chờ hết, và tin mới nhất (bong bóng dưới cùng xin tải sau cùng) lại có file sau cùng.
+ * Each account downloads ONE file at a time: GramJS borrows the sender of the DC that holds the file. The avatar path and the media path running in parallel
+ * used to cause a storm of "Not connected" errors in forums with many media. But there is no longer a first-in-first-out order: previously
+ * (a FIFO promise chain) when the app opened, the catch-up queued hundreds of old images / videos from every conversation first, the video of the open conversation had to wait for all of them,
+ * and the newest message (the bubble at the bottom asks for its file last) got its file last.
  *
- * Thứ tự chọn lượt kế tiếp — tính lúc chọn, nên mở hội thoại khác là đổi thứ tự ngay:
- *   0. Người dùng bấm tải / thử lại (`urgent`).
- *   1. Hội thoại đang mở: bong bóng trên màn hình xin tải (`visible`).
- *   2. Hội thoại đang mở: mọi file khác (tin realtime, bắt kịp, lịch sử, ảnh đại diện).
- *   3. Giao diện xin cho chỗ khác (hồ sơ, thông tin nhóm, ảnh đại diện đang hiện…).
- *   4. Nền: bắt kịp tin lúc offline, lịch sử, tin realtime của hội thoại khác, quét ảnh đại diện.
- * Cùng mức: tin mới nhất trước (`sortKey` = giờ tin, ms), bằng nhau thì theo thứ tự xếp hàng.
+ * Choosing the next pass, computed at pick time, so opening another conversation changes the order at once:
+ *   0. The user clicked download / retry (`urgent`).
+ *   1. Open conversation: the bubble on screen asks for the download (`visible`).
+ *   2. Open conversation: every other file (realtime messages, catch-up, history, avatars).
+ *   3. The UI asked for something else (profile, group info, avatars currently shown…).
+ *   4. Background: catch-up of messages while offline, history, realtime messages of other conversations, avatar scan.
+ * Same level: newest message first (`sortKey` = message time, ms); if equal, queue order.
  *
- * Nhường: lượt mức 3–4 đang tải mà còn hơn `preemptMinRemainingBytes` thì khi có việc mức 0–2 sẽ dừng ở mảnh kế tiếp
- * (progress callback ném TelegramDownloadPreempted), quay lại hàng và tải lại từ đầu sau (GramJS không tải tiếp được).
- * Mỗi lượt nhường tối đa `maxPreemptions` lần để file lớn không bị tải dở mãi. Lượt không có progress callback (ảnh,
- * ảnh đại diện — nhỏ) không bao giờ bị dừng.
+ * Yielding: a pass at level 3–4 that is downloading, with more than `preemptMinRemainingBytes` left, stops at the next chunk when level 0–2 work arrives
+ * (the progress callback throws TelegramDownloadPreempted), goes back to the queue and downloads again from the start later (GramJS cannot resume a download).
+ * Each pass yields at most `maxPreemptions` times, so a large file is not downloaded partially forever. A pass without a progress callback (images,
+ * avatars: small) is never stopped.
  *
- * Hạn chót: một lượt quá `deadlineMs` thì hàng đi tiếp (lượt đó báo lỗi hết giờ, việc tải thật của GramJS vẫn chạy nốt):
- * GramJS không có timeout phía client, một lượt kẹt trên sender chết từng chặn mọi ảnh / sticker / avatar sau nó.
+ * Deadline: a pass longer than `deadlineMs` lets the queue move on (that pass reports a timeout error, but GramJS's real download keeps running to the end):
+ * GramJS has no client-side timeout, and a pass stuck on a dead sender used to block every image / sticker / avatar behind it.
  */
 
 export type TelegramDownloadUrgency = 'background' | 'visible' | 'urgent';
 
 export interface TelegramDownloadOptions {
-  /** Hội thoại của file — được ưu tiên khi đang mở. Bỏ trống: không gắn hội thoại nào. */
+  /** The conversation the file belongs to, given priority while it is open. Leave empty: not attached to any conversation. */
   threadId?: string;
-  /** Mặc định `background`. Xin lại cùng file với mức cao hơn thì nâng mức. */
+  /** Default `background`. Requesting the same file again at a higher level raises the level. */
   urgency?: TelegramDownloadUrgency;
-  /** Lớn hơn = tải trước trong cùng mức (giờ tin, ms). Mặc định: lúc xếp hàng. */
+  /** Larger = downloads first within the same level (message time, ms). Default: the time it was queued. */
   sortKey?: number;
 }
 
-/** Tham số truyền cho thao tác tải. */
+/** Parameters passed to the download operation. */
 export interface TelegramDownloadRun {
-  /** Gọi trong progress callback của GramJS: ghi tiến độ; ném TelegramDownloadPreempted khi phải nhường. */
+  /** Called in GramJS's progress callback: records progress; throws TelegramDownloadPreempted when it has to yield. */
   progress(downloaded: unknown, total: unknown): void;
 }
 
@@ -60,13 +60,13 @@ export interface TelegramDownloadPreemptInfo {
   key: string;
   downloaded: number;
   total: number;
-  /** Việc làm lượt này phải nhường. */
+  /** The work of this pass has to yield. */
   forKey: string;
 }
 
 export interface TelegramDownloadQueueOptions {
   deadlineMs: number;
-  /** Còn ít hơn chừng này byte thì tải nốt, không nhường. */
+  /** Fewer than this many bytes left: finish the download, do not yield. */
   preemptMinRemainingBytes?: number;
   maxPreemptions?: number;
   now?: () => number;
@@ -74,7 +74,7 @@ export interface TelegramDownloadQueueOptions {
 }
 
 const URGENCY_LEVEL: Record<TelegramDownloadUrgency, number> = { background: 0, visible: 1, urgent: 2 };
-/** Việc mức 0–2 (người dùng bấm, hội thoại đang mở) làm lượt mức 3–4 đang tải phải nhường. */
+/** Work at level 0–2 (user clicks, the open conversation) makes a running level 3–4 pass yield. */
 const PREEMPTING_RANK = 2;
 
 interface Task {
@@ -90,7 +90,7 @@ interface Task {
   reject: (error: unknown) => void;
   attempts: number;
   preemptions: number;
-  /** Đã xin lượt đang chạy dừng lại. */
+  /** Asked the running pass to stop. */
   stopRequested: boolean;
   downloaded: number;
   total: number;
@@ -112,7 +112,7 @@ function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promis
     promise,
     new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(`${label} (deadline ${Math.round(ms / 1000)}s)`)), ms);
-      // Hạn chót của một lượt tải không bao giờ được giữ tiến trình sống
+      // The deadline of a download pass must never keep the process alive
       (timer as { unref?: () => void }).unref?.();
     }),
   ]).finally(() => {
@@ -140,7 +140,7 @@ export function createTelegramDownloadQueue(options: TelegramDownloadQueueOption
     return task.urgency === 'visible' ? 3 : 4;
   }
 
-  /** Âm = `a` tải trước. */
+  /** Negative = `a` (downloads first). */
   function compare(a: Task, b: Task): number {
     return rank(a) - rank(b) || b.sortKey - a.sortKey || a.seq - b.seq;
   }
@@ -162,17 +162,17 @@ export function createTelegramDownloadQueue(options: TelegramDownloadQueueOption
     }
   }
 
-  /** Việc đang chờ mà lượt đang tải phải nhường, nếu có. */
+  /** Pending work that the running pass must yield to, if any. */
   function yieldTo(queue: AccountQueue, running: Task): Task | null {
     if (running.preemptions >= maxPreemptions || rank(running) <= PREEMPTING_RANK) return null;
-    // Chưa biết dung lượng (chưa có mảnh nào) / sắp xong → tải nốt; mảnh kế tiếp sẽ xét lại.
+    // Size unknown (no chunk yet) / almost done → finish the download; the next chunk will check again.
     if (running.total <= 0 || running.total - running.downloaded < preemptMinRemainingBytes) return null;
     const index = bestPendingIndex(queue);
     const waiting = index < 0 ? null : queue.pending[index];
     return waiting && rank(waiting) <= PREEMPTING_RANK ? waiting : null;
   }
 
-  /** Xét lại lượt đang tải: xin dừng, hoặc bỏ lệnh dừng khi lý do đã hết (chính file đó được xin, đổi hội thoại…). */
+  /** Re-check the running pass: request a stop, or clear the stop request once its reason is gone (the same file was requested, the conversation changed…). */
   function maybePreempt(queue: AccountQueue): void {
     const running = queue.running;
     if (!running) return;
@@ -192,7 +192,7 @@ export function createTelegramDownloadQueue(options: TelegramDownloadQueueOption
         forKey: waiting.key,
       });
     } catch {
-      // Ghi log không bao giờ được làm hỏng hàng tải
+      // Logging must never break the download queue
     }
   }
 
@@ -212,7 +212,7 @@ export function createTelegramDownloadQueue(options: TelegramDownloadQueueOption
     const current = () => queue.running === task && task.attempts === attempt;
     const run: TelegramDownloadRun = {
       progress: (downloaded, total) => {
-        // Lượt đã hết giờ (hàng đã đi tiếp) vẫn có thể báo tiến độ — kệ nó tải nốt như trước.
+        // A pass that already timed out (the queue has moved on) can still report progress: let it finish as before.
         if (!current()) return;
         task.downloaded = toBytes(downloaded);
         const size = toBytes(total);
@@ -229,7 +229,7 @@ export function createTelegramDownloadQueue(options: TelegramDownloadQueueOption
       error => {
         if (!current()) return;
         if (task.stopRequested && isTelegramDownloadPreempted(error)) {
-          // Nhường: về hàng (giữ promise, mức, thứ tự) — tải lại từ đầu khi tới lượt
+          // Yield: back to the queue (keeps the promise, level, order); downloads again from the start when its turn comes
           queue.running = null;
           task.stopRequested = false;
           task.preemptions += 1;
@@ -303,7 +303,7 @@ export function createTelegramDownloadQueue(options: TelegramDownloadQueueOption
     return promise as Promise<T>;
   }
 
-  /** File đã có trong hàng (đang chờ / đang tải) → nâng mức, trả promise của lượt đó; chưa có → undefined. */
+  /** File already in the queue (waiting / downloading) → raise its level and return that pass's promise; not there → undefined. */
   function promote(accountId: string, key: string, opts: TelegramDownloadOptions = {}): Promise<unknown> | undefined {
     const task = tasks.get(taskId(accountId, key));
     if (!task) return undefined;
@@ -313,7 +313,7 @@ export function createTelegramDownloadQueue(options: TelegramDownloadQueueOption
     return task.promise;
   }
 
-  /** Hội thoại đang mở (renderer báo). Không có → bỏ ưu tiên hội thoại. */
+  /** Open conversation (reported by the renderer). None → drop the conversation priority. */
   function setFocus(accountId?: string | null, threadId?: string | null): void {
     focus = accountId && threadId ? { accountId: String(accountId), threadId: String(threadId) } : null;
     for (const queue of queues.values()) maybePreempt(queue);
@@ -325,12 +325,12 @@ export function createTelegramDownloadQueue(options: TelegramDownloadQueueOption
     setFocus,
     getFocus: () => (focus ? { ...focus } : null),
     has: (accountId: string, key: string) => tasks.has(taskId(accountId, key)),
-    /** Số lượt đang chờ + đang tải của tài khoản. */
+    /** Number of waiting + downloading passes of the account. */
     size: (accountId: string) => {
       const queue = queues.get(accountId);
       return queue ? queue.pending.length + (queue.running ? 1 : 0) : 0;
     },
-    /** Khoá các lượt đang chờ theo thứ tự sẽ tải (test / log). */
+    /** Keys of the waiting passes in the order they will be downloaded (tests / logs). */
     pendingKeys: (accountId: string) => [...(queues.get(accountId)?.pending ?? [])].sort(compare).map(task => task.key),
     runningKey: (accountId: string) => queues.get(accountId)?.running?.key ?? null,
   };

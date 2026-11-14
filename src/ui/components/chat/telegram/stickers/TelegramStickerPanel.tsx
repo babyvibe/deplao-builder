@@ -1,10 +1,10 @@
 /**
- * Tab "Sticker" của bảng biểu cảm Telegram — như Telegram: sticker yêu thích, gần đây rồi từng bộ đã thêm vào tài khoản
- * (đồng bộ với app Telegram trên máy khác), thanh biểu tượng bộ ở dưới để nhảy nhanh, ô tìm bộ sticker và bộ thịnh hành
- * để xem / thêm bộ mới. Bấm sticker = gửi; "⋯" ở tiêu đề bộ = popup bộ (xem, gỡ khỏi tài khoản).
+ * "Sticker" tab of the Telegram emoji panel, like Telegram: favorite stickers, recent ones, then each set added to the account
+ * (synced with the Telegram app on other devices), a set icon bar at the bottom to jump quickly, a search box for sticker sets and trending sets
+ * to view / add new sets. Click a sticker = send; "⋯" in the set header = set popup (view, remove from the account).
  *
- * Hiệu năng: mỗi mục chỉ dựng lưới khi cuộn tới gần (giữ sẵn chiều cao theo số sticker → không nhảy khi tải xong),
- * ô sticker chỉ tải ảnh khi hiện ra, nội dung các bộ tải lần lượt 2 bộ một lúc.
+ * Performance: each section builds its grid only when scrolled near (its height is reserved from the sticker count, so nothing jumps when loaded),
+ * sticker tiles load their image only when visible, and set contents load 2 sets at a time.
  */
 import React from 'react';
 import { cn } from '@/lib/cn';
@@ -26,6 +26,8 @@ import {
 } from '@/lib/chat/telegram/telegramStickerStore';
 import { useAppStore } from '@/store/app/appStore';
 import { StickerThumb, TelegramStickerTile } from './TelegramStickerTile';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 const TILE = 60;
 const COLUMNS = 5;
@@ -37,7 +39,7 @@ interface Section {
   title: string;
   icon?: 'faved' | 'recent';
   set?: TelegramStickerSetInfo;
-  /** null = nội dung bộ chưa tải xong. */
+  /** null = the set's content has not finished loading. */
   stickers: TelegramStickerItem[] | null;
   count: number;
 }
@@ -55,7 +57,7 @@ export const TelegramStickerPanel = React.memo(function TelegramStickerPanel({ a
   const [query, setQuery] = React.useState('');
   const [featuredOpen, setFeaturedOpen] = React.useState(false);
 
-  // Mở bảng: hiện ngay bản đã có, đồng thời hỏi lại (main so hash với Telegram → đổi ở máy khác cũng về)
+  // On open: show the cached copy at once and ask again at the same time (main compares the hash with Telegram → a change made on another device also comes back)
   React.useEffect(() => { loadStickerPanel(accountId).catch(() => {}); }, [accountId]);
 
   const sets = panel?.sets;
@@ -69,17 +71,17 @@ export const TelegramStickerPanel = React.memo(function TelegramStickerPanel({ a
   const sections = React.useMemo<Section[]>(() => {
     if (!panel) return [];
     const list: Section[] = [];
-    if (panel.faved.length) list.push({ key: 'faved', title: 'Yêu thích', icon: 'faved', stickers: panel.faved, count: panel.faved.length });
+    if (panel.faved.length) list.push({ key: 'faved', title: tr('Yêu thích'), icon: 'faved', stickers: panel.faved, count: panel.faved.length });
     if (panel.recent.length) {
       const recent = panel.recent.slice(0, RECENT_LIMIT);
-      list.push({ key: 'recent', title: 'Gần đây', icon: 'recent', stickers: recent, count: recent.length });
+      list.push({ key: 'recent', title: tr('Gần đây'), icon: 'recent', stickers: recent, count: recent.length });
     }
     for (const set of panel.sets) {
       const loaded = getLoadedStickerSet(accountId, { id: set.id });
       list.push({ key: `set:${set.id}`, title: set.title, set, stickers: loaded?.stickers ?? null, count: loaded?.stickers.length ?? set.count });
     }
     return list;
-    // version: nội dung bộ vừa tải xong nằm trong store
+    // version: the set's content that just finished loading is in the store
   }, [accountId, panel, version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const searching = query.trim().length > 0 || featuredOpen;
@@ -104,7 +106,7 @@ export const TelegramStickerPanel = React.memo(function TelegramStickerPanel({ a
   const jumpTo = (key: string) => {
     setQuery('');
     setFeaturedOpen(false);
-    // Đợi lưới thường hiện lại (vừa thoát tìm kiếm) rồi mới cuộn
+    // Wait for the normal grid to show again (just left search) before scrolling
     requestAnimationFrame(() => {
       const target = scrollEl?.querySelector<HTMLElement>(`[data-section-key="${key}"]`);
       if (scrollEl && target) scrollEl.scrollTop = target.offsetTop - 2;
@@ -117,15 +119,15 @@ export const TelegramStickerPanel = React.memo(function TelegramStickerPanel({ a
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 px-2 pb-1 pt-2">
-        <SearchField value={query} onChange={(value) => { setQuery(value); if (value) setFeaturedOpen(false); }} placeholder="Tìm bộ sticker" />
+        <SearchField value={query} onChange={(value) => { setQuery(value); if (value) setFeaturedOpen(false); }} placeholder={tr('Tìm bộ sticker')} />
       </div>
       <InViewRootContext.Provider value={scrollEl}>
         <div ref={setScrollEl} onScroll={trackActiveSection} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-2">
           {scrollEl && (searching || empty ? (
             <StickerSetSearch accountId={accountId} query={query.trim()} onPick={onPick} onOpenSet={onOpenSet}
-              hint={empty && !query.trim() ? 'Tài khoản chưa có bộ sticker nào — thêm từ các bộ thịnh hành dưới đây' : undefined} />
+              hint={empty && !query.trim() ? tr('Tài khoản chưa có bộ sticker nào — thêm từ các bộ thịnh hành dưới đây') : undefined} />
           ) : !panel ? (
-            error ? <PanelMessage>{error}</PanelMessage> : <PanelMessage loading>Đang tải sticker…</PanelMessage>
+            error ? <PanelMessage>{error}</PanelMessage> : <PanelMessage loading>{tr('Đang tải sticker…')}</PanelMessage>
           ) : (
             sections.map((section) => (
               <StickerSection key={section.key} accountId={accountId} section={section} onPick={onPick} onOpenSet={onOpenSet} />
@@ -134,12 +136,12 @@ export const TelegramStickerPanel = React.memo(function TelegramStickerPanel({ a
         </div>
       </InViewRootContext.Provider>
       {panel && !empty && (
-        <div className="flex h-11 shrink-0 items-center gap-0.5 overflow-x-auto border-t border-border px-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="toolbar" aria-label="Bộ sticker">
-          <BarButton title="Bộ sticker thịnh hành" active={featuredOpen} onClick={() => { setQuery(''); setFeaturedOpen((open) => !open); }}>
+        <div className="flex h-11 shrink-0 items-center gap-0.5 overflow-x-auto border-t border-border px-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="toolbar" aria-label={tr('Bộ sticker')}>
+          <BarButton title={tr('Bộ sticker thịnh hành')} active={featuredOpen} onClick={() => { setQuery(''); setFeaturedOpen((open) => !open); }}>
             <TrendingUpIcon className="h-[18px] w-[18px]" />
           </BarButton>
           {sections.map((section, index) => {
-            // Chưa cuộn → mục đầu đang được xem
+            // Not scrolled yet → the first section is the one being viewed
             const active = !searching && (activeKey ? activeKey === section.key : index === 0);
             const first = section.stickers?.[0];
             return (
@@ -157,7 +159,7 @@ export const TelegramStickerPanel = React.memo(function TelegramStickerPanel({ a
   );
 });
 
-// memo: bộ khác vừa tải xong (store đổi) không dựng lại các mục đã có
+// memo: another set that just finished loading (store changed) does not rebuild the sections already there
 const StickerSection = React.memo(function StickerSection({ accountId, section, onPick, onOpenSet }: {
   accountId: string;
   section: Section;
@@ -165,7 +167,7 @@ const StickerSection = React.memo(function StickerSection({ accountId, section, 
   onOpenSet: (set: TelegramStickerSetInfo) => void;
 }) {
   const gridRef = React.useRef<HTMLDivElement>(null);
-  // Dựng lưới khi cuộn tới gần (khung cuộn = root của InViewRootContext), dựng rồi giữ nguyên
+  // Build the grid when scrolled near (the scroll container = root of InViewRootContext), then keep it once built
   const near = useInView(gridRef, { rootMargin: '360px 0px', once: true });
   const rows = Math.max(1, Math.ceil(section.count / COLUMNS));
   const minHeight = rows * TILE + (rows - 1) * ROW_GAP;
@@ -177,8 +179,8 @@ const StickerSection = React.memo(function StickerSection({ accountId, section, 
           <button
             type="button"
             onClick={() => onOpenSet(section.set!)}
-            title="Xem bộ sticker"
-            aria-label={`Xem bộ ${section.title}`}
+            title={tr('Xem bộ sticker')}
+            aria-label={tr('Xem bộ {{title}}', { title: section.title })}
             className="flex h-6 w-7 items-center justify-center rounded-md text-base leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             ⋯
@@ -197,7 +199,7 @@ const StickerSection = React.memo(function StickerSection({ accountId, section, 
   && previous.section.count === next.section.count && previous.section.stickers === next.section.stickers
   && previous.section.set === next.section.set);
 
-/** Tìm bộ sticker (từ khoá rỗng = bộ thịnh hành của Telegram). */
+/** Search sticker sets (empty keyword = Telegram's trending sets). */
 function StickerSetSearch({ accountId, query, hint, onPick, onOpenSet }: {
   accountId: string;
   query: string;
@@ -205,7 +207,7 @@ function StickerSetSearch({ accountId, query, hint, onPick, onOpenSet }: {
   onPick: (item: TelegramStickerItem) => void;
   onOpenSet: (set: TelegramStickerSetInfo) => void;
 }) {
-  useTelegramStickerData(); // "Đã thêm" cập nhật ngay sau khi thêm
+  useTelegramStickerData(); // "Đã thêm" (Added) updates right after adding
   const [result, setResult] = React.useState<{ query: string; sets: TelegramCoveredStickerSet[]; loading: boolean; error?: string }>({ query: '\u0000', sets: [], loading: true });
   const [installing, setInstalling] = React.useState('');
 
@@ -223,18 +225,18 @@ function StickerSetSearch({ accountId, query, hint, onPick, onOpenSet }: {
     setInstalling(set.id);
     const res = await setStickerSetInstalled(accountId, set, true);
     setInstalling('');
-    if (!res.success) useAppStore.getState().showNotification(`Không thêm được bộ sticker: ${res.error}`, 'error');
+    if (!res.success) useAppStore.getState().showNotification(tr('Không thêm được bộ sticker: {{error}}', { error: res.error }), 'error');
   };
 
-  const title = query ? 'Kết quả tìm bộ sticker' : 'Bộ sticker thịnh hành';
+  const title = query ? tr('Kết quả tìm bộ sticker') : tr('Bộ sticker thịnh hành');
   return (
     <div className="pt-1">
       {hint && <p className="px-1 pb-2 text-[12px] leading-5 text-muted-foreground">{hint}</p>}
       <div className="px-1 pb-1 text-[11px] font-semibold text-muted-foreground">{title}</div>
       {result.loading && result.sets.length === 0 ? (
-        <PanelMessage loading>Đang tìm…</PanelMessage>
+        <PanelMessage loading>{tr('Đang tìm…')}</PanelMessage>
       ) : result.sets.length === 0 ? (
-        <PanelMessage>{result.error || (query ? 'Không tìm thấy bộ sticker' : 'Chưa có bộ thịnh hành')}</PanelMessage>
+        <PanelMessage>{result.error || (query ? tr('Không tìm thấy bộ sticker') : tr('Chưa có bộ thịnh hành'))}</PanelMessage>
       ) : (
         <div className={cn('flex flex-col gap-1 transition-opacity', result.loading && 'opacity-60')}>
           {result.sets.map((set) => {
@@ -242,12 +244,12 @@ function StickerSetSearch({ accountId, query, hint, onPick, onOpenSet }: {
             return (
               <div key={set.id} className="rounded-lg px-1 py-1.5 transition-colors hover:bg-muted/60">
                 <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => onOpenSet(set)} className="min-w-0 flex-1 text-left" title="Xem bộ sticker">
+                  <button type="button" onClick={() => onOpenSet(set)} className="min-w-0 flex-1 text-left" title={tr('Xem bộ sticker')}>
                     <div className="truncate text-[13px] font-medium text-foreground">{set.title}</div>
-                    <div className="text-[11px] text-muted-foreground">{set.count} sticker</div>
+                    <div className="text-[11px] text-muted-foreground">{trx('{{count}} sticker', { count: set.count })}</div>
                   </button>
                   {installed ? (
-                    <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"><CheckIcon className="h-3.5 w-3.5" />Đã thêm</span>
+                    <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">{trx('<0/>Đã thêm', { 0: <CheckIcon className="h-3.5 w-3.5" /> })}</span>
                   ) : (
                     <button
                       type="button"
@@ -255,14 +257,14 @@ function StickerSetSearch({ accountId, query, hint, onPick, onOpenSet }: {
                       disabled={installing === set.id}
                       className="h-7 shrink-0 rounded-full bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-60"
                     >
-                      {installing === set.id ? 'Đang thêm…' : 'Thêm'}
+                      {installing === set.id ? tr('Đang thêm…') : tr('Thêm')}
                     </button>
                   )}
                 </div>
                 {set.covers.length > 0 && (
                   <div className="mt-1 flex gap-1">
                     {set.covers.map((item) => (
-                      <TelegramStickerTile key={item.id} accountId={accountId} item={item} size={56} onClick={onPick} title="Gửi sticker này" />
+                      <TelegramStickerTile key={item.id} accountId={accountId} item={item} size={56} onClick={onPick} title={tr('Gửi sticker này')} />
                     ))}
                   </div>
                 )}
@@ -287,7 +289,7 @@ export function SearchField({ value, onChange, placeholder }: { value: string; o
         className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-subtle-foreground focus:outline-none"
       />
       {value && (
-        <button type="button" onClick={() => onChange('')} aria-label="Xoá" className="shrink-0 rounded-full p-0.5 hover:bg-muted hover:text-foreground">
+        <button type="button" onClick={() => onChange('')} aria-label={tr('Xoá')} className="shrink-0 rounded-full p-0.5 hover:bg-muted hover:text-foreground">
           <CloseIcon className="h-3 w-3" />
         </button>
       )}

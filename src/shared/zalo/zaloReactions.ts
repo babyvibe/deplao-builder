@@ -1,9 +1,9 @@
 /**
- * zaloReactions.ts — mã reaction Zalo (rIcon, vd ":>") → emoji hiển thị: MỘT bảng dùng chung cho renderer và main.
+ * zaloReactions.ts: Zalo reaction codes (rIcon, e.g. ":>") → displayed emoji: ONE table shared by the renderer and main.
  *
- * Trước đây thanh chọn gửi "haha" bằng 😄 (EMOJI_TO_REACTION 😄 → HAHA = ":>") nhưng 3 nơi nhận reaction (useZaloEvents,
- * EventBroadcaster, HttpClientService) dịch ":>" thành 😆 → bản echo Zalo gửi lại của reaction vừa thả không khớp
- * reaction đã lưu → bị lưu thêm: thả 1 lần thành 2 (😄 + 😆 cùng một người).
+ * Previously the picker sent "haha" as 😄 (EMOJI_TO_REACTION 😄 → HAHA = ":>"), but the 3 places that receive reactions (useZaloEvents,
+ * EventBroadcaster, HttpClientService) translated ":>" into 😆, so Zalo's echo of the reaction just sent did not match the saved
+ * reaction and it was saved again: one tap became two (😄 + 😆 from the same person).
  */
 
 export const ZALO_REACTION_ICON_TO_EMOJI: Readonly<Record<string, string>> = {
@@ -16,12 +16,12 @@ export const ZALO_REACTION_ICON_TO_EMOJI: Readonly<Record<string, string>> = {
   ':))': '😁', '$-)': '🤑',
 };
 
-/** rIcon của Zalo → emoji (mã lạ giữ nguyên). */
+/** Zalo rIcon → emoji (unknown codes kept as is). */
 export function zaloReactionIconToEmoji(icon: string): string {
   return ZALO_REACTION_ICON_TO_EMOJI[icon] || icon;
 }
 
-/** Emoji cũ đã lưu cho cùng một reaction Zalo (trước bản sửa, "haha" nhận về là 😆). */
+/** Old emoji already saved for the same Zalo reaction (before the fix, "haha" came back as 😆). */
 const ZALO_REACTION_ALIASES: Readonly<Record<string, string>> = { '😆': '😄' };
 
 export function normalizeZaloReactionEmoji(emoji: string): string {
@@ -31,8 +31,8 @@ export function normalizeZaloReactionEmoji(emoji: string): string {
 export interface ZaloReactionEntry { total: number; users: Record<string, number> }
 
 /**
- * Gộp bản ghi reaction Zalo bị tách đôi về emoji chuẩn. Cùng một người có ở cả 2 khoá = lần thả trong app + bản echo
- * của chính lần đó → lấy số lớn hơn (không cộng); người khác nhau → gộp chung. Không có khoá cũ → trả nguyên `data`.
+ * Merges Zalo reaction records that were split in two into the standard emoji. The same person under both keys = one tap in the app + the echo
+ * of that same tap, so take the larger number (do not add); different people → combined. No old key → return `data` unchanged.
  */
 export function mergeZaloReactionAliases<T extends { total?: number; emoji: Record<string, ZaloReactionEntry> }>(data: T): T {
   const keys = Object.keys(data?.emoji || {});

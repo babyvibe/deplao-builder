@@ -3,7 +3,7 @@
  *
  * A read-only mini React Flow with the editor's own node cards (new nodes green, edited amber,
  * untouched canvas nodes dimmed), the list of changes, the automatic checks and the apply buttons
- * ("Thêm vào kịch bản" / "Thay thế kịch bản"; the proposal's own mode is the primary button).
+ * ("Thêm vào kịch bản" (add to workflow) / "Thay thế kịch bản" (replace workflow); the proposal's own mode is the primary button).
  */
 import React, { memo, useMemo } from 'react';
 import ReactFlow, { Background, Edge, MarkerType, Node, ReactFlowProvider } from 'reactflow';
@@ -15,6 +15,8 @@ import {
   AIProposal, CanvasNode, CopilotContext, CopilotItem, ProposalMode, ValidationResult,
   materializeProposal, validateProposal,
 } from './aiCopilot';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 /** How a proposal is applied by default: its own mode, or "replace" on an empty canvas. */
 export function primaryModeFor(proposal: AIProposal, ctx: CopilotContext): ProposalMode {
@@ -36,10 +38,10 @@ interface Props {
 type Change = { kind: 'new' | 'updated' | 'kept' | 'removed'; node: CanvasNode };
 
 const CHANGE_BADGE: Record<Change['kind'], { text: string; tone: string }> = {
-  new: { text: 'MỚI', tone: 'green' },
-  updated: { text: 'SỬA', tone: 'yellow' },
-  kept: { text: 'GIỮ LẠI', tone: 'gray' },
-  removed: { text: 'XOÁ', tone: 'red' },
+  new: { text: tr('MỚI'), tone: 'green' },
+  updated: { text: tr('SỬA'), tone: 'yellow' },
+  kept: { text: tr('GIỮ LẠI'), tone: 'gray' },
+  removed: { text: tr('XOÁ'), tone: 'red' },
 };
 
 function CopilotPreview({ item, versions, ctx, isLight, busy, onSelect, onApply, onAskFix }: Props) {
@@ -106,10 +108,9 @@ function CopilotPreview({ item, versions, ctx, isLight, busy, onSelect, onApply,
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-center px-8 gap-3">
         <span className="wf-copilot-tile w-12 h-12 opacity-80"><LayoutIcon className="w-6 h-6" /></span>
-        <p className="text-sm font-semibold wf-text">Chưa có đề xuất</p>
+        <p className="text-sm font-semibold wf-text">{tr('Chưa có đề xuất')}</p>
         <p className="text-xs wf-muted leading-relaxed max-w-[19rem]">
-          Khi AI đề xuất kịch bản, sơ đồ xem trước hiện ở đây. Bạn kiểm tra rồi chọn
-          <b className="wf-text-2"> Thêm vào</b> hoặc <b className="wf-text-2">Thay thế</b> kịch bản hiện tại.
+          {trx('Khi AI đề xuất kịch bản, sơ đồ xem trước hiện ở đây. Bạn kiểm tra rồi chọn<0> Thêm vào</0> hoặc <1>Thay thế</1> kịch bản hiện tại.', { 0: <b className="wf-text-2" />, 1: <b className="wf-text-2" /> })}
         </p>
       </div>
     );
@@ -117,9 +118,9 @@ function CopilotPreview({ item, versions, ctx, isLight, busy, onSelect, onApply,
 
   const { validation, altValidation } = view;
   const hasEdits = proposal.update.length + proposal.remove.length + proposal.removeEdges.length > 0;
-  const modeText = (mode: ProposalMode) => (canvasEmpty ? 'Đưa vào sơ đồ'
-    : mode === 'replace' ? 'Thay thế kịch bản'
-      : hasEdits ? 'Áp dụng thay đổi' : 'Thêm vào kịch bản');
+  const modeText = (mode: ProposalMode) => (canvasEmpty ? tr('Đưa vào sơ đồ')
+    : mode === 'replace' ? tr('Thay thế kịch bản')
+      : hasEdits ? tr('Áp dụng thay đổi') : tr('Thêm vào kịch bản'));
   const count = (kind: Change['kind']) => changes.filter(change => change.kind === kind).length;
   const edgeCount = view.result.edges.filter(edge => !edge.data?.telegramInline).length;
 
@@ -128,7 +129,7 @@ function CopilotPreview({ item, versions, ctx, isLight, busy, onSelect, onApply,
       {/* Title + versions */}
       <div className="px-4 pt-3 pb-2.5 border-b border-[color:var(--wf-panel-border)]">
         <div className="flex items-center gap-2">
-          <span className="wf-section-title !m-0">Bản đề xuất</span>
+          <span className="wf-section-title !m-0">{tr('Bản đề xuất')}</span>
           <div className="flex items-center gap-1 ml-auto overflow-x-auto max-w-[70%]">
             {versions.map(version => (
               <button key={version.id} type="button" className="wf-chip !h-5 !px-2 flex-shrink-0" data-active={String(version.id === item.id)}
@@ -138,18 +139,18 @@ function CopilotPreview({ item, versions, ctx, isLight, busy, onSelect, onApply,
             ))}
           </div>
         </div>
-        <p className="mt-1.5 text-[14px] font-semibold wf-text leading-snug">{proposal.title || `Đề xuất v${item.version}`}</p>
+        <p className="mt-1.5 text-[14px] font-semibold wf-text leading-snug">{proposal.title || tr('Đề xuất v{{version}}', { version: item.version })}</p>
         {proposal.summary && <p className="mt-0.5 text-xs wf-muted leading-relaxed">{proposal.summary}</p>}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <span className="wf-badge" data-tone={primaryMode === 'replace' && !canvasEmpty ? 'orange' : 'gray'}>
-            {canvasEmpty ? 'Sơ đồ mới' : primaryMode === 'replace' ? 'Thay thế toàn bộ' : 'Thêm / sửa trên sơ đồ'}
+            {canvasEmpty ? tr('Sơ đồ mới') : primaryMode === 'replace' ? tr('Thay thế toàn bộ') : tr('Thêm / sửa trên sơ đồ')}
           </span>
-          {count('new') > 0 && <span className="wf-badge" data-tone="green">+{count('new')} node mới</span>}
-          {count('updated') > 0 && <span className="wf-badge" data-tone="yellow">{count('updated')} node sửa</span>}
-          {count('kept') > 0 && <span className="wf-badge" data-tone="gray">giữ {count('kept')} node</span>}
-          {count('removed') > 0 && <span className="wf-badge" data-tone="red">−{count('removed')} node</span>}
-          <span className="wf-badge" data-tone="gray">{edgeCount} liên kết</span>
-          {item.appliedMode && <span className="wf-badge" data-tone="green">✓ Đã áp dụng</span>}
+          {count('new') > 0 && <span className="wf-badge" data-tone="green">{trx('+{{v1}} node mới', { v1: count('new') })}</span>}
+          {count('updated') > 0 && <span className="wf-badge" data-tone="yellow">{trx('{{v1}} node sửa', { v1: count('updated') })}</span>}
+          {count('kept') > 0 && <span className="wf-badge" data-tone="gray">{trx('giữ {{v1}} node', { v1: count('kept') })}</span>}
+          {count('removed') > 0 && <span className="wf-badge" data-tone="red">{trx('−{{v1}} node', { v1: count('removed') })}</span>}
+          <span className="wf-badge" data-tone="gray">{trx('{{edgeCount}} liên kết', { edgeCount })}</span>
+          {item.appliedMode && <span className="wf-badge" data-tone="green">{tr('✓ Đã áp dụng')}</span>}
         </div>
       </div>
 
@@ -174,9 +175,9 @@ function CopilotPreview({ item, versions, ctx, isLight, busy, onSelect, onApply,
         </ReactFlowProvider>
         {primaryMode === 'append' && (
           <div className="wf-preview-legend">
-            <span><i className="wf-legend-dot" style={{ background: '#22c55e' }} />Mới</span>
-            <span><i className="wf-legend-dot" style={{ background: '#f59e0b' }} />Sửa</span>
-            <span><i className="wf-legend-dot" style={{ background: 'var(--wf-faint)' }} />Giữ nguyên</span>
+            <span><i className="wf-legend-dot" style={{ background: '#22c55e' }} />{tr('Mới')}</span>
+            <span><i className="wf-legend-dot" style={{ background: '#f59e0b' }} />{tr('Sửa')}</span>
+            <span><i className="wf-legend-dot" style={{ background: 'var(--wf-faint)' }} />{tr('Giữ nguyên')}</span>
           </div>
         )}
       </div>
@@ -187,20 +188,20 @@ function CopilotPreview({ item, versions, ctx, isLight, busy, onSelect, onApply,
           <div className="wf-callout" data-tone="danger">
             <AlertIcon className="w-4 h-4" />
             <div className="min-w-0 flex-1">
-              <p className="wf-callout__title">Còn {validation.errors.length} lỗi - phần sai sẽ bị bỏ qua khi áp dụng</p>
+              <p className="wf-callout__title">{trx('Còn {{count}} lỗi - phần sai sẽ bị bỏ qua khi áp dụng', { count: validation.errors.length })}</p>
               <ul className="mt-1 space-y-0.5 list-disc pl-4">
                 {validation.errors.slice(0, 5).map(error => <li key={error}>{error}</li>)}
-                {validation.errors.length > 5 && <li>… và {validation.errors.length - 5} lỗi khác</li>}
+                {validation.errors.length > 5 && <li>{trx('… và {{v1}} lỗi khác', { v1: validation.errors.length - 5 })}</li>}
               </ul>
               <button type="button" className="wf-btn wf-btn--sm mt-2" disabled={busy} onClick={() => onAskFix(item, validation)}>
-                <RefreshIcon className="w-3 h-3" /> Nhờ AI sửa
+                {trx('<0/> Nhờ AI sửa', { 0: <RefreshIcon className="w-3 h-3" /> })}
               </button>
             </div>
           </div>
         ) : (
           <div className="wf-callout" data-tone="success">
             <CheckCircleIcon className="w-4 h-4" />
-            <span>Đã kiểm tra: đúng 1 trigger, node và liên kết hợp lệ, biến dùng đúng.</span>
+            <span>{tr('Đã kiểm tra: đúng 1 trigger, node và liên kết hợp lệ, biến dùng đúng.')}</span>
           </div>
         )}
         {validation.warnings.length > 0 && (
@@ -213,7 +214,7 @@ function CopilotPreview({ item, versions, ctx, isLight, busy, onSelect, onApply,
         )}
         {changes.length > 0 && (
           <div>
-            <p className="wf-section-title mb-1.5">Thay đổi</p>
+            <p className="wf-section-title mb-1.5">{tr('Thay đổi')}</p>
             <div className="space-y-1">
               {changes.map(({ kind, node }) => (
                 <div key={`${kind}:${node.id}`} className="flex items-center gap-2 min-w-0" style={kind === 'removed' ? { opacity: 0.6 } : undefined}>
@@ -233,8 +234,8 @@ function CopilotPreview({ item, versions, ctx, isLight, busy, onSelect, onApply,
         {!canvasEmpty && (
           <button type="button" className="wf-btn" disabled={busy || !!altValidation?.errors.length}
             title={altValidation?.errors.length
-              ? `Không áp dụng kiểu này được: ${altValidation.errors[0]}${altMode === 'replace' ? ' - muốn thay thế, hãy nhắn AI "làm lại toàn bộ kịch bản".' : ''}`
-              : altMode === 'replace' ? 'Bỏ sơ đồ hiện tại, dùng đề xuất này' : 'Giữ sơ đồ hiện tại, thêm đề xuất vào'}
+              ? tr('Không áp dụng kiểu này được: {{v1}}{{v2}}', { v1: altValidation.errors[0], v2: altMode === 'replace' ? tr(' - muốn thay thế, hãy nhắn AI "làm lại toàn bộ kịch bản".') : '' })
+              : altMode === 'replace' ? tr('Bỏ sơ đồ hiện tại, dùng đề xuất này') : tr('Giữ sơ đồ hiện tại, thêm đề xuất vào')}
             onClick={() => onApply(item, altMode)}>
             {modeText(altMode)}
           </button>

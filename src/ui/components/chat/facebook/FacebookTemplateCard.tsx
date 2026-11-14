@@ -1,9 +1,9 @@
 /**
- * Tin mẫu của Page Facebook (msg_type `fb.template`): thẻ ảnh + tiêu đề + mô tả + nút, carousel nhiều thẻ — như
- * Messenger. Dữ liệu thẻ nằm trong cột `attachments` (shared/facebook/facebookTemplate.ts).
+ * Facebook Page template message (msg_type `fb.template`): image card + title + description + buttons, multi-card carousel, like
+ * Messenger. Card data lives in the `attachments` column (shared/facebook/facebookTemplate.ts).
  *
- * Nút: link → mở trình duyệt; số điện thoại → sao chép; postback → gửi tên nút cho Page (giống Messenger hiện trong
- * khung chat; LightSpeed không có lệnh postback nên Page không nhận mã ẩn của nút → kèm "Mở trên Messenger").
+ * Buttons: link → opens the browser; phone number → copies it; postback → sends the button label to the Page (as Messenger does in the
+ * chat frame; LightSpeed has no postback command, so the Page does not receive the button's hidden payload → add "Mở trên Messenger" (Open on Messenger)).
  */
 import React, { useMemo, useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -19,6 +19,7 @@ import {
   type FbTemplateButton,
   type FbTemplateItem,
 } from '../../../../shared/facebook/facebookTemplate';
+import { tr } from '../../../../shared/i18n';
 
 function openUrl(url?: string): void {
   if (url && /^https?:\/\//i.test(url)) ipc.shell?.openExternal(url);
@@ -46,8 +47,8 @@ function ButtonGlyph({ kind }: { kind: FbTemplateButton['kind'] }) {
 
 function buttonHint(button: FbTemplateButton, isSent: boolean): string {
   if (button.kind === 'url') return button.url || button.title;
-  if (button.kind === 'phone') return `Sao chép số ${button.phone}`;
-  return isSent ? 'Nút trên tin của bạn' : `Gửi “${button.title}” cho Trang`;
+  if (button.kind === 'phone') return tr('Sao chép số {{phone}}', { phone: button.phone });
+  return isSent ? tr('Nút trên tin của bạn') : tr('Gửi “{{title}}” cho Trang', { title: button.title });
 }
 
 function ButtonList({ buttons, isSent, sending, onPress }: {
@@ -69,7 +70,7 @@ function ButtonList({ buttons, isSent, sending, onPress }: {
             } disabled:opacity-70`}
           >
             <ButtonGlyph kind={button.kind} />
-            <span className="truncate">{sending === button.title ? 'Đang gửi…' : button.title}</span>
+            <span className="truncate">{sending === button.title ? tr('Đang gửi…') : button.title}</span>
           </button>
         );
       })}
@@ -86,7 +87,7 @@ function CardTexts({ template }: { template: Pick<FbTemplate, 'header' | 'title'
       {template.title && <p className="text-sm font-semibold leading-snug text-foreground whitespace-pre-line break-words">{template.title}</p>}
       {template.subtitle && <p className="text-[13px] leading-snug text-muted-foreground whitespace-pre-line break-words">{template.subtitle}</p>}
       {template.body && (
-        // Tin "chữ + nút" (không tiêu đề): chữ cỡ như tin thường, như Messenger
+        // Text + button message (no title): text at the normal message size, as in Messenger
         <p className={`${template.title || template.subtitle || template.header ? 'text-[13px] leading-snug' : 'text-sm leading-relaxed'} text-foreground whitespace-pre-line break-words`}>
           {template.body}
         </p>
@@ -114,18 +115,18 @@ export default function FacebookTemplateCard({ msg, isSent }: { msg: any; isSent
   const [sending, setSending] = useState<string | null>(null);
 
   if (!template) {
-    // Thẻ hỏng / thiếu dữ liệu: vẫn hiện chữ đã lưu thay vì bong bóng rỗng
+    // Broken or incomplete card: still show the saved text instead of an empty bubble
     return (
       <div className={`rounded-lg px-3 py-2 border ${isSent ? 'bg-bubble-out border-bubble-out-border' : 'bg-bubble-in border-bubble-in-border'}`}>
-        <p className="text-sm whitespace-pre-line break-words">{msg?.content || '[Tin nhắn mẫu]'}</p>
+        <p className="text-sm whitespace-pre-line break-words">{msg?.content || tr('[Tin nhắn mẫu]')}</p>
         <BubbleTime timestamp={msg?.timestamp} />
       </div>
     );
   }
 
   if (isFbUnavailableTemplate(template)) {
-    // Facebook chỉ gửi thẻ thay thế "File đính kèm không hiển thị" (thường là tin có nút của Trang mà bridge chưa nhận được
-    // bản đầy đủ): báo chưa hiển thị được + mở trên Messenger, không hiện chữ "có thể đã bị gỡ" gây hiểu nhầm
+    // Facebook only sends the placeholder "File đính kèm không hiển thị" (Attachment not displayed) for messages with a Page button that the bridge did not receive
+    // in full): show "cannot display yet" + open on Messenger, do not show the misleading "may have been deleted" text
     return (
       <div
         data-fb-template="unavailable"
@@ -145,8 +146,8 @@ export default function FacebookTemplateCard({ msg, isSent }: { msg: any; isSent
     if (button.kind === 'phone') {
       const phone = button.phone || '';
       navigator.clipboard?.writeText(phone)
-        .then(() => useAppStore.getState().showNotification(`Đã sao chép số ${phone}`, 'success'))
-        .catch(() => useAppStore.getState().showNotification(`Số điện thoại: ${phone}`, 'info'));
+        .then(() => useAppStore.getState().showNotification(tr('Đã sao chép số {{phone}}', { phone }), 'success'))
+        .catch(() => useAppStore.getState().showNotification(tr('Số điện thoại: {{phone}}', { phone }), 'info'));
       return;
     }
     if (isSent) return;
@@ -157,7 +158,7 @@ export default function FacebookTemplateCard({ msg, isSent }: { msg: any; isSent
       text: button.title,
     });
     if (!sent) {
-      useAppStore.getState().showNotification('Không gửi được — hãy mở hội thoại trên Messenger', 'error');
+      useAppStore.getState().showNotification(tr('Không gửi được — hãy mở hội thoại trên Messenger'), 'error');
       return;
     }
     setSending(button.title);
@@ -198,28 +199,28 @@ export default function FacebookTemplateCard({ msg, isSent }: { msg: any; isSent
         <button
           type="button"
           onClick={() => openUrl(messengerThreadUrl(msg?.thread_id))}
-          title="Nút của Trang chỉ gửi đúng dữ liệu ẩn khi bấm trên Messenger; ở đây Trang nhận tên nút như một tin nhắn"
+          title={tr('Nút của Trang chỉ gửi đúng dữ liệu ẩn khi bấm trên Messenger; ở đây Trang nhận tên nút như một tin nhắn')}
           className="self-start px-1 text-[11px] text-muted-foreground hover:text-foreground hover:underline"
         >
-          Mở trên Messenger
+          {tr('Mở trên Messenger')}
         </button>
       )}
     </div>
   );
 }
 
-/** Tin Facebook cũ lưu rỗng (bản trước chưa đọc được tin mẫu / đính kèm): chữ thay thế + mở trên Messenger. */
+/** Old saved Facebook message with an empty payload (earlier build could not read template / attachment messages): show the fallback text + open on Messenger. */
 export function FacebookEmptyMessage({ msg }: { msg: any }) {
   return (
     <span className="text-[13px] italic text-muted-foreground">
-      Tin nhắn chưa hiển thị được.{' '}
+      {tr('Tin nhắn chưa hiển thị được. ')}
       <button
         type="button"
         className="not-italic text-primary hover:underline"
-        title="Đồng bộ lại tin nhắn để tải nội dung, hoặc xem trên Messenger"
+        title={tr('Đồng bộ lại tin nhắn để tải nội dung, hoặc xem trên Messenger')}
         onClick={(e) => { e.stopPropagation(); openUrl(messengerThreadUrl(msg?.thread_id)); }}
       >
-        Mở trên Messenger
+        {tr('Mở trên Messenger')}
       </button>
     </span>
   );

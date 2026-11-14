@@ -1,6 +1,6 @@
 /**
- * Người chưa thêm được vào nhóm / kênh (messages.InvitedUsers.missing_invitees). Như Telegram: người chặn vì quyền
- * riêng tư → gửi link mời bằng tin nhắn riêng; cần Telegram Premium → ghi rõ, không gửi được.
+ * People who could not be added to the group / channel (messages.InvitedUsers.missing_invitees). Like Telegram: people blocked by
+ * privacy settings get the invite link by private message; people who need Telegram Premium are marked as not sendable.
  */
 import React, { useState } from 'react';
 import ipc from '@/lib/ipc';
@@ -9,19 +9,21 @@ import { Badge, Button } from '@/components/ui';
 import { CheckIcon, SendIcon } from '@/components/common/icons';
 import type { TelegramMissingInvitee } from '../../../../../shared/telegram/telegramQuickModel';
 import { TelegramAvatar } from './TelegramUi';
+import { tr } from '../../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type SendState = 'idle' | 'sending' | 'sent' | 'failed';
 
-/** Ai nhận được link mời qua tin nhắn riêng. */
+/** Who receives the invite link by private message. */
 export function canSendInviteLink(person: TelegramMissingInvitee): boolean {
   return !person.premiumRequiredForPm && !person.error;
 }
 
 function reasonOf(person: TelegramMissingInvitee): string {
   if (person.error) return person.error;
-  if (person.premiumWouldAllowInvite) return 'Cần Telegram Premium để thêm';
-  if (person.premiumRequiredForPm) return 'Chỉ nhận tin nhắn từ tài khoản Premium';
-  return 'Cài đặt riêng tư không cho thêm';
+  if (person.premiumWouldAllowInvite) return tr('Cần Telegram Premium để thêm');
+  if (person.premiumRequiredForPm) return tr('Chỉ nhận tin nhắn từ tài khoản Premium');
+  return tr('Cài đặt riêng tư không cho thêm');
 }
 
 export default function TelegramInviteResult({ accountId, chatId, chatTitle, isChannel, people, names }: {
@@ -30,7 +32,7 @@ export default function TelegramInviteResult({ accountId, chatId, chatTitle, isC
   chatTitle: string;
   isChannel: boolean;
   people: TelegramMissingInvitee[];
-  /** Tên đã biết ở renderer (người vừa chọn) — main chỉ biết tên trong cache. */
+  /** Names known in the renderer (the people just selected): main only knows the names in its cache. */
   names?: Record<string, { name: string; avatar: string }>;
 }) {
   const [states, setStates] = useState<Record<string, SendState>>({});
@@ -46,13 +48,13 @@ export default function TelegramInviteResult({ accountId, chatId, chatTitle, isC
     if (!inviteLink) {
       const res = await ipc.telegramUser?.exportChatInvite({ accountId, chatId });
       if (!res?.success || !res.link) {
-        setError(res?.error || 'Không lấy được link mời');
+        setError(res?.error || tr('Không lấy được link mời'));
         return;
       }
       inviteLink = res.link;
       setLink(inviteLink);
     }
-    const text = `Mời bạn tham gia ${isChannel ? 'kênh' : 'nhóm'} "${chatTitle}" trên Telegram: ${inviteLink}`;
+    const text = tr('Mời bạn tham gia {{v1}} "{{chatTitle}}" trên Telegram: {{inviteLink}}', { v1: isChannel ? tr('kênh') : tr('nhóm'), chatTitle, inviteLink });
     for (const person of pending) {
       setStates(prev => ({ ...prev, [person.userId]: 'sending' }));
       try {
@@ -68,12 +70,12 @@ export default function TelegramInviteResult({ accountId, chatId, chatTitle, isC
     <div className="space-y-2.5">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-foreground">
-          {people.length} người chưa {isChannel ? 'được mời vào kênh' : 'được thêm vào nhóm'}
+          {trx('{{count}} người chưa {{v1}}', { count: people.length, v1: isChannel ? tr('được mời vào kênh') : tr('được thêm vào nhóm') })}
         </p>
         {eligible.length > 0 && (
           <Button size="sm" variant={pending.length ? 'primary' : 'outline'} onClick={() => void sendAll()} loading={sending}
             disabled={pending.length === 0 || sending} leftIcon={pending.length ? <SendIcon className="h-3.5 w-3.5" /> : <CheckIcon className="h-3.5 w-3.5" />}>
-            {pending.length ? `Gửi link mời (${pending.length})` : 'Đã gửi link mời'}
+            {pending.length ? tr('Gửi link mời ({{count}})', { count: pending.length }) : tr('Đã gửi link mời')}
           </Button>
         )}
       </div>
@@ -89,16 +91,16 @@ export default function TelegramInviteResult({ accountId, chatId, chatTitle, isC
                 <span className="block truncate text-[13px] text-foreground">{name}</span>
                 <span className={cn('block truncate text-[11px]', person.error ? 'text-destructive' : 'text-muted-foreground')}>{reasonOf(person)}</span>
               </span>
-              {state === 'sent' && <Badge size="sm" variant="success" dot>Đã gửi link</Badge>}
-              {state === 'failed' && <Badge size="sm" variant="destructive">Gửi lỗi</Badge>}
-              {state === 'sending' && <span className="text-[11px] text-muted-foreground">Đang gửi…</span>}
+              {state === 'sent' && <Badge size="sm" variant="success" dot>{tr('Đã gửi link')}</Badge>}
+              {state === 'failed' && <Badge size="sm" variant="destructive">{tr('Gửi lỗi')}</Badge>}
+              {state === 'sending' && <span className="text-[11px] text-muted-foreground">{tr('Đang gửi…')}</span>}
             </li>
           );
         })}
       </ul>
       {eligible.length > 0 && !error && (
         <p className="text-[11px] leading-4 text-subtle-foreground">
-          Telegram không cho thêm thẳng những người này. Gửi link mời bằng tin nhắn riêng để họ tự bấm tham gia.
+          {tr('Telegram không cho thêm thẳng những người này. Gửi link mời bằng tin nhắn riêng để họ tự bấm tham gia.')}
         </p>
       )}
       {error && <p role="alert" className="text-[11px] text-destructive">{error}</p>}

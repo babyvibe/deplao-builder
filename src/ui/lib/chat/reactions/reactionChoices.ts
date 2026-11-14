@@ -5,19 +5,19 @@ import { isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { DEFAULT_TELEGRAM_REACTIONS, normalizeTelegramReaction } from '../../../../shared/telegram/telegramReactions';
 
 /**
- * Danh sách reaction theo kênh — dùng chung cho thanh chọn khi rê chuột và menu chuột phải.
- * - 6 reaction hiện sẵn CÙNG THỨ TỰ ở mọi kênh (REACTION_SLOTS): tim, haha, wow, buồn, phẫn nộ, thích. Thanh rê chuột:
- *   reaction đầu sát nút nhất; menu chuột phải: trái sang phải.
- * - Zalo: chỉ các loại Zalo có (EMOJI_TO_REACTION) — emoji khác bị gửi thành ❤️ (trước đây 😆 / 😯 ở menu chuột phải).
- * - Facebook (Messenger nhận mọi emoji): 6 reaction mặc định của Messenger.
- * - Telegram: danh sách thật của hội thoại (useTelegramChatReactions) — chuỗi đúng như Telegram (tim là "❤").
+ * Reaction list per channel: shared by the picker shown on hover and the right-click menu.
+ * - The 6 reactions shown by default are in the SAME ORDER on every channel (REACTION_SLOTS): heart, haha, wow, sad, angry, like. Hover bar:
+ *   the first reaction is closest to the button; right-click menu: left to right.
+ * - Zalo: only the types Zalo has (EMOJI_TO_REACTION); other emoji are sent as ❤️ (before, 😆 / 😯 appeared in the right-click menu).
+ * - Facebook (Messenger accepts every emoji): the 6 default Messenger reactions.
+ * - Telegram: the conversation's real list (useTelegramChatReactions): strings exactly as Telegram (heart is "❤").
  */
 const unique = (items: readonly string[]) => [...new Set(items)];
 
 /**
- * Thứ tự chung: mỗi ô một ý, emoji đúng của từng kênh. Haha: Zalo 😄 (mã ":>"), Messenger 😆, Telegram 😁 (không có
- * 😄 / 😆); phẫn nộ của Messenger là 😠; Telegram không có 😮 nên "wow" là 😱. Trước đây Telegram một thứ tự riêng
- * (👍 😁 ❤ 😢 👏 😡), Zalo / Facebook một thứ tự khác.
+ * Shared order: one meaning per slot, with each channel's correct emoji. Haha: Zalo 😄 (code ":>"), Messenger 😆, Telegram 😁 (no
+ * 😄 / 😆); Messenger's angry is 😠; Telegram has no 😮 so "wow" is 😱. Before, Telegram had its own order
+ * (👍 😁 ❤ 😢 👏 😡), and Zalo / Facebook another order.
  */
 export const REACTION_SLOTS = [
   { slot: 'heart', zalo: '❤️', facebook: '❤️', telegram: '❤' },
@@ -28,22 +28,22 @@ export const REACTION_SLOTS = [
   { slot: 'like', zalo: '👍', facebook: '👍', telegram: '👍' },
 ] as const;
 
-// Zalo / Facebook: giữ ít reaction như cũ (6), danh sách dài chỉ dành cho Telegram
+// Zalo / Facebook: keep the few reactions as before (6), the long list is only for Telegram
 export const ZALO_QUICK_REACTIONS: string[] = REACTION_SLOTS.map((reaction) => reaction.zalo);
 export const ZALO_ALL_REACTIONS = unique(ZALO_QUICK_REACTIONS.filter((emoji) => !!EMOJI_TO_REACTION[emoji]));
 export const FACEBOOK_QUICK_REACTIONS: string[] = REACTION_SLOTS.map((reaction) => reaction.facebook);
 export const FACEBOOK_ALL_REACTIONS = [...FACEBOOK_QUICK_REACTIONS];
-/** Telegram: số reaction hiện sẵn (menu chuột phải trước nút mở rộng, thanh rê chuột trước khi cuộn). */
+/** Telegram: number of reactions shown by default (right-click menu before the expand button, hover bar before scrolling). */
 export const TELEGRAM_QUICK_COUNT = 6;
 /**
- * Reaction hiện sẵn của Telegram: cố định, cùng thứ tự Zalo / Facebook, không dùng thẳng danh sách "hay dùng" Telegram cá
- * nhân hoá (từng ra 🍌 / 👎…). Chuỗi đúng như Telegram (tim là "❤").
+ * Telegram's default reactions: fixed, in the same order as Zalo / Facebook, not taken directly from the personalised "frequently used" list of Telegram
+ * (which once produced 🍌 / 👎...). Strings exactly as Telegram (heart is "❤").
  */
 export const TELEGRAM_PREFERRED_QUICK: string[] = REACTION_SLOTS.map((reaction) => reaction.telegram);
 
 export function getReactionChoices(channel: string | undefined, telegramReactions: readonly string[]): { quick: string[]; all: string[] } {
   if (isTelegram(channel)) {
-    // Nhóm / kênh chỉ cho một số reaction → bỏ cái không được phép, bù bằng reaction được phép kế tiếp
+    // A group / channel allows only some reactions → drop the ones not allowed, fill up with the next allowed reactions
     const allowed = new Set(telegramReactions);
     const quick = TELEGRAM_PREFERRED_QUICK.filter((emoji) => allowed.has(emoji));
     for (const emoji of telegramReactions) {
@@ -56,7 +56,7 @@ export function getReactionChoices(channel: string | undefined, telegramReaction
   return { quick: ZALO_QUICK_REACTIONS, all: ZALO_ALL_REACTIONS };
 }
 
-/** Cùng một reaction dù khác biến thể hiển thị ("❤" / "❤️"). */
+/** The same reaction even when the display variant differs ("❤" / "❤️"). */
 export function sameReaction(a: string | null | undefined, b: string | null | undefined): boolean {
   return !!a && !!b && normalizeTelegramReaction(a) === normalizeTelegramReaction(b);
 }
@@ -66,8 +66,8 @@ const cache = new Map<string, { at: number; reactions: string[] }>();
 const inflight = new Map<string, Promise<string[] | null>>();
 
 /**
- * Reaction dùng được trong hội thoại Telegram đang mở. Mặc định danh sách chuẩn; `load()` (gọi khi mở thanh chọn / menu
- * chuột phải, KHÔNG gọi khi vẽ từng tin) hỏi main 1 lần / 10 phút / hội thoại. Nhóm tắt reaction → [].
+ * Reactions allowed in the open Telegram conversation. Defaults to the standard list; `load()` (called when the picker / right-click menu opens,
+ * NOT when each message is drawn) asks main once per 10 minutes per conversation. A group with reactions turned off → [].
  */
 export function useTelegramChatReactions(accountId: string | null | undefined, chatId: string | null | undefined, enabled: boolean) {
   const key = enabled && accountId && chatId ? `${accountId}:${chatId}` : '';
@@ -105,7 +105,7 @@ export function useTelegramChatReactions(accountId: string | null | undefined, c
   return { reactions, load };
 }
 
-/** Chỉ dùng trong test. */
+/** Test only. */
 export function __resetTelegramReactionCache(): void {
   cache.clear();
   inflight.clear();

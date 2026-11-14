@@ -1,6 +1,6 @@
 /**
- * Tin đã thu hồi / đã xoá: RecalledBubble (dùng chung MessageBubbles), "Xem nội dung gốc" nếu app còn giữ, menu chuột
- * phải chỉ thao tác cục bộ. Hàm vẽ (không phải component) → giữ nguyên key / cây phần tử của hàng như bản cũ.
+ * Unsent / deleted message: RecalledBubble (shared with MessageBubbles), "Xem nội dung gốc" (View original content) if the app still keeps it, the right-click
+ * menu only does local actions. A draw function (not a component) → keeps the same key / element tree of the row as the old version.
  */
 import React from 'react';
 import { RecalledBubble } from '../../messages/MessageBubbles';
@@ -39,11 +39,11 @@ export function renderRecalledRow(
           onOpenProfile={(userId, e) => setUserProfilePopup({ userId, x: e.clientX, y: e.clientY })}
           onContextMenu={(e, previewMsg) => {
             if (isSelecting) { e.preventDefault(); return; }
-            // Đang bôi đen chữ → để trình duyệt xử lý (copy tự nhiên)
+            // Text is being selected → let the browser handle it (natural copy)
             const sel = window.getSelection();
             if (sel && sel.toString().length > 0) return;
             e.preventDefault();
-            // Tin đã thu hồi: chỉ thao tác cục bộ (sao chép, lưu ảnh/file, đánh dấu, xoá khỏi app)
+            // Unsent message: local actions only (copy, save photo / file, star, delete from the app)
             setContextMenu({ x: e.clientX, y: e.clientY, msg: previewMsg, isSent, recalled: true });
           }}
         />

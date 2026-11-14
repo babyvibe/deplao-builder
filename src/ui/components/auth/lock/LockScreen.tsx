@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ipc from '@/lib/ipc';
 import { Spinner } from '@/components/common/PageLoading';
 import { LockIcon } from '@/components/common/icons';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 interface Props {
   onUnlock: () => void;
@@ -60,7 +62,7 @@ export default function LockScreen({ onUnlock }: Props) {
       if (res.success) {
         onUnlock();
       } else {
-        setError(res.error || 'Sai mật khẩu');
+        setError(res.error || tr('Sai mật khẩu'));
         if (res.cooldownRemaining && res.cooldownRemaining > 0) {
           setCooldown(res.cooldownRemaining);
         }
@@ -68,7 +70,7 @@ export default function LockScreen({ onUnlock }: Props) {
         inputRef.current?.focus();
       }
     } catch {
-      setError('Lỗi xác thực');
+      setError(tr('Lỗi xác thực'));
     } finally {
       setLoading(false);
     }
@@ -85,10 +87,10 @@ export default function LockScreen({ onUnlock }: Props) {
         setScreen('resetPassword');
         setError('');
       } else {
-        setError(res.error || 'Recovery key không đúng');
+        setError(res.error || tr('Recovery key không đúng'));
       }
     } catch {
-      setError('Lỗi xác thực recovery key');
+      setError(tr('Lỗi xác thực recovery key'));
     } finally {
       setLoading(false);
     }
@@ -97,11 +99,11 @@ export default function LockScreen({ onUnlock }: Props) {
   const handleResetPassword = useCallback(async () => {
     if (loading) return;
     if (newPassword.length < 4) {
-      setError('Mật khẩu phải có ít nhất 4 ký tự');
+      setError(tr('Mật khẩu phải có ít nhất 4 ký tự'));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setError('Mật khẩu xác nhận không khớp');
+      setError(tr('Mật khẩu xác nhận không khớp'));
       return;
     }
 
@@ -116,10 +118,10 @@ export default function LockScreen({ onUnlock }: Props) {
       if (res.success) {
         onUnlock();
       } else {
-        setError(res.error || 'Đặt lại mật khẩu thất bại');
+        setError(res.error || tr('Đặt lại mật khẩu thất bại'));
       }
     } catch {
-      setError('Lỗi đặt lại mật khẩu');
+      setError(tr('Lỗi đặt lại mật khẩu'));
     } finally {
       setLoading(false);
     }
@@ -211,7 +213,7 @@ export default function LockScreen({ onUnlock }: Props) {
             </div>
           </div>
           <h1 className="text-3xl font-bold text-white-important tracking-tight" style={{ textShadow: '0 0 30px rgba(147,51,234,0.5)' }}>Deplao</h1>
-          <p className="text-white/50 text-sm mt-1 font-medium tracking-wide">Ứng dụng đã được bảo vệ</p>
+          <p className="text-white/50 text-sm mt-1 font-medium tracking-wide">{tr('Ứng dụng đã được bảo vệ')}</p>
         </div>
 
         {/* Glass card */}
@@ -235,7 +237,7 @@ export default function LockScreen({ onUnlock }: Props) {
           {screen === 'password' && (
             <>
               {/* Password Input */}
-              <label className="block text-sm font-semibold text-white/70 mb-2 tracking-wide">Mật khẩu</label>
+              <label className="block text-sm font-semibold text-white/70 mb-2 tracking-wide">{tr('Mật khẩu')}</label>
               <div className="relative">
                 <input
                   ref={inputRef}
@@ -243,7 +245,7 @@ export default function LockScreen({ onUnlock }: Props) {
                   value={password}
                   onChange={e => { setPassword(e.target.value); setError(''); }}
                   onKeyDown={handleKeyDown}
-                  placeholder="Nhập mật khẩu..."
+                  placeholder={tr('Nhập mật khẩu...')}
                   disabled={loading || cooldown > 0}
                   className="w-full px-4 py-3 rounded-xl text-white-important placeholder-white/30 focus:outline-none disabled:opacity-50 pr-12 transition-all duration-200"
                   style={{
@@ -279,7 +281,7 @@ export default function LockScreen({ onUnlock }: Props) {
               {cooldown > 0 && (
                 <p className="mt-3 text-sm text-amber-400 flex items-center gap-1.5">
                   <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  Thử lại sau {cooldown} giây
+                  {trx('Thử lại sau {{cooldown}} giây', { cooldown })}
                 </p>
               )}
 
@@ -298,7 +300,7 @@ export default function LockScreen({ onUnlock }: Props) {
                 ) : (
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>
                 )}
-                {loading ? 'Đang xác thực...' : 'Mở khoá'}
+                {loading ? tr('Đang xác thực...') : tr('Mở khoá')}
               </button>
 
               {/* Recovery Link */}
@@ -306,7 +308,7 @@ export default function LockScreen({ onUnlock }: Props) {
                 onClick={() => { setScreen('recovery'); setError(''); setRecoveryKey(''); }}
                 className="w-full mt-4 text-sm text-white/40 hover:text-white/70 transition-colors text-center"
               >
-                Quên mật khẩu?
+                {tr('Quên mật khẩu?')}
               </button>
             </>
           )}
@@ -318,15 +320,15 @@ export default function LockScreen({ onUnlock }: Props) {
                 className="flex items-center gap-1 text-sm text-white/50 hover:text-white/80 transition-colors mb-4"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                Quay lại
+                {tr('Quay lại')}
               </button>
 
-              <h2 className="text-lg font-semibold text-white-important mb-2">Khôi phục bằng Recovery Key</h2>
+              <h2 className="text-lg font-semibold text-white-important mb-2">{tr('Khôi phục bằng Recovery Key')}</h2>
               <p className="text-sm text-white/50 mb-4">
-                Nhập recovery key đã lưu khi bạn thiết lập mật khẩu.
+                {tr('Nhập recovery key đã lưu khi bạn thiết lập mật khẩu.')}
               </p>
 
-              <label className="block text-sm font-semibold text-white/70 mb-2 tracking-wide">Recovery Key</label>
+              <label className="block text-sm font-semibold text-white/70 mb-2 tracking-wide">{tr('Recovery Key')}</label>
               <input
                 ref={inputRef}
                 type="text"
@@ -361,26 +363,26 @@ export default function LockScreen({ onUnlock }: Props) {
                   boxShadow: '0 4px 20px rgba(124,58,237,0.3)',
                 }}
               >
-                {loading ? 'Đang xác thực...' : 'Xác nhận Recovery Key'}
+                {loading ? tr('Đang xác thực...') : tr('Xác nhận Recovery Key')}
               </button>
             </>
           )}
 
           {screen === 'resetPassword' && (
             <>
-              <h2 className="text-lg font-semibold text-white mb-2">Đặt mật khẩu mới</h2>
+              <h2 className="text-lg font-semibold text-white mb-2">{tr('Đặt mật khẩu mới')}</h2>
               <p className="text-sm text-emerald-400 mb-4 flex items-center gap-1.5">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                Recovery key hợp lệ. Hãy đặt mật khẩu mới.
+                {tr('Recovery key hợp lệ. Hãy đặt mật khẩu mới.')}
               </p>
 
-              <label className="block text-sm font-semibold text-white/70 mb-2 tracking-wide">Mật khẩu mới</label>
+              <label className="block text-sm font-semibold text-white/70 mb-2 tracking-wide">{tr('Mật khẩu mới')}</label>
               <input
                 ref={inputRef}
                 type={showPassword ? 'text' : 'password'}
                 value={newPassword}
                 onChange={e => { setNewPassword(e.target.value); setError(''); }}
-                placeholder="Tối thiểu 4 ký tự"
+                placeholder={tr('Tối thiểu 4 ký tự')}
                 disabled={loading}
                 className="w-full px-4 py-3 rounded-xl text-white placeholder-white/30 focus:outline-none disabled:opacity-50 mb-3 transition-all duration-200"
                 style={{
@@ -392,13 +394,13 @@ export default function LockScreen({ onUnlock }: Props) {
                 autoComplete="new-password"
               />
 
-              <label className="block text-sm font-semibold text-white/70 mb-2 tracking-wide">Xác nhận mật khẩu</label>
+              <label className="block text-sm font-semibold text-white/70 mb-2 tracking-wide">{tr('Xác nhận mật khẩu')}</label>
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={confirmPassword}
                 onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
                 onKeyDown={handleKeyDown}
-                placeholder="Nhập lại mật khẩu"
+                placeholder={tr('Nhập lại mật khẩu')}
                 disabled={loading}
                 className="w-full px-4 py-3 rounded-xl text-white placeholder-white/30 focus:outline-none disabled:opacity-50 transition-all duration-200"
                 style={{
@@ -417,7 +419,7 @@ export default function LockScreen({ onUnlock }: Props) {
                   onChange={e => setShowPassword(e.target.checked)}
                   className="rounded accent-purple-500"
                 />
-                Hiện mật khẩu
+                {tr('Hiện mật khẩu')}
               </label>
 
               {error && (
@@ -436,16 +438,14 @@ export default function LockScreen({ onUnlock }: Props) {
                   boxShadow: '0 4px 20px rgba(5,150,105,0.3)',
                 }}
               >
-                {loading ? 'Đang đặt lại...' : 'Đặt mật khẩu mới'}
+                {loading ? tr('Đang đặt lại...') : tr('Đặt mật khẩu mới')}
               </button>
             </>
           )}
         </div>
 
         {/* Footer */}
-        <p className="text-center text-white/60 text-xs mt-6 font-medium tracking-wider"><LockIcon className="w-4 h-4 inline" /> Dữ liệu được bảo vệ bởi mã hoá cục bộ
-          <br />
-          Các tính năng vẫn được chạy ngầm khi bạn khoá màn hình
+        <p className="text-center text-white/60 text-xs mt-6 font-medium tracking-wider">{trx('<0/> Dữ liệu được bảo vệ bởi mã hoá cục bộ<1/>Các tính năng vẫn được chạy ngầm khi bạn khoá màn hình', { 0: <LockIcon className="w-4 h-4 inline" />, 1: <br /> })}
         </p>
       </div>
     </div>

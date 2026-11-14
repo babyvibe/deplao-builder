@@ -1,9 +1,11 @@
 /**
  * FacebookScanTypes.ts
- * TypeScript interfaces cho tất cả scan operations
+ * TypeScript interfaces for all scan operations
  */
 
 // ─── Common ───────────────────────────────────────────────────────────
+
+import { tr } from '../../../shared/i18n';
 
 export interface ScanPageInfo {
   endCursor: string | null;
@@ -129,9 +131,9 @@ export interface ScanConfig {
 export const SCAN_CONFIGS: ScanConfig[] = [
   {
     scanType: 'group_members',
-    label: 'Thành viên nhóm',
+    label: tr('Thành viên nhóm'),
     icon: '👥',
-    description: 'Thu thập tất cả thành viên của một nhóm Facebook',
+    description: tr('Thu thập tất cả thành viên của một nhóm Facebook'),
     requiresUrl: true,
     urlPlaceholder: 'https://facebook.com/groups/...',
     showKeywordInput: false,
@@ -139,29 +141,29 @@ export const SCAN_CONFIGS: ScanConfig[] = [
   },
   {
     scanType: 'group_keyword',
-    label: 'Nhóm theo từ khóa',
+    label: tr('Nhóm theo từ khóa'),
     icon: '🔍',
-    description: 'Tìm kiếm và thu thập các nhóm theo từ khóa',
+    description: tr('Tìm kiếm và thu thập các nhóm theo từ khóa'),
     requiresUrl: false,
     urlPlaceholder: '',
     showKeywordInput: true,
-    keywordPlaceholder: 'Nhập từ khóa tìm kiếm nhóm...',
+    keywordPlaceholder: tr('Nhập từ khóa tìm kiếm nhóm...'),
   },
   {
     scanType: 'fanpage_keyword',
-    label: 'Fanpage theo từ khóa',
+    label: tr('Fanpage theo từ khóa'),
     icon: '🔎',
-    description: 'Tìm kiếm và thu thập các fanpage theo từ khóa',
+    description: tr('Tìm kiếm và thu thập các fanpage theo từ khóa'),
     requiresUrl: false,
     urlPlaceholder: '',
     showKeywordInput: true,
-    keywordPlaceholder: 'Nhập từ khóa tìm kiếm fanpage...',
+    keywordPlaceholder: tr('Nhập từ khóa tìm kiếm fanpage...'),
   },
   {
     scanType: 'post_comments',
-    label: 'Bình luận bài viết',
+    label: tr('Bình luận bài viết'),
     icon: '💬',
-    description: 'Thu thập tất cả bình luận của một bài viết',
+    description: tr('Thu thập tất cả bình luận của một bài viết'),
     requiresUrl: true,
     urlPlaceholder: 'https://facebook.com/.../posts/...',
     showKeywordInput: false,
@@ -169,13 +171,13 @@ export const SCAN_CONFIGS: ScanConfig[] = [
   },
   {
     scanType: 'post_keyword',
-    label: 'Bài viết theo từ khóa',
+    label: tr('Bài viết theo từ khóa'),
     icon: '📝',
-    description: 'Tìm kiếm bài viết theo từ khóa',
+    description: tr('Tìm kiếm bài viết theo từ khóa'),
     requiresUrl: false,
     urlPlaceholder: '',
     showKeywordInput: true,
-    keywordPlaceholder: 'Nhập từ khóa tìm kiếm bài viết...',
+    keywordPlaceholder: tr('Nhập từ khóa tìm kiếm bài viết...'),
   },
 ];
 
@@ -191,40 +193,40 @@ export const SCAN_EXCEL_COLUMNS: Record<ScanType, ExcelColumn[]> = {
   group_members: [
     { key: 'index', label: 'STT', width: 6 },
     { key: 'uid', label: 'ID Facebook', width: 20 },
-    { key: 'name', label: 'Tên', width: 30 },
-    { key: 'role', label: 'Vai trò', width: 15 },
+    { key: 'name', label: tr('Tên'), width: 30 },
+    { key: 'role', label: tr('Vai trò'), width: 15 },
     { key: 'picture', label: 'Avatar URL', width: 40 },
   ],
   group_keyword: [
     { key: 'index', label: 'STT', width: 6 },
     { key: 'uid', label: 'ID', width: 20 },
-    { key: 'name', label: 'Tên nhóm', width: 30 },
-    { key: 'type', label: 'Loại', width: 20 },
-    { key: 'members', label: 'Số thành viên', width: 20 },
-    { key: 'picture', label: 'Ảnh đại diện', width: 40 },
+    { key: 'name', label: tr('Tên nhóm'), width: 30 },
+    { key: 'type', label: tr('Loại'), width: 20 },
+    { key: 'members', label: tr('Số thành viên'), width: 20 },
+    { key: 'picture', label: tr('Ảnh đại diện'), width: 40 },
   ],
   fanpage_keyword: [
     { key: 'index', label: 'STT', width: 6 },
     { key: 'uid', label: 'ID', width: 20 },
-    { key: 'name', label: 'Tên', width: 30 },
-    { key: 'followers', label: 'Số người theo dõi', width: 20 },
-    { key: 'picture', label: 'Ảnh đại diện', width: 40 },
+    { key: 'name', label: tr('Tên'), width: 30 },
+    { key: 'followers', label: tr('Số người theo dõi'), width: 20 },
+    { key: 'picture', label: tr('Ảnh đại diện'), width: 40 },
   ],
   post_comments: [
     { key: 'index', label: 'STT', width: 6 },
-    { key: 'authorName', label: 'Người bình luận', width: 30 },
+    { key: 'authorName', label: tr('Người bình luận'), width: 30 },
     { key: 'authorId', label: 'ID', width: 20 },
-    { key: 'body', label: 'Nội dung', width: 50 },
-    { key: 'timestamp', label: 'Thời gian', width: 20 },
+    { key: 'body', label: tr('Nội dung'), width: 50 },
+    { key: 'timestamp', label: tr('Thời gian'), width: 20 },
     { key: 'reactions', label: 'Reactions', width: 12 },
   ],
   post_keyword: [
     { key: 'index', label: 'STT', width: 6 },
-    { key: 'postId', label: 'ID bài viết', width: 25 },
-    { key: 'content', label: 'Nội dung', width: 50 },
-    { key: 'timestamp', label: 'Thời gian', width: 20 },
+    { key: 'postId', label: tr('ID bài viết'), width: 25 },
+    { key: 'content', label: tr('Nội dung'), width: 50 },
+    { key: 'timestamp', label: tr('Thời gian'), width: 20 },
     { key: 'reactions', label: 'Reactions', width: 12 },
-    { key: 'comments', label: 'Bình luận', width: 12 },
+    { key: 'comments', label: tr('Bình luận'), width: 12 },
     { key: 'url', label: 'Link', width: 30 },
   ],
 };

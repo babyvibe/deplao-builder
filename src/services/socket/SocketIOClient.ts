@@ -1,27 +1,27 @@
 /**
- * SocketIOClient - Employee-side Socket.IO client.
+ * SocketIOClient: Employee-side Socket.IO client.
  *
  * Replaces the SSE connection for real-time event delivery.
- * - Connects to Boss Socket.IO server (attach to same port, path /socket.io)
- * - Authenticates via JWT token (handshake.auth)
- * - Lỗi transport (mất mạng, Boss tắt): Socket.IO tự reconnect (backoff 1 s → 15 s)
- * - Boss TỪ CHỐI (middleware next(err)) hoặc chủ động ngắt ('io server disconnect'): Socket.IO
- *   KHÔNG tự thử lại → tự lên lịch theo SOCKET_RECONNECT_BACKOFF_MS (1/2/5/10/30 s…).
- *   Riêng lỗi xác thực (token hết hạn / sai, nhân viên bị khoá) → dừng hẳn và báo onAuthRejected
- *   (UI: "Phiên đăng nhập hết hạn — đăng nhập lại") thay vì lặp vô hạn.
- * - WebSocket bị chặn: tryAllTransports → rơi xuống HTTP long-polling ngay trong lần thử
- *   (engine.io-client 6.6 mặc định KHÔNG thử transport kế tiếp). WebSocket treo / lỗi 2 lần liên
- *   tiếp → đổi sang polling-first (polling rồi upgrade WebSocket nếu được).
- * - Catch-up (catchUpProtocol.ts): lưu { bootId, lastSeqId } của luồng Boss; mỗi lần nối gửi 'catch-up' + ack.
- *   Boss trả reset (khởi động lại — bootId khác / buffer không phủ đủ) → nhảy tới seqId hiện tại của Boss và báo
- *   onResync ('boss-restart' / 'catchup-gap'). Boss bản cũ (không bootId, không ack) → như cũ, kết nối lại thì
- *   resync cho chắc ('catchup-unverified').
+ * - Connects to the Boss Socket.IO server (attached to the same port, path /socket.io)
+ * - Authenticates with a JWT token (handshake.auth)
+ * - Transport errors (network loss, Boss turned off): Socket.IO reconnects by itself (backoff 1 s → 15 s)
+ * - Boss REJECTS (middleware next(err)) or deliberately disconnects ('io server disconnect'): Socket.IO
+ *   does NOT retry by itself → schedules the retry itself using SOCKET_RECONNECT_BACKOFF_MS (1/2/5/10/30 s...).
+ *   Auth errors only (token expired / wrong, employee locked) → stop completely and report onAuthRejected
+ *   (UI: "Phiên đăng nhập hết hạn - đăng nhập lại" = session expired, log in again) instead of looping forever.
+ * - WebSocket blocked: tryAllTransports → falls back to HTTP long-polling within the same attempt
+ *   (engine.io-client 6.6 does NOT try the next transport by default). A WebSocket that hangs / fails 2 times in a row
+ *   → switch to polling-first (polling, then upgrade to WebSocket if possible).
+ * - Catch-up (catchUpProtocol.ts): stores { bootId, lastSeqId } of the Boss stream; every connection sends 'catch-up' + ack.
+ *   Boss replies reset (restarted: different bootId / buffer does not cover the gap) → jumps to Boss's current seqId and reports
+ *   onResync ('boss-restart' / 'catchup-gap'). Old Boss builds (no bootId, no ack) → as before, a reconnect does a
+ *   resync to be safe ('catchup-unverified').
  * - Forwards received events to the onEvent handler (HttpClientService.handlePushedEvent)
  *
  * Integration:
  *   HttpClientService.connect() → this.connect(bossUrl, token, { sinceTs })
  *   HttpClientService.disconnect() → this.disconnect()
- *   HttpClientService.handleWake() / heartbeat hồi phục → this.reconnectNow()
+ *   HttpClientService.handleWake() / heartbeat recovered → this.reconnectNow()
  */
 import { io as socketIOClient, Socket } from 'socket.io-client';
 import Logger from '../../utils/Logger';
@@ -41,34 +41,34 @@ import {
   type ClientSyncState,
 } from './catchUpProtocol';
 
-/** Catch-up của MỘT lần nối (một socket). */
+/** Catch-up state of ONE connection (one socket). */
 interface PendingCatchUp {
   socket: Socket;
   timer: ReturnType<typeof setTimeout> | null;
   acked: boolean;
-  /** Yêu cầu có vị trí cũ (kết nối lại) — Boss cũ không kiểm chứng được thì resync. */
+  /** Has a previous position (reconnect): an old Boss that cannot verify it → resync. */
   hadPosition: boolean;
   legacyHandled: boolean;
-  /** ms mất kết nối trước lần nối này (0 nếu không đo được) — kèm theo resync. */
+  /** ms offline before this connection (0 if not measured), sent with the resync. */
   gapMs: number;
 }
 
 export interface SocketStatusInfo {
-  /** ms mất kết nối trước lần 'connect' này — chỉ có khi là kết nối LẠI (đã từng nối trước đó). */
+  /** ms offline before this 'connect', only set on a RECONNECT (it has connected before). */
   gapMs?: number;
-  /** Lý do 'disconnect' / thông điệp 'connect_error'. */
+  /** Reason for 'disconnect' / the 'connect_error' message. */
   reason?: string;
 }
 
 const WEBSOCKET_FIRST = ['websocket', 'polling'];
 const POLLING_FIRST = ['polling', 'websocket'];
-/** Số lỗi kết nối liên tiếp (WebSocket-first) trước khi chuyển sang polling-first. */
+/** Number of consecutive connection errors (WebSocket-first) before switching to polling-first. */
 const TRANSPORT_FALLBACK_AFTER_ERRORS = 2;
 
 /**
- * io(url) coi phần path của URL là NAMESPACE → Boss URL có sub-path (tunnel / reverse proxy
- * https://host/boss) sẽ bị từ chối "Invalid namespace". Kết nối tới origin, gộp sub-path vào `path`.
- * URL không có sub-path → giữ nguyên như cũ (origin + /socket.io).
+ * io(url) treats the path part of the URL as a NAMESPACE → a Boss URL with a sub-path (tunnel / reverse proxy
+ * https://host/boss) would be rejected with "Invalid namespace". Connect to the origin and move the sub-path into `path`.
+ * A URL without a sub-path → unchanged as before (origin + /socket.io).
  */
 function socketEndpoint(bossUrl: string): { url: string; path: string } {
   try {
@@ -86,42 +86,42 @@ class SocketIOClient {
   private token = '';
   private workspaceId = '';
 
-  /** Vị trí catch-up: luồng Boss (bootId) + seqId cuối cùng đã nhận trong luồng đó. */
+  /** Catch-up position: the Boss stream (bootId) + the last seqId received in that stream. */
   private sync: ClientSyncState = initialClientSyncState();
-  /** Giờ Boss (ms) lúc đăng ký qua heartbeat — lần nối ĐẦU xin phát lại event từ đây (phủ khe tải REST ↔ vào phòng). */
+  /** Boss time (ms) when registered through the heartbeat: the FIRST connection asks for events to be replayed from here (covers the gap between the REST load and joining the room). */
   private freshSinceTs: number | undefined;
   private catchUp: PendingCatchUp | null = null;
 
-  /** Thứ tự transport cho lần mở kế tiếp (đổi sang polling-first khi WebSocket không qua được). */
+  /** Transport order for the next open (switches to polling-first when WebSocket cannot get through). */
   private transports: string[] = [...WEBSOCKET_FIRST];
   private connectErrorsInRow = 0;
-  /** Đã từng 'connect' thành công với cấu hình hiện tại → các lần sau là kết nối lại. */
+  /** Has connected successfully with the current configuration before → later ones are reconnects. */
   private hasConnected = false;
-  /** Thời điểm bắt đầu mất kết nối (0 = đang nối / chưa mất). */
+  /** When the connection was lost (0 = connecting / not lost). */
   private disconnectedAt = 0;
 
-  /** Reconnect thủ công (sau khi Boss từ chối / ngắt) — Socket.IO không tự làm. */
+  /** Manual reconnect (after Boss rejected / disconnected): Socket.IO does not do this by itself. */
   private manualAttempt = 0;
   private manualTimer: ReturnType<typeof setTimeout> | null = null;
-  /** true = không tự kết nối lại (chưa connect, đã disconnect, hoặc bị từ chối xác thực). */
+  /** true = does not reconnect by itself (never connected, disconnected, or auth rejected). */
   private stopped = true;
 
-  /** Callback khi nhận event từ Boss */
+  /** Callback when an event is received from Boss */
   private onEvent: ((channel: string, data: any) => void) | null = null;
-  /** Callback khi trạng thái kết nối thay đổi */
+  /** Callback when the connection state changes */
   private onStatusChange: ((connected: boolean, info?: SocketStatusInfo) => void) | null = null;
-  /** Callback khi Boss từ chối token — cần đăng nhập lại, client đã dừng. */
+  /** Callback when Boss rejects the token: login is needed again, the client has stopped. */
   private onAuthRejected: ((message: string) => void) | null = null;
-  /** Callback khi catch-up không phát lại được phần đã lỡ → cần tải lại toàn bộ (employee:resync). */
+  /** Callback when catch-up cannot replay what was missed → everything must be reloaded (employee:resync). */
   private onResync: ((reason: EmployeeResyncReason, gapMs: number) => void) | null = null;
 
   /**
-   * Kết nối (mới) đến Boss Socket.IO server — reset vị trí catch-up, thứ tự transport và lịch backoff.
-   * `sinceTs` = giờ Boss lúc đăng ký (ts của heartbeat) — lần nối đầu chỉ xin phát lại event từ thời điểm này.
-   * Socket.IO tự động:
-   * - Ping/pong để phát hiện mất kết nối
-   * - Auto-reconnect với exponential backoff khi lỗi transport
-   * - Buffer events trong quá trình reconnect
+   * Connects (fresh) to the Boss Socket.IO server: resets the catch-up position, the transport order and the backoff schedule.
+   * `sinceTs` = Boss time at registration (the heartbeat ts): the first connection only asks for events replayed from this time.
+   * Socket.IO automatically:
+   * - Ping/pong to detect a lost connection
+   * - Auto-reconnect with exponential backoff on transport errors
+   * - Buffers events while reconnecting
    */
   public connect(bossUrl: string, token: string, options: { sinceTs?: number } = {}): void {
     this.disconnect();
@@ -140,7 +140,7 @@ class SocketIOClient {
     this.open();
   }
 
-  /** Tạo socket mới với cấu hình hiện tại — GIỮ vị trí (bootId + lastSeqId) để catch-up. */
+  /** Creates a new socket with the current config, KEEPS the position (bootId + lastSeqId) for catch-up. */
   private open(): void {
     this.closeSocket();
     if (this.stopped || !this.bossUrl) return;
@@ -151,17 +151,17 @@ class SocketIOClient {
     const socket = socketIOClient(endpoint.url, {
       path: endpoint.path,
       auth: { token: this.token },
-      // Ưu tiên WebSocket, fallback polling cho tunnel / proxy chặn upgrade
+      // Prefer WebSocket, fall back to polling for tunnels / proxies that block the upgrade
       transports: [...this.transports],
-      // engine.io-client 6.6: thiếu cờ này thì WebSocket lỗi là bỏ cuộc, không thử polling
+      // engine.io-client 6.6: without this flag a WebSocket error gives up, without trying polling
       tryAllTransports: true,
-      // Auto-reconnect (lỗi transport)
+      // Auto-reconnect (transport errors)
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 15000,
       randomizationFactor: 0.5,
       timeout: 20000,
-      // Mỗi lần mở là một Manager riêng — đóng sạch khi reconnect thủ công
+      // Each open is a separate Manager: fully closed on a manual reconnect
       forceNew: true,
     });
     this.socket = socket;
@@ -179,16 +179,16 @@ class SocketIOClient {
         + `${gapMs !== undefined ? `, mất kết nối ${Math.round(gapMs / 1000)}s` : ''})`);
       this.onStatusChange?.(true, gapMs !== undefined ? { gapMs } : undefined);
 
-      // Catch-up: xin lại event đã lỡ khi offline (Boss chỉ phát lại phần của mình; reset → resync)
+      // Catch-up: asks again for events missed while offline (Boss only replays the employee's own part; reset → resync)
       this.startCatchUp(socket, gapMs ?? 0);
     });
 
-    // ─── Event từ Boss ──────────────────────────────────────────
+    // ─── Events from Boss ──────────────────────────────────────────
     socket.on('event', (payload: { seqId?: number; channel: string; data: any; bootId?: string }) => {
       if (this.socket !== socket) return;
       if (!payload || !payload.channel) return;
 
-      // Theo dõi vị trí (bootId + seqId) — event luôn được chuyển tiếp như cũ
+      // Track the position (bootId + seqId): events are always forwarded as before
       const tracked = trackEnvelope(this.sync, payload);
       this.sync = tracked.state;
       if (tracked.legacy) {
@@ -198,11 +198,11 @@ class SocketIOClient {
         this.onResync?.('boss-restart', this.catchUp?.gapMs ?? 0);
       }
 
-      // Forward đến handler (handlePushedEvent trong HttpClientService)
+      // Forward to the handler (handlePushedEvent in HttpClientService)
       this.onEvent?.(payload.channel, payload.data);
     });
 
-    // ─── Mốc seqId (nhân viên ít event) — Boss cũ không gửi ─────
+    // ─── seqId marks (employees with few events): old Boss builds do not send these ─────
     socket.on('seq', (watermark: unknown) => {
       if (this.socket !== socket) return;
       this.sync = trackWatermark(this.sync, watermark);
@@ -212,11 +212,11 @@ class SocketIOClient {
     socket.on('disconnect', (reason) => {
       if (this.socket !== socket) return;
       if (!this.disconnectedAt) this.disconnectedAt = Date.now();
-      // Ack của lần nối này sẽ không đến nữa (Socket.IO bỏ) — đừng để hết giờ rồi kết luận nhầm "Boss cũ"
+      // The ack of this connection will not arrive any more (Socket.IO dropped it): do not wait for the timeout and wrongly conclude "Boss cũ"
       this.clearCatchUp();
       Logger.log(`[SocketIOClient] 🔴 Disconnected from ${this.bossUrl}: ${reason}`);
       this.onStatusChange?.(false, { reason });
-      // Boss chủ động ngắt → Socket.IO không tự reconnect
+      // Boss disconnected on purpose → Socket.IO does not reconnect by itself
       if (reason === 'io server disconnect') this.scheduleManualReconnect('Boss ngắt kết nối');
     });
 
@@ -228,7 +228,7 @@ class SocketIOClient {
       this.onStatusChange?.(false, { reason: message });
 
       if (!socket.active) {
-        // Middleware của Boss từ chối (CONNECT_ERROR) → Socket.IO không tự thử lại.
+        // Boss middleware rejected it (CONNECT_ERROR) → Socket.IO does not retry by itself.
         if (isAuthRejectionMessage(message)) {
           Logger.warn(`[SocketIOClient] Boss từ chối xác thực: ${message} — dừng kết nối lại, cần đăng nhập lại`);
           this.stop();
@@ -240,12 +240,12 @@ class SocketIOClient {
         return;
       }
 
-      // Lỗi transport → Socket.IO tự reconnect. Chỉ log lần đầu + mỗi 10 lần để Nhật ký không ngập.
+      // Transport error → Socket.IO reconnects by itself. Only logs the first time + every 10 times so the log does not flood.
       this.connectErrorsInRow++;
       if (this.connectErrorsInRow === 1 || this.connectErrorsInRow % 10 === 0) {
         Logger.warn(`[SocketIOClient] Connection error (#${this.connectErrorsInRow}): ${message}`);
       }
-      // WebSocket treo / bị chặn liên tục → polling trước (upgrade WebSocket sau nếu được)
+      // WebSocket keeps hanging / being blocked → polling first (upgrade to WebSocket later if possible)
       if (this.connectErrorsInRow >= TRANSPORT_FALLBACK_AFTER_ERRORS && this.transports[0] === 'websocket') {
         this.transports = [...POLLING_FIRST];
         try { (socket.io.opts as any).transports = [...this.transports]; } catch { /* ignore */ }
@@ -259,7 +259,7 @@ class SocketIOClient {
     });
   }
 
-  /** Lên lịch mở lại socket theo SOCKET_RECONNECT_BACKOFF_MS (attempt reset khi 'connect'). */
+  /** Schedules reopening the socket per SOCKET_RECONNECT_BACKOFF_MS (attempt resets on 'connect'). */
   private scheduleManualReconnect(reason: string): void {
     if (this.stopped || this.manualTimer) return;
     const delay = backoffDelay(this.manualAttempt, SOCKET_RECONNECT_BACKOFF_MS);
@@ -281,8 +281,8 @@ class SocketIOClient {
   // ─── Catch-up ──────────────────────────────────────────────────
 
   /**
-   * Gửi 'catch-up' { proto, lastSeqId, bootId, sinceTs? } kèm ack. Boss mới phát lại phần đã lỡ rồi mới ack
-   * (ack đến SAU event phát lại); Boss cũ chỉ đọc lastSeqId và không bao giờ ack.
+   * Sends 'catch-up' { proto, lastSeqId, bootId, sinceTs? } with an ack. A new Boss replays the missed part first and only then acks
+   * (the ack arrives AFTER the replayed events); an old Boss only reads lastSeqId and never acks.
    */
   private startCatchUp(socket: Socket, gapMs: number): void {
     this.clearCatchUp();
@@ -305,7 +305,7 @@ class SocketIOClient {
   }
 
   private handleCatchUpResult(pending: PendingCatchUp, result: unknown): void {
-    // Ack muộn (sau khi đã coi là Boss cũ) vẫn áp dụng — miễn còn là socket hiện tại
+    // A late ack (after it was treated as an old Boss) still applies, as long as it is still the current socket
     if (this.socket !== pending.socket || this.catchUp !== pending) return;
     pending.acked = true;
     if (pending.timer) {
@@ -328,14 +328,14 @@ class SocketIOClient {
     if (replayed > 0) Logger.log(`[SocketIOClient] Catch-up: nhận lại ${replayed} event đã lỡ`);
   }
 
-  /** Event không có bootId trong lúc chờ ack → Boss bản cũ (không cần chờ hết giờ). */
+  /** An event without bootId while waiting for the ack → old Boss build (no need to wait for the timeout). */
   private noteLegacyBoss(socket: Socket, why: string): void {
     const pending = this.catchUp;
     if (!pending || pending.socket !== socket || pending.acked) return;
     this.handleLegacyBoss(pending, why);
   }
 
-  /** Boss bản cũ: catch-up theo seqId như trước; kết nối lại thì không kiểm chứng được phần đã lỡ → resync. */
+  /** Old Boss build: catch-up by seqId as before; on reconnect the missed part cannot be verified → resync. */
   private handleLegacyBoss(pending: PendingCatchUp, why: string): void {
     if (pending.legacyHandled) return;
     pending.legacyHandled = true;
@@ -356,7 +356,7 @@ class SocketIOClient {
     this.catchUp = null;
   }
 
-  /** Đóng socket hiện tại (không phát event) — không đổi trạng thái stopped. */
+  /** Closes the current socket (emits no event), does not change the stopped state. */
   private closeSocket(): void {
     this.clearCatchUp();
     const socket = this.socket;
@@ -369,8 +369,8 @@ class SocketIOClient {
   }
 
   /**
-   * Bỏ backoff đang chờ và mở lại socket ngay (máy ngủ dậy, mạng có lại, heartbeat hồi phục).
-   * Giữ vị trí catch-up → phát lại phần đã lỡ. Không làm gì nếu đã dừng (disconnect / hết hạn phiên).
+   * Cancels the pending backoff and reopens the socket right away (machine woke from sleep, network is back, heartbeat recovered).
+   * Keeps the catch-up position → replays the missed part. Does nothing if already stopped (disconnect / session expired).
    */
   public reconnectNow(reason = 'manual'): void {
     if (this.stopped || !this.bossUrl) return;
@@ -379,7 +379,7 @@ class SocketIOClient {
     this.open();
   }
 
-  /** Dừng hẳn (không tự kết nối lại) nhưng giữ vị trí catch-up — dùng khi Boss từ chối token. */
+  /** Stops completely (no automatic reconnect) but keeps the catch-up position: used when Boss rejects the token. */
   public stop(): void {
     this.stopped = true;
     this.clearManualTimer();
@@ -387,7 +387,7 @@ class SocketIOClient {
   }
 
   /**
-   * Ngắt kết nối
+   * Disconnect
    */
   public disconnect(): void {
     this.stop();
@@ -400,13 +400,13 @@ class SocketIOClient {
   }
 
   /**
-   * Kiểm tra trạng thái kết nối
+   * Checks the connection state
    */
   public isConnected(): boolean {
     return this.socket?.connected ?? false;
   }
 
-  /** Đang nối hoặc đang tự thử lại (Socket.IO backoff / lịch thủ công) — false nếu đã bỏ cuộc / dừng. */
+  /** Connecting or retrying by itself (Socket.IO backoff / manual schedule); false if it gave up / stopped. */
   public isRecovering(): boolean {
     if (this.stopped) return false;
     return !!this.manualTimer || !!this.socket?.active;
@@ -426,7 +426,7 @@ class SocketIOClient {
     this.onAuthRejected = cb;
   }
 
-  /** Catch-up không phát lại được phần đã lỡ (Boss khởi động lại / buffer không đủ / Boss cũ) → cần resync. */
+  /** Catch-up could not replay the missed part (Boss restarted / buffer not large enough / old Boss) → resync needed. */
   public setOnResync(cb: ((reason: EmployeeResyncReason, gapMs: number) => void) | null): void {
     this.onResync = cb;
   }
@@ -435,12 +435,12 @@ class SocketIOClient {
     this.workspaceId = id;
   }
 
-  /** Vị trí catch-up hiện tại (chẩn đoán / log). */
+  /** Current catch-up position (diagnostics / log). */
   public getSyncState(): ClientSyncState {
     return { ...this.sync };
   }
 
-  /** Reset vị trí catch-up (dùng khi reconnect toàn bộ) — lần nối sau là kết nối mới. */
+  /** Resets the catch-up position (used when reconnecting everything): the next connection is a fresh one. */
   public resetSeqId(): void {
     this.sync = initialClientSyncState();
     this.freshSinceTs = undefined;

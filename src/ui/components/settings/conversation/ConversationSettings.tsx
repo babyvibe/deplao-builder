@@ -1,6 +1,6 @@
 /**
- * Cài đặt → Hội thoại: tin nhắn nhanh và nhãn hội thoại, lọc theo tài khoản + tìm kiếm. Trang cao đúng khung, danh sách
- * cuộn bên trong thẻ.
+ * Settings → Conversations: quick messages and conversation labels, filtered by account + search. The page is exactly the height of the frame, the list
+ * scrolls inside the card.
  */
 import React, { useState, useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -11,6 +11,7 @@ import LabelSettings from './LabelSettings';
 import { SearchIcon } from '@/components/common/icons';
 import { Input } from '@/components/ui';
 import { SegmentedControl, SettingsPage } from '../settingsUi';
+import { tr } from '../../../../shared/i18n';
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -33,16 +34,16 @@ export default function ConversationSettings() {
   }, [accounts]);
 
   return (
-    <SettingsPage title="Hội thoại" description="Tin nhắn nhanh (gõ / để chèn khi chat) và nhãn phân loại hội thoại." width="full" fill>
-      {/* Mục + lọc tài khoản + tìm */}
+    <SettingsPage title={tr('Hội thoại')} description={tr('Tin nhắn nhanh (gõ / để chèn khi chat) và nhãn phân loại hội thoại.')} width="full" fill>
+      {/* Items + account filter + search */}
       <div className="mb-3 flex flex-shrink-0 flex-wrap items-center gap-2">
         <SegmentedControl
-          label="Mục"
+          label={tr('Mục')}
           value={activeTab}
           onChange={setActiveTab}
           options={[
-            { value: 'quick_msg', label: 'Tin nhắn nhanh' },
-            { value: 'labels', label: 'Nhãn' },
+            { value: 'quick_msg', label: tr('Tin nhắn nhanh') },
+            { value: 'labels', label: tr('Nhãn') },
           ]}
         />
         <div className="flex-1" />
@@ -50,7 +51,7 @@ export default function ConversationSettings() {
           accounts={accounts}
           selectedIds={filterAccounts}
           onChange={setFilterAccounts}
-          placeholder="Lọc tài khoản..."
+          placeholder={tr('Lọc tài khoản...')}
         />
         <div className="relative">
           <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -58,14 +59,14 @@ export default function ConversationSettings() {
             type="text"
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
-            placeholder="Tìm kiếm..."
-            aria-label="Tìm kiếm"
+            placeholder={tr('Tìm kiếm...')}
+            aria-label={tr('Tìm kiếm')}
             className="h-9 w-48 pl-8"
           />
         </div>
       </div>
 
-      {/* Nội dung: thẻ cao hết phần còn lại, danh sách cuộn bên trong */}
+      {/* Content: the card takes the rest of the height, the list scrolls inside */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-card">
         {activeTab === 'quick_msg' && (
           <QuickMessageSettings

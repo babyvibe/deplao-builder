@@ -1,9 +1,9 @@
 /**
  * useMediaGallery - the image viewer gallery ("Bộ sưu tập") paged like the chat, Telegram / Zalo style.
  *
- * - Opens instantly with the images already in memory, on the clicked one.
- * - Then loads a window around it: GALLERY_PAGE_SIZE older + newer images by keyset cursors on
- *   (timestamp, msg_id) (db:getMediaMessages beforeTs / afterTs), and further pages on demand
+ * - Opens instantly with the images already in memory, on the one clicked.
+ * - Then loads a window around it: GALLERY_PAGE_SIZE older + newer images using keyset cursors on
+ *   (timestamp, msg_id) (db:getMediaMessages beforeTs / afterTs), with more pages on demand
  *   (loadOlder / loadNewer: strip scrolled near an end, or ←/→ past the first / last loaded image).
  * - Never reloads or replaces the list: pages are merged in (dedupe by msgId / URL), oldest → newest.
  *   Items keep their object identity, so MediaViewer keeps the current image and the strip position.

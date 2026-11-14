@@ -10,20 +10,22 @@ import InAppNotifySettings from '@/components/settings/notifications/InAppNotify
 import { SegmentedControl } from '@/components/settings/settingsUi';
 import { useQuickErpAccess } from '@/hooks/erp/useQuickErpAccess';
 import UpcomingEventsTab, { useUpcomingTodayCount } from './UpcomingEventsTab';
+import { tr, appLocale } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type NotificationTab = 'inbox' | 'upcoming';
 
 interface Props {
   onClose?: () => void;
-  /** Tab mở sẵn: chuông đang báo lịch sắp tới → "Lịch sắp tới". */
+  /** Tab opened by default: when the bell is announcing an upcoming event → "Lịch sắp tới" (Upcoming). */
   initialTab?: NotificationTab;
 }
 
 /**
- * Chuông thông báo trên thanh tiêu đề: bản cập nhật, thông báo ERP (khi có quyền) và ⚙ Cài đặt thông báo tin nhắn trong
- * app (bật / tắt từng tài khoản hoặc tất cả). Nhắc lịch sắp tới ("15 phút nữa tới lịch hẹn"): bấm = đã đọc + mở hội thoại
- * gắn với lịch (không có thì mở Lịch), chuông trên thanh tiêu đề thôi báo. Được xem lịch → thêm tab "Lịch sắp tới"
- * (UpcomingEventsTab: danh sách lịch 7 ngày tới + mốc báo trước).
+ * Title-bar bell: app updates, ERP notifications (if permitted), and ⚙ message notification settings in the
+ * app (on / off per account or for all). Upcoming-event reminders, e.g. "15 phút nữa tới lịch hẹn" (15 minutes until the appointment): clicking = marks as read + opens the conversation
+ * linked to the event (or the Calendar if none); the title-bar bell only stops ringing. If the user may view the calendar → an extra tab "Lịch sắp tới" (Upcoming) is added
+ * (UpcomingEventsTab: events for the next 7 days + reminder times).
  */
 export default function NotificationCenter({ onClose, initialTab = 'inbox' }: Props) {
   const [view, setView] = useState<'list' | 'settings'>('list');
@@ -33,12 +35,12 @@ export default function NotificationCenter({ onClose, initialTab = 'inbox' }: Pr
     return (
       <div className="w-80 max-h-[520px] bg-card border border-input rounded-xl shadow-2xl overflow-hidden flex flex-col">
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-          <button onClick={() => setView('list')} className="text-muted-foreground hover:text-foreground" title="Quay lại" aria-label="Quay lại">
+          <button onClick={() => setView('list')} className="text-muted-foreground hover:text-foreground" title={tr('Quay lại')} aria-label={tr('Quay lại')}>
             <ArrowLeftIcon className="w-4 h-4" />
           </button>
-          <span className="flex-1 text-sm font-semibold text-foreground">Thông báo tin nhắn trong app</span>
+          <span className="flex-1 text-sm font-semibold text-foreground">{tr('Thông báo tin nhắn trong app')}</span>
           {onClose && (
-            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs" title="Đóng">✕</button>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs" title={tr('Đóng')}>✕</button>
           )}
         </div>
         <div className="flex-1 overflow-y-auto p-1.5">
@@ -57,13 +59,13 @@ export default function NotificationCenter({ onClose, initialTab = 'inbox' }: Pr
   );
 }
 
-/** payload lưu JSON (IPC / REST trả chuỗi hoặc object). */
+/** payload stored as JSON (IPC / REST return a string or an object). */
 function payloadOf(n: ErpNotification): Record<string, any> {
   if (n.payload && typeof n.payload === 'object') return n.payload;
   try { return JSON.parse(String(n.payload || '{}')) || {}; } catch { return {}; }
 }
 
-/** Nhắc lịch: id lịch để tắt chuông trên thanh tiêu đề khi đã đọc / xoá. */
+/** Event reminder: the event id, used to turn off the title-bar bell once it is read / deleted. */
 function reminderEventIds(items: ErpNotification[]): string[] {
   return items.filter(n => n.type === 'event_reminder').map(n => String(payloadOf(n).eventId || '')).filter(Boolean);
 }
@@ -71,7 +73,7 @@ function reminderEventIds(items: ErpNotification[]): string[] {
 function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Props, 'onClose'> & {
   onOpenSettings: () => void;
   tab: NotificationTab;
-  /** Có tab "Lịch sắp tới" (được xem lịch) */
+  /** Whether the "Lịch sắp tới" (Upcoming) tab is shown (user may view the calendar) */
   onTabChange?: (tab: NotificationTab) => void;
 }) {
   const eid = useCurrentEmployeeId();
@@ -120,22 +122,22 @@ function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Pr
       <button
         onClick={() => { useErpReminderAttention.getState().dismiss(); void markAllRead(eid); }}
         className="text-[11px] text-muted-foreground hover:text-foreground"
-        title="Đánh dấu tất cả đã đọc"
-      >Đọc hết</button>
+        title={tr('Đánh dấu tất cả đã đọc')}
+      >{tr('Đọc hết')}</button>
       <button
         onClick={() => { useErpReminderAttention.getState().dismiss(); void deleteAllNotifications(eid); }}
         className="text-[11px] text-muted-foreground hover:text-red-400"
-        title="Xoá tất cả thông báo"
-      >Xoá hết</button>
+        title={tr('Xoá tất cả thông báo')}
+      >{tr('Xoá hết')}</button>
     </>
   );
 
   const updateStatusLabel = () => {
     switch (status) {
-      case 'downloaded': return { text: 'Đã tải xong – sẵn sàng cài đặt', color: 'text-green-400' };
-      case 'downloading': return { text: progress ? `Đang tải… ${progress.percent.toFixed(0)}%` : 'Đang tải…', color: 'text-blue-300' };
-      case 'error':      return { text: 'Tải thất bại – nhấn để thử lại', color: 'text-red-400' };
-      default:           return { text: 'Bản cập nhật mới sẵn sàng', color: 'text-yellow-300' };
+      case 'downloaded': return { text: tr('Đã tải xong – sẵn sàng cài đặt'), color: 'text-green-400' };
+      case 'downloading': return { text: progress ? tr('Đang tải… {{v1}}%', { v1: progress.percent.toFixed(0) }) : tr('Đang tải…'), color: 'text-blue-300' };
+      case 'error':      return { text: tr('Tải thất bại – nhấn để thử lại'), color: 'text-red-400' };
+      default:           return { text: tr('Bản cập nhật mới sẵn sàng'), color: 'text-yellow-300' };
     }
   };
 
@@ -145,33 +147,33 @@ function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Pr
 
   return (
     <div className="w-80 max-h-[520px] bg-card border border-input rounded-xl shadow-2xl overflow-hidden flex flex-col">
-      {/* Header: tab Thông báo / Lịch sắp tới (khi được xem lịch), ⚙, đóng */}
+      {/* Header: Notifications / Upcoming tabs (when allowed to view the calendar), ⚙, close */}
       <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border">
         {onTabChange ? (
           <SegmentedControl
-            label="Thông báo"
+            label={tr('Thông báo')}
             value={tab}
             onChange={onTabChange}
             options={[
-              { value: 'inbox', label: 'Thông báo', count: unreadCount },
-              { value: 'upcoming', label: 'Lịch sắp tới', count: upcomingToday },
+              { value: 'inbox', label: tr('Thông báo'), count: unreadCount },
+              { value: 'upcoming', label: tr('Lịch sắp tới'), count: upcomingToday },
             ]}
           />
         ) : (
-          <span className="text-sm font-semibold text-foreground">Thông báo</span>
+          <span className="text-sm font-semibold text-foreground">{tr('Thông báo')}</span>
         )}
         <div className="flex items-center gap-2">
           {!onTabChange && inboxActions}
           <button
             onClick={onOpenSettings}
             className="text-muted-foreground hover:text-foreground"
-            title="Cài đặt thông báo tin nhắn trong app"
-            aria-label="Cài đặt thông báo"
+            title={tr('Cài đặt thông báo tin nhắn trong app')}
+            aria-label={tr('Cài đặt thông báo')}
           >
             <SettingsIcon className="w-3.5 h-3.5" />
           </button>
           {onClose && (
-            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs" title="Đóng">✕</button>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs" title={tr('Đóng')}>✕</button>
           )}
         </div>
       </div>
@@ -189,7 +191,7 @@ function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Pr
               <div className="mt-0.5 w-8 h-8 flex-shrink-0 rounded-full bg-orange-500/20 flex items-center justify-center text-base"><SparklesIcon className="w-4 h-4" /></div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-xs font-semibold text-foreground">Phiên bản {updateInfo.version}</span>
+                  <span className="text-xs font-semibold text-foreground">{trx('Phiên bản {{version}}', { version: updateInfo.version })}</span>
                 </div>
                 <div className={`text-[11px] mt-0.5 ${updateStatusLabel().color}`}>
                   {updateStatusLabel().text}
@@ -199,7 +201,7 @@ function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Pr
                     onClick={handleUpdateAction}
                     className="w-full py-1 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-semibold transition-colors"
                   >
-                    <DownloadIcon className="w-4 h-4 inline" /> Xem cập nhật
+                    {trx('<0/> Xem cập nhật', { 0: <DownloadIcon className="w-4 h-4 inline" /> })}
                   </button>
                 </div>
               </div>
@@ -211,10 +213,10 @@ function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Pr
         {erpPerms.can('erp.access') && (
           <>
             {groups.length === 0 && !hasUpdate && (
-              <div className="p-6 text-center text-muted-foreground text-xs">Chưa có thông báo</div>
+              <div className="p-6 text-center text-muted-foreground text-xs">{tr('Chưa có thông báo')}</div>
             )}
             {groups.length === 0 && hasUpdate && (
-              <div className="p-3 text-center text-muted-foreground text-[11px]">Không có thông báo ERP</div>
+              <div className="p-3 text-center text-muted-foreground text-[11px]">{tr('Không có thông báo ERP')}</div>
             )}
             {groups.map(g => (
               <div key={g.label}>
@@ -241,7 +243,7 @@ function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Pr
                         <button
                           onClick={(e) => { e.stopPropagation(); readOne(n); }}
                           className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-blue-500/20 text-muted-foreground hover:text-blue-400 transition-all"
-                          title="Đánh dấu đã đọc"
+                          title={tr('Đánh dấu đã đọc')}
                         >
                           <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                             <polyline points="20 6 9 17 4 12"/>
@@ -251,7 +253,7 @@ function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Pr
                       <button
                         onClick={(e) => { e.stopPropagation(); dismissReminders([n]); void deleteNotifications([n.id]); }}
                         className="w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-all"
-                        title="Xoá thông báo này"
+                        title={tr('Xoá thông báo này')}
                       >
                         <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -266,7 +268,7 @@ function NotificationList({ onClose, onOpenSettings, tab, onTabChange }: Pick<Pr
         )}
 
         {!erpPerms.can('erp.access') && isEmpty && (
-          <div className="p-6 text-center text-muted-foreground text-xs">Chưa có thông báo</div>
+          <div className="p-6 text-center text-muted-foreground text-xs">{tr('Chưa có thông báo')}</div>
         )}
       </div>
       )}
@@ -279,16 +281,16 @@ function formatTime(ts: number): string {
   const now = new Date();
   const diffMs = now.getTime() - ts;
   const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 1) return 'Vừa xong';
-  if (diffMin < 60) return `${diffMin} phút trước`;
+  if (diffMin < 1) return tr('Vừa xong');
+  if (diffMin < 60) return tr('{{diffMin}} phút trước', { diffMin });
   const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return `${diffH} giờ trước`;
+  if (diffH < 24) return tr('{{diffH}} giờ trước', { diffH });
   const today = new Date(); today.setHours(0,0,0,0);
   const dDay = new Date(d); dDay.setHours(0,0,0,0);
-  if (dDay.getTime() === today.getTime()) return `Hôm nay ${d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`;
+  if (dDay.getTime() === today.getTime()) return tr('Hôm nay {{v1}}', { v1: d.toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' }) });
   const yest = new Date(today); yest.setDate(yest.getDate() - 1);
-  if (dDay.getTime() === yest.getTime()) return `Hôm qua ${d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`;
-  return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  if (dDay.getTime() === yest.getTime()) return tr('Hôm qua {{v1}}', { v1: d.toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' }) });
+  return d.toLocaleDateString(appLocale(), { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString(appLocale(), { hour: '2-digit', minute: '2-digit' });
 }
 
 function groupByDay(items: any[]) {
@@ -298,9 +300,9 @@ function groupByDay(items: any[]) {
   for (const n of items) {
     const d = new Date(n.created_at); d.setHours(0,0,0,0);
     let label: string;
-    if (d.getTime() === today.getTime()) label = 'Hôm nay';
-    else if (d.getTime() === yest.getTime()) label = 'Hôm qua';
-    else label = d.toLocaleDateString('vi-VN');
+    if (d.getTime() === today.getTime()) label = tr('Hôm nay');
+    else if (d.getTime() === yest.getTime()) label = tr('Hôm qua');
+    else label = d.toLocaleDateString(appLocale());
     let grp = out.find(g => g.label === label);
     if (!grp) { grp = { label, items: [] }; out.push(grp); }
     grp.items.push(n);

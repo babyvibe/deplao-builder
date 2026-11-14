@@ -1,7 +1,7 @@
 /**
- * starredStore - "Tin đánh dấu": which messages are starred, per account (key = threadId|msgId).
+ * starredStore - "Tin đánh dấu" (Starred messages): which messages are starred, per account (key = threadId|msgId).
  *
- * Loaded once per account (DataAccessor → local DB, or Boss REST in employee mode). `version`
+ * Loaded once per account (DataAccessor → local DB, or owner's machine REST in employee mode). `version`
  * bumps on every change so the "Tin đánh dấu" panel knows when to reload its list.
  * Components read it with selectors only (see deplao UI perf rules).
  */
@@ -18,7 +18,7 @@ interface StarredState {
   setStarred: (params: { zaloId: string; threadId: string; msgId: string; starred: boolean; snapshot?: StarredSnapshot }) => Promise<boolean>;
   /** Apply a change made elsewhere (DB event, other window). */
   applyChange: (zaloId: string, threadId: string, msgId: string, starred: boolean) => void;
-  /** Chế độ nhân viên — kết nối BOSS phục hồi (employee:resync): đọc lại các tài khoản đã nạp, báo panel tải lại. */
+  /** Employee mode: connection to the owner's machine restored (employee:resync): re-read the loaded accounts, tell the panel to reload. */
   reloadLoaded: () => Promise<void>;
 }
 
@@ -36,7 +36,7 @@ export const useStarredStore = create<StarredState>((set, get) => ({
     const task = (async () => {
       try {
         const res = await DataAccessor.getStarredMessageKeys({ zaloId });
-        // Lỗi đọc (nhân viên mất kết nối BOSS) ≠ "không có tin đánh dấu": giữ tập đang có
+        // A read error (employee lost connection to the owner's machine) ≠ "không có tin đánh dấu" (no starred messages): keep the current set
         if (isReadFailure(res)) return;
         const rows = Array.isArray(res?.keys) ? res.keys : [];
         const keys = new Set(rows.map(row => starKey(String(row.thread_id), String(row.msg_id))));

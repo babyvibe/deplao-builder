@@ -9,11 +9,12 @@ import Logger from '../../../src/utils/Logger';
 import { createProxyAgent } from '../../../src/utils/connection/ProxyHelper';
 import type { ProxyConfig } from '../../../src/models';
 import { reconnectFacebookAccount } from '../facebook/facebookIpc';
+import { tr } from '../../../src/shared/i18n';
 
-/** Thử kết nối ra Internet qua proxy (HEAD tới vài trang lớn): dùng cho nút "Thử kết nối" và trước khi đổi proxy. */
+/** Test the Internet connection through the proxy (HEAD requests to a few large pages): used by the "Thử kết nối" (Test connection) button and before changing the proxy. */
 async function testProxyConnection(proxy: ProxyConfig): Promise<{ ok: boolean; ms?: number; status?: number; error?: string }> {
     const agent = createProxyAgent(proxy);
-    if (!agent) return { ok: false, error: 'Không thể tạo proxy agent' };
+    if (!agent) return { ok: false, error: tr('Không thể tạo proxy agent') };
 
     const https = require('https');
     const URLS = ['https://www.google.com', 'https://httpbin.org/get'];
@@ -40,31 +41,31 @@ async function testProxyConnection(proxy: ProxyConfig): Promise<{ ok: boolean; m
             req.end();
         });
 
-    // Thử lần lượt các URL
+    // Try the URLs one by one
     let lastError = '';
     for (const url of URLS) {
         const result = await testReq(url);
         if (result.ok) return { ok: true, ms: result.ms, status: result.status };
         lastError = `HTTP ${result.status || 'timeout'}`;
     }
-    return { ok: false, error: `Proxy không phản hồi (${lastError}). Kiểm tra lại host/port/credentials.` };
+    return { ok: false, error: tr('Proxy không phản hồi ({{lastError}}). Kiểm tra lại host/port/credentials.', { lastError }) };
 }
 
-/** Kết nối lại tài khoản Zalo bằng phiên đang lưu với proxy vừa chọn (null = kết nối thẳng). */
+/** Reconnect a Zalo account using the saved session with the newly chosen proxy (null = connect directly). */
 async function reconnectZaloAccount(loginService: LoginService, zaloId: string, proxyId: number | null): Promise<void> {
     const db = DatabaseService.getInstance();
     const acc: any = db.getAccounts().find((a: any) => a.zalo_id === zaloId);
     if (!acc?.cookies || isUndecryptedCredential(acc.cookies)) {
-        throw new Error('Phiên đăng nhập không dùng được trên máy này, cần đăng nhập lại tài khoản');
+        throw new Error(tr('Phiên đăng nhập không dùng được trên máy này, cần đăng nhập lại tài khoản'));
     }
-    // Ngắt phiên cũ (vẫn đi qua proxy cũ) rồi đăng nhập lại bằng cookie đã lưu qua proxy mới
+    // Disconnect the old session (it still goes through the old proxy), then sign in again with the saved cookies via the new proxy
     await loginService.disconnectUser(zaloId);
     const ok = await loginService.connectUser({ imei: acc.imei, cookies: acc.cookies, userAgent: acc.user_agent, proxyId })
-        .catch((err: any) => { throw new Error(err?.message || 'Không kết nối lại được'); });
+        .catch((err: any) => { throw new Error(err?.message || tr('Không kết nối lại được')); });
     if (!ok) {
         db.setListenerActive(zaloId, false);
         EventBroadcaster.broadcastListenerDead(zaloId, 'connect_failed');
-        throw new Error(proxyId ? 'Không đăng nhập được Zalo qua proxy này' : 'Không kết nối lại được Zalo');
+        throw new Error(proxyId ? tr('Không đăng nhập được Zalo qua proxy này') : tr('Không kết nối lại được Zalo'));
     }
     db.setListenerActive(zaloId, true);
 }
@@ -88,7 +89,7 @@ export function registerProxyIpc() {
         };
     };
 
-    // ─── Lấy danh sách proxies ─────────────────────────────────────────────────
+    // ─── Get the list of proxies ─────────────────────────────────────────────────
     ipcMain.handle('proxy:list', async () => {
         try {
             const proxies = DatabaseService.getInstance().getProxies();
@@ -99,11 +100,11 @@ export function registerProxyIpc() {
         }
     });
 
-    // ─── Tạo proxy mới ─────────────────────────────────────────────────────────
+    // ─── Create a new proxy ─────────────────────────────────────────────────────────
     ipcMain.handle('proxy:save', async (_event, { proxy }) => {
         try {
             if (!proxy?.host || !proxy?.port) {
-                return { success: false, error: 'Host và Port không được để trống' };
+                return { success: false, error: tr('Host và Port không được để trống') };
             }
             const id = DatabaseService.getInstance().saveProxy({
                 name: proxy.name || `${proxy.host}:${proxy.port}`,
@@ -121,10 +122,10 @@ export function registerProxyIpc() {
         }
     });
 
-    // ─── Cập nhật proxy ────────────────────────────────────────────────────────
+    // ─── Update a proxy ────────────────────────────────────────────────────────
     ipcMain.handle('proxy:update', async (_event, { id, proxy }) => {
         try {
-            if (!id) return { success: false, error: 'Thiếu id proxy' };
+            if (!id) return { success: false, error: tr('Thiếu id proxy') };
             DatabaseService.getInstance().updateProxy(Number(id), proxy);
             const updated = DatabaseService.getInstance().getProxyById(Number(id));
             return { success: true, proxy: updated };
@@ -134,10 +135,10 @@ export function registerProxyIpc() {
         }
     });
 
-    // ─── Xóa proxy ──────────────────────────────────────────────────────────────
+    // ─── Delete a proxy ──────────────────────────────────────────────────────────────
     ipcMain.handle('proxy:delete', async (_event, { id }) => {
         try {
-            if (!id) return { success: false, error: 'Thiếu id proxy' };
+            if (!id) return { success: false, error: tr('Thiếu id proxy') };
             DatabaseService.getInstance().deleteProxy(Number(id));
             return { success: true };
         } catch (err: any) {
@@ -146,10 +147,10 @@ export function registerProxyIpc() {
         }
     });
 
-    // ─── Gắn/gỡ proxy cho tài khoản (chỉ lưu, áp dụng ở lần kết nối sau) ───────────
+    // ─── Assign / remove a proxy for an account (save only, applied at the next connection) ───────────
     ipcMain.handle('proxy:setAccount', async (_event, { zaloId, proxyId }) => {
         try {
-            if (!zaloId) return { success: false, error: 'Thiếu zaloId' };
+            if (!zaloId) return { success: false, error: tr('Thiếu zaloId') };
             DatabaseService.getInstance().setAccountProxy(zaloId, proxyId ?? null);
             return { success: true };
         } catch (err: any) {
@@ -158,14 +159,14 @@ export function registerProxyIpc() {
         }
     });
 
-    // ─── Thêm / đổi / bỏ proxy của tài khoản và kết nối lại ngay (không cần đăng nhập lại) ──
+    // ─── Add / change / remove an account's proxy and reconnect right away (no need to sign in again) ──
     ipcMain.handle('proxy:applyToAccount', async (_event, { accountId, proxyId, force }) => {
         try {
             if (inUiRemoteScope()) {
-                return { success: false, error: 'Proxy do máy chủ quản lý, máy nhân viên không đổi được' };
+                return { success: false, error: tr('Proxy do máy chủ quản lý, máy nhân viên không đổi được') };
             }
             const id = proxyId == null || proxyId === '' ? null : Number(proxyId);
-            if (id !== null && (!Number.isInteger(id) || id <= 0)) return { success: false, error: 'Proxy không hợp lệ' };
+            if (id !== null && (!Number.isInteger(id) || id <= 0)) return { success: false, error: tr('Proxy không hợp lệ') };
             const result = await applyAccountProxy(accountProxyDeps(), String(accountId || ''), id, { force: !!force });
             if (result.success && result.changed !== false) {
                 Logger.log(`[proxyIpc] applyToAccount ${accountId}: proxy=${id ?? 'none'} connected=${result.connected}${result.reconnectError ? ` (${result.reconnectError})` : ''}`);
@@ -177,10 +178,10 @@ export function registerProxyIpc() {
         }
     });
 
-    // ─── Lấy proxy của 1 tài khoản ─────────────────────────────────────────────
+    // ─── Get the proxy of 1 account ─────────────────────────────────────────────
     ipcMain.handle('proxy:getForAccount', async (_event, { zaloId }) => {
         try {
-            if (!zaloId) return { success: false, error: 'Thiếu zaloId' };
+            if (!zaloId) return { success: false, error: tr('Thiếu zaloId') };
             const proxy = DatabaseService.getInstance().getAccountProxy(zaloId);
             return { success: true, proxy };
         } catch (err: any) {
@@ -193,7 +194,7 @@ export function registerProxyIpc() {
     ipcMain.handle('proxy:test', async (_event, { proxy }) => {
         try {
             if (!proxy?.host || !proxy?.port) {
-                return { success: false, error: 'Host và Port không được để trống' };
+                return { success: false, error: tr('Host và Port không được để trống') };
             }
             const result = await testProxyConnection({
                 id: 0,

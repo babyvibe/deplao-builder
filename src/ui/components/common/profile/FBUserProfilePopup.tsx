@@ -1,7 +1,7 @@
 /**
- * FBUserProfilePopup - Popup thông tin người dùng Facebook
- * Thiết kế riêng, khác biệt với Zalo UserProfilePopup.
- * Reusable: dùng được trong ChatWindow, ConversationInfo, ...
+ * FBUserProfilePopup - Facebook user info popup
+ * Its own design, different from the Zalo UserProfilePopup.
+ * Reusable: can be used in ChatWindow, ConversationInfo, ...
  */
 import React from 'react';
 import { useChatStore } from '@/store/chat/chatStore';
@@ -9,6 +9,8 @@ import { useAppStore } from '@/store/app/appStore';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import PeerInitials from '../avatars/PeerInitials';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeAccountId, activeThreadId, onClose }: {
   userId: string; anchorX: number; anchorY: number;
@@ -38,7 +40,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
     return () => document.removeEventListener('keydown', key);
   }, [onClose, confirmBlock]);
 
-  // Fetch user info từ Facebook HTML nếu chưa có (E2EE / hội thoại mới)
+  // Fetch user info from the Facebook HTML if not there yet (E2EE / new conversation)
   React.useEffect(() => {
     const hasName = userInfo?.display_name || userInfo?.alias;
     const hasAvatar = userInfo?.avatar_url;
@@ -69,7 +71,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
   const left = Math.max(8, Math.min(anchorX + 12, window.innerWidth - modalW - 8));
   const topPos = Math.max(8, Math.min(anchorY - 60, window.innerHeight - 520));
 
-  // Nhắn ngay trong popup Nhắn tin nhanh (không rời màn hình đang xem); trong popup có nút mở hội thoại đầy đủ
+  // Message right away in the quick message popup (without leaving the current screen); the popup has a button to open the full conversation
   const handleOpenChat = () => {
     useAppStore.getState().openQuickChat({
       zaloId: activeAccountId,
@@ -89,14 +91,14 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
       if (isBlocked) {
         await ipc.fb?.unblockUser({ accountId: activeAccountId, userId });
         setIsBlocked(false);
-        showNotification(`Đã bỏ chặn ${name}`, 'success');
+        showNotification(tr('Đã bỏ chặn {{name}}', { name }), 'success');
       } else {
         await ipc.fb?.blockUser({ accountId: activeAccountId, userId });
         setIsBlocked(true);
-        showNotification(`Đã chặn ${name}`, 'success');
+        showNotification(tr('Đã chặn {{name}}', { name }), 'success');
       }
     } catch (e: any) {
-      showNotification('Thất bại: ' + (e?.message || e), 'error');
+      showNotification(tr('Thất bại: {{v1}}', { v1: (e?.message || e) }), 'error');
     }
     setBlocking(false);
     setConfirmBlock(false);
@@ -150,10 +152,10 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
           <div className="pl-[5.5rem] pt-1.5 min-w-0">
             <p className="text-gray-900 font-bold text-base leading-tight truncate">{name}</p>
             <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-muted-foreground text-xs">ID: {userId}</span>
-              <button onClick={() => { navigator.clipboard.writeText(userId); showNotification('Đã sao chép ID', 'success'); }}
+              <span className="text-muted-foreground text-xs">{trx('ID: {{userId}}', { userId })}</span>
+              <button onClick={() => { navigator.clipboard.writeText(userId); showNotification(tr('Đã sao chép ID'), 'success'); }}
                 className="text-muted-foreground hover:text-[#1877F2] transition-colors"
-                title="Sao chép ID">
+                title={tr('Sao chép ID')}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                 </svg>
@@ -163,7 +165,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
             {userInfo?.is_friend === 1 && (
               <div className="inline-flex items-center gap-1 mt-1.5 bg-blue-50 text-[#1877F2] text-[11px] font-medium px-2.5 py-0.5 rounded-full">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                Bạn bè
+                {tr('Bạn bè')}
               </div>
             )}
           </div>
@@ -173,20 +175,20 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
 
         {/* Quick actions */}
         <div className="px-5 py-4 space-y-2">
-          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Hành động</p>
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{tr('Hành động')}</p>
           <button onClick={handleOpenChat}
             className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-[#1877F2] hover:bg-[#166fe5] text-white text-sm font-medium transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
             </svg>
-            Nhắn tin
+            {tr('Nhắn tin')}
           </button>
           <button onClick={handleOpenFBProfile}
             className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="#1877F2">
               <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
             </svg>
-            Mở trang Facebook
+            {tr('Mở trang Facebook')}
           </button>
           {!isMe && (
             <>
@@ -196,7 +198,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
                 </svg>
-                {isBlocked ? 'Bỏ chặn người dùng' : 'Chặn người dùng'}
+                {isBlocked ? tr('Bỏ chặn người dùng') : tr('Chặn người dùng')}
               </button>
             </>
           )}
@@ -210,21 +212,21 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
           <div className="bg-white rounded-2xl p-5 w-72 border shadow-xl"
             onClick={e => e.stopPropagation()}>
             <h3 className="text-gray-900 font-semibold text-base mb-2">
-              {isBlocked ? 'Bỏ chặn người dùng?' : 'Chặn người dùng?'}
+              {isBlocked ? tr('Bỏ chặn người dùng?') : tr('Chặn người dùng?')}
             </h3>
             <p className="text-muted-foreground text-sm mb-4">
               {isBlocked
-                ? `Bạn có chắc muốn bỏ chặn ${name}?`
-                : `${name} sẽ không thể nhắn tin hoặc gọi cho bạn.`}
+                ? tr('Bạn có chắc muốn bỏ chặn {{name}}?', { name })
+                : tr('{{name}} sẽ không thể nhắn tin hoặc gọi cho bạn.', { name })}
             </p>
             <div className="flex gap-2">
               <button onClick={() => setConfirmBlock(null)} disabled={blocking}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm py-2 rounded-xl font-medium transition-colors">Huỷ</button>
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm py-2 rounded-xl font-medium transition-colors">{tr('Huỷ')}</button>
               <button onClick={handleToggleBlock} disabled={blocking}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm py-2 rounded-xl font-medium transition-colors flex items-center justify-center gap-1">
                 {blocking ? (
-                  <><svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Đang xử lý...</>
-                ) : (isBlocked ? 'Bỏ chặn' : 'Chặn')}
+                  <><svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> {tr('Đang xử lý...')}</>
+                ) : (isBlocked ? tr('Bỏ chặn') : tr('Chặn'))}
               </button>
             </div>
           </div>

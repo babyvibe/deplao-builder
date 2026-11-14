@@ -1,9 +1,9 @@
 /**
- * Nút "Thao tác nhanh" cạnh ô tìm kiếm hội thoại: tạo nhóm (Zalo / Telegram / Messenger), tham gia nhóm bằng link,
- * thêm bạn (Zalo / Telegram), thêm lịch hẹn + ghi chú nhanh (Quản lý công việc). Tài khoản Telegram có thêm các mục
- * như menu của Telegram: Kênh mới, Danh bạ, Cuộc gọi.
- * Tài khoản thao tác chọn ngay trong menu: thường → tài khoản đang mở; gộp trang → tài khoản đang lọc / đang mở / đầu
- * tiên của trang gộp (quy tắc ở quickActions.ts).
+ * "Thao tác nhanh" (Quick actions) button next to the conversation search box: create a group (Zalo / Telegram / Messenger), join a group by link,
+ * add a friend (Zalo / Telegram), add an appointment + quick note (Task management). Telegram accounts get extra items
+ * like Telegram's own menu: New channel, Contacts, Calls.
+ * The account is picked right in the menu: normal → the open account; merged inbox → the account being filtered / open / the first
+ * of the merged inbox (rules in quickActions.ts).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -32,6 +32,8 @@ import {
   CHANNEL_SHORT_LABEL, accountChannel, accountLabel, defaultQuickAccountId, orderQuickAccounts, quickActionSupport, quickActionVisible,
   type OpenQuickConversation, type QuickActionId, type QuickModeState,
 } from './quickActions';
+import { tr } from '../../../../shared/i18n';
+import { trx } from '@/lib/i18n/trx';
 
 type QuickDialog =
   | { kind: 'createGroup' | 'createChannel' | 'addFriend' | 'contacts' | 'calls'; account: AccountInfo }
@@ -39,35 +41,35 @@ type QuickDialog =
   | { kind: 'event' | 'note' };
 
 const CREATE_GROUP_LABEL: Record<string, { title: string; hint: string }> = {
-  zalo: { title: 'Tạo nhóm Zalo', hint: 'Chọn bạn bè theo nhãn, đặt tên nhóm' },
-  telegram_user: { title: 'Nhóm mới', hint: 'Chọn thành viên, đặt tên + ảnh nhóm' },
-  facebook: { title: 'Tạo nhóm Messenger', hint: 'Từ 2 người trở lên' },
+  zalo: { title: tr('Tạo nhóm Zalo'), hint: tr('Chọn bạn bè theo nhãn, đặt tên nhóm') },
+  telegram_user: { title: tr('Nhóm mới'), hint: tr('Chọn thành viên, đặt tên + ảnh nhóm') },
+  facebook: { title: tr('Tạo nhóm Messenger'), hint: tr('Từ 2 người trở lên') },
 };
 
 const ADD_FRIEND_LABEL: Record<string, { title: string; hint: string }> = {
-  zalo: { title: 'Thêm bạn Zalo', hint: 'Tìm theo số điện thoại, gửi lời mời' },
-  telegram_user: { title: 'Thêm liên hệ Telegram', hint: 'Theo số điện thoại hoặc @tên người dùng' },
+  zalo: { title: tr('Thêm bạn Zalo'), hint: tr('Tìm theo số điện thoại, gửi lời mời') },
+  telegram_user: { title: tr('Thêm liên hệ Telegram'), hint: tr('Theo số điện thoại hoặc @tên người dùng') },
 };
 
 function ActionItem({ icon, title, hint, reason, onSelect }: {
   icon: React.ReactNode;
   title: string;
   hint: string;
-  /** Có lý do → mục bị khoá, hiện lý do thay cho gợi ý. */
+  /** Has a reason → the item is locked, shows the reason instead of the suggestion. */
   reason?: string | null;
   onSelect: () => void;
 }) {
   return (
     <DropdownMenuItem icon={icon} disabled={!!reason} onSelect={onSelect} className="py-2">
       <span className="block truncate text-[13px]">{title}</span>
-      {/* Lý do khoá được xuống dòng (không cắt chữ) — người dùng cần đọc đủ */}
+      {/* The lock reason wraps onto new lines (text is not cut): the user needs to read all of it */}
       <span className={cn('block text-[11px] leading-4', reason ? 'whitespace-normal text-warning' : 'truncate text-muted-foreground')}>{reason || hint}</span>
     </DropdownMenuItem>
   );
 }
 
 export default function QuickActionsButton({ activeThread, onOpenConversation }: {
-  /** Hội thoại đang mở — cho phép gắn lịch hẹn với hội thoại. */
+  /** Open conversation: allows attaching an appointment to it. */
   activeThread?: { id: string; name: string } | null;
   onOpenConversation: OpenQuickConversation;
 }) {
@@ -83,7 +85,7 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
   const [menuOpen, setMenuOpen] = useState(false);
   const [view, setView] = useState<'main' | 'accounts'>('main');
   const [dialog, setDialog] = useState<QuickDialog | null>(null);
-  // Tài khoản người dùng tự chọn — chỉ giữ khi ngữ cảnh (tài khoản mặc định) chưa đổi.
+  // Account the user picked themselves: only kept while the context (default account) has not changed.
   const [choice, setChoice] = useState<{ base: string | null; id: string } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -97,14 +99,14 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
   const channel = accountChannel(selected);
 
   const supportReason = useCallback((action: QuickActionId, account: AccountInfo | null): string | null => {
-    if (!account) return 'Chưa có tài khoản';
+    if (!account) return tr('Chưa có tài khoản');
     const support = quickActionSupport(action, accountChannel(account));
     return 'reason' in support ? support.reason : null;
   }, []);
   const joinDisabledReason = useCallback((account: AccountInfo) => supportReason('joinLink', account), [supportReason]);
   const canJoinAny = accounts.some(account => !supportReason('joinLink', account));
 
-  // Đổi màn (tài khoản ↔ thao tác): mục vừa bấm biến mất → đưa focus về mục đầu để phím ↑/↓ vẫn chạy.
+  // Switching screen (account ↔ action): the item just clicked disappears → move focus to the first item so ↑/↓ keys keep working.
   const viewChanged = useRef(false);
   useEffect(() => {
     if (!viewChanged.current) return;
@@ -119,9 +121,9 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
   if (accounts.length === 0 && !erp.event && !erp.note) return null;
 
   const createReason = supportReason('createGroup', selected);
-  const createLabel = CREATE_GROUP_LABEL[channel] || { title: 'Tạo nhóm', hint: '' };
+  const createLabel = CREATE_GROUP_LABEL[channel] || { title: tr('Tạo nhóm'), hint: '' };
   const friendReason = supportReason('addFriend', selected);
-  const friendLabel = ADD_FRIEND_LABEL[channel] || { title: 'Thêm bạn', hint: '' };
+  const friendLabel = ADD_FRIEND_LABEL[channel] || { title: tr('Thêm bạn'), hint: '' };
   const hasMergedSection = entries.some(entry => entry.inMerged);
 
   return (
@@ -132,7 +134,7 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
         align="end"
         className="w-72 p-1.5"
         trigger={(
-          <button type="button" title="Tạo nhóm / kênh, tham gia nhóm, thêm bạn, danh bạ, cuộc gọi, lịch hẹn, ghi chú" aria-label="Thao tác nhanh"
+          <button type="button" title={tr('Tạo nhóm / kênh, tham gia nhóm, thêm bạn, danh bạ, cuộc gọi, lịch hẹn, ghi chú')} aria-label={tr('Thao tác nhanh')}
             className={cn(
               'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
               menuOpen && 'bg-muted text-foreground',
@@ -145,7 +147,7 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
           {view === 'accounts' ? (
             <>
               <DropdownMenuItem icon={<ArrowLeftIcon />} onClick={e => { e.preventDefault(); switchView('main'); }}>
-                <span className="text-[13px] font-medium">Chọn tài khoản thao tác</span>
+                <span className="text-[13px] font-medium">{tr('Chọn tài khoản thao tác')}</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <div className="max-h-72 overflow-y-auto">
@@ -156,8 +158,8 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
                   const showOthersHeader = hasMergedSection && !entry.inMerged && (index === 0 || entries[index - 1].inMerged);
                   return (
                     <React.Fragment key={account.zalo_id}>
-                      {showMergedHeader && <DropdownMenuLabel className="py-1 text-[10px] uppercase tracking-wide">Trang gộp</DropdownMenuLabel>}
-                      {showOthersHeader && <DropdownMenuLabel className="py-1 text-[10px] uppercase tracking-wide">Tài khoản khác</DropdownMenuLabel>}
+                      {showMergedHeader && <DropdownMenuLabel className="py-1 text-[10px] uppercase tracking-wide">{tr('Trang gộp')}</DropdownMenuLabel>}
+                      {showOthersHeader && <DropdownMenuLabel className="py-1 text-[10px] uppercase tracking-wide">{tr('Tài khoản khác')}</DropdownMenuLabel>}
                       <DropdownMenuItem
                         aria-current={active || undefined}
                         className={cn(active && 'bg-selected')}
@@ -172,7 +174,7 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
                             <span className="block truncate text-[13px]">{accountLabel(account)}</span>
                             <span className="block truncate text-[11px] text-muted-foreground">
                               {CHANNEL_SHORT_LABEL[accountChannel(account)] || accountChannel(account)}
-                              {entry.isActive && ' · đang mở'}
+                              {entry.isActive && tr(' · đang mở')}
                             </span>
                           </span>
                           {active && <CheckIcon className="h-4 w-4 shrink-0 text-primary" />}
@@ -187,7 +189,7 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
             <>
               {selected && (
                 <>
-                  <DropdownMenuLabel className="pb-1 pt-1 text-[10px] uppercase tracking-wide">Thao tác bằng tài khoản</DropdownMenuLabel>
+                  <DropdownMenuLabel className="pb-1 pt-1 text-[10px] uppercase tracking-wide">{tr('Thao tác bằng tài khoản')}</DropdownMenuLabel>
                   {accounts.length > 1 ? (
                     <DropdownMenuItem className="py-1.5" onClick={e => { e.preventDefault(); switchView('accounts'); }}>
                       <span className="flex items-center gap-2.5">
@@ -196,11 +198,11 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
                           <span className="block truncate text-[13px] font-medium">{accountLabel(selected)}</span>
                           <span className="block truncate text-[11px] text-muted-foreground">
                             {CHANNEL_SHORT_LABEL[channel] || channel}
-                            {selected.zalo_id === activeAccountId ? ' · đang mở' : ''}
+                            {selected.zalo_id === activeAccountId ? tr(' · đang mở') : ''}
                           </span>
                         </span>
                         <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-primary">
-                          Đổi<ChevronDownIcon className="h-3.5 w-3.5 -rotate-90" />
+                          {trx('Đổi<0/>', { 0: <ChevronDownIcon className="h-3.5 w-3.5 -rotate-90" /> })}
                         </span>
                       </span>
                     </DropdownMenuItem>
@@ -222,12 +224,12 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
                   <ActionItem icon={<UsersIcon />} title={createLabel.title} hint={createLabel.hint} reason={createReason}
                     onSelect={() => { if (selected) open({ kind: 'createGroup', account: selected }); }} />
                   {selected && quickActionVisible('createChannel', channel) && (
-                    <ActionItem icon={<MegaphoneGlyph />} title="Kênh mới" hint="Phát tin tới nhiều người theo dõi"
+                    <ActionItem icon={<MegaphoneGlyph />} title={tr('Kênh mới')} hint={tr('Phát tin tới nhiều người theo dõi')}
                       reason={supportReason('createChannel', selected)}
                       onSelect={() => open({ kind: 'createChannel', account: selected })} />
                   )}
-                  <ActionItem icon={<LinkIcon />} title="Tham gia nhóm bằng link" hint="Dán link Zalo / Telegram, tự chọn tài khoản"
-                    reason={canJoinAny ? null : 'Cần tài khoản Zalo hoặc Telegram'}
+                  <ActionItem icon={<LinkIcon />} title={tr('Tham gia nhóm bằng link')} hint={tr('Dán link Zalo / Telegram, tự chọn tài khoản')}
+                    reason={canJoinAny ? null : tr('Cần tài khoản Zalo hoặc Telegram')}
                     onSelect={() => open({ kind: 'joinLink', accountId: selected && !supportReason('joinLink', selected) ? selected.zalo_id : null })} />
                   <ActionItem icon={<UserPlusIcon />} title={friendLabel.title} hint={friendLabel.hint} reason={friendReason}
                     onSelect={() => { if (selected) open({ kind: 'addFriend', account: selected }); }} />
@@ -235,11 +237,11 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
                     <>
                       <DropdownMenuSeparator />
                       {quickActionVisible('contacts', channel) && (
-                        <ActionItem icon={<BookIcon />} title="Danh bạ" hint="Liên hệ Telegram · trạng thái, nhắn tin"
+                        <ActionItem icon={<BookIcon />} title={tr('Danh bạ')} hint={tr('Liên hệ Telegram · trạng thái, nhắn tin')}
                           reason={supportReason('contacts', selected)} onSelect={() => open({ kind: 'contacts', account: selected })} />
                       )}
                       {quickActionVisible('calls', channel) && (
-                        <ActionItem icon={<PhoneIcon />} title="Cuộc gọi" hint="Lịch sử cuộc gọi, gọi nhỡ"
+                        <ActionItem icon={<PhoneIcon />} title={tr('Cuộc gọi')} hint={tr('Lịch sử cuộc gọi, gọi nhỡ')}
                           reason={supportReason('calls', selected)} onSelect={() => open({ kind: 'calls', account: selected })} />
                       )}
                     </>
@@ -250,14 +252,14 @@ export default function QuickActionsButton({ activeThread, onOpenConversation }:
               {(erp.event || erp.note) && (
                 <>
                   {accounts.length > 0 && <DropdownMenuSeparator />}
-                  <DropdownMenuLabel className="pb-1 pt-1 text-[10px] uppercase tracking-wide">Công việc của tôi</DropdownMenuLabel>
+                  <DropdownMenuLabel className="pb-1 pt-1 text-[10px] uppercase tracking-wide">{tr('Công việc của tôi')}</DropdownMenuLabel>
                   {erp.event && (
-                    <ActionItem icon={<CalendarIcon />} title="Thêm lịch hẹn"
-                      hint={activeThread ? 'Có thể gắn với hội thoại đang mở' : 'Hẹn gọi lại, gặp khách… có nhắc trước'}
+                    <ActionItem icon={<CalendarIcon />} title={tr('Thêm lịch hẹn')}
+                      hint={activeThread ? tr('Có thể gắn với hội thoại đang mở') : tr('Hẹn gọi lại, gặp khách… có nhắc trước')}
                       onSelect={() => open({ kind: 'event' })} />
                   )}
                   {erp.note && (
-                    <ActionItem icon={<FileTextIcon />} title="Ghi chú nhanh" hint="Lưu vào Ghi chú trong Quản lý công việc"
+                    <ActionItem icon={<FileTextIcon />} title={tr('Ghi chú nhanh')} hint={tr('Lưu vào Ghi chú trong Quản lý công việc')}
                       onSelect={() => open({ kind: 'note' })} />
                   )}
                 </>

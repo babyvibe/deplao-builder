@@ -1,27 +1,27 @@
 /**
- * ErpRestRoutes — ERP qua REST của nhân viên (Boss phục vụ): bảng route → kênh IPC erp:* (phần thuần, có test).
+ * ErpRestRoutes: ERP over REST for employees (served by Boss): route table → erp:* IPC channels (pure part, has tests).
  *
- * Máy nhân viên không giữ dữ liệu ERP: DataAccessor gửi REST → Boss chạy ĐÚNG handler IPC erp:* mà UI Boss dùng
- * (cùng kiểm tra, cùng service, cùng event realtime, cùng phong bì `{ success, ...trường, error, code }`) với danh tính
- * ERP của nhân viên (HttpRelayService.executeErpRest: ErpAuthContext.forEmployee → runAs). Người làm KHÔNG BAO GIỜ lấy
- * từ tham số — id nhân viên trong tham số chỉ là đối tượng (giao việc, người theo dõi, hồ sơ cần xem / sửa…).
+ * Employee machines hold no ERP data: DataAccessor sends REST → Boss runs EXACTLY the erp:* IPC handler that the Boss UI uses
+ * (same checks, same service, same realtime events, same envelope `{ success, ...fields, error, code }`) with the employee's
+ * ERP identity (HttpRelayService.executeErpRest: ErpAuthContext.forEmployee → runAs). The actor is NEVER taken
+ * from the parameters: an employee id in the parameters is only an object (task assignee, follower, record to view / edit...).
  *
- *  - `action` = ĐÚNG chuỗi quyền handler truyền cho withErpAuth (null = handler tự kiểm tra theo tham số: giao việc,
- *    sửa hồ sơ, xem chấm công người khác). Boss kiểm tra quyền module 'erp' (employeeAccess / restCommandPolicy) và
- *    `action` TRƯỚC khi vào IPC → 403 `permission_denied`; withErpAuth kiểm tra lại cùng action.
- *    erpRestRoutes.test.ts đối chiếu bảng với electron/ipc/erp*Ipc.ts: mọi kênh có route, cùng action.
- *  - `input(req)` dựng tham số handler từ tham số REST + phần động của đường dẫn. Query GET là CHUỖI → ép kiểu
- *    (`archived=false` không được thành true, `all=true` phải là boolean như handler so `=== true`).
- *  - Thứ tự: route cụ thể đứng trước route có `:tham_số` (route khớp đầu tiên thắng); `when` chọn biến thể theo body.
+ *  - `action` = EXACTLY the permission string the handler passes to withErpAuth (null = the handler checks by parameters itself: assigning tasks,
+ *    editing records, viewing other people's attendance). Boss checks the 'erp' module permission (employeeAccess / restCommandPolicy) and
+ *    `action` BEFORE calling IPC → 403 `permission_denied`; withErpAuth checks the same action again.
+ *    erpRestRoutes.test.ts checks the table against electron/ipc/erp*Ipc.ts: every channel has a route, with the same action.
+ *  - `input(req)` builds the handler parameters from the REST parameters + the dynamic part of the path. GET query values are STRINGS → cast
+ *    (`archived=false` must not become true, `all=true` must be a boolean because the handler compares `=== true`).
+ *  - Order: specific routes come before routes with `:param` (the first matching route wins); `when` selects a variant by body.
  *
- * Trước đây chỉ dự án / công việc / lịch có route (gọi thẳng service, KHÔNG kiểm tra quyền ERP — nhân viên vượt RBAC
- * được: tạo task giao cho người khác, sửa / xoá lịch của người khác, đọc lịch theo organizerId tuỳ ý); ghi chú, nhân sự,
- * chấm công, nghỉ phép, thông báo đi IPC trên máy nhân viên → đọc / ghi DB cục bộ, Boss và nhân viên khác không thấy.
+ * Previously only projects / tasks / calendar had routes (calling the service directly, WITHOUT ERP permission checks: an employee could bypass RBAC:
+ * create tasks assigned to others, edit / delete other people's events, read the calendar by any organizerId); notes, HR,
+ * attendance, leave and notifications went through IPC on the employee machine → read / wrote the local DB, which Boss and other employees could not see.
  */
 
 export type ErpRestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
-/** Tham số route nhận: query (GET) / body JSON (lệnh) + phần động của đường dẫn (đã giải mã %xx). */
+/** Route parameters received: query (GET) / JSON body (commands) + the dynamic part of the path (%xx decoded). */
 export interface ErpRestRequest {
   params: Record<string, any>;
   path: Record<string, string>;
@@ -29,13 +29,13 @@ export interface ErpRestRequest {
 
 export interface ErpRestRoute {
   methods: readonly ErpRestMethod[];
-  /** Mẫu đường dẫn, `:ten` = một đoạn động. */
+  /** Path pattern, `:name` = one dynamic segment. */
   path: string;
-  /** Kênh IPC erp:* trên Boss. */
+  /** erp:* IPC channel on Boss. */
   channel: string;
-  /** Chuỗi quyền của withErpAuth trong handler (null = handler tự kiểm tra). */
+  /** withErpAuth permission string used in the handler (null = the handler checks itself). */
   action: string | null;
-  /** Biến thể theo tham số (vd `action: 'remove'`) — không khớp thì xét route sau. */
+  /** Variant selected by a parameter (e.g. `action: 'remove'`): if it does not match, the next route is checked. */
   when?: (params: Record<string, any>) => boolean;
   input: (req: ErpRestRequest) => Record<string, unknown>;
 }
@@ -43,7 +43,7 @@ export interface ErpRestRoute {
 export interface ErpRestMatch {
   route: ErpRestRoute;
   path: Record<string, string>;
-  /** Tham số gửi cho handler IPC. */
+  /** Parameters passed to the IPC handler. */
   input: Record<string, any>;
 }
 
@@ -56,9 +56,9 @@ export function isErpRestPath(pathname: string): boolean {
   return p.startsWith(ERP_REST_QUERY_PREFIX) || p.startsWith(ERP_REST_COMMAND_PREFIX);
 }
 
-// ── Ép kiểu tham số ─────────────────────────────────────────────────────────────────────────────────────────────
+// ── Parameter type casting ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/** Có giá trị (query bỏ khoá rỗng; body có thể gửi null). */
+/** Has a value (query drops empty keys; body may send null). */
 function given(v: unknown): boolean {
   return v !== undefined && v !== null && v !== '';
 }
@@ -67,19 +67,19 @@ function str(v: unknown): string | undefined {
   return given(v) ? String(v) : undefined;
 }
 
-/** `true` / "true" / 1 / "1" → true; còn lại false (query "false" KHÔNG thành true). */
+/** `true` / "true" / 1 / "1" → true; anything else is false (query "false" does NOT become true). */
 function bool(v: unknown): boolean {
   return v === true || v === 1 || v === 'true' || v === '1';
 }
 
-/** Số từ query / body; không phải số → giữ nguyên để handler báo lỗi kiểm tra (erpValidate.int). */
+/** Number from query / body; not a number → kept as is so the handler reports the validation error (erpValidate.int). */
 function num(v: unknown): unknown {
   if (!given(v)) return undefined;
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? n : v;
 }
 
-/** Như num, nhưng "null" / null → null (query không gửi được null: DataAccessor mã hoá thành "null"). */
+/** Same as num, but "null" / null → null (a query cannot send null: DataAccessor encodes it as "null"). */
 function nullableNum(v: unknown): unknown {
   if (v === null || v === 'null') return null;
   return num(v);
@@ -94,14 +94,14 @@ function obj(v: unknown): Record<string, any> | undefined {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, any>) : undefined;
 }
 
-/** Mảng từ body / query (mảng JSON đã parse hoặc "a,b"). */
+/** Array from body / query (parsed JSON array or "a,b"). */
 function list(v: unknown): unknown[] | undefined {
   if (Array.isArray(v)) return v;
   if (typeof v === 'string' && v.trim()) return v.split(',').map((s) => s.trim()).filter(Boolean);
   return undefined;
 }
 
-/** Bỏ khoá undefined (handler phân biệt "không gửi" với "gửi rỗng", vd parentTaskId / folderId). */
+/** Drops undefined keys (the handler tells "not sent" apart from "sent empty", e.g. parentTaskId / folderId). */
 function compact(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input)) if (v !== undefined) out[k] = v;
@@ -112,18 +112,18 @@ const GET: readonly ErpRestMethod[] = ['GET'];
 const POST: readonly ErpRestMethod[] = ['POST'];
 const UPDATE: readonly ErpRestMethod[] = ['PATCH', 'PUT'];
 const DELETE: readonly ErpRestMethod[] = ['DELETE'];
-/** Lệnh "bật / đổi một trường" — DataAccessor dùng PATCH, nhận thêm POST / PUT. */
+/** "Toggle / change one field" command: DataAccessor uses PATCH, also accepts POST / PUT. */
 const ACTION: readonly ErpRestMethod[] = ['PATCH', 'PUT', 'POST'];
 
 const none = (): Record<string, unknown> => ({});
 const patchOf = (p: Record<string, any>) => obj(p.patch) ?? {};
 
 /**
- * Bảng route ERP. Mỗi kênh erp:* có ít nhất một route (test kiểm tra). Đường dẫn cũ (DataAccessor bản trước) giữ
- * nguyên: tasks/assign, tasks/watcher, tasks/comment, tasks/checklist…, calendar, calendar/:id.
+ * ERP route table. Every erp:* channel has at least one route (checked by a test). Old paths (earlier DataAccessor builds) are kept
+ * as they are: tasks/assign, tasks/watcher, tasks/comment, tasks/checklist..., calendar, calendar/:id.
  */
 export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
-  // ── Dự án ──
+  // ── Projects ──
   { methods: GET, path: '/api/query/erp/projects', channel: 'erp:project:list', action: 'erp.access',
     input: ({ params: p }) => ({ archived: bool(p.archived) }) },
   { methods: POST, path: '/api/command/erp/projects', channel: 'erp:project:create', action: 'project.create',
@@ -133,7 +133,7 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
   { methods: DELETE, path: '/api/command/erp/projects/:id', channel: 'erp:project:delete', action: 'project.delete',
     input: ({ path }) => ({ id: path.id }) },
 
-  // ── Công việc ──
+  // ── Tasks ──
   { methods: GET, path: '/api/query/erp/tasks', channel: 'erp:task:list', action: 'erp.access',
     input: ({ params: p }) => compact({
       projectId: str(p.projectId),
@@ -147,14 +147,14 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
       limit: num(p.limit),
       offset: num(p.offset),
     }) },
-  // ⚠️ /tasks/inbox phải đứng trước /tasks/:id
+  // ⚠️ /tasks/inbox must come before /tasks/:id
   { methods: GET, path: '/api/query/erp/tasks/inbox', channel: 'erp:task:listMyInbox', action: 'erp.access',
     input: ({ params: p }) => compact({ filter: str(p.filter) }) },
   { methods: GET, path: '/api/query/erp/tasks/:id', channel: 'erp:task:get', action: 'erp.access',
     input: ({ path }) => ({ id: path.id }) },
   { methods: POST, path: '/api/command/erp/tasks', channel: 'erp:task:create', action: 'task.create',
     input: ({ params: p }) => ({ input: obj(p.input) ?? {} }) },
-  // Đường dẫn tên riêng (POST) trước /tasks/:id (PATCH/PUT/DELETE)
+  // Named paths (POST) before /tasks/:id (PATCH/PUT/DELETE)
   { methods: POST, path: '/api/command/erp/tasks/assign', channel: 'erp:task:assign', action: null,
     input: ({ params: p }) => ({ id: str(p.id), employeeIds: list(p.employeeIds) ?? [] }) },
   { methods: POST, path: '/api/command/erp/tasks/watcher', channel: 'erp:task:removeWatcher', action: 'task.update',
@@ -181,11 +181,11 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
     input: ({ params: p, path }) => ({ id: path.id, status: p.status }) },
   { methods: UPDATE, path: '/api/command/erp/tasks/:id', channel: 'erp:task:update', action: 'task.update',
     input: ({ params: p, path }) => ({ id: path.id, patch: patchOf(p) }) },
-  // Người tạo xoá được task của mình, task khác cần task.delete — handler kiểm tra (erpAccessRules.taskDeleteAction)
+  // The creator can delete their own task, other tasks need task.delete: the handler checks (erpAccessRules.taskDeleteAction)
   { methods: DELETE, path: '/api/command/erp/tasks/:id', channel: 'erp:task:delete', action: null,
     input: ({ path }) => ({ id: path.id }) },
 
-  // ── Lịch (chỉ sự kiện mình tổ chức / được mời — handler lọc theo danh tính) ──
+  // ── Calendar (only events I organize / am invited to: the handler filters by identity) ──
   { methods: GET, path: '/api/query/erp/calendar/events', channel: 'erp:calendar:listEvents', action: 'calendar.view',
     input: ({ params: p }) => compact({ from: num(p.from), to: num(p.to), limit: num(p.limit), offset: num(p.offset) }) },
   { methods: GET, path: '/api/query/erp/calendar/conflicts', channel: 'erp:calendar:checkConflict', action: 'calendar.view',
@@ -204,7 +204,7 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
   { methods: DELETE, path: '/api/command/erp/calendar/:id', channel: 'erp:calendar:deleteEvent', action: 'calendar.delete',
     input: ({ path }) => ({ id: path.id }) },
 
-  // ── Ghi chú (phạm vi: tác giả / chia sẻ / workspace — handler lọc theo danh tính) ──
+  // ── Notes (scope: author / shared / workspace: the handler filters by identity) ──
   { methods: GET, path: '/api/query/erp/note-folders', channel: 'erp:note:listFolders', action: 'erp.access', input: none },
   { methods: POST, path: '/api/command/erp/note-folders', channel: 'erp:note:createFolder', action: 'note.create',
     input: ({ params: p }) => compact({ name: p.name, parent_id: num(p.parent_id) }) },
@@ -247,7 +247,7 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
   { methods: DELETE, path: '/api/command/erp/notes/:id', channel: 'erp:note:delete', action: 'note.delete',
     input: ({ path }) => ({ id: path.id }) },
 
-  // ── Nhân sự: phòng ban / chức vụ / hồ sơ ──
+  // ── HR: departments / positions / records ──
   { methods: GET, path: '/api/query/erp/departments', channel: 'erp:department:list', action: 'erp.access', input: none },
   { methods: POST, path: '/api/command/erp/departments', channel: 'erp:department:create', action: 'department.manage',
     input: ({ params: p }) => compact({
@@ -274,7 +274,7 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
     input: ({ path }) => ({ employeeId: path.employeeId }) },
   { methods: GET, path: '/api/query/erp/license/seat', channel: 'erp:license:seatStatus', action: 'erp.access', input: none },
 
-  // ── Chấm công (check-in / check-out luôn cho chính mình) ──
+  // ── Attendance (check-in / check-out is always for yourself) ──
   { methods: GET, path: '/api/query/erp/attendance/today', channel: 'erp:attendance:today', action: 'erp.access', input: none },
   { methods: GET, path: '/api/query/erp/attendance', channel: 'erp:attendance:list', action: null,
     input: ({ params: p }) => compact({ all: bool(p.all), employeeId: str(p.employeeId), from: str(p.from), to: str(p.to) }) },
@@ -283,7 +283,7 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
   { methods: POST, path: '/api/command/erp/attendance/check-out', channel: 'erp:attendance:checkOut', action: 'attendance.checkin',
     input: ({ params: p }) => compact({ note: str(p.note) }) },
 
-  // ── Nghỉ phép (duyệt: chỉ quản lý trực tiếp của người xin nghỉ — handler kiểm tra) ──
+  // ── Leave (approval: only the direct manager of the person requesting leave, the handler checks) ──
   { methods: GET, path: '/api/query/erp/leaves/my', channel: 'erp:leave:listMy', action: 'erp.access', input: none },
   { methods: GET, path: '/api/query/erp/leaves/pending', channel: 'erp:leave:listPending', action: 'leave.approve', input: none },
   { methods: POST, path: '/api/command/erp/leaves', channel: 'erp:leave:create', action: 'leave.create',
@@ -293,7 +293,7 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
   { methods: POST, path: '/api/command/erp/leaves/:id/cancel', channel: 'erp:leave:cancel', action: 'leave.create',
     input: ({ path }) => ({ id: num(path.id) }) },
 
-  // ── Thông báo (chỉ của chính mình — handler lọc theo người nhận) ──
+  // ── Notifications (only my own: the handler filters by recipient) ──
   { methods: GET, path: '/api/query/erp/notifications', channel: 'erp:notify:listInbox', action: 'erp.access',
     input: ({ params: p }) => compact({ unreadOnly: bool(p.unreadOnly), limit: num(p.limit), offset: num(p.offset) }) },
   { methods: GET, path: '/api/query/erp/notifications/unread-count', channel: 'erp:notify:unreadCount', action: 'erp.access', input: none },
@@ -304,19 +304,19 @@ export const ERP_REST_ROUTES: readonly ErpRestRoute[] = [
     input: ({ params: p }) => ({ ids: list(p.ids) ?? [] }) },
   { methods: POST, path: '/api/command/erp/notifications/delete-all', channel: 'erp:notify:deleteAll', action: 'erp.access', input: none },
 
-  // ── Thông báo qua Zalo (Cài đặt, owner / admin). Tài khoản gửi đi tham số `zaloId` → Boss kiểm tra tài khoản được giao
-  //    (employeeAccess) như mọi lệnh theo tài khoản; không gửi `zaloId` = giữ tài khoản đang chọn ──
+  // ── Notifications via Zalo (Settings, owner / admin). An account sent with the `zaloId` parameter → Boss checks that the account is assigned
+  //    (employeeAccess) like every account-scoped command; not sending `zaloId` = keep the selected account ──
   { methods: GET, path: '/api/query/erp/notifications/zalo', channel: 'erp:notify:zaloStatus', action: 'settings.erp', input: none },
   { methods: POST, path: '/api/command/erp/notifications/zalo', channel: 'erp:notify:setZaloSettings', action: 'settings.erp',
     input: ({ params: p }) => ({
       settings: compact({ enabled: given(p.enabled) ? bool(p.enabled) : undefined, accountId: str(p.zaloId), types: list(p.types) }),
     }) },
-  // employeeId = người nhận tin thử (đối tượng, không phải người làm)
+  // employeeId = the recipient of the test message (an object, not the actor)
   { methods: POST, path: '/api/command/erp/notifications/zalo/test', channel: 'erp:notify:testZalo', action: 'settings.erp',
     input: ({ params: p }) => compact({ employeeId: str(p.employeeId) }) },
 ];
 
-// ── Khớp route ─────────────────────────────────────────────────────────────────────────────────────────────────
+// ── Route matching ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 interface CompiledRoute { route: ErpRestRoute; re: RegExp; keys: string[] }
 
@@ -342,7 +342,7 @@ function decodeSegment(part: string): string {
   try { return decodeURIComponent(part); } catch { return part; }
 }
 
-/** Route khớp đầu tiên (đúng method, đường dẫn và `when`) + phần động đã giải mã. */
+/** First matching route (same method, path and `when`) + the decoded dynamic part. */
 function findRoute(method: string, pathname: string, params: Record<string, any>): { route: ErpRestRoute; path: Record<string, string> } | null {
   const m = String(method || '').toUpperCase();
   const p = String(pathname || '');
@@ -358,7 +358,7 @@ function findRoute(method: string, pathname: string, params: Record<string, any>
   return null;
 }
 
-/** Route ERP cho một request (null = không có — Boss trả "Unknown endpoint"). */
+/** ERP route for a request (null = none; Boss replies "Unknown endpoint"). */
 export function matchErpRestRoute(method: string, pathname: string, params?: Record<string, any> | null): ErpRestMatch | null {
   const safeParams = params && typeof params === 'object' ? params : {};
   const found = findRoute(method, pathname, safeParams);
@@ -367,8 +367,8 @@ export function matchErpRestRoute(method: string, pathname: string, params?: Rec
 }
 
 /**
- * Tên tham số REST mà route ERP đọc khi dựng input (theo dõi qua Proxy) — employeeRestContract.test dùng để kiểm tra
- * "Boss đọc MỌI tham số nhân viên gửi" cho các route ERP (route chung trong handleRestApi chuyển nguyên params).
+ * REST parameter names that the ERP route reads when building the input (tracked through a Proxy). employeeRestContract.test uses them to check
+ * that "Boss reads EVERY parameter the employee sends" for the ERP routes (the shared route in handleRestApi passes params through unchanged).
  */
 export function erpRestParamKeys(method: string, pathname: string, params: Record<string, any>): string[] {
   const read = new Set<string>();
@@ -387,7 +387,7 @@ export function erpRestParamKeys(method: string, pathname: string, params: Recor
   return [...read];
 }
 
-/** Mã lỗi từ chối → HTTP 403 (RestQueryService không tính vào mất kết nối). Còn lại 200 như lệnh IPC. */
+/** Rejection error codes → HTTP 403 (RestQueryService does not count them as a lost connection). Everything else is 200, like the IPC command. */
 const FORBIDDEN_CODES: ReadonlySet<string> = new Set(['permission_denied', 'MODULE_FORBIDDEN', 'PATH_FORBIDDEN', 'ACCOUNT_FORBIDDEN']);
 
 export function erpRestHttpStatus(result: unknown): number {
@@ -396,8 +396,8 @@ export function erpRestHttpStatus(result: unknown): number {
 }
 
 /**
- * Danh sách tệp đính kèm trong input của lệnh task (tạo: `input.attachments`, sửa: `patch.attachments`) — Boss kiểm tra
- * đường dẫn trước khi chạy handler. null = lệnh không mang tệp đính kèm.
+ * Attachment list in the task command input (create: `input.attachments`, edit: `patch.attachments`). Boss checks the
+ * paths before running the handler. null = the command carries no attachments.
  */
 export function erpTaskAttachmentHolder(channel: string, input: Record<string, any> | null | undefined): { attachments: any[] } | null {
   const holder = channel === 'erp:task:create' ? obj(input?.input) : channel === 'erp:task:update' ? obj(input?.patch) : undefined;

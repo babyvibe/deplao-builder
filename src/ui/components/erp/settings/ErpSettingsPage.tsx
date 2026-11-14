@@ -1,5 +1,5 @@
 /**
- * Quản lý công việc → Cài đặt (owner / admin, quyền `settings.erp`). Mỗi phần cài đặt là một thẻ, lưu ngay khi đổi.
+ * Task management → Settings (owner / admin, permission `settings.erp`). Each settings section is a card, saved as soon as it changes.
  */
 import React from 'react';
 import ErpZaloNotifySettings from './ErpZaloNotifySettings';
