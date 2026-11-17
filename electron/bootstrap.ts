@@ -9,6 +9,11 @@
 process.env.WS_NO_BUFFER_UTIL = '1';
 process.env.WS_NO_UTF_8_VALIDATE = '1';
 
+if (process.env.DEPLAO_WEB === '1' && (process.env.DEPLAO_WEB_PASSWORD || '').length < 12) {
+  console.error('DEPLAO_WEB_PASSWORD cần ít nhất 12 ký tự để bật giao diện web.');
+  process.exit(1);
+}
+
 // Set the app name BEFORE anything else: Electron locks the data folder (userData = %APPDATA%/Deplao) the first time code asks for it
 // The dev build runs straight from the bootstrap file, so its default name is "Electron" → if code asks for userData before main.ts
 // sets the name, the app opens an empty new DB in %APPDATA%/Electron (incident 22/10/2026). main.ts sets it again anyway (harmless).

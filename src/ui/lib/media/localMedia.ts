@@ -9,6 +9,7 @@
  */
 
 import { useEmployeeStore } from '../../store/employee/employeeStore';
+import { browserMediaUrl } from '../../../shared/platform/browserMedia';
 
 function getBossBaseUrl(): string {
   try {
@@ -20,6 +21,12 @@ function getBossBaseUrl(): string {
 
 export function toLocalMediaUrl(filePath: string, zaloId?: string): string {
   if (!filePath) return '';
+  if (/^(blob:|data:)/.test(filePath)) return filePath;
+  if (filePath.startsWith('/api/browser/media?')) return filePath;
+  if (typeof document !== 'undefined' && document.documentElement.dataset.deplaoRuntime === 'web') {
+    if (/^(local-media:\/\/|media:\/\/local\/|file:\/\/)/.test(filePath)) return browserMediaUrl(filePath);
+    if (!/^https?:\/\//.test(filePath) && getMode() !== 'employee') return browserMediaUrl(filePath);
+  }
 
   // Already a proper URL → return as-is
   if (filePath.startsWith('http://') || filePath.startsWith('https://') || filePath.startsWith('local-media://')) {

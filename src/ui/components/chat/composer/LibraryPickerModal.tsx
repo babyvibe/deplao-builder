@@ -25,6 +25,7 @@ import DataAccessor, { refreshLibraryCache } from '../../../lib/data/DataAccesso
 import { LIBRARY_CHANGED_EVENT } from '@/lib/chat/realtime/relayUiEvents';
 import { useChatStore } from '@/store/chat/chatStore';
 import { useAccountStore } from '@/store/accounts/accountStore';
+import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { messageQueue, generateTempId, extractMsgIdFromResponse } from '@/lib/chat/send/MessageQueue';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { isNonZalo, CHANNEL, isZalo, isTelegram, isFacebook } from '@/lib/channels/channelHelper';
@@ -493,7 +494,6 @@ export default function LibraryPickerModal({
     } catch {}
     // Fallback: try through employeeStore
     try {
-      const { useEmployeeStore } = require('../../../store/employee/employeeStore');
       const mode = useEmployeeStore.getState().mode;
       // employee mode: Boss attaches the real auth itself, but it must know which account (empty auth → Boss uses the first account)
       if (mode === 'employee') return { accountId: zaloId };

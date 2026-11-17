@@ -1,6 +1,9 @@
 import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, protocol, net, Notification, safeStorage, powerMonitor } from 'electron';
 // Public API v1: record every IPC handler so the API/plugins call the same logic as the UI (must come before the IPC imports).
 import { ipcHandlerRegistry } from './ipc/handlerRegistry';
+import { startBrowserServer } from './web/BrowserServer';
+import { runInUiScope } from '../src/services/database/dbScope';
+import { getBootPayload } from '../src/services/i18n/localeStore';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Readable } from 'stream';
@@ -92,6 +95,8 @@ function decryptCookiesForStartup(encrypted: string): string {
 }
 
 const isDev = IS_DEV_BUILD;
+const WEB_MODE = process.env.DEPLAO_WEB === '1';
+let browserServer: Awaited<ReturnType<typeof startBrowserServer>> | undefined;
 let isQuitting = false;
 
 // ─── Hardware acceleration ────────────────────────────────────────────────────
@@ -321,18 +326,29 @@ function createWindow() {
     },
     show: false,
   });
+  if (WEB_MODE) {
+    // Existing services target this window for events and workspace state. The browser
+    // receives the same events; the placeholder never loads a second React client.
+    const originalSend = mainWindow.webContents.send.bind(mainWindow.webContents);
+    mainWindow.webContents.send = (channel: string, ...args: any[]) => {
+      browserServer?.publish(channel, args);
+      originalSend(channel, ...args);
+    };
+  }
   // CPU profile of the UI at app launch: only when requested (flag file diagnostics/profile-next-startup, see utils/startup/startupProfiler)
   startRendererStartupProfile(mainWindow.webContents);
 
   // Load Vite dev server or built files
-  if (isDev) {
+  if (WEB_MODE) {
+    void mainWindow.loadURL('about:blank');
+  } else if (isDev) {
     mainWindow.loadURL('http://localhost:27799');
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
 
   // DevTools: only open in the dev build
-  if (SHOW_DEV_TOOLS) {
+  if (SHOW_DEV_TOOLS && !WEB_MODE) {
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.webContents.on('before-input-event', (_event, input) => {
@@ -351,6 +367,7 @@ function createWindow() {
   let initialWindowShown = false;
   mainWindow.once('ready-to-show', () => {
     initialWindowShown = true;
+    if (WEB_MODE) return;
     if (cachedNormalIcon && !cachedNormalIcon.isEmpty()) {
       mainWindow?.setIcon(cachedNormalIcon);
     }
@@ -368,7 +385,7 @@ function createWindow() {
   // only called show(), which is exactly the blank blue screen users saw after
   // Electron's network service restarted.
   setTimeout(() => {
-    if (!initialWindowShown && mainWindow && !mainWindow.isDestroyed()) {
+    if (!WEB_MODE && !initialWindowShown && mainWindow && !mainWindow.isDestroyed()) {
       console.warn('[main] Renderer did not emit ready-to-show in time; recovering renderer');
       mainWindow.show();
       if (isDev) {
@@ -580,7 +597,7 @@ function createWindow() {
       setTimeout(() => app.exit(0), 8000).unref();
       return;
     }
-    if (mainWindow) {
+    if (mainWindow && !WEB_MODE) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       if (!mainWindow.isVisible()) mainWindow.show();
       mainWindow.focus();
@@ -853,6 +870,10 @@ function registerWindowControls() {
   // ── Notification click → focus window + open thread ───────────────
   ipcMain.on('app:openThread', (_event, { zaloId, threadId, threadType }: { zaloId: string; threadId: string; threadType: number }) => {
     if (!mainWindow) return;
+    if (WEB_MODE) {
+      mainWindow.webContents.send('app:openThread', { zaloId, threadId, threadType });
+      return;
+    }
 
     // Restore + focus: on Windows, focus() is not always reliable when minimized
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -1488,11 +1509,11 @@ app.whenReady().then(async () => {
   // The OS launches the app at sign-in: runs in the background if the user chose that
   try { startHiddenAtLogin = getAutoLaunch().startHidden(process.argv); } catch { startHiddenAtLogin = false; }
   createWindow();
-  createTray();
+  if (!WEB_MODE) createTray();
   registerWindowControls();
   // Launch at login: on by default (machines updated from an old build too), keeps the current run path
   try {
-    const autoLaunch = getAutoLaunch().syncAtStartup();
+    const autoLaunch = WEB_MODE ? { supported: false, enabled: false, blocked: false } : getAutoLaunch().syncAtStartup();
     Logger.log(`[main] Tự mở cùng máy: ${!autoLaunch.supported ? 'không áp dụng (bản dev)' : autoLaunch.enabled ? 'bật' : 'tắt'}`
       + `${autoLaunch.blocked ? ' (hệ điều hành đang chặn)' : ''}`);
   } catch (err: any) {
@@ -1574,6 +1595,38 @@ app.whenReady().then(async () => {
   registerPluginIpc();
   // UI language: language picker IPC. A change rebuilds the tray menu (its labels are translated).
   registerI18nIpc({ onLanguageChanged: () => { if (tray) tray.setContextMenu(buildTrayMenu()); } });
+  if (WEB_MODE) {
+    try {
+      browserServer = await startBrowserServer({
+        password: process.env.DEPLAO_WEB_PASSWORD || '',
+        port: Number(process.env.DEPLAO_WEB_PORT || 27800),
+        publicOrigin: process.env.DEPLAO_WEB_ORIGIN || '',
+        secureCookie: process.env.DEPLAO_WEB_SECURE === '1',
+        assets: path.join(__dirname, '../../dist-web'),
+        boot: getBootPayload,
+        invoke: async (channel, args) => {
+          const handler = ipcHandlerRegistry.get(channel);
+          if (!handler) throw new Error(`Không có lệnh ${channel}`);
+          return runInUiScope(() => handler({ sender: mainWindow!.webContents, senderFrame: null }, ...args));
+        },
+        send: (channel, args) => {
+          ipcMain.emit(channel, { sender: mainWindow!.webContents }, ...args);
+        },
+        resolveMedia: file => FileStorageService.resolveAbsolutePath(file),
+        mediaRoots: () => [
+          FileStorageService.getBaseDir(),
+          path.join(path.dirname(FileStorageService.getBaseDir()), 'avatar'),
+          path.join(path.dirname(FileStorageService.getBaseDir()), '_uploads'),
+          path.join(app.getPath('temp'), 'deplao-clipboard'),
+        ],
+      });
+      console.log(`[web] Mở ${browserServer.url} trong trình duyệt`);
+    } catch (error: any) {
+      console.error('[web] Không khởi động được:', error.message);
+      app.exit(1);
+      return;
+    }
+  }
   try {
     const PluginsPlatform = require('../src/services/plugins/PluginsPlatform').default;
     const { forkElectron } = require('../src/services/plugins/PluginSandbox');
@@ -1727,7 +1780,7 @@ app.whenReady().then(async () => {
   console.log('[MediaCleanup] Scheduler initialized - runs daily at 3:00 AM');
 
   // Check for updates: wait for the renderer to be ready first
-  if (!isDev) {
+  if (!isDev && !WEB_MODE) {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
 
@@ -1805,6 +1858,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
+  if (WEB_MODE) return;
   if (mainWindow === null) createWindow();
   else { mainWindow.show(); mainWindow.focus(); }
 });
@@ -1813,6 +1867,7 @@ app.on('before-quit', (event) => {
   // Cloudflare: stop the tunnel / R2 queue / DB sync first (≤ ~3 s), then quit again and run the rest below as before.
   if (deferQuitForCloudShutdown(event)) return;
   isQuitting = true;
+  void browserServer?.close();
 
   // Stop the plugin processes (deactivate ≤ 5 s in the background; the utilityProcess closes by itself when the app quits).
   try {

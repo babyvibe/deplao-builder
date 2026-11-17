@@ -52,26 +52,22 @@ interface ScanGroupResult {
   error?: string;
 }
 
-/**
- * "Mã hoá" (Encrypts) the body with AES-128-CBC before sending it to the backend (public key, see the top of the file: it is only obfuscation, HTTPS is
- * the protection layer). Uses the Node.js crypto module (available in the Electron main / preload).
- */
+/** AES-128-CBC wire format, shared with the existing backend. */
 async function encryptBody(body: object): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(body));
+  const toBase64 = (data: Uint8Array) => {
+    let binary = '';
+    for (const byte of data) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  };
   try {
-    // In the Electron renderer, crypto may not be available through a dynamic import
-    // Fallback: send plain text (the backend handles both formats during development)
-    const crypto = window.require ? window.require('crypto') : await import('crypto');
-    // SECRET_KEY is a hex string → converted to a Buffer (16 bytes for AES-128)
-    const key = Buffer.from(SECRET_KEY, 'hex').slice(0, 16);
-    const iv = Buffer.alloc(16, 0);
-    const cipher = crypto.createCipheriv('aes-128-cbc', key, iv);
-    let encrypted = cipher.update(JSON.stringify(body), 'utf8', 'base64');
-    encrypted += cipher.final('base64');
-    return encrypted;
+    const rawKey = Uint8Array.from(SECRET_KEY.match(/.{2}/g)!.slice(0, 16), hex => parseInt(hex, 16));
+    const key = await globalThis.crypto.subtle.importKey('raw', rawKey, 'AES-CBC', false, ['encrypt']);
+    const encrypted = await globalThis.crypto.subtle.encrypt({ name: 'AES-CBC', iv: new Uint8Array(16) }, key, bytes);
+    return toBase64(new Uint8Array(encrypted));
   } catch (err) {
     console.warn('[backendService] encryptBody failed, sending plain text:', err);
-    // Fallback: send plain base64 text
-    return btoa(JSON.stringify(body));
+    return toBase64(bytes);
   }
 }
 

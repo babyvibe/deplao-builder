@@ -1102,7 +1102,16 @@ export default function TopBar() {
           )}
         </div>
 
-        {!isMac && (
+        {platform === 'web' && (
+          <button
+            className="px-3 h-9 text-xs text-muted-foreground hover:text-foreground"
+            onClick={async () => {
+              const response = await fetch('/api/browser/logout', { method: 'POST' });
+              if (response.ok) window.location.reload();
+            }}
+          >{tr('Đăng xuất')}</button>
+        )}
+        {!isMac && platform !== 'web' && (
           <>
             <button
               onClick={() => ipc.window?.minimize()}

@@ -2,6 +2,7 @@
  * videoUtils.ts - Video thumbnail extraction utility
  * Shared by MessageInput and other components.
  */
+import { toLocalMediaUrl } from '../../media/localMedia';
 
 /**
  * Uses HTMLVideoElement + Canvas to capture a video frame as the thumbnail.
@@ -50,7 +51,9 @@ export async function extractVideoThumbViaCanvas(videoPath: string, seekSec = 1)
       vid.load();
     });
 
-  const fileUrl = videoPath.startsWith('file://')
+  const fileUrl = document.documentElement.dataset.deplaoRuntime === 'web'
+    ? toLocalMediaUrl(videoPath)
+    : videoPath.startsWith('file://')
     ? videoPath
     : `file:///${videoPath.replace(/\\/g, '/')}`;
 

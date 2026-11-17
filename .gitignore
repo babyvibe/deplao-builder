@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-web/
 dist-electron/
 dist-electron-build/
 agents/
@@ -18,6 +19,7 @@ docs/*
 scripts/*
 .vscode/
 src/__tests__/*
+!src/__tests__/web/
 src/.tmp-go-build-cache/*
 .gitmodules
 examples

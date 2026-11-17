@@ -102,7 +102,7 @@ function fileUrlToPath(fileUrl: string): string {
   let path = fileUrl.replace('file:///', '');
   // Windows: decode and remove the leading slash if present
   path = decodeURIComponent(path);
-  if (process.platform === 'win32' && path.startsWith('/')) {
+  if (/^\/[a-z]:\//i.test(path)) {
     path = path.slice(1);
   }
   return path;

@@ -4,6 +4,8 @@
 
 # Deplao
 
+Browser client: see [Deplao Web setup and current limitations](./WEB.md).
+
 **Desktop app for managing multiple Zalo, Facebook & Telegram accounts**
 CRM · Marketing · ERP · POS · Workflow · AI Assistant — all in one unified workspace
 

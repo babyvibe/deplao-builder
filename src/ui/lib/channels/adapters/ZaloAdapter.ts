@@ -14,6 +14,8 @@ import {
 import ipc, { buildZaloAuth } from '../../ipc';
 import DataAccessor from '../../data/DataAccessor';
 import { tr } from '../../../../shared/i18n';
+import { useAccountStore } from '../../../store/accounts/accountStore';
+import { useEmployeeStore } from '../../../store/employee/employeeStore';
 
 export class ZaloAdapter extends BaseChannelAdapter {
   readonly channel = 'zalo' as const;
@@ -21,12 +23,10 @@ export class ZaloAdapter extends BaseChannelAdapter {
   private resolveAuth(accountId: string, auth?: any): any {
     if (auth) return auth;
     try {
-      const { useAccountStore } = require('../../../store/accounts/accountStore');
       const account = useAccountStore.getState().accounts?.find((a: any) => a.zalo_id === accountId);
       if (account?.cookies) return buildZaloAuth(account, accountId);
       // The employee machine has no cookie (the snapshot does not send one) → auth only carries accountId, and the Boss attaches the real session of that
       // account (previously it returned undefined → "Missing auth", or the Boss used the first assigned account)
-      const { useEmployeeStore } = require('../../../store/employee/employeeStore');
       if (account && useEmployeeStore.getState().mode === 'employee') return buildZaloAuth(account, accountId);
     } catch {}
     return undefined;
