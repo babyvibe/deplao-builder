@@ -3,6 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { createReadStream } from 'fs';
 import { realpath, stat, readFile } from 'fs/promises';
 import * as path from 'path';
+import { operationsHtml } from './operations';
 
 export interface BrowserServerOptions {
   password: string;
@@ -10,6 +11,10 @@ export interface BrowserServerOptions {
   /** Public HTTPS origin when the loopback gateway is behind a reverse proxy. */
   publicOrigin?: string;
   secureCookie?: boolean;
+  /** Public API authenticates its own Bearer keys; browser cookies never grant API rights. */
+  publicApi?(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  deliveries?(): unknown;
+  retryDelivery?(owner: string, id: string): unknown;
   assets: string;
   invoke(channel: string, args: any[]): Promise<any>;
   send(channel: string, args: any[]): void;
@@ -83,6 +88,10 @@ export async function startBrowserServer(options: BrowserServerOptions) {
     }
     try {
       const url = new URL(req.url || '/', `http://${authority}`);
+      if (options.publicApi && (url.pathname.startsWith('/api/v1/') || url.pathname === '/docs' || url.pathname.startsWith('/docs/'))) {
+        await options.publicApi(req, res);
+        return;
+      }
       const token = req.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith(COOKIE + '='))?.slice(COOKIE.length + 1) || '';
       const authenticated = (sessions.get(token) || 0) > Date.now();
       if (url.pathname === '/api/browser/login' && req.method === 'POST') {
@@ -111,6 +120,17 @@ export async function startBrowserServer(options: BrowserServerOptions) {
         const secure = options.secureCookie ? '; Secure' : '';
         res.setHeader('Set-Cookie', `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`);
         json(res, 200, { success: true }); return;
+      }
+      if (url.pathname === '/operations' && req.method === 'GET') {
+        res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'}); res.end(operationsHtml); return;
+      }
+      if (url.pathname === '/api/browser/deliveries' && req.method === 'GET' && options.deliveries) {
+        json(res, 200, options.deliveries()); return;
+      }
+      if (url.pathname === '/api/browser/deliveries/retry' && req.method === 'POST' && options.retryDelivery) {
+        const value = JSON.parse(await body(req));
+        if (typeof value.owner !== 'string' || typeof value.id !== 'string') { json(res, 400, {error: 'Invalid delivery'}); return; }
+        json(res, 200, options.retryDelivery(value.owner, value.id)); return;
       }
       if (url.pathname === '/api/browser/boot' && req.method === 'GET') {
         json(res, 200, { i18n: options.boot() }); return;

@@ -1103,6 +1103,9 @@ export default function TopBar() {
         </div>
 
         {platform === 'web' && (
+          <a className="px-3 text-xs" href="/operations">Hàng đợi kênh</a>
+        )}
+        {platform === 'web' && (
           <button
             className="px-3 h-9 text-xs text-muted-foreground hover:text-foreground"
             onClick={async () => {

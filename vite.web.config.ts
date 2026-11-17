@@ -3,6 +3,7 @@ import desktop from './vite.config';
 
 export default mergeConfig(desktop, defineConfig({
   base: '/',
+  define: { __CHANNELS_ONLY__: 'true' },
   build: { outDir: 'dist-web' },
   plugins: [{
     name: 'deplao-browser-entry',

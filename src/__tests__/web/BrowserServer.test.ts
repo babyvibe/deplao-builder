@@ -22,6 +22,11 @@ describe('owner browser gateway', () => {
     gateway = await startBrowserServer({
       password: 'test-password-123', port: 0, assets: path.join(root, 'assets'), invoke, send,
       boot: () => ({ lang: 'vi' }), mediaRoots: () => [path.join(root, 'media')],
+      publicApi: async (req, res) => {
+        res.writeHead(req.headers.authorization === 'Bearer test-key' ? 200 : 401);
+        res.end();
+      },
+      deliveries: () => [],
       resolveMedia: file => path.isAbsolute(file) ? file : path.join(root, 'media', file),
     });
     const response = await fetch(gateway.url + '/api/browser/login', {
@@ -47,6 +52,13 @@ describe('owner browser gateway', () => {
     const result = await fetch(gateway.url + '/api/browser/login', { method: 'POST', body: new URLSearchParams({ password: 'wrong' }) });
     expect(result.status).toBe(401);
     expect(result.headers.get('set-cookie')).toBeNull();
+  });
+  test('public API uses Bearer auth independently of owner cookies', async () => {
+    expect((await request('/api/v1/accounts')).status).toBe(401);
+    expect((await fetch(gateway.url + '/api/v1/accounts', {headers: {Authorization: 'Bearer test-key'}})).status).toBe(200);
+    expect((await fetch(gateway.url + '/api/browser/deliveries')).status).toBe(401);
+    expect((await request('/api/browser/deliveries')).status).toBe(200);
+    expect((await request('/operations')).status).toBe(200);
   });
   test('serves authenticated assets and language boot payload', async () => {
     expect(await (await request('/')).text()).toContain('<main>Deplao</main>');

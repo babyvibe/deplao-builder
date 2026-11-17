@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { CHANNELS_ONLY } from '../../../shared/channelMode';
 
 export type FeatureVisibilityKey =
   | 'dashboard'
@@ -26,6 +27,8 @@ const DEFAULT_VISIBILITY: Record<FeatureVisibilityKey, boolean> = {
 };
 
 function loadVisibility(): Record<FeatureVisibilityKey, boolean> {
+  if (CHANNELS_ONLY) return {dashboard: false, chat: true, crm: false, workflow: false,
+    integration: false, analytics: false, erp: false, plugins: true, settings: true};
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_VISIBILITY };
@@ -51,19 +54,21 @@ interface FeatureVisibilityStore {
 export const useFeatureVisibilityStore = create<FeatureVisibilityStore>((set) => ({
   enabled: loadVisibility(),
   setEnabled: (feature, enabled) => set((state) => {
+    if (CHANNELS_ONLY) return state;
     if (feature === 'dashboard' || feature === 'chat') return state;
     const next = { ...state.enabled, [feature]: enabled };
     persistVisibility(next);
     return { enabled: next };
   }),
   toggle: (feature) => set((state) => {
+    if (CHANNELS_ONLY) return state;
     if (feature === 'dashboard' || feature === 'chat') return state;
     const next = { ...state.enabled, [feature]: !state.enabled[feature] };
     persistVisibility(next);
     return { enabled: next };
   }),
   reset: () => {
-    const next = { ...DEFAULT_VISIBILITY };
+    const next = loadVisibility();
     persistVisibility(next);
     set({ enabled: next });
   },

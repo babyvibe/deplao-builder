@@ -20,6 +20,7 @@ scripts/*
 .vscode/
 src/__tests__/*
 !src/__tests__/web/
+!src/__tests__/delivery/
 src/.tmp-go-build-cache/*
 .gitmodules
 examples

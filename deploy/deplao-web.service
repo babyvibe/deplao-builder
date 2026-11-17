@@ -1,0 +1,21 @@
+[Unit]
+Description=Deplao multi-channel web server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deplao
+WorkingDirectory=/opt/deplao-builder-t123
+EnvironmentFile=/opt/deplao-builder-t123/.env
+Environment=NODE_ENV=production
+Environment=DEPLAO_WEB=1
+Environment=DEPLAO_CHANNELS_ONLY=1
+ExecStart=/usr/bin/xvfb-run -a /opt/deplao-builder-t123/node_modules/.bin/electron /opt/deplao-builder-t123/dist-electron/electron/bootstrap.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

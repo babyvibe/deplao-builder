@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { CHANNELS_ONLY, channelViewAllowed } from '../../../shared/channelMode';
 import { useAccountStore } from '../accounts/accountStore';
 import { useEmployeeStore } from '../employee/employeeStore';
 import DataAccessor, { isReadFailure } from '@/lib/data/DataAccessor';
@@ -440,13 +441,13 @@ function persistFlag(
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
-  view: 'dashboard',
+  view: CHANNELS_ONLY ? 'chat' : 'dashboard',
   activePluginPage: null,
-  openPluginPage: (pluginId, pageId) => set({ view: 'plugin', activePluginPage: { pluginId, pageId } }),
+  openPluginPage: (pluginId, pageId) => { if (!CHANNELS_ONLY) set({ view: 'plugin', activePluginPage: { pluginId, pageId } }); },
   openPluginHub: () => set({ view: 'plugin', activePluginPage: null }),
   pluginHubTab: 'installed',
   setPluginHubTab: (tab) => set({ pluginHubTab: tab }),
-  pluginHubSection: 'plugins',
+  pluginHubSection: CHANNELS_ONLY ? 'api' : 'plugins',
   setPluginHubSection: (section) => set({ pluginHubSection: section }),
   activePluginPanel: null,
   setActivePluginPanel: (panel) => set(panel
@@ -514,7 +515,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return { quickChatThread: thread };
   }),
 
-  setView: (view) => set({ view }),
+  setView: (view) => { if (channelViewAllowed(view)) set({ view }); },
   setLoading: (isLoading) => set({ isLoading }),
   showNotification: (message, type = 'info') => {
     set({ notification: { message, type } });

@@ -1,4 +1,6 @@
 import React, { Suspense, useCallback, useEffect, useState, useRef } from 'react';
+import { CHANNELS_ONLY } from '../shared/channelMode';
+import ChannelSettings from './components/settings/ChannelSettings';
 import TopBar from './components/layout/topbar/TopBar';
 import Sidebar from './components/layout/sidebar/Sidebar';
 import AccountPanel from './components/layout/sidebar/AccountPanel';
@@ -67,13 +69,13 @@ import { tr } from '../shared/i18n';
 
 // These pages pull in editors, charts, React Flow and large ERP modules. They
 // are not needed for the first chat frame, so defer them until their view opens.
-const Dashboard = React.lazy(() => import('./components/dashboard/Dashboard'));
-const Settings = React.lazy(() => import('./components/settings/Settings'));
-const CRMPage = React.lazy(() => import('./components/crm/CRMPage'));
-const WorkflowPage = React.lazy(() => import('./components/workflow/WorkflowPage'));
-const IntegrationPage = React.lazy(() => import('./components/integration/IntegrationPage'));
-const AnalyticsPage = React.lazy(() => import('./components/analytics/AnalyticsPage'));
-const ErpPage = React.lazy(() => import('./components/erp/ErpPage'));
+const Dashboard = CHANNELS_ONLY ? () => null : React.lazy(() => import('./components/dashboard/Dashboard'));
+const Settings = CHANNELS_ONLY ? ChannelSettings : React.lazy(() => import('./components/settings/Settings'));
+const CRMPage = CHANNELS_ONLY ? () => null : React.lazy(() => import('./components/crm/CRMPage'));
+const WorkflowPage = CHANNELS_ONLY ? () => null : React.lazy(() => import('./components/workflow/WorkflowPage'));
+const IntegrationPage = CHANNELS_ONLY ? () => null : React.lazy(() => import('./components/integration/IntegrationPage'));
+const AnalyticsPage = CHANNELS_ONLY ? () => null : React.lazy(() => import('./components/analytics/AnalyticsPage'));
+const ErpPage = CHANNELS_ONLY ? () => null : React.lazy(() => import('./components/erp/ErpPage'));
 
 const HEALTH_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
 const NETWORK_RECONNECT_COOLDOWN_MS = 15 * 1000; // 15 seconds
@@ -247,7 +249,7 @@ export default function App() {
   const activePluginPanel = useAppStore(s => s.activePluginPanel);
   const setActivePluginPanel = useAppStore(s => s.setActivePluginPanel);
   // Plugin: sidebar pages, chat panel, composer buttons of enabled plugins (empty if there is no plugin).
-  useEffect(() => initPluginStore(), []);
+  useEffect(() => { if (!CHANNELS_ONLY) return initPluginStore(); }, []);
   const { setAccounts, updateListenerActive, accounts } = useAccountStore(useShallow(s => ({
     setAccounts: s.setAccounts, updateListenerActive: s.updateListenerActive, accounts: s.accounts,
   })));
@@ -1819,7 +1821,7 @@ export default function App() {
                         </div>
                     )}
                     {/* Right panel: integration quick panel */}
-                    {showIntegrationQuickPanel && (
+                    {!CHANNELS_ONLY && showIntegrationQuickPanel && (
                         <div
                             className="absolute inset-y-0 right-0 z-40 max-w-[92vw] overflow-hidden"
                             onClick={(e) => e.stopPropagation()}
@@ -1842,7 +1844,7 @@ export default function App() {
                         </div>
                     )}
                     {/* Right panel: AI quick panel */}
-                    {showAIQuickPanel && (
+                    {!CHANNELS_ONLY && showAIQuickPanel && (
                         <div
                             className="absolute inset-y-0 right-0 z-40 max-w-[92vw] overflow-hidden"
                             onClick={(e) => e.stopPropagation()}
@@ -1851,7 +1853,7 @@ export default function App() {
                         </div>
                     )}
                     {/* Right panel: plugin (contributes.chatPanels) */}
-                    {pluginPanelOpen && (
+                    {!CHANNELS_ONLY && pluginPanelOpen && (
                         <div
                             className="absolute inset-y-0 right-0 z-40 max-w-[92vw] overflow-hidden"
                             onClick={(e) => e.stopPropagation()}
@@ -1874,7 +1876,7 @@ export default function App() {
             {view === 'erp' && <div className="flex-1 h-full overflow-hidden"><ErpPage /></div>}
             {view === 'dashboard' && <Dashboard />}
             {/* Plugin page: keep the opened iframe when switching views (hidden with CSS) */}
-            <PluginPagesHost />
+            {CHANNELS_ONLY ? (view === 'plugin' && <ChannelSettings />) : <PluginPagesHost />}
           </Suspense>
         </div>
       </div>

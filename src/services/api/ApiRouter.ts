@@ -289,7 +289,7 @@ export class ApiRouter {
 
             // ── Idempotency (POST) ──
             const idemHeader = req.headers['idempotency-key'];
-            const idemKey = method === 'POST' && principal && typeof idemHeader === 'string' && idemHeader.length > 0 && idemHeader.length <= 200
+            const idemKey = pathname !== '/api/v1/deliveries' && method === 'POST' && principal && typeof idemHeader === 'string' && idemHeader.length > 0 && idemHeader.length <= 200
                 ? `${principalLogId(principal)}:${routeLabel}:${idemHeader}`
                 : null;
             if (idemKey) {

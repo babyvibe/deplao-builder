@@ -25,6 +25,7 @@ import { EventHub } from './events/EventHub';
 import { WebhookOutboundService } from './events/WebhookOutboundService';
 import { SocketGateway } from './events/SocketGateway';
 import type { Principal, RouteDef } from './types';
+import { DeliveryQueue } from './DeliveryQueue';
 
 type ExtraProvider = () => RouteDef[];
 type OnBeforeSend = (channel: string, cb: (data: any) => void) => () => void;
@@ -54,6 +55,14 @@ class ApiPlatform {
     private socketGateway: SocketGateway | null = null;
     private onBeforeSend: OnBeforeSend | null = null;
     private principalResolvers: PrincipalResolver[] = [];
+    private deliveries = new DeliveryQueue({
+        principal: owner => this.principalForOwner(owner),
+        online: async id => !!(await this.getAccounts().get(id).catch(() => null))?.online,
+        send: (principal, body) => this.invoke('sendMessage', {
+            principal, params: {accountId: body.account_id, threadId: body.conversation_id},
+            body: {text: body.text, thread_type: body.thread_type},
+        }),
+    });
 
     static getInstance(): ApiPlatform {
         if (!ApiPlatform.instance) ApiPlatform.instance = new ApiPlatform();
@@ -63,6 +72,7 @@ class ApiPlatform {
     /** Test: create a new instance. */
     static resetForTests(): void {
         ApiPlatform.instance?.webhooks?.stop();
+        ApiPlatform.instance?.deliveries.stop();
         ApiPlatform.instance = null;
     }
 
@@ -177,6 +187,7 @@ class ApiPlatform {
         try {
             this.getHub().hook();
             this.getWebhooks().start();
+            this.deliveries.start();
         } catch (err: any) {
             logger().error?.(`[ApiPlatform] startEvents: ${err?.message || err}`);
         }
@@ -234,7 +245,7 @@ class ApiPlatform {
         const webhooks = this.getWebhooks();
         router.register(buildRoutes({
             uploads: this.uploads,
-            extra: [() => eventRoutes({ hub, webhooks }), ...this.extraProviders],
+            extra: [() => eventRoutes({ hub, webhooks }), () => this.deliveries.routes(), ...this.extraProviders],
         }));
         this.router = router;
         this.uploads.cleanup(true);
@@ -295,6 +306,8 @@ class ApiPlatform {
     flush(): void {
         this.log.flush();
     }
+    operatorDeliveries() { return this.deliveries.operatorList(); }
+    retryDelivery(owner: string, id: string) { return this.deliveries.retry(owner, id); }
 }
 
 export default ApiPlatform;

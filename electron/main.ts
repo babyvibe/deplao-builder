@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, protocol, 
 // Public API v1: record every IPC handler so the API/plugins call the same logic as the UI (must come before the IPC imports).
 import { ipcHandlerRegistry } from './ipc/handlerRegistry';
 import { startBrowserServer } from './web/BrowserServer';
+import { CHANNELS_ONLY } from '../src/shared/channelMode';
 import { runInUiScope } from '../src/services/database/dbScope';
 import { getBootPayload } from '../src/services/i18n/localeStore';
 import * as path from 'path';
@@ -14,10 +15,10 @@ import { registerLoginIpc } from './ipc/zalo/loginIpc';
 import { registerZaloIpc } from './ipc/zalo/zaloIpc';
 import { registerDatabaseIpc } from './ipc/database/databaseIpc';
 import { registerFileIpc } from './ipc/file/fileIpc';
-import { registerCRMIpc } from './ipc/crm/crmIpc';
-import { registerWorkflowIpc } from './ipc/workflow/workflowIpc';
-import { registerIntegrationIpc } from './ipc/integrations/integrationIpc';
-import { registerAIAssistantIpc } from './ipc/ai/aiAssistantIpc';
+const registerCRMIpc = CHANNELS_ONLY ? () => {} : require('./ipc/crm/crmIpc').registerCRMIpc;
+const registerWorkflowIpc = CHANNELS_ONLY ? () => {} : require('./ipc/workflow/workflowIpc').registerWorkflowIpc;
+const registerIntegrationIpc = CHANNELS_ONLY ? () => {} : require('./ipc/integrations/integrationIpc').registerIntegrationIpc;
+const registerAIAssistantIpc = CHANNELS_ONLY ? () => {} : require('./ipc/ai/aiAssistantIpc').registerAIAssistantIpc;
 import { registerUtilIpc } from './ipc/util/utilIpc';
 import { registerEmployeeIpc } from './ipc/employee/employeeIpc';
 import { registerRelayIpc } from './ipc/network/relayIpc';
@@ -26,29 +27,29 @@ import { registerFacebookIpc, reconnectAllFBAccounts } from './ipc/facebook/face
 import { registerTelegramIpc } from './ipc/telegram/telegramIpc';
 import { registerTelegramUserIpc } from './ipc/telegram/telegramUserIpc';
 import { registerProxyIpc } from './ipc/network/proxyIpc';
-import { registerErpTaskIpc } from './ipc/erp/erpTaskIpc';
-import { registerErpCalendarIpc } from './ipc/erp/erpCalendarIpc';
-import { registerErpNoteIpc } from './ipc/erp/erpNoteIpc';
-import { registerErpNotificationIpc } from './ipc/erp/erpNotificationIpc';
-import { registerErpHrmIpc } from './ipc/erp/erpHrmIpc';
+const registerErpTaskIpc = CHANNELS_ONLY ? () => {} : require('./ipc/erp/erpTaskIpc').registerErpTaskIpc;
+const registerErpCalendarIpc = CHANNELS_ONLY ? () => {} : require('./ipc/erp/erpCalendarIpc').registerErpCalendarIpc;
+const registerErpNoteIpc = CHANNELS_ONLY ? () => {} : require('./ipc/erp/erpNoteIpc').registerErpNoteIpc;
+const registerErpNotificationIpc = CHANNELS_ONLY ? () => {} : require('./ipc/erp/erpNotificationIpc').registerErpNotificationIpc;
+const registerErpHrmIpc = CHANNELS_ONLY ? () => {} : require('./ipc/erp/erpHrmIpc').registerErpHrmIpc;
 import { registerLockScreenIpc } from './ipc/security/lockScreenIpc';
 import { registerLibraryIpc } from './ipc/library/libraryIpc';
 import { registerMobileSyncIpc } from './ipc/zalo/mobileSyncIpc';
 import { registerApiIpc } from './ipc/api/apiIpc';
-import { registerPluginIpc } from './ipc/plugins/pluginIpc';
+const registerPluginIpc = CHANNELS_ONLY ? () => {} : require('./ipc/plugins/pluginIpc').registerPluginIpc;
 import { registerI18nIpc } from './ipc/i18n/i18nIpc';
 import { registerCloudflareIpc } from './ipc/cloud/cloudflareIpc';
 import ApiPlatform from '../src/services/api/ApiPlatform';
 import WorkspaceManager from '../src/utils/app/WorkspaceManager';
 import HttpConnectionManager from '../src/services/http/HttpConnectionManager';
 import { installBossFileAuthHook, setPreferredBossWorkspace } from '../src/services/http/bossSessionAuth';
-import WorkflowEngineService from '../src/services/workflow/WorkflowEngineService';
-import WebhookGatewayService from '../src/services/workflow/WebhookGatewayService';
-import IntegrationRegistry from '../src/services/integrations/IntegrationRegistry';
+const WorkflowEngineService = CHANNELS_ONLY ? null : require('../src/services/workflow/WorkflowEngineService').default;
+const WebhookGatewayService = CHANNELS_ONLY ? null : require('../src/services/workflow/WebhookGatewayService').default;
+const IntegrationRegistry = CHANNELS_ONLY ? null : require('../src/services/integrations/IntegrationRegistry').default;
 import EventBroadcaster from '../src/services/event/EventBroadcaster';
-import CRMQueueService from '../src/services/crm/CRMQueueService';
+const CRMQueueService = CHANNELS_ONLY ? null : require('../src/services/crm/CRMQueueService').default;
 import FileStorageService from '../src/services/file/FileStorageService';
-import TrackingService from '../src/services/tracking/TrackingService';
+const TrackingService = CHANNELS_ONLY ? null : require('../src/services/tracking/TrackingService').default;
 import { SHOW_DEV_TOOLS, IS_DEV_BUILD } from '../src/configs/app/BuildConfig';
 import Logger from '../src/utils/Logger';
 import { armStartupSettleFallback, settleWhenMainIdle } from '../src/utils/startup/startupSettle';
@@ -1603,6 +1604,9 @@ app.whenReady().then(async () => {
         publicOrigin: process.env.DEPLAO_WEB_ORIGIN || '',
         secureCookie: process.env.DEPLAO_WEB_SECURE === '1',
         assets: path.join(__dirname, '../../dist-web'),
+        publicApi: (req, res) => ApiPlatform.getInstance().handle(req, res),
+        deliveries: () => ApiPlatform.getInstance().operatorDeliveries(),
+        retryDelivery: (owner, id) => ApiPlatform.getInstance().retryDelivery(owner, id),
         boot: getBootPayload,
         invoke: async (channel, args) => {
           const handler = ipcHandlerRegistry.get(channel);
@@ -1627,7 +1631,7 @@ app.whenReady().then(async () => {
       return;
     }
   }
-  try {
+  if (!CHANNELS_ONLY) try {
     const PluginsPlatform = require('../src/services/plugins/PluginsPlatform').default;
     const { forkElectron } = require('../src/services/plugins/PluginSandbox');
     const { handlePluginRequest } = require('../src/services/plugins/PluginProtocol');
@@ -1697,6 +1701,7 @@ app.whenReady().then(async () => {
       runStartupPathMigration();
     }
   }, 30_000).unref();
+  if (!CHANNELS_ONLY) {
   // Resume any active CRM campaigns after restart
   setTimeout(() => CRMQueueService.getInstance().resumeActiveCampaigns(), 3000);
   // Initialize ERP Calendar reminders scheduler
@@ -1718,6 +1723,7 @@ app.whenReady().then(async () => {
   // Initialize Integration Registry. integration:payment → trigger.payment is registered automatically by WorkflowEngineService
   // (rehookEvents): adding a hook here would run every payment workflow twice.
   setTimeout(() => IntegrationRegistry.initialize(), 2500);
+  }
   // Public API v1: auto-starts the API server if the user turned on "Tự bật khi mở app" (start when the app opens) (off by default).
   setTimeout(async () => {
     try {
@@ -1735,6 +1741,7 @@ app.whenReady().then(async () => {
     }
   }, 3600);
 
+  if (!CHANNELS_ONLY) {
   // Initialize Webhook Gateway (port 9889)
   setTimeout(() => {
     WebhookGatewayService.getInstance().start().then(result => {
@@ -1753,6 +1760,7 @@ app.whenReady().then(async () => {
     }
   }, 5000);
 
+  }
   // ─── Media cleanup scheduler (automatically deletes old media) ─────────────────────
   // Runs every day at 3:00 AM and checks all accounts that have auto-delete configured
   const mediaCleanupJob = cron.schedule('0 3 * * *', async () => {
