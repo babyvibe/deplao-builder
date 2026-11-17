@@ -1,3 +1,7 @@
+import { loadEnvFile } from './loadEnv';
+
+loadEnvFile();
+
 /**
  * Process entrypoint for Electron.
  *
