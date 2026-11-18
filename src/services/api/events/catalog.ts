@@ -14,7 +14,7 @@ export interface EventTypeInfo {
 }
 
 export const EVENT_TYPES: EventTypeInfo[] = [
-    { type: 'message.received', description: tr('Tin nhắn mới từ khách/nhóm (mọi kênh). data.message giống GET message, data.conversation tóm tắt hội thoại.') },
+    { type: 'message.received', description: tr('Tin nhắn mới từ khách/nhóm (mọi kênh). data.message giống GET message, thêm mentions [{user_id, offset, length}] (người được tag); data.conversation tóm tắt hội thoại.') },
     { type: 'message.sent', description: tr('Tin do tài khoản gửi đi (từ app, điện thoại, API, workflow).') },
     { type: 'message.recalled', description: tr('Tin bị thu hồi. data: msg_id, thread_id.') },
     { type: 'message.deleted', description: tr('Tin bị xoá. data: msg_ids, thread_id.') },

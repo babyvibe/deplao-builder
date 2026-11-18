@@ -7,6 +7,7 @@
  */
 import { mapConversation, mapMessage } from '../routes/common';
 import { threadTypeName } from '../channels/ChannelActions';
+import { EventMention, fromEventMentions, fromZaloMentions } from './mentions';
 
 export interface PartialEvent {
     type: string;
@@ -43,20 +44,33 @@ function tsOf(raw: any): number {
     return n < 1e12 ? n * 1000 : n;
 }
 
-async function messageEvent(accountId: string, channel: string, msgId: string, threadId: string, fallback: any, h: NormalizeHelpers): Promise<PartialEvent[]> {
+interface MessageOverrides {
+    /** Only ever upgrades to 'group' (Facebook stores every row with thread_type 0). */
+    threadType?: 'group';
+    mentions?: EventMention[];
+}
+
+async function messageEvent(
+    accountId: string, channel: string, msgId: string, threadId: string, fallback: any,
+    h: NormalizeHelpers, overrides: MessageOverrides = {},
+): Promise<PartialEvent[]> {
     if (!accountId || !msgId) return [];
     const row = await h.loadMessage(accountId, msgId, threadId).catch(() => null);
-    const message = row ? mapMessage(row) : fallback;
+    let message = row ? mapMessage(row) : fallback;
     if (!message) return [];
     if (message.timestamp && h.now() - message.timestamp > HISTORY_CUTOFF_MS) return [];
+    if (overrides.threadType === 'group') message = { ...message, thread_type: 'group' };
     const contact = await h.loadContact(accountId, message.thread_id || threadId).catch(() => null);
+    message = { ...message, mentions: overrides.mentions ?? [] };
+    let conversation = contact ? mapConversation(contact) : { thread_id: message.thread_id || threadId, type: message.thread_type };
+    if (overrides.threadType === 'group') conversation = { ...conversation, type: 'group' };
     return [{
         type: message.is_self ? 'message.sent' : 'message.received',
         account_id: accountId,
         channel: message.channel || channel,
         data: {
             message,
-            conversation: contact ? mapConversation(contact) : { thread_id: message.thread_id || threadId, type: message.thread_type },
+            conversation,
         },
     }];
 }
@@ -81,22 +95,23 @@ export async function normalizeEvent(source: string, data: any, h: NormalizeHelp
                 topic_id: d.topicId ?? null, reply_to_id: d.replyToId ?? null, attachments: Array.isArray(d.attachments) ? d.attachments : [],
                 quote: d.quoteData ?? null, reactions: {}, has_local_media: false, handled_by_employee: null,
             };
-            return messageEvent(accountId, channel, msgId, threadId, fallback, h);
+            return messageEvent(accountId, channel, msgId, threadId, fallback, h, { mentions: fromZaloMentions(d.mentions) });
         }
         case 'fb:onMessage': {
             const accountId = str(data.fbAccountId);
             const m = data.message || {};
             const msgId = str(m.messageID || m.messageId || m.id || m.mid);
             const threadId = str(m.threadID || m.threadId || m.thread_id);
+            const isGroup = m.type === 'group' || !!m.isGroup;
             const fallback = {
                 msg_id: msgId, cli_msg_id: null, account_id: accountId, channel: 'facebook', thread_id: threadId,
-                thread_type: m.isGroup ? 'group' : 'user', sender_id: str(m.senderID || m.userID || m.senderId), sender_name: data.contactName ?? null,
+                thread_type: isGroup ? 'group' : 'user', sender_id: str(m.senderID || m.userID || m.senderId), sender_name: data.contactName ?? null,
                 is_self: !!m.isSelf, msg_type: m.attachments?.length ? 'file' : 'text', content: str(m.body), text: str(m.body),
                 timestamp: tsOf(m.timestamp) || h.now(), status: null, is_recalled: false, is_edited: false, topic_id: null,
                 reply_to_id: m.replyToMessageId ?? null, attachments: Array.isArray(m.attachments) ? m.attachments : [],
                 quote: m.quote_data ?? null, reactions: {}, has_local_media: false, handled_by_employee: null,
             };
-            return messageEvent(accountId, 'facebook', msgId, threadId, fallback, h);
+            return messageEvent(accountId, 'facebook', msgId, threadId, fallback, h, { ...(isGroup ? { threadType: 'group' as const } : {}), mentions: fromEventMentions(m.mentions) });
         }
         case 'event:reaction': {
             const accountId = str(data.zaloId);

@@ -53,6 +53,24 @@ describe('owner browser gateway', () => {
     expect(result.status).toBe(401);
     expect(result.headers.get('set-cookie')).toBeNull();
   });
+  test('sends Referrer-Policy same-origin so form POSTs keep their Origin', async () => {
+    const res = await fetch(gateway.url);
+    expect(res.headers.get('referrer-policy')).toBe('same-origin');
+  });
+  test('login form accepts its own origin and rejects Origin: null', async () => {
+    const ok = await fetch(gateway.url + '/api/browser/login', {
+      method: 'POST', redirect: 'manual',
+      headers: { Origin: gateway.url },
+      body: new URLSearchParams({ password: 'test-password-123' }),
+    });
+    expect(ok.status).toBe(303);
+    const nullOrigin = await fetch(gateway.url + '/api/browser/login', {
+      method: 'POST', redirect: 'manual',
+      headers: { Origin: 'null' },
+      body: new URLSearchParams({ password: 'test-password-123' }),
+    });
+    expect(nullOrigin.status).toBe(403);
+  });
   test('public API uses Bearer auth independently of owner cookies', async () => {
     expect((await request('/api/v1/accounts')).status).toBe(401);
     expect((await fetch(gateway.url + '/api/v1/accounts', {headers: {Authorization: 'Bearer test-key'}})).status).toBe(200);

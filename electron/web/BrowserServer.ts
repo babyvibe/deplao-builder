@@ -78,7 +78,8 @@ export async function startBrowserServer(options: BrowserServerOptions) {
   const server = createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Referrer-Policy', 'no-referrer');
+    // same-origin, not no-referrer: with no-referrer browsers send `Origin: null` on the login form POST and the origin check below rejects it (403).
+    res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Cache-Control', 'no-store');
     // Reject DNS rebinding and cross-origin requests before reading cookies or bodies.
     const allowedOrigins = new Set([`http://${authority}`, options.publicOrigin].filter(Boolean));

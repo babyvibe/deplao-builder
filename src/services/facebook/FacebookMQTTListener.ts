@@ -13,6 +13,7 @@ import {
   generateSessionId, generateClientId
 } from './FacebookUtils';
 import Logger from '../../utils/Logger';
+import { fromFbPrng } from '../api/events/mentions';
 
 const FB_MQTT_ENDPOINT = 'wss://edge-chat.facebook.com/chat';
 const FB_TOPICS = ['/t_ms', '/thread_typing', '/orca_typing_notifications', '/orca_presence'];
@@ -730,6 +731,7 @@ export class FacebookMQTTListener extends EventEmitter {
       replyToMessageId: repliedToMsg,
       replyToSenderId: repliedToSender,
       type: threadType === 'user' ? 'user' : 'group',
+      mentions: fromFbPrng((delta as any)?.data?.prng),
       attachments: primaryAtt,
       ...(allAttachments.length > 1 ? { allAttachments } : {}),
     };
