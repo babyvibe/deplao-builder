@@ -376,6 +376,19 @@ func (ds *DeviceStore) GetChatSettings(ctx context.Context, chat waTypes.JID) (w
 	return waTypes.LocalChatSettings{}, unsupportedStoreOperation(ctx, "GetChatSettings")
 }
 
+// WASA root secret IDs (whatsmeow 2026-11-16, store.ChatSettingsStore). Meta's
+// bot/WASA messages are encrypted with a per-chat root secret that the appstate
+// sync stores here. The bridge keeps no appstate keys either (see MsgSecrets),
+// so both accessors stay unsupported: sending a WASA/bot message fails, while
+// receiving ordinary messages is unaffected.
+func (ds *DeviceStore) PutWASARootSecretID(ctx context.Context, chat waTypes.JID, id waTypes.MessageID) error {
+	return unsupportedStoreOperation(ctx, "PutWASARootSecretID")
+}
+
+func (ds *DeviceStore) GetWASARootSecretID(ctx context.Context, chat waTypes.JID) (waTypes.MessageID, error) {
+	return "", unsupportedStoreOperation(ctx, "GetWASARootSecretID")
+}
+
 func (ds *DeviceStore) PutMessageSecrets(ctx context.Context, inserts []store.MessageSecretInsert) error {
 	return unsupportedStoreOperation(ctx, "PutMessageSecrets")
 }

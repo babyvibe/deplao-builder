@@ -1,7 +1,7 @@
 /**
  * Settings → Accounts → the "Hội thoại ẩn" (Hidden conversations) row under a Zalo account (ZL-03): PIN status + number of hidden conversations (read from
  * Zalo), the set / change PIN button and "Quên mã PIN? Đặt lại" (Forgot PIN? Reset): asks for confirmation twice because Zalo may delete messages of the hidden conversations
- * on the phone and Zalo PC (decision Q5, changed on 22/10/2026), and if the screen lock is on, the password must be entered again
+ * on the phone and Zalo PC, and if the screen lock is on, the password must be entered again
  * (FR-ZL03.7); then the new PIN dialog opens right away.
  */
 import React from 'react';

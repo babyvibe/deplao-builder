@@ -328,6 +328,18 @@ export function registerTelegramUserIpc(): void {
     catch (err: any) { return { success: false, error: err.message }; }
   });
 
+  // Several photos as ONE album (messages.SendMultiMedia), chunked to 10 per album inside the service.
+  // The composer must use this instead of a sendFile loop: sending 5 photos one by one looked like spam and
+  // flooded the chat instead of one album.
+  ipcMain.handle('telegramUser:sendAlbum', async (_event, params: { accountId: string; chatId: string; filePaths: string[]; caption?: string; topicRootMessageId?: string; replyToMsgId?: string }) => {
+    try {
+      return await TelegramUser.sendAlbum(params.accountId, params.chatId, params.filePaths, params.caption, {
+        topicRootMessageId: params.topicRootMessageId,
+        replyToMsgId: params.replyToMsgId,
+      });
+    } catch (err: any) { return { success: false, error: err.message }; }
+  });
+
   ipcMain.handle('telegramUser:sendTyping', async (_event, params: { accountId: string; chatId: string }) => {
     try { return await TelegramUser.sendTyping(params.accountId, params.chatId); }
     catch (err: any) { return { success: false, error: err.message }; }
@@ -341,6 +353,12 @@ export function registerTelegramUserIpc(): void {
   // Reactions available in the conversation (the standard list / the group's restricted list; channels / frequently used first)
   ipcMain.handle('telegramUser:getAvailableReactions', async (_event, params: { accountId: string; chatId: string }) => {
     try { return await TelegramUser.getAvailableReactions(params.accountId, params.chatId); }
+    catch (err: any) { return { success: false, error: err.message }; }
+  });
+
+  // The account's quick reaction (double-click / reaction button), from Telegram's settings
+  ipcMain.handle('telegramUser:getQuickReaction', async (_event, params: { accountId: string }) => {
+    try { return await TelegramUser.getQuickReaction(params.accountId); }
     catch (err: any) { return { success: false, error: err.message }; }
   });
 

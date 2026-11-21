@@ -49,9 +49,9 @@ const REQUIRED_PROTOCOL_VERSION = 2;
 
 /** Allowed bridge versions (semver prefix match) */
 // Protocol v2 plus the capability handshake is the compatibility contract.
-// Accept the maintained fbchat-v2 2.3.1/2.3.2 bridge lines; a future minor
+// Accept the maintained fbchat-v2 2.3.1-2.3.5 bridge lines; a future minor
 // version still needs an explicit review here.
-const ALLOWED_BRIDGE_VERSIONS = ['2.3.1', '2.3.2', '2.3.3'];
+const ALLOWED_BRIDGE_VERSIONS = ['2.3.1', '2.3.2', '2.3.3', '2.3.4', '2.3.5'];
 
 /** Max single JSON frame size (encoded) — 40 MiB */
 const MAX_JSON_FRAME_BYTES = 40 * 1024 * 1024;

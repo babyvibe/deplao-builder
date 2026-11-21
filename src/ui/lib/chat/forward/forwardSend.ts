@@ -4,6 +4,7 @@
  * on the machine (downloaded first if missing), Telegram / Facebook still use native forwarding. Split out of ChatWindow (behaviour unchanged).
  */
 import ipc, { buildZaloAuth } from '@/lib/ipc';
+import * as channelIpc from '@/lib/channels/channelIpc';
 import { useChatStore } from '@/store/chat/chatStore';
 import { getAdapter } from '@/lib/channels/adapters/registry';
 import { getLocalMediaPath } from '@/lib/media/mediaResolver';
@@ -132,13 +133,47 @@ export function groupForwardAlbums(messages: any[], albums: Record<string, any[]
 const FORWARD_ALBUM_FILE_RE = /\.(jpe?g|png|webp)$/i;
 /** ZaloService.sendImages error when checking the file before upload (kept in line with the wording over there). */
 const FORWARD_ALBUM_PRECHECK_ERROR_RE = /Không tìm thấy một trong các tệp ảnh|không phải ảnh JPG, PNG hoặc WebP|Không đọc được kích thước ảnh/;
+/** Telegram groups at most 10 media per album; longer lists must be split. */
+const TELEGRAM_FORWARD_ALBUM_MAX = 10;
+
+const isTelegramForwardTarget = (channel?: string) => isTelegramCh(channel);
 
 /**
- * Local files of the album when it can be sent as one batch: the target is Zalo, every message is a photo, and each has (or can download) a JPG/PNG/WebP file
- * (formats sendImages accepts). Otherwise null → send each message separately.
+ * Merge adjacent photo-only units into one album unit (Telegram): forwarding 5 separately picked photos used to
+ * send 5 messages — the recipient gets one album instead. Units that are not plain photos (text, video, file…)
+ * keep their position and break the batch, so the order of the source list is preserved.
+ */
+export function mergeForwardPhotoUnits(units: any[][], channel?: string): any[][] {
+  if (!isTelegramForwardTarget(channel)) return units;
+  const isPhotoUnit = (unit: any[]) => unit.length > 0 && unit.every(m => getForwardPlan(m).kind === 'image');
+  const merged: any[][] = [];
+  let batch: any[] = [];
+  const flush = () => {
+    if (batch.length > 0) merged.push(batch);
+    batch = [];
+  };
+  for (const unit of units) {
+    if (!isPhotoUnit(unit)) {
+      flush();
+      merged.push(unit);
+      continue;
+    }
+    for (const msg of unit) {
+      if (batch.length >= TELEGRAM_FORWARD_ALBUM_MAX) flush();
+      batch.push(msg);
+    }
+  }
+  flush();
+  return merged;
+}
+
+/**
+ * Local files of the album when it can be sent as one batch: the target is Zalo / Telegram, every message is a photo, and each has
+ * (or can download) a JPG/PNG/WebP file (formats both album APIs accept). Otherwise null → send each message separately.
  */
 async function prepareForwardAlbum(unit: any[], channel?: string): Promise<string[] | null> {
-  if (unit.length < 2 || !isZaloForwardTarget(channel)) return null;
+  if (unit.length < 2) return null;
+  if (!isZaloForwardTarget(channel) && !isTelegramForwardTarget(channel)) return null;
   if (!unit.every(m => getForwardPlan(m).kind === 'image')) return null;
   const paths: string[] = [];
   for (const m of unit) {
@@ -149,11 +184,32 @@ async function prepareForwardAlbum(unit: any[], channel?: string): Promise<strin
   return paths;
 }
 
-/** Sends the album in one sendImages call (zca-js assigns a groupLayoutId → the recipient sees an album), the caption is sent afterwards as in sendOneForward. */
+/** Sends the album in one batch (Zalo sendImages / Telegram album), the captions are sent afterwards as in sendOneForward. */
 async function sendForwardAlbum(
   auth: any, unit: any[], filePaths: string[], target: ForwardTarget,
   channel?: string, accountId?: string,
 ): Promise<void> {
+  if (isTelegramForwardTarget(channel)) {
+    if (!accountId) throw new Error(tr('Không tìm thấy tài khoản gửi'));
+    // Telegram shows ONE caption per album → the first caption rides on the album, the rest stay separate messages
+    const captions = unit.map(msg => getForwardCaption(msg, 'image'));
+    const captionIndex = captions.findIndex(Boolean);
+    const result = await channelIpc.sendAttachments(channel as Channel, {
+      accountId,
+      threadId: target.threadId,
+      threadType: target.threadType,
+      filePaths,
+      fileType: 'image',
+      body: captionIndex >= 0 ? captions[captionIndex] : undefined,
+    });
+    ensureForwardSuccess(result, tr('Không chuyển tiếp được album ảnh Telegram'));
+    for (let index = 0; index < unit.length; index++) {
+      if (index === captionIndex || !captions[index]) continue;
+      await sendForwardText(auth, channel, accountId, target, captions[index]);
+    }
+    return;
+  }
+
   const result = await ipc.zalo?.sendImages({ auth, filePaths, threadId: target.threadId, type: target.threadType });
   ensureForwardSuccess(result, tr('Không gửi được album ảnh Zalo'));
   for (const msg of unit) {
@@ -439,7 +495,7 @@ export function runForwardJob(
   ctx: ForwardJobContext,
   labels: ForwardJobLabels = DEFAULT_FORWARD_LABELS,
 ): void {
-  const units = groupForwardAlbums(messages, ctx.albums);
+  const baseUnits = groupForwardAlbums(messages, ctx.albums);
   // Runs one after another in the background, does not block the UI
   (async () => {
     const total = messages.length * targets.length;
@@ -460,6 +516,8 @@ export function runForwardJob(
       const targetAuth = isNonZalo(targetChannel)
         ? { cookies: '', imei: '', userAgent: '' }
         : buildZaloAuth(targetAccount);
+      // Telegram: adjacent photos become ONE album (per target channel, the same list may go to several channels)
+      const units = mergeForwardPhotoUnits(baseUnits, targetChannel);
 
       for (const unit of units) {
         // All-photo album (downloaded first if missing) → sent in one batch so the recipient also sees an album.

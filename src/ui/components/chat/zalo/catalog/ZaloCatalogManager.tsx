@@ -1,7 +1,7 @@
 /**
  * Zalo Business product catalog manager (ZL-04): add / rename / delete categories; add / edit / delete products (name, price,
  * description, up to 5 photos). Photos are uploaded first with uploadProductPhoto, then the URL is sent (zca-js 2.2.0 ignores `files`).
- * Deleting on Zalo cannot be undone → always asks again. Employee machines that write need the CRM permission (decision Q7).
+ * Deleting on Zalo cannot be undone → always asks again. Employee machines that write need the CRM permission.
  */
 import React from 'react';
 import ipc from '@/lib/ipc';

@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -35,9 +36,17 @@ import (
 	"go.mau.fi/mautrix-meta/pkg/metaid"
 )
 
+var ErrNoNativeSession = bridgev2.WrapErrorInStatus(errors.New("messenger lite login has no access token for media uploads")).
+	WithMessage("log in to Facebook again to send media").
+	WithStatus(event.MessageStatusFail).
+	WithErrorReason(event.MessageStatusUnsupported).
+	WithIsCertain(true).
+	WithSendNotice(true)
+
 func ReuploadFileToMeta(
 	ctx context.Context,
 	client *httpclient.HTTPClient,
+	nativeSession *types.NativeSession,
 	portal *bridgev2.Portal,
 	content *event.MessageEventContent,
 ) (int64, error) {
@@ -61,6 +70,22 @@ func ReuploadFileToMeta(
 		for i, amp := range content.MSC1767Audio.Waveform {
 			waveformData.Amplitudes[i] = max(min(float64(amp)/256.0, 1.0), 0.0)
 		}
+	}
+	if client.GetPlatform().IsMessengerLite() {
+		if nativeSession == nil {
+			return 0, ErrNoNativeSession
+		}
+		mediaID, err := client.SendRUploadRequest(ctx, nativeSession, &httpclient.RUploadMedia{
+			Filename:    fileName,
+			MimeType:    mime,
+			MediaData:   data,
+			IsVoiceClip: isVoice,
+			DurationMS:  content.Info.Duration,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("%w: %w", bridgev2.ErrMediaReuploadFailed, err)
+		}
+		return mediaID, nil
 	}
 	resp, err := client.SendMercuryUploadRequest(ctx, threadID, &httpclient.MercuryUploadMedia{
 		Filename:     fileName,
@@ -119,7 +144,7 @@ func reuploadVideoToMetaFallback(ctx context.Context, client *httpclient.HTTPCli
 	h.Add("offset", "0")
 	h.Add("segment-start-offset", "0")
 	h.Add("segment-type", "3")
-	h.Add("user-agent", useragent.AndroidUserAgent)
+	h.Add("user-agent", useragent.IGAndroidUserAgent)
 	h.Add("video_type", "FILE_ATTACHMENT")
 	h.Add("x-entity-length", fmt.Sprintf("%d", len(data)))
 	h.Add("x-entity-name", uploadID)

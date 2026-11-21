@@ -1,6 +1,5 @@
 /**
- * Magnifier of the conversation search box, and the Zalo hidden-conversation mark (ZL-03, decision Q1: the project owner confirmed on 22/10/2026 that there is no
- * separate lock icon):
+ * Magnifier of the conversation search box, and the Zalo hidden-conversation mark (ZL-03; there is no separate lock icon):
  *  - no hidden conversations → a grey magnifier like every search box;
  *  - hidden conversations exist → a red magnifier, click = the cursor goes into the search box to type the PIN + reload from Zalo (if the PIN was removed on the phone,
  *    the conversation shows again);

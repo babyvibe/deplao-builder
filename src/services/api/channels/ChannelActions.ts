@@ -213,6 +213,65 @@ export async function sendFile(ctx: ApiContext, acc: AccountInfo, input: SendFil
     }
 }
 
+/**
+ * Several images in ONE action per channel (Telegram = a real album of up to 10, Zalo = one album message,
+ * Facebook = one batch upload+send). Used by POST /send when the caller attaches several images without
+ * per-image captions: sending them one by one looked like spam on Telegram.
+ */
+export async function sendImages(ctx: ApiContext, acc: AccountInfo, input: {
+    threadId: string;
+    threadType: ThreadType;
+    filePaths: string[];
+    caption?: string;
+    quoteRow?: any;
+}): Promise<any> {
+    requireOnline(acc);
+    const type = threadTypeNum(input.threadType);
+    const quote = input.quoteRow ? buildQuotePayload(input.quoteRow) : null;
+    const files = input.filePaths.filter(Boolean);
+    if (files.length === 0) throw new ApiError(400, 'VALIDATION_ERROR', tr('Không có ảnh để gửi'));
+    switch (acc.channel) {
+        case CHANNELS.ZALO: {
+            const auth = await zaloAuth(ctx, acc.id);
+            if (files.length === 1) {
+                return ctx.call('zalo:sendImage', {
+                    auth, filePath: files[0], threadId: input.threadId, type, message: input.caption || '',
+                    ...(quote ? { quote } : {}),
+                }, { timeoutMs: 180_000 });
+            }
+            return ctx.call('zalo:sendImages', {
+                auth, filePaths: files, threadId: input.threadId, type,
+                ...(quote ? { quote } : {}),
+            }, { timeoutMs: 300_000 });
+        }
+        case CHANNELS.FACEBOOK:
+            return ctx.call('fb:sendAttachments', {
+                accountId: acc.id,
+                threadId: input.threadId,
+                filePaths: files,
+                body: input.caption || '',
+                typeChat: input.threadType === 'group' ? null : 'user',
+            }, { timeoutMs: 300_000 });
+        case CHANNELS.TELEGRAM_USER:
+            return ctx.call('telegramUser:sendAlbum', {
+                accountId: acc.id,
+                chatId: input.threadId,
+                filePaths: files,
+                caption: input.caption || '',
+                replyToMsgId: input.quoteRow ? String(input.quoteRow.msg_id).replace(/^tg_/, '') : undefined,
+            }, { timeoutMs: 300_000 });
+        case CHANNELS.TELEGRAM_BOT:
+            return ctx.call('telegram:sendPhotoAlbum', {
+                accountId: acc.id,
+                chatId: input.threadId,
+                photoPaths: files,
+                caption: input.caption || '',
+            }, { timeoutMs: 300_000 });
+        default:
+            return unsupported(acc, 'gửi ảnh');
+    }
+}
+
 /** Mirror MessageInput.tsx: getVideoMeta → uploadVideoThumb → uploadVideoFile → sendVideo. */
 async function sendZaloVideo(ctx: ApiContext, acc: AccountInfo, input: SendFileInput, quote: string | null): Promise<any> {
     const auth = await zaloAuth(ctx, acc.id);
@@ -337,11 +396,12 @@ export async function react(ctx: ApiContext, acc: AccountInfo, row: any, emoji: 
 
 /** Copy of EMOJI_TO_REACTION (src/ui/lib/chat/messages/emojiUtils.ts): the Zalo reaction code per emoji. */
 export const EMOJI_TO_REACTION: Record<string, string> = {
-    '❤️': 'HEART', '👍': 'LIKE', '😄': 'HAHA', '😮': 'WOW', '😢': 'CRY', '😡': 'ANGRY',
+    '❤️': 'HEART', '👍': 'LIKE', '😆': 'HAHA', '😮': 'WOW', '😭': 'CRY', '😡': 'ANGRY',
+    '😄': 'HAHA', '😢': 'CRY',
     '😘': 'KISS', '😂': 'TEARS_OF_JOY', '💩': 'SHIT', '🌹': 'ROSE', '💔': 'BROKEN_HEART',
     '👎': 'DISLIKE', '😍': 'LOVE', '👌': 'OK', '✌️': 'PEACE', '🙏': 'PRAY',
     '😉': 'WINK', '😕': 'CONFUSED', '😁': 'BIG_SMILE', '👊': 'PUNCH', '👋': 'BYE',
-    '🫶': 'LOVE_YOU', '😭': 'VERY_SAD', '😎': 'COOL', '🎂': 'BIRTHDAY',
+    '🫶': 'LOVE_YOU', '😎': 'COOL', '🎂': 'BIRTHDAY',
 };
 
 export function zaloReactionKey(emoji: string): string {

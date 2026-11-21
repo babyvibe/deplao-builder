@@ -11,6 +11,7 @@ import {
   HealthResult,
   SendMessageParams,
   SendAttachmentParams,
+  SendAttachmentsParams,
   SendVideoParams,
   UnsendParams,
   ReactionParams,
@@ -43,6 +44,24 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
 
   async sendAttachment(_params: SendAttachmentParams): Promise<ActionResult> {
     return this.notSupported(tr('gửi file'));
+  }
+
+  /**
+   * Default: no album support → send the files one by one (the old behaviour). Adapters that can batch
+   * (Telegram) override this.
+   */
+  async sendAttachments(params: SendAttachmentsParams): Promise<ActionResult> {
+    const files = (params.filePaths || []).filter(Boolean);
+    if (files.length === 0) return { success: false, error: tr('Không có tệp để gửi') };
+    let last: ActionResult = { success: true };
+    const messageIds: string[] = [];
+    for (const filePath of files) {
+      last = await this.sendAttachment({ ...params, filePath });
+      if (!last?.success) return last;
+      const id = (last as any)?.messageId ?? (last as any)?.msgId;
+      if (id) messageIds.push(String(id));
+    }
+    return { success: true, ...(last as any), messageId: messageIds[0], messageIds };
   }
 
   async sendVideo(_params: SendVideoParams): Promise<ActionResult> {

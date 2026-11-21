@@ -59,6 +59,15 @@ export async function sendQuickImages(target: QuickSendTarget, filePaths: string
       if (!res?.success) return failed(res, tr('Gửi ảnh Facebook thất bại'));
       return { success: true, msgId: res.messageId ? String(res.messageId) : undefined };
     }
+    // Telegram: ONE album for the whole batch (not a photo per message); other channels use their own batch or loop
+    const batch: any = await getAdapter(target.channel as any).sendAttachments?.({
+      accountId: target.accountId, threadId: target.threadId, threadType: target.threadType,
+      filePaths, fileType: 'image',
+    });
+    if (batch) {
+      if (!batch.success) return failed(batch, tr('Gửi ảnh thất bại'));
+      return { success: true, msgId: batch.messageId ? String(batch.messageId) : undefined, msgIds: batch.messageIds };
+    }
     const msgIds: string[] = [];
     for (const filePath of filePaths) {
       const res: any = await getAdapter(target.channel as any).sendAttachment({

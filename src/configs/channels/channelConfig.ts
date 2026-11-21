@@ -218,7 +218,8 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsGroupReload: false,
     supportsQuickMessages: false,
     supportsInviteToGroup: false,
-    supportsCampaigns: false,
+    // Message campaigns only (CRMQueueService): the Facebook API here has no friend request / group invite campaign action.
+    supportsCampaigns: true,
     quickMessageSyncMode: 'local',
   },
 

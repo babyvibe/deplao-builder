@@ -36,6 +36,14 @@ interface MessageContextMenuProps {
   /** Reactions per channel (lib/chat/reactions/reactionChoices): `quick` is shown directly; if there are more → a button expands into a grid (Telegram) */
   reactionChoices?: { quick: string[]; all: string[] };
   myReaction?: string | null;
+  /**
+   * Zalo ('add'): every pick adds +1, the ✕ at the end removes all your reactions (like Zalo's bar). Others ('toggle', default):
+   * picking your own reaction again removes it.
+   */
+  reactionMode?: 'add' | 'toggle';
+  /** Telegram: the "N cảm xúc" line (who reacted) when the message has reactions. */
+  reactionTotal?: number;
+  onShowReactions?: (msg: any) => void;
   onPin?: (msg: any) => void;
   onEdit?: (msg: any) => void;
   /** "Tin đánh dấu" (starred messages): current state of the targeted message + toggle. */
@@ -127,15 +135,16 @@ function getDefaultFilename(msg: any): string {
 export default function MessageContextMenu({
   x, y, msg, mediaMsg, isSent, isGroupAdmin, channelCap, onClose, onReply, onForward, onSelectMessages, onUndo, onDelete, onDeleteFromDb, onReact, onPin, onEdit,
   isStarred, onToggleStar, onSaveToMyDocuments, onAddToCalendar, onSaveToNote, onCreateTask, showNotification, recalled = false, readReceipts,
-  onCancelReact, reactionChoices, myReaction = null,
+  onCancelReact, reactionChoices, myReaction = null, reactionMode = 'toggle', reactionTotal = 0, onShowReactions,
 }: MessageContextMenuProps) {
   const quickReactions = reactionChoices?.quick ?? QUICK_REACTIONS;
   const allReactions = reactionChoices?.all ?? QUICK_REACTIONS;
   const canExpandReactions = allReactions.length > quickReactions.length;
   // Telegram: expand the reaction row into a full grid (instead of menu items, as in Telegram)
   const [reactionsExpanded, setReactionsExpanded] = useState(false);
+  const addsOnly = reactionMode === 'add';
   const pickReaction = (emoji: string) => {
-    if (onCancelReact && sameReaction(emoji, myReaction)) onCancelReact(msg);
+    if (!addsOnly && onCancelReact && sameReaction(emoji, myReaction)) onCancelReact(msg);
     else onReact(msg, emoji);
     onClose();
   };
@@ -296,11 +305,26 @@ export default function MessageContextMenu({
             {quickReactions.map((emoji) => (
               <button key={emoji}
                 onClick={() => pickReaction(emoji)}
-                className={`text-xl leading-none p-0.5 rounded-lg hover:scale-125 transition-transform ${sameReaction(emoji, myReaction) ? 'bg-muted ring-1 ring-primary' : ''}`}
-                title={sameReaction(emoji, myReaction) ? tr('Bấm lần nữa để gỡ') : emoji}>
+                className={`text-xl leading-none p-0.5 rounded-lg hover:scale-125 transition-transform ${!addsOnly && sameReaction(emoji, myReaction) ? 'bg-muted ring-1 ring-primary' : ''}`}
+                title={!addsOnly && sameReaction(emoji, myReaction) ? tr('Bấm lần nữa để gỡ') : displayReactionEmoji(emoji)}>
                 {displayReactionEmoji(emoji)}
               </button>
             ))}
+            {/* Zalo: ✕ removes all your reactions on the message, like Zalo's bar */}
+            {addsOnly && myReaction && onCancelReact && (
+              <button
+                type="button"
+                data-remove-reactions=""
+                onClick={() => { onCancelReact(msg); onClose(); }}
+                className="w-7 h-7 shrink-0 flex items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                title={tr('Gỡ cảm xúc của bạn')}
+                aria-label={tr('Gỡ cảm xúc của bạn')}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            )}
             {canExpandReactions && (
               <button
                 type="button"
@@ -319,6 +343,12 @@ export default function MessageContextMenu({
       )}
       {/* Reaction grid open: hide the menu items (as in Telegram) */}
       {!reactionsExpanded && (<>
+
+      {/* Telegram: who reacted ("N cảm xúc"), like Telegram's right-click menu */}
+      {platform && onShowReactions && reactionTotal > 0 && (
+        <MenuItem icon={<span className="text-sm leading-none">❤️</span>} label={tr('{{count}} cảm xúc', { count: reactionTotal })}
+          onClick={() => { onShowReactions(msg); onClose(); }} />
+      )}
 
       {platform && (channelCap?.supportsReply ?? true) && (
         <MenuItem icon={<ReplyIcon className="w-4 h-4" />} label={tr('Trả lời')} onClick={() => { onReply(msg); onClose(); }} />

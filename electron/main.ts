@@ -50,7 +50,10 @@ import { SHOW_DEV_TOOLS, IS_DEV_BUILD } from '../src/configs/app/BuildConfig';
 import Logger from '../src/utils/Logger';
 import { armStartupSettleFallback, settleWhenMainIdle } from '../src/utils/startup/startupSettle';
 import { startMainThreadWatchdog } from '../src/utils/startup/mainThreadWatchdog';
-import { noteSystemPower, startWakeWatch } from '../src/utils/startup/systemIdle';
+import { noteSystemPower, onSystemPower, startWakeWatch } from '../src/utils/startup/systemIdle';
+import { classifyDevLoadFailure, devRecoveryExpired, devRendererRetryDelay } from './app/devRendererRecovery';
+import { WAKE_PAINT_DONE, createWakePaintCheck, disabledChromiumFeatures } from './app/wakeRepaint';
+import { createHungWindowGuard } from './app/hungWindow';
 import { noteWindowHidden, noteWindowShown, startMemoryMonitor } from '../src/utils/startup/memoryMonitor';
 import { dbReads } from '../src/services/database/read/DbReadClient';
 import { startRendererStartupProfile } from '../src/utils/startup/startupProfiler';
@@ -213,9 +216,10 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-// ─── Suppress Chromium DevTools "Autofill.enable" / "Autofill.setAddresses" errors ──
-app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication');
-app.commandLine.appendSwitch('disable-features', 'Autofill');
+// ─── Chromium features turned off (app/wakeRepaint): Autofill noise in DevTools, and on Windows the native occlusion
+// tracker that dropped the window's picture while the screen was off, so the window stayed dark for a long time after
+// the laptop woke. ONE value: a second appendSwitch('disable-features') replaces the first. ──
+app.commandLine.appendSwitch('disable-features', disabledChromiumFeatures(process.platform));
 
 // ─── Single Instance Lock ──────────────────────────────────────────────────────
 // The build just launched sends its version + run path: an old build still running in the background (hidden to the tray) that sees a newer build quits itself
@@ -269,28 +273,63 @@ let onRendererReportedReady: (() => void) | null = null;
 // but the renderer with a blank page and ERR_NETWORK_IO_SUSPENDED. Keep this
 // recovery isolated to dev: packaged builds load local files and must retain
 // their current UI state on resume.
-let devRendererReloadTimer: ReturnType<typeof setTimeout> | null = null;
+const DEV_RENDERER_URL = 'http://localhost:27799';
+/** A recovery attempt is scheduled or its reachability check is running: one at a time. */
+let devRendererRecoveryBusy = false;
 let devRendererReloadAttempts = 0;
+/** When the current recovery started (0 = none); it gives up after DEV_RENDERER_RECOVERY_WINDOW_MS. */
+let devRendererRecoveryStartedAt = 0;
 let devRendererSuspended = false;
 let devRendererSystemSuspended = false;
-const DEV_RENDERER_MAX_RELOAD_ATTEMPTS = 4;
 
+/** The dev server answers HTTP. Loading the page before it does fails and leaves an empty dark window. */
+async function devServerReachable(): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3_000);
+  try {
+    const res = await net.fetch(DEV_RENDERER_URL, { method: 'HEAD', signal: controller.signal });
+    return res.status < 500;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Reload the dev renderer once the dev server answers (app/devRendererRecovery): retries 1.5 s, 3 s, 5 s, then every
+ * 10 s for up to 10 minutes. It used to give up after 4 attempts made right after waking, while the dev server was still
+ * paged out, which left a dark window until F5.
+ */
 function loadDevRenderer(reason: string, delayMs = 0): void {
-  if (!isDev || devRendererReloadTimer || !mainWindow || mainWindow.isDestroyed()) return;
-  if (devRendererReloadAttempts >= DEV_RENDERER_MAX_RELOAD_ATTEMPTS) {
-    console.error(`[main] Dev renderer recovery stopped after ${devRendererReloadAttempts} attempts (${reason})`);
+  if (!isDev || devRendererRecoveryBusy || !mainWindow || mainWindow.isDestroyed()) return;
+  if (!devRendererRecoveryStartedAt) devRendererRecoveryStartedAt = Date.now();
+  if (devRecoveryExpired(devRendererRecoveryStartedAt, Date.now())) {
+    Logger.error(`[main] Dev renderer recovery stopped after ${devRendererReloadAttempts} attempts (${reason}): start the dev server, then press F5`);
     return;
   }
-
-  devRendererReloadTimer = setTimeout(() => {
-    devRendererReloadTimer = null;
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    devRendererReloadAttempts++;
-    console.warn(`[main] Reloading Vite renderer after ${reason} (attempt ${devRendererReloadAttempts}/${DEV_RENDERER_MAX_RELOAD_ATTEMPTS})`);
-    void mainWindow.loadURL('http://localhost:27799').catch((err: any) => {
-      console.warn(`[main] Vite renderer reload failed: ${err?.message || err}`);
-    });
+  devRendererRecoveryBusy = true;
+  const timer = setTimeout(() => {
+    void (async () => {
+      let retryIn: number | null = null;
+      try {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        if (!(await devServerReachable())) {
+          retryIn = devRendererRetryDelay(devRendererReloadAttempts++);
+          return;
+        }
+        devRendererReloadAttempts++;
+        Logger.warn(`[main] Reloading the dev renderer after ${reason} (attempt ${devRendererReloadAttempts})`);
+        void mainWindow.loadURL(DEV_RENDERER_URL).catch((err: any) => {
+          Logger.warn(`[main] Dev renderer reload failed: ${err?.message || err}`);
+        });
+      } finally {
+        devRendererRecoveryBusy = false;
+        if (retryIn !== null) loadDevRenderer(reason, retryIn);
+      }
+    })();
   }, delayMs);
+  (timer as any).unref?.();
 }
 
 function createWindow() {
@@ -415,6 +454,7 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     if (!isDev) return;
     devRendererReloadAttempts = 0;
+    devRendererRecoveryStartedAt = 0;
     devRendererSuspended = false;
   });
 
@@ -424,10 +464,11 @@ function createWindow() {
   // Fix: automatically reload the renderer; if it still crashes → quit completely.
   let crashCount = 0;
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
-    console.error(`[main] Renderer process gone: ${details.reason} (exitCode=${details.exitCode})`);
+    // Logger (not console): visible in Settings → Logs of the installed build
+    Logger.error(`[main] Renderer process gone: ${details.reason} (exitCode=${details.exitCode})`);
     crashCount++;
     if (crashCount <= 2 && mainWindow && !mainWindow.isDestroyed()) {
-      console.log(`[main] Attempting renderer reload (attempt ${crashCount})...`);
+      Logger.warn(`[main] Attempting renderer reload (attempt ${crashCount})...`);
       setTimeout(() => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           if (isDev) {
@@ -444,25 +485,34 @@ function createWindow() {
     }
   });
 
-  // Window is hung (unresponsive) → show a notice and reload
-  mainWindow.on('unresponsive', () => {
-    console.warn('[main] Window unresponsive - reloading renderer');
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.reload();
-    }
+  // Window hung (unresponsive): wait for 'responsive' and reload only if it stays hung (app/hungWindow). Right after the
+  // laptop wakes a paged-out renderer can be busy for tens of seconds; reloading at once dropped the UI on screen.
+  const hungWindow = createHungWindowGuard({
+    now: () => Date.now(),
+    log: (message) => Logger.log(message),
+    warn: (message) => Logger.warn(message),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    alive: () => !!mainWindow && !mainWindow.isDestroyed(),
+    reload: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload(); },
   });
+  mainWindow.on('unresponsive', () => hungWindow.unresponsive());
+  mainWindow.on('responsive', () => hungWindow.responsive());
 
   // Loading the HTML failed (file missing, Vite dev server not running, ...)
   // → the window exists but is blank, ready-to-show still fires → the user sees a blank window
-  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     console.error(`[main] did-fail-load: ${errorCode} ${errorDescription} - ${validatedURL}`);
     if (!isDev) return;
+    // Only the main frame: an app page / Mini App iframe failing during sleep used to reload the whole UI
+    const action = classifyDevLoadFailure(errorCode, errorDescription, isMainFrame);
+    if (action === 'ignore') return;
+    Logger.warn(`[main] Dev renderer failed to load: ${errorCode} ${errorDescription}`);
 
-    if (String(errorDescription).includes('ERR_NETWORK_IO_SUSPENDED')) {
+    if (action === 'suspended') {
       // Do not keep issuing localhost requests while Windows has suspended the
       // network stack. powerMonitor.resume will reload once Node/Vite can run.
       devRendererSuspended = true;
-      console.warn('[main] Vite renderer request suspended; waiting for system resume');
       // The failed request may be reported just after the OS has emitted
       // `resume`; in that ordering there will be no second resume event.
       if (!devRendererSystemSuspended) {
@@ -471,8 +521,7 @@ function createWindow() {
       return;
     }
 
-    // Vite may still be starting (or has just resumed). Debounced, bounded
-    // retries avoid the previous unbounded loadURL loop and blank window.
+    // Vite may still be starting (or has just resumed): retry once it answers.
     loadDevRenderer(`load failure ${errorDescription}`, 1500);
   });
 
@@ -1238,6 +1287,31 @@ app.whenReady().then(async () => {
   // goes to sleep midway: running it right at boot pushes the disk to 100 % and the app freezes (utils/startup/systemIdle.ts).
   // powerMonitor does not report on some machines (Modern Standby): a 30-second tick detects that the machine just woke up
   startWakeWatch();
+  // Sleep / wake in Settings → Logs, to line them up with "[Hiệu năng] Giao diện bận …" and "Luồng chính bị chặn …".
+  // On wake / unlock the main window is asked for a fresh picture and the time until it paints is logged (app/wakeRepaint).
+  const wakePaint = createWakePaintCheck({
+    now: () => Date.now(),
+    log: (message) => Logger.log(message),
+    warn: (message) => Logger.warn(message),
+    setTimer: (fn, ms) => { (setTimeout(fn, ms) as any).unref?.(); },
+  });
+  ipcMain.on(WAKE_PAINT_DONE, (event, id) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+    wakePaint.painted(id);
+  });
+  let lastPowerLog = '';
+  onSystemPower((ev) => {
+    if (ev !== lastPowerLog) { // powerMonitor and the wake watch can both report the same wake
+      lastPowerLog = ev;
+      Logger.log(`[Hiệu năng] ${ev === 'suspend' ? 'Máy ngủ' : ev === 'unlock' ? 'Mở khoá màn hình' : 'Máy thức dậy'}`);
+    }
+    if (ev !== 'suspend') wakePaint.start(mainWindow);
+  });
+  // A GPU / utility process that crashed or was killed (e.g. the GPU process lost at wake) in Settings → Logs
+  app.on('child-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit') return;
+    Logger.warn(`[main] Child process gone: ${details.type}${details.name ? ` (${details.name})` : ''} ${details.reason} exitCode=${details.exitCode}`);
+  });
   powerMonitor.on('suspend', () => {
     noteSystemPower('suspend');
     if (isDev) {
@@ -1270,6 +1344,7 @@ app.whenReady().then(async () => {
       return;
     }
     devRendererReloadAttempts = 0;
+    devRendererRecoveryStartedAt = 0;
     // Let Vite's Node process and Windows loopback socket resume first.
     console.log('[main] System resume detected; checking Vite renderer in 1500ms');
     loadDevRenderer(devRendererSuspended ? 'system resume after suspended request' : 'system resume', 1500);

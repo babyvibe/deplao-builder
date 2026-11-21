@@ -1,9 +1,19 @@
 import DatabaseService from '../database/DatabaseService';
 import ConnectionManager from '../../utils/connection/ConnectionManager';
+import FacebookConnectionManager from '../../utils/connection/FacebookConnectionManager';
 import EventBroadcaster from '../event/EventBroadcaster';
 import Logger from '../../utils/Logger';
 import { parseMarkup } from './message-markup';
 import { sendCampaignBlock } from './campaignBlockSender';
+import { applyCampaignSuccessLabels } from './campaignLabels';
+import {
+  genderText,
+  genderTextFromProfile,
+  recipientPhone,
+  resolveCampaignPhone,
+  substituteCampaignVars,
+  type CampaignVars,
+} from '../../shared/crm/campaignVars';
 import { DEFAULT_CAMPAIGN_SEND_OPTIONS, readCampaignSendOptions, type CampaignSendOptions } from '../../shared/crm/campaignSendPlan';
 import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../shared/crm/campaignDelay';
 import { summarizeMixedOutcome, type MixedActionOutcome } from '../../shared/crm/campaignOutcome';
@@ -225,9 +235,30 @@ class CRMQueueService {
         const account = db.getAccounts().find(a => a.zalo_id === zaloId);
         // Account is authoritative for legacy campaigns created before the
         // channel snapshot migration; new campaigns persist the same value.
-        const channel = account?.channel || (campaignData as any)?.channel || 'zalo';
+        // A Facebook owner is not in `accounts` (it lives in `fb_accounts`) → getAccountChannel covers it.
+        const channel = account?.channel || db.getAccountChannel(zaloId) || (campaignData as any)?.channel || 'zalo';
         if (channel === 'zalo' && !conn?.api) {
             Logger.warn(`[CRMQueue] No connection for ${zaloId}, skipping`);
+            return;
+        }
+        // Facebook: wait for the account to be connected instead of failing the contact (same as Zalo above).
+        // Sends go through FacebookService (E2EE bridge for 1:1, upload + REST for groups).
+        if (channel === 'facebook') {
+            const fb = FacebookConnectionManager.get(zaloId);
+            if (!fb?.isConnected?.()) {
+                Logger.warn(`[CRMQueue] Facebook account ${zaloId} is not connected, skipping`);
+                return;
+            }
+        }
+        // Message campaigns only on Facebook: a legacy / hand-edited record must not reach the Zalo-only branches
+        if (channel === 'facebook' && ((campaignData?.campaign_type || 'message') !== 'message')) {
+            const reason = tr('Facebook chỉ hỗ trợ chiến dịch gửi tin nhắn trong CRM');
+            db.updateCampaignContactStatus(item.id!, 'failed', reason);
+            db.save();
+            this.broadcastProgress(zaloId, item.campaign_id, item.contact_id, 'failed', reason);
+            this.finishContact(zaloId, item.campaign_id, campaignData, {
+                failed: true, error: reason, strangersOnly: false, counted: true,
+            });
             return;
         }
 
@@ -257,6 +288,12 @@ class CRMQueueService {
         let logBase: any = {};
         let describeBlock: (b: any) => string = () => '';
         let substitute: (tpl: string) => string = (t) => t;
+        // Values of the template variables for this recipient ({name}, {userId}, {gender}, {phone}); filled in before the
+        // first substitution so the same closure can be reused for every block / friend request message.
+        const templateVars: CampaignVars = { name: effectiveDisplayName || item.contact_id, userId: effectiveContactId, gender: '', phone: '' };
+        // Phone the Zalo profile lookup returned while resolving the name (only used when it happened - never an extra call)
+        let profilePhone = '';
+        let profileGender = '';
         // The real state of the contact after the send round: reported to the campaign screen (it used to always report 'sent', even when
         // the group / message branch had just written 'failed' → the screen shows "Đã gửi" (Sent) until it reloads).
         let outcomeStatus: 'sent' | 'failed' = 'sent';
@@ -307,6 +344,11 @@ class CRMQueueService {
                     const profile = infoRes?.response?.changed_profiles?.[effectiveContactId]
                         ?? infoRes?.changed_profiles?.[effectiveContactId];
                     if (profile) effectiveDisplayName = profile.displayName || profile.zaloName || profile.name || '';
+                    // A profile that had to be loaded anyway may carry a phone / gender: reuse it, never call the API for it
+                    if (profile) {
+                        profilePhone = String(profile.phoneNumber ?? profile.phone ?? '').trim();
+                        profileGender = genderTextFromProfile(profile.gender);
+                    }
                     if (effectiveDisplayName) {
                         try { db.updateCampaignContactId(item.id!, effectiveContactId, effectiveDisplayName); } catch { /* */ }
                         Logger.log(`[CRMQueue] UID ${effectiveContactId} → "${effectiveDisplayName}"`);
@@ -317,10 +359,19 @@ class CRMQueueService {
             }
 
             // ── Template preparation ───────────────────────────────────────
-            substitute = (tpl: string) =>
-                (tpl || '')
-                    .replace(/\{name\}/g, effectiveDisplayName || item.contact_id)
-                    .replace(/\{userId\}/g, effectiveContactId);
+            // {phone}: the number that came with the recipient list (file / "Theo SĐT"), then the CRM contact record,
+            // then the profile this send already loaded. {gender}: the CRM record, then the same profile.
+            let crmContact: { phone?: string | null; gender?: number | null } | undefined;
+            try { crmContact = db.getContactById(zaloId, effectiveContactId) as any; } catch { /* CRM row is optional */ }
+            templateVars.name = effectiveDisplayName || item.contact_id;
+            templateVars.userId = effectiveContactId;
+            templateVars.phone = resolveCampaignPhone({
+                filePhone: recipientPhone(item.contact_id, (item as any).phone),
+                crmPhone: crmContact?.phone,
+                profilePhone,
+            });
+            templateVars.gender = genderText(crmContact?.gender) || profileGender;
+            substitute = (tpl: string) => substituteCampaignVars(tpl || '', templateVars);
 
             campaignType = (item as any).campaign_type || 'message';
             isGroup = (item as any).contact_type === 'group';
@@ -332,15 +383,24 @@ class CRMQueueService {
             mixedGroupIds = mixedConfig.group_ids || [];
 
             // ── Multi-block template support ───────────────────────────────
-            type ContentBlock = { id: string; text: string; images: string[]; tagAll?: boolean; tagAllText?: string };
+            type ContentBlock = { id: string; text: string; images: string[]; videos: string[]; files: string[]; tagAll?: boolean; tagAllText?: string };
+            const stringList = (value: unknown): string[] =>
+                Array.isArray(value) ? value.filter((path): path is string => typeof path === 'string' && path.length > 0) : [];
             const parseContentBlocks = (raw: string): { blocks: ContentBlock[]; mode: 'random' | 'all'; options: CampaignSendOptions } => {
                 try {
                     const p = JSON.parse(raw);
                     if (p && Array.isArray(p.blocks)) {
-                        return { blocks: p.blocks as ContentBlock[], mode: p.mode === 'all' ? 'all' : 'random', options: readCampaignSendOptions(p) };
+                        // Older templates have no videos/files: normalize so the sender always sees arrays
+                        const blocks = (p.blocks as any[]).map((block) => ({
+                            ...block,
+                            images: stringList(block?.images),
+                            videos: stringList(block?.videos),
+                            files: stringList(block?.files),
+                        })) as ContentBlock[];
+                        return { blocks, mode: p.mode === 'all' ? 'all' : 'random', options: readCampaignSendOptions(p) };
                     }
                 } catch {}
-                return { blocks: [{ id: '', text: raw, images: [] }], mode: 'random', options: DEFAULT_CAMPAIGN_SEND_OPTIONS };
+                return { blocks: [{ id: '', text: raw, images: [], videos: [], files: [] }], mode: 'random', options: DEFAULT_CAMPAIGN_SEND_OPTIONS };
             };
 
             const { blocks: allBlocks, mode: parsedMode, options: sendOptions } = parseContentBlocks(item.template_message || '');
@@ -370,21 +430,32 @@ class CRMQueueService {
                 const substituted = substitute(raw);
                 return channel === 'zalo' ? parseMarkup(substituted).text : substituted;
             };
+            const attachmentSummary = (block: ContentBlock | undefined): string => {
+                if (!block) return '';
+                const counts: string[] = [];
+                const images = block.images?.filter(Boolean).length || 0;
+                const videos = block.videos?.filter(Boolean).length || 0;
+                const files = block.files?.filter(Boolean).length || 0;
+                if (images > 0) counts.push(tr('{{count}} ảnh', { count: images }));
+                if (videos > 0) counts.push(tr('{{count}} video', { count: videos }));
+                if (files > 0) counts.push(tr('{{count}} tệp', { count: files }));
+                return counts.join(', ');
+            };
             const firstBlockText = firstBlock ? displayText(firstBlock.text || '') : '';
-            const firstBlockImgCount = firstBlock?.images?.filter(Boolean).length || 0;
+            const firstBlockAttachments = attachmentSummary(firstBlock);
             message = firstBlockText.trim()
-              ? firstBlockText + (firstBlockImgCount > 0 ? tr(' + {{firstBlockImgCount}} ảnh', { firstBlockImgCount }) : '')
-              : firstBlockImgCount > 0
-                ? tr('[{{firstBlockImgCount}} ảnh]', { firstBlockImgCount })
+              ? firstBlockText + (firstBlockAttachments ? ` + ${firstBlockAttachments}` : '')
+              : firstBlockAttachments
+                ? `[${firstBlockAttachments}]`
                 : tr('(trống)');
 
             // Helper: describe the block content for the log (used in catch)
             describeBlock = (block: ContentBlock): string => {
                 const txt = displayText(block.text || '').trim();
-                const imgCount = (block.images || []).filter(Boolean).length;
-                if (txt && imgCount > 0) return tr('{{txt}} + {{imgCount}} ảnh', { txt, imgCount });
+                const attachments = attachmentSummary(block);
+                if (txt && attachments) return `${txt} + ${attachments}`;
                 if (txt) return txt;
-                if (imgCount > 0) return tr('[{{imgCount}} ảnh]', { imgCount });
+                if (attachments) return `[${attachments}]`;
                 return tr('(trống)');
             };
 
@@ -394,7 +465,7 @@ class CRMQueueService {
                 channel,
                 contact_id: effectiveContactId,
                 display_name: effectiveDisplayName || '',
-                phone: (item as any).phone || '',
+                phone: (item as any).phone || templateVars.phone,
                 contact_type: isGroup ? 'group' : 'user',
                 campaign_id: item.campaign_id,
                 sent_at: Date.now(),
@@ -510,7 +581,7 @@ class CRMQueueService {
                 let actionLabel = 'message';
                 let mixedResp: any[] = [];
                 try {
-                    mixedResp = await sendBlock(blocksToSend[0] ?? { id: '', text: '', images: [] }, effectiveContactId, 0);
+                    mixedResp = await sendBlock(blocksToSend[0] ?? { id: '', text: '', images: [], videos: [], files: [] }, effectiveContactId, 0);
                 } catch (msgErr: any) {
                     if (isMixedFallbackError(msgErr)) {
                         Logger.log(`[CRMQueue] Mixed fallback → sendFriendRequest for ${effectiveContactId}`);
@@ -562,6 +633,19 @@ class CRMQueueService {
                     error: result.errors.join('; ') || '',
                     data_request: JSON.stringify({ type: 'sendMessage', threadId: effectiveContactId, threadType, blocks: blocksToSend.length, sent: result.sent }),
                     data_response: result.responses.length > 0 ? JSON.stringify(result.responses.length === 1 ? result.responses[0] : result.responses) : '' });
+            }
+
+            // "Gắn nhãn khi gửi thành công": only after a round that really sent (mixed with one failed action still counts
+            // as sent). Never throws - a label problem must not turn a delivered message into a failed contact.
+            if (outcomeStatus === 'sent') {
+                await applyCampaignSuccessLabels({
+                    zaloId,
+                    channel,
+                    threadId: effectiveContactId,
+                    threadType: isGroup ? 1 : 0,
+                    api: conn?.api,
+                    campaign: campaignData,
+                });
             }
 
             // Consume 1 token

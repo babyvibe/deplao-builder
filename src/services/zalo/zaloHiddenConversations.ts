@@ -5,13 +5,13 @@
  *   digits, with no salt, so it only prevents peeking and is not encryption. The MD5 is kept only in the memory of the Boss main process: no IPC returns
  *   it to the UI, the employee machines, the Public API or Apps.
  * - contacts.zalo_hidden = 1 for hidden conversations (the whole set is replaced on each read), so the UI filters them while locked; it is reported via
- *   db:contactFlagsChanged (relayed to employees). API / workflow / Apps keep their behavior (decision Q2).
+ *   db:contactFlagsChanged (relayed to employees). API / workflow / Apps keep their behavior.
  * - Unlock: compare the MD5 of the 4 digits typed in the search box; 5 wrong tries within 1 minute → comparisons paused for 30 s (like a screen lock).
  * - The zca-js listener does not report when the PIN is hidden / changed / deleted on the phone, so it is read again on connect (at most every 6 hours), when
  *   the red magnifier icon of the search box is clicked or Settings is opened, and when a PIN does not match while the last read is more than 30 s old (PIN just changed on the phone).
  * - If Zalo no longer has a PIN (deleted / reset on the phone), there is nothing to lock: all conversations show as normal.
  * - Forgot PIN → reset (resetHiddenConversPin): Zalo may delete the messages of the hidden conversations on the Zalo device; Deplao
- *   keeps the messages on the machine. The UI asks for confirmation twice (decision Q5; the project owner changed it on 22/10/2026: open to everyone).
+ *   keeps the messages on the machine. The UI asks for confirmation twice (open to everyone).
  */
 import * as crypto from 'crypto';
 import EventBroadcaster from '../event/EventBroadcaster';

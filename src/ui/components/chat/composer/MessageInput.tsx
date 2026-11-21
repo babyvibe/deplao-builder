@@ -30,6 +30,8 @@ import {NoteViewModal} from '../groups/NoteViewModal';
 import BankCardModal from './BankCardModal';
 import ZaloCatalogPicker from '../zalo/catalog/ZaloCatalogPicker';
 import LibraryPickerModal from './LibraryPickerModal';
+import ZaloStickerStore from './ZaloStickerStore';
+import { mergeStickerSuggestions, zaloApiStickerSuggestions, zaloKeywordStickerSuggestions } from '@/lib/chat/zalo/zaloStickers';
 import {
   fetchQuickMessages,
   invalidateZaloQuickMessageCache,
@@ -159,7 +161,6 @@ export default function MessageInput() {
   // Inline sticker suggestions (above input area)
   const [inlineStickerSuggestions, setInlineStickerSuggestions] = useState<any[]>([]);
   const inlineStickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inlineStickerLastKwRef = useRef<string>('');
   // Keyboard shortcuts popup
   const [showShortcuts, setShowShortcuts] = useState(false);
   const shortcutsBtnRef = useRef<HTMLButtonElement>(null);
@@ -640,7 +641,8 @@ export default function MessageInput() {
     textareaRef.current?.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
-  // ── Inline sticker suggestions: when user types >2 chars + 1s pause ──
+  // ── Inline sticker suggestions like Zalo ("hi", "ok", ":)", "cảm ơn"): Zalo's keyword table (copied into the app) shows
+  // them right away, then after a 1 s pause Zalo's suggestion API adds newer stickers (lib/chat/zalo/zaloStickers)
   // Only for Zalo (plain text, no reply quote, no clipboard images)
   useEffect(() => {
     if (inlineStickerTimerRef.current) clearTimeout(inlineStickerTimerRef.current);
@@ -652,10 +654,9 @@ export default function MessageInput() {
       return;
     }
 
-    // Clear suggestions when text is short or empty
-    if (!kw || kw.length < 3) {
+    // Clear suggestions when the text is empty
+    if (!kw) {
       setInlineStickerSuggestions([]);
-      inlineStickerLastKwRef.current = '';
       return;
     }
 
@@ -665,65 +666,40 @@ export default function MessageInput() {
       return;
     }
 
-    // Don't re-search same keyword
-    if (kw === inlineStickerLastKwRef.current) return;
-
     // Skip if starts with "/" (quick message trigger) or "@" (mention)
-    if (kw.startsWith('/') || kw.startsWith('@')) return;
+    if (kw.startsWith('/') || kw.startsWith('@')) {
+      setInlineStickerSuggestions([]);
+      return;
+    }
 
+    // Every change looks again (the table is instant, the API answer is cached per keyword), so the bar always
+    // matches the text, also after the text went back to an earlier keyword
+    let cancelled = false;
+    // Step 1: Zalo's keyword table, no network (the user's packs first)
+    const localPromise = zaloKeywordStickerSuggestions(kw, 20);
+    void localPromise.then((local) => { if (!cancelled) setInlineStickerSuggestions(local); });
+
+    // Step 2: Zalo's suggestion API (asked once per keyword, cached in the DB) adds what the table does not have
     inlineStickerTimerRef.current = setTimeout(async () => {
-      inlineStickerLastKwRef.current = kw;
       try {
-        // Step 1: Check keyword_stickers cache in DB
-        const cacheRes = await DataAccessor.getKeywordStickers(kw);
-        if (cacheRes?.success && cacheRes.stickerIds !== null && cacheRes.stickerIds !== undefined) {
-          // Cache hit (including empty array = previously searched with no results)
-          if (cacheRes.stickerIds.length === 0) {
-            setInlineStickerSuggestions([]);
-            return;
-          }
-          // DataAccessor: employee mode reads the stickers cached on Boss (IPC returns an empty stub → always ask the API again)
-          const detailRes = await DataAccessor.getStickers({ stickerIds: cacheRes.stickerIds.slice(0, 20) });
-          if (detailRes?.success && detailRes.stickers?.length) {
-            setInlineStickerSuggestions(detailRes.stickers);
-            return;
-          }
-        }
-
-        // Step 2: Cache miss → call Zalo API
         const account = getActiveAccount();
-        if (!account) { setInlineStickerSuggestions([]); return; }
-        const auth = buildZaloAuth(account);
-
-        const idsRes = await ipc.zalo?.getStickers({ auth, keyword: kw });
-        const ids: number[] = idsRes?.response || [];
-
-        // Always cache keyword → stickerIds (even empty = no results, so next time skip API)
-        DataAccessor.saveKeywordStickers?.({ keyword: kw, stickerIds: ids }).catch(() => {});
-
-        if (!ids.length) { setInlineStickerSuggestions([]); return; }
-
-        // Step 3: Get sticker details
-        const detailRes = await ipc.zalo?.getStickersDetail({ auth, stickerIds: ids.slice(0, 20) });
-        const stickers: any[] = detailRes?.response || [];
-        setInlineStickerSuggestions(stickers);
-
-        // Save ALL stickers to DB cache (for sticker store)
-        if (stickers.length) {
-          DataAccessor.saveStickers({ stickers }).catch(() => {});
-        }
+        const auth = account ? buildZaloAuth(account) : null;
+        const [local, remote] = await Promise.all([localPromise, zaloApiStickerSuggestions(kw, auth, 20)]);
+        if (!cancelled) setInlineStickerSuggestions(mergeStickerSuggestions(local, remote, 30));
       } catch {
-        setInlineStickerSuggestions([]);
+        // Keep what the keyword table showed
       }
     }, 1000); // 1 second debounce
 
-    return () => { if (inlineStickerTimerRef.current) clearTimeout(inlineStickerTimerRef.current); };
+    return () => {
+      cancelled = true;
+      if (inlineStickerTimerRef.current) clearTimeout(inlineStickerTimerRef.current);
+    };
   }, [text, activeAccountId, replyTo, clipboardImages.length]);
 
   // Clear inline sticker suggestions when thread changes
   useEffect(() => {
     setInlineStickerSuggestions([]);
-    inlineStickerLastKwRef.current = '';
   }, [activeThreadId]);
 
   // ─── Phone number detection → contact card suggestion ──────────────────
@@ -1551,17 +1527,15 @@ export default function MessageInput() {
             try {
               const ch = activeContact?.channel || CHANNEL.ZALO;
               if (isNonZalo(ch)) {
-                // FB: send multiple images via channelIpc
-                for (const imgPath of imagePaths) {
-                  await channelIpc.sendAttachment(ch, {
-                    accountId,
-                    threadId,
-                    threadType: threadType as any,
-                    topicRootMessageId: activeTopicId || undefined,
-                    filePath: imgPath,
-                    body: '',
-                  });
-                }
+                // Telegram = one album / Facebook = one batch upload, not a message per photo
+                await channelIpc.sendAttachments(ch, {
+                  accountId,
+                  threadId,
+                  threadType: threadType as any,
+                  topicRootMessageId: activeTopicId || undefined,
+                  filePaths: imagePaths,
+                  fileType: 'image',
+                });
               } else {
                 await ipc.zalo?.sendImages({ auth, threadId, type: threadType, filePaths: imagePaths });
               }
@@ -1841,18 +1815,16 @@ export default function MessageInput() {
             sendFn: async () => {
               try {
                 if (isTelegram(ch)) {
-                  let messageId: string | undefined;
-                  for (const filePath of tempPaths) {
-                    const result = await channelIpc.sendAttachment(ch, {
-                      accountId: activeAccountId!, threadId: activeThreadId, threadType: activeThreadType,
-                      topicRootMessageId: activeTopicId || undefined, filePath, fileType: 'image',
-                      // Forum topic / comment thread: reply to exactly the message being quoted
-                      ...(activeTopicId && quotePayload ? { quote: quotePayload } : {}),
-                    });
-                    if (!result?.success) return { success: false, error: result?.error || tr('Gửi ảnh Telegram thất bại') };
-                    messageId = result.messageId;
-                  }
-                  return { success: true, msgId: messageId };
+                  // ONE album for the whole batch (Telegram groups up to 10 media per album). Sending a photo per
+                  // message looked like spam and pushed the chat up by N bubbles.
+                  const batch = await channelIpc.sendAttachments(ch, {
+                    accountId: activeAccountId!, threadId: activeThreadId, threadType: activeThreadType,
+                    topicRootMessageId: activeTopicId || undefined, filePaths: tempPaths, fileType: 'image',
+                    // Forum topic / comment thread: reply to exactly the message being quoted
+                    ...(activeTopicId && quotePayload ? { quote: quotePayload } : {}),
+                  });
+                  if (!batch?.success) return { success: false, error: batch?.error || tr('Gửi ảnh Telegram thất bại') };
+                  return { success: true, msgId: batch.messageId };
                 } else if (isNonZalo(ch)) {
                   const batchRes = await ipc.fb?.sendAttachments({
                     accountId: activeAccountId!, threadId: activeThreadId, filePaths: tempPaths,
@@ -2161,17 +2133,14 @@ export default function MessageInput() {
       sendFn: async () => {
         try {
           if (isTelegram(ch)) {
-            let messageId: string | undefined;
-            for (const filePath of filePaths) {
-              const result = await channelIpc.sendAttachment(ch, {
-                accountId: activeAccountId!, threadId: activeThreadId, threadType: activeThreadType,
-                topicRootMessageId: activeTopicId || undefined, filePath, fileType: 'image',
-                ...(activeTopicId && quotePayload ? { quote: quotePayload } : {}),
-              });
-              if (!result?.success) return { success: false, error: result?.error || tr('Gửi ảnh Telegram thất bại') };
-              messageId = result.messageId;
-            }
-            return { success: true, msgId: messageId };
+            // Same as the clipboard/paste path: the picked photos go out as ONE album, not one message each
+            const batch = await channelIpc.sendAttachments(ch, {
+              accountId: activeAccountId!, threadId: activeThreadId, threadType: activeThreadType,
+              topicRootMessageId: activeTopicId || undefined, filePaths, fileType: 'image',
+              ...(activeTopicId && quotePayload ? { quote: quotePayload } : {}),
+            });
+            if (!batch?.success) return { success: false, error: batch?.error || tr('Gửi ảnh Telegram thất bại') };
+            return { success: true, msgId: batch.messageId };
           } else if (isNonZalo(ch)) {
             const batchRes = await ipc.fb?.sendAttachments({
               accountId: activeAccountId!, threadId: activeThreadId,
@@ -2638,8 +2607,8 @@ export default function MessageInput() {
   const handleInlineStickerSend = async (sticker: any) => {
     const auth = getAuth();
     if (!auth || !activeThreadId || sending) return;
+    if (inlineStickerTimerRef.current) clearTimeout(inlineStickerTimerRef.current);
     setInlineStickerSuggestions([]);
-    inlineStickerLastKwRef.current = '';
     setSending(true);
     try {
       await ipc.zalo?.sendSticker({ auth, stickerId: sticker.id, threadId: activeThreadId, type: activeThreadType });
@@ -3285,7 +3254,11 @@ export default function MessageInput() {
             </button>
           ))}
           <button
-            onClick={() => { setInlineStickerSuggestions([]); inlineStickerLastKwRef.current = ''; }}
+            onClick={() => {
+              // Hidden until the text changes (a pending API answer must not bring the bar back)
+              if (inlineStickerTimerRef.current) clearTimeout(inlineStickerTimerRef.current);
+              setInlineStickerSuggestions([]);
+            }}
             className="flex-shrink-0 w-6 h-6 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground/80 text-[10px] transition-colors ml-0.5"
             title={tr('Ẩn gợi ý sticker')}
           >
@@ -4352,17 +4325,6 @@ type StickerDetail = {
   checksum?: string;
 };
 
-type StickerPack = {
-  catId: number;
-  name: string;
-  thumbUrl: string;
-  stickerCount: number;
-  stickers?: StickerDetail[];
-};
-
-// Popular Vietnamese keywords to seed the sticker store
-const STICKER_SEED_KEYWORDS = ['haha', 'buồn', 'yêu', 'vui', 'hi', 'ok', 'cảm ơn', 'chúc mừng', 'giận', 'ngủ'];
-
 function StickerPicker({
   getAuth,
   onSelect,
@@ -4374,21 +4336,14 @@ function StickerPicker({
   onClose: () => void;
   onInsertEmoji?: (emoji: string) => void;
 }) {
-  const [tab, setTab] = useState<'recent' | 'store' | 'search' | 'emoji'>('recent');
+  // Opens on the sticker library like Zalo's panel (ZaloStickerStore); "Gần đây" stays one click away
+  const [tab, setTab] = useState<'recent' | 'store' | 'search' | 'emoji'>('store');
   const [keyword, setKeyword] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<StickerDetail[]>([]);
   const [recentStickers, setRecentStickers] = useState<StickerDetail[]>([]);
   const pickerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Store state
-  const [packs, setPacks] = useState<StickerPack[]>([]);
-  const [activePackId, setActivePackId] = useState<number | null>(null);
-  const [packStickers, setPackStickers] = useState<StickerDetail[]>([]);
-  const [loadingStore, setLoadingStore] = useState(false);
-  const [loadingPack, setLoadingPack] = useState(false);
-  const [storeError, setStoreError] = useState('');
 
   // Close on outside click
   useEffect(() => {
@@ -4406,34 +4361,6 @@ function StickerPicker({
     }).catch(() => {});
   }, []);
 
-  // Load sticker packs from DB cache on open (build from cached stickers)
-  useEffect(() => {
-    loadPacksFromDb();
-  }, []);
-
-  /** Load pack list from DB (sticker_packs + cached pack summaries) */
-  const loadPacksFromDb = async () => {
-    try {
-      // Try sticker_packs first
-      const res = await DataAccessor.getStickerPacks?.();
-      if (res?.success && res.packs?.length) {
-        setPacks(res.packs);
-        return;
-      }
-      // Fallback: build from cached stickers grouped by cat_id
-      const sumRes = await DataAccessor.getAllCachedPackSummaries?.();
-      if (sumRes?.success && sumRes.packs?.length) {
-        const builtPacks: StickerPack[] = sumRes.packs.map((p) => ({
-          catId: p.catId,
-          name: tr('Gói {{catId}}', { catId: p.catId }),
-          thumbUrl: p.thumbUrl,
-          stickerCount: p.count,
-        }));
-        setPacks(builtPacks);
-      }
-    } catch {}
-  };
-
   // Switch to search tab when keyword is entered
   useEffect(() => {
     if (keyword.trim()) {
@@ -4441,258 +4368,37 @@ function StickerPicker({
     }
   }, [keyword]);
 
-  // Debounced search with keyword_stickers caching
-  // >2 chars + 1s pause → check DB cache → if miss, call API → save keyword mapping + sticker details
+  // Search from 1 char: Zalo's keyword table right away (no network), then after a 1 s pause Zalo's suggestion API
+  // (cached per keyword in the DB) adds the stickers the table does not have (lib/chat/zalo/zaloStickers)
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const kw = keyword.trim();
-    if (!kw) { setSearchResults([]); return; }
+    if (!kw) { setSearchResults([]); setSearching(false); return; }
 
-    // Short keywords (<3 chars): no search
-    if (kw.length < 3) {
-      setSearchResults([]);
-      return;
-    }
+    let cancelled = false;
+    const localPromise = zaloKeywordStickerSuggestions(kw, 40);
+    void localPromise.then((local) => {
+      if (cancelled) return;
+      setSearchResults(local);
+      setSearching(local.length === 0); // spinner only while there is nothing to show
+    });
 
     debounceRef.current = setTimeout(async () => {
-      setSearching(true);
       try {
-        // Step 1: Check keyword_stickers cache
-        const cacheRes = await DataAccessor.getKeywordStickers(kw);
-        if (cacheRes?.success && cacheRes.stickerIds?.length) {
-          // Cache hit - load sticker details from stickers DB table
-          const detailRes = await DataAccessor.getStickers({ stickerIds: cacheRes.stickerIds.slice(0, 30) });
-          if (detailRes?.success && detailRes.stickers?.length) {
-            setSearchResults(detailRes.stickers);
-            setSearching(false);
-            return;
-          }
-          // If stickers not in DB yet (edge case), fall through to API
-        }
-
-        // Step 2: Cache miss → call Zalo API
-        const auth = getAuth();
-        if (!auth) { setSearchResults([]); setSearching(false); return; }
-
-        const idsRes = await ipc.zalo?.getStickers({ auth, keyword: kw });
-        const ids: number[] = idsRes?.response || [];
-        if (!ids.length) { setSearchResults([]); setSearching(false); return; }
-
-        // Save keyword → stickerIds mapping
-        DataAccessor.saveKeywordStickers?.({ keyword: kw, stickerIds: ids }).catch(() => {});
-
-        // Step 3: Get sticker details
-        const detailRes = await ipc.zalo?.getStickersDetail({ auth, stickerIds: ids.slice(0, 30) });
-        const stickers: StickerDetail[] = detailRes?.response || [];
-        setSearchResults(stickers);
-
-        // Save ALL stickers to DB cache (cho kho sticker)
-        if (stickers.length) {
-          DataAccessor.saveStickers({ stickers }).catch(() => {});
-
-          // Discover new packs from these stickers and save them
-          discoverAndSavePacks(stickers, auth);
-        }
+        const [local, remote] = await Promise.all([localPromise, zaloApiStickerSuggestions(kw, getAuth(), 30)]);
+        if (!cancelled) setSearchResults(mergeStickerSuggestions<StickerDetail>(local, remote, 60));
       } catch {
-        setSearchResults([]);
+        // Keep what the keyword table found
       } finally {
-        setSearching(false);
+        if (!cancelled) setSearching(false);
       }
     }, 1000); // 1 second debounce
 
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    return () => {
+      cancelled = true;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [keyword]);
-
-  /** Discover packs from stickers and save to DB + state */
-  const discoverAndSavePacks = async (stickers: StickerDetail[], auth: any) => {
-    try {
-      const cateMap = new Map<number, StickerDetail[]>();
-      for (const s of stickers) {
-        const cid = s.cateId ?? s.catId ?? 0;
-        if (cid === 0) continue;
-        if (!cateMap.has(cid)) cateMap.set(cid, []);
-        cateMap.get(cid)!.push(s);
-      }
-
-      const existingIds = new Set(packs.map((p) => p.catId));
-      const newPacks: StickerPack[] = [];
-
-      for (const [cateId, catStickers] of cateMap) {
-        if (existingIds.has(cateId)) continue;
-        newPacks.push({
-          catId: cateId,
-          name: tr('Gói {{cateId}}', { cateId }),
-          thumbUrl: catStickers[0]?.stickerUrl || '',
-          stickerCount: catStickers.length,
-        });
-      }
-
-      if (newPacks.length) {
-        DataAccessor.saveStickerPacks?.({ packs: newPacks }).catch(() => {});
-        setPacks((prev) => {
-          const ids = new Set(prev.map((p) => p.catId));
-          return [...prev, ...newPacks.filter((p) => !ids.has(p.catId))];
-        });
-      }
-    } catch {}
-  };
-
-  // Fetch sticker store using popular keywords (seed)
-  const fetchStickerStore = async () => {
-    const auth = getAuth();
-    if (!auth) { setStoreError(tr('Chưa kết nối tài khoản')); return; }
-    setLoadingStore(true);
-    setStoreError('');
-    try {
-      const allStickers: StickerDetail[] = [];
-      const allPacks: StickerPack[] = [];
-      const seenCateIds = new Set<number>();
-
-      // Fetch stickers for each seed keyword
-      for (let i = 0; i < STICKER_SEED_KEYWORDS.length; i++) {
-        const kw = STICKER_SEED_KEYWORDS[i];
-        try {
-          // Check keyword cache first
-          let ids: number[] = [];
-          const cacheRes = await DataAccessor.getKeywordStickers(kw);
-          if (cacheRes?.success && cacheRes.stickerIds?.length) {
-            ids = cacheRes.stickerIds;
-          } else {
-            // Call API
-            const idsRes = await ipc.zalo?.getStickers({ auth, keyword: kw });
-            ids = idsRes?.response || [];
-            // Cache keyword → stickerIds
-            if (ids.length) {
-              DataAccessor.saveKeywordStickers?.({ keyword: kw, stickerIds: ids }).catch(() => {});
-            }
-          }
-
-          if (!ids.length) continue;
-
-          // Get sticker details (try DB first, then API for missing ones)
-          let stickers: StickerDetail[] = [];
-          const dbRes = await DataAccessor.getStickers({ stickerIds: ids.slice(0, 30) });
-          if (dbRes?.success && dbRes.stickers?.length >= ids.slice(0, 30).length * 0.8) {
-            // Most stickers already in DB
-            stickers = dbRes.stickers;
-          } else {
-            // Fetch from API
-            const detailRes = await ipc.zalo?.getStickersDetail({ auth, stickerIds: ids.slice(0, 30) });
-            stickers = detailRes?.response || [];
-            // Save to DB
-            if (stickers.length) {
-              DataAccessor.saveStickers({ stickers }).catch(() => {});
-            }
-          }
-
-          allStickers.push(...stickers);
-
-          // Discover packs
-          for (const s of stickers) {
-            const cid = s.cateId ?? s.catId ?? 0;
-            if (cid === 0 || seenCateIds.has(cid)) continue;
-            seenCateIds.add(cid);
-            allPacks.push({
-              catId: cid,
-              name: tr('Gói {{cid}}', { cid }),
-              thumbUrl: s.stickerUrl || '',
-              stickerCount: stickers.filter((x) => (x.cateId ?? x.catId ?? 0) === cid).length,
-            });
-          }
-        } catch {
-          // Skip failed keyword
-        }
-
-        // Throttle: 500ms delay between keywords
-        if (i < STICKER_SEED_KEYWORDS.length - 1) {
-          await new Promise((r) => setTimeout(r, 500));
-        }
-      }
-
-      if (allStickers.length === 0) {
-        setStoreError(tr('Không tìm thấy sticker. Thử lại sau.'));
-        setLoadingStore(false);
-        return;
-      }
-
-      // For each discovered pack, try to fetch full category details (max 10)
-      const packsToFetchDetail = allPacks.slice(0, 10);
-      for (let i = 0; i < packsToFetchDetail.length; i++) {
-        const pack = packsToFetchDetail[i];
-        try {
-          // Check if we already have enough stickers for this pack in DB
-          const dbPack = await DataAccessor.getStickersByPackId(pack.catId);
-          if (dbPack?.success && dbPack.stickers?.length >= 5) {
-            pack.stickerCount = dbPack.stickers.length;
-            pack.thumbUrl = dbPack.stickers[0]?.stickerUrl || pack.thumbUrl;
-            continue;
-          }
-
-          const catRes = await ipc.zalo?.getStickerCategoryDetail({ auth, cateId: pack.catId });
-          const catStickers: StickerDetail[] = catRes?.response || [];
-          if (catStickers.length > 0) {
-            DataAccessor.saveStickers({ stickers: catStickers }).catch(() => {});
-            pack.stickerCount = catStickers.length;
-            pack.thumbUrl = catStickers[0]?.stickerUrl || pack.thumbUrl;
-          }
-        } catch {}
-
-        if (i < packsToFetchDetail.length - 1) {
-          await new Promise((r) => setTimeout(r, 300));
-        }
-      }
-
-      // Save packs to DB and update state
-      if (allPacks.length) {
-        DataAccessor.saveStickerPacks?.({ packs: allPacks }).catch(() => {});
-        setPacks(allPacks);
-      }
-    } catch (err: any) {
-      setStoreError(tr('Lỗi tải kho sticker'));
-    } finally {
-      setLoadingStore(false);
-    }
-  };
-
-  // Load stickers for a specific pack
-  const loadPackStickers = async (catId: number) => {
-    setActivePackId(catId);
-    setPackStickers([]);
-    setLoadingPack(true);
-
-    // Try from DB cache first
-    try {
-      const dbRes = await DataAccessor.getStickersByPackId(catId);
-      if (dbRes?.success && dbRes.stickers?.length) {
-        setPackStickers(dbRes.stickers);
-        setLoadingPack(false);
-        return;
-      }
-    } catch {}
-
-    // Fetch from API
-    const auth = getAuth();
-    if (!auth) { setLoadingPack(false); return; }
-    try {
-      const catRes = await ipc.zalo?.getStickerCategoryDetail({ auth, cateId: catId });
-      const stickers: StickerDetail[] = catRes?.response || [];
-      setPackStickers(stickers);
-      if (stickers.length) {
-        DataAccessor.saveStickers({ stickers }).catch(() => {});
-      }
-    } catch {
-      setPackStickers([]);
-    } finally {
-      setLoadingPack(false);
-    }
-  };
-
-  // Auto-fetch store if no cached packs
-  useEffect(() => {
-    if (tab === 'store' && packs.length === 0 && !loadingStore) {
-      fetchStickerStore();
-    }
-  }, [tab]);
 
   const mainTabs = [
     { key: 'recent' as const, label: <>{trx('<0/> Gần đây', { 0: <ClockIcon className="w-3.5 h-3.5 mr-2" /> })}</> },
@@ -4714,7 +4420,7 @@ function StickerPicker({
             key={t.key}
             onClick={() => { setTab(t.key); if (t.key === 'recent' || t.key === 'store' || t.key === 'emoji') setKeyword(''); }}
             className={`flex-1 py-2 text-[11px] font-semibold tracking-wide transition-colors place-content-center flex ${
-              (tab === t.key || (tab === 'search' && t.key === 'recent'))
+              (tab === t.key || (tab === 'search' && t.key === 'store'))
                 ? 'text-blue-400 border-b-2 border-blue-400'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
@@ -4740,7 +4446,7 @@ function StickerPicker({
               className="flex-1 bg-transparent text-sm text-foreground placeholder-subtle-foreground focus:outline-none"
             />
             {keyword && (
-              <button onClick={() => { setKeyword(''); setTab('recent'); }} className="text-muted-foreground hover:text-foreground text-sm">✕</button>
+              <button onClick={() => { setKeyword(''); setTab('store'); }} className="text-muted-foreground hover:text-foreground text-sm">✕</button>
             )}
           </div>
         </div>
@@ -4789,113 +4495,8 @@ function StickerPicker({
           )}
         </div>
       ) : tab === 'store' ? (
-        /* Sticker Store */
-        <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
-          {loadingStore ? (
-            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-              <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2" />
-              <span className="text-xs">{tr('Đang tải kho sticker...')}</span>
-            </div>
-          ) : storeError && packs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground text-xs gap-2">
-              <span><AlertIcon className="w-4 h-4 inline" /> {storeError}</span>
-              <button
-                onClick={fetchStickerStore}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs transition-colors"
-              >
-                {tr('Thử lại')}
-              </button>
-            </div>
-          ) : packs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground text-xs gap-2">
-              <StoreIcon className="w-8 h-8 mb-1 opacity-40" />
-              <span>{tr('Chưa có gói sticker nào')}</span>
-              <button
-                onClick={fetchStickerStore}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs transition-colors"
-              >
-                {tr('Tải kho sticker')}
-              </button>
-            </div>
-          ) : (
-            <>
-              {/* Pack list - horizontal scroll */}
-              <div className="flex gap-1 px-2 py-2 overflow-x-auto flex-shrink-0 border-b border-border/50"
-                   onWheel={e => {
-                     // Convert vertical wheel to horizontal scroll so mouse wheel works naturally
-                     if (e.deltaY !== 0) {
-                       e.preventDefault();
-                       e.currentTarget.scrollBy({ left: e.deltaY, behavior: 'auto' });
-                     }
-                   }}>
-                {packs.map((pack) => (
-                  <button
-                    key={pack.catId}
-                    onClick={() => loadPackStickers(pack.catId)}
-                    className={`flex-shrink-0 w-12 h-12 rounded-xl overflow-hidden border-2 transition-all hover:scale-105 ${
-                      activePackId === pack.catId
-                        ? 'border-blue-400 shadow-lg shadow-blue-500/20'
-                        : 'border-transparent hover:border-border-strong'
-                    }`}
-                    title={pack.name || tr('Gói {{catId}}', { catId: pack.catId })}
-                  >
-                    {pack.thumbUrl ? (
-                      <img
-                        src={pack.thumbUrl}
-                        alt={pack.name}
-                        className="w-full h-full object-contain bg-muted/50"
-                        loading="lazy"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-muted/50 flex items-center justify-center text-lg">🎭</div>
-                    )}
-                  </button>
-                ))}
-                {/* Refresh button */}
-                <button
-                  onClick={fetchStickerStore}
-                  disabled={loadingStore}
-                  className="flex-shrink-0 w-12 h-12 rounded-xl border-2 border-dashed border-input hover:border-border-strong flex items-center justify-center text-muted-foreground hover:text-foreground/80 transition-all"
-                  title={tr('Cập nhật kho sticker')}
-                >
-                  {loadingStore ? (
-                    <div className="w-4 h-4 border-2 border-border-strong border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
-                      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                    </svg>
-                  )}
-                </button>
-              </div>
-
-              {/* Pack stickers grid */}
-              <div className="flex-1 overflow-y-auto px-2 pb-2">
-                {activePackId === null ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-muted-foreground text-xs">
-                    {trx('<0>👆</0>Chọn một gói sticker ở trên', { 0: <span className="text-2xl mb-2" /> })}
-                  </div>
-                ) : loadingPack ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
-                    <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2" />
-                    <span className="text-xs">{tr('Đang tải...')}</span>
-                  </div>
-                ) : packStickers.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-muted-foreground text-xs">
-                    {tr('Gói sticker này trống hoặc không hỗ trợ')}
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-5 gap-1.5 pt-2">
-                    {packStickers.map((s) => (
-                      <StickerItem key={s.id} sticker={s} onSelect={onSelect} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
+        /* Sticker library like Zalo's panel: packs copied from Zalo Web (shared/zalo/zaloStickerPacks) */
+        <ZaloStickerStore onSelect={onSelect} />
       ) : (
         /* Emoji tab */
         <div className="flex-1 overflow-y-auto p-2 space-y-3">

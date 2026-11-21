@@ -226,7 +226,7 @@ interface AppStore {
   removeFromOthers: (zaloId: string, contactId: string) => void;
   /** Fast in-memory check. */
   isInOthers: (zaloId: string, contactId: string) => boolean;
-  /** Hidden conversations on Zalo (even if unlocked): no sound / notifications / unread count (decision Q3). */
+  /** Hidden conversations on Zalo (even if unlocked): no sound / notifications / unread count. */
   isZaloHidden: (zaloId: string, contactId: string) => boolean;
   /** Hidden and the account is locked → not shown in the list / search. */
   isHiddenLocked: (zaloId: string, contactId: string) => boolean;

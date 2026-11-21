@@ -79,9 +79,10 @@ and rebuild.
 `scripts/build-bridge-e2ee.js` builds into `build/fbchat-login-bridge[.exe]`
 next to the E2EE bridge. It was split off when fbchat-v2 2.3.2 pinned mautrix-meta
 3ed7bfa, whose Bloks interpreter crashes on Facebook's current Messenger Lite login
-pages. The E2EE bridge now pins cea2e38 (fbchat-v2 2.3.3), still older than the
-helper's mautrix-meta, so the helper keeps its own newer copy and only runs the
-login wizard. It returns session cookies; the account then connects through the
+pages. Both modules now pin the same revision (mautrix-meta `efc4c92`, v26.11);
+the helper keeps its own vendored copy (`login/meta`) so the Bloks interpreter can
+carry the numeric-literal and `string.EndsWith`/`Contains` patch that upstream
+still lacks. It returns session cookies; the account then connects through the
 E2EE bridge.
 
 Methods: `hello`, `startNativeLogin`, `submitNativeLogin`, `waitNativeLogin`
@@ -92,8 +93,9 @@ error codes).
 To move it to another mautrix-meta revision: run
 `go get go.mau.fi/mautrix-meta@<commit>` and `go mod tidy` inside `login/`
 only, copy any `replace` lines from mautrix-meta's own `go.mod` (currently
-`github.com/imroc/req/v3 => github.com/beeper/req/v3`), and update
-`loginHelper` in `docs/fbchat-v2.3.3-vendor-manifest.json`; the build checks
+`github.com/imroc/req/v3 => github.com/beeper/req/v3`), re-copy the vendored
+`login/meta` tree and re-apply the Bloks patch, and update
+`loginHelper` in `docs/fbchat-v2.3.5-vendor-manifest.json`; the build checks
 that the two agree.
 
 ## License

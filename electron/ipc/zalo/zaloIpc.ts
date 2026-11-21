@@ -602,7 +602,7 @@ export function registerZaloIpc() {
     wrap('zalo:hiddenSetPin', (s, p) => s.setHiddenConversationPin(String(p.pin || ''), p.oldPin ? String(p.oldPin) : undefined));
     wrap('zalo:hiddenResetPin', (s) => s.resetHiddenConversationPin());
 
-    // ─── Zalo Business product catalog (ZL-04): reading = Chat permission, writing = CRM permission (proxyActionPolicy, Q7) ───
+    // ─── Zalo Business product catalog (ZL-04): reading = Chat permission, writing = CRM permission (proxyActionPolicy) ───
     wrap('zalo:getCatalogs', (s, p) => s.getCatalogs(Number(p.page) || 0, Number(p.limit) || 20));
     wrap('zalo:createCatalog', (s, p) => s.createCatalog(String(p.name || '')));
     wrap('zalo:updateCatalog', (s, p) => s.updateCatalog(String(p.catalogId || ''), String(p.name || '')));

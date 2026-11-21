@@ -95,7 +95,7 @@ export const ACCOUNT_SETTINGS_PROXY_CHANNELS: ReadonlySet<string> = new Set([
   'zalo:getAccountSettings', 'zalo:updateAccountSetting', 'zalo:hiddenSetPin', 'zalo:hiddenResetPin',
 ]);
 
-/** Writes the Zalo Business product catalog (SRS ZL-04): employees need the CRM permission (decision Q7); reading / sending follows the Chat permission. */
+/** Writes the Zalo Business product catalog (ZL-04): employees need the CRM permission; reading / sending follows the Chat permission. */
 export const CATALOG_WRITE_PROXY_CHANNELS: ReadonlySet<string> = new Set([
   'zalo:createCatalog', 'zalo:updateCatalog', 'zalo:deleteCatalog',
   'zalo:createCatalogProduct', 'zalo:updateCatalogProduct', 'zalo:deleteCatalogProducts', 'zalo:uploadProductPhoto',

@@ -5,7 +5,7 @@
  *    the conversation list only keeps that account's hidden conversations (ConversationList), without mixing in normal conversations.
  *  - Hides again automatically: switching account / merged inbox, 5 minutes without activity; app lock in App.tsx; ✕ on the "Hội thoại ẩn" (Hidden conversations) row or the
  *    red magnifier of the search box.
- * The unlocked state only lives on this machine (decision Q4). Sound / notifications / unread count are always off for hidden conversations (Q3).
+ * The unlocked state only lives on this machine. Sound / notifications / unread count are always off for hidden conversations.
  */
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';

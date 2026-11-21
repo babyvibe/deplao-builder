@@ -1,0 +1,41 @@
+{
+  "upstream": "https://github.com/m008v/fbchat-v2",
+  "version": "2.3.5",
+  "commit": "ec26e54c550d99aab31c666e5e2865794527bdf2",
+  "submodules": {
+    "bridge-e2ee/meta": {
+      "upstream": "https://github.com/mautrix/meta.git",
+      "commit": "efc4c92226116f80cb110b5364f08cc39d219a7c"
+    }
+  },
+  "retrievedAt": "2026-11-20T00:00:00Z",
+  "bridgeAdapterPatches": [
+    "Electron JSON-RPC media localPath adapter",
+    "Electron secure-storage device state transport",
+    "Application event persistence adapter",
+    "hello handshake with protocol/capability validation",
+    "Serial write queue for stdin",
+    "Generation isolation for stale response detection",
+    "connectE2EE registers only devices without a server identity and waits for the encrypted socket",
+    "Per-request panic recovery (handleSafely)",
+    "Credential login removed from the E2EE bridge; served by loginHelper",
+    "Page templates / XMA kept as structured template attachments with all CTAs + carousel items; legacy LSInsertAttachment rows converted; button templates (message text + CTA rows without a card) get a template with those buttons (bridge/xma.go orphanButtons, events.go)",
+    "fetchMessages RPC: per-thread history page via LightSpeed FetchMessagesTask, answered asynchronously; an existing-range answer must carry the request reference timestamp (as in mautrix-meta), one diagnostic log line per page (bridge/history.go)",
+    "E2EE: thumbs-up CommonSticker, image galleries, placeholders for view-once / payment / contact; signal-only payloads dropped instead of empty messages",
+    "Device store: WASA root secret accessors stay unsupported (same policy as MessageSecrets); only sending Meta bot/WASA messages is affected"
+  ],
+  "loginHelper": {
+    "path": "src/bridge-e2ee/login",
+    "binary": "fbchat-login-bridge",
+    "reason": "Separate module since fbchat-v2 2.3.2, whose pinned mautrix/meta crashed in the Bloks interpreter on Facebook's current Messenger Lite login pages (nil GetArg in bk.action.f32.Eq, missing bk.action.array.Get). The helper keeps its own vendored copy (login/meta via a replace directive) so the Bloks interpreter can be patched. Upstream v26.11 now implements bk.action.string.StartsWith itself; the patch only has to add bk.action.string.EndsWith/Contains, which the OTP input validation uses.",
+    "mautrixMeta": {
+      "module": "go.mau.fi/mautrix-meta",
+      "version": "v0.2611.1-0.20261119194150-efc4c9222611",
+      "commit": "efc4c92226116f80cb110b5364f08cc39d219a7c"
+    },
+    "replace": {
+      "github.com/imroc/req/v3": "github.com/beeper/req/v3 v3.0.0-20260925135712-b49593750e56"
+    }
+  },
+  "note": "fbchat-v2 v2.3.5 (2026-11-20) still pins bridge-e2ee/meta cea2e38 (2026-08-25), libsignal v0.2.2 and whatsmeow 2026-09-19, so bumping the fbchat-v2 line alone changes nothing. Deplao vendors mautrix/meta forward to efc4c92 (v26.11, 185 commits) for the Messenger realtime fixes it needs: forced resync handling on the live socket (d779029, efc4c92), initial GraphQL mailbox sync fallback + 90s lightspeed sync timeout (472a7f0), libsignal v0.2.3 (Kyber/PQXDH message decoding, upstream 180b9ce), and current Chrome/Messenger user agents with the HelloChrome_Auto websocket TLS fingerprint. v26.11 requires whatsmeow 2026-11-16, libsignal v0.2.3, util v0.11.1 and mautrix v0.33.1-20261119; the four move together. See docs/plan-mautrix-meta-v26.11-upgrade.md."
+}

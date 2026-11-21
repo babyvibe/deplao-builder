@@ -9,10 +9,33 @@
          in src/ui/index.css; the data-theme rule keeps it from fighting the light theme. */
       html { background-color: #131518; }
       html[data-theme="light"] { background-color: #eceef3; }
+      /* Boot screen until React's first render replaces #root: a reload (the dev server reconnecting after the laptop
+         sleeps, F5) or a cold start on a busy machine used to show an empty dark window that looked frozen. The preload
+         applies the saved theme and the translated text as soon as this HTML is parsed. Only transform / opacity are
+         animated, so the bar keeps moving on the compositor while the main thread loads the app. */
+      #boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: #e6e8ec; }
+      html[data-theme="light"] #boot { color: #1f2329; }
+      #boot .boot-name { font-size: 20px; font-weight: 600; }
+      #boot .boot-track { width: 160px; height: 3px; border-radius: 3px; overflow: hidden; background: rgba(128, 128, 128, 0.25); }
+      #boot .boot-bar { width: 40%; height: 100%; border-radius: 3px; background: #2f7bff; animation: boot-slide 1.2s ease-in-out infinite; }
+      html[data-theme="light"] #boot .boot-bar { background: #1f6bf2; }
+      #boot .boot-text { font-size: 13px; opacity: 0.7; }
+      #boot .boot-slow { font-size: 12px; opacity: 0; animation: boot-show 0.4s ease 8s forwards; }
+      @keyframes boot-slide { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
+      @keyframes boot-show { to { opacity: 0.55; } }
+      @media (prefers-reduced-motion: reduce) { #boot .boot-bar { animation-duration: 2.4s; } }
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot" data-deplao-boot role="status" aria-live="polite">
+        <div class="boot-name">Deplao</div>
+        <div class="boot-track"><div class="boot-bar"></div></div>
+        <div class="boot-text" data-boot="loading">Đang tải giao diện…</div>
+        <div class="boot-slow" data-boot="slow">Tải lâu hơn thường lệ, vui lòng chờ…</div>
+      </div>
+    </div>
     <script type="module" src="/src/ui/main.tsx"></script>
   </body>
 </html>

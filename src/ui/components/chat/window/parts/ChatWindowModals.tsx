@@ -11,7 +11,7 @@ import { type Channel, getChannelLabel } from '@/../configs/channels/channelConf
 import { QuickEventDialog, QuickNoteDialog } from '../../quick/QuickErpDialogs';
 import { QuickTaskFromMessages } from '../../quick/QuickTaskFromMessages';
 import { eventDraftFromMessages, noteDraftFromMessages } from '@/lib/chat/erp/messageToErp';
-import { CHANNEL } from '@/lib/channels/channelHelper';
+import { CHANNEL, isTelegram, isZalo } from '@/lib/channels/channelHelper';
 import { myDocumentsThreadId } from '@/lib/chat/zalo/myDocuments';
 import { ManagePanel } from '../../groups/GroupInfoPanel';
 import { UserProfilePopup } from '../../../common/profile/UserProfilePopup';
@@ -127,6 +127,11 @@ export function ChatWindowModals(props: ChatWindowModalsProps) {
             const full = parseReactionsFull(contextMenu.msg.reactions, contextMenu.msg.channel);
             return Object.entries(full.emoji || {}).find(([, data]) => (data as any).users?.[activeAccountId] > 0)?.[0] || null;
           })()}
+          // Zalo: every pick adds +1 and ✕ removes yours (like Zalo); Telegram / Facebook: picking yours again removes it
+          reactionMode={isZalo(contextMenu.msg?.channel || CHANNEL.ZALO) ? 'add' : 'toggle'}
+          // Telegram: "N cảm xúc" opens who reacted (the chips toggle reactions, like Telegram)
+          reactionTotal={isTelegram(contextMenu.msg?.channel) ? parseReactionsFull(contextMenu.msg.reactions, contextMenu.msg.channel).total : 0}
+          onShowReactions={isTelegram(contextMenu.msg?.channel) ? (m) => setReactionPopup({ msg: m, activeEmoji: 'all' }) : undefined}
           onPin={handlePin}
           onEdit={(m) => {
             setEditingMsg(m);

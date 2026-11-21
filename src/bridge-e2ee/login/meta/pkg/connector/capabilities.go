@@ -18,7 +18,6 @@ package connector
 
 import (
 	"context"
-	"time"
 
 	"go.mau.fi/util/ffmpeg"
 	"go.mau.fi/util/jsontime"
@@ -54,13 +53,12 @@ func (m *MetaConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities {
 }
 
 func (m *MetaConnector) GetBridgeInfoVersion() (info, caps int) {
-	return 1, 17
+	return 1, 20
 }
 
 const MaxTextLength = 20000
 const MaxFileSize = 25 * 1000 * 1000
 const MaxFileSizeWithE2E = 100 * 1000 * 1000
-const MaxImageSize = 8 * 1000 * 1000
 
 func supportedIfFFmpeg() event.CapabilitySupportLevel {
 	if ffmpeg.Supported() {
@@ -70,7 +68,7 @@ func supportedIfFFmpeg() event.CapabilitySupportLevel {
 }
 
 func capID() string {
-	base := "fi.mau.meta.capabilities.2026_10_01"
+	base := "fi.mau.meta.capabilities.2026_11_11"
 	if ffmpeg.Supported() {
 		return base + "+ffmpeg"
 	}
@@ -98,7 +96,7 @@ var metaCaps = &event.RoomFeatures{
 			},
 			Caption:          event.CapLevelFullySupported,
 			MaxCaptionLength: MaxTextLength,
-			MaxSize:          MaxImageSize,
+			MaxSize:          MaxFileSize,
 		},
 		event.MsgVideo: {
 			MimeTypes: map[string]event.CapabilitySupportLevel{
@@ -134,7 +132,7 @@ var metaCaps = &event.RoomFeatures{
 			},
 			Caption:          event.CapLevelDropped,
 			MaxCaptionLength: MaxTextLength,
-			MaxSize:          MaxImageSize,
+			MaxSize:          MaxFileSize,
 		},
 		event.CapMsgSticker: {
 			MimeTypes: map[string]event.CapabilitySupportLevel{
@@ -142,7 +140,7 @@ var metaCaps = &event.RoomFeatures{
 				"image/webp": event.CapLevelFullySupported,
 			},
 			Caption: event.CapLevelDropped,
-			MaxSize: MaxImageSize,
+			MaxSize: MaxFileSize,
 		},
 		event.CapMsgVoice: {
 			MimeTypes: map[string]event.CapabilitySupportLevel{
@@ -157,7 +155,7 @@ var metaCaps = &event.RoomFeatures{
 	Reply:               event.CapLevelFullySupported,
 	Edit:                event.CapLevelFullySupported,
 	EditMaxCount:        5,
-	EditMaxAge:          ptr.Ptr(jsontime.S(15 * time.Minute)),
+	EditMaxAge:          ptr.Ptr(jsontime.S(EditMaxAge)),
 	Delete:              event.CapLevelFullySupported,
 	DeleteForMe:         false,
 	Reaction:            event.CapLevelFullySupported,
@@ -205,8 +203,17 @@ func init() {
 		event.StateRoomAvatar.Type: {Level: event.CapLevelFullySupported},
 	}
 	metaCapsGroup.MemberActions = metaCapsWithE2EGroup.MemberActions.Clone()
+	for _, caps := range []*event.RoomFeatures{metaCapsGroup, metaCapsWithThreads} {
+		caps.Poll = event.CapLevelPartialSupport
+		caps.PollEnd = event.CapLevelUnsupported
+		caps.PollHiddenVotes = event.CapLevelUnsupported
+		caps.PollDuplicateOptions = event.CapLevelUnsupported
+		caps.PollMultipleChoiceOnly = true
+		caps.PollOptionMaxLength = 140
+	}
 
 	metaCaps.BlockUser = true
+	metaCapsWithE2E.BlockUser = true
 }
 
 func (m *MetaClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {

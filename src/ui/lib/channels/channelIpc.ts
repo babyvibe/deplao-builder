@@ -9,6 +9,7 @@
 
 import { Channel } from '../../../configs/channels/channelConfig';
 import { getAdapter } from './adapters/registry';
+import type { SendAttachmentsParams } from './adapters/ChannelAdapter';
 
 // Re-export types for backward compatibility
 export type {
@@ -18,6 +19,7 @@ export type {
   HealthResult,
   SendMessageParams,
   SendAttachmentParams,
+  SendAttachmentsParams,
   SendVideoParams,
   UnsendParams,
   ReactionParams,
@@ -65,6 +67,27 @@ export async function sendAttachment(channel: Channel, params: {
   libraryUuid?: string;
 }) {
   return getAdapter(channel).sendAttachment(params);
+}
+
+/**
+ * Send several attachments in ONE action: Telegram turns the images into a real album (max 10 per album, the
+ * service chunks longer lists), other channels keep sending them one by one.
+ */
+export async function sendAttachments(channel: Channel, params: SendAttachmentsParams) {
+  const adapter = getAdapter(channel);
+  if (adapter.sendAttachments) return adapter.sendAttachments(params);
+  // Adapter without batching (Zalo/Facebook have their own batch IPC, but stay safe): sequential fallback
+  const files = (params.filePaths || []).filter(Boolean);
+  if (files.length === 0) return { success: false, error: 'No files' };
+  const messageIds: string[] = [];
+  let last: any = { success: true };
+  for (const filePath of files) {
+    last = await adapter.sendAttachment({ ...params, filePath });
+    if (!last?.success) return last;
+    const id = last?.messageId ?? last?.msgId;
+    if (id) messageIds.push(String(id));
+  }
+  return { success: true, ...last, messageId: messageIds[0], messageIds };
 }
 
 export async function sendVideo(channel: Channel, params: {

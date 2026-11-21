@@ -175,6 +175,19 @@ function MessageBlock({ block, formatting, channel, options }: {
   }
   const plan = previewBlockPlan(block, channel, options);
   const combined = plan.steps.some(step => step.kind === 'captioned');
+  // Videos / files: one attachment row each (the queue sends them one by one after the text/images part)
+  const attachments = (paths: string[], kind: 'video' | 'file') => (
+    <div className="flex flex-wrap gap-1.5">
+      {paths.map((path, i) => (
+        <div key={`${kind}-${i}`} className="flex items-center gap-1.5 rounded-lg border border-bubble-out-border bg-bubble-out px-2 py-1">
+          <span className="text-[10px]">{kind === 'video' ? '▶' : '📄'}</span>
+          <span className="max-w-[10rem] truncate text-[11px] text-foreground/80" title={path}>
+            {path.split(/[\\/]/).pop() || path}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
   return (
     <div className="space-y-1.5">
       {plan.steps.map((step, index) => {
@@ -184,6 +197,12 @@ function MessageBlock({ block, formatting, channel, options }: {
               <TemplateText text={block.text} formatting={formatting} />
             </div>
           );
+        }
+        if (step.kind === 'videos') {
+          return <div key={`videos-${index}`}>{attachments(step.videos, 'video')}</div>;
+        }
+        if (step.kind === 'files') {
+          return <div key={`files-${index}`}>{attachments(step.files, 'file')}</div>;
         }
         if (step.kind === 'images') {
           return (
@@ -263,6 +282,7 @@ export function CampaignSendOptionsControl({ value, channel = 'zalo', disabled, 
   onChange: (patch: Partial<CampaignSendOptions>) => void;
 }) {
   const telegram = channel === 'telegram_user' || channel === 'telegram_bot';
+  const facebook = channel === 'facebook';
   return (
     <div className="space-y-2.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -292,7 +312,9 @@ export function CampaignSendOptionsControl({ value, channel = 'zalo', disabled, 
           <span className="text-[11px] leading-4">
             {telegram
               ? tr('Chữ thành chú thích của ảnh; nhiều ảnh gửi thành album. Chữ dài quá 1024 ký tự thì gửi riêng.')
-              : tr('Chữ thành mô tả của ảnh. Zalo chỉ hỗ trợ khi có 1 ảnh (jpg, png, webp) và không giữ định dạng chữ.')}
+              : facebook
+                ? tr('Chữ thành nội dung của tin gửi kèm ảnh. Facebook chỉ gộp được khi có 1 ảnh, nhiều ảnh sẽ gửi chữ riêng.')
+                : tr('Chữ thành mô tả của ảnh. Zalo chỉ hỗ trợ khi có 1 ảnh (jpg, png, webp) và không giữ định dạng chữ.')}
             {value.combine && tr(' Không gộp được thì gửi riêng theo thứ tự ở trên.')}
           </span>
         )}

@@ -1288,7 +1288,8 @@ export async function deleteMessage(accountId: string, chatId: string, messageId
 }
 
 /**
- * Add a reaction
+ * Set the bot's reaction on a message: like Telegram, it REPLACES the bot's previous reaction; an empty emoji removes it
+ * (the Bot API wants an empty list for that, an emoji "" is rejected).
  */
 export async function addReaction(accountId: string, chatId: string, messageId: string, emoji: string): Promise<ActionResult> {
   const bot = registeredAccounts.get(accountId);
@@ -1297,7 +1298,7 @@ export async function addReaction(accountId: string, chatId: string, messageId: 
     const res = await axios.post(`${TELEGRAM_API}/bot${bot.botToken}/setMessageReaction`, {
       chat_id: chatId,
       message_id: messageId,
-      reaction: JSON.stringify([{ type: 'emoji', emoji }]),
+      reaction: JSON.stringify(emoji ? [{ type: 'emoji', emoji }] : []),
     }, { timeout: REQUEST_TIMEOUT });
     return { success: !!res.data?.ok, error: res.data?.ok ? undefined : res.data?.description || 'Telegram API error' };
   } catch (err: any) {

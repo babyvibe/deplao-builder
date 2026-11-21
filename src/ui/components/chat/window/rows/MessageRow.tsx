@@ -8,12 +8,12 @@
 import React from 'react';
 import { groupRankLabel, peerColorIndex, telegramRankLabel } from '@/lib/chat/messages/peerStyle';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
-import { BubbleTime, formatBubbleTime, formatFullDateTime, MessageStatusContext, MessageTtlContext, StatusTicks, TtlMark } from '../../messages/MessageTime';
+import { BubbleTime, formatBubbleTime, formatFullDateTime, inlineTimeSpacerClass, MessageStatusContext, MessageTimeElsewhereContext, MessageTtlContext, StatusTicks, TtlMark } from '../../messages/MessageTime';
 import { outgoingMessageStatus } from '@/lib/chat/messages/messageStatus';
 import SharedMessageContent from '../../messages/SharedMessageContent';
 import FacebookTemplateCard, { FacebookEmptyMessage } from '../../facebook/FacebookTemplateCard';
 import ZaloOaCard from '../../zalo/messages/ZaloOaCard';
-import { isTelegram as isTelegramCh, isTelegramUser } from '@/lib/channels/channelHelper';
+import { isFacebook, isTelegram as isTelegramCh, isTelegramUser } from '@/lib/channels/channelHelper';
 import { BankCardBubble } from '../../messages/MessageBubbles';
 import { getTelegramPostMeta } from '@/lib/media/mediaResolver';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
@@ -35,7 +35,8 @@ import { HandledByEmployeeAvatar } from './HandledByEmployeeAvatar';
 import { QuotePreview } from './QuotePreview';
 import { VideoMessageBody } from './VideoMessageBody';
 import { TextMessageBody } from './TextMessageBody';
-import { MessageReactions } from './MessageReactions';
+import { MessageReactions, toggleTelegramQuickReaction } from './MessageReactions';
+import { MessageTelegramReactions } from './MessageTelegramReactions';
 import { SendStatusIndicator } from './SendStatusIndicator';
 import { MessageHoverActions } from './MessageHoverActions';
 import { resolveTelegramForward } from '../channels/telegram/forwardSource';
@@ -52,6 +53,9 @@ function renderDaySeparator(timestamp: number) {
     </div>
   );
 }
+
+/** Parts of a Telegram message that keep their own double-click (no quick reaction there). */
+const QUICK_REACTION_SKIP = 'a, button, input, textarea, select, img, video, audio, [role="button"], [contenteditable="true"]';
 
 /** Draws one message row (renderItem of ChatHistoryList). Returns null for messages that do not draw their own row. */
 export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number): React.ReactNode {
@@ -176,7 +180,27 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
   // Forwarded photos / album / file: "Chuyển tiếp từ …" (Forwarded from …) shares the frame with the content, text wraps to the photo width (like
   // Telegram); before, the source line sat above the photo, outside the frame, and if it was longer than the photo it pulled the whole message sideways
   const forwardShell = !!telegramForward && isNoBubbleMsg && !telegramPostMeta && !isStickerMsg && !isEcardMsg && !isBankCardMsg;
-  const bubbleShell = quoteShell || nameShell || forwardShell;
+
+  // Sticker group: several consecutive stickers from the same sender within 30 minutes
+  const isGroupedStickerFirst = isStickerMsg && !!groupedStickerFirstMsgs[msg.msg_id];
+  const groupStickerMsgs = isGroupedStickerFirst ? groupedStickerFirstMsgs[msg.msg_id] : null;
+
+  // Reactions: parse new PHP-like format or legacy format
+  const reactionCounts = parseReactions(msg.reactions, msg.channel);
+  const hasReactions = Object.keys(reactionCounts).length > 0;
+  // Each channel like its app: Telegram chips INSIDE the message frame, Zalo's corner hangs from the bottom-right corner (its
+  // button always shown on the last message of a run, like Zalo)
+  const isTelegramMsg = isTelegramCh(msg.channel);
+  const reactionsShown = channelCap.supportsReaction && !isEcardMsg && !isGroupedStickerFirst;
+  const telegramChips = reactionsShown && isTelegramMsg && hasReactions && !telegramPostMeta;
+  // Telegram photo / album / file / contact card with reactions: ONE frame around the content and the chips (like Telegram, and like
+  // a reply / forward); only a sticker keeps them right below it, without a frame
+  const reactionShell = telegramChips && isNoBubbleMsg && !isStickerMsg && !isEcardMsg && !isBankCardMsg && !isFbTemplateMsg && !isZinstantMsg;
+  const bubbleShell = quoteShell || nameShell || forwardShell || reactionShell;
+  const telegramChipsInFrame = telegramChips && (!isNoBubbleMsg || reactionShell);
+  // Like Telegram: with reaction chips in the frame, the send time moves to the end of the chips line (the frame's last line);
+  // the photo badge / caption / file time inside the content is hidden (MessageTimeElsewhereContext)
+  const timeOnReactionRow = telegramChipsInFrame;
   const nameInBubble = showGroupName && !telegramPostMeta && (!isNoBubbleMsg || bubbleShell);
   // Send time at the bottom right, on the same line as the last word if there is room (like Telegram): plain text messages only; messages with their own block
   // (polls, video, link cards with a site name / title, old content being viewed) keep their own time line. Telegram link messages
@@ -185,14 +209,12 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
     && !isPollMsg && !isVideoMsg && !isVoiceMsg && !isRtf && !isLocationMsg
     && !(msg.msg_type === 'telegram.webpage' && getTelegramWebpageMeta(msg)) && !revealedEditIds.has(msg.msg_id);
 
-  // Sticker group: several consecutive stickers from the same sender within 30 minutes
-  const isGroupedStickerFirst = isStickerMsg && !!groupedStickerFirstMsgs[msg.msg_id];
-  const groupStickerMsgs = isGroupedStickerFirst ? groupedStickerFirstMsgs[msg.msg_id] : null;
-
-
-  // Reactions: parse new PHP-like format or legacy format
-  const reactionCounts = parseReactions(msg.reactions, msg.channel);
-  const hasReactions = Object.keys(reactionCounts).length > 0;
+  // Zalo / Telegram reaction button: outer bottom corner (right of others' messages, left of yours), 16 px past the edge
+  // (the hover buttons on that side start after it)
+  const isZaloReactions = reactionsShown && !isTelegramMsg && !isFacebook(msg.channel);
+  // Zalo's summary hangs 22 px under the frame (ZaloReactionCorner): keep that room before the next message
+  const reactionGap = isZaloReactions && hasReactions ? ' mb-6'
+    : reactionsShown && hasReactions && !telegramPostMeta && !isTelegramMsg && !isZaloReactions ? ' mb-3' : '';
 
   // Selection state for this message
   const isMsgSelected = isSelecting && selectedMsgIds.has(msg.msg_id);
@@ -281,7 +303,7 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
 
           {/* Channel post: the column is not wider than the post frame. The post frame is min(30rem, 100%) of this column itself; when measuring the column,
               the browser ignores the percentage → the column stretches to the whole chat, and the 👍 button (the column's corner) and the Reply button fall outside the post */}
-          <div className={`flex flex-col ${isEcardMsg ? 'w-full items-center' : isSent ? 'items-end' : 'items-start'} relative min-w-0${hasReactions && !isGroupedStickerFirst && !telegramPostMeta ? ' mb-3' : ''}`}
+          <div className={`flex flex-col ${isEcardMsg ? 'w-full items-center' : isSent ? 'items-end' : 'items-start'} relative min-w-0${reactionGap}`}
             style={telegramPostMeta ? { maxWidth: TELEGRAM_POST_MAX_WIDTH } : undefined}>
             {/* Sender name in a group for messages without a frame (stickers…); messages with a frame: inside the bubble (nameInBubble) */}
             {showGroupName && !nameInBubble && (
@@ -298,7 +320,16 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
             <MessageTtlContext.Provider value={Number((msg as any).ttl) || 0}>
             <MessageStatusContext.Provider value={outgoingStatus}>
             <div style={telegramPostMeta ? (postEdgeMedia ? { width: TELEGRAM_POST_WIDTH } : { maxWidth: TELEGRAM_POST_WIDTH, minWidth: 'min(18rem, 100%)' }) : undefined}
-              className={`rounded-lg text-sm break-words min-w-0 max-w-full overflow-hidden${inlineTime ? ' relative' : ''}${hasQuote && !isNoBubbleMsg ? ' min-w-[13rem]' : ''} ${
+              // Telegram: double-click the message = the quick reaction (again = remove), like Telegram; no word selection on that
+              // double-click (dragging still selects text). Links, buttons, photos and players keep their own double-click.
+              onMouseDown={reactionsShown && isTelegramMsg && !isSelecting ? (e) => {
+                if (e.detail > 1 && !(e.target as HTMLElement).closest(QUICK_REACTION_SKIP)) e.preventDefault();
+              } : undefined}
+              onDoubleClick={reactionsShown && isTelegramMsg && !isSelecting ? (e) => {
+                if ((e.target as HTMLElement).closest(QUICK_REACTION_SKIP)) return;
+                void toggleTelegramQuickReaction(ctx, msg);
+              } : undefined}
+              className={`rounded-lg text-sm break-words min-w-0 max-w-full overflow-hidden${inlineTime || timeOnReactionRow ? ' relative' : ''}${hasQuote && !isNoBubbleMsg ? ' min-w-[13rem]' : ''} ${
               telegramPostMeta ? `${isSent ? 'bg-bubble-out border border-bubble-out-border' : 'bg-bubble-in border border-bubble-in-border'} rounded-lg` :
               bubbleShell ? (isSent ? 'bg-bubble-out text-foreground border border-bubble-out-border' : 'bg-bubble-in text-foreground border border-bubble-in-border') :
               isNoBubbleMsg ? '' : isSent
@@ -336,6 +367,7 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
             <TelegramPostLayoutContext.Provider value={postEdgeMedia}>
             {/* Channel post: files / voice / polls… sit inside the post frame, without a separate bubble on top */}
             <BubbleEmbedContext.Provider value={bubbleShell || !!telegramPostMeta}>
+            <MessageTimeElsewhereContext.Provider value={timeOnReactionRow}>
             {/* Quote preview - supports both pre-built quote_data and reply_to_id fallback */}
             {(msg.quote_data || (msg.reply_to_id && !(
               msg.channel === 'telegram_user' && msg.topic_id != null &&
@@ -418,35 +450,47 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
               )}
               renderText={() => isFbEmptyMsg ? <FacebookEmptyMessage msg={msg} /> : (
                 <TextMessageBody ctx={ctx} msg={msg} isSent={isSent} content={content} richBlocks={richBlocks}
-                  telegramPostMeta={telegramPostMeta} inlineTime={inlineTime} outgoingStatus={outgoingStatus} />
+                  // Telegram reactions inside the frame: the send time moves to the end of the reaction line
+                  telegramPostMeta={telegramPostMeta} inlineTime={inlineTime && !telegramChipsInFrame} outgoingStatus={outgoingStatus} />
               )}
             />
+            </MessageTimeElsewhereContext.Provider>
             </BubbleEmbedContext.Provider>
             </TelegramPostLayoutContext.Provider>
             </div>
-            {!telegramPostMeta && !isNoBubbleMsg && (inlineTime ? (
+            {/* Telegram: reaction chips on the last line of the frame, close to the content, the send time at its end (like Telegram) */}
+            {telegramChipsInFrame && (
+              <MessageTelegramReactions ctx={ctx} msg={msg}
+                // In a frame around a photo / file (no padding of its own): wrap within the content's width, like the forward header
+                className={bubbleShell ? 'w-0 min-w-full px-2.5 pb-1.5 pt-1' : 'mt-1'}
+                trailingSpacerClass={inlineTimeSpacerClass(!!outgoingStatus, (msg as any).ttl)} />
+            )}
+            {!telegramPostMeta && (inlineTime || timeOnReactionRow) ? (
               <span className="absolute bottom-1.5 right-2.5 inline-flex items-center gap-0.5 text-[11px] leading-none text-subtle-foreground select-none cursor-default"
                 title={formatFullDateTime(msg.timestamp)}>
                 <TtlMark ttl={(msg as any).ttl} sentAt={msg.timestamp} />
                 {formatBubbleTime(msg.timestamp)}
                 <StatusTicks status={outgoingStatus} />
               </span>
-            ) : (
+            ) : !telegramPostMeta && !isNoBubbleMsg ? (
               <BubbleTime timestamp={msg.timestamp} />
-            ))}
+            ) : null}
             {telegramPostMeta && (
               <TelegramPostRowFooter ctx={ctx} msg={msg} isSent={isSent} telegramPostMeta={telegramPostMeta}
                 postStats={postStats} reactionCounts={reactionCounts} hasReactions={hasReactions} />
             )}
           </div>
+          {/* Telegram sticker (no frame, like Telegram): the chips right below it */}
+          {telegramChips && isNoBubbleMsg && !reactionShell && <MessageTelegramReactions ctx={ctx} msg={msg} className="mt-1" />}
           </MessageStatusContext.Provider>
           </MessageTtlContext.Provider>
 
 
-          {/* Reaction button at the bottom corner, INSIDE the chat window (like big apps): your own message → left corner, other people's message →
-              right corner, near the middle of the screen, easy to reach; the picker pops up from the button, and for a message flush with the top edge it pops down
-              instead. When open → z-30: the reaction chips of the messages below (z-20, later in the DOM) do not cover the bar */}
-          {channelCap.supportsReaction && !isEcardMsg && !isGroupedStickerFirst && (
+          {/* Reactions per channel (MessageReactions): Zalo and Telegram: the button at the outermost bottom-right corner, right after the
+              send time (Zalo's summary next to it, just under the frame); Facebook: the button at the bottom corner INSIDE the chat window
+              (own message → left, others → right). Pickers pop up (down for a message flush with the top edge). When open → z-30: the
+              reaction chips of the messages below (z-20, later in the DOM) do not cover the bar */}
+          {reactionsShown && (
             <MessageReactions ctx={ctx} msg={msg} isSent={isSent} reactionCounts={reactionCounts} telegramPostMeta={telegramPostMeta} />
           )}
 
@@ -461,7 +505,7 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
 
         {/* Hover action buttons - visible on msg hover, outside bubble */}
         {!isEcardMsg && !isGroupedStickerFirst && !isSelecting && (
-        <MessageHoverActions ctx={ctx} msg={msg} isSent={isSent} />
+        <MessageHoverActions ctx={ctx} msg={msg} isSent={isSent} afterReactionButton={reactionsShown && (isTelegramMsg || isZaloReactions)} />
         )}
       </div>{/* end outer row */}
 

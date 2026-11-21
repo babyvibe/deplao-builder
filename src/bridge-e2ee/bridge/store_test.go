@@ -416,6 +416,18 @@ func TestPersistenceErrorsAndUnsupportedStoresAreVisible(t *testing.T) {
 		t.Fatal("PutAppStateSyncKey() error = nil, want unsupported operation error")
 	}
 
+	// WASA root secrets (whatsmeow 2026-11-16) are appstate-derived like
+	// message secrets, which this store also does not keep. Receiving ordinary
+	// messages must not depend on them, so both accessors fail loudly instead of
+	// pretending to persist state.
+	waChat := waTypes.JID{User: "123", Server: waTypes.MessengerServer}
+	if err := ds.PutWASARootSecretID(context.Background(), waChat, "msg-id"); !errors.Is(err, ErrUnsupportedStoreOperation) {
+		t.Fatalf("PutWASARootSecretID() error = %v, want ErrUnsupportedStoreOperation", err)
+	}
+	if id, err := ds.GetWASARootSecretID(context.Background(), waChat); !errors.Is(err, ErrUnsupportedStoreOperation) || id != "" {
+		t.Fatalf("GetWASARootSecretID() = %q, %v; want \"\", ErrUnsupportedStoreOperation", id, err)
+	}
+
 	// Event buffering is explicitly optional in whatsmeow and intentionally
 	// retains the upstream NoopStore behavior.
 	if event, err := ds.GetBufferedEvent(context.Background(), [32]byte{}); err != nil || event != nil {

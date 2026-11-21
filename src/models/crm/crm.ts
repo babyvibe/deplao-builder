@@ -48,6 +48,12 @@ export interface CRMCampaign {
     stop_strangers_only?: number;
     /** Auto stop: send again tomorrow (stop until the start time the next day): 0 / 1 */
     stop_resume_next_day?: number;
+    /**
+     * "Gắn nhãn khi gửi thành công": JSON array of local label ids (nhãn Local) and Zalo server label ids applied to the
+     * recipient after a successful send (Zalo labels only on the Zalo channel). See services/crm/campaignLabels.
+     */
+    success_local_labels?: string;
+    success_zalo_labels?: string;
     /** When to resume automatically after an auto stop "Mai gửi tiếp" (send again tomorrow) (0 = not scheduled) */
     auto_resume_at?: number;
     created_at?: number;

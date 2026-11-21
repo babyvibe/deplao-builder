@@ -53,6 +53,7 @@ type Client struct {
 	mobileLoginDevice     *types.InstagramLoginDevice
 	mobileSession         atomic.Pointer[instagramMobileSession]
 	saveMobileLoginDevice func(context.Context, types.InstagramLoginDevice) error
+	saveNativeSession     func(context.Context, *types.InstagramNativeSession) error
 
 	socket        atomic.Pointer[dgw.Socket]
 	cancelSocket  atomic.Pointer[context.CancelFunc]
@@ -73,6 +74,9 @@ type Client struct {
 	loadIndexLock sync.Mutex
 	lastReload    time.Time
 
+	noticeCheckLock sync.Mutex
+	lastNoticeCheck time.Time
+
 	enableTyping bool
 
 	logRedactedLoginResponses bool
@@ -81,6 +85,9 @@ type Client struct {
 
 	seqID   int64
 	seqIDTS time.Time
+
+	failedDeltaSeqID int64
+	failedDeltaCount int
 }
 
 type EventHandler func(context.Context, slidetypes.ClientEvent) error
@@ -103,6 +110,7 @@ type ClientParams struct {
 	// identity across login processes for the same bridge user.
 	MobileLoginDevice     *types.InstagramLoginDevice
 	SaveMobileLoginDevice func(context.Context, types.InstagramLoginDevice) error
+	SaveNativeSession     func(context.Context, *types.InstagramNativeSession) error
 }
 
 func NewClient(params ClientParams) *Client {
@@ -122,6 +130,7 @@ func NewClient(params ClientParams) *Client {
 		logRedactedLoginResponses: params.LogRedactedLoginResponses,
 
 		saveMobileLoginDevice: params.SaveMobileLoginDevice,
+		saveNativeSession:     params.SaveNativeSession,
 	}
 	if params.MobileLoginDevice != nil {
 		device := *params.MobileLoginDevice
@@ -139,7 +148,10 @@ func NewClient(params ClientParams) *Client {
 
 func (c *Client) SetEventHandler(handler func(context.Context, slidetypes.ClientEvent) error) {
 	if handler == nil {
-		handler = func(context.Context, slidetypes.ClientEvent) error {
+		handler = func(_ context.Context, evt slidetypes.ClientEvent) error {
+			if _, ok := evt.(*slidetypes.ReconnectionStateUpdate); ok {
+				return nil
+			}
 			return fmt.Errorf("event handler disabled")
 		}
 	}
@@ -147,16 +159,25 @@ func (c *Client) SetEventHandler(handler func(context.Context, slidetypes.Client
 }
 
 func (c *Client) loadIndex(ctx context.Context) error {
+	prevConfigs := c.configs
 	c.configs = httpclient.NewConfigs(c)
 	c.http.SetConfigs(c.configs)
 	moduleLoader := httpclient.NewModuleParser(c, c.http, c.configs)
 	moduleLoader.LS = nil
 	err := moduleLoader.Load(ctx, c.GetEndpoint("messages"))
 	if err != nil {
+		if prevConfigs != nil {
+			c.configs = prevConfigs
+			c.http.SetConfigs(prevConfigs)
+		}
 		return fmt.Errorf("failed to load inbox: %w", err)
 	}
-	c.configs.Setup(c.IsAuthenticated())
+	authenticated := c.IsAuthenticated()
+	c.configs.Setup(authenticated)
 	c.lastReload = time.Now()
+	if !authenticated && c.cookies.IsLoggedIn() {
+		zerolog.Ctx(ctx).Warn().Msg("Inbox page didn't include the logged-in viewer")
+	}
 
 	state, err := c.DumpState()
 	if err != nil {
@@ -187,8 +208,10 @@ func (c *Client) ReloadIndex(ctx context.Context) (bool, error) {
 	}
 	if s := c.socket.Load(); s != nil {
 		s.DeviceID = c.configs.BrowserConfigTable.IGDMqttWebDeviceID.ClientID
+		s.UserID = c.configs.BrowserConfigTable.PolarisViewer.Data.Fbid
 		if scs := c.streamControllerSocket.Load(); scs != nil {
 			scs.DeviceID = c.configs.BrowserConfigTable.IGDMqttWebDeviceID.ClientID
+			scs.UserID = c.configs.BrowserConfigTable.PolarisViewer.ID
 		}
 		c.mqttBypassConnectLock.Lock()
 		if mbs := c.mqttBypassSocket; mbs != nil {
@@ -224,6 +247,8 @@ func (c *Client) LoadIndex(ctx context.Context) (*types.PolarisViewer, *slidetyp
 	mailbox, err := c.GetMailbox(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get mailbox: %w", err)
+	} else if mailbox.GetMailbox() == nil {
+		return nil, nil, ErrMailboxMissing
 	}
 	c.seqID = mailbox.Mailbox.UQSeqID
 	c.seqIDTS = time.Now()
@@ -283,6 +308,7 @@ const MaxCachedStateAge = 24 * time.Hour
 
 var ErrCachedStateTooOld = errors.New("cached state is too old")
 var ErrClientIsNil = errors.New("client is nil")
+var ErrMailboxMissing = errors.New("mailbox missing from response")
 
 func (c *Client) LoadState(state json.RawMessage) error {
 	if c == nil {
@@ -327,7 +353,7 @@ func (c *Client) DumpState() (json.RawMessage, error) {
 func (c *Client) checkResponseError(err error) {
 	if errors.Is(err, httpclient.ErrChallengeRequired) ||
 		errors.Is(err, httpclient.ErrCheckpointRequired) ||
-		errors.Is(err, httpclient.ErrCheckpointRequired) ||
+		errors.Is(err, httpclient.ErrAccountSuspended) ||
 		errors.Is(err, httpclient.ErrConsentRequired) ||
 		errors.Is(err, httpclient.ErrTokenInvalidated) {
 		_ = c.eventHandler(context.TODO(), &slidetypes.AuthError{Error: err})

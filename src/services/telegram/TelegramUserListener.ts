@@ -9118,10 +9118,17 @@ export async function sendAlbum(
   chatId: string,
   filePaths: string[],
   caption?: string,
+  opts?: { topicRootMessageId?: string; replyToMsgId?: string },
 ): Promise<{ success: boolean; messageId?: string; messageIds?: string[]; error?: string }> {
   const files = filePaths.filter(Boolean);
   if (files.length === 0) return { success: false, error: tr('Không có ảnh để gửi') };
-  if (files.length === 1) return sendFile(accountId, chatId, files[0], caption, 'image');
+  if (files.length === 1) {
+    // A one-item "album" is rejected by messages.SendMultiMedia → the plain file sender (which also handles topics)
+    if (opts?.topicRootMessageId) {
+      return sendTopicFile(accountId, chatId, opts.topicRootMessageId, files[0], caption, 'image', opts.replyToMsgId);
+    }
+    return sendFile(accountId, chatId, files[0], caption, 'image', opts?.replyToMsgId);
+  }
 
   const listener = activeListeners.get(accountId);
   if (!listener?.client || !listener.connected) return { success: false, error: 'Not connected' };
@@ -9137,14 +9144,23 @@ export async function sendAlbum(
     if (missing) return { success: false, error: tr('File không tồn tại: {{v1}}', { v1: pathMod.basename(missing) }) };
 
     const peer = await resolveInputPeer(accountId, listener.client, chatId);
+    // Forum topic / channel post comment thread: the album must enter the topic, so it replies to the topic root
+    // (or to the quoted message) with topMsgId, exactly like sendTopicFile does for a single file.
+    const topicRoot = opts?.topicRootMessageId ? Number(opts.topicRootMessageId) : 0;
+    const replyTarget = opts?.replyToMsgId && /^\d+$/.test(String(opts.replyToMsgId))
+      ? Number(opts.replyToMsgId)
+      : (topicRoot || undefined);
     const messageIds: string[] = [];
     for (let start = 0; start < resolved.length; start += TELEGRAM_ALBUM_MAX) {
       const chunk = resolved.slice(start, start + TELEGRAM_ALBUM_MAX);
-      const result: any = await listener.client.sendFile(peer, {
+      const sendOpts: any = {
         // A one-item "album" is rejected by messages.SendMultiMedia → plain photo.
         file: chunk.length === 1 ? chunk[0] : chunk,
         caption: start === 0 ? (caption || '') : '',
-      });
+      };
+      if (replyTarget) sendOpts.replyTo = replyTarget;
+      if (topicRoot) sendOpts.topMsgId = topicRoot;
+      const result: any = await listener.client.sendFile(peer, sendOpts);
       const sent = (Array.isArray(result) ? result : [result]).filter(Boolean);
       for (const message of sent) {
         messageIds.push(String(message.id));
@@ -9347,6 +9363,31 @@ export async function getAvailableReactions(
       chatReactionsCache.set(chatKey, chatEntry);
     }
     return { success: true, reactions: orderTelegramReactions({ ...catalog, chat: chatEntry.chat }) };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+const QUICK_REACTION_TTL_MS = 6 * 60 * 60 * 1000;
+const quickReactionCache = new Map<string, { at: number; emoji: string }>();
+
+/**
+ * The account's quick reaction (Telegram settings → Quick Reaction, `help.getConfig().reactions_default`): what Telegram sends on a
+ * double-click and shows on the reaction button. Cached 6 hours per account. A custom emoji (Premium) is not a standard emoji
+ * → null, and the renderer falls back to 👍 like Telegram's own default.
+ */
+export async function getQuickReaction(accountId: string): Promise<{ success: boolean; emoji?: string | null; error?: string }> {
+  const cached = quickReactionCache.get(accountId);
+  if (cached && Date.now() - cached.at < QUICK_REACTION_TTL_MS) return { success: true, emoji: cached.emoji || null };
+  const listener = activeListeners.get(accountId);
+  if (!listener?.client || !listener.connected) return { success: false, error: 'Not connected' };
+  try {
+    const { Api } = require('telegram');
+    const config: any = await listener.client.invoke(new Api.help.GetConfig());
+    const reaction = config?.reactionsDefault;
+    const emoji = reaction?.className === 'ReactionEmoji' && reaction.emoticon ? String(reaction.emoticon) : '';
+    quickReactionCache.set(accountId, { at: Date.now(), emoji });
+    return { success: true, emoji: emoji || null };
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) };
   }

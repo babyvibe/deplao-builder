@@ -6,12 +6,14 @@ import { MsgActionBtn } from '../../messages/ChatWindowBubbles';
 import type { MessageRowContext, RowLocals } from './rowContext';
 import { tr } from '../../../../../shared/i18n';
 
-type MessageHoverActionsProps = { ctx: MessageRowContext } & Pick<RowLocals, 'msg' | 'isSent'>;
+type MessageHoverActionsProps = { ctx: MessageRowContext; afterReactionButton?: boolean } & Pick<RowLocals, 'msg' | 'isSent'>;
 
-export function MessageHoverActions({ ctx, msg, isSent }: MessageHoverActionsProps) {
+export function MessageHoverActions({ ctx, msg, isSent, afterReactionButton }: MessageHoverActionsProps) {
   const { isGroupAdmin, setContextMenu, setReplyTo } = ctx;
   return (
-    <div className="flex items-center gap-0.5 self-end mb-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-100 flex-shrink-0 flex-nowrap">
+    // afterReactionButton: the Zalo / Telegram reaction button sticks out 16 px past the outer edge of the message (right of
+    // others' messages, left of yours, the same side as these buttons) → start after it
+    <div className={`flex items-center gap-0.5 self-end mb-1 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-100 flex-shrink-0 flex-nowrap${afterReactionButton ? (isSent ? ' mr-4' : ' ml-4') : ''}`}>
       {/* Reply */}
       <MsgActionBtn title={tr('Trả lời')} onClick={() => setReplyTo(msg)}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

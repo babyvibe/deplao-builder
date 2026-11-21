@@ -1,10 +1,11 @@
 /**
- * How one CRM campaign block (text + images) is sent to one recipient — shared by the queue
+ * How one CRM campaign block (text + images + videos + files) is sent to one recipient — shared by the queue
  * (`services/crm/campaignBlockSender`) and the campaign screens, so the preview shows exactly
  * what will be sent. Options live in the template JSON next to `mode` / `blocks`:
  * `{ mode, blocks, order?: 'text_first' | 'images_first', combine?: boolean }`.
  *
  * Defaults (`text_first`, no combine) keep the historical behaviour: text message, then images.
+ * Videos and files are always sent after the text/images part, videos first, one message per file.
  */
 
 import { tr } from '../i18n';
@@ -31,10 +32,14 @@ export type CampaignSendStep =
   /** Images without text: one batch on Zalo (album), one message per image on Telegram (as before). */
   | { kind: 'images'; images: string[] }
   /** Images + text as caption: one message (Telegram: an album when several images). */
-  | { kind: 'captioned'; images: string[] };
+  | { kind: 'captioned'; images: string[] }
+  /** Videos: sent one by one, never as a caption (Zalo/Telegram keep them separate from the text). */
+  | { kind: 'videos'; videos: string[] }
+  /** Documents / arbitrary files: sent one by one as an attachment. */
+  | { kind: 'files'; files: string[] };
 
 /** Why "combine" fell back to separate messages. */
-export type CombineFallback = 'zalo_multi_image' | 'zalo_not_photo' | 'caption_too_long';
+export type CombineFallback = 'zalo_multi_image' | 'zalo_not_photo' | 'facebook_multi_image' | 'caption_too_long';
 
 export interface BlockSendPlan {
   steps: CampaignSendStep[];
@@ -53,28 +58,48 @@ function isTelegramChannel(channel: string): boolean {
   return channel === 'telegram_user' || channel === 'telegram_bot';
 }
 
+/** Videos and files always trail the text/images part (see the module docstring). */
+function attachmentSteps(videos: readonly string[], files: readonly string[]): CampaignSendStep[] {
+  return [
+    ...(videos.length ? [{ kind: 'videos' as const, videos: [...videos] }] : []),
+    ...(files.length ? [{ kind: 'files' as const, files: [...files] }] : []),
+  ];
+}
+
 /**
  * @param text text that will be sent (after `{name}` substitution and Zalo markup removal)
  */
 export function planBlockSend(input: {
   text: string;
   images: readonly string[];
+  videos?: readonly string[];
+  files?: readonly string[];
   channel: string;
   options: CampaignSendOptions;
 }): BlockSendPlan {
   const hasText = input.text.trim().length > 0;
   const images = input.images.filter(Boolean);
-  if (!hasText && images.length === 0) return { steps: [], fallback: null };
-  if (images.length === 0) return { steps: [{ kind: 'text' }], fallback: null };
-  if (!hasText) return { steps: [{ kind: 'images', images }], fallback: null };
+  const videos = (input.videos ?? []).filter(Boolean);
+  const files = (input.files ?? []).filter(Boolean);
+  const trailer = attachmentSteps(videos, files);
+
+  if (!hasText && images.length === 0) return { steps: trailer, fallback: null };
+  if (images.length === 0) return { steps: [{ kind: 'text' }, ...trailer], fallback: null };
+  if (!hasText) return { steps: [{ kind: 'images', images }, ...trailer], fallback: null };
 
   let fallback: CombineFallback | null = null;
   if (input.options.combine) {
     if (isTelegramChannel(input.channel)) {
-      if (input.text.length <= TELEGRAM_CAPTION_LIMIT) return { steps: [{ kind: 'captioned', images }], fallback: null };
+      if (input.text.length <= TELEGRAM_CAPTION_LIMIT) {
+        return { steps: [{ kind: 'captioned', images }, ...trailer], fallback: null };
+      }
       fallback = 'caption_too_long';
+    } else if (input.channel === 'facebook') {
+      // Facebook sends the text as the message body of one attachment: only a single image can carry it.
+      if (images.length === 1) return { steps: [{ kind: 'captioned', images }, ...trailer], fallback: null };
+      fallback = 'facebook_multi_image';
     } else if (images.length === 1 && ZALO_CAPTION_IMAGE.test(images[0])) {
-      return { steps: [{ kind: 'captioned', images }], fallback: null };
+      return { steps: [{ kind: 'captioned', images }, ...trailer], fallback: null };
     } else {
       fallback = images.length > 1 ? 'zalo_multi_image' : 'zalo_not_photo';
     }
@@ -83,11 +108,12 @@ export function planBlockSend(input: {
   const steps: CampaignSendStep[] = input.options.order === 'images_first'
     ? [{ kind: 'images', images }, { kind: 'text' }]
     : [{ kind: 'text' }, { kind: 'images', images }];
-  return { steps, fallback };
+  return { steps: [...steps, ...trailer], fallback };
 }
 
 export const COMBINE_FALLBACK_LABEL: Record<CombineFallback, string> = {
   zalo_multi_image: tr('Zalo chỉ gắn chữ vào 1 ảnh — nhiều ảnh sẽ gửi chữ riêng'),
   zalo_not_photo: tr('Zalo chỉ gắn chữ vào ảnh jpg / png / webp'),
+  facebook_multi_image: tr('Facebook chỉ gắn chữ vào 1 ảnh — nhiều ảnh sẽ gửi chữ riêng'),
   caption_too_long: tr('Chữ dài hơn {{TELEGRAM_CAPTION_LIMIT}} ký tự — Telegram không cho làm chú thích ảnh', { TELEGRAM_CAPTION_LIMIT }),
 };

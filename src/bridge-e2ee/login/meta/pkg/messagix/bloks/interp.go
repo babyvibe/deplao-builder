@@ -9,6 +9,7 @@ import (
 	"maps"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,8 @@ type InterpBridge struct {
 	OpenDialog             func(context.Context, *BloksDialog) error
 	PopScreen              func(context.Context, string) error
 	HandleVariableChange   func(ctx context.Context, name string, value *BloksScriptLiteral) error
+
+	ShowLoggedInResetPassword func(ctx context.Context) error
 }
 
 type BloksDialogButton struct {
@@ -102,7 +105,7 @@ func NewInterpreter(ctx context.Context, b *BloksBundle, br *InterpBridge, old *
 		}
 		id := BloksVariableID(item.ID)
 		switch item.Type {
-		case "gs", "bloks_android_system_insets", "bloks_ios_view_insets":
+		case "gs", "bloks_android_system_insets", "bloks_ios_view_insets", "bloks_viewport_dimensions":
 			// Check if global var was already set
 			if globals[id] != nil {
 				break
@@ -149,6 +152,9 @@ func NewInterpreter(ctx context.Context, b *BloksBundle, br *InterpBridge, old *
 		br.GetEncryptedMSISDN = func(ctx context.Context, name string, flag bool) (string, error) {
 			return "", nil
 		}
+	}
+	if br.DeviceEmails == nil {
+		br.DeviceEmails = []*BloksScriptLiteral{}
 	}
 	if br.SignRequestData == nil {
 		br.SignRequestData = func(ctx context.Context, data any) (any, error) {
@@ -234,7 +240,7 @@ func NewInterpreter(ctx context.Context, b *BloksBundle, br *InterpBridge, old *
 		}
 		id := BloksVariableID(item.ID)
 		switch item.Type {
-		case "gs", "bloks_android_system_insets", "bloks_ios_view_insets":
+		case "gs", "bloks_android_system_insets", "bloks_ios_view_insets", "bloks_viewport_dimensions":
 			if globals[id] != nil {
 				break
 			}
@@ -306,8 +312,8 @@ func castFloat(val *BloksScriptLiteral, where string) (float64, error) {
 	return 0, fmt.Errorf("expected int64 or float64 in %s, got %T", where, val.Value())
 }
 
-// asFloat reports the numeric value of a literal, coercing int64→float64 so
-// numeric equality/comparison works when Facebook mixes 6 and 6.0.
+// DEPLAO_ADAPTER: numeric literal coercion for bk.action.f32.Eq, which
+// upstream still compares by Go type (int64 6 != float64 6.0).
 func asFloat(val *BloksScriptLiteral) (float64, bool) {
 	switch v := val.Value().(type) {
 	case float64:
@@ -609,6 +615,8 @@ func getBloksType(lit *BloksScriptLiteral) (int64, error) {
 		return 7, nil
 	case *BloksLambda:
 		return 8, nil
+	case *BloksIllegalValue:
+		return 5, nil
 	}
 	// Native code would return 5 in this case
 	return -1, fmt.Errorf("unexpected bloks typecheck for %T", lit.Value())
@@ -814,7 +822,7 @@ func (i *Interpreter) Evaluate(ctx context.Context, form *BloksScriptNode) (*Blo
 		if err != nil {
 			return nil, err
 		}
-		// Numeric equality coerces int64/float64 so 6 == 6.0 is true.
+		// DEPLAO_ADAPTER: numeric equality coerces int64/float64 so 6 == 6.0 is true.
 		firstFloat, firstIsNum := asFloat(first)
 		secondFloat, secondIsNum := asFloat(second)
 		if firstIsNum && secondIsNum {
@@ -1112,6 +1120,56 @@ func (i *Interpreter) Evaluate(ctx context.Context, form *BloksScriptNode) (*Blo
 		default:
 			return nil, fmt.Errorf("expected array or map in array.get, got %T", mapping.Value())
 		}
+	case "bk.action.array.Slice":
+		arr, err := evalAs[[]*BloksScriptLiteral](ctx, i, &call.Args[0], "array.slice")
+		if err != nil {
+			return nil, err
+		}
+		length := int64(len(arr))
+		start, err := evalAs[int64](ctx, i, &call.Args[1], "array.slice")
+		if err != nil {
+			return nil, err
+		}
+		end := length
+		if len(call.Args) > 2 {
+			endVal, err := i.Evaluate(ctx, &call.Args[2])
+			if err != nil {
+				return nil, err
+			}
+			if endVal.Value() != nil {
+				var ok bool
+				end, ok = endVal.Value().(int64)
+				if !ok {
+					return nil, fmt.Errorf("expected int64 in array.slice, got %T", endVal.Value())
+				}
+			}
+		}
+		clamp := func(idx int64) int64 {
+			if idx < 0 {
+				idx += length
+			}
+			return min(max(idx, 0), length)
+		}
+		start, end = clamp(start), clamp(end)
+		results := []*BloksScriptLiteral{}
+		if start < end {
+			results = append(results, arr[start:end]...)
+		}
+		return BloksLiteralOf(results), nil
+	case "bk.action.array.Concat":
+		results := []*BloksScriptLiteral{}
+		for _, arg := range call.Args {
+			val, err := i.Evaluate(ctx, &arg)
+			if err != nil {
+				return nil, err
+			}
+			if arr, ok := val.Value().([]*BloksScriptLiteral); ok {
+				results = append(results, arr...)
+			} else {
+				results = append(results, val)
+			}
+		}
+		return BloksLiteralOf(results), nil
 	case "bk.action.array.Map":
 		arr, err := evalAs[[]*BloksScriptLiteral](ctx, i, &call.Args[0], "array.map")
 		if err != nil {
@@ -1176,7 +1234,7 @@ func (i *Interpreter) Evaluate(ctx context.Context, form *BloksScriptNode) (*Blo
 			return nil, err
 		}
 		keys := []*BloksScriptLiteral{}
-		for key := range dict {
+		for _, key := range slices.Sorted(maps.Keys(dict)) {
 			keys = append(keys, BloksLiteralOf(key))
 		}
 		return BloksLiteralOf(keys), nil
@@ -1186,8 +1244,8 @@ func (i *Interpreter) Evaluate(ctx context.Context, form *BloksScriptNode) (*Blo
 			return nil, err
 		}
 		vals := []*BloksScriptLiteral{}
-		for _, val := range dict {
-			vals = append(vals, val)
+		for _, key := range slices.Sorted(maps.Keys(dict)) {
+			vals = append(vals, dict[key])
 		}
 		return BloksLiteralOf(vals), nil
 	case "ig.action.IsDarkModeEnabled", "fb.action.IsDarkModeEnabled":
@@ -1657,21 +1715,21 @@ func (i *Interpreter) Evaluate(ctx context.Context, form *BloksScriptNode) (*Blo
 		}
 		return BloksLiteralOf(strings.Contains(str, substr)), nil
 	case "bk.action.mins.Ge":
-		lhs, err := evalAs[int64](ctx, i, &call.Args[0], "mins.ge")
+		lhs, err := evalFloat(ctx, i, &call.Args[0], "mins.ge")
 		if err != nil {
 			return nil, err
 		}
-		rhs, err := evalAs[int64](ctx, i, &call.Args[1], "mins.ge")
+		rhs, err := evalFloat(ctx, i, &call.Args[1], "mins.ge")
 		if err != nil {
 			return nil, err
 		}
 		return BloksLiteralOf(lhs >= rhs), nil
 	case "bk.action.mins.Le":
-		lhs, err := evalAs[int64](ctx, i, &call.Args[0], "mins.ge")
+		lhs, err := evalFloat(ctx, i, &call.Args[0], "mins.le")
 		if err != nil {
 			return nil, err
 		}
-		rhs, err := evalAs[int64](ctx, i, &call.Args[1], "mins.ge")
+		rhs, err := evalFloat(ctx, i, &call.Args[1], "mins.le")
 		if err != nil {
 			return nil, err
 		}
@@ -1704,15 +1762,21 @@ func (i *Interpreter) Evaluate(ctx context.Context, form *BloksScriptNode) (*Blo
 			return nil, err
 		}
 		return BloksNothing, nil
-	case "bk.action.timer.Cancel":
-		// Args are (timer context, name), the first of which we have no use for.
-		name, err := evalAs[string](ctx, i, &call.Args[1], "timer.cancel")
+	case "bk.action.timer.Cancel", "bk.action.timer.Stop":
+		name, err := evalAs[string](ctx, i, &call.Args[len(call.Args)-1], "timer.cancel")
 		if err != nil {
 			return nil, err
 		}
 		err = i.Bridge.CancelTimer(name)
 		if err != nil {
 			return nil, err
+		}
+		return BloksNothing, nil
+	case "bk.action.caa.ShowLoggedInResetPassword", "bk.action.caa.ShowLoggedInResetPasswordV2":
+		if i.Bridge.ShowLoggedInResetPassword != nil {
+			if err := i.Bridge.ShowLoggedInResetPassword(ctx); err != nil {
+				return nil, err
+			}
 		}
 		return BloksNothing, nil
 	case "bk.action.caa.PresentCheckpointsFlow":
@@ -1759,7 +1823,27 @@ func (i *Interpreter) Evaluate(ctx context.Context, form *BloksScriptNode) (*Blo
 			return nil, err
 		}
 		return nil, fmt.Errorf("%s", msg)
-	case "bk.action.callback.MakeWithScopeOnly":
+	case "bk.action.callback.Apply":
+		if len(call.Args) < 1 {
+			return nil, fmt.Errorf("callback.Apply needs a callback")
+		}
+		callback, err := i.Evaluate(ctx, &call.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if callback.Value() == nil {
+			return BloksNothing, nil
+		}
+		if _, ok := callback.Value().(*BloksLambda); !ok {
+			return nil, fmt.Errorf("callback.Apply expected a callback, got %T", callback.Value())
+		}
+		return i.Evaluate(ctx, &BloksScriptNode{
+			Content: &BloksScriptFuncall{
+				Function: "bk.action.core.Apply",
+				Args:     append([]BloksScriptNode{{Content: callback}}, call.Args[1:]...),
+			},
+		})
+	case "bk.action.callback.Make", "bk.action.callback.MakeWithScopeOnly", "dyw":
 		return i.Evaluate(ctx, &call.Args[0])
 	case "bk.action.session_store.Get":
 		return BloksLiteralOf(i.SessionStore), nil
@@ -1790,6 +1874,17 @@ func (i *Interpreter) Evaluate(ctx context.Context, form *BloksScriptNode) (*Blo
 			return nil, err
 		}
 		return BloksNothing, i.Bridge.OpenURL(url)
+	case "bk.action.caa.PlayVoiceCaptchaAudio":
+		if len(call.Args) != 2 {
+			return nil, fmt.Errorf("PlayVoiceCaptchaAudio expects 2 arguments, got %d", len(call.Args))
+		}
+		url, err := evalAs[string](ctx, i, &call.Args[1], "captcha audio URL")
+		if err != nil {
+			return nil, err
+		}
+		return BloksNothing, i.Bridge.OpenURL(url)
+	case "bk.action.caa.GetAppBuildType":
+		return BloksLiteralOf("release"), nil
 	case "bk.action.caa.GenerateUUID":
 		// This may be wrong, just guessed the implementation based on the function name, it seems to work
 		return BloksLiteralOf(uuid.New().String()), nil
@@ -1879,8 +1974,7 @@ func (i *Interpreter) Evaluate(ctx context.Context, form *BloksScriptNode) (*Blo
 		"bk.action.text_input.ClearText",
 		"bk.action.caa.reg.SaveCachedInfo",
 		"bk.action.textinput.SetTextV2",
-		"bk.action.caa.reg.SaveMachineID",
-		"bk.action.caa.ShowLoggedInResetPassword":
+		"bk.action.caa.reg.SaveMachineID":
 		return BloksNothing, nil
 	}
 	return nil, fmt.Errorf("unimplemented function %s (%d args)", call.Function, len(call.Args))

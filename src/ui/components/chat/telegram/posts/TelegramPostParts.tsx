@@ -32,7 +32,8 @@ export function TelegramPostReactions({ counts, myEmoji, onToggle }: {
             }}
             title={mine ? tr('Bỏ cảm xúc') : tr('Thả cảm xúc này')}
             className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors select-none ${
-              mine ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-foreground hover:bg-primary/20'
+              // Same chips as Telegram messages (TelegramReactionChips): readable on the dark theme too
+              mine ? 'bg-primary text-primary-foreground' : 'bg-primary/20 text-foreground ring-1 ring-inset ring-primary/35 hover:bg-primary/30'
             }`}
           >
             <span>{displayReactionEmoji(emoji)}</span>

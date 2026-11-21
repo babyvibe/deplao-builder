@@ -32,6 +32,7 @@ import { evaluateCondition, isBotCommandText, looseText, matchCategory, parseBot
 import { MAX_LOOP_ITERATIONS_PER_RUN, forEachBodyNodeIds, forEachItemLimit, forEachVariableName, parseForEachList } from './forEachLoop';
 import { paymentFromEvent } from '../integrations/paymentWebhook';
 import { matchesPosWebhookTrigger } from '../integrations/posWebhook';
+import { sameZaloReactionMeaning, zaloReactionEventFields } from '../../shared/zalo/zaloReactions';
 import { tr } from '../../shared/i18n';
 
 // Workflow versions before reaction keys were introduced stored the six picker
@@ -524,6 +525,15 @@ class WorkflowEngineService {
     };
     for (const [channel, triggerType] of Object.entries(EVENT_MAP)) {
       this.onEvent(channel, (data: any) => {
+        if (channel === 'event:reaction') {
+          // The listener sends { zaloId, reaction }: the fields are nested in reaction.data. Own reactions and removals (✕) do not
+          // start "Khi có cảm xúc"
+          if (!data?.reaction) return;
+          const fields = zaloReactionEventFields(data);
+          if (!fields.react || fields.isSelf) return;
+          this.triggerWorkflows(triggerType, { ...data, ...fields });
+          return;
+        }
         this.triggerWorkflows(triggerType, data);
       });
     }
@@ -1230,7 +1240,8 @@ class WorkflowEngineService {
     if (triggerNode.type === 'trigger.reaction') {
       if (cfg.threadId && data.threadId !== cfg.threadId) return false;
       if (cfg.reactionType && cfg.reactionType !== 'any') {
-        if (String(data.react || data.reactionType || '') !== String(cfg.reactionType)) return false;
+        // By meaning: workflows saved 😂 (Haha) / 😢 (Buồn), Zalo's reactions now arrive as 😆 / 😭
+        if (!sameZaloReactionMeaning(String(data.react || data.reactionType || ''), String(cfg.reactionType))) return false;
       }
     }
 

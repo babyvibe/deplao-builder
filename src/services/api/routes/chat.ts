@@ -317,9 +317,28 @@ export function chatRoutes(deps: ChatRouteDeps): RouteDef[] {
                 for (const a of b.attachments || []) files.push(await resolveAttachment(ctx, deps, a));
 
                 const sent: any[] = [];
-                for (const f of files) {
-                    const res = await actions.sendFile(ctx, acc, { threadId, threadType, filePath: f.path, kind: f.kind, caption: f.caption, quoteRow });
-                    sent.push({ type: f.kind, ...extractSentId(res) });
+                // Consecutive images WITHOUT their own caption go out as ONE batch (Telegram album) instead of
+                // one message per photo; anything else keeps the per-file path (per-file captions still work).
+                for (let index = 0; index < files.length;) {
+                    const file = files[index];
+                    const isPlainImage = file.kind === 'image' && !file.caption;
+                    if (!isPlainImage) {
+                        const res = await actions.sendFile(ctx, acc, { threadId, threadType, filePath: file.path, kind: file.kind, caption: file.caption, quoteRow });
+                        sent.push({ type: file.kind, ...extractSentId(res) });
+                        index++;
+                        continue;
+                    }
+                    let end = index;
+                    while (end < files.length && files[end].kind === 'image' && !files[end].caption) end++;
+                    const run = files.slice(index, end);
+                    if (run.length === 1) {
+                        const res = await actions.sendFile(ctx, acc, { threadId, threadType, filePath: run[0].path, kind: 'image', quoteRow });
+                        sent.push({ type: 'image', ...extractSentId(res) });
+                    } else {
+                        const res = await actions.sendImages(ctx, acc, { threadId, threadType, filePaths: run.map(f => f.path), quoteRow });
+                        sent.push({ type: 'image', count: run.length, ...extractSentId(res) });
+                    }
+                    index = end;
                 }
                 if (b.sticker_id !== undefined) {
                     const res = await actions.sendSticker(ctx, acc, threadId, threadType, b.sticker_id);

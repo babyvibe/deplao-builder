@@ -6,12 +6,13 @@
 import { BaseChannelAdapter } from './BaseChannelAdapter';
 import {
   ActionResult, ThreadsResult, MessagesResult, HealthResult,
-  SendMessageParams, SendAttachmentParams, SendVideoParams,
+  SendMessageParams, SendAttachmentParams, SendAttachmentsParams, SendVideoParams,
   UnsendParams, ReactionParams, GetThreadsParams, GetMessagesParams,
   MarkReadParams, TypingParams, ConnectParams,
   GroupNameParams, BlockParams, ForwardParams, EditParams, PollParams,
 } from './ChannelAdapter';
 import ipc from '../../ipc';
+import { tr } from '../../../../shared/i18n';
 
 export class FacebookAdapter extends BaseChannelAdapter {
   readonly channel = 'facebook' as const;
@@ -68,6 +69,22 @@ export class FacebookAdapter extends BaseChannelAdapter {
       ...(replyToMessageId ? { replyToMessageId } : {}),
       ...(params.libraryUuid ? { _libraryUuid: params.libraryUuid } : {}),
     }) ?? { success: false, error: 'FB IPC not available' };
+  }
+
+  /** Several attachments at once: Facebook uploads and sends them in one IPC call (one mutation per file server-side). */
+  async sendAttachments(params: SendAttachmentsParams): Promise<ActionResult> {
+    const files = (params.filePaths || []).filter(Boolean);
+    if (files.length === 0) return { success: false, error: tr('Không có ảnh để gửi') };
+    if ((params.fileType ?? 'image') !== 'image') return super.sendAttachments(params);
+    const typeChat = this.typeChat(params.threadType);
+    const res: any = await ipc.fb?.sendAttachments({
+      accountId: params.accountId,
+      threadId: params.threadId,
+      filePaths: files,
+      body: params.body,
+      ...(typeChat !== undefined ? { typeChat } : {}),
+    });
+    return { success: res?.success ?? false, messageId: res?.messageId, error: res?.error };
   }
 
   async sendVideo(params: SendVideoParams): Promise<ActionResult> {

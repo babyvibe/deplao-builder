@@ -1663,8 +1663,9 @@ export function useZaloEvents() {
         // Echo of a reaction just clicked in the app: handleReact() already updated the UI + saved to the DB → skip both
         // (previously the echo was still saved → each click added +2 in the DB, reopening the conversation showed double).
         const echoOfLocalReact = !!reaction.isSelf && !!emoji && consumeLocalReaction(zaloId, targetMsgId, emoji);
-        // UI: other people's reactions + my own reactions clicked from another device (phone)
-        if (!reaction.isSelf || (emoji && !echoOfLocalReact)) {
+        // UI: other people's reactions + my own reactions from another device (phone), including my removal there (empty
+        // icon = Zalo's ✕, removes all my reactions; repeating the removal of an in-app ✕ is harmless)
+        if (!echoOfLocalReact) {
           updateMessageReaction(zaloId, threadId, targetMsgId, userId, emoji);
         }
         // Employee: the Boss already saved the reaction (Boss renderer / broadcastReaction); the matching REST call is a no-op

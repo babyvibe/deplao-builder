@@ -72,13 +72,58 @@ ipcRenderer.on('app:trimMemory', () => {
   try { webFrame.clearCache(); } catch { /* ignore */ }
 });
 
+// The machine woke (main: electron/app/wakeRepaint.ts): answer two animation frames later, i.e. once the UI painted again
+ipcRenderer.on('app:wakePaint', (_event, id) => {
+  const raf = (globalThis as any).requestAnimationFrame;
+  if (typeof raf !== 'function') return;
+  raf(() => raf(() => ipcRenderer.send('app:wakePainted', id)));
+});
+
 // UI language: fetch the catalog once, synchronously, before page scripts run, so src/shared/i18n/runtime.ts
 // (window.deplaoI18n) also translates module-level constants. Main side: electron/ipc/i18n/i18nIpc.ts.
+let i18nBoot: { lang?: string; messages?: Record<string, unknown> | null; fallback?: Record<string, unknown> | null } | null = null;
 try {
-  const i18nBoot = ipcRenderer.sendSync('i18n:boot');
+  i18nBoot = ipcRenderer.sendSync('i18n:boot');
   if (i18nBoot && typeof i18nBoot.lang === 'string') contextBridge.exposeInMainWorld('deplaoI18n', i18nBoot);
 } catch {
   /* no i18n handler in main: the UI stays Vietnamese */
+}
+
+// Boot screen of index.html (#boot[data-deplao-boot], shown until React's first render replaces #root): the saved theme and
+// the translated text are applied as soon as the HTML is parsed, before the app scripts load, so a reload after the laptop
+// wakes (or a slow cold start) shows "loading" in the user's colors instead of an empty dark window. Plain lookups: the
+// preload requires no other file at runtime. Named `tr` so scripts/i18n extracts these strings.
+const tr = (source: string): string => {
+  const pick = (catalog: Record<string, unknown> | null | undefined) => {
+    const value = catalog?.[source];
+    return typeof value === 'string' && value ? value : null;
+  };
+  return pick(i18nBoot?.messages) ?? pick(i18nBoot?.fallback) ?? source;
+};
+const BOOT_TEXT: Record<string, string> = {
+  loading: tr('Đang tải giao diện…'),
+  slow: tr('Tải lâu hơn thường lệ, vui lòng chờ…'),
+};
+// The electron tsconfig has no DOM lib: reach the page through globalThis
+const pageDocument: any = (globalThis as any).document;
+function prepareBootScreen(): void {
+  const boot = pageDocument?.querySelector('#boot[data-deplao-boot]');
+  if (!boot) return; // not the app page: never touch another document's theme
+  try {
+    // Same default as appStore.loadTheme: light unless dark was chosen
+    const saved = (globalThis as any).localStorage?.getItem('app_theme');
+    pageDocument.documentElement.dataset.theme = saved === 'dark' ? 'dark' : 'light';
+  } catch { /* storage unavailable: keep the dark pre-paint */ }
+  boot.querySelectorAll('[data-boot]').forEach((el: any) => {
+    const text = BOOT_TEXT[el.dataset?.boot || ''];
+    if (text) el.textContent = text;
+  });
+}
+if (pageDocument?.readyState === 'loading') {
+  // "interactive" comes right after parsing, BEFORE the deferred app module runs (DOMContentLoaded waits for it)
+  pageDocument.addEventListener('readystatechange', prepareBootScreen, { once: true });
+} else if (pageDocument) {
+  prepareBootScreen();
 }
 
 // Expose typed API to renderer
@@ -754,6 +799,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     isBotPolling:   (params: any) => ipcRenderer.invoke('telegram:isBotPolling', params),
     sendMessage:    (params: any) => ipcRenderer.invoke('telegram:sendMessage', params),
     sendPhoto:      (params: any) => ipcRenderer.invoke('telegram:sendPhoto', params),
+    sendPhotoAlbum: (params: { accountId: string; chatId: string; photoPaths: string[]; caption?: string }) => ipcRenderer.invoke('telegram:sendPhotoAlbum', params),
     sendVideo:      (params: any) => ipcRenderer.invoke('telegram:sendVideo', params),
     sendDocument:   (params: any) => ipcRenderer.invoke('telegram:sendDocument', params),
     sendAudio:      (params: any) => ipcRenderer.invoke('telegram:sendAudio', params),
@@ -786,10 +832,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     syncPinnedMessages: (params: any) => ipcRenderer.invoke('telegramUser:syncPinnedMessages', params),
     ensureMessageAvailable: (params: any) => ipcRenderer.invoke('telegramUser:ensureMessageAvailable', params),
     sendFile:       (params: any) => ipcRenderer.invoke('telegramUser:sendFile', params),
+    sendAlbum:      (params: { accountId: string; chatId: string; filePaths: string[]; caption?: string; topicRootMessageId?: string; replyToMsgId?: string }) => ipcRenderer.invoke('telegramUser:sendAlbum', params),
     sendTopicFile:  (params: TelegramForumTopicContext & { filePath: string; caption?: string; fileType?: string; replyToMsgId?: string }) => ipcRenderer.invoke('telegramUser:sendTopicFile', params),
     sendTyping:     (params: any) => ipcRenderer.invoke('telegramUser:sendTyping', params),
     sendReaction:   (params: any) => ipcRenderer.invoke('telegramUser:sendReaction', params),
     getAvailableReactions: (params: { accountId: string; chatId: string }) => ipcRenderer.invoke('telegramUser:getAvailableReactions', params),
+    getQuickReaction: (params: { accountId: string }) => ipcRenderer.invoke('telegramUser:getQuickReaction', params),
     refreshReactions: (params: { accountId: string; chatId: string; messageIds: string[] }) => ipcRenderer.invoke('telegramUser:refreshReactions', params),
     isConnected:    (accountId: string) => ipcRenderer.invoke('telegramUser:isConnected', accountId),
     getActive:      () => ipcRenderer.invoke('telegramUser:getActive'),

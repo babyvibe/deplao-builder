@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"runtime/debug"
@@ -41,13 +43,20 @@ type MetaClient struct {
 	stopHandlingTables   atomic.Pointer[context.CancelFunc]
 	initialTable         atomic.Pointer[table.LSTable]
 	initialTableHandled  atomic.Bool
-	parsedTables         chan *parsedTable
+	unhandledTables      atomic.Int32
+	parsedTables         []*parsedTable
+	parsedTablesLock     sync.Mutex
+	parsedTablesWake     chan struct{}
+	tableLoopLock        sync.Mutex
 	backfillCollectors   map[int64]*BackfillCollector
+	historyReadStates    *exsync.Map[int64, historyReadState]
 	backfillLock         sync.Mutex
+	mediaRefreshLock     exsync.KeyedMutex[int64]
 	connectLock          sync.Mutex
 	pushRegistrationLock sync.Mutex
 	stopConnectAttempt   atomic.Pointer[context.CancelFunc]
 	permanentErrored     atomic.Bool
+	reconnecting         atomic.Bool
 
 	editChannels *exsync.Map[string, chan *FBEditEvent]
 
@@ -65,14 +74,24 @@ type MetaClient struct {
 	lastStateSave     time.Time
 	lastStateSaveLock sync.Mutex
 
-	E2EEClient      *whatsmeow.Client
-	WADevice        *store.Device
-	e2eeConnectLock sync.Mutex
+	E2EEClient            *whatsmeow.Client
+	WADevice              *store.Device
+	e2eeConnectLock       sync.Mutex
+	stopE2EEReconnect     atomic.Pointer[context.CancelFunc]
+	e2eeReconnectAttempts atomic.Int32
+	e2eeLogoutRetried     atomic.Bool
 
 	metaState status.BridgeState
 	waState   status.BridgeState
 
 	waLastPresence waTypes.Presence
+
+	pollSendLock sync.Mutex
+	pendingPoll  atomic.Pointer[pendingPollSend]
+
+	pollQueries sync.Map
+
+	requestedThreads *exsync.Set[int64]
 }
 
 func (m *MetaConnector) getMessagixConfig() *messagix.Config {
@@ -95,8 +114,10 @@ func (m *MetaConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserL
 		LoginMeta: loginMetadata,
 		UserLogin: login,
 
-		parsedTables:       make(chan *parsedTable, 16),
+		parsedTablesWake:   make(chan struct{}, 1),
 		backfillCollectors: make(map[int64]*BackfillCollector),
+		historyReadStates:  exsync.NewMap[int64, historyReadState](),
+		requestedThreads:   exsync.NewSet[int64](),
 
 		connectBackgroundWAOfflineSync: exsync.NewEvent(),
 
@@ -109,10 +130,11 @@ func (m *MetaConnector) LoadUserLogin(ctx context.Context, login *bridgev2.UserL
 }
 
 var (
-	_ bridgev2.NetworkAPI                    = (*MetaClient)(nil)
-	_ bridgev2.CredentialExportingNetworkAPI = (*MetaClient)(nil)
-	_ status.BridgeStateFiller               = (*MetaClient)(nil)
+	_ bridgev2.NetworkAPI      = (*MetaClient)(nil)
+	_ status.BridgeStateFiller = (*MetaClient)(nil)
 )
+
+var getProxyClient = &http.Client{Timeout: 30 * time.Second}
 
 type respGetProxy struct {
 	ProxyURL string `json:"proxy_url"`
@@ -136,10 +158,14 @@ func (m *MetaConnector) getProxy(reason string) (string, error) {
 		return "", fmt.Errorf("failed to prepare request: %w", err)
 	}
 	req.Header.Set("User-Agent", mautrix.DefaultUserAgent)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := getProxyClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %w", err)
-	} else if resp.StatusCode >= 300 || resp.StatusCode < 200 {
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode >= 300 || resp.StatusCode < 200 {
 		return "", fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 	var respData respGetProxy
@@ -163,26 +189,17 @@ func (m *MetaClient) ensureMessagixClient() {
 	}
 }
 
-func (m *MetaClient) ExportCredentials(ctx context.Context) any {
-	if m.Client == nil {
-		return nil
-	}
-	if m.LoginMeta.NativeSession == nil {
-		return m.Client.GetCookies()
-	}
-	return &metaCredentials{
-		Platform:      m.LoginMeta.Platform,
-		Cookies:       m.Client.GetCookies(),
-		NativeSession: m.LoginMeta.NativeSession,
-	}
-}
-
 func (m *MetaClient) Connect(ctx context.Context) {
 	if !m.connectLock.TryLock() {
 		zerolog.Ctx(ctx).Error().Msg("Connect called multiple times in parallel")
 		return
 	}
 	defer m.connectLock.Unlock()
+	m.connect(ctx)
+}
+
+func (m *MetaClient) connect(ctx context.Context) {
+	m.historyReadStates.Clear()
 	if m.metaState.StateEvent == "" && m.waState.StateEvent == "" {
 		// Ensure both states start at CONNECTING now
 		m.metaState.StateEvent = status.StateConnecting
@@ -201,6 +218,7 @@ const MaxConnectRetries = 10
 
 func (m *MetaClient) connectWithRetry(retryCtx, ctx context.Context, attempts int) {
 	if m.LoginMeta.Platform == types.Instagram {
+		m.permanentErrored.Store(true)
 		m.UserLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateBadCredentials,
 			Error:      IGNotSupported,
@@ -281,6 +299,7 @@ func (m *MetaClient) connectWithRetry(retryCtx, ctx context.Context, attempts in
 			}
 		} else if errors.Is(err, httpclient.ErrChallengeRequired) {
 			// Note: this is probably exclusive to instagram
+			m.permanentErrored.Store(true)
 			m.UserLogin.BridgeState.Send(status.BridgeState{
 				StateEvent: status.StateBadCredentials,
 				Error:      FBChallengeRequired,
@@ -289,12 +308,15 @@ func (m *MetaClient) connectWithRetry(retryCtx, ctx context.Context, attempts in
 			})
 		} else if errors.Is(err, httpclient.ErrAccountSuspended) {
 			// Note: this is probably exclusive to instagram
+			m.permanentErrored.Store(true)
 			m.UserLogin.BridgeState.Send(status.BridgeState{
 				StateEvent: status.StateBadCredentials,
 				Error:      FBAccountSuspended,
+				UserAction: status.UserActionRestart,
 				Info:       map[string]any{"open_url": httpclient.GetErrorRedirectURL(err)},
 			})
 		} else if errors.Is(err, httpclient.ErrCheckpointRequired) {
+			m.permanentErrored.Store(true)
 			m.UserLogin.BridgeState.Send(status.BridgeState{
 				StateEvent: status.StateBadCredentials,
 				Error:      FBCheckpointRequired,
@@ -302,6 +324,7 @@ func (m *MetaClient) connectWithRetry(retryCtx, ctx context.Context, attempts in
 				Info:       map[string]any{"open_url": httpclient.GetErrorRedirectURL(err)},
 			})
 		} else if errors.Is(err, httpclient.ErrConsentRequired) {
+			m.permanentErrored.Store(true)
 			m.UserLogin.BridgeState.Send(status.BridgeState{
 				StateEvent: status.StateBadCredentials,
 				Error:      FBConsentRequired,
@@ -312,13 +335,15 @@ func (m *MetaClient) connectWithRetry(retryCtx, ctx context.Context, attempts in
 			stateEvt := status.StateUnknownError
 			if lsErr.ErrorCode == 1357053 {
 				stateEvt = status.StateBadCredentials
+				m.permanentErrored.Store(true)
 			} else if attempts < MaxConnectRetries {
 				stateEvt = status.StateTransientDisconnect
 			}
 			m.UserLogin.BridgeState.Send(status.BridgeState{
 				StateEvent: stateEvt,
 				Error:      status.BridgeStateErrorCode(fmt.Sprintf("meta-lserror-%d", lsErr.ErrorCode)),
-				Message:    lsErr.Error(),
+				Message:    "Facebook returned an error while connecting",
+				Info:       map[string]any{"go_error": lsErr.Error()},
 			})
 			if stateEvt == status.StateTransientDisconnect {
 				m.connectWithRetry(retryCtx, ctx, attempts+1)
@@ -336,6 +361,15 @@ func (m *MetaClient) connectWithRetry(retryCtx, ctx context.Context, attempts in
 				Error:      MetaConnectError,
 			})
 			m.connectWithRetry(retryCtx, ctx, attempts+1)
+		} else if m.LoginMeta.Platform.IsMessengerLite() && errors.Is(err, httpclient.ErrPageInternalServerError) {
+			m.UserLogin.BridgeState.Send(status.BridgeState{
+				StateEvent:         status.StateUnknownError,
+				Error:              MetaInboxLoadFailed,
+				BlockAutoReconnect: true,
+				Info: map[string]any{
+					"go_error": err.Error(),
+				},
+			})
 		} else {
 			m.UserLogin.BridgeState.Send(status.BridgeState{
 				StateEvent: status.StateUnknownError,
@@ -415,6 +449,7 @@ func (m *MetaClient) periodicReconnect() {
 		(*oldCancel)()
 	}
 	interval := time.Duration(m.Main.Config.ForceRefreshIntervalSeconds) * time.Second
+	interval -= rand.N(interval / 10)
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
 	m.UserLogin.Log.Info().Stringer("interval", interval).Msg("Starting periodic reconnect loop")
@@ -442,7 +477,8 @@ func (m *MetaClient) tryConnectE2EE(fromConnectFailure bool) {
 					"go_error": fmt.Sprintf("panic: %v", v),
 				},
 			}
-			m.UserLogin.BridgeState.Send(m.waState)
+			m.sendBridgeState(m.waState)
+			m.scheduleE2EEReconnect()
 		}
 	}()
 	err := m.connectE2EE()
@@ -455,14 +491,58 @@ func (m *MetaClient) tryConnectE2EE(fromConnectFailure bool) {
 					"go_error": err.Error(),
 				},
 			}
-			m.UserLogin.BridgeState.Send(m.waState)
+			m.sendBridgeState(m.waState)
 		}
 		if fromConnectFailure {
 			m.UserLogin.Log.Err(err).Msg("Failed to connect to e2ee after 415 error")
 		} else {
 			m.UserLogin.Log.Err(err).Msg("Failed to connect to e2ee")
 		}
+		if errors.Is(err, messagix.ErrICDCUnauthorized) {
+			if !m.permanentErrored.Load() && m.canReconnect() {
+				m.UserLogin.Log.Debug().Msg("Doing full reconnect after e2ee device registration was unauthorized")
+				go m.FullReconnect()
+			}
+			return
+		}
+		m.scheduleE2EEReconnect()
 	}
+}
+
+func (m *MetaClient) scheduleE2EEReconnect() {
+	attempts := m.e2eeReconnectAttempts.Add(1)
+	backoff := min(time.Duration(1<<min(attempts, 10))*time.Second, messagix.MaxConnectBackoff)
+	backoff = backoff/2 + rand.N(backoff/2)
+	ctx, cancel := context.WithCancel(context.Background())
+	if oldCancel := m.stopE2EEReconnect.Swap(&cancel); oldCancel != nil {
+		(*oldCancel)()
+	}
+	m.UserLogin.Log.Debug().Stringer("reconnect_in", backoff).Msg("Scheduling e2ee reconnect")
+	go func() {
+		defer cancel()
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+		if m.stopE2EEReconnect.CompareAndSwap(&cancel, nil) && m.Client != nil && m.waState.StateEvent == status.StateUnknownError {
+			m.reconnectE2EE()
+		}
+	}()
+}
+
+func (m *MetaClient) reconnectE2EE() {
+	m.UserLogin.Log.Debug().Msg("Reconnecting e2ee client after error")
+	m.e2eeConnectWaiter.Clear()
+	m.e2eeConnectLock.Lock()
+	if cli := m.E2EEClient; cli != nil {
+		cli.Disconnect()
+		m.E2EEClient = nil
+	}
+	// The store may have deleted the device, so load it again by ID
+	m.WADevice = nil
+	m.e2eeConnectLock.Unlock()
+	m.tryConnectE2EE(false)
 }
 
 func (m *MetaClient) connectE2EE() error {
@@ -541,7 +621,7 @@ func (m *MetaClient) saveConnectionState(ctx context.Context, state json.RawMess
 	}
 	m.lastStateSaveLock.Unlock()
 	if state == nil {
-		if !ratelimited {
+		if ratelimited {
 			return
 		}
 		state, _ = m.Client.DumpState()
@@ -562,6 +642,10 @@ func (m *MetaClient) Disconnect() {
 	if !m.initialTableHandled.Load() {
 		if state != nil {
 			m.UserLogin.Log.Warn().Msg("Initial table wasn't handled before disconnect, not saving reconnection state")
+		}
+	} else if m.unhandledTables.Load() > 0 {
+		if state != nil {
+			m.UserLogin.Log.Warn().Msg("Some tables weren't handled before disconnect, not saving reconnection state")
 		}
 	} else if state != nil {
 		saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -599,11 +683,16 @@ func (m *MetaClient) disconnect(dumpState bool) (state json.RawMessage) {
 	if stopPeriodicReconnect := m.stopPeriodicReconnect.Swap(nil); stopPeriodicReconnect != nil {
 		(*stopPeriodicReconnect)()
 	}
+	if stopE2EEReconnect := m.stopE2EEReconnect.Swap(nil); stopE2EEReconnect != nil {
+		(*stopE2EEReconnect)()
+	}
+	m.e2eeReconnectAttempts.Store(0)
+	m.e2eeLogoutRetried.Store(false)
 	return
 }
 
 func (m *MetaClient) IsLoggedIn() bool {
-	return m.Client.IsAuthenticatedAndLoaded() && !m.permanentErrored.Load()
+	return m.LoginMeta.Cookies != nil && !m.permanentErrored.Load()
 }
 
 func (m *MetaClient) IsThisUser(ctx context.Context, userID networkid.UserID) bool {
@@ -638,19 +727,38 @@ func (m *MetaClient) canReconnectError24() bool {
 	return true
 }
 
-func (m *MetaClient) FullReconnect() {
-	if m.LoginMeta.Cookies == nil {
+func (m *MetaClient) reconnectAfterNetworkReset() {
+	if !m.reconnecting.CompareAndSwap(false, true) {
 		return
 	}
+	defer m.reconnecting.Store(false)
+	m.UserLogin.BridgeState.StopUnknownErrorReconnect()
+	m.Disconnect()
+	m.Connect(m.UserLogin.Log.WithContext(m.Main.Bridge.BackgroundCtx))
+}
+
+func (m *MetaClient) FullReconnect() {
+	if m.LoginMeta.Cookies == nil || m.Client == nil {
+		return
+	} else if !m.reconnecting.CompareAndSwap(false, true) {
+		m.UserLogin.Log.Debug().Msg("Not doing full reconnect as another reconnect is in progress")
+		return
+	}
+	defer m.reconnecting.Store(false)
 	ctx := m.UserLogin.Log.WithContext(m.Main.Bridge.BackgroundCtx)
 	m.connectWaiter.Clear()
 	m.e2eeConnectWaiter.Clear()
 	m.disconnect(false)
+	m.metaState = status.BridgeState{StateEvent: status.StateConnecting}
+	m.waState = status.BridgeState{StateEvent: status.StateConnecting}
+	m.sendBridgeState(m.metaState)
 	err := m.Main.DB.DeleteReconnectionState(ctx, m.UserLogin.ID)
 	if err != nil {
 		m.UserLogin.Log.Err(err).Msg("Failed to delete cached reconnection state for full reconnect")
 	}
-	m.Connect(ctx)
+	m.connectLock.Lock()
+	defer m.connectLock.Unlock()
+	m.connect(ctx)
 	m.lastFullReconnect = time.Now()
 }
 
@@ -662,12 +770,28 @@ func (m *MetaClient) resetWADevice() {
 func (m *MetaClient) FillBridgeState(state status.BridgeState) status.BridgeState {
 	// The Meta bridge internally has two states - one for connection to meta and one for whatsapp;
 	// as such we need to merge the two states when sending updates and pick the "worst case".
-	copyFrom := m.pickWorstCaseBridgeState(state)
+	// A whatsapp failure only affects encrypted chats, so it's reported on top of a connected meta state
+	// instead of making the whole login look broken.
+	waState := m.waState
+	waFailed := waState.StateEvent == status.StateUnknownError
+	if waFailed {
+		waState.StateEvent = status.StateConnected
+		if state.StateEvent == status.StateUnknownError && state.Error == waState.Error {
+			state.StateEvent = status.StateConnected
+		}
+	}
+	copyFrom := m.pickWorstCaseBridgeState(state, &waState)
 	if copyFrom != nil {
 		state.StateEvent = copyFrom.StateEvent
 		state.Error = copyFrom.Error
 		state.Message = copyFrom.Message
-		state.Info = copyFrom.Info
+		state.UserAction = copyFrom.UserAction
+		state.Info = maps.Clone(copyFrom.Info)
+	}
+	if waFailed && state.StateEvent == status.StateConnected {
+		state.Error = waState.Error
+		state.Message = waState.Message
+		state.Info = maps.Clone(waState.Info)
 	}
 
 	if state.Info == nil {
@@ -680,8 +804,13 @@ func (m *MetaClient) FillBridgeState(state status.BridgeState) status.BridgeStat
 	return state
 }
 
-func (m *MetaClient) pickWorstCaseBridgeState(state status.BridgeState) *status.BridgeState {
-	if state.StateEvent == m.waState.StateEvent && state.StateEvent == m.metaState.StateEvent {
+func (m *MetaClient) sendBridgeState(state status.BridgeState) {
+	state.Info = maps.Clone(state.Info)
+	m.UserLogin.BridgeState.Send(state)
+}
+
+func (m *MetaClient) pickWorstCaseBridgeState(state status.BridgeState, waState *status.BridgeState) *status.BridgeState {
+	if state.StateEvent == waState.StateEvent && state.StateEvent == m.metaState.StateEvent {
 		// If both states are the same as the input, we can use as-is
 		return nil
 	}
@@ -696,8 +825,8 @@ func (m *MetaClient) pickWorstCaseBridgeState(state status.BridgeState) *status.
 	} {
 		if state.StateEvent == status {
 			return nil
-		} else if m.waState.StateEvent == status {
-			return &m.waState
+		} else if waState.StateEvent == status {
+			return waState
 		} else if m.metaState.StateEvent == status {
 			return &m.metaState
 		}

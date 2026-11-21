@@ -1,6 +1,6 @@
 /**
- * Estimated server time (main process). Computer clocks often drift a few seconds from the standard time (the project owner's machine was 6.4 s fast
- * (measured with w32tm on 22/10/2026)). Received messages carry the server time, but messages sent from Deplao used to be stamped with the machine time, so
+ * Estimated server time (main process). Computer clocks often drift a few seconds from the standard time (a test machine was 6.4 s fast,
+ * measured with w32tm). Received messages carry the server time, but messages sent from Deplao used to be stamped with the machine time, so
  * a customer who replied within a few seconds was sorted BEFORE the message just sent (Telegram Desktop compensates for the drift itself, so its order stays correct).
  *
  * Sent messages always use the server time the platform returns (Telegram `date`, Facebook `timestamp`); this module is the fallback when

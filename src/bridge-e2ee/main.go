@@ -68,7 +68,7 @@ const (
 // Upstream expects base64 `data` in JSON-RPC. Electron passes `localPath`
 // (filesystem path) to avoid copying large buffers across IPC.
 // This adapter reads the file, validates it, then passes bytes to bridge/.
-// See: docs/fbchat-v2.3.3-vendor-manifest.json
+// See: docs/fbchat-v2.3.5-vendor-manifest.json
 func readAndValidateLocalPath(localPath string, label string) ([]byte, error) {
 	if localPath == "" {
 		return nil, fmt.Errorf("%s: localPath is empty", label)
@@ -173,7 +173,7 @@ func handle(req *request) {
 		// DEPLAO_ADAPTER: deviceData transport — Electron passes device state
 		// as a JSON string via secureStorage instead of file I/O.
 		// Upstream uses DevicePath (file); Electron uses DeviceData (string).
-		// See: docs/fbchat-v2.3.3-vendor-manifest.json
+		// See: docs/fbchat-v2.3.5-vendor-manifest.json
 		if client != nil {
 			fail(req.ID, fmt.Errorf("client already created"))
 			return

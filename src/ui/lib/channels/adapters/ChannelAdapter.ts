@@ -68,6 +68,25 @@ export interface SendAttachmentParams {
   libraryUuid?: string;
 }
 
+/**
+ * Several attachments in ONE action. On Telegram the images become a real album (messages.SendMultiMedia, up to 10
+ * per album) instead of one message per photo; channels without an album simply send them one after another.
+ */
+export interface SendAttachmentsParams {
+  accountId: string;
+  threadId: string;
+  /** Telegram forum root/top message ID when sending inside a topic. */
+  topicRootMessageId?: string;
+  filePaths: string[];
+  threadType?: number;
+  /** Caption of the album / first attachment. */
+  body?: string;
+  /** Only 'image' is guaranteed to be batched; other kinds fall back to single sends. */
+  fileType?: SendAttachmentParams['fileType'];
+  quote?: string | null;
+  replyToMsgId?: string;
+}
+
 export interface SendVideoParams {
   accountId: string;
   threadId: string;
@@ -181,6 +200,8 @@ export interface ChannelAdapter {
 
   sendMessage(params: SendMessageParams): Promise<ActionResult>;
   sendAttachment(params: SendAttachmentParams): Promise<ActionResult>;
+  /** Optional: send several attachments at once (Telegram = one album). Adapters without it use single sends. */
+  sendAttachments?(params: SendAttachmentsParams): Promise<ActionResult>;
   sendVideo(params: SendVideoParams): Promise<ActionResult>;
   unsendMessage(params: UnsendParams): Promise<ActionResult>;
   addReaction(params: ReactionParams): Promise<ActionResult>;

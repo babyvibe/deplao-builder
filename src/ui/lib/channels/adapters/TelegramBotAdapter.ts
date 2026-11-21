@@ -5,10 +5,11 @@
 
 import { BaseChannelAdapter } from './BaseChannelAdapter';
 import {
-  ActionResult, SendMessageParams, SendAttachmentParams, SendVideoParams,
+  ActionResult, SendMessageParams, SendAttachmentParams, SendAttachmentsParams, SendVideoParams,
   UnsendParams, ReactionParams, ConnectParams, HealthResult, HealthParams,
   ForwardParams, EditParams, PollParams, GroupNameParams, BlockParams,
 } from './ChannelAdapter';
+import { isTelegramImagePath } from '../../../../shared/telegram/telegramAlbum';
 import ipc from '../../ipc';
 import { tr } from '../../../../shared/i18n';
 
@@ -85,6 +86,34 @@ export class TelegramBotAdapter extends BaseChannelAdapter {
         }
       }
       return { success: res?.success ?? false, msgId: res?.messageId, messageId: res?.messageId, error: res?.error };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Several photos as ONE album (sendMediaGroup). Same reason as the user adapter: a photo per message
+   * looked like spam. Non-image files keep the single-send path.
+   */
+  async sendAttachments(params: SendAttachmentsParams): Promise<ActionResult> {
+    const files = (params.filePaths || []).filter(Boolean);
+    if (files.length === 0) return { success: false, error: tr('Không có ảnh để gửi') };
+    const onlyImages = (params.fileType ?? 'image') === 'image' && files.every(isTelegramImagePath);
+    if (!onlyImages) return super.sendAttachments(params);
+    try {
+      const res = await (ipc.telegram as any)?.sendPhotoAlbum({
+        accountId: params.accountId,
+        chatId: params.threadId,
+        photoPaths: files,
+        caption: params.body,
+      });
+      return {
+        success: res?.success ?? false,
+        msgId: res?.messageId,
+        messageId: res?.messageId,
+        messageIds: res?.messageIds,
+        error: res?.error,
+      } as ActionResult;
     } catch (err: any) {
       return { success: false, error: err.message };
     }

@@ -45,6 +45,9 @@ export interface CRMCampaign {
   stop_strangers_only?: number;
   stop_resume_next_day?: number;
   auto_resume_at?: number;
+  /** "Gắn nhãn khi gửi thành công": JSON arrays of local / Zalo label ids (services/crm/campaignLabels) */
+  success_local_labels?: string;
+  success_zalo_labels?: string;
   created_at: number;
   updated_at: number;
   total_contacts: number;

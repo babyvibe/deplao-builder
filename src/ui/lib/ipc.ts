@@ -1091,6 +1091,8 @@ declare global {
         isBotPolling:   (params: { accountId: string }) => Promise<{ success: boolean; polling: boolean }>;
         sendMessage:    (params: { accountId: string; chatId: string; text: string; parseMode?: string; replyMarkup?: Record<string, any>; mentions?: Array<{ uid: string; pos: number; len: number }> }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendPhoto:      (params: { accountId: string; chatId: string; photoPath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        /** Several photos as one album (sendMediaGroup, chunked to 10). */
+        sendPhotoAlbum: (params: { accountId: string; chatId: string; photoPaths: string[]; caption?: string }) => Promise<{ success: boolean; messageId?: string; messageIds?: string[]; error?: string }>;
         sendVideo:      (params: { accountId: string; chatId: string; videoPath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendDocument:   (params: { accountId: string; chatId: string; filePath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendAudio:      (params: { accountId: string; chatId: string; audioPath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
@@ -1128,11 +1130,14 @@ declare global {
         syncPinnedMessages: (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; pins?: any[]; error?: string }>;
         ensureMessageAvailable: (params: { accountId: string; chatId: string; messageId: string }) => Promise<{ success: boolean; message?: any; error?: string }>;
         sendFile:       (params: { accountId: string; chatId: string; filePath: string; caption?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        /** Several photos as ONE album (messages.SendMultiMedia, chunked to 10); topic/reply supported. */
+        sendAlbum:      (params: { accountId: string; chatId: string; filePaths: string[]; caption?: string; topicRootMessageId?: string; replyToMsgId?: string }) => Promise<{ success: boolean; messageId?: string; messageIds?: string[]; error?: string }>;
         sendTopicFile:  (params: TelegramForumTopicContext & { filePath: string; caption?: string; fileType?: string; replyToMsgId?: string }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
         sendTyping:     (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; error?: string }>;
         sendReaction:   (params: { accountId: string; chatId: string; messageId: string; emoji?: string }) => Promise<{ success: boolean; error?: string }>;
         /** Reactions usable in a conversation, most used first (strings exactly as in Telegram, without U+FE0F) */
         getAvailableReactions?: (params: { accountId: string; chatId: string }) => Promise<{ success: boolean; reactions?: string[]; error?: string }>;
+        getQuickReaction?: (params: { accountId: string }) => Promise<{ success: boolean; emoji?: string | null; error?: string }>;
         /** Fetch the official reactions again (GetMessagesReactions) and overwrite the saved ones */
         refreshReactions?: (params: { accountId: string; chatId: string; messageIds: string[] }) => Promise<{ success: boolean; applied?: number; error?: string }>;
         // Group management

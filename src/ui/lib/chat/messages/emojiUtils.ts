@@ -5,8 +5,9 @@
 
 /** Zalo text reaction codes → Unicode emoji (used to convert when displaying) */
 export const ZALO_CODE_TO_EMOJI: Record<string, string> = {
-  '/-heart':   '❤️',  '/-strong':  '👍',  ':>':       '😄',  ':o':       '😮',
-  ':-((': '😢',  ':-h': '😡',  ':-*': '😘',  ":')": '😂',
+  // The 6 reaction codes match shared/zalo/zaloReactions (haha 😆, cry 😭, like Zalo's own images)
+  '/-heart':   '❤️',  '/-strong':  '👍',  ':>':       '😆',  ':o':       '😮',
+  ':-((': '😭',  ':-h': '😡',  ':-*': '😘',  ":')": '😂',
   '/-shit': '💩',  '/-rose': '🌹',  '/-break': '💔',  '/-weak': '👎',
   ';xx': '😍',  ';-/': '😕',  ';-)': '😉',  '/-fade': '😶',
   '/-li': '☀️',  '/-bd': '🎂',  '/-bome': '💣',  '/-ok': '👌',
@@ -55,11 +56,13 @@ export function convertZaloEmojis(text: string): string {
 
 /** Map Unicode emoji → Zalo reaction code (used when sending a reaction) */
 export const EMOJI_TO_REACTION: Record<string, string> = {
-  '❤️': 'HEART', '👍': 'LIKE', '😄': 'HAHA', '😮': 'WOW', '😢': 'CRY', '😡': 'ANGRY',
+  // Zalo's bar: 👍 ❤️ 😆 😮 😭 😡; 😄 / 😢 (the emoji used before) still send the same reactions
+  '❤️': 'HEART', '👍': 'LIKE', '😆': 'HAHA', '😮': 'WOW', '😭': 'CRY', '😡': 'ANGRY',
+  '😄': 'HAHA', '😢': 'CRY',
   '😘': 'KISS', '😂': 'TEARS_OF_JOY', '💩': 'SHIT', '🌹': 'ROSE', '💔': 'BROKEN_HEART',
   '👎': 'DISLIKE', '😍': 'LOVE', '👌': 'OK', '✌️': 'PEACE', '🙏': 'PRAY',
   '😉': 'WINK', '😕': 'CONFUSED', '😁': 'BIG_SMILE', '👊': 'PUNCH', '👋': 'BYE',
-  '🫶': 'LOVE_YOU', '😭': 'VERY_SAD', '😎': 'COOL', '🎂': 'BIRTHDAY',
+  '🫶': 'LOVE_YOU', '😎': 'COOL', '🎂': 'BIRTHDAY',
 };
 
 /** Extended emoji categories for the emoji picker */

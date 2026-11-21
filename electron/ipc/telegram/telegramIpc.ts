@@ -99,6 +99,21 @@ export function registerTelegramIpc(): void {
     }
   });
 
+  // ── Send several photos as one album (sendMediaGroup) ───────────────────
+  ipcMain.handle('telegram:sendPhotoAlbum', async (_event, params: {
+    accountId: string;
+    chatId: string;
+    photoPaths: string[];
+    caption?: string;
+  }) => {
+    try {
+      return await TelegramBotChannel.sendPhotoAlbum(params.accountId, params.chatId, params.photoPaths, params.caption);
+    } catch (err: any) {
+      Logger.error(`[telegram:sendPhotoAlbum] ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  });
+
   // ── Get active bots ─────────────────────────────────────────────────────
   ipcMain.handle('telegram:getActiveBots', async () => {
     try {

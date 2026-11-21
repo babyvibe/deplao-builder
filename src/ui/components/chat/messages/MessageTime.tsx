@@ -18,6 +18,12 @@ export const MessageStatusContext = React.createContext<OutgoingStatus | null>(n
 /** Zalo self-delete timer for the message being drawn (ms, ZL-05); 0 = none. Deplao does not delete messages by TTL, it only shows the clock. */
 export const MessageTtlContext = React.createContext<number>(0);
 
+/**
+ * The message row draws the send time itself, on the last line of the frame (Telegram reaction chips): the content's own time
+ * (photo badge, caption, file / card time line) is not drawn, so it does not show twice.
+ */
+export const MessageTimeElsewhereContext = React.createContext<boolean>(false);
+
 const MAX_TIMER_MS = 2_147_000_000;
 
 /** Whether the message is past its Zalo self-delete time (sent time + ttl); updates itself when due while the conversation is open. */
@@ -142,8 +148,9 @@ export function StatusTicks({ status, mono = false, className = '' }: {
 export function BubbleTime({ timestamp, className = '' }: { timestamp?: number | string | null; className?: string }) {
   const status = React.useContext(MessageStatusContext);
   const ttl = React.useContext(MessageTtlContext);
+  const elsewhere = React.useContext(MessageTimeElsewhereContext);
   const t = formatBubbleTime(timestamp);
-  if (!t) return null;
+  if (!t || elsewhere) return null;
   return (
     <div className={`mt-1 flex items-center gap-0.5 text-[11px] leading-none text-subtle-foreground select-none cursor-default ${className}`}
       title={formatFullDateTime(timestamp)}>
@@ -163,7 +170,8 @@ export function TextWithInlineTime({ timestamp, children, className = '' }: {
 }) {
   const status = React.useContext(MessageStatusContext);
   const ttl = React.useContext(MessageTtlContext);
-  const t = formatBubbleTime(timestamp);
+  const elsewhere = React.useContext(MessageTimeElsewhereContext);
+  const t = elsewhere ? '' : formatBubbleTime(timestamp);
   return (
     <div className={`relative ${className}`}>
       {children}
@@ -183,8 +191,9 @@ export function TextWithInlineTime({ timestamp, children, className = '' }: {
 export function MediaTimeBadge({ timestamp, className = '' }: { timestamp?: number | string | null; className?: string }) {
   const status = React.useContext(MessageStatusContext);
   const ttl = React.useContext(MessageTtlContext);
+  const elsewhere = React.useContext(MessageTimeElsewhereContext);
   const t = formatBubbleTime(timestamp);
-  if (!t) return null;
+  if (!t || elsewhere) return null;
   return (
     <span
       className={`pointer-events-none absolute bottom-1.5 right-1.5 z-[1] inline-flex items-center gap-0.5 rounded-full bg-black/45 px-1.5 py-[3px] text-[11px] leading-none text-white select-none ${className}`}

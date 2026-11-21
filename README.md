@@ -4,12 +4,12 @@
 
 # Deplao
 
-**Phần mềm desktop quản lý tài khoản Zalo, Facebook & Telegram đa tài khoản**
-Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận hành tập trung trong một app duy nhất
+**Desktop app for managing multiple Zalo, Facebook & Telegram accounts**
+CRM · Marketing · ERP · POS · Workflow · AI Assistant — all in one unified workspace
 
-[🌐 Website](https://deplaoapp.com/) · [🇬🇧 English](./README.en.md)
+[🌐 Website](https://deplaoapp.com/) · [🇻🇳 Tiếng Việt](./README.vi.md)
 
-![Version](https://img.shields.io/badge/version-26.11.1-22c55e)
+![Version](https://img.shields.io/badge/version-26.11.2-22c55e)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Ubuntu-3b82f6)
 ![Electron](https://img.shields.io/badge/Electron-41-47848f?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=white)
@@ -22,192 +22,187 @@ Tích hợp CRM · MARKETING · ERP · POS · Workflow · Trợ lý AI - vận h
 </div>
 
 <p align="center">
-  <a href="#tai-xuong">📥 Tải xuống</a> &nbsp;|&nbsp;
-  <a href="#cong-nghe">🛠️ Công nghệ</a> &nbsp;|&nbsp;
-  <a href="#cai-dat">📦 Cài đặt</a> &nbsp;|&nbsp;
+  <a href="#download">📥 Download</a> &nbsp;|&nbsp;
+  <a href="#tech-stack">🛠️ Tech Stack</a> &nbsp;|&nbsp;
+  <a href="#installation">📦 Install</a> &nbsp;|&nbsp;
   <a href="#public-api">🌐 Public API</a> &nbsp;|&nbsp;
-  <a href="#tinh-nang">✨ Tính năng</a> &nbsp;|&nbsp;
-  <a href="#bao-mat">🔒 Bảo mật</a> &nbsp;|&nbsp;
-  <a href="#giay-phep">📝 MIT</a> &nbsp;|&nbsp;
-  <a href="#lien-he">📞 Liên hệ</a>
+  <a href="#features">✨ Features</a> &nbsp;|&nbsp;
+  <a href="#security">🔒 Security</a> &nbsp;|&nbsp;
+  <a href="#license">📝 MIT</a> &nbsp;|&nbsp;
+  <a href="#contact">📞 Contact</a>
 </p>
 
 ---
 
-<a id="tai-xuong"></a>
+<a id="download"></a>
 
-## ⬇️ Tải xuống
+## ⬇️ Download
 
 <table>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.11.1.exe">
-<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.11.1-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-Setup-26.11.2.exe">
+<img src="https://img.shields.io/badge/🪟_Windows_10/11-v26.11.2-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows" />
 </a>
 
-<big><strong>Deplao-Setup-26.11.1.exe</strong></big>
+<big><strong>Deplao-Setup-26.11.2.exe</strong></big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.1-arm64.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.11.1-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.2-arm64.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_M1+-v26.11.2-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon" />
 </a>
 
-<big><strong>Deplao-26.11.1-arm64.dmg</strong></big>
+<big><strong>Deplao-26.11.2-arm64.dmg</strong></big>
 
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.1.AppImage">
-<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.11.1-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.2.AppImage">
+<img src="https://img.shields.io/badge/🐧_Ubuntu_Linux-v26.11.2-e95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download Ubuntu" />
 </a>
 
-<big><strong>Deplao-26.11.1.AppImage</strong></big><br>
-<big>chạy mọi distro - <code>chmod +x</code> là dùng được</big>
+<big><strong>Deplao-26.11.2.AppImage</strong></big><br>
+<big>works on any distro - <code>chmod +x</code> & run</big>
 
 </td>
 <td align="center" width="50%">
 
-<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.1.dmg">
-<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.11.1-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
+<a href="https://github.com/babyvibe/deplao-builder/releases/latest/download/Deplao-26.11.2.dmg">
+<img src="https://img.shields.io/badge/🍎_macOS_Intel-v26.11.2-555555?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel" />
 </a>
 
-<big><strong>Deplao-26.11.1.dmg</strong></big>
+<big><strong>Deplao-26.11.2.dmg</strong></big>
 
 </td>
 </tr>
 </table>
 
 <p align="center">
-👉 <strong><a href="https://github.com/babyvibe/deplao-builder/releases">Xem tất cả phiên bản</a></strong>
+👉 <strong><a href="https://github.com/babyvibe/deplao-builder/releases">View all releases</a></strong>
 </p>
 
 <details>
-<summary>⚠️ Lưu ý khi mở file cài đặt (bị chặn bởi Windows / macOS / Linux)</summary>
+<summary>⚠️ Security warning on first launch (blocked by Windows / macOS / Linux)</summary>
 
-Do Deplao chưa được ký chứng chỉ (code signing) - nói thẳng ra là nghèo, nên hệ điều hành có thể hiển thị cảnh báo khi mở file. Bạn có thể làm theo hướng dẫn dưới đây:
+Deplao is not code-signed (we're bootstrapped), so your OS may show a warning when opening the installer.
 
 ---
 
 ### 🪟 Windows (.exe)
 
-Khi mở file `.exe`, Windows có thể hiển thị cảnh báo **"Windows protected your PC"**:
+Windows may show **"Windows protected your PC"**:
 
-👉 Cách xử lý:
-1. Nhấn **More info**
-2. Chọn **Run anyway**
+👉 How to proceed:
+1. Click **More info**
+2. Click **Run anyway**
 
 ---
 
 ### 🍎 macOS (.dmg)
 
-Khi mở file `.dmg`, macOS có thể báo **"cannot be opened because it is from an unidentified developer"**
+macOS may show **"cannot be opened because it is from an unidentified developer"**
 
-👉 Cách xử lý:
+👉 How to proceed:
 
-**Cách 1:**
-- Chuột phải vào file → chọn **Open**
-- Nhấn **Open** lần nữa
+**Option 1:**
+- Right-click the file → **Open**
+- Click **Open** again
 
-**Cách 2 (nếu vẫn bị chặn):**
-1. Vào **System Settings → Privacy & Security**
-2. Kéo xuống phần Security
-3. Nhấn **Open Anyway**
+**Option 2 (if still blocked):**
+1. Go to **System Settings → Privacy & Security**
+2. Scroll down to Security
+3. Click **Open Anyway**
 
 ---
 
 ### 🐧 Ubuntu Linux (.AppImage)
 
-Sau khi tải file `.AppImage`:
+After downloading the `.AppImage` file:
 
 ```bash
 chmod +x Deplao-*.AppImage
 ./Deplao-*.AppImage
 ```
 
-> Nếu gặp lỗi "FUSE: fuse2 not available", cài `libfuse2`:
+> If you get "FUSE: fuse2 not available", install `libfuse2`:
 > ```bash
 > sudo apt install libfuse2
 > ```
 
-Hoặc cài bản `.deb`:
+Or install the `.deb` package:
 ```bash
 sudo dpkg -i Deplao_*_amd64.deb
 ```
 
 </details>
 
-<p align="center">
-  <img src="./assets/deplao-overview-map.svg" alt="Sơ đồ trực quan mô tả Deplao là workspace desktop tập trung cho bán hàng và chăm sóc khách hàng trên Zalo, Facebook, Telegram" width="960" />
-</p>
+<a id="tech-stack"></a>
 
-<a id="cong-nghe"></a>
+## 🛠️ Tech Stack
 
-## 🛠️ Công nghệ & ngôn ngữ sử dụng
+Deplao is built on the following core technologies:
 
-Deplao hiện được xây dựng trên các công nghệ chính sau:
-
-- **Thư viện kênh nhắn tin:** zca-js (Zalo), fbchat-v2 (Facebook Messenger, bridge Go dựa trên mautrix-meta), GramJS (Telegram User), Telegram Bot API
-- **AI Gateway:** 9router, OpenRouter hoặc kết nối trực tiếp OpenAI, Claude, Gemini...
-- **Ngôn ngữ:** TypeScript, JavaScript, Go, SQL, HTML, CSS
-- **Ứng dụng desktop:** Electron, React, Vite
-- **Giao diện:** Tailwind CSS, PostCSS
-- **Lưu trữ dữ liệu cục bộ:** SQLite qua `better-sqlite3`
-- **State & UI chuyên biệt:** Zustand, React Flow, Recharts, Quill
-- **Realtime & API:** Socket.IO, REST API v1 + OpenAPI, Webhook
-- **Đám mây (tuỳ chọn):** Cloudflare Tunnel, Cloudflare R2, Google Drive API (Google One)
-- **Tích hợp & automation:** Axios, Google APIs / Google Sheets, node-cron, Telegram Bot API, v.v.
+- **Messaging libraries:** zca-js (Zalo), fbchat-v2 (Facebook Messenger, a Go bridge based on mautrix-meta), GramJS (Telegram User), Telegram Bot API
+- **AI Gateway:** 9router, OpenRouter or direct OpenAI, Claude, Gemini...
+- **Languages:** TypeScript, JavaScript, Go, SQL, HTML, CSS
+- **Desktop:** Electron, React, Vite
+- **UI:** Tailwind CSS, PostCSS
+- **Local storage:** SQLite via `better-sqlite3`
+- **State & UI specialized:** Zustand, React Flow, Recharts, Quill
+- **Realtime & API:** Socket.IO, REST API v1 + OpenAPI, webhooks
+- **Cloud (optional):** Cloudflare Tunnel, Cloudflare R2, Google Drive API (Google One)
+- **Integrations & automation:** Axios, Google APIs / Google Sheets, node-cron, Telegram Bot API, etc.
 
 ---
 
+<a id="installation"></a>
 
-<a id="cai-dat"></a>
-
-## Cài đặt
+## Installation
 
 <details open>
-<summary>🛠️ Tự build từ source</summary>
+<summary>🛠️ Build from source</summary>
 
-### Yêu cầu
+### Requirements
 
-- Windows 10/11, macOS (Apple Silicon / Intel), hoặc Ubuntu 20.04+
-- Node.js 18+ khuyến nghị
+- Windows 10/11, macOS (Apple Silicon / Intel), or Ubuntu 20.04+
+- Node.js 18+ recommended
 - npm 9+
 
-### Cài đặt
+### Install dependencies
 
 ```powershell
 npm install --legacy-peer-deps
 ```
 
-### Chạy development
+### Run in development mode
 
 ```powershell
 npm run dev
 ```
 
-### Build app
+### Build production app
 
 ```powershell
 npm run production
 ```
 
-### Dữ liệu cục bộ
+### Local data
 
-- Dữ liệu app dùng SQLite cục bộ
-- Có thể đổi thư mục lưu trữ trong phần `Cài đặt`
+- App data is stored in local SQLite
+- Storage directory can be changed in `Settings`
 
 </details>
 
-## 🗺️ Sơ đồ kiến trúc & luồng hoạt động
+## 🗺️ Architecture & Flow Diagrams
 
 ---
 
-### 1️⃣ Luồng Build
+### 1️⃣ Build Pipeline
 
 ```mermaid
 flowchart LR
@@ -230,7 +225,7 @@ flowchart LR
         B("bridge-e2ee/build/\nfbchat bridge")
     end
 
-    subgraph PKG["🚀 Đóng gói"]
+    subgraph PKG["🚀 Package"]
         EB(("electron\nbuilder"))
         WIN("🪟 Windows\n.exe / dir")
         MAC("🍎 macOS\n.dmg arm64 · x64")
@@ -245,7 +240,7 @@ flowchart LR
 
 ---
 
-### 2️⃣ Kiến trúc Runtime
+### 2️⃣ Runtime Architecture
 
 ```mermaid
 mindmap
@@ -270,14 +265,14 @@ mindmap
         Chat & Inbox
         CRM & Campaign
         Workflow Editor
-        Tích hợp · Ứng dụng
+        Integrations · Apps
         ERP · Settings
       🗃️ Zustand State
         accountStore
         chatStore
         workspaceStore
         employeeStore
-    📱 Kênh nhắn tin
+    📱 Messaging channels
       zca-js · Zalo
       fbchat-v2 · Facebook
       GramJS · Telegram User
@@ -293,11 +288,11 @@ mindmap
 
 ---
 
-### 3️⃣ Mô hình Boss ↔ Nhân viên (REST API)
+### 3️⃣ Boss ↔ Employee Model (REST API)
 
 ```mermaid
 flowchart TB
-    subgraph BOSS["🖥️ Máy BOSS - Local Workspace"]
+    subgraph BOSS["🖥️ BOSS Machine - Local Workspace"]
         BZ("📱 Zalo / FB / Telegram\nAccounts")
         BSV("🔧 Services\nCRM · ERP · AI · Workflow · Library")
         BSD[("🗄️ SQLite DB\n+ Media Files")]
@@ -305,17 +300,17 @@ flowchart TB
         BRS("📡 REST API Handlers\n/api/query | /api/command\n/api/library | /api/media")
     end
 
-    subgraph NET["🌐 Kết nối"]
+    subgraph NET["🌐 Connection"]
         LAN("🏠 LAN\n192.168.x.x:9900")
         WAN("🌍 Internet\nCloudflare Tunnel / ngrok")
     end
 
-    subgraph EMP["💻 Nhân Viên - Remote Workspace"]
+    subgraph EMP["💻 Employee - Remote Workspace"]
         EA("📲 Deplao App\nEmployee Mode")
-        DA("🔀 DataAccessor\ntự động routing")
+        DA("🔀 DataAccessor\nauto routing")
         RQ("🌐 RestQueryService\nHTTP REST client")
         EP("🔐 Permission Filter\nerp · crm · workflow · ...")
-        EU("👁️ UI\nchỉ thấy TK được gán")
+        EU("👁️ UI\nassigned accounts only")
         MC("📦 Media Cache\nworkspace → Boss → CDN")
         EC("⚡ Employee Cache\nconversations · messages · labels")
     end
@@ -337,76 +332,76 @@ flowchart TB
     EA --> MC
 ```
 
-> Nhân viên gọi dữ liệu qua **REST API** (HTTP fetch → Boss) thay vì sync toàn bộ DB. DataAccessor tự động routing: standalone/boss → IPC trực tiếp, employee → RestQueryService → Boss. Socket.IO cho realtime event, tự kết nối lại và nhận bù sự kiện bị lỡ. Media được cache local với cascade workspace → Boss → CDN. Facebook / Telegram của nhân viên chạy qua máy Boss. Nhân viên ở xa kết nối qua địa chỉ Internet cố định (Cloudflare Tunnel) hoặc ngrok.
+> Employees fetch data through the **REST API** (HTTP fetch → Boss) instead of syncing the whole DB. DataAccessor routes automatically: standalone/boss → direct IPC, employee → RestQueryService → Boss. Socket.IO carries realtime events, with automatic reconnects and missed-event catch-up. Media is cached locally with a workspace → Boss → CDN cascade. An employee's Facebook / Telegram actions run through the Boss machine. Remote employees connect through a fixed Internet address (Cloudflare Tunnel) or ngrok.
 
 ---
 
-### 4️⃣ Đa tài khoản & Lưu trữ
+### 4️⃣ Multi-account & Local Storage
 
 ```mermaid
 flowchart LR
-    subgraph ACCS["👤 Tài khoản"]
+    subgraph ACCS["👤 Accounts"]
         Z1("Zalo #1\nzca-js")
         ZN("Zalo #N\nzca-js")
         FB("Facebook\nfbchat-v2 bridge")
         TG("Telegram\nUser · Bot")
     end
 
-    subgraph STORE["💾 Lưu trữ cục bộ"]
+    subgraph STORE["💾 Local Storage"]
         DB[("🗄️ SQLite\ndeplao-tool.db\nmessages · contacts\ncrm · workflow · erp")]
-        MED("📁 FileStorage\n~/media/\nảnh · video · file")
+        MED("📁 FileStorage\n~/media/\nphotos · videos · files")
         ES("🔑 electron-store\ncookies · tokens\nsettings")
     end
 
     subgraph WS["🗂️ Workspace Manager"]
         WA("🏠 Local WS\nDefault")
         WB("🌐 Remote WS\nBoss")
-        WC("⚙️ Custom WS\npath tuỳ chỉnh")
+        WC("⚙️ Custom WS\ncustom path")
     end
 
-    subgraph CLOUD["☁️ Cloudflare R2 / Google Drive (tuỳ chọn)"]
+    subgraph CLOUD["☁️ Cloudflare R2 / Google Drive (optional)"]
         R2M("Media")
-        R2B("Sao lưu DB\nmã hoá trên máy")
+        R2B("DB backups\nencrypted on device")
     end
 
-    Z1 & ZN & FB & TG -->|"tin nhắn · danh bạ"| DB
-    Z1 & ZN & FB & TG -->|"ảnh · video · file"| MED
+    Z1 & ZN & FB & TG -->|"messages · contacts"| DB
+    Z1 & ZN & FB & TG -->|"photos · videos · files"| MED
     ES -->|"cookie session"| Z1 & ZN & FB & TG
     DB & ES <-->|"path resolve\nswitch workspace"| WS
-    WA & WB & WC -.-|"mỗi WS = DB riêng"| DB
-    MED -.->|"tải lên nền"| R2M
-    DB -.->|"theo giờ / realtime"| R2B
+    WA & WB & WC -.-|"each WS = own DB"| DB
+    MED -.->|"background upload"| R2M
+    DB -.->|"hourly / realtime"| R2B
 ```
 
-> Mỗi **Workspace** có DB + media folder độc lập - đổi hoặc di chuyển sang ổ đĩa khác không mất dữ liệu. Media và DB có thể sao lưu thêm lên Cloudflare R2 hoặc Google Drive (Google One) của chính bạn để khôi phục sang máy mới.
+> Each **Workspace** has its own DB + media folder — switch or move to another drive without losing data. Media and the DB can also be backed up to your own Cloudflare R2 or Google Drive (Google One) and restored on a new machine.
 
 ---
 
 
 <a id="public-api"></a>
 
-## 🌐 Public API & Ứng dụng mở rộng
+## 🌐 Public API & Extension Apps
 
-Deplao có **Public API v1** với gần 300 thao tác (tài khoản, chat Zalo / Facebook / Telegram, nhóm, nhãn, danh bạ, CRM, workflow, tích hợp, ERP, AI, báo cáo, media, nhân viên) để kết nối website, n8n, phần mềm bán hàng hay hệ thống riêng của bạn. API chạy **ngay trên máy cài Deplao** (cổng mặc định `9900`) và **tắt sẵn** cho tới khi bạn bật. Mọi lời gọi đi qua đúng luồng của app: tin gửi bằng API vẫn hiện trong khung chat, lưu DB, kích hoạt workflow như khi bạn tự gửi.
+Deplao ships a **Public API v1** with ~300 operations (accounts, Zalo / Facebook / Telegram chat, groups, labels, contacts, CRM, workflows, integrations, ERP, AI, reports, media, employees) to connect your website, n8n, sales software or your own systems. The API runs **on the machine where Deplao is installed** (default port `9900`) and is **off by default** until you enable it. Every call goes through the app's normal flow: a message sent via the API shows up in the chat window, is saved to the DB and triggers workflows just like one you send yourself.
 
-### Bắt đầu nhanh
+### Quick start
 
-1. Mở **Công cụ → Ứng dụng, API & Webhook → API**, bật **API server**.
-2. Bấm **Tạo API key**, chọn quyền (scope) và tài khoản được phép. Key `dpk_...` chỉ hiện một lần.
-3. Gọi thử:
+1. Open **Công cụ (Tools) → Ứng dụng, API & Webhook → API** and turn on the **API server**.
+2. Click **Tạo API key** (Create API key), choose scopes and allowed accounts. The `dpk_...` key is shown only once.
+3. Try it:
 
 ```bash
 curl -H "Authorization: Bearer dpk_xxx" http://127.0.0.1:9900/api/v1/accounts
 ```
 
-- Tài liệu đầy đủ (hướng dẫn, danh sách endpoint, nút "Thử gọi", lệnh curl): `http://127.0.0.1:9900/docs`
-- OpenAPI cho Postman / Insomnia / sinh SDK: `http://127.0.0.1:9900/api/v1/openapi.json`
-- Sự kiện realtime (Socket.IO, SSE, polling) và **webhook gửi ra** có chữ ký HMAC, tự thử lại
-- Gọi từ xa (nhân viên, webhook nhận vào, thanh toán): dùng địa chỉ Internet ở **Cài đặt → Internet & Cloud**
+- Full docs (guides, endpoint list, "Try it" button, curl commands): `http://127.0.0.1:9900/docs`
+- OpenAPI for Postman / Insomnia / SDK generation: `http://127.0.0.1:9900/api/v1/openapi.json`
+- Realtime events (Socket.IO, SSE, polling) and **outgoing webhooks** with HMAC signatures and retries
+- Remote access (employees, incoming webhooks, payments): use the Internet address from **Settings → Internet & Cloud**
 
-### Ứng dụng tự phát triển
+### Build your own apps
 
-Ứng dụng (plugin) chạy ngay trong Deplao: trang riêng, panel trong khung chat, nút ở ô soạn tin, cài đặt riêng, node workflow và lịch chạy. Cài từ file zip hoặc thư mục, duyệt quyền trước khi chạy; ứng dụng chỉ gọi được API trong phạm vi quyền đã duyệt và trên các tài khoản được cấp. Bộ công cụ nằm trong thư mục [`packages/`](./packages): SDK `@deplao/plugin-sdk` và CLI `deplao-plugin`.
+Apps (plugins) run inside Deplao: their own page, chat side panels, composer buttons, settings, workflow nodes and schedules. Install from a zip file or a folder and review permissions before they run; an app can only call the API within the permissions you approved and on the accounts you granted. The toolkit lives in [`packages/`](./packages): the `@deplao/plugin-sdk` SDK and the `deplao-plugin` CLI.
 
 ```bash
 node packages/plugin-cli/bin/deplao-plugin.js create my-app --runtime web
@@ -414,247 +409,248 @@ node packages/plugin-cli/bin/deplao-plugin.js validate my-app
 node packages/plugin-cli/bin/deplao-plugin.js pack my-app --out my-app.zip
 ```
 
-## 🚀 Deplao là gì?
+## 🚀 What is Deplao?
 
-Nếu nhìn nhanh, có thể hiểu Deplao là:
+At a glance, Deplao is:
 
-- **trung tâm vận hành**: nhiều tài khoản Zalo, Facebook, Telegram, inbox tập trung, trả lời nhanh, đồng bộ lịch sử chat
-- **lớp quản lý khách hàng**: CRM, nhãn, lịch sử tương tác, chiến dịch cho bạn bè và khách hàng đã nhắn tin
-- **lớp tự động hóa**: workflow, AI, trigger và action chạy nền
-- **lớp kết nối kinh doanh**: POS, vận chuyển, thanh toán, Public API, webhook và ứng dụng tự phát triển
-- **lớp quản trị nội bộ**: báo cáo, ERP, phân quyền, workspace nhân viên, sao lưu đám mây
+- **An operations hub**: multiple Zalo, Facebook, Telegram accounts, a unified inbox, quick replies, chat history sync
+- **A customer management layer**: CRM, labels, interaction history, campaigns for friends and customers who have messaged you
+- **An automation layer**: workflows, AI, triggers and actions running in the background
+- **A business connection layer**: POS, shipping, payments, Public API, webhooks and your own apps
+- **An internal management layer**: reports, ERP, permissions, employee workspaces, cloud backups
 
-## ✨ Điểm nổi bật
+## ✨ Highlights
 
-- 👤 **Đa tài khoản Zalo, Facebook, Telegram Bot, Telegram User** - đăng nhập không giới hạn tài khoản, chuyển đổi qua lại nhanh
-- 💬 **Hộp thư tập trung** - chế độ gộp tài khoản giúp gom và xử lý hội thoại từ nhiều tài khoản trong một giao diện duy nhất
-- 📱 **Đồng bộ tin nhắn cũ** - kéo lịch sử chat Zalo từ điện thoại về app theo khoảng thời gian; Facebook đồng bộ lịch sử Messenger theo khoảng thời gian
-- 👥 **CRM & Campaign** - quản lý liên hệ, nhãn, ghi chú nội bộ, chăm sóc khách cũ; gửi chiến dịch cho bạn bè và khách hàng đã nhắn tin, xem trước nội dung như khung chat, thống kê realtime
-- ⚙️ **Workflow tự động hóa** - kéo-thả Trigger → Node → Action hoặc trò chuyện với AI copilot để tạo quy trình, chạy thử ở chế độ Mô phỏng, chạy nền 24/7 không cần code
-- 🤖 **AI Assistant** - hỗ trợ gợi ý câu trả lời, chat trực tiếp trong hội thoại. Còn giúp phân loại tin nhắn, trả lời khách hàng 24/7.
-- 🔗 **Tích hợp ngoài** - POS, vận chuyển, thanh toán, Google Sheets, Telegram, Email, HTTP Request... Kết hợp sử dụng khi chat hoặc workflow
-- 🧩 **Ứng dụng & Public API** - gần 300 API, webhook, sự kiện realtime và ứng dụng tự phát triển chạy ngay trong Deplao
-- ☁️ **Internet & Cloud** - địa chỉ Internet cố định qua Cloudflare của bạn; lưu media, sao lưu + đồng bộ DB đã mã hoá lên Cloudflare R2 hoặc Google Drive (Google One), xem mức dùng và phí ước tính; khôi phục sang máy mới
-- 📈 **Báo cáo & phân tích** - theo dõi tin nhắn, liên hệ, nhãn, nhân viên, chiến dịch, workflow, AI.
-- 🗂️ **ERP nội bộ** - task, lịch làm việc, notes và phối hợp vận hành nội bộ ngay trong cùng hệ thống
-- 🧑‍💼 **Workspace boss ↔ nhân viên** - kết nối qua **LAN hoặc Internet**, tự kết nối lại, đồng bộ realtime hai chiều, phân quyền chi tiết và theo dõi hiệu suất từng nhân viên
-- 🎨 **Giao diện Sáng / Tối** - bảng màu và bộ thành phần thống nhất, thanh điều hướng gọn với nhóm "Công cụ"
-- 🔒 **Proxy per-account** - gán Proxy riêng cho từng tài khoản, thêm / đổi / bỏ lúc nào cũng được, không cần đăng nhập lại
-- 🔐 **Dữ liệu lưu cục bộ** - ưu tiên quyền kiểm soát dữ liệu và bảo mật trên máy người dùng
+- 👤 **Multi-account Zalo, Facebook, Telegram Bot, Telegram User** - unlimited accounts, fast switching
+- 💬 **Unified inbox** - merged mode consolidates conversations from multiple accounts into one view
+- 📱 **Old message sync** - pull Zalo chat history from your phone into the app by time range; sync Facebook Messenger history by time range
+- 👥 **CRM & Campaign** - contacts, labels, internal notes, re-engagement; campaigns for friends and customers who have messaged you, with a chat-style content preview and realtime stats
+- ⚙️ **Workflow automation** - drag-and-drop Trigger → Node → Action or chat with the AI copilot to build flows, test them in Simulation mode, run 24/7 with no code
+- 🤖 **AI Assistant** - reply suggestions, in-chat AI Q&A, message classification and 24/7 auto-replies
+- 🔗 **External integrations** - POS, shipping, payments, Google Sheets, Telegram, Email, HTTP Request... usable in chat or workflows
+- 🧩 **Apps & Public API** - ~300 APIs, webhooks, realtime events and your own apps running inside Deplao
+- ☁️ **Internet & Cloud** - a fixed Internet address through your own Cloudflare; media plus encrypted DB backup + sync on Cloudflare R2 or Google Drive (Google One), with usage and estimated cost; restore to a new machine
+- 📈 **Reports & analytics** - track messages, contacts, labels, employees, campaigns, workflows, AI
+- 🗂️ **Internal ERP** - tasks, calendars, notes and team coordination within the same system
+- 🧑‍💼 **Boss ↔ Employee workspaces** - connect via **LAN or the Internet**, automatic reconnects, two-way realtime sync, fine-grained permissions and per-employee performance tracking
+- 🎨 **Light / Dark UI** - one color system and component set, a compact navigation bar with a "Tools" group
+- 🔒 **Per-account proxy** - assign a dedicated proxy to each account, add / change / remove it anytime without logging in again
+- 🔐 **Local-first data** - prioritizes data ownership and security on the user's machine
 
 
-### Xem nhanh giao diện Deplao
+### Screenshots
 
-Các màn hình dưới đây được sắp theo luồng sử dụng thực tế: từ dashboard → chat → CRM → workflow → tích hợp / báo cáo / ERP → công cụ mở rộng (ảnh dùng dữ liệu demo).
+Screens are ordered by real usage flow: dashboard → chat → CRM → workflow → integrations / reports / ERP → extension tools (demo data; the app UI is in Vietnamese).
 
 <table>
   <tr>
     <td>
-      <img src="./assets/dashboard.png" alt="Dashboard quản lý đa tài khoản Zalo, Facebook, Telegram trong Deplao" width="360" />
+      <img src="./assets/dashboard.png" alt="Multi-account dashboard for Zalo, Facebook, Telegram in Deplao" width="360" />
       <br />
-      <sub><strong>Dashboard đa tài khoản</strong></sub>
+      <sub><strong>Multi-account dashboard</strong></sub>
     </td>
     <td>
-      <img src="./assets/chat.png" alt="Giao diện chat tập trung trong Deplao" width="360" />
+      <img src="./assets/chat.png" alt="Unified chat interface in Deplao" width="360" />
       <br />
-      <sub><strong>Chat tập trung tích hợp AI gợi ý trả lời</strong></sub>
+      <sub><strong>Unified chat with AI reply suggestions</strong></sub>
     </td>
     <td>
-      <img src="./assets/crm.png" alt="Màn hình CRM và quản lý liên hệ trong Deplao" width="360" />
+      <img src="./assets/crm.png" alt="CRM and contact management in Deplao" width="360" />
       <br />
-      <sub><strong>CRM & liên hệ</strong></sub>
+      <sub><strong>CRM & contacts</strong></sub>
     </td>
   </tr>
   <tr>
     <td>
-      <img src="./assets/campaign.png" alt="Chiến dịch cho bạn bè và khách hàng đã nhắn tin trong Deplao" width="360" />
+      <img src="./assets/campaign.png" alt="Campaigns for friends and customers who have messaged you in Deplao" width="360" />
       <br />
-      <sub><strong>Chiến dịch cho bạn bè, khách đã nhắn tin</strong></sub>
+      <sub><strong>Campaigns for friends & customers</strong></sub>
     </td>
     <td>
-      <img src="./assets/workflow.png" alt="Trình thiết kế workflow kéo thả trong Deplao" width="360" />
+      <img src="./assets/workflow.png" alt="Drag-and-drop workflow designer in Deplao" width="360" />
       <br />
       <sub><strong>Workflow editor</strong></sub>
     </td>
     <td>
-      <img src="./assets/detail-workflow.png" alt="Chi tiết cấu hình workflow trong Deplao" width="360" />
+      <img src="./assets/detail-workflow.png" alt="Workflow node configuration in Deplao" width="360" />
       <br />
-      <sub><strong>Chi tiết workflow</strong></sub>
+      <sub><strong>Workflow details</strong></sub>
     </td>
   </tr>
   <tr>
     <td>
-      <img src="./assets/workflow-ai.png" alt="Workflow kết hợp AI trong Deplao" width="360" />
+      <img src="./assets/workflow-ai.png" alt="AI-powered workflow creation in Deplao" width="360" />
       <br />
-      <sub><strong>Ra lệnh tạo Workflow bằng AI</strong></sub>
+      <sub><strong>Create workflows by talking to AI</strong></sub>
     </td>
     <td>
-      <img src="./assets/pos.png" alt="Tích hợp POS và bán hàng trong Deplao" width="360" />
+      <img src="./assets/pos.png" alt="POS and sales integrations in Deplao" width="360" />
       <br />
-      <sub><strong>Tích hợp POS, VC, Thanh toán</strong></sub>
+      <sub><strong>POS, shipping & payment integrations</strong></sub>
     </td>
     <td>
-      <img src="./assets/report.png" alt="Báo cáo và phân tích hiệu suất trong Deplao" width="360" />
+      <img src="./assets/report.png" alt="Reports and performance analytics in Deplao" width="360" />
       <br />
-      <sub><strong>Báo cáo & phân tích</strong></sub>
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <img src="./assets/employees.png" alt="Quản lý nhân viên và phân quyền trong Deplao" width="360" />
-      <br />
-      <sub><strong>Quản lý nhân viên</strong></sub>
-    </td>
-    <td>
-      <img src="./assets/erp.png" alt="ERP nội bộ và phối hợp vận hành trong Deplao" width="360" />
-      <br />
-      <sub><strong>ERP nội bộ</strong></sub>
-    </td>
-    <td>
-      <img src="./assets/apps-api.png" alt="Ứng dụng, API và Webhook trong Deplao" width="360" />
-      <br />
-      <sub><strong>Ứng dụng, API & Webhook</strong></sub>
+      <sub><strong>Reports & analytics</strong></sub>
     </td>
   </tr>
   <tr>
     <td>
-      <img src="./assets/cloud.png" alt="Internet & Cloud với Cloudflare, Google Drive trong Deplao" width="360" />
+      <img src="./assets/employees.png" alt="Employee management and permissions in Deplao" width="360" />
+      <br />
+      <sub><strong>Employee management</strong></sub>
+    </td>
+    <td>
+      <img src="./assets/erp.png" alt="Internal ERP and team coordination in Deplao" width="360" />
+      <br />
+      <sub><strong>Internal ERP</strong></sub>
+    </td>
+    <td>
+      <img src="./assets/apps-api.png" alt="Apps, API and Webhook in Deplao" width="360" />
+      <br />
+      <sub><strong>Apps, API & Webhook</strong></sub>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <img src="./assets/cloud.png" alt="Internet and Cloud with Cloudflare and Google Drive in Deplao" width="360" />
       <br />
       <sub><strong>Internet & Cloud (Cloudflare · Google Drive)</strong></sub>
     </td>
     <td>
-      <img src="./assets/mobile-sync.png" alt="Đồng bộ tin nhắn cũ Zalo từ điện thoại trong Deplao" width="360" />
+      <img src="./assets/mobile-sync.png" alt="Sync old Zalo messages from the phone in Deplao" width="360" />
       <br />
-      <sub><strong>Đồng bộ tin nhắn cũ từ điện thoại</strong></sub>
+      <sub><strong>Sync old messages from your phone</strong></sub>
     </td>
   </tr>
 </table>
 
-## 🎯 Phù hợp với ai?
+## 🎯 Who is it for?
 
-Deplao phù hợp cho:
+Deplao is a great fit for:
 
-- Shop online và đội ngũ chốt đơn qua Zalo, Facebook, Telegram
-- Tự động hoá quy trình làm việc và chăm sóc khách hàng, gửi chiến dịch cho bạn bè và khách hàng đã nhắn tin
-- Doanh nghiệp SME cần nhiều nhân viên xử lý inbox cùng lúc
-- Marketing agency hoặc freelancer quản lý nhiều tài khoản khách hàng
-- Spa, phòng khám, giáo dục, F&B và các mô hình cần chăm sóc khách hàng định kỳ
-- Đội nhóm muốn kết hợp chat, CRM, workflow, AI và ERP trong một desktop app duy nhất
-- Đội kỹ thuật muốn nối Zalo, Facebook, Telegram vào hệ thống riêng qua API, webhook hoặc ứng dụng tự viết
+- Online shops and sales teams closing orders via Zalo, Facebook, Telegram
+- Workflow automation and customer care, with campaigns for friends and customers who have messaged you
+- SMEs needing multiple staff handling inboxes simultaneously
+- Marketing agencies or freelancers managing multiple client accounts
+- Spas, clinics, education, F&B and businesses requiring recurring customer care
+- Teams wanting chat, CRM, workflow, AI and ERP in a single desktop app
+- Developers who want to connect Zalo, Facebook, Telegram to their own systems via the API, webhooks or custom apps
 
-<a id="tinh-nang"></a>
+<a id="features"></a>
 
-## 🧩 Các nhóm tính năng chính
+## 🧩 Core feature groups
 
-### 1) Quản lý đa tài khoản & inbox tập trung
-- Đăng nhập nhiều tài khoản Zalo (cá nhân / Business), Facebook, Telegram bot, Telegram user
-- Dashboard quản lý tài khoản trực quan, đăng nhập lại Facebook ngay tại chỗ khi hết phiên
-- Gộp nhiều tài khoản vào một inbox hợp nhất
-- Tìm kiếm không dấu theo tên, biệt danh, số điện thoại
-- Lọc nhanh theo chưa đọc, nhãn (Local / Zalo) và kênh
-- Thao tác nhanh: tạo nhóm, tham gia nhóm bằng link, thêm bạn, thêm lịch hẹn và ghi chú
-- Đánh dấu đã đọc hàng loạt theo khoảng thời gian của tin cuối (chạy nền), đồng bộ lên Zalo, Telegram, Facebook
-- Đồng bộ tin nhắn cũ Zalo từ điện thoại theo khoảng thời gian; đồng bộ lịch sử Facebook Messenger theo tài khoản và khoảng thời gian
-- Gắn Proxy riêng cho từng tài khoản
+### 1) Multi-account & unified inbox
+- Log in to multiple Zalo (personal / Business), Facebook, Telegram bot and Telegram user accounts
+- Visual account management dashboard; re-login Facebook in place when the session expires
+- Merge multiple accounts into one unified inbox
+- Accent-insensitive search by name, nickname, phone number
+- Quick filters: unread, labels (Local / Zalo) and channel
+- Quick actions: create groups, join a group by link, add friends, add appointments and notes
+- Bulk mark-as-read by the time of the last message (runs in the background), synced to Zalo, Telegram, Facebook
+- Sync old Zalo messages from your phone by time range; sync Facebook Messenger history per account and time range
+- Assign a dedicated proxy per account
 
-### 2) Chat đầy đủ tính năng
-- Gửi tin nhắn văn bản có định dạng, ảnh, album, video, file, tin thoại
-- Gửi emoji, sticker, reply, tag thành viên, thả cảm xúc
-- Gửi poll, ghi chú nhóm, nhắc nhở, gửi danh thiếp
-- Gửi quick messages để lưu mẫu tin và gọi nhanh bằng từ khóa
-- Ghim tin nhắn không giới hạn, Tin đánh dấu, My Documents của Zalo, quản lý media và file đính kèm
-- Chuyển tiếp đúng mọi loại tin Zalo, mốc ngày khi cuộn, xem bộ sưu tập ảnh
-- Telegram: tạo nhóm / kênh, quản lý nhóm / kênh, danh bạ, nhật ký cuộc gọi, bảng Sticker · GIF đồng bộ tài khoản
+### 2) Full-featured chat
+- Send rich text, images, albums, videos, files, voice messages
+- Send emoji, stickers, replies, member mentions, reactions
+- Send polls, group notes, reminders, contact cards
+- Quick messages: save message templates and trigger them by keyword
+- Unlimited pinned messages, Starred messages, Zalo My Documents, media and file management
+- Correct forwarding for every Zalo message type, date markers while scrolling, photo gallery
+- Telegram: create groups / channels, group / channel management, contacts, call log, Sticker · GIF panel synced with your account
 
-### 3) CRM & chăm sóc khách hàng
-- Đồng bộ bạn bè, nhóm đã tham gia và hồ sơ liên hệ
-- Lưu số điện thoại, giới tính, ngày sinh, ghi chú nội bộ
-- Tạo và quản lý nhãn Zalo hai chiều, nhãn Local dùng chung nhiều tài khoản
-- Lọc liên hệ theo nhiều tiêu chí để chăm sóc đúng nhóm khách hàng
-- Gửi chiến dịch cho bạn bè và khách hàng đã nhắn tin (tin nhắn, mời vào nhóm) với tiến độ realtime; xem trước nội dung như khung chat, tuỳ chọn gửi ảnh trước / chữ trước hoặc gộp ảnh + chữ
+### 3) CRM & customer care
+- Sync friends, joined groups and contact profiles
+- Store phone number, gender, birthday, internal notes
+- Two-way Zalo label sync and Local labels shared across accounts
+- Filter contacts by multiple criteria for targeted outreach
+- Send campaigns to friends and customers who have messaged you (messages, group invites) with realtime progress; chat-style content preview, send image first / text first or merge image + text
 
-### 4) Workflow tự động hóa
-- Workflow kéo-thả không cần code, sơ đồ có nút sắp xếp tự động
-- AI copilot dạng chat để tạo và sửa workflow bằng câu lệnh (xem mục 7)
-- Chế độ Mô phỏng chạy thử không gửi tin thật
-- Hỗ trợ trigger từ tin nhắn, nhãn, react, lịch cron, sự kiện nhóm, thanh toán, đơn hàng từ phần mềm bán hàng, webhook...; lọc theo vai trò người gửi, chỉ khi được @nhắc
-- Action gửi tin, gửi ảnh/file, tìm user, quản lý nhóm, mute, forward, recall...
-- Tích hợp logic, Google Sheets, AI, Telegram, Email, Notion và HTTP Request
-- Có lịch sử chạy để kiểm tra và debug dễ dàng
+### 4) Workflow automation
+- No-code drag-and-drop workflows with an auto-layout button
+- Chat-style AI copilot to create and edit workflows from prompts (see section 7)
+- Simulation mode to test runs without sending real messages
+- Triggers: messages, labels, reactions, cron schedules, group events, webhooks...; filters by sender role, only when @mentioned
+- Actions: send messages, images/files, find users, manage groups, mute, forward, recall...
+- Integrations: logic, Google Sheets, AI, Telegram, Email, Notion and HTTP Request
+- Execution history for easy debugging
 
-### 5) Tích hợp phục vụ bán hàng
-- POS: KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS — tra cứu, tạo đơn ngay trong hội thoại; webhook đơn hàng / khách hàng (xác thực bằng khoá) tự chạy workflow
-- Vận chuyển: GHN, GHTK
-- Thanh toán: Sepay, Casso
-- AI Assistant gợi ý trả lời, hỏi đáp trực tiếp trong hội thoại (xem mục 7)
-- Dễ kết hợp thành quy trình bán hàng và chăm sóc khách hàng khép kín
+### 5) Sales integrations
+- POS: KiotViet, Haravan, Sapo, Nhanh.vn, Pancake POS
+- Shipping: GHN, GHTK
+- Payments: Sepay, Casso
+- AI Assistant for reply suggestions and in-chat Q&A (see section 7)
+- Combine into closed-loop sales and customer care workflows
 
-### 6) Báo cáo, ERP và nhân viên
-- Báo cáo tin nhắn, liên hệ, chiến dịch, workflow, AI, nhân viên
-- ERP nội bộ gồm Task, Calendar, Notes; báo việc cho nhân viên qua Zalo (giao việc, sắp đến hạn, nghỉ phép)
-- Mô hình boss ↔ nhân viên và phân quyền module, nhân viên chỉ thấy tài khoản được giao
-- Nhân viên kết nối qua LAN hoặc Internet, tự kết nối lại, đồng bộ realtime cả sửa / xoá / cảm xúc
-- Hỗ trợ theo dõi hiệu suất làm việc theo từng người và từng giai đoạn
+### 6) Reports, ERP & employee management
+- Reports: messages, contacts, campaigns, workflows, AI, employees
+- Internal ERP: Tasks, Calendar, Notes; work alerts to employees via Zalo (new tasks, due soon, leave requests)
+- Boss ↔ Employee model with module-level permissions; employees only see their assigned accounts
+- Employees connect over LAN or the Internet, reconnect automatically, realtime sync including edits / deletes / reactions
+- Track individual and team performance across time periods
 
-### 7) 🤖 Trợ lý AI (AI Assistant)
-- Gợi ý trả lời thông minh trong hội thoại
-- Hỏi đáp trực tiếp với AI ngay trong khung chat
-- Tạo và sửa workflow tự động bằng câu lệnh tiếng Việt qua AI copilot, không cần kéo-thả
-- Dùng node AI trong workflow để xây dựng chatbot trả lời tự động 24/7
-- Hỗ trợ đa nền tảng AI: OpenAI, Claude, Gemini, Deepseek, Grok,... và các AI gateway local như 9Router, OpenRouter, v.v.
+### 7) 🤖 AI Assistant
+- Smart reply suggestions in conversations
+- Ask AI questions directly in the chat window
+- Create and edit workflows with Vietnamese prompts through the AI copilot — no drag-and-drop needed
+- Use AI nodes in workflows to build 24/7 auto-reply chatbots
+- Multi-platform AI support: OpenAI, Claude, Gemini, DeepSeek, Grok, … and local AI gateways like 9Router, OpenRouter, etc.
 
-### 8) 🧩 Ứng dụng, Public API & Webhook
-- Public API v1 gần 300 thao tác, API key theo quyền / tài khoản / IP / hạn dùng, nhật ký request
-- Sự kiện realtime và webhook gửi ra có chữ ký, trang tài liệu + OpenAPI
-- Cài và tự viết ứng dụng chạy ngay trong Deplao, có SDK và CLI (xem mục [Public API](#public-api))
+### 8) 🧩 Apps, Public API & Webhook
+- Public API v1 with ~300 operations, API keys scoped by permission / account / IP / expiry, request log
+- Realtime events and signed outgoing webhooks, a docs page + OpenAPI
+- Install or write your own apps that run inside Deplao, with an SDK and CLI (see [Public API](#public-api))
 
 ### 9) ☁️ Internet & Cloud (Cloudflare · Google Drive)
-- Một chỗ cấu hình địa chỉ Internet (địa chỉ tạm, Cloudflare tự động, ngrok, Cloudflare thủ công) cho nhân viên ở xa, webhook và thanh toán
-- Chọn kho lưu: Cloudflare R2 hoặc Google Drive (Google One) — đăng nhập Google trên trình duyệt, Deplao chỉ thấy file do chính nó tạo
-- Lưu media lên kho đã chọn, tự lấy lại khi file trên máy thiếu, tuỳ chọn giải phóng ổ đĩa
-- Sao lưu & đồng bộ DB lên kho đã chọn, mã hoá ngay trên máy; khôi phục sang máy mới hoặc máy dự phòng
-- Mức sử dụng & chi phí: % phần miễn phí và ngưỡng tính phí, phí ước tính tháng này (R2), giải thích Ghi / Đọc / Tải xuống
+- One place to configure your Internet address (temporary address, automatic Cloudflare, ngrok, manual Cloudflare) for remote employees, webhooks and payments
+- Choose where to store: Cloudflare R2 or Google Drive (Google One) — sign in to Google in your browser; Deplao only sees the files it created
+- Store media on the chosen storage, fetch it back when local files are missing, optionally free up disk space
+- Back up & sync the DB to the chosen storage, encrypted on your machine; restore to a new or standby machine
+- Usage & cost: % of the free tier and billing thresholds, this month's estimated cost (R2), what counts as a write / read / download
 
-<a id="bao-mat"></a>
+<a id="security"></a>
 
-## 🔒 Bảo mật & dữ liệu
+## 🔒 Security & data
 
-Deplao ưu tiên kiến trúc chạy cục bộ trên máy người dùng:
+Deplao is designed to run locally on the user's machine:
 
-- Tất cả dữ liệu tin nhắn, danh bạ, CRM, cài đặt và media được lưu trên máy
-- Đăng nhập Zalo bằng QR Code, không lưu mật khẩu; phiên đăng nhập (cookie, token) chỉ lưu trên máy và được mã hoá bằng khoá của hệ điều hành (phiên Zalo, Telegram, token bot, cookie Facebook)
-- Người dùng có thể đổi thư mục lưu trữ dữ liệu sang ổ đĩa khác khi cần
-- Đám mây là tuỳ chọn và dùng tài khoản Cloudflare / Google của chính bạn (với Google Drive, Deplao chỉ được quyền với file do chính nó tạo); bản sao lưu DB được mã hoá trên máy trước khi tải lên
-- Public API tắt sẵn, API key giới hạn theo quyền, tài khoản, IP; ứng dụng chỉ chạy trong phạm vi quyền đã duyệt
-- Nhân viên chỉ truy cập được tài khoản được giao; khoá hoặc đổi mật khẩu nhân viên là thu hồi phiên ngay
-- Phù hợp với đội nhóm muốn kiểm soát dữ liệu nội bộ chặt chẽ hơn
-- Deplao là công cụ quản lý tài khoản của chính bạn: hãy tuân thủ điều khoản của Zalo, Facebook, Telegram và quy định về bảo vệ dữ liệu cá nhân, không dùng để gửi tin rác hay thu thập dữ liệu trái phép
+- All messages, contacts, CRM data, settings and media are stored locally
+- Zalo logs in with a QR code and no password is stored; login sessions (cookies, tokens) stay on the machine and are encrypted with the OS key (Zalo and Telegram sessions, bot tokens, Facebook cookies)
+- Storage directory can be moved to another drive at any time
+- The cloud is optional and uses your own Cloudflare / Google account (on Google Drive, Deplao only gets access to the files it created); DB backups are encrypted on the machine before upload
+- The Public API is off by default, API keys are limited by permission, account and IP; apps run only within the permissions you approved
+- Employees can only access their assigned accounts; locking an employee or changing their password revokes their session immediately
+- Ideal for teams wanting tighter internal data control
+- Deplao is a tool for managing your own accounts: follow the terms of Zalo, Facebook, Telegram and the personal data protection rules that apply to you; do not use it to send spam or collect data unlawfully
 
-## 💻 Yêu cầu vận hành
+## 💻 Runtime requirements
 
-- Kết nối Internet 24/7 ổn định để đồng bộ hội thoại và automation
-- Nên để app hoạt động liên tục nếu dùng workflow hoặc vận hành đội nhóm
+- Stable 24/7 internet connection for conversation sync and automation
+- Keep the app running if using workflows or team operations
 
 
 ---------------------------------------------------------------------------------------------------------------------------------------------
 
-<a id="lien-he"></a>
+<a id="contact"></a>
 
-## 📣 Liên hệ
+## 📣 Contact & support
 
-- Báo lỗi, góp ý hoặc cần hỗ trợ: 👉 [Tạo issue tại đây](https://github.com/babyvibe/deplao-builder/issues)
+- Bug reports, feedback or support: 👉 [Open an issue](https://github.com/babyvibe/deplao-builder/issues)
 
-## 🙏 Lời cảm ơn
+## 🙏 Acknowledgements
 
-Deplao xin gửi lời cảm ơn đến các dự án: zca-js, fbchat-v2 (mautrix-meta) & GramJS.
+Special thanks to the projects: zca-js, fbchat-v2 (mautrix-meta) & GramJS.
+
+---
+
+<a id="license"></a>
+
+## 📝 License
+
+Distributed under the **MIT** license.
+See [LICENSE](LICENSE) for details.
 
 ---
 
-<a id="giay-phep"></a>
-
-## 📝 Giấy phép
-
-Dự án được phân phối dưới giấy phép **MIT**.
-Xem file [LICENSE](LICENSE) để biết thêm chi tiết.
-
----

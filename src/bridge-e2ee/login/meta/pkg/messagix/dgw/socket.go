@@ -141,7 +141,7 @@ func (s *Socket) DoOneOffStream(ctx context.Context, payload []byte, noAckOrData
 	if err != nil {
 		if !s.stopping.Load() {
 			go func() {
-				_ = writeFrames(ctx, conn, &EndOfDataFrame{StreamID: streamID})
+				_ = writeFrames(context.WithoutCancel(ctx), conn, &EndOfDataFrame{StreamID: streamID})
 				s.streams.Delete(streamID)
 			}()
 		}
@@ -186,6 +186,7 @@ var ErrSocketAlreadyOpen = errors.New("dgw: socket is already open")
 var ErrDial = errors.New("dgw: failed to dial socket")
 var ErrPongTimeout = errors.New("dgw: pong timeout")
 var ErrUnauthorized = errors.New("dgw: unauthorized")
+var ErrDeauthFrame = errors.New("dgw: received deauth frame")
 
 func IsUnauthorized(err error) bool {
 	return errors.Is(err, ErrUnauthorized) || websocket.CloseStatus(err) == CloseStatusUnauthorized
@@ -218,11 +219,12 @@ func (s *Socket) Connect(ctx context.Context) (err error) {
 			return fmt.Errorf("%w: %w", ErrDial, dialErr)
 		}
 		wsConn.SetReadLimit(-1)
-		conn = &connection{connectionTransport: wsConn}
+		conn = newConnection(wsConn, false)
 	}
 	s.conn.Store(conn)
 	if s.stopping.Load() {
 		s.conn.Store(nil)
+		close(conn.done)
 		_ = conn.CloseNow()
 		return nil
 	}
@@ -253,12 +255,13 @@ func (s *Socket) Disconnect() {
 }
 
 const AckTimeout = 5 * time.Second
+const ResponseTimeout = 30 * time.Second
 const PingInterval = 10 * time.Second
 const PongTimeout = 30 * time.Second
 const WriteTimeout = 20 * time.Second
 
 func (s *Socket) readLoop(ctx context.Context, conn *connection) error {
-	done := make(chan struct{})
+	done := conn.done
 	var errorOnce sync.Once
 	var wg sync.WaitGroup
 
@@ -303,6 +306,13 @@ func (s *Socket) readLoop(ctx context.Context, conn *connection) error {
 
 	pongTimeoutTimer := time.NewTimer(PongTimeout)
 	defer pongTimeoutTimer.Stop()
+
+	wg.Add(1)
+	go func() {
+		defer catchPanics("write loop")
+		defer wg.Done()
+		conn.writeLoop(ctx)
+	}()
 
 	incoming := make(chan wrappedDataFrame, 64)
 	wg.Add(1)
@@ -354,9 +364,9 @@ func (s *Socket) readLoop(ctx context.Context, conn *connection) error {
 					}, "ack for unknown stream")
 				}
 			} else {
-				incoming <- wrappedDataFrame{
-					s: stream,
-					f: f,
+				select {
+				case incoming <- wrappedDataFrame{s: stream, f: f}:
+				case <-done:
 				}
 			}
 		case *AckFrame:
@@ -379,8 +389,10 @@ func (s *Socket) readLoop(ctx context.Context, conn *connection) error {
 					Uint16("stream_id", uint16(streamID)).
 					Stringer("reason", f.GetReason()).
 					Msg("Received end of data frame")
-				incoming <- wrappedDataFrame{
-					s: stream,
+				select {
+				case incoming <- wrappedDataFrame{s: stream}:
+				case <-done:
+					stream.close(false)
 				}
 				s.streams.Delete(streamID)
 			}
@@ -389,7 +401,7 @@ func (s *Socket) readLoop(ctx context.Context, conn *connection) error {
 		case *DeauthFrame:
 			s.Log.Debug().Msg("Received deauth frame")
 			if conn.extendedData {
-				fatalError(ErrUnauthorized)
+				fatalError(ErrDeauthFrame)
 			}
 		case *UnsupportedFrame:
 			s.Log.Warn().
@@ -480,6 +492,11 @@ func (s *Socket) readLoop(ctx context.Context, conn *connection) error {
 	}
 
 	wg.Wait()
+	for frame := range incoming {
+		if frame.s != nil && frame.f == nil {
+			frame.s.close(false)
+		}
+	}
 
 	s.stopped.Set()
 	s.conn.Store(nil)

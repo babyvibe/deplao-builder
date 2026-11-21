@@ -33,7 +33,17 @@ export type MixedAction = 'message' | 'friend_request' | 'invite_to_groups';
 export type SendMode = 'random' | 'all';
 type BadgeTone = 'default' | 'primary' | 'success' | 'warning' | 'destructive' | 'info';
 
-export interface ContentBlock { id: string; text: string; images: string[]; tagAll?: boolean; tagAllText?: string; }
+export interface ContentBlock {
+  id: string;
+  text: string;
+  images: string[];
+  /** Videos sent after the text/images part (one message per file). */
+  videos: string[];
+  /** Documents / arbitrary files sent after the videos (one message per file). */
+  files: string[];
+  tagAll?: boolean;
+  tagAllText?: string;
+}
 /** `order` / `combine`: how text and images of a block are sent (shared/crm/campaignSendPlan). */
 export interface ContentConfig extends CampaignSendOptions { mode: SendMode; blocks: ContentBlock[]; }
 
@@ -100,6 +110,8 @@ export function contactStatusOf(value: string | null | undefined): CampaignConta
 export function readContentConfig(raw: string | null | undefined): ContentConfig {
   const source = raw ?? '';
   if (!source.trim()) return { mode: 'random', blocks: [], ...DEFAULT_CAMPAIGN_SEND_OPTIONS };
+  const pathList = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((path): path is string => typeof path === 'string' && path.length > 0) : [];
   try {
     const parsed = JSON.parse(source);
     if (parsed && Array.isArray(parsed.blocks)) {
@@ -109,16 +121,16 @@ export function readContentConfig(raw: string | null | undefined): ContentConfig
         blocks: parsed.blocks.map((block: any, index: number): ContentBlock => ({
           id: String(block?.id ?? index),
           text: typeof block?.text === 'string' ? block.text : '',
-          images: Array.isArray(block?.images)
-            ? block.images.filter((path: unknown): path is string => typeof path === 'string' && path.length > 0)
-            : [],
+          images: pathList(block?.images),
+          videos: pathList(block?.videos),
+          files: pathList(block?.files),
           tagAll: !!block?.tagAll,
           tagAllText: typeof block?.tagAllText === 'string' ? block.tagAllText : undefined,
         })),
       };
     }
   } catch { /* legacy plain-text template */ }
-  return { mode: 'random', blocks: [{ id: 'legacy', text: source, images: [] }], ...DEFAULT_CAMPAIGN_SEND_OPTIONS };
+  return { mode: 'random', blocks: [{ id: 'legacy', text: source, images: [], videos: [], files: [] }], ...DEFAULT_CAMPAIGN_SEND_OPTIONS };
 }
 
 /** Stored template with new send options; every other key of the template is kept as is. */
@@ -128,7 +140,7 @@ export function withSendOptions(raw: string | null | undefined, patch: Partial<C
   try { parsed = JSON.parse(source); } catch { /* legacy plain-text template */ }
   const base = parsed && Array.isArray(parsed.blocks)
     ? parsed
-    : { mode: 'random', blocks: source.trim() ? [{ id: 'legacy', text: source, images: [] }] : [] };
+    : { mode: 'random', blocks: source.trim() ? [{ id: 'legacy', text: source, images: [], videos: [], files: [] }] : [] };
   return JSON.stringify({ ...base, ...patch });
 }
 
@@ -148,11 +160,18 @@ export function hasMarkupStyles(text: string): boolean {
 
 /** Same decision as the queue (services/crm/campaignBlockSender) for one block. */
 export function previewBlockPlan(block: ContentBlock, channel: string, options: CampaignSendOptions): BlockSendPlan {
-  return planBlockSend({ text: captionText(block.text, channel), images: block.images, channel, options });
+  return planBlockSend({
+    text: captionText(block.text, channel),
+    images: block.images,
+    videos: block.videos ?? [],
+    files: block.files ?? [],
+    channel,
+    options,
+  });
 }
 
 export function isEmptyBlock(block: ContentBlock): boolean {
-  return !block.text.trim() && block.images.length === 0;
+  return !block.text.trim() && block.images.length === 0 && (block.videos?.length ?? 0) === 0 && (block.files?.length ?? 0) === 0;
 }
 
 const MIXED_ACTIONS: readonly MixedAction[] = ['message', 'friend_request', 'invite_to_groups'];

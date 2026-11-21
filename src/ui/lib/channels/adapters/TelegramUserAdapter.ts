@@ -5,12 +5,13 @@
 
 import { BaseChannelAdapter } from './BaseChannelAdapter';
 import {
-  ActionResult, SendMessageParams, SendAttachmentParams,
+  ActionResult, SendMessageParams, SendAttachmentParams, SendAttachmentsParams,
   ConnectParams, HealthResult, HealthParams, DisconnectParams, SendVideoParams,
   UnsendParams, ForwardParams, EditParams, TypingParams, ReactionParams,
 } from './ChannelAdapter';
 import ipc from '../../ipc';
 import { tr } from '../../../../shared/i18n';
+import { isTelegramImagePath, quoteMsgId } from '../../../../shared/telegram/telegramAlbum';
 
 export class TelegramUserAdapter extends BaseChannelAdapter {
   readonly channel = 'telegram_user' as const;
@@ -215,6 +216,40 @@ export class TelegramUserAdapter extends BaseChannelAdapter {
       return { success: res?.success ?? false, msgId: res?.messageId, messageId: res?.messageId, error: res?.error };
     } catch (err: any) {
       console.error(`[TG:adapter] sendAttachment FAILED: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Several photos as ONE album. Without this the composer sent a photo per message (5 photos = 5 messages,
+   * looking like spam) while Telegram supports albums of up to 10 media items.
+   * Anything that is not an image keeps the single-send path.
+   */
+  async sendAttachments(params: SendAttachmentsParams): Promise<ActionResult> {
+    const files = (params.filePaths || []).filter(Boolean);
+    if (files.length === 0) return { success: false, error: tr('Không có ảnh để gửi') };
+    const onlyImages = (params.fileType ?? 'image') === 'image' && files.every(isTelegramImagePath);
+    if (!onlyImages) return super.sendAttachments(params);
+    try {
+      const replyToMsgId = params.replyToMsgId || quoteMsgId(params.quote);
+      const res = await (ipc.telegramUser as any)?.sendAlbum({
+        accountId: params.accountId,
+        chatId: params.threadId,
+        filePaths: files,
+        caption: params.body,
+        topicRootMessageId: params.topicRootMessageId,
+        replyToMsgId,
+      });
+      console.log(`[TG:adapter] sendAlbum files=${files.length} success=${res?.success} msgIds=${(res?.messageIds || []).length} error=${res?.error || ''}`);
+      return {
+        success: res?.success ?? false,
+        msgId: res?.messageId,
+        messageId: res?.messageId,
+        messageIds: res?.messageIds,
+        error: res?.error,
+      } as ActionResult;
+    } catch (err: any) {
+      console.error(`[TG:adapter] sendAlbum FAILED: ${err.message}`);
       return { success: false, error: err.message };
     }
   }

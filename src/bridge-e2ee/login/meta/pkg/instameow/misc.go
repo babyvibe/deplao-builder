@@ -1,6 +1,7 @@
 package instameow
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -54,7 +55,7 @@ func (c *Client) RegisterPushNotifications(ctx context.Context, endpoint string,
 	headers.Set("x-requested-with", "XMLHttpRequest")
 	headers.Set("Referer", c.GetEndpoint("base_url"))
 
-	_, body, err := c.http.MakeRequest(
+	resp, body, err := c.http.MakeRequest(
 		ctx, c.GetEndpoint("web_push"), http.MethodPost, headers, []byte(form.Encode()), types.FORM,
 	)
 	if err != nil {
@@ -68,7 +69,8 @@ func (c *Client) RegisterPushNotifications(ctx context.Context, endpoint string,
 
 	err = json.Unmarshal(body, resBody)
 	if err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
+		return fmt.Errorf("failed to parse response (status %d, content type %q, title %q): %w",
+			resp.StatusCode, resp.Header.Get("Content-Type"), htmlTitle(body), err)
 	} else if resBody.Status != "ok" {
 		return fmt.Errorf("unexpected response status: %s", resBody.Status)
 	}
@@ -81,6 +83,16 @@ func (c *Client) FetchMedia(ctx context.Context, mediaID, mediaShortcode string)
 		return nil, ErrClientIsNil
 	}
 	h := c.http.BuildHeaders(true, false)
+	// IG web's PolarisInstajax doesn't send these on REST calls (x-mid only before cookie consent)
+	for _, key := range []string{"x-fb-lsd", "x-mid", "dpr", "viewport-width"} {
+		h.Del(key)
+	}
+	if h.Get("x-ig-www-claim") == "" {
+		h.Set("x-ig-www-claim", "0")
+	}
+	if siteData := c.configs.BrowserConfigTable.PolarisSiteData; siteData.SendDeviceIDHeader && siteData.DeviceID != "" {
+		h.Set("x-web-device-id", siteData.DeviceID)
+	}
 	h.Set("x-requested-with", "XMLHttpRequest")
 	referer := c.GetEndpoint("base_url")
 	if mediaShortcode != "" {
@@ -90,7 +102,6 @@ func (c *Client) FetchMedia(ctx context.Context, mediaID, mediaShortcode string)
 	h.Set("sec-fetch-dest", "empty")
 	h.Set("sec-fetch-mode", "cors")
 	h.Set("sec-fetch-site", "same-origin")
-	// TODO the web client seems to change this for media requests?
 	h.Set("X-Web-Session-ID", c.configs.WebSessionID)
 	reqUrl := fmt.Sprintf(c.GetEndpoint("media_info"), mediaID)
 
@@ -120,16 +131,20 @@ func (c *Client) FetchReel(ctx context.Context, reelIDs []string, mediaID string
 	h.Set("sec-fetch-mode", "cors")
 	h.Set("sec-fetch-site", "same-origin")
 	h.Set("X-Web-Session-ID", c.configs.WebSessionID)
-	query := url.Values{}
+	h.Set("x-instagram-ajax", c.configs.BrowserConfigTable.InstagramWebPushInfo.RolloutHash)
+	reelIDsJSON, err := json.Marshal(reelIDs)
+	if err != nil {
+		return nil, err
+	}
+	form := url.Values{}
 	if mediaID != "" {
-		query.Add("media_id", mediaID)
+		form.Set("media_id", mediaID)
 	}
-	for _, id := range reelIDs {
-		query.Add("reel_ids", id)
-	}
+	form.Set("reel_ids", string(reelIDsJSON))
+	form.Set("fb_dtsg", c.configs.BrowserConfigTable.DTSGInitData.Token)
+	form.Set("jazoest", c.configs.Jazoest)
 
-	reqURL := c.GetEndpoint("reels_media") + query.Encode()
-	resp, respBody, err := c.http.MakeRequest(ctx, reqURL, http.MethodGet, h, nil, types.NONE)
+	resp, respBody, err := c.http.MakeRequest(ctx, c.GetEndpoint("reels_media"), http.MethodPost, h, []byte(form.Encode()), types.FORM)
 	if err != nil {
 		c.checkResponseError(err)
 		return nil, fmt.Errorf("failed to fetch reels by ids %v: %w", reelIDs, err)
@@ -142,4 +157,17 @@ func (c *Client) FetchReel(ctx context.Context, reelIDs []string, mediaID string
 	}
 
 	return reelInfo, nil
+}
+
+func htmlTitle(body []byte) string {
+	_, after, found := bytes.Cut(body, []byte("<title"))
+	if !found {
+		return ""
+	}
+	_, after, found = bytes.Cut(after, []byte(">"))
+	if !found {
+		return ""
+	}
+	title, _, _ := bytes.Cut(after, []byte("</title>"))
+	return string(bytes.TrimSpace(title[:min(len(title), 200)]))
 }

@@ -6,6 +6,7 @@ import { CHANNEL, isZalo } from '@/lib/channels/channelHelper';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { mergePeerReceipts, type PeerReceipt } from '@/lib/chat/messages/messageStatus';
 import { replyStateFromMessages } from '../../../shared/chat/replyState';
+import { mergeZaloReactionAliases } from '../../../shared/zalo/zaloReactions';
 import { FB_TEMPLATE_MSG_TYPE, fbTemplateFromAttachments, shouldUpgradeFbTemplate } from '../../../shared/facebook/facebookTemplate';
 import { tr } from '../../../shared/i18n';
 
@@ -100,6 +101,8 @@ export interface ReactionEmoji {
 export interface ReactionData {
   total: number;
   lastReact: string;
+  /** Each person's latest reaction (Zalo shows yours on the reaction button); absent on rows saved before it existed. */
+  lastByUser?: Record<string, string>;
   emoji: Record<string, ReactionEmoji>; // emojiChar -> stats
 }
 
@@ -909,6 +912,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }
           }
 
+          // Zalo: fold emoji saved earlier for the same reaction (😄 → 😆, 😢 → 😭) BEFORE counting this tap, like the DB does
+          if (!m.channel || m.channel === 'zalo') current = mergeZaloReactionAliases(current);
+
           // Apply PHP-like reaction logic
           if (!icon || mode === 'set') {
             // Remove user's reactions across all emojis
@@ -921,6 +927,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 if (current.emoji[emo].total <= 0) delete current.emoji[emo];
               }
             }
+            if (current.lastByUser) delete current.lastByUser[userId];
           }
           if (icon) {
             if (!current.emoji[icon]) current.emoji[icon] = { total: 0, users: {} };
@@ -928,6 +935,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             current.emoji[icon].users[userId] = mode === 'set' ? 1 : (current.emoji[icon].users[userId] || 0) + 1;
             current.total++;
             current.lastReact = icon;
+            current.lastByUser = { ...(current.lastByUser || {}), [userId]: icon };
           }
 
           return { ...m, reactions: { ...current } };

@@ -396,7 +396,25 @@ export default function ForwardMessageModal({ messages, onClose, onForward, mode
               {!selectedAccount ? (
                 <span className="text-subtle-foreground">{tr('Chọn tài khoản...')}</span>
               ) : (
-                <span className="text-foreground truncate">{accountName(selectedAccount)}</span>
+                <>
+                  {/* Avatar + channel badge: same look as the sidebar AccountPanel so the sending account is recognisable at a glance */}
+                  <div className="relative flex-shrink-0">
+                    <div className="w-7 h-7 rounded-full overflow-hidden ring-1 ring-foreground/10">
+                      {selectedAccount.avatar_url ? (
+                        <img src={selectedAccount.avatar_url} alt="" className="w-full h-full object-cover"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      ) : (
+                        <div className="w-full h-full bg-blue-600 flex items-center justify-center text-white font-bold text-[10px]">
+                          {accountName(selectedAccount).charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <div className="absolute -top-1 -left-1 z-10 pointer-events-none scale-[0.6] origin-top-left">
+                      <ChannelBadge channel={(selectedAccount.channel as any) || CHANNEL.ZALO} size="sm" />
+                    </div>
+                  </div>
+                  <span className="text-foreground truncate">{accountName(selectedAccount)}</span>
+                </>
               )}
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`ml-auto flex-shrink-0 text-muted-foreground transition-transform ${showAccountDropdown ? 'rotate-180' : ''}`}>
                 <polyline points="6 9 12 15 18 9"/>

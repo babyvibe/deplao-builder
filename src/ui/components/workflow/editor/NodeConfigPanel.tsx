@@ -879,7 +879,7 @@ export const CONFIG_SCHEMA: Record<string, Field[]> = {
       options: [
         { value: 'LIKE', label: tr('👍 Like') }, { value: 'HEART', label: tr('❤️ Yêu thích') },
         { value: 'HAHA', label: tr('😆 Haha') }, { value: 'WOW', label: tr('😮 Wow') },
-        { value: 'CRY', label: tr('😢 Buồn') }, { value: 'ANGRY', label: tr('😡 Giận') },
+        { value: 'CRY', label: tr('😭 Buồn') }, { value: 'ANGRY', label: tr('😡 Giận') },
       ],
     },
     {
@@ -2312,11 +2312,12 @@ export const CONFIG_SCHEMA: Record<string, Field[]> = {
       desc: tr('Workflow chạy khi tin nhắn nhận được cảm xúc nào?'),
       options: [
         { value: 'any', label: tr('Bất kỳ cảm xúc nào') },
+        // Zalo's 6 reactions as Zalo draws them; older workflows saved 😂 / 😢, the engine matches them by meaning
         { value: '👍',  label: tr('Like') },
         { value: '❤️',  label: tr('Yêu thích') },
-        { value: '😂',  label: tr('Haha') },
+        { value: '😆',  label: tr('Haha') },
         { value: '😮',  label: tr('Wow') },
-        { value: '😢',  label: tr('Buồn') },
+        { value: '😭',  label: tr('Buồn') },
         { value: '😡',  label: tr('Giận') },
       ],
     },

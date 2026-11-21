@@ -84,8 +84,8 @@ function parseReactions(raw: any, channel?: string): Record<string, number> {
   return counts;
 }
 
-/** Parse reactions into full ReactionData (with users) to check the current user and show the popup */
-function parseReactionsFull(raw: any, channel?: string): { total: number; emoji: Record<string, { total: number; users: Record<string, number> }> } {
+/** Parse reactions into full ReactionData (with users) to check the current user and show the popup. `lastByUser`: each person's latest reaction (Zalo). */
+function parseReactionsFull(raw: any, channel?: string): { total: number; lastByUser?: Record<string, string>; emoji: Record<string, { total: number; users: Record<string, number> }> } {
   const empty = { total: 0, emoji: {} };
   if (!raw) return empty;
   let parsed = raw;
@@ -107,8 +107,9 @@ function parseReactionsFull(raw: any, channel?: string): { total: number; emoji:
         converted[key].users[uid] = ((converted[key].users[uid] || 0)) + (cnt as number);
       }
     }
-    const result = { total: parsed.total || 0, emoji: converted };
-    // Zalo: "haha" was stored in 2 forms (😄 when reacted, 😆 from the echo) → merged, the same person takes the larger count
+    const result: { total: number; lastByUser?: Record<string, string>; emoji: typeof converted } = { total: parsed.total || 0, emoji: converted };
+    if (parsed.lastByUser && typeof parsed.lastByUser === 'object') result.lastByUser = parsed.lastByUser;
+    // Zalo: emoji saved earlier for the same reaction (😄 → 😆, 😢 → 😭) are merged, the same person takes the larger count
     return isZaloChannel(channel) ? mergeZaloReactionAliases(result) : result;
   }
 
@@ -273,6 +274,59 @@ function ReactionPopup({ msg, initialEmoji, contacts, groupMembers, currentUserI
     return m?.avatar ? toLocalMediaUrl(m.avatar) : '';
   };
   const users = getUsersForTab();
+
+  // Zalo's "Biểu cảm" dialog: tabs in a column on the left (Tất cả, then each reaction, most first), each person with the
+  // reactions they gave and their total number of taps
+  if (isZaloChannel(msg.channel)) {
+    const kinds = Object.entries(data.emoji).filter(([, entry]) => entry.total > 0).sort((a, b) => b[1].total - a[1].total);
+    const tabClass = (active: boolean) =>
+      `flex w-full items-center justify-between gap-2 px-3 py-2 text-sm transition-colors ${active ? 'bg-card text-foreground' : 'text-muted-foreground hover:bg-card/60 hover:text-foreground'}`;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+        <div className="bg-card rounded-2xl w-[30rem] max-w-[92vw] max-h-[70vh] flex flex-col shadow-2xl border border-border overflow-hidden"
+          onClick={(e) => e.stopPropagation()} data-reaction-dialog="zalo">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <h3 className="text-sm font-semibold text-foreground">{tr('Biểu cảm')}</h3>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground w-6 h-6 flex items-center justify-center rounded-full hover:bg-muted">✕</button>
+          </div>
+          <div className="flex min-h-[14rem] flex-1 overflow-hidden">
+            <div className="w-32 shrink-0 overflow-y-auto bg-muted/60 py-1" role="tablist">
+              <button type="button" role="tab" aria-selected={tab === 'all'} onClick={() => setTab('all')} className={tabClass(tab === 'all')}>
+                <span>{tr('Tất cả')}</span><span className="tabular-nums">{totalAll}</span>
+              </button>
+              {kinds.map(([emo, entry]) => (
+                <button key={emo} type="button" role="tab" aria-selected={tab === emo} onClick={() => setTab(emo)} className={tabClass(tab === emo)}>
+                  <span className="text-lg leading-none">{displayReactionEmoji(emo)}</span><span className="tabular-nums">{entry.total}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {users.map(({ uid, emojis, total }) => (
+                <div key={uid} className="flex items-center gap-3 py-1">
+                  {getAvatar(uid) && !brokenAvatars.has(uid) ? (
+                    <img src={getAvatar(uid)} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0"
+                      onError={() => setBrokenAvatars((prev) => new Set(prev).add(uid))} />
+                  ) : (
+                    <PeerInitials id={uid} name={getName(uid)} fallback="U" className="w-9 h-9 text-xs" />
+                  )}
+                  <p className="flex-1 min-w-0 truncate text-sm text-foreground">{getName(uid)}</p>
+                  <span className="flex shrink-0 items-center gap-0.5 text-base leading-none">
+                    {Object.entries(emojis).sort((a, b) => (b[1] as number) - (a[1] as number)).map(([emo]) => (
+                      <span key={emo}>{displayReactionEmoji(emo)}</span>
+                    ))}
+                    <span className="ml-1 text-sm tabular-nums text-muted-foreground">{total}</span>
+                  </span>
+                </div>
+              ))}
+              {users.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-6">{tr('Chưa có ai thả cảm xúc này')}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>

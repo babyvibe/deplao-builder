@@ -163,6 +163,9 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:sendTopicMessage': proxy(CHAT, { send: true, timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
   'telegramUser:sendFile': proxy(CHAT, { send: true, timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
   'telegramUser:sendTopicFile': proxy(CHAT, { send: true, timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
+  // Several photos as one album: `filePaths` are uploaded to Boss first (PROXY_FILE_PATH_LIST_FIELDS); the album's
+  // first message (`messageId`) is recorded as sent by the employee, like fb:sendAttachments
+  'telegramUser:sendAlbum': proxy(CHAT, { send: true, timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
   'telegramUser:sendSticker': proxy(CHAT, { send: true }),
   'telegramUser:sendGif': proxy(CHAT, { send: true }),
   // ── Messages ────────────────────────────────────────────────────────────
@@ -173,6 +176,7 @@ export const TELEGRAM_USER_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChann
   'telegramUser:syncPinnedMessages': proxy(),
   'telegramUser:sendReaction': proxy(),
   'telegramUser:getAvailableReactions': proxy(),
+  'telegramUser:getQuickReaction': proxy(),
   'telegramUser:sendTyping': proxy(),
   'telegramUser:readChatHistory': proxy(),
   'telegramUser:readForumTopic': proxy(),

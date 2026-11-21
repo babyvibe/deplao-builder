@@ -18,6 +18,55 @@ interface VersionEntry {
 // ─── Changelog data - add the new entry at the TOP of the array when there is an update ────────
 const CHANGELOG: VersionEntry[] = [
   {
+    version: '26.11.2',
+    date: '11/2026',
+    type: 'minor',
+    highlights: [
+      tr('😀 Thả cảm xúc giống Zalo và Telegram: tin Zalo có nút ở góc tin, thanh 👍 ❤️ 😆 😮 😭 😡 và nút ✕ để gỡ; tin Telegram có cảm xúc nằm trong khung tin, nháy đúp để thả nhanh.'),
+      tr('🧸 Kho sticker Zalo như trên Zalo: 50 bộ có sẵn, nút + thêm 182 bộ miễn phí, gợi ý sticker hiện ngay từ 1 ký tự.'),
+      tr('📣 Chiến dịch gửi được video và tệp, tự gắn nhãn cho người đã gửi xong, có thêm biến {gender} và {phone}.'),
+      tr('💬 Facebook chạy được chiến dịch nhắn tin.'),
+      tr('📨 Sửa tin nhắn Facebook realtime: tin Messenger mới lại về ngay khi có người nhắn.'),
+      tr('🖼️ Telegram gửi và chuyển tiếp nhiều ảnh thành một album, không còn mỗi ảnh một tin.'),
+      tr('🖥️ Hết màn hình đen sau khi gập máy hay khoá màn hình; mở app có màn hình chờ thay cho cửa sổ tối trống.'),
+    ],
+    changes: [
+      {
+        category: 'new',
+        items: [
+          tr('Kho sticker Zalo như trên Zalo: 50 bộ sticker có tên và ảnh đại diện (Trọc Trắng, Mèo Méo Meo…), cuộn xem liền từng bộ, thanh chọn bộ ở dưới. Mở bảng sticker là vào thẳng kho, không phải chờ tải hay bấm Tải kho sticker như trước.'),
+          tr('Nút + cuối thanh chọn bộ mở thêm 182 bộ sticker khác của Zalo, đều miễn phí: bấm Tải về là bộ có ngay trong kho, bấm Gỡ để bỏ ra.'),
+          tr('Chiến dịch gửi kèm video và tệp (Zalo, Telegram, Telegram Bot, Facebook): form chiến dịch có ô Đính kèm video và Đính kèm tệp; gửi theo thứ tự chữ, ảnh, video, tệp, mỗi video và mỗi tệp là một tin riêng.'),
+          tr('Chiến dịch có mục Gắn nhãn khi gửi xong: chọn nhiều nhãn Local và một nhãn Zalo (chỉ kênh Zalo), chỉ gắn cho người đã gửi thành công, kể cả chiến dịch kết bạn và mời vào nhóm. Zalo chỉ cho một nhãn mỗi hội thoại nên nhãn Zalo mới thay nhãn cũ.'),
+          tr('Chiến dịch có thêm biến {gender} (giới tính) và {phone} (số điện thoại), dùng được cả trong lời mời kết bạn; nút ? cạnh Chèn biến cho biết biến nào dùng được ở kênh nào và lấy giá trị từ đâu.'),
+          tr('Facebook: tài khoản Facebook có tab Chiến dịch và nút Thêm vào chiến dịch để gửi chiến dịch nhắn tin (chưa có chiến dịch kết bạn, mời vào nhóm); tài khoản chưa kết nối thì chiến dịch chờ thay vì báo gửi lỗi.'),
+        ],
+      },
+      {
+        category: 'improved',
+        items: [
+          tr('Thả cảm xúc tin Zalo giống Zalo: nút ở góc phải dưới tin, bấm là thả 👍 (hoặc cảm xúc vừa thả), mỗi lần bấm +1; giữ chuột hiện thanh 👍 ❤️ 😆 😮 😭 😡 và nút ✕ gỡ hết cảm xúc của mình; bấm ô tổng để xem ai đã thả.'),
+          tr('Thả cảm xúc tin Telegram giống Telegram: cảm xúc nằm trong khung tin, ô của mình tô màu, ít người thả thì hiện ảnh đại diện; bấm ô để thả hoặc gỡ; nháy đúp tin hoặc bấm nút để thả cảm xúc nhanh đã chọn trong Telegram; chuột phải → "N cảm xúc" để xem ai thả.'),
+          tr('Gợi ý sticker khi soạn tin Zalo và ô tìm sticker chạy từ 1 ký tự (vd "hi", "ok", "cảm ơn") và hiện ra ngay nhờ bảng từ khoá của Zalo có sẵn trong app; trước đây phải gõ từ 3 ký tự rồi chờ mạng.'),
+          tr('Telegram và Telegram Bot: gửi nhiều ảnh cùng lúc (chọn nhiều ảnh, dán, kéo thả, chọn từ thư viện, tin nhắn nhanh, chiến dịch, API) thành một album, tối đa 10 ảnh mỗi album, thay vì mỗi ảnh một tin; dùng được trong chủ đề và khi trả lời.'),
+          tr('Telegram: chuyển tiếp nhiều ảnh liền nhau thành một album, giữ đúng thứ tự; chú thích đầu tiên đi cùng album, chú thích khác gửi riêng.'),
+          tr('Hộp chuyển tiếp tin: ô Tài khoản gửi hiện ảnh đại diện và biểu tượng kênh của từng tài khoản.'),
+          tr('Lúc mở app hay tải lại giao diện (vd đổi ngôn ngữ), Deplao hiện màn hình chờ có thanh chạy và chữ Đang tải giao diện thay cho cửa sổ tối trống; quá 8 giây thì báo đang tải lâu hơn thường lệ. Màn hình chờ theo đúng giao diện sáng / tối đã chọn.'),
+          tr('Cài đặt → Nhật ký ghi lúc máy ngủ, thức dậy, mở khoá màn hình, giao diện mất bao lâu để hiện lại và khi phần vẽ giao diện bị lỗi, để dễ tìm nguyên nhân khi app chậm sau khi mở máy.'),
+        ],
+      },
+      {
+        category: 'fixed',
+        items: [
+          tr('Facebook: sửa tin Messenger không về ngay: cầu nối nhận tin được cập nhật theo thay đổi mới của Meta.'),
+          tr('Sửa gỡ cảm xúc Zalo trên điện thoại mà Deplao vẫn hiện; workflow "Khi có cảm xúc" nay nhận đúng cảm xúc Zalo và lọc đúng loại; Telegram Bot gỡ cảm xúc được.'),
+          tr('Sửa cửa sổ Deplao trên Windows đen rất lâu sau khi gập máy hoặc khoá màn hình rồi mở lại: nay giữ nguyên hình đang có và cập nhật ngay khi máy sẵn sàng.'),
+          tr('Sửa giao diện chậm phản hồi (thường ngay sau khi mở máy) bị tải lại ngay, mất hội thoại đang mở và hiện cửa sổ trống: nay Deplao chờ thêm 45 giây, giao diện tự phản hồi lại thì không tải lại.'),
+        ],
+      },
+    ],
+  },
+  {
     version: '26.11.1',
     date: '11/2026',
     type: 'minor',

@@ -117,6 +117,9 @@ async function callBackend<T>(endpoint: string, body: object): Promise<T> {
  * Scans group members through the backend: SENDS THE ZALO COOKIE + IMEI to deplaoapp.com (see the top of the file).
  * Only runs when the user has agreed (`hasHiddenScanConsent()`); the caller must ask first with `ensureHiddenScanConsent()`.
  * Does not check the plan or the expiry date (the server is free for every account).
+ * Why via the backend:
+ * - Zalo can fix the hidden group scanning vulnerability at any time, so the hidden group scanning must run on the server to maintain confidentiality (the app is open source). The server uses cookies to call Zalo (getLoginInfo → list of IDs → member info), then returns the list; it does not store cookies or log them. Server logs include: endpoint, IP, user agent, page_id, group_id, time...
+ * - The server does not store cookies or log cookie activity. This feature is not enabled by default; users must agree. Disagreement will result in no cookie submission and no scanning of hidden groups..
  */
 export async function scanGroupViaBackend(params: {
   pageId: string;

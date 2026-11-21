@@ -27,7 +27,7 @@ const BRIDGE_DIR = path.resolve(__dirname, '..', 'src', 'bridge-e2ee');
 const META_DIR = path.join(BRIDGE_DIR, 'meta');
 const BUILD_DIR = path.join(BRIDGE_DIR, 'build');
 const GO_BUILD_CACHE = path.resolve(__dirname, '..', 'tmp', 'go-build-cache');
-const MANIFEST_PATH = path.resolve(__dirname, '..', 'docs', 'fbchat-v2.3.3-vendor-manifest.json');
+const MANIFEST_PATH = path.resolve(__dirname, '..', 'docs', 'fbchat-v2.3.5-vendor-manifest.json');
 const BINARY_NAME = process.platform === 'win32'
   ? 'fbchat-bridge-e2ee.exe'
   : 'fbchat-bridge-e2ee';

@@ -139,12 +139,18 @@ export function useMessageActions(deps: {
       // process saves the official counts from the send result. It does not add into the DB the way Zalo does (it used to add onto a message
       // with the same ID in another conversation → "1 đống icon" (a pile of icons)).
       const isTelegramUserMsg = ch === 'telegram_user';
-      useChatStore.getState().updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, emoji, isTelegramUserMsg ? 'set' : 'accumulate');
+      // Telegram (user and bot): one reaction per person, a new one REPLACES it; Zalo: every tap adds +1
+      const replacesOwn = isTelegramUserMsg || ch === 'telegram_bot';
+      useChatStore.getState().updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, emoji, replacesOwn ? 'set' : 'accumulate');
 
       if (!isTelegramUserMsg) {
         // Persist the reaction to the DB immediately (so it survives a conversation switch); the Zalo echo of this click is ignored
         markLocalReaction(accId, msg.msg_id, emoji);
-        DataAccessor.updateReaction?.({ zaloId: accId, msgId: msg.msg_id, threadId: msg.thread_id, userId: accId, emoji }).catch(() => {});
+        const save = (value: string) =>
+          DataAccessor.updateReaction?.({ zaloId: accId, msgId: msg.msg_id, threadId: msg.thread_id, userId: accId, emoji: value });
+        // Telegram Bot: the DB adds up like Zalo → remove the bot's own reaction first, then save the new one
+        if (ch === 'telegram_bot') void Promise.resolve(save('')).then(() => save(emoji)).catch(() => {});
+        else save(emoji)?.catch(() => {});
       }
 
       if (isNonZalo(ch)) {

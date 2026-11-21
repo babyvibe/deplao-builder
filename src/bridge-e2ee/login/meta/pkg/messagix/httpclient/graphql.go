@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -232,11 +233,21 @@ func (c *HTTPClient) MakeGraphQLRequest(ctx context.Context, name string, variab
 	headers.Set("origin", c.parent.GetEndpoint("base_url"))
 	headers.Set("referer", c.parent.GetEndpoint("messages")+"/")
 
-	reqUrl := c.parent.GetEndpoint("graphql")
+	reqUrl := c.parent.GetEndpoint(cmp.Or(graphQLDoc.EndpointName, "graphql"))
 	//c.Logger.Info().Any("url", reqUrl).Any("payload", string(payloadBytes)).Any("headers", headers).Msg("Sending graphQL request.")
-	resp, respData, err := c.makeRequest(ctx, reqUrl, "POST", headers, payloadBytes, types.FORM, func(e *zerolog.Event) *zerolog.Event {
-		return e.Str("graphql_method", name)
-	})
+	var resp *http.Response
+	var respData []byte
+	if graphQLDoc.NoRetry {
+		resp, respData, err = c.MakeRequestOnce(ctx, reqUrl, "POST", headers, payloadBytes, types.FORM)
+	} else {
+		getClient := c.GetHTTPClient
+		if graphQLDoc.SlowQuery {
+			getClient = c.lsSyncClient
+		}
+		resp, respData, err = c.makeRequest(ctx, getClient, reqUrl, "POST", headers, payloadBytes, types.FORM, func(e *zerolog.Event) *zerolog.Event {
+			return e.Str("graphql_method", name)
+		})
+	}
 	if err == nil && resp != nil {
 		c.parent.GetCookies().UpdateFromResponse(resp)
 	}

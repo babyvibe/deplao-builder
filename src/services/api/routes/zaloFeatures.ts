@@ -2,7 +2,7 @@
  * Extended Zalo (Deplao SRS, ZL-01 → ZL-05): access status, auto-delete messages, privacy settings, zBusiness product catalog.
  * Mirrors the UI: chat/zalo/presence/ZaloPresenceLine.tsx, ZaloAutoDeleteSection.tsx, settings/accounts/ZaloPrivacySettings.tsx,
  * chat/zalo/catalog/ZaloCatalogPicker.tsx. Every route calls the exact zalo:* IPC handler the UI uses.
- * Conversations hidden with a PIN (ZL-03) are only a display layer in the app: the API keeps the behavior as is (decision Q2), no separate route.
+ * Conversations hidden with a PIN (ZL-03) are only a display layer in the app: the API keeps the behavior as is, no separate route.
  */
 import { s } from '../schema';
 import { AccountInfo, ApiContext, ApiError, route, RouteDef } from '../types';

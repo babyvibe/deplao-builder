@@ -5,27 +5,26 @@ import { isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { DEFAULT_TELEGRAM_REACTIONS, normalizeTelegramReaction } from '../../../../shared/telegram/telegramReactions';
 
 /**
- * Reaction list per channel: shared by the picker shown on hover and the right-click menu.
- * - The 6 reactions shown by default are in the SAME ORDER on every channel (REACTION_SLOTS): heart, haha, wow, sad, angry, like. Hover bar:
- *   the first reaction is closest to the button; right-click menu: left to right.
- * - Zalo: only the types Zalo has (EMOJI_TO_REACTION); other emoji are sent as ❤️ (before, 😆 / 😯 appeared in the right-click menu).
+ * Reaction list per channel: shared by the hover pickers and the right-click menu.
+ * - The 6 reactions shown by default are in the SAME ORDER on every channel (REACTION_SLOTS), Zalo's order: like, heart, haha,
+ *   wow, sad, angry. Zalo's horizontal bar and the right-click menu read left to right; Telegram's column starts at the button.
+ * - Zalo: only the types Zalo has (EMOJI_TO_REACTION); other emoji are sent as ❤️.
  * - Facebook (Messenger accepts every emoji): the 6 default Messenger reactions.
  * - Telegram: the conversation's real list (useTelegramChatReactions): strings exactly as Telegram (heart is "❤").
  */
 const unique = (items: readonly string[]) => [...new Set(items)];
 
 /**
- * Shared order: one meaning per slot, with each channel's correct emoji. Haha: Zalo 😄 (code ":>"), Messenger 😆, Telegram 😁 (no
- * 😄 / 😆); Messenger's angry is 😠; Telegram has no 😮 so "wow" is 😱. Before, Telegram had its own order
- * (👍 😁 ❤ 😢 👏 😡), and Zalo / Facebook another order.
+ * Shared order: one meaning per slot, with each channel's correct emoji. Zalo draws haha 😆 (code ":>") and cry 😭 (":-(("),
+ * Messenger 😆 / 😢 and angry 😠, Telegram 😁 (no 😆) and 😱 for wow (no 😮).
  */
 export const REACTION_SLOTS = [
-  { slot: 'heart', zalo: '❤️', facebook: '❤️', telegram: '❤' },
-  { slot: 'haha', zalo: '😄', facebook: '😆', telegram: '😁' },
-  { slot: 'wow', zalo: '😮', facebook: '😮', telegram: '😱' },
-  { slot: 'sad', zalo: '😢', facebook: '😢', telegram: '😢' },
-  { slot: 'angry', zalo: '😡', facebook: '😠', telegram: '😡' },
   { slot: 'like', zalo: '👍', facebook: '👍', telegram: '👍' },
+  { slot: 'heart', zalo: '❤️', facebook: '❤️', telegram: '❤' },
+  { slot: 'haha', zalo: '😆', facebook: '😆', telegram: '😁' },
+  { slot: 'wow', zalo: '😮', facebook: '😮', telegram: '😱' },
+  { slot: 'sad', zalo: '😭', facebook: '😢', telegram: '😢' },
+  { slot: 'angry', zalo: '😡', facebook: '😠', telegram: '😡' },
 ] as const;
 
 // Zalo / Facebook: keep the few reactions as before (6), the long list is only for Telegram
@@ -33,7 +32,7 @@ export const ZALO_QUICK_REACTIONS: string[] = REACTION_SLOTS.map((reaction) => r
 export const ZALO_ALL_REACTIONS = unique(ZALO_QUICK_REACTIONS.filter((emoji) => !!EMOJI_TO_REACTION[emoji]));
 export const FACEBOOK_QUICK_REACTIONS: string[] = REACTION_SLOTS.map((reaction) => reaction.facebook);
 export const FACEBOOK_ALL_REACTIONS = [...FACEBOOK_QUICK_REACTIONS];
-/** Telegram: number of reactions shown by default (right-click menu before the expand button, hover bar before scrolling). */
+/** Telegram: number of reactions shown by default (right-click menu before the expand button, hover column before scrolling). */
 export const TELEGRAM_QUICK_COUNT = 6;
 /**
  * Telegram's default reactions: fixed, in the same order as Zalo / Facebook, not taken directly from the personalised "frequently used" list of Telegram
@@ -105,8 +104,57 @@ export function useTelegramChatReactions(accountId: string | null | undefined, c
   return { reactions, load };
 }
 
+/** Telegram's own default quick reaction (when the account's setting is unknown or a Premium custom emoji). */
+export const TELEGRAM_DEFAULT_QUICK_REACTION = '👍';
+const QUICK_TTL_MS = 6 * 60 * 60 * 1000;
+const quickCache = new Map<string, { at: number; emoji: string }>();
+const quickInflight = new Map<string, Promise<string>>();
+
+/** The account's quick reaction (Telegram settings → Quick Reaction): read once per 6 hours, 👍 until known. */
+export function loadTelegramQuickReaction(accountId: string | null | undefined): Promise<string> {
+  if (!accountId) return Promise.resolve(TELEGRAM_DEFAULT_QUICK_REACTION);
+  const cached = quickCache.get(accountId);
+  if (cached && Date.now() - cached.at < QUICK_TTL_MS) return Promise.resolve(cached.emoji);
+  let task = quickInflight.get(accountId);
+  if (!task) {
+    const request = ipc.telegramUser?.getQuickReaction?.({ accountId });
+    task = (request || Promise.resolve(null))
+      .then((result) => {
+        const emoji = result?.success && result.emoji ? normalizeTelegramReaction(result.emoji) : TELEGRAM_DEFAULT_QUICK_REACTION;
+        // Not connected yet / error: keep 👍 for now, ask again next time
+        if (result?.success) quickCache.set(accountId, { at: Date.now(), emoji });
+        return emoji;
+      })
+      .catch(() => TELEGRAM_DEFAULT_QUICK_REACTION)
+      .finally(() => { quickInflight.delete(accountId); });
+    quickInflight.set(accountId, task);
+  }
+  return task;
+}
+
+/** Quick reaction known so far (no request). */
+export function cachedTelegramQuickReaction(accountId: string | null | undefined): string {
+  return (accountId && quickCache.get(accountId)?.emoji) || TELEGRAM_DEFAULT_QUICK_REACTION;
+}
+
+/** The quick reaction for the open Telegram conversation: 👍 until the account's setting is read (on first hover / double-click). */
+export function useTelegramQuickReaction(accountId: string | null | undefined, enabled: boolean) {
+  const [emoji, setEmoji] = React.useState(() => cachedTelegramQuickReaction(accountId));
+  React.useEffect(() => { setEmoji(cachedTelegramQuickReaction(accountId)); }, [accountId]);
+  const load = React.useCallback(() => {
+    if (!enabled || !accountId) return Promise.resolve(TELEGRAM_DEFAULT_QUICK_REACTION);
+    return loadTelegramQuickReaction(accountId).then((value) => {
+      setEmoji(value);
+      return value;
+    });
+  }, [accountId, enabled]);
+  return { emoji, load };
+}
+
 /** Test only. */
 export function __resetTelegramReactionCache(): void {
   cache.clear();
   inflight.clear();
+  quickCache.clear();
+  quickInflight.clear();
 }

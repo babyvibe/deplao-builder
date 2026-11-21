@@ -11,7 +11,7 @@ import { tr, appLocale } from '../i18n';
 
 export const ZALO_CATALOG_BASE_URL = 'https://catalog.zalo.me/';
 export const ZALO_PRODUCT_MAX_PHOTOS = 5;
-/** Sending several products at once: at least 2 s apart (decision Q8). */
+/** Sending several products at once: at least 2 s apart. */
 export const ZALO_PRODUCT_SEND_GAP_MS = 2000;
 export const ZALO_PRODUCT_NAME_MAX = 200;
 export const ZALO_PRODUCT_DESCRIPTION_MAX = 2000;

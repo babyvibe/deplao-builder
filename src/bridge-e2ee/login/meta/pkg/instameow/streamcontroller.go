@@ -19,6 +19,7 @@ package instameow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -59,11 +60,16 @@ func (c *Client) connectStreamController(ctx context.Context) {
 			sock.Log.Warn().Err(err).
 				Int("sequential_failures", sequentialFailures).
 				Msg("Connection failed, reconnecting...")
+			if c.cookies.IsLoggedIn() && !c.IsAuthenticated() {
+				if _, reloadErr := c.ReloadIndex(ctx); reloadErr != nil {
+					sock.Log.Err(reloadErr).Msg("Failed to reload index for typing stream without logged-in viewer")
+				}
+			}
 			select {
 			case <-ctx.Done():
 				sock.Log.Debug().Msg("Context canceled, stopping socket reconnect attempts")
 				return
-			case <-time.After(min(time.Duration(1<<sequentialFailures)*time.Second, MaxConnectionRetryInterval)):
+			case <-time.After(min(time.Duration(1<<min(sequentialFailures, 10))*time.Second, MaxConnectionRetryInterval)):
 				continue
 			}
 		} else {
@@ -103,7 +109,7 @@ func (c *Client) getStreamControllerSocketOptions() dgw.SocketOptions {
 		AppID:          c.configs.BrowserConfigTable.DGWWebConfig.AppID,
 		UserID:         c.configs.BrowserConfigTable.PolarisViewer.ID,
 		DeviceID:       c.configs.BrowserConfigTable.IGDMqttWebDeviceID.ClientID,
-		OnConnect: func(ctx context.Context, _ func(error)) error {
+		OnConnect: func(ctx context.Context, fatalError func(error)) error {
 			// Note: the official web app subscribes to multiple streams like presence and other realtime events,
 			// but we only support typing for now
 			params, err := json.Marshal(&typingSubscribeParameters{
@@ -120,6 +126,9 @@ func (c *Client) getStreamControllerSocketOptions() dgw.SocketOptions {
 			stream, err := c.streamControllerSocket.Load().EstablishStream(ctx, dgw.StreamInit{
 				Parameters:   params,
 				FrameHandler: c.handleStreamControllerFrame,
+				OnClose: func() {
+					fatalError(errors.New("typing stream closed"))
+				},
 			})
 			if err != nil {
 				c.log.Err(err).Msg("Failed to establish typing stream")
@@ -146,7 +155,7 @@ func (c *Client) getStreamControllerSocketOptions() dgw.SocketOptions {
 	}
 	if c.mobileSession.Load() != nil {
 		options.HTTPStream = &dgw.HTTPStreamOptions{
-			Client: c.http.HTTP, URL: c.GetEndpoint("dgw_streamcontroller_native"), GetHeaders: c.streamControllerNativeHeaders,
+			GetClient: c.http.GetHTTPClient, URL: c.GetEndpoint("dgw_streamcontroller_native"), GetHeaders: c.streamControllerNativeHeaders,
 		}
 	}
 	return options

@@ -3,13 +3,17 @@ import DataAccessor from '@/lib/data/DataAccessor';
 import ipc from '@/lib/ipc';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
-import { AlertIcon, ChartIcon, ChatIcon, ClipboardListIcon, EditIcon, PauseIcon, RocketIcon, SendIcon, ShuffleIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
+import { AlertIcon, ChartIcon, ChatIcon, ClipboardListIcon, EditIcon, PauseIcon, RocketIcon, SendIcon, ShuffleIcon, TagIcon, UserCheckIcon, UsersIcon } from '@/components/common/icons';
 import { parseMarkup } from '../../../../services/crm/message-markup';
 import { type Channel } from '../../../../configs/channels/channelConfig';
 import { COMBINE_FALLBACK_LABEL, planBlockSend, type CampaignSendOptions } from '../../../../shared/crm/campaignSendPlan';
+import { CAMPAIGN_PREVIEW_VARS, CAMPAIGN_TEMPLATE_VARS, substituteCampaignVars } from '../../../../shared/crm/campaignVars';
 import { CAMPAIGN_MIN_CONTACT_DELAY_SECONDS, effectiveContactDelayRange } from '../../../../shared/crm/campaignDelay';
 import { CAMPAIGN_STOP_AFTER_FAILURES_CHOICES, campaignFlag, normalizeStopAfterFailures } from '../../../../shared/crm/campaignAutoStop';
 import { CampaignSendOptionsControl } from './CampaignParts';
+import TemplateVarHelp from './TemplateVarHelp';
+import SuccessLabelPicker from './SuccessLabelPicker';
+import { useAppStore, type LabelData } from '@/store/app/appStore';
 import { tr } from '../../../../shared/i18n';
 import { trx } from '@/lib/i18n/trx';
 
@@ -20,12 +24,24 @@ type MixedAction  = 'message' | 'friend_request' | 'invite_to_groups';
 type SendMode     = 'random' | 'all';
 
 export interface MixedConfig   { actions: MixedAction[]; group_ids?: string[]; }
-export interface ContentBlock  { id: string; text: string; images: string[]; tagAll?: boolean; tagAllText?: string; }
+export interface ContentBlock  {
+  id: string;
+  text: string;
+  images: string[];
+  /** Videos sent after the text/images part (one message per file). */
+  videos: string[];
+  /** Documents / arbitrary files sent after the videos (one message per file). */
+  files: string[];
+  tagAll?: boolean;
+  tagAllText?: string;
+}
 /** `order` / `combine`: photos with text (order, merge into 1 message); see shared/crm/campaignSendPlan. */
 export interface ContentConfig { mode: SendMode; blocks: ContentBlock[]; order?: CampaignSendOptions['order']; combine?: boolean; }
 
 interface CampaignFormData {
   name: string;
+  /** Channel snapshot: the queue resolves the send path from it (a Facebook account is not listed in `accounts`). */
+  channel?: Channel;
   template_message: string;
   friend_request_message: string;
   campaign_type: CampaignType;
@@ -42,6 +58,9 @@ interface CampaignFormData {
   /** Auto-stop: only counts strangers (Zalo) / send tomorrow: 0 / 1 */
   stop_strangers_only?: number;
   stop_resume_next_day?: number;
+  /** "Gắn nhãn khi gửi thành công": JSON arrays of local / Zalo label ids */
+  success_local_labels?: string;
+  success_zalo_labels?: string;
 }
 
 interface CampaignCreateModalProps {
@@ -55,22 +74,55 @@ interface CampaignCreateModalProps {
 
 // Preview substitution - replaces variables with dummy values
 function substitutePreview(text: string): string {
-  return (text || '')
-    .replace(/\{name\}/g, tr('Nguyễn Văn A'))
-    .replace(/\{userId\}/g, '0987654321');
+  return substituteCampaignVars(text || '', CAMPAIGN_PREVIEW_VARS);
+}
+
+/** Last segment of a path (the renderer has no node:path). */
+function basename(filePath: string): string {
+  const parts = String(filePath ?? '').split(/[\\/]/);
+  return parts[parts.length - 1] || String(filePath ?? '');
+}
+
+/** Label ids stored on the campaign as a JSON array ([] on a new campaign / broken value). */
+function readLabelIds(raw?: string): number[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.map((id: unknown) => Number(id)).filter((id: number) => Number.isInteger(id) && id > 0))]
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const genId = () => Math.random().toString(36).slice(2, 9);
 
+/** One stored block → the editor shape; older templates have no videos/files. */
+function normalizeBlock(block: any): ContentBlock {
+  const list = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((path): path is string => typeof path === 'string' && path.length > 0) : [];
+  return {
+    ...block,
+    id: String(block?.id ?? genId()),
+    text: typeof block?.text === 'string' ? block.text : '',
+    images: list(block?.images),
+    videos: list(block?.videos),
+    files: list(block?.files),
+  };
+}
+
 function parseContentConfig(raw?: string): ContentConfig {
-  if (!raw) return { mode: 'random', blocks: [{ id: genId(), text: '', images: [] }] };
+  if (!raw) return { mode: 'random', blocks: [{ id: genId(), text: '', images: [], videos: [], files: [] }] };
   try {
     const p = JSON.parse(raw);
-    if (p?.blocks && Array.isArray(p.blocks)) return p as ContentConfig;
+    if (p?.blocks && Array.isArray(p.blocks)) {
+      return { ...p, blocks: (p.blocks as any[]).map(normalizeBlock) } as ContentConfig;
+    }
   } catch {}
-  return { mode: 'random', blocks: [{ id: genId(), text: raw, images: [] }] };
+  return { mode: 'random', blocks: [{ id: genId(), text: raw, images: [], videos: [], files: [] }] };
 }
 
 function parseMixedConfig(raw?: string): MixedConfig {
@@ -85,7 +137,7 @@ function parseMixedConfig(raw?: string): MixedConfig {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const TEMPLATE_VARS = ['{name}', '{userId}'];
+const TEMPLATE_VARS = CAMPAIGN_TEMPLATE_VARS;
 
 /** Format delay range for display */
 function fmtDelayRange(min: number, max: number): string {
@@ -150,11 +202,21 @@ function LivePreview({
     : substitutePreview(block?.text ?? '');
 
   const hasImages = (block?.images?.length ?? 0) > 0;
+  const hasVideos = (block?.videos?.length ?? 0) > 0;
+  const hasFiles  = (block?.files?.length ?? 0) > 0;
+  const hasAttachments = hasImages || hasVideos || hasFiles;
   const isFR      = type === 'friend_request';
   // Same decision as the queue: text first / photos first / photos + text in 1 message.
   const captionPreview = supportsFormatting ? parseMarkup(previewText).text : previewText;
   const plan = !isFR && block
-    ? planBlockSend({ text: captionPreview, images: block.images, channel, options: sendOptions })
+    ? planBlockSend({
+        text: captionPreview,
+        images: block.images ?? [],
+        videos: block.videos ?? [],
+        files: block.files ?? [],
+        channel,
+        options: sendOptions,
+      })
     : null;
 
   const textBubble = (
@@ -172,6 +234,19 @@ function LivePreview({
         <div key={i} className="aspect-square overflow-hidden rounded">
           <img src={toLocalMediaUrl(p)} alt="" className="w-full h-full object-cover"
             onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+        </div>
+      ))}
+    </div>
+  );
+  // Videos / files in the preview: an attachment row each (the real bubble shows a player / document icon)
+  const attachmentRows = (paths: string[], kind: 'video' | 'file') => (
+    <div className="flex flex-col gap-1" style={{ maxWidth: '11.25rem' }}>
+      {paths.map((p, i) => (
+        <div key={`${kind}-${i}`} className="flex items-center gap-1.5 bg-muted border border-input rounded-xl px-2 py-1.5">
+          <span className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] flex-shrink-0 ${
+            kind === 'video' ? 'bg-fuchsia-500/20 text-fuchsia-300' : 'bg-slate-500/20 text-slate-300'
+          }`}>{kind === 'video' ? '▶' : '📄'}</span>
+          <span className="text-[10px] text-foreground/80 truncate">{basename(p)}</span>
         </div>
       ))}
     </div>
@@ -223,13 +298,15 @@ function LivePreview({
             <span className="text-[9px] text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{tr('Hôm nay 12:00')}</span>
           </div>
 
-          {(previewText || hasImages) ? (
+          {(previewText || hasAttachments) ? (
             <div className="flex justify-end">
               <div className="flex flex-col items-end gap-1.5 max-w-[85%]">
                 {isFR ? (previewText ? textBubble : null) : plan?.steps.map((step, i) => (
                   <React.Fragment key={`${step.kind}-${i}`}>
                     {step.kind === 'text' && textBubble}
                     {step.kind === 'images' && imageGrid(step.images)}
+                    {step.kind === 'videos' && attachmentRows(step.videos, 'video')}
+                    {step.kind === 'files' && attachmentRows(step.files, 'file')}
                     {step.kind === 'captioned' && (
                       // Photo + text = 1 message: the text is the caption (Zalo does not keep formatting)
                       <div className="bg-blue-600 rounded-2xl rounded-br-sm overflow-hidden" style={{ maxWidth: '11.25rem' }}>
@@ -423,10 +500,12 @@ function MarkupPreview({ text, className = 'text-foreground/80' }: { text: strin
 // ── Block Editor ──────────────────────────────────────────────────────────────
 
 function BlockEditor({
-  block, onUpdate, supportsTagAll = true, supportsFormatting = true,
+  block, onUpdate, channel, supportsTagAll = true, supportsFormatting = true,
 }: {
   block: ContentBlock;
   onUpdate: (u: Partial<ContentBlock>) => void;
+  /** Channel of the campaign: drives the per-channel notes of the variable help. */
+  channel: string;
   supportsTagAll?: boolean;
   supportsFormatting?: boolean;
 }) {
@@ -463,6 +542,42 @@ function BlockEditor({
     if (r?.filePaths?.length) onUpdate({ images: [...block.images, ...r.filePaths] });
   };
 
+  const pickVideos = async () => {
+    const r = await ipc.file?.openDialog({
+      filters: [{ name: tr('Video'), extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', '3gp'] }],
+      properties: ['openFile', 'multiSelections'],
+    });
+    if (r?.filePaths?.length) onUpdate({ videos: [...(block.videos ?? []), ...r.filePaths] });
+  };
+
+  const pickFiles = async () => {
+    const r = await ipc.file?.openDialog({
+      // Any file: "Tất cả tệp" only, so a document the OS does not know still shows up
+      filters: [{ name: tr('Tất cả tệp'), extensions: ['*'] }],
+      properties: ['openFile', 'multiSelections'],
+    });
+    if (r?.filePaths?.length) onUpdate({ files: [...(block.files ?? []), ...r.filePaths] });
+  };
+
+  /** One attachment row (video / file) with its remove button. */
+  const attachmentChip = (kind: 'video' | 'file', filePath: string, index: number) => (
+    <div key={`${kind}-${index}`} className="flex items-center gap-1.5 bg-card border border-input rounded-lg px-2 py-1 max-w-full">
+      <span className={`w-5 h-5 rounded flex items-center justify-center text-[9px] flex-shrink-0 ${
+        kind === 'video' ? 'bg-fuchsia-500/20 text-fuchsia-300' : 'bg-slate-500/20 text-slate-300'
+      }`}>{kind === 'video' ? '▶' : '📄'}</span>
+      <span className="text-[10px] text-foreground/80 truncate max-w-[7.5rem]" title={filePath}>{basename(filePath)}</span>
+      <button type="button"
+        onClick={() => onUpdate(kind === 'video'
+          ? { videos: (block.videos ?? []).filter((_, j) => j !== index) }
+          : { files: (block.files ?? []).filter((_, j) => j !== index) })}
+        className="text-muted-foreground hover:text-red-400 flex-shrink-0" title={tr('Bỏ đính kèm')}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-2 h-full min-h-0">
       {/* Variable chips */}
@@ -474,6 +589,7 @@ function BlockEditor({
             {v}
           </button>
         ))}
+        <TemplateVarHelp channel={channel} />
       </div>
 
       {/* Formatting toolbar */}
@@ -552,6 +668,34 @@ function BlockEditor({
           {block.images.length > 0 ? tr('{{count}} ảnh · thêm tiếp', { count: block.images.length }) : tr('Đính kèm ảnh (tuỳ chọn)')}
         </button>
       </div>
+
+      {/* Videos + files: sent after the text/images part, one message per file */}
+      <div className="flex-shrink-0 flex flex-col gap-2">
+        {(block.videos?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {(block.videos ?? []).map((p, i) => attachmentChip('video', p, i))}
+          </div>
+        )}
+        <button type="button" onClick={pickVideos}
+          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs text-muted-foreground hover:text-fuchsia-400 border border-dashed border-input hover:border-fuchsia-500/50 rounded-lg transition-colors">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="2" y="4" width="20" height="16" rx="2"/><polygon points="10 9 15 12 10 15"/>
+          </svg>
+          {(block.videos?.length ?? 0) > 0 ? tr('{{count}} video · thêm tiếp', { count: block.videos!.length }) : tr('Đính kèm video (tuỳ chọn)')}
+        </button>
+        {(block.files?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {(block.files ?? []).map((p, i) => attachmentChip('file', p, i))}
+          </div>
+        )}
+        <button type="button" onClick={pickFiles}
+          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs text-muted-foreground hover:text-emerald-400 border border-dashed border-input hover:border-emerald-500/50 rounded-lg transition-colors">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+          </svg>
+          {(block.files?.length ?? 0) > 0 ? tr('{{count}} tệp · thêm tiếp', { count: block.files!.length }) : tr('Đính kèm tệp (tuỳ chọn)')}
+        </button>
+      </div>
     </div>
   );
 }
@@ -563,8 +707,10 @@ export default function CampaignCreateModal({
 }: CampaignCreateModalProps) {
   const [name,          setName]         = useState(initialData?.name ?? '');
   const [type,          setType]         = useState<CampaignType>(initialData?.campaign_type ?? 'message');
-  const telegramCampaign = channel === 'telegram_user' || channel === 'telegram_bot';
-  const availableTypes = telegramCampaign ? TYPE_OPTIONS.filter(opt => opt.value === 'message') : TYPE_OPTIONS;
+  // Telegram and Facebook run message campaigns only (CRMChannelCapabilityService); Zalo keeps every type.
+  const messageOnlyCampaign = channel === 'telegram_user' || channel === 'telegram_bot' || channel === 'facebook';
+  const zaloCampaign = channel === 'zalo';
+  const availableTypes = messageOnlyCampaign ? TYPE_OPTIONS.filter(opt => opt.value === 'message') : TYPE_OPTIONS;
   const [saving,        setSaving]       = useState(false);
   const [friendReqMsg,  setFriendReqMsg] = useState(initialData?.friend_request_message ?? '');
   const [activeBlock,   setActiveBlock]  = useState(0);
@@ -617,6 +763,22 @@ export default function CampaignCreateModal({
     parseContentConfig(initialData?.template_message)
   );
 
+  // ── "Gắn nhãn khi gửi thành công": local labels + Zalo server labels (Zalo channel only) ──
+  const [successLocalLabelIds, setSuccessLocalLabelIds] = useState<number[]>(() => readLabelIds(initialData?.success_local_labels));
+  const [successZaloLabelIds, setSuccessZaloLabelIds] = useState<number[]>(() => readLabelIds(initialData?.success_zalo_labels));
+  const [localLabels, setLocalLabels] = useState<Array<{ id: number; name: string; color?: string; emoji?: string }>>([]);
+  const zaloLabels: LabelData[] = useAppStore(s => (zaloId ? s.labels[zaloId] : undefined)) ?? [];
+  const supportsZaloLabels = channel === 'zalo';
+
+  useEffect(() => {
+    if (!zaloId) { setLocalLabels([]); return; }
+    let cancelled = false;
+    DataAccessor.getLocalLabels({ zaloId })
+      .then((res: any) => { if (!cancelled) setLocalLabels(Array.isArray(res?.labels) ? res.labels : []); })
+      .catch(() => { if (!cancelled) setLocalLabels([]); });
+    return () => { cancelled = true; };
+  }, [zaloId]);
+
   const initMixed = parseMixedConfig(initialData?.mixed_config);
   const [mixedActions,   setMixedActions]   = useState<MixedAction[]>(initMixed.actions);
   const [inviteGroupIds, setInviteGroupIds] = useState<string[]>(initMixed.group_ids ?? []);
@@ -626,8 +788,8 @@ export default function CampaignCreateModal({
   const hasInvite = type === 'invite_to_group' || (type === 'mixed' && mixedActions.includes('invite_to_groups'));
 
   useEffect(() => {
-    if (telegramCampaign && type !== 'message') setType('message');
-  }, [telegramCampaign, type]);
+    if (messageOnlyCampaign && type !== 'message') setType('message');
+  }, [messageOnlyCampaign, type]);
 
   // Clamp activeBlock when blocks change
   useEffect(() => {
@@ -636,7 +798,7 @@ export default function CampaignCreateModal({
 
   const addBlock = () => {
     setContentConfig(prev => {
-      const next = { ...prev, blocks: [...prev.blocks, { id: genId(), text: '', images: [] }] };
+      const next = { ...prev, blocks: [...prev.blocks, { id: genId(), text: '', images: [], videos: [], files: [] }] };
       setActiveBlock(next.blocks.length - 1);
       return next;
     });
@@ -667,16 +829,20 @@ export default function CampaignCreateModal({
     return JSON.stringify(cfg);
   };
 
+  /** A block counts as content when it has text or any attachment (image / video / file). */
+  const blockHasContent = (b: ContentBlock): boolean =>
+    !!b.text.trim() || b.images.length > 0 || (b.videos?.length ?? 0) > 0 || (b.files?.length ?? 0) > 0;
+
   const isValid = (): boolean => {
     if (!name.trim()) return false;
     if (type === 'invite_to_group') return inviteGroupIds.length > 0;
     if (type === 'mixed') {
       if (!mixedActions.length) return false;
-      if (mixedActions.includes('message') && !contentConfig.blocks.some(b => b.text.trim() || b.images.length)) return false;
+      if (mixedActions.includes('message') && !contentConfig.blocks.some(blockHasContent)) return false;
       if (mixedActions.includes('friend_request') && !friendReqMsg.trim()) return false;
       if (mixedActions.includes('invite_to_groups') && !inviteGroupIds.length) return false;
     } else {
-      if (hasMsg && !contentConfig.blocks.some(b => b.text.trim() || b.images.length)) return false;
+      if (hasMsg && !contentConfig.blocks.some(blockHasContent)) return false;
       if (hasFR && !friendReqMsg.trim()) return false;
     }
     return true;
@@ -690,6 +856,7 @@ export default function CampaignCreateModal({
     const finalDelaySec = Math.round((saveDelayMin + saveDelayMax) / 2);
     await onSave({
       name: name.trim(),
+      channel,
       template_message: hasMsg ? JSON.stringify(contentConfig) : '',
       friend_request_message: friendReqMsg.trim(),
       campaign_type: type,
@@ -704,6 +871,9 @@ export default function CampaignCreateModal({
       stop_after_failures: stopAfterFailures,
       stop_strangers_only: countStrangersOnly ? 1 : 0,
       stop_resume_next_day: stopResumeNextDay ? 1 : 0,
+      success_local_labels: JSON.stringify(successLocalLabelIds),
+      // Zalo keeps one label per conversation → store at most one, so the screen and the queue agree
+      success_zalo_labels: JSON.stringify(supportsZaloLabels ? successZaloLabelIds.slice(0, 1) : []),
     });
     setSaving(false);
     onClose();
@@ -1047,13 +1217,14 @@ export default function CampaignCreateModal({
               ) : hasFR && !hasMsg ? (
                 <>
                   <span className="text-xs font-medium text-foreground/80">{trx('<0/> Lời nhắn kết bạn', { 0: <UserCheckIcon className="w-4 h-4 inline" /> })}</span>
-                  <div className="flex gap-1">
+                  <div className="flex items-center gap-1">
                     {TEMPLATE_VARS.map(v => (
                       <button key={v} type="button" onClick={() => insertFRVar(v)}
                         className="text-[11px] px-2 py-0.5 rounded-full border border-blue-500/30 text-blue-400 hover:bg-blue-500/15 font-mono transition-colors">
                         {v}
                       </button>
                     ))}
+                    <TemplateVarHelp channel={channel} />
                   </div>
                 </>
               ) : hasInvite && !hasMsg ? (
@@ -1071,8 +1242,9 @@ export default function CampaignCreateModal({
                   <BlockEditor
                     block={currentBlock}
                     onUpdate={u => updateBlock(currentBlock.id, u)}
-                    supportsTagAll={!telegramCampaign}
-                    supportsFormatting={!telegramCampaign}
+                    channel={channel}
+                    supportsTagAll={zaloCampaign}
+                    supportsFormatting={zaloCampaign}
                   />
                 </div>
               )}
@@ -1094,13 +1266,14 @@ export default function CampaignCreateModal({
                 <div className="flex-shrink-0 border-t border-border pt-3">
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] font-medium text-muted-foreground">{trx('<0/> Lời nhắn kết bạn', { 0: <UserCheckIcon className="w-4 h-4 inline" /> })}</span>
-                    <div className="flex gap-1">
+                    <div className="flex items-center gap-1">
                       {TEMPLATE_VARS.map(v => (
                         <button key={v} type="button" onClick={() => insertFRVar(v)}
                           className="text-[10px] px-1.5 py-0.5 rounded-full border border-blue-500/30 text-blue-400 hover:bg-blue-500/15 font-mono transition-colors">
                           {v}
                         </button>
                       ))}
+                      <TemplateVarHelp channel={channel} />
                     </div>
                   </div>
                   <textarea ref={friendReqRef} value={friendReqMsg} onChange={e => setFriendReqMsg(e.target.value)}
@@ -1133,6 +1306,24 @@ export default function CampaignCreateModal({
                   <GroupPicker zaloId={zaloId} inviteGroupIds={inviteGroupIds} onToggle={toggleGroupId} />
                 </div>
               )}
+
+              {/* Gắn nhãn khi gửi xong: một dòng gọn, bấm vào mở popup tích nhãn.
+                  Chỉ nhãn đã chọn mới hiện ra (dạng pill) để tiết kiệm diện tích.
+                  Zalo: chọn được nhãn Local và/hoặc 1 nhãn Zalo — nhãn Zalo sẽ đè nhãn cũ theo chính sách Zalo. */}
+              <div className="flex-shrink-0 rounded-xl border border-border bg-muted/30 px-3 py-2">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                  <TagIcon className="w-3.5 h-3.5" /> {tr('Gắn nhãn khi gửi xong')}
+                </p>
+                <SuccessLabelPicker
+                  localLabels={localLabels}
+                  zaloLabels={zaloLabels}
+                  supportsZalo={supportsZaloLabels}
+                  localIds={successLocalLabelIds}
+                  zaloIds={successZaloLabelIds}
+                  onLocalChange={setSuccessLocalLabelIds}
+                  onZaloChange={setSuccessZaloLabelIds}
+                />
+              </div>
             </div>
           </div>
 
@@ -1145,7 +1336,7 @@ export default function CampaignCreateModal({
               type={type}
               friendMsg={friendReqMsg}
               onTabChange={setActiveBlock}
-              supportsFormatting={!telegramCampaign}
+              supportsFormatting={zaloCampaign}
               sendOptions={{ order: contentConfig.order ?? 'text_first', combine: !!contentConfig.combine }}
               channel={channel}
             />

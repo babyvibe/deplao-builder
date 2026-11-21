@@ -1158,6 +1158,10 @@ class DatabaseService {
         try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN stop_strangers_only INTEGER NOT NULL DEFAULT 0`); } catch {}
         try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN stop_resume_next_day INTEGER NOT NULL DEFAULT 0`); } catch {}
         try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN auto_resume_at INTEGER NOT NULL DEFAULT 0`); } catch {}
+        // "Gắn nhãn khi gửi thành công": JSON arrays of local / Zalo label ids applied to the recipient after a send
+        // (services/crm/campaignLabels). Stored per campaign so every screen and a clone keep them.
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN success_local_labels TEXT NOT NULL DEFAULT '[]'`); } catch {}
+        try { this.exec(`ALTER TABLE crm_campaigns ADD COLUMN success_zalo_labels TEXT NOT NULL DEFAULT '[]'`); } catch {}
 
         this.exec(`
             CREATE TABLE IF NOT EXISTS crm_campaign_contacts (
@@ -3681,6 +3685,21 @@ class DatabaseService {
         );
     }
 
+    /**
+     * Channel of one account id. Zalo and Telegram accounts live in `accounts`; Facebook accounts live only in
+     * `fb_accounts` (separate login flow), so a lookup limited to `accounts` would report them as Zalo.
+     * '' = unknown (the caller keeps its own fallback).
+     */
+    public getAccountChannel(accountId: string): string {
+        if (!this.initialized || !accountId) return '';
+        try {
+            const row = this.queryOne<{ channel?: string }>('SELECT channel FROM accounts WHERE zalo_id=?', [accountId]);
+            if (row?.channel) return row.channel;
+            if (this.queryOne<{ id?: string }>('SELECT id FROM fb_accounts WHERE id=?', [accountId])) return 'facebook';
+        } catch (err: any) { Logger.warn(`[DB] getAccountChannel: ${err.message}`); }
+        return '';
+    }
+
     public getAccounts(): Account[] {
         if (!this.initialized) return [];
         const accounts = this.query<Account>('SELECT * FROM accounts WHERE is_active = 1 ORDER BY created_at');
@@ -5529,15 +5548,15 @@ class DatabaseService {
             // Telegram: the count is a total returned by Telegram (UpdateMessageReactions / the SendReaction result), not
             // accumulated the Zalo way
             if (row.channel === 'telegram_user') return;
-            // Zalo: "haha" was once stored in 2 forms (😄 when reacted, 😆 from the echo) → normalise + merge the old records that were split in two
+            // Zalo: emoji saved earlier for the same reaction (haha 😄, cry 😢) → normalise to the current one (😆, 😭) and merge the old records
             const isZaloRow = !row.channel || row.channel === 'zalo';
             const icon = isZaloRow && rawIcon ? normalizeZaloReactionEmoji(rawIcon) : rawIcon;
 
             let parsed: any = {};
             try { parsed = JSON.parse(row.reactions || '{}'); } catch {}
 
-            // Migrate old format { userId: emojiChar } → new format
-            let reactions: { total: number; lastReact: string; emoji: Record<string, { total: number; users: Record<string, number> }> };
+            // Migrate old format { userId: emojiChar } → new format. lastByUser: each person's latest reaction (Zalo's reaction button shows it)
+            let reactions: { total: number; lastReact: string; lastByUser?: Record<string, string>; emoji: Record<string, { total: number; users: Record<string, number> }> };
             if (parsed && parsed.emoji && typeof parsed.emoji === 'object') {
                 reactions = isZaloRow ? mergeZaloReactionAliases(parsed) : parsed;
             } else {
@@ -5563,6 +5582,7 @@ class DatabaseService {
                         if (reactions.emoji[emo].total <= 0) delete reactions.emoji[emo];
                     }
                 }
+                if (reactions.lastByUser) delete reactions.lastByUser[userId];
             } else {
                 // PHP-like: accumulate
                 if (!reactions.emoji[icon]) {
@@ -5573,6 +5593,7 @@ class DatabaseService {
                 }
                 reactions.total++;
                 reactions.lastReact = icon;
+                reactions.lastByUser = { ...(reactions.lastByUser || {}), [userId]: icon };
             }
 
             this.run('UPDATE messages SET reactions = ? WHERE id = ?', [JSON.stringify(reactions), row.id]);
@@ -7153,7 +7174,7 @@ class DatabaseService {
         return Number(this.queryOne<{ n: number }>('SELECT changes() AS n')?.n || 0);
     }
 
-    /** One-time cleanup a while after the DB opens (the owner chose an automatic run): see trimRemotePinsOnce. */
+    /** One-time cleanup a while after the DB opens: see trimRemotePinsOnce. */
     private scheduleRemotePinTrim(): void {
         if (this.pinTrimTimer) clearTimeout(this.pinTrimTimer);
         this.pinTrimTimer = setTimeout(() => {
@@ -7704,7 +7725,7 @@ class DatabaseService {
         try {
             const now = Date.now();
             const type = campaign.campaign_type || 'message';
-            const channel = campaign.channel || this.queryOne<{ channel?: string }>('SELECT channel FROM accounts WHERE zalo_id=?', [campaign.owner_zalo_id])?.channel || 'zalo';
+            const channel = campaign.channel || this.getAccountChannel(campaign.owner_zalo_id) || 'zalo';
             const frMsg = campaign.friend_request_message || '';
             const status = campaign.status || 'draft';
             const mixedCfg = campaign.mixed_config || '{}';
@@ -7721,16 +7742,19 @@ class DatabaseService {
             const stopAfterFailures = campaign.stop_after_failures == null ? null : normalizeStopAfterFailures(campaign.stop_after_failures);
             const strangersOnly = campaign.stop_strangers_only == null ? null : campaignFlag(campaign.stop_strangers_only);
             const resumeNextDay = campaign.stop_resume_next_day == null ? null : campaignFlag(campaign.stop_resume_next_day);
+            // Success labels: undefined = keep the stored value (a screen / API client that does not know the field)
+            const successLocal = campaign.success_local_labels == null ? null : (campaign.success_local_labels || '[]');
+            const successZalo = campaign.success_zalo_labels == null ? null : (campaign.success_zalo_labels || '[]');
             if (campaign.id) {
                 this.run(
-                    `UPDATE crm_campaigns SET channel=?, name=?, template_message=?, friend_request_message=?, campaign_type=?, mixed_config=?, status=?, delay_seconds=?, delay_min_seconds=?, delay_max_seconds=?, per_contact_delay_min_seconds=?, per_contact_delay_max_seconds=?, daily_send_limit=?, daily_start_time=?, stop_after_failures=COALESCE(?, stop_after_failures), stop_strangers_only=COALESCE(?, stop_strangers_only), stop_resume_next_day=COALESCE(?, stop_resume_next_day), updated_at=? WHERE id=? AND owner_zalo_id=?`,
-                    [channel, campaign.name, campaign.template_message || '', frMsg, type, mixedCfg, status, compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, stopAfterFailures, strangersOnly, resumeNextDay, now, campaign.id, campaign.owner_zalo_id]
+                    `UPDATE crm_campaigns SET channel=?, name=?, template_message=?, friend_request_message=?, campaign_type=?, mixed_config=?, status=?, delay_seconds=?, delay_min_seconds=?, delay_max_seconds=?, per_contact_delay_min_seconds=?, per_contact_delay_max_seconds=?, daily_send_limit=?, daily_start_time=?, stop_after_failures=COALESCE(?, stop_after_failures), stop_strangers_only=COALESCE(?, stop_strangers_only), stop_resume_next_day=COALESCE(?, stop_resume_next_day), success_local_labels=COALESCE(?, success_local_labels), success_zalo_labels=COALESCE(?, success_zalo_labels), updated_at=? WHERE id=? AND owner_zalo_id=?`,
+                    [channel, campaign.name, campaign.template_message || '', frMsg, type, mixedCfg, status, compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, stopAfterFailures, strangersOnly, resumeNextDay, successLocal, successZalo, now, campaign.id, campaign.owner_zalo_id]
                 );
                 return campaign.id;
             } else {
                 return this.runInsert(
-                    `INSERT INTO crm_campaigns (owner_zalo_id, channel, name, template_message, friend_request_message, campaign_type, mixed_config, status, delay_seconds, delay_min_seconds, delay_max_seconds, per_contact_delay_min_seconds, per_contact_delay_max_seconds, daily_send_limit, daily_start_time, stop_after_failures, stop_strangers_only, stop_resume_next_day, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-                    [campaign.owner_zalo_id, channel, campaign.name, campaign.template_message, frMsg, type, mixedCfg, campaign.status || 'draft', compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, stopAfterFailures ?? 0, strangersOnly ?? 0, resumeNextDay ?? 0, now, now]
+                    `INSERT INTO crm_campaigns (owner_zalo_id, channel, name, template_message, friend_request_message, campaign_type, mixed_config, status, delay_seconds, delay_min_seconds, delay_max_seconds, per_contact_delay_min_seconds, per_contact_delay_max_seconds, daily_send_limit, daily_start_time, stop_after_failures, stop_strangers_only, stop_resume_next_day, success_local_labels, success_zalo_labels, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                    [campaign.owner_zalo_id, channel, campaign.name, campaign.template_message, frMsg, type, mixedCfg, campaign.status || 'draft', compatDelaySeconds, delayMin, delayMax, perContactMin, perContactMax, dailyLimit, dailyStartTime, stopAfterFailures ?? 0, strangersOnly ?? 0, resumeNextDay ?? 0, successLocal ?? '[]', successZalo ?? '[]', now, now]
                 );
             }
         } catch (err: any) { Logger.error(`[DB] saveCRMCampaign: ${err.message}`); return 0; }

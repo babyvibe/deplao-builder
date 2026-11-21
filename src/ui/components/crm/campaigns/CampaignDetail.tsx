@@ -782,6 +782,8 @@ export default function CampaignDetail({ campaign, zaloId, channel, allLabels, l
             stop_after_failures: campaign.stop_after_failures,
             stop_strangers_only: campaign.stop_strangers_only,
             stop_resume_next_day: campaign.stop_resume_next_day,
+            success_local_labels: campaign.success_local_labels,
+            success_zalo_labels: campaign.success_zalo_labels,
           }}
           onClose={() => setShowEdit(false)}
           onSave={async (data) => {

@@ -40,7 +40,16 @@ func (c *HTTPClient) GetPlatform() types.Platform {
 	return c.parent.GetPlatform()
 }
 
+type instagramNativeSessionClient interface {
+	GetInstagramNativeSession() *types.InstagramNativeSession
+}
+
 func (c *HTTPClient) GetRUploadToken() string {
+	if native, ok := c.parent.(instagramNativeSessionClient); ok {
+		if session := native.GetInstagramNativeSession(); session != nil && session.Authorization != "" {
+			return session.Authorization
+		}
+	}
 	token, _ := json.Marshal(RUploadToken{
 		DSUserID:  c.parent.GetCookies().Get(cookies.IGCookieDSUserID),
 		SessionID: c.parent.GetCookies().Get(cookies.IGCookieSessionID),
@@ -91,7 +100,9 @@ func (c *HTTPClient) SendMercuryUploadRequest(ctx context.Context, threadID int6
 		h.Set("sec-fetch-mode", "cors")
 		h.Set("sec-fetch-site", "same-origin") // header is required
 
-		_, respBody, err := c.MakeRequest(ctx, url, http.MethodPost, h, payload, types.NONE)
+		_, respBody, err := c.makeRequest(ctx, c.uploadClient, url, http.MethodPost, h, payload, types.NONE, func(e *zerolog.Event) *zerolog.Event {
+			return e
+		})
 		if err != nil {
 			// MakeRequest retries itself, so bail immediately if that fails
 			return nil, fmt.Errorf("failed to send MercuryUploadRequest: %w", err)

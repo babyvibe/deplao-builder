@@ -1,6 +1,6 @@
 /**
  * "Sản phẩm" (Products) button on the compose toolbar (ZL-04, only Zalo Business accounts): pick a category, search products, send into the
- * conversation as a catalog.zalo.me link with the name + price. Select several → sent one by one, at least 2 s apart (decision Q8).
+ * conversation as a catalog.zalo.me link with the name + price. Select several → sent one by one, at least 2 s apart.
  * "Quản lý" (Manage) opens the window to add / edit / delete categories and products.
  */
 import React from 'react';

@@ -13,8 +13,10 @@ export interface CRMChannelDecision {
 }
 
 export function getCRMChannelDecision(accountId: string, action: CRMChannelAction): CRMChannelDecision {
-  const account = DatabaseService.getInstance().getAccounts().find(a => a.zalo_id === accountId);
-  const channel = normalizeChannel(account?.channel);
+  const db = DatabaseService.getInstance();
+  const account = db.getAccounts().find(a => a.zalo_id === accountId);
+  // Facebook accounts are not in `accounts`: ask the DB for the channel so an FB account is not read as Zalo
+  const channel = normalizeChannel(account?.channel || db.getAccountChannel(accountId) || undefined);
   const capability = getCapability(channel);
 
   const allowed = action === 'campaign' || action === 'campaign_message'
@@ -30,7 +32,7 @@ export function getCRMChannelDecision(accountId: string, action: CRMChannelActio
     : { allowed: false, channel, reason: tr('{{label}} không hỗ trợ tính năng CRM này', { label: capability.label }) };
 }
 
-/** Telegram deliberately supports message campaigns only.  Do not silently
+/** Telegram and Facebook deliberately support message campaigns only.  Do not silently
  * downgrade Zalo-only campaign types such as friend request or group invite. */
 export function validateCampaignForChannel(accountId: string, campaign: any): CRMChannelDecision {
   const decision = getCRMChannelDecision(accountId, 'campaign');
@@ -38,6 +40,9 @@ export function validateCampaignForChannel(accountId: string, campaign: any): CR
   if ((decision.channel === 'telegram_user' || decision.channel === 'telegram_bot')
     && (campaign?.campaign_type || 'message') !== 'message') {
     return { allowed: false, channel: decision.channel, reason: tr('Telegram chỉ hỗ trợ chiến dịch gửi tin nhắn trong CRM') };
+  }
+  if (decision.channel === 'facebook' && (campaign?.campaign_type || 'message') !== 'message') {
+    return { allowed: false, channel: decision.channel, reason: tr('Facebook chỉ hỗ trợ chiến dịch gửi tin nhắn trong CRM') };
   }
   return decision;
 }

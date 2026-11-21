@@ -975,7 +975,7 @@ export default function ConversationList() {
   // Do not count unread of conversations in the "Khác" folder
   const unreadCount = accountContacts.reduce((s, c) => {
     if (othersConversations.has(c.contact_id)) return s;
-    if (hiddenAccounts[activeAccountId || '']?.has(c.contact_id)) return s; // hidden conversations: not counted as unread (Q3)
+    if (hiddenAccounts[activeAccountId || '']?.has(c.contact_id)) return s; // hidden conversations: not counted as unread
     return s + (c.unread_count > 0 ? 1 : 0);
   }, 0);
   // Separate unread for the "Khác" folder: only used to show the red dot

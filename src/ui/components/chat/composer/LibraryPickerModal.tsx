@@ -753,13 +753,15 @@ export default function LibraryPickerModal({
         const filePath = saveRes.filePath;
 
         if (isNonZaloChannel) {
-          // Facebook and Telegram: send all files via their adapter
-          if (file.type.startsWith('video/')) {
+          // Facebook and Telegram: images are collected and sent as ONE batch (Telegram album) below,
+          // videos / other files go out individually.
+          if (file.type.startsWith('image/')) {
+            imagePaths.push(filePath);
+          } else if (file.type.startsWith('video/')) {
             videoPromises.push(channelIpc.sendVideo(channel, { accountId: zaloId, threadId, threadType, filePath, ...sendTarget }).then(() => {}));
           } else {
             filePromises.push(channelIpc.sendAttachment(channel, {
-              accountId: zaloId, threadId, threadType, filePath, body: '',
-              fileType: file.type.startsWith('image/') ? 'image' : 'file', ...sendTarget,
+              accountId: zaloId, threadId, threadType, filePath, body: '', fileType: 'file', ...sendTarget,
             }).then(() => {}));
           }
         } else {
@@ -784,9 +786,13 @@ export default function LibraryPickerModal({
         }
       }
 
-      // Phase 2: send images in batch (Zalo only)
-      if (!isNonZaloChannel && imagePaths.length > 0) {
-        if (imagePaths.length === 1) {
+      // Phase 2: send images in one batch (Zalo sendImages / Telegram album / Facebook sendAttachments)
+      if (imagePaths.length > 0) {
+        if (isNonZaloChannel) {
+          await channelIpc.sendAttachments(channel, {
+            accountId: zaloId, threadId, threadType, filePaths: imagePaths, fileType: 'image', ...sendTarget,
+          });
+        } else if (imagePaths.length === 1) {
           await ipc.zalo.sendImage({ auth: auth || {}, zaloId, threadId, threadType, filePath: imagePaths[0] });
         } else {
           await ipc.zalo.sendImages({ auth: auth || {}, zaloId, threadId, type: threadType, filePaths: imagePaths });

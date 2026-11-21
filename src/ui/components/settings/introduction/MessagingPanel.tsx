@@ -40,7 +40,7 @@ const COMPOSER_FEATURES: { icon: React.ReactNode; feat: string; desc: string }[]
   { icon: <ImageIcon className="w-4 h-4 inline" />, feat: tr('Ảnh và album'), desc: tr('Chọn từ thư viện / máy tính, dán Ctrl+V hoặc kéo-thả; gửi nhiều ảnh một lần') },
   { icon: <PaperclipIcon className="w-4 h-4 inline" />, feat: tr('Video và file'), desc: tr('Chọn từ Thư viện Media hoặc máy tính') },
   { icon: <WaveIcon className="w-4 h-4 inline" />, feat: tr('Tin thoại'), desc: tr('Bấm Ghi âm giọng nói, bấm lần nữa để dừng và gửi') },
-  { icon: <SmileIcon className="w-4 h-4 inline" />, feat: tr('Emoji và sticker'), desc: tr('Sticker Zalo (gợi ý sticker khi gõ chữ); Telegram có bảng Emoji · Sticker · GIF') },
+  { icon: <SmileIcon className="w-4 h-4 inline" />, feat: tr('Emoji và sticker'), desc: tr('Sticker Zalo như trên Zalo: kho sticker, nút + thêm bộ mới, gợi ý sticker ngay khi gõ chữ; Telegram có bảng Emoji · Sticker · GIF') },
   { icon: <ReplyIcon className="w-4 h-4 inline" />, feat: tr('Trả lời'), desc: tr('Trích dẫn một tin cụ thể; Esc để bỏ trích dẫn') },
   { icon: <span className="font-semibold">@</span>, feat: tr('Nhắc tên'), desc: tr('Gõ @ trong nhóm để chọn thành viên, có cả @all') },
   { icon: <ChartIcon className="w-4 h-4 inline" />, feat: tr('Bình chọn'), desc: tr('Tạo poll trong nhóm; Zalo có thêm thời hạn, chọn nhiều, ẩn danh') },
