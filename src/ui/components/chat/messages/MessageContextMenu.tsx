@@ -297,7 +297,7 @@ export default function MessageContextMenu({
         </div>
       )}
       {/* Quick reactions per channel; Telegram: the ⌄ button opens the full reaction grid of the conversation */}
-      {platform && (channelCap?.supportsReaction ?? true) && quickReactions.length > 0 && (
+      {platform && (channelCap?.supportsReaction ?? true) && quickReactions.length > 0 && msg?.msg_type !== 'fb.poll' && (
         reactionsExpanded ? (
           <ReactionGrid emojis={allReactions} myEmoji={myReaction} onPick={pickReaction} />
         ) : (

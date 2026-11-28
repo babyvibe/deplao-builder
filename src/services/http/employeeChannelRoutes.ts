@@ -105,6 +105,7 @@ export const FACEBOOK_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChannelSpe
   'fb:markAsRead': proxy(),
   'fb:sendSeen': proxy(),
   'fb:sendTyping': proxy(),
+  'fb:setViewingChat': proxy(), // the account's encrypted-chat presence on Boss follows the chat the employee shows
   'fb:changeThreadName': proxy(),
   'fb:changeThreadEmoji': proxy(),
   'fb:changeThreadTheme': proxy(),
@@ -117,6 +118,25 @@ export const FACEBOOK_CHANNEL_ROUTES: Readonly<Record<string, EmployeeChannelSpe
   'fb:approvePendingMember': proxy(),
   'fb:getGroupLink': proxy(),
   'fb:setGroupLink': proxy(),
+  'fb:addGroupMembers': proxy(),
+  'fb:refreshGroupInfo': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
+  'fb:removeGroupMember': proxy(),
+  'fb:leaveGroup': proxy(),
+  'fb:setGroupPhoto': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
+  // ── People, conversations, polls, media ────────────────────────────────
+  'fb:searchPeople': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
+  'fb:startChat': proxy(CHAT, { timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
+  'fb:setThreadMute': proxy(),
+  'fb:deleteThread': proxy(),
+  'fb:acceptMessageRequest': proxy(),
+  'fb:deleteMessageForMe': proxy(),
+  'fb:votePollInThread': proxy(),
+  'fb:sendSticker': proxy(CHAT, { send: true, timeoutMs: PROXY_MEDIUM_TIMEOUT_MS }),
+  'fb:getRecentStickers': proxy(),
+  // The Messenger PIN unlocks the account's secure history on the Boss machine only (a PIN never travels to Boss)
+  'fb:unlockEncryptedHistory': BOSS_ONLY,
+  'fb:getEncryptedHistoryStatus': proxy(),
+  'fb:repairMessageMedia': proxy(CHAT, { timeoutMs: PROXY_SLOW_TIMEOUT_MS }),
   // ── Blocking users ─────────────────────────────────────────────────────
   'fb:blockUser': proxy(FRIENDS_OR_CHAT),
   'fb:unblockUser': proxy(FRIENDS_OR_CHAT),

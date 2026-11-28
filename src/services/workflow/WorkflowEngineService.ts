@@ -34,6 +34,7 @@ import { paymentFromEvent } from '../integrations/paymentWebhook';
 import { matchesPosWebhookTrigger } from '../integrations/posWebhook';
 import { sameZaloReactionMeaning, zaloReactionEventFields } from '../../shared/zalo/zaloReactions';
 import { tr } from '../../shared/i18n';
+import { isLocalMediaUrl, localMediaUrlToPath } from '../../shared/media/localMediaUrl';
 
 // Workflow versions before reaction keys were introduced stored the six picker
 // options as numbers. Keep those workflows executable while sending the icon
@@ -4578,8 +4579,9 @@ class WorkflowEngineService {
       const candidate = paths.file || paths.video || paths.voice || paths.main || paths.hd
         || Object.values(paths).find((value: any) => typeof value === 'string' && value) || '';
       if (!candidate || typeof candidate !== 'string') return '';
-      const normalized = candidate.startsWith('local-media:///') ? candidate.replace('local-media:///', '')
-        : candidate.startsWith('local-media://') ? candidate.replace('local-media://', '') : candidate;
+      const normalized = isLocalMediaUrl(candidate)
+        ? localMediaUrlToPath(candidate, { windows: process.platform === 'win32' })
+        : candidate;
       return fs.existsSync(normalized) ? normalized : '';
     } catch {
       return '';

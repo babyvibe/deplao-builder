@@ -21,6 +21,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import Logger from '../../../utils/Logger';
 import ConnectionManager from '../../../utils/connection/ConnectionManager';
 import EventBroadcaster from '../../event/EventBroadcaster';
+import type { MessagesSyncedEvent } from '../../../shared/chat/messagesSynced';
 import {
     MobileSyncRange,
     MobileSyncStage,
@@ -585,6 +586,12 @@ class MobileSyncService {
             updatedAt: Date.now(),
         };
         this.emit(session, true);
+        // The import wrote the messages straight into the DB (no event per message): employees reload what they show.
+        // Also after a cancel / error that came after part of the import.
+        const imported = stats?.messagesImported || 0;
+        if (imported > 0) {
+            EventBroadcaster.emit('event:messagesSynced', { zaloId: session.zaloId, source: 'zalo_mobile', inserted: imported } satisfies MessagesSyncedEvent);
+        }
     }
 
     private emit(session: SyncSession, force: boolean): void {

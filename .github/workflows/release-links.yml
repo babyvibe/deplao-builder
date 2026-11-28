@@ -96,7 +96,7 @@ jobs:
               // Bình luận trên commit đã build: mở commit trên GitHub là thấy link Release (không sửa lịch sử git).
               // Có marker ẩn nên chạy lại chỉ cập nhật bình luận cũ, không nhân đôi.
               const COMMENT_MARK = '<!-- deplao-release-comment -->';
-              const commentBody = `${COMMENT_MARK}\n📦 Phát hành trong **[${rel.name || tag}](${rel.html_url})**`;
+              const commentBody = `${COMMENT_MARK}\n📦 Released in **[${rel.name || tag}](${rel.html_url})**`;
               try {
                 const commitComments = await github.paginate(github.rest.repos.listCommentsForCommit, { owner, repo, commit_sha: sha, per_page: 100 });
                 const oldComment = commitComments.find(c => (c.body || '').includes(COMMENT_MARK));
@@ -115,22 +115,22 @@ jobs:
               const lines = [
                 START,
                 '---',
-                `- **Commit đã build:** [\`${sha.slice(0, 7)}\`](${base}/commit/${sha}) — ${subject}`,
+                `- **Build commit:** [\`${sha.slice(0, 7)}\`](${base}/commit/${sha}) ${subject}`,
               ];
               if (prev) {
-                lines.push(`- **Thay đổi so với ${prev.tag_name}:** [${prev.tag_name}...${tag}](${base}/compare/${prev.tag_name}...${tag})`);
+                lines.push(`- **Changes since ${prev.tag_name}:** [${prev.tag_name}...${tag}](${base}/compare/${prev.tag_name}...${tag})`);
                 // Commit thuộc bản này (bản trước → tag), mới nhất trước; tối đa 8 dòng, còn lại xem link so sánh.
                 const cmp = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${prev.tag_name}...${tag}` });
                 const commits = (cmp.data.commits || []).slice().reverse()
                   .map(c => ({ h: c.sha, s: c.commit.message.split('\n')[0].replace(/[[\]]/g, '') }));
                 const total = cmp.data.total_commits ?? commits.length;
                 if (total > 0) {
-                  lines.push(`- **Commit của bản này (${total}):**`);
+                  lines.push(`- **Commits in this release (${total}):**`);
                   for (const c of commits.slice(0, 8)) lines.push(`  - [\`${c.h.slice(0, 7)}\`](${base}/commit/${c.h}) ${c.s}`);
-                  if (total > 8) lines.push(`  - … và ${total - 8} commit nữa — xem link so sánh`);
+                  if (total > 8) lines.push(`  - … and ${total - 8} more (see the comparison link)`);
                 }
               }
-              lines.push(`- **Danh sách commit đến bản này:** [commits/${tag}](${base}/commits/${tag})`, END);
+              lines.push(`- **All commits up to this release:** [commits/${tag}](${base}/commits/${tag})`, END);
 
               let body = rel.body || '';
               const s = body.indexOf(START);

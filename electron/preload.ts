@@ -103,7 +103,14 @@ const tr = (source: string): string => {
 const BOOT_TEXT: Record<string, string> = {
   loading: tr('Đang tải giao diện…'),
   slow: tr('Tải lâu hơn thường lệ, vui lòng chờ…'),
+  retry: tr('Tải lại'),
 };
+/**
+ * Boot screen still up after this: the Tải lại button appears and one line goes to the log (page state, whether the app
+ * module ran, network), so a start that hangs after the laptop wakes can be explained. Main also reloads a stalled page by
+ * itself after 30 s (electron/app/bootWatchdog.ts).
+ */
+const BOOT_RETRY_AFTER_MS = 15_000;
 // The electron tsconfig has no DOM lib: reach the page through globalThis
 const pageDocument: any = (globalThis as any).document;
 function prepareBootScreen(): void {
@@ -118,6 +125,25 @@ function prepareBootScreen(): void {
     const text = BOOT_TEXT[el.dataset?.boot || ''];
     if (text) el.textContent = text;
   });
+  const startedAt = Date.now();
+  const retry = boot.querySelector('[data-boot-retry]');
+  retry?.addEventListener('click', () => {
+    // Main reloads the page (and writes it to the log); if main does not answer, the page reloads itself
+    try { ipcRenderer.send('app:bootRetry', { waitedMs: Date.now() - startedAt }); } catch { /* main gone */ }
+    setTimeout(() => { if (boot.isConnected) (globalThis as any).location?.reload(); }, 3_000);
+  });
+  setTimeout(() => {
+    if (!boot.isConnected) return; // React replaced the boot screen: the app started
+    if (retry) retry.hidden = false;
+    try {
+      ipcRenderer.send('app:bootSlow', {
+        waitedMs: Date.now() - startedAt,
+        readyState: pageDocument.readyState,
+        appStarted: !!pageDocument.documentElement?.dataset?.deplaoApp,
+        online: (globalThis as any).navigator?.onLine !== false,
+      });
+    } catch { /* main gone */ }
+  }, BOOT_RETRY_AFTER_MS);
 }
 if (pageDocument?.readyState === 'loading') {
   // "interactive" comes right after parsing, BEFORE the deferred app module runs (DOMContentLoaded waits for it)
@@ -249,6 +275,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getStickers: (params: any) => ipcRenderer.invoke('zalo:getStickers', params),
     getStickersDetail: (params: any) => ipcRenderer.invoke('zalo:getStickersDetail', params),
     getStickerCategoryDetail: (params: any) => ipcRenderer.invoke('zalo:getStickerCategoryDetail', params),
+    getGifCategories: (params: any) => ipcRenderer.invoke('zalo:getGifCategories', params),
+    getGifs: (params: any) => ipcRenderer.invoke('zalo:getGifs', params),
+    sendGif: (params: any) => ipcRenderer.invoke('zalo:sendGif', params),
     addUnreadMark: (params: any) => ipcRenderer.invoke('zalo:addUnreadMark', params),
     removeUnreadMark: (params: any) => ipcRenderer.invoke('zalo:removeUnreadMark', params),
     createPoll: (params: any) => ipcRenderer.invoke('zalo:createPoll', params),
@@ -270,6 +299,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeReminder: (params: any) => ipcRenderer.invoke('zalo:removeReminder', params),
     getListReminder: (params: any) => ipcRenderer.invoke('zalo:getListReminder', params),
     getReminder: (params: any) => ipcRenderer.invoke('zalo:getReminder', params),
+    resolveReminderTitle: (params: any) => ipcRenderer.invoke('zalo:resolveReminderTitle', params),
     sendSeenEvent: (params: any) => ipcRenderer.invoke('zalo:sendSeenEvent', params),
     sendTyping: (params: any) => ipcRenderer.invoke('zalo:sendTyping', params),
     sendBankCard: (params: any) => ipcRenderer.invoke('zalo:sendBankCard', params),
@@ -739,6 +769,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getHistorySyncStatus:  (params: any) => ipcRenderer.invoke('fb:getHistorySyncStatus', params),
     refreshContactAvatar:  (params: any) => ipcRenderer.invoke('fb:refreshContactAvatar', params),
     sendTyping:            (params: any) => ipcRenderer.invoke('fb:sendTyping', params),
+    setViewingChat:        (params: any) => ipcRenderer.invoke('fb:setViewingChat', params),
     blockUser:             (params: any) => ipcRenderer.invoke('fb:blockUser', params),
     unblockUser:           (params: any) => ipcRenderer.invoke('fb:unblockUser', params),
     forwardMessage:        (params: any) => ipcRenderer.invoke('fb:forwardMessage', params),
@@ -760,6 +791,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     approvePendingMember:  (params: any) => ipcRenderer.invoke('fb:approvePendingMember', params),
     getGroupLink:          (params: any) => ipcRenderer.invoke('fb:getGroupLink', params),
     setGroupLink:          (params: any) => ipcRenderer.invoke('fb:setGroupLink', params),
+    searchPeople:          (params: any) => ipcRenderer.invoke('fb:searchPeople', params),
+    startChat:             (params: any) => ipcRenderer.invoke('fb:startChat', params),
+    setThreadMute:         (params: any) => ipcRenderer.invoke('fb:setThreadMute', params),
+    deleteThread:          (params: any) => ipcRenderer.invoke('fb:deleteThread', params),
+    acceptMessageRequest:  (params: any) => ipcRenderer.invoke('fb:acceptMessageRequest', params),
+    deleteMessageForMe:    (params: any) => ipcRenderer.invoke('fb:deleteMessageForMe', params),
+    addGroupMembers:       (params: any) => ipcRenderer.invoke('fb:addGroupMembers', params),
+    refreshGroupInfo:      (params: any) => ipcRenderer.invoke('fb:refreshGroupInfo', params),
+    removeGroupMember:     (params: any) => ipcRenderer.invoke('fb:removeGroupMember', params),
+    leaveGroup:            (params: any) => ipcRenderer.invoke('fb:leaveGroup', params),
+    setGroupPhoto:         (params: any) => ipcRenderer.invoke('fb:setGroupPhoto', params),
+    votePollInThread:      (params: any) => ipcRenderer.invoke('fb:votePollInThread', params),
+    repairMessageMedia:    (params: any) => ipcRenderer.invoke('fb:repairMessageMedia', params),
+    sendSticker:           (params: any) => ipcRenderer.invoke('fb:sendSticker', params),
+    getRecentStickers:     (params: any) => ipcRenderer.invoke('fb:getRecentStickers', params),
+    unlockEncryptedHistory: (params: any) => ipcRenderer.invoke('fb:unlockEncryptedHistory', params),
+    getEncryptedHistoryStatus: (params: any) => ipcRenderer.invoke('fb:getEncryptedHistoryStatus', params),
     getUserInfoFacebook: (params: { accountId: string; userId: string }) => ipcRenderer.invoke('fb:getUserInfoFacebook', params),
     // Backward-compatible preload API for renderer bundles that have not yet reloaded.
     getUserInfoFacebookHtml: (params: { accountId: string; userId: string }) => ipcRenderer.invoke('fb:getUserInfoFacebook', params),
@@ -1071,6 +1119,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'event:messageEdited',
       'event:messagesRepaired',
       'event:contactPreview',
+      'event:messagesSynced',
       'event:messagesDeleted',
       'event:userPresence',
       'event:telegramEntityHydrated',
@@ -1139,6 +1188,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'fb:onThreadInfoUpdate',
       'fb:onGroupEvent',
       'fb:onContactUpdate',
+      'fb:onThreadsSynced',
+      'fb:onMessagePatch',
       'fb:onE2EEStatus',
       // ─── ERP events ──────────────────────────────────────────────────
       'erp:event:taskCreated',

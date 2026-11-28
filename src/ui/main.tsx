@@ -1,8 +1,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { RenderErrorBoundary } from './components/app/RenderErrorBoundary';
 import './index.css';
 import Logger from '../utils/Logger';
+
+// Every import above has loaded and run: main's boot watchdog (electron/app/bootWatchdog.ts) reads this to tell a stalled
+// load (reload it) from a slow one (wait)
+document.documentElement.dataset.deplaoApp = 'started';
 
 // The UI stays busy for ≥ 1 s (long task: a big render, a burst of events…) → logged as "[Hiệu năng] …" (Performance). Together with
 // the "Luồng chính bị chặn" (main thread blocked) message from the main process shows whether the app froze because of the UI or because of main.
@@ -29,9 +34,12 @@ window.addEventListener('drop', (event) => {
   if (!event.defaultPrevented) event.preventDefault();
 });
 
+// A render error that no inner boundary catches would make React unmount everything (blank window): show a reload screen
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <RenderErrorBoundary name="app" variant="app">
+      <App />
+    </RenderErrorBoundary>
   </React.StrictMode>
 );
 

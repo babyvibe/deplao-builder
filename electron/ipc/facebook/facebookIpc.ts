@@ -171,6 +171,107 @@ function resolveRealFacebookId(internalId: string, service: any): string {
 /** Open-source build: keep the function so imports in the main process do not break. */
 export function setFBMainWindow(_win: any) {}
 
+// ─── People, conversations, groups, polls, media (LightSpeed tasks in the bridge) ─────────────
+
+const NOT_CONNECTED = () => ({ success: false, error: 'Tài khoản chưa kết nối. Vui lòng kết nối lại Facebook.' });
+
+async function withFacebookService<T>(accountId: string, run: (service: FacebookService) => Promise<T>): Promise<T | { success: false; error: string }> {
+  try {
+    const service = await getFBServiceOrReconnect(resolveInternalId(accountId));
+    if (!service) return NOT_CONNECTED() as { success: false; error: string };
+    return await run(service);
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/** Messenger people search (friends, other people, Pages, the account's groups). */
+ipcMain.handle('fb:searchPeople', async (_event, params: { accountId: string; query: string }) =>
+  withFacebookService(params.accountId, service => service.searchPeople(String(params.query || ''))));
+
+/** Start a chat with a person from the search: Messenger thread + conversation in Deplao. */
+ipcMain.handle('fb:startChat', async (_event, params: {
+  accountId: string; userId: string; name?: string; avatarUrl?: string; isGroup?: boolean;
+}) => withFacebookService(params.accountId, service => service.startChat({
+  id: String(params.userId || ''), name: params.name, avatarUrl: params.avatarUrl, isGroup: params.isGroup === true,
+})));
+
+/** Mute (muteUntilMs: -1 = until turned back on, Unix ms = until then, 0 = unmute), synced to Messenger. */
+ipcMain.handle('fb:setThreadMute', async (_event, params: { accountId: string; threadId: string; muteUntilMs: number }) =>
+  withFacebookService(params.accountId, service => service.setThreadMute(String(params.threadId || ''), Number(params.muteUntilMs) || 0)));
+
+/** Delete the conversation from the Messenger inbox (also used to decline a message request). */
+ipcMain.handle('fb:deleteThread', async (_event, params: { accountId: string; threadId: string }) =>
+  withFacebookService(params.accountId, service => service.deleteThreadOnMessenger(String(params.threadId || ''))));
+
+ipcMain.handle('fb:acceptMessageRequest', async (_event, params: { accountId: string; threadId: string }) =>
+  withFacebookService(params.accountId, service => service.acceptMessageRequest(String(params.threadId || ''))));
+
+/** "Xóa (chỉ mình tôi)" on Messenger (ordinary messages; encrypted ones are only hidden in Deplao: synced false). */
+ipcMain.handle('fb:deleteMessageForMe', async (_event, params: { accountId: string; threadId: string; messageId: string }) =>
+  withFacebookService(params.accountId, service => service.deleteMessageForMe(String(params.threadId || ''), String(params.messageId || ''))));
+
+ipcMain.handle('fb:addGroupMembers', async (_event, params: { accountId: string; threadId: string; userIds: string[] }) =>
+  withFacebookService(params.accountId, service => service.addGroupMembers(String(params.threadId || ''), Array.isArray(params.userIds) ? params.userIds.map(String) : [])));
+
+ipcMain.handle('fb:removeGroupMember', async (_event, params: { accountId: string; threadId: string; userId: string }) =>
+  withFacebookService(params.accountId, service => service.removeGroupMember(String(params.threadId || ''), String(params.userId || ''))));
+
+ipcMain.handle('fb:leaveGroup', async (_event, params: { accountId: string; threadId: string }) =>
+  withFacebookService(params.accountId, service => service.leaveGroup(String(params.threadId || ''))));
+
+/** A group's name, picture and members from Messenger (members panel, refresh). */
+ipcMain.handle('fb:refreshGroupInfo', async (_event, params: { accountId: string; threadId: string }) =>
+  withFacebookService(params.accountId, service => service.refreshGroupInfo(String(params.threadId || ''))));
+
+/** Group picture from a file on the machine (photoPath: uploaded to Boss first in employee mode). */
+ipcMain.handle('fb:setGroupPhoto', async (_event, params: { accountId: string; threadId: string; photoPath: string; mimeType?: string }) =>
+  withFacebookService(params.accountId, service => service.setGroupPhoto(String(params.threadId || ''), String(params.photoPath || ''), params.mimeType)));
+
+/** Vote in a poll shown in the chat (fb.poll): the account's full choice list (empty = remove the vote). */
+ipcMain.handle('fb:votePollInThread', async (_event, params: { accountId: string; threadId: string; pollId: string; optionIds: string[] }) =>
+  withFacebookService(params.accountId, service => service.votePollInThread(
+    String(params.threadId || ''), String(params.pollId || ''), Array.isArray(params.optionIds) ? params.optionIds.map(String) : [])));
+
+/** Send a sticker (id; encrypted chats send its image: stickerPath on disk, else downloaded from url). */
+ipcMain.handle('fb:sendSticker', async (_event, params: {
+  accountId: string; threadId: string; stickerId: string; url?: string; stickerPath?: string; typeChat?: 'user' | null;
+}) => withFacebookService(params.accountId, async () => {
+  const { FacebookSendService } = require('../../../src/services/facebook/send/FacebookSendService');
+  return FacebookSendService.sendSticker({
+    accountId: resolveInternalId(params.accountId),
+    threadId: String(params.threadId || ''),
+    stickerId: String(params.stickerId || ''),
+    url: params.url,
+    localPath: params.stickerPath,
+    ...(Object.prototype.hasOwnProperty.call(params, 'typeChat') ? { typeChat: params.typeChat } : {}),
+  });
+}));
+
+/** Stickers sent / received lately by this account (Facebook sticker tab). */
+ipcMain.handle('fb:getRecentStickers', async (_event, params: { accountId: string }) => {
+  try {
+    const { FacebookSendService } = require('../../../src/services/facebook/send/FacebookSendService');
+    return { success: true, stickers: FacebookSendService.recentStickers(String(params?.accountId || '')) };
+  } catch (err: any) {
+    return { success: false, stickers: [], error: err.message };
+  }
+});
+
+/**
+ * Unlock old encrypted messages with the Messenger PIN (never stored; one recovery call in the bridge). After this the
+ * "load older messages" path of encrypted chats reads Messenger's secure history.
+ */
+ipcMain.handle('fb:unlockEncryptedHistory', async (_event, params: { accountId: string; pin: string }) =>
+  withFacebookService(params.accountId, service => service.unlockEncryptedHistory(String(params.pin || ''))));
+
+ipcMain.handle('fb:getEncryptedHistoryStatus', async (_event, params: { accountId: string }) =>
+  withFacebookService(params.accountId, async service => ({ success: true, unlocked: service.isEncryptedHistoryUnlocked() })));
+
+/** Download a message's media again; dead Facebook links are fetched again from Messenger first. */
+ipcMain.handle('fb:repairMessageMedia', async (_event, params: { accountId: string; messageId: string }) =>
+  withFacebookService(params.accountId, service => service.repairMessageMedia(String(params.messageId || ''))));
+
 /**
  * Get FacebookService from ConnectionManager, auto-reconnecting if it is not there yet.
  * All handlers call this instead of calling FacebookConnectionManager.get() directly.
@@ -919,6 +1020,7 @@ export function registerFacebookIpc(): void {
           body: params.body,
           typeChat,
           replyToMessageId: params.options?.replyToMessageId,
+          ...(Array.isArray(params.options?.mentions) ? { mentions: params.options.mentions } : {}),
         }),
         new Promise<any>((_, reject) =>
           setTimeout(() => reject(new Error(tr('Gửi tin nhắn timeout sau {{v1}}s. Vui lòng thử lại.', { v1: TIMEOUT_MS / 1000 }))), TIMEOUT_MS)
@@ -946,7 +1048,7 @@ export function registerFacebookIpc(): void {
    */
   ipcMain.handle('fb:sendAttachment', async (_event, params: {
     accountId: string; threadId: string; filePath: string; body?: string; typeChat?: 'user' | null; fileType?: 'image' | 'video' | 'audio' | 'file';
-    replyToMessageId?: string;
+    replyToMessageId?: string; voice?: boolean;
   }) => {
     try {
       const internalId = resolveInternalId(params.accountId);
@@ -962,6 +1064,7 @@ export function registerFacebookIpc(): void {
         typeChat: params.typeChat,
         fileType: params.fileType,
         replyToMessageId: params.replyToMessageId,
+        ...(params.voice === true ? { voice: true } : {}),
       });
 
       return { ...result, fileName: require('path').basename(params.filePath) };
@@ -1316,6 +1419,20 @@ export function registerFacebookIpc(): void {
     } catch (err: any) {
       // Typing is best-effort - no error returned
       return { success: true };
+    }
+  });
+
+  /**
+   * The Facebook chat on screen (threadId null = none, window in the background). Encrypted chats only exchange typing
+   * while the account is "available", which follows this. Never reconnects: a disconnected account has nothing to show.
+   */
+  ipcMain.handle('fb:setViewingChat', async (_event, params: { accountId: string; threadId?: string | null }) => {
+    try {
+      const service = FacebookConnectionManager.get(resolveInternalId(params.accountId));
+      if (service) await service.setViewingChat(params.threadId ? String(params.threadId) : null);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
   });
 

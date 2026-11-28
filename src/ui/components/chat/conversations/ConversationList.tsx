@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { compareMessagesChronologically, getMessageCacheKey, useChatStore } from '@/store/chat/chatStore';
+import { getMessageCacheKey, useChatStore } from '@/store/chat/chatStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
@@ -24,7 +24,7 @@ import { ZALO_FRIEND_ONLINES_ENABLED } from '../../../../shared/zalo/zaloPresenc
 import { showZaloPinDialog } from '../zalo/hidden/ZaloHiddenPinDialog';
 import { setZaloConversationHidden, tryUnlockHiddenFromSearch, useHiddenAutoRelock } from '@/hooks/zalo/useZaloHidden';
 import type { OpenQuickConversation } from '../quick/quickActions';
-import { showConfirm } from '../../common/ConfirmDialog';
+import { showConfirm, showConfirmChoice } from '../../common/ConfirmDialog';
 import LabelPicker, { EditLabelsModal } from './LabelPicker';
 import AddFriendModal from '../../common/profile/AddFriendModal';
 import ConversationGroupAvatar from './ConversationGroupAvatar';
@@ -42,6 +42,7 @@ import type { StarredItem } from '@/lib/chat/messages/starredMessages';
 import { MY_DOCUMENTS_NAME, isMyDocumentsContact, isMyDocumentsThread, myDocumentsGroupSummary, myDocumentsThreadId, myDocumentsTitle, showsMyDocumentsIcon } from '@/lib/chat/zalo/myDocuments';
 import MyDocumentsPanel, { type MyDocumentsPanelEntry } from './MyDocumentsPanel';
 import { isSameMessagePage, newestMessages } from '@/lib/chat/messages/messagePage';
+import { reloadNewestPage } from '@/lib/chat/realtime/messagesSyncedReload';
 import { hiddenViewRows } from '@/lib/chat/zalo/hiddenView';
 import { registerConversationOpener } from '@/lib/chat/conversations/openConversation';
 import {
@@ -50,6 +51,8 @@ import {
 import { lookupZaloUserByPhone } from '@/lib/chat/zalo/zaloPhoneLookup';
 import { isManuallyMarkedReplied, isUnrepliedConversation } from '../../../../shared/chat/replyState';
 import { isTelegramProfileOnlyRow } from '../../../../shared/telegram/telegramConversationRows';
+import { isFacebookProfileOnlyRow } from '../../../../shared/facebook/facebookConversationRows';
+import { stripMessengerFormatting } from '../../../../shared/facebook/messengerFormatting';
 import BulkMarkRepliedModal from './BulkMarkRepliedModal';
 import {
   customDateRange, inConversationDateRange, toDateInputValue,
@@ -62,6 +65,7 @@ import { extractUserProfile } from '../../../../utils/zalo/profileUtils';
 import { refreshContactAlias } from '../../../hooks/chat/useZaloEvents';
 import PageLoading from '@/components/common/PageLoading';
 import { CHANNEL, isFacebook, isZalo, isNonZalo, isTelegram, isTelegramUser } from '@/lib/channels/channelHelper';
+import { deleteFacebookThread, syncFacebookMute } from '@/lib/chat/facebook/facebookThreadSync';
 import { getTelegramMembershipNotice, isTelegramNonMember } from '@/lib/telegram/telegramMembership';
 import { getAdapter } from '@/lib/channels/adapters/registry';
 import ForumTopicsPanel from '../telegram/forum/ForumTopicsPanel';
@@ -1121,7 +1125,7 @@ export default function ConversationList() {
       : rawSource.filter(c => !othersConversations.has(c.contact_id)))
       .filter(c => !hiddenLocked(c.owner_zalo_id || activeAccountId, c.contact_id))
       // Telegram people saved only for their name / avatar are not conversations (Telegram does not list them); a search still finds them
-      .filter(c => !!search || !isTelegramProfileOnlyRow(c)
+      .filter(c => !!search || (!isTelegramProfileOnlyRow(c) && !isFacebookProfileOnlyRow(c))
         || pinnedThreads.has(c.contact_id) || localPinnedThreads.has(c.contact_id));
 
     // Label filter in memory (DB does not support it yet). Unreplied: the DB already filtered it, re-apply on live state (just replied → remove at once)
@@ -1283,7 +1287,7 @@ export default function ConversationList() {
           return !ownerOthers.has(c.contact_id) && !hiddenLocked(c.owner_zalo_id, c.contact_id);
         }))
       // Telegram people saved only for their name / avatar are not conversations; a search still finds them
-      .filter(c => !!search || !isTelegramProfileOnlyRow(c));
+      .filter(c => !!search || (!isTelegramProfileOnlyRow(c) && !isFacebookProfileOnlyRow(c)));
 
     const unreadFiltered = (filter === 'unread' || dateRange)
       ? source.filter(c => (filter !== 'unread' || c.unread_count > 0) && inConversationDateRange(c.last_message_time, dateRange))
@@ -1420,36 +1424,13 @@ export default function ConversationList() {
       reloadLocalPins(accountId);
       const acc = useAccountStore.getState().getActiveAccount();
       if (acc && isZalo(acc.channel)) reloadZaloPins(accountId, buildZaloAuth(acc, accountId));
-      // Open conversation → load the page with the newest messages. No messages yet (the load during the disconnect failed) → just set it. Already has messages →
-      // merge: in the new page take Boss's copy (recalled / reactions / edits made during the disconnect), keep the older loaded messages and
-      // the messages being sent (temp_). After a long disconnect / Boss restarted (catch-up cannot replay) the missed messages
-      // only come back through here: previously the open conversation was missing messages until it was reopened.
+      // Open conversation → the page with the newest messages, merged into memory (lib/chat/realtime/messagesSyncedReload): Boss's copy wins for
+      // recalls / reactions / edits made during the disconnect, older loaded messages and messages being sent stay. After a long disconnect / Boss
+      // restarted (catch-up cannot replay) the missed messages only come back through here: previously the open conversation was missing messages
+      // until it was reopened.
       const chat = useChatStore.getState();
       const threadId = chat.activeThreadId;
-      if (threadId && !chat.activeTopicId) {
-        tasks.push(DataAccessor.getMessages({ zaloId: accountId, threadId, limit: MESSAGE_LOAD_LIMIT, offset: 0 }).then((res: any) => {
-          const msgs: any[] = res?.messages || res?.items || [];
-          if (isReadFailure(res) || msgs.length === 0) return;
-          const latest = useChatStore.getState();
-          if (latest.activeThreadId !== threadId || latest.activeTopicId || useAccountStore.getState().activeAccountId !== accountId) return;
-          const fresh = [...msgs].reverse();
-          const cached = latest.messages[getMessageCacheKey(accountId, threadId)] || [];
-          if (cached.length === 0) {
-            latest.setMessages(accountId, threadId, fresh);
-            return;
-          }
-          const isTemp = (m: any) => String(m.msg_id || '').startsWith('temp_');
-          const freshIds = new Set(fresh.map((m: any) => String(m.msg_id)));
-          const newestCached = cached.reduce((max, m) => (isTemp(m) ? max : Math.max(max, Number(m.timestamp || 0))), 0);
-          const oldestFresh = fresh.reduce((min, m: any) => Math.min(min, Number(m.timestamp || 0)), Number.POSITIVE_INFINITY);
-          // The new page is full and all of it is newer than the memory → there may be a gap between the two parts: replace it entirely (keep the messages being sent)
-          const kept = fresh.length >= MESSAGE_LOAD_LIMIT && oldestFresh > newestCached
-            ? cached.filter(isTemp)
-            : cached.filter((m) => !freshIds.has(String(m.msg_id)));
-          const merged = [...kept, ...fresh].sort(compareMessagesChronologically);
-          latest.setMessages(accountId, threadId, merged);
-        }));
-      }
+      if (threadId && !chat.activeTopicId) tasks.push(reloadNewestPage(accountId, threadId));
     }
     await Promise.allSettled(tasks);
   });
@@ -2067,6 +2048,10 @@ export default function ConversationList() {
       useChatStore.getState().updateContact(zId, { contact_id: contactId, is_muted: until === 0 ? 1 : 0, mute_until: until === 0 ? 0 : until } as any);
       return;
     }
+    if (accObj && isFacebook(accObj.channel)) {
+      syncFacebookMute(zId, contactId, true, until).then(err => { if (err) showNotification(err, 'error'); });
+      return;
+    }
     if (!accObj || !channelSupports(accObj.channel || CHANNEL.ZALO, 'supportsMuteSync')) return;
     const auth = buildZaloAuth(accObj);
     const contact = (useChatStore.getState().contacts[zId] || []).find(c => c.contact_id === contactId);
@@ -2087,6 +2072,10 @@ export default function ConversationList() {
         .then(res => { if (!res?.success) showNotification(res?.error || tr('Không thể đồng bộ bật thông báo với Telegram'), 'error'); })
         .catch(() => showNotification(tr('Không thể đồng bộ bật thông báo với Telegram'), 'error'));
       useChatStore.getState().updateContact(zId, { contact_id: contactId, is_muted: 0, mute_until: 0 } as any);
+      return;
+    }
+    if (accObj2 && isFacebook(accObj2.channel)) {
+      syncFacebookMute(zId, contactId, false).then(err => { if (err) showNotification(err, 'error'); });
       return;
     }
     if (!accObj2 || !channelSupports((accObj2.channel || CHANNEL.ZALO) as Channel, 'supportsMuteSync')) return;
@@ -2128,6 +2117,11 @@ export default function ConversationList() {
       useChatStore.getState().updateContact(zId, { contact_id: contactId, telegram_folder_id: 1, telegram_archived: 1 });
       return;
     }
+    // Messenger has no "Khác" folder: muting it there keeps the phone quiet as well
+    if (isFacebook(ch)) {
+      syncFacebookMute(zId, contactId, true, 0).catch(() => {});
+      return;
+    }
     if (!channelSupports(ch, 'supportsMuteSync')) return;
     const auth = buildZaloAuth(accObj);
     const contact = (useChatStore.getState().contacts[zId] || []).find(c => c.contact_id === contactId);
@@ -2152,6 +2146,10 @@ export default function ConversationList() {
       ipc.telegramUser?.setDialogArchived({ accountId: zId, chatId: contactId, archived: false }).catch(() => {});
       ipc.telegramUser?.setDialogMute({ accountId: zId, chatId: contactId, muteUntil: 0 }).catch(() => {});
       useChatStore.getState().updateContact(zId, { contact_id: contactId, telegram_folder_id: 0, telegram_archived: 0 });
+      return;
+    }
+    if (isFacebook(ch2)) {
+      syncFacebookMute(zId, contactId, false).catch(() => {});
       return;
     }
     if (!channelSupports(ch2, 'supportsMuteSync')) return;
@@ -2275,21 +2273,36 @@ export default function ConversationList() {
 
   const handleDeleteConversation = async (contactId: string, overrideZaloId?: string) => {
     setCtxMenu(null);
-    const ok = await showConfirm({
+    const zId = overrideZaloId || activeAccountId;
+    if (!zId) return;
+    const accObj = useAccountStore.getState().accounts.find(a => a.zalo_id === zId);
+    // Deplao deletes its own copy; the conversation is deleted on Zalo / Messenger too only when the box is ticked
+    const platformName = accObj && isZalo(accObj.channel) ? 'Zalo' : accObj && isFacebook(accObj.channel) ? 'Messenger' : '';
+    const dialog = {
       title: tr('Xóa hội thoại này?'),
       message: tr('Toàn bộ tin nhắn sẽ bị xóa khỏi ứng dụng và không thể khôi phục.'),
       confirmText: tr('Xóa'),
-      variant: 'danger',
-    });
-    if (!ok) return;
-    const zId = overrideZaloId || activeAccountId;
-    if (!zId) return;
+      variant: 'danger' as const,
+    };
+    let alsoOnPlatform = false;
+    if (platformName) {
+      const choice = await showConfirmChoice({
+        ...dialog,
+        option: {
+          label: tr('Xóa cả trên {{platform}}', { platform: platformName }),
+          hint: tr('Chỉ xóa ở tài khoản này, người kia vẫn còn tin nhắn'),
+        },
+      });
+      if (!choice.ok) return;
+      alsoOnPlatform = choice.checked;
+    } else if (!(await showConfirm(dialog))) {
+      return;
+    }
 
     const contact = (contacts[zId] || []).find(c => c.contact_id === contactId);
     const threadType = contact?.contact_type === 'group' ? 1 : 0;
-    const accObj = useAccountStore.getState().accounts.find(a => a.zalo_id === zId);
 
-    if (accObj && isZalo(accObj.channel)) {
+    if (alsoOnPlatform && accObj && isZalo(accObj.channel)) {
       try {
         const auth = buildZaloAuth(accObj);
         const msgRes = await DataAccessor.getMessages({ zaloId: zId, threadId: contactId, limit: 1 });
@@ -2303,6 +2316,11 @@ export default function ConversationList() {
           await ipc.zalo?.deleteChat({ auth, lastMessage, threadId: contactId, type: threadType });
         }
       } catch {}
+    }
+    // Facebook: delete it from the Messenger inbox too (the other people keep it); Deplao deletes its copy either way
+    if (alsoOnPlatform && accObj && isFacebook(accObj.channel)) {
+      const err = await deleteFacebookThread(zId, contactId);
+      if (err) showNotification(err, 'warning');
     }
 
     await DataAccessor.deleteConversation({ zaloId: zId, contactId });
@@ -2464,7 +2482,7 @@ export default function ConversationList() {
             accountAvatar: account.avatar_url || '',
             channel: (account.channel || CHANNEL.ZALO) as Channel,
             threadId,
-            preview: formatLastMessage(contact?.last_message),
+            preview: listPreview(contact?.last_message, account.channel),
             timeLabel: contact?.last_message_time ? formatTime(contact.last_message_time) : '',
             unread: Number(contact?.unread_count) || 0,
           }))}
@@ -3091,7 +3109,7 @@ export default function ConversationList() {
               </div>
             ) : (
             <div className="flex items-center gap-2">
-              {phoneResult.avatar ? <img src={phoneResult.avatar} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+              {phoneResult.avatar ? <img src={toLocalMediaUrl(phoneResult.avatar)} alt="" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
                 : <PeerInitials id={phoneResult.uid} name={phoneResult.display_name || phoneResult.zalo_name} fallback="U" className="w-9 h-9 text-xs" />}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-foreground truncate">{phoneResult.display_name || phoneResult.zalo_name}</p>
@@ -3223,6 +3241,7 @@ export default function ConversationList() {
                     avatarUrl={contact.avatar_url}
                     name={contact.alias || contact.display_name}
                     observer={groupAvatarObserver}
+                    channel={contact.channel || contactAccount?.channel}
                   />
                 ) : contact.avatar_url && !failedAvatars.has(contact.contact_id) ? (
                   <img src={toLocalMediaUrl(contact.avatar_url)} alt="" loading="lazy" decoding="async" className="w-10 h-10 rounded-full object-cover"
@@ -3318,7 +3337,7 @@ export default function ConversationList() {
                         if (draftText) {
                           return <><span className="text-red-400">{tr('Chưa gửi:')} </span><span className="text-muted-foreground">{draftText}</span></>;
                         }
-                        return formatLastMessage(contact.last_message) || (contact.phone ? `${contact.phone}` : '');
+                        return listPreview(contact.last_message, contact.channel) || (contact.phone ? `${contact.phone}` : '');
                       })()}
                     </span>
                   </span>
@@ -3570,6 +3589,12 @@ function MyDocumentsIcon() {
       <CloudIcon className="w-5 h-5" />
     </div>
   );
+}
+
+/** List preview of a conversation; Messenger formatting marks are dropped so the line reads clean (the bubble shows the formatting). */
+function listPreview(msg: string | undefined, channel?: string | null): string {
+  const text = formatLastMessage(msg);
+  return isFacebook(channel) ? stripMessengerFormatting(text) : text;
 }
 
 function formatLastMessage(msg: string | undefined): string {

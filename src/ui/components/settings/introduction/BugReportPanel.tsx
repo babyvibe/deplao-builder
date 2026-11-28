@@ -92,7 +92,7 @@ export function BugReportPanel() {
             </ol>
           </div>
           <p className="text-muted-foreground leading-relaxed">
-            {trx('<0>Môi trường:</0> Deplao v26.11.2, Windows 11, Zalo cá nhân, dùng một mình (không có nhân viên). Đã thử 50 người (bình thường), 100 người (bình thường), 150 người (lỗi). Đính kèm: ảnh chụp + file nhật ký.', { 0: <strong className="text-foreground" /> })}
+            {trx('<0>Môi trường:</0> Deplao v26.11.3, Windows 11, Zalo cá nhân, dùng một mình (không có nhân viên). Đã thử 50 người (bình thường), 100 người (bình thường), 150 người (lỗi). Đính kèm: ảnh chụp + file nhật ký.', { 0: <strong className="text-foreground" /> })}
           </p>
           <div className="bg-success/10 border border-success/30 rounded-lg p-2 mt-2">
             <p className="text-[11px] text-success">

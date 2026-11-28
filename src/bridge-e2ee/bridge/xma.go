@@ -354,9 +354,13 @@ func (x *tableExtras) convertXMA(xma *table.WrappedXMA) *Attachment {
 		Width:       int(xma.PreviewWidth),
 		Height:      int(xma.PreviewHeight),
 		Buttons:     x.buttons(refs, xma.AttachmentFbid, xma.DefaultCtaId),
-		XmaType:     firstNonEmpty(xma.XmaDataclass, xma.XMATypeOne, xma.XMATypeTwo),
+		XmaType:     boundedXmaType(xma.XmaDataclass, xma.XMATypeOne, xma.XMATypeTwo),
 		FileName:    strings.TrimSpace(xma.TitleText),
 		Description: strings.TrimSpace(xma.SubtitleText),
+		// DEPLAO_ADAPTER: shared reels / videos keep their playable file.
+		AttachmentFbid:   xma.AttachmentFbid,
+		PlayableURL:      xma.PlayableUrl,
+		PlayableMimeType: xma.PlayableUrlMimeType,
 	}
 	if att.Header == att.Title {
 		att.Header = ""
@@ -373,11 +377,16 @@ func (x *tableExtras) convertXMA(xma *table.WrappedXMA) *Attachment {
 			att.Body += line
 		}
 	}
-	if isPlainURLPreview(att) {
+	// DEPLAO_ADAPTER: custom Bloks templates carry their texts only in the
+	// dataclass payload (mautrix-meta xmaBloksTemplateToMatrix).
+	if att.Title == "" && att.Body == "" && xma.XmaDataclass != "" {
+		applyBloksCard(att, xma.XmaDataclass)
+	}
+	if isPlainURLPreview(att) && att.PlayableURL == "" {
 		att.Type = "link"
 	}
 	if att.Title == "" && att.Subtitle == "" && att.Body == "" && att.Header == "" && att.Footer == "" &&
-		att.ImageURL == "" && att.URL == "" && len(att.Buttons) == 0 {
+		att.ImageURL == "" && att.URL == "" && len(att.Buttons) == 0 && att.PlayableURL == "" {
 		return nil
 	}
 	return att

@@ -29,7 +29,7 @@ const TRIGGERS: { title: string; items: string[] }[] = [
   { title: tr('Mọi kênh'), items: [tr('Chạy theo lịch hẹn'), tr('Chạy thủ công'), tr('Khi nhận thanh toán'), tr('Khi phần mềm bán hàng gửi webhook'), tr('Webhook bên ngoài'), tr('Khi API/ứng dụng gọi')] },
   { title: 'Zalo', items: [tr('Khi nhận tin nhắn'), tr('Khi có lời mời kết bạn'), tr('Khi có sự kiện nhóm'), tr('Khi có người react tin nhắn'), tr('Khi gán hoặc gỡ nhãn')] },
   {
-    title: 'Facebook',
+    title: 'Facebook Messenger',
     items: [tr('Khi nhận tin nhắn'), tr('Khi nhận tin nhắn ảnh'), tr('Khi nhận tin nhắn video'), tr('Khi nhận tin nhắn file'), tr('Khi nhận sticker'), tr('Khi có reaction'), tr('Khi thu hồi tin nhắn'), tr('Khi có sự kiện nhóm')],
   },
   { title: tr('Telegram (Cá nhân)'), items: [tr('Khi nhận tin nhắn Telegram'), tr('Khi thu hồi tin nhắn Telegram'), tr('Sự kiện nhóm Telegram')] },
@@ -56,7 +56,7 @@ const ACTIONS: { title: string; items: string[]; note?: string }[] = [
     ],
   },
   {
-    title: 'Facebook',
+    title: 'Facebook Messenger',
     items: [
       tr('Gửi tin nhắn'), tr('Gửi tệp đính kèm'), tr('Thả reaction'), tr('Thu hồi tin nhắn'), tr('Chỉnh sửa tin nhắn'), tr('Gửi lại nội dung'),
       tr('Ghim tin nhắn'), tr('Bỏ ghim tin nhắn'), tr('Tạo bình chọn'), tr('Hiệu ứng đang gõ'), tr('Đánh dấu đã đọc'), tr('Chặn người dùng'),
@@ -95,7 +95,7 @@ export function WorkflowPanel() {
         <StepList steps={[
           {
             title: tr('Tạo workflow'),
-            desc: tr('Bấm <strong class="text-foreground">Tạo workflow</strong> → chọn kênh <strong class="text-foreground">Zalo</strong>, <strong class="text-foreground">Facebook</strong>, <strong class="text-foreground">Telegram (Cá nhân)</strong> hoặc <strong class="text-foreground">Telegram (Bot)</strong>. Mỗi workflow dùng cho một kênh, bảng node chỉ hiện node hợp với kênh đó. Có thể bắt đầu từ <strong class="text-foreground">Kho mẫu</strong> hoặc <strong class="text-foreground">Nhập JSON</strong>.'),
+            desc: tr('Bấm <strong class="text-foreground">Tạo workflow</strong> → chọn kênh <strong class="text-foreground">Zalo</strong>, <strong class="text-foreground">Facebook Messenger</strong>, <strong class="text-foreground">Telegram (Cá nhân)</strong> hoặc <strong class="text-foreground">Telegram (Bot)</strong>. Mỗi workflow dùng cho một kênh, bảng node chỉ hiện node hợp với kênh đó. Có thể bắt đầu từ <strong class="text-foreground">Kho mẫu</strong> hoặc <strong class="text-foreground">Nhập JSON</strong>.'),
           },
           {
             title: tr('Chọn tài khoản áp dụng'),

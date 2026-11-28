@@ -2,7 +2,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app, safeStorage } from 'electron';
 import Logger from '../../utils/Logger';
-import { FB_TEMPLATE_MSG_TYPE, fbTemplateFromAttachments, fbTemplateText, isFbUnavailableTemplate, shouldUpgradeFbTemplate } from '../../shared/facebook/facebookTemplate';
+import { FB_TEMPLATE_MSG_TYPE, FB_UNDECRYPTABLE_ATTACHMENT, fbTemplateFromAttachments, fbTemplateText, isFbUnavailableTemplate, shouldUpgradeFbTemplate } from '../../shared/facebook/facebookTemplate';
+import { FB_POLL_MSG_TYPE } from '../../shared/facebook/facebookSpecialMessages';
 import BetterSqlite3 from 'better-sqlite3';
 import type { Account, Message, Contact, CRMNote, CRMCampaign, CRMCampaignContact, CRMSendLog, CRMCampaignStatus, CRMContactStatus } from '../../models';
 import type { TelegramPeer } from '../../models/telegram/telegram';
@@ -17,7 +18,7 @@ import {
     type CampaignEngagementReport, type EngagementCounts, type EngagementSupport, type OutreachStats,
 } from '../../shared/analytics/messageEngagement';
 import { campaignEngagementRows, outreachRows } from './engagementQueries';
-import { MEDIA_MESSAGE_COLUMNS, MEDIA_MESSAGE_FILTER, buildMediaCursorQuery, type MediaCursor } from './mediaMessagesQuery';
+import { FILE_MESSAGE_FILTER, MEDIA_MESSAGE_COLUMNS, MEDIA_MESSAGE_FILTER, buildMediaCursorQuery, type MediaCursor } from './mediaMessagesQuery';
 import { escapeLikePattern, foldSearchText } from '../../shared/chat/searchFold';
 import { PINNED_READ_LIMIT, TELEGRAM_PINNED_LIMIT } from '../../shared/telegram/telegramPins';
 import { buildMessageFtsQuery, MESSAGE_SEARCH_FTS_CANDIDATES, MESSAGE_SEARCH_LIMIT, MESSAGE_SEARCH_RECENT_SCAN } from '../../shared/chat/messageSearch';
@@ -26,6 +27,7 @@ import { campaignFlag, normalizeStopAfterFailures } from '../../shared/crm/campa
 import { campaignInviteGroupIds, recipientForOtherAccount, withoutInviteGroups, type CopiedRecipient } from '../../shared/crm/campaignCopy';
 import { mergeZaloReactionAliases, normalizeZaloReactionEmoji } from '../../shared/zalo/zaloReactions';
 import { zinstantPreviewText } from '../../shared/zalo/zaloZinstant';
+import { parseZaloReminderCard, withReminderFullTitle } from '../../shared/zalo/zaloReminderCard';
 import { contactReplyStateSql } from '../../shared/chat/replyState';
 import { isLinkableUrl, trimUrlEnd } from '../../shared/chat/urlText';
 import { ZALO_TTL_EXPIRY_GRACE_MS, isZaloTtlExpired } from '../../shared/zalo/zaloAutoDelete';
@@ -2405,6 +2407,24 @@ class DatabaseService {
                 Logger.log('[DatabaseService] Migration: added is_in_others to contacts');
                 needSave = true;
             }
+            // Facebook: the conversation is a Messenger message request (folder "pending"); it lives in "Khác" until accepted
+            if (!names.includes('fb_request')) {
+                conn().exec(`ALTER TABLE contacts ADD COLUMN fb_request INTEGER DEFAULT 0`);
+                Logger.log('[DatabaseService] Migration: added fb_request to contacts');
+                needSave = true;
+            }
+            // Facebook: why Messenger does not let the account reply ("blocked" = the account blocked the person; '' = can reply)
+            if (!names.includes('fb_cannot_reply')) {
+                conn().exec(`ALTER TABLE contacts ADD COLUMN fb_cannot_reply TEXT DEFAULT ''`);
+                Logger.log('[DatabaseService] Migration: added fb_cannot_reply to contacts');
+                needSave = true;
+            }
+            // Facebook: disappearing-message timer of an encrypted chat (ms; Messenger deletes, Deplao keeps the messages)
+            if (!names.includes('fb_disappearing_ttl')) {
+                conn().exec(`ALTER TABLE contacts ADD COLUMN fb_disappearing_ttl INTEGER DEFAULT 0`);
+                Logger.log('[DatabaseService] Migration: added fb_disappearing_ttl to contacts');
+                needSave = true;
+            }
             // Zalo: auto-delete time for messages (ms, ZL-05 - Deplao only displays it, does not delete messages) and conversations hidden by PIN (ZL-03)
             if (!names.includes('zalo_auto_delete_ttl')) {
                 conn().exec(`ALTER TABLE contacts ADD COLUMN zalo_auto_delete_ttl INTEGER DEFAULT 0`);
@@ -2909,6 +2929,12 @@ class DatabaseService {
                 conn().exec(`ALTER TABLE fb_threads ADD COLUMN is_e2ee INTEGER DEFAULT 0`);
                 this.save();
                 Logger.log('[DatabaseService] Migration: added is_e2ee to fb_threads');
+            }
+            // Separate Facebook thread key of an encrypted chat (LightSpeed tasks of the chat use it)
+            if (!threadCols.some((c: any) => c.name === 'fb_thread_key')) {
+                conn().exec(`ALTER TABLE fb_threads ADD COLUMN fb_thread_key TEXT DEFAULT NULL`);
+                this.save();
+                Logger.log('[DatabaseService] Migration: added fb_thread_key to fb_threads');
             }
         } catch (err: any) {
             Logger.warn(`[DatabaseService] is_e2ee migration: ${err.message}`);
@@ -4579,7 +4605,7 @@ class DatabaseService {
         return deduped;
     }
 
-    /** Gets all file attachments in a thread - used for the File tab */
+    /** Gets all file attachments in a thread - used for the File tab (pictures sent as files are with the photos: mediaMessagesQuery) */
     public getFileMessages(ownerZaloId: string, threadId: string, limit = 50, offset = 0): Message[] {
         return this.runReadPlan(this.getFileMessagesPlan(ownerZaloId, threadId, limit, offset));
     }
@@ -4595,11 +4621,7 @@ class DatabaseService {
             `SELECT msg_id, owner_zalo_id, thread_id, sender_id, content, msg_type, timestamp, local_paths, attachments, channel
              FROM messages
              WHERE owner_zalo_id = ? AND thread_id = ?
-               AND (
-                 msg_type IN ('share.file', 'file', 'share.link')
-                 OR (content LIKE '%"title"%' AND content LIKE '%"href"%' AND content LIKE '%"fileExt"%')
-                 OR (channel = 'facebook' AND msg_type = 'file' AND attachments IS NOT NULL AND attachments != '[]' AND attachments != '')
-               )
+               AND ${FILE_MESSAGE_FILTER}
              ORDER BY timestamp DESC
              LIMIT ? OFFSET ?`,
             [ownerZaloId, threadId, limit, offset]
@@ -6458,6 +6480,21 @@ class DatabaseService {
                  ORDER BY id DESC LIMIT 1`,
                 [ownerZaloId, m]
             );
+    }
+
+    /**
+     * Zalo reminder card (shared/zalo/zaloReminderCard): saves the whole title looked up on the group board as
+     * `fullTitle` in the message content, so the card shows it without asking Zalo again. False when the message is
+     * missing or is not a reminder card.
+     */
+    public saveZaloReminderFullTitle(ownerZaloId: string, msgId: string, threadId: string | undefined, fullTitle: string): boolean {
+        if (!this.initialized || !msgId || !String(fullTitle || '').trim()) return false;
+        const row = this.getMessageById(ownerZaloId, msgId, threadId) as (Message & { id?: number }) | undefined;
+        if (!row?.id || !parseZaloReminderCard(row.content)) return false;
+        const content = withReminderFullTitle(String(row.content || ''), fullTitle);
+        if (!content) return false;
+        this.run('UPDATE messages SET content = ? WHERE id = ?', [content, row.id]);
+        return true;
     }
 
     /** Batch lookup: fetch many messages by IDs in 1 query */
@@ -10298,9 +10335,210 @@ class DatabaseService {
             thread.is_e2ee ?? 0, metadata, now]);
     }
 
-    /** Mark the thread as E2EE-encrypted */
-    public markFBThreadE2EE(threadId: string, accountId: string): void {
+    /**
+     * Mark the thread as E2EE-encrypted. With `kind` (the caller knows the thread type) a missing thread row is created:
+     * an encrypted 1:1 often has no row, and the flag would be lost after a restart.
+     */
+    public markFBThreadE2EE(threadId: string, accountId: string, kind?: 'user' | 'group'): void {
+        if (kind && /^\d+$/.test(String(threadId || ''))) {
+            this.run(`INSERT OR IGNORE INTO fb_threads (id, account_id, name, type, unread_count, is_e2ee) VALUES (?, ?, '', ?, 0, 1)`,
+                [threadId, accountId, kind]);
+        }
         this.run(`UPDATE fb_threads SET is_e2ee = 1 WHERE id = ? AND account_id = ?`, [threadId, accountId]);
+    }
+
+    /** Facebook thread keys of encrypted chats (bridge hybridThreads): saved on the chat's thread row, which is an encrypted chat. */
+    public saveFBHybridThreads(accountId: string, links: Array<{ threadKey: string; threadId: string; isGroup?: boolean }>): number {
+        if (!this.initialized) return 0;
+        let saved = 0;
+        for (const link of links || []) {
+            const threadId = String(link?.threadId || '');
+            const threadKey = String(link?.threadKey || '');
+            if (!/^\d+$/.test(threadId) || !/^\d+$/.test(threadKey) || threadId === threadKey) continue;
+            this.markFBThreadE2EE(threadId, accountId, link.isGroup ? 'group' : 'user');
+            this.run(`UPDATE fb_threads SET fb_thread_key = ? WHERE id = ? AND account_id = ?`, [threadKey, threadId, accountId]);
+            saved++;
+        }
+        return saved;
+    }
+
+    /** Saved Facebook thread keys of encrypted chats, given back to the bridge after it starts. */
+    public getFBHybridThreads(accountId: string): Array<{ threadKey: string; threadId: string; isGroup: boolean }> {
+        if (!this.initialized) return [];
+        try {
+            return this.query<{ id: string; fb_thread_key: string; type: string }>(
+                `SELECT id, fb_thread_key, type FROM fb_threads WHERE account_id = ? AND fb_thread_key IS NOT NULL AND fb_thread_key != ''`,
+                [accountId],
+            ).map(r => ({ threadKey: String(r.fb_thread_key), threadId: String(r.id), isGroup: r.type === 'group' }));
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * Messenger conversation read on another device (phone, Messenger web) up to `readUpToMs`: the unread count becomes the
+     * received messages newer than that (among the newest 200), never more than before; 0 also clears the @ flag and marks
+     * the newest received messages read. Returns the new count only when it changed (like Zalo's applyZaloClearUnread).
+     */
+    public applyFBReadElsewhere(ownerId: string, threadId: string, readUpToMs: number): { unread?: number; mentionCleared: boolean } {
+        const result: { unread?: number; mentionCleared: boolean } = { mentionCleared: false };
+        if (!this.initialized || !/^\d+$/.test(String(threadId || ''))) return result;
+        const contact = this.queryOne<{ unread_count: number | null; has_mention: number | null }>(
+            `SELECT unread_count, has_mention FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`,
+            [ownerId, threadId]);
+        if (!contact) return result;
+        const current = Math.max(0, Number(contact.unread_count || 0));
+        let remaining = 0;
+        if (readUpToMs > 0) {
+            const row = this.queryOne<{ n: number }>(
+                `SELECT COUNT(*) AS n FROM (
+                   SELECT is_sent, timestamp, msg_type FROM messages
+                   WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook' ORDER BY timestamp DESC LIMIT 200
+                 ) WHERE is_sent = 0 AND timestamp > ? AND COALESCE(msg_type, '') NOT IN ('system', 'recalled')`,
+                [ownerId, threadId, readUpToMs]);
+            remaining = Math.max(0, Number(row?.n || 0));
+        }
+        const unread = Math.min(current, remaining);
+        const clearMention = unread === 0 && Number(contact.has_mention || 0) !== 0;
+        if (unread === current && !clearMention) return result;
+        this.run(`UPDATE contacts SET unread_count = ?${clearMention ? ', has_mention = 0' : ''}
+                  WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [unread, ownerId, threadId]);
+        this.run(`UPDATE fb_threads SET unread_count = ? WHERE id = ? AND account_id IN (SELECT id FROM fb_accounts WHERE facebook_id = ?)`,
+            [unread, threadId, ownerId]);
+        if (unread === 0) {
+            this.run(`UPDATE messages SET status = 'read'
+                      WHERE id IN (SELECT id FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
+                                   ORDER BY timestamp DESC LIMIT 200)
+                        AND is_sent = 0 AND COALESCE(status, '') != 'read'`, [ownerId, threadId]);
+        }
+        if (unread !== current) result.unread = unread;
+        result.mentionCleared = clearMention;
+        return result;
+    }
+
+    /**
+     * Block state Messenger sent with its contact rows. Blocked people get "blocked"; people sent as not blocked lose a
+     * stored "blocked" (other reasons stay). Returns the conversations whose state changed.
+     */
+    public applyFBContactBlocks(ownerId: string, blocked: string[], unblocked: string[]): Array<{ threadId: string; reason: string }> {
+        const changed: Array<{ threadId: string; reason: string }> = [];
+        if (!this.initialized) return changed;
+        for (const id of blocked || []) {
+            if (this.setFBCannotReply(ownerId, String(id), 'blocked')) changed.push({ threadId: String(id), reason: 'blocked' });
+        }
+        const clear = (unblocked || []).map(String).filter(id => /^\d+$/.test(id));
+        for (let i = 0; i < clear.length; i += 200) {
+            const chunk = clear.slice(i, i + 200);
+            const marks = chunk.map(() => '?').join(',');
+            const rows = this.query<{ contact_id: string }>(
+                `SELECT contact_id FROM contacts WHERE owner_zalo_id = ? AND channel = 'facebook' AND fb_cannot_reply = 'blocked'
+                 AND contact_id IN (${marks})`, [ownerId, ...chunk]);
+            for (const row of rows) {
+                if (this.setFBCannotReply(ownerId, String(row.contact_id), '')) changed.push({ threadId: String(row.contact_id), reason: '' });
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * A Messenger group moved to end-to-end encryption continues in a new (encrypted) thread: its local history, members,
+     * name and picture move to the new thread, which shows it like Messenger does; the old conversation row goes away
+     * (its messages are not deleted, they now belong to the new one). Returns how many messages moved.
+     */
+    public mergeFBGroupIntoEncrypted(accountId: string, ownerId: string, openThreadId: string, encryptedThreadId: string): number {
+        if (!this.initialized || !/^\d+$/.test(openThreadId) || !/^\d+$/.test(encryptedThreadId) || openThreadId === encryptedThreadId) return 0;
+        const old = this.queryOne<{ display_name?: string; avatar_url?: string; last_message?: string; last_message_time?: number }>(
+            `SELECT display_name, avatar_url, last_message, last_message_time FROM contacts
+             WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [ownerId, openThreadId]);
+        const moved = this.queryOne<{ n: number }>(
+            `SELECT COUNT(*) AS n FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'`,
+            [ownerId, openThreadId]);
+        const count = Number(moved?.n || 0);
+        if (!old && !count) return 0;
+        this.run(`INSERT OR IGNORE INTO fb_threads (id, account_id, name, type, unread_count, is_e2ee) VALUES (?, ?, '', 'group', 0, 1)`,
+            [encryptedThreadId, accountId]);
+        this.run(`UPDATE messages SET thread_id = ? WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'`,
+            [encryptedThreadId, ownerId, openThreadId]);
+        this.run(`UPDATE fb_messages SET thread_id = ? WHERE account_id = ? AND thread_id = ?`, [encryptedThreadId, accountId, openThreadId]);
+        this.run(`INSERT OR IGNORE INTO page_group_member (owner_zalo_id, group_id, member_id, display_name, avatar, role)
+                  SELECT owner_zalo_id, ?, member_id, display_name, avatar, role FROM page_group_member
+                  WHERE owner_zalo_id = ? AND group_id = ?`, [encryptedThreadId, ownerId, openThreadId]);
+        const exists = this.queryOne<{ found: number }>(
+            `SELECT 1 AS found FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [ownerId, encryptedThreadId]);
+        if (exists) {
+            this.run(`UPDATE contacts SET
+                        display_name = CASE WHEN COALESCE(display_name, '') IN ('', contact_id) THEN ? ELSE display_name END,
+                        avatar_url = CASE WHEN COALESCE(avatar_url, '') = '' THEN ? ELSE avatar_url END
+                      WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`,
+                [old?.display_name || '', old?.avatar_url || '', ownerId, encryptedThreadId]);
+        } else if (old) {
+            this.run(`INSERT INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count,
+                        last_message, last_message_time, channel)
+                      VALUES (?, ?, ?, ?, 0, 'group', 0, ?, ?, 'facebook')`,
+                [ownerId, encryptedThreadId, old.display_name || '', old.avatar_url || '', old.last_message || '', Number(old.last_message_time) || 0]);
+        }
+        this.run(`DELETE FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [ownerId, openThreadId]);
+        try {
+            const row = this.queryOne<{ metadata?: string }>(`SELECT metadata FROM fb_threads WHERE id = ? AND account_id = ?`, [encryptedThreadId, accountId]);
+            let meta: Record<string, unknown> = {};
+            try { meta = JSON.parse(row?.metadata || '{}') || {}; } catch { meta = {}; }
+            meta.open_thread_id = openThreadId;
+            this.run(`UPDATE fb_threads SET metadata = ? WHERE id = ? AND account_id = ?`, [JSON.stringify(meta), encryptedThreadId, accountId]);
+        } catch { /* link kept for history paging only */ }
+        Logger.log(`[DB] Facebook group ${openThreadId} moved to encrypted thread ${encryptedThreadId}: ${count} messages`);
+        return count;
+    }
+
+    /** The ordinary thread an encrypted group continues (set by mergeFBGroupIntoEncrypted), '' when none. */
+    public getFBOpenThreadId(accountId: string, threadId: string): string {
+        try {
+            const row = this.queryOne<{ metadata?: string }>(`SELECT metadata FROM fb_threads WHERE id = ? AND account_id = ?`, [threadId, accountId]);
+            const id = String(JSON.parse(row?.metadata || '{}')?.open_thread_id || '');
+            return /^\d+$/.test(id) ? id : '';
+        } catch {
+            return '';
+        }
+    }
+
+    /** Why Messenger does not let the account reply in a conversation ('' = it can). True when it changed. */
+    public setFBCannotReply(ownerId: string, threadId: string, reason: string): boolean {
+        if (!this.initialized || !/^\d+$/.test(String(threadId || ''))) return false;
+        const next = String(reason || '').trim().slice(0, 64);
+        const row = this.queryOne<{ fb_cannot_reply?: string | null }>(
+            `SELECT fb_cannot_reply FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [ownerId, threadId]);
+        if (!row || String(row.fb_cannot_reply || '') === next) return false;
+        this.run(`UPDATE contacts SET fb_cannot_reply = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [next, ownerId, threadId]);
+        return true;
+    }
+
+    /** Disappearing-message timer (ms) of an encrypted Messenger chat; 0 = off. True when it changed. */
+    public setFBDisappearingTtl(ownerId: string, threadId: string, ttlMs: number): boolean {
+        if (!this.initialized || !/^\d+$/.test(String(threadId || ''))) return false;
+        const next = Math.max(0, Math.round(Number(ttlMs) || 0));
+        const row = this.queryOne<{ fb_disappearing_ttl?: number | null }>(
+            `SELECT fb_disappearing_ttl FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [ownerId, threadId]);
+        if (!row || (Number(row.fb_disappearing_ttl) || 0) === next) return false;
+        this.run(`UPDATE contacts SET fb_disappearing_ttl = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [next, ownerId, threadId]);
+        return true;
+    }
+
+    /** Encrypted Messenger chats with a disappearing timer: thread id, timer (ms) and whether it is a group. */
+    public getFBDisappearingTimers(ownerId: string): Array<{ threadId: string; ttl: number; isGroup: boolean }> {
+        if (!this.initialized) return [];
+        try {
+            return this.query<{ contact_id: string; fb_disappearing_ttl: number; contact_type: string }>(
+                `SELECT contact_id, fb_disappearing_ttl, contact_type FROM contacts
+                 WHERE owner_zalo_id = ? AND channel = 'facebook' AND fb_disappearing_ttl > 0`,
+                [ownerId],
+            ).map(r => ({ threadId: String(r.contact_id), ttl: Number(r.fb_disappearing_ttl) || 0, isGroup: r.contact_type === 'group' }));
+        } catch {
+            return [];
+        }
+    }
+
+    /** A 1:1 that went through the normal (not encrypted) way: no longer an encrypted chat. */
+    public unmarkFBThreadE2EE(threadId: string, accountId: string): void {
+        this.run(`UPDATE fb_threads SET is_e2ee = 0 WHERE id = ? AND account_id = ? AND is_e2ee = 1`, [threadId, accountId]);
     }
 
     /** Get the list of E2EE-encrypted thread IDs of the account */
@@ -10383,6 +10621,13 @@ class DatabaseService {
         reactions?: string;
         /** Historical backfill must never create a new unread notification. */
         is_history?: boolean;
+        /** Thread kind when the source knows it for sure (MQTT thread key, bridge thread type, E2EE chat JID). */
+        thread_kind?: 'user' | 'group';
+        /** Quoted message text / sender sent with a reply (used when the original is not in the DB, e.g. older than the sync). */
+        reply_text?: string;
+        reply_sender_id?: string;
+        /** Conversation list text when `body` is not readable on its own (call card JSON, poll). */
+        preview?: string;
     }): FbSaveOutcome {
         const now = Date.now();
         let repaired = false;
@@ -10407,25 +10652,34 @@ class DatabaseService {
         let quoteData: string | undefined;
         if (msg.reply_to_id) {
           try {
-            const orig = this.queryOne<any>(`SELECT body, type FROM fb_messages WHERE id = ? AND account_id = ?`, [msg.reply_to_id, msg.account_id]);
+            const orig = this.queryOne<any>(`SELECT body, type, sender_id FROM fb_messages WHERE id = ? AND account_id = ?`, [msg.reply_to_id, msg.account_id]);
             if (orig) {
               quoteData = JSON.stringify({
                 msgId: msg.reply_to_id,
                 msg: orig.body || '',
-                senderId: '',
+                // The quoted person's name is shown from the sender id (it used to be empty)
+                senderId: String(orig.sender_id || msg.reply_sender_id || ''),
                 msgType: orig.type || 'text',
               });
               Logger.log(`[DB:saveFBMessage] Resolved reply_to_id=${msg.reply_to_id} → content="${(orig.body || '').slice(0,50)}"`);
             } else {
               Logger.log(`[DB:saveFBMessage] reply_to_id=${msg.reply_to_id} not found in fb_messages, will try unified messages table`);
               // Fallback: try unified messages table
-              const orig2 = this.queryOne<any>(`SELECT content, msg_type FROM messages WHERE msg_id = ?`, [msg.reply_to_id]);
+              const orig2 = this.queryOne<any>(`SELECT content, msg_type, sender_id FROM messages WHERE msg_id = ?`, [msg.reply_to_id]);
               if (orig2) {
                 quoteData = JSON.stringify({
                   msgId: msg.reply_to_id,
                   msg: orig2.content || '',
-                  senderId: '',
+                  senderId: String(orig2.sender_id || msg.reply_sender_id || ''),
                   msgType: orig2.msg_type || 'text',
+                });
+              } else if (msg.reply_text || msg.reply_sender_id) {
+                // The original is older than what Deplao has: keep the text / sender the reply carried (was "[Tin nhắn]" with no name)
+                quoteData = JSON.stringify({
+                  msgId: msg.reply_to_id,
+                  msg: msg.reply_text || '',
+                  senderId: msg.reply_sender_id || '',
+                  msgType: 'text',
                 });
               }
             }
@@ -10454,7 +10708,7 @@ class DatabaseService {
         }
         Logger.log(`[DB:saveFBMessage] INSERT INTO messages: msg_id=${msg.id} owner_zalo_id=${ownerZaloId} thread_id=${msg.thread_id} is_sent=${msg.is_self} channel=facebook`);
         // Generate display content for unified messages table when body is empty
-        const displayContent = msg.body || (() => {
+        const displayContent = msg.body || msg.preview || (() => {
             if (msg.type === 'image' || msg.type === 'photo') return '🖼️ Hình ảnh';
             if (msg.type === 'video') return '🎬 Video';
             if (msg.type === 'audio') return '🎵 Audio';
@@ -10466,18 +10720,36 @@ class DatabaseService {
             if (msg.type !== 'text') {
                 try {
                     const atts = JSON.parse(msg.attachments || '[]');
-                    const name = atts[0]?.name;
+                    const name = atts[0]?.name || atts[0]?.fileName;
                     return name ? `📎 ${name}` : '📎 Tệp đính kèm';
                 } catch { return '📎 Tệp đính kèm'; }
             }
             return '';
         })();
+        // Thread kind: the stored thread row wins; a kind the source is sure of creates the missing row, so a brand-new
+        // conversation gets its real type (group / person) and group messages get thread_type 1 (sender names in bubbles).
+        // Before, every row was saved with thread_type 0 and a new group became a 'user' conversation.
+        let threadKind: 'user' | 'group' | undefined;
+        try {
+            const knownThread = this.queryOne<{ type?: string }>(
+                `SELECT type FROM fb_threads WHERE id = ? AND account_id = ?`, [msg.thread_id, msg.account_id]);
+            if (knownThread?.type === 'group' || knownThread?.type === 'user') {
+                threadKind = knownThread.type;
+            } else if (msg.thread_kind && !knownThread) {
+                threadKind = msg.thread_kind;
+                this.run(
+                    `INSERT OR IGNORE INTO fb_threads (id, account_id, name, type, last_message_at, unread_count) VALUES (?, ?, '', ?, ?, 0)`,
+                    [msg.thread_id, msg.account_id, threadKind, msg.timestamp]);
+            }
+        } catch (err: any) {
+            Logger.warn(`[DB:saveFBMessage] thread kind lookup error: ${err.message}`);
+        }
         // Rows just inserted into messages (even when fb_messages already had them) also count as new messages for the caller
         const insertedUnified = this.runChanges(`
             INSERT OR IGNORE INTO messages
               (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, status, channel, reply_to_id, quote_data)
-            VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 'facebook', ?, ?)
-        `, [msg.id, ownerZaloId, msg.thread_id, msg.sender_id,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'facebook', ?, ?)
+        `, [msg.id, ownerZaloId, msg.thread_id, threadKind === 'group' ? 1 : 0, msg.sender_id,
             displayContent, msg.type || 'text', msg.timestamp,
             msg.is_self, msg.attachments || '[]', msg.is_self ? 'sent' : 'received',
             msg.reply_to_id || null, quoteData || null]);
@@ -10548,6 +10820,29 @@ class DatabaseService {
                 Logger.warn(`[DB:saveFBMessage] upgrade template row error: ${err.message}`);
             }
         }
+        // Poll: Deplao's own MQTT listener usually saves the admin line ("… đã tạo cuộc thăm dò ý kiến") first, then the bridge brings
+        // the same message with the poll → the poll card replaces the line (never the other way round)
+        if (!isNewMessage && !msg.is_unsent && msg.type === FB_POLL_MSG_TYPE && hasNewAttachments) {
+            try {
+                const stored = this.queryOne<{ msg_type?: string; is_recalled?: number }>(
+                    `SELECT msg_type, is_recalled FROM messages
+                     WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook' LIMIT 1`,
+                    [msg.id, ownerZaloId, msg.thread_id],
+                );
+                if (stored && !stored.is_recalled && stored.msg_type === 'system') {
+                    this.run(`
+                        UPDATE messages SET content = ?, msg_type = ?, attachments = ?
+                        WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
+                    `, [displayContent, msg.type, newAttachments, msg.id, ownerZaloId, msg.thread_id]);
+                    this.run(`UPDATE fb_messages SET body = ?, type = ?, attachments = ? WHERE id = ? AND account_id = ?`,
+                        [msg.body || displayContent || null, msg.type, newAttachments, msg.id, msg.account_id]);
+                    Logger.log(`[DB:saveFBMessage] poll card replaced its admin line: id=${msg.id} thread_id=${msg.thread_id}`);
+                    repaired = true;
+                }
+            } catch (err: any) {
+                Logger.warn(`[DB:saveFBMessage] upgrade poll row error: ${err.message}`);
+            }
+        }
         // The replacement card "File đính kèm không hiển thị" (Attachment not shown) (MQTT arrived first) and the later copy is real text without the card (old bridge
         // did not join the buttons of a "chữ + nút" (text + buttons) message) → replace with the text: readable content instead of "Tin nhắn chưa hiển thị được" (Message cannot be displayed yet).
         if (!isNewMessage && !msg.is_unsent && msg.type !== FB_TEMPLATE_MSG_TYPE && msg.type !== 'system' && displayContent && !repaired) {
@@ -10581,6 +10876,48 @@ class DatabaseService {
                 Logger.warn(`[DB:saveFBMessage] replace placeholder with text error: ${err.message}`);
             }
         }
+        // A message the account sends in an encrypted chat with disappearing messages on carries the chat's timer (the bridge sends it
+        // with the timer too): the clock shows next to the time, Deplao keeps the message
+        if (isNewMessage && msg.is_self) {
+            try {
+                const timer = this.queryOne<{ ttl: number | null }>(
+                    `SELECT fb_disappearing_ttl AS ttl FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`,
+                    [ownerZaloId, msg.thread_id]);
+                if (Number(timer?.ttl) > 0) this.setMessageTtl(ownerZaloId, msg.id, Number(timer!.ttl));
+            } catch { /* clock only */ }
+        }
+        // An encrypted message saved as "not decrypted yet" (attachments [{ type: fb_undecryptable }]): the sender's re-send carries
+        // the same id and replaces it (mautrix-meta WANowDecryptableMessage)
+        if (!isNewMessage && !msg.is_unsent && !repaired && !newAttachments.includes(`"${FB_UNDECRYPTABLE_ATTACHMENT}"`)) {
+            try {
+                const stored = this.queryOne<{ content?: string; attachments?: string; is_recalled?: number }>(
+                    `SELECT content, attachments, is_recalled FROM messages
+                     WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook' LIMIT 1`,
+                    [msg.id, ownerZaloId, msg.thread_id],
+                );
+                if (stored && !stored.is_recalled && String(stored.attachments || '').includes(`"${FB_UNDECRYPTABLE_ATTACHMENT}"`)) {
+                    this.run(`
+                        UPDATE messages SET content = ?, msg_type = ?, attachments = ?
+                        WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
+                    `, [displayContent, msg.type || 'text', newAttachments, msg.id, ownerZaloId, msg.thread_id]);
+                    this.run(`UPDATE fb_messages SET body = ?, type = ?, attachments = ? WHERE id = ? AND account_id = ?`,
+                        [msg.body || displayContent || null, msg.type || 'text', newAttachments, msg.id, msg.account_id]);
+                    const oldPreview = String(stored.content || '').slice(0, 200);
+                    if (oldPreview && displayContent) {
+                        this.run(`
+                            UPDATE contacts SET last_message = ?
+                            WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook' AND last_message = ?
+                        `, [displayContent.slice(0, 200), ownerZaloId, msg.thread_id, oldPreview]);
+                        this.run(`UPDATE fb_threads SET last_message_preview = ? WHERE id = ? AND account_id = ? AND last_message_preview = ?`,
+                            [displayContent.slice(0, 200), msg.thread_id, msg.account_id, oldPreview]);
+                    }
+                    Logger.log(`[DB:saveFBMessage] decrypted copy replaced its placeholder: id=${msg.id} thread_id=${msg.thread_id}`);
+                    repaired = true;
+                }
+            } catch (err: any) {
+                Logger.warn(`[DB:saveFBMessage] replace undecryptable placeholder error: ${err.message}`);
+            }
+        }
         // Message unsent in the history (bridge / GraphQL): shows "đã thu hồi" (unsent) instead of an empty bubble
         if (msg.is_unsent) {
             this.run(`
@@ -10594,7 +10931,7 @@ class DatabaseService {
         // those rows are not new notifications and must not re-increment unread
         // counts every time the application starts.
         if (!msg.is_unsent && !msg.is_history && isNewMessage) {
-            const lastMsgPreview = msg.body?.slice(0, 200) || (msg.type === FB_TEMPLATE_MSG_TYPE && displayContent ? displayContent.slice(0, 200) : msg.type === 'image' ? '🖼️ Hình ảnh' : msg.type === 'video' ? '🎬 Video' : msg.type === 'audio' ? '🎵 Audio' : msg.type === 'sticker' ? '🎨 Sticker' : tr('[Tệp đính kèm]'));
+            const lastMsgPreview = msg.preview?.slice(0, 200) || msg.body?.slice(0, 200) || (msg.type === FB_TEMPLATE_MSG_TYPE && displayContent ? displayContent.slice(0, 200) : msg.type === 'image' ? '🖼️ Hình ảnh' : msg.type === 'video' ? '🎬 Video' : msg.type === 'audio' ? '🎵 Audio' : msg.type === 'sticker' ? '🎨 Sticker' : tr('[Tệp đính kèm]'));
             this.run(`
                 UPDATE fb_threads SET last_message_preview = ?, last_message_at = ?,
                   unread_count = unread_count + ?
@@ -10630,7 +10967,11 @@ class DatabaseService {
                     VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, 'facebook')
                     ON CONFLICT(owner_zalo_id, contact_id) DO UPDATE SET
                       display_name = CASE WHEN excluded.display_name != '' AND contacts.display_name = '' THEN excluded.display_name ELSE contacts.display_name END,
-                      avatar_url = CASE WHEN excluded.avatar_url != '' THEN excluded.avatar_url ELSE contacts.avatar_url END,
+                      avatar_url = CASE
+                        WHEN excluded.avatar_url != '' AND (contacts.avatar_url IS NULL OR contacts.avatar_url = '' OR contacts.avatar_url NOT LIKE 'media/%')
+                        THEN excluded.avatar_url
+                        ELSE contacts.avatar_url
+                      END,
                       last_message = excluded.last_message,
                       last_message_time = excluded.last_message_time,
                       unread_count = CASE WHEN ? = 0 THEN contacts.unread_count + 1 ELSE contacts.unread_count END,
@@ -10658,6 +10999,209 @@ class DatabaseService {
             } catch {}
         }
         return isNewMessage || insertedUnified > 0 ? 'new' : repaired ? 'repaired' : 'duplicate';
+    }
+
+    /**
+     * Links a Messenger poll's vote line to the poll card (attachments = a poll_update entry). 'attached' = linked now,
+     * 'present' = the line already has its data (linked before, or not a system line), 'missing' = the line is not saved yet.
+     */
+    public attachFBPollUpdate(ownerZaloId: string, threadId: string, msgId: string, attachments: string): 'attached' | 'present' | 'missing' {
+        const row = this.queryOne<{ attachments?: string | null; msg_type?: string }>(
+            `SELECT attachments, msg_type FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook' LIMIT 1`,
+            [msgId, ownerZaloId, threadId],
+        );
+        if (!row) return 'missing';
+        if (row.msg_type !== 'system' || !['', '[]', 'null'].includes(String(row.attachments ?? '[]'))) return 'present';
+        this.run(`
+            UPDATE messages SET attachments = ?
+            WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook'
+        `, [attachments, msgId, ownerZaloId, threadId]);
+        this.run(`
+            UPDATE fb_messages SET attachments = ?
+            WHERE id = ? AND COALESCE(attachments, '[]') IN ('', '[]', 'null')
+        `, [attachments, msgId]);
+        return 'attached';
+    }
+
+    /** contacts.owner_zalo_id of a Facebook account (its facebook_id; the internal id when unknown). */
+    public fbOwnerId(accountId: string): string {
+        try {
+            const fbAcc = this.queryOne<any>(`SELECT facebook_id FROM fb_accounts WHERE id = ?`, [accountId]);
+            if (fbAcc?.facebook_id) return String(fbAcc.facebook_id);
+        } catch {}
+        return accountId;
+    }
+
+    /**
+     * Messenger thread rows from the bridge (folder, picture, mute). A thread moving into the message request folder
+     * ("pending") goes to "Khác" (is_in_others) and is flagged fb_request; accepting it (folder "inbox") brings it back.
+     * is_in_others only changes on a folder change, so a conversation the user moved to "Khác" by hand stays there.
+     * Missing rows are created only for message requests (the inbox rows come with their messages). Returns the ids changed.
+     */
+    public applyFBThreadUpdates(accountId: string, updates: Array<{
+        threadId: string; type?: number; kind?: 'user' | 'group' | 'unknown'; name?: string; snippet?: string;
+        lastActivityMs?: number; folderName?: string; pictureUrl?: string; muteExpireTimeMs?: number;
+    }>): string[] {
+        const ownerId = this.fbOwnerId(accountId);
+        const changed: string[] = [];
+        for (const u of updates) {
+            const threadId = String(u?.threadId || '').replace(/@.*$/, '');
+            if (!/^\d+$/.test(threadId)) continue;
+            const folder = String(u.folderName || '');
+            if (folder === 'spam') continue;
+            try {
+                const row = this.queryOne<{ fb_request?: number; is_in_others?: number; display_name?: string }>(
+                    `SELECT fb_request, is_in_others, display_name FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`,
+                    [ownerId, threadId]);
+                const isRequest = folder === 'pending';
+                const kind = u.kind === 'group' || u.kind === 'user' ? u.kind : null;
+                if (!row) {
+                    if (!isRequest) continue;
+                    this.run(
+                        `INSERT OR IGNORE INTO fb_threads (id, account_id, name, type, last_message_preview, last_message_at, unread_count) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+                        [threadId, accountId, u.name || '', kind || 'user', u.snippet || '', Number(u.lastActivityMs) || 0]);
+                    this.run(`
+                        INSERT OR IGNORE INTO contacts (owner_zalo_id, contact_id, display_name, avatar_url, is_friend, contact_type, unread_count,
+                          last_message, last_message_time, channel, is_in_others, fb_request)
+                        VALUES (?, ?, ?, '', 0, ?, 0, ?, ?, 'facebook', 1, 1)
+                    `, [ownerId, threadId, u.name || '', kind || 'user', (u.snippet || '').slice(0, 200), Number(u.lastActivityMs) || 0]);
+                    changed.push(threadId);
+                    continue;
+                }
+                const wasRequest = Number(row.fb_request) === 1;
+                if (folder && isRequest !== wasRequest) {
+                    this.run(
+                        `UPDATE contacts SET fb_request = ?, is_in_others = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`,
+                        [isRequest ? 1 : 0, isRequest ? 1 : 0, ownerId, threadId]);
+                    changed.push(threadId);
+                }
+                if (u.name && kind === 'group') {
+                    this.run(`UPDATE fb_threads SET name = ? WHERE id = ? AND account_id = ? AND COALESCE(name, '') != ?`, [u.name, threadId, accountId, u.name]);
+                    if (row.display_name !== u.name) {
+                        this.run(`UPDATE contacts SET display_name = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [u.name, ownerId, threadId]);
+                        if (!changed.includes(threadId)) changed.push(threadId);
+                    }
+                }
+                if (u.muteExpireTimeMs !== undefined && u.muteExpireTimeMs !== null) {
+                    if (this.applyFBThreadMute(accountId, threadId, Number(u.muteExpireTimeMs)) && !changed.includes(threadId)) changed.push(threadId);
+                }
+            } catch (err: any) {
+                Logger.warn(`[DB:applyFBThreadUpdates] ${threadId}: ${err.message}`);
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Mute state from Messenger: -1 = muted until turned back on, > now = muted until then, otherwise not muted.
+     * contacts keeps Deplao's own format (mute_until 0 = forever). Returns true when the row changed.
+     */
+    public applyFBThreadMute(accountId: string, threadId: string, muteExpireTimeMs: number): boolean {
+        const ownerId = this.fbOwnerId(accountId);
+        const now = Date.now();
+        const muted = muteExpireTimeMs === -1 || muteExpireTimeMs > now;
+        const until = muteExpireTimeMs > now ? muteExpireTimeMs : 0;
+        const changes = this.runChanges(
+            `UPDATE contacts SET is_muted = ?, mute_until = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'
+               AND (COALESCE(is_muted, 0) != ? OR COALESCE(mute_until, 0) != ?)`,
+            [muted ? 1 : 0, until, ownerId, threadId, muted ? 1 : 0, until]);
+        this.run(`UPDATE fb_threads SET is_muted = ? WHERE id = ? AND account_id = ?`, [muted ? 1 : 0, threadId, accountId]);
+        return changes > 0;
+    }
+
+    /**
+     * Members of a Messenger group from the bridge (LSAddParticipantIdToGroupThread): page_group_member rows with the
+     * Zalo role convention (2 = owner / super admin, 1 = admin). Names / pictures already known are kept; the nickname is
+     * used when the member has no name yet. Only for threads stored as groups.
+     */
+    public saveFBGroupParticipants(
+        accountId: string,
+        threadId: string,
+        members: Array<{ id: string; isAdmin?: boolean; isSuperAdmin?: boolean; nickname?: string }>,
+        /** The bridge knows the thread is a group: a missing thread row is created (members can arrive before its first message). */
+        kindHint?: 'user' | 'group' | 'unknown',
+    ): number {
+        if (!this.initialized || !/^\d+$/.test(threadId)) return 0;
+        let thread = this.queryOne<{ type?: string }>(`SELECT type FROM fb_threads WHERE id = ? AND account_id = ?`, [threadId, accountId]);
+        if (!thread && kindHint === 'group') {
+            this.run(`INSERT OR IGNORE INTO fb_threads (id, account_id, name, type, unread_count) VALUES (?, ?, '', 'group', 0)`, [threadId, accountId]);
+            thread = { type: 'group' };
+        }
+        if (thread?.type !== 'group') return 0;
+        const ownerId = this.fbOwnerId(accountId);
+        const valid = members.filter(m => /^\d+$/.test(String(m?.id || '')));
+        if (!valid.length) return 0;
+        const known = new Map<string, { display_name: string; avatar: string }>();
+        try {
+            const placeholders = valid.map(() => '?').join(',');
+            for (const row of this.query<{ member_id: string; display_name: string; avatar: string }>(
+                `SELECT member_id, display_name, avatar FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND member_id IN (${placeholders})`,
+                [ownerId, threadId, ...valid.map(m => String(m.id))])) {
+                known.set(String(row.member_id), { display_name: row.display_name || '', avatar: row.avatar || '' });
+            }
+        } catch {}
+        this.saveGroupMembers(ownerId, threadId, valid.map(m => {
+            const prev = known.get(String(m.id));
+            return {
+                memberId: String(m.id),
+                displayName: prev?.display_name || String(m.nickname || ''),
+                avatar: prev?.avatar || '',
+                role: m.isSuperAdmin ? 2 : m.isAdmin ? 1 : 0,
+            };
+        }));
+        try {
+            const total = this.queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ?`, [ownerId, threadId]);
+            if (total?.n) this.run(`UPDATE fb_threads SET participant_count = ? WHERE id = ? AND account_id = ?`, [total.n, threadId, accountId]);
+        } catch {}
+        return valid.length;
+    }
+
+    /**
+     * People Messenger sent with a table (name, picture): fills group member rows that have no name / picture and
+     * 1-1 conversations whose name is missing or is the id. Returns the conversation ids whose name changed.
+     */
+    public applyFBPeople(accountId: string, people: Array<{ id: string; name?: string; avatarUrl?: string }>): string[] {
+        if (!this.initialized) return [];
+        const ownerId = this.fbOwnerId(accountId);
+        const renamed: string[] = [];
+        const updateMember = conn().prepare(`
+            UPDATE page_group_member SET
+              display_name = CASE WHEN COALESCE(display_name, '') IN ('', member_id) AND ? != '' THEN ? ELSE display_name END,
+              avatar = CASE WHEN COALESCE(avatar, '') = '' AND ? != '' THEN ? ELSE avatar END
+            WHERE owner_zalo_id = ? AND member_id = ?`);
+        conn().transaction(() => {
+            for (const person of people) {
+                const id = String(person?.id || '');
+                if (!/^\d+$/.test(id)) continue;
+                const name = String(person.name || '').trim();
+                const avatar = String(person.avatarUrl || '');
+                updateMember.run(name, name, avatar, avatar, ownerId, id);
+                if (name && this.runChanges(
+                    `UPDATE contacts SET display_name = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'
+                       AND contact_type != 'group' AND COALESCE(display_name, '') IN ('', contact_id)`,
+                    [name, ownerId, id]) > 0) {
+                    renamed.push(id);
+                }
+            }
+        })();
+        return renamed;
+    }
+
+    /** The stored Facebook poll message (fb.poll) of a poll id, if Deplao has it. */
+    public findFBPollMessage(ownerId: string, threadId: string, pollId: string): { msg_id: string; attachments: string } | undefined {
+        if (!/^\d+$/.test(pollId)) return undefined;
+        return this.queryOne<{ msg_id: string; attachments: string }>(
+            `SELECT msg_id, attachments FROM messages
+             WHERE owner_zalo_id = ? AND CAST(thread_id AS TEXT) = ? AND channel = 'facebook' AND msg_type = 'fb.poll'
+               AND attachments LIKE ? LIMIT 1`,
+            [ownerId, threadId, `%"poll_id":"${pollId}"%`]);
+    }
+
+    /** Replaces the attachments of a Facebook message in both tables (poll votes, refreshed media links). */
+    public updateFBMessageAttachments(accountId: string, messageId: string, attachments: string): void {
+        const ownerId = this.fbOwnerId(accountId);
+        this.run(`UPDATE messages SET attachments = ? WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook'`, [attachments, messageId, ownerId]);
+        this.run(`UPDATE fb_messages SET attachments = ? WHERE id = ? AND account_id = ?`, [attachments, messageId, accountId]);
     }
 
     public getFBMessages(accountId: string, threadId: string, limit: number = 50, offset: number = 0): any[] {

@@ -106,7 +106,7 @@ export default function ChatWindow() {
 
   // ─── Collect messages to render + look up senders ─────────────────────────────────────────────────────────────────────────────────
   const {
-    groupedFirstMsgs, groupedSkipIds, pollSkipIds, groupedStickerFirstMsgs, groupedStickerSkipIds,
+    groupedFirstMsgs, groupedSkipIds, pollSkipIds, fbPollCardRows, groupedStickerFirstMsgs, groupedStickerSkipIds,
     dayStartIds, msgIndexById, findMsgById, msgTypeCache, getRowMsgIds,
   } = useMessageGrouping(msgs);
   const {
@@ -154,7 +154,7 @@ export default function ChatWindow() {
   const rowCtx: MessageRowContext = {
     activeAccountId, activeThreadId, activeContact, channelCap, msgs, contactList, threadReceipt,
     telegramGroupAdmins, postReplierPeers, searchHighlightQuery, updateContact, removeMessage, setReplyTo,
-    groupedFirstMsgs, groupedSkipIds, pollSkipIds, groupedStickerFirstMsgs, groupedStickerSkipIds,
+    groupedFirstMsgs, groupedSkipIds, pollSkipIds, fbPollCardRows, groupedStickerFirstMsgs, groupedStickerSkipIds,
     dayStartIds, msgIndexById, findMsgById, msgTypeCache, getRowMsgIds,
     getContact, getGroupMember, groupMembers, isGroupAdmin, resolveQuoteAuthor,
     failedMsgAvatars, setFailedMsgAvatars, avatarRefreshAttempted,

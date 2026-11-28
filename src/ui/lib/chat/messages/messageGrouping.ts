@@ -7,6 +7,7 @@ import { isCardType, isEcardType, isFileType, isMediaType, isRtfMsg, isStickerTy
 import { isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { parseContent } from '@/lib/chat/messages/messageParser';
 import { isZinstantMsgType } from '../../../../shared/zalo/zaloZinstant';
+import { fbPollUpdateFromAttachments } from '../../../../shared/facebook/facebookSpecialMessages';
 
 /** Extracts the groupLayoutId from a photo message sent as a group (is_group_layout=1) */
 export function getGroupLayoutId(msg: any): string | null {
@@ -144,6 +145,25 @@ export function pollDuplicateIds(msgs: any[]): Set<string> {
   return skip;
 }
 
+/**
+ * Messenger poll updates: the newest vote line of each poll shows the poll card again under it, like Messenger shows the
+ * updated poll below its update lines. Returns vote line msg_id → msg_id of the poll card.
+ */
+export function facebookPollCardRows(msgs: any[]): Map<string, string> {
+  const newest = new Map<string, { rowId: string; ts: number }>();
+  for (const msg of msgs) {
+    if (msg?.msg_type !== 'system') continue;
+    const ref = fbPollUpdateFromAttachments(msg.attachments);
+    if (!ref) continue;
+    const ts = Number(msg.timestamp) || 0;
+    const prev = newest.get(ref.poll_msg_id);
+    if (!prev || ts >= prev.ts) newest.set(ref.poll_msg_id, { rowId: String(msg.msg_id), ts });
+  }
+  const rows = new Map<string, string>();
+  for (const [pollMsgId, row] of newest) rows.set(row.rowId, pollMsgId);
+  return rows;
+}
+
 export interface StickerRuns {
   groupedStickerFirstMsgs: Record<string, any[]>;
   groupedStickerSkipIds: Set<string>;
@@ -226,7 +246,7 @@ export function buildMsgTypeCache(msgs: any[], groupedFirstMsgs: Record<string, 
     const isEcard = isEcardType(mt);
     const isSticker = isStickerType(mt);
     const isRtf = isRtfMsg(mt, mc);
-    const isPoll = mt === 'group.poll' || mt === 'telegram.poll' || (mt === 'poll' && isTelegram(msg.channel));
+    const isPoll = mt === 'group.poll' || mt === 'telegram.poll' || mt === 'fb.poll' || (mt === 'poll' && isTelegram(msg.channel));
     // Telegram bot: GIF (animation, mp4) plays like a video; `voice` is a voice recording
     const isVideo = isVideoType(mt) || mt === 'gif';
     const isVoice = isVoiceType(mt);

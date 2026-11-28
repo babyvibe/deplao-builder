@@ -2,6 +2,7 @@
 // Used in React components instead of calling directly
 
 import type { FbHistorySyncStatus } from '../../shared/facebook/facebookHistorySync';
+import type { FacebookPersonResult } from '../../shared/facebook/facebookPeople';
 import type { ErpZaloNotifySettings, ErpZaloNotifyStatus } from '../../shared/erp/erpZaloNotify';
 import type { PosWebhookListResponse } from '../../shared/integrations/posWebhookTopics';
 import { useAppStore } from '../store/app/appStore';
@@ -469,6 +470,12 @@ declare global {
         getStickers: (params: any) => Promise<any>;
         getStickersDetail: (params: any) => Promise<any>;
         getStickerCategoryDetail: (params: any) => Promise<any>;
+        /** GIF tab of the sticker panel: Giphy categories through Zalo ({ success, response: { data_list, has_more } }). */
+        getGifCategories: (params: { auth: any }) => Promise<any>;
+        /** Trending GIFs (empty keyword) or search results, `offset` / `limit` paging. */
+        getGifs: (params: { auth: any; keyword?: string; offset?: number; limit?: number }) => Promise<any>;
+        /** Download the first URL that is a real GIF and send it to the conversation. */
+        sendGif: (params: { auth: any; urls: string[]; threadId: string; type: number; quote?: any }) => Promise<any>;
         addUnreadMark: (params: any) => Promise<any>;
         removeUnreadMark: (params: any) => Promise<any>;
         createPoll: (params: any) => Promise<any>;
@@ -490,6 +497,9 @@ declare global {
         removeReminder: (params: any) => Promise<any>;
         getListReminder: (params: any) => Promise<any>;
         getReminder: (params: any) => Promise<any>;
+        /** Whole title of a reminder card Zalo sent cut (looked up once, saved in the message). */
+        resolveReminderTitle?: (params: { auth: any; msgId: string; threadId?: string }) =>
+          Promise<{ success: boolean; response?: { title: string; full: boolean }; error?: string }>;
         sendSeenEvent: (params: any) => Promise<any>;
         sendBankCard: (params: any) => Promise<any>;
         /** Access status (ZL-01): main caches for 60 s, `force` = ask again right away. */
@@ -1007,7 +1017,7 @@ declare global {
         disconnect:           (params: { accountId: string }) => Promise<{ success: boolean; error?: string }>;
         checkHealth:          (params: { accountId: string }) => Promise<{ success: boolean; alive: boolean; listenerConnected: boolean; reason?: string }>;
         sendMessage:          (params: { accountId: string; threadId: string; body: string; options?: any }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
-        sendAttachment:       (params: { accountId: string; threadId: string; filePath: string; body?: string; typeChat?: 'user' | null; fileType?: 'image' | 'video' | 'audio' | 'file'; _libraryUuid?: string }) => Promise<{ success: boolean; error?: string }>;
+        sendAttachment:       (params: { accountId: string; threadId: string; filePath: string; body?: string; typeChat?: 'user' | null; fileType?: 'image' | 'video' | 'audio' | 'file'; _libraryUuid?: string; replyToMessageId?: string; voice?: boolean }) => Promise<{ success: boolean; error?: string }>;
         sendAttachments:      (params: { accountId: string; threadId: string; filePaths: string[]; body?: string; typeChat?: 'user' | null }) => Promise<{ success: boolean; uploadedCount?: number; totalCount?: number; error?: string }>;
         unsendMessage:        (params: { accountId: string; messageId: string }) => Promise<{ success: boolean; error?: string }>;
         addReaction:          (params: { accountId: string; messageId: string; emoji: string; action: 'add' | 'remove' }) => Promise<{ success: boolean; error?: string }>;
@@ -1024,14 +1034,16 @@ declare global {
          * the conversation has no message to use as an anchor, the newest page via GraphQL (`source`). code: BRIDGE_DOWN / BRIDGE_OLD / E2EE / FETCH / NOT_CONNECTED
          */
         fetchOlderMessages: (params: { accountId: string; threadId: string; beforeTimestampMs?: number; beforeMessageId?: string }) => Promise<
-          | { success: true; saved: number; received: number; stored: number; count: number; hasMoreBefore: boolean; minTimestampMs: number; minMessageId?: string; source: 'lightspeed' | 'graphql' }
-          | { success: false; code?: string; error?: string; source?: 'lightspeed' | 'graphql' }>;
+          | { success: true; saved: number; received: number; stored: number; count: number; hasMoreBefore: boolean; minTimestampMs: number; minMessageId?: string; source: 'lightspeed' | 'graphql' | 'secure_history' }
+          | { success: false; code?: string; error?: string; source?: 'lightspeed' | 'graphql' | 'secure_history' }>;
         /** Sync Facebook messages by time range (runs in the background, progress via event:fbHistorySync) */
         startHistorySync: (params: { accountId: string; fromTs: number | null; toTs: number | null }) => Promise<{ success: boolean; status?: FbHistorySyncStatus | null; error?: string }>;
         cancelHistorySync: (params: { accountId: string }) => Promise<{ success: boolean; status?: FbHistorySyncStatus | null }>;
         getHistorySyncStatus: (params: { accountId: string }) => Promise<{ success: boolean; status?: FbHistorySyncStatus | null }>;
         refreshContactAvatar: (params: { accountId: string; userId: string }) => Promise<{ success: boolean; avatarUrl?: string; error?: string }>;
         sendTyping:           (params: { accountId: string; threadId: string; isTyping: boolean; isGroup?: boolean }) => Promise<{ success: boolean; error?: string }>;
+        /** The Facebook chat on screen (null = none): encrypted chats exchange typing only while it is shown. */
+        setViewingChat:       (params: { accountId: string; threadId: string | null }) => Promise<{ success: boolean; error?: string }>;
         blockUser:            (params: { accountId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
         unblockUser:          (params: { accountId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
         forwardMessage:       (params: { accountId: string; messageId: string; targetThreadId: string; isGroup?: boolean }) => Promise<{ success: boolean; error?: string }>;
@@ -1053,6 +1065,27 @@ declare global {
         approvePendingMember: (params: { accountId: string; threadId: string; userId: string; approve: boolean }) => Promise<{ success: boolean; error?: string }>;
         getGroupLink:         (params: { accountId: string; threadId: string }) => Promise<{ success: boolean; link?: string; error?: string }>;
         setGroupLink:         (params: { accountId: string; threadId: string; enable: boolean }) => Promise<{ success: boolean; error?: string }>;
+        /** Messenger people search (friends, other people, Pages, the account's groups). */
+        searchPeople:         (params: { accountId: string; query: string }) => Promise<{ success: boolean; results?: FacebookPersonResult[]; error?: string }>;
+        startChat:            (params: { accountId: string; userId: string; name?: string; avatarUrl?: string; isGroup?: boolean }) => Promise<{ success: boolean; threadId?: string; encrypted?: boolean; error?: string }>;
+        /** muteUntilMs: -1 = until turned back on, Unix ms = until then, 0 = unmute. */
+        setThreadMute:        (params: { accountId: string; threadId: string; muteUntilMs: number }) => Promise<{ success: boolean; error?: string }>;
+        deleteThread:         (params: { accountId: string; threadId: string }) => Promise<{ success: boolean; error?: string }>;
+        acceptMessageRequest: (params: { accountId: string; threadId: string }) => Promise<{ success: boolean; error?: string }>;
+        deleteMessageForMe:   (params: { accountId: string; threadId: string; messageId: string }) => Promise<{ success: boolean; synced?: boolean; error?: string }>;
+        addGroupMembers:      (params: { accountId: string; threadId: string; userIds: string[] }) => Promise<{ success: boolean; error?: string }>;
+        /** A group's name, picture (local path) and members from Messenger; members are saved to the DB. */
+        refreshGroupInfo:     (params: { accountId: string; threadId: string }) => Promise<{ success: boolean; error?: string; name?: string; avatarUrl?: string; memberCount?: number }>;
+        removeGroupMember:    (params: { accountId: string; threadId: string; userId: string }) => Promise<{ success: boolean; error?: string }>;
+        leaveGroup:           (params: { accountId: string; threadId: string }) => Promise<{ success: boolean; error?: string }>;
+        setGroupPhoto:        (params: { accountId: string; threadId: string; photoPath: string; mimeType?: string }) => Promise<{ success: boolean; error?: string }>;
+        votePollInThread:     (params: { accountId: string; threadId: string; pollId: string; optionIds: string[] }) => Promise<{ success: boolean; error?: string }>;
+        repairMessageMedia:   (params: { accountId: string; messageId: string }) => Promise<{ success: boolean; localPaths?: Record<string, string>; refreshed?: boolean; expired?: boolean; error?: string }>;
+        sendSticker:          (params: { accountId: string; threadId: string; stickerId: string; url?: string; stickerPath?: string; typeChat?: 'user' | null }) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+        getRecentStickers:    (params: { accountId: string }) => Promise<{ success: boolean; stickers: Array<{ stickerId: string; key?: string; url: string; localPath?: string }>; error?: string }>;
+        /** Messenger PIN → old encrypted messages (the PIN is never stored). */
+        unlockEncryptedHistory: (params: { accountId: string; pin: string }) => Promise<{ success: boolean; error?: string; code?: string; attemptsRemaining?: number }>;
+        getEncryptedHistoryStatus: (params: { accountId: string }) => Promise<{ success: boolean; unlocked?: boolean; error?: string }>;
         getUserInfoFacebook: (params: { accountId: string; userId: string }) => Promise<{ success: boolean; name?: string; avatarUrl?: string; error?: string }>;
         /** @deprecated Compatibility alias for renderer bundles before the IPC rename. */
         getUserInfoFacebookHtml: (params: { accountId: string; userId: string }) => Promise<{ success: boolean; name?: string; avatarUrl?: string; error?: string }>;

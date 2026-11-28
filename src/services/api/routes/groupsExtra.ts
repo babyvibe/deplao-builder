@@ -11,6 +11,7 @@ import { CHANNELS, extractSentId, requireOnline, unsupported, zaloAuth } from '.
 import { ChatRouteDeps, resolveAttachment } from './chat';
 import { accountParams, scrub } from './common';
 import { tr } from '../../../shared/i18n';
+import { zaloJoinAnswerText, zaloJoinAnswers } from '../../../shared/zalo/zaloJoinAnswers';
 
 const groupParams = s.object({ accountId: s.id(), groupId: s.id().describe(tr('ID nhóm (thread_id)')) });
 const memberParams = s.object({ accountId: s.id(), groupId: s.id(), userId: s.id() });
@@ -206,16 +207,30 @@ export function groupExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         route({
             method: 'GET', path: '/accounts/:accountId/groups/:groupId/pending-members', scope: 'chat:read', tags, operationId: 'listPendingGroupMembers',
             summary: tr('Người xin vào nhóm đang chờ duyệt (Zalo)'),
+            description: tr('`answers`: câu trả lời người xin vào nhóm đã gửi (kèm câu hỏi nếu Zalo gửi), `answer`: các câu trả lời gộp thành một đoạn, null khi không có.'),
             params: groupParams,
+            examples: {
+                response: [{
+                    user_id: '7158751312373529111', display_name: 'Lan Nguyễn', avatar_url: 'https://s120-ava-talk.zadn.vn/a.jpg',
+                    answer: tr('Bạn biết nhóm qua đâu?: Qua fanpage của shop'),
+                    answers: [{ question: tr('Bạn biết nhóm qua đâu?'), answer: tr('Qua fanpage của shop') }],
+                }],
+            },
             handler: async ctx => {
                 const acc = await ctx.account(ctx.params.accountId);
                 zaloOnly(acc, 'duyệt thành viên');
                 const res = await zalo(ctx, acc, 'zalo:getPendingGroupMembers', { groupId: ctx.params.groupId });
-                return (res?.users || []).map((u: any) => ({
-                    user_id: String(u.uid || u.id || u.userId || u),
-                    display_name: u.dpn || u.displayName || u.name || '',
-                    avatar_url: u.avatar || u.avt || '',
-                })).filter((u: any) => u.user_id);
+                return (res?.users || []).map((u: any) => {
+                    // What the person wrote when asking to join (Zalo `user_submit`, see shared/zalo/zaloJoinAnswers)
+                    const answers = zaloJoinAnswers(u?.user_submit);
+                    return {
+                        user_id: String(u.uid || u.id || u.userId || u),
+                        display_name: u.dpn || u.displayName || u.name || '',
+                        avatar_url: u.avatar || u.avt || '',
+                        answer: zaloJoinAnswerText(answers),
+                        answers,
+                    };
+                }).filter((u: any) => u.user_id);
             },
         }),
         route({

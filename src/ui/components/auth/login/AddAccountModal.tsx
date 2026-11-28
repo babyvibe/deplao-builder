@@ -3,7 +3,7 @@ import ipc, { type NativeLoginIpcField, type NativeLoginIpcResult, type NativeLo
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
-import {ZaloIcon, FacebookIcon, TelegramIcon} from '../../common/avatars/ChannelBadge';
+import {ZaloIcon, MessengerLogo, TelegramIcon} from '../../common/avatars/ChannelBadge';
 import { getChannelLabel } from '../../../../configs/channels/channelConfig';
 import { CHANNEL, isFacebook, isTelegramBot, isTelegramUser } from '@/lib/channels/channelHelper';
 import cookieGuideImg from '../../../../assets/login/hd_login_fb_cookie.png';
@@ -158,11 +158,11 @@ export default function AddAccountModal({ onClose }: AddAccountModalProps) {
                 onClick={() => handleSelectChannel('facebook')}
                 className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-input hover:border-blue-400 hover:bg-blue-400/10 bg-muted/50 transition-all group relative"
               >
-                <div className="w-14 h-14 rounded-full bg-[#1877F2]/20 flex items-center justify-center group-hover:bg-[#1877F2]/30 transition-colors">
-                  <FacebookIcon size={32} />
+                <div className="w-14 h-14 rounded-full bg-[#A033FF]/15 flex items-center justify-center group-hover:bg-[#A033FF]/25 transition-colors">
+                  <MessengerLogo size={32} />
                 </div>
                 <div className="text-center">
-                  <p className="text-foreground font-semibold text-sm">{tr('Facebook cá nhân')}</p>
+                  <p className="text-foreground font-semibold text-sm">Facebook Messenger</p>
                   <p className="text-muted-foreground text-xs mt-0.5">{tr('Tài khoản hoặc Cookie')}</p>
                 </div>
               </button>

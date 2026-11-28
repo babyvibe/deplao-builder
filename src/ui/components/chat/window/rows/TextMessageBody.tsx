@@ -6,6 +6,8 @@ import { inlineTimeSpacerClass, TtlExpiredNote } from '../../messages/MessageTim
 import ScheduleChip from './ScheduleChip';
 import { getMentionRanges, parseContent } from '@/lib/chat/messages/messageParser';
 import { TextWithMentions } from '../../messages/ChatWindowBubbles';
+import MessengerFormattedText from '../../facebook/MessengerFormattedText';
+import { isFacebook } from '@/lib/channels/channelHelper';
 import { getTelegramWebpageMeta, TelegramLinkPreviewCard } from '../../telegram/messages/TelegramLinkPreview';
 import TelegramRichMessageBody from '../../telegram/messages/TelegramRichMessageBody';
 import type { MessageRowContext, RowLocals } from './rowContext';
@@ -20,6 +22,12 @@ export function TextMessageBody({ ctx, msg, isSent, content, richBlocks, telegra
       {richBlocks ? (
         <TelegramRichMessageBody msg={msg} onOpenImages={openImageList} highlight={searchHighlightQuery}
           allContacts={contactList} groupMembersList={groupMembers} />
+      ) : isFacebook(msg.channel) ? (
+      // Messenger draws *bold*, _italic_, ~strike~, `code`, code blocks and quotes typed in the text
+      <MessengerFormattedText text={content} channel={msg.channel} allContacts={contactList} groupMembersList={groupMembers}
+        mentionRanges={getMentionRanges(msg.attachments)}
+        highlight={searchHighlightQuery}
+        onMentionClick={(uid, e) => setUserProfilePopup({ userId: uid, x: e.clientX, y: e.clientY })} />
       ) : (
       <TextWithMentions text={content} channel={msg.channel} allContacts={contactList} groupMembersList={groupMembers}
         mentionRanges={getMentionRanges(msg.attachments)}
@@ -53,7 +61,7 @@ export function TextMessageBody({ ctx, msg, isSent, content, richBlocks, telegra
                     else next.add(msg.msg_id);
                     return next;
                   })}
-                  className="ml-1 text-[10px] font-medium text-blue-300 transition-colors underline underline-offset-2 select-none pointer-events-auto"
+                  className="chat-link ml-1 text-[10px] font-medium text-blue-400 hover:text-blue-300 transition-colors underline underline-offset-2 select-none pointer-events-auto"
                 >
                   {revealedEditIds.has(msg.msg_id) ? tr('Ẩn') : tr('Xem nội dung cũ')}
                 </button>
@@ -81,17 +89,18 @@ export function TextMessageBody({ ctx, msg, isSent, content, richBlocks, telegra
         try {
           const parsed = JSON.parse(msg.edit_history || '[]');
           if (!Array.isArray(parsed) || parsed.length === 0) return null;
+          // Same look as a quote block (accent bar + light fill, full-strength text): it used to be faded twice (60 % box, 50 % date)
           return (
             <div className="w-full mt-1 space-y-1">
               {parsed.map((entry: any, i: number) => (
                 <div
                   key={i}
-                  className={`px-3 py-1.5 rounded-lg text-xs opacity-60 ${isSent ? 'bg-blue-700/30 mr-8' : 'bg-accent/30 ml-8'}`}
+                  className={`rounded border-l-2 px-2 py-1 text-xs ${isSent ? 'border-primary bg-primary/20' : 'border-border-strong bg-background'}`}
                 >
-                  <div className="text-[10px] opacity-50 mb-0.5">
+                  <div className="text-[10px] text-muted-foreground mb-0.5">
                     {new Date(entry.editedAt).toLocaleString(appLocale())}
                   </div>
-                  <div className="break-words whitespace-pre-wrap italic">
+                  <div className="break-words whitespace-pre-wrap text-foreground/90">
                     {parseContent(entry.oldBody || '') || tr('(Không có nội dung)')}
                   </div>
                 </div>

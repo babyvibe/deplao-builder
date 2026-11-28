@@ -24,6 +24,7 @@ import {
   type FbHistorySyncStatus,
 } from '../../../shared/facebook/facebookHistorySync';
 import { tr, appLocale } from '../../../shared/i18n';
+import type { MessagesSyncedEvent } from '../../../shared/chat/messagesSynced';
 
 interface SyncThread {
   id: string;
@@ -178,6 +179,10 @@ export default class FacebookHistorySyncService {
         : error || tr('Đồng bộ thất bại');
     Logger.log(`[FBHistorySync:${s.accountId}] ${stage}: threads=${s.threadsDone}/${s.threadsTotal} received=${s.messagesReceived} saved=${s.messagesSaved} e2ee=${s.skippedE2EE} failed=${s.failedThreads}${error ? ` error=${error}` : ''}`);
     this.emit(job, true);
+    // Pages were saved one after another without an event per message: employees reload what they show (also after a stop / an error midway)
+    if (s.messagesSaved > 0) {
+      EventBroadcaster.emit('event:messagesSynced', { zaloId: s.accountId, source: 'facebook_history', inserted: s.messagesSaved } satisfies MessagesSyncedEvent);
+    }
   }
 
   private async run(job: Job, getService: () => Promise<FacebookService | null>): Promise<void> {

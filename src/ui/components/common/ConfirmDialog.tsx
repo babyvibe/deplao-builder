@@ -20,6 +20,8 @@ export interface ConfirmOptions {
   confirmText?: string;
   cancelText?: string;
   variant?: ConfirmVariant;
+  /** Tick box under the message (showConfirmChoice returns its state); unticked unless defaultChecked. */
+  option?: { label: string; hint?: string; defaultChecked?: boolean };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -30,25 +32,28 @@ export function ConfirmDialog({
   confirmText = tr('Xác nhận'),
   cancelText = tr('Hủy'),
   variant = 'danger',
+  option,
   onConfirm,
   onCancel,
 }: ConfirmOptions & {
   open: boolean;
-  onConfirm: () => void;
+  /** `checked`: state of the tick box (false without one). */
+  onConfirm: (checked: boolean) => void;
   onCancel: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [checked, setChecked] = useState(!!option?.defaultChecked);
 
   // Close on Escape
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCancel();
-      if (e.key === 'Enter') onConfirm();
+      if (e.key === 'Enter') onConfirm(checked);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [open, onCancel, onConfirm]);
+  }, [open, onCancel, onConfirm, checked]);
 
   if (!open) return null;
 
@@ -102,6 +107,16 @@ export function ConfirmDialog({
             {message && (
               <p className="text-muted-foreground text-sm leading-relaxed whitespace-pre-line">{message}</p>
             )}
+            {option && (
+              <label className="mt-3 flex items-start gap-2 cursor-pointer select-none">
+                <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 flex-shrink-0 accent-red-600 cursor-pointer" />
+                <span className="min-w-0">
+                  <span className="block text-sm text-foreground">{option.label}</span>
+                  {option.hint && <span className="block text-xs text-muted-foreground mt-0.5">{option.hint}</span>}
+                </span>
+              </label>
+            )}
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border/60">
@@ -112,7 +127,7 @@ export function ConfirmDialog({
             {cancelText}
           </button>
           <button
-            onClick={onConfirm}
+            onClick={() => onConfirm(checked)}
             autoFocus
             className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${confirmBtnClass[variant]}`}
           >
@@ -159,6 +174,30 @@ export function showConfirm(options: ConfirmOptions): Promise<boolean> {
         open
         onConfirm={() => cleanup(true)}
         onCancel={() => cleanup(false)}
+      />
+    );
+  });
+}
+
+/** showConfirmChoice - confirm dialog with a tick box (`option`): whether it was confirmed and the box ticked. */
+export function showConfirmChoice(options: ConfirmOptions & { option: NonNullable<ConfirmOptions['option']> }): Promise<{ ok: boolean; checked: boolean }> {
+  return new Promise(resolve => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    const cleanup = (result: { ok: boolean; checked: boolean }) => {
+      root.unmount();
+      container.remove();
+      resolve(result);
+    };
+
+    root.render(
+      <ConfirmDialog
+        {...options}
+        open
+        onConfirm={(checked) => cleanup({ ok: true, checked })}
+        onCancel={() => cleanup({ ok: false, checked: false })}
       />
     );
   });

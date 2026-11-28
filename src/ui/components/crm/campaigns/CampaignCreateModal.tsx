@@ -432,7 +432,7 @@ function GroupPicker({
                     {checked && <svg width="8" height="6" viewBox="0 0 8 6" fill="none"><path d="M1 3L3 5L7 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                   </div>
                   {g.avatar_url
-                    ? <img src={g.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                    ? <img src={toLocalMediaUrl(g.avatar_url)} alt="" className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
                     : <div className="w-6 h-6 rounded-full bg-blue-700 flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0">{(g.display_name||'?').charAt(0).toUpperCase()}</div>
                   }
                   <span className={`flex-1 text-xs truncate ${checked ? 'text-foreground font-medium' : 'text-foreground/80'}`}>{g.display_name}</span>

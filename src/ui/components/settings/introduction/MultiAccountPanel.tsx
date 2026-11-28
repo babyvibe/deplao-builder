@@ -30,13 +30,13 @@ export function MultiAccountPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <SectionTitle>{trx('<0/> Thêm tài khoản Zalo, Facebook, Telegram', { 0: <UserPlusIcon className="w-4 h-4 inline" /> })}</SectionTitle>
+        <SectionTitle>{trx('<0/> Thêm tài khoản Zalo, Facebook Messenger, Telegram', { 0: <UserPlusIcon className="w-4 h-4 inline" /> })}</SectionTitle>
         <Paragraph>
-          {trx('Deplao cho phép đăng nhập <0>không giới hạn tài khoản</0> Zalo (cá nhân / Business), Facebook (Messenger), Telegram (tài khoản cá nhân) và Telegram Bot trong một giao diện. Mỗi tài khoản có phiên đăng nhập riêng (Zalo, Facebook gắn được proxy riêng) và hoạt động độc lập với nhau.', { 0: <strong className="text-foreground font-semibold" /> })}
+          {trx('Deplao cho phép đăng nhập <0>không giới hạn tài khoản</0> Zalo (cá nhân / Business), Facebook Messenger, Telegram (tài khoản cá nhân) và Telegram Bot trong một giao diện. Mỗi tài khoản có phiên đăng nhập riêng (Zalo, Facebook gắn được proxy riêng) và hoạt động độc lập với nhau.', { 0: <strong className="text-foreground font-semibold" /> })}
         </Paragraph>
         <StepList steps={[
           { title: tr('Mở hộp "Thêm tài khoản"'), desc: tr('Bấm <strong class="text-foreground">Thêm tài khoản</strong> trên Dashboard, hoặc nút <strong class="text-foreground">+</strong> (viền nét đứt) dưới danh sách avatar ở thanh bên trái.') },
-          { title: tr('Chọn kênh'), desc: tr('<strong class="text-foreground">Zalo cá nhân</strong> (QR Code hoặc Cookie) · <strong class="text-foreground">Facebook cá nhân</strong> (tài khoản hoặc Cookie) · <strong class="text-foreground">Telegram</strong> (số điện thoại) · <strong class="text-foreground">Telegram Bot</strong> (Bot Token).') },
+          { title: tr('Chọn kênh'), desc: tr('<strong class="text-foreground">Zalo cá nhân</strong> (QR Code hoặc Cookie) · <strong class="text-foreground">Facebook Messenger</strong> (tài khoản hoặc Cookie) · <strong class="text-foreground">Telegram</strong> (số điện thoại) · <strong class="text-foreground">Telegram Bot</strong> (Bot Token).') },
           { title: tr('Chọn proxy (Zalo, Facebook)'), desc: tr('Ở bước <em>Chọn Proxy (tuỳ chọn)</em>: chọn proxy đã lưu rồi bấm <em>Test ngay</em>, hoặc chọn <em>Không dùng proxy</em> để kết nối trực tiếp. Bỏ qua cũng được: thêm hoặc đổi proxy sau ở Cài đặt → Tài khoản. Telegram không có bước này.') },
           { title: tr('Đăng nhập'), desc: tr('Làm theo hướng dẫn từng kênh ở mục bên dưới. Xong, tài khoản hiện trên Dashboard và thanh bên trái, tin nhắn mới bắt đầu về.') },
           { title: tr('Dùng tiếp những lần sau'), desc: tr('Phiên đăng nhập được lưu trên máy: mở app là tự kết nối lại, không phải đăng nhập lại (trừ khi phiên hết hạn). Khi mất mạng, app tự thử kết nối lại.') },
@@ -52,7 +52,7 @@ export function MultiAccountPanel() {
             tr('<strong class="text-foreground">Cookies / IMEI</strong> (nâng cao): dán khối Auth JSON (gồm imei, cookies, userAgent) lấy từ công cụ trích xuất cookie trên trình duyệt.'),
             tr('Không cần và không lưu mật khẩu Zalo.'),
           ]} />
-          <ChannelLogin title="Facebook" note={tr('Messenger cá nhân')} items={[
+          <ChannelLogin title="Facebook Messenger" note={tr('tài khoản cá nhân')} items={[
             tr('<strong class="text-foreground">Đăng nhập tài khoản</strong> (khuyên dùng): nhập email / tên người dùng và mật khẩu Facebook, rồi làm bước xác minh nếu Facebook yêu cầu - mã 6 số từ ứng dụng xác thực, mã SMS / WhatsApp / email, mã dự phòng, captcha, thử thách trong <em>cửa sổ xác minh</em>, hoặc đồng ý trên thiết bị khác (app tự đi tiếp khi bạn đồng ý). Muốn đổi cách xác minh: <em>Thử cách xác minh khác</em>.'),
             tr('App chưa hỗ trợ xác minh bằng tài khoản Google: hãy thêm ứng dụng xác thực hoặc SMS làm xác thực hai lớp cho Facebook, hoặc dùng tab <em>Cookie</em>.'),
             tr('<strong class="text-foreground">Cookie</strong>: dán chuỗi cookie Facebook lấy từ trình duyệt (bấm <em>Xem hướng dẫn lấy Cookie Facebook</em>). Cookie hết hạn khi bạn đăng xuất Facebook trên trình duyệt, lâu không hoạt động hoặc khi Facebook nghi ngờ bất thường.'),

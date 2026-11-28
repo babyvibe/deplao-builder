@@ -21,8 +21,9 @@ function getBossBaseUrl(): string {
 export function toLocalMediaUrl(filePath: string, zaloId?: string): string {
   if (!filePath) return '';
 
-  // Already a proper URL → return as-is
-  if (filePath.startsWith('http://') || filePath.startsWith('https://') || filePath.startsWith('local-media://')) {
+  // Already a proper URL → return as-is (data: / blob: are in-memory images, never a file on disk)
+  if (filePath.startsWith('http://') || filePath.startsWith('https://') || filePath.startsWith('local-media://')
+    || filePath.startsWith('data:') || filePath.startsWith('blob:')) {
     return filePath;
   }
 

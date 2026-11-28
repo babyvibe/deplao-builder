@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { reportBrokenAvatar } from '@/lib/contacts/contactRefresh';
 import type { CRMContact } from '@/store/crm/crmStore';
 import type { ContactTypeFilter, GenderFilter, BirthdayFilter } from '@/store/crm/crmStore';
@@ -762,10 +763,15 @@ export default function CRMContactList({
                       name={name}
                       size="xs"
                     />
-                  ) : contact.avatar
-                    ? <img key={contact.avatar} src={contact.avatar} alt="" className="w-full h-full object-cover"
-                        onError={(e) => { e.currentTarget.style.display = 'none'; reportBrokenAvatar(activeAccountId, contact.contact_id); }} />
-                    : <PeerInitials id={contact.contact_id} name={name} fallback="U" className="w-full h-full text-xs" />}
+                  ) : (
+                    <>
+                      <PeerInitials id={contact.contact_id} name={name} fallback="U" className="absolute inset-0 w-full h-full text-xs" />
+                      {contact.avatar && (
+                        <img key={contact.avatar} src={toLocalMediaUrl(contact.avatar)} alt="" className="relative w-full h-full object-cover"
+                          onError={(e) => { e.currentTarget.style.display = 'none'; reportBrokenAvatar(activeAccountId, contact.contact_id); }} />
+                      )}
+                    </>
+                  )}
                   {/* hover overlay */}
                   <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover/av:opacity-100 transition-opacity">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">

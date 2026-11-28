@@ -44,6 +44,8 @@ export interface FbTemplate {
   imageUrl?: string;
   /** Tapping the card opens this link. */
   url?: string;
+  /** Shared reel / video: the playable file (the card shows a play button). */
+  videoUrl?: string;
   buttons?: FbTemplateButton[];
   /** Carousel (generic template with several cards). */
   items?: FbTemplateItem[];
@@ -126,7 +128,7 @@ function compactItem(item: FbTemplateItem): FbTemplateItem | null {
 
 function compactTemplate(t: FbTemplate): FbTemplate | null {
   const out: FbTemplate = { type: 'template' };
-  for (const key of ['header', 'title', 'subtitle', 'body', 'footer', 'source', 'imageUrl', 'url'] as const) {
+  for (const key of ['header', 'title', 'subtitle', 'body', 'footer', 'source', 'imageUrl', 'url', 'videoUrl'] as const) {
     if (t[key]) out[key] = t[key];
   }
   if (t.buttons?.length) out.buttons = t.buttons.slice(0, MAX_BUTTONS);
@@ -152,6 +154,7 @@ export function templateFromBridgeAttachment(att: any): FbTemplate | null {
     source: clean(att.sourceText ?? att.source),
     imageUrl: webUrl(att.imageUrl) || webUrl(att.previewUrl),
     url: webUrl(att.url),
+    videoUrl: webUrl(att.playableUrl ?? att.videoUrl),
     buttons: buttonsOf(att.buttons, bridgeButton),
     items: Array.isArray(att.items) ? att.items.map((item: any) => ({
       title: clean(item?.title),
@@ -184,6 +187,7 @@ export function templateFromStoryAttachment(ext: any): FbTemplate | null {
     source: clean(story.source?.text),
     imageUrl: webUrl(media.image?.uri) || webUrl(media.animated_image?.uri) || webUrl(media.preview_image?.uri),
     url: webUrl(story.url),
+    videoUrl: webUrl(media.playable_url),
     buttons: buttonsOf(story.action_links, (raw: any) => classifyFbButton({
       title: raw?.title, type: raw?.__typename ?? raw?.type, url: raw?.url,
     })),
@@ -211,6 +215,7 @@ export function normalizeStoredTemplate(raw: any): FbTemplate | null {
     source: clean(raw.source),
     imageUrl: webUrl(raw.imageUrl),
     url: webUrl(raw.url),
+    videoUrl: webUrl(raw.videoUrl),
     buttons: buttonsOf(raw.buttons, storedButton),
     items: Array.isArray(raw.items) ? raw.items.map((item: any) => ({
       title: clean(item?.title),
@@ -272,7 +277,7 @@ export function fbTemplateRichness(t: FbTemplate | null | undefined): number {
   if (!t) return 0;
   const items = t.items || [];
   const itemButtons = items.reduce((sum, item) => sum + (item.buttons?.length || 0), 0);
-  return (t.buttons?.length || 0) + items.length + itemButtons + (t.url ? 1 : 0) + (t.imageUrl ? 1 : 0);
+  return (t.buttons?.length || 0) + items.length + itemButtons + (t.url ? 1 : 0) + (t.imageUrl ? 1 : 0) + (t.videoUrl ? 1 : 0);
 }
 
 const UNAVAILABLE_TITLE = /^(file đính kèm không hiển thị|attachment unavailable)$/i;
@@ -320,6 +325,8 @@ export function fbUnsupportedText(kind: unknown): string {
     case 'group_invite': return tr('[Lời mời tham gia nhóm — mở trên Messenger để xem]');
     case 'poll': return tr('[Bình chọn — mở trên Messenger để xem]');
     case 'note_reply': return tr('[Trả lời ghi chú]');
+    case 'undecryptable': return tr('[Chưa giải mã được tin này, đang chờ người gửi gửi lại]');
+    case 'bump': return tr('Đã nhắc lại tin nhắn này');
     default: return tr('[Tin nhắn chưa hỗ trợ — mở trên Messenger để xem]');
   }
 }
@@ -329,3 +336,9 @@ export function messengerThreadUrl(threadId: string | number | null | undefined)
   const id = String(threadId ?? '').replace(/@.*$/, '').trim();
   return /^\d+$/.test(id) ? `https://www.facebook.com/messages/t/${id}` : 'https://www.facebook.com/messages';
 }
+
+/**
+ * Attachment entry marking an encrypted message saved before it could be decrypted: the sender's re-send (same id)
+ * replaces the row (DatabaseService.saveFBMessage).
+ */
+export const FB_UNDECRYPTABLE_ATTACHMENT = 'fb_undecryptable';

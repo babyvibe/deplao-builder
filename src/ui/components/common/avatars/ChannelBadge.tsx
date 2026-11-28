@@ -1,10 +1,17 @@
 /**
- * ChannelBadge.tsx - Shows the channel badge (Zalo / Facebook) on avatars, contact cards, etc.
+ * ChannelBadge.tsx - Shows the channel badge (Zalo / Facebook Messenger / Telegram) on avatars, contact cards, etc.
+ * The Facebook channel is Messenger chat: it shows the Messenger logo on Messenger's gradient.
  */
 
-import React from 'react';
+import React, { useId } from 'react';
 import { Channel, getChannelColor, getChannelLabel } from '../../../../configs/channels/channelConfig';
-import { isZalo, isTelegram } from '@/lib/channels/channelHelper';
+import { isZalo, isTelegram, isFacebook } from '@/lib/channels/channelHelper';
+
+/** Messenger's logo gradient, behind the white Messenger glyph (badges, account pictures without a photo). */
+export const MESSENGER_GRADIENT = 'radial-gradient(circle at 20% 100%, #0099FF 0%, #A033FF 60%, #FF5280 90%, #FF7061 100%)';
+
+/** The Messenger glyph: speech bubble with the lightning bolt cut out (Simple Icons "messenger", CC0). */
+const MESSENGER_PATH = 'M.001 11.639C.001 4.949 5.241 0 12.001 0S24 4.95 24 11.639c0 6.689-5.24 11.638-12 11.638-1.21 0-2.38-.16-3.47-.46a.96.96 0 00-.64.05l-2.39 1.05a.96.96 0 01-1.35-.85l-.07-2.14a.97.97 0 00-.32-.68A11.39 11.389 0 01.002 11.64zm8.32-2.19l-3.52 5.6c-.35.53.32 1.139.82.75l3.79-2.87c.26-.2.6-.2.87 0l2.8 2.1c.84.63 2.04.4 2.6-.48l3.52-5.6c.35-.53-.32-1.13-.82-.75l-3.79 2.87c-.25.2-.6.2-.86 0l-2.8-2.1a1.8 1.8 0 00-2.61.48z';
 
 interface Props {
   channel: Channel;
@@ -34,10 +41,29 @@ export function ZaloIcon({ size = 10 }: { size?: number }) {
   );
 }
 
+/** Icon of the Facebook Messenger channel: the white Messenger glyph, drawn on MESSENGER_GRADIENT. */
 export function FacebookIcon({ size = 10 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
-      <path fill="#FFFFFF" d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+    <svg width={size} height={size} viewBox="0 0 24 24">
+      <path fill="#FFFFFF" fillRule="evenodd" d={MESSENGER_PATH} />
+    </svg>
+  );
+}
+
+/** The Messenger logo in its colours (gradient bubble, white bolt), for big channel cards on a plain background. */
+export function MessengerLogo({ size = 32 }: { size?: number }) {
+  const gradientId = `messenger-logo-${useId().replace(/:/g, '')}`;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24">
+      <defs>
+        <radialGradient id={gradientId} cx="0.2" cy="1" r="1.2">
+          <stop offset="0" stopColor="#0099FF" />
+          <stop offset="0.6" stopColor="#A033FF" />
+          <stop offset="0.9" stopColor="#FF5280" />
+          <stop offset="1" stopColor="#FF7061" />
+        </radialGradient>
+      </defs>
+      <path fill={`url(#${gradientId})`} fillRule="evenodd" d={MESSENGER_PATH} />
     </svg>
   );
 }
@@ -64,7 +90,7 @@ export default function ChannelBadge({ channel, size = 'md', className = '' }: P
   return (
     <span
       className={`inline-flex items-center justify-center rounded-full border border-border ${sizeClass} ${className}`}
-      style={{ backgroundColor: color }}
+      style={isFacebook(channel) ? { background: MESSENGER_GRADIENT } : { backgroundColor: color }}
       title={getChannelLabel(channel as Channel)}
     >
       {renderIcon()}

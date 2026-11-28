@@ -1,4 +1,5 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import ipc, { buildZaloAuth } from '@/lib/ipc'
 import DataAccessor, { isReadFailure, readFailureMessage } from '@/lib/data/DataAccessor';
 import { useEmployeeResync } from '@/hooks/accounts/useEmployeeResync';
@@ -12,6 +13,7 @@ import { CHANNEL, isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { Spinner } from '@/components/common/PageLoading';
 import { ChatIcon, CloseIcon} from '@/components/common/icons';
 import { lookupZaloUserByPhone } from '@/lib/chat/zalo/zaloPhoneLookup';
+import FacebookPeopleResults from './FacebookPeopleResults';
 import { useHiddenLockedPredicate } from '@/hooks/zalo/useZaloHidden';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
 import {
@@ -189,7 +191,7 @@ function ContactResultItem({ contact, query, onClick, groupInfoCache }: {
           />
         ) : (
           contact.avatar_url && !avatarFailed
-            ? <img src={contact.avatar_url} alt={name} className="w-11 h-11 rounded-full object-cover" onError={() => {
+            ? <img src={toLocalMediaUrl(contact.avatar_url)} alt={name} className="w-11 h-11 rounded-full object-cover" onError={() => {
                 setAvatarFailed(true);
                 const ownerId = contact.owner_zalo_id;
                 if (ownerId && isFacebook(contact.channel)) {
@@ -245,7 +247,7 @@ function MessageResultItem({ msg, query, contacts, onClick, groupInfoCache }: {
         />
       ) : (
         contact?.avatar_url && !avatarFailed
-          ? <img src={contact.avatar_url} alt={convName} className="w-11 h-11 rounded-full object-cover flex-shrink-0" onError={() => {
+          ? <img src={toLocalMediaUrl(contact.avatar_url)} alt={convName} className="w-11 h-11 rounded-full object-cover flex-shrink-0" onError={() => {
               setAvatarFailed(true);
               const ownerId = msg.owner_zalo_id;
               if (ownerId) {
@@ -290,7 +292,7 @@ function PhoneResultCard({ result, searching, onOpen, onAddFriend }: {
   return (
     <div className="mx-3 my-2 p-3 bg-card rounded-xl border border-border flex items-center gap-3">
       {result.avatar
-        ? <img src={result.avatar} alt={name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+        ? <img src={toLocalMediaUrl(result.avatar)} alt={name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
         : <PeerInitials id={result.uid} name={name} fallback="U" className="w-10 h-10 text-sm" />}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-foreground truncate font-medium">{name}</p>
@@ -329,7 +331,7 @@ function UsernameResultCard({ result, searching, onOpen }: {
   return (
     <div className="mx-3 my-2 p-3 bg-card rounded-xl border border-cyan-500/30 flex items-center gap-3">
       {result.avatar
-        ? <img src={result.avatar} alt={name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+        ? <img src={toLocalMediaUrl(result.avatar)} alt={name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
         : <PeerInitials id={result.id} name={name} fallback="U" className="w-10 h-10 text-sm" />}
       <div className="flex-1 min-w-0">
         <p className="text-sm text-foreground truncate font-medium">{name}</p>
@@ -760,8 +762,14 @@ export default function GlobalSearchPanel({
     ? tr('Không tải được kết quả tìm kiếm')
     : msgSearchFailed ? tr('Không tải được kết quả tin nhắn') : tr('Không tải được đầy đủ danh bạ');
   const retrySearch = () => { void retryFailedSources(); };
+  // Facebook account being searched (one account): Messenger's people search is shown under the contacts
+  const fbSearchAccountId = (() => {
+    const id = mergedInboxMode ? (mergedInboxAccounts.length === 1 ? mergedInboxAccounts[0] : '') : activeAccountId;
+    const acc = id ? allAccounts.find(a => a.zalo_id === id) : null;
+    return acc && isFacebook(acc.channel) ? String(acc.zalo_id) : '';
+  })();
   const isEmpty = !searching && !isPhone && !isUsername && !phoneSearching && !usernameSearching && query.trim()
-    && contactResults.length === 0 && msgResults.length === 0 && !anySearchFailed;
+    && contactResults.length === 0 && msgResults.length === 0 && !anySearchFailed && !fbSearchAccountId;
 
   // Paginated slices
   const contactsForAll = contactResults.slice(0, ALL_CONTACT_LIMIT);
@@ -943,6 +951,13 @@ export default function GlobalSearchPanel({
               </>
             )}
 
+            {fbSearchAccountId && (
+              <FacebookPeopleResults
+                accountId={fbSearchAccountId}
+                query={query}
+                onOpen={(threadId, threadType, info) => onSelectConversation(threadId, threadType, fbSearchAccountId !== activeAccountId ? fbSearchAccountId : undefined, info)}
+              />
+            )}
             {/* Messages section */}
             {showMessagesSection && (
               <>

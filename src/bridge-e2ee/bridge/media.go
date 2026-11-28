@@ -738,7 +738,7 @@ func (c *Client) SendE2EEImage(opts *SendE2EEImageOptions) (*SendMessageResult, 
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, c.withChatTimer(chatJID, metadata), whatsmeow.SendRequestExtra{ // DEPLAO_ADAPTER: chat timer
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})
@@ -865,7 +865,7 @@ func (c *Client) SendE2EEVideo(opts *SendE2EEVideoOptions) (*SendMessageResult, 
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, c.withChatTimer(chatJID, metadata), whatsmeow.SendRequestExtra{ // DEPLAO_ADAPTER: chat timer
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})
@@ -971,7 +971,7 @@ func (c *Client) SendE2EEAudio(opts *SendE2EEAudioOptions) (*SendMessageResult, 
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, c.withChatTimer(chatJID, metadata), whatsmeow.SendRequestExtra{ // DEPLAO_ADAPTER: chat timer
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})
@@ -1074,7 +1074,7 @@ func (c *Client) SendE2EEDocument(opts *SendE2EEDocumentOptions) (*SendMessageRe
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, c.withChatTimer(chatJID, metadata), whatsmeow.SendRequestExtra{ // DEPLAO_ADAPTER: chat timer
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})
@@ -1192,7 +1192,7 @@ func (c *Client) SendE2EESticker(opts *SendE2EEStickerOptions) (*SendMessageResu
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, c.withChatTimer(chatJID, metadata), whatsmeow.SendRequestExtra{ // DEPLAO_ADAPTER: chat timer
 		ID:          msgID,
 		MediaHandle: uploaded.Handle,
 	})

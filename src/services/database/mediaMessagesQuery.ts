@@ -1,6 +1,8 @@
 /**
- * mediaMessagesQuery.ts - SQL for the photos/videos of one conversation (db:getMediaMessages).
+ * mediaMessagesQuery.ts - SQL for the photos/videos (db:getMediaMessages) and the files (db:getFileMessages) of one conversation.
  *
+ * - A picture sent as a document (msg_type 'file', e.g. a screenshot Telegram sent "as a file") is drawn as a photo in the chat, so it
+ *   is listed with the photos and not with the files: IMAGE_DOCUMENT_SQL = shared/chat/imageDocument in SQL.
  * - Offset pages (panel "Ảnh/Video" (Photos/Videos), Public API): `ORDER BY timestamp DESC LIMIT ? OFFSET ?` - unchanged.
  * - Cursor pages (image viewer gallery "Bộ sưu tập" (Gallery)): keyset pages on (timestamp, msg_id), like the chat.
  *   SQLite answers them with a range seek on idx_messages_thread_cursor
@@ -11,8 +13,36 @@
  * Pure module (no DB handle) so it can be unit-tested without the native better-sqlite3 binding.
  */
 
+import {
+  IMAGE_DOCUMENT_EXTENSIONS, IMAGE_DOCUMENT_MIME_PREFIXES, SVG_DOCUMENT_MIMES,
+} from '../../shared/chat/imageDocument';
+import { TELEGRAM_META_ATTACHMENT_TYPES } from '../../shared/telegram/telegramAttachmentTypes';
+
 /** Columns returned for media rows. */
 export const MEDIA_MESSAGE_COLUMNS = 'msg_id, owner_zalo_id, thread_id, sender_id, content, msg_type, timestamp, local_paths, attachments, channel';
+
+const sqlText = (value: string) => `'${value.replace(/'/g, "''")}'`;
+const DOC_MIME = `lower(COALESCE(json_extract(doc.value, '$.mime_type'), ''))`;
+const DOC_NAME = `lower(COALESCE(json_extract(doc.value, '$.file_name'), ''))`;
+const DOC_IS_SVG = [`${DOC_NAME} LIKE '%.svg'`, `${DOC_MIME} IN (${SVG_DOCUMENT_MIMES.map(sqlText).join(', ')})`].join(' OR ');
+const DOC_IS_PICTURE = [
+  ...IMAGE_DOCUMENT_MIME_PREFIXES.map((prefix) => `${DOC_MIME} LIKE ${sqlText(`${prefix}%`)}`),
+  ...IMAGE_DOCUMENT_EXTENSIONS.map((ext) => `${DOC_NAME} LIKE ${sqlText(`%${ext}`)}`),
+].join(' OR ');
+
+/**
+ * A msg_type 'file' row whose document (the first attachment that is not Telegram presentation info: forward header, @mention,
+ * album entry, post card) is a picture. Only 'file' rows read their JSON; invalid / non-array attachments → not a picture (no error).
+ * Never NULL, so `NOT IMAGE_DOCUMENT_SQL` is safe.
+ */
+export const IMAGE_DOCUMENT_SQL = `(COALESCE(msg_type, '') = 'file' AND COALESCE((
+                   SELECT CASE WHEN ${DOC_IS_SVG} THEN 0 WHEN ${DOC_IS_PICTURE} THEN 1 ELSE 0 END
+                   FROM json_each(CASE WHEN json_valid(attachments) THEN attachments END) AS doc
+                   WHERE doc.type = 'object'
+                     AND COALESCE(json_extract(doc.value, '$.type'), '') NOT IN (${[...TELEGRAM_META_ATTACHMENT_TYPES].map(sqlText).join(', ')})
+                   ORDER BY doc.id
+                   LIMIT 1
+                 ), 0) = 1)`;
 
 /** WHERE predicate that selects photo/video messages (Zalo content/local files + Facebook attachments). */
 export const MEDIA_MESSAGE_FILTER = `(
@@ -29,6 +59,17 @@ export const MEDIA_MESSAGE_FILTER = `(
                  )
                  OR (channel = 'facebook' AND msg_type IN ('image', 'photo', 'video', 'sticker', 'animated_image')
                      AND attachments IS NOT NULL AND attachments != '[]' AND attachments != '')
+                 OR ${IMAGE_DOCUMENT_SQL}
+               )`;
+
+/** WHERE predicate of the File tab: files, Zalo file cards and Facebook files, without the pictures listed with the photos. */
+export const FILE_MESSAGE_FILTER = `(
+                 (
+                   msg_type IN ('share.file', 'file', 'share.link')
+                   OR (content LIKE '%"title"%' AND content LIKE '%"href"%' AND content LIKE '%"fileExt"%')
+                   OR (channel = 'facebook' AND msg_type = 'file' AND attachments IS NOT NULL AND attachments != '[]' AND attachments != '')
+                 )
+                 AND NOT ${IMAGE_DOCUMENT_SQL}
                )`;
 
 /**

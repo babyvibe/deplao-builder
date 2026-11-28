@@ -12,7 +12,8 @@ import { useEffect } from 'react';
 import ipc from '../../lib/ipc'
 import { messageQueue } from '@/lib/chat/send/MessageQueue';
 import DataAccessor from '../../lib/data/DataAccessor';;
-import { useChatStore, type MessageItem } from '@/store/chat/chatStore';
+import { getMessageCacheKey, useChatStore, type MessageItem } from '@/store/chat/chatStore';
+import { stripMessengerFormatting } from '../../../shared/facebook/messengerFormatting';
 import { FB_TEMPLATE_MSG_TYPE, fbTemplateText } from '../../../shared/facebook/facebookTemplate';
 import { replyStateForIncoming } from '../../../shared/chat/replyState';
 import { useAccountStore } from '@/store/accounts/accountStore';
@@ -88,7 +89,8 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
   const attachPreview = fbAttachmentPreview(rawType, msg.attachments);
   // FB sometimes sends body as "[file: name]" or "[image]" system text - prefer attachment preview
   const bodyIsSystemText = msg.body && /^\[.+\]$/.test(msg.body.trim());
-  const content = (!msg.body || bodyIsSystemText) ? attachPreview : msg.body;
+  // Without an attachment, "[...]" is the real text (E2EE placeholders: view once, payment, poll…), not a file label
+  const content = (!msg.body || (bodyIsSystemText && hasAttachment)) ? attachPreview : msg.body;
 
   const serializeAtt = (a: any, defaultType: string) => ({
     type: a.attachmentType || defaultType,
@@ -106,10 +108,13 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
     ...(a.template ? { ...a.template, type: 'template' } : {}),
   });
 
-  const attachments = msg.allAttachments && msg.allAttachments.length > 1
-    ? JSON.stringify(msg.allAttachments.map((a: any) => serializeAtt(a, 'image')))
-    : hasAttachment ? JSON.stringify([serializeAtt(msg.attachments, msgType)])
-    : undefined;
+  // The main process sends what it stored (sticker ids, mentions, poll…): the live bubble equals the reloaded one
+  const attachments = typeof msg.storedAttachments === 'string' && msg.storedAttachments
+    ? msg.storedAttachments
+    : msg.allAttachments && msg.allAttachments.length > 1
+      ? JSON.stringify(msg.allAttachments.map((a: any) => serializeAtt(a, 'image')))
+      : hasAttachment ? JSON.stringify([serializeAtt(msg.attachments, msgType)])
+      : undefined;
 
   // quote_data is provided by backend broadcast (already has original message content)
   // or will be loaded from DB on reload (saveFBMessage now saves quote_data)
@@ -127,7 +132,8 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
     thread_id: threadId,
     thread_type: msg.type === 'group' ? 1 : 0,
     sender_id: msg.userID || '',
-    content,
+    // Call card / poll: the stored content (JSON for the call card) instead of a text preview
+    content: typeof msg.storedContent === 'string' ? msg.storedContent : content,
     msg_type: msgType,
     timestamp: parseInt(msg.timestamp) || Date.now(),
     is_sent: 0,
@@ -136,7 +142,9 @@ function normalizeFBMessage(fbAccountId: string, msg: any): MessageItem {
     attachments,
     ...(hasQuoteData ? { quote_data: msg.quote_data } : {}),
     ...(hasReplyToId ? { reply_to_id: msg.replyToMessageId } : {}),
-  };
+    // Self-delete timer of an encrypted chat (ms): the clock next to the time, like the stored row
+    ...(Number(msg.ttl) > 0 ? { ttl: Number(msg.ttl) } : {}),
+  } as MessageItem;
 }
 
 /** Whether the app window is in use: main reports it via 'app:windowFocus' (document.hasFocus() is not reliable in Electron). */
@@ -199,7 +207,9 @@ export function useChatEvents(): void {
 
       // If self-echo from MQTT, replace the temp message instead of adding duplicate
       // Build last message preview early (used by both temp-replacement and normal paths)
-      const lastMsgPreview = normalized.content?.slice(0, 100)
+      // Messenger formatting marks (*bold*, _italic_…) are not shown in the list / notifications (the bubble shows the formatting)
+      const lastMsgPreview = (typeof message.preview === 'string' && message.preview ? stripMessengerFormatting(message.preview).slice(0, 100) : '')
+        || stripMessengerFormatting(normalized.content).slice(0, 100)
         || (normalized.msg_type === 'image' || normalized.msg_type === 'photo' ? tr('🖼️ Hình ảnh')
           : normalized.msg_type === 'video' ? '🎬 Video'
           : normalized.msg_type === 'audio' ? '🎵 Audio'
@@ -319,9 +329,30 @@ export function useChatEvents(): void {
         { msgType: normalized.msg_type, timestamp: normalized.timestamp, isSelf },
         (useChatStore.getState().contacts[fbAccountId] || []).find(c => c.contact_id === threadId)?.last_message_time,
       );
+      // A conversation the list has not loaded (new message request, older row): take its DB row (name, picture, type,
+      // "Khác") instead of the bare row updateContact would make
+      const knewThread = (useChatStore.getState().contacts[fbAccountId] || []).some(c => c.contact_id === threadId);
+      if (!knewThread) {
+        DataAccessor.getConversationsByIds(fbAccountId, [threadId]).then((res) => {
+          const row = res?.success ? res.items?.[0] : null;
+          if (!row) return;
+          const current = (useChatStore.getState().contacts[fbAccountId] || []).find(c => c.contact_id === threadId);
+          useChatStore.getState().updateContact(fbAccountId, {
+            ...row,
+            contact_id: threadId,
+            // Keep the live message preview when it is newer than the stored row
+            ...(current && Number(current.last_message_time || 0) > Number(row.last_message_time || 0)
+              ? { last_message: current.last_message, last_message_time: current.last_message_time } : {}),
+          });
+          if (Number(row.is_in_others) === 1 || Number(row.is_muted) === 1) useAppStore.getState().loadFlags(fbAccountId).catch(() => {});
+        }).catch(() => {});
+      }
+
       // Update contact (last message preview + time)
       store.updateContact(fbAccountId, {
         contact_id: threadId,
+        // A brand-new row was always made a 'user' conversation (a new group then opened / replied as a 1-1 chat)
+        ...(data.message?.threadKind === 'group' || data.message?.threadKind === 'user' ? { contact_type: data.message.threadKind } : {}),
         ...(data.contactName ? { display_name: data.contactName } : {}),
         ...(data.contactAvatar ? { avatar_url: data.contactAvatar } : {}),
         last_message: lastMsgPreview,
@@ -330,33 +361,9 @@ export function useChatEvents(): void {
         ...(fbReplyState !== undefined ? { is_replied: fbReplyState } : {}),
       });
 
-      // ── FE fallback: refresh the conversation entity, not the actor ────────
-      // In Page conversations the event actor can be the logged-in/acting
-      // account. Fetching that actor and using it for the thread makes many
-      // Pages display the same account avatar.
-      const threadContact = (useChatStore.getState().contacts[fbAccountId] || [])
-        .find(c => c.contact_id === threadId);
-      // Employee: the Facebook session only exists on the Boss machine: the Boss fetches the name / avatar itself, then emits fb:onContactUpdate (relay)
-      if (!isEmployeeMode() && threadContact?.contact_type !== 'group' && /^\d+$/.test(String(threadId))) {
-        const contactsList = useChatStore.getState().contacts[fbAccountId] || [];
-        const conversationContact = contactsList.find(c => c.contact_id === threadId);
-        const missingName = !conversationContact?.display_name;
-        const missingAvatar = !conversationContact?.avatar_url;
-        if (missingName || missingAvatar) {
-          (async () => {
-            try {
-              const result = await ipc.fb?.getUserInfoFacebook({ accountId: fbAccountId, userId: String(threadId) });
-              if (result?.success && (result.name || result.avatarUrl)) {
-                const patch: any = { contact_id: threadId, channel: 'facebook' };
-                if (result.name) patch.display_name = result.name;
-                if (result.avatarUrl) patch.avatar_url = result.avatarUrl;
-                useChatStore.getState().updateContact(fbAccountId, patch);
-              }
-            } catch {}
-          })();
-        }
-      }
-      // ────────────────────────────────────────────────────────────────────────
+      // The name / picture of a new conversation is looked up by the main process in the background (FacebookProfileResolver,
+      // retried with backoff) and arrives as db:contactProfileUpdated; the one-shot lookup that used to run here never retried
+      // and treated "name = id" as a name.
 
       // Increment unread if not currently viewing this thread and not self-sent
       const currentActive = useChatStore.getState().activeThreadId;
@@ -414,6 +421,41 @@ export function useChatEvents(): void {
       }
     });
     if (unsubMsg) unsubscribers.push(unsubMsg);
+
+    // ─── fb:onThreadsSynced → conversations saved by the bridge inbox / history sync: reload the list ─────
+    // (the list loaded at "connected", before the sync; new conversations used to appear only at the next reload)
+    const syncReloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const unsubThreadsSynced = ipc.on?.('fb:onThreadsSynced', (data: { fbAccountId?: string }) => {
+      const fbAccountId = String(data?.fbAccountId || '');
+      if (!fbAccountId) return;
+      const pending = syncReloadTimers.get(fbAccountId);
+      if (pending) clearTimeout(pending);
+      syncReloadTimers.set(fbAccountId, setTimeout(() => {
+        syncReloadTimers.delete(fbAccountId);
+        reloadAccountContacts(fbAccountId).catch(() => {});
+        // Mute / "Khác" (message requests) come from Messenger too
+        useAppStore.getState().loadFlags(fbAccountId).catch(() => {});
+      }, 1500));
+    });
+    if (unsubThreadsSynced) unsubscribers.push(unsubThreadsSynced);
+
+    // ─── fb:onMessagePatch → a stored message changed (poll votes, media links fetched again) ─────
+    const unsubPatch = ipc.on?.('fb:onMessagePatch', (data: {
+      fbAccountId?: string; threadId?: string; messageId?: string; attachments?: string; content?: string; msgType?: string;
+    }) => {
+      const fbAccountId = String(data?.fbAccountId || '');
+      const threadId = String(data?.threadId || '');
+      const messageId = String(data?.messageId || '');
+      if (!fbAccountId || !threadId || !messageId) return;
+      useChatStore.getState().patchMessage(fbAccountId, threadId, messageId, {
+        ...(typeof data.attachments === 'string' ? { attachments: data.attachments } : {}),
+        ...(typeof data.content === 'string' ? { content: data.content } : {}),
+        // An admin line that turned out to be a poll (the poll copy came second) becomes the poll card
+        ...(typeof data.msgType === 'string' && data.msgType ? { msg_type: data.msgType } : {}),
+      });
+    });
+    if (unsubPatch) unsubscribers.push(unsubPatch);
+    unsubscribers.push(() => { for (const timer of syncReloadTimers.values()) clearTimeout(timer); syncReloadTimers.clear(); });
 
     // ─── fb:onContactUpdate → update name/avatar for 1-1 Facebook ──────────────
     const unsubContact = ipc.on?.('fb:onContactUpdate', (data: {
@@ -480,9 +522,20 @@ export function useChatEvents(): void {
     const unsubUnsend = ipc.on?.('fb:onUnsend', (data: {
       fbAccountId: string;
       messageId: string;
+      threadId?: string;
     }) => {
       if (!data?.fbAccountId || !data?.messageId) return;
-      useChatStore.getState().recallMessage(data.fbAccountId, data.messageId);
+      const threadId = String(data.threadId || '');
+      useChatStore.getState().recallMessage(data.fbAccountId, data.messageId, threadId || undefined);
+      // The newest message of the conversation was unsent: the list preview stops showing its text (main updated the DB)
+      if (threadId) {
+        const store = useChatStore.getState();
+        const msgs = store.messages[getMessageCacheKey(data.fbAccountId, threadId)] || [];
+        const last = msgs[msgs.length - 1];
+        if (last && String(last.msg_id) === String(data.messageId)) {
+          store.updateContact(data.fbAccountId, { contact_id: threadId, last_message: tr('↩ Tin nhắn đã thu hồi') });
+        }
+      }
     });
     if (unsubUnsend) unsubscribers.push(unsubUnsend);
 
@@ -574,9 +627,11 @@ export function useChatEvents(): void {
     const unsubThreadInfo = ipc.on?.('fb:onThreadInfoUpdate', (data: {
       fbAccountId: string;
       threadId: string;
-      type: 'name' | 'emoji';
+      type: 'name' | 'emoji' | 'cannotReply' | 'disappearing';
       name?: string;
       emoji?: string;
+      cannotReply?: string;
+      ttl?: number;
     }) => {
       if (!data?.fbAccountId || !data?.threadId) return;
       const update: any = { contact_id: data.threadId, channel: 'facebook' };
@@ -584,6 +639,10 @@ export function useChatEvents(): void {
         update.display_name = data.name;
       } else if (data.type === 'emoji' && data.emoji) {
         update.fb_emoji = data.emoji;
+      } else if (data.type === 'cannotReply') {
+        update.fb_cannot_reply = String(data.cannotReply || '');
+      } else if (data.type === 'disappearing') {
+        update.fb_disappearing_ttl = Math.max(0, Number(data.ttl) || 0);
       }
       useChatStore.getState().updateContact(data.fbAccountId, update);
     });

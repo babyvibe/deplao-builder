@@ -8,6 +8,7 @@ import LibraryService from '../../../src/services/library/LibraryService';
 import DatabaseService from '../../../src/services/database/DatabaseService';
 import WorkspaceManager from '../../../src/utils/app/WorkspaceManager';
 import Logger from '../../../src/utils/Logger';
+import { encodedLocalMediaUrl } from '../../../src/shared/media/localMediaUrl';
 
 const lib = () => LibraryService.getInstance();
 
@@ -16,10 +17,7 @@ const lib = () => LibraryService.getInstance();
  * The Boss UI no longer goes through HTTP /api/library/*: that route needs an employee session token, and the relay port is not fixed at 9900.
  */
 function localMediaUrl(filePath: string | null | undefined): string | null {
-  if (!filePath) return null;
-  const normalized = String(filePath).replace(/\\/g, '/');
-  const withSlash = normalized.startsWith('/') ? normalized : `/${normalized}`;
-  return `local-media://${withSlash.split('/').map(encodeURIComponent).join('/')}`;
+  return filePath ? encodedLocalMediaUrl(String(filePath)) : null;
 }
 
 /** Library item for the Boss UI: hides file_path/thumb_path, displays local-media:// URLs, keeps _localPath to send the file. */

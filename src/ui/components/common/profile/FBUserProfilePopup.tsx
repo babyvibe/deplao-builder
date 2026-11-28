@@ -26,7 +26,7 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
   });
   const [confirmBlock, setConfirmBlock] = React.useState(false);
   const [blocking, setBlocking] = React.useState(false);
-  const [isBlocked, setIsBlocked] = React.useState(false);
+  const [isBlocked, setIsBlocked] = React.useState(() => contacts.find(c => c.contact_id === userId)?.fb_cannot_reply === 'blocked');
   const avatarRefreshedRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -88,13 +88,18 @@ export function FBUserProfilePopup({ userId, anchorX, anchorY, contacts, activeA
   const handleToggleBlock = async () => {
     setBlocking(true);
     try {
+      // A refused change answers { success: false } (it does not throw)
       if (isBlocked) {
-        await ipc.fb?.unblockUser({ accountId: activeAccountId, userId });
+        const res = await ipc.fb?.unblockUser({ accountId: activeAccountId, userId });
+        if (!res?.success) throw new Error(res?.error || tr('Không bỏ chặn được trên Messenger'));
         setIsBlocked(false);
+        useChatStore.getState().updateContact(activeAccountId, { contact_id: userId, fb_cannot_reply: '' } as any);
         showNotification(tr('Đã bỏ chặn {{name}}', { name }), 'success');
       } else {
-        await ipc.fb?.blockUser({ accountId: activeAccountId, userId });
+        const res = await ipc.fb?.blockUser({ accountId: activeAccountId, userId });
+        if (!res?.success) throw new Error(res?.error || tr('Không chặn được trên Messenger'));
         setIsBlocked(true);
+        useChatStore.getState().updateContact(activeAccountId, { contact_id: userId, fb_cannot_reply: 'blocked' } as any);
         showNotification(tr('Đã chặn {{name}}', { name }), 'success');
       }
     } catch (e: any) {

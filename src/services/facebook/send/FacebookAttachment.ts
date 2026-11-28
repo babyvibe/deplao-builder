@@ -65,7 +65,9 @@ function buildClosingBoundary(boundary: string): Buffer {
 export async function uploadAttachment(
   dataFB: FBSessionData,
   filePath: string,
-  httpsAgent?: any
+  httpsAgent?: any,
+  /** voiceClip: upload as a Messenger voice clip (played as a voice message, not an audio file). */
+  options?: { voiceClip?: boolean },
 ): Promise<FBAttachmentUploadResult | null> {
   if (!fs.existsSync(filePath)) {
     Logger.error(`[FacebookAttachment] File not found: ${filePath}`);
@@ -93,7 +95,7 @@ export async function uploadAttachment(
   // Build multipart body manually - reliable across all Node.js versions
   const boundary = `----WebKitFormBoundary${Math.random().toString(36).slice(2, 12)}`;
   const parts: Buffer[] = [
-    buildTextPart(boundary, 'voice_clip', 'false'),
+    buildTextPart(boundary, 'voice_clip', options?.voiceClip ? 'true' : 'false'),
     buildTextPart(boundary, '__a', '1'),
     buildTextPart(boundary, '__req', reqId),
     buildTextPart(boundary, 'fb_dtsg', dataFB.fb_dtsg),

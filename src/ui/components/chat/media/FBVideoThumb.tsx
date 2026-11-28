@@ -173,12 +173,14 @@ export default function FBVideoThumb({ videoPath, onPlay, width, height, dimsMsg
 
   const handlePlay = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (opening || !videoPath) return;
-    // Use inline player callback if provided, otherwise fallback to external app
+    if (opening) return;
+    // Use inline player callback if provided (it can also play a remote link, e.g. a Facebook video not downloaded),
+    // otherwise fallback to external app
     if (onPlay) {
       onPlay();
       return;
     }
+    if (!videoPath) return;
     setOpening(true);
     const p = ipc.file?.openPath(videoPath);
     if (p) p.finally(() => setOpening(false)); else setOpening(false);

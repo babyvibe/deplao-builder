@@ -38,6 +38,8 @@ export function VideoMessageBody({ ctx, msg, telegramPostMeta }: VideoMessageBod
     videoCaption = typeof parsed === 'string' ? parsed : (parsed.title || parsed.text || parsed.caption || '');
   } catch { videoCaption = ''; }
   if (!videoCaption && msg.content && !msg.content.startsWith('{')) videoCaption = msg.content;
+  // Facebook rows keep a list label ("🎬 Video", "📎 name") as content: not a caption
+  if (isFacebook(msg.channel) && /^(🎬|📎|🖼️|🎵|🎨)/u.test(videoCaption.trim())) videoCaption = '';
   // Zalo has no local file (e.g. a message synced from the phone) → thumbnail + playback from the CDN,
   // shows "Video đã hết hạn" (Video expired) when Zalo no longer keeps the file
   const videoNode = !videoPath && isZalo(msg.channel)

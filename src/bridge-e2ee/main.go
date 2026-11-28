@@ -153,19 +153,23 @@ func pumpEvents(c *bridge.Client) {
 }
 
 func handle(req *request) {
+	// DEPLAO_ADAPTER: conversation and people actions (deplao_rpc.go).
+	if handleDeplaoRequest(req) {
+		return
+	}
 	switch req.Method {
 	case "hello":
 		ok(req.ID, map[string]interface{}{
 			"protocolVersion": protocolVersion,
 			"bridgeVersion":   bridgeVersion,
-			"capabilities": []string{
+			"capabilities": append([]string{
 				"connectE2EE", "sendMessage", "sendReaction", "sendImage", "sendFile",
 				"sendE2EEMessage", "sendE2EEReaction", "sendE2EESticker", "sendE2EEImage",
 				"sendE2EEVideo", "sendE2EEAudio", "sendE2EEDocument", "downloadE2EEAttachment",
 				"mediaLocalPath", "sendTypingIndicator", "sendE2EETyping", "markRead",
 				"editMessage", "unsendMessage", "editE2EEMessage", "unsendE2EEMessage", "syncHistory", "fetchMessages", "getUserInfo",
 				"createGroup",
-			},
+			}, deplaoCapabilities...),
 			"maxDecodedMediaBytes": maxDecodedMediaBytes,
 		})
 
@@ -450,6 +454,19 @@ func handle(req *request) {
 			fail(req.ID, err)
 			return
 		}
+		// DEPLAO_ADAPTER: localPath media transport for the sticker image.
+		var stickerPath struct {
+			LocalPath string `json:"localPath"`
+		}
+		_ = json.Unmarshal(req.Params, &stickerPath)
+		if len(opts.Data) == 0 && stickerPath.LocalPath != "" {
+			data, err := readAndValidateLocalPath(stickerPath.LocalPath, "sendE2EESticker")
+			if err != nil {
+				fail(req.ID, err)
+				return
+			}
+			opts.Data = data
+		}
 		res, err := client.SendE2EESticker(&opts)
 		if err != nil {
 			fail(req.ID, err)
@@ -467,6 +484,9 @@ func handle(req *request) {
 			ChatJID   string `json:"chatJid"`
 			AudioPath string `json:"audioPath"`
 			MimeType  string `json:"mimeType"`
+			// DEPLAO_ADAPTER: voice notes (push-to-talk) with their length.
+			PTT      bool `json:"ptt"`
+			Duration int  `json:"duration"`
 		}
 		if err := json.Unmarshal(req.Params, &ap); err != nil {
 			fail(req.ID, err)
@@ -485,7 +505,8 @@ func handle(req *request) {
 			ChatJID:  ap.ChatJID,
 			Data:     aData,
 			MimeType: mimeType,
-			PTT:      false,
+			PTT:      ap.PTT,
+			Duration: ap.Duration,
 		})
 		if err != nil {
 			fail(req.ID, err)
@@ -644,9 +665,19 @@ func handle(req *request) {
 		var mrp struct {
 			ThreadID    int64 `json:"threadId"`
 			WatermarkTs int64 `json:"watermarkTs"`
+			// DEPLAO_ADAPTER: 95 for end-to-end encrypted threads.
+			SyncGroup int64 `json:"syncGroup"`
 		}
 		if err := json.Unmarshal(req.Params, &mrp); err != nil {
 			fail(req.ID, err)
+			return
+		}
+		if mrp.SyncGroup > 1 {
+			if err := client.MarkThreadRead(mrp.ThreadID, mrp.WatermarkTs, mrp.SyncGroup); err != nil {
+				fail(req.ID, err)
+				return
+			}
+			ok(req.ID, map[string]interface{}{})
 			return
 		}
 		if err := client.MarkRead(mrp.ThreadID, mrp.WatermarkTs); err != nil {

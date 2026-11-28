@@ -53,6 +53,8 @@ export function myGroupRoleKind(
   return 'member';
 }
 
-export function groupRoleLabel(kind: GroupRoleKind): string {
+export function groupRoleLabel(kind: GroupRoleKind, channel?: string | null): string {
+  // Messenger groups only have administrators (the bubbles say the same, peerStyle.groupRankLabel)
+  if (String(channel || '') === 'facebook') return kind === 'member' ? '' : tr('Quản trị viên');
   return kind === 'owner' ? tr('Trưởng nhóm') : kind === 'admin' ? tr('Phó nhóm') : '';
 }

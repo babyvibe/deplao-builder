@@ -14,6 +14,7 @@ import { getCapability } from '../../../configs/channels/channelConfig';
 import { CHANNELS, buildQuotePayload, extractSentId, markRead, requireOnline, threadTypeNum, unsupported, zaloAuth } from '../channels/ChannelActions';
 import { ChatRouteDeps, loadMessage, resolveAttachment, threadTypeOf } from './chat';
 import { accountParams, scrub, threadParams, threadTypeSchema } from './common';
+import { formatZaloHistoryCursor, parseZaloHistoryCursor } from '../../zalo/zaloGroupHistory';
 import { tr } from '../../../shared/i18n';
 
 const TG_MUTE_FOREVER = 2147483647;
@@ -146,6 +147,8 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 let synced = false;
                 if (acc.online && acc.channel === CHANNELS.TELEGRAM_USER) {
                     synced = await trySync(() => ctx.call('telegramUser:setDialogMute', { accountId: acc.id, chatId: threadId, muteUntil: until === 0 ? TG_MUTE_FOREVER : Math.floor(until / 1000) }));
+                } else if (acc.online && acc.channel === CHANNELS.FACEBOOK) {
+                    synced = await trySync(() => ctx.call('fb:setThreadMute', { accountId: acc.id, threadId, muteUntilMs: until === 0 ? -1 : until }));
                 } else if (acc.online && getCapability(acc.channel as any)?.supportsMuteSync) {
                     synced = await trySync(async () => {
                         const { auth, type } = await zaloThread(ctx, acc, threadId);
@@ -166,6 +169,8 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                 let synced = false;
                 if (acc.online && acc.channel === CHANNELS.TELEGRAM_USER) {
                     synced = await trySync(() => ctx.call('telegramUser:setDialogMute', { accountId: acc.id, chatId: threadId, muteUntil: 0 }));
+                } else if (acc.online && acc.channel === CHANNELS.FACEBOOK) {
+                    synced = await trySync(() => ctx.call('fb:setThreadMute', { accountId: acc.id, threadId, muteUntilMs: 0 }));
                 } else if (acc.online && getCapability(acc.channel as any)?.supportsMuteSync) {
                     synced = await trySync(async () => {
                         const { auth, type } = await zaloThread(ctx, acc, threadId);
@@ -193,6 +198,8 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                         await ctx.call('telegramUser:setDialogArchived', { accountId: acc.id, chatId: threadId, archived: into });
                         await ctx.call('telegramUser:setDialogMute', { accountId: acc.id, chatId: threadId, muteUntil: into ? TG_MUTE_FOREVER : 0 });
                     });
+                } else if (acc.online && acc.channel === CHANNELS.FACEBOOK) {
+                    synced = await trySync(() => ctx.call('fb:setThreadMute', { accountId: acc.id, threadId, muteUntilMs: into ? -1 : 0 }));
                 } else if (acc.online && getCapability(acc.channel as any)?.supportsMuteSync) {
                     synced = await trySync(async () => {
                         const { auth, type } = await zaloThread(ctx, acc, threadId);
@@ -206,16 +213,25 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
         })),
         route({
             method: 'DELETE', path: '/accounts/:accountId/conversations/:threadId', scope: 'chat:manage', tags, operationId: 'deleteConversation',
-            summary: tr('Xoá hội thoại (toàn bộ tin trong Deplao; Zalo xoá cả trên server)'),
-            description: tr('Không thể hoàn tác — bắt buộc `?confirm=true`. Như menu "Xóa hội thoại": Zalo gọi `zalo:deleteChat` theo tin cuối rồi xoá khỏi DB.'),
+            summary: tr('Xoá hội thoại (toàn bộ tin trong Deplao; xoá cả trên Zalo / Messenger khi `delete_on_channel=true`)'),
+            description: tr('Không thể hoàn tác, bắt buộc `?confirm=true`. Như menu "Xóa hội thoại": mặc định chỉ xoá trong Deplao. `delete_on_channel=true` xoá cả trên kênh (Zalo theo tin cuối, Messenger khỏi hộp thư của tài khoản; người kia vẫn còn tin).'),
             params: threadParams,
-            query: s.object({ confirm: s.boolean().default(false).describe(tr('Phải là true')) }),
+            query: s.object({
+                confirm: s.boolean().default(false).describe(tr('Phải là true')),
+                delete_on_channel: s.boolean().default(false).describe(tr('Xoá cả trên Zalo / Messenger (mặc định chỉ xoá trong Deplao)')),
+            }),
             handler: async ctx => {
                 if (!ctx.query.confirm) throw new ApiError(400, 'VALIDATION_ERROR', tr('Thêm ?confirm=true để xác nhận xoá hội thoại'));
                 const acc = await ctx.account(ctx.params.accountId);
                 const threadId = ctx.params.threadId;
                 let channelDeleted = false;
-                if (acc.channel === CHANNELS.ZALO && acc.online) {
+                if (ctx.query.delete_on_channel && acc.channel === CHANNELS.FACEBOOK && acc.online) {
+                    channelDeleted = await trySync(async () => {
+                        const res = await ctx.call('fb:deleteThread', { accountId: acc.id, threadId });
+                        if (res && res.success === false) throw new Error(res.error || 'delete failed');
+                    });
+                }
+                if (ctx.query.delete_on_channel && acc.channel === CHANNELS.ZALO && acc.online) {
                     channelDeleted = await trySync(async () => {
                         const last = (await ctx.call('db:getMessages', { zaloId: acc.id, threadId, limit: 1 }))?.messages?.[0];
                         if (!last) throw new Error('no message');
@@ -235,7 +251,7 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
             summary: tr('Tải tin cũ từ server của kênh vào Deplao'),
             description: [
                 tr('Lưu vào DB rồi đọc bằng `GET …/messages`. Telegram: `before_msg_id` = msg_id cũ nhất bạn đang có để lấy trang cũ hơn.'),
-                tr('Facebook: dùng `next_cursor` của lần trước làm `before_cursor`. Zalo: chỉ nhóm (Zalo không cho tải lịch sử chat 1-1).'),
+                tr('Facebook, nhóm Zalo: dùng `next_cursor` của lần trước làm `before_cursor`. Zalo chỉ tải được nhóm (Zalo không cho tải lịch sử chat 1-1).'),
             ].join(' '),
             params: threadParams,
             body: s.object({
@@ -267,9 +283,15 @@ export function chatExtraRoutes(deps: ChatRouteDeps): RouteDef[] {
                     }
                     case CHANNELS.ZALO: {
                         if ((await threadTypeOf(ctx, acc.id, threadId)) !== 'group') return unsupported(acc, 'tải lịch sử chat 1-1 từ server');
-                        const res = await ctx.call('zalo:getGroupChatHistory', { auth: await zaloAuth(ctx, acc.id), groupId: threadId, count: limit }, { timeoutMs: 120_000 });
+                        const cursor = parseZaloHistoryCursor(ctx.body?.before_cursor);
+                        if (ctx.body?.before_cursor && !cursor) throw new ApiError(400, 'VALIDATION_ERROR', tr('before_cursor của Zalo là next_cursor của lần gọi trước'));
+                        const res = await ctx.call('zalo:getGroupChatHistory', { auth: await zaloAuth(ctx, acc.id), groupId: threadId, count: limit, cursor }, { timeoutMs: 120_000 });
                         if (res?.response?.error) throw new ApiError(502, 'UPSTREAM_ERROR', String(res.response.error));
-                        return { fetched: Number(res?.response?.groupMsgsCount || 0), has_more: false, next_cursor: null };
+                        return {
+                            fetched: Number(res?.response?.groupMsgsCount || 0),
+                            has_more: !!res?.response?.hasMore,
+                            next_cursor: formatZaloHistoryCursor(res?.response?.cursor),
+                        };
                     }
                     default:
                         return unsupported(acc, 'tải lịch sử từ server');

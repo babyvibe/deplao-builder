@@ -108,6 +108,8 @@ interface GroupAvatarProps {
   size?: GroupAvatarSize;
   /** Extra CSS class (e.g. hover:ring-2 ...) */
   className?: string;
+  /** The group photo failed to load (expired link, missing file): the caller may fetch a new one. */
+  onAvatarError?: () => void;
 }
 
 /**
@@ -116,7 +118,7 @@ interface GroupAvatarProps {
  * 2. If not → composite grid from members (2/3/4 tiles)
  * 3. Fallback → the first letter on a purple background
  */
-function GroupAvatar({ avatarUrl, groupInfo, name, id, size = 'md', className = '' }: GroupAvatarProps) {
+function GroupAvatar({ avatarUrl, groupInfo, name, id, size = 'md', className = '', onAvatarError }: GroupAvatarProps) {
   // Remember the broken URL (not a true/false flag) → when the group avatar changes to a new URL, try to show it again
   const [failedAvatarUrl, setFailedAvatarUrl] = useState('');
   const { sizeClass, fallbackText } = SIZE_MAP[size];
@@ -125,7 +127,8 @@ function GroupAvatar({ avatarUrl, groupInfo, name, id, size = 'md', className = 
   // 1. Avatar URL → show the image (convert local path → Boss REST URL if needed)
   const mainAvatarUrl = avatarUrl ? toLocalMediaUrl(avatarUrl) : '';
   if (mainAvatarUrl && mainAvatarUrl !== failedAvatarUrl) {
-    return <img src={mainAvatarUrl} alt="" loading="lazy" decoding="async" className={`${cls} rounded-full object-cover flex-shrink-0`} onError={() => setFailedAvatarUrl(mainAvatarUrl)} />;
+    return <img src={mainAvatarUrl} alt="" loading="lazy" decoding="async" className={`${cls} rounded-full object-cover flex-shrink-0`}
+      onError={() => { setFailedAvatarUrl(mainAvatarUrl); onAvatarError?.(); }} />;
   }
 
   // 2. Composite avatar from the cache, preferring members who have a photo (same as the conversation header),

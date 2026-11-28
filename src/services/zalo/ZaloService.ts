@@ -29,7 +29,8 @@ import {
     GetAllGroupsResponse,
     GetArchivedChatListResponse,
     GetFriendRequestStatusResponse,
-    GetGroupChatHistoryResponse,
+    GetGiphyCategoriesResponse,
+    GetGiphyGifTrendingResponse,
     GetListReminderResponse,
     GetPendingGroupMembersResponse,
     GetPinConversationsResponse,
@@ -45,7 +46,7 @@ import {
     RejectFriendRequestResponse,
     RemoveFriendAliasResponse,
     RemoveReminderResponse,
-    RemoveUserFromGroupResponse, SendBankCardPayload,
+    RemoveUserFromGroupResponse, SearchGiphyGifResponse, SendBankCardPayload,
     SendBankCardResponse,
     SendCardResponse,
     SendSeenEventResponse,
@@ -92,6 +93,8 @@ import {
     hiddenStatus, resetZaloHiddenPin, setZaloConversationHidden, setZaloHiddenPin, syncZaloHidden, unlockZaloHidden, zaloHiddenApiOf,
     type HiddenStatus, type UnlockResult,
 } from "./zaloHiddenConversations";
+import { loadZaloGroupHistory, type ZaloGroupHistoryCursor, type ZaloGroupHistoryResult } from "./zaloGroupHistory";
+import { downloadZaloGif } from "./zaloGif";
 import { tr } from '../../shared/i18n';
 
 
@@ -405,7 +408,8 @@ export default class ZaloService {
             const dest = {
                 data: { msgId, cliMsgId },
                 threadId: String(parsedMessage.threadId || ''),
-                type: parsedMessage.type ?? 0,
+                // zca-js >= 2.3 throws on anything but ThreadType.User / ThreadType.Group (a string "1" too)
+                type: convertThreadType(parsedMessage.type),
             };
             return await this.api.addReaction(Reactions[reaction], dest as any);
         } catch (error: any) {
@@ -559,6 +563,32 @@ export default class ZaloService {
             return await this.api.getStickerCategoryDetail(cateId);
         } catch (error: any) {
             throw new Error("Error getting sticker category detail: " + error.message || error);
+        }
+    }
+
+    // ─── GIF tab of the sticker panel (Giphy through Zalo) ──────────────────
+    public async getGifCategories(): Promise<GetGiphyCategoriesResponse> {
+        if (!this.api) throw new Error("API not initialized");
+        return await this.api.getGiphyCategories(0, 30);
+    }
+
+    /** Trending GIFs when `keyword` is empty, otherwise search results. */
+    public async getGifs(keyword: string, offset: number = 0, limit: number = 30): Promise<GetGiphyGifTrendingResponse | SearchGiphyGifResponse> {
+        if (!this.api) throw new Error("API not initialized");
+        const kw = String(keyword || '').trim().slice(0, 100);
+        const from = Math.max(0, Math.floor(Number(offset)) || 0);
+        const count = Math.min(50, Math.max(1, Math.floor(Number(limit)) || 30));
+        return kw ? await this.api.searchGiphyGif(kw, from, count) : await this.api.getGiphyGifTrending(from, count);
+    }
+
+    /** Send a GIF from the GIF tab: download the first URL that is a real GIF, then send it as a GIF file. */
+    public async sendGif(urls: string[] | string, threadId: string, type: ThreadType = ThreadType.User, quote: any = null): Promise<any> {
+        if (!this.api) throw new Error("API not initialized");
+        const filePath = await downloadZaloGif(urls);
+        try {
+            return await this.sendImage(filePath, String(threadId || ''), convertThreadType(type), undefined, quote);
+        } finally {
+            fs.promises.unlink(filePath).catch(() => {});
         }
     }
 
@@ -1591,20 +1621,14 @@ export default class ZaloService {
     }
 
     /**
-     * Get the message history (group), or return empty (user - not supported in the API)
+     * Get the message history (group), or return empty (user - not supported in the API).
+     * `lastMsgId`: load messages older than this one (the `lastMsgId` of the previous result).
      */
     public async getMessageHistory(threadId: string, type: number, lastMsgId?: string, count?: number): Promise<any> {
         if (!this.api) throw new Error("API not initialized");
-        if (type === 1) {
-            try {
-                return await this.api.getGroupChatHistory(threadId, count ?? 500);
-            } catch (error: any) {
-                // zca-js can throw a SyntaxError when the JSON response is truncated
-                if (error instanceof SyntaxError) {
-                    throw new Error(tr('Không thể tải tin nhắn nhóm (lỗi phản hồi từ Zalo): {{message}}', { message: error.message }));
-                }
-                throw error;
-            }
+        if (Number(type) === 1) {
+            const res = await this.getGroupChatHistory(threadId, count ?? 500, lastMsgId ? { lastMsgId: String(lastMsgId), isOld: 0 } : null);
+            return { groupMsgs: res.groupMsgs, more: res.hasMore ? 1 : 0, lastMsgId: res.cursor?.lastMsgId ?? '', isOld: res.cursor?.isOld ?? 0 };
         }
         return { data: [] };
     }
@@ -1632,14 +1656,17 @@ export default class ZaloService {
         return await this.api.setPinnedConversations(isPin, threadIds, threadType);
     }
 
-    public async getGroupChatHistory(groupId: string, count: number = 500): Promise<GetGroupChatHistoryResponse> {
+    /** Group history through Zalo's cloud message service (pages of 50), older than `from` when given. */
+    public async getGroupChatHistory(groupId: string, count: number = 500, from?: ZaloGroupHistoryCursor | null): Promise<ZaloGroupHistoryResult> {
         if (!this.api) {
             throw new Error("API not initialized. Please ensure you've called initialize() first.");
         }
 
+        const api = this.api;
         try {
-            return await this.api.getGroupChatHistory(groupId, count);
+            return await loadZaloGroupHistory((id, lastMsgId, options) => api.getCloudMessage(id, lastMsgId, options), groupId, count, from);
         } catch (error: any) {
+            // zca-js can throw a SyntaxError when the JSON response is truncated
             if (error instanceof SyntaxError) {
                 throw new Error(tr('Không thể tải tin nhắn nhóm (lỗi phản hồi từ Zalo): {{message}}', { message: error.message }));
             }

@@ -22,6 +22,7 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'event:messageEdited',
   'event:messagesRepaired', // old messages fetched again from Telegram (not supported yet → readable, channel posts drop the wrong topic)
   'event:contactPreview', // conversation preview changes after an old message is edited
+  'event:messagesSynced', // a bulk sync (Zalo phone, Facebook history, Telegram) finished on Boss → reload the list + the open conversation
   'event:messagesDeleted',
   'event:undo',
   'event:delete',
@@ -60,6 +61,8 @@ export const RELAY_CHANNELS: readonly string[] = Object.freeze([
   'fb:onGroupEvent',
   'fb:onContactUpdate',
   'fb:onConnectionStatus',
+  'fb:onThreadsSynced', // conversations saved by the bridge inbox / history sync → reload the list
+  'fb:onMessagePatch', // a stored Facebook message changed (poll votes, refreshed media links)
   // ─── Conversation settings / labels / quick messages / CRM ─────────────────────
   'db:localLabelChanged',
   'db:localLabelThreadChanged',
@@ -137,11 +140,11 @@ export const BOSS_ONLY_CHANNELS: Readonly<Record<string, string>> = Object.freez
   'qr:update': 'QR đăng nhập tài khoản đang thêm trên máy Boss',
   'relay:employeeListUpdate': 'Danh sách nhân viên đang kết nối — màn hình quản lý relay của Boss',
   'relay:tunnelStatusUpdate': 'Trạng thái tunnel của Boss; nhân viên nhận địa chỉ mới qua relay:bossUrlChanged',
-  'event:telegramSync': 'Tiến độ đồng bộ lịch sử Telegram do Boss chạy; kết quả tới nhân viên qua db:unreadChanged',
+  'event:telegramSync': 'Tiến độ đồng bộ lịch sử Telegram do Boss chạy; xong thì nhân viên tải lại qua event:messagesSynced',
   // To notify the employee assigned the account: move to RELAY_CHANNELS + EPHEMERAL (the ring state is not replayed during catch-up)
   'event:telegramCall': 'Báo cuộc gọi Telegram đến (đang làm) — Deplao không nghe máy được, chỉ báo trên máy Boss / điện thoại',
-  'event:mobileSync': 'Tiến độ "Đồng bộ từ điện thoại" chạy trên máy Boss',
-  'event:fbHistorySync': 'Tiến độ "Đồng bộ tin nhắn Facebook" chạy trên máy Boss; tin đã lưu tới nhân viên qua đọc DB của Boss',
+  'event:mobileSync': 'Tiến độ "Đồng bộ từ điện thoại" chạy trên máy Boss; xong thì nhân viên tải lại qua event:messagesSynced',
+  'event:fbHistorySync': 'Tiến độ "Đồng bộ tin nhắn Facebook" chạy trên máy Boss; xong thì nhân viên tải lại qua event:messagesSynced',
   'event:mediaProgress': 'Nhịp tiến độ tải video ("2.1 / 5.0 MB") trên máy Boss đang tải; file xong tới nhân viên qua event:localPath',
   'event:telegramBotEditedMessage': 'Chỉ làm trigger workflow trên Boss (renderer không nghe)',
   'event:telegramBotJoinRequest': 'Chỉ làm trigger workflow trên Boss (renderer không nghe)',

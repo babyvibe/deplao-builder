@@ -24,15 +24,14 @@ import { getTelegramMessagePreview } from '../messages/TelegramMessagePreview';
 import { isTelegramBotToken } from '../../../shared/accounts/storedCredential';
 import { telegramSentTimestamp } from '../../../utils/time/serverClock';
 import { tr } from '../../../shared/i18n';
+import { isLocalMediaUrl, localMediaUrlToPath } from '../../../shared/media/localMediaUrl';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const REQUEST_TIMEOUT = 30000;
 
 /** Renderer may pass Electron's local-media:// URL. The Bot API needs a real file path. */
 function resolveBotUploadPath(filePath: string): string {
-  let candidate = filePath;
-  if (candidate.startsWith('local-media:///')) candidate = candidate.replace('local-media:///', '');
-  else if (candidate.startsWith('local-media://')) candidate = candidate.replace('local-media://', '');
+  const candidate = isLocalMediaUrl(filePath) ? localMediaUrlToPath(filePath, { windows: process.platform === 'win32' }) : filePath;
   // DB local_paths may be relative to the configured storage folder.
   return FileStorageService.resolveAbsolutePath(candidate);
 }

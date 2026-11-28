@@ -19,6 +19,7 @@ import GroupAvatar from '../../common/avatars/GroupAvatar';
 import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { getCapability, channelSupports, type Channel } from '../../../../configs/channels/channelConfig';
 import { CHANNEL, isZalo as isZaloCh, isNonZalo, isFacebook, isTelegram as isTelegramCh, resolveChannel } from '@/lib/channels/channelHelper';
+import { syncFacebookMute } from '@/lib/chat/facebook/facebookThreadSync';
 import { fetchContactInfo } from '@/hooks/chat/useZaloEvents';
 import { BellIcon, BellOffIcon, CloudIcon, GiftIcon, MapPinIcon, PhoneIcon, PinIcon, UserIcon, UsersIcon } from '@/components/common/icons';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
@@ -300,6 +301,10 @@ function UserConversationInfo() {
     setMuted(activeAccountId, activeThreadId, until);
     showNotification(tr('Đã tắt thông báo'), 'success');
     setMuteDropdownOpen(false);
+    if (isFacebook(effectiveChannel)) {
+      syncFacebookMute(activeAccountId, activeThreadId, true, until).then(err => { if (err) showNotification(err, 'error'); });
+      return;
+    }
     // Call the sync API on the server (fire-and-forget): Zalo only
     if (channelCap.supportsMuteSync && isZaloCh(effectiveChannel)) {
       const auth = getAuth();
@@ -314,6 +319,10 @@ function UserConversationInfo() {
     if (!activeAccountId || !activeThreadId) return;
     clearMuted(activeAccountId, activeThreadId);
     showNotification(tr('Đã bật thông báo'), 'success');
+    if (isFacebook(effectiveChannel)) {
+      syncFacebookMute(activeAccountId, activeThreadId, false).then(err => { if (err) showNotification(err, 'error'); });
+      return;
+    }
     // Call the sync API on the server (fire-and-forget): Zalo only
     if (channelCap.supportsMuteSync && isZaloCh(effectiveChannel)) {
       const auth = getAuth();

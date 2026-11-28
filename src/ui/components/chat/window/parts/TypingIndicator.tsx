@@ -46,7 +46,7 @@ export function TypingIndicator({ activeAccountId, activeThreadId, contactList }
   return (
     <div className="flex items-center gap-1.5 px-4 py-1.5 flex-shrink-0 pointer-events-none">
       {firstAvatar ? (
-        <img src={firstAvatar} className="w-4 h-4 rounded-full object-cover flex-shrink-0 opacity-80" alt="" />
+        <img src={toLocalMediaUrl(firstAvatar)} className="w-4 h-4 rounded-full object-cover flex-shrink-0 opacity-80" alt="" />
       ) : (
         <PeerInitials id={firstUid} name={resolveName(firstUid)} single className="w-4 h-4 text-[9px] opacity-80" />
       )}

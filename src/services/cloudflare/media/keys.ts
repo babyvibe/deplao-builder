@@ -11,6 +11,7 @@
 import * as path from 'path';
 import { ALL_SCOPE, CloudScope, scopeIncludesAccount } from '../../../shared/cloud/cloudContracts';
 import { tr } from '../../../shared/i18n';
+import { isLocalMediaUrl, localMediaUrlToPath } from '../../../shared/media/localMediaUrl';
 
 export function toSlash(p: string): string {
     return String(p).replace(/\\/g, '/');
@@ -137,7 +138,7 @@ export function resolveStoredLocalPath(value: string, mediaRoot: string): string
     if (typeof value !== 'string' || !mediaRoot) return null;
     let v = value.trim();
     if (!v || /^(https?|data|blob):/i.test(v)) return null;
-    v = v.replace(/^local-media:\/+/i, '');
+    if (isLocalMediaUrl(v)) v = localMediaUrlToPath(v, { windows: process.platform === 'win32' });
     const s = toSlash(v);
     const isAbs = path.isAbsolute(v) || /^[A-Za-z]:\//.test(s) || s.startsWith('/');
     if (!isAbs) {

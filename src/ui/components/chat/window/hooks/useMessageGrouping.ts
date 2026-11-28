@@ -5,7 +5,7 @@
 import React from 'react';
 import { getDayStartIds } from '@/lib/chat/messages/daySeparators';
 import {
-  buildMsgTypeCache, groupMediaAlbums, groupStickerRuns, indexMessagesById, pollDuplicateIds,
+  buildMsgTypeCache, facebookPollCardRows, groupMediaAlbums, groupStickerRuns, indexMessagesById, pollDuplicateIds,
 } from '@/lib/chat/messages/messageGrouping';
 
 export function useMessageGrouping(msgs: any[]) {
@@ -15,6 +15,8 @@ export function useMessageGrouping(msgs: any[]) {
 
   // DEDUP poll messages: several vote events with the same pollId → show only 1 bubble (the latest)
   const pollSkipIds = React.useMemo(() => pollDuplicateIds(msgs), [msgs]);
+  // Messenger: the newest vote line of each poll shows the poll card again (vote line msg_id → poll card msg_id)
+  const fbPollCardRows = React.useMemo(() => facebookPollCardRows(msgs), [msgs]);
 
   // ─── Group consecutive stickers from the same sender within 30 minutes ────────────
   const { groupedStickerFirstMsgs, groupedStickerSkipIds } = React.useMemo(
@@ -50,7 +52,7 @@ export function useMessageGrouping(msgs: any[]) {
       .join(' ');
 
   return {
-    groupedFirstMsgs, groupedSkipIds, pollSkipIds, groupedStickerFirstMsgs, groupedStickerSkipIds,
+    groupedFirstMsgs, groupedSkipIds, pollSkipIds, fbPollCardRows, groupedStickerFirstMsgs, groupedStickerSkipIds,
     dayStartIds, msgIndexById, findMsgById, msgTypeCache, getRowMsgIds,
   };
 }

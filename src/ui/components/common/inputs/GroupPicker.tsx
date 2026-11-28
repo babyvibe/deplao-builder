@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { useAppStore } from '@/store/app/appStore';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
@@ -197,7 +198,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
             isLight ? 'bg-gray-50' : 'bg-background/50'
           }`}>
             {selectedGroup.avatar ? (
-              <img src={selectedGroup.avatar} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+              <img src={toLocalMediaUrl(selectedGroup.avatar)} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
             ) : (
               <div className="w-7 h-7 rounded-full bg-purple-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
                 {(selectedGroup.name || 'G').charAt(0).toUpperCase()}
@@ -326,7 +327,7 @@ const GroupPicker: React.FC<GroupPickerProps> = ({
                 }`}
               >
                 {group.avatar ? (
-                  <img src={group.avatar} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                  <img src={toLocalMediaUrl(group.avatar)} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
                 ) : (
                   <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
                     {(group.name || 'G').charAt(0).toUpperCase()}

@@ -56,7 +56,7 @@ export function MessagingPanel() {
       <Card>
         <SectionTitle>{trx('<0/> Hộp thư tập trung - Danh sách hội thoại', { 0: <ChatIcon className="w-4 h-4 inline" /> })}</SectionTitle>
         <Paragraph>
-          {tr('Mục Chat gom hội thoại của mọi tài khoản Zalo, Facebook (Messenger), Telegram cá nhân và Telegram Bot. Muốn xử lý nhiều tài khoản trong cùng một danh sách, bật chế độ Gộp trang (xem mục Đa tài khoản).')}
+          {tr('Mục Chat gom hội thoại của mọi tài khoản Zalo, Facebook Messenger, Telegram cá nhân và Telegram Bot. Muốn xử lý nhiều tài khoản trong cùng một danh sách, bật chế độ Gộp trang (xem mục Đa tài khoản).')}
         </Paragraph>
         <BulletList items={[
           tr('{{v1}} Tất cả · Chưa đọc · Nhãn (Nhãn Local hoặc Nhãn Zalo; chọn nhiều nhãn theo kiểu "Tất cả nhãn đã chọn" hoặc "Có chứa 1 trong số nhãn"). Bấm {{v2}} là bỏ mọi bộ lọc đang bật (kể cả các bộ lọc của menu ⋮) và về danh sách đầy đủ.', { v1: b(tr('Bộ lọc:')), v2: b(tr('Tất cả')) }),
@@ -225,7 +225,7 @@ export function MessagingPanel() {
           tr('Facebook: hội thoại mã hoá đầu cuối không tải được tin cũ (Facebook không cho thiết bị mới đọc) — chỉ có tin nhận khi Deplao đang chạy.'),
           tr('Zalo: ảnh / video cũ có thể đã hết hạn trên máy chủ Zalo và không xem lại được.'),
           tr('Telegram Bot: không có trạng thái "đã đọc", và Telegram không cho bot tải lại lịch sử chat cũ.'),
-          tr('Xóa hội thoại / Xoá lịch sử trò chuyện trong Deplao chỉ xoá trên máy này, không xoá trên Zalo, Facebook, Telegram.'),
+          tr('Xóa hội thoại / Xoá lịch sử trò chuyện trong Deplao chỉ xoá trên máy này. Muốn xóa cả trên Zalo hoặc Messenger thì tích ô "Xóa cả trên ..." khi xóa hội thoại.'),
         ]} />
       </Card>
     </div>

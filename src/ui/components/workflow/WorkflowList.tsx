@@ -7,7 +7,7 @@ import { useAccountStore } from '@/store/accounts/accountStore';
 import { v4 as uuidv4 } from 'uuid';
 import { showConfirm } from '../common/ConfirmDialog';
 import PageLoading from '../common/PageLoading';
-import { FacebookIcon, ZaloIcon, TelegramIcon } from '../common/avatars/ChannelBadge';
+import { MessengerLogo, ZaloIcon, TelegramIcon, MESSENGER_GRADIENT } from '../common/avatars/ChannelBadge';
 import type { Channel } from '../../../configs/channels/channelConfig';
 import { getChannelColor, normalizeChannel, getChannelLabel } from '../../../configs/channels/channelConfig';
 import { ChatIcon, HomeIcon, LightningIcon, PackageIcon, PlayIcon, SearchIcon, SmartphoneIcon, TagIcon, UsersIcon } from '@/components/common/icons';
@@ -76,11 +76,11 @@ function CreateWorkflowChannelModal({
               onClick={() => onSelect('facebook')}
               className="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 border-input hover:border-blue-500 hover:bg-blue-500/10 bg-card transition-all group"
             >
-              <div className="w-14 h-14 rounded-full bg-[#1877F2]/20 flex items-center justify-center group-hover:bg-[#1877F2]/30 transition-colors">
-                <FacebookIcon size={32} />
+              <div className="w-14 h-14 rounded-full bg-[#A033FF]/15 flex items-center justify-center group-hover:bg-[#A033FF]/25 transition-colors">
+                <MessengerLogo size={32} />
               </div>
               <div className="text-center">
-                <p className="text-foreground font-semibold text-sm">Facebook</p>
+                <p className="text-foreground font-semibold text-sm">Facebook Messenger</p>
                 <p className="text-muted-foreground text-xs mt-0.5">{tr('Tạo workflow cho Facebook')}</p>
               </div>
             </button>
@@ -665,7 +665,7 @@ function ChannelFilterButton({ value, onChange }: {
   const options: { key: 'all' | Channel; label: string }[] = [
     { key: 'all', label: tr('Tất cả kênh') },
     { key: CHANNEL.ZALO, label: 'Zalo' },
-    { key: CHANNEL.FACEBOOK, label: 'Facebook' },
+    { key: CHANNEL.FACEBOOK, label: 'Facebook Messenger' },
     { key: CHANNEL.TELEGRAM_USER, label: tr('Telegram (Cá nhân)') },
     { key: CHANNEL.TELEGRAM_BOT, label: 'Telegram (Bot)' },
   ];
@@ -703,7 +703,7 @@ function ChannelFilterButton({ value, onChange }: {
               }`}
             >
               {opt.key === CHANNEL.ZALO && <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />}
-              {opt.key === CHANNEL.FACEBOOK && <span className="w-2 h-2 rounded-full bg-[#1877F2] flex-shrink-0" />}
+              {opt.key === CHANNEL.FACEBOOK && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: MESSENGER_GRADIENT }} />}
               {opt.key === 'all' && (
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0">
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>

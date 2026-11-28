@@ -10,6 +10,7 @@
 import React from 'react';
 import { outgoingStatusLabel, type OutgoingStatus } from '@/lib/chat/messages/messageStatus';
 import { ZALO_TTL_EXPIRED_LABEL, isZaloTtlExpired, zaloAutoDeleteLabel, zaloTtlExpiresAt } from '../../../../shared/zalo/zaloAutoDelete';
+import { disappearingLabel } from '../../../../shared/facebook/facebookDisappearing';
 import { tr, appLocale } from '../../../../shared/i18n';
 
 /** Status of MY sent message being drawn (ChatWindow provides it per message); null = no tick drawn (received messages / channel does not support it). */
@@ -17,6 +18,9 @@ export const MessageStatusContext = React.createContext<OutgoingStatus | null>(n
 
 /** Zalo self-delete timer for the message being drawn (ms, ZL-05); 0 = none. Deplao does not delete messages by TTL, it only shows the clock. */
 export const MessageTtlContext = React.createContext<number>(0);
+
+/** Channel of the message being drawn: the clock names the platform that deletes it ('facebook' = Messenger, otherwise Zalo). */
+export const MessageTtlChannelContext = React.createContext<string>('');
 
 /**
  * The message row draws the send time itself, on the last line of the frame (Telegram reaction chips): the content's own time
@@ -47,10 +51,15 @@ export function useZaloTtlExpired(sentAt?: number | string | null, ttl?: number 
 export function TtlMark({ ttl, sentAt, className = '' }: { ttl?: number | null; sentAt?: number | string | null; className?: string }) {
   const value = Number(ttl) || 0;
   const expired = useZaloTtlExpired(sentAt, value);
+  const messenger = React.useContext(MessageTtlChannelContext) === 'facebook';
   if (value <= 0) return null;
-  const label = expired
-    ? tr('{{ZALO_TTL_EXPIRED_LABEL}} (sau {{v1}}) — Deplao vẫn giữ tin này trên máy', { ZALO_TTL_EXPIRED_LABEL, v1: zaloAutoDeleteLabel(value) })
-    : tr('Zalo tự xoá tin này sau {{v1}} — Deplao vẫn giữ trên máy này', { v1: zaloAutoDeleteLabel(value) });
+  const label = messenger
+    ? (expired
+      ? tr('Đã tự xóa trên Messenger (sau {{v1}}). Deplao vẫn giữ tin này trên máy này', { v1: disappearingLabel(value) })
+      : tr('Messenger tự xóa tin này sau {{v1}}. Deplao vẫn giữ trên máy này', { v1: disappearingLabel(value) }))
+    : expired
+      ? tr('{{ZALO_TTL_EXPIRED_LABEL}} (sau {{v1}}) — Deplao vẫn giữ tin này trên máy', { ZALO_TTL_EXPIRED_LABEL, v1: zaloAutoDeleteLabel(value) })
+      : tr('Zalo tự xoá tin này sau {{v1}} — Deplao vẫn giữ trên máy này', { v1: zaloAutoDeleteLabel(value) });
   return (
     <svg viewBox="0 0 12 12" width="10" height="10" aria-label={label} className={`inline-block flex-shrink-0 ${className}`}
       fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
@@ -65,7 +74,16 @@ export function TtlMark({ ttl, sentAt, className = '' }: { ttl?: number | null; 
 /** "(đã tự xoá trên Zalo)" (deleted on Zalo) after the text of a message past its self-delete time, like "(đã chỉnh sửa)" (edited). */
 export function TtlExpiredNote({ ttl, sentAt }: { ttl?: number | null; sentAt?: number | string | null }) {
   const expired = useZaloTtlExpired(sentAt, ttl);
+  const messenger = React.useContext(MessageTtlChannelContext) === 'facebook';
   if (!expired) return null;
+  if (messenger) {
+    return (
+      <span className="ml-1 text-[10px] opacity-60 select-none font-normal"
+        title={tr('Messenger đã xóa tin này theo hẹn tự hủy; Deplao vẫn giữ trên máy này')}>
+        ({tr('đã tự xóa trên Messenger')})
+      </span>
+    );
+  }
   return (
     <span className="ml-1 text-[10px] opacity-60 select-none font-normal"
       title={tr('Zalo đã xoá tin này trên điện thoại và Zalo PC theo hẹn tự xoá; Deplao vẫn giữ trên máy này')}>

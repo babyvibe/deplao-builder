@@ -121,6 +121,20 @@ export function useMediaViewers(msgsRef: React.MutableRefObject<any[]>, activeTh
       duration = params.duration ? Math.round(params.duration / 1000) : 0;
     } catch {}
 
+    // Facebook keeps the CDN link in attachments (it can expire; the player then shows its own error)
+    if (!localPath && !remoteUrl && isFacebook(msg.channel)) {
+      try {
+        const atts = typeof msg.attachments === 'string' ? JSON.parse(msg.attachments || '[]') : (msg.attachments || []);
+        const att = Array.isArray(atts) ? atts.find((a: any) => a?.url) : null;
+        if (att) {
+          remoteUrl = String(att.url);
+          thumbUrl = thumbUrl || String(att.previewUrl || att.thumbnailUrl || '');
+          width = width || Number(att.width) || 0;
+          height = height || Number(att.height) || 0;
+        }
+      } catch {}
+    }
+
     if (!localPath && !remoteUrl) return;
 
     setVideoPlayerState({

@@ -122,7 +122,7 @@ function progressLabel(step: RestoreProgress['step'], label: string): string {
 
 const CHANNEL_INFO: Record<string, { label: string; how: string }> = {
   zalo: { label: 'Zalo', how: tr('Cần đăng nhập lại bằng mã QR') },
-  facebook: { label: 'Facebook', how: tr('Cần đăng nhập lại tài khoản Facebook') },
+  facebook: { label: 'Facebook Messenger', how: tr('Cần đăng nhập lại tài khoản Facebook') },
   telegram_user: { label: 'Telegram', how: tr('Cần đăng nhập lại bằng số điện thoại') },
   telegram_bot: { label: 'Telegram bot', how: tr('Cần dán lại token bot') },
 };

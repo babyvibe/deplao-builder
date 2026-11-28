@@ -711,7 +711,7 @@ export default function TelegramPostDiscussion({ accountId, channelId, postId, o
       return { boxed: false, node: <MediaBubble msg={comment} onView={openImage} isSent={isSent} /> };
     }
     if (isFileType(type, comment.content, typeof comment.attachments === 'string' ? comment.attachments : undefined) || type === 'file') {
-      return { boxed: false, node: <FileBubble msg={comment} isSent={isSent} /> };
+      return { boxed: false, node: <FileBubble msg={comment} isSent={isSent} onOpenImage={(image) => openImages([image], 0)} /> };
     }
     return {
       boxed: true,

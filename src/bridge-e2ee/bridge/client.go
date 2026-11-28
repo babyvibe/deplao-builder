@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -31,6 +32,7 @@ import (
 
 	"go.mau.fi/mautrix-meta/pkg/messagix"
 	"go.mau.fi/mautrix-meta/pkg/messagix/cookies"
+	"go.mau.fi/mautrix-meta/pkg/messagix/securehistory"
 	"go.mau.fi/mautrix-meta/pkg/messagix/table"
 	"go.mau.fi/mautrix-meta/pkg/messagix/types"
 )
@@ -78,6 +80,22 @@ type Client struct {
 	// DEPLAO_ADAPTER: per-thread history requests waiting for their upsert page (history.go).
 	historyMu         sync.Mutex
 	historyCollectors map[int64]*historyCollector
+	// DEPLAO_ADAPTER: skip raw debug events (see handleEvent) and the account
+	// proxy, also used by the encrypted socket.
+	quietRaw bool
+	proxyURL string
+	// DEPLAO_ADAPTER: secure history device unlocked with the Messenger PIN
+	// (deplao_history_pin.go); guarded by historyMu.
+	historyDevice *securehistory.Device
+	// DEPLAO_ADAPTER: threads whose full info was requested in this run (deplao_events.go).
+	requestedThreadInfo sync.Map
+	// DEPLAO_ADAPTER: WhatsApp presence Deplao wants for encrypted chats
+	// (deplao_actions.go), sent again after the encrypted socket reconnects.
+	e2eeAvailable atomic.Bool
+	// DEPLAO_ADAPTER: Facebook thread keys of encrypted chats and the
+	// disappearing timer of each encrypted chat (deplao_threads.go).
+	hybrid     hybridThreads
+	chatTimers sync.Map
 }
 
 // ClientConfig for creating a new client
@@ -88,6 +106,10 @@ type ClientConfig struct {
 	DeviceData     string            `json:"deviceData,omitempty"`     // JSON string of device data (optional, takes priority over DevicePath)
 	E2EEMemoryOnly bool              `json:"e2eeMemoryOnly,omitempty"` // If true, E2EE state is stored in memory only (no file, no events)
 	LogLevel       string            `json:"logLevel"`
+	// DEPLAO_ADAPTER: account proxy (http, https or socks5 URL) for the
+	// Messenger and encrypted sockets; RawEvents forces raw debug events.
+	Proxy     string `json:"proxy,omitempty"`
+	RawEvents bool   `json:"rawEvents,omitempty"`
 }
 
 type e2eeConnectOperations struct {
@@ -148,6 +170,13 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 	msgClient := messagix.NewClient(cks, logger, &messagix.Config{
 		ClientSettings: exhttp.ClientSettings{},
 	})
+	// DEPLAO_ADAPTER: route Messenger traffic through the account proxy.
+	proxyURL := strings.TrimSpace(cfg.Proxy)
+	if proxyURL != "" {
+		if err := msgClient.GetHTTP().SetProxy(proxyURL); err != nil {
+			return nil, fmt.Errorf("invalid proxy: %w", err)
+		}
+	}
 
 	// Create device store
 	var deviceStore *DeviceStore
@@ -191,6 +220,8 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 		threadCache:       make(map[int64]*Thread),
 		recentUnreactions: make(map[string]int64),
 		recentMessages:    make(map[string]recentMessageEvent),
+		quietRaw:          !cfg.RawEvents && cfg.LogLevel != "debug" && cfg.LogLevel != "trace",
+		proxyURL:          proxyURL,
 	}
 
 	// Electron uses either DeviceData or an empty DevicePath with safeStorage.
@@ -287,6 +318,9 @@ func (c *Client) collectInitialData(initialTable *table.LSTable) *InitialData {
 		c.cacheThread(thread)
 		data.Threads = append(data.Threads, thread)
 	}
+	// DEPLAO_ADAPTER: group members and people of the page (deplao_events.go).
+	data.Participants = c.participantsOf(initialTable)
+	data.People = peopleOf(initialTable)
 
 	upsert, insert := initialTable.WrapMessages()
 	// DEPLAO_ADAPTER: CTA + carousel rows for template cards (xma.go).
@@ -330,7 +364,20 @@ func (c *Client) ConnectE2EE() error {
 			deviceID := c.DeviceStore.Device.ID
 			return deviceID == nil || deviceID.User == "" || deviceID.Device == 0
 		},
-		prepare: c.Messagix.PrepareE2EEClient,
+		prepare: func() (*whatsmeow.Client, error) {
+			e2eeClient, err := c.Messagix.PrepareE2EEClient()
+			// DEPLAO_ADAPTER: the encrypted socket uses the account proxy too.
+			if err == nil && e2eeClient != nil && c.proxyURL != "" {
+				if proxyErr := e2eeClient.SetProxyAddress(c.proxyURL); proxyErr != nil {
+					return nil, fmt.Errorf("invalid proxy for encrypted chats: %w", proxyErr)
+				}
+			}
+			// DEPLAO_ADAPTER: messages whatsmeow drops are reported (deplao_diagnostics.go).
+			if err == nil {
+				c.watchE2EEDrops(e2eeClient)
+			}
+			return e2eeClient, err
+		},
 		register: func() error {
 			return c.Messagix.RegisterE2EE(c.ctx, c.FBID)
 		},
@@ -1465,6 +1512,12 @@ func convertThread(t *table.LSDeleteThenInsertThread) *Thread {
 		Name:                    t.ThreadName,
 		LastActivityTimestampMs: t.LastActivityTimestampMs,
 		Snippet:                 t.Snippet,
+		// DEPLAO_ADAPTER: see Thread.
+		FolderName:       t.FolderName,
+		ParentThreadKey:  t.ParentThreadKey,
+		PictureURL:       firstNonEmpty(t.ThreadPictureUrl, t.ThreadPictureUrlFallback),
+		MuteExpireTimeMs: t.MuteExpireTimeMs,
+		IsMessageRequest: t.FolderName == FolderPending,
 	}
 }
 

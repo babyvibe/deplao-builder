@@ -11,7 +11,10 @@ import { resolveThreadKind } from '../FacebookThreadKind';
 import { normalizeChatJid } from '../FacebookUtils';
 import DatabaseService from '../../database/DatabaseService';
 import EventBroadcaster from '../../event/EventBroadcaster';
+import { prepareM4aVoiceNote, prepareOggVoiceNote, removeConverted } from '../../media/voiceNotes';
+import { mentionAttachments } from '../../../shared/facebook/facebookSpecialMessages';
 import FileStorageService from '../../file/FileStorageService';
+import { isE2EEServerRejection, isNormalSendRejection } from './facebookSendFallback';
 import Logger from '../../../utils/Logger';
 import { tr } from '../../../shared/i18n';
 
@@ -30,6 +33,8 @@ export interface FBSendCommonParams {
 
 export interface FBSendTextParams extends FBSendCommonParams {
   body: string;
+  /** @mentions inside body (group messages). */
+  mentions?: Array<{ userId: string; offset: number; length: number }>;
 }
 
 export interface FBSendResult {
@@ -127,6 +132,8 @@ export class FacebookSendService {
           // second DB lookup and persistence below stays consistent.
           typeChat: isUserMessage ? 'user' : null,
           replyToMessageId: params.replyToMessageId,
+          // @mentions only exist in groups (an encrypted 1:1 has nobody to mention)
+          ...(!isUserMessage && params.mentions?.length ? { mentions: params.mentions } : {}),
         } as any),
         new Promise<any>((_, reject) =>
           setTimeout(() => reject(new Error(`Gửi tin nhắn timeout sau ${SEND_TIMEOUT_MS / 1000}s`)), SEND_TIMEOUT_MS)
@@ -151,6 +158,7 @@ export class FacebookSendService {
         type: 'text',
         isUserMessage,
         replyToMessageId: params.replyToMessageId,
+        ...(!isUserMessage && params.mentions?.length ? { attachments: JSON.stringify(mentionAttachments(params.mentions)) } : {}),
       });
     }
 
@@ -166,12 +174,13 @@ export class FacebookSendService {
 
   /**
    * Send an attachment (image/video/audio/file) with the correct route matrix:
-   * - user → E2EE bridge (sendE2EEImage/Video/Audio/File)
-   * - group → upload + REST send
+   * - user → E2EE bridge (sendE2EEImage/Video/Audio/File), unless the 1:1 is known as a normal chat
+   * - group / known normal 1:1 → upload + REST send
    * - unknown → structured error
    *
-   * NO fallback between routes. If E2EE fails → return an error.
-   * If REST fails → return an error.
+   * A 1:1 tries the other way once only after a clear refusal (send/facebookSendFallback.ts): Messenger's server refuses the
+   * E2EE send with an error code → upload + normal send; Facebook refuses the normal send of a known normal 1:1 → the E2EE send.
+   * The way that went through is remembered. Timeouts / lost connections are never sent the other way.
    */
   static async sendAttachment(params: {
     accountId: string;
@@ -181,6 +190,8 @@ export class FacebookSendService {
     typeChat?: 'user' | null;
     fileType?: 'image' | 'video' | 'audio' | 'file';
     replyToMessageId?: string;
+    /** In-app voice recording: sent as a voice message (OGG / Opus in encrypted chats, M4A voice clip otherwise). */
+    voice?: boolean;
   }): Promise<FBSendResult> {
     const accountId = FacebookSendService.resolveAccountId(params.accountId);
     const threadId = String(params.threadId);
@@ -240,6 +251,62 @@ export class FacebookSendService {
     const attachType: FBAttachmentKind = params.fileType || inferredType;
     const service = await FacebookSendService.getService(accountId);
 
+    /** E2EE send of the file to the 1:1 (voice recording: OGG / Opus voice message). Never throws. */
+    const sendEncrypted = async (): Promise<any> => {
+      const chatJid = normalizeChatJid(threadId);
+      try {
+        if (attachType === 'image') return await service.sendE2EEImage(chatJid, params.filePath, params.body);
+        if (attachType === 'video') return await service.sendE2EEVideo(chatJid, params.filePath, params.body);
+        if (attachType === 'audio' && params.voice) {
+          const note = await prepareOggVoiceNote(params.filePath);
+          try {
+            return await service.sendE2EEAudio(chatJid, note.path, note.converted ? note.mimeType : undefined, {
+              ptt: true, durationSec: note.durationSec,
+            });
+          } finally {
+            removeConverted(note);
+          }
+        }
+        if (attachType === 'audio') return await service.sendE2EEAudio(chatJid, params.filePath);
+        return await service.sendE2EEFile(chatJid, params.filePath, fileName);
+      } catch (err: any) {
+        return { success: false, error: `E2EE send failed: ${err.message}` };
+      }
+    };
+    /** Save the E2EE-sent file (a copy on this machine) to the DB + emit to the UI. */
+    const persistEncrypted = async (result: { messageId: string; timestamp?: number }) => {
+      const fbSenderId = service.getRealFacebookId() || accountId;
+      let localRelPath: string | undefined;
+      try {
+        const fs = require('fs');
+        const buffer = fs.readFileSync(params.filePath);
+        const ext = require('path').extname(fileName) || '.bin';
+        const savedName = `sent_${result.messageId.slice(-8)}_${Date.now()}${ext}`;
+        const absPath = await FileStorageService.saveBuffer(fbSenderId, buffer, savedName);
+        localRelPath = FileStorageService.toRelativePath(absPath);
+      } catch {}
+
+      await FacebookSendService.persistSentMessage({
+        accountId,
+        threadId,
+        messageId: result.messageId,
+        body: params.body || null,
+        fbSenderId,
+        timestamp: result.timestamp || Date.now(),
+        type: attachType,
+        isUserMessage: true,
+        replyToMessageId: params.replyToMessageId,
+        attachments: JSON.stringify([{
+          type: attachType,
+          name: fileName,
+          ...(localRelPath ? { localPath: localRelPath } : {}),
+        }]),
+        localPath: localRelPath,
+      });
+    };
+    /** Error of Messenger's server when it refused the E2EE send ('' = not refused). */
+    let refusedEncrypted = '';
+
     // ═════════════════════════════════════════════════════════════════════
     // USER ROUTING — E2EE, unless this session has already established that
     // this particular 1:1 is a normal REST conversation.
@@ -255,67 +322,38 @@ export class FacebookSendService {
         };
       }
 
-      const chatJid = normalizeChatJid(threadId);
-      let result: any;
-      try {
-        if (attachType === 'image') {
-          result = await service.sendE2EEImage(chatJid, params.filePath, params.body);
-        } else if (attachType === 'video') {
-          result = await service.sendE2EEVideo(chatJid, params.filePath, params.body);
-        } else if (attachType === 'audio') {
-          result = await service.sendE2EEAudio(chatJid, params.filePath);
-        } else {
-          result = await service.sendE2EEFile(chatJid, params.filePath, fileName);
+      const result = await sendEncrypted();
+      if (!result?.success && isE2EEServerRejection(result?.error)) {
+        // Messenger's server refused the encrypted file: nothing was delivered → upload + normal send once (below)
+        Logger.warn(`[FacebookSendService] 1:1 E2EE ${attachType} refused by the server (${result.error}) → normal send once`);
+        refusedEncrypted = String(result.error);
+      } else {
+        if (result?.success && result?.messageId) {
+          service.rememberE2EEThread(threadId);
+          await persistEncrypted(result);
         }
-      } catch (err: any) {
-        // DEPLAO_ADAPTER: No REST fallback for E2EE failures.
-        return { success: false, error: `E2EE send failed: ${err.message}` };
+        return {
+          success: result?.success === true,
+          messageId: result?.messageId,
+          timestamp: result?.timestamp,
+          ...(result?.error ? { error: result.error } : {}),
+        };
       }
-
-      if (result?.success && result?.messageId) {
-        // Save to DB + emit UI
-        const fbSenderId = service.getRealFacebookId() || accountId;
-        let localRelPath: string | undefined;
-        try {
-          const fs = require('fs');
-          const buffer = fs.readFileSync(params.filePath);
-          const ext = require('path').extname(fileName) || '.bin';
-          const savedName = `sent_${result.messageId.slice(-8)}_${Date.now()}${ext}`;
-          const absPath = await FileStorageService.saveBuffer(fbSenderId, buffer, savedName);
-          localRelPath = FileStorageService.toRelativePath(absPath);
-        } catch {}
-
-        await FacebookSendService.persistSentMessage({
-          accountId,
-          threadId,
-          messageId: result.messageId,
-          body: params.body || null,
-          fbSenderId,
-          timestamp: result.timestamp || Date.now(),
-          type: attachType,
-          isUserMessage: true,
-          replyToMessageId: params.replyToMessageId,
-          attachments: JSON.stringify([{
-            type: attachType,
-            name: fileName,
-            ...(localRelPath ? { localPath: localRelPath } : {}),
-          }]),
-          localPath: localRelPath,
-        });
-      }
-
-      return {
-        success: result?.success === true,
-        messageId: result?.messageId,
-        timestamp: result?.timestamp,
-        ...(result?.error ? { error: result.error } : {}),
-      };
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // GROUP + known normal 1:1 ROUTING — REST ONLY
+    // GROUP + known normal 1:1 ROUTING (and a 1:1 whose E2EE send was refused) — REST
     // ═════════════════════════════════════════════════════════════════════
-    const uploaded = await service.uploadAttachment(params.filePath);
+    // A voice recording goes up as Messenger's own voice clip (M4A); without ffmpeg the recording is sent as it is
+    const voiceNote = attachType === 'audio' && params.voice ? await prepareM4aVoiceNote(params.filePath) : null;
+    let uploaded: Awaited<ReturnType<typeof service.uploadAttachment>>;
+    try {
+      uploaded = voiceNote
+        ? await service.uploadAttachment(voiceNote.path, { voiceClip: true })
+        : await service.uploadAttachment(params.filePath);
+    } finally {
+      removeConverted(voiceNote);
+    }
     if (!uploaded) return { success: false, error: tr('Upload thất bại') };
 
     const restAttachType = uploaded.attachmentType?.startsWith('image') ? 'image'
@@ -325,17 +363,36 @@ export class FacebookSendService {
 
     let result: any;
     try {
-      result = await service.sendMessage(threadId, params.body || '', {
+      const restOpts = {
         typeAttachment: restAttachType as any,
         attachmentId: uploaded.attachmentId,
         // `route` was resolved above. Pass its explicit discriminator instead
         // of asking FacebookService to resolve a second time from mutable DB
         // metadata.
-        typeChat: isUserMessage ? 'user' : null,
+        typeChat: isUserMessage ? 'user' as const : null,
         ...(params.replyToMessageId ? { replyToMessageId: params.replyToMessageId } : {}),
-      });
+      };
+      // After a refused E2EE send: straight to the normal send (sendMessage would try E2EE again)
+      result = refusedEncrypted
+        ? await service.sendNormalMessage(threadId, params.body || '', restOpts)
+        : await service.sendMessage(threadId, params.body || '', restOpts);
     } catch (err: any) {
       return { success: false, error: `REST attachment send failed: ${err.message}` };
+    }
+
+    // A 1:1 known as normal that Messenger upgraded to E2EE: Facebook refused the normal send → the E2EE send once
+    if (isUserMessage && !refusedEncrypted && !result?.success && isNormalSendRejection(result) && service.e2eeReadyForRetry()) {
+      Logger.warn(`[FacebookSendService] 1:1 normal ${restAttachType} send refused (${result.error}) → E2EE send once`);
+      const encrypted = await sendEncrypted();
+      if (encrypted?.success && encrypted?.messageId) {
+        service.rememberE2EEThread(threadId);
+        await persistEncrypted(encrypted);
+        return { success: true, messageId: encrypted.messageId, timestamp: encrypted.timestamp };
+      }
+      return { success: false, error: `${result.error || 'Normal send failed'}; E2EE send failed: ${encrypted?.error || 'unknown error'}` };
+    }
+    if (refusedEncrypted && !result?.success) {
+      return { success: false, error: `E2EE send failed: ${refusedEncrypted}; normal send failed: ${result?.error || 'unknown error'}` };
     }
 
     if (result?.success && result?.messageId) {
@@ -383,6 +440,125 @@ export class FacebookSendService {
    * Save the sent message to the DB and broadcast it to the UI.
    * Shared by all message types (text, image, video, file, audio).
    */
+  /**
+   * Send a Messenger sticker. Ordinary threads send the sticker id; encrypted 1:1 chats carry the sticker image itself
+   * (downloaded first when only its link is known). The sent sticker is saved and shown like a received one.
+   */
+  static async sendSticker(params: {
+    accountId: string;
+    threadId: string;
+    stickerId: string;
+    url?: string;
+    localPath?: string;
+    typeChat?: 'user' | null;
+  }): Promise<FBSendResult> {
+    const accountId = FacebookSendService.resolveAccountId(params.accountId);
+    const threadId = String(params.threadId);
+    const stickerId = /^\d+$/.test(String(params.stickerId || '')) ? String(params.stickerId) : '';
+    // A sticker received in an encrypted chat has no Messenger id, only its image: it can be sent to encrypted chats only
+    if (!stickerId && !params.localPath && !params.url) return { success: false, error: tr('Nhãn dán không hợp lệ') };
+    const service = await FacebookSendService.getService(accountId);
+    const hasTypeChat = Object.prototype.hasOwnProperty.call(params, 'typeChat');
+    const route = await resolveThreadKind(threadId, hasTypeChat ? params.typeChat : undefined, accountId);
+    if (route.kind === 'unknown') return { success: false, error: route.error };
+    const isUserMessage = route.kind === 'user';
+    const fbSenderId = service.getRealFacebookId() || accountId;
+    let result: { success: boolean; messageId?: string; timestamp?: number; error?: string; rejected?: boolean };
+
+    /** E2EE send of the sticker image (the stored copy, downloaded first when only its link is known). */
+    const sendEncryptedSticker = async (): Promise<{ success: boolean; messageId?: string; error?: string }> => {
+      const fs = require('fs');
+      const storedPath = params.localPath ? FileStorageService.resolveAbsolutePath(params.localPath) : '';
+      let imagePath = storedPath && fs.existsSync(storedPath) ? storedPath : '';
+      if (!imagePath && params.url) {
+        try {
+          imagePath = await FileStorageService.downloadImage(fbSenderId, params.url, `fb_sticker_${stickerId || Date.now()}.png`, undefined, undefined, 'https://www.facebook.com/');
+          imagePath = imagePath ? FileStorageService.resolveAbsolutePath(imagePath) || imagePath : '';
+        } catch { imagePath = ''; }
+      }
+      if (!imagePath) return { success: false, error: tr('Không tải được ảnh nhãn dán') };
+      const mime = /\.webp$/i.test(imagePath) ? 'image/webp' : /\.gif$/i.test(imagePath) ? 'image/gif' : 'image/png';
+      return service.sendE2EESticker(normalizeChatJid(threadId), imagePath, mime);
+    };
+
+    if (isUserMessage && !service.isKnownNonE2EEThread(threadId)) {
+      if (!service.isE2EEConnected()) {
+        try { await service.retryE2EE(); } catch {}
+      }
+      if (!service.isE2EEConnected()) return { success: false, error: tr('Không thể gửi 1:1: E2EE bridge chưa kết nối.') };
+      result = await sendEncryptedSticker();
+      if (result.success && result.messageId) {
+        service.rememberE2EEThread(threadId);
+      } else if (isE2EEServerRejection(result.error) && stickerId) {
+        // Messenger's server refused the encrypted sticker: nothing was delivered → the normal send (sticker id) once
+        Logger.warn(`[FacebookSendService] 1:1 E2EE sticker refused by the server (${result.error}) → normal send once`);
+        const encryptedError = result.error;
+        result = await service.sendNormalMessage(threadId, '', { typeChat: 'user', stickerId });
+        if (!result.success) result = { ...result, error: `E2EE send failed: ${encryptedError}; normal send failed: ${result.error || 'unknown error'}` };
+      }
+    } else {
+      if (!stickerId) return { success: false, error: tr('Nhãn dán này chỉ gửi được trong chat mã hóa đầu cuối') };
+      result = await service.sendMessage(threadId, '', { typeChat: isUserMessage ? 'user' : null, stickerId } as any);
+      // A 1:1 known as normal that Messenger upgraded to E2EE: Facebook refused the normal send → the E2EE sticker once
+      if (isUserMessage && !result?.success && isNormalSendRejection(result) && service.e2eeReadyForRetry()) {
+        Logger.warn(`[FacebookSendService] 1:1 normal sticker send refused (${result.error}) → E2EE send once`);
+        const normalError = result.error;
+        const encrypted = await sendEncryptedSticker();
+        if (encrypted.success && encrypted.messageId) service.rememberE2EEThread(threadId);
+        result = encrypted.success ? encrypted : { ...encrypted, error: `${normalError || 'Normal send failed'}; E2EE send failed: ${encrypted.error || 'unknown error'}` };
+      }
+    }
+    if (result?.success && result.messageId) {
+      service.markMessageLocallySent(result.messageId);
+      await FacebookSendService.persistSentMessage({
+        accountId, threadId, messageId: result.messageId, body: null, fbSenderId,
+        timestamp: result.timestamp || Date.now(), type: 'sticker', isUserMessage,
+        attachments: JSON.stringify([{ type: 'sticker', url: params.url || null, ...(stickerId ? { id: stickerId, stickerId } : {}) }]),
+        // The image the encrypted chat carried: the sent bubble shows it without a link
+        ...(params.localPath ? { localPath: params.localPath } : {}),
+      });
+    }
+    return {
+      success: result?.success === true,
+      messageId: result?.messageId,
+      ...(result?.error ? { error: result.error } : {}),
+    };
+  }
+
+  /**
+   * Stickers this account sent or received lately (newest first, unique), for the sticker tab. Stickers of encrypted
+   * chats have no Messenger id (stickerId ''), only their image: they can be sent to encrypted chats.
+   */
+  static recentStickers(accountId: string, limit = 60): Array<{ stickerId: string; key: string; url: string; localPath?: string }> {
+    const db = DatabaseService.getInstance();
+    const owner = db.fbOwnerId(FacebookSendService.resolveAccountId(accountId));
+    const rows = db.query<{ attachments?: string; local_paths?: string }>(
+      `SELECT attachments, local_paths FROM messages
+       WHERE owner_zalo_id = ? AND channel = 'facebook' AND msg_type = 'sticker' AND COALESCE(is_recalled, 0) = 0
+       ORDER BY timestamp DESC LIMIT 600`,
+      [owner],
+    ) || [];
+    const out: Array<{ stickerId: string; key: string; url: string; localPath?: string }> = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      let att: any = null;
+      try { att = (JSON.parse(row.attachments || '[]') || [])[0]; } catch {}
+      const rawId = String(att?.stickerId || (/^\d{6,}$/.test(String(att?.id || '')) ? att.id : '') || '');
+      const stickerId = /^\d+$/.test(rawId) ? rawId : '';
+      let localPath = '';
+      try { const paths = JSON.parse(row.local_paths || '{}'); localPath = paths.att_0 || paths.main || ''; } catch {}
+      const url = String(att?.url || '');
+      if (!url && !localPath) continue;
+      // Without a Messenger id (encrypted chat) the image itself tells two stickers apart
+      const key = stickerId || String(att?.mediaSha256 || '') || localPath || url;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ stickerId, key, url, ...(localPath ? { localPath } : {}) });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   static async persistSentMessage(params: {
     accountId: string;       // internal UUID
     threadId: string;

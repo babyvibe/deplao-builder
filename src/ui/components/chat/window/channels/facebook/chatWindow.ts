@@ -6,6 +6,7 @@ import { useAppStore } from '@/store/app/appStore';
 import ipc from '@/lib/ipc';
 import type { ChatWindowChannel, OlderFromServerArgs, OlderFromServerResult } from '../types';
 import { tr } from '../../../../../../shared/i18n';
+import { markEncryptedHistoryLocked } from '@/lib/chat/facebook/encryptedHistoryLock';
 
 /** Error code "dừng tải, không báo lỗi" (stop loading, show no error) (opening / scrolling again later will retry) */
 const FACEBOOK_OLDER_STOP_CODES = ['E2EE', 'BRIDGE_OLD', 'BRIDGE_DOWN', 'NOT_CONNECTED', 'BUSY', 'COOLDOWN', 'RISK', 'CANCELLED'];
@@ -20,6 +21,10 @@ async function fetchOlderFromServer({ accountId, threadId, oldest, before }: Old
   });
   if (fbRes?.success) {
     return { stored: fbRes.stored || 0, hasMore: !!fbRes.hasMoreBefore };
+  }
+  if (fbRes?.code === 'E2EE') {
+    // Encrypted chat: the chat window offers to unlock the old messages with the Messenger PIN
+    markEncryptedHistoryLocked(accountId, threadId);
   }
   if (FACEBOOK_OLDER_STOP_CODES.includes(fbRes?.code)) {
     // End-to-end encryption / old bridge / bridge reconnecting / loading many pages (at a real user's pace) / Facebook shows

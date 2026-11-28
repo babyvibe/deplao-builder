@@ -29,6 +29,7 @@ gốc một tính năng trong `components/` giữ trang / thành phần chính c
 | `auth/` | `login/` thêm tài khoản (QR, SĐT, bot Telegram), `lock/` khoá app |
 | `common/` | Dùng chung: `accounts/`, `avatars/`, `profile/`, `notifications/`, `inputs/`, `cloud/` (địa chỉ công khai); gốc: `icons`, `PageLoading`, `ConfirmDialog` |
 | `dashboard/`, `analytics/` | Trang chủ, báo cáo |
+| `app/` | Mức app: `RenderErrorBoundary` bắt lỗi khi vẽ giao diện (bọc `App` trong `main.tsx`, khung chat, danh sách hội thoại, bảng bên phải, từng trang) để một phần lỗi không làm trắng cả cửa sổ; ghi 1 dòng vào Nhật ký |
 | `ui/` | Bộ thành phần giao diện (nút, ô nhập, hộp thoại…), có README riêng |
 
 ## lib/
@@ -38,7 +39,7 @@ gốc một tính năng trong `components/` giữ trang / thành phần chính c
 | `chat/` | Logic màn chat: `messages/`, `conversations/`, `read/`, `send/`, `composer/`, `reactions/`, `forward/`, `media/`, `members/`, `erp/`, `realtime/`, `notifications/`, `telegram/`, `zalo/`, `facebook/` |
 | `channels/` | Tiện ích chung mọi kênh (`channelHelper`, `channelIpc`) + `adapters/` adapter từng kênh (gửi tin, thu hồi, cảm xúc…) |
 | `data/` | `DataAccessor` (máy chủ: IPC, máy nhân viên: REST) |
-| `app/` | Mức app: báo main giao diện đã tải xong (`startupSettled`), lỗi IPC (`apiError`), chấm "mới" của tab (`settingsSeenTabs`) |
+| `app/` | Mức app: báo main giao diện đã tải xong (`startupSettled`), lỗi IPC (`apiError`), chấm "mới" của tab (`settingsSeenTabs`), dòng log + nhận lỗi tải trang cho `RenderErrorBoundary` (`renderError`) |
 | `media/` | Ảnh / video: đường dẫn file cục bộ (`localMedia`), chọn nguồn hiển thị (`mediaResolver`), tải dần, sửa ảnh… |
 | `notifications/` | Âm thanh + thông báo hệ điều hành (`NotificationService`), cài đặt thông báo theo máy, số trên biểu tượng |
 | `zalo/`, `telegram/`, `facebook/` | Tiện ích riêng kênh (khởi tạo, nhóm, tên gợi nhớ…) |

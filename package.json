@@ -1,6 +1,6 @@
 {
   "name": "Deplao",
-  "version": "26.11.2",
+  "version": "26.11.3",
   "description": "Phần mềm desktop quản lý Zalo, Facebook & Telegram cá nhân Đa tài khoản tích hợp CRM, ERP, POS, Workflow và AI Assistant giúp đội nhóm bán hàng, chăm sóc khách hàng và marketing trên Zalo vận hành tập trung trong một ứng dụng duy nhất.",
   "main": "dist-electron/electron/bootstrap.js",
   "scripts": {
@@ -58,7 +58,7 @@
     "uuid": "^13.0.0",
     "xlsx": "^0.18.5",
     "xz-decompress": "^0.2.3",
-    "zca-js": "^2.2.0"
+    "zca-js": "^2.4.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

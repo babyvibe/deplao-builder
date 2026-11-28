@@ -31,10 +31,16 @@ import { parseGroupLink } from '../../shared/crm/groupLinks';
 import { describeTelegramServiceAction } from './messages/telegramServiceText';
 import { getTelegramForwardAttachment, telegramEntityName } from './messages/telegramForward';
 import { markTelegramMessagesDeleted } from './messages/telegramDeletions';
+import type { MessagesSyncedEvent } from '../../shared/chat/messagesSynced';
+import {
+  createPendingLinkPreviewWatch, isLinkPreviewAttachment, LINK_PREVIEW_TARGET_TYPES, telegramLinkPreviewState, telegramWebpageIdOf,
+  withLinkPreview, type PendingLinkPreview, type TelegramLinkPreviewState,
+} from './messages/telegramSentLinkPreview';
 import { telegramStrippedThumb, telegramVideoAttributes, telegramWebpageMeta } from './media/telegramMediaMeta';
 import * as TelegramStickers from './media/telegramStickers';
 import { stickerSetRefOf, type StickerClientDeps, type TelegramStickerSetRef } from './media/telegramStickers';
 import { mapForumTopics } from './channels/telegramForumTopics';
+import { basicGroupChat, telegramParticipantsCount } from './channels/telegramMemberCount';
 import { mapReadReceiptError, normalizeReadParticipants, type ReadReceiptUnavailableReason } from './read/telegramReadReceipts';
 import { applyTelegramReadUpdate, parseTelegramReadUpdate } from './read/telegramReadHistory';
 import { isStartupSettled, whenStartupSettled } from '../../utils/startup/startupSettle';
@@ -72,6 +78,7 @@ import {
 import { API_ID, API_HASH } from '../../configs/channels/telegram.config';
 import { tr } from '../../shared/i18n';
 import { TELEGRAM_PINNED_LIMIT } from '../../shared/telegram/telegramPins';
+import { isLocalMediaUrl, localMediaUrlToPath } from '../../shared/media/localMediaUrl';
 
 export interface TelegramUserAccount {
   accountId: string;     // = Telegram user ID
@@ -266,12 +273,8 @@ const LOGIN_SESSION_TTL_MS = 10 * 60 * 1000;
 
 /** GramJS can upload only absolute paths; media DB rows may be storage-relative. */
 function resolveTelegramUploadPath(filePath: string): string {
-  let candidate = String(filePath || '');
-  if (candidate.startsWith('local-media:///')) {
-    candidate = candidate.replace('local-media:///', '');
-  } else if (candidate.startsWith('local-media://')) {
-    candidate = candidate.replace('local-media://', '');
-  }
+  const raw = String(filePath || '');
+  const candidate = isLocalMediaUrl(raw) ? localMediaUrlToPath(raw, { windows: process.platform === 'win32' }) : raw;
   return FileStorageService.resolveAbsolutePath(candidate);
 }
 
@@ -491,7 +494,7 @@ function persistTelegramDialogState(
   const muteUntilMs = muteUntilSeconds == null
     ? Number(existing?.mute_until || 0)
     : (foreverMuted ? 0 : muteUntilSeconds * 1000);
-  const membersCount = Number(fullChat?.participantsCount ?? entity?.participantsCount ?? 0);
+  const membersCount = telegramParticipantsCount(fullChat, entity);
   const onlineCount = Number(fullChat?.onlineCount ?? 0);
   const displayName = entity?.title || [entity?.firstName, entity?.lastName].filter(Boolean).join(' ') || entity?.username || chatId;
   const contactType = peerType === 'user' ? 'user' : 'group';
@@ -2517,6 +2520,8 @@ function scheduleReconnectCatchUp(listener: ActiveListener, client: TelegramClie
           inserted: result.inserted,
           pending: !result.historyComplete,
         });
+        // The history pass saves without one event per message and repairs conversation previews: employees reload like the Boss topbar
+        EventBroadcaster.emit('event:messagesSynced', { zaloId: accountId, source: 'telegram', inserted: result.inserted } satisfies MessagesSyncedEvent);
       }
     } else {
       retryNeeded = true;
@@ -4333,6 +4338,12 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
           return;
         }
 
+        // Telegram finished fetching a link preview page (a message we sent got WebPagePending): ask for that message now
+        if ((update as any)?.className === 'UpdateWebPage' || (update as any)?.className === 'UpdateChannelWebPage') {
+          pendingLinkPreviews.pageReady(account.accountId, telegramWebpageIdOf((update as any).webpage));
+          return;
+        }
+
         // Handle deleted messages (unsend / recall)
         if (update instanceof Api.UpdateDeleteMessages || update instanceof Api.UpdateDeleteChannelMessages) {
           const ids = update.messages || [];
@@ -4486,6 +4497,8 @@ async function connectListenerNow(listener: ActiveListener): Promise<void> {
         // Channel reactions - handled via className/CONSTRUCTOR_ID check in handler
         (Api as any).UpdateChannelMessageReactions,
         (Api as any).UpdateMessagePoll,
+        (Api as any).UpdateWebPage,
+        (Api as any).UpdateChannelWebPage,
       ].filter(Boolean),
     }));
 
@@ -6197,6 +6210,9 @@ export function startAccountMessageRefresh(accountId: string): {
       ? { zaloId: accountId, status: 'completed', inserted: result.inserted || 0, pending: !!result.pending }
       : { zaloId: accountId, status: 'failed', error: result.error || tr('Không thể đồng bộ tin nhắn Telegram') },
     );
+    if (result.success) {
+      EventBroadcaster.emit('event:messagesSynced', { zaloId: accountId, source: 'telegram', inserted: result.inserted || 0 } satisfies MessagesSyncedEvent);
+    }
   })();
   manualRefreshTasks.set(accountId, task);
   task.finally(() => {
@@ -7666,6 +7682,79 @@ function getPersistedTelegramSendDenial(accountId: string, chatId: string): stri
   }
 }
 
+// ─── Link preview of sent messages (messages/telegramSentLinkPreview.ts) ───────
+
+/** Link preview ready in Telegram's answer to a send: msg_type + attachments as history saves them (null = none or still pending). */
+function sentLinkPreview(message: any): { msgType: string; attachments: Record<string, any>[] } | null {
+  if (message?.className !== 'Message' || telegramLinkPreviewState(message) !== 'ready') return null;
+  const normalized = normalizeTelegramMessageMedia(message);
+  const attachments = normalized.attachments.filter(isLinkPreviewAttachment);
+  return attachments.length ? { msgType: normalized.msgType, attachments } : null;
+}
+
+/** The page's photo is downloaded at once (open conversation first). Video / file previews are left to the bubble (small ones load by themselves). */
+function downloadLinkPreviewPhoto(accountId: string, client: TelegramClient, message: any, msgId: string, msgType: string, chatId: string): void {
+  if (msgType !== 'photo') return;
+  downloadMediaForMessage(accountId, client, message, msgId, msgType, chatId, { urgency: 'visible' }).catch((err: any) => {
+    tgLog('warn', accountId, 'socket', 'LINK_PREVIEW_DOWNLOAD_FAILED', { chatId, msgId, error: err?.message || String(err) });
+  });
+}
+
+/** Writes a ready preview over the sent row, patches the bubble (event:messagesRepaired) and downloads the page's photo. */
+function applySentLinkPreview(accountId: string, client: TelegramClient, chatId: string, msgId: string, message: any): boolean {
+  const db = DatabaseService.getInstance();
+  const preview = sentLinkPreview(message);
+  if (!db || !preview) return false;
+  const row = db.queryOne<{ attachments: string | null; msg_type: string }>(
+    `SELECT attachments, msg_type FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+    [msgId, accountId, chatId],
+  );
+  if (!row || !LINK_PREVIEW_TARGET_TYPES.has(String(row.msg_type || ''))) return false;
+  let saved: any[] = [];
+  try {
+    const parsed = JSON.parse(row.attachments || '[]');
+    if (Array.isArray(parsed)) saved = parsed;
+  } catch {}
+  const attachments = withLinkPreview(saved, preview.attachments);
+  db.run(
+    `UPDATE messages SET msg_type = ?, attachments = ? WHERE msg_id = ? AND owner_zalo_id = ? AND thread_id = ? AND channel = 'telegram_user'`,
+    [preview.msgType, JSON.stringify(attachments), msgId, accountId, chatId],
+  );
+  EventBroadcaster.emit('event:messagesRepaired', {
+    zaloId: accountId, threadId: chatId, items: [{ msgId, msgType: preview.msgType, attachments }],
+  });
+  downloadLinkPreviewPhoto(accountId, client, message, msgId, preview.msgType, chatId);
+  return true;
+}
+
+/** Asks Telegram again for a sent message whose preview was still being fetched; saves the preview once it is ready. */
+async function refreshPendingLinkPreview(item: PendingLinkPreview): Promise<TelegramLinkPreviewState> {
+  const listener = activeListeners.get(item.accountId);
+  if (!listener?.client || !listener.connected || listener.stopped) throw new Error('Telegram client not connected');
+  const peer = await resolveInputPeer(item.accountId, listener.client, item.chatId);
+  const fetched = await listener.client.getMessages(peer, { ids: [Number(item.msgId)] });
+  const message = (fetched || []).find((entry: any) => String(entry?.id || '') === item.msgId && entry?.className !== 'MessageEmpty');
+  if (!message) return 'none';
+  const state = telegramLinkPreviewState(message);
+  if (state === 'ready') applySentLinkPreview(item.accountId, listener.client, item.chatId, item.msgId, message);
+  return state;
+}
+
+const pendingLinkPreviews = createPendingLinkPreviewWatch({ refresh: refreshPendingLinkPreview });
+
+/** After a send: download the preview's photo now, or keep asking while Telegram is still fetching the page. */
+function followSentLinkPreview(
+  accountId: string, client: TelegramClient, chatId: string, msgId: string, message: any,
+  preview: { msgType: string } | null,
+): void {
+  if (preview) {
+    downloadLinkPreviewPhoto(accountId, client, message, msgId, preview.msgType, chatId);
+    return;
+  }
+  if (telegramLinkPreviewState(message) === 'none' || !/^\d+$/.test(msgId)) return;
+  pendingLinkPreviews.watch({ accountId, chatId, msgId, webpageId: telegramWebpageIdOf(message?.media?.webpage) });
+}
+
 export async function sendMessage(accountId: string, chatId: string, text: string, mentions?: TelegramSendMention[], replyToMsgId?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const listener = activeListeners.get(accountId);
   if (!listener?.client || !listener.connected) {
@@ -7714,14 +7803,21 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
     const mentionAttachments = telegramMentionAttachments(sendMentions, text);
     // Channel post: the message just posted shows at once as "Bài đăng kênh" (Channel post); previously only after the next sync
     const postAttachment = sentChannelPostAttachment(accountId, chatId, result);
-    const rowAttachments = postAttachment ? [postAttachment, ...mentionAttachments] : mentionAttachments;
+    // Link in the text: the preview in Telegram's answer is saved with the message (card + page photo, as history saves it), so it
+    // shows at once instead of after reopening the conversation. A preview Telegram is still fetching is asked for again below.
+    const linkPreview = sentLinkPreview(result);
+    const msgType = linkPreview?.msgType || 'text';
+    const rowAttachments = withLinkPreview(
+      postAttachment ? [postAttachment, ...mentionAttachments] : mentionAttachments,
+      linkPreview?.attachments || [],
+    );
     const db = DatabaseService.getInstance();
     if (db) {
       db.run(`
         INSERT OR IGNORE INTO messages
           (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, status, channel, reply_to_id, quote_data)
-        VALUES (?, ?, ?, ?, ?, ?, 'text', ?, 1, ?, 'sent', 'telegram_user', ?, ?)
-      `, [msgId, accountId, chatId, threadType, accountId, text, now, JSON.stringify(rowAttachments), replyToMsgId || null, quoteData]);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'sent', 'telegram_user', ?, ?)
+      `, [msgId, accountId, chatId, threadType, accountId, text, msgType, now, JSON.stringify(rowAttachments), replyToMsgId || null, quoteData]);
 
       // Update contacts (last_message, last_message_time): ensures the conversation list updates right away
       db.run(`
@@ -7750,7 +7846,7 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
           msgId,
           content: text,
           preview: text,
-          msgType: 'text',
+          msgType,
           channel: 'telegram_user',
           ts: String(now),
           replyToId: replyToMsgId || undefined,
@@ -7760,6 +7856,7 @@ export async function sendMessage(accountId: string, chatId: string, text: strin
       },
     });
 
+    followSentLinkPreview(accountId, listener.client, chatId, msgId, result, linkPreview);
     return { success: true, messageId: msgId };
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -9962,10 +10059,12 @@ export async function getGroupInfo(accountId: string, chatId: string): Promise<{
     const isChannel = isChannelPeerType(peerType);
     const full = isChannel
       ? await conn.client.invoke(new Api.channels.GetFullChannel({ channel: await resolveInputChannel(accountId, conn.client, chatId) })).catch(() => null)
-      : await conn.client.invoke(new Api.messages.GetFullChat({ chatId: getBasicGroupId(chatId) }).catch(() => null));
-    if (entity) {
-      cacheTelegramPeer(accountId, chatId, entity);
-      persistTelegramDialogState(accountId, chatId, null, entity, full?.fullChat);
+      : await conn.client.invoke(new Api.messages.GetFullChat({ chatId: getBasicGroupId(chatId) })).catch(() => null);
+    // A basic group the account was just added to may not resolve yet: the GetFullChat answer carries a fresh Chat object
+    const groupEntity = entity || (isChannel ? null : basicGroupChat(full?.chats, chatId));
+    if (groupEntity) {
+      cacheTelegramPeer(accountId, chatId, groupEntity);
+      persistTelegramDialogState(accountId, chatId, null, groupEntity, full?.fullChat);
     }
     let avatarUrl = '';
     const db = DatabaseService.getInstance();
@@ -9974,9 +10073,9 @@ export async function getGroupInfo(accountId: string, chatId: string): Promise<{
       [accountId, chatId]
     );
     avatarUrl = cached?.avatar_url || '';
-    if (!avatarUrl && entity) {
+    if (!avatarUrl && groupEntity) {
       try {
-        const photo = await downloadProfilePhotoQueued(accountId, conn.client, entity, `group:${chatId}`, false, {
+        const photo = await downloadProfilePhotoQueued(accountId, conn.client, groupEntity, `group:${chatId}`, false, {
           threadId: chatId, urgency: 'visible',
         });
         if (photo && photo.length > 0) {
@@ -9992,12 +10091,12 @@ export async function getGroupInfo(accountId: string, chatId: string): Promise<{
         }
       } catch {}
     }
-    const capability = getTelegramSendCapability(entity);
-    const membership = getTelegramMembership(entity);
-    const canManageTopics = !!entity?.creator || !!entity?.adminRights?.manageTopics;
+    const capability = getTelegramSendCapability(groupEntity);
+    const membership = getTelegramMembership(groupEntity);
+    const canManageTopics = !!groupEntity?.creator || !!groupEntity?.adminRights?.manageTopics;
     return { success: true, info: {
-      entity, peerType, full: full?.fullChat, chats: full?.chats, users: full?.users, avatarUrl,
-      memberCount: Number(full?.fullChat?.participantsCount ?? entity?.participantsCount ?? 0),
+      entity: groupEntity, peerType, full: full?.fullChat, chats: full?.chats, users: full?.users, avatarUrl,
+      memberCount: telegramParticipantsCount(full?.fullChat, groupEntity, full?.chats, chatId),
       onlineCount: Number(full?.fullChat?.onlineCount ?? 0),
       canSend: capability.canSend, canManageTopics, sendReason: capability.reason,
       membershipState: membership.state, joinAction: membership.action,
@@ -12856,13 +12955,18 @@ export async function sendTopicMessage(accountId: string, chatId: string, rootMe
     const now = telegramSentTimestamp(result, sentAt);
     const quoteData = sentReplyQuoteData(accountId, chatId, replyToId);
     const mentionAttachments = telegramMentionAttachments(sendMentions, text);
+    // Link preview as in sendMessage: the sent message is inside the Updates answer
+    const sentMessage = (result?.updates || []).find((update: any) => String(update?.message?.id || '') === msgId)?.message || result;
+    const linkPreview = sentLinkPreview(sentMessage);
+    const msgType = linkPreview?.msgType || 'text';
+    const rowAttachments = withLinkPreview(mentionAttachments, linkPreview?.attachments || []);
 
     // Save to DB (INSERT OR IGNORE: the socket echo skips it if it already exists)
     const db = DatabaseService.getInstance();
     const commentOnly = !!db && skipCommentOnlyConversation(db, accountId, chatId);
     if (db) {
-      db.run(`INSERT OR IGNORE INTO messages (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, status, channel, reply_to_id, topic_id, quote_data) VALUES (?, ?, ?, 1, ?, ?, 'text', ?, 1, ?, 'sent', 'telegram_user', ?, ?, ?)`,
-        [msgId, accountId, chatId, accountId, text, now, JSON.stringify(mentionAttachments), replyToId, rootMessageId, quoteData]);
+      db.run(`INSERT OR IGNORE INTO messages (msg_id, owner_zalo_id, thread_id, thread_type, sender_id, content, msg_type, timestamp, is_sent, attachments, status, channel, reply_to_id, topic_id, quote_data) VALUES (?, ?, ?, 1, ?, ?, ?, ?, 1, ?, 'sent', 'telegram_user', ?, ?, ?)`,
+        [msgId, accountId, chatId, accountId, text, msgType, now, JSON.stringify(rowAttachments), replyToId, rootMessageId, quoteData]);
 
       // Discussion group not joined: do not create a conversation (like Telegram)
       if (!commentOnly) db.run(`
@@ -12892,17 +12996,18 @@ export async function sendTopicMessage(accountId: string, chatId: string, rootMe
           msgId,
           content: text,
           preview: text,
-          msgType: 'text',
+          msgType,
           channel: 'telegram_user',
           ts: String(now),
           topicId: rootMessageId,
           ...(replyToId ? { replyToId } : {}),
           ...(quoteData ? { quoteData } : {}),
-          ...(mentionAttachments.length ? { attachments: mentionAttachments } : {}),
+          ...(rowAttachments.length ? { attachments: rowAttachments } : {}),
         },
       },
     });
 
+    followSentLinkPreview(accountId, conn.client, chatId, msgId, sentMessage, linkPreview);
     return { success: true, messageId: msgId };
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -13842,6 +13947,9 @@ export const __test = {
   getTelegramDownloadTarget,
   isImageBuffer,
   downloadMediaForMessage,
+  // Link preview of sent messages (ready in the send answer, or asked for again while pending)
+  sentLinkPreview,
+  pendingLinkPreviews,
   // Reactions / edits (private chats deliver reaction changes as hidden edits)
   normalizeTelegramReactions,
   applyTelegramMessageReactions,

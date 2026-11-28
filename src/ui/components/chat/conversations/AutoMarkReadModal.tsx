@@ -80,7 +80,7 @@ export default function AutoMarkReadModal({ accountIds, scopeLabel, onClose }: P
     for (const item of matches || []) counts.set(item.channel, (counts.get(item.channel) || 0) + 1);
     return [...counts.entries()];
   }, [matches]);
-  const channelName: Record<string, string> = { zalo: 'Zalo', facebook: 'Facebook', telegram_user: 'Telegram', telegram_bot: 'Telegram Bot' };
+  const channelName: Record<string, string> = { zalo: 'Zalo', facebook: 'Facebook Messenger', telegram_user: 'Telegram', telegram_bot: 'Telegram Bot' };
 
   return (
     <div className="fixed inset-0 z-[9000] flex items-center justify-center p-4" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>

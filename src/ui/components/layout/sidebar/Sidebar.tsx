@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '@/store/app/appStore';
 import { useChatStore } from '@/store/chat/chatStore';
 import { useEmployeeStore } from '@/store/employee/employeeStore';
-import ChannelBadge, { ZaloIcon, FacebookIcon, TelegramIcon } from '../../common/avatars/ChannelBadge';
+import ChannelBadge, { ZaloIcon, FacebookIcon, TelegramIcon, MESSENGER_GRADIENT } from '../../common/avatars/ChannelBadge';
 import { isZalo, isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { useVisibleAccounts } from '@/hooks/accounts/useVisibleAccounts';
 import { hasUnseenSettingsTabs, markFeatureSeen, useFeatureSeen } from '@/lib/app/settingsSeenTabs';
@@ -255,7 +255,8 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                         });
                       }} />
                   ) : (
-                    <div className={`w-full h-full flex items-center justify-center text-white font-bold text-sm ${isFacebook(account.channel) ? 'bg-blue-800' : isTelegram(account.channel) ? 'bg-blue-500' : 'bg-blue-600'}${account.isConnected ? '' : ' grayscale opacity-60'}`}>
+                    <div className={`w-full h-full flex items-center justify-center text-white font-bold text-sm ${isFacebook(account.channel) ? '' : isTelegram(account.channel) ? 'bg-blue-500' : 'bg-blue-600'}${account.isConnected ? '' : ' grayscale opacity-60'}`}
+                      style={isFacebook(account.channel) ? { background: MESSENGER_GRADIENT } : undefined}>
                       {isFacebook(account.channel) ? (
                         <FacebookIcon size={16} />
                       ) : isTelegram(account.channel) ? (
@@ -357,7 +358,8 @@ export default function Sidebar({ onAddAccount }: SidebarProps) {
                         }}
                       />
                     ) : (
-                      <div className={`w-full h-full flex items-center justify-center text-white font-bold text-sm ${isFacebook(account.channel) ? 'bg-blue-800' : isTelegram(account.channel) ? 'bg-blue-500' : 'bg-blue-600'}`}>
+                      <div className={`w-full h-full flex items-center justify-center text-white font-bold text-sm ${isFacebook(account.channel) ? '' : isTelegram(account.channel) ? 'bg-blue-500' : 'bg-blue-600'}`}
+                        style={isFacebook(account.channel) ? { background: MESSENGER_GRADIENT } : undefined}>
                         {isFacebook(account.channel) ? (
                           <FacebookIcon size={16} />
                         ) : isTelegram(account.channel) ? (

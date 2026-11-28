@@ -15,7 +15,7 @@ import {
   TerminalIcon, TrashIcon, TruckIcon, UndoIcon, UserCheckIcon, UserIcon, UserPlusIcon, UsersIcon,
   WebhookIcon,
 } from '@/components/common/icons';
-import { FacebookIcon, TelegramIcon, ZaloIcon } from '@/components/common/avatars/ChannelBadge';
+import { FacebookIcon, TelegramIcon, ZaloIcon, MESSENGER_GRADIENT } from '@/components/common/avatars/ChannelBadge';
 import { tr } from '../../../../shared/i18n';
 
 type IconComponent = (props: { className?: string }) => JSX.Element;
@@ -153,7 +153,7 @@ export function getNodeChannel(type: string): NodeChannel | undefined {
 
 export const CHANNEL_NAME: Record<NodeChannel, string> = {
   zalo: 'Zalo',
-  facebook: 'Facebook',
+  facebook: 'Facebook Messenger',
   telegram_user: 'Telegram',
   telegram_bot: 'Telegram Bot',
 };
@@ -258,7 +258,7 @@ export function ChannelMark({ channel, className = '' }: { channel: NodeChannel;
       </span>
     );
   }
-  const bg = channel === 'facebook' ? '#1877F2' : '#229ED9';
+  const bg = channel === 'facebook' ? MESSENGER_GRADIENT : '#229ED9';
   return (
     <span className={`wf-channel-mark ${className}`} style={{ background: bg }} title={CHANNEL_NAME[channel]}>
       {channel === 'facebook' ? <FacebookIcon size={10} /> : <TelegramIcon size={10} />}

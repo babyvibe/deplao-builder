@@ -54,11 +54,13 @@ import { noteSystemPower, onSystemPower, startWakeWatch } from '../src/utils/sta
 import { classifyDevLoadFailure, devRecoveryExpired, devRendererRetryDelay } from './app/devRendererRecovery';
 import { WAKE_PAINT_DONE, createWakePaintCheck, disabledChromiumFeatures } from './app/wakeRepaint';
 import { createHungWindowGuard } from './app/hungWindow';
+import { BOOT_PROBE_TIMEOUT_MS, createBootWatchdog } from './app/bootWatchdog';
 import { noteWindowHidden, noteWindowShown, startMemoryMonitor } from '../src/utils/startup/memoryMonitor';
 import { dbReads } from '../src/services/database/read/DbReadClient';
 import { startRendererStartupProfile } from '../src/utils/startup/startupProfiler';
 import { newerInstallToRelaunch, type LaunchInfo } from './app/singleInstanceRelaunch';
 import { rendererCspHeaders } from './app/rendererCsp';
+import { localMediaUrlToPath } from '../src/shared/media/localMediaUrl';
 import { isExternalUrl, isInAppChatLink, mainFrameNavigation } from './app/mainWindowLinks';
 import { createAutoLaunch, type AutoLaunch } from '../src/utils/startup/autoLaunch';
 import { tr } from '../src/shared/i18n';
@@ -187,6 +189,10 @@ protocol.registerSchemesAsPrivileged([
   {
     scheme: 'local-media',
     privileges: {
+      // Standard: over a non-standard custom scheme Chromium does not read a media file from the middle reliably, so
+      // seeking in a video (and opening an MP4 whose index sits at the end) failed. Chromium then sends URLs in host form
+      // ("local-media://d/dir/a.mp4"): the handler rebuilds the path with shared/media/localMediaUrl.
+      standard: true,
       secure: true,
       supportFetchAPI: true,
       bypassCSP: true,
@@ -244,6 +250,8 @@ let mainWindow: BrowserWindow | null = null;
 let inAppBrowserWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let rendererReportedReady = false;
+/** Reloads a page whose app module never ran (app/bootWatchdog); set in createWindow. */
+let bootWatchdog: ReturnType<typeof createBootWatchdog> | null = null;
 
 // ─── Launch at login (src/utils/startup/autoLaunch.ts) ─────────────────────────────────
 // Create when needed: userData is only correct after app.setName('Deplao').
@@ -281,6 +289,22 @@ let devRendererReloadAttempts = 0;
 let devRendererRecoveryStartedAt = 0;
 let devRendererSuspended = false;
 let devRendererSystemSuspended = false;
+
+/** html[data-deplao-app] of the app page ('' = the app module has not run yet); null when the page does not answer in time. */
+async function probeAppStarted(): Promise<string | null> {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const answer = mainWindow.webContents
+    .executeJavaScript("document.documentElement.dataset.deplaoApp || ''", true)
+    .then((value: unknown) => String(value ?? ''))
+    .catch(() => null);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), BOOT_PROBE_TIMEOUT_MS); });
+  try {
+    return await Promise.race([answer, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /** The dev server answers HTTP. Loading the page before it does fails and leaves an empty dark window. */
 async function devServerReachable(): Promise<boolean> {
@@ -498,6 +522,19 @@ function createWindow() {
   });
   mainWindow.on('unresponsive', () => hungWindow.unresponsive());
   mainWindow.on('responsive', () => hungWindow.responsive());
+
+  // Page loaded but the app never started (a stalled module request after the laptop wakes): reload it (app/bootWatchdog)
+  bootWatchdog = createBootWatchdog({
+    now: () => Date.now(),
+    log: (message) => Logger.log(message),
+    warn: (message) => Logger.warn(message),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    alive: () => !!mainWindow && !mainWindow.isDestroyed(),
+    probe: () => probeAppStarted(),
+    reload: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload(); },
+  });
+  mainWindow.webContents.on('dom-ready', () => bootWatchdog?.pageLoaded());
 
   // Loading the HTML failed (file missing, Vite dev server not running, ...)
   // → the window exists but is blank, ready-to-show still fires → the user sees a blank window
@@ -1221,6 +1258,19 @@ async function resolveMissingMediaFromCloud(absPath: string, waitMs: number): Pr
 }
 
 /**
+ * local-media:// on macOS / Linux: the host form of a standard URL lower-cases the first folder of the path ("/Users/me/a.jpg"
+ * arrives as "/users/me/a.jpg"). A case-insensitive disk finds it anyway; on a case-sensitive one, use the real name of
+ * that folder from "/". null when there is no other spelling.
+ */
+async function withRealRootFolderCase(absPath: string): Promise<string | null> {
+  const match = /^\/([^/]+)(\/.*)?$/.exec(absPath);
+  if (!match) return null;
+  const names = await fs.promises.readdir('/').catch(() => [] as string[]);
+  const real = names.find((name) => name !== match[1] && name.toLowerCase() === match[1].toLowerCase());
+  return real ? `/${real}${match[2] || ''}` : null;
+}
+
+/**
  * Video diagnostics for video served via local-media: HEVC (Chromium cannot play it), moov not within the first 64 KB (not
  * faststart, so <video> cannot read the info). Once per file per session, read asynchronously in the background. Before, it opened and read
  * 64 KB synchronously on the main process for EVERY Range request of the video player.
@@ -1360,13 +1410,10 @@ app.whenReady().then(async () => {
         return new Response('Forbidden', { status: 403 });
       }
       const requestUrl = new URL(request.url);
-      let filePath = decodeURIComponent(requestUrl.pathname);
+      // Host form from Chromium ("local-media://d/dir/a.mp4") or slash form → "D:/dir/a.mp4", "media/…" (Windows), "/…"
+      let filePath = localMediaUrlToPath(request.url, { windows: process.platform === 'win32' });
       // The UI's hint for when the file must come from R2: 'long' = no other source is left (channel CDN expired / missing).
       const cloudWaitMs = requestUrl.searchParams.get('cw') === 'long' ? CLOUD_MEDIA_WAIT_LONG_MS : CLOUD_MEDIA_WAIT_SHORT_MS;
-      // Windows: strip leading slash → "D:/..." or "media/..."
-      if (process.platform === 'win32' && filePath.startsWith('/')) {
-        filePath = filePath.slice(1);
-      }
 
       const configFolder = path.dirname(FileStorageService.getBaseDir());
       // console.log(`[local-media] Request: url=${request.url} → filePath=${filePath} configFolder=${configFolder}`);
@@ -1381,6 +1428,12 @@ app.whenReady().then(async () => {
         stat = await statFile(filePath);
       } else {
         stat = await statFile(filePath);
+        if (!stat && process.platform !== 'win32') {
+          // Host form lower-cases the first folder ("/Users/…" arrives as "/users/…"): match it on a case-sensitive disk
+          const realCase = await withRealRootFolderCase(filePath);
+          const found = realCase ? await statFile(realCase) : null;
+          if (found) { filePath = realCase!; stat = found; }
+        }
         if (!stat) {
           // Absolute path but file not found (old drive/folder after move).
           const normalized = filePath.replace(/\\/g, '/');
@@ -1581,8 +1634,21 @@ app.whenReady().then(async () => {
   ipcMain.on('app:rendererReady', (event) => {
     if (event.sender !== mainWindow?.webContents) return;
     rendererReportedReady = true;
+    bootWatchdog?.ready();
     console.log('[main] Renderer app mounted');
     onRendererReportedReady?.();
+  });
+  // Boot screen still up after a while (preload): one line for Settings → Logs, so the next stuck start can be explained
+  ipcMain.on('app:bootSlow', (event, info: { waitedMs?: number; readyState?: string; appStarted?: boolean; online?: boolean } = {}) => {
+    if (event.sender !== mainWindow?.webContents) return;
+    Logger.warn(`[Khởi động] Giao diện chưa hiện sau ${Math.round(Number(info.waitedMs || 0) / 1000)} s`
+      + ` (trang: ${String(info.readyState || '?')}, app: ${info.appStarted ? 'đang chạy' : 'chưa chạy'}, mạng: ${info.online === false ? 'mất' : 'có'})`);
+  });
+  // The user pressed Tải lại on the boot screen
+  ipcMain.on('app:bootRetry', (event, info: { waitedMs?: number } = {}) => {
+    if (event.sender !== mainWindow?.webContents || !mainWindow || mainWindow.isDestroyed()) return;
+    Logger.warn(`[Khởi động] Người dùng bấm Tải lại sau ${Math.round(Number(info.waitedMs || 0) / 1000)} s`);
+    mainWindow.webContents.reload();
   });
   // Once the UI has loaded the conversation list → heavy background work only starts when the main thread is idle (catch-up sync of old messages
   // Telegram…) - see src/utils/startup/startupSettle.ts. Running it right at app launch makes the app stutter.

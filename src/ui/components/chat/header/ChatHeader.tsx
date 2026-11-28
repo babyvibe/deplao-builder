@@ -22,6 +22,7 @@ import { fetchAllAliases } from '@/lib/zalo/zaloAliasUtils';
 import { Spinner } from '@/components/common/PageLoading';
 import { BotIcon, ClockIcon, CloudIcon, RefreshIcon } from '@/components/common/icons';
 import { zaloAutoDeleteLabel } from '../../../../shared/zalo/zaloAutoDelete';
+import { disappearingLabel } from '../../../../shared/facebook/facebookDisappearing';
 import { isMyDocumentsThread, isSavedMessagesAccount, myDocumentsTitle, showsMyDocumentsIcon } from '@/lib/chat/zalo/myDocuments';
 import { PluginPanelToggle } from '@/components/plugins/contributions/PluginChatPanel';
 import { CHANNEL, isZalo, isFacebook, isTelegram, isTelegramUser, resolveChannel } from '@/lib/channels/channelHelper';
@@ -718,7 +719,7 @@ export default function ChatHeader() {
           <div className="w-9 h-9 rounded-full overflow-hidden grid grid-cols-2 grid-rows-2 bg-green-700 flex-shrink-0">
             {members.slice(0, 4).map((m, i) => (
               <div key={i} className="overflow-hidden">
-                <img src={m.avatar} alt="" className="w-full h-full object-cover"
+                <img src={toLocalMediaUrl(m.avatar)} alt="" className="w-full h-full object-cover"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
               </div>
             ))}
@@ -819,6 +820,13 @@ export default function ChatHeader() {
             {isZalo(activeAccount?.channel) && Number(contact?.zalo_auto_delete_ttl) > 0 && (
               <span className="flex-shrink-0 text-muted-foreground ml-1"
                 title={tr('Zalo tự xoá tin nhắn mới sau {{v1}} — Deplao vẫn giữ tin trên máy này', { v1: zaloAutoDeleteLabel(Number(contact?.zalo_auto_delete_ttl)) })}>
+                <ClockIcon className="w-3.5 h-3.5" />
+              </span>
+            )}
+            {/* Disappearing messages are on in an encrypted Messenger chat: Messenger deletes, Deplao keeps the messages */}
+            {isFacebook(activeAccount?.channel) && Number(contact?.fb_disappearing_ttl) > 0 && (
+              <span className="flex-shrink-0 text-muted-foreground ml-1"
+                title={tr('Messenger tự xóa tin nhắn mới sau {{v1}}. Deplao vẫn giữ tin trên máy này', { v1: disappearingLabel(Number(contact?.fb_disappearing_ttl)) })}>
                 <ClockIcon className="w-3.5 h-3.5" />
               </span>
             )}

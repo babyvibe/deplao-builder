@@ -164,7 +164,7 @@ func (c *Client) sendE2EEMessage(opts *SendMessageOptions) (*SendMessageResult, 
 	}
 
 	msgID := strconv.FormatInt(time.Now().UnixNano(), 10)
-	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, metadata, whatsmeow.SendRequestExtra{ID: msgID})
+	resp, err := e2eeClient.SendFBMessage(c.ctx, chatJID, waMsg, c.withChatTimer(chatJID, metadata), whatsmeow.SendRequestExtra{ID: msgID}) // DEPLAO_ADAPTER: chat timer
 	if err != nil {
 		if isE2EESendResponseTimeout(err) {
 			return newUnknownE2EESendResult(msgID, time.Now()), nil

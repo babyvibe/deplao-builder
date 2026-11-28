@@ -8,6 +8,7 @@ import WorkspaceManager from '../../../src/utils/app/WorkspaceManager';
 import Logger from '../../../src/utils/Logger';
 import EventBroadcaster from '../../../src/services/event/EventBroadcaster';
 import FileStorageService from '../../../src/services/file/FileStorageService';
+import { resolveZaloReminderTitle } from '../../../src/services/zalo/zaloReminderTitle';
 // Upload the employee machine's files to Boss before proxying: shared with Facebook / Telegram (same list of fields Boss checks)
 import { prepareLocalFilesForProxy } from '../network/proxyHelper';
 import type { ContactsInfoRefreshResult } from '../../../src/models/chat/contact';
@@ -345,14 +346,13 @@ export function registerZaloIpc() {
     wrap('zalo:getGroupChatHistory', async (s, p) => {
         let result: any;
         try {
-            result = await s.getGroupChatHistory(p.groupId, p.count ?? 500);
+            // p.cursor: { lastMsgId, isOld } from the previous call → the next older pages
+            result = await s.getGroupChatHistory(p.groupId, p.count ?? 500, p.cursor ?? null);
         } catch (apiErr: any) {
             Logger.warn(`[zaloIpc] getGroupChatHistory API error for group ${p.groupId}: ${apiErr.message}`);
             return { groupMsgsCount: 0, error: apiErr.message };
         }
-        Logger.info(`[zaloIpc] getGroupChatHistory raw result keys: ${Object.keys(result || {}).join(', ')}`);
-        // zca-js returns { groupMsgs: GroupMessage[] }
-        // Each GroupMessage has been wrapped into an object with { data, threadId, type, isSelf, ... }
+        // { groupMsgs: GroupMessage[], hasMore, cursor }: each GroupMessage is { data, threadId, type, isSelf, ... }
         const zaloId = s.getZaloId();
         const rawMsgs = result?.groupMsgs || result?.data;
         const msgs = Array.isArray(rawMsgs) ? rawMsgs : [];
@@ -370,7 +370,7 @@ export function registerZaloIpc() {
             }
             Logger.info(`[zaloIpc] getGroupChatHistory: processed ${count}/${msgs.length} messages for group ${p.groupId}`);
         }
-        return { groupMsgsCount: msgs.length };
+        return { groupMsgsCount: msgs.length, hasMore: !!result?.hasMore, cursor: result?.cursor ?? null };
     });
 
     // ─── Friends ───────────────────────────────────────────────────────────
@@ -727,6 +727,17 @@ export function registerZaloIpc() {
         s.getStickerCategoryDetail(p.cateId)
     );
 
+    // ─── GIF tab of the sticker panel (Giphy through Zalo) ─────────────────
+    wrap('zalo:getGifCategories', (s) => s.getGifCategories());
+
+    wrap('zalo:getGifs', (s, p) =>
+        s.getGifs(String(p.keyword || ''), Number(p.offset) || 0, Number(p.limit) || 30)
+    );
+
+    wrap('zalo:sendGif', (s, p) =>
+        s.sendGif(p.urls, p.threadId, p.type, p.quote ?? null)
+    );
+
     // ─── Keep Alive ───────────────────────────────────────────────────────
     wrap('zalo:keepAlive', (s) => s.keepAlive());
 
@@ -804,6 +815,11 @@ export function registerZaloIpc() {
 
     wrap('zalo:getReminder', (s, p) =>
         s.getReminder(p.reminderId)
+    );
+
+    // Reminder card: Zalo sends long titles cut, the whole one comes from the group board once and is saved in the message
+    wrap('zalo:resolveReminderTitle', (s, p) =>
+        resolveZaloReminderTitle(s, p.msgId, p.threadId)
     );
 
     // ─── Read events ────────────────────────────────────────────────────

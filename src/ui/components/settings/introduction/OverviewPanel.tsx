@@ -58,7 +58,7 @@ export function OverviewPanel() {
         <div>
           <h3 className="text-foreground font-bold text-base">Deplao</h3>
           <p className="text-muted-foreground text-xs mt-0.5 leading-relaxed">
-            {trx('Phần mềm desktop quản lý nhiều tài khoản <0>Zalo</0> (cá nhân / Business), <1>Facebook</1> (Messenger), <2>Telegram</2> (tài khoản cá nhân) và <3>Telegram Bot</3> trong một ứng dụng. Tích hợp CRM, chiến dịch gửi tin, Workflow tự động, Trợ lý AI, POS - vận chuyển - thanh toán và quản lý công việc nội bộ, giúp đội bán hàng, chăm sóc khách hàng và marketing làm việc tập trung.', { 0: <strong className="text-foreground" />, 1: <strong className="text-foreground" />, 2: <strong className="text-foreground" />, 3: <strong className="text-foreground" /> })}
+            {trx('Phần mềm desktop quản lý nhiều tài khoản <0>Zalo</0> (cá nhân / Business), <1>Facebook Messenger</1>, <2>Telegram</2> (tài khoản cá nhân) và <3>Telegram Bot</3> trong một ứng dụng. Tích hợp CRM, chiến dịch gửi tin, Workflow tự động, Trợ lý AI, POS - vận chuyển - thanh toán và quản lý công việc nội bộ, giúp đội bán hàng, chăm sóc khách hàng và marketing làm việc tập trung.', { 0: <strong className="text-foreground" />, 1: <strong className="text-foreground" />, 2: <strong className="text-foreground" />, 3: <strong className="text-foreground" /> })}
           </p>
           <div className="flex gap-1.5 mt-2 flex-wrap">
             <Badge text={tr('Desktop App')} color="bg-primary/15 text-primary" />

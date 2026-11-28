@@ -2,6 +2,7 @@
  * "Đã xem" (Seen) + the photos of the people who have seen it (up to 5) below the last message.
  */
 import { useAppStore } from '@/store/app/appStore';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
 import type { OpenThread } from '../hooks/useOpenThread';
 import { tr } from '../../../../../shared/i18n';
@@ -38,7 +39,7 @@ export function SeenIndicator({ activeAccountId, activeThreadId, contactList, th
         {shown.map((u) => (
           <div key={u.userId} title={u.name} className="w-4 h-4 rounded-full ring-1 ring-border overflow-hidden flex-shrink-0">
             {u.avatar ? (
-              <img src={u.avatar} alt={u.name} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              <img src={toLocalMediaUrl(u.avatar)} alt={u.name} className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
             ) : (
               <PeerInitials id={u.userId} name={u.name} single className="w-full h-full text-[7px]" />
             )}

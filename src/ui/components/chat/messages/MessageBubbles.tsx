@@ -28,6 +28,8 @@ import {
 } from '@/lib/chat/messages/messageTypeUtils';
 import OaListBubble from '../zalo/messages/OaListBubble';
 import ZaloOaCard from '../zalo/messages/ZaloOaCard';
+import { ZaloReminderCard } from '../zalo/messages/ZaloReminderCard';
+import { parseZaloReminderCard } from '../../../../shared/zalo/zaloReminderCard';
 import { isZinstantMsgType } from '../../../../shared/zalo/zaloZinstant';
 import { toZaloJpgUrl } from '../../../../utils/zalo/zaloImageUrl';
 import { isFacebook, isNonZalo, isTelegram, isTelegramUser } from '@/lib/channels/channelHelper';
@@ -1174,81 +1176,8 @@ function EcardBubble({ msg, onManage }: { msg: any; onManage?: () => void }) {
   let params: any = {};
   try { params = typeof parsed.params === 'string' ? JSON.parse(parsed.params) : (parsed.params || {}); } catch {}
 
-  const isReminderCard = (params.actions || []).some((a: any) => a.actionId === 'action.open.reminder');
-
-  if (isReminderCard) {
-    let reminderData: any = {};
-    const reminderAction = (params.actions || []).find((a: any) => a.actionId === 'action.open.reminder');
-    try {
-      if (reminderAction?.data) {
-        const outerData = typeof reminderAction.data === 'string' ? JSON.parse(reminderAction.data) : reminderAction.data;
-        if (outerData?.data) reminderData = typeof outerData.data === 'string' ? JSON.parse(outerData.data) : outerData.data;
-      }
-    } catch {}
-
-    const startTime = Number(reminderData.startTime || 0);
-    const repeat: number = Number(reminderData.repeat ?? 0);
-    const repeatText = repeat === 1 ? tr('Nhắc theo ngày') : repeat === 2 ? tr('Nhắc theo tuần') : repeat === 3 ? tr('Nhắc theo tháng') : '';
-    const emoji = reminderData.emoji || '⏰';
-
-    const fmt = (ts: number) => {
-      if (!ts) return description || '';
-      const d = new Date(ts);
-      const pad = (n: number) => n.toString().padStart(2, '0');
-      const weekDays = [tr('Chủ Nhật'), tr('Thứ Hai'), tr('Thứ Ba'), tr('Thứ Tư'), tr('Thứ Năm'), tr('Thứ Sáu'), tr('Thứ Bảy')];
-      const months = [tr('tháng 1'), tr('tháng 2'), tr('tháng 3'), tr('tháng 4'), tr('tháng 5'), tr('tháng 6'), tr('tháng 7'), tr('tháng 8'), tr('tháng 9'), tr('tháng 10'), tr('tháng 11'), tr('tháng 12')];
-      return tr('{{v1}}, {{v2}} {{v3}} lúc {{v4}}:{{v5}}', { v1: weekDays[d.getDay()], v2: d.getDate(), v3: months[d.getMonth()], v4: pad(d.getHours()), v5: pad(d.getMinutes()) });
-    };
-    const fmtDay = (ts: number) => ts ? new Date(ts).getDate() : '';
-    const fmtMonth = (ts: number) => {
-      if (!ts) return '';
-      const months = [tr('THÁNG 1'), tr('THÁNG 2'), tr('THÁNG 3'), tr('THÁNG 4'), tr('THÁNG 5'), tr('THÁNG 6'), tr('THÁNG 7'), tr('THÁNG 8'), tr('THÁNG 9'), tr('THÁNG 10'), tr('THÁNG 11'), tr('THÁNG 12')];
-      return months[new Date(ts).getMonth()];
-    };
-    const fmtWeekDay = (ts: number) => {
-      if (!ts) return '';
-      const days = [tr('CHỦ NHẬT'), tr('THỨ HAI'), tr('THỨ BA'), tr('THỨ TƯ'), tr('THỨ NĂM'), tr('THỨ SÁU'), tr('THỨ BẢY')];
-      return days[new Date(ts).getDay()];
-    };
-
-    const reminderTitle = (params.notifyTxt || title || '').replace(/^[⏰📅🔔⭐📌💡🎯🎉]\s*/, '');
-
-    return (
-      <div className="flex justify-center w-full my-1">
-        <div className="bg-bubble-in rounded-2xl overflow-hidden max-w-[300px] w-full shadow-sm">
-          <div className="flex gap-3 p-4">
-            {startTime > 0 && (
-              <div className="flex-shrink-0 w-14 rounded-xl overflow-hidden border border-input flex flex-col items-center">
-                <div className="w-full bg-blue-600 py-0.5 text-center text-white text-[11px] font-bold tracking-wide">{fmtWeekDay(startTime)}</div>
-                <div className="flex-1 flex flex-col items-center justify-center py-1">
-                  <span className="text-foreground text-2xl font-bold leading-none">{fmtDay(startTime)}</span>
-                  <span className="text-muted-foreground text-[11px] mt-0.5">{fmtMonth(startTime)}</span>
-                </div>
-              </div>
-            )}
-            <div className="flex-1 min-w-0">
-              <p className="text-foreground font-semibold text-sm truncate">{emoji} {reminderTitle}</p>
-              <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-                </svg>
-                <span>{startTime ? fmt(startTime) : description}</span>
-              </div>
-              {repeatText && (
-                <div className="flex items-center gap-1 mt-0.5 text-xs text-orange-400">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/>
-                    <path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/>
-                  </svg>
-                  <span>{repeatText}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const reminderCard = parseZaloReminderCard(parsed);
+  if (reminderCard) return <ZaloReminderCard msg={msg} card={reminderCard} />;
 
   const actions: any[] = (params.actions || []).filter((a: any) => a.actionId === 'action.group.open.admintool');
 
@@ -2043,7 +1972,7 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
             </span>
             <button
               onClick={() => setShowEditHistory(p => !p)}
-              className="ml-1.5 text-[10px] font-medium text-blue-300 transition-colors underline underline-offset-2 select-none pointer-events-auto"
+              className="chat-link ml-1.5 text-[10px] font-medium text-blue-400 hover:text-blue-300 transition-colors underline underline-offset-2 select-none pointer-events-auto"
             >
               {showEditHistory ? tr('Ẩn') : tr('Xem nội dung cũ')}
             </button>
@@ -2053,14 +1982,15 @@ export function MessageBubble({ msg, isSelf, senderName, onManage, onView, onOpe
       {showEditHistory && editHistoryEntries.length > 0 && (
         <div className="w-full max-w-[280px] mt-1 space-y-1">
           {editHistoryEntries.map((entry, i) => (
+            // Quote-block look (accent bar, bubble fill, full-strength text) instead of a box faded twice
             <div
               key={i}
-              className={`px-3 py-1.5 rounded-lg text-xs opacity-60 ${isSelf ? 'bg-blue-700/30 mr-8' : 'bg-accent/30 ml-8'}`}
+              className={`rounded border-l-2 px-2 py-1 text-xs ${isSelf ? 'border-primary bg-bubble-out' : 'border-border-strong bg-bubble-in'}`}
             >
-              <div className="text-[10px] opacity-50 mb-0.5">
+              <div className="text-[10px] text-muted-foreground mb-0.5">
                 {new Date(entry.editedAt).toLocaleString(appLocale())}
               </div>
-              <div className="break-words whitespace-pre-wrap italic">
+              <div className="break-words whitespace-pre-wrap text-foreground/90">
                 {parseTxt(entry.oldBody) ? linkifyText(parseTxt(entry.oldBody)) : tr('(Không có nội dung)')}
               </div>
             </div>

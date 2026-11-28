@@ -10,9 +10,13 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import ipc from '@/lib/ipc';
-import { toLocalMediaUrl, withCloudWaitHint } from '@/lib/media/localMedia';
+import { appendUrlParam, toLocalMediaUrl, withCloudWaitHint } from '@/lib/media/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
 import { tr } from '../../../../shared/i18n';
+import Logger from '../../../../utils/Logger';
+
+/** Errors after the video has loaded (usually right after a seek): reload and continue at the same point this many times. */
+const MAX_VIDEO_RECOVERIES = 3;
 
 export interface VideoPlayerProps {
   /** Local filesystem path (absolute) */
@@ -67,19 +71,48 @@ export default function VideoPlayer({
   const localMediaUrl = localPath ? (remoteUrl ? toLocalMediaUrl(localPath) : withCloudWaitHint(toLocalMediaUrl(localPath))) : '';
   const videoSrc = localMediaUrl || remoteUrl || '';
 
+  // ─── Error recovery state ───────────────────────────────────────────
+  /** Play pressed and not paused since: a recovery resumes playback only then. */
+  const playIntentRef = useRef(false);
+  /** Where to continue after a recovery: the last time played, or the target of the seek in progress. */
+  const resumeAtRef = useRef(0);
+  const metadataLoadedRef = useRef(false);
+  /** Set by a recovery, applied once the reloaded video has its metadata. */
+  const pendingResumeRef = useRef<{ time: number; play: boolean } | null>(null);
+  const recoveriesRef = useRef(0);
+
   // ─── Video event handlers ───────────────────────────────────────────
-  const onPlay = useCallback(() => setIsPlaying(true), []);
-  const onPause = useCallback(() => setIsPlaying(false), []);
+  const onPlay = useCallback(() => {
+    playIntentRef.current = true;
+    setIsPlaying(true);
+  }, []);
+  const onPause = useCallback(() => {
+    if (!pendingResumeRef.current) playIntentRef.current = false;
+    setIsPlaying(false);
+  }, []);
   const onTimeUpdate = useCallback(() => {
     const v = videoRef.current;
-    if (v) setCurrentTime(v.currentTime);
+    // While a recovery reloads the video, its time is 0: keep showing the position it will continue at
+    if (!v || pendingResumeRef.current) return;
+    setCurrentTime(v.currentTime);
+    resumeAtRef.current = v.currentTime;
+  }, []);
+  const onSeeking = useCallback(() => {
+    const v = videoRef.current;
+    if (v && !pendingResumeRef.current) resumeAtRef.current = v.currentTime;
   }, []);
   const onLoadedMetadata = useCallback(() => {
     const v = videoRef.current;
-    if (v) {
-      setTotalDuration(v.duration);
-      setIsBuffering(false);
-    }
+    if (!v) return;
+    metadataLoadedRef.current = true;
+    setTotalDuration(v.duration);
+    setIsBuffering(false);
+    const pending = pendingResumeRef.current;
+    if (!pending) return;
+    pendingResumeRef.current = null;
+    if (pending.time > 0) v.currentTime = isFinite(v.duration) ? Math.min(pending.time, Math.max(0, v.duration - 0.1)) : pending.time;
+    if (pending.play) v.play().catch(() => {});
+    Logger.notice(`[VideoPlayer] Video reloaded after an error, continuing at ${pending.time.toFixed(1)}s`);
   }, []);
   const onWaiting = useCallback(() => setIsBuffering(true), []);
   const onCanPlay = useCallback(() => setIsBuffering(false), []);
@@ -95,7 +128,7 @@ export default function VideoPlayer({
     const v = videoRef.current;
     if (!v) return;
     console.log('[VideoPlayer] Retrying playback');
-    v.src = videoSrc + '?t=' + Date.now();
+    v.src = appendUrlParam(videoSrc, 't', String(Date.now()));
     v.load();
     v.play().catch(() => {});
   }, [videoSrc]);
@@ -113,6 +146,23 @@ export default function VideoPlayer({
       networkState: v?.networkState,
       readyState: v?.readyState,
     });
+    // The console is stripped in production: keep the cause in Settings → Logs (file name only, never a CDN link)
+    const fileName = localPath ? localPath.replace(/.*[/\\]/, '') : 'remote video';
+    Logger.warn(`[VideoPlayer] Video error ${error?.code ?? '?'} ${error?.code ? errorNames[error.code] : 'UNKNOWN'}`
+      + `${error?.message ? ` (${error.message})` : ''} at ${resumeAtRef.current.toFixed(1)}s, ${fileName}`);
+
+    // Error after the video had loaded (usually right after a seek): reload it and continue at the same point instead
+    // of showing the error screen at once.
+    if (v && metadataLoadedRef.current && recoveriesRef.current < MAX_VIDEO_RECOVERIES) {
+      recoveriesRef.current += 1;
+      metadataLoadedRef.current = false;
+      pendingResumeRef.current = { time: resumeAtRef.current, play: playIntentRef.current };
+      setIsBuffering(true);
+      // Local file: a new URL so Chromium does not reuse the failed media data; a CDN link (may be signed) stays as it is
+      v.src = videoSrc.startsWith('local-media:') ? appendUrlParam(videoSrc, 'r', String(Date.now())) : videoSrc;
+      v.load();
+      return;
+    }
 
     // AUTO-REPAIR: If SRC_NOT_SUPPORTED for a local MP4, try ensureFaststart
     // Only attempt once per mount to avoid infinite loops
@@ -318,6 +368,7 @@ export default function VideoPlayer({
         onPlay={onPlay}
         onPause={onPause}
         onTimeUpdate={onTimeUpdate}
+        onSeeking={onSeeking}
         onLoadedMetadata={onLoadedMetadata}
         onWaiting={onWaiting}
         onCanPlay={onCanPlay}

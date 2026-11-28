@@ -42,7 +42,7 @@ export type MessageRowContext =
   // Open conversation (useOpenThread)
   Pick<OpenThread, 'activeAccountId' | 'activeThreadId' | 'activeContact' | 'channelCap' | 'msgs' | 'contactList' | 'threadReceipt' | 'telegramGroupAdmins' | 'postReplierPeers' | 'searchHighlightQuery' | 'updateContact' | 'removeMessage' | 'setReplyTo'>
   // Gom tin (useMessageGrouping)
-  & Pick<MessageGrouping, 'groupedFirstMsgs' | 'groupedSkipIds' | 'pollSkipIds' | 'groupedStickerFirstMsgs' | 'groupedStickerSkipIds' | 'dayStartIds' | 'msgIndexById' | 'findMsgById' | 'msgTypeCache' | 'getRowMsgIds'>
+  & Pick<MessageGrouping, 'groupedFirstMsgs' | 'groupedSkipIds' | 'pollSkipIds' | 'fbPollCardRows' | 'groupedStickerFirstMsgs' | 'groupedStickerSkipIds' | 'dayStartIds' | 'msgIndexById' | 'findMsgById' | 'msgTypeCache' | 'getRowMsgIds'>
   // Sender (useSenderDirectory)
   & Pick<SenderDirectory, 'getContact' | 'getGroupMember' | 'groupMembers' | 'isGroupAdmin' | 'resolveQuoteAuthor'>
   // Row display state (useRowDisplayState)

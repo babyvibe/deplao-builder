@@ -10,6 +10,7 @@ import {
 } from '../FacebookTypes';
 import { buildFormData, buildPostConfig, parseFBResponse, genThreadingId, rateLimitDelay } from '../FacebookUtils';
 import { parseFacebookResponse, assertFacebookMutationSuccess } from '../FacebookGraphQLResult';
+import { isFacebookRefusal } from './facebookSendFallback';
 import Logger from '../../../utils/Logger';
 
 const SEND_URL = 'https://www.facebook.com/messaging/send/';
@@ -86,6 +87,22 @@ export async function sendMessage(
     form['replied_to_message_id'] = opts.replyToMessageId;
   }
 
+  // @mentions (Messenger web form: profile_xmd[i][id / offset / length / type])
+  (opts?.mentions || [])
+    .filter(m => /^\d+$/.test(String(m.userId)) && m.length > 0 && m.offset >= 0 && m.offset + m.length <= body.length)
+    .forEach((m, i) => {
+      form[`profile_xmd[${i}][id]`] = String(m.userId);
+      form[`profile_xmd[${i}][offset]`] = String(m.offset);
+      form[`profile_xmd[${i}][length]`] = String(m.length);
+      form[`profile_xmd[${i}][type]`] = 'p';
+    });
+
+  // Sticker (sent instead of text)
+  if (opts?.stickerId && /^\d+$/.test(opts.stickerId)) {
+    form['sticker_id'] = opts.stickerId;
+    form['has_attachment'] = 'true';
+  }
+
   // Attachment(s)
   if (opts?.attachmentIds && opts.attachmentIds.length > 0) {
     // Multi-attachment: group by type and index each
@@ -128,6 +145,8 @@ export async function sendMessage(
     return {
       success: false,
       error: result?.errorDescription || result?.error || 'Unknown error',
+      // Facebook answered with an error: nothing was sent (an answer without actions or error stays unclear)
+      ...(isFacebookRefusal(result) ? { rejected: true } : {}),
     };
   } catch (err: any) {
     const status = err.response?.status;
@@ -143,7 +162,8 @@ export async function sendMessage(
       } catch {}
     }
     Logger.error(`[FacebookMessageSender] sendMessage error: ${detail}`);
-    return { success: false, error: detail };
+    // HTTP 4xx = refused; 5xx / no answer (timeout, lost connection) = unclear, the message may have been created
+    return { success: false, error: detail, ...(isFacebookRefusal(null, status) ? { rejected: true } : {}) };
   }
 }
 
@@ -165,6 +185,8 @@ export async function unsendMessage(
     const response = await axios.post(config.url, config.data, {
       headers: config.headers,
       timeout: config.timeout,
+      // Through the account's proxy like the other calls (it reached Facebook from the machine's own IP)
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
     const result = parseFBResponse(response.data as string);
 

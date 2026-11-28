@@ -35,7 +35,7 @@ function CellView({ value }: { value: Cell }) {
 export function TemplateVarsHelpContent({ channel, onClose }: { channel: string; onClose?: () => void }) {
   const zalo = channel === 'zalo';
   const channelLabel = channel === 'facebook'
-    ? 'Facebook'
+    ? 'Facebook Messenger'
     : channel === 'telegram_user' || channel === 'telegram_bot' ? 'Telegram' : 'Zalo';
 
   /** Value availability per channel: the same variable is not equally filled on every channel. */
@@ -96,7 +96,7 @@ export function TemplateVarsHelpContent({ channel, onClose }: { channel: string;
               <th className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground">{tr('Biến')}</th>
               <th className={`px-2 py-1.5 text-[10px] font-semibold ${zalo ? 'text-blue-300' : 'text-muted-foreground'}`}>Zalo</th>
               <th className={`px-2 py-1.5 text-[10px] font-semibold ${channel === 'telegram_user' || channel === 'telegram_bot' ? 'text-blue-300' : 'text-muted-foreground'}`}>Telegram</th>
-              <th className={`px-2 py-1.5 text-[10px] font-semibold ${channel === 'facebook' ? 'text-blue-300' : 'text-muted-foreground'}`}>Facebook</th>
+              <th className={`px-2 py-1.5 text-[10px] font-semibold ${channel === 'facebook' ? 'text-blue-300' : 'text-muted-foreground'}`}>Facebook Messenger</th>
             </tr>
           </thead>
           <tbody>

@@ -22,6 +22,10 @@
       html[data-theme="light"] #boot .boot-bar { background: #1f6bf2; }
       #boot .boot-text { font-size: 13px; opacity: 0.7; }
       #boot .boot-slow { font-size: 12px; opacity: 0; animation: boot-show 0.4s ease 8s forwards; }
+      #boot .boot-retry { margin-top: 4px; padding: 6px 16px; border-radius: 8px; border: 1px solid rgba(128, 128, 128, 0.45);
+        background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+      #boot .boot-retry:hover { background: rgba(128, 128, 128, 0.15); }
+      #boot .boot-retry[hidden] { display: none; }
       @keyframes boot-slide { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
       @keyframes boot-show { to { opacity: 0.55; } }
       @media (prefers-reduced-motion: reduce) { #boot .boot-bar { animation-duration: 2.4s; } }
@@ -34,6 +38,7 @@
         <div class="boot-track"><div class="boot-bar"></div></div>
         <div class="boot-text" data-boot="loading">Đang tải giao diện…</div>
         <div class="boot-slow" data-boot="slow">Tải lâu hơn thường lệ, vui lòng chờ…</div>
+        <button type="button" class="boot-retry" data-boot-retry hidden data-boot="retry">Tải lại</button>
       </div>
     </div>
     <script type="module" src="/src/ui/main.tsx"></script>

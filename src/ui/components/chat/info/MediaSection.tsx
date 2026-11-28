@@ -33,6 +33,7 @@ import { appendMediaPanelRows, prependMediaPanelRows, toMediaPanelPage } from '@
 import { ChartIcon, EditIcon, FileTextIcon } from '@/components/common/icons';
 import { getFirstAttachment, getFileMetadata, getRemoteMediaUrl, getLocalMediaPath, getVideoRemoteUrl } from '@/lib/media/mediaResolver';
 import { isFacebook, isTelegram as isTelegramCh } from '@/lib/channels/channelHelper';
+import { isImageDocumentMessage } from '../../../../shared/chat/imageDocument';
 import { tr, appLocale } from '../../../../shared/i18n';
 import { trx } from '@/lib/i18n/trx';
 
@@ -70,7 +71,8 @@ function extractImgUrl(msg: any): string {
       if (t && t !== 'undefined') return toLocalMediaUrl(t);
       try { return JSON.parse(msg.content || '{}').thumb || ''; } catch { return ''; }
     }
-    const p = lp.main || lp.hd || lp.thumb || '';
+    // A picture sent as a file (Telegram document) is listed with the photos: its downloaded file is the image
+    const p = lp.main || lp.hd || lp.thumb || (isImageDocumentMessage(msg.msg_type, msg.attachments) ? lp.file : '') || '';
     if (p && p !== 'undefined') return toLocalMediaUrl(p);
   } catch {}
   try {

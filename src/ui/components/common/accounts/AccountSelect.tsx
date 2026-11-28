@@ -28,7 +28,7 @@ export function accountSelectDetail(account: SelectableAccount): string {
 export function groupAccountsByChannel<T extends SelectableAccount>(accounts: readonly T[]): Array<{ label: string; accounts: T[] }> {
   const groups: Array<{ label: string; test: (channel?: string) => boolean; accounts: T[] }> = [
     { label: 'Zalo', test: (channel) => isZalo(channel as any), accounts: [] },
-    { label: 'Facebook', test: (channel) => isFacebook(channel as any), accounts: [] },
+    { label: 'Facebook Messenger', test: (channel) => isFacebook(channel as any), accounts: [] },
     { label: 'Telegram', test: (channel) => isTelegram(channel as any), accounts: [] },
   ];
   const other: T[] = [];

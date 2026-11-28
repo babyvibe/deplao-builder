@@ -1,4 +1,5 @@
 import React from 'react';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import { Spinner } from '@/components/common/PageLoading';
 import { useAppStore } from '@/store/app/appStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -291,7 +292,7 @@ export default function FriendRequestBar({ zaloId, userId, contact, getAuth, onR
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <div className="flex items-center gap-3">
                 {contact?.avatar_url ? (
-                  <img src={contact.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover"
+                  <img src={toLocalMediaUrl(contact.avatar_url)} alt="" className="w-10 h-10 rounded-full object-cover"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                 ) : (
                   <PeerInitials id={userId} name={displayName} fallback="U" className="w-10 h-10 text-sm" />

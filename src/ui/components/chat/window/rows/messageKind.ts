@@ -51,6 +51,7 @@ export function classifyMessage(msg: any, cached: MsgTypeInfo | undefined, group
   const isPollMsg = cached?.isPoll ?? (
     msg.msg_type === 'group.poll'
     || msg.msg_type === 'telegram.poll'
+    || msg.msg_type === 'fb.poll'
     || (msg.msg_type === 'poll' && isTelegramCh(msg.channel))
   );
   const isVideoMsg = cached?.isVideo ?? (isVideoType(msg.msg_type) || msg.msg_type === 'gif');

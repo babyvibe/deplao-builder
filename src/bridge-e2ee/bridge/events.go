@@ -76,6 +76,9 @@ type UserInfo struct {
 type InitialData struct {
 	Threads  []*Thread  `json:"threads"`
 	Messages []*Message `json:"messages"`
+	// DEPLAO_ADAPTER: group members and people (names, pictures) of the page.
+	Participants []*ThreadParticipants `json:"participants,omitempty"`
+	People       []*PersonRow          `json:"people,omitempty"`
 }
 
 // Thread represents a conversation thread
@@ -85,6 +88,13 @@ type Thread struct {
 	Name                    string `json:"name"`
 	LastActivityTimestampMs int64  `json:"lastActivityTimestampMs"`
 	Snippet                 string `json:"snippet"`
+	// DEPLAO_ADAPTER: folder ("inbox", "pending" = message request, "spam"...),
+	// group picture and mute state (deplao_events.go).
+	FolderName       string `json:"folderName,omitempty"`
+	ParentThreadKey  int64  `json:"parentThreadKey,omitempty"`
+	PictureURL       string `json:"pictureUrl,omitempty"`
+	MuteExpireTimeMs int64  `json:"muteExpireTimeMs,omitempty"`
+	IsMessageRequest bool   `json:"isMessageRequest,omitempty"`
 }
 
 // Attachment represents a media attachment
@@ -118,6 +128,16 @@ type Attachment struct {
 	Buttons  []*TemplateButton `json:"buttons,omitempty"`
 	Items    []*TemplateItem   `json:"items,omitempty"`
 	XmaType  string            `json:"xmaType,omitempty"`
+	// DEPLAO_ADAPTER: media refresh key, shared reel / video of a card, live
+	// location and call logs (type "call", deplao_events.go).
+	AttachmentFbid string `json:"attachmentFbid,omitempty"`
+	PlayableURL    string `json:"playableUrl,omitempty"`
+	// DEPLAO_ADAPTER: view-once / replayable media (deplao_incoming.go).
+	ViewOnce         bool   `json:"viewOnce,omitempty"`
+	PlayableMimeType string `json:"playableMimeType,omitempty"`
+	Live             bool   `json:"live,omitempty"`
+	CallType         string `json:"callType,omitempty"`
+	Missed           bool   `json:"missed,omitempty"`
 }
 
 // ReplyTo represents reply info
@@ -152,6 +172,8 @@ type Message struct {
 	// messageUnsend events) and messages whose content the bridge cannot show.
 	IsUnsent    bool   `json:"isUnsent,omitempty"`
 	Unsupported string `json:"unsupported,omitempty"`
+	// DEPLAO_ADAPTER: poll created / changed by this admin message.
+	Poll *PollInfo `json:"poll,omitempty"`
 }
 
 // MessageEditEvent represents a message edit
@@ -227,6 +249,10 @@ type E2EEMessage struct {
 	// DEPLAO_ADAPTER: kind of content the bridge cannot show (view_once,
 	// payment, contact…); the app renders a placeholder instead of an empty bubble.
 	Unsupported string `json:"unsupported,omitempty"`
+	// DEPLAO_ADAPTER: self-delete timer of the message in seconds, counted
+	// after it is read when DisappearAfterRead (deplao_threads.go).
+	DisappearSeconds   int64 `json:"disappearSeconds,omitempty"`
+	DisappearAfterRead bool  `json:"disappearAfterRead,omitempty"`
 }
 
 // getEventTypeName returns the type name of an event
@@ -243,12 +269,16 @@ func getEventTypeName(evt any) string {
 
 // handleEvent handles messagix events
 func (c *Client) handleEvent(ctx context.Context, evt any) {
-	// Emit raw event for all incoming LightSpeed events
-	c.emitEvent(EventTypeRaw, &RawEvent{
-		From: RawEventSourceLightSpeed,
-		Type: getEventTypeName(evt),
-		Data: evt,
-	})
+	// Emit raw event for all incoming LightSpeed events.
+	// DEPLAO_ADAPTER: not when quietRaw is set (normal log levels): a whole
+	// LSTable is serialised for every socket payload and the app discards it.
+	if !c.quietRaw {
+		c.emitEvent(EventTypeRaw, &RawEvent{
+			From: RawEventSourceLightSpeed,
+			Type: getEventTypeName(evt),
+			Data: evt,
+		})
+	}
 
 	switch e := evt.(type) {
 	case *messagix.ConnectedEvent:
@@ -286,9 +316,14 @@ func (c *Client) handleEvent(ctx context.Context, evt any) {
 
 // handleTable processes a table from publish response
 func (c *Client) handleTable(tbl *table.LSTable) {
+	// DEPLAO_ADAPTER: thread keys of encrypted chats become their chat ids (deplao_threads.go).
+	c.learnHybridThreads(tbl)
+	c.remapHybridThreadKeys(tbl)
 	for _, thread := range tbl.LSDeleteThenInsertThread {
 		c.cacheThread(convertThread(thread))
 	}
+	// DEPLAO_ADAPTER: thread folders / mute / deletes before the messages.
+	c.emitThreadTables(tbl)
 
 	// Process wrapped messages (includes attachments info)
 	// upsert = sync/backfill messages (should NOT emit events)
@@ -690,6 +725,7 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage, extras *tableE
 		IsUnsent:    msg.IsUnsent,
 		Attachments: []*Attachment{},
 		Mentions:    []*Mention{},
+		Poll:        pollInfoOf(msg),
 	}
 
 	// Handle reply
@@ -755,6 +791,22 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage, extras *tableE
 		if xma != nil && xma.LSInsertXmaAttachment != nil && xma.AttachmentFbid != "" {
 			cardFbids[xma.AttachmentFbid] = true
 		}
+		// DEPLAO_ADAPTER: call logs and live locations.
+		if isCallLogXMA(xma) {
+			m.Attachments = append(m.Attachments, callLogAttachment(xma))
+			continue
+		}
+		if xma.CTA != nil && xma.CTA.Type_ == "xma_live_location_sharing" {
+			m.Attachments = append(m.Attachments, &Attachment{
+				Type:        "location",
+				Live:        true,
+				FileName:    xma.TitleText,
+				Description: xma.SubtitleText,
+				PreviewURL:  xma.PreviewUrl,
+			})
+			continue
+		}
+
 		// Check if this is a location attachment
 		if xma.CTA != nil && xma.CTA.Type_ == "xma_map" {
 			// Parse location from NativeUrl (format: "lat,lng")
@@ -769,6 +821,7 @@ func (c *Client) convertWrappedMessage(msg *table.WrappedMessage, extras *tableE
 						Longitude:   lng,
 						FileName:    xma.TitleText,    // Address name
 						Description: xma.SubtitleText, // Address details
+						PreviewURL:  xma.PreviewUrl,
 					})
 					continue
 				}
@@ -852,6 +905,8 @@ func (c *Client) convertBlobAttachment(blob *table.LSInsertBlobAttachment) *Atta
 		FileName: blob.Filename,
 		MimeType: blob.AttachmentMimeType,
 		FileSize: blob.Filesize,
+		// DEPLAO_ADAPTER: lets the app match a refreshed URL to this file.
+		AttachmentFbid: blob.AttachmentFbid,
 	}
 
 	// Determine type based on AttachmentType (from table/enums.go)
@@ -907,12 +962,18 @@ func (c *Client) convertBlobAttachment(blob *table.LSInsertBlobAttachment) *Atta
 
 // handleE2EEEvent handles WhatsApp E2EE events
 func (c *Client) handleE2EEEvent(evt interface{}) {
-	// Emit raw event for all incoming whatsmeow events
-	c.emitEvent(EventTypeRaw, &RawEvent{
-		From: RawEventSourceWhatsmeow,
-		Type: getEventTypeName(evt),
-		Data: evt,
-	})
+	// Emit raw event for all incoming whatsmeow events (see handleEvent).
+	if !c.quietRaw {
+		c.emitEvent(EventTypeRaw, &RawEvent{
+			From: RawEventSourceWhatsmeow,
+			Type: getEventTypeName(evt),
+			Data: evt,
+		})
+	}
+	// DEPLAO_ADAPTER: typing and call logs of encrypted chats.
+	if c.handleE2EEExtras(evt) {
+		return
+	}
 
 	switch e := evt.(type) {
 	case *events.Connected:
@@ -1338,6 +1399,12 @@ func (c *Client) extractE2EEMessage(e *events.FBMessage, senderID int64) *E2EEMe
 		msg.ReplyTo = replyTo
 	}
 
+	// DEPLAO_ADAPTER: the chat's disappearing timer (deplao_threads.go).
+	if setting := messageDisappearing(e); setting != nil && setting.Seconds > 0 {
+		msg.DisappearSeconds = setting.Seconds
+		msg.DisappearAfterRead = setting.AfterRead
+	}
+
 	if e.Message == nil {
 		// DEPLAO_ADAPTER: no sub-message and no text = protocol traffic, not a
 		// visible message; emitting it produced an empty bubble.
@@ -1360,7 +1427,15 @@ func (c *Client) extractE2EEMessage(e *events.FBMessage, senderID int64) *E2EEMe
 				// DEPLAO_ADAPTER: content kinds without a dedicated mapping below.
 				switch {
 				case content.GetViewOnceMessage() != nil:
-					msg.Unsupported = "view_once"
+					// DEPLAO_ADAPTER: view-once media is shown like mautrix-meta (deplao_incoming.go).
+					if att, caption := c.viewOnceAttachment(content.GetViewOnceMessage()); att != nil {
+						msg.Attachments = append(msg.Attachments, att)
+						if caption.GetText() != "" {
+							msg.Text = caption.GetText()
+						}
+					} else {
+						msg.Unsupported = "view_once"
+					}
 				case content.GetContactMessage() != nil, content.GetContactsArrayMessage() != nil:
 					msg.Unsupported = "contact"
 				case content.GetGroupInviteMessage() != nil:
@@ -1525,8 +1600,16 @@ func (c *Client) extractE2EEMessage(e *events.FBMessage, senderID int64) *E2EEMe
 					msg.Unsupported = "unknown"
 				}
 			case content.GetRavenMessage() != nil, content.GetRavenMessageMsgr() != nil:
-				// View-once media: never persisted, the sender expects one view.
-				msg.Unsupported = "view_once"
+				// View-once media, shown like mautrix-meta (deplao_incoming.go).
+				raven := content.GetRavenMessage()
+				if raven == nil {
+					raven = content.GetRavenMessageMsgr()
+				}
+				if att := ravenAttachment(raven); att != nil {
+					msg.Attachments = append(msg.Attachments, att)
+				} else {
+					msg.Unsupported = "view_once"
+				}
 			case content.GetPaymentsTransactionMessage() != nil:
 				msg.Unsupported = "payment"
 			case content.GetNoteReplyMessage() != nil:
@@ -1535,7 +1618,15 @@ func (c *Client) extractE2EEMessage(e *events.FBMessage, senderID int64) *E2EEMe
 				} else {
 					msg.Unsupported = "note_reply"
 				}
-			case content.GetBumpExistingMessage() != nil, content.GetScreenshotAction() != nil,
+			case content.GetBumpExistingMessage() != nil:
+				// A message brought back to the top: shown as a reply to it (deplao_incoming.go)
+				reply := c.bumpReply(content.GetBumpExistingMessage().GetKey())
+				if reply == nil {
+					return nil
+				}
+				msg.ReplyTo = reply
+				msg.Unsupported = unsupportedBump
+			case content.GetScreenshotAction() != nil,
 				content.GetRavenActionNotifMessage() != nil, content.GetNetworkVerificationMessage() != nil:
 				// Signals about other messages, nothing to show.
 				return nil
@@ -1543,15 +1634,9 @@ func (c *Client) extractE2EEMessage(e *events.FBMessage, senderID int64) *E2EEMe
 
 			// ExtendedContentMessage - used for link shares and location sharing
 			if extMsg := content.GetExtendedContentMessage(); extMsg != nil {
-				targetType := extMsg.GetTargetType()
-				if targetType == waArmadilloXMA.ExtendedContentMessage_MSG_LOCATION_SHARING_V2 {
-					// Todo: check for live location end event?
+				// DEPLAO_ADAPTER: card text, location shares, story replies (deplao_incoming.go).
+				if !c.applyExtendedContent(msg, extMsg) {
 					return nil
-				}
-
-				att := c.extractArmadilloLinkAttachment(extMsg)
-				if att != nil {
-					msg.Attachments = append(msg.Attachments, att)
 				}
 			}
 

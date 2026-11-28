@@ -242,8 +242,10 @@ export function parseThreadNodes(dataGet: string, accountId: string, fbUserId?: 
         emoji: node?.customization_info?.emoji || undefined,
         participant_count: participants.length,
         last_message_preview: node?.last_message?.nodes?.[0]?.snippet || undefined,
+        // Milliseconds like every other source (bridge, realtime): seconds here sorted these conversations below all others
+        // and showed 1970 dates
         last_message_at: node?.updated_time_precise
-          ? Math.floor(parseInt(node.updated_time_precise) / 1000)
+          ? parseInt(node.updated_time_precise, 10) || undefined
           : undefined,
         unread_count: unreadCount,
         is_muted: false,
@@ -330,6 +332,7 @@ export async function changeThreadName(
         'Referer': 'https://www.facebook.com/',
       },
       timeout: 15000,
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
     assertFacebookMutationSuccess('changeThreadName', parseFacebookResponse(response.data as string));
     return true;
@@ -366,6 +369,7 @@ export async function changeThreadEmoji(
         'Referer': 'https://www.facebook.com/',
       },
       timeout: 15000,
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
     assertFacebookMutationSuccess('changeThreadEmoji', parseFacebookResponse(response.data as string));
     return true;
@@ -405,6 +409,7 @@ export async function changeNickname(
         'Referer': 'https://www.facebook.com/',
       },
       timeout: 15000,
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
     assertFacebookMutationSuccess('changeNickname', parseFacebookResponse(response.data as string));
     return true;
@@ -505,13 +510,16 @@ export async function fetchThreadMessages(
         senderName: node.message_sender?.name || node.sender_name || '',
         attachments: [
           ...(node.blob_attachments || []).map((a: any) => {
-            const type = graphQLBlobType(a.__typename);
+            const blobType = graphQLBlobType(a.__typename);
+            const url = (blobType === 'video' || blobType === 'audio' ? a.playable_url : null)
+              || (blobType === 'gif' ? a.animated_image?.uri : null)
+              || a.large_preview?.uri || a.url || a.preview?.uri || null;
+            // An animated image given as a .gif file is drawn as an image (the 'gif' kind plays in <video>, which cannot open .gif)
+            const type = blobType === 'gif' && url && !/\.(mp4|webm)(\?|$)/i.test(url) ? 'image' : blobType;
             return {
               id: a.attachment_fbid || a.id,
               type,
-              url: (type === 'video' || type === 'audio' ? a.playable_url : null)
-                || (type === 'gif' ? a.animated_image?.uri : null)
-                || a.large_preview?.uri || a.url || a.preview?.uri || null,
+              url,
               name: a.filename || a.name,
               fileSize: a.filesize,
               mimeType: a.content_type,
@@ -557,8 +565,9 @@ export async function addGroupAdmin(
   dataFB: FBSessionData,
   threadId: string,
   userId: string,
+  httpsAgent?: any,
 ): Promise<{ success: boolean; error?: string }> {
-  return changeGroupAdminStatus(dataFB, threadId, userId, true);
+  return changeGroupAdminStatus(dataFB, threadId, userId, true, httpsAgent);
 }
 
 /**
@@ -568,8 +577,9 @@ export async function removeGroupAdmin(
   dataFB: FBSessionData,
   threadId: string,
   userId: string,
+  httpsAgent?: any,
 ): Promise<{ success: boolean; error?: string }> {
-  return changeGroupAdminStatus(dataFB, threadId, userId, false);
+  return changeGroupAdminStatus(dataFB, threadId, userId, false, httpsAgent);
 }
 
 async function changeGroupAdminStatus(
@@ -577,6 +587,7 @@ async function changeGroupAdminStatus(
   threadId: string,
   userId: string,
   add: boolean,
+  httpsAgent?: any,
 ): Promise<{ success: boolean; error?: string }> {
   await rateLimitDelay();
 
@@ -608,6 +619,7 @@ async function changeGroupAdminStatus(
         'Cookie': dataFB.cookieFacebook,
       },
       timeout: 30000,
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
     assertFacebookMutationSuccess(add ? 'addGroupAdmin' : 'removeGroupAdmin', parseFacebookResponse(response.data as string));
     return { success: true };
@@ -656,6 +668,7 @@ export async function changeApprovalMode(
         'Cookie': dataFB.cookieFacebook,
       },
       timeout: 30000,
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
     assertFacebookMutationSuccess('changeApprovalMode', parseFacebookResponse(response.data as string));
     return { success: true };
@@ -704,6 +717,7 @@ export async function approvePendingMember(
         'Cookie': dataFB.cookieFacebook,
       },
       timeout: 30000,
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
     assertFacebookMutationSuccess('approvePendingMember', parseFacebookResponse(response.data as string));
     return { success: true };
@@ -748,6 +762,7 @@ export async function getGroupLink(
         'Cookie': dataFB.cookieFacebook,
       },
       timeout: 30000,
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
 
     const parsed = parseFacebookResponse(response.data as string);
@@ -799,6 +814,7 @@ export async function setGroupLink(
         'Cookie': dataFB.cookieFacebook,
       },
       timeout: 30000,
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
     assertFacebookMutationSuccess('setGroupLink', parseFacebookResponse(response.data as string));
     return { success: true };

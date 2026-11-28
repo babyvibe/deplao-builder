@@ -75,6 +75,17 @@ export const E2EE_REQUIRED_CAPABILITIES: readonly string[] = [
  */
 export const NATIVE_LOGIN_REQUIRED_CAPABILITIES: readonly string[] = ['nativeLogin'];
 
+export type { FacebookPersonResult } from '../../../shared/facebook/facebookPeople';
+import type { FacebookPersonResult } from '../../../shared/facebook/facebookPeople';
+
+/** A thread for thread tasks: encrypted threads run in sync group 95. */
+export interface FacebookThreadRef {
+  threadId: string;
+  /** Messenger thread type (bridge threadType); 15 / 16 = encrypted. */
+  threadType?: number;
+  encrypted?: boolean;
+}
+
 /**
  * The supported bridge methods.
  * Reference: bridge-e2ee/main.go `handle()` switch statement.
@@ -138,22 +149,60 @@ export interface BridgeContactInfo {
 }
 
 /** Recent inbox data returned by the bridge. It is persisted, never replayed as live events. */
+/** Member rows of one thread (bridge ThreadParticipants). */
+export interface BridgeThreadParticipants {
+  threadId: string;
+  threadType?: number;
+  members: Array<{ id: string; isAdmin?: boolean; isSuperAdmin?: boolean; nickname?: string }>;
+}
+
+/** A person (or Page) Messenger sent with a table. */
+export interface BridgePersonRow { id: string; name?: string; avatarUrl?: string }
+
+/** A thread row from the bridge (threads event, thread info). */
+export interface BridgeThreadUpdate {
+  threadId: string;
+  type?: number;
+  name?: string;
+  snippet?: string;
+  lastActivityTimestampMs?: number;
+  folderName?: string;
+  parentThreadKey?: number;
+  pictureUrl?: string;
+  muteExpireTimeMs?: number;
+  isMessageRequest?: boolean;
+}
+
 export interface BridgeInitialData {
+  /** Group members and people of the page (bridges with threadInfo). */
+  participants?: BridgeThreadParticipants[];
+  people?: BridgePersonRow[];
   threads?: Array<{
     id: string | number;
     type?: number;
     name?: string;
     lastActivityTimestampMs?: number;
     snippet?: string;
+    /** Messenger folder: "inbox", "pending" (message request), "spam"… (bridges with threadEvents) */
+    folderName?: string;
+    parentThreadKey?: number;
+    pictureUrl?: string;
+    /** -1 = muted until turned back on, > now = muted until then */
+    muteExpireTimeMs?: number;
+    isMessageRequest?: boolean;
   }>;
   messages?: Array<{
     id: string;
     threadId: string | number;
+    threadType?: number;
     senderId?: string | number;
     text?: string | null;
     timestampMs?: number;
     attachments?: any[];
-    replyTo?: { messageId?: string };
+    mentions?: Array<{ userId: string | number; offset: number; length: number }>;
+    /** Poll created / changed by this admin message (bridges with pollEvents) */
+    poll?: import('../../../shared/facebook/facebookSpecialMessages').BridgePollInfo;
+    replyTo?: { messageId?: string; senderId?: string | number; text?: string };
     /** Unsent message (history): bridge DEPLAO_ADAPTER */
     isUnsent?: boolean;
     /** System message (group renamed, pinned…) */
@@ -775,6 +824,8 @@ export class FacebookE2EEBridge extends EventEmitter {
     e2eeMemoryOnly?: boolean;
     devicePath?: string;
     deviceData?: string;
+    /** Account proxy URL (http / https / socks5); older bridges ignore it. */
+    proxy?: string;
   }, timeout: number = 30000): Promise<{ deviceData?: string }> {
     return this.call('newClient', {
       cookies: config.cookies,
@@ -783,6 +834,7 @@ export class FacebookE2EEBridge extends EventEmitter {
       e2eeMemoryOnly: config.e2eeMemoryOnly ?? true,
       ...(config.devicePath ? { devicePath: config.devicePath } : {}),
       ...(config.deviceData ? { deviceData: config.deviceData } : {}),
+      ...(config.proxy ? { proxy: config.proxy } : {}),
     }, timeout);
   }
 
@@ -912,9 +964,19 @@ export class FacebookE2EEBridge extends EventEmitter {
    */
   public async sendE2EESticker(params: {
     chatJid: string;
-    stickerId: string;
-  }): Promise<any> {
-    return this.call('sendE2EESticker', params);
+    /** Sticker image on disk (webp / png); encrypted chats send the image itself. */
+    localPath: string;
+    mimeType?: string;
+    width?: number;
+    height?: number;
+  }): Promise<{ messageId?: string; timestampMs?: number }> {
+    return this.call('sendE2EESticker', {
+      chatJid: params.chatJid,
+      localPath: params.localPath,
+      mimeType: params.mimeType || 'image/webp',
+      ...(params.width ? { width: params.width } : {}),
+      ...(params.height ? { height: params.height } : {}),
+    });
   }
 
   /**
@@ -954,11 +1016,16 @@ export class FacebookE2EEBridge extends EventEmitter {
     chatJid: string;
     audioPath: string;
     mimeType?: string;
+    /** Voice note (push-to-talk) instead of an audio file. */
+    ptt?: boolean;
+    durationSec?: number;
   }): Promise<{ messageId?: string; timestampMs?: number }> {
     return this.call('sendE2EEAudio', {
       chatJid: params.chatJid,
       audioPath: params.audioPath,
       mimeType: params.mimeType || '',
+      ...(params.ptt ? { ptt: true } : {}),
+      ...(params.durationSec ? { duration: Math.round(params.durationSec) } : {}),
     });
   }
 
@@ -1000,11 +1067,22 @@ export class FacebookE2EEBridge extends EventEmitter {
     threadId: string;
     text: string;
     replyToId?: string;
+    /** @mentions: user ids with UTF-16 offsets / lengths in text. */
+    mentions?: Array<{ userId: string; offset: number; length: number }>;
+    /** Sticker id (ordinary threads). */
+    stickerId?: string;
   }): Promise<{ messageId?: string; timestampMs?: number }> {
+    const mentions = (params.mentions || []).filter(m => /^\d+$/.test(String(m.userId)) && m.length > 0);
     return this.call('sendMessage', {
       threadId: FacebookE2EEBridge.toIntThreadId(params.threadId),
       text: params.text,
       replyToId: params.replyToId || '',
+      ...(mentions.length ? {
+        mentionIds: mentions.map(m => Number(m.userId)),
+        mentionOffsets: mentions.map(m => m.offset),
+        mentionLengths: mentions.map(m => m.length),
+      } : {}),
+      ...(params.stickerId && /^\d+$/.test(params.stickerId) ? { stickerId: Number(params.stickerId) } : {}),
     });
   }
 
@@ -1091,10 +1169,13 @@ export class FacebookE2EEBridge extends EventEmitter {
   public async markRead(params: {
     threadId: string;
     watermarkTs?: number;
+    /** 95 for end-to-end encrypted threads (bridges with markReadSyncGroup). */
+    syncGroup?: number;
   }): Promise<void> {
     await this.call('markRead', {
       threadId: FacebookE2EEBridge.toIntThreadId(params.threadId),
       watermarkTs: params.watermarkTs || Date.now(),
+      ...(params.syncGroup && params.syncGroup > 1 ? { syncGroup: params.syncGroup } : {}),
     });
   }
 
@@ -1134,6 +1215,176 @@ export class FacebookE2EEBridge extends EventEmitter {
       chatJid: params.chatJid,
       messageId: params.messageId,
     });
+  }
+
+  // ─── Conversation / people actions (bridge deplao_rpc.go) ─────────────────
+  // Ids travel as strings: group thread ids can exceed 2^53.
+
+  /** Messenger people search: friends, other people, Pages and the account's groups. */
+  public async searchUsers(query: string): Promise<{ results: FacebookPersonResult[] }> {
+    return this.call('searchUsers', { query }, 30000);
+  }
+
+  /** Open (create when missing) the 1:1 thread with a person. */
+  public async startChat(userId: string): Promise<{ threadId: string; encrypted: boolean }> {
+    return this.call('startChat', { userId: String(userId) }, 30000);
+  }
+
+  /** Mute until muteUntilMs (Unix ms); -1 = until turned back on, 0 = unmute. */
+  public async muteThread(params: FacebookThreadRef & { muteUntilMs: number }): Promise<void> {
+    await this.call('muteThread', { ...FacebookE2EEBridge.threadRef(params), muteUntilMs: params.muteUntilMs }, 30000);
+  }
+
+  /** Delete the conversation from the account's inbox (not for the other people). */
+  public async deleteThread(params: FacebookThreadRef): Promise<void> {
+    await this.call('deleteThread', FacebookE2EEBridge.threadRef(params), 30000);
+  }
+
+  /** Accept a message request (moves it to the inbox). */
+  public async acceptMessageRequest(params: FacebookThreadRef): Promise<void> {
+    await this.call('acceptMessageRequest', FacebookE2EEBridge.threadRef(params), 30000);
+  }
+
+  /** Remove an ordinary message for the account only. */
+  public async deleteMessageForMe(params: { threadId: string; messageId: string }): Promise<void> {
+    await this.call('deleteMessageForMe', { threadId: String(params.threadId), messageId: params.messageId }, 30000);
+  }
+
+  /** `encrypted`: an end-to-end encrypted group, changed through the encrypted socket (bridges with `e2eeGroups`). */
+  public async addGroupMembers(params: { threadId: string; userIds: string[]; encrypted?: boolean }): Promise<void> {
+    await this.call('addGroupMembers', {
+      threadId: String(params.threadId), userIds: params.userIds.map(String), ...(params.encrypted ? { encrypted: true } : {}),
+    }, 30000);
+  }
+
+  /** Remove a member; the account's own id leaves the group. */
+  public async removeGroupMember(params: { threadId: string; userId: string; encrypted?: boolean }): Promise<void> {
+    await this.call('removeGroupMember', {
+      threadId: String(params.threadId), userId: String(params.userId), ...(params.encrypted ? { encrypted: true } : {}),
+    }, 30000);
+  }
+
+  public async setGroupAdmin(params: { threadId: string; userId: string; isAdmin: boolean }): Promise<void> {
+    await this.call('setGroupAdmin', {
+      threadId: String(params.threadId), userId: String(params.userId), isAdmin: params.isAdmin === true,
+    }, 30000);
+  }
+
+  public async setGroupPhoto(params: { threadId: string; localPath: string; mimeType?: string }): Promise<void> {
+    await this.call('setGroupPhoto', {
+      threadId: String(params.threadId), localPath: params.localPath, mimeType: params.mimeType || 'image/jpeg',
+    }, 60000);
+  }
+
+  public async renameGroup(params: { threadId: string; name: string }): Promise<void> {
+    await this.call('renameGroup', { threadId: String(params.threadId), name: params.name }, 30000);
+  }
+
+  public async createPollLS(params: { threadId: string; question: string; options: string[] }): Promise<void> {
+    await this.call('createPoll', {
+      threadId: String(params.threadId), question: params.question, options: params.options,
+    }, 30000);
+  }
+
+  /** Replace the account's choices in a poll (empty = remove the vote). */
+  public async votePollLS(params: { threadId: string; pollId: string; optionIds: string[] }): Promise<void> {
+    await this.call('votePoll', {
+      threadId: String(params.threadId), pollId: String(params.pollId), optionIds: params.optionIds.map(String),
+    }, 30000);
+  }
+
+  /**
+   * WhatsApp presence of the encrypted chats (bridges with `e2eePresence`): typing in encrypted chats is only exchanged
+   * with an "available" client.
+   */
+  public async setE2EEPresence(available: boolean): Promise<void> {
+    await this.call('setE2EEPresence', { available }, 15000);
+  }
+
+  /** "Seen" for end-to-end encrypted messages of one sender. */
+  public async markE2EERead(params: {
+    chatJid: string;
+    senderJid?: string;
+    messageIds: string[];
+    timestampMs?: number;
+  }): Promise<void> {
+    await this.call('markE2EERead', {
+      chatJid: params.chatJid,
+      senderJid: params.senderJid || '',
+      messageIds: params.messageIds,
+      ...(params.timestampMs ? { timestampMs: params.timestampMs } : {}),
+    }, 30000);
+  }
+
+  /**
+   * Unlock Messenger's secure history backup with the Messenger PIN (one recovery call; the PIN is not kept anywhere).
+   * Returns the enrolled history device (JSON) the app stores encrypted. A refused PIN fails with "pin_rejected|code|attempts".
+   */
+  public async restoreHistoryPin(pin: string): Promise<{ device: string }> {
+    return this.call('restoreHistoryPin', { pin }, 120000);
+  }
+
+  /** A thread's full info: thread row (name, picture, folder), members and people (CreateThreadTask). */
+  public async fetchThreadInfo(threadId: string): Promise<{
+    threads: BridgeThreadUpdate[];
+    participants: BridgeThreadParticipants[];
+    people: BridgePersonRow[];
+  }> {
+    return this.call('fetchThreadInfo', { threadId: String(threadId) }, 30000);
+  }
+
+  /** Facebook thread keys of encrypted chats saved in an earlier run (bridges with `hybridThreads`). */
+  public async setHybridThreads(threads: Array<{ threadKey: string; threadId: string; isGroup?: boolean }>): Promise<{ added: number }> {
+    return this.call('setHybridThreads', {
+      threads: threads.map(t => ({ threadKey: String(t.threadKey), threadId: String(t.threadId), ...(t.isGroup ? { isGroup: true } : {}) })),
+    }, 15000);
+  }
+
+  /** Disappearing timers (seconds) of encrypted chats saved in an earlier run, by chat JID (bridges with `disappearing`). */
+  public async setChatTimers(timers: Record<string, number>): Promise<void> {
+    await this.call('setChatTimers', { timers }, 15000);
+  }
+
+  /** LightSpeed app state: foreground while a Messenger chat is on screen (bridges with `appState`). */
+  public async setAppState(foreground: boolean): Promise<void> {
+    await this.call('setAppState', { foreground: foreground === true }, 15000);
+  }
+
+  /** Block or unblock a person's messages through LightSpeed (bridges with `blockUser`). */
+  public async setUserBlock(params: { userId: string; block: boolean }): Promise<void> {
+    await this.call('setUserBlock', { userId: String(params.userId), block: params.block === true }, 30000);
+  }
+
+  /** Name, members and disappearing timer of an encrypted group (bridges with `e2eeGroups`). */
+  public async fetchE2EEGroupInfo(threadId: string): Promise<{
+    threadId: string;
+    name?: string;
+    members: Array<{ id: string; isAdmin?: boolean; isSuperAdmin?: boolean }>;
+    disappearingSeconds?: number;
+  }> {
+    return this.call('fetchE2EEGroupInfo', { threadId: String(threadId) }, 30000);
+  }
+
+  /** History device enrolled in an earlier run (empty = forget it). */
+  public async setHistoryDevice(device: string): Promise<void> {
+    await this.call('setHistoryDevice', { device }, 15000);
+  }
+
+  /** One page (newest first) of old encrypted messages of a chat from the secure history. */
+  public async fetchEncryptedHistory(params: { chatJid: string; beforeMs?: number; count?: number }): Promise<{ messages: any[]; hasMore: boolean; before: number }> {
+    return this.call('fetchEncryptedHistory', {
+      chatJid: params.chatJid,
+      ...(params.beforeMs ? { beforeMs: params.beforeMs } : {}),
+      ...(params.count ? { count: params.count } : {}),
+    }, 90000);
+  }
+
+  private static threadRef(params: FacebookThreadRef): { threadId: string; threadType: number; encrypted: boolean } {
+    return {
+      threadId: String(params.threadId),
+      threadType: Number(params.threadType) || 0,
+      encrypted: params.encrypted === true,
+    };
   }
 
   // ─── Shutdown ─────────────────────────────────────────────────────────────

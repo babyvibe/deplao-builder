@@ -2,7 +2,8 @@
 import DOMPurify from 'dompurify';
 import { useAppStore } from '@/store/app/appStore';
 import { useUpdateStore, UpdateInfo, ProgressInfo, UpdateError } from '@/store/app/updateStore';
-import { tr } from '../../../../shared/i18n';
+import { getLanguage, tr } from '../../../../shared/i18n';
+import { releaseNotesForLanguage } from '@/lib/app/releaseNotes';
 import { trx } from '@/lib/i18n/trx';
 
 const DOWNLOAD_STALL_TIMEOUT_MS = 45_000;
@@ -22,7 +23,8 @@ async function fetchAggregatedNotes(currentVersion: string, targetVersion: strin
       if (!v) continue;
       // Include if v > currentVersion and v <= targetVersion
       if (compareVersions(v, currentVersion) > 0 && compareVersions(v, targetVersion) <= 0) {
-        const body = (r.body || '').trim();
+        // English is the visible text on GitHub; Vietnamese users get the hidden Vietnamese notes (lib/app/releaseNotes)
+        const body = releaseNotesForLanguage(r.body || '', getLanguage());
         notes.push(`<h2>v${v}</h2>\n${body ? mdToHtml(body) : tr('<em>Không có ghi chú</em>')}`);
       }
     }
@@ -73,23 +75,28 @@ export function UpdateNotification() {
   const [aggregatedNotes, setAggregatedNotes] = useState('');
   const [notesLoading, setNotesLoading] = useState(false);
 
-  // Fetch aggregated release notes when update info arrives
+  // Release notes of every skipped version, read from the GitHub API: its raw text carries the hidden Vietnamese notes.
+  // electron-updater's releaseNotes is GitHub's rendered HTML (English only, hidden part dropped): used only when the
+  // API cannot be reached.
   useEffect(() => {
     if (!updateInfo || !showPopup) return;
-    // If we already have releaseNotes from electron-updater, use that
-    // Otherwise fetch from GitHub for all skipped versions
-    if (updateInfo.releaseNotes) {
-      // releaseNotes can be a string or an array (electron-updater)
-      const notes = Array.isArray(updateInfo.releaseNotes)
+    let alive = true;
+    const updaterNotes = updateInfo.releaseNotes
+      ? (Array.isArray(updateInfo.releaseNotes)
         ? updateInfo.releaseNotes.map((n: any) => n.note || n).join('\n')
-        : updateInfo.releaseNotes;
-      setAggregatedNotes(typeof notes === 'string' ? notes : String(notes));
-      return;
-    }
+        : updateInfo.releaseNotes)
+      : '';
     setNotesLoading(true);
     fetchAggregatedNotes(APP_VERSION, updateInfo.version)
-      .then(notes => setAggregatedNotes(notes))
-      .finally(() => setNotesLoading(false));
+      .then((notes) => {
+        if (alive) setAggregatedNotes(notes || (typeof updaterNotes === 'string' ? updaterNotes : String(updaterNotes)));
+      })
+      .finally(() => {
+        if (alive) setNotesLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
   }, [updateInfo, showPopup]);
 
   const resetStallTimer = useCallback(() => {

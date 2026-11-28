@@ -1098,13 +1098,16 @@ export function AddMemberToGroupModal({ groupId, groupName, existingMemberIds = 
 function PersonRow({ id, name, avatar, selected, onToggle, isGroup, subtitle }: {
   id: string; name: string; avatar?: string; selected: boolean; onToggle: () => void; isGroup?: boolean; subtitle?: string;
 }) {
+  // Facebook / Telegram pictures are files on this machine (media/…): shown through local-media, letter when it fails
+  const [brokenAvatar, setBrokenAvatar] = React.useState('');
+  const avatarSrc = avatar ? toLocalMediaUrl(avatar) : '';
   return (
     <button onClick={onToggle} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted transition-colors text-left">
       <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${selected ? 'bg-blue-600 border-blue-600' : 'border-border-strong hover:border-border-strong'}`}>
         {selected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
       </div>
-      {avatar ? (
-        <img src={avatar} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+      {avatarSrc && brokenAvatar !== avatarSrc ? (
+        <img src={avatarSrc} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" onError={() => setBrokenAvatar(avatarSrc)} />
       ) : (
         <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 ${isGroup ? 'bg-purple-600' : 'bg-blue-600'}`}>
           {(name || 'U').charAt(0).toUpperCase()}

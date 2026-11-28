@@ -1,4 +1,8 @@
 import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from 'react';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
+import {
+  focusComposerSoon, noteComposerPress, overlayOpen, rememberComposerBlur, returnComposerFocusAfterClick,
+} from '@/lib/chat/composer/composerFocus';
 import {useChatStore, type MessageItem} from '@/store/chat/chatStore';
 import { forgetReplyDraft, getReplyDraft, replyDraftKey, saveReplyDraft } from '@/lib/chat/composer/replyDrafts';
 import { liveReadSync } from '@/lib/chat/read/liveReadSync';
@@ -31,6 +35,9 @@ import BankCardModal from './BankCardModal';
 import ZaloCatalogPicker from '../zalo/catalog/ZaloCatalogPicker';
 import LibraryPickerModal from './LibraryPickerModal';
 import ZaloStickerStore from './ZaloStickerStore';
+import ZaloGifPanel from './ZaloGifPanel';
+import FacebookStickerPicker, { FACEBOOK_LIKE_STICKER_ID, type FacebookStickerItem } from './FacebookStickerPicker';
+import { zaloGifAnimated, zaloGifSendUrls, zaloGifThumb, type ZaloGif } from '@/lib/chat/zalo/zaloGifs';
 import { mergeStickerSuggestions, zaloApiStickerSuggestions, zaloKeywordStickerSuggestions } from '@/lib/chat/zalo/zaloStickers';
 import {
   fetchQuickMessages,
@@ -52,11 +59,14 @@ import { EMOJI_CATEGORIES, QUICK_EMOJIS } from '@/lib/chat/messages/emojiUtils';
 import PluginComposerButtons from '@/components/plugins/contributions/PluginComposerButtons';
 import { TelegramMediaPicker, lastTelegramPickerTab } from '../telegram/stickers/TelegramMediaPicker';
 import { sendTelegramStickerItem, type TelegramStickerItem } from '@/lib/chat/telegram/telegramStickerStore';
-import { AlertIcon, AwardIcon, BellIcon, BookmarkIcon, BotIcon, ChartIcon, ChatIcon, CheckIcon, ClipboardListIcon, ClockIcon, CreditCardIcon, DollarIcon, EditIcon, FileTextIcon, FolderIcon, GiftIcon, GlobeIcon, KeyIcon, LightbulbIcon, LightningIcon, LinkIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, SmartphoneIcon, SmileIcon, SparklesIcon, StarIcon, StoreIcon, TagIcon, TargetIcon, TrashIcon, TrendingUpIcon, TruckIcon, UserIcon } from '@/components/common/icons';
+import { AlertIcon, AwardIcon, BellIcon, BookmarkIcon, BotIcon, ChartIcon, ChatIcon, CheckIcon, ClipboardListIcon, ClockIcon, CreditCardIcon, DollarIcon, EditIcon, FileTextIcon, FolderIcon, GiftIcon, GlobeIcon, ImageIcon, KeyIcon, LightbulbIcon, LightningIcon, LinkIcon, PackageIcon, PinIcon, PluginIcon, RefreshIcon, SearchIcon, SettingsIcon, ShoppingCartIcon, SmartphoneIcon, SmileIcon, SparklesIcon, StarIcon, StoreIcon, TagIcon, TargetIcon, TrashIcon, TrendingUpIcon, TruckIcon, UserIcon } from '@/components/common/icons';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
 import { ComposerTargetContext } from './composerTarget';
 import { tr } from '../../../../shared/i18n';
 import { trx } from '@/lib/i18n/trx';
+
+/** How long a just-picked Zalo sticker waits for its details to be cached before it shows in the chat. */
+const STICKER_CACHE_WAIT_MS = 300;
 
 /** Quote (quote payload) → id of the replied message, sent into the Telegram forum topic / comment thread. */
 function quotedMessageId(payload?: string | null): string | undefined {
@@ -417,7 +427,7 @@ export default function MessageInput() {
         ...((!mentionSearch || 'all'.includes(mentionSearch.toLowerCase()) || '@all'.includes(mentionSearch.toLowerCase()))
           ? [{ userId: isZalo(activeContact?.channel) ? '-1' : 'all', displayName: '@all', avatar: '', username: '' }]
           : []),
-        ...mentionList.members,
+        ...mentionList.members.filter(member => String(member.userId) !== String(activeAccountId || '')),
       ]
     : [];
 
@@ -1742,7 +1752,11 @@ export default function MessageInput() {
             return;
           }
         } else if (isFacebook(activeContact?.channel)) {
-          await ipc.fb?.editMessage({ accountId: activeAccountId, messageId: rawMsgId, text: msgText });
+          const res: any = await ipc.fb?.editMessage({ accountId: activeAccountId, messageId: rawMsgId, text: msgText });
+          if (res && res.success === false) {
+            showNotification(tr('Sửa tin nhắn thất bại: {{v1}}', { v1: (res.error || 'Unknown error') }), 'error');
+            return;
+          }
         }
         // Update local message content
         useChatStore.getState().updateMessageEdit(activeAccountId, activeThreadId, rawMsgId, msgText, (editingMsg.is_edited || 0) + 1, Date.now());
@@ -1952,6 +1966,8 @@ export default function MessageInput() {
           msg_type: 'text', timestamp: Date.now(), is_sent: 1, status: 'sending', channel: activeChannel as any,
           send_status: 'pending', temp_id: fbTempId, media_type: 'text',
           ...(activeTopicId ? { topic_id: activeTopicId } : {}),
+          // Encrypted Messenger chat with disappearing messages on: the message is sent with the timer (clock next to the time)
+          ...(Number((activeContact as any)?.fb_disappearing_ttl) > 0 ? { ttl: Number((activeContact as any).fb_disappearing_ttl) } : {}),
           ...(quotePayload ? { quote_data: quotePayload } : {}),
           // The comments section draws the quote from reply_to_id → the comment being sent also shows up right away
           ...(commentMode && quotedMessageId(quotePayload) ? { reply_to_id: quotedMessageId(quotePayload) } : {}),
@@ -1977,7 +1993,7 @@ export default function MessageInput() {
                   body: msgText,
                   threadType: activeThreadType,
                   quote: quotePayload,
-                  ...(isTelegram(activeChannel) && mentions.length > 0 ? { mentions } : {}),
+                  ...((isTelegram(activeChannel) || isFacebook(activeChannel)) && mentions.length > 0 ? { mentions } : {}),
                 });
               if (!res?.success) {
                 return { success: false, uncertain: !!res?.uncertain, msgId: res?.messageId, error: res?.error || tr('Gửi tin nhắn Facebook thất bại') };
@@ -2396,17 +2412,19 @@ export default function MessageInput() {
           const voiceChannel = activeContact?.channel || CHANNEL.ZALO;
           // Telegram: a real voice message (OGG/Opus + duration). Previously Telegram recordings went through the Zalo path, so they always failed
           const telegramVoice = isTelegramUser(voiceChannel);
+          // Facebook: same story; sent as an audio attachment (the upload turns .webm into audio/webm)
+          const facebookVoice = isFacebook(voiceChannel);
           addMessage(activeAccountId!, activeThreadId, {
             msg_id: voiceTempId, owner_zalo_id: activeAccountId!, thread_id: activeThreadId,
             thread_type: activeThreadType, sender_id: activeAccountId!, content: '🎤 Ghi âm',
             msg_type: 'voice', timestamp: Date.now(), is_sent: 1, status: 'sending',
             send_status: 'pending', temp_id: voiceTempId, media_type: 'voice',
-            ...(telegramVoice ? { channel: voiceChannel as any } : {}),
+            ...(telegramVoice || facebookVoice ? { channel: voiceChannel as any } : {}),
             ...(activeTopicId ? { topic_id: activeTopicId } : {}),
           });
           messageQueue.enqueue({
             tempId: voiceTempId, zaloId: activeAccountId!, threadId: activeThreadId,
-            threadType: activeThreadType, channel: telegramVoice ? voiceChannel as any : 'zalo',
+            threadType: activeThreadType, channel: telegramVoice || facebookVoice ? voiceChannel as any : 'zalo',
             sendFn: async () => {
               try {
                 if (telegramVoice) {
@@ -2416,6 +2434,15 @@ export default function MessageInput() {
                     ...(quotePayload ? { quote: quotePayload } : {}),
                   });
                   if (!r?.success) return { success: false, error: r?.error || tr('Gửi ghi âm Telegram thất bại') };
+                  return { success: true, msgId: (r as any)?.messageId };
+                }
+                if (facebookVoice) {
+                  const r = await channelIpc.sendAttachment(voiceChannel as any, {
+                    accountId: activeAccountId!, threadId: activeThreadId, threadType: activeThreadType,
+                    filePath: saveRes.filePath, fileType: 'voice',
+                    ...(quotePayload ? { quote: quotePayload } : {}),
+                  });
+                  if (!r?.success) return { success: false, error: r?.error || tr('Gửi ghi âm Facebook thất bại') };
                   return { success: true, msgId: (r as any)?.messageId };
                 }
                 const uploadRes = await ipc.zalo?.uploadVoiceFile?.({ auth, voicePath: saveRes.filePath, threadId: activeThreadId, type: activeThreadType });
@@ -2512,6 +2539,22 @@ export default function MessageInput() {
     setShowStickerPicker((v) => !v);
   };
 
+  /** After a sticker / GIF goes out, the caret returns to the composer (the picker had the focus): keep typing or press Enter. */
+  const refocusComposer = () => focusComposerSoon(() => textareaRef.current);
+
+  // A click on a control in the chat (header, messages, details panel, images) gives the caret back to the composer when
+  // it had it just before; a dialog / the image viewer opened by that click gives it back when it closes
+  useEffect(() => {
+    const onPress = () => noteComposerPress(textareaRef.current);
+    const onClick = (event: MouseEvent) => returnComposerFocusAfterClick(event, textareaRef.current);
+    document.addEventListener('mousedown', onPress, true);
+    document.addEventListener('click', onClick, true);
+    return () => {
+      document.removeEventListener('mousedown', onPress, true);
+      document.removeEventListener('click', onClick, true);
+    };
+  }, []);
+
   /** Telegram sticker / GIF from the emoji panel: sent right away (replies to whatever message is being replied to), the text being composed is kept as it is. */
   const handleSendTelegramSticker = (item: TelegramStickerItem) => {
     setShowEmojiPicker(false);
@@ -2522,7 +2565,7 @@ export default function MessageInput() {
       // Comments section: the open conversation is the channel, the message being replied to belongs to this box
       ...(commentMode ? { replyTo } : {}),
     });
-    textareaRef.current?.focus();
+    refocusComposer();
   };
 
   // Emoji grid: the regular emoji panel, or the Emoji tab of the Emoji · Sticker · GIF panel (Telegram)
@@ -2578,55 +2621,156 @@ export default function MessageInput() {
     sel?.addRange(range);
   };
 
-  const handleSendStickerItem = async (sticker: any) => {
-    const auth = getAuth();
-    if (!auth || !activeThreadId || sending) return;
+  /**
+   * Facebook sticker panel: a recent sticker is sent by id (encrypted chats send its image); the like goes as the like
+   * sticker in groups and as 👍 text in 1-1 chats (encrypted chats have no like sticker id). The sent message comes back
+   * from the main process like any other.
+   */
+  const handleSendFacebookSticker = (item: FacebookStickerItem | 'like') => {
+    if (!activeAccountId || !activeThreadId) return;
     setShowStickerPicker(false);
-    setSending(true);
-    try {
-      await ipc.zalo?.sendSticker({ auth, stickerId: sticker.id, threadId: activeThreadId, type: activeThreadType });
-      // Save to recent + DB cache
-      await DataAccessor.addRecentSticker(sticker.id);
-      await DataAccessor.saveStickers({ stickers: [sticker] });
-      // Clear the text input + draft after sending a sticker
-      setText('');
-      setFmtRanges([]);
-      setActiveFmts(new Set());
-      prevTextRef.current = '';
-      if (textareaRef.current) textareaRef.current.innerHTML = '';
-      if (draftSaveTimerRef.current) { clearTimeout(draftSaveTimerRef.current); draftSaveTimerRef.current = null; }
-      if (activeAccountId && activeThreadId) clearDraft(activeAccountId, draftThreadId || activeThreadId);
-    } catch (err: any) {
-      showNotification(tr('Gửi sticker thất bại: {{message}}', { message: err.message }), 'error');
-    } finally {
-      setSending(false);
-    }
+    refocusComposer();
+    const accountId = activeAccountId;
+    const threadId = activeThreadId;
+    const threadType = activeThreadType;
+    const typeChat = threadType === 1 ? null : 'user';
+    // Sent in the background: the composer stays usable (typing, Enter, the toolbar) while Messenger answers
+    void (async () => {
+      try {
+        let res: { success?: boolean; error?: string } | undefined;
+        if (item === 'like' && threadType !== 1) {
+          res = await channelIpc.sendMessage(CHANNEL.FACEBOOK as any, { accountId, threadId, body: '👍', threadType });
+        } else {
+          const sticker = item === 'like' ? { stickerId: FACEBOOK_LIKE_STICKER_ID, url: '' } : item;
+          res = await ipc.fb?.sendSticker({
+            accountId, threadId, stickerId: sticker.stickerId,
+            ...(sticker.url ? { url: sticker.url } : {}),
+            ...(sticker.localPath ? { stickerPath: sticker.localPath } : {}),
+            typeChat,
+          });
+        }
+        if (!res?.success) showNotification(tr('Gửi nhãn dán thất bại: {{message}}', { message: res?.error || '' }), 'error');
+      } catch (err: any) {
+        showNotification(tr('Gửi nhãn dán thất bại: {{message}}', { message: err?.message || String(err) }), 'error');
+      }
+    })();
   };
 
-  /** Send sticker from inline suggestion bar and clear text + suggestions */
-  const handleInlineStickerSend = async (sticker: any) => {
+  /** Empties the composer and its saved draft: a Zalo sticker from the panel or the suggestion bar replaces what was typed. */
+  const clearComposerText = () => {
+    setText('');
+    setFmtRanges([]);
+    setActiveFmts(new Set());
+    prevTextRef.current = '';
+    if (textareaRef.current) textareaRef.current.innerHTML = '';
+    if (draftSaveTimerRef.current) { clearTimeout(draftSaveTimerRef.current); draftSaveTimerRef.current = null; }
+    if (activeAccountId && activeThreadId) clearDraft(activeAccountId, draftThreadId || activeThreadId);
+  };
+
+  /**
+   * Zalo sticker (panel or suggestion bar): the box is emptied and focused at once, the sticker shows in the chat right away
+   * and goes out through the send queue like a text message, so nothing waits for Zalo's answer. The temporary message has
+   * the same content as Zalo's own copy ({id, catId, type}), which replaces it when it arrives.
+   */
+  const sendZaloSticker = (sticker: any) => {
     const auth = getAuth();
-    if (!auth || !activeThreadId || sending) return;
+    if (!auth || !activeAccountId || !activeThreadId || !sticker?.id) return;
+    const accountId = activeAccountId;
+    const threadId = activeThreadId;
+    const threadType = activeThreadType;
+    clearComposerText();
+    refocusComposer();
+    const tempId = generateTempId();
+    const content = JSON.stringify({ id: Number(sticker.id), catId: Number(sticker.cateId ?? sticker.catId ?? 0), type: Number(sticker.type ?? 0) });
+    // The sticker's details go to the cache first so the bubble draws from them by id instead of asking Zalo; a slow
+    // save (employee machine through the Boss) holds the bubble back STICKER_CACHE_WAIT_MS at most
+    const cached = DataAccessor.saveStickers({ stickers: [sticker] }).catch(() => undefined);
+    const waitCache = new Promise<void>((resolve) => { setTimeout(resolve, STICKER_CACHE_WAIT_MS); });
+    void Promise.race([cached, waitCache]).then(() => {
+      addMessage(accountId, threadId, {
+        msg_id: tempId, owner_zalo_id: accountId, thread_id: threadId,
+        thread_type: threadType, sender_id: accountId, content,
+        msg_type: 'chat.sticker', timestamp: Date.now(), is_sent: 1, status: 'sending',
+        send_status: 'pending', temp_id: tempId, media_type: 'image', channel: CHANNEL.ZALO as any,
+      });
+      messageQueue.enqueue({
+        tempId,
+        zaloId: accountId,
+        threadId,
+        threadType,
+        channel: CHANNEL.ZALO as any,
+        sendFn: async () => {
+          try {
+            const res = await ipc.zalo?.sendSticker({ auth, stickerId: sticker.id, threadId, type: threadType });
+            if (!res?.success) return { success: false, error: res?.error || tr('Gửi sticker thất bại') };
+            return { success: true, ...extractMsgIdFromResponse(res, 'zalo') };
+          } catch (err: any) {
+            return { success: false, error: err?.message || String(err) };
+          }
+        },
+        onSuccess: () => { void DataAccessor.addRecentSticker(sticker.id).catch(() => undefined); },
+      });
+    });
+  };
+
+  const handleSendStickerItem = (sticker: any) => {
+    setShowStickerPicker(false);
+    sendZaloSticker(sticker);
+  };
+
+  /**
+   * GIF from the GIF tab of the Zalo sticker panel: shown right away from the GIF's own URL, the main process
+   * downloads it and sends it as a GIF file (the same path as a picked .gif image). The text being composed is kept.
+   */
+  const handleSendZaloGif = (gif: ZaloGif) => {
+    const auth = getAuth();
+    const urls = zaloGifSendUrls(gif);
+    if (!auth || !activeAccountId || !activeThreadId || !urls.length) return;
+    setShowStickerPicker(false);
+    refocusComposer();
+    const accountId = activeAccountId;
+    const threadId = activeThreadId;
+    const threadType = activeThreadType;
+    const quotePayload = buildQuotePayload(replyTo);
+    const moving = zaloGifAnimated(gif);
+    const still = zaloGifThumb(gif);
+    const size = moving || still;
+    const tempId = generateTempId();
+    addMessage(accountId, threadId, {
+      msg_id: tempId, owner_zalo_id: accountId, thread_id: threadId,
+      thread_type: threadType, sender_id: accountId,
+      content: JSON.stringify({ href: moving?.url || urls[0], thumb: still?.url || urls[0], params: JSON.stringify({ width: size?.width || 0, height: size?.height || 0 }) }),
+      msg_type: 'chat.gif', timestamp: Date.now(), is_sent: 1, status: 'sending',
+      send_status: 'sending', temp_id: tempId, media_type: 'image', channel: CHANNEL.ZALO as any,
+    });
+    messageQueue.enqueue({
+      tempId,
+      zaloId: accountId,
+      threadId,
+      threadType,
+      channel: CHANNEL.ZALO as any,
+      sendFn: async () => {
+        try {
+          const res = await ipc.zalo?.sendGif({ auth, urls, threadId, type: threadType, ...(quotePayload ? { quote: quotePayload } : {}) });
+          if (!res?.success) return { success: false, error: res?.error || tr('Gửi GIF thất bại') };
+          return { success: true, ...extractMsgIdFromResponse(res, 'zalo') };
+        } catch (err: any) {
+          return { success: false, error: err?.message || String(err) };
+        }
+      },
+      onSuccess: () => {
+        // Like a picked image: keep the preview until the account's own copy of the message arrives
+        if (quotePayload) finishReply(replyTo);
+        messageQueue.registerImageBatch(tempId, accountId, threadId, 1, () => { removeMessage(accountId, threadId, tempId); });
+      },
+    });
+  };
+
+  /** Sticker from the inline suggestion bar: the typed keyword is replaced by the sticker, suggestions close. */
+  const handleInlineStickerSend = (sticker: any) => {
     if (inlineStickerTimerRef.current) clearTimeout(inlineStickerTimerRef.current);
     setInlineStickerSuggestions([]);
-    setSending(true);
-    try {
-      await ipc.zalo?.sendSticker({ auth, stickerId: sticker.id, threadId: activeThreadId, type: activeThreadType });
-      await DataAccessor.addRecentSticker(sticker.id);
-      await DataAccessor.saveStickers({ stickers: [sticker] });
-      // Clear the text input after sending sticker
-      setText('');
-      setFmtRanges([]);
-      setActiveFmts(new Set());
-      prevTextRef.current = '';
-      if (textareaRef.current) textareaRef.current.innerHTML = '';
-      if (draftSaveTimerRef.current) { clearTimeout(draftSaveTimerRef.current); draftSaveTimerRef.current = null; }
-      if (activeAccountId && activeThreadId) clearDraft(activeAccountId, draftThreadId || activeThreadId);
-    } catch (err: any) {
-      showNotification(tr('Gửi sticker thất bại: {{message}}', { message: err.message }), 'error');
-    } finally {
-      setSending(false);
-    }
+    sendZaloSticker(sticker);
   };
 
   const insertEmoji = (emoji: string) => {
@@ -2898,7 +3042,10 @@ export default function MessageInput() {
     if (e.key === 'Enter' && !e.shiftKey) {
       // Skip send while IME is composing (Vietnamese/Chinese input on macOS)
       if (e.nativeEvent.isComposing || isComposingRef.current) return;
-      e.preventDefault(); handleSend(); return;
+      e.preventDefault();
+      // A dialog / the image viewer is on top: that Enter was meant for it, never send the draft behind it
+      if (overlayOpen()) return;
+      handleSend(); return;
     }
     if (e.key === 'Escape' && replyTo) setReplyTo(null);
   };
@@ -3282,7 +3429,7 @@ export default function MessageInput() {
             <>
               <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 bg-blue-800/50">
                 {contactCardSuggestion.avatarUrl ? (
-                  <img src={contactCardSuggestion.avatarUrl} alt="" className="w-full h-full object-cover"
+                  <img src={toLocalMediaUrl(contactCardSuggestion.avatarUrl)} alt="" className="w-full h-full object-cover"
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                 ) : (
                   <PeerInitials id={contactCardSuggestion.userId} name={contactCardSuggestion.displayName} className="w-full h-full text-xs" />
@@ -3350,9 +3497,18 @@ export default function MessageInput() {
                   className="absolute bottom-full left-0 mb-2 z-50"
                 />
               ) : null
+            : isFacebook(activeContact?.channel) ? (activeAccountId ? (
+                <FacebookStickerPicker
+                  accountId={activeAccountId}
+                  imageStickers={activeThreadType !== 1}
+                  onPick={handleSendFacebookSticker}
+                  onClose={() => setShowStickerPicker(false)}
+                />
+              ) : null)
             : <StickerPicker
                 getAuth={getAuth}
                 onSelect={handleSendStickerItem}
+                onSelectGif={isZalo(activeContact?.channel || CHANNEL.ZALO) ? handleSendZaloGif : undefined}
                 onClose={() => setShowStickerPicker(false)}
                 onInsertEmoji={(emoji) => { insertEmoji(emoji); }}
               />
@@ -3914,7 +4070,7 @@ export default function MessageInput() {
                 className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors scroll-mt-8 ${idx === mentionSelectedIdx ? 'bg-muted' : 'hover:bg-muted'}`}
               >
                 {member.avatar ? (
-                  <img src={member.avatar} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                  <img src={toLocalMediaUrl(member.avatar)} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
                 ) : (
                   <PeerInitials id={member.userId} name={member.displayName} fallback="U" className="w-7 h-7 text-[10px]" />
                 )}
@@ -3949,6 +4105,7 @@ export default function MessageInput() {
             onKeyUp={handleEditorKeyUp}
             onMouseUp={handleEditorKeyUp}
             onPaste={handleEditorPaste}
+            onBlur={() => rememberComposerBlur(textareaRef.current)}
             onCompositionStart={() => { isComposingRef.current = true; }}
             onCompositionEnd={() => {
               isComposingRef.current = false;
@@ -4328,16 +4485,19 @@ type StickerDetail = {
 function StickerPicker({
   getAuth,
   onSelect,
+  onSelectGif,
   onClose,
   onInsertEmoji,
 }: {
   getAuth: () => any;
   onSelect: (sticker: StickerDetail) => void;
+  /** Zalo only: shows the GIF tab (Giphy through the Zalo account). */
+  onSelectGif?: (gif: ZaloGif) => void;
   onClose: () => void;
   onInsertEmoji?: (emoji: string) => void;
 }) {
   // Opens on the sticker library like Zalo's panel (ZaloStickerStore); "Gần đây" stays one click away
-  const [tab, setTab] = useState<'recent' | 'store' | 'search' | 'emoji'>('store');
+  const [tab, setTab] = useState<'recent' | 'store' | 'search' | 'gif' | 'emoji'>('store');
   const [keyword, setKeyword] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<StickerDetail[]>([]);
@@ -4403,6 +4563,7 @@ function StickerPicker({
   const mainTabs = [
     { key: 'recent' as const, label: <>{trx('<0/> Gần đây', { 0: <ClockIcon className="w-3.5 h-3.5 mr-2" /> })}</> },
     { key: 'store' as const, label: <>{trx('<0/> Kho sticker', { 0: <StoreIcon className="w-3.5 h-3.5 mr-2" /> })}</> },
+    ...(onSelectGif ? [{ key: 'gif' as const, label: <><ImageIcon className="w-3.5 h-3.5 mr-2" />GIF</> }] : []),
     { key: 'emoji' as const, label: <>{trx('<0/> Emoji', { 0: <SmileIcon className="w-3.5 h-3.5 mr-2" /> })}</> },
   ];
 
@@ -4418,7 +4579,7 @@ function StickerPicker({
         {mainTabs.map((t) => (
           <button
             key={t.key}
-            onClick={() => { setTab(t.key); if (t.key === 'recent' || t.key === 'store' || t.key === 'emoji') setKeyword(''); }}
+            onClick={() => { setTab(t.key); if (t.key === 'recent' || t.key === 'store' || t.key === 'gif' || t.key === 'emoji') setKeyword(''); }}
             className={`flex-1 py-2 text-[11px] font-semibold tracking-wide transition-colors place-content-center flex ${
               (tab === t.key || (tab === 'search' && t.key === 'store'))
                 ? 'text-blue-400 border-b-2 border-blue-400'
@@ -4430,8 +4591,8 @@ function StickerPicker({
         ))}
       </div>
 
-      {/* Search input (always visible except emoji tab) */}
-      {tab !== 'emoji' && (
+      {/* Search input (always visible except the emoji tab; the GIF tab has its own) */}
+      {tab !== 'emoji' && tab !== 'gif' && (
         <div className="px-3 py-2 flex-shrink-0">
           <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted-foreground flex-shrink-0">
@@ -4497,6 +4658,8 @@ function StickerPicker({
       ) : tab === 'store' ? (
         /* Sticker library like Zalo's panel: packs copied from Zalo Web (shared/zalo/zaloStickerPacks) */
         <ZaloStickerStore onSelect={onSelect} />
+      ) : tab === 'gif' && onSelectGif ? (
+        <ZaloGifPanel getAuth={getAuth} onPick={onSelectGif} />
       ) : (
         /* Emoji tab */
         <div className="flex-1 overflow-y-auto p-2 space-y-3">

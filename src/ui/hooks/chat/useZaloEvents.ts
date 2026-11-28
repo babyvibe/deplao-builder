@@ -2511,17 +2511,22 @@ export function useZaloEvents() {
       }
     }));
     // A contact profile edited on another machine (REST update-profile call) → name / photo / phone of the existing conversation
+    // Also a batch ({ contacts: [...] }): Zalo names / pictures refreshed in the background (zaloProfileRefresh)
     unsubs.push(ipc.on('db:contactProfileUpdated', (data: any) => {
       const zaloId = accountOf(data);
-      const contactId = String(data?.contactId || '');
-      if (!zaloId || !contactId) return;
-      const contact = (useChatStore.getState().contacts[zaloId] || []).find((item) => item.contact_id === contactId);
-      if (!contact) return;
-      const patch: { display_name?: string; avatar_url?: string; phone?: string } = {};
-      if (data.displayName && data.displayName !== contact.display_name) patch.display_name = String(data.displayName);
-      if (data.avatarUrl && data.avatarUrl !== contact.avatar_url) patch.avatar_url = String(data.avatarUrl);
-      if (data.phone && data.phone !== (contact as any).phone) patch.phone = String(data.phone);
-      if (Object.keys(patch).length > 0) useChatStore.getState().updateContact(zaloId, { contact_id: contactId, ...patch });
+      if (!zaloId) return;
+      const items: any[] = Array.isArray(data?.contacts) ? data.contacts : [data];
+      const known = new Map((useChatStore.getState().contacts[zaloId] || []).map((item) => [item.contact_id, item]));
+      for (const item of items) {
+        const contactId = String(item?.contactId || '');
+        const contact = contactId ? known.get(contactId) : undefined;
+        if (!contact) continue;
+        const patch: { display_name?: string; avatar_url?: string; phone?: string } = {};
+        if (item.displayName && item.displayName !== contact.display_name) patch.display_name = String(item.displayName);
+        if (item.avatarUrl && item.avatarUrl !== contact.avatar_url) patch.avatar_url = String(item.avatarUrl);
+        if (item.phone && item.phone !== (contact as any).phone) patch.phone = String(item.phone);
+        if (Object.keys(patch).length > 0) useChatStore.getState().updateContact(zaloId, { contact_id: contactId, ...patch });
+      }
     }));
     // Conversation deleted on another machine → removed from the list + message memory; if open, it is closed (as when deleting it yourself)
     unsubs.push(ipc.on('db:conversationDeleted', (data: any) => {

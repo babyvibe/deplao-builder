@@ -82,7 +82,6 @@ export function TelegramReactionChips({ chips, peerOf, onToggle, className = '',
             event.stopPropagation();
             onToggle(chip.emoji, chip.mine);
           }}
-          onDoubleClick={(event) => event.stopPropagation()}
           title={chip.mine ? tr('Bỏ cảm xúc') : tr('Thả cảm xúc này')}
           className={`flex h-6 items-center gap-1 rounded-full px-2 text-xs transition-colors select-none ${
             // A clear tint + edge so the chips stand out on dark bubbles too (a 10 % tint vanished in the dark theme)
@@ -110,7 +109,7 @@ export function myTelegramReaction(emoji: Record<string, TelegramReactionEntry> 
   return Object.entries(emoji || {}).find(([, entry]) => Number(entry?.users?.[myId]) > 0)?.[0] || null;
 }
 
-/** Clicking the reaction button / double-clicking the message: the quick reaction, or remove it when it is already yours. */
+/** Clicking the reaction button: the quick reaction, or remove it when it is already yours. */
 export function quickReactionAction(quick: string, mine: string | null): 'add' | 'remove' {
   return sameReaction(quick, mine) ? 'remove' : 'add';
 }

@@ -320,7 +320,7 @@ function RecipientRow({ zaloId, channel, contacts, accounts, onSelect }: {
             <button key={c.contact_id} onClick={() => { onSelect(c); setQuery(''); }}
               className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted text-left transition-colors">
               {c.avatar_url
-                ? <img src={c.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0"/>
+                ? <img src={toLocalMediaUrl(c.avatar_url)} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0"/>
                 : <PeerInitials id={c.contact_id} name={c.alias || c.display_name} className="w-8 h-8 text-xs" />}
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-foreground truncate">{c.alias||c.display_name||c.contact_id}</p>
@@ -667,7 +667,7 @@ export default function QuickChatModal() {
             {target ? (
               <>
                 {target.avatarUrl
-                  ? <img src={target.avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0"/>
+                  ? <img src={toLocalMediaUrl(target.avatarUrl)} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0"/>
                   : <PeerInitials id={target.userId} name={target.displayName} className="w-7 h-7 text-[10px]" />}
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-foreground truncate leading-tight">{target.displayName}</p>

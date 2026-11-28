@@ -15,6 +15,8 @@ export interface Contact {
     is_muted?: number;
     mute_until?: number;
     is_in_others?: number;
+    /** 1 = Facebook Messenger message request (accept / delete bar in the chat) */
+    fb_request?: number;
     /** Zalo auto-deletes new messages after N ms (ZL-05, 0 = off) */
     zalo_auto_delete_ttl?: number;
     /** 1 = conversation is hidden on Zalo (ZL-03) */

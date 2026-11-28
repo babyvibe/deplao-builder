@@ -42,7 +42,7 @@ export interface MentionRange {
 /** Kept as an alias while older call sites migrate to platform-neutral mentions. */
 export type TelegramMentionRange = MentionRange;
 
-/** Read native Zalo and Telegram mention entities without a DB migration. */
+/** Read native Zalo, Telegram and Facebook mention entities without a DB migration. */
 export function getMentionRanges(attachments: unknown): MentionRange[] {
   let parsed = attachments;
   if (typeof parsed === 'string') {
@@ -52,7 +52,7 @@ export function getMentionRanges(attachments: unknown): MentionRange[] {
 
   return parsed
     .filter((attachment: any) =>
-      attachment?.type === 'telegram_mention' || attachment?.type === 'zalo_mention'
+      attachment?.type === 'telegram_mention' || attachment?.type === 'zalo_mention' || attachment?.type === 'fb_mention'
     )
     .map((attachment: any) => ({
       offset: Number(attachment.offset),

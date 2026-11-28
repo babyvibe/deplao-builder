@@ -11,7 +11,7 @@ import { useInAppNotifyStore } from '@/store/chat/inAppNotifyStore';
 import { useAccountStore, type AccountInfo } from '@/store/accounts/accountStore';
 import { useChatStore } from '@/store/chat/chatStore';
 import { CloseIcon } from '@/components/common/icons';
-import { ChannelBadgeOverlay, FacebookIcon, TelegramIcon, ZaloIcon } from '../avatars/ChannelBadge';
+import { ChannelBadgeOverlay, FacebookIcon, TelegramIcon, ZaloIcon, MESSENGER_GRADIENT } from '../avatars/ChannelBadge';
 import { getChannelLabel, resolveAccountChannel, type Channel } from '../../../../configs/channels/channelConfig';
 import { isFacebook, isTelegram } from '@/lib/channels/channelHelper';
 import { tr } from '../../../../shared/i18n';
@@ -38,7 +38,8 @@ function AccountAvatar({ account }: { account: InAppToastAccount }) {
       {src ? (
         <img src={src} alt="" className="h-9 w-9 rounded-full object-cover" onError={() => setFailed(true)} />
       ) : (
-        <span className={`flex h-9 w-9 items-center justify-center rounded-full ${isFacebook(account.channel) ? 'bg-blue-800' : isTelegram(account.channel) ? 'bg-sky-500' : 'bg-blue-600'}`}>
+        <span className={`flex h-9 w-9 items-center justify-center rounded-full ${isFacebook(account.channel) ? '' : isTelegram(account.channel) ? 'bg-sky-500' : 'bg-blue-600'}`}
+          style={isFacebook(account.channel) ? { background: MESSENGER_GRADIENT } : undefined}>
           {isFacebook(account.channel) ? <FacebookIcon size={16} /> : isTelegram(account.channel) ? <TelegramIcon size={16} /> : <ZaloIcon size={16} />}
         </span>
       )}

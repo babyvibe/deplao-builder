@@ -213,6 +213,10 @@ export interface ContactItem {
   // Facebook-specific fields (nullable)
   fb_emoji?: string;
   fb_participant_count?: number;
+  /** Why Messenger does not let the account reply ("blocked" = the account blocked the person); '' = it can */
+  fb_cannot_reply?: string;
+  /** Disappearing timer of an encrypted Messenger chat (ms, 0 = off); Messenger deletes, Deplao keeps the messages */
+  fb_disappearing_ttl?: number;
 }
 
 interface ChatStore {

@@ -8,7 +8,7 @@
 import React from 'react';
 import { groupRankLabel, peerColorIndex, telegramRankLabel } from '@/lib/chat/messages/peerStyle';
 import PeerInitials from '@/components/common/avatars/PeerInitials';
-import { BubbleTime, formatBubbleTime, formatFullDateTime, inlineTimeSpacerClass, MessageStatusContext, MessageTimeElsewhereContext, MessageTtlContext, StatusTicks, TtlMark } from '../../messages/MessageTime';
+import { BubbleTime, formatBubbleTime, formatFullDateTime, inlineTimeSpacerClass, MessageStatusContext, MessageTimeElsewhereContext, MessageTtlChannelContext, MessageTtlContext, StatusTicks, TtlMark } from '../../messages/MessageTime';
 import { outgoingMessageStatus } from '@/lib/chat/messages/messageStatus';
 import SharedMessageContent from '../../messages/SharedMessageContent';
 import FacebookTemplateCard, { FacebookEmptyMessage } from '../../facebook/FacebookTemplateCard';
@@ -21,6 +21,8 @@ import { useEmployeeStore } from '@/store/employee/employeeStore';
 import { formatDaySeparator } from '@/lib/chat/messages/messageParser';
 import PollBubble from '../../polls/PollBubble';
 import TelegramPollBubble from '../../telegram/messages/TelegramPollBubble';
+import FacebookPollBubble from '../../facebook/FacebookPollBubble';
+import { pollPersonResolver } from './pollPeople';
 import { parseReactions } from '../../messages/reactions/ReactionComponents';
 import { BubbleEmbedContext, CardBubble, EcardBubble, FileBubble, MediaBubble, MediaGroupBubble, RtfBubble, StickerBubble, StickerGroupBubble, TelegramForwardHeader, VoiceBubble } from '../../messages/ChatWindowBubbles';
 import { getTelegramWebpageMeta } from '../../telegram/messages/TelegramLinkPreview';
@@ -35,7 +37,7 @@ import { HandledByEmployeeAvatar } from './HandledByEmployeeAvatar';
 import { QuotePreview } from './QuotePreview';
 import { VideoMessageBody } from './VideoMessageBody';
 import { TextMessageBody } from './TextMessageBody';
-import { MessageReactions, toggleTelegramQuickReaction } from './MessageReactions';
+import { MessageReactions } from './MessageReactions';
 import { MessageTelegramReactions } from './MessageTelegramReactions';
 import { SendStatusIndicator } from './SendStatusIndicator';
 import { MessageHoverActions } from './MessageHoverActions';
@@ -54,9 +56,6 @@ function renderDaySeparator(timestamp: number) {
   );
 }
 
-/** Parts of a Telegram message that keep their own double-click (no quick reaction there). */
-const QUICK_REACTION_SKIP = 'a, button, input, textarea, select, img, video, audio, [role="button"], [contenteditable="true"]';
-
 /** Draws one message row (renderItem of ChatHistoryList). Returns null for messages that do not draw their own row. */
 export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number): React.ReactNode {
   const {
@@ -64,7 +63,7 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
     groupedFirstMsgs, groupedSkipIds, pollSkipIds, groupedStickerFirstMsgs, groupedStickerSkipIds, dayStartIds,
     msgIndexById, msgTypeCache, getRowMsgIds, getContact, getGroupMember, groupMembers, isGroupAdmin, revealedEditIds,
     isSelecting, selectedMsgIds, setSelectedMsgIds, dragSelectRef, clickSuppressUntilRef, setContextMenu,
-    setManageGroupOpen, setUserProfilePopup, openViewer, openVideoPlayer,
+    setManageGroupOpen, setUserProfilePopup, openViewer, openImageList, openVideoPlayer,
   } = ctx;
 
   // Skip non-first images in a group layout batch
@@ -191,7 +190,9 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
   // Each channel like its app: Telegram chips INSIDE the message frame, Zalo's corner hangs from the bottom-right corner (its
   // button always shown on the last message of a run, like Zalo)
   const isTelegramMsg = isTelegramCh(msg.channel);
-  const reactionsShown = channelCap.supportsReaction && !isEcardMsg && !isGroupedStickerFirst;
+  // Messenger takes no reaction on a poll (its own app offers none there)
+  const reactionsShown = channelCap.supportsReaction && !isEcardMsg && !isGroupedStickerFirst
+    && !(isFacebook(msg.channel) && msg.msg_type === 'fb.poll');
   const telegramChips = reactionsShown && isTelegramMsg && hasReactions && !telegramPostMeta;
   // Telegram photo / album / file / contact card with reactions: ONE frame around the content and the chips (like Telegram, and like
   // a reply / forward); only a sticker keeps them right below it, without a frame
@@ -318,17 +319,10 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
                 postAuthor={telegramForward.postAuthor} className="mb-0.5 px-1" />
             )}
             <MessageTtlContext.Provider value={Number((msg as any).ttl) || 0}>
+            <MessageTtlChannelContext.Provider value={String(msg.channel || '')}>
             <MessageStatusContext.Provider value={outgoingStatus}>
             <div style={telegramPostMeta ? (postEdgeMedia ? { width: TELEGRAM_POST_WIDTH } : { maxWidth: TELEGRAM_POST_WIDTH, minWidth: 'min(18rem, 100%)' }) : undefined}
-              // Telegram: double-click the message = the quick reaction (again = remove), like Telegram; no word selection on that
-              // double-click (dragging still selects text). Links, buttons, photos and players keep their own double-click.
-              onMouseDown={reactionsShown && isTelegramMsg && !isSelecting ? (e) => {
-                if (e.detail > 1 && !(e.target as HTMLElement).closest(QUICK_REACTION_SKIP)) e.preventDefault();
-              } : undefined}
-              onDoubleClick={reactionsShown && isTelegramMsg && !isSelecting ? (e) => {
-                if ((e.target as HTMLElement).closest(QUICK_REACTION_SKIP)) return;
-                void toggleTelegramQuickReaction(ctx, msg);
-              } : undefined}
+              // No double-click reaction: a double-click selects a word, the quick reaction is the button at the message edge
               className={`rounded-lg text-sm break-words min-w-0 max-w-full overflow-hidden${inlineTime || timeOnReactionRow ? ' relative' : ''}${hasQuote && !isNoBubbleMsg ? ' min-w-[13rem]' : ''} ${
               telegramPostMeta ? `${isSent ? 'bg-bubble-out border border-bubble-out-border' : 'bg-bubble-in border border-bubble-in-border'} rounded-lg` :
               bubbleShell ? (isSent ? 'bg-bubble-out text-foreground border border-bubble-out-border' : 'bg-bubble-in text-foreground border border-bubble-in-border') :
@@ -412,11 +406,13 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
               }} onVideoPlay={openVideoPlayer} />}
               renderPoll={() => msg.msg_type === 'group.poll'
                 ? <PollBubble msg={msg} isSent={isSent} activeAccountId={activeAccountId || ''} threadId={activeThreadId || ''} />
-                : <TelegramPollBubble msg={msg} isSent={isSent} />
+                : msg.msg_type === 'fb.poll'
+                  ? <FacebookPollBubble msg={msg} isSent={isSent} accountId={activeAccountId || ''} threadId={activeThreadId || ''} getPerson={pollPersonResolver(ctx)} />
+                  : <TelegramPollBubble msg={msg} isSent={isSent} />
               }
               renderVideo={() => <VideoMessageBody ctx={ctx} msg={msg} telegramPostMeta={telegramPostMeta} />}
               renderVoice={() => <VoiceBubble msg={msg} isSent={isSent} />}
-              renderFile={() => <FileBubble msg={msg} isSent={isSent} />}
+              renderFile={() => <FileBubble msg={msg} isSent={isSent} onOpenImage={(image) => openImageList([image], 0)} />}
               renderMedia={() => (
                 <MediaBubble msg={msg} onView={openViewer} isSent={isSent}
                   allContacts={contactList} groupMembersList={groupMembers}
@@ -483,6 +479,7 @@ export function renderMessageRow(ctx: MessageRowContext, msg: any, idx: number):
           {/* Telegram sticker (no frame, like Telegram): the chips right below it */}
           {telegramChips && isNoBubbleMsg && !reactionShell && <MessageTelegramReactions ctx={ctx} msg={msg} className="mt-1" />}
           </MessageStatusContext.Provider>
+          </MessageTtlChannelContext.Provider>
           </MessageTtlContext.Provider>
 
 

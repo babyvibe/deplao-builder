@@ -10,9 +10,11 @@ import ipc from '@/lib/ipc';
 import { useAppStore } from '@/store/app/appStore';
 import { sendFacebookText } from '@/lib/chat/facebook/sendFacebookText';
 import { BubbleTime } from '../messages/MessageTime';
+import { linkifyText } from '@/lib/chat/messages/messageParser';
 import {
   fbTemplateFromAttachments,
   fbTemplateHasPostback,
+  fbTemplateText,
   isFbUnavailableTemplate,
   messengerThreadUrl,
   type FbTemplate,
@@ -110,6 +112,16 @@ function ItemCard({ item, isSent, sending, onPress }: {
   );
 }
 
+/** The message text when it is not the card's own text (the row keeps the card text as content when nothing was typed). */
+export function typedTextOutsideCard(content: unknown, template: FbTemplate): string {
+  const typed = String(content ?? '').trim();
+  if (!typed || /^📎/.test(typed)) return '';
+  const cardText = fbTemplateText(template);
+  const norm = (value: string) => value.replace(/\s+/g, ' ').trim();
+  if (!cardText || norm(cardText).includes(norm(typed))) return cardText ? '' : typed;
+  return typed;
+}
+
 export default function FacebookTemplateCard({ msg, isSent }: { msg: any; isSent: boolean }) {
   const template = useMemo(() => fbTemplateFromAttachments(msg?.attachments), [msg?.attachments]);
   const [sending, setSending] = useState<string | null>(null);
@@ -165,15 +177,32 @@ export default function FacebookTemplateCard({ msg, isSent }: { msg: any; isSent
     window.setTimeout(() => setSending(current => (current === button.title ? null : current)), 1500);
   };
 
-  const hasMainCard = !!(template.imageUrl || template.title || template.subtitle || template.body || template.header
+  const hasMainCard = !!(template.imageUrl || template.videoUrl || template.title || template.subtitle || template.body || template.header
     || template.footer || template.buttons?.length);
   const tone = isSent ? 'bg-bubble-out border-bubble-out-border' : 'bg-bubble-in border-bubble-in-border';
+  // What the person typed with a shared link / post / story reply: the card only draws its own texts, so it was invisible
+  const typed = typedTextOutsideCard(msg?.content, template);
 
   return (
     <div className="flex flex-col gap-1.5 max-w-full" data-fb-template="1">
+      {typed && (
+        <div data-fb-template-text="1" className={`rounded-lg px-3 py-2 border w-fit max-w-[300px] ${tone}`}>
+          <p className="text-sm whitespace-pre-line break-words">{linkifyText(typed, { detectMentions: false })}</p>
+        </div>
+      )}
       {hasMainCard && (
         <div className={`flex flex-col overflow-hidden rounded-lg w-[300px] max-w-full border text-left text-foreground ${tone}`}>
-          {template.imageUrl && (
+          {template.videoUrl ? (
+            // Shared reel / video: plays in the card (poster = the card image); the link still opens the post
+            <video
+              src={template.videoUrl}
+              poster={template.imageUrl || undefined}
+              controls
+              preload="none"
+              playsInline
+              className="block w-full max-h-[420px] bg-black object-contain"
+            />
+          ) : template.imageUrl && (
             <CardImage src={template.imageUrl} className="aspect-[1.91/1]" onClick={template.url ? () => openUrl(template.url) : undefined} />
           )}
           {template.url && !template.imageUrl ? (

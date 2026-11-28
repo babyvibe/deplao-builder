@@ -139,6 +139,10 @@ export interface FBMessageRecord {
 
 export interface FBSendOptions {
   replyToMessageId?: string;
+  /** @mentions: user id + UTF-16 offset / length inside the body (group messages). */
+  mentions?: Array<{ userId: string; offset: number; length: number }>;
+  /** Sticker id (sent instead of text). */
+  stickerId?: string;
   typeAttachment?: 'gif' | 'image' | 'video' | 'file' | 'audio';
   attachmentId?: string | number;
   attachmentIds?: Array<{ id: string | number; type: 'gif' | 'image' | 'video' | 'file' | 'audio' }>;
@@ -157,6 +161,11 @@ export interface FBSendResult {
    * `messageId` is set so a later echo can be matched.
    */
   uncertain?: boolean;
+  /**
+   * Facebook answered the send with an error: no message was created, so the message may be sent another way
+   * (send/facebookSendFallback.ts). Never set for a timeout / lost connection.
+   */
+  rejected?: boolean;
 }
 
 // ─── Attachment Upload ────────────────────────────────────────────────────────
@@ -234,6 +243,8 @@ export interface FBMQTTMessage {
   replyToMessageId?: string;
   /** Sender ID of the message being replied to */
   replyToSenderId?: string;
+  /** Text of the message being replied to, as the bridge sends it with the reply */
+  replyToText?: string;
   // ─── E2EE fields (set when message comes from E2EE bridge) ──────────────
   /** E2EE chat JID (e.g. "100012345678@msgr") - only for 1:1 encrypted messages */
   chatJid?: string;
@@ -243,6 +254,13 @@ export interface FBMQTTMessage {
   isE2EE?: boolean;
   /** Content the bridge cannot display (view once, payment…) → replacement text, no empty bubble is saved */
   unsupported?: string;
+  /** Self-delete timer on Messenger (ms, encrypted chats): Messenger deletes the message, Deplao keeps it and shows the timer */
+  ttl?: number;
+  /**
+   * Thread kind when the source really knows it (MQTT thread key, bridge thread type, E2EE chat JID). `type` above can be a
+   * guess; only this value may create the thread row / set the conversation type.
+   */
+  threadKind?: 'user' | 'group';
 }
 
 // ─── E2EE Bridge Types ───────────────────────────────────────────────────────
@@ -315,10 +333,15 @@ export interface FBE2EEMessageRaw {
   type: 'e2ee';
   /** Content type the bridge cannot display yet (view_once, payment, contact…) */
   unsupported?: string;
+  /** Disappearing timer of the chat the message carries (seconds; counted after reading when disappearAfterRead) */
+  disappearSeconds?: number;
+  disappearAfterRead?: boolean;
   /** Original message being replied to (if this message is a reply) */
   replyTo?: {
     messageId: string;
     senderId: string;
+    /** Quoted text (bridge ReplyTo.text) */
+    text?: string;
   };
 }
 

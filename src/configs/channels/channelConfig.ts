@@ -157,7 +157,7 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
 
   facebook: {
     id: 'facebook',
-    label: 'Facebook',
+    label: 'Facebook Messenger',
     icon: 'facebook',
     color: '#1877F2',
 
@@ -169,8 +169,9 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsVideo: true,
     supportsFile: true,
     supportsAudio: true,
-    supportsGif: true,
-    supportsSticker: false,
+    // No Facebook GIF picker yet; stickers = recently used stickers + like (fb:getRecentStickers / fb:sendSticker)
+    supportsGif: false,
+    supportsSticker: true,
     supportsPoll: true,
     supportsReminder: false,
     supportsReply: true,
@@ -185,16 +186,17 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
     supportsAlias: true,
     supportsMuteSync: false,
     supportsPinConversation: false,
-    supportsCreateGroup: false,
+    supportsCreateGroup: true,
     supportsMutualGroups: false,
     supportsBlock: true,
     supportsReport: false,
     supportsRemoveFriend: false,
 
     supportsGroupRename: true,
-    supportsGroupEmoji: true,
-    supportsGroupNickname: true,
-    supportsGroupLink: true,
+    // Emoji / nickname / group link have main-process calls but no screen yet
+    supportsGroupEmoji: false,
+    supportsGroupNickname: false,
+    supportsGroupLink: false,
     supportsGroupAdmin: true,
     supportsGroupBoard: false,
     supportsGroupLock: false,
@@ -211,10 +213,10 @@ export const CHANNEL_CONFIG: Record<Channel, ChannelCapability> = {
 
     loginMethods: ['cookie', 'credentials'],
 
-    supportsChangeGroupAvatar: false,
+    supportsChangeGroupAvatar: true,
     supportsGroupManage: false,
     supportsPendingApproval: false,
-    supportsLeaveGroup: false,
+    supportsLeaveGroup: true,
     supportsGroupReload: false,
     supportsQuickMessages: false,
     supportsInviteToGroup: false,

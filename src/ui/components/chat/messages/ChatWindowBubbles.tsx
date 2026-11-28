@@ -14,6 +14,8 @@ import { isFacebook, isTelegram, isTelegramUser, isNonZalo, isZalo } from '@/lib
 import DataAccessor from '@/lib/data/DataAccessor';
 import {appendUrlParam, toLocalMediaUrl, withCloudWaitHint} from '@/lib/media/localMedia';
 import {fileOnThisMachine} from '@/lib/media/employeeMediaSync';
+import {imageFileViewerItem} from '@/lib/chat/media/imageFileViewer';
+import type {MediaViewerImage} from '../media/MediaViewer';
 import {formatPhone} from '@/lib/contacts/phoneUtils';
 import PhoneDisplay from '../../common/inputs/PhoneDisplay';
 import {COLOR_EMOJI_TEXT_FONT, convertZaloEmojis} from '@/lib/chat/messages/emojiUtils';
@@ -22,6 +24,8 @@ import { openChatLink } from '@/lib/chat/links/chatLinks';
 import {isMediaType, isOaListType} from '@/lib/chat/messages/messageTypeUtils';
 import {TgsBubble} from './MessageBubbles';
 import OaListBubble from '../zalo/messages/OaListBubble';
+import { ZaloReminderCard } from '../zalo/messages/ZaloReminderCard';
+import { parseZaloReminderCard } from '../../../../shared/zalo/zaloReminderCard';
 import {BubbleTime, MediaTimeBadge, TextWithInlineTime, formatBubbleTime} from './MessageTime';
 import {checkZaloMediaExpired, ExpiredMediaPlaceholder, isMediaExpired, setMediaExpiredInStore} from '../zalo/messages/ZaloMediaExpiry';
 import {toZaloJpgUrl} from '../../../../utils/zalo/zaloImageUrl';
@@ -58,6 +62,8 @@ type TelegramMediaRepairResult = {
 };
 
 const telegramMediaRepairInFlight = new Map<string, Promise<TelegramMediaRepairResult>>();
+/** Facebook media repairs in flight (fb:repairMessageMedia), shared by the bubbles of one message. */
+const facebookMediaRepairInFlight = new Map<string, Promise<{ success: boolean; localPaths?: Record<string, string>; error?: string } | null>>();
 
 /**
  * Standard bubble surface for message types that draw their own frame (image / album with caption, file, link, contact card, call):
@@ -133,7 +139,43 @@ export function useTelegramMediaRepair(msg: any, shouldAutoRepair: boolean) {
         reason: 'missing_source' | 'image_load_error' | 'manual_retry',
         force = false,
     ): Promise<Record<string, string> | null> => {
-        if (!isTelegramUser(msg?.channel) || !accountId || !threadId || !messageId) return null;
+        if (!accountId || !threadId || !messageId) return null;
+        // Facebook: download the message's files again; dead Facebook links are fetched again from Messenger (main process)
+        if (isFacebook(msg?.channel)) {
+            // Messenger no longer serves the file (flagged by the main process): only the retry button asks again
+            if (reason !== 'manual_retry' && Number(msg?.media_expired) === 1) return null;
+            if (!force && attemptedKeyRef.current === repairKey) return null;
+            attemptedKeyRef.current = repairKey;
+            setRepairing(true);
+            try {
+                let request = facebookMediaRepairInFlight.get(repairKey);
+                if (!request) {
+                    request = (ipc.fb?.repairMessageMedia({accountId, messageId}) ?? Promise.resolve(null))
+                        .finally(() => facebookMediaRepairInFlight.delete(repairKey));
+                    facebookMediaRepairInFlight.set(repairKey, request);
+                }
+                const result: any = await request;
+                if (result?.success && result.localPaths) {
+                    useChatStore.getState().updateMessageLocalPath(accountId, threadId, messageId, result.localPaths);
+                    if (Number(msg?.media_expired) === 1) useChatStore.getState().setMessageMediaExpired(accountId, threadId, messageId, false);
+                    setRepairedAt(Date.now());
+                    return result.localPaths;
+                }
+                if (result?.expired) {
+                    // The bubble shows "expired" from now on instead of retrying
+                    useChatStore.getState().setMessageMediaExpired(accountId, threadId, messageId, true);
+                    console.info('[FacebookMedia] MEDIA_EXPIRED', {accountId, threadId, messageId});
+                    return null;
+                }
+                console.warn('[FacebookMedia] REPAIR_FAILED', {accountId, threadId, messageId, reason: result?.error || 'unknown'});
+            } catch (error: any) {
+                console.warn('[FacebookMedia] REPAIR_FAILED', {accountId, threadId, messageId, reason: error?.message || String(error)});
+            } finally {
+                setRepairing(false);
+            }
+            return null;
+        }
+        if (!isTelegramUser(msg?.channel)) return null;
         if (!force && attemptedKeyRef.current === repairKey) return null;
         attemptedKeyRef.current = repairKey;
 
@@ -215,7 +257,7 @@ export function useTelegramMediaRepair(msg: any, shouldAutoRepair: boolean) {
             setRepairing(false);
         }
         return null;
-    }, [accountId, attachmentsValue, localPathsValue, messageId, msg?.channel, msg?.msg_type, repairKey, threadId]);
+    }, [accountId, attachmentsValue, localPathsValue, messageId, msg?.channel, msg?.msg_type, msg?.media_expired, repairKey, threadId]);
 
     React.useEffect(() => {
         if (shouldAutoRepair) void requestRepair('missing_source');
@@ -252,8 +294,11 @@ export function EmployeeAvatar({name, avatarUrl}: { name: string; avatarUrl?: st
 
 // Type detection helpers: imported from @/lib/chat/messages/messageTypeUtils
 
-/** FileBubble: shows a file attachment message (share.file) */
-export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
+/**
+ * FileBubble: shows a file attachment message (share.file). onOpenImage: an image sent as a file opens in the app's photo
+ * viewer (without it, or for other files, the computer's app opens the file).
+ */
+export function FileBubble({msg, isSent, onOpenImage}: { msg: any; isSent: boolean; onOpenImage?: (image: MediaViewerImage) => void }) {
     const surface = useBubbleSurface(isSent);
     // Employee machine: local_paths are paths on the Boss machine, not "đã có trên máy này" (already on this machine)
     const employeeView = useEmployeeStore(s => s.mode === 'employee');
@@ -418,6 +463,22 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
     const previewUrl = !previewFailed && isImageDocument
         ? (localFilePath ? toLocalMediaUrl(localFilePath) : fileHref)
         : '';
+    // Image file → the app's photo viewer, like Telegram (a preview that failed to load still opens with the computer's app)
+    const viewerImage = onOpenImage && !previewFailed
+        ? imageFileViewerItem({
+            msg,
+            localUrl: localFilePath ? toLocalMediaUrl(localFilePath) : '',
+            localPath: localFilePath,
+            remoteUrl: fileHref,
+            fileName: fileTitle,
+            mimeType: fileMimeType,
+            ext: (fileTitle.match(/\.([a-z0-9]+)$/i)?.[1] || fileExt),
+        })
+        : null;
+    const handleView = () => {
+        if (viewerImage && onOpenImage) onOpenImage(viewerImage);
+        else void handleOpen();
+    };
     // For Telegram, `message.message` is the document's caption and is stored in
     // content. Do not parse other channels' JSON as the file caption.
     const rawCaption = isTelegramUser(msg.channel) ? String(msg.content || '').trim() : '';
@@ -432,7 +493,7 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                 {/* Image documents retain the file card, but use the downloaded image as Telegram does. */}
                 {previewUrl ? (
                     <button
-                        onClick={handleOpen}
+                        onClick={handleView}
                         disabled={opening || !canOpen}
                         className="w-16 h-16 overflow-hidden rounded-lg flex-shrink-0 bg-foreground/5 disabled:cursor-default"
                         title={canOpen ? tr('Nhấn để mở ảnh') : ''}
@@ -458,10 +519,10 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
 
                 {/* File info */}
                 <button
-                    onClick={handleOpen}
+                    onClick={handleView}
                     disabled={opening || !canOpen}
                     className="flex-1 min-w-0 text-left"
-                    title={canOpen ? tr('Nhấn để mở') : ''}
+                    title={canOpen ? (viewerImage ? tr('Nhấn để mở ảnh') : tr('Nhấn để mở')) : ''}
                 >
                     <p className="text-sm font-medium truncate">{fileTitle}</p>
                     <p className="text-xs mt-0.5 flex items-center gap-1 text-muted-foreground">
@@ -491,7 +552,8 @@ export function FileBubble({msg, isSent}: { msg: any; isSent: boolean }) {
                             </svg>
                         </button>
                     )}
-                    <button onClick={handleOpen} disabled={opening || !canOpen} title={hasLocal ? tr('Mở file') : tr('Tải xuống')}
+                    <button onClick={handleOpen} disabled={opening || !canOpen}
+                            title={hasLocal ? (viewerImage ? tr('Mở bằng app bên ngoài') : tr('Mở file')) : tr('Tải xuống')}
                             className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40 text-muted-foreground hover:text-foreground hover:bg-foreground/10">
                         {hasLocal
                             ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -587,10 +649,12 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     // Parse local URL
     let localUrl = '';
     let localFilePath = '';
+    let savedPaths: Record<string, string> = {};
     try {
         const lp: Record<string, string> = typeof msg.local_paths === 'string'
             ? JSON.parse(msg.local_paths || '{}')
             : (msg.local_paths || {});
+        savedPaths = lp || {};
         localFilePath = lp.main || lp.hd || (Object.values(lp)[0] as string) || '';
         if (isUndisplayableLocalImage(localFilePath)) localFilePath = '';
         if (localFilePath) {
@@ -599,11 +663,15 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
     } catch {
     }
 
-    // FB/Telegram: use localPath from attachments for immediate preview via MediaResolver
+    // FB/Telegram: use localPath from attachments for immediate preview via MediaResolver; downloaded files are saved as att_<i>
+    // (an E2EE album has no URLs at all, so only the first photo showed)
     let fbLocalUrls: string[] = [];
     if (isNonZalo(msg.channel)) {
         const atts = extractAttachments(msg);
-        fbLocalUrls = atts.map(a => a.localPath ? toLocalMediaUrl(a.localPath) : (a.url || '')).filter(Boolean);
+        fbLocalUrls = atts.map((a, i) => {
+            const saved = a.localPath || savedPaths[`att_${i}`] || (i === 0 ? savedPaths.main : '');
+            return saved && !isUndisplayableLocalImage(saved) ? toLocalMediaUrl(saved) : (a.url || '');
+        }).filter(Boolean);
         if (!localUrl && fbLocalUrls.length > 0) localUrl = fbLocalUrls[0];
     }
 
@@ -868,7 +936,9 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
 
     if (mediaExpired && (loadFailed || !displayUrl)) {
         const expiredNode = (
-            <ExpiredMediaPlaceholder kind="image" onRetry={() => void requestZaloRepair(true)} retrying={zaloRepairing}/>
+            <ExpiredMediaPlaceholder kind="image" channel={msg.channel}
+                onRetry={() => void (isFacebook(msg.channel) ? telegramRepair.requestRepair('manual_retry', true) : requestZaloRepair(true))}
+                retrying={zaloRepairing || telegramRepair.repairing}/>
         );
         if (!caption) {
             return (
@@ -1000,10 +1070,10 @@ export function MediaBubble({msg, onView, isSent, allContacts, groupMembersList,
             <button
                 type="button"
                 onClick={() => {
-                    if (isTelegramUser(msg.channel)) void telegramRepair.requestRepair('manual_retry', true);
+                    if (isTelegramUser(msg.channel) || isFacebook(msg.channel)) void telegramRepair.requestRepair('manual_retry', true);
                     else if (isZalo(msg.channel)) void requestZaloRepair(true);
                 }}
-                disabled={(!isTelegramUser(msg.channel) && !isZalo(msg.channel)) || telegramRepair.repairing || zaloRepairing}
+                disabled={(!isTelegramUser(msg.channel) && !isZalo(msg.channel) && !isFacebook(msg.channel)) || telegramRepair.repairing || zaloRepairing}
                 title={isTelegramUser(msg.channel) ? tr('Tải lại ảnh Telegram này') : isZalo(msg.channel) ? tr('Tải lại ảnh Zalo này') : undefined}
                 className="relative flex flex-col gap-1 items-center justify-center max-w-xs w-full h-32 rounded-xl bg-muted/40 text-muted-foreground select-none disabled:cursor-default">
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
@@ -1480,15 +1550,29 @@ export function VoiceBubble({msg, isSent}: { msg: any; isSent: boolean }) {
         } catch {
         }
 
+        // Facebook / Telegram rows keep the audio in `attachments` ([{ url, duration }]) and the downloaded file under att_0
+        if (!_voiceUrl) {
+            try {
+                const atts = typeof msg.attachments === 'string' ? JSON.parse(msg.attachments || '[]') : (msg.attachments || []);
+                const att = Array.isArray(atts) ? atts.find((a: any) => a && (a.url || a.href)) : null;
+                if (att) {
+                    _voiceUrl = String(att.url || att.href || '');
+                    const rawDur = Number(att.duration || 0);
+                    if (!_paramsDur && rawDur > 0) _paramsDur = rawDur > 300 ? rawDur / 1000 : rawDur;
+                }
+            } catch {
+            }
+        }
+
         let _localPath = '';
         try {
             const lp = typeof msg.local_paths === 'string' ? JSON.parse(msg.local_paths || '{}') : (msg.local_paths || {});
-            _localPath = lp.file || lp.voice || lp.main || '';
+            _localPath = lp.file || lp.voice || lp.main || lp.att_0 || '';
         } catch {
         }
 
         return {voiceUrl: _voiceUrl, paramsDurationSec: _paramsDur, localPath: _localPath};
-    }, [msg.content, msg.local_paths]);
+    }, [msg.content, msg.local_paths, msg.attachments]);
 
     // Sync duration from params when there is no audio metadata yet
     React.useEffect(() => {
@@ -1945,13 +2029,18 @@ export function SingleImageInGroup({msg, onView, isSent, isSelecting: isSelectin
         return (
             <ExpiredMediaPlaceholder
                 kind={isVideoTile ? 'video' : 'image'}
+                channel={msg.channel}
                 compact
                 selected={!!(isSelectingProp && isSelected)}
-                retrying={checkingExpiry}
+                retrying={checkingExpiry || telegramRepair.repairing}
                 onClick={(e) => {
                     e.stopPropagation();
                     if (isSelectingProp) {
                         onToggleSelect?.(msg.msg_id);
+                        return;
+                    }
+                    if (isFacebook(msg.channel)) {
+                        void telegramRepair.requestRepair('manual_retry', true);
                         return;
                     }
                     if (checkingExpiry || !remoteUrl) return;
@@ -2552,107 +2641,9 @@ export function EcardBubble({msg, onManage}: { msg: any; onManage?: () => void }
     } catch {
     }
 
-    // ── Detect reminder card (action.open.reminder) ──
-    const isReminderCard = (params.actions || []).some(
-        (a: any) => a.actionId === 'action.open.reminder'
-    );
-
-    if (isReminderCard) {
-        // Parse reminder details from action data
-        let reminderData: any = {};
-        const reminderAction = (params.actions || []).find((a: any) => a.actionId === 'action.open.reminder');
-        try {
-            if (reminderAction?.data) {
-                const outerData = typeof reminderAction.data === 'string' ? JSON.parse(reminderAction.data) : reminderAction.data;
-                if (outerData?.data) {
-                    reminderData = typeof outerData.data === 'string' ? JSON.parse(outerData.data) : outerData.data;
-                }
-            }
-        } catch {
-        }
-
-        const startTime = Number(reminderData.startTime || 0);
-        const repeat: number = Number(reminderData.repeat ?? 0);
-        const repeatText = repeat === 1 ? tr('Nhắc theo ngày') : repeat === 2 ? tr('Nhắc theo tuần') : repeat === 3 ? tr('Nhắc theo tháng') : '';
-        const emoji = reminderData.emoji || '⏰';
-
-        const formatReminderDateFull = (ts: number) => {
-            if (!ts) return description || '';
-            const d = new Date(ts);
-            const pad = (n: number) => n.toString().padStart(2, '0');
-            const weekDays = [tr('Chủ Nhật'), tr('Thứ Hai'), tr('Thứ Ba'), tr('Thứ Tư'), tr('Thứ Năm'), tr('Thứ Sáu'), tr('Thứ Bảy')];
-            const months = [tr('tháng 1'), tr('tháng 2'), tr('tháng 3'), tr('tháng 4'), tr('tháng 5'), tr('tháng 6'), tr('tháng 7'), tr('tháng 8'), tr('tháng 9'), tr('tháng 10'), tr('tháng 11'), tr('tháng 12')];
-            return tr('{{v1}}, {{v2}} {{v3}} lúc {{v4}}:{{v5}}', { v1: weekDays[d.getDay()], v2: d.getDate(), v3: months[d.getMonth()], v4: pad(d.getHours()), v5: pad(d.getMinutes()) });
-        };
-
-        const formatDayNum = (ts: number) => ts ? new Date(ts).getDate() : '';
-        const formatMonth = (ts: number) => {
-            if (!ts) return '';
-            const d = new Date(ts);
-            const months = [tr('THÁNG 1'), tr('THÁNG 2'), tr('THÁNG 3'), tr('THÁNG 4'), tr('THÁNG 5'), tr('THÁNG 6'), tr('THÁNG 7'), tr('THÁNG 8'), tr('THÁNG 9'), tr('THÁNG 10'), tr('THÁNG 11'), tr('THÁNG 12')];
-            return months[d.getMonth()];
-        };
-        const formatWeekDay = (ts: number) => {
-            if (!ts) return '';
-            const days = [tr('CHỦ NHẬT'), tr('THỨ HAI'), tr('THỨ BA'), tr('THỨ TƯ'), tr('THỨ NĂM'), tr('THỨ SÁU'), tr('THỨ BẢY')];
-            return days[new Date(ts).getDay()];
-        };
-
-        // Extract reminder title from params.notifyTxt or card title
-        const reminderTitle = (params.notifyTxt || title || '').replace(/^(?:[⏰📅🔔⭐📌💡🎯🎉]|Clock:|Calendar:|Bell:|Star:|Pin:|Lightbulb:|Target:)\s*/i, '');
-
-        return (
-            <div className="flex justify-center w-full my-1">
-                <div
-                    className="bg-bubble-in rounded-2xl overflow-hidden max-w-[300px] w-full shadow-sm">
-                    {/* Reminder card body */}
-                    <div className="flex gap-3 p-4">
-                        {/* Calendar icon */}
-                        {startTime > 0 && (
-                            <div
-                                className="flex-shrink-0 w-14 rounded-xl overflow-hidden border border-input bg-muted flex flex-col items-center">
-                                <div
-                                    className="w-full bg-blue-600 py-0.5 text-center text-white text-[11px] font-bold tracking-wide">
-                                    {formatWeekDay(startTime)}
-                                </div>
-                                <div className="flex-1 flex flex-col items-center justify-center py-1">
-                                    <span
-                                        className="text-foreground text-2xl font-bold leading-none">{formatDayNum(startTime)}</span>
-                                    <span className="text-muted-foreground text-[11px] mt-0.5">{formatMonth(startTime)}</span>
-                                </div>
-                            </div>
-                        )}
-                        {/* Info */}
-                        <div className="flex-1 min-w-0">
-                            <p className="text-foreground font-semibold text-sm truncate">{emoji} {reminderTitle}</p>
-                            {/* Time */}
-                            <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                     strokeWidth="2">
-                                    <circle cx="12" cy="12" r="10"/>
-                                    <polyline points="12 6 12 12 16 14"/>
-                                </svg>
-                                <span>{startTime ? formatReminderDateFull(startTime) : description}</span>
-                            </div>
-                            {/* Repeat */}
-                            {repeatText && (
-                                <div className="flex items-center gap-1 mt-0.5 text-xs text-orange-400">
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                         strokeWidth="2.5">
-                                        <path d="M17 1l4 4-4 4"/>
-                                        <path d="M3 11V9a4 4 0 014-4h14"/>
-                                        <path d="M7 23l-4-4 4-4"/>
-                                        <path d="M21 13v2a4 4 0 01-4 4H3"/>
-                                    </svg>
-                                    <span>{repeatText}</span>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    }
+    // ── Reminder card (action.open.reminder): shared with MessageBubbles ──
+    const reminderCard = parseZaloReminderCard(parsed);
+    if (reminderCard) return <ZaloReminderCard msg={msg} card={reminderCard} />;
 
     // ── Standard ecard (group events etc.) ──
     const actions: any[] = (params.actions || []).filter(

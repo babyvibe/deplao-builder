@@ -78,6 +78,18 @@ export interface FBListenerEvents {
   overflow: (seqId: string) => void;
 }
 
+/** @mention ranges of an MQTT message (`data.prng`: JSON list of { i: user id, o: offset, l: length }). */
+export function parseMqttMentions(raw: unknown): Array<{ userId: string; offset: number; length: number }> {
+  let list: unknown = raw;
+  if (typeof raw === 'string') {
+    try { list = JSON.parse(raw); } catch { return []; }
+  }
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((m: any) => ({ userId: String(m?.i ?? m?.id ?? ''), offset: Number(m?.o ?? m?.offset), length: Number(m?.l ?? m?.length) }))
+    .filter(m => /^\d+$/.test(m.userId) && Number.isInteger(m.offset) && Number.isInteger(m.length) && m.offset >= 0 && m.length > 0);
+}
+
 export class FacebookMQTTListener extends EventEmitter {
   private dataFB: FBSessionData;
   private accountId: string;
@@ -608,12 +620,24 @@ export class FacebookMQTTListener extends EventEmitter {
       return;
     }
 
-    // 4eii. Admin activity messages (pin, poll, group info changes from adminText) - skip
-    // Facebook sends admin-generated text such as "Tiến đã ghim một tin nhắn." (the person pinned a message.) inside
-    // messageMetadata.adminText. These are NOT real user messages - just localized
-    // informational text that the bridge handles internally.
+    // 4eii. Admin activity messages (pin, poll, nickname, theme, call log…): Facebook's own localized text in
+    // messageMetadata.adminText. Reported as 'adminText' so the service saves a centered system line (or a call card);
+    // the bridge reports the same message id, the second copy is a duplicate.
     if (delta.messageMetadata?.adminText) {
-      Logger.log(`[FBMqtt:${this.accountId}] Admin message: "${(delta.messageMetadata.adminText as string).slice(0, 100)}" - skipping (admin activity, not a user message)`);
+      const adminText = String(delta.messageMetadata.adminText);
+      Logger.log(`[FBMqtt:${this.accountId}] Admin message type=${delta.type || '-'}: "${adminText.slice(0, 100)}"`);
+      if (meta.messageId) {
+        this.emit('adminText', {
+          messageId: meta.messageId,
+          threadId: String(replyToID),
+          actorFbId: meta.actorFbId || '',
+          text: adminText,
+          adminType: String(delta.type || ''),
+          untypedData: delta.untypedData || {},
+          timestamp: meta.timestamp || String(Date.now()),
+          threadKind: threadKey.otherUserFbId ? 'user' : threadKey.threadFbId ? 'group' : undefined,
+        });
+      }
       return;
     }
 
@@ -730,6 +754,9 @@ export class FacebookMQTTListener extends EventEmitter {
       replyToMessageId: repliedToMsg,
       replyToSenderId: repliedToSender,
       type: threadType === 'user' ? 'user' : 'group',
+      // The thread key says it for sure (otherUserFbId = one-to-one, threadFbId = group)
+      ...(threadKey.otherUserFbId || threadKey.threadFbId ? { threadKind: threadType === 'user' ? 'user' as const : 'group' as const } : {}),
+      mentions: parseMqttMentions((delta as any).data?.prng),
       attachments: primaryAtt,
       ...(allAttachments.length > 1 ? { allAttachments } : {}),
     };
@@ -927,6 +954,20 @@ export class FacebookMQTTListener extends EventEmitter {
   /**
    * Checks whether it is currently connected
    */
+  /**
+   * Foreground state like a visible Messenger web tab (fbchat's set_foreground, topic /foreground_state): Messenger only
+   * sends typing to foreground clients. The connection starts in the background (fg: false); FacebookService switches it
+   * while an ordinary chat is on screen.
+   */
+  public setForeground(foreground: boolean): void {
+    if (!this.client?.connected) return;
+    try {
+      this.client.publish('/foreground_state', JSON.stringify({ foreground }), { qos: 1 });
+    } catch (err: any) {
+      Logger.warn(`[FBMqtt:${this.accountId}] foreground state: ${err?.message || err}`);
+    }
+  }
+
   public isConnected(): boolean {
     return !!(this.client && this.client.connected);
   }

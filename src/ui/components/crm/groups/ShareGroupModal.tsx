@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { toLocalMediaUrl } from '@/lib/media/localMedia';
 import ipc, { buildZaloAuth } from '@/lib/ipc';
 import { useAccountStore } from '@/store/accounts/accountStore';
 import { submitSharedGroup, DEFAULT_CATEGORIES, type SharedGroupCategory } from '@/lib/crm/backendService';
@@ -192,7 +193,7 @@ export default function ShareGroupModal({
               </div>
               <div className="bg-muted/50 rounded-xl p-4 flex items-center gap-3">
                 {avatarUrl ? (
-                  <img src={avatarUrl} alt={displayName || pageId}
+                  <img src={toLocalMediaUrl(avatarUrl)} alt={displayName || pageId}
                     className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
                 ) : (
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">

@@ -56,3 +56,25 @@ export async function resolveThreadKind(
     error: tr('Không thể xác định loại hội thoại cho thread {{threadId}}. Vui lòng tải lại cuộc trò chuyện hoặc chọn loại chat thủ công.', { threadId }),
   };
 }
+
+/**
+ * messagix ThreadType of a bridge event (bridge/events.go threadMeta) → kind. 0 = the bridge did not know the thread yet.
+ * One-to-one kinds follow table/enums.go IsOneToOne (+ page follow-up); everything that is a chat with members is a group.
+ */
+const BRIDGE_ONE_TO_ONE_TYPES = new Set([1, 7, 10, 13, 14, 15]);
+const BRIDGE_GROUP_TYPES = new Set([2, 8, 11, 16, 18, 19, 21, 22, 23, 24, 25, 26, 150, 151]);
+
+export function bridgeThreadKind(threadType: unknown): FacebookThreadKind {
+  const value = Number(threadType);
+  if (BRIDGE_ONE_TO_ONE_TYPES.has(value)) return 'user';
+  if (BRIDGE_GROUP_TYPES.has(value)) return 'group';
+  return 'unknown';
+}
+
+/** E2EE chats come through whatsmeow: groups use the `g.us` server, one-to-one chats `msgr`. */
+export function e2eeChatKind(chatJid: unknown): FacebookThreadKind {
+  const jid = String(chatJid || '');
+  if (/@g\.us$/i.test(jid)) return 'group';
+  if (/@msgr$/i.test(jid) || /@s\.whatsapp\.net$/i.test(jid)) return 'user';
+  return 'unknown';
+}

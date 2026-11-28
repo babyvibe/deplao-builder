@@ -12,6 +12,7 @@ import {
 import { getFacebookAvatarById, initSession } from './FacebookSession';
 import { getFacebookUserInfo } from './FacebookUserInfo';
 import { sendMessage as sendMessageREST, unsendMessage, addReaction, editMessage, forwardMessage, pinMessage, unpinMessage, createPoll, votePoll } from './send/FacebookMessageSender';
+import { isE2EEServerRejection, isNormalSendRejection, isTextOnlySend } from './send/facebookSendFallback';
 import { uploadAttachment } from './send/FacebookAttachment';
 import {
   getThreadList, getThreadListPage, parseThreadNodes, fetchThreadMessages,
@@ -27,15 +28,15 @@ import { FacebookE2EEBridge, BridgeInitialData, type BridgeHistoryPage } from '.
 import {
   activityMs, isLightSpeedMessageId, messageInRange, nextHistoryAnchor, type FbHistorySyncRange,
 } from '../../shared/facebook/facebookHistorySync';
-import { FacebookHumanPacer, sleepUnlessStopped, type PacerWait } from './send/FacebookHumanPacer';
+import { FacebookHumanPacer, isFacebookRiskError, sleepUnlessStopped, type PacerWait } from './send/FacebookHumanPacer';
 import {
-  FB_TEMPLATE_MSG_TYPE, fbTemplateText, fbUnsupportedText, isFbUnavailableTemplate, templateFromBridgeAttachment, withTemplateText,
-  type FbTemplate,
+  FB_TEMPLATE_MSG_TYPE, FB_UNDECRYPTABLE_ATTACHMENT, fbTemplateText, fbUnsupportedText, isFbUnavailableTemplate, templateFromBridgeAttachment,
+  withTemplateText, type FbTemplate,
 } from '../../shared/facebook/facebookTemplate';
 import { FacebookE2EESender, e2eeSendOutcome } from './e2ee/FacebookE2EESender';
 import { parseE2EECookies, resolveE2EEBinaryPath, normalizeChatJid } from './FacebookUtils';
 import { FacebookE2EEStateStore } from './e2ee/FacebookE2EEStateStore';
-import { resolveThreadKind } from './FacebookThreadKind';
+import { bridgeThreadKind, e2eeChatKind, resolveThreadKind, type FacebookThreadKind } from './FacebookThreadKind';
 import { FacebookEventPipeline, EventPriority, bridgeEventKey } from './FacebookEventPipeline';
 import { createRepeatFilter, reactionRepeat, unsendRepeat, type RepeatFilter } from './FacebookEventRepeats';
 import { metricInc } from './FacebookMetrics';
@@ -44,11 +45,21 @@ import { messageTimestampById, recordPeerReceipt } from '../receipts/peerReceipt
 import { mediaProgressReporter } from '../media/mediaProgress';
 import DatabaseService, { type FbSaveOutcome } from '../database/DatabaseService';
 import FileStorageService from '../file/FileStorageService';
-import { createProxyAgent } from '../../utils/connection/ProxyHelper';
-import { secureGet } from '../secure/SecureSettingsService';
+import { FacebookProfileResolver, isSameFacebookAvatar } from './FacebookProfileResolver';
+import { whenStartupSettled } from '../../utils/startup/startupSettle';
+import { buildProxyUrl, createProxyAgent } from '../../utils/connection/ProxyHelper';
+import {
+  FB_CALL_MSG_TYPE, FB_POLL_MSG_TYPE, POLL_EVENT_CREATE, applyPollVotes, callLogContent, callLogFromAttachment,
+  fbPollFromAttachments, fbPollText, mentionAttachments, normalizeBridgeAttachment, pollAttachmentFromBridge,
+  pollUpdateAttachment, withOwnPollChoice, type BridgePollInfo,
+} from '../../shared/facebook/facebookSpecialMessages';
+import * as threadActions from './actions/FacebookThreadActions';
+import { FacebookMediaRepair, type MediaRepairResult } from './FacebookMediaRepair';
+import { secureGet, secureSet } from '../secure/SecureSettingsService';
 import path from 'path';
 import Logger from '../../utils/Logger';
 import { tr } from '../../shared/i18n';
+import { disappearingNoticeText, fbSettingTimeMs } from '../../shared/facebook/facebookDisappearing';
 
 // ─── Cookie key helper ─────────────────────────────────────────────────
 
@@ -56,20 +67,6 @@ function fbCookieKey(accountId: string): string {
   return `fb_cookie_${accountId}`;
 }
 
-/** Compare signed Facebook CDN URLs without treating unrelated image URLs as equal. */
-function isSameFacebookAvatar(left?: string, right?: string): boolean {
-  if (!left || !right) return false;
-  if (left === right) return true;
-  try {
-    const a = new URL(left);
-    const b = new URL(right);
-    const aHash = a.searchParams.get('oh');
-    const bHash = b.searchParams.get('oh');
-    return !!aHash && aHash === bHash;
-  } catch {
-    return false;
-  }
-}
 
 /** GraphQL page when the conversation has no Messenger message yet in the machine to use as the mark for FetchMessagesTask (~1 Messenger web page). */
 const HISTORY_GRAPHQL_PAGE = 20;
@@ -77,10 +74,30 @@ const HISTORY_GRAPHQL_PAGE = 20;
 const HISTORY_TOP_GAP_MS = 60_000;
 const HISTORY_RISK_TEXT = tr('Facebook có dấu hiệu hạn chế / yêu cầu xác minh — đã tạm dừng tải lịch sử 30 phút để bảo vệ tài khoản');
 /** Where a history page comes from: the LightSpeed FetchMessagesTask (bridge) or GraphQL (when there is no message to use as the mark yet). */
-type FbHistorySource = 'lightspeed' | 'graphql';
+type FbHistorySource = 'lightspeed' | 'graphql' | 'secure_history';
 type FbHistoryPageResult =
   | { success: true; saved: number; received: number; stored: number; count: number; hasMoreBefore: boolean; minTimestampMs: number; minMessageId?: string; source: FbHistorySource }
   | { success: false; code: 'BRIDGE_DOWN' | 'BRIDGE_OLD' | 'E2EE' | 'FETCH' | 'RISK' | 'COOLDOWN' | 'BUSY' | 'CANCELLED'; error: string; source?: FbHistorySource };
+
+/** Attachment fields kept in the stored JSON besides type / url / name (sticker id, poster, size, media refresh key). */
+function extraAttachmentFields(a: any): Record<string, unknown> {
+  return {
+    ...(a?.stickerId ? { stickerId: String(a.stickerId) } : {}),
+    ...(a?.previewUrl ? { previewUrl: a.previewUrl } : {}),
+    ...(a?.width ? { width: Number(a.width) } : {}),
+    ...(a?.height ? { height: Number(a.height) } : {}),
+    ...(a?.duration ? { duration: Number(a.duration) } : {}),
+    ...(a?.attachmentFbid ? { attachmentFbid: String(a.attachmentFbid) } : {}),
+    // View-once / replayable media of an encrypted chat (shown, marked as such)
+    ...(a?.viewOnce ? { viewOnce: true } : {}),
+  };
+}
+
+/** Proxy schemes the Go bridge (Messenger + encrypted sockets) can use. */
+const BRIDGE_PROXY_SCHEMES = new Set(['http', 'https', 'socks5', 'socks5h']);
+
+/** Messenger accepts an edit for 15 minutes after the message was sent. */
+const FB_EDIT_WINDOW_MS = 15 * 60_000;
 
 export class FacebookService {
   private static instances = new Map<string, FacebookService>();
@@ -121,6 +138,35 @@ export class FacebookService {
   private _nonE2EEThreads: Set<string> = new Set();
   /** Debounce avatar refresh - only once per user / session */
   private avatarRefreshDebounce = new Set<string>();
+  /** Background name / picture lookups of this account's conversations (created on first use). */
+  private profileResolver: FacebookProfileResolver | null = null;
+  /** Downloads / refreshes media of messages (FacebookMediaRepair). */
+  private mediaRepairer: FacebookMediaRepair | null = null;
+  /** Encrypted read receipts already sent, per thread: newest message time (ms). */
+  private e2eeReadSentAt = new Map<string, number>();
+  /** WhatsApp presence sent for the encrypted chats ("available" while one is on screen or being typed in). */
+  private e2eePresence: 'available' | 'unavailable' = 'unavailable';
+  private e2eePresenceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Encrypted chat on screen in Deplao (fb:setViewingChat), '' when none. */
+  private viewingEncryptedChat = '';
+  /** Ordinary (not encrypted) chat on screen; the LightSpeed app state is "foreground" meanwhile so typing reaches Deplao. */
+  private viewingOrdinaryChat = '';
+  private appForeground = false;
+  private appForegroundTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Old encrypted messages can be read from Messenger's secure history (unlocked once with the Messenger PIN). */
+  private encryptedHistoryReady = false;
+  /** Group pictures already tried in this run (a failed download is not retried on every message). */
+  private groupPictureTried = new Set<string>();
+  /** Groups whose info (name, picture, members) was fetched from Messenger in this run. */
+  private groupInfoFetched = new Set<string>();
+  /** Background group info queue (pictures / members missing), one request at a time with a gap. */
+  private groupInfoQueue: string[] = [];
+  private groupInfoRunning = false;
+  private groupSweepTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Group picture links of the GraphQL thread list (first page), reused for 10 minutes. */
+  private graphqlPictures: { at: number; byThread: Map<string, string> } | null = null;
+  /** Group threads saved with the old 1-1 type are repaired once per run. */
+  private threadTypesRepaired = false;
   /** Bridge instance ID - incremented each time startE2EEBridge runs, used to detect stale reconnect timers (BUG #6 fix) */
   private e2eeBridgeGen: number = 0;
   /** Heartbeat timer that checks the bridge is still responsive (BUG #8 fix) */
@@ -158,6 +204,26 @@ export class FacebookService {
       if (proxy) return createProxyAgent(proxy);
     } catch {}
     return undefined;
+  }
+
+  /**
+   * Account proxy as a URL for the Go bridge (Messenger and encrypted sockets); '' without a proxy or for a scheme the
+   * bridge cannot use (socks4), which then connects directly as before.
+   */
+  private bridgeProxyUrl(): string {
+    if (!this.proxyId) return '';
+    try {
+      const proxy = DatabaseService.getInstance().getProxyById(this.proxyId);
+      if (!proxy) return '';
+      const scheme = String(proxy.type || '').toLowerCase();
+      if (!BRIDGE_PROXY_SCHEMES.has(scheme)) {
+        Logger.warn(`[FacebookService:${this.accountId}] Proxy type ${scheme} is not supported by the Messenger bridge; it connects directly`);
+        return '';
+      }
+      return buildProxyUrl(proxy);
+    } catch {
+      return '';
+    }
   }
 
   /** Update the proxy (called when the user changes the proxy for the account) */
@@ -267,12 +333,22 @@ export class FacebookService {
   }
 
   private setStatus(status: FBAccountStatus): void {
+    const wasConnected = this.status === 'connected';
     this.status = status;
     EventBroadcaster.emit('fb:onConnectionStatus', {
       fbAccountId: this.getFacebookId(),
       status,
     });
     this.statusChangeCallback?.(status);
+    // Conversations still without a name / picture (e.g. found by an earlier sync): look them up once the app has settled
+    if (status === 'connected' && !wasConnected) {
+      whenStartupSettled(() => {
+        if (this.status === 'connected') {
+          this.sweepConversationProfiles();
+          this.scheduleGroupSweep(5_000);
+        }
+      });
+    }
 
     // ── Sync DB marking with connection state ───────────────────────────
     // Make sure listener_active + fb_accounts.status always stay in sync,
@@ -368,6 +444,10 @@ export class FacebookService {
     );
       });
 
+      this.listener.on('adminText', (data: any) => {
+        this.handleMqttAdminText(data);
+      });
+
       this.listener.on('threadEvent', (data: any) => {
         this.handleThreadEvent(data);
       });
@@ -404,6 +484,7 @@ export class FacebookService {
           try {
             DatabaseService.getInstance().updateFBMessageUnsent(data.messageId);
           } catch {}
+          this.afterMessageUnsent(String(data.threadId || ''), String(data.messageId));
           EventBroadcaster.emit('fb:onUnsend', {
             fbAccountId: this.getFacebookId(),
             messageId: data.messageId,
@@ -413,14 +494,15 @@ export class FacebookService {
       });
 
       this.listener.on('reaction', (data: { messageId: string; reaction: string; actorFbId: string; threadId: string }) => {
-        if (data?.messageId && data?.reaction && this.acceptReactionEvent(data.messageId, data.actorFbId || '', data.reaction)) {
-          this.persistReactionToDB(data.messageId, data.actorFbId || '', data.reaction);
+        // An empty reaction is a removal (it used to be dropped, so a removed reaction stayed in Deplao)
+        if (data?.messageId && data?.actorFbId && this.acceptReactionEvent(data.messageId, data.actorFbId, data.reaction || '')) {
+          this.persistReactionToDB(data.messageId, data.actorFbId, data.reaction || '');
           EventBroadcaster.emit('fb:onReaction', {
             fbAccountId: this.getFacebookId(),
             messageId: data.messageId,
             threadId: data.threadId || '',
-            userId: data.actorFbId || '',
-            emoji: data.reaction,
+            userId: data.actorFbId,
+            emoji: data.reaction || '',
           });
         }
       });
@@ -526,6 +608,8 @@ export class FacebookService {
    * Disconnects
    */
   public async disconnect(): Promise<void> {
+    this.profileResolver?.stop();
+    this.profileResolver = null;
     // Disconnect E2EE bridge first
     await this.stopE2EEBridge();
     this.e2eeStateStore = null;
@@ -673,29 +757,16 @@ export class FacebookService {
     }
     // ──────────────────────────────────────────────────────────────────────────
 
-    // ── Pre-fetch contact info for unknown users ──────────────────────────────
-    // Before saving the message, make sure the sender already has a display_name in the DB.
-    // Avoids showing a UID instead of the user's name on the client.
-    if (msg.userID && /^\d+$/.test(String(msg.userID)) && !isSelf) {
-      try {
-        const db = DatabaseService.getInstance();
-        const existingSender = db.queryOne?.(
-          `SELECT display_name FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook' AND display_name != '' LIMIT 1`,
-          [this.getFacebookId(), String(msg.userID)]
-        ) as { display_name?: string } | undefined;
-        if (!existingSender?.display_name) {
-          // No name yet → fetch first, so the broadcast has complete info
-          await this.checkAndFetchUserInfo(String(msg.userID));
-        }
-      } catch {}
-    }
-    // ────────────────────────────────────────────────────────────────────────────
+    // The name / picture of a new person is looked up in the background after the save (FacebookProfileResolver): the old
+    // blocking lookup here could hold the first message of a new person for up to 30 s (bridge timeout).
 
     // Persist to DB
     // MQTT and the bridge (LightSpeed) both receive each ordinary message, a few tens of ms apart. The later copy changes nothing in the DB → dropped
     // without being replayed (before, each message was added to unread / reports / workflow runs / API events twice); an empty row can be fixed
     // or the "File đính kèm không hiển thị" (Attachment not shown) card → replayed with `repeat` (the renderer only patches the message, it does not report it again).
     let saveOutcome: FbSaveOutcome = 'new';
+    // Exactly what is stored in the attachments column, broadcast with the message so the live bubble equals the saved one
+    let storedAttachments: string | undefined;
     if (threadId && msg.messageID) {
       try {
         const db = DatabaseService.getInstance();
@@ -729,6 +800,7 @@ export class FacebookService {
             ...(a.mediaKey ? { mediaKey: a.mediaKey } : {}),
             ...(a.mediaSha256 ? { mediaSha256: a.mediaSha256 } : {}),
             ...(a.mediaEncSha256 ? { mediaEncSha256: a.mediaEncSha256 } : {}),
+            ...extraAttachmentFields(a),
             ...(a.template ? { ...a.template, type: 'template' } : {}),
           })));
         } else if (hasAttachment) {
@@ -744,9 +816,20 @@ export class FacebookService {
             ...(msg.attachments.mediaKey ? { mediaKey: msg.attachments.mediaKey } : {}),
             ...(msg.attachments.mediaSha256 ? { mediaSha256: msg.attachments.mediaSha256 } : {}),
             ...(msg.attachments.mediaEncSha256 ? { mediaEncSha256: msg.attachments.mediaEncSha256 } : {}),
+            ...extraAttachmentFields(msg.attachments),
             ...(msg.attachments.template ? { ...msg.attachments.template, type: 'template' } : {}),
           }]);
         }
+        // @mentions of a text message: attachment entries like Zalo / Telegram (the bubble highlights them)
+        if (!attachmentPayload) {
+          const mentions = mentionAttachments(msg.mentions);
+          if (mentions.length) attachmentPayload = JSON.stringify(mentions);
+        }
+        // Not decrypted yet: the sender's re-send (same id) replaces this row (saveFBMessage)
+        if (!attachmentPayload && msg.unsupported === 'undecryptable') {
+          attachmentPayload = JSON.stringify([{ type: FB_UNDECRYPTABLE_ATTACHMENT }]);
+        }
+        storedAttachments = attachmentPayload;
 
         if (msgType === 'sticker') {
           Logger.log(`[FacebookService:${this.accountId}] [STICKER] handleIncomingMessage: msgId=${msg.messageID} threadId=${threadId} rawType=${rawType} msgType=${msgType} hasAttachment=${hasAttachment} url=${(msg.attachments?.url || '').slice(0,100)}`);
@@ -768,7 +851,11 @@ export class FacebookService {
           reply_to_id: msg.replyToMessageId,
           is_self: isSelf,
           is_unsent: 0,
+          ...(msg.threadKind ? { thread_kind: msg.threadKind } : {}),
+          ...(msg.replyToText ? { reply_text: msg.replyToText } : {}),
+          ...(msg.replyToSenderId ? { reply_sender_id: msg.replyToSenderId } : {}),
         }) || 'new';
+        if (msg.ttl && msg.ttl > 0) db.setMessageTtl(this.getFacebookId(), msg.messageID, msg.ttl);
 
         // Note: fb_threads preview is updated inside saveFBMessage
 
@@ -793,7 +880,21 @@ export class FacebookService {
           [threadId, this.accountId],
         ) as { type?: string } | undefined;
         if (knownThread?.type !== 'group' && /^\d+$/.test(threadId)) {
-          this.checkAndFetchUserInfo(threadId);
+          // Queued (deduped, retried with backoff); the list row gets the name / picture through db:contactProfileUpdated
+          this.profiles.enqueue([threadId]);
+        }
+      } catch {}
+
+      // A group conversation without a local picture or members: fetch its info in the background (merged sweep)
+      try {
+        if (this.storedThreadKind(threadId) === 'group' && !this.groupInfoFetched.has(threadId)) {
+          const owner = this.getFacebookId();
+          const row = DatabaseService.getInstance().queryOne?.(
+            `SELECT c.avatar_url, (SELECT COUNT(*) FROM page_group_member m WHERE m.owner_zalo_id = c.owner_zalo_id AND m.group_id = c.contact_id) AS members
+             FROM contacts c WHERE c.owner_zalo_id = ? AND c.contact_id = ? AND c.channel = 'facebook'`,
+            [owner, threadId],
+          ) as { avatar_url?: string; members?: number } | undefined;
+          if (row && (!row.avatar_url || /^https?:/i.test(String(row.avatar_url)) || !Number(row.members))) this.enqueueGroupInfo(threadId);
         }
       } catch {}
 
@@ -827,29 +928,37 @@ export class FacebookService {
         const dbInst = DatabaseService.getInstance();
         // Look up original message from fb_messages first, then unified messages
         const origRow = dbInst.queryOne<any>(
-          `SELECT body, type FROM fb_messages WHERE id = ? AND account_id = ?`,
+          `SELECT body, type, sender_id FROM fb_messages WHERE id = ? AND account_id = ?`,
           [msg.replyToMessageId, this.accountId]
         );
         if (origRow) {
           broadcastQuoteData = JSON.stringify({
             msgId: msg.replyToMessageId,
             msg: origRow.body || '',
-            senderId: msg.replyToSenderId || '',
+            senderId: msg.replyToSenderId || String(origRow.sender_id || ''),
             msgType: origRow.type || 'text',
           });
           Logger.log(`[FacebookService:${this.accountId}] [QUOTE] broadcast reply_to_id=${msg.replyToMessageId} content="${(origRow.body || '').slice(0,100)}"`);
         } else {
           // Fallback to unified messages table
           const origRow2 = dbInst.queryOne<any>(
-            `SELECT content, msg_type FROM messages WHERE msg_id = ?`,
+            `SELECT content, msg_type, sender_id FROM messages WHERE msg_id = ?`,
             [msg.replyToMessageId]
           );
           if (origRow2) {
             broadcastQuoteData = JSON.stringify({
               msgId: msg.replyToMessageId,
               msg: origRow2.content || '',
-              senderId: msg.replyToSenderId || '',
+              senderId: msg.replyToSenderId || String(origRow2.sender_id || ''),
               msgType: origRow2.msg_type || 'text',
+            });
+          } else if (msg.replyToText || msg.replyToSenderId) {
+            // Original older than what Deplao has: the text / sender the reply carried
+            broadcastQuoteData = JSON.stringify({
+              msgId: msg.replyToMessageId,
+              msg: msg.replyToText || '',
+              senderId: msg.replyToSenderId || '',
+              msgType: 'text',
             });
           }
         }
@@ -896,6 +1005,7 @@ export class FacebookService {
       message: {
         ...msg,
         isSelf: !!isSelf,
+        ...(storedAttachments ? { storedAttachments } : {}),
         ...(broadcastQuoteData ? { quote_data: broadcastQuoteData } : {}),
         ...(saveOutcome === 'repaired' ? { repeat: true } : {}),
       },
@@ -1106,11 +1216,13 @@ export class FacebookService {
       // keeps e2eeRetryPromise pending forever and every later chat send sees
       // "not connected" until the user manually stops/reconnects the account.
       Logger.log(`[FacebookService:${this.accountId}] E2EE startup: newClient`);
+      const bridgeProxy = this.bridgeProxyUrl();
       const newClientResult = await this.e2eeBridge.newClient({
         cookies,
         logLevel: 'error',
         e2eeMemoryOnly,
         ...(deviceData ? { deviceData } : {}),
+        ...(bridgeProxy ? { proxy: bridgeProxy } : {}),
       }, 25_000);
       Logger.log(`[FacebookService:${this.accountId}] E2EE startup: newClient ready`);
       if (newClientResult?.deviceData) {
@@ -1183,6 +1295,8 @@ export class FacebookService {
         if (this.e2eeBridge !== bridgeInstance || this.e2eeBridgeGen !== bridgeGen) return;
         Logger.warn(`[FacebookService:${this.accountId}] E2EE bridge closed (code=${code}, gen=${bridgeGen})`);
         this._clearE2EEHeartbeat();
+        // A new bridge process starts "unavailable" on the encrypted layer
+        this.e2eePresence = 'unavailable';
         // Only clear if the current bridge is still this instance
         if (this.e2eeBridge === bridgeInstance) {
           this.e2eeBridge = null;
@@ -1361,7 +1475,7 @@ export class FacebookService {
         );
       } catch { /* only to count new messages */ }
       const senderId = String(message.senderId ?? '');
-      const { attachments, type, body } = this.bridgeHistoryContent(message);
+      const { attachments, type, body, preview } = this.bridgeHistoryContent(message);
       db.saveFBMessage({
         id,
         account_id: this.accountId,
@@ -1375,6 +1489,7 @@ export class FacebookService {
         is_self: senderId !== '' && senderId === ownFacebookId ? 1 : 0,
         is_unsent: message.isUnsent ? 1 : 0,
         is_history: true,
+        ...(preview ? { preview } : {}),
       });
       stored += 1;
       if (!exists) fresh += 1;
@@ -1387,9 +1502,19 @@ export class FacebookService {
    * in the standard form (buttons classified), body = the card's text / the link's URL / the replacement text; system messages → `system`.
    */
   private bridgeHistoryContent(message: NonNullable<BridgeInitialData['messages']>[number]): {
-    attachments: any[]; type: string; body: string | null;
+    attachments: any[]; type: string; body: string | null; preview?: string;
   } {
-    const attachments = (Array.isArray(message.attachments) ? message.attachments : []).flatMap((a: any) => {
+    const poll = message.poll && Number(message.poll.eventType) === POLL_EVENT_CREATE
+      ? pollAttachmentFromBridge(message.poll, this.getFacebookId())
+      : null;
+    if (poll) return { attachments: [poll], type: FB_POLL_MSG_TYPE, body: poll.question, preview: fbPollText(poll) };
+    const rawCall = Array.isArray(message.attachments) ? message.attachments.find((a: any) => a?.type === 'call') : null;
+    const call = rawCall ? callLogFromAttachment(rawCall) : null;
+    if (call) {
+      const isCaller = String(message.senderId ?? '') === this.getFacebookId();
+      return { attachments: [], type: FB_CALL_MSG_TYPE, body: callLogContent({ ...call, isCaller }), preview: call.missed ? tr('📵 Cuộc gọi nhỡ') : tr('📞 Cuộc gọi') };
+    }
+    const attachments = (Array.isArray(message.attachments) ? message.attachments : []).map(normalizeBridgeAttachment).flatMap((a: any) => {
       if (a?.type !== 'template') return a ? [a] : [];
       // A "chữ + nút" (text + buttons) message: the text is the message content, the card only has buttons → merge the text into the card
       const template = withTemplateText(templateFromBridgeAttachment(a), message.text);
@@ -1404,6 +1529,10 @@ export class FacebookService {
       || (primaryType === 'link' && primary?.url ? String(primary.url) : '')
       || (message.unsupported && !primary ? fbUnsupportedText(message.unsupported) : '')
       || null;
+    if (!attachments.length && type === 'text') {
+      const mentions = mentionAttachments(message.mentions);
+      if (mentions.length) return { attachments: mentions, type, body };
+    }
     return { attachments, type, body };
   }
 
@@ -1502,7 +1631,7 @@ export class FacebookService {
             id: String(thread.id),
             account_id: this.accountId,
             name: String(thread.name || ''),
-            type: rawType === 2 || rawType === 16 ? 'group' : 'user',
+            type: bridgeThreadKind(rawType) === 'group' ? 'group' : 'user',
             participant_count: 0,
             last_message_preview: thread.snippet || '',
             last_message_at: Number(thread.lastActivityTimestampMs || 0),
@@ -1513,10 +1642,26 @@ export class FacebookService {
         }), { preserveUnread: true });
     }
 
+    if (threads.length > 0) this.applyBridgeThreadUpdates(threads.map(thread => ({
+      threadId: String(thread.id),
+      type: Number(thread.type),
+      name: thread.name,
+      snippet: thread.snippet,
+      lastActivityTimestampMs: thread.lastActivityTimestampMs,
+      folderName: thread.folderName,
+      pictureUrl: thread.pictureUrl,
+      muteExpireTimeMs: thread.muteExpireTimeMs,
+    })), false);
+
+    this.persistBridgePeople(data.participants, data.people);
+
     const savedMessages = this.persistBridgeMessages(messages).stored;
 
     if (threads.length || savedMessages) {
       Logger.log(`[FacebookService:${this.accountId}] Persisted bridge history: ${threads.length} threads, ${savedMessages} messages`);
+      // Conversations found by the sync: look up their names / pictures, and let the list reload (it already loaded at "connected")
+      this.sweepConversationProfiles();
+      EventBroadcaster.emit('fb:onThreadsSynced', { fbAccountId: this.getFacebookId(), threads: threads.length, messages: savedMessages });
     }
     return { threads: threads.length, messages: savedMessages };
   }
@@ -1544,6 +1689,7 @@ export class FacebookService {
 
       case 'ready':
         Logger.log(`[FacebookService:${this.accountId}] E2EE bridge ready (isNewSession=${data?.isNewSession})`);
+        this.seedBridgeThreadState().catch(() => {});
         break;
 
       case 'deviceDataChanged':
@@ -1551,8 +1697,17 @@ export class FacebookService {
         // callback (line 1019) before this switch. Log at debug level only.
         break;
 
+      case 'historyDeviceChanged':
+        // New epochs of the secure history device: keep the latest keys (encrypted at rest)
+        if (typeof data?.device === 'string' && data.device) {
+          try { secureSet(FacebookService.historyDeviceKey(this.accountId), data.device); } catch {}
+        }
+        break;
+
       case 'e2eeConnected':
         Logger.log(`[FacebookService:${this.accountId}] E2EE bridge: e2eeConnected`);
+        this.restoreHistoryDevice().catch(() => {});
+        this.seedBridgeThreadState().catch(() => {});
         this.setE2EEStatus('connected');
         this._e2eeReconnectAttempts = 0;
         this._clearE2EEReconnect();
@@ -1611,19 +1766,20 @@ export class FacebookService {
 
       // ─── Bridge event types (C8) ────────────────────────────────────────
       case 'reaction': {
-        // data: { messageId, threadId, userId, emoji, action }
+        // The bridge sends { messageId, threadId, actorId, reaction, timestampMs } (bridge/events.go ReactionEvent); the
+        // userId / emoji names are older shapes. An empty reaction is a removal.
         if (data?.messageId) {
-          const userId = data.userId || data.senderId || '';
-          if (!this.acceptReactionEvent(data.messageId, String(userId), data.emoji || '')) break;
-          if (data.emoji) {
-            this.persistReactionToDB(data.messageId, userId, data.emoji);
-          }
+          const userId = String(data.actorId ?? data.userId ?? data.senderId ?? '');
+          const emoji = String(data.reaction ?? data.emoji ?? '');
+          if (!userId) break;
+          if (!this.acceptReactionEvent(data.messageId, userId, emoji)) break;
+          this.persistReactionToDB(data.messageId, userId, emoji);
           EventBroadcaster.emit('fb:onReaction', {
             fbAccountId: this.getFacebookId(),
             messageId: data.messageId,
-            threadId: data.threadId || data.chatJid || '',
+            threadId: String(data.threadId || data.chatJid || ''),
             userId,
-            emoji: data.emoji || '',
+            emoji,
           });
         }
         break;
@@ -1658,15 +1814,201 @@ export class FacebookService {
       }
 
       case 'typing': {
-        // data: { threadId, userId, isTyping }
+        // data: { threadId, senderId, isTyping } (bridge TypingEvent; encrypted chats too). userId is an older shape.
         if (data?.threadId) {
+          const userId = String(data.senderId ?? data.userId ?? '');
+          if (userId && userId === this.getFacebookId()) break;
           EventBroadcaster.emit('fb:onTyping', {
             fbAccountId: this.getFacebookId(),
-            threadId: data.threadId,
-            userId: data.userId || '',
+            threadId: String(data.threadId),
+            userId,
             isTyping: data.isTyping !== false,
           });
         }
+        break;
+      }
+
+      case 'threads': {
+        // Thread rows (folder: message requests, mute, name, picture) of a LightSpeed table
+        const list = Array.isArray(data?.threads) ? data.threads : [];
+        if (list.length) this.applyBridgeThreadUpdates(list, true);
+        break;
+      }
+
+      case 'threadMute': {
+        const threadId = String(data?.threadId || '');
+        if (/^\d+$/.test(threadId) && DatabaseService.getInstance().applyFBThreadMute(this.accountId, threadId, Number(data?.muteExpireTimeMs) || 0)) {
+          EventBroadcaster.emit('fb:onThreadsSynced', { fbAccountId: this.getFacebookId(), threads: 1, messages: 0 });
+        }
+        break;
+      }
+
+      case 'threadFolder': {
+        this.applyBridgeThreadUpdates([{ threadId: data?.threadId, folderName: data?.folderName }], true);
+        break;
+      }
+
+      case 'pins': {
+        // Pinned messages from Messenger (clear = the full list of the thread follows)
+        this.applyBridgePins(data);
+        break;
+      }
+
+      case 'participants': {
+        // Group members (thread fetch, someone added): the members panel and the @mention list read page_group_member
+        const threadId = String(data?.threadId || '');
+        const members = Array.isArray(data?.members) ? data.members : [];
+        try {
+          DatabaseService.getInstance().saveFBGroupParticipants(this.accountId, threadId, members, bridgeThreadKind(Number(data?.threadType)));
+        } catch (err: any) {
+          Logger.warn(`[FacebookService:${this.accountId}] group members ${threadId}: ${err.message}`);
+        }
+        // Encrypted groups send ids only: look the names up
+        if (Number(data?.threadType) === 16) this.lookUpMemberNames(threadId);
+        break;
+      }
+
+      case 'participantRemoved': {
+        const threadId = String(data?.threadId || '');
+        const userId = String(data?.userId || '');
+        if (/^\d+$/.test(threadId) && /^\d+$/.test(userId) && this.storedThreadKind(threadId) === 'group') {
+          try { DatabaseService.getInstance().removeGroupMember(this.getFacebookId(), threadId, userId); } catch {}
+        }
+        break;
+      }
+
+      case 'contacts': {
+        // Names / pictures Messenger sent with a table: fill members and conversations without a name
+        const people = Array.isArray(data?.contacts) ? data.contacts : [];
+        if (!people.length) break;
+        let renamed: string[] = [];
+        try {
+          renamed = DatabaseService.getInstance().applyFBPeople(this.accountId, people);
+        } catch (err: any) {
+          Logger.warn(`[FacebookService:${this.accountId}] people rows: ${err.message}`);
+        }
+        if (renamed.length) {
+          const byId = new Map(people.map((p: any) => [String(p?.id || ''), p]));
+          EventBroadcaster.emit('db:contactProfileUpdated', {
+            ownerZaloId: this.getFacebookId(),
+            contacts: renamed.map(id => ({ contactId: id, displayName: String((byId.get(id) as any)?.name || '') })),
+          });
+          // Their pictures are fetched (and kept locally) by the resolver
+          this.profiles.enqueue(renamed);
+        }
+        break;
+      }
+
+      case 'hybridThreads': {
+        // Facebook thread keys of encrypted chats: kept for the next start; the chats are encrypted
+        const links = (Array.isArray(data?.threads) ? data.threads : [])
+          .map((t: any) => ({ threadKey: String(t?.threadKey || ''), threadId: String(t?.threadId || ''), isGroup: t?.isGroup === true }))
+          .filter((t: { threadKey: string; threadId: string }) => /^\d+$/.test(t.threadKey) && /^\d+$/.test(t.threadId));
+        if (!links.length) break;
+        try { DatabaseService.getInstance().saveFBHybridThreads(this.accountId, links); } catch {}
+        for (const link of links) {
+          this.e2eeThreads.add(link.threadId);
+          this._nonE2EEThreads.delete(link.threadId);
+        }
+        break;
+      }
+
+      case 'threadEncrypted': {
+        // Messenger moved the chat to end-to-end encryption: the next send goes the encrypted way at once
+        const threadId = String(data?.threadId || '').replace(/@.*$/, '');
+        if (!/^\d+$/.test(threadId)) break;
+        const isGroup = !!data?.openThreadId || this.storedThreadKind(threadId) === 'group';
+        if (isGroup) this.e2eeThreads.add(threadId);
+        else this.rememberE2EEThread(threadId);
+        try { DatabaseService.getInstance().markFBThreadE2EE(threadId, this.accountId, isGroup ? 'group' : 'user'); } catch {}
+        // A group continues in a new encrypted thread: its history, members, name and picture move there (like Messenger)
+        const openThreadId = String(data?.openThreadId || '');
+        if (isGroup && /^\d+$/.test(openThreadId) && openThreadId !== threadId) {
+          let moved = 0;
+          try { moved = DatabaseService.getInstance().mergeFBGroupIntoEncrypted(this.accountId, this.getFacebookId(), openThreadId, threadId); } catch (err: any) {
+            Logger.warn(`[FacebookService:${this.accountId}] merge group ${openThreadId} → ${threadId}: ${err.message}`);
+          }
+          EventBroadcaster.emit('fb:onThreadsSynced', { fbAccountId: this.getFacebookId(), threads: 2, messages: moved });
+        }
+        Logger.log(`[FacebookService:${this.accountId}] Messenger moved thread ${threadId} to end-to-end encryption${data?.openThreadId ? ` (open thread ${data.openThreadId})` : ''}`);
+        break;
+      }
+
+      case 'threadInfo': {
+        // Group renamed / new group picture (LightSpeed), encrypted group renamed (encrypted socket)
+        const threadId = String(data?.threadId || '').replace(/@.*$/, '');
+        if (!/^\d+$/.test(threadId)) break;
+        const isGroup = Number(data?.threadType) === 16 || this.storedThreadKind(threadId) === 'group';
+        if (!isGroup) break;
+        if (typeof data?.name === 'string' && data.name.trim()) this.handleThreadEvent({ type: 'name', threadId, name: data.name.trim() });
+        if (typeof data?.pictureUrl === 'string' && /^https?:\/\//i.test(data.pictureUrl)) {
+          this.saveGroupPictureIfMissing(threadId, data.pictureUrl, true).catch(() => {});
+        }
+        break;
+      }
+
+      case 'contactBlocks': {
+        // Block state Messenger sent with its contact rows
+        const blocked = (Array.isArray(data?.blocked) ? data.blocked : []).map(String).filter((id: string) => /^\d+$/.test(id));
+        const unblocked = (Array.isArray(data?.unblocked) ? data.unblocked : []).map(String).filter((id: string) => /^\d+$/.test(id));
+        let changed: Array<{ threadId: string; reason: string }> = [];
+        try { changed = DatabaseService.getInstance().applyFBContactBlocks(this.getFacebookId(), blocked, unblocked); } catch {}
+        for (const change of changed) {
+          EventBroadcaster.emit('fb:onThreadInfoUpdate', {
+            fbAccountId: this.getFacebookId(), threadId: change.threadId, type: 'cannotReply', cannotReply: change.reason,
+          });
+        }
+        break;
+      }
+
+      case 'viewerStatus': {
+        // "blocked" = the account blocked the person on Messenger; '' = it can reply again
+        const threadId = String(data?.threadId || '').replace(/@.*$/, '');
+        if (/^\d+$/.test(threadId)) this.applyCannotReply(threadId, String(data?.cannotReplyReason || ''));
+        break;
+      }
+
+      case 'disappearing': {
+        // Disappearing-message timer of an encrypted chat changed (Messenger deletes; Deplao keeps the messages)
+        const threadId = String(data?.threadId || '').replace(/@.*$/, '');
+        if (!/^\d+$/.test(threadId)) break;
+        const ttlMs = (Number(data?.seconds) || 0) * 1000;
+        // A late copy of an older change never turns the conversation's timer back
+        const changed = data?.stale === true ? false : this.applyDisappearing(threadId, ttlMs);
+        Logger.log(`[FacebookService:${this.accountId}] Disappearing timer ${threadId}: ${ttlMs / 1000}s`
+          + ` ${data?.notice ? 'notice' : data?.implicit ? 'implicit' : 'message'} form=${data?.form || '-'} actor=${data?.actorId || '-'}`
+          + `${data?.fromMe ? ' fromMe' : ''}${data?.stale ? ' stale' : ''} device=${data?.senderDevice || '-'} id=${data?.messageId || '-'}`
+          + ` time=${data?.timestampMs || '-'} setting=${data?.settingTimestamp || '-'} changed=${changed}`);
+        this.saveDisappearingLine(threadId, data, ttlMs, changed);
+        break;
+      }
+
+      case 'e2eeDropped':
+        // Encrypted message the bridge received but Deplao does not show (kinds and ids only): kept in the log
+        Logger.warn(`[FacebookService:${this.accountId}] Encrypted message not shown (${String(data?.reason || '?')}):`
+          + ` ${String(data?.detail || '').slice(0, 400)}${data?.messageId ? ` id=${data.messageId}` : ''}`
+          + `${data?.chatJid ? ` chat=${data.chatJid}` : ''}${data?.senderId ? ` sender=${data.senderId}` : ''}${data?.fromMe ? ' fromMe' : ''}`);
+        break;
+
+      case 'threadDeleted':
+        // Deleted on another device: the conversation and its messages stay in Deplao (nothing is removed automatically)
+        Logger.log(`[FacebookService:${this.accountId}] Messenger reported thread ${data?.threadId} deleted on another device`);
+        break;
+
+      case 'call': {
+        // Encrypted chat call log (missed / ended)
+        const threadId = String(data?.threadId || '').replace(/@.*$/, '');
+        if (!threadId || !data?.id) break;
+        this.saveCallLog({
+          id: String(data.id),
+          threadId,
+          actorId: String(data.actorId || ''),
+          timestampMs: Number(data.timestampMs) || Date.now(),
+          missed: data.eventType === 'missed',
+          video: data.callType === 'video',
+          durationSec: Number(data.durationSec) || 0,
+          threadKind: e2eeChatKind(data.chatJid),
+        });
         break;
       }
 
@@ -1677,6 +2019,12 @@ export class FacebookService {
         const threadId = String(data?.chat || '').replace(/@.*$/, '');
         const receiptType = String(data?.type ?? '');
         const owner = this.getFacebookId();
+        if (threadId && receiptType === 'read-self') {
+          // Read on another device of the account: up to the newest of these messages
+          const readTs = messageTimestampById(owner, threadId, Array.isArray(data?.messageIds) ? data.messageIds : [], 'facebook');
+          if (readTs) this.applyReadElsewhere(threadId, readTs);
+          break;
+        }
         if (!threadId || userOf(data?.sender) === owner) break;
         const isDelivered = receiptType === '' || receiptType === 'delivered';
         const isRead = receiptType === 'read' || receiptType === 'played';
@@ -1693,6 +2041,9 @@ export class FacebookService {
         const watermark = Number(data?.readWatermarkTimestampMs) || 0;
         if (threadId && watermark && readerId && readerId !== this.getFacebookId()) {
           recordPeerReceipt(this.getFacebookId(), threadId, { readTs: watermark });
+        } else if (threadId && watermark && readerId === this.getFacebookId()) {
+          // Read on another device (phone, Messenger web): Deplao clears its unread count too
+          this.applyReadElsewhere(threadId, watermark);
         }
         break;
       }
@@ -1706,6 +2057,7 @@ export class FacebookService {
           try {
             DatabaseService.getInstance().updateFBMessageUnsent(data.messageId);
           } catch {}
+          this.afterMessageUnsent(threadId, String(data.messageId));
           EventBroadcaster.emit('fb:onUnsend', {
             fbAccountId: this.getFacebookId(),
             messageId: data.messageId,
@@ -1717,13 +2069,15 @@ export class FacebookService {
 
       case 'e2eeReaction': {
         // E2EE 1:1 reaction from bridge
-        // data: { chatJid, messageId, reaction, senderId, senderJid }
-        if (data?.messageId && data?.reaction) {
+        // data: { chatJid, messageId, reaction, senderId, senderJid }; an empty reaction is a removal
+        if (data?.messageId) {
           const stripJid = (id: string) => id.replace(/@.*$/, '');
           const threadId = data.chatJid ? stripJid(String(data.chatJid)) : '';
-          const userId = String(data.senderId || data.senderJid?.replace(/:.*$/, '') || '');
-          if (!this.acceptReactionEvent(data.messageId, userId, data.reaction)) break;
-          this.persistReactionToDB(data.messageId, userId, data.reaction);
+          const userId = String(data.senderId || data.senderJid?.replace(/[.:@].*$/, '') || '');
+          if (!userId) break;
+          const reaction = String(data.reaction ?? '');
+          if (!this.acceptReactionEvent(data.messageId, userId, reaction)) break;
+          this.persistReactionToDB(data.messageId, userId, reaction);
           EventBroadcaster.emit('fb:onReaction', {
             fbAccountId: this.getFacebookId(),
             messageId: data.messageId,
@@ -1807,7 +2161,9 @@ export class FacebookService {
       userID: data.senderId != null ? String(data.senderId) : '',
       messageID: data.id || '',
       replyToID: threadId,
-      type: 'user', // E2EE is always 1:1
+      // Encrypted group chats exist too (whatsmeow group JID `…@g.us`)
+      type: e2eeChatKind(data.chatJid) === 'group' ? 'group' : 'user',
+      ...(e2eeChatKind(data.chatJid) !== 'unknown' ? { threadKind: e2eeChatKind(data.chatJid) as 'user' | 'group' } : {}),
       mentions: data.mentions || [],
       attachments: {
         id: 0,
@@ -1819,7 +2175,10 @@ export class FacebookService {
       // Extract replyTo info from the bridge data - a message replying to another message
       replyToMessageId: data.replyTo?.messageId,
       replyToSenderId: data.replyTo?.senderId != null ? String(data.replyTo.senderId) : undefined,
+      ...(data.replyTo?.text ? { replyToText: String(data.replyTo.text) } : {}),
       ...(data.unsupported ? { unsupported: String(data.unsupported) } : {}),
+      // The chat's disappearing timer: Messenger deletes the message, Deplao keeps it and shows the timer
+      ...(Number(data.disappearSeconds) > 0 ? { ttl: Number(data.disappearSeconds) * 1000 } : {}),
     };
 
     // Parse attachments if there are any
@@ -1829,7 +2188,8 @@ export class FacebookService {
     // E2EE media (image/video/audio/file) has no URL, but has directPath + mediaKey
     // to download through the bridge - keep them to store in the DB and download later
     if (data.attachments?.length) {
-      const raw = data.attachments as any[];
+      // Locations and link previews become cards (coordinates kept as a Maps link, title / description / image kept)
+      const raw = (data.attachments as any[]).map(normalizeBridgeAttachment).filter(Boolean);
       const mapped = raw.map((a: any, idx: number) => ({
         id: a.stickerId || idx + 1,                    // Go: no id, use the index
         url: a.url || null,                             // Go: url (null for an E2EE image)
@@ -1842,12 +2202,17 @@ export class FacebookService {
         mediaKey: a.mediaKey,
         mediaSha256: a.mediaSha256,
         mediaEncSha256: a.mediaEncSha256,
+        ...extraAttachmentFields(a),
         ...(a?.type === 'template' && templateFromBridgeAttachment(a) ? { template: templateFromBridgeAttachment(a)! } : {}),
       }));
 
       msg.attachments = mapped[0];
       if (mapped.length > 1) {
         msg.allAttachments = mapped;
+      }
+      // View-once media without a caption: say so under the picture (and in the list preview)
+      if (!msg.body && raw.some((a: any) => a?.viewOnce)) {
+        msg.body = raw.some((a: any) => a?.viewOnce && a?.type === 'video') ? tr('Video xem một lần') : tr('Ảnh xem một lần');
       }
 
       Logger.log(`[FacebookService:${this.accountId}] [DEBUG] After mapping: attachmentType=${msg.attachments.attachmentType} hasDirectPath=${!!msg.attachments.directPath} hasMediaKey=${!!msg.attachments.mediaKey}`);
@@ -1861,6 +2226,7 @@ export class FacebookService {
     // Otherwise there is a race: event:localPath fires before the message is in the store
     // → local_paths gets lost → the video can never play.
     await this.handleIncomingMessage(msg);
+    if (msg.ttl && threadId) this.applyDisappearing(threadId, msg.ttl);
 
     // Auto-download E2EE media (image/video/audio/file) sau khi save message
     const e2eeAttachments = data.attachments as any[] | undefined;
@@ -1879,8 +2245,52 @@ export class FacebookService {
   /**
    * Handle non-E2EE group messages from bridge (bridge can also receive these)
    */
+  /** fb_threads.type of a thread this account already knows, null when there is no row. */
+  private storedThreadKind(threadId: string): 'user' | 'group' | null {
+    try {
+      const row = DatabaseService.getInstance().queryOne?.(
+        `SELECT type FROM fb_threads WHERE id = ? AND account_id = ?`, [threadId, this.accountId],
+      ) as { type?: string } | undefined;
+      return row?.type === 'group' || row?.type === 'user' ? row.type : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Thread kind of a LightSpeed (bridge) message when it is certain: the bridge's thread type, the stored thread row, or a
+   * one-to-one thread key (= the other person's id) on the other person's own message. 'unknown' otherwise.
+   */
+  private bridgeMessageThreadKind(threadId: string, data: any): FacebookThreadKind {
+    const fromBridge = bridgeThreadKind(data?.threadType);
+    if (fromBridge !== 'unknown') return fromBridge;
+    const stored = this.storedThreadKind(threadId);
+    if (stored) return stored;
+    if (data?.senderId != null && String(data.senderId) === threadId && threadId !== this.getFacebookId()) return 'user';
+    return 'unknown';
+  }
+
   private handleBridgeGroupMessage(data: any): void {
     if (!data?.id) return;
+
+    // Poll created / voted: the creation message becomes the poll card; a vote updates it (its admin text is still saved below)
+    if (data.poll && this.handleBridgePoll(data)) return;
+    // Call log (XMA "xma_rtc_…"): the call card the other channels use
+    const callAttachment = Array.isArray(data.attachments) ? data.attachments.find((a: any) => a?.type === 'call') : null;
+    if (callAttachment) {
+      const call = callLogFromAttachment(callAttachment);
+      if (call) {
+        this.saveCallLog({
+          id: String(data.id),
+          threadId: String(data.threadId ?? '').replace(/@.*$/, ''),
+          actorId: String(data.senderId ?? ''),
+          timestampMs: Number(data.timestampMs) || Date.now(),
+          ...call,
+          threadKind: this.bridgeMessageThreadKind(String(data.threadId ?? '').replace(/@.*$/, ''), data),
+        });
+        return;
+      }
+    }
 
     // Handle admin messages (pin, poll, group info changes) as system notifications.
     // The bridge processes the raw delta internally (e.g. deltaUpdatePinnedMessagesV2)
@@ -1894,6 +2304,8 @@ export class FacebookService {
 
     const stripJid = (id: string) => id.replace(/@.*$/, '');
     const threadId = data.threadId ? stripJid(String(data.threadId)) : '0';
+    // Every LightSpeed message used to be marked 'group' (1-1 ones too), so a new group / person thread got the wrong type
+    const certainKind = this.bridgeMessageThreadKind(threadId, data);
 
     const msg: FBMQTTMessage = {
       body: data.text || null,
@@ -1902,7 +2314,11 @@ export class FacebookService {
       messageID: data.id,
       replyToID: threadId,
       replyToMessageId: data.replyTo?.messageId,
-      type: 'group',
+      ...(data.replyTo?.senderId != null ? { replyToSenderId: String(data.replyTo.senderId) } : {}),
+      ...(data.replyTo?.text ? { replyToText: String(data.replyTo.text) } : {}),
+      type: certainKind === 'unknown' ? this.storedThreadKind(threadId) ?? 'group' : certainKind,
+      ...(certainKind !== 'unknown' ? { threadKind: certainKind } : {}),
+      mentions: Array.isArray(data.mentions) ? data.mentions : [],
       attachments: { id: 0, url: null },
       ...(data.unsupported ? { unsupported: String(data.unsupported) } : {}),
     };
@@ -1911,7 +2327,8 @@ export class FacebookService {
     // Bridge gui attachments array: [{ type, url, fileName, mimeType, fileSize, ... }]
     // Template card ("template": title, description, image, buttons, carousel) is kept in `template`.
     if (data.attachments?.length) {
-      const raw = data.attachments as any[];
+      // Locations and link previews become cards; a card with a shared reel keeps its video link
+      const raw = (data.attachments as any[]).map(normalizeBridgeAttachment).filter(Boolean);
       const mapped = raw.flatMap((a: any, idx: number) => {
         // "chữ + nút" (text + buttons) message of the Page: the text is the message content, the card only has buttons → merge the text into the card (draw the text + the buttons)
         const template = a?.type === 'template' ? withTemplateText(templateFromBridgeAttachment(a), data.text) : null;
@@ -1927,6 +2344,7 @@ export class FacebookService {
           name: a.fileName || a.name || '',
           fileSize: a.fileSize,
           mimeType: a.mimeType,
+          ...extraAttachmentFields(a),
           ...(template ? { template } : {}),
         }];
       });
@@ -1956,50 +2374,101 @@ export class FacebookService {
     const isSelf = data.senderId === fbId ? 1 : 0;
 
     Logger.log(`[FacebookService:${this.accountId}] Saving admin message as system: msgId=${data.id} threadId=${threadId} text="${(data.text || '').slice(0, 100)}"`);
+    const kind = bridgeThreadKind(data.threadType);
+    this.saveSystemLine({
+      id: String(data.id), threadId, senderId: String(data.senderId || ''), text: String(data.text || ''), timestampMs: ts,
+      isSelf: isSelf === 1, ...(kind !== 'unknown' ? { threadKind: kind } : {}),
+    });
+  }
 
-    // Save to DB with type='system' - saveFBMessage handles fb_messages + unified messages + thread preview + contacts
+  /**
+   * Centered system line (admin text: pin, nickname, theme, members…). Saved as `system`; the live broadcast is skipped
+   * when the other source (MQTT / bridge) already saved the same message.
+   */
+  private saveSystemLine(line: {
+    id: string; threadId: string; senderId: string; text: string; timestampMs: number; isSelf: boolean; threadKind?: 'user' | 'group';
+    /** JSON attachments of the line (a poll vote line links its poll). */
+    attachments?: string;
+  }): void {
+    if (!line.id || !line.threadId || !line.text.trim()) return;
+    let outcome: FbSaveOutcome = 'new';
     try {
-      DatabaseService.getInstance().saveFBMessage({
-        id: data.id,
+      outcome = DatabaseService.getInstance().saveFBMessage({
+        id: line.id,
         account_id: this.accountId,
-        thread_id: threadId,
-        sender_id: String(data.senderId || ''),
-        body: data.text || null,
-        timestamp: ts,
+        thread_id: line.threadId,
+        sender_id: line.senderId,
+        body: line.text,
+        timestamp: line.timestampMs,
         type: 'system',
-        attachments: undefined,
+        attachments: line.attachments,
         reply_to_id: undefined,
-        is_self: isSelf,
+        is_self: line.isSelf ? 1 : 0,
         is_unsent: 0,
-      });
+        ...(line.threadKind ? { thread_kind: line.threadKind } : {}),
+      }) || 'new';
     } catch (err: any) {
-      Logger.warn(`[FacebookService:${this.accountId}] handleAdminGroupMessage DB error: ${err.message}`);
+      Logger.warn(`[FacebookService:${this.accountId}] system line DB error: ${err.message}`);
     }
-
+    if (outcome === 'duplicate') return;
     // Broadcast as system notification - UI's normalizeFBMessage respects msg_type override
     EventBroadcaster.emit('fb:onMessage', {
-      fbAccountId: fbId,
+      fbAccountId: this.getFacebookId(),
       message: {
-        messageID: data.id,
-        body: data.text || null,
-        timestamp: String(data.timestampMs || Date.now()),
-        userID: String(data.senderId || ''),
-        replyToID: threadId,
-        type: data.threadType === 2 ? 'group' : 'user',
+        messageID: line.id,
+        body: line.text,
+        timestamp: String(line.timestampMs),
+        userID: line.senderId,
+        replyToID: line.threadId,
+        type: line.threadKind === 'group' ? 'group' : 'user',
         attachments: { id: 0, url: null },
         isSelf: false,
         msg_type: 'system',
+        ...(line.attachments ? { storedAttachments: line.attachments } : {}),
       },
     });
   }
 
   /**
-   * Downloads and decrypts E2EE media attachments (image/video/audio/file) from the Go bridge.
-   * Saves the decrypted file to local storage and updates the DB.
+   * MQTT admin text (Deplao's own listener): call logs become the call card, everything else a system line. The bridge
+   * reports the same message ids, so whichever source comes second is a duplicate.
    */
-  private async downloadE2EEAttachments(attachments: any[], messageId: string, threadId: string): Promise<void> {
-    if (!this.e2eeBridge?.isAlive()) {
+  private handleMqttAdminText(data: any): void {
+    const id = String(data?.messageId || '');
+    const threadId = String(data?.threadId || '').replace(/@.*$/, '');
+    if (!id || !/^\d+$/.test(threadId)) return;
+    const ts = Number(data?.timestamp) || Date.now();
+    const actorId = String(data?.actorFbId || '');
+    const type = String(data?.adminType || '');
+    const kind = data?.threadKind === 'group' || data?.threadKind === 'user' ? data.threadKind as 'user' | 'group' : undefined;
+    if (/call/i.test(type)) {
+      const extra = data?.untypedData || {};
+      const event = String(extra.event || extra.call_event || '');
+      this.saveCallLog({
+        id, threadId, actorId, timestampMs: ts,
+        missed: /miss/i.test(event) || /miss/i.test(type),
+        video: String(extra.video ?? '') === '1' || String(extra.video ?? '') === 'true' || /video/i.test(event),
+        durationSec: Number(extra.call_duration ?? extra.duration) || 0,
+        ...(kind ? { threadKind: kind } : {}),
+      });
       return;
+    }
+    // Polls: the bridge sends the poll itself (question, options, votes); the MQTT copy is only its text
+    this.saveSystemLine({
+      id, threadId, senderId: actorId, text: String(data?.text || ''), timestampMs: ts,
+      isSelf: actorId !== '' && actorId === this.getFacebookId(), ...(kind ? { threadKind: kind } : {}),
+    });
+  }
+
+  /**
+   * Downloads and decrypts E2EE media attachments (image/video/audio/file) from the Go bridge.
+   * Saves the decrypted file to local storage and updates the DB. `gone` = files Messenger no longer serves (the signed
+   * link expired: HTTP 403 / 404 / 410), which no retry will bring back.
+   */
+  private async downloadE2EEAttachments(attachments: any[], messageId: string, threadId: string): Promise<{ saved: number; gone: number; failed: number }> {
+    const outcome = { saved: 0, gone: 0, failed: 0 };
+    if (!this.e2eeBridge?.isAlive()) {
+      return outcome;
     }
 
     for (let i = 0; i < attachments.length; i++) {
@@ -2024,7 +2493,7 @@ export class FacebookService {
 
         if (result?.data) {
           const buffer = Buffer.from(result.data, 'base64');
-          const ext = this.getExtFromMime(result.mimeType) || '.bin';
+          const ext = this.getExtFromMime(result.mimeType) || this.getExtFromMime(att.mimeType) || path.extname(String(att.fileName || '')) || '.bin';
           const filename = `e2ee_${messageId.slice(-8)}_${Date.now()}${ext}`;
 
           const localPath = await FileStorageService.saveBuffer(
@@ -2036,30 +2505,118 @@ export class FacebookService {
           const relativePath = FileStorageService.toRelativePath(localPath);
           const fbId = this.getFacebookId() || this.accountId;
 
-          DatabaseService.getInstance().updateLocalPaths(
-            fbId,
-            messageId,
-            { main: relativePath },
-          );
+          // One key per file: an album used to overwrite `main` with each photo (only one photo showed). The first file also
+          // stays under `main` for the bubbles that read it.
+          const savedPaths: Record<string, string> = i === 0
+            ? { main: relativePath, att_0: relativePath }
+            : { [`att_${i}`]: relativePath };
+          DatabaseService.getInstance().updateLocalPaths(fbId, messageId, savedPaths);
 
           // Notify UI to re-render with local path
           EventBroadcaster.emit('event:localPath', {
             zaloId: fbId,
             msgId: messageId,
             threadId,
-            localPaths: { main: relativePath },
+            localPaths: savedPaths,
           });
 
           Logger.log(`[FacebookService:${this.accountId}] E2EE media saved: ${relativePath}`);
+          outcome.saved++;
         } else {
           Logger.warn(`[FacebookService:${this.accountId}] E2EE download returned no data - mediaType=${att.type || 'image'} mimeType=${att.mimeType || ''} size=${att.fileSize || 0}. Go bridge may not support downloading this media type.`);
+          outcome.failed++;
         }
       } catch (err: any) {
         if (/too large|exceed/i.test(err.message)) {
           metricInc('fb_e2ee_media_rejected_too_large', this.accountId, { mediaType: att.type });
         }
+        if (/status code (403|404|410)\b/.test(String(err.message))) outcome.gone++;
+        else outcome.failed++;
         Logger.warn(`[FacebookService:${this.accountId}] E2EE download failed: ${err.message}`);
       }
+    }
+    return outcome;
+  }
+
+  /** Background lookups of conversation names / pictures (see FacebookProfileResolver). */
+  private get profiles(): FacebookProfileResolver {
+    if (!this.profileResolver) {
+      this.profileResolver = new FacebookProfileResolver({
+        accountId: this.accountId,
+        ownerId: () => this.getFacebookId(),
+        lookup: (uid) => this.lookupConversationProfile(uid),
+        saveAvatar: (uid, url) => this.saveContactAvatarLocally(uid, url),
+        isRiskError: isFacebookRiskError,
+      });
+    }
+    return this.profileResolver;
+  }
+
+  /** Queue the 1-1 conversations that still miss a name / picture (after a sync, on connect). */
+  public sweepConversationProfiles(): number {
+    this.repairThreadTypes();
+    return this.profiles.sweep();
+  }
+
+  /** Like resolveFacebookUserInfo, but a slow bridge lookup (it may wait 30 s) falls back to the web endpoint after 6 s. */
+  private async lookupConversationProfile(uid: string): Promise<{ name: string; avatarUrl: string } | null> {
+    const bridgeInfo = await Promise.race([
+      this.getE2EEUserInfo(uid),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 6000)),
+    ]);
+    if (bridgeInfo) return bridgeInfo;
+    const session = this.requireSession();
+    const profile = await getFacebookUserInfo(session, uid, this.httpsAgent);
+    if (!profile) return null;
+    const exactAvatar = await getFacebookAvatarById(session.cookieFacebook, uid, this.httpsAgent);
+    return { name: profile.name, avatarUrl: exactAvatar || profile.avatarUrl };
+  }
+
+  /** Local copy of a contact picture (Facebook CDN links expire); null when the download fails. */
+  private async saveContactAvatarLocally(uid: string, url: string): Promise<string | null> {
+    try {
+      const session = this.requireSession();
+      return await FileStorageService.downloadImage(
+        session.FacebookID, url, `fb_avatar_${uid}.jpg`, session.cookieFacebook, undefined, 'https://www.facebook.com/',
+      ) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Rows saved by older versions (once per run): messages of group threads had thread_type 0 and new groups were 'user'
+   * conversations; conversations from the GraphQL thread list had their time in seconds.
+   */
+  private repairThreadTypes(): void {
+    if (this.threadTypesRepaired) return;
+    this.threadTypesRepaired = true;
+    try {
+      const db = DatabaseService.getInstance();
+      const owner = this.getFacebookId();
+      db.run?.(
+        `UPDATE messages SET thread_type = 1
+         WHERE channel = 'facebook' AND owner_zalo_id = ? AND COALESCE(thread_type, 0) = 0
+           AND thread_id IN (SELECT id FROM fb_threads WHERE account_id = ? AND type = 'group')`,
+        [owner, this.accountId]);
+      db.run?.(
+        `UPDATE contacts SET contact_type = 'group'
+         WHERE channel = 'facebook' AND owner_zalo_id = ? AND COALESCE(contact_type, 'user') <> 'group'
+           AND contact_id IN (SELECT id FROM fb_threads WHERE account_id = ? AND type = 'group')`,
+        [owner, this.accountId]);
+      // Conversations from the GraphQL thread list were saved with times in seconds (sorted last, "1970" dates)
+      db.run?.(
+        `UPDATE fb_threads SET last_message_at = last_message_at * 1000
+         WHERE account_id = ? AND last_message_at > 0 AND last_message_at < 100000000000`,
+        [this.accountId]);
+      db.run?.(
+        `UPDATE contacts SET last_message_time = last_message_time * 1000
+         WHERE owner_zalo_id = ? AND channel = 'facebook' AND last_message_time > 0 AND last_message_time < 100000000000`,
+        [owner]);
+      // The list was loaded at "connected", before this repair: reload it once
+      EventBroadcaster.emit('fb:onThreadsSynced', { fbAccountId: owner, threads: 0, messages: 0 });
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] repairThreadTypes error: ${err.message}`);
     }
   }
 
@@ -2069,6 +2626,8 @@ export class FacebookService {
    * Only applies to 1-1 users (groups are not supported).
    */
   private async checkAndFetchUserInfo(fbUserId: string): Promise<void> {
+    // The account itself is not a conversation (a contact row for it showed up as an empty conversation)
+    if (!fbUserId || fbUserId === this.getFacebookId()) return;
     try {
       // Check the DB first: if there is already a name and an avatar, skip
       const db = DatabaseService.getInstance();
@@ -2211,9 +2770,26 @@ export class FacebookService {
       'audio/mpeg': '.mp3',
       'audio/ogg': '.ogg',
       'audio/mp4': '.m4a',
+      'audio/aac': '.aac',
+      'audio/wav': '.wav',
+      'audio/webm': '.webm',
+      'video/quicktime': '.mov',
+      'image/heic': '.heic',
       'application/pdf': '.pdf',
+      'application/zip': '.zip',
+      'application/x-rar-compressed': '.rar',
+      'application/vnd.rar': '.rar',
+      'text/plain': '.txt',
+      'text/csv': '.csv',
+      'application/msword': '.doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+      'application/vnd.ms-excel': '.xls',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+      'application/vnd.ms-powerpoint': '.ppt',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
     };
-    return map[mime] || '';
+    // Documents were saved as .bin (unknown type) and could not be opened by double click
+    return map[String(mime || '').split(';')[0].trim().toLowerCase()] || '';
   }
 
   private setE2EEStatus(status: FBE2EEStatus): void {
@@ -2380,6 +2956,169 @@ export class FacebookService {
     return this._nonE2EEThreads.has(threadId);
   }
 
+  /**
+   * Give the bridge what Deplao saved about encrypted chats after it starts: their Facebook thread keys (LightSpeed
+   * events of a chat are reported under its id, its tasks use the key) and their disappearing timers (Deplao's sends
+   * carry them).
+   */
+  private async seedBridgeThreadState(): Promise<void> {
+    const bridge = this.e2eeBridge;
+    if (!bridge?.isAlive()) return;
+    const db = DatabaseService.getInstance();
+    if (bridge.supportsCapability('hybridThreads')) {
+      const links = db.getFBHybridThreads(this.accountId);
+      if (links.length) await bridge.setHybridThreads(links).catch(err => Logger.warn(`[FacebookService:${this.accountId}] thread keys: ${err?.message || err}`));
+    }
+    if (bridge.supportsCapability('disappearing')) {
+      const timers: Record<string, number> = {};
+      for (const t of db.getFBDisappearingTimers(this.getFacebookId())) {
+        timers[`${t.threadId}@${t.isGroup ? 'g.us' : 'msgr'}`] = Math.round(t.ttl / 1000);
+      }
+      if (Object.keys(timers).length) await bridge.setChatTimers(timers).catch(err => Logger.warn(`[FacebookService:${this.accountId}] chat timers: ${err?.message || err}`));
+    }
+  }
+
+  /** Messenger conversation read on another device: Deplao's unread count follows (never sends a read back). */
+  private applyReadElsewhere(threadId: string, readUpToMs: number): void {
+    let result: { unread?: number; mentionCleared: boolean } = { mentionCleared: false };
+    try { result = DatabaseService.getInstance().applyFBReadElsewhere(this.getFacebookId(), threadId, readUpToMs); } catch { return; }
+    if (result.unread !== undefined) {
+      EventBroadcaster.emit('db:unreadChanged', {
+        zaloId: this.getFacebookId(), contactId: threadId, unread: result.unread, source: 'facebook_read_elsewhere',
+      });
+    }
+    if (result.mentionCleared) {
+      EventBroadcaster.emit('db:contactFlagsChanged', { ownerZaloId: this.getFacebookId(), contactId: threadId, flags: { has_mention: 0 } });
+    }
+  }
+
+  /** Members of a group without a name yet (encrypted groups only send ids): names / pictures looked up in the background. */
+  private lookUpMemberNames(groupId: string): void {
+    try {
+      const rows = DatabaseService.getInstance().query<{ member_id: string }>(
+        `SELECT member_id FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ? AND COALESCE(display_name, '') IN ('', member_id) LIMIT 100`,
+        [this.getFacebookId(), groupId]) || [];
+      if (rows.length) this.profiles.enqueue(rows.map(r => String(r.member_id)));
+    } catch { /* names only */ }
+  }
+
+  /** Why Messenger does not let the account reply ("blocked", '' = it can): saved and sent to the conversation. */
+  private applyCannotReply(threadId: string, reason: string): void {
+    let changed = false;
+    try { changed = DatabaseService.getInstance().setFBCannotReply(this.getFacebookId(), threadId, reason); } catch {}
+    if (!changed) return;
+    EventBroadcaster.emit('fb:onThreadInfoUpdate', {
+      fbAccountId: this.getFacebookId(), threadId, type: 'cannotReply', cannotReply: String(reason || '').trim(),
+    });
+  }
+
+  /** Disappearing timer (ms, 0 = off) of an encrypted chat: saved and sent to the conversation header. True = it changed. */
+  private applyDisappearing(threadId: string, ttlMs: number): boolean {
+    let changed = false;
+    try { changed = DatabaseService.getInstance().setFBDisappearingTtl(this.getFacebookId(), threadId, ttlMs); } catch {}
+    if (!changed) return false;
+    EventBroadcaster.emit('fb:onThreadInfoUpdate', {
+      fbAccountId: this.getFacebookId(), threadId, type: 'disappearing', ttl: Math.max(0, Math.round(ttlMs)),
+    });
+    return true;
+  }
+
+  /**
+   * The line Messenger shows when a chat's disappearing timer changes ("X đã bật tính năng tin nhắn tự hủy…").
+   * In a one-to-one chat the devices of both people send copies of one change at about the same time, whoever made
+   * it, so the sender of a copy does not tell who changed it: the line names nobody. Group changes come from the
+   * server with their real author. One line per change (keyed by the time of the change, the first copy writes it).
+   * A timer learned from a later message gets a line just before that message, only when the saved timer changed.
+   */
+  private saveDisappearingLine(threadId: string, data: any, ttlMs: number, changed: boolean): void {
+    const notice = data?.notice === true;
+    if (!notice && !(data?.implicit === true && changed)) return;
+    const owner = this.getFacebookId();
+    const ts = Number(data?.timestampMs) || Date.now();
+    const settingMs = fbSettingTimeMs(data?.settingTimestamp);
+    // Keyed by the time of the change when known (a notice and a later message carrying the same change make one line)
+    const id = `fbtimer_${threadId}_${settingMs || (notice ? ts : String(data?.messageId || ts))}`;
+    const db = DatabaseService.getInstance();
+    if (db.queryOne?.(`SELECT 1 AS found FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook' LIMIT 1`, [id, owner])) {
+      return;
+    }
+    const actorId = notice && data?.form === 'group' ? String(data?.actorId || '') : '';
+    const isSelf = actorId !== '' && actorId === owner;
+    const person = actorId && !isSelf ? this.storedPerson(actorId) : null;
+    const text = disappearingNoticeText({ ttlMs, afterRead: data?.afterRead === true, isSelf, actorName: person?.name || '' });
+    // At the change itself: the setting time, unless the copy's own time is earlier (the clock of the device that
+    // changed it can run ahead of Messenger's); a change learned from a message goes at the latest just before it
+    const latest = notice ? ts : Math.max(0, ts - 1);
+    const at = settingMs && settingMs > ts - 3_600_000 ? Math.min(latest, settingMs) : latest;
+    this.saveSystemLine({
+      id, threadId, senderId: person ? actorId : isSelf ? owner : '', text, timestampMs: at, isSelf,
+      threadKind: /@g\.us$/.test(String(data?.chatJid || '')) ? 'group' : 'user',
+      ...(person?.name ? { attachments: JSON.stringify([{ id: actorId, dName: person.name, avatar: person.avatar }]) } : {}),
+    });
+  }
+
+  /** Name and picture Deplao has for a Facebook person (contact, else a group member row). */
+  private storedPerson(userId: string): { name: string; avatar: string } | null {
+    try {
+      const db = DatabaseService.getInstance();
+      const owner = this.getFacebookId();
+      const contact = db.queryOne?.(
+        `SELECT display_name, avatar_url FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook' LIMIT 1`,
+        [owner, userId],
+      ) as { display_name?: string; avatar_url?: string } | undefined;
+      if (contact?.display_name && contact.display_name !== userId) {
+        return { name: contact.display_name, avatar: contact.avatar_url || '' };
+      }
+      const member = db.queryOne?.(
+        `SELECT display_name, avatar FROM page_group_member WHERE owner_zalo_id = ? AND member_id = ? AND COALESCE(display_name, '') NOT IN ('', member_id) LIMIT 1`,
+        [owner, userId],
+      ) as { display_name?: string; avatar?: string } | undefined;
+      return member?.display_name ? { name: member.display_name, avatar: member.avatar || '' } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The 1:1 went through end-to-end encrypted: remembered as an encrypted chat (DB too, kept across restarts). */
+  public rememberE2EEThread(threadId: string): void {
+    this._nonE2EEThreads.delete(threadId);
+    if (this.e2eeThreads.has(threadId)) return;
+    this.e2eeThreads.add(threadId);
+    try { DatabaseService.getInstance().markFBThreadE2EE(threadId, this.accountId); } catch {}
+    Logger.log(`[FacebookService:${this.accountId}] 1:1 ${threadId} remembered as E2EE`);
+  }
+
+  /** The 1:1 went through the normal way: remembered as a normal chat for this session, the encrypted flag of the DB cleared. */
+  public rememberNormalThread(threadId: string): void {
+    const wasE2EE = this.e2eeThreads.delete(threadId);
+    if (!this._nonE2EEThreads.has(threadId)) {
+      this._nonE2EEThreads.add(threadId);
+      Logger.log(`[FacebookService:${this.accountId}] 1:1 ${threadId} remembered as non-E2EE${wasE2EE ? ' (was E2EE)' : ''}`);
+    }
+    try { DatabaseService.getInstance().unmarkFBThreadE2EE(threadId, this.accountId); } catch {}
+  }
+
+  /**
+   * The normal (not encrypted) Messenger send. A 1:1 (`typeChat: 'user'`) that goes through is remembered as a normal chat.
+   * FacebookSendService calls it directly for an attachment / sticker whose encrypted send Messenger refused.
+   */
+  public async sendNormalMessage(threadId: string, body: string, opts?: FBSendOptions): Promise<FBSendResult> {
+    const result = await sendMessageREST(this.requireSession(), threadId, body, opts, this.httpsAgent);
+    if (result.success && result.messageId) {
+      if (opts?.typeChat === 'user') this.rememberNormalThread(threadId);
+      this.markMessageLocallySent(result.messageId);
+    }
+    return result;
+  }
+
+  /**
+   * The E2EE retry of a refused normal send only runs while the bridge is connected: it does not wait for a reconnect (up to
+   * 80 s), which would outlast the send's own time limit (FacebookSendService, 30 s) and report a failure for a delivered message.
+   */
+  public e2eeReadyForRetry(): boolean {
+    return this.isE2EEConnected();
+  }
+
   /** Gets the current E2EE state */
   public getE2EEStatus(): FBE2EEStatus {
     return this.e2eeStatus;
@@ -2445,10 +3184,12 @@ export class FacebookService {
     chatJid: string,
     audioPath: string,
     mimeType?: string,
+    /** Voice note (push-to-talk) with its length. */
+    voice?: { ptt: boolean; durationSec?: number },
   ): Promise<{ success: boolean; messageId?: string; timestamp?: number; error?: string }> {
     const result = await this.sendE2EEMediaWithRecovery(async () => {
       if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
-      return this.e2eeSender.sendAudio(chatJid, audioPath, mimeType);
+      return this.e2eeSender.sendAudio(chatJid, audioPath, mimeType, voice);
     });
     if (result.success && result.messageId) this.markMessageLocallySent(result.messageId);
     return result;
@@ -2482,10 +3223,11 @@ export class FacebookService {
   /** Sends a sticker over 1:1 E2EE (C4) */
   public async sendE2EESticker(
     chatJid: string,
-    stickerId: string,
-  ): Promise<{ success: boolean; error?: string }> {
+    localPath: string,
+    mimeType?: string,
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     if (!this.e2eeSender) return { success: false, error: 'E2EE not connected' };
-    return this.e2eeSender.sendSticker(chatJid, stickerId);
+    return this.e2eeSender.sendSticker(chatJid, localPath, mimeType);
   }
 
   /** Sends a typing indicator through the bridge */
@@ -2496,22 +3238,25 @@ export class FacebookService {
   ): Promise<void> {
     if (!this.e2eeBridge?.isAlive()) return;
     try {
-      // Route by thread kind: 1:1 → E2EE typing, group → normal typing
+      // Route by thread kind: encrypted 1:1 → WhatsApp typing, group / ordinary 1:1 → LightSpeed typing
       const resolved = await resolveThreadKind(threadId, undefined, this.accountId);
-      if (resolved.kind === 'user') {
-        // E2EE 1:1
+      if (resolved.kind === 'user' && !this.isKnownNonE2EEThread(threadId)) {
         if (this.isE2EEConnected()) {
+          // Encrypted chats only deliver typing from an "available" client
+          if (isTyping) await this.noteE2EEActivity();
           await this.e2eeBridge.sendE2EETyping({
             chatJid: normalizeChatJid(threadId),
             isTyping,
           });
         }
-      } else if (resolved.kind === 'group') {
-        // Group — best effort, no await needed
+      } else if (resolved.kind === 'group' || resolved.kind === 'user') {
+        // Best effort, no await needed. Messenger ignores the typing without its thread type (1 = one-to-one, 2 = group).
+        const group = resolved.kind === 'group';
         this.e2eeBridge.sendTypingIndicator({
           threadId,
           isTyping,
-          isGroup: true,
+          isGroup: group,
+          threadType: group ? 2 : 1,
         }).catch(() => {});
       }
       // Unknown kind → don't send (safe default)
@@ -2532,10 +3277,15 @@ export class FacebookService {
         `SELECT MAX(timestamp) AS timestamp FROM fb_messages WHERE thread_id = ? AND account_id = ?`,
         [threadId, this.accountId],
       ) as { timestamp?: number } | undefined;
+      const watermarkTs = Number(newest?.timestamp) || Date.now();
+      const encrypted = route.kind === 'user' && this.isE2EEThread(threadId);
       await this.e2eeBridge.markRead({
         threadId,
-        watermarkTs: Number(newest?.timestamp) || Date.now(),
+        watermarkTs,
+        // Encrypted chats are read in their own sync group (bridges with markReadSyncGroup)
+        ...(encrypted && this.e2eeBridge.supportsCapability('markReadSyncGroup') ? { syncGroup: 95 } : {}),
       });
+      if (encrypted) this.sendE2EESeen(threadId).catch(() => {});
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -2672,9 +3422,10 @@ export class FacebookService {
    *
    * Routing strategy:
    *   1. Work out 1:1 vs group: opts.typeChat → if missing, query fb_threads.type
-   *   2. 1:1 → E2EE first (bridge sendE2EEMessage). If the E2EE bridge is not connected yet → retry first.
-   *   3. 1:1 E2EE success → mark the thread as E2EE. E2EE fails → REST API fallback.
-   *   4. GROUP → REST API. If REST fails → bridge sendMessage fallback.
+   *   2. 1:1 not known as normal → E2EE first (bridge sendE2EEMessage). If the E2EE bridge is not connected yet → retry first.
+   *   3. 1:1 E2EE success → remembered as E2EE. Messenger refuses it with an error code → the normal send once (remembered as normal
+   *      when it goes through). 1:1 known as normal → normal send; Facebook refuses it → the E2EE send once (send/facebookSendFallback.ts).
+   *   4. GROUP → REST API.
    *
    * EVERY successful path calls markMessageLocallySent() to stop a self-echo duplicate.
    */
@@ -2697,17 +3448,20 @@ export class FacebookService {
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // 1:1 ROUTING — E2EE ONLY, no REST fallback
+    // 1:1 ROUTING: the way known for the chat; the other way once after a clear refusal
     // ═════════════════════════════════════════════════════════════════════
-    // DEPLAO_ADAPTER: Per plan §8 — once a thread is resolved as 'user',
-    // we send via E2EE bridge exclusively. If E2EE fails, return the error
-    // directly. We do NOT fallback to REST for 1:1 conversations.
-    // The only exception is the initial probe: if the thread is NOT yet known
-    // as E2EE, we try E2EE first; if E2EE probe fails, we try REST once to
-    // discover whether this is actually a non-E2EE user thread.
-    // If REST succeeds → mark as non-E2EE for future sends.
-
+    // A Messenger 1:1 is end-to-end encrypted or normal, and Messenger can upgrade a normal chat to encrypted without notice
+    // (send/facebookSendFallback.ts):
+    //  - Not known as normal → E2EE first. Messenger's server refuses it with an error code (e.g. 405: the other side cannot
+    //    receive it) → nothing was delivered → the normal send once; it goes through → remembered as normal.
+    //  - Known as normal → normal send. Facebook answers with an error (e.g. the chat was upgraded) → the E2EE send once (text
+    //    only); it goes through → remembered as E2EE.
+    //  - A timeout, a lost connection or an unclear answer is never sent the other way: the message may have been delivered.
+    //  - Bridge not connected and the chat not known as E2EE → the normal send probes it, as before.
     if (is1on1) {
+      // `typeChat: 'user'`: the normal send uses the 1:1 form, and a 1:1 that goes through is remembered as normal
+      const normalOpts: FBSendOptions = { ...opts, typeChat: 'user' };
+
       // ── PATH A: E2EE first (skip if thread already known non-E2EE) ────
       if (!this._nonE2EEThreads.has(threadId)) {
         let e2eeReady = this.isE2EEConnected();
@@ -2722,52 +3476,48 @@ export class FacebookService {
         }
 
         if (e2eeReady) {
+          let r: FBSendResult;
           try {
-            const r = await this.sendE2EEMessage(normalizeChatJid(threadId), body, opts);
-            if (r.uncertain) {
-              // The message may have been delivered. It is neither marked as
-              // locally sent (a delivered echo must still reach the chat) nor
-              // retried through REST.
-              Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE send unacknowledged: msgId=${r.messageId}`);
-              return r;
-            }
-            if (r.success && r.messageId) {
-              // E2EE success → mark thread as E2EE
-              if (!this.e2eeThreads.has(threadId)) {
-                this.e2eeThreads.add(threadId);
-                try { DatabaseService.getInstance().markFBThreadE2EE(threadId, this.accountId); } catch {}
-                this._nonE2EEThreads.delete(threadId);
-              }
-              this.markMessageLocallySent(r.messageId);
-              Logger.log(`[FacebookService:${this.accountId}] 1:1 E2EE OK: msgId=${r.messageId} - marked thread as E2EE`);
-              return { success: true, messageId: r.messageId, timestamp: r.timestamp };
-            }
-            throw new Error(r.error || 'E2EE send did not return a message ID.');
+            r = await this.sendE2EEMessage(normalizeChatJid(threadId), body, opts);
           } catch (err: any) {
-            // DEPLAO_ADAPTER: A thread that has already succeeded with E2EE
-            // must NEVER be downgraded to REST merely because a send failed.
-            if (this.e2eeThreads.has(threadId)) {
-              return { success: false, error: tr('Không thể gửi tin nhắn E2EE: {{message}}', { message: err.message }) };
-            }
-            // DEPLAO_ADAPTER: If E2EE timed out, the message may have been
-            // sent but response lost. Do NOT fallback to REST to avoid duplicate.
-            // Only fallback for real connection errors (not timeout).
-            if (/timeout|ETIMEDOUT/i.test(err.message || '')) {
-              Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE timed out — NOT retrying REST (may duplicate)`);
-              return { success: false, error: `E2EE send timeout — tin nhắn có thể đã gửi. Vui lòng kiểm tra.` };
-            }
-            // Do not infer transport from a generic bridge failure. The remote
-            // operation may have succeeded even though its response was lost.
-            // A normal 1:1 may use REST only when we have not attempted E2EE
-            // (bridge unavailable) or a future explicit capability signal.
-            return { success: false, error: `E2EE send failed: ${err.message}` };
+            r = { success: false, error: String(err?.message || err || 'Unknown E2EE send error') };
           }
-        }
+          if (r.uncertain) {
+            // The message may have been delivered. It is neither marked as
+            // locally sent (a delivered echo must still reach the chat) nor
+            // retried through REST.
+            Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE send unacknowledged: msgId=${r.messageId}`);
+            return r;
+          }
+          if (r.success && r.messageId) {
+            this.rememberE2EEThread(threadId);
+            this.markMessageLocallySent(r.messageId);
+            Logger.log(`[FacebookService:${this.accountId}] 1:1 E2EE OK: msgId=${r.messageId}`);
+            return { success: true, messageId: r.messageId, timestamp: r.timestamp };
+          }
+          const e2eeError = r.error || 'E2EE send did not return a message ID.';
 
-        // A fulfilled bridge response without a message ID is equally
-        // ambiguous. Never turn it into a REST send.
-        if (e2eeReady) {
-          return { success: false, error: 'E2EE send did not return a message ID.' };
+          // Messenger's server refused the encrypted message (error code): nothing was delivered → the normal send once
+          if (isE2EEServerRejection(e2eeError)) {
+            Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE refused by the server (${e2eeError}) → normal send once`);
+            const normal = await this.sendNormalMessage(threadId, body, normalOpts);
+            if (normal.success && normal.messageId) return normal;
+            return { success: false, error: `E2EE send failed: ${e2eeError}; normal send failed: ${normal.error || 'unknown error'}` };
+          }
+          // DEPLAO_ADAPTER: A thread that has already succeeded with E2EE
+          // must NEVER be downgraded to REST merely because a send failed.
+          if (this.e2eeThreads.has(threadId)) {
+            return { success: false, error: tr('Không thể gửi tin nhắn E2EE: {{message}}', { message: e2eeError }) };
+          }
+          // DEPLAO_ADAPTER: If E2EE timed out, the message may have been
+          // sent but response lost. Do NOT fallback to REST to avoid duplicate.
+          if (/timeout|ETIMEDOUT/i.test(e2eeError)) {
+            Logger.warn(`[FacebookService:${this.accountId}] 1:1 E2EE timed out — NOT retrying REST (may duplicate)`);
+            return { success: false, error: `E2EE send timeout — tin nhắn có thể đã gửi. Vui lòng kiểm tra.` };
+          }
+          // Do not infer transport from a generic bridge failure. The remote
+          // operation may have succeeded even though its response was lost.
+          return { success: false, error: `E2EE send failed: ${e2eeError}` };
         }
 
         // A known E2EE thread must never be sent through REST merely because
@@ -2794,21 +3544,24 @@ export class FacebookService {
         }
       }
 
-      // ── PATH B: REST probe (only for threads not yet known as E2EE) ──
-      // If this thread is already known E2EE, we already returned above.
-      // If REST succeeds → mark as non-E2EE, return success.
-      // If REST fails → return error. No E2EE retry (avoids PATH C loop).
-      const restResult = await sendMessageREST(this.requireSession(), threadId, body, opts, agent);
-      if (restResult.success && restResult.messageId) {
-        if (!this._nonE2EEThreads.has(threadId)) {
-          this._nonE2EEThreads.add(threadId);
-          Logger.log(`[FacebookService:${this.accountId}] 1:1 REST OK - marked thread as non-E2EE`);
-        }
-        this.markMessageLocallySent(restResult.messageId);
-        return restResult;
-      }
+      // ── PATH B: normal send (known normal chat, or a probe while the bridge is unavailable) ──
+      const knownNormal = this._nonE2EEThreads.has(threadId);
+      const restResult = await this.sendNormalMessage(threadId, body, normalOpts);
+      if (restResult.success && restResult.messageId) return restResult;
 
-      // Both E2EE probe and REST probe failed → return REST error
+      // A chat known as normal that Messenger upgraded to E2EE: Facebook refused the normal send → the E2EE send once.
+      // Attachments / stickers are retried by FacebookSendService (they are sent differently over E2EE).
+      if (knownNormal && isNormalSendRejection(restResult) && isTextOnlySend(opts) && this.e2eeReadyForRetry()) {
+        Logger.warn(`[FacebookService:${this.accountId}] 1:1 normal send refused (${restResult.error}) → E2EE send once`);
+        const r = await this.sendE2EEMessage(normalizeChatJid(threadId), body, opts);
+        if (r.uncertain) return r;
+        if (r.success && r.messageId) {
+          this.rememberE2EEThread(threadId);
+          this.markMessageLocallySent(r.messageId);
+          return { success: true, messageId: r.messageId, timestamp: r.timestamp };
+        }
+        return { success: false, error: `${restResult.error || 'Normal send failed'}; E2EE send failed: ${r.error || 'unknown error'}` };
+      }
       return restResult;
     }
 
@@ -2866,6 +3619,808 @@ export class FacebookService {
     };
   }
 
+  // ─── Old encrypted messages (Messenger secure history, PIN) ───────────────────────────────
+
+  private static historyDeviceKey(accountId: string): string {
+    return `fb_history_device_${accountId}`;
+  }
+
+  /** Hand the history device enrolled earlier back to the bridge (after a restart / reconnect). */
+  private async restoreHistoryDevice(): Promise<void> {
+    const bridge = this.e2eeBridge;
+    if (!bridge?.isAlive() || !bridge.supportsCapability('encryptedHistory')) return;
+    let stored: string | null = null;
+    try { stored = secureGet(FacebookService.historyDeviceKey(this.accountId)); } catch { stored = null; }
+    if (!stored) return;
+    try {
+      await bridge.setHistoryDevice(stored);
+      this.encryptedHistoryReady = true;
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] secure history device not restored: ${err.message}`);
+    }
+  }
+
+  public isEncryptedHistoryUnlocked(): boolean {
+    return this.encryptedHistoryReady;
+  }
+
+  /**
+   * Unlock old encrypted messages with the Messenger PIN. The PIN goes to the bridge for one recovery call and is never
+   * saved or logged; a wrong PIN reports the attempts Messenger still allows.
+   */
+  public async unlockEncryptedHistory(pin: string): Promise<{ success: boolean; error?: string; code?: string; attemptsRemaining?: number }> {
+    const value = String(pin || '').trim();
+    if (!/^\d{4,12}$/.test(value)) return { success: false, code: 'PIN_FORMAT', error: tr('Mã PIN Messenger gồm 4 đến 12 chữ số') };
+    const bridge = this.e2eeBridge;
+    if (!bridge?.isAlive()) return { success: false, code: 'BRIDGE_DOWN', error: tr('Bridge Messenger chưa kết nối. Kết nối lại tài khoản Facebook rồi thử lại.') };
+    if (!bridge.supportsCapability('encryptedHistory')) {
+      return { success: false, code: 'BRIDGE_OLD', error: tr('Bản bridge Messenger hiện tại chưa hỗ trợ thao tác này. Hãy cập nhật ứng dụng.') };
+    }
+    if (!this.isE2EEConnected()) return { success: false, code: 'E2EE_DOWN', error: tr('Kết nối mã hoá đầu cuối chưa sẵn sàng, thử lại sau ít phút') };
+    try {
+      const res = await bridge.restoreHistoryPin(value);
+      if (!res?.device) return { success: false, code: 'FETCH', error: tr('Không mở khoá được tin nhắn cũ') };
+      secureSet(FacebookService.historyDeviceKey(this.accountId), res.device);
+      this.encryptedHistoryReady = true;
+      return { success: true };
+    } catch (err: any) {
+      const message = String(err?.message || err);
+      const refused = /pin_rejected\|([^|]*)\|(-?\d+)/.exec(message);
+      if (refused) {
+        const attempts = Number(refused[2]);
+        return {
+          success: false,
+          code: 'PIN_REJECTED',
+          ...(attempts >= 0 ? { attemptsRemaining: attempts } : {}),
+          error: attempts >= 0 ? tr('Mã PIN không đúng. Còn {{attempts}} lần thử.', { attempts }) : tr('Mã PIN không đúng'),
+        };
+      }
+      return { success: false, code: 'FETCH', error: message };
+    }
+  }
+
+  /** One page of old encrypted messages from the secure history, saved like history (no unread, no notification). */
+  private async fetchEncryptedHistoryPage(threadId: string, anchor: { timestampMs?: number; messageId?: string }): Promise<FbHistoryPageResult> {
+    const bridge = this.e2eeBridge;
+    if (!bridge?.isAlive()) return { success: false, code: 'BRIDGE_DOWN', error: tr('Bridge Facebook chưa chạy (đang kết nối lại) — thử lại sau ít phút') };
+    const chatJid = this.storedThreadKind(threadId) === 'group' ? `${threadId}@g.us` : normalizeChatJid(threadId);
+    let page: { messages: any[]; hasMore: boolean; before: number };
+    try {
+      page = await bridge.fetchEncryptedHistory({ chatJid, beforeMs: Number(anchor?.timestampMs) || 0, count: 40 });
+    } catch (err: any) {
+      return { success: false, code: 'FETCH', error: err?.message || String(err), source: 'secure_history' };
+    }
+    const messages = Array.isArray(page?.messages) ? page.messages : [];
+    const { stored, fresh, received } = this.persistEncryptedHistory(threadId, messages);
+    const oldest = messages.length ? Math.min(...messages.map(m => Number(m?.timestampMs) || Infinity)) : 0;
+    return {
+      success: true,
+      saved: fresh,
+      received,
+      stored,
+      count: messages.length,
+      hasMoreBefore: !!page?.hasMore,
+      minTimestampMs: Number(page?.before) || (Number.isFinite(oldest) ? oldest : 0),
+      source: 'secure_history',
+    };
+  }
+
+  /** Old encrypted messages (bridge E2EEMessage shape) saved as history: cards, mentions, media keys kept for downloads. */
+  private persistEncryptedHistory(threadId: string, messages: any[]): { stored: number; fresh: number; received: number } {
+    const db = DatabaseService.getInstance();
+    const owner = this.getFacebookId();
+    const kind = e2eeChatKind(messages[0]?.chatJid);
+    let stored = 0;
+    let fresh = 0;
+    for (const m of messages) {
+      const id = String(m?.id || '');
+      if (!id) continue;
+      let exists = false;
+      try {
+        exists = !!db.queryOne?.(`SELECT 1 AS found FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook' LIMIT 1`, [id, owner]);
+      } catch {}
+      const raw = (Array.isArray(m.attachments) ? m.attachments : []).map(normalizeBridgeAttachment).filter(Boolean);
+      const attachments = raw.map((a: any, idx: number) => {
+        const template = a?.type === 'template' ? templateFromBridgeAttachment(a) : null;
+        return template ? { ...template } : {
+          type: a.type || 'file',
+          url: a.url || null,
+          id: String(a.stickerId || idx + 1),
+          ...(a.fileName ? { name: a.fileName } : {}),
+          ...(a.fileSize ? { fileSize: a.fileSize } : {}),
+          ...(a.mimeType ? { mimeType: a.mimeType } : {}),
+          ...(a.directPath ? { directPath: a.directPath } : {}),
+          ...(a.mediaKey ? { mediaKey: a.mediaKey } : {}),
+          ...(a.mediaSha256 ? { mediaSha256: a.mediaSha256 } : {}),
+          ...(a.mediaEncSha256 ? { mediaEncSha256: a.mediaEncSha256 } : {}),
+          ...extraAttachmentFields(a),
+        };
+      });
+      const primary = attachments[0];
+      const type = !primary ? 'text' : primary.type === 'template' ? FB_TEMPLATE_MSG_TYPE : String(primary.type);
+      const mentions = !primary ? mentionAttachments(m.mentions) : [];
+      const body = m.text
+        || (primary?.type === 'template' ? fbTemplateText(primary) : '')
+        || (m.unsupported && !primary ? fbUnsupportedText(m.unsupported) : '')
+        || null;
+      const senderId = String(m.senderId ?? '');
+      db.saveFBMessage({
+        id,
+        account_id: this.accountId,
+        thread_id: threadId,
+        sender_id: senderId,
+        body,
+        timestamp: Number(m.timestampMs) || Date.now(),
+        type,
+        attachments: JSON.stringify(primary ? attachments : mentions),
+        reply_to_id: m.replyTo?.messageId || '',
+        is_self: senderId !== '' && senderId === owner ? 1 : 0,
+        is_unsent: 0,
+        is_history: true,
+        ...(kind !== 'unknown' ? { thread_kind: kind as 'user' | 'group' } : {}),
+        ...(m.replyTo?.text ? { reply_text: String(m.replyTo.text) } : {}),
+      });
+      stored += 1;
+      if (!exists) fresh += 1;
+    }
+    return { stored, fresh, received: messages.length };
+  }
+
+  // ─── Message requests, polls, call logs, encrypted "Seen" (bridge deplao_events.go) ───────────
+
+  /**
+   * Thread rows from the bridge: folder (message request → "Khác" + fb_request), mute, group name. Group pictures are
+   * saved locally when the conversation has none. `notify` reloads the conversation list when something changed.
+   */
+  private applyBridgeThreadUpdates(list: any[], notify: boolean): void {
+    const updates = (Array.isArray(list) ? list : []).map((t: any) => ({
+      threadId: String(t?.threadId ?? t?.id ?? '').replace(/@.*$/, ''),
+      type: Number(t?.type) || 0,
+      kind: bridgeThreadKind(Number(t?.type)),
+      name: t?.name ? String(t.name) : undefined,
+      snippet: t?.snippet ? String(t.snippet) : undefined,
+      lastActivityMs: Number(t?.lastActivityTimestampMs) || undefined,
+      folderName: t?.folderName ? String(t.folderName) : undefined,
+      pictureUrl: t?.pictureUrl ? String(t.pictureUrl) : undefined,
+      muteExpireTimeMs: t?.muteExpireTimeMs !== undefined && t?.muteExpireTimeMs !== null ? Number(t.muteExpireTimeMs) : undefined,
+    })).filter(u => /^\d+$/.test(u.threadId));
+    if (!updates.length) return;
+    for (const u of updates) {
+      if (u.type === 15 || u.type === 16) this.e2eeThreads.add(u.threadId);
+    }
+    let changed: string[] = [];
+    try {
+      changed = DatabaseService.getInstance().applyFBThreadUpdates(this.accountId, updates);
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] thread updates: ${err.message}`);
+    }
+    // Group pictures (Messenger keeps them on expiring CDN links): local copy when the conversation has no picture yet
+    for (const u of updates) {
+      if (u.kind !== 'group' || !u.pictureUrl) continue;
+      this.saveGroupPictureIfMissing(u.threadId, u.pictureUrl).catch(() => {});
+    }
+    // New message requests: look up their names / pictures like any new conversation
+    const newPeople = changed.filter(id => this.storedThreadKind(id) !== 'group');
+    if (newPeople.length) this.profiles.enqueue(newPeople);
+    if (notify && changed.length) {
+      EventBroadcaster.emit('fb:onThreadsSynced', { fbAccountId: this.getFacebookId(), threads: changed.length, messages: 0 });
+    }
+  }
+
+  private async saveGroupPictureIfMissing(threadId: string, url: string, force = false): Promise<string | null> {
+    if (!force && this.groupPictureTried.has(threadId)) return null;
+    const db = DatabaseService.getInstance();
+    const owner = this.getFacebookId();
+    const row = db.queryOne?.(
+      `SELECT avatar_url FROM contacts WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [owner, threadId],
+    ) as { avatar_url?: string } | undefined;
+    // The thread row keeps the link: a conversation created later by its first message takes it from there
+    this.rememberThreadPicture(threadId, url);
+    if (!row || (!force && row.avatar_url && !/^https?:/i.test(row.avatar_url))) return null;
+    this.groupPictureTried.add(threadId);
+    const local = await this.saveContactAvatarLocally(threadId, url);
+    if (!local) return null;
+    this.rememberThreadPicture(threadId, local);
+    db.run(`UPDATE contacts SET avatar_url = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [local, owner, threadId]);
+    EventBroadcaster.emit('db:contactProfileUpdated', { ownerZaloId: owner, contacts: [{ contactId: threadId, avatarUrl: local }] });
+    return local;
+  }
+
+  /**
+   * Keep a group picture in fb_threads.metadata (read when the conversation row is created / swept): a CDN link, or the
+   * file saved on this machine once downloaded.
+   */
+  private rememberThreadPicture(threadId: string, url: string): void {
+    if (!/^https?:\/\//i.test(url) && !/^media\//i.test(url)) return;
+    try {
+      const db = DatabaseService.getInstance();
+      const row = db.queryOne?.(`SELECT metadata FROM fb_threads WHERE id = ? AND account_id = ?`, [threadId, this.accountId]) as { metadata?: string } | undefined;
+      if (!row) return;
+      let meta: Record<string, unknown> = {};
+      try { meta = JSON.parse(row.metadata || '{}') || {}; } catch { meta = {}; }
+      if (meta.avatar_url === url) return;
+      meta.avatar_url = url;
+      db.run(`UPDATE fb_threads SET metadata = ? WHERE id = ? AND account_id = ?`, [JSON.stringify(meta), threadId, this.accountId]);
+    } catch { /* best effort */ }
+  }
+
+  /** Members and people of a bridge table (inbox page, thread info): members per group, names for rows without one. */
+  private persistBridgePeople(participants?: Array<{ threadId: string; threadType?: number; members: any[] }>, people?: any[]): void {
+    const db = DatabaseService.getInstance();
+    for (const group of Array.isArray(participants) ? participants : []) {
+      try {
+        db.saveFBGroupParticipants(this.accountId, String(group?.threadId || ''), Array.isArray(group?.members) ? group.members : [],
+          bridgeThreadKind(Number(group?.threadType)));
+      } catch (err: any) {
+        Logger.warn(`[FacebookService:${this.accountId}] group members ${group?.threadId}: ${err.message}`);
+      }
+    }
+    if (Array.isArray(people) && people.length) {
+      try {
+        const renamed = db.applyFBPeople(this.accountId, people);
+        if (renamed.length) {
+          const byId = new Map(people.map((p: any) => [String(p?.id || ''), p]));
+          EventBroadcaster.emit('db:contactProfileUpdated', {
+            ownerZaloId: this.getFacebookId(),
+            contacts: renamed.map(id => ({ contactId: id, displayName: String((byId.get(id) as any)?.name || '') })),
+          });
+          this.profiles.enqueue(renamed);
+        }
+      } catch (err: any) {
+        Logger.warn(`[FacebookService:${this.accountId}] people rows: ${err.message}`);
+      }
+    }
+  }
+
+  /**
+   * A group's name, picture and members from Messenger (bridge thread info). The picture is saved locally (replacing an
+   * older one); members go to page_group_member. Used by the members panel and the background group sweep.
+   */
+  public async refreshGroupInfo(threadId: string): Promise<{ success: boolean; error?: string; name?: string; avatarUrl?: string; memberCount?: number }> {
+    const id = String(threadId || '').replace(/@.*$/, '');
+    if (!/^\d+$/.test(id)) return { success: false, error: tr('Hội thoại không hợp lệ') };
+    const bridge = this.e2eeBridge;
+    if (!bridge?.isAlive()) return { success: false, error: tr('Bridge Messenger chưa kết nối. Kết nối lại tài khoản Facebook rồi thử lại.') };
+    if (!bridge.supportsCapability('threadInfo')) {
+      return { success: false, error: tr('Bản bridge Messenger hiện tại chưa hỗ trợ thao tác này. Hãy cập nhật ứng dụng.') };
+    }
+    // An encrypted group lives on the encrypted socket: its name, members and timer come from there
+    if (this.storedThreadKind(id) === 'group' && this.isE2EEThread(id) && bridge.supportsCapability('e2eeGroups')) {
+      return this.refreshE2EEGroupInfo(bridge, id);
+    }
+    let info: Awaited<ReturnType<FacebookE2EEBridge['fetchThreadInfo']>>;
+    try {
+      info = await bridge.fetchThreadInfo(id);
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) };
+    }
+    this.groupInfoFetched.add(id);
+    const threads = Array.isArray(info?.threads) ? info.threads : [];
+    if (threads.length) this.applyBridgeThreadUpdates(threads, true);
+    this.persistBridgePeople(info?.participants, info?.people);
+    const own = threads.find((t: any) => String(t?.threadId ?? t?.id ?? '') === id) as any;
+    let avatarUrl: string | undefined;
+    // A group without its own photo has no picture in LightSpeed: Messenger's generated one is in the thread list.
+    // Fresh links first; the link kept in fb_threads goes last because Facebook CDN links expire.
+    const candidates = [
+      String(own?.pictureUrl || ''),
+      (await this.graphqlGroupPictures().catch(() => new Map<string, string>())).get(id) || '',
+      this.storedThreadPicture(id),
+    ].filter((url, index, all) => /^https?:\/\//i.test(url) && all.indexOf(url) === index);
+    for (const url of candidates) {
+      avatarUrl = (await this.saveGroupPictureIfMissing(id, url, true)) || undefined;
+      if (avatarUrl) break;
+    }
+    let memberCount = ((info?.participants || []).find(p => String(p?.threadId) === id)?.members || []).length;
+    if (!memberCount) {
+      // The rows usually come over the socket a moment after the task's (empty) answer
+      const db = DatabaseService.getInstance();
+      const owner = this.getFacebookId();
+      for (let waited = 0; waited < 3000 && !memberCount; waited += 250) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        try {
+          const row = db.queryOne?.(`SELECT COUNT(*) AS n FROM page_group_member WHERE owner_zalo_id = ? AND group_id = ?`, [owner, id]) as { n?: number } | undefined;
+          memberCount = Number(row?.n) || 0;
+        } catch { break; }
+      }
+    }
+    return {
+      success: true,
+      ...(own?.name ? { name: String(own.name) } : {}),
+      ...(avatarUrl ? { avatarUrl } : {}),
+      memberCount,
+    };
+  }
+
+  private async refreshE2EEGroupInfo(bridge: FacebookE2EEBridge, id: string): Promise<{ success: boolean; error?: string; name?: string; memberCount?: number }> {
+    let info: Awaited<ReturnType<FacebookE2EEBridge['fetchE2EEGroupInfo']>>;
+    try {
+      info = await bridge.fetchE2EEGroupInfo(id);
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) };
+    }
+    this.groupInfoFetched.add(id);
+    const name = String(info?.name || '').trim();
+    if (name) this.handleThreadEvent({ type: 'name', threadId: id, name });
+    const members = (Array.isArray(info?.members) ? info.members : []).filter(m => /^\d+$/.test(String(m?.id || '')));
+    if (members.length) {
+      try {
+        DatabaseService.getInstance().saveFBGroupParticipants(this.accountId, id, members.map(m => ({
+          id: String(m.id), isAdmin: m.isAdmin === true, isSuperAdmin: m.isSuperAdmin === true,
+        })), 'group');
+      } catch (err: any) {
+        Logger.warn(`[FacebookService:${this.accountId}] encrypted group members ${id}: ${err.message}`);
+      }
+      // The encrypted socket only gives ids: look the names / pictures up in the background
+      this.lookUpMemberNames(id);
+    }
+    this.applyDisappearing(id, (Number(info?.disappearingSeconds) || 0) * 1000);
+    return { success: true, ...(name ? { name } : {}), memberCount: members.length };
+  }
+
+  /**
+   * Picture links of the groups on the first page of the GraphQL thread list (Messenger's own picture for groups
+   * without a photo, which LightSpeed does not send). One request per 10 minutes at most.
+   */
+  private async graphqlGroupPictures(): Promise<Map<string, string>> {
+    if (this.graphqlPictures && Date.now() - this.graphqlPictures.at < 10 * 60_000) return this.graphqlPictures.byThread;
+    const byThread = new Map<string, string>();
+    this.graphqlPictures = { at: Date.now(), byThread };
+    const session = this.requireSession();
+    const result = await getThreadList(session, undefined, this.httpsAgent);
+    for (const thread of parseThreadNodes(result.dataGet, this.accountId, session.FacebookID)) {
+      const url = String((thread as any)?.metadata?.avatar_url || '');
+      if (thread?.type === 'group' && /^https?:\/\//i.test(url)) byThread.set(String(thread.id), url);
+    }
+    return byThread;
+  }
+
+  /** Group picture link kept in fb_threads.metadata (GraphQL thread list / bridge), '' when none. */
+  private storedThreadPicture(threadId: string): string {
+    try {
+      const row = DatabaseService.getInstance().queryOne?.(
+        `SELECT metadata FROM fb_threads WHERE id = ? AND account_id = ?`, [threadId, this.accountId],
+      ) as { metadata?: string } | undefined;
+      const url = String(JSON.parse(row?.metadata || '{}')?.avatar_url || '');
+      return /^https?:\/\//i.test(url) ? url : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** Run the group sweep after `delayMs` (calls in the meantime are merged). */
+  private scheduleGroupSweep(delayMs: number): void {
+    if (this.groupSweepTimer) return;
+    this.groupSweepTimer = setTimeout(() => {
+      this.groupSweepTimer = null;
+      this.sweepGroups().catch(err => Logger.warn(`[FacebookService:${this.accountId}] group sweep: ${err?.message || err}`));
+    }, delayMs);
+  }
+
+  /**
+   * Group conversations without a local picture or without members: fetch their info from Messenger in the background
+   * (newest first, one at a time, at most 25 per sweep, each group once per run). Before, a group picture only loaded
+   * when the conversation was opened.
+   */
+  private async sweepGroups(): Promise<void> {
+    if (this.status !== 'connected') return;
+    const db = DatabaseService.getInstance();
+    const owner = this.getFacebookId();
+    let rows: Array<{ contact_id: string; avatar_url?: string; members?: number }> = [];
+    try {
+      rows = db.query<{ contact_id: string; avatar_url?: string; members?: number }>(
+        `SELECT c.contact_id, c.avatar_url,
+                (SELECT COUNT(*) FROM page_group_member m WHERE m.owner_zalo_id = c.owner_zalo_id AND m.group_id = c.contact_id) AS members
+         FROM contacts c
+         WHERE c.owner_zalo_id = ? AND c.channel = 'facebook' AND c.contact_type = 'group'
+         ORDER BY c.last_message_time DESC LIMIT 200`,
+        [owner],
+      ) || [];
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] group sweep query: ${err.message}`);
+      return;
+    }
+    const needs = rows.filter(r => /^\d+$/.test(String(r.contact_id))
+      && (!r.avatar_url || /^https?:/i.test(String(r.avatar_url)) || !Number(r.members)));
+    for (const row of needs) this.enqueueGroupInfo(String(row.contact_id));
+  }
+
+  /** Queue a group for a background info fetch (once per run). */
+  private enqueueGroupInfo(threadId: string): void {
+    if (this.groupInfoFetched.has(threadId) || this.groupInfoQueue.includes(threadId)) return;
+    if (this.groupInfoQueue.length >= 25) return;
+    this.groupInfoQueue.push(threadId);
+    if (!this.groupInfoRunning) this.drainGroupInfo().catch(() => {});
+  }
+
+  private async drainGroupInfo(): Promise<void> {
+    this.groupInfoRunning = true;
+    try {
+      while (this.groupInfoQueue.length && this.status === 'connected') {
+        const threadId = this.groupInfoQueue.shift()!;
+        if (this.groupInfoFetched.has(threadId)) continue;
+        const bridge = this.e2eeBridge;
+        if (bridge?.isAlive() && bridge.supportsCapability('threadInfo')) {
+          const res = await this.refreshGroupInfo(threadId);
+          if (!res.success) Logger.warn(`[FacebookService:${this.accountId}] group info ${threadId}: ${res.error}`);
+        } else {
+          // Older bridge: at least the picture link the thread list gave
+          const url = this.storedThreadPicture(threadId)
+            || (await this.graphqlGroupPictures().catch(() => new Map<string, string>())).get(threadId) || '';
+          if (url) await this.saveGroupPictureIfMissing(threadId, url);
+          this.groupInfoFetched.add(threadId);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1500 + Math.floor(Math.random() * 1000)));
+      }
+    } finally {
+      this.groupInfoRunning = false;
+    }
+  }
+
+  /**
+   * Poll admin message from the bridge. Creation → the message is saved as the poll card (fb.poll) and true is returned
+   * (no separate system line). A vote / new option updates the stored poll; false lets the admin text be saved as usual.
+   */
+  private handleBridgePoll(data: any): boolean {
+    const poll = data?.poll as BridgePollInfo | undefined;
+    if (!poll?.pollId) return false;
+    const threadId = String(data.threadId ?? '').replace(/@.*$/, '');
+    if (!threadId) return false;
+    const db = DatabaseService.getInstance();
+    const owner = this.getFacebookId();
+    if (Number(poll.eventType) === POLL_EVENT_CREATE) {
+      const attachment = pollAttachmentFromBridge(poll, owner);
+      if (!attachment) return false;
+      const attachments = JSON.stringify([attachment]);
+      const preview = fbPollText(attachment);
+      const ts = Number(data.timestampMs) || Date.now();
+      const senderId = String(data.senderId ?? '');
+      const outcome = db.saveFBMessage({
+        id: String(data.id), account_id: this.accountId, thread_id: threadId, sender_id: senderId,
+        body: attachment.question, timestamp: ts, type: FB_POLL_MSG_TYPE, attachments,
+        is_self: senderId === owner ? 1 : 0, is_unsent: 0, thread_kind: 'group', preview,
+      });
+      if (outcome === 'repaired') {
+        // The admin line of this message is already on screen: it becomes the poll card
+        EventBroadcaster.emit('fb:onMessagePatch', {
+          fbAccountId: owner, threadId, messageId: String(data.id), attachments, content: attachment.question, msgType: FB_POLL_MSG_TYPE,
+        });
+      } else if (outcome !== 'duplicate') {
+        EventBroadcaster.emit('fb:onMessage', {
+          fbAccountId: owner,
+          message: {
+            messageID: String(data.id), body: attachment.question, timestamp: String(ts), userID: senderId,
+            replyToID: threadId, type: 'group', attachments: { id: 0, url: null }, isSelf: senderId === owner,
+            msg_type: FB_POLL_MSG_TYPE, storedAttachments: attachments, storedContent: attachment.question, preview,
+          },
+        });
+      }
+      return true;
+    }
+    const stored = db.findFBPollMessage(owner, threadId, String(poll.pollId));
+    const current = stored ? fbPollFromAttachments(stored.attachments) : null;
+    if (stored && current) {
+      const updated = applyPollVotes(current, poll, owner);
+      const attachments = JSON.stringify([updated]);
+      db.updateFBMessageAttachments(this.accountId, stored.msg_id, attachments);
+      EventBroadcaster.emit('fb:onMessagePatch', { fbAccountId: owner, threadId, messageId: stored.msg_id, attachments });
+      // The vote line remembers its poll: the newest line of the poll shows the poll card again, like Messenger
+      const lineId = String(data.id || '');
+      const text = String(data.text || '').trim();
+      if (lineId && lineId !== stored.msg_id && text) {
+        const lineAttachments = JSON.stringify([pollUpdateAttachment(String(poll.pollId), stored.msg_id)]);
+        const linked = db.attachFBPollUpdate(owner, threadId, lineId, lineAttachments);
+        if (linked === 'attached') {
+          // Deplao's MQTT listener saved the line first: the line on screen gets the link
+          EventBroadcaster.emit('fb:onMessagePatch', { fbAccountId: owner, threadId, messageId: lineId, attachments: lineAttachments });
+        } else if (linked === 'missing') {
+          const senderId = String(data.senderId ?? '');
+          this.saveSystemLine({
+            id: lineId, threadId, senderId, text, timestampMs: Number(data.timestampMs) || Date.now(), isSelf: senderId === owner,
+            threadKind: 'group', attachments: lineAttachments,
+          });
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Pinned messages from Messenger: a full list (clear) replaces the remote pins of the conversation (Deplao's own notes
+   * stay), otherwise single pins / unpins. The pin row copies the stored message when Deplao has it.
+   */
+  private applyBridgePins(data: any): void {
+    const threadId = String(data?.threadId || '');
+    if (!/^\d+$/.test(threadId)) return;
+    const db = DatabaseService.getInstance();
+    const owner = this.getFacebookId();
+    const pinned = (Array.isArray(data?.pinned) ? data.pinned : []).filter((p: any) => p?.messageId);
+    const unpinned = (Array.isArray(data?.unpinned) ? data.unpinned : []).map(String).filter(Boolean);
+    const rowOf = (messageId: string, pinnedAt: number) => {
+      const msg = db.queryOne?.(
+        `SELECT msg_type, content, sender_id, timestamp FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook' LIMIT 1`,
+        [messageId, owner],
+      ) as { msg_type?: string; content?: string; sender_id?: string; timestamp?: number } | undefined;
+      const content = String(msg?.content || '');
+      return {
+        msgId: messageId,
+        msgType: String(msg?.msg_type || 'text'),
+        content,
+        previewText: content.slice(0, 200) || tr('[Tin nhắn]'),
+        previewImage: '',
+        senderId: String(msg?.sender_id || ''),
+        senderName: '',
+        timestamp: Number(msg?.timestamp) || pinnedAt,
+        pinnedAt,
+      };
+    };
+    try {
+      if (data?.clear && this.storedThreadKind(threadId) === 'group') {
+        db.replaceRemotePinnedMessages(owner, threadId, pinned.map((p: any) => rowOf(String(p.messageId), Number(p.pinnedAtMs) || Date.now())));
+      } else {
+        for (const p of pinned) db.pinMessage(owner, threadId, rowOf(String(p.messageId), Number(p.pinnedAtMs) || Date.now()));
+      }
+      for (const id of unpinned) db.unpinMessage(owner, threadId, id);
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] pins ${threadId}: ${err.message}`);
+      return;
+    }
+    EventBroadcaster.emit('event:pinsUpdated', { zaloId: owner, threadId });
+  }
+
+  /** Saves a call log as the call card (chat.recommended) and shows it live. */
+  private saveCallLog(call: {
+    id: string; threadId: string; actorId: string; timestampMs: number; missed: boolean; video: boolean; durationSec: number;
+    threadKind?: FacebookThreadKind;
+  }): void {
+    if (!call.id || !/^\d+$/.test(call.threadId)) return;
+    const owner = this.getFacebookId();
+    const isCaller = call.actorId === owner;
+    const content = callLogContent({ missed: call.missed, video: call.video, durationSec: call.durationSec, isCaller });
+    const preview = call.missed ? tr('📵 Cuộc gọi nhỡ') : tr('📞 Cuộc gọi');
+    const kind = call.threadKind === 'group' || call.threadKind === 'user' ? call.threadKind : undefined;
+    let outcome: FbSaveOutcome = 'new';
+    try {
+      outcome = DatabaseService.getInstance().saveFBMessage({
+        id: call.id, account_id: this.accountId, thread_id: call.threadId, sender_id: call.actorId,
+        body: content, timestamp: call.timestampMs, type: FB_CALL_MSG_TYPE, attachments: undefined,
+        is_self: isCaller ? 1 : 0, is_unsent: 0, preview, ...(kind ? { thread_kind: kind } : {}),
+      });
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] call log save: ${err.message}`);
+      return;
+    }
+    if (outcome === 'duplicate') return;
+    EventBroadcaster.emit('fb:onMessage', {
+      fbAccountId: owner,
+      message: {
+        messageID: call.id, body: content, timestamp: String(call.timestampMs), userID: call.actorId,
+        replyToID: call.threadId, type: kind === 'group' ? 'group' : 'user', attachments: { id: 0, url: null },
+        isSelf: isCaller, msg_type: FB_CALL_MSG_TYPE, storedContent: content, preview,
+      },
+    });
+  }
+
+  /**
+   * A message was unsent (by anyone): like Messenger its pin goes away, and when it was the conversation's newest message the
+   * list preview stops showing its text.
+   */
+  private afterMessageUnsent(threadId: string, messageId: string): void {
+    const db = DatabaseService.getInstance();
+    const owner = this.getFacebookId();
+    try {
+      let thread = threadId;
+      if (!thread) {
+        const row = db.queryOne?.(
+          `SELECT thread_id FROM messages WHERE msg_id = ? AND owner_zalo_id = ? AND channel = 'facebook' LIMIT 1`, [messageId, owner],
+        ) as { thread_id?: string } | undefined;
+        thread = String(row?.thread_id || '');
+      }
+      if (!thread) return;
+      const pinned = db.queryOne?.(
+        `SELECT 1 AS hit FROM pinned_messages WHERE owner_zalo_id = ? AND thread_id = ? AND msg_id = ? LIMIT 1`, [owner, thread, messageId],
+      );
+      if (pinned) {
+        db.unpinMessage(owner, thread, messageId);
+        EventBroadcaster.emit('db:pinnedMessageChanged', { action: 'unpin', ownerZaloId: owner, threadId: thread, msgId: messageId });
+      }
+      const newest = db.queryOne?.(
+        `SELECT msg_id FROM messages WHERE owner_zalo_id = ? AND thread_id = ? AND channel = 'facebook' ORDER BY timestamp DESC LIMIT 1`,
+        [owner, thread],
+      ) as { msg_id?: string } | undefined;
+      if (String(newest?.msg_id || '') === messageId) {
+        const preview = tr('↩ Tin nhắn đã thu hồi');
+        db.run(`UPDATE contacts SET last_message = ? WHERE owner_zalo_id = ? AND contact_id = ? AND channel = 'facebook'`, [preview, owner, thread]);
+        db.run(`UPDATE fb_threads SET last_message_preview = ? WHERE id = ? AND account_id = ?`, [preview, thread, this.accountId]);
+      }
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] after unsend ${messageId}: ${err.message}`);
+    }
+  }
+
+  /**
+   * The chat on screen in Deplao (null = none / window in the background). While an encrypted chat is shown the account
+   * is "available" on the WhatsApp layer, so typing works both ways; one minute after it leaves the screen it goes back
+   * to "unavailable" (like mautrix-meta's viewing-chat presence).
+   */
+  public async setViewingChat(threadId: string | null): Promise<void> {
+    const id = String(threadId || '');
+    const encrypted = !!id && /^\d+$/.test(id) && this.storedThreadKind(id) !== 'group' && this.isE2EEThread(id)
+      && !this.isKnownNonE2EEThread(id);
+    this.viewingEncryptedChat = encrypted ? id : '';
+    this.viewingOrdinaryChat = !encrypted && !!id && /^\d+$/.test(id) ? id : '';
+    if (encrypted) await this.noteE2EEActivity();
+    else this.scheduleE2EEUnavailable();
+    if (this.viewingOrdinaryChat) await this.noteForegroundActivity();
+    else this.scheduleAppBackground();
+  }
+
+  /**
+   * An ordinary chat is on screen: LightSpeed app state "foreground", like a visible Messenger web tab (Messenger only
+   * sends typing to foreground clients). Back to "background" a minute after no Messenger chat is shown, so the account
+   * does not look active all day.
+   */
+  private async noteForegroundActivity(): Promise<void> {
+    const was = this.appForeground;
+    this.appForeground = true;
+    this.scheduleAppBackground();
+    if (was) return;
+    // Deplao's own Messenger MQTT (typing topics) and the bridge's LightSpeed socket
+    this.listener?.setForeground(true);
+    const bridge = this.e2eeBridge;
+    if (!bridge?.isAlive() || !bridge.supportsCapability('appState')) return;
+    try {
+      await bridge.setAppState(true);
+    } catch (err: any) {
+      Logger.warn(`[FacebookService:${this.accountId}] app state: ${err?.message || err}`);
+    }
+  }
+
+  private scheduleAppBackground(): void {
+    if (this.appForegroundTimer) clearTimeout(this.appForegroundTimer);
+    this.appForegroundTimer = null;
+    if (!this.appForeground) return;
+    this.appForegroundTimer = setTimeout(() => {
+      this.appForegroundTimer = null;
+      if (this.viewingOrdinaryChat) {
+        this.scheduleAppBackground();
+        return;
+      }
+      this.appForeground = false;
+      this.listener?.setForeground(false);
+      if (this.e2eeBridge?.isAlive() && this.e2eeBridge.supportsCapability('appState')) {
+        this.e2eeBridge.setAppState(false).catch(() => {});
+      }
+    }, 60_000);
+  }
+
+  /** Something happened in an encrypted chat (shown, typed in): be "available" and restart the idle countdown. */
+  private async noteE2EEActivity(): Promise<void> {
+    if (!this.e2eeBridge?.isAlive() || !this.isE2EEConnected() || !this.e2eeBridge.supportsCapability('e2eePresence')) return;
+    const wasAvailable = this.e2eePresence === 'available';
+    this.e2eePresence = 'available';
+    this.scheduleE2EEUnavailable();
+    if (wasAvailable) return;
+    try {
+      await this.e2eeBridge.setE2EEPresence(true);
+    } catch (err: any) {
+      this.e2eePresence = 'unavailable';
+      if (this.e2eePresenceTimer) clearTimeout(this.e2eePresenceTimer);
+      this.e2eePresenceTimer = null;
+      Logger.warn(`[FacebookService:${this.accountId}] encrypted presence: ${err.message}`);
+    }
+  }
+
+  /** Back to "unavailable" a minute after the last encrypted-chat activity, unless one is still on screen. */
+  private scheduleE2EEUnavailable(): void {
+    if (this.e2eePresenceTimer) clearTimeout(this.e2eePresenceTimer);
+    this.e2eePresenceTimer = null;
+    if (this.e2eePresence !== 'available') return;
+    this.e2eePresenceTimer = setTimeout(() => {
+      this.e2eePresenceTimer = null;
+      if (this.viewingEncryptedChat) {
+        this.scheduleE2EEUnavailable();
+        return;
+      }
+      this.e2eePresence = 'unavailable';
+      if (this.e2eeBridge?.isAlive() && this.e2eeBridge.supportsCapability('e2eePresence')) {
+        this.e2eeBridge.setE2EEPresence(false).catch(() => {});
+      }
+    }, 60_000);
+    (this.e2eePresenceTimer as any)?.unref?.();
+  }
+
+  /**
+   * "Seen" for the newest received messages of an encrypted chat (whatsmeow MarkRead per sender). Only messages newer
+   * than the last receipt sent in this run, at most 20, from the last 7 days.
+   */
+  private async sendE2EESeen(threadId: string): Promise<void> {
+    if (!this.e2eeBridge?.isAlive() || !this.isE2EEConnected() || !this.e2eeBridge.supportsCapability('markE2EERead')) return;
+    const since = Math.max(this.e2eeReadSentAt.get(threadId) || 0, Date.now() - 7 * 86_400_000);
+    const rows = (DatabaseService.getInstance().query<{ id: string; sender_id: string; timestamp: number }>(
+      `SELECT id, sender_id, timestamp FROM fb_messages
+       WHERE account_id = ? AND thread_id = ? AND is_self = 0 AND timestamp > ? AND id NOT GLOB 'mid.$*'
+       ORDER BY timestamp DESC LIMIT 20`,
+      [this.accountId, threadId, since],
+    ) || []).filter(r => r.id && /^\d+$/.test(String(r.sender_id || '')));
+    if (!rows.length) return;
+    this.e2eeReadSentAt.set(threadId, Math.max(...rows.map(r => Number(r.timestamp) || 0)));
+    const bySender = new Map<string, string[]>();
+    for (const r of rows) bySender.set(String(r.sender_id), [...(bySender.get(String(r.sender_id)) || []), r.id]);
+    for (const [sender, ids] of bySender) {
+      try {
+        await this.e2eeBridge.markE2EERead({ chatJid: normalizeChatJid(threadId), senderJid: `${sender}@msgr`, messageIds: ids });
+      } catch (err: any) {
+        Logger.warn(`[FacebookService:${this.accountId}] encrypted seen ${threadId}: ${err.message}`);
+      }
+    }
+  }
+
+  private threadActionContext(): threadActions.ThreadActionContext {
+    return {
+      accountId: this.accountId,
+      ownerId: () => this.getFacebookId(),
+      bridge: () => (this.e2eeBridge?.isAlive() ? this.e2eeBridge : null),
+      isEncryptedThread: (threadId: string) => this.isE2EEThread(threadId),
+    };
+  }
+
+  public searchPeople(query: string) { return threadActions.searchPeople(this.threadActionContext(), query); }
+  public async startChat(person: { id: string; name?: string; avatarUrl?: string; isGroup?: boolean }) {
+    const result = await threadActions.startChat(this.threadActionContext(), person);
+    if (result.success) {
+      if (result.encrypted) this.e2eeThreads.add(result.threadId);
+      if (!person.isGroup && (!person.name || !person.avatarUrl)) this.profiles.enqueue([result.threadId]);
+    }
+    return result;
+  }
+  public setThreadMute(threadId: string, muteUntilMs: number) { return threadActions.setThreadMute(this.threadActionContext(), threadId, muteUntilMs); }
+  public deleteThreadOnMessenger(threadId: string) { return threadActions.deleteThread(this.threadActionContext(), threadId); }
+  public acceptMessageRequest(threadId: string) { return threadActions.acceptMessageRequest(this.threadActionContext(), threadId); }
+  public deleteMessageForMe(threadId: string, messageId: string) { return threadActions.deleteMessageForMe(this.threadActionContext(), threadId, messageId); }
+  public addGroupMembers(threadId: string, userIds: string[]) { return threadActions.addGroupMembers(this.threadActionContext(), threadId, userIds); }
+  public removeGroupMember(threadId: string, userId: string) { return threadActions.removeGroupMember(this.threadActionContext(), threadId, userId); }
+  public leaveGroup(threadId: string) { return threadActions.removeGroupMember(this.threadActionContext(), threadId, this.getFacebookId()); }
+  public setGroupAdminLS(threadId: string, userId: string, isAdmin: boolean) { return threadActions.setGroupAdmin(this.threadActionContext(), threadId, userId, isAdmin); }
+  public setGroupPhoto(threadId: string, localPath: string, mimeType?: string) { return threadActions.setGroupPhoto(this.threadActionContext(), threadId, localPath, mimeType); }
+
+  /**
+   * Vote in a poll Deplao shows (fb.poll): the account's choice is stored right away, then sent through the bridge
+   * (GraphQL vote as fallback for an older bridge).
+   */
+  public async votePollInThread(threadId: string, pollId: string, optionIds: string[]): Promise<{ success: boolean; error?: string }> {
+    const owner = this.getFacebookId();
+    const db = DatabaseService.getInstance();
+    const stored = db.findFBPollMessage(owner, String(threadId), String(pollId));
+    const current = stored ? fbPollFromAttachments(stored.attachments) : null;
+    let result: { success: boolean; error?: string };
+    if (this.e2eeBridge?.isAlive() && this.e2eeBridge.supportsCapability('polls')) {
+      result = await threadActions.votePoll(this.threadActionContext(), threadId, pollId, optionIds);
+    } else {
+      result = await this.votePoll(pollId, optionIds);
+    }
+    if (result.success && stored && current) {
+      const attachments = JSON.stringify([withOwnPollChoice(current, optionIds, owner)]);
+      db.updateFBMessageAttachments(this.accountId, stored.msg_id, attachments);
+      EventBroadcaster.emit('fb:onMessagePatch', { fbAccountId: owner, threadId: String(threadId), messageId: stored.msg_id, attachments });
+    }
+    return result.success ? { success: true } : { success: false, error: result.error };
+  }
+
+  /** Download the media of a message again; dead Facebook links are fetched again from Messenger first. */
+  public repairMessageMedia(messageId: string): Promise<MediaRepairResult> {
+    if (!this.mediaRepairer) {
+      this.mediaRepairer = new FacebookMediaRepair({
+        accountId: this.accountId,
+        ownerId: () => this.getFacebookId(),
+        bridge: () => (this.e2eeBridge?.isAlive() ? this.e2eeBridge : null),
+        downloadEncrypted: (attachments, msgId, threadId) => this.downloadE2EEAttachments(attachments, msgId, threadId),
+      });
+    }
+    return this.mediaRepairer.repair(messageId);
+  }
+
   private async resolveMessageThreadKind(messageId: string): Promise<{ threadId?: string; senderId?: string; kind: 'user' | 'group' | 'unknown'; error?: string }> {
     const message = DatabaseService.getInstance().queryOne?.(
       'SELECT thread_id, sender_id FROM fb_messages WHERE id = ? AND account_id = ?',
@@ -2879,16 +4434,24 @@ export class FacebookService {
   public async unsendMessage(messageId: string): Promise<{ success: boolean; error?: string }> {
     const route = await this.resolveMessageThreadKind(messageId);
     if (route.kind === 'unknown' || !route.threadId) return { success: false, error: route.error };
+    let result: { success: boolean; error?: string };
     if (route.kind === 'user') {
       if (!this.isE2EEConnected()) return { success: false, error: tr('E2EE bridge chưa sẵn sàng.') };
       try {
         await this.e2eeBridge!.unsendE2EEMessage({ chatJid: normalizeChatJid(route.threadId), messageId });
-        return { success: true };
+        result = { success: true };
       } catch (err: any) {
         return { success: false, error: err.message };
       }
+    } else {
+      result = await unsendMessage(this.requireSession(), messageId, this.httpsAgent);
     }
-    return unsendMessage(this.requireSession(), messageId, this.httpsAgent);
+    // Messenger does not always echo the account's own unsend (encrypted chats): pin and list preview are cleaned here
+    if (result.success && this.acceptRepeatable(unsendRepeat(messageId))) {
+      this.afterMessageUnsent(route.threadId, messageId);
+      EventBroadcaster.emit('fb:onUnsend', { fbAccountId: this.getFacebookId(), messageId, threadId: route.threadId });
+    }
+    return result;
   }
 
   public async addReaction(messageId: string, emoji: string, action?: FBReactionAction) {
@@ -2906,16 +4469,36 @@ export class FacebookService {
         action === 'remove' ? '' : emoji,
       );
     }
+    // Ordinary threads: LightSpeed like Messenger itself (the GraphQL reaction mutation is refused); GraphQL only without a bridge
+    if (this.e2eeBridge?.isAlive() && this.e2eeBridge.supportsCapability('sendReaction')) {
+      return this.sendBridgeReaction(route.threadId, messageId, action === 'remove' ? '' : emoji);
+    }
     return addReaction(this.requireSession(), messageId, emoji, action, this.httpsAgent);
   }
 
   public async editMessage(messageId: string, newText: string): Promise<{ success: boolean; error?: string }> {
     const route = await this.resolveMessageThreadKind(messageId);
     if (route.kind === 'unknown' || !route.threadId) return { success: false, error: route.error };
+    // Messenger only lets a message be edited for 15 minutes; it drops a later edit without an answer
+    const sentAt = Number((DatabaseService.getInstance().queryOne?.(
+      `SELECT timestamp FROM fb_messages WHERE id = ? AND account_id = ? LIMIT 1`, [messageId, this.accountId],
+    ) as { timestamp?: number } | undefined)?.timestamp) || 0;
+    if (sentAt && Date.now() - sentAt > FB_EDIT_WINDOW_MS) {
+      return { success: false, error: tr('Messenger chỉ cho sửa tin trong 15 phút sau khi gửi') };
+    }
     if (route.kind === 'user') {
       if (!this.isE2EEConnected()) return { success: false, error: tr('E2EE bridge chưa sẵn sàng.') };
       try {
         await this.e2eeBridge!.editE2EEMessage({ chatJid: normalizeChatJid(route.threadId), messageId, newText });
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    }
+    // Ordinary threads: LightSpeed (the GraphQL edit mutation is refused); GraphQL only without a bridge
+    if (this.e2eeBridge?.isAlive() && this.e2eeBridge.supportsCapability('editMessage')) {
+      try {
+        await this.e2eeBridge.editMessage({ messageId, newText });
         return { success: true };
       } catch (err: any) {
         return { success: false, error: err.message };
@@ -2966,6 +4549,15 @@ export class FacebookService {
   public async createPoll(threadId: string, question: string, options: string[]): Promise<{ success: boolean; pollId?: string; error?: string }> {
     const allowed = await this.requireGroupOperation(threadId, tr('Tạo khảo sát'));
     if (!allowed.success) return allowed;
+    // LightSpeed like Messenger itself (the GraphQL poll mutation is refused); the poll card arrives as a message
+    if (this.e2eeBridge?.isAlive() && this.e2eeBridge.supportsCapability('polls')) {
+      try {
+        await this.e2eeBridge.createPollLS({ threadId, question, options });
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    }
     return createPoll(this.requireSession(), threadId, question, options, this.httpsAgent);
   }
 
@@ -2973,8 +4565,8 @@ export class FacebookService {
     return votePoll(this.requireSession(), pollId, optionIds, this.httpsAgent);
   }
 
-  public async uploadAttachment(filePath: string): Promise<FBAttachmentUploadResult | null> {
-    return uploadAttachment(this.requireSession(), filePath, this.httpsAgent);
+  public async uploadAttachment(filePath: string, options?: { voiceClip?: boolean }): Promise<FBAttachmentUploadResult | null> {
+    return uploadAttachment(this.requireSession(), filePath, this.httpsAgent, options);
   }
 
   public async getThreadList(): Promise<FBThread[]> {
@@ -3199,6 +4791,8 @@ export class FacebookService {
       onWait?: (wait: PacerWait) => void;
       /** The newest known activity of the conversation (the first page of the sync) - used to detect that the machine is missing messages at the start of the conversation. */
       latestKnownMs?: number;
+      /** Messages of `threadId` are saved under this conversation (an encrypted group continuing an ordinary one). */
+      storeAs?: string;
     } = {},
   ): Promise<FbHistoryPageResult> {
     const cooldown = this.historyPacer.cooldownRemaining();
@@ -3212,9 +4806,19 @@ export class FacebookService {
     const id = String(threadId || '').replace(/@.*$/, '');
     if (!/^\d+$/.test(id)) return { success: false, code: 'FETCH', error: tr('Mã hội thoại không hợp lệ') };
     if (this.isE2EEThread(id)) {
-      return { success: false, code: 'E2EE', error: tr('Hội thoại mã hoá đầu cuối: Facebook không cho thiết bị mới tải tin cũ') };
+      // An encrypted group that continues an ordinary one (Messenger moved it to encryption): older pages come from the
+      // ordinary thread once the encrypted history ends (mautrix-meta history cutover), saved in this conversation
+      const openId = this.storedThreadKind(id) === 'group' ? DatabaseService.getInstance().getFBOpenThreadId(this.accountId, id) : '';
+      // Unlocked with the Messenger PIN: old encrypted messages come from the secure history backup
+      if (this.encryptedHistoryReady && this.e2eeBridge?.isAlive()) {
+        const encrypted = await this.fetchEncryptedHistoryPage(id, anchor);
+        if (!openId || !encrypted.success || encrypted.hasMoreBefore || Number(encrypted.count || 0) > 0) return encrypted;
+      } else if (!openId) {
+        return { success: false, code: 'E2EE', error: tr('Hội thoại mã hoá đầu cuối: mở khoá tin cũ bằng mã PIN Messenger để tải') };
+      }
+      return this.fetchHistoryPage(openId, anchor, range, { ...opts, storeAs: id });
     }
-    const ref = this.resolveHistoryAnchor(id, anchor, opts.latestKnownMs);
+    const ref = this.resolveHistoryAnchor(opts.storeAs || id, anchor, opts.latestKnownMs);
     if (ref) {
       const bridge = this.e2eeBridge;
       if (!bridge?.isAlive()) {
@@ -3238,6 +4842,8 @@ export class FacebookService {
         if (!(await sleepUnlessStopped(plan.ms, opts.shouldStop))) return { success: false, code: 'CANCELLED', error: tr('Đã huỷ') };
       }
     }
+    // The ordinary thread an encrypted group continues: without a LightSpeed anchor there is nothing older to fetch
+    if (!ref && opts.storeAs) return { success: true, saved: 0, received: 0, stored: 0, count: 0, hasMoreBefore: false, minTimestampMs: 0, source: 'lightspeed' };
     if (!ref) return this.fetchGraphQLHistoryPage(id, range);
     // The bridge may have been rebuilt during the rest → use the one currently running
     const liveBridge = this.e2eeBridge;
@@ -3266,7 +4872,8 @@ export class FacebookService {
       return { success: false, code: 'FETCH', error: message, source: 'lightspeed' };
     }
     this.historyPacer.recordResult(true, Date.now() - startedAt);
-    const messages = Array.isArray(page?.messages) ? page.messages : [];
+    const pageMessages = Array.isArray(page?.messages) ? page.messages : [];
+    const messages = opts.storeAs ? pageMessages.map(m => ({ ...m, threadId: opts.storeAs as any })) : pageMessages;
     const { stored, fresh, received } = this.persistBridgeMessages(messages, range);
     return {
       success: true,
@@ -3496,6 +5103,19 @@ export class FacebookService {
   }
 
   public async changeThreadName(threadId: string, name: string): Promise<boolean> {
+    const id = String(threadId || '').replace(/@.*$/, '');
+    // Messenger's encrypted socket has no rename for encrypted groups
+    if (this.storedThreadKind(id) === 'group' && this.isE2EEThread(id)) return false;
+    // LightSpeed like Messenger web (Facebook refuses more and more GraphQL mutations); GraphQL without a bridge
+    const bridge = this.e2eeBridge;
+    if (/^\d+$/.test(id) && bridge?.isAlive() && bridge.supportsCapability('renameGroup')) {
+      try {
+        await bridge.renameGroup({ threadId: id, name });
+        return true;
+      } catch (err: any) {
+        Logger.warn(`[FacebookService:${this.accountId}] LightSpeed rename failed, trying GraphQL: ${err?.message || err}`);
+      }
+    }
     return changeThreadName(this.requireSession(), threadId, name, this.httpsAgent);
   }
 
@@ -3524,12 +5144,40 @@ export class FacebookService {
 
   /** Blocks a user (N4) */
   public async blockUser(userId: string): Promise<{ success: boolean; error?: string }> {
-    return blockUser(this.requireSession(), userId, this.httpsAgent);
+    return this.setUserBlocked(userId, true);
+  }
+
+  /**
+   * Block / unblock through LightSpeed like Messenger web (mautrix-meta SetUserBlockStatusTask); the GraphQL mutation
+   * only when there is no bridge or LightSpeed failed. The conversation shows the blocked state at once.
+   */
+  private async setUserBlocked(userId: string, block: boolean): Promise<{ success: boolean; error?: string }> {
+    const id = String(userId || '').replace(/@.*$/, '');
+    const bridge = this.e2eeBridge;
+    let bridgeError = '';
+    if (/^\d+$/.test(id) && bridge?.isAlive() && bridge.supportsCapability('blockUser')) {
+      try {
+        await bridge.setUserBlock({ userId: id, block });
+        this.applyCannotReply(id, block ? 'blocked' : '');
+        return { success: true };
+      } catch (err: any) {
+        bridgeError = err?.message || String(err);
+        Logger.warn(`[FacebookService:${this.accountId}] LightSpeed ${block ? 'block' : 'unblock'} failed, trying GraphQL: ${bridgeError}`);
+      }
+    }
+    const result = block
+      ? await blockUser(this.requireSession(), id, this.httpsAgent)
+      : await unblockUser(this.requireSession(), id, this.httpsAgent);
+    if (result?.success) {
+      this.applyCannotReply(id, block ? 'blocked' : '');
+      return result;
+    }
+    return bridgeError ? { success: false, error: bridgeError } : result;
   }
 
   /** Unblocks a user (N4) */
   public async unblockUser(userId: string): Promise<{ success: boolean; error?: string }> {
-    return unblockUser(this.requireSession(), userId, this.httpsAgent);
+    return this.setUserBlocked(userId, false);
   }
 
   /** Changes the conversation theme (N1) */
@@ -3546,14 +5194,22 @@ export class FacebookService {
   public async addGroupAdmin(threadId: string, userId: string): Promise<{ success: boolean; error?: string }> {
     const allowed = await this.requireGroupOperation(threadId, tr('Thêm quản trị viên'));
     if (!allowed.success) return allowed;
-    return addGroupAdmin(this.requireSession(), threadId, userId);
+    if (this.e2eeBridge?.isAlive() && this.e2eeBridge.supportsCapability('groupMembers')) {
+      const viaBridge = await this.setGroupAdminLS(threadId, userId, true);
+      if (viaBridge.success) return { success: true };
+    }
+    return addGroupAdmin(this.requireSession(), threadId, userId, this.httpsAgent);
   }
 
   /** Removes a group admin (N3) */
   public async removeGroupAdmin(threadId: string, userId: string): Promise<{ success: boolean; error?: string }> {
     const allowed = await this.requireGroupOperation(threadId, tr('Xóa quản trị viên'));
     if (!allowed.success) return allowed;
-    return removeGroupAdmin(this.requireSession(), threadId, userId);
+    if (this.e2eeBridge?.isAlive() && this.e2eeBridge.supportsCapability('groupMembers')) {
+      const viaBridge = await this.setGroupAdminLS(threadId, userId, false);
+      if (viaBridge.success) return { success: true };
+    }
+    return removeGroupAdmin(this.requireSession(), threadId, userId, this.httpsAgent);
   }
 
   /** Turns member approval on / off (N3) */
@@ -3600,8 +5256,9 @@ export class FacebookService {
     return this.acceptRepeatable(reactionRepeat(messageId, userId, emoji));
   }
 
+  /** Save one person's reaction on a message; an empty emoji removes their reaction. */
   private persistReactionToDB(messageId: string, userId: string, emoji: string): void {
-    if (!messageId || !userId || !emoji) return;
+    if (!messageId || !userId) return;
     try {
       const db = DatabaseService.getInstance();
       const row = db.queryOne<any>(`SELECT reactions FROM fb_messages WHERE id = ?`, [messageId]);

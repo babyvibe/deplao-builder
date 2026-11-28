@@ -279,6 +279,7 @@ export class FacebookE2EESender {
     chatJid: string | number,
     audioPath: string,
     mimeType?: string,
+    voice?: { ptt: boolean; durationSec?: number },
   ): Promise<{ success: boolean; messageId?: string; timestamp?: number; error?: string }> {
     try {
       const bridge = this.getBridge();
@@ -286,6 +287,7 @@ export class FacebookE2EESender {
         chatJid: normalizeChatJid(chatJid),
         audioPath,
         mimeType,
+        ...(voice?.ptt ? { ptt: true, durationSec: voice.durationSec } : {}),
       });
       return { success: true, messageId: result.messageId, timestamp: result.timestampMs };
     } catch (err: any) {
@@ -319,15 +321,18 @@ export class FacebookE2EESender {
    */
   public async sendSticker(
     chatJid: string | number,
-    stickerId: string,
-  ): Promise<{ success: boolean; error?: string }> {
+    /** Sticker image on disk: encrypted chats carry the image itself, not a sticker id. */
+    localPath: string,
+    mimeType?: string,
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
       const bridge = this.getBridge();
-      await bridge.sendE2EESticker({
+      const result = await bridge.sendE2EESticker({
         chatJid: normalizeChatJid(chatJid),
-        stickerId,
+        localPath,
+        mimeType,
       });
-      return { success: true };
+      return { success: true, ...(result?.messageId ? { messageId: result.messageId } : {}) };
     } catch (err: any) {
       return { success: false, error: err.message || 'E2EE sticker send error' };
     }

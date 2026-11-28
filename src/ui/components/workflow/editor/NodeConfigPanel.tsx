@@ -216,13 +216,13 @@ export const CONFIG_SCHEMA: Record<string, Field[]> = {
   'action.forwardCrossChannel': [
     { key: 'sourceChannel', label: tr('Kênh tài khoản nguồn'), type: 'select', options: [
       { value: '', label: tr('Tự lấy từ trigger workflow') },
-      { value: 'zalo', label: 'Zalo' }, { value: 'facebook', label: 'Facebook' }, { value: 'telegram_user', label: tr('Telegram User') }, { value: 'telegram_bot', label: 'Telegram Bot' },
+      { value: 'zalo', label: 'Zalo' }, { value: 'facebook', label: 'Facebook Messenger' }, { value: 'telegram_user', label: tr('Telegram User') }, { value: 'telegram_bot', label: 'Telegram Bot' },
     ], clearsKeyOnChange: ['sourceAccountId'] },
     { key: 'sourceAccountId', label: tr('Tài khoản nguồn'), type: 'account-picker', channelFromKey: 'sourceChannel', placeholder: tr('Để trống = tài khoản kích hoạt workflow') },
     { key: 'sourceChatId', label: tr('Chat nguồn'), type: 'text', placeholder: '{{ $trigger.chatId }}', templateVars: ['$trigger.chatId'] },
     { key: 'messageId', label: tr('Tin nhắn cần chuyển tiếp'), type: 'text', placeholder: '{{ $trigger.messageId }}', desc: tr('Dùng ID từ trigger để chuyển tiếp đúng tin vừa nhận.'), templateVars: ['$trigger.messageId'] },
     { key: 'targetChannel', label: tr('Kênh đích'), type: 'select', options: [
-      { value: 'zalo', label: 'Zalo' }, { value: 'facebook', label: 'Facebook' }, { value: 'telegram_user', label: tr('Telegram User') }, { value: 'telegram_bot', label: 'Telegram Bot' },
+      { value: 'zalo', label: 'Zalo' }, { value: 'facebook', label: 'Facebook Messenger' }, { value: 'telegram_user', label: tr('Telegram User') }, { value: 'telegram_bot', label: 'Telegram Bot' },
     ], clearsKeyOnChange: ['targetAccountId', 'targetChatId'] },
     { key: 'targetAccountId', label: tr('Tài khoản gửi ở kênh đích'), type: 'account-picker', channelFromKey: 'targetChannel', placeholder: tr('Chọn tài khoản đích') },
     { key: 'targetChatId', label: tr('Chat nhận'), type: 'contact-picker', contactType: 'all', channelFromKey: 'targetChannel', accountIdFromKey: 'targetAccountId', placeholder: tr('Chọn chat thuộc tài khoản đích') },

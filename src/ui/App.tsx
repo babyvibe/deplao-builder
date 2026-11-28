@@ -10,6 +10,7 @@ import { TelegramPostDiscussionHost } from './components/chat/telegram/posts/Tel
 import { TelegramMiniAppHost } from './components/chat/telegram/miniapp/TelegramMiniApp';
 import { ChatLinkHost } from './components/chat/links/ChatLinkHost';
 import ConversationInfo from './components/chat/info/ConversationInfo';
+import { RenderErrorBoundary } from './components/app/RenderErrorBoundary';
 import GroupBoardPanel from './components/chat/groups/GroupBoardPanel';
 import IntegrationQuickPanel from './components/integration/IntegrationQuickPanel';
 import PluginPagesHost from './components/plugins/runtime/PluginPagesHost';
@@ -39,6 +40,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { useCRMStore } from './store/crm/crmStore';
 import { useZaloEvents } from './hooks/chat/useZaloEvents';
 import { useChatEvents } from './hooks/chat/useChatEvents';
+import { useMessagesSyncedReload } from './hooks/chat/useMessagesSyncedReload';
+import { useFacebookViewingChat } from './hooks/chat/useFacebookViewingChat';
 import useIsMobile from './hooks/layout/useIsMobile';
 import { useCampaignAutoStopNotice } from './hooks/crm/useCampaignAutoStopNotice';
 import ipc, { buildZaloAuth } from './lib/ipc';
@@ -532,6 +535,10 @@ export default function App() {
 
   // Register unified multi-channel event listeners (FB → chatStore)
   useChatEvents();
+  // Employee: a bulk sync finished on the Boss (Zalo phone, Facebook history, Telegram) → reload the list + the open conversation
+  useMessagesSyncedReload();
+  // The Facebook chat on screen → main (encrypted chats exchange typing only while one is shown)
+  useFacebookViewingChat();
 
   const reconnectAccountNow = useCallback(async (
     acc: { zalo_id: string; cookies: string; imei: string; user_agent: string },
@@ -1709,6 +1716,8 @@ export default function App() {
     if (showAIQuickPanel) toggleAIQuickPanel();
     if (activePluginPanel) setActivePluginPanel(null);
   };
+  // Render error boundaries of the chat screen clear themselves when another account / conversation opens
+  const chatResetKeys = [activeAccountId, activeThreadId];
 
   // ─── Lock screen gate: block entire app until unlocked ───────────────────
   if (lockEnabled && isLocked) {
@@ -1751,7 +1760,9 @@ export default function App() {
               {(!isMobile || !mobileShowChat) && (
                 <>
                   <div data-sidebar data-sidebar-width={sidebarWidth} style={{ width: sidebarWidth, flexShrink: 0 }} className="relative">
-                    <ConversationList />
+                    <RenderErrorBoundary name="conversation-list" resetKeys={[activeAccountId]}>
+                      <ConversationList />
+                    </RenderErrorBoundary>
                   </div>
                   {/* Resizable divider */}
                   {!isMobile && (
@@ -1764,19 +1775,28 @@ export default function App() {
                 </>
               )}
               {(!isMobile || mobileShowChat) && (
-                <div className="flex flex-col flex-1 overflow-hidden">
+                // data-composer-focus-return: clicks on controls here give the caret back to the composer (lib/chat/composer/composerFocus)
+                <div className="flex flex-col flex-1 overflow-hidden" data-composer-focus-return>
                   {/* Chat header with title + info toggle */}
-                  <ChatHeader />
+                  <RenderErrorBoundary name="chat-header" variant="inline" resetKeys={chatResetKeys}>
+                    <ChatHeader />
+                  </RenderErrorBoundary>
                   <div className="flex flex-1 overflow-hidden relative">
                     {/* Chat content */}
                     <div className="flex flex-col flex-1 overflow-hidden relative"
                          onClick={() => {
                            if (rightInfoOverlayOpen) closeRightInfoOverlay();
                          }}>
-                      <ChatWindow />
+                      <RenderErrorBoundary name="chat-window" resetKeys={chatResetKeys}>
+                        <ChatWindow />
+                      </RenderErrorBoundary>
                       {/* Channel post comments are open: that section has its own composer (sends to the discussion group) → hide the channel's
                           composer so only one input accepts paste / drag and drop / quotes; the draft is still kept in the store */}
-                      {!postDiscussionOpen && <MessageInput />}
+                      {!postDiscussionOpen && (
+                        <RenderErrorBoundary name="composer" variant="inline" resetKeys={chatResetKeys}>
+                          <MessageInput />
+                        </RenderErrorBoundary>
+                      )}
                       {/* Telegram channel post comments: overlay on the channel + composer (the channel keeps its scroll position below) */}
                       <TelegramPostDiscussionHost activeAccountId={activeAccountId} activeThreadId={activeThreadId} />
                     </div>
@@ -1787,27 +1807,29 @@ export default function App() {
                       return isGroupThread ? (
                         <div className="absolute inset-y-0 right-0 z-50 w-80 max-w-[92vw] border-l border-border bg-card flex flex-col overflow-hidden shadow-2xl"
                               onClick={(e) => e.stopPropagation()}>
-                          <GroupBoardPanel
-                            zaloId={activeAccountId}
-                            threadId={activeThreadId}
-                            onBack={() => setShowGroupBoard(false)}
-                            onCreateNote={() => {
-                              window.dispatchEvent(new CustomEvent('groupinfo:createNote', { detail: { groupId: activeThreadId } }));
-                            }}
-                            onScrollToMsg={async (msgId) => {
-                              setShowGroupBoard(false);
-                              window.dispatchEvent(new CustomEvent('chat:jumpToMessage', {
-                                detail: {
-                                  accountId: activeAccountId,
-                                  threadId: activeThreadId,
-                                  messageId: msgId,
-                                },
-                              }));
-                            }}
-                            onNoteClick={(note) => {
-                              window.dispatchEvent(new CustomEvent('groupinfo:viewNote', { detail: note }));
-                            }}
-                          />
+                          <RenderErrorBoundary name="group-board" variant="panel" resetKeys={chatResetKeys} onClose={closeRightInfoOverlay}>
+                            <GroupBoardPanel
+                              zaloId={activeAccountId}
+                              threadId={activeThreadId}
+                              onBack={() => setShowGroupBoard(false)}
+                              onCreateNote={() => {
+                                window.dispatchEvent(new CustomEvent('groupinfo:createNote', { detail: { groupId: activeThreadId } }));
+                              }}
+                              onScrollToMsg={async (msgId) => {
+                                setShowGroupBoard(false);
+                                window.dispatchEvent(new CustomEvent('chat:jumpToMessage', {
+                                  detail: {
+                                    accountId: activeAccountId,
+                                    threadId: activeThreadId,
+                                    messageId: msgId,
+                                  },
+                                }));
+                              }}
+                              onNoteClick={(note) => {
+                                window.dispatchEvent(new CustomEvent('groupinfo:viewNote', { detail: note }));
+                              }}
+                            />
+                          </RenderErrorBoundary>
                         </div>
                       ) : null;
                     })()}
@@ -1815,7 +1837,9 @@ export default function App() {
                     {showConversationInfo && activeThreadId && (
                         <div className="absolute inset-y-0 right-0 z-40 max-w-[92vw] overflow-hidden"
                             onClick={(e) => e.stopPropagation()}>
-                          <ConversationInfo />
+                          <RenderErrorBoundary name="conversation-info" variant="panel" resetKeys={chatResetKeys} onClose={closeRightInfoOverlay}>
+                            <ConversationInfo />
+                          </RenderErrorBoundary>
                         </div>
                     )}
                     {/* Right panel: integration quick panel */}
@@ -1824,21 +1848,23 @@ export default function App() {
                             className="absolute inset-y-0 right-0 z-40 max-w-[92vw] overflow-hidden"
                             onClick={(e) => e.stopPropagation()}
                         >
-                          <IntegrationQuickPanel
-                              onClose={toggleIntegrationQuickPanel}
-                              contextPhone={(() => {
-                                const c = activeContact;
-                                const raw = c?.phone || '';
-                                if (!raw) return '';
-                                const digits = raw.startsWith('+') ? raw.slice(1) : raw;
-                                if (digits.startsWith('84') && digits.length >= 11) return '0' + digits.slice(2);
-                                return raw;
-                              })()}
-                              contextName={(() => {
-                                const c = activeContact;
-                                return c?.alias || c?.display_name || '';
-                              })()}
-                          />
+                          <RenderErrorBoundary name="integration-panel" variant="panel" resetKeys={chatResetKeys} onClose={closeRightInfoOverlay}>
+                            <IntegrationQuickPanel
+                                onClose={toggleIntegrationQuickPanel}
+                                contextPhone={(() => {
+                                  const c = activeContact;
+                                  const raw = c?.phone || '';
+                                  if (!raw) return '';
+                                  const digits = raw.startsWith('+') ? raw.slice(1) : raw;
+                                  if (digits.startsWith('84') && digits.length >= 11) return '0' + digits.slice(2);
+                                  return raw;
+                                })()}
+                                contextName={(() => {
+                                  const c = activeContact;
+                                  return c?.alias || c?.display_name || '';
+                                })()}
+                            />
+                          </RenderErrorBoundary>
                         </div>
                     )}
                     {/* Right panel: AI quick panel */}
@@ -1847,7 +1873,9 @@ export default function App() {
                             className="absolute inset-y-0 right-0 z-40 max-w-[92vw] overflow-hidden"
                             onClick={(e) => e.stopPropagation()}
                         >
-                          <AIQuickPanel onClose={toggleAIQuickPanel} />
+                          <RenderErrorBoundary name="ai-panel" variant="panel" resetKeys={chatResetKeys} onClose={closeRightInfoOverlay}>
+                            <AIQuickPanel onClose={toggleAIQuickPanel} />
+                          </RenderErrorBoundary>
                         </div>
                     )}
                     {/* Right panel: plugin (contributes.chatPanels) */}
@@ -1856,7 +1884,9 @@ export default function App() {
                             className="absolute inset-y-0 right-0 z-40 max-w-[92vw] overflow-hidden"
                             onClick={(e) => e.stopPropagation()}
                         >
-                          <PluginChatPanel />
+                          <RenderErrorBoundary name="plugin-panel" variant="panel" resetKeys={chatResetKeys} onClose={closeRightInfoOverlay}>
+                            <PluginChatPanel />
+                          </RenderErrorBoundary>
                         </div>
                     )}
                   </div>
@@ -1865,17 +1895,20 @@ export default function App() {
             </>
           )}
 
-          <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner size={8} /></div>}>
-            {view === 'settings' && <div className="flex-1 h-full overflow-hidden"><Settings /></div>}
-            {view === 'crm' && <div className="flex-1 h-full overflow-hidden"><CRMPage /></div>}
-            {view === 'workflow' && <div className="flex-1 h-full overflow-hidden"><WorkflowPage /></div>}
-            {view === 'integration' && <div className="flex-1 h-full overflow-hidden"><IntegrationPage /></div>}
-            {view === 'analytics' && <div className="flex-1 h-full overflow-hidden"><AnalyticsPage /></div>}
-            {view === 'erp' && <div className="flex-1 h-full overflow-hidden"><ErpPage /></div>}
-            {view === 'dashboard' && <Dashboard />}
-            {/* Plugin page: keep the opened iframe when switching views (hidden with CSS) */}
-            <PluginPagesHost />
-          </Suspense>
+          {/* A page that fails to render (or to load) shows a retry screen; opening another page clears it */}
+          <RenderErrorBoundary name={`page:${view}`} resetKeys={[view]}>
+            <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner size={8} /></div>}>
+              {view === 'settings' && <div className="flex-1 h-full overflow-hidden"><Settings /></div>}
+              {view === 'crm' && <div className="flex-1 h-full overflow-hidden"><CRMPage /></div>}
+              {view === 'workflow' && <div className="flex-1 h-full overflow-hidden"><WorkflowPage /></div>}
+              {view === 'integration' && <div className="flex-1 h-full overflow-hidden"><IntegrationPage /></div>}
+              {view === 'analytics' && <div className="flex-1 h-full overflow-hidden"><AnalyticsPage /></div>}
+              {view === 'erp' && <div className="flex-1 h-full overflow-hidden"><ErpPage /></div>}
+              {view === 'dashboard' && <Dashboard />}
+              {/* Plugin page: keep the opened iframe when switching views (hidden with CSS) */}
+              <PluginPagesHost />
+            </Suspense>
+          </RenderErrorBoundary>
         </div>
       </div>
 

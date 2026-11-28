@@ -9,7 +9,7 @@ import { buildStarredSnapshot, starKey } from '@/lib/chat/messages/starredMessag
 import { myDocumentsThreadId } from '@/lib/chat/zalo/myDocuments';
 import { buildPinFromMsg } from '../../messages/PinnedMessages';
 import * as channelIpc from '../../../../lib/channels/channelIpc';
-import { CHANNEL, isNonZalo, isZalo } from '@/lib/channels/channelHelper';
+import { CHANNEL, isFacebook, isNonZalo, isZalo } from '@/lib/channels/channelHelper';
 import { EMOJI_TO_REACTION } from '@/lib/chat/messages/emojiUtils';
 import { markLocalReaction } from '@/lib/chat/reactions/localReactionRegistry';
 import DataAccessor from '@/lib/data/DataAccessor';
@@ -57,11 +57,13 @@ export function useMessageActions(deps: {
       const ch = msg.channel || contact?.channel || CHANNEL.ZALO;
 
       if (isNonZalo(ch)) {
-        await channelIpc.unsendMessage(ch, {
+        const unsendRes = await channelIpc.unsendMessage(ch, {
           accountId: activeAccountId || '',
           messageId: msg.msg_id,
           threadId: msg.thread_id,
         });
+        // Adapters answer { success: false } instead of throwing: must not mark the message as recalled
+        if (unsendRes?.success === false) throw new Error(unsendRes.error || tr('Không thu hồi được tin nhắn'));
       } else if (isZalo(ch)) {
       const isMsgSent = !!msg.is_sent;
       const messagePayload = JSON.stringify({
@@ -90,14 +92,19 @@ export function useMessageActions(deps: {
   };
 
   const handleDelete = async (msg: any) => {
-    const auth = getAuth();
-    if (!auth) return;
     try {
       const contact = contactList.find(c => c.contact_id === msg.thread_id);
       const ch = msg.channel || contact?.channel || CHANNEL.ZALO;
-      if (isNonZalo(ch)) {
-        await (channelIpc as any).unsendMessage(ch, { accountId: activeAccountId || '', messageId: msg.msg_id, threadId: msg.thread_id });
-      } else {
+      // Facebook: ordinary messages are removed for this account on Messenger too (the other person keeps them);
+      // encrypted ones have no such call and are hidden in Deplao only. Telegram: hidden in Deplao only (supergroups have
+      // no "delete for me"; the unsend call would remove it for everyone).
+      if (isFacebook(ch)) {
+        if (!activeAccountId) return;
+        const res = await ipc.fb?.deleteMessageForMe({ accountId: activeAccountId, threadId: msg.thread_id, messageId: msg.msg_id });
+        if (res && res.success === false) throw new Error(res.error || tr('Messenger từ chối'));
+      } else if (!isNonZalo(ch)) {
+      const auth = getAuth();
+      if (!auth) return;
       const messagePayload = JSON.stringify({
         data: { msgId: msg.msg_id, cliMsgId: msg.cli_msg_id || msg.msg_id, uidFrom: msg.sender_id },
         threadId: msg.thread_id,
@@ -128,6 +135,33 @@ export function useMessageActions(deps: {
     }
   };
 
+  /** My reaction on a message before an optimistic change ('' = none). Messenger keeps one per person. */
+  const ownReactionOf = (msg: any, accId: string): string => {
+    let parsed: any = msg?.reactions;
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed || '{}'); } catch { parsed = {}; }
+    }
+    const byEmoji = parsed?.emoji && typeof parsed.emoji === 'object' ? parsed.emoji : {};
+    for (const [icon, stats] of Object.entries<any>(byEmoji)) {
+      if (Number(stats?.users?.[accId]) > 0) return icon;
+    }
+    return '';
+  };
+
+  /** Messenger refused a reaction change: my previous reaction comes back (screen + DB) and the user is told. */
+  const revertFacebookReaction = (msg: any, accId: string, previous: string, removing: boolean, error?: string) => {
+    const store = useChatStore.getState();
+    store.updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, '');
+    if (previous) store.updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, previous, 'set');
+    const save = (value: string) =>
+      DataAccessor.updateReaction?.({ zaloId: accId, msgId: msg.msg_id, threadId: msg.thread_id, userId: accId, emoji: value });
+    void Promise.resolve(save('')).then(() => (previous ? save(previous) : undefined)).catch(() => {});
+    const reason = error || tr('lỗi không xác định');
+    showNotification(removing
+      ? tr('Không gỡ được cảm xúc trên Messenger: {{v1}}', { v1: reason })
+      : tr('Không thả được cảm xúc trên Messenger: {{v1}}', { v1: reason }), 'error');
+  };
+
   const handleReact = async (msg: any, emoji: string) => {
     try {
       const contact = contactList.find(c => c.contact_id === msg.thread_id);
@@ -135,12 +169,13 @@ export function useMessageActions(deps: {
 
       // Optimistic update: show reaction immediately in UI
       const accId = activeAccountId || '';
+      const previousOwn = isFacebook(ch) ? ownReactionOf(msg, accId) : '';
       // Telegram: SendReaction REPLACES your own reaction (one per person) and the counts are the totals Telegram returns, main
       // process saves the official counts from the send result. It does not add into the DB the way Zalo does (it used to add onto a message
       // with the same ID in another conversation → "1 đống icon" (a pile of icons)).
       const isTelegramUserMsg = ch === 'telegram_user';
-      // Telegram (user and bot): one reaction per person, a new one REPLACES it; Zalo: every tap adds +1
-      const replacesOwn = isTelegramUserMsg || ch === 'telegram_bot';
+      // Telegram (user and bot), Messenger: one reaction per person, a new one REPLACES it; Zalo: every tap adds +1
+      const replacesOwn = isTelegramUserMsg || ch === 'telegram_bot' || isFacebook(ch);
       useChatStore.getState().updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, emoji, replacesOwn ? 'set' : 'accumulate');
 
       if (!isTelegramUserMsg) {
@@ -148,19 +183,20 @@ export function useMessageActions(deps: {
         markLocalReaction(accId, msg.msg_id, emoji);
         const save = (value: string) =>
           DataAccessor.updateReaction?.({ zaloId: accId, msgId: msg.msg_id, threadId: msg.thread_id, userId: accId, emoji: value });
-        // Telegram Bot: the DB adds up like Zalo → remove the bot's own reaction first, then save the new one
-        if (ch === 'telegram_bot') void Promise.resolve(save('')).then(() => save(emoji)).catch(() => {});
+        // Telegram Bot / Messenger: the DB adds up like Zalo → remove my own reaction first, then save the new one
+        if (replacesOwn) void Promise.resolve(save('')).then(() => save(emoji)).catch(() => {});
         else save(emoji)?.catch(() => {});
       }
 
       if (isNonZalo(ch)) {
-        await channelIpc.addReaction(ch, {
+        const res: any = await channelIpc.addReaction(ch, {
           accountId: accId,
           messageId: msg.msg_id,
           emoji,
           threadId: msg.thread_id,
           action: 'add',
         });
+        if (isFacebook(ch) && res?.success === false) revertFacebookReaction(msg, accId, previousOwn, false, res.error);
       } else if (isZalo(ch)) {
         const auth = getAuth();
         if (!auth) return;
@@ -184,6 +220,7 @@ export function useMessageActions(deps: {
 
       // Optimistic update: remove reaction immediately in UI
       const accId = activeAccountId || '';
+      const previousOwn = isFacebook(ch) ? ownReactionOf(msg, accId) : '';
       useChatStore.getState().updateMessageReaction(accId, msg.thread_id, msg.msg_id, accId, '');
       // Always save the removal (it used to be skipped, so reopening the conversation brought the reaction back). A repeated removal with the Zalo echo is harmless.
       // Telegram: the main process saves the official counts from the send result.
@@ -192,13 +229,14 @@ export function useMessageActions(deps: {
       }
 
       if (isNonZalo(ch)) {
-        await channelIpc.addReaction(ch, {
+        const res: any = await channelIpc.addReaction(ch, {
           accountId: accId,
           messageId: msg.msg_id,
           emoji: '',
           threadId: msg.thread_id,
           action: 'remove',
         });
+        if (isFacebook(ch) && res?.success === false) revertFacebookReaction(msg, accId, previousOwn, true, res.error);
       } else if (isZalo(ch)) {
         const auth = getAuth();
         if (!auth) return;
@@ -307,6 +345,8 @@ export function useMessageActions(deps: {
     // Telegram pin to local-only based on the Zalo rule.
     const alreadyPinned = pins.some(p => p.msg_id === msg.msg_id);
     const overLimit = isZalo(ch) && !alreadyPinned && pins.length >= 3;
+    // Messenger accepts no pin from Deplao (its pin mutation is refused): the pin is kept in Deplao only
+    const facebookLocalOnly = isFacebook(ch);
 
     try {
       // Server-side pin for Telegram
@@ -332,6 +372,8 @@ export function useMessageActions(deps: {
       if (overLimit) {
         // The Zalo API only supports 3 pinned messages: pinning succeeds in the app but does not sync to the API
         showNotification(tr('Đã ghim (chỉ áp dụng trong app - Zalo giới hạn 3 tin ghim)'), 'success');
+      } else if (facebookLocalOnly) {
+        showNotification(tr('Đã ghim trong Deplao (Messenger chưa nhận ghim từ Deplao)'), 'success');
       } else {
         showNotification(tr('Đã ghim tin nhắn'), 'success');
       }

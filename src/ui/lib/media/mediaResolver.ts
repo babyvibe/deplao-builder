@@ -170,7 +170,8 @@ export function getThumbUrl(msg: MsgLike): string {
 export function getFileMetadata(msg: MsgLike): FileMetadata {
   if (isFacebook(msg.channel) || isTelegram(msg.channel)) {
     const att = getFirstAttachment(msg, 'file') || getFirstAttachment(msg);
-    const name = att?.name || att?.file_name || '';
+    // History rows (GraphQL / bridge) keep the name as fileName
+    const name = att?.name || att?.file_name || (att as any)?.fileName || '';
     let title = name;
     if (!title || title === 'File') {
       try {

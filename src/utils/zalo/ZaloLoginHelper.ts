@@ -16,6 +16,8 @@ import { refreshZaloAutoDelete } from "../../services/zalo/zaloAutoDeleteSync";
 import { refreshZaloHidden, zaloHiddenApiOf } from "../../services/zalo/zaloHiddenConversations";
 import { describeZaloSocketRetry, installZaloListenerRetryGuard } from "./zaloListenerRetry";
 import { isQrLoginCancelled, qrLoginErrorText } from "../../shared/zalo/zaloQrLogin";
+import { rememberZaloApiVersion, zaloApiVersionOptions } from "./zaloApiVersion";
+import { refreshZaloProfiles } from "../../services/zalo/zaloProfileRefresh";
 import { tr } from '../../shared/i18n';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -32,6 +34,7 @@ class ZaloLoginHelper {
             selfListen: options.selfListen !== undefined ? options.selfListen : true,
             checkUpdate: options.checkUpdate !== undefined ? options.checkUpdate : false,
             logging: options.logging !== undefined ? options.logging : false,
+            ...zaloApiVersionOptions(),
             /**
              * imageMetadataGetter: required for uploadAttachment with photos (jpg/png/webp/gif) to work.
              * Uses image-size to read width/height and fs.stat to get the size.
@@ -160,6 +163,7 @@ class ZaloLoginHelper {
         // Cleanup
         ZaloLoginHelper.activeQRAbortFns.delete(tempId);
 
+        rememberZaloApiVersion(api);
         const context = api.getContext();
         const zaloId = api.getOwnId();
 
@@ -552,6 +556,7 @@ class ZaloLoginHelper {
 
         try {
             const api = await zalo.login(credentials as Credentials);
+            rememberZaloApiVersion(api);
             const zaloId = api.getOwnId();
 
             if (!zaloId) throw new Error(tr('Login thất bại: không lấy được zaloId'));
@@ -611,6 +616,8 @@ class ZaloLoginHelper {
                 if (!api) void refreshZaloBusinessFlag(zaloId, syncApi);
                 void refreshZaloAutoDelete(zaloId, syncApi);
                 void refreshZaloHidden(zaloId, zaloHiddenApiOf(syncApi));
+                // Expired profile pictures (Zalo links last ~2 months) / missing names of contacts and group members
+                refreshZaloProfiles(zaloId, syncApi, () => ConnectionManager.getConnection(zaloId) === connection);
             });
             return true;
         } catch (error: any) {
@@ -708,7 +715,9 @@ class ZaloLoginHelper {
             userAgent: auth.userAgent,
         };
 
-        return await zalo.login(credentials as Credentials);
+        const api = await zalo.login(credentials as Credentials);
+        rememberZaloApiVersion(api);
+        return api;
     }
 
     /** ID of the account's "My Documents" conversation (zca-js `loginInfo.send2me_id`), '' if the session has none. */

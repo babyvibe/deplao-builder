@@ -40,6 +40,10 @@ export class FacebookAdapter extends BaseChannelAdapter {
     const replyToMessageId = this.extractReplyTo(params.quote);
     const inferredTypeChat = this.typeChat(params.threadType);
     const hasCallerTypeChat = Object.prototype.hasOwnProperty.call(params.options || {}, 'typeChat');
+    // @mentions picked in the composer ({ uid, pos, len }) → Messenger ranges; "@all" has no Messenger equivalent
+    const mentions = (Array.isArray((params as any).mentions) ? (params as any).mentions : [])
+      .map((m: any) => ({ userId: String(m?.uid ?? m?.userId ?? ''), offset: Number(m?.pos ?? m?.offset), length: Number(m?.len ?? m?.length) }))
+      .filter((m: { userId: string; offset: number; length: number }) => /^\d+$/.test(m.userId) && m.offset >= 0 && m.length > 0);
     return ipc.fb?.sendMessage({
       accountId: params.accountId,
       threadId: params.threadId,
@@ -48,6 +52,7 @@ export class FacebookAdapter extends BaseChannelAdapter {
         ...params.options,
         ...(!hasCallerTypeChat && inferredTypeChat !== undefined ? { typeChat: inferredTypeChat } : {}),
         ...(replyToMessageId ? { replyToMessageId } : {}),
+        ...(mentions.length ? { mentions } : {}),
       },
     }) ?? { success: false, error: 'FB IPC not available' };
   }
@@ -63,9 +68,12 @@ export class FacebookAdapter extends BaseChannelAdapter {
       ...(typeChat !== undefined ? { typeChat } : {}),
       // Facebook only accepts these four MIME routes; Telegram-specific
       // media types are sent as a normal file when crossing channels.
-      fileType: ['image', 'video', 'audio', 'file'].includes(params.fileType || '')
-        ? params.fileType as 'image' | 'video' | 'audio' | 'file'
-        : 'file',
+      // 'voice' = in-app recording → audio sent as a Messenger voice message
+      fileType: params.fileType === 'voice' ? 'audio'
+        : ['image', 'video', 'audio', 'file'].includes(params.fileType || '')
+          ? params.fileType as 'image' | 'video' | 'audio' | 'file'
+          : 'file',
+      ...(params.fileType === 'voice' ? { voice: true } : {}),
       ...(replyToMessageId ? { replyToMessageId } : {}),
       ...(params.libraryUuid ? { _libraryUuid: params.libraryUuid } : {}),
     }) ?? { success: false, error: 'FB IPC not available' };
@@ -213,5 +221,34 @@ export class FacebookAdapter extends BaseChannelAdapter {
       question: params.question,
       options: params.options,
     }) ?? { success: false, error: 'FB IPC not available' };
+  }
+
+  // ─── Group members (Messenger LightSpeed tasks through the bridge) ─────────────
+  // Same method names as the Telegram adapter: GroupInfoPanel / AddMemberToGroupModal call them for non-Zalo channels.
+
+  async addMember(params: { accountId: string; threadId: string; userId: string }): Promise<ActionResult> {
+    return ipc.fb?.addGroupMembers({ accountId: params.accountId, threadId: params.threadId, userIds: [params.userId] })
+      ?? { success: false, error: 'FB IPC not available' };
+  }
+
+  async removeMember(params: { accountId: string; threadId: string; userId: string }): Promise<ActionResult> {
+    return ipc.fb?.removeGroupMember({ accountId: params.accountId, threadId: params.threadId, userId: params.userId })
+      ?? { success: false, error: 'FB IPC not available' };
+  }
+
+  async promoteMember(params: { accountId: string; threadId: string; userId: string; isAdmin: boolean }): Promise<ActionResult> {
+    const call = params.isAdmin ? ipc.fb?.addGroupAdmin : ipc.fb?.removeGroupAdmin;
+    return call?.({ accountId: params.accountId, threadId: params.threadId, userId: params.userId })
+      ?? { success: false, error: 'FB IPC not available' };
+  }
+
+  async leaveGroup(params: { accountId: string; threadId: string }): Promise<ActionResult> {
+    return ipc.fb?.leaveGroup({ accountId: params.accountId, threadId: params.threadId })
+      ?? { success: false, error: 'FB IPC not available' };
+  }
+
+  async setGroupAvatar(params: { accountId: string; threadId: string; photoPath: string }): Promise<ActionResult> {
+    return ipc.fb?.setGroupPhoto({ accountId: params.accountId, threadId: params.threadId, photoPath: params.photoPath })
+      ?? { success: false, error: 'FB IPC not available' };
   }
 }

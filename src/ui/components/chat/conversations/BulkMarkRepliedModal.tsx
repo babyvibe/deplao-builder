@@ -35,7 +35,7 @@ interface UnrepliedConversation {
 
 /** Number of conversations sent per command (a list of ids in one command / one REST request). */
 const MARK_CHUNK = 200;
-const CHANNEL_NAME: Record<string, string> = { zalo: 'Zalo', facebook: 'Facebook', telegram_user: 'Telegram', telegram_bot: 'Telegram Bot' };
+const CHANNEL_NAME: Record<string, string> = { zalo: 'Zalo', facebook: 'Facebook Messenger', telegram_user: 'Telegram', telegram_bot: 'Telegram Bot' };
 
 export default function BulkMarkRepliedModal({ accountIds, scopeLabel, onClose }: Props) {
   const [preset, setPreset] = useState<AutoReadPreset>('all');

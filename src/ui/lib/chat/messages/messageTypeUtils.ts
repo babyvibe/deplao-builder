@@ -2,6 +2,7 @@
  * messageTypeUtils.ts - Helpers that determine the message type (message type detection)
  * Shared by ChatWindow, MessageBubbles, and other components.
  */
+import { documentAttachment, isImageDocumentAttachment, isSvgDocumentAttachment } from '../../../../shared/chat/imageDocument';
 
 /** Checks whether the message is a contact card (chat.recommended) */
 export function isCardType(msgType: string, content: string): boolean {
@@ -65,24 +66,16 @@ export function isMediaType(msgType: string, content: string, attachmentsStr?: s
   if (msgType === 'chat.voice' || msgType === 'audio' || msgType === 'voice') return false; // voice is handled separately
   if (msgType === 'photo' || msgType === 'image' || msgType === 'chat.photo') return true;
 
-  // Telegram/Facebook: file with image MIME type or image extension → treat as media.
-  // SVG documents are intentionally kept as files. Telegram and Zalo commonly send
-  // them as attachments (icons/documents), even though their MIME is image/svg+xml;
-  // rendering those through an <img> creates a broken image bubble instead of a
-  // downloadable attachment.
+  // Telegram/Facebook: a document whose file is a picture (image MIME type or extension) → treat as media
+  // (shared/chat/imageDocument: the "Ảnh/Video" panel and the photo viewer use the same rule). The document is the first
+  // attachment that is not Telegram presentation info: a forward header / @mention / album entry used to come first and
+  // turn the picture into a file card. SVG documents are intentionally kept as files: Telegram and Zalo commonly send
+  // them as attachments (icons/documents), even though their MIME is image/svg+xml; rendering those through an <img>
+  // creates a broken image bubble instead of a downloadable attachment.
   if (msgType === 'file' && attachmentsStr) {
-    try {
-      const atts = JSON.parse(attachmentsStr || '[]');
-      if (Array.isArray(atts) && atts.length > 0) {
-        const mime = (atts[0].mime_type || '').toLowerCase();
-        const fileName = (atts[0].file_name || '').toLowerCase();
-        if (fileName.endsWith('.svg') || mime === 'image/svg+xml' || mime === 'image/svg') return false;
-        const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff'];
-        const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.ico'];
-        if (imageMimes.some(m => mime.startsWith(m))) return true;
-        if (imageExts.some(ext => fileName.endsWith(ext))) return true;
-      }
-    } catch {}
+    const document = documentAttachment(attachmentsStr);
+    if (isSvgDocumentAttachment(document)) return false;
+    if (isImageDocumentAttachment(document)) return true;
   }
 
   try {

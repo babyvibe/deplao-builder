@@ -1,24 +1,26 @@
 /**
- * Expired Zalo media.
+ * Expired Zalo / Facebook media.
  *
  * Zalo only keeps photos / videos on the CDN for a while: an old CDN host is removed from DNS (e.g. `f24-zpc.zdn.vn` → ENOTFOUND)
  * or the CDN returns 404/410. Old messages (especially messages synced from the phone) often end up in this case. The main process
  * decides it has expired (`file:repairImage` / `file:checkMediaExpired`) and stores the flag `messages.media_expired`;
  * the renderer shows "Ảnh/Video đã hết hạn" (Photo/Video expired) instead of retrying the download again and again.
+ * Facebook: encrypted files Messenger no longer serves (signed link expired, 403 / 404 / 410) get the same flag from
+ * FacebookMediaRepair.
  */
 import React from 'react';
 import ipc from '@/lib/ipc';
 import {useChatStore} from '@/store/chat/chatStore';
-import {isZalo} from '@/lib/channels/channelHelper';
+import {isFacebook, isZalo} from '@/lib/channels/channelHelper';
 import {isTransferring, useMessageMediaProgress} from '@/lib/media/mediaProgress';
 import {VideoDownloadOverlay} from '../../media/MediaDownloadProgress';
 import { tr } from '../../../../../shared/i18n';
 
 export type ExpiredMediaKind = 'image' | 'video';
 
-/** Zalo message marked as having expired media. */
+/** Zalo / Facebook message marked as having expired media. */
 export function isMediaExpired(msg: any): boolean {
-    return isZalo(msg?.channel) && Number(msg?.media_expired) === 1;
+    return (isZalo(msg?.channel) || isFacebook(msg?.channel)) && Number(msg?.media_expired) === 1;
 }
 
 /** Update the expired flag in the store so the message bubble re-renders at once. */
@@ -87,8 +89,10 @@ function ExpiredIcon({kind, size}: { kind: ExpiredMediaKind; size: number }) {
 }
 
 /** Frame that replaces an expired Zalo photo / video. `compact` = a cell in a photo album. */
-export function ExpiredMediaPlaceholder({kind, compact = false, onRetry, retrying = false, onClick, selected = false}: {
+export function ExpiredMediaPlaceholder({kind, compact = false, onRetry, retrying = false, onClick, selected = false, channel}: {
     kind: ExpiredMediaKind;
+    /** Channel of the message: the hint names the service that dropped the file. */
+    channel?: string;
     compact?: boolean;
     onRetry?: () => void;
     retrying?: boolean;
@@ -98,7 +102,7 @@ export function ExpiredMediaPlaceholder({kind, compact = false, onRetry, retryin
     selected?: boolean;
 }) {
     const label = kind === 'video' ? tr('Video đã hết hạn') : tr('Ảnh đã hết hạn');
-    const hint = tr('Zalo không còn lưu file này');
+    const hint = isFacebook(channel) ? tr('Messenger không còn lưu file này') : tr('Zalo không còn lưu file này');
 
     if (compact) {
         return (

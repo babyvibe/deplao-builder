@@ -33,6 +33,26 @@ export function markGroupMembersApiSynced(accountId: string, groupId: string, at
   }
 }
 
+/** The "first sync" spinner stops after this even if the API never answers (the list from the DB stays usable). */
+export const MEMBERS_SYNC_SPINNER_MAX_MS = 45_000;
+
+const membersApiSyncs = new Map<string, Promise<unknown>>();
+
+/**
+ * The first API sync of a group's members (key "account:group"). A caller that arrives while one runs (a second panel,
+ * React's double effect in development) waits for the same run: no second request, and never skipped, since a skipped
+ * caller had nothing to turn its spinner off. Always resolves; the entry is dropped once the run ends.
+ */
+export function joinGroupMembersApiSync(key: string, start: () => Promise<unknown>): Promise<unknown> {
+  const running = membersApiSyncs.get(key);
+  if (running) return running;
+  const sync = new Promise<unknown>((resolve) => resolve(start()))
+    .catch(() => false)
+    .finally(() => { membersApiSyncs.delete(key); });
+  membersApiSyncs.set(key, sync);
+  return sync;
+}
+
 /** page_group_member row → member. */
 export function memberFromRow(row: any): GroupMember {
   return {

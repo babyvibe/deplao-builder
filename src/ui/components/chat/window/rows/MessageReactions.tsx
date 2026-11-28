@@ -30,7 +30,7 @@ function quickReactionFor(ctx: MessageRowContext, channel: string | undefined): 
     : Promise.resolve(TELEGRAM_DEFAULT_QUICK_REACTION);
 }
 
-/** Telegram: send the quick reaction, or remove it when it is already yours (button click / double-click on the message). */
+/** Telegram: send the quick reaction, or remove it when it is already yours (the reaction button at the message edge). */
 export async function toggleTelegramQuickReaction(ctx: MessageRowContext, msg: any): Promise<void> {
   const quick = await quickReactionFor(ctx, msg.channel);
   const mine = myTelegramReaction(parseReactionsFull(msg.reactions, msg.channel).emoji, ctx.activeAccountId);

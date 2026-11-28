@@ -34,7 +34,7 @@ export const CHANNEL_SHORT_LABEL: Record<string, string> = {
   zalo: 'Zalo',
   telegram_user: 'Telegram',
   telegram_bot: 'Bot Telegram',
-  facebook: 'Facebook',
+  facebook: 'Facebook Messenger',
 };
 
 const UNSUPPORTED: Record<QuickActionId, Record<string, string>> = {
